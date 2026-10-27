@@ -43,7 +43,40 @@ listed with how to check a result in the
   disagree with that derivative, and finite gradients alone do not prove
   reliable pose recovery.
 
+## Detector-ring correction
+
+`Rings` separates detector response from object structure statistically; it is
+not a no-harm guarantee. On four real parallel-scan cuts, known injected
+response fields retain 28–61% of their RMS after differential correction.
+Independent off-axis analytic structure increments change by up to 11.1% on
+I13 and 0.9–3.7% on the other three scans; see the
+[ring measurements](measurements.md#detector-response-and-structure-controls).
+Review corrected and uncorrected structures, especially on moving samples.
+A centred radial feature and an even detector error are indistinguishable in
+a stationary full turn: correction of that component depends on the method's
+prior, not information uniquely supplied by the scan. Natural motion can
+supply extra calibration constraints, but `Rings` does not fit those constraints.
+
 ## Data and geometry boundaries
+
+- Projection-only centre reports apply to axial parallel scans. Pair intervals
+  describe a selected rigid matching mode, not ambiguous peaks or sample motion;
+  opposing shifts determine sums, not individual per-view motion. Row-centre
+  slope is an apparent detector trend, not a calibrated three-dimensional axis
+  tilt. Use the pair diagnostics when automatic alignment reports disagreement.
+  In five low-contrast gVXR mesh cases, wrong-mode errors reached a 3.91 px
+  p95 and the conditional 90% intervals covered only one truth; check competing
+  modes against an independent calibration rather than treating a narrow local
+  interval as a global accuracy certificate. Runtime reports mark global
+  coverage uncalibrated for every estimate, including a single pair without
+  a disagreement test; automatic alignment remains limited and loading warns.
+- `tomojax inspect` checks storage and missing calibration in recognized raw
+  acquisitions. It does not run data-driven centre inference; a centre pending
+  inference can still fail during loading. A valid report does not certify
+  physical geometry or reconstruction readiness.
+- External HDF5 links require readable backing files at their recorded paths.
+  The loader reports missing detector sources; it does not repair damaged files
+  or guess relocated links.
 
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).

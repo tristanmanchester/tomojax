@@ -52,6 +52,23 @@ def test_inspect_cli_describes_and_checks_a_dataset(
     assert payload["volume"]["found"] is False
 
 
+def test_inspect_raw_acquisition_reports_required_cli_inputs(tmp_path, capsys):
+    path = tmp_path / "raw.h5"
+    with h5py.File(path, "w") as file:
+        file["exchange/data"] = np.ones((2, 2, 4), np.uint16)
+        file["exchange/theta"] = [0, 90]
+    assert main(["inspect", str(path), "--json"]) == 1
+    issues = json.loads(capsys.readouterr().out)["issues"]
+    assert len(issues) == 3
+    assert "detector" in issues[0] and "--config" in issues[0]
+    assert "--flats" in issues[1] and "--darks" in issues[2]
+    with h5py.File(path, "a") as file:
+        file["exchange/data_white"] = np.ones((1, 2, 4))
+        file["exchange/data_dark"] = np.zeros((1, 2, 4))
+    assert main(["inspect", str(path), "--json"]) == 1
+    assert len(json.loads(capsys.readouterr().out)["issues"]) == 1
+
+
 @pytest.mark.parametrize("units", ["degrees", "rad"])
 def test_inspection_angle_range_uses_degrees_of_sample_frames_only(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], units: str
@@ -871,9 +888,12 @@ def test_inspect_and_preview_share_raw_acquisition_discovery(tmp_path, capsys, l
             "radians" if layout == "exchange" else "mm" if layout == "gda" else "degree"
         )
     previews = tmp_path / "previews"
-    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == 0
+    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == (
+        layout == "exchange"
+    )
     report = json.loads(capsys.readouterr().out)
-    assert report["valid"] and report["issues"] == []
+    assert report["valid"] == (layout != "exchange")
+    assert len(report["issues"]) == (layout == "exchange")
     assert report["projection"]["path"] == data_path
     assert report["angles"]["path"] == angles_path
     assert report["angles"]["coverage_deg"] == pytest.approx(180)

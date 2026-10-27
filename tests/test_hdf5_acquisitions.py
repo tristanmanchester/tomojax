@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.io.api import read_acquisition
+from tomojax.io.api import locate_frames, read_acquisition
 
 
 @pytest.mark.parametrize("recorded", [False, True])
@@ -94,3 +94,74 @@ def test_external_nxtomo_checks_nested_virtual_pixels(tmp_path):
     source.unlink()
     with pytest.raises(ValueError, match="missing virtual detector pixels"):
         tj.load_frames(path, detector=detector)
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [
+        False,
+        True,
+        "parent_definition",
+        "external_entry",
+        "external_nested",
+        "alias_path",
+        "relative_path",
+    ],
+)
+def test_linked_nxtomo_float_keys_preserve_pixels_and_calibration(tmp_path, nested):
+    path, pixels = tmp_path / "scan.nxs", tmp_path / "pixels.h5"
+    values = np.asarray([1, 101, 51, 76, 101], np.uint16)[:, None, None]
+    with h5py.File(pixels, "w") as file:
+        file["pixels"] = values
+    entry = "/entry/tomo" if nested in (True, "parent_definition", "external_nested") else "/entry"
+    with h5py.File(path, "w") as file:
+        file[
+            ("/entry" if nested in ("parent_definition", "external_nested") else entry)
+            + "/definition"
+        ] = "NXtomo"
+        for suffix in ("/instrument/detector/data", "/data/data"):
+            file[entry + suffix] = h5py.ExternalLink(pixels.name, "/pixels")
+        file[entry + "/instrument/detector/image_key"] = [2.0, 1.0, 0.0, 0.0, 1.0]
+        file[entry + "/sample/rotation_angle"] = [0.0, 0.0, 12.0, 72.0, 0.0]
+        for axis in ("x", "y"):
+            file.create_dataset(
+                entry + f"/instrument/detector/{axis}_pixel_size", data=np.nan
+            ).attrs["units"] = "m"
+    options = {}
+    with h5py.File(path, "a") as file:
+        if nested in ("alias_path", "relative_path"):
+            if nested == "relative_path":
+                file.copy("entry", "other")
+            file["latest"] = file["entry"]
+            options["data_path"] = (
+                "/" if nested == "alias_path" else ""
+            ) + "latest/instrument/detector/data"
+        file[entry + "/back"] = h5py.SoftLink("/entry")
+    if nested in ("external_entry", "external_nested"):
+        master = tmp_path / "master.nxs"
+        with h5py.File(master, "w") as file:
+            file["entry"] = h5py.ExternalLink(path.name, "/entry")
+        path = master
+    located = locate_frames(
+        str(path),
+        **(
+            {
+                "data_path": entry + "/instrument/detector/data",
+                "image_key_path": entry + "/instrument/detector/image_key",
+                "angles_path": entry + "/sample/rotation_angle",
+            }
+            if nested == "external_nested"
+            else {}
+        ),
+    )
+    np.testing.assert_array_equal(located.stack[:], values)
+    np.testing.assert_array_equal(located.image_key, [2, 1, 0, 0, 1])
+    assert located.angles is not None
+    with pytest.raises(ValueError, match="detector="):
+        tj.load_frames(path, **options)
+    frames = tj.load_frames(path, detector=tj.Detector(1, 1, 1, 1), **options)
+    np.testing.assert_allclose(frames.geometry.angles, [12, 72])
+    np.testing.assert_allclose(frames.corrected().projections[:, 0, 0], -np.log([0.5, 0.75]))
+    pixels.unlink()
+    with pytest.raises(ValueError, match="external data unavailable.*pixels.h5"):
+        tj.load_frames(path, detector=tj.Detector(1, 1, 1, 1), **options)

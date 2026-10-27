@@ -475,8 +475,10 @@ def _automatic_axial_setup(
     scan: Scan, *, method: Method, reasons: list[str]
 ) -> tuple[Scan, dict[str, Any] | None, str | None]:
     """Infer an absent axial centre and identify unresolved raw-workflow limitations."""
-    center_estimation = None
     source_meta = {} if scan.source is None else scan.source.geometry_metadata
+    center_estimation: dict[str, Any] | None = cast(
+        "dict[str, Any] | None", source_meta.get("detector_center_calibration")
+    )
     if method == "fourier" and source_meta.get("detector_center_status") == "not_recorded":
         try:
             scan = estimate_center(scan)
@@ -486,6 +488,11 @@ def _automatic_axial_setup(
         except ValueError as exc:
             center_estimation = {"status": "failed", "reason": str(exc)}
             reasons.append("Automatic centre estimation failed: " + str(exc))
+    if center_estimation is not None:
+        diagnostics = cast("dict[str, Any]", center_estimation.get("diagnostics", {}))
+        uncertainty = diagnostics.get("uncertainty_reason")
+        if uncertainty:
+            reasons.append(uncertainty)
     center_calibration_reason = None
     if method == "fourier" and any(step.name == "log" for step in scan.corrections):
         if source_meta.get("detector_center_status") not in {"inferred", "recorded", "provided"}:
@@ -498,7 +505,7 @@ def _automatic_axial_setup(
             "Corrected projections were already materialized; use reconstruct_slabs on raw "
             "Frames to avoid that host round trip. Raw-workflow speed is not guaranteed here."
         )
-        if not any(step.name == "stripes" for step in scan.corrections):
+        if not any(step.name in {"stripes", "rings"} for step in scan.corrections):
             reasons.append(
                 "No stripe correction is recorded; detector-ring suppression is unassessed."
             )
@@ -657,8 +664,10 @@ def estimate_center(scan: Scan) -> Scan:
     full scan's centre rather than copying the preview's. Needs corrected
     projections of an unposed axial :class:`ParallelGeometry` with usable
     near-opposite views (within two degrees). The estimate uses row-wise
-    gradient correlations and can be ambiguous for repetitive structure; check the image. Source
-    provenance, when present, records the inferred centre without changing the input.
+    gradient correlations and can be ambiguous for repetitive structure. Source
+    metadata, when present, records pair offsets, conditional uncertainty,
+    alternative matches and row trends without changing the input. Physical centre and sample motion
+    are aliases; conditional matching intervals do not cover motion.
 
     Parameters
     ----------
@@ -681,9 +690,23 @@ def estimate_center(scan: Scan) -> Scan:
     >>> scan = tj.estimate_center(tj.load("scan.nxs"))  # doctest: +SKIP
     >>> recon = tj.reconstruct(scan)  # doctest: +SKIP
     """
-    from tomojax.alignment.api import estimate_center as estimate_geometry_center
+    return _estimate_center(scan)[0]
 
-    geometry = estimate_geometry_center(cast("Geometry", scan.geometry), scan.projections)
+
+def _estimate_center(scan: Scan) -> tuple[Scan, dict[str, object]]:
+    """Share bounded centre estimation and its report without copying a scan."""
+    from tomojax.alignment.api import estimate_center_report
+
+    report = estimate_center_report(cast("Geometry", scan.geometry), scan.projections)
+    geometry = report.geometry
+    calibration: dict[str, object] = {
+        "status": "estimated",
+        "method": "opposite_view_correlation",
+        "diagnostics": report.to_dict(),
+        "input": list(scan.detector.center),
+        "output": list(geometry.detector.center),
+        "unit": "geometry_length",
+    }
     source = scan.source
     if source is not None:
         source = replace(
@@ -691,16 +714,10 @@ def estimate_center(scan: Scan) -> Scan:
             geometry_metadata={
                 **source.geometry_metadata,
                 "detector_center_status": "inferred",
-                "detector_center_calibration": {
-                    "status": "estimated",
-                    "method": "opposite_view_correlation",
-                    "input": list(scan.detector.center),
-                    "output": list(geometry.detector.center),
-                    "unit": "geometry_length",
-                },
+                "detector_center_calibration": calibration,
             },
         )
-    return replace(scan, geometry=geometry, source=source)
+    return replace(scan, geometry=geometry, source=source), calibration
 
 
 def align(
@@ -943,8 +960,16 @@ def _align_automatically(scan: Scan, *, grid: Grid | None = None) -> Alignment:
         "unit": "geometry_length",
     }
     try:
-        scan = estimate_center(scan)
-        center.update(status="estimated", output=list(scan.detector.center))
+        scan, calibration = _estimate_center(scan)
+        center.update(calibration)
+        diagnostics = cast("dict[str, Any]", calibration["diagnostics"])
+        automatic.update(status="limited", reasons=[diagnostics["uncertainty_reason"]])
+        probability = diagnostics["consistency_pvalue"]
+        if probability is not None and probability < 0.01:
+            cast("list[str]", automatic["reasons"]).append(
+                "Pair centres differ beyond conditional matching errors; inspect diagnostics "
+                "for motion or model mismatch. Local intervals do not cover those effects."
+            )
     except ValueError as exc:
         center.update(status="failed", reason=str(exc))
         automatic.update(status="limited", reasons=[str(exc)])
@@ -960,7 +985,7 @@ def _align_automatically(scan: Scan, *, grid: Grid | None = None) -> Alignment:
         reasons = [reason for reason in reasons if reason != resolved]
     if reconstruction.get("status") == "limited" and (reasons or not reconstruction.get("reasons")):
         automatic["status"] = "limited"
-    automatic["reasons"] = [*cast("list[str]", automatic["reasons"]), *reasons]
+    automatic["reasons"] = list(dict.fromkeys([*cast("list[str]", automatic["reasons"]), *reasons]))
     return Alignment(
         result.volume,
         result.scan,

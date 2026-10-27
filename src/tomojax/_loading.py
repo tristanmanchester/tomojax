@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tomojax._data import calibration_issues
 from tomojax._loading_geometry import frame_geometry, frame_output_grid
 from tomojax._scan import (
     Scan,
@@ -522,13 +523,13 @@ class _CorrectedRows:
 
 def _estimate_missing_center(frames: Frames) -> Frames:
     """Resolve an internal axial centre seed, or fail rather than expose its zero."""
-    from tomojax.alignment.api import estimate_center
+    from tomojax.alignment.api import estimate_center_report
 
     source = frames.source
     if source is None or source.geometry_metadata.get("detector_center_status") != "pending":
         return frames
     try:
-        geometry = estimate_center(
+        report = estimate_center_report(
             cast("Any", frames.geometry), cast("Any", _CorrectedRows(frames))
         )
     except ValueError as exc:
@@ -536,6 +537,9 @@ def _estimate_missing_center(frames: Frames) -> Frames:
             f"Cannot estimate the detector centre: {exc}; pass detector=... or geometry=... "
             "to tomojax.load_frames"
         ) from exc
+    geometry = report.geometry
+    diagnostics = report.to_dict()
+    LOG.warning("%s", diagnostics["uncertainty_reason"])
     source = replace(
         source,
         detector=geometry.detector,
@@ -545,6 +549,7 @@ def _estimate_missing_center(frames: Frames) -> Frames:
             "detector_center_calibration": {
                 "status": "estimated",
                 "method": "opposite_view_correlation",
+                "diagnostics": diagnostics,
                 "input": list(frames.geometry.detector.center),
                 "output": list(geometry.detector.center),
                 "unit": "geometry_length",
@@ -557,15 +562,9 @@ def _estimate_missing_center(frames: Frames) -> Frames:
 
 def _require_calibration(frames: Frames) -> Frames:
     """Missing file calibration requires a caller choice, not a numerical guess."""
-    if frames.flats is None and frames.white_level is None:
-        raise ValueError(
-            "No flat fields: pass flats=... (frames or one level) to tomojax.load_frames"
-        )
-    if frames.darks is None:
-        raise ValueError(
-            "No dark fields: pass darks=... to tomojax.load_frames "
-            "(darks=0 only for counts already dark-corrected)"
-        )
+    issues = calibration_issues(frames.flats, frames.darks, frames.white_level)
+    if issues:
+        raise ValueError(issues[0])
     return frames
 
 

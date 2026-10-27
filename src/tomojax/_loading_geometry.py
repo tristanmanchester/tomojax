@@ -78,23 +78,6 @@ def frame_geometry(
         grid=geometry.grid if geometry is not None else grid or record.grid,
         geometry_metadata=meta,
     )
-    record = _prepare_center_seed(record) if geometry is None else record
+    record = record.prepare_center_seed() if geometry is None else record
     resolved = geometry if geometry is not None else geometry_of(record, poses=poses)
     return record, frame_output_grid(resolved, record)
-
-
-def _prepare_center_seed(record: ProjectionDataset) -> ProjectionDataset:
-    """An internal zero seed is not a usable calibrated detector."""
-    if record.detector is not None or record.geometry_type != "parallel":
-        return record
-    meta = record.geometry_metadata
-    pitches = meta.get("acquisition", {}).get("detector_pixel_size", (None, None))
-    if any(p is None for p in pitches):
-        return record  # geometry_inputs names detector= for the absent pitches.
-    _, nv, nu = record.projections.shape
-    detector = Detector(nu, nv, float(pitches[0]), float(pitches[1]), (0.0, 0.0))
-    return replace(
-        record,
-        detector=detector,
-        geometry_metadata={**meta, "detector_center_status": "pending"},
-    )

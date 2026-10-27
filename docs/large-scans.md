@@ -6,6 +6,18 @@ Streaming from host memory applies to projections held as NumPy arrays or
 memmaps, which is what `tj.load` returns. A JAX array already on the GPU stays
 there.
 
+## GPU allocator
+
+Importing `tomojax` defaults JAX to on-demand allocation rather than an eager
+75% GPU reservation, leaving room for cuSolver and CuPy workspaces. The pool
+retains memory for reuse; Python keeps JAX's default pool limit, while GPU CLI
+commands set a 90% ceiling. Explicit
+`XLA_PYTHON_CLIENT_PREALLOCATE`, `XLA_CLIENT_MEM_FRACTION` (or JAX's legacy
+`XLA_PYTHON_CLIENT_MEM_FRACTION`) and `XLA_PYTHON_CLIENT_ALLOCATOR` take precedence; the align
+CLI defaults to the releasing `platform` allocator. These process-wide
+settings cannot change an already initialized JAX backend: import TomoJAX or
+set the environment before the first JAX operation in a notebook.
+
 ## What has to fit on the GPU
 
 | Method | Projections | Volume |

@@ -16,6 +16,7 @@ from tomojax._data import (
     LocatedFrames,
     NXTomoMetadata,
     build_geometry_from_meta,
+    calibration_issues,
     load_npz,
     load_nxtomo,
     locate_frames,
@@ -309,14 +310,17 @@ class ProjectionDataset:
         ):
             raise ValueError(
                 "Missing detector pixel sizes or centre: pass detector=... or geometry=... "
-                "to tomojax.load_frames"
+                "to tomojax.load_frames, or set detector in tomojax preprocess --config"
             )
         if self.geometry_metadata.get("axis_status") == "not_recorded":
             raise ValueError(
                 "Missing calibrated rotation axis: pass geometry=... to tomojax.load_frames"
             )
         if self.angles.shape != (self.projections.shape[0],):
-            raise ValueError("Missing view angles: pass angles=... to tomojax.load_frames")
+            raise ValueError(
+                "Missing view angles: pass angles=... to tomojax.load_frames, "
+                "or use tomojax preprocess --angles"
+            )
         payload: dict[str, Any] = {
             "detector": detector.to_dict(),
             "angles": np.asarray(self.angles, dtype=np.float32),
@@ -329,6 +333,31 @@ class ProjectionDataset:
         _merge_dataset_solver_metadata(payload, self)
         _merge_geometry_metadata_dict(payload, self.geometry_metadata)
         return payload
+
+    def prepare_center_seed(self) -> ProjectionDataset:
+        """Prepare axial centre inference from recorded pitches, without reading pixels.
+
+        The pending seed is not calibrated; loading must estimate its centre before
+        returning frames. Inspection can check the remaining required metadata.
+
+        Returns
+        -------
+        ProjectionDataset
+            Original record or a copy with an internal pending detector seed.
+        """
+        if self.detector is not None or self.geometry_type != "parallel":
+            return self
+        meta = self.geometry_metadata
+        pitches = meta.get("acquisition", {}).get("detector_pixel_size", (None, None))
+        if any(p is None for p in pitches):
+            return self  # geometry_inputs names detector= for the absent pitches.
+        _, nv, nu = self.projections.shape
+        detector = Detector(nu, nv, float(pitches[0]), float(pitches[1]), (0.0, 0.0))
+        return replace(
+            self,
+            detector=detector,
+            geometry_metadata={**meta, "detector_center_status": "pending"},
+        )
 
 
 def load_dataset(path: PathLike) -> ProjectionDataset:
@@ -524,7 +553,7 @@ def validate_dataset(path: PathLike) -> ValidationReport:
     Parameters
     ----------
     path : str or pathlib.Path
-        Dataset path to inspect for structural validity.
+        Dataset path to inspect for structural validity and missing raw calibration.
 
     Returns
     -------
@@ -541,8 +570,14 @@ def validate_dataset(path: PathLike) -> ValidationReport:
 def _dataset_issues(input_path: Path) -> list[str]:
     from ._acquisition import read_acquisition
 
-    if read_acquisition(input_path) is not None:
-        return []
+    raw = read_acquisition(input_path)
+    if raw is not None:
+        issues = calibration_issues(raw.flats, raw.darks, raw.white_level)
+        try:
+            raw.record.prepare_center_seed().geometry_inputs()
+        except ValueError as exc:
+            issues.insert(0, str(exc))
+        return issues
     suffix = input_path.suffix.lower()
     if suffix in _HDF5_SUFFIXES:
         located = locate_frames(str(input_path))

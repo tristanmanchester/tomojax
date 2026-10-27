@@ -33,9 +33,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if command not in _MODULES:
         _build_parser().error(f"unknown command {command!r}")
     if command in _JAX_ALLOCATORS:
-        from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
+        from tomojax._runtime import configure_jax_allocator_defaults
 
-        configure_jax_allocator_defaults(allocator=_JAX_ALLOCATORS[command])
+        configure_jax_allocator_defaults(allocator=_JAX_ALLOCATORS[command], memory_fraction=0.9)
     module = importlib.import_module(f"tomojax.cli.{_MODULES[command]}")
     run = cast("Callable[[], int | None]", module.main)
     with _temporary_argv([f"tomojax {command}", *tail]):

@@ -63,6 +63,7 @@ def test_estimate_center_returns_the_scan_with_its_physical_centre():
     scan, true_u, truth = _scan()
     result = tj.estimate_center(scan)
     assert result.projections is scan.projections
+    assert result.source is None
     assert result.grid is scan.grid
     assert result.detector.center[1] == scan.detector.center[1]
     assert abs(result.detector.center[0] - true_u) <= 0.3 * scan.detector.du
@@ -122,13 +123,15 @@ def test_auto_alignment_records_center_and_resolves_only_its_limitation(monkeypa
     monkeypatch.setattr(_workflow, "reconstruct", lambda s: replace(rec, scan=s))
     info = tj.align(scan).info["automatic"]
     assert info["reconstruction"] == context
-    assert info["reasons"] == ["rings"] and info["status"] == "limited"
+    assert info["reasons"][-1] == "rings" and info["status"] == "limited"
+    assert "not a calibrated centre interval" in info["reasons"][0]
     center = info["center_estimation"]
     assert center["input"] == list(scan.detector.center) and center["status"] == "estimated"
+    assert center["diagnostics"]["pairs"][0]["local_matching_sigma_px"] >= 0
     assert abs(center["output"][0] - true_u) <= 0.3 * scan.detector.du
 
 
-def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(tmp_path):
+def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(tmp_path, caplog):
     import h5py
 
     scan, true_u, _ = _scan()
@@ -147,6 +150,9 @@ def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(t
     frames = tj.load_frames(path)
     assert abs(frames.geometry.detector.center[0] - true_u) <= 0.3 * scan.detector.du
     assert frames.source.geometry_metadata["detector_center_status"] == "inferred"
+    diagnostics = frames.source.geometry_metadata["detector_center_calibration"]["diagnostics"]
+    assert diagnostics["global_coverage_calibrated"] is False
+    assert "not a calibrated centre interval" in caplog.text
     assert tj.load(path).detector == frames.geometry.detector
     result = frames.cropped(slice(2, 4), slice(None)).corrected()
     expected = -np.log(counts[:, 2:4].astype(np.float64) / 10000)
@@ -169,3 +175,76 @@ def test_estimate_center_retains_signed_phase_contrast_across_rows():
     phase += np.sin(np.deg2rad(scan.angles))[:, None, None]
     result = tj.estimate_center(replace(scan, projections=phase))
     assert abs(result.detector.center[0] - true_u) < 0.15 * scan.detector.du
+
+
+def test_center_resolves_subpixel_peaks_of_sharp_analytic_projections():
+    from tomojax.alignment.api import estimate_center
+
+    detector = Detector(128, 1, 1, 1)
+    geometry = ParallelGeometry(Grid(128, 128, 1, 1, 1, 1), detector, [0, 180])
+    for center in np.linspace(-5.4, 5.4, 21):
+        u = np.arange(128) - 63.5 + center
+        data = np.asarray(
+            [
+                sum(
+                    a * np.exp(-0.5 * (u - sign * x) ** 2)
+                    for x, a in [(-19, 1), (-3, 0.8), (27, 0.4)]
+                )
+                for sign in (1, -1)
+            ]
+        )[:, None]
+        assert abs(estimate_center(geometry, data).detector.center[0] - center) < 0.001
+
+
+def test_center_report_keeps_opposing_constraints_and_exposes_motion():
+    from scipy.ndimage import shift
+
+    from tomojax.alignment.api import estimate_center_report
+
+    scan, truth, _ = _scan(views=360, span=360)
+    data = scan.projections.copy()
+    for i in range(len(data)):
+        data[i] = shift(data[i], (0, 2 if i % 180 < 90 else -2), order=3)
+    report = estimate_center_report(scan.geometry, data)
+    assert len(report.pairs) == 16
+    assert report.pair_scatter_px > 1.5
+    assert report.consistency_pvalue < 0.01
+    assert abs(report.geometry.detector.center[0] - truth) < 0.1
+    assert all(abs(sum(w for _, w in p.first) - 1) < 1e-10 for p in report.pairs)
+    assert all(abs(sum(w for _, w in p.second) - 1) < 1e-10 for p in report.pairs)
+    assert len(report.to_dict()["pairs"]) == 16
+
+
+def test_center_report_measures_row_trend_and_conditional_interval():
+    from scipy.ndimage import shift
+
+    from tomojax.alignment.api import estimate_center_report
+
+    scan, truth, _ = _scan(views=360, span=360)
+    data = scan.projections.copy()
+    for row in range(data.shape[1]):
+        data[:, row] = shift(data[:, row], (0, 0.03 * (row - 3.5)), order=3)
+    data += np.random.default_rng(304).normal(0, 0.01, data.shape)
+    report = estimate_center_report(scan.geometry, data)
+    assert abs(report.row_slope_px_per_row + 0.03) < 0.003
+    assert abs(report.geometry.detector.center[0] - truth) < 0.03
+    assert all(p.local_sigma_px > 0 for p in report.pairs)
+    assert all(
+        p.local_interval90_px[0] < p.offset_px < p.local_interval90_px[1] for p in report.pairs
+    )
+
+
+def test_single_pair_reports_uncalibrated_global_coverage_without_inconsistency(monkeypatch):
+    from tomojax import _workflow
+
+    scan, _, _ = _scan(views=2, span=360)
+    reconstruction = tj.Reconstruction(np.zeros((80, 80, 8)), scan, "fbp", {})
+    monkeypatch.setattr(_workflow, "reconstruct", lambda s: replace(reconstruction, scan=s))
+    automatic = tj.align(scan).info["automatic"]
+    diagnostics = automatic["center_estimation"]["diagnostics"]
+    assert diagnostics["consistency_pvalue"] is None
+    assert diagnostics["global_coverage_calibrated"] is False
+    assert diagnostics["uncertainty_status"] == "local_matching_only"
+    assert "local_matching_interval90_px" in diagnostics["pairs"][0]
+    assert automatic["status"] == "limited"
+    assert "not a calibrated centre interval" in automatic["reasons"][0]

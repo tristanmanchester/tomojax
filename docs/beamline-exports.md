@@ -124,69 +124,41 @@ For rings, phase retrieval, larger row windows and explicit reconstruction
 methods, continue with [the quickstart](quickstart.md). Do not apply another
 logarithm to the saved corrected projections.
 
-## Diamond I13 mixed TIFF folder
+## Diamond I13 NXtomo acquisition
 
-This example uses an unpublished Diamond I13 TIFF export (scan 159815), not a
-publicly downloadable test dataset. It has LZW-compressed TIFFs in one `raw/` directory:
-100 darks, 100 flats, 3001 projections, then 100 flats. `savu_processed.nxs`
-records the projection angles and the processing calibration. Generic TIFFs
-alone do not identify which images are flats or supply angles and geometry.
-For another such export, replace the filename ranges, angle dataset and sign,
-detector dimensions/centre, and row/column crop with its own processing record;
-the numbers below are not I13-wide defaults.
+The unpublished Diamond I13 scan 159815 is a GDA NXtomo file,
+`diamond-i13-mg31912-1/raw/159815.nxs`, linked to `pco1-159815.hdf` beside it.
+Keep both files together. Loading discovers its 3001 sample views, 200 flats in
+before/after sets, 100 darks and recorded angles without a TIFF export.
+The detector pixel pitch is not recorded, so `tj.load` reports the missing
+calibration: supply `detector=` through `tj.load_frames`.
 
-This Linux example creates temporary **symlinks**, not copies of the images.
-Keep the temporary directories alive until correction has materialised the
-selected row. The recorded Savu crop is columns 441:1872, with axis column
-718.5 in that crop: original axis column 1159.5, hence detector offset 120.
-Savu's angle convention is opposite to TomoJAX's world-from-object rotations.
-Neither these TIFFs nor this Savu export establishes a physical pixel pitch;
-this preview deliberately uses **pixel units**, not millimetres or micrometres.
+This preview uses **pixel units**, not millimetres or micrometres. The Savu
+processing record supplies the crop 441:1872 and axis column 718.5 within that
+crop: original axis column 1159.5, hence detector offset 120. These are values
+for this scan, not I13-wide defaults; replace them with your scan's calibration.
+The acquisition's recorded angle signs are preserved. Negate them explicitly
+only when comparing to a pipeline using the opposite rotation convention.
 
 ```python
-from pathlib import Path
-from tempfile import TemporaryDirectory
-
-import h5py
-import numpy as np
 import tomojax as tj
 
-root = Path("diamond-i13-159815").resolve()
-with h5py.File(root / "savu_processed.nxs") as source:
-    angles = -np.asarray(source["entry/input_data/tomo/rotation_angle"])
-
-with TemporaryDirectory() as temporary:
-    temporary = Path(temporary)
-    selections = {
-        "projections": range(200, 3201),
-        "flats": [*range(100, 200), *range(3201, 3301)],
-        "darks": range(100),
-    }
-    for name, indices in selections.items():
-        folder = temporary / name
-        folder.mkdir()
-        for index in indices:
-            (folder / f"proj_{index}.tif").symlink_to(root / "raw" / f"proj_{index}.tif")
-    frames = tj.load_frames(
-        temporary / "projections",
-        angles=angles,
-        detector=tj.Detector(2560, 2160, 1, 1, center=(120, 0)),
-        flats=temporary / "flats",
-        darks=temporary / "darks",
-    )
-    scan = frames.cropped(slice(1080, 1081), slice(441, 1872)).corrected()
-    result = tj.reconstruct(scan)
-    tj.save("i13-preview.nxs", result)
+frames = tj.load_frames(
+    "diamond-i13-mg31912-1/raw/159815.nxs",
+    detector=tj.Detector(2560, 2160, 1, 1, center=(120, 0)),
+)
+scan = frames.cropped(slice(1080, 1081), slice(441, 1872)).corrected()
+result = tj.reconstruct(scan)
+tj.save("i13-preview.nxs", result)
 ```
 
-Save this complete block as `i13_preview.py` and run it:
+Save this block as `i13_preview.py` and run it:
 
 ```bash
 python i13_preview.py
 tomojax inspect i13-preview.nxs --preview i13-preview-images
 ```
 
-This is the default reconstruction, not a
-reproduction of Savu's ring-removal/filtering pipeline. Keep those distinctions
-when comparing images. For ordinary separated TIFF folders and angle sidecars,
-see [preparing TIFF data](real-laminography.md#prepare-tiff-data).
+This is the default reconstruction, not a reproduction of Savu's
+ring-removal/filtering pipeline. For TIFF-only acquisitions without NXtomo
+metadata, see [preparing TIFF data](real-laminography.md#prepare-tiff-data).

@@ -24,6 +24,32 @@ Commands, adapters and physical conventions are in the
 [benchmark guide](../bench/README.md). Raw records are kept out of the
 repository; each result names the command, commit and date to rerun it.
 
+## Raw NXtomo loading and held-out split integrity
+
+Measured 2026-10-27 on `a4a969cb` (loading) and `191c0882` (evaluation),
+using the local Diamond files. These are functional/integrity tests, not image
+or pose accuracy measurements. Commands in the lab shared directory are
+`JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/loader_kill.py`
+(the metadata/pixel section) and
+`JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/evaluation_kill.py`.
+
+- I13 NXtomo scans 159791 and 159815 classify respectively 37/80/80 and
+  3001/200/100 sample/flat/dark frames. First-sample row1080 columns441:449
+  exactly match raw HDF5 pixels (maximum integer error 0). Discovery cold/warm
+  times are 55.7/4.75 ms and 46.6/15.2 ms, with 260 MiB peak process RSS and no
+  GPU allocation. Missing physical pitch requires explicit detector geometry.
+- I12 physical row1080, every thirtieth sample view (61×1×2560), tests
+  interleaved-view, angular-block and detector-block splits. Changing every
+  excluded value to 1234 leaves a fixed four-coefficient least-squares fit
+  bitwise unchanged. Streamed versus dense squared-error relative differences
+  are 1.96e-16, 0 and 3.00e-16. Cold/warm fit-and-score times are 32.7/32.7,
+  56.4/29.5 and 24.0/22.7 ms; peak RSS 68 MiB, GPU 0. This checks held-out
+  accounting, not tomographic reconstruction or stopping-rule effectiveness.
+
+The [held-out guide](held-out-evaluation.md) describes the split and leakage
+contract. Public reconstruction/alignment workflows do not automatically enforce
+arbitrary detector observation masks.
+
 ## Real-scan comparison criteria
 
 Use the same calibrated geometry and physical output grid for each library,
@@ -35,6 +61,104 @@ times with both diagnostics reported. Physical accuracy checks use the walnut
 reference and independent analytic phantoms. The Zeiss vendor comparison uses
 a fixed registered valid-data region and an intensity-affine fit as an image
 diagnostic, not as a truth volume or an acceptance threshold.
+
+## Detector response and structure controls
+
+Measured 2026-10-27 on `e71f900f` for response injections and `271fd6e3` for
+independently scored structure increments. The `Rings` implementation is the
+same in both. These are T1 known perturbations of real line-integral data,
+not reconstruction accuracy or ring-energy rankings. All selected views are
+used; there is no held-out split, fitted registration or pose-gauge removal.
+Explicit detector centres are −5/−138/−15/0 pixels in table order; ESRF uses
+the panel centre, not an independently calibrated axis.
+
+| Scan and frozen cut | Injected-field residual, Rings | Injected-field residual, Algotom | Off-axis structure alteration, Rings | Off-axis structure alteration, Algotom |
+|---|---:|---:|---:|---:|
+| I13 159815, row 1080, columns 441:1869, every eighth of 3000 views | 0.2803 | 0.4033 | 0.1112 | 0.3501 |
+| I12 3339629, row 1080, all 2560 columns, every eighth view | 0.3917 | 0.2406 | 0.0085 | 0.2998 |
+| APS 2-BM `test_data.h5`, row 11, all 1536 columns, every eighth view | 0.6110 | 0.2302 | 0.0130 | 2.0735 |
+| ESRF bamboo, row 270, all 640 columns, every eighth view | 0.4370 | 0.1696 | 0.0367 | 0.3529 |
+
+Injected response is `a + b * (1 - exp(-q))`, with independent pixel fields,
+RMS 0.004 and 0.006, seeds 608–611, and paired sparse support. These amplitudes
+are declared perturbations, **not calibrated detector errors**. The field
+residual is `RMS(C(q + error) - C(q)) / RMS(error)`: existing structure damage
+common to both outputs cancels. Corresponding off-support ratios are
+0.246/0.298/0.221/0.307 for Rings and 0.299/0.202/0.208/0.152 for Algotom.
+Rings misses at least one of the frozen residual ≤0.5 and off-support ≤0.2
+gates on every scan. Even/odd injection variants also miss those gates.
+
+Structure increments are independent analytic Gaussian Radon traces, not
+TomoJAX projections: widths 2 and 8 pixels, peak 0.05, radii 0.35 and 0.7
+of detector half-width, azimuth seed 9027. The table gives the maximum
+`norm(C(q + increment) - C(q) - increment) / norm(increment)` per scan.
+Rings misses the 5% gate on I13; Algotom misses it on all four cuts. The I13
+maximum remains 10.5% with all 3000 views. Axis-centred Gaussians and annuli
+are reported separately as unidentifiable detector/object aliases, not as
+failures to recover uniquely determined structure.
+
+Even an off-axis Gaussian has a radial component. A follow-up physical-radial
+projection on `09437d17` assigns 1.13–6.68%, 0.76–4.09%, 1.26–6.29% and
+2.32–12.89% of the probes' energy to that component. Maximum error outside
+the radial component, normalized by nonradial truth, is
+0.04712/0.00601/0.01009/0.03771 for Rings. Thus the I13 full-increment failure
+mostly concerns the radial prior, not its uniquely varying component. The
+frozen full-increment gate above is not retrospectively changed.
+
+Algotom 1.7 uses its canonical transmission-domain chain,
+`-log(remove_all_stripe(exp(-q)))`, with unchanged defaults 3/51/21.
+Commands, from this run's checkout with its external `shared/` harness:
+
+```bash
+JAX_PLATFORMS=cpu ALGO_DOMAIN=transmission LAB_ARTIFACTS=OUTPUT \
+  uv run --no-sync python ../../shared/agent08/rings/injected_kill.py
+JAX_PLATFORMS=cpu LAB_ARTIFACTS=OUTPUT \
+  uv run --no-sync python ../../shared/agent02/ring_structure_score.py
+JAX_PLATFORMS=cpu LAB_ARTIFACTS=OUTPUT \
+  uv run --no-sync python ../../shared/agent02/i13_native_noharm.py
+```
+
+The response run's CPU first/warm correction times are 5.070/0.225 s,
+1.220/0.141 s, 1.235/0.038 s and 0.990/0.028 s for the table's scan order;
+these exclude imports and loading and do not follow the page's fresh-process protocol.
+Peak host RSS is 1281 MiB and GPU use is zero. No speed comparison is claimed.
+Final ring quality requires independent rows and seeds plus reconstruction
+metrics; these perturbation controls do not establish removal of native rings.
+
+### Response-inverse feasibility
+
+On the I13 159815 runtime cut (every 25th sample view, rows 1080:1088,
+columns 441:1873, count-binned 8×8), the former final response had no real
+inverse for 166 observations. Its three Newton steps nevertheless returned
+finite values spanning −8.77 to 9.11. The constrained fit on `694a9ae7`
+changes seven of 179 final-stage coefficient pairs, gives a minimum response
+derivative of 0.5011 and maximum forward/inverse closure error of 3.58e−7.
+The final weighted data-fit SSE changes from 1325.891 to 1324.329; the first
+fine stage increases by 0.00136%. These are numerical feasibility checks,
+not reconstruction accuracy. The constraint changes the odd coefficient
+components too: RMS 0.01785 for offset and 0.02860 for response slope.
+
+```bash
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/source_coarse.py
+```
+
+The four-scan finite-reference fixture and analytic structure controls retain
+their previous pass/fail outcomes; the fit constraint repairs inversion, not
+the statistical separation of detector errors and object structure.
+
+CUDA A/B/A/B on the native I13 cut, baseline `c7d8578d` versus the constrained
+implementation, gives median warm correction times 0.01403/0.01719 and
+0.01312/0.01613 s: approximately **23% slower**, with sampled GPU peaks
+704–706 versus 742 MiB (**about 36 MiB more**). Cold calls are 9.63–9.68
+versus 9.73–9.92 s; peak host RSS is 1607 versus 1623–1628 MiB. On the same
+runs, seed-622 dense log-gain residual is 0.919913 and the independent
+Gaussian increment alteration is 0.104278 for both implementations; native
+output disagreement is at most 7.62e−8 relative. These controls still fail
+their quality gates. The correctness repair is not a speed improvement.
+
+```bash
+LAB_ARTIFACTS=OUTPUT uv run --no-sync python ../../shared/agent08/rings/paired_gpu.py
+```
 
 ## Reconstruction against ASTRA
 
@@ -779,6 +903,80 @@ constrained FISTA reaches 0.12 after 100 iterations and 0.091 after 300
 (109 s), against 0.059 for the volume of the full-resolution alignment.
 
 ### Detector centre
+
+The projection-only estimator uses a one-pixel derivative bandwidth and a
+Fourier-interpolated global correlation peak. On 2026-10-27, the fixed shift
+matrix (`JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/shift_kill.py`, implementation `a04e5ee7`) gave the following 95th-percentile absolute errors in the **change**
+of centre after injected ±0.25, ±0.5 and ±1 px shifts (T1):
+
+| Scan (three detector rows) | Centre-change error, px |
+|---|---:|
+| APS 2-BM test_data | 0.00085 |
+| Elettra TomoBank 00024 | 0.00292 |
+| ESRF bamboo | 0.00567 |
+| I12 3339629, rows 1050/1080/1100 | 0.00117 |
+| I13 159815, rows 690/1080/1470 | 0.00488 |
+
+These errors test shift equivariance, not absolute centre accuracy. Motion,
+truncation and competing correlation peaks can bias a single centre estimate.
+
+`alignment.api.estimate_center_report` retains the weighted view-pair constraints,
+conditional 90% matching intervals, other correlation peaks and apparent
+row-centre slope. The uncertainty uses eight detector-column blocks, an observed
+cross-Hessian and leverage correction; it does not claim a physical-centre
+interval under arbitrary motion. Pair disagreement is reported separately.
+The automatic workflow saves these diagnostics and reports conditional
+inconsistency without replacing it by independent per-view poses.
+Runtime fields label the intervals `local_matching_interval90_px`, with
+`global_coverage_calibrated=false` and `uncertainty_status=local_matching_only`.
+These are local matching diagnostics, not calibrated global centre intervals;
+automatic alignment reports this limitation even without pair disagreement.
+
+On 2026-10-27 (`a04e5ee7`), 64 real rows gave centre-change p95 errors
+0.00422 px on Elettra 00024 and 0.00284 px on I13 159815. The report took
+0.233/0.230 s and 2.30/2.27 s cold/warm on corrected inputs; cumulative peak
+host memory was 348/663 MiB, GPU memory zero. Reading and correcting the
+selected HDF5 observations took 0.035/52.61 s separately. Command:
+`OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/full_rows.py`. I13 used rows 300:1860 and columns 441:1872;
+both scans sampled 64 evenly spaced rows. I13 pair centres ranged from
+−3.76 to +0.59 px, with 1.75 px scatter and conditional standard errors
+0.049–0.287 px. These conflicting pairs do not define one physical centre.
+Elettra's 50.800 px estimate and conditional interval [49.235, 52.366] px
+include the TomoBank 51.5 px centre convention (T3 agreement, not accuracy).
+
+Independent analytic Gaussian line integrals with Poisson counts, seed 304,
+100 pairs per category, gave conditional 90% coverage 93% dense, 100% sparse,
+91% low contrast and 91% truncated. Their p95 location errors were
+0.0103/0.0152/0.0861/0.0088 px. Command: `OPENBLAS_NUM_THREADS=1
+JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/production_coverage.py`. This calibration excludes wrong
+matching modes, axis tilt and sample motion; it is not whole-scan coverage.
+
+Independent gVXR cuboid projections expose failures outside that calibration
+(2026-10-27, `a04e5ee7`, renderer seed 316, count seed 317, five cases per
+category, 257 by 65 pixels, 30,000 incident photons). Absolute centre p95
+errors were 0.086/0.156/0.120/0.052/0.173 px for dense, sparse, off-centre,
+phase-fringe and truncated objects, respectively, but 3.907 px at low contrast
+and 1.004 px with a one-degree axis tilt. Only one of the five low-contrast
+truths lay inside its conditional 90% interval. Tilt is outside the axial
+matching model; its apparent row-slope error reached 0.678 px p95 over the
+32-row half-height. Command: isolated gVXR Python runs
+`../../shared/agent03/gvxr_render.py`, then `JAX_PLATFORMS=cpu uv run --no-sync
+python ../../shared/agent03/gvxr_score.py`, with `LAB_ARTIFACTS` set to the
+output directory. The complete renderer-and-score job took 3.04 s; the CPU
+scoring stage took 0.564 s with 273 MiB peak host memory.
+
+Signed cSAXS porous-glass phase data gave centre-change p95 0.000512 px over
+the same six injected shifts, versus 0.006150 px for the integer-peak baseline
+(2026-10-27, `a04e5ee7`). The 51 selected views used 64 evenly spaced rows and
+1312 columns. Point estimation took 0.410/0.410 s cold/warm versus
+0.0393/0.0398 s for the baseline; data reading took 7.31 s, with 640 MiB peak
+host memory and no GPU use. Command: `OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu
+uv run --no-sync python ../../shared/agent03/psi_phase.py`. This is shift
+equivariance on phase data, not an absolute centre measurement.
+
 
 | Mode and scan | Result |
 |---|---|

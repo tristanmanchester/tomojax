@@ -7,7 +7,7 @@ In particular, pixel pitch does not establish the rotation-axis position.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import h5py
 import numpy as np
@@ -45,7 +45,48 @@ def _length(file: Any, path: str) -> float | None:
     # Without a recorded length unit, a physical pitch is not established.
     if unit not in _MM:
         return None
-    return float(np.asarray(data[()]).item()) * _MM[unit]
+    value = float(np.asarray(data[()]).item()) * _MM[unit]
+    return value if np.isfinite(value) else None
+
+
+def _entries(file: Any) -> list[str]:
+    """Acquisition containers under local or externally linked NXtomo entries."""
+    definitions: list[str] = []
+    containers: list[str] = []
+    seen = set()
+
+    def visit(name: str, entry: Any, *, inherited: bool) -> None:
+        definition = entry.get("definition")
+        label = definition[()] if definition is not None else entry.attrs.get("definition", "")
+        declared = _text(label) == "NXtomo"
+        scope = inherited or declared
+        identity = (entry.id, scope)
+        if identity in seen:
+            return
+        seen.add(identity)
+        if declared:
+            definitions.append(name)
+        if scope and "instrument/detector" in entry:
+            containers.append(name)
+        # HDF5's visit methods do not descend external groups. Resolve them
+        # explicitly; object identity prevents soft/external link cycles.
+        for child_name, child in entry.items():
+            if isinstance(child, h5py.Group):
+                visit(name + "/" + child_name, child, inherited=scope)
+
+    visit("", file, inherited=False)
+    return containers or definitions
+
+
+def _contains(file: Any, entry: str, data_path: str) -> bool:
+    """Compare ancestor objects, not path spellings that may be link aliases."""
+    root = file[entry]
+    parent = ("/" + data_path.strip("/")).rsplit("/", 1)[0]
+    while parent:
+        if file.get(parent) == root:
+            return True
+        parent = parent.rsplit("/", 1)[0]
+    return False
 
 
 def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | None:
@@ -53,19 +94,11 @@ def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | Non
     if "exchange/data" in file:
         where = data_path or "/exchange/data"
         return "data_exchange", where, "", ""
-    entries = []
-    for group in file.values():
-        if not isinstance(group, h5py.Group):
-            continue
-        group = cast(Any, group)  # h5py stubs omit Group.name and dataset scalar indexing.
-        definition = group.get("definition")
-        label = definition[()] if definition is not None else group.attrs.get("definition", "")
-        if _text(label) == "NXtomo":
-            entries.append(group.name)
+    entries = _entries(file)
     if not entries:
         return None
     if data_path is not None:
-        entries = [entry for entry in entries if data_path.startswith(entry + "/")]
+        entries = [entry for entry in entries if _contains(file, entry, data_path)]
     if len(entries) != 1:
         raise ValueError("Several NXtomo entries: pass data_path=... for the detector stack")
     entry = entries[0]
@@ -75,12 +108,23 @@ def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | Non
         detector is not None and "detector_meta_json" in detector.attrs
     ):
         return None
-    where = data_path or entry + "/instrument/detector/data"
+    where = data_path or next(
+        (
+            entry + suffix
+            for suffix in ("/instrument/detector/data", "/data/data")
+            if entry + suffix in file
+        ),
+        entry + "/instrument/detector/data",
+    )
     key = entry + "/instrument/detector/image_key"
     angles = next(
         (
             entry + "/" + p
-            for p in ("sample/rotation_angle", "sample/transformations/rotation_angle")
+            for p in (
+                "sample/rotation_angle",
+                "sample/transformations/rotation_angle",
+                "data/rotation_angle",
+            )
             if entry + "/" + p in file
         ),
         "",
@@ -100,7 +144,11 @@ def _metadata(file: Any, layout: str, where: str) -> dict[str, Any]:
             if path in file:
                 acquisition[field] = _text(file[path][()])
     else:
-        prefix = where.rsplit("/", 1)[0] + "/"
+        prefix = (
+            where.rsplit("/", 2)[0] + "/instrument/detector/"
+            if where.endswith("/data/data")
+            else where.rsplit("/", 1)[0] + "/"
+        )
         names = ("x_pixel_size", "y_pixel_size")
     acquisition["detector_pixel_size"] = [_length(file, prefix + name) for name in names]
     acquisition["pixel_size_paths"] = [prefix + name for name in names if prefix + name in file]

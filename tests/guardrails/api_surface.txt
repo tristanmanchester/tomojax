@@ -315,6 +315,59 @@ def tomojax.geometry.stack_view_poses(
         dtype: 'DTypeLike' = <class 'numpy.float32'>,
     ) -> 'jnp.ndarray'
 
+# tomojax.evaluation
+class tomojax.evaluation.Score(
+        squared_error: 'float',
+        target_energy: 'float',
+        weight_sum: 'float',
+        count: 'int',
+    ) -> None
+    .mse
+    .relative_l2
+class tomojax.evaluation.Split(
+        *,
+        shape: 'tuple[int, int, int]',
+        train: 'np.ndarray',
+        test: 'np.ndarray',
+        specification: 'str',
+    ) -> None
+    .angular(
+        cls,
+        shape: 'tuple[int, int, int]',
+        angles: 'np.ndarray',
+        *,
+        start: 'float',
+        width: 'float',
+        guard: 'float' = 0,
+        period: 'float' = 360,
+    ) -> 'Split'
+    .detector(
+        cls,
+        shape: 'tuple[int, int, int]',
+        *,
+        start: 'int',
+        width: 'int',
+        period: 'int',
+        guard: 'int' = 0,
+        offsets: 'np.ndarray | float' = 0,
+    ) -> 'Split'
+    .fingerprint
+    .interleaved(
+        cls,
+        shape: 'tuple[int, int, int]',
+        *,
+        stride: 'int',
+        offset: 'int' = 0,
+    ) -> 'Split'
+    .score(
+        self,
+        prediction: 'np.ndarray',
+        target: 'np.ndarray',
+        *,
+        weights: 'np.ndarray | float' = 1,
+        views: 'slice | None' = None,
+    ) -> 'Score'
+
 # tomojax.recon
 class tomojax.recon.CGLSConfig(
         *,
@@ -615,6 +668,7 @@ class tomojax.io.ProjectionDataset(
         source_path: 'PathLike | None' = None,
     ) -> 'ProjectionDataset'
     .geometry_inputs(self) -> 'dict[str, Any]'
+    .prepare_center_seed(self) -> 'ProjectionDataset'
     .to_nxtomo_metadata(self) -> 'NXTomoMetadata'
 class tomojax.io.ValidationReport
 def tomojax.io.build_geometry_from_dataset_metadata(

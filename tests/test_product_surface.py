@@ -48,6 +48,28 @@ def test_cli_imports_do_not_configure_jax_allocator(monkeypatch: pytest.MonkeyPa
     assert "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ
 
 
+@pytest.mark.parametrize(
+    "explicit", [None, "XLA_CLIENT_MEM_FRACTION", "XLA_PYTHON_CLIENT_MEM_FRACTION"]
+)
+def test_python_allocator_defaults_precede_jax_and_preserve_overrides(explicit):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("XLA_")}
+    if explicit:
+        env.update({explicit: "0.6", "XLA_PYTHON_CLIENT_PREALLOCATE": "true"})
+    script = f"""
+import os, jax, tomojax
+from jaxlib.xla_client import generate_pjrt_gpu_plugin_options
+options = generate_pjrt_gpu_plugin_options()
+assert options['preallocate'] == {bool(explicit)!r}
+assert options.get('memory_fraction') == {0.6 if explicit else None!r}
+assert 'XLA_PYTHON_CLIENT_ALLOCATOR' not in os.environ
+from tomojax.cli.main import main
+try: main(['recon', '--help'])
+except SystemExit: pass
+assert generate_pjrt_gpu_plugin_options()['memory_fraction'] == {0.6 if explicit else 0.9!r}
+"""
+    subprocess.run([sys.executable, "-c", script], env=env, check=True)
+
+
 def test_non_product_namespaces_are_absent() -> None:
     for module_name in ("tomojax.bench", "tomojax.verify", "tomojax.data"):
         with pytest.raises(ModuleNotFoundError):

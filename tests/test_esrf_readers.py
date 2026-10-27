@@ -30,11 +30,14 @@ def _edf(path: Path, values: np.ndarray) -> None:
     path.write_bytes(header + b" " * (510 - len(header)) + b"}\n" + data.tobytes())
 
 
-def _check_inspection(path, frames, previews, capsys):
-    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == 0
+def _check_inspection(path, frames, previews, capsys, *, missing_angles=False):
+    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == missing_angles
     report = json.loads(capsys.readouterr().out)
     counts = np.asarray(frames.counts)
-    assert report["valid"] and report["projection"]["shape"] == list(counts.shape)
+    assert report["valid"] == (not missing_angles)
+    assert report["projection"]["shape"] == list(counts.shape)
+    if missing_angles:
+        assert len(report["issues"]) == 1 and "--angles" in report["issues"][0]
     assert report["projection"]["stats"]["mean"] == pytest.approx(float(counts.mean()))
     assert report["detector_metadata"]["du"] == frames.source.detector.du
     assert report["flats_darks"]["flat_count"] == len(frames.flats)
@@ -84,7 +87,7 @@ def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path, capsys,
         frames.counts.frames_at(np.array([3, 1])).window(slice(1, 3), slice(2, 5))[:],
         np.asarray(frames.counts)[[3, 1], 1:3, 2:5],
     )
-    _check_inspection(metadata, frames, tmp_path / "previews", capsys)
+    _check_inspection(metadata, frames, tmp_path / "previews", capsys, missing_angles=True)
     scan = frames.corrected()
     np.testing.assert_allclose(scan.projections, 0.2, atol=2e-7)
     np.testing.assert_allclose(scan.detector.du, 0.0125)

@@ -20,6 +20,7 @@ PUBLIC_MODULES = (
     "tomojax.io",
     "tomojax.alignment",
     "tomojax.geometry",
+    "tomojax.evaluation",
     "tomojax.recon.api",
     "tomojax.io.api",
     "tomojax.alignment.api",

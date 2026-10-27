@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+Python imports default to JAX's growing GPU memory pool, preserving explicit
+allocator settings, so CUDA libraries can initialize without a 75% eager
+reservation. Automatic reconstruction recognizes both `Rings` and `Stripes`
+correction records when reporting unassessed detector artefacts.
+
+Ring-response fits are constrained after regularisation to have a stable
+inverse for every observed value. Monotone-branch Newton initialization
+replaces the three-step inverse that could return arbitrary finite values
+when a fitted response had no real inverse.
+
+Recognized raw-acquisition validation reports missing geometry and intensity
+references instead of declaring every readable acquisition valid. Missing-input
+errors include applicable CLI preprocessing options. Inspection and loading
+share axial-centre seed preparation through `ProjectionDataset.prepare_center_seed`:
+a centre awaiting data-driven inference is not reported as missing external input.
+
+`tomojax.evaluation` provides frozen interleaved-view, angular-block and
+detector-block splits, guarded training masks and additive held-out scores
+from caller-supplied matched predictions.
+
+Raw NXtomo loading discovers nested entries and external detector links, accepts
+exact integer-valued floating-point frame labels, and treats missing pixel
+calibration as requiring an explicit detector.
+
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
 
@@ -29,6 +53,15 @@ which name its two operators.
 
 Centre estimation spreads opposing view pairs across the scan instead of
 concentrating them in one sector because of small encoder-angle variations.
+A one-pixel derivative bandwidth suppresses near-Nyquist noise, and the
+correlation is Fourier-interpolated before selecting its global peak, rather
+than refining only the largest integer-lag sample.
+Centre reports retain opposing-view constraints, local detector-band matching
+uncertainty, alternative matches and row-centre trends. Global interval coverage
+is explicitly uncalibrated in runtime reports, including a single pair without
+a disagreement test. Fits use overlapping support; automatic alignment reports
+both this limitation and inconsistent pair centres rather than one unqualified
+calibration, and loading warns when it infers the centre.
 
 Whole-row transmission corrections run before the logarithm in batched and
 streamed-row workflows; detector binning averages the corrected line integrals.

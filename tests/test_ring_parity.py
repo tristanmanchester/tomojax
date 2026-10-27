@@ -4,7 +4,11 @@ import pytest
 
 # check-public-imports: allow-private
 from tomojax.corrections._ring_parity import _plan, regularize
-from tomojax.corrections._rings import _fill  # check-public-imports: allow-private
+from tomojax.corrections._rings import (  # check-public-imports: allow-private
+    _feasible_response,
+    _fill,
+    _invert,
+)
 
 
 @pytest.mark.parametrize("size", [63, 64])
@@ -41,3 +45,50 @@ def test_stuck_column_fit_does_not_invent_variation_in_constant_views() -> None:
     profile = np.random.default_rng(7543).uniform(0, 3, 256).astype(np.float32)
     values = jnp.asarray(np.broadcast_to(profile, (180, 256)))
     np.testing.assert_array_equal(_fill(values), values)
+
+
+@pytest.mark.parametrize("beta", [0.0, 0.1, 1.0, 10.0, 100.0])
+def test_response_inverse_including_negative_attenuation(beta: float) -> None:
+    truth = jnp.linspace(-3.0, 10.0, 101)[:, None]
+    alpha, slope = jnp.array([0.2]), jnp.array([beta])
+    observed = truth + alpha - slope * jnp.expm1(-truth)
+    recovered = _invert(observed, alpha, slope)
+    np.testing.assert_allclose(recovered, truth, atol=2e-5, rtol=2e-6)
+
+
+def test_feasible_negative_response_is_unchanged() -> None:
+    slope = jnp.array([-2.0, -0.9, -0.5, -0.1])
+    truth = jnp.log(-2 * slope) + jnp.linspace(0.1, 4.0, 101)[:, None]
+    alpha = jnp.array([0.0, 0.2, -0.1, 0.0])
+    observed = truth + alpha - slope * jnp.expm1(-truth)
+    fitted_alpha, fitted_slope = _feasible_response(observed, truth, alpha, slope)
+    np.testing.assert_array_equal(fitted_alpha, alpha)
+    np.testing.assert_array_equal(fitted_slope, slope)
+    np.testing.assert_allclose(_invert(observed, alpha, slope), truth, atol=2e-6)
+
+
+def test_regularised_response_is_refit_before_inversion() -> None:
+    # Similar to a coarse real-scan fit: the original law has no real root
+    # for its lowest observations, despite all inputs being finite.
+    observed = jnp.linspace(0.08, 1.45, 121)[:, None]
+    alpha, slope = jnp.array([0.342]), jnp.array([-0.64])
+    assert float(observed[0, 0] - alpha[0]) < float(jnp.log(-slope[0]) + slope[0] + 1)
+    fitted_alpha, fitted_slope = _feasible_response(observed, observed, alpha, slope)
+    recovered = _invert(observed, fitted_alpha, fitted_slope)
+    assert np.isfinite(recovered).all()
+    derivative = 1 + fitted_slope * jnp.exp(-recovered)
+    assert float(derivative.min()) >= 0.5 - 1e-6
+    mapped = recovered + fitted_alpha - fitted_slope * jnp.expm1(-recovered)
+    np.testing.assert_allclose(mapped, observed, atol=3e-7, rtol=2e-6)
+    perturbed = _invert(observed + 1e-4, fitted_alpha, fitted_slope)
+    assert float(jnp.abs(perturbed - recovered).max()) <= 2.01e-4
+
+
+def test_feasibility_boundary_refit_is_continuous() -> None:
+    slope, alpha = jnp.array([-2.0]), jnp.array([0.0])
+    lower = jnp.log(-2 * slope) + slope + 0.5
+    q = lower + jnp.linspace(-1e-4, 1.0, 21)[:, None]
+    a, b = _feasible_response(q, q, alpha, slope)
+    assert float(jnp.abs(a - alpha).max() + jnp.abs(b - slope).max()) < 1e-3
+    p = _invert(q, a, b)
+    np.testing.assert_allclose(p + a - b * jnp.expm1(-p), q, atol=5e-7)
