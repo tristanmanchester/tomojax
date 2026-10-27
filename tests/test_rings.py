@@ -73,6 +73,14 @@ def test_removes_column_errors(turn: float) -> None:
     assert _rms_offset(fixed, clean) < 0.4 * _rms_offset(measured, clean)
 
 
+@pytest.mark.parametrize("turn", [180.0, 360.0])
+def test_response_map_preserves_equal_column_observations(turn: float) -> None:
+    measured = _sinogram(turn, 32).astype(np.float32)
+    measured[:, N // 2] = 0.3
+    fixed = np.asarray(Rings(_geometry(turn, 32)).apply(jnp.asarray(measured[:, None])))
+    np.testing.assert_array_equal(fixed[:, 0, N // 2], fixed[0, 0, N // 2])
+
+
 def test_detector_reversal_and_flat_data() -> None:
     q = jnp.asarray(_errors(_sinogram(360.0, 180, offset=0.5))[:, None], jnp.float32)
     a = Rings(_geometry(360.0, 180, offset=0.5)).apply(q)

@@ -285,7 +285,7 @@ def _response_posterior(
 def _unsorted_row(
     q: jax.Array, neighbours: jax.Array, weights: jax.Array, groups: tuple[int, ...]
 ) -> jax.Array:
-    out = _fill(q)
+    out = q
     taps = _quadratic_taps(6, 0)
     for _ in range(2):
         ref = _correlate(out, taps)
@@ -295,42 +295,6 @@ def _unsorted_row(
         alpha, beta = _feasible_response(out, ref, level - beta * xm, beta)
         out = _invert(out, alpha, beta)
     return out
-
-
-def _fill(q: jax.Array, window: int = 30) -> jax.Array:
-    """Columns that do not follow the scene, blended into their neighbours' interpolation.
-
-    Each column's sorted values are regressed on the median of its neighbours on either side at
-    the same ranks; the better side counts, so a column beside a sample edge still follows its air
-    side, and a column whose neighbours never vary is taken as working (slope 1).
-    """
-    ranked = jnp.sort(q, axis=0)
-    # Measure variation relative to an observation before centring. Subtracting
-    # rounded absolute means fabricates variance in view-constant columns.
-    centered = ranked - ranked[:1]
-    centered = centered - centered.mean(0)
-    slopes = []
-    for side in (-1, 1):
-        foot = np.zeros(2 * window + 1, bool)
-        foot[window + side * np.arange(2, window + 1)] = True
-        rc = _median(ranked, foot)
-        rc = rc - rc[:1]
-        rc = rc - rc.mean(0)
-        spread = (rc * rc).sum(0)
-        prior = 1e-3 * jnp.median(spread) + jnp.finfo(q.dtype).tiny
-        slopes.append(((rc * centered).sum(0) + prior) / (spread + prior))
-    weight = jnp.clip(jnp.maximum(*slopes) / jnp.median(jnp.maximum(*slopes)), 0.0, 1.0)
-    good = weight > 0.5
-    n = q.shape[1]
-    idx = jnp.arange(n)
-    left = jax.lax.cummax(jnp.where(good, idx, -1))
-    right = jax.lax.cummin(jnp.where(good, idx, n), reverse=True)
-    lo = jnp.clip(jnp.where(left < 0, right, left), 0, n - 1)
-    hi = jnp.clip(jnp.where(right >= n, left, right), 0, n - 1)
-    frac = jnp.where(hi > lo, (idx - lo) / jnp.maximum(hi - lo, 1), 0.0).astype(q.dtype)
-    filled = q[:, lo] + frac * (q[:, hi] - q[:, lo])
-    usable = (~jnp.all(good)) & (jnp.sum(good) >= 2)
-    return jnp.where(usable, weight * q + (1 - weight) * filled, q)
 
 
 def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 3.0) -> jax.Array:
@@ -380,7 +344,7 @@ def _row(
     closing: bool,
 ) -> jax.Array:
     """Full-turn fits without sorting away the spatial smoothness at the axis."""
-    out = _large_stripes(_fill(q), axis)
+    out = _large_stripes(q, axis)
     for _ in range(2):
         fitted = jnp.concatenate([0.5 * (out[:1] + out[-1:]), out[1:-1]]) if closing else out
         ref = _reference(fitted)
@@ -559,9 +523,12 @@ class Rings(Step):
     A column whose gain or response the flat field does not describe reports
     ``q + a + b (1 - exp(-q))`` instead of the line integral ``q``: a stripe in
     the sinogram, a ring in the volume, stronger where the sample absorbs more
-    when ``b`` is not zero. The fitted response is inverted in two passes;
-    columns that do not follow the scene (stuck pixels) are first filled from
-    their neighbours.
+    when ``b`` is not zero. The fitted response is inverted in two passes.
+    This step does not interpolate detector columns: low angular variation
+    alone cannot distinguish a defective pixel from object structure. Raw
+    flat/dark calibration interpolates bracketed pixels without measured
+    illumination; other defective measurements need independent calibration
+    evidence and repair before this step.
 
     After statistical regularisation, a constrained coefficient refit ensures
     that every observation has an inverse on a branch with response derivative

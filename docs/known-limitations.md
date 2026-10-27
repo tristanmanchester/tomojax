@@ -56,6 +56,9 @@ A centred radial feature and an even detector error are indistinguishable in
 a stationary full turn: correction of that component depends on the method's
 prior, not information uniquely supplied by the scan. Natural motion can
 supply extra calibration constraints, but `Rings` does not fit those constraints.
+`Rings` does not identify or interpolate dead pixels from the sinogram. Raw
+calibration fills bracketed pixels without measured illumination; other defective
+measurements require independent calibration evidence and repair before `Rings`.
 
 ## Data and geometry boundaries
 

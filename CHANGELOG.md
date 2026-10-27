@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+`Rings` no longer imputes detector columns from low angular variation, which
+can also be produced by object structure. Calibration-backed gap interpolation
+remains in raw-frame correction; post-log stuck columns are not repaired.
+
 Cone acquisition trajectories are recorded independently of calibration segments.
 Zeiss per-view arrangements form one acquisition trajectory; ring correction
 retains angular neighbours across those arrangements without joining separate scans.
