@@ -1232,3 +1232,24 @@ five groups. I12 and I13 pass all five groups, with maximum discrepancies
 0.023 and 0.390. The model therefore fails ESRF's tail-distribution test despite
 matching its RMS; sparse transient contamination is not represented by its
 Poisson/read model.
+
+## Weighted alignment background profiling
+
+Measured 2026-10-27 on `cf827cf8`, CPU, with
+`JAX_PLATFORMS=cpu uv run --no-sync python artifacts/agent07/weighted_profile_kill.py`
+(the experiment script is archived outside the package). Native-texture joint
+alignment profiles row offsets and a shared detector slope after whitening,
+using the same orthogonal projection in the forward map, transpose and pose
+Jacobian. Per-pixel weights can exclude observations from the background fit.
+
+On I13 159815, row 1080, columns 441:1869, every 40th view of the frozen
+`0:3000:8` selection and every fourth column, a masked block and a completely
+excluded view give relative agreement `1.37e-7` with an independent dense
+weighted least-squares projection. The adjoint inner-product discrepancy is
+`5.82e-7`; replacing excluded measurements by 1234 changes the result by zero.
+This is numerical agreement and exclusion integrity, not motion accuracy.
+First/repeated filter evaluations take 0.0325/0.000553 s, excluding imports and
+file reading; peak process host memory is 615 MiB and GPU use is zero.
+
+Fourier resampling of measured rows can transfer excluded observations into
+training data; weighted background profiling alone does not prevent that leak.

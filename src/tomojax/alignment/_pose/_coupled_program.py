@@ -444,6 +444,14 @@ def _pose_column_cache(p, x, *, spec: CoupledSpec, arrays: CoupledArrays, predic
     return residual, cached, columns
 
 
+def _batch_residual(ops, start, volume, measured):
+    """Reuse cached weighted residuals or evaluate the same batch from its image."""
+    if ops.residual is None:
+        return ops.project(start, volume) - measured
+    cached = jax.lax.dynamic_slice_in_dim(ops.residual, start, measured.shape[0])
+    return cached.reshape(measured.shape)
+
+
 def _build_program(
     spec: CoupledSpec, arrays: CoupledArrays
 ) -> tuple[
@@ -646,11 +654,7 @@ def _build_program(
             gx, gp = carry
             weight = batch_weights(start)
             measured = filtered(weight * take(arrays.projections, start), weight)
-            residual = (
-                ops.project(start, x) - measured
-                if ops.residual is None
-                else take(ops.residual, start).reshape(size, spec.detector.nv, spec.detector.nu)
-            )
+            residual = _batch_residual(ops, start, x, measured)
             cols = ops.batch_columns(start)
             return (
                 ops.transpose(start, valid, residual, gx),

@@ -30,7 +30,7 @@
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 165,
     "src/tomojax/alignment/_objectives/fixed_volume.py::project_and_score_stack": 160,
-    "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 257,
+    "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 255,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 189,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 148,
