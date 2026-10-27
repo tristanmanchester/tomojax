@@ -55,6 +55,7 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
     align_gauge: dict[str, JsonValue]
     cone_beam: dict[str, float]
     cone_segments: list[dict[str, object]]
+    trajectory_lengths: Sequence[int]
 
 
 GridOverride = Grid | tuple[int, int, int] | list[int] | None
@@ -361,7 +362,9 @@ def _segments_from_meta(
         start += views
     if start != len(angles):
         raise ValueError(f"cone_segments describe {start} views; the dataset has {len(angles)}")
-    return ConeSegments(tuple(segments))
+    return ConeSegments(
+        tuple(segments), trajectory_lengths=tuple(meta.get("trajectory_lengths", ()))
+    )
 
 
 def _saved_poses(
@@ -469,7 +472,7 @@ def nominal_geometry(geometry: ScanGeometry) -> ScanGeometry:
         segments = tuple(nominal_geometry(s) for s in geometry.segments)
         if all(a is b for a, b in zip(segments, geometry.segments, strict=True)):
             return geometry
-        return ConeSegments(segments)
+        return replace(geometry, segments=segments)
     if isinstance(geometry, AugmentedGeometry):
         return nominal_geometry(geometry.base)
     if isinstance(geometry, DetectorRollGeometry):

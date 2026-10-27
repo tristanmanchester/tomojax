@@ -14,9 +14,41 @@ import numpy as np
 import pytest
 
 import tomojax as tj
+from tomojax.corrections import Rings
+from tomojax.geometry.api import view_frames
 
 if TYPE_CHECKING:
     from tomojax.alignment import AlignConfig
+
+
+def test_trajectory_groups_survive_combine_select_crop_and_file(tmp_path: Path) -> None:
+    grid, detector = tj.Grid(4, 4, 4, 1, 1, 1), tj.Detector(4, 4, 1, 1)
+    parts = tuple(
+        tj.ConeGeometry(grid, replace(detector, center=(i / 10, 0)), [i * 30], tj.ConeBeam(20, 40))
+        for i in range(4)
+    )
+    geometry = tj.geometry.ConeSegments(parts, trajectory_lengths=(4,))
+    scan = tj.Scan(np.ones((4, 4, 4), np.float32), geometry)
+    scan = scan.with_poses(np.full((4, 6), 0.01, np.float32))
+    combined = tj.Scan.combine([scan, scan, scan])
+    assert combined.geometry.trajectory_lengths == (4, 4, 4)
+    np.testing.assert_array_equal(
+        view_frames(combined.geometry), np.tile(view_frames(scan.geometry), (3, 1))
+    )
+    selected = combined.selected([0, 2, 8, 10]).cropped(slice(1, 3), slice(1, 3))
+    assert selected.geometry.trajectory_lengths == (2, 2)
+    poses = np.zeros((4, 6), np.float32)
+    poses[:, 3] = 0.1
+    posed = selected.with_poses(poses)
+    path = tmp_path / "trajectories.nxs"
+    tj.save(path, posed)
+    loaded = tj.load(path)
+    assert loaded.geometry.trajectory_lengths == (2, 2)
+    np.testing.assert_allclose(view_frames(loaded.geometry), view_frames(posed.geometry), atol=1e-6)
+    np.testing.assert_array_equal(
+        Rings(loaded.geometry).apply(loaded.projections),
+        Rings(posed.geometry).apply(posed.projections),
+    )
 
 
 def _phantom(n: int) -> np.ndarray:

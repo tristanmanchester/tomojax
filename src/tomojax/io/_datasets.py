@@ -626,6 +626,7 @@ def _merge_geometry_metadata_dict(
         "detector_roll_deg",
         "cone_beam",
         "cone_segments",
+        "trajectory_lengths",
     ):
         value = geometry_metadata.get(key)
         if value is not None:

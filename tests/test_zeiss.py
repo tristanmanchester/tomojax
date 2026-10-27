@@ -185,7 +185,9 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path):
     assert scan.geometry.beam.source_to_detector == 60
     streams["alignment/x-shifts"] = np.array([0.25, 0.5, -0.25], "<f4").tobytes()
     write_ole(path, streams)
-    segments = tj.load_frames(path, darks=0).geometry.segments
+    geometry = tj.load_frames(path, darks=0).geometry
+    assert geometry.trajectory_lengths == (3,)
+    segments = geometry.segments
     np.testing.assert_allclose(
         [s.detector.center[0] for s in segments], [0.001875, 0.005625, -0.005625]
     )

@@ -231,7 +231,11 @@ class tomojax.geometry.ConeGeometry(
     .poses(self, *, angles: 'np.ndarray | None' = None) -> 'np.ndarray'
     .rays_for_view(self, i: 'int') -> 'RayPair'
     .rotation_axis(self) -> 'np.ndarray'
-class tomojax.geometry.ConeSegments(segments: 'tuple[ScanGeometry, ...]') -> None
+class tomojax.geometry.ConeSegments(
+        segments: 'tuple[ScanGeometry, ...]',
+        *,
+        trajectory_lengths: 'tuple[int, ...]' = (),
+    ) -> None
     .angles
     .beam
     .detector

@@ -453,20 +453,24 @@ def _periodic_order(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool] |
 
 
 def _view_plan(geometry: object, *, cyclic: bool = False) -> _ViewPlan | None:
-    """Angular neighbours within each fixed trajectory, never between cone segments."""
-    if isinstance(geometry, ConeSegments):
-        segments = geometry.segments
+    """Angular neighbours within declared acquisition trajectories, not calibration blocks."""
+    layout = geometry
+    while (base := getattr(layout, "base", None)) is not None:
+        layout = base
+    if isinstance(layout, ConeSegments):
+        stops = np.cumsum(layout.trajectory_lengths)[:-1]
+        trajectories = np.split(np.asarray(layout.angles, np.float64), stops)
     elif isinstance(
-        geometry, ParallelGeometry | ConeGeometry | LaminographyGeometry | RotationAxisGeometry
+        layout, ParallelGeometry | ConeGeometry | LaminographyGeometry | RotationAxisGeometry
     ):
-        segments = (geometry,)
+        trajectories = (np.asarray(layout.angles, np.float64),)
     else:
         return None
     order, neighbours, weights, groups = [], [], [], []
     offset = 0
     closing = False
-    for segment in segments:
-        angles = np.asarray(segment.angles, np.float64)
+    for trajectory in trajectories:
+        angles = trajectory
         size = len(angles)
         if size < 2:
             raise ValueError("Rings needs at least two views per trajectory")
@@ -599,7 +603,8 @@ class Rings(Step):
 
     Built-in angular geometries order the views by angle within each trajectory;
     single turns are unwrapped across the largest unsampled arc, explicit
-    multi-turn angle labels are retained, and cone segments are kept separate.
+    multi-turn angle labels are retained, and independent cone trajectories
+    are kept separate even when their calibration segments are subdivided.
     Without such geometry, views must follow a continuous acquisition trajectory.
     At least two views per trajectory are needed. Output view order is preserved.
 

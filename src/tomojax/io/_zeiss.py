@@ -328,7 +328,11 @@ def _cone_metadata(
             ).to_dict(),
         }
         entries.append(entry)
-    return {"cone_segments": entries} if len(entries) > 1 else entries[0]
+    return (
+        {"cone_segments": entries, "trajectory_lengths": [len(arrangements)]}
+        if len(entries) > 1
+        else entries[0]
+    )
 
 
 def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> ProjectionDataset:

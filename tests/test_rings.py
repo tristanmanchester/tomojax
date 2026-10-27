@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,8 +7,31 @@ import pytest
 import tomojax as tj
 from tomojax.corrections import Rings
 from tomojax.geometry import ConeSegments
+from tomojax.geometry.api import view_frames
 
 N = 256
+
+
+@pytest.mark.parametrize("groups", [(32,), (16, 16)])
+def test_calibration_subdivision_preserves_acquisition_trajectories(groups) -> None:
+    base = _geometry(180.0, 32)
+    parts = tuple(
+        tj.ConeGeometry(
+            base.grid,
+            replace(base.detector, center=(shift, 0)),
+            base.angles[start : start + 16],
+            tj.ConeBeam(100.0, 200.0),
+        )
+        for start, shift in [(0, 0.0), (16, 0.5)]
+    )
+    coarse = ConeSegments(parts, trajectory_lengths=groups)
+    fine = ConeSegments(
+        tuple(replace(part, angles=(angle,)) for part in parts for angle in part.angles),
+        trajectory_lengths=groups,
+    )
+    np.testing.assert_array_equal(view_frames(fine), view_frames(coarse))
+    data = jnp.asarray(_errors(_sinogram(180.0, 32))[:, None], jnp.float32)
+    np.testing.assert_array_equal(Rings(fine).apply(data), Rings(coarse).apply(data))
 
 
 def _sinogram(turn: float, views: int, offset: float = 0.0) -> np.ndarray:

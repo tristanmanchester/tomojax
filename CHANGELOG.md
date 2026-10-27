@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Cone acquisition trajectories are recorded independently of calibration segments.
+Zeiss per-view arrangements form one acquisition trajectory; ring correction
+retains angular neighbours across those arrangements without joining separate scans.
+Trajectory groups survive scan selection, cropping, poses and NXtomo persistence.
+
 Python imports default to JAX's growing GPU memory pool, preserving explicit
 allocator settings, so CUDA libraries can initialize without a 75% eager
 reservation. Automatic reconstruction recognizes both `Rings` and `Stripes`
