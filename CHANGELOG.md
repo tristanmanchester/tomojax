@@ -43,6 +43,11 @@ Raw NXtomo loading discovers nested entries and external detector links, accepts
 exact integer-valued floating-point frame labels, and treats missing pixel
 calibration as requiring an explicit detector.
 
+`tomojax.datasets.DetectorModel` calibrates a count-domain Poisson/read-noise model
+from repeated flats and darks, simulates finite calibration references and explicit
+gain/offset changes, and returns conditional systematic-error truth. Calibration
+propagates flux normalization through shot, read and shared dark-reference noise.
+
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
 
