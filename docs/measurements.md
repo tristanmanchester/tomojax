@@ -26,8 +26,8 @@ repository; each result names the command, commit and date to rerun it.
 
 ## Raw NXtomo loading and held-out split integrity
 
-Measured 2026-10-27 on `a4a969cb` (loading) and `2626e6e5` (evaluation),
-using the local Diamond files. These are functional/integrity tests, not image
+Loading was measured 2026-10-27 on `a4a969cb`; evaluation was measured
+2026-10-28 on `0199b919`, using the local Diamond files. These are functional/integrity tests, not image
 or pose accuracy measurements. Commands in the lab shared directory are
 `JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/loader_kill.py`
 (the metadata/pixel section) and
@@ -43,13 +43,40 @@ shared/agent02/evaluation_kill.py`.
   interleaved-view, angular-block and detector-block splits. Changing every
   excluded value to 1234 leaves a fixed four-coefficient least-squares fit
   bitwise unchanged. Streamed versus dense squared-error relative differences
-  are 1.96e-16, 0 and 3.00e-16. Cold/warm fit-and-score times are 15.29/13.51,
-  13.00/13.25 and 9.95/8.46 ms; peak RSS 69.37 MiB, GPU 0. This checks held-out
+  are 1.96e-16, 0 and 3.00e-16. First/repeat fit-and-score times are 23.17/20.02,
+  20.07/19.93 and 15.05/13.36 ms; peak RSS 70.48 MiB, GPU 0. This checks held-out
   accounting, not tomographic reconstruction or stopping-rule effectiveness.
 
 The [held-out guide](held-out-evaluation.md) describes the split and leakage
 contract. Public reconstruction/alignment workflows do not automatically enforce
 arbitrary detector observation masks.
+
+## Raw-input inventory and bounded workflows
+
+A CPU audit on 2026-10-28 (`0199b919`) tested 521 acquisition and metadata
+candidates, not 521 complete scans. Literal `tj.load` calls returned 513
+`ValueError` exceptions identifying missing calibration, geometry, unavailable
+external pixels or unsupported/incomplete inputs; five errors named missing paths.
+ESRF bamboo and Elettra 00024 completed separate public correction,
+reconstruction, alignment, save and reload checks on 128 selected views and
+central 64² detector cuts. Their automatic alignments report `limited`; finite
+outputs and exact save/reload agreement are not image or pose accuracy tests.
+PyHST's file-owned 2048²×1200 grid alone requires 20.13 GB, exceeding the audit's
+18 GB job limit; that numerical workflow was not run at unchanged defaults.
+
+The sweep took 601.92 s, with 6.77 GiB peak anonymous-plus-shared host memory,
+no GPU allocation, no watchdog stops and no timeouts. Generated datasets were
+deleted. Command: `JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+TOMO_SOURCE_COMMIT=0199b919 PYTHONPATH=PINNED/src LAB_ARTIFACTS=OUTPUT taskset -c 24
+python run_default.py`, using the frozen lab inventory and its per-record
+16.75 GiB/180 s watchdog. This is a full-input loading audit with bounded
+numerical follow-ups, not full-volume completion.
+
+The independent CLI audit `shared/agent02/cli_input_audit.py` checks APS, PSI,
+two Nikon families and SkyScan with `inspect`, `preprocess`, `recon` and `align`,
+twice each. All 40 calls stopped with actionable missing-input messages and no
+traceback: 131.53 s total, 670.76 MiB peak RSS, GPU 0 on the same source/date.
+Missing-input contracts do not establish reconstruction quality.
 
 ## Real-scan comparison criteria
 
