@@ -104,6 +104,11 @@ supply extra calibration constraints, but `Rings` does not fit those constraints
 
 ## Implementation limitations
 
+- Held-out projection error is not an image-error certificate. Tested CGLS
+  MSE selectors miss the best tested image iteration on 2DeteCT and Walnut
+  reference comparisons and an I13 injected-response control; see the
+  [stopping-rule limits](held-out-evaluation.md#stopping-rule-limits).
+  Held-out iteration and regularisation selection are not automatic.
 - The explicit CUDA Joseph projection API supports first-order derivatives
   for linear and cubic interpolation. Cubic has negative lobes, can overshoot,
   and uses a larger stencil; it does not remove physical support truncation or
