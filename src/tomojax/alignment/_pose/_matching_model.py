@@ -44,16 +44,26 @@ def resample_rows(data: np.ndarray, width: int) -> np.ndarray:
 
 
 def nuisance_filter(native_width: int, detector: Detector) -> Callable:
-    """Profile native row offsets and a shared native detector slope after sampling."""
+    """Profile row offsets and a shared sampled slope in whitened coordinates."""
     native = np.arange(native_width, dtype=np.float32) - (native_width - 1) / 2
     ramp = jnp.broadcast_to(
         jnp.asarray(resample_rows(native, detector.nu)), (detector.nv, detector.nu)
     )
     ramp /= jnp.linalg.norm(ramp)
 
-    def apply(value):
-        centred = value - jnp.mean(value, axis=-1, keepdims=True)
-        return centred - jnp.sum(centred * ramp, axis=(-2, -1), keepdims=True) * ramp
+    def apply(value, weights=1.0):
+        # Orthogonal residual projection in whitened coordinates. First remove
+        # each row's weighted constant; orthogonalise the common slope against
+        # those constants before removing it. Zero-weight rows add no basis.
+        weights = jnp.broadcast_to(jnp.asarray(weights, value.dtype), value.shape)
+        squares = weights * weights
+        mass = jnp.sum(squares, axis=-1, keepdims=True)
+        denominator = jnp.where(mass > 0, mass, 1.0)
+        centred = value - weights * jnp.sum(weights * value, axis=-1, keepdims=True) / denominator
+        slope = weights * (ramp - jnp.sum(squares * ramp, axis=-1, keepdims=True) / denominator)
+        norm = jnp.sum(slope * slope, axis=(-2, -1), keepdims=True)
+        coefficient = jnp.sum(slope * centred, axis=(-2, -1), keepdims=True)
+        return centred - slope * coefficient / jnp.where(norm > 0, norm, 1.0)
 
     return apply
 

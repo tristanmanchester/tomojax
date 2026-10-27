@@ -25,7 +25,7 @@ from ._coupled_program import (
     CoupledArrays,
     CoupledSpec,
     constrained_pose_inverse,
-    filtered_operators,
+    data_residual_filter,
     free_volume_support,
     physical_columns,
     physical_projectors,
@@ -67,11 +67,11 @@ def _linearization(predict, batch, params, volume, indices):
     return residual.reshape(batch.projections.shape), columns * batch.active[indices][None, :, None]
 
 
-def _data_increment(mode, t, dx, dp, gram, batch, forward, pose_forward, pose_adjoint):
+def _data_increment(mode, t, dx, dp, gram, batch, forward, pose_forward, pose_adjoint, filtered):
     """Data-space image of a block increment, eliminating only independent poses locally."""
     if mode == "cross":
         return pose_forward(dp)
-    y = batch.weights * forward(t, dx, batch.frames)
+    y = filtered(batch.weights * forward(t, dx, batch.frames), batch.weights)
     if mode == "schur":
         solve = pose_block_solver(gram, batch.smoothness, has_smoothness=False)
         return y - pose_forward(solve(pose_adjoint(y)))
@@ -114,11 +114,8 @@ def _pass(
         def masked(v):
             return v if arrays.mask.ndim == 0 else arrays.mask * v
 
-        raw_forward, raw_adjoint = physical_projectors(spec, batch, masked)
-        predict = physical_columns(spec, batch)
-        batch, forward, adjoint, predict = filtered_operators(
-            spec, batch, raw_forward, raw_adjoint, predict
-        )
+        forward, adjoint = physical_projectors(spec, batch, masked)
+        filtered, predict = data_residual_filter(spec, physical_columns(spec, batch))
         t, q = take(poses, start), take(p, start)
         ax, rows, blocks, loss = carry
         if mode == "bound":
@@ -126,6 +123,7 @@ def _pass(
             return ax, rows, blocks, loss
         if mode == "loss":
             residual = weights * (forward(t, x, batch.frames) - batch.projections)
+            residual = filtered(residual, weights)
             loss += 0.5 * jnp.sum(residual**2 * valid[:, None, None])
             return ax, rows, blocks, loss
         residual, cols = _linearization(predict, batch, q, masked(x), indices)
@@ -160,10 +158,11 @@ def _pass(
                 forward,
                 pose_forward,
                 pose_adjoint,
+                filtered,
             )
         rows = jax.lax.dynamic_update_slice_in_dim(rows, pose_adjoint(y), start, axis=0)
         if mode != "rows":
-            ax = adjoint(t, weights * y * valid[:, None, None], batch.frames, ax)
+            ax = adjoint(t, weights * filtered(y, weights) * valid[:, None, None], batch.frames, ax)
         return ax, rows, blocks, loss
 
     initial = (

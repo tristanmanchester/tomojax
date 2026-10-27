@@ -55,6 +55,10 @@ Zeiss loading uses recorded image streams instead of the planned frame count,
 supporting consistent interrupted acquisitions. Missing image streams report
 the required complete acquisition file instead of exposing an iterator failure.
 
+Native-texture joint alignment profiles detector backgrounds with per-pixel
+statistical weights, including excluded observations, in both resident and
+host-streamed solves.
+
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
 

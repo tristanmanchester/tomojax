@@ -597,12 +597,28 @@ def joint_placement(request, monkeypatch):
         )
 
 
+def _affine_residual_reference(ramp, rng, weighted):
+    weights = rng.uniform(0.5, 1.5, (3, 3, 7)) if weighted else np.ones((3, 3, 7))
+    if weighted:
+        weights[:, :, 2:4] = 0
+        weights[0, 0] = 0
+    basis = np.column_stack([np.repeat(np.eye(3), 7, axis=0), ramp.ravel()])
+    whitened = weights.reshape(3, -1, 1) * basis
+    residualizers = np.eye(21) - whitened @ np.linalg.pinv(whitened)
+
+    def filtered(y):
+        return np.einsum("nij,nj->ni", residualizers, (weights * y).reshape(3, -1)).reshape(y.shape)
+
+    return weights, filtered
+
+
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("weighted", [False, True])
 @pytest.mark.usefixtures("joint_placement")
 def test_affine_joint_increment_and_loss_match_dense_physical_model(
-    monkeypatch, solver, backend, stream
+    monkeypatch, solver, backend, stream, weighted
 ):
     from dataclasses import replace
 
@@ -636,10 +652,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         signal.resample(spectrum, detector.nu, domain="freq").real, (detector.nv, detector.nu)
     )
 
-    def filtered(y):
-        centred = y - y.mean(axis=-1, keepdims=True)
-        slope = (centred * ramp).sum(axis=(-2, -1), keepdims=True) / np.sum(ramp**2)
-        return centred - slope * ramp
+    weights, filtered = _affine_residual_reference(ramp, rng, weighted)
 
     measured = project(volume, poses) + rng.normal(0, 0.03, (3, 3, 7))
     cfg = AlignConfig(
@@ -671,6 +684,13 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     ctx = replace(_pose_objective_context(runtime=runtime, **common), volume_mask=support)
+    ctx = replace(
+        ctx,
+        has_loss_mask=weighted,
+        loss_adapter=replace(
+            ctx.loss_adapter, gauss_newton_weights=lambda *_: jnp.asarray(weights, jnp.float32)
+        ),
+    )
     objective = _coupled_objective.build_coupled_objective(
         ctx,
         refinement=_matching_model.JointRefinement(native_width=2 * detector.nu),
