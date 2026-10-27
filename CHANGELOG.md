@@ -18,8 +18,9 @@ which name its two operators.
 
 Centre estimation spreads opposing view pairs across the scan instead of
 concentrating them in one sector because of small encoder-angle variations.
-The correlation is Fourier-interpolated before selecting its global peak,
-so subpixel detector shifts do not change which integer-lag sample wins.
+A one-pixel derivative bandwidth suppresses near-Nyquist noise, and the
+correlation is Fourier-interpolated before selecting its global peak, rather
+than refining only the largest integer-lag sample.
 
 Whole-row transmission corrections run before the logarithm in batched and
 streamed-row workflows; detector binning averages the corrected line integrals.

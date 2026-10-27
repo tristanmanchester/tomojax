@@ -780,6 +780,24 @@ constrained FISTA reaches 0.12 after 100 iterations and 0.091 after 300
 
 ### Detector centre
 
+The projection-only estimator uses a one-pixel derivative bandwidth and a
+Fourier-interpolated global correlation peak. On 2026-10-27, the fixed shift
+matrix (`JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/shift_kill.py`, implementation `00823229`) gave the following 95th-percentile absolute errors in the **change**
+of centre after injected ±0.25, ±0.5 and ±1 px shifts (T1):
+
+| Scan (three detector rows) | Centre-change error, px |
+|---|---:|
+| APS 2-BM test_data | 0.0018 |
+| Elettra TomoBank 00024 | 0.0047 |
+| ESRF bamboo | 0.0077 |
+| I12 3339629, rows 1050/1080/1100 | 0.0020 |
+| I13 159815, rows 690/1080/1470 | 0.0044 |
+
+These errors test shift equivariance, not absolute centre accuracy. Motion,
+truncation and competing correlation peaks can bias a single centre estimate.
+
+
 | Mode and scan | Result |
 |---|---|
 | `cor`, +3.7 px offset, 128³ parallel / laminography (2026-10-05, `74923c1`) | 3.693 / 3.677 px in 41 / 84 s; with ±0.5°/±8 px motion as well, 2.2 / 3.3 px |

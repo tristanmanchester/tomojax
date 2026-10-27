@@ -133,7 +133,10 @@ def _paired_offset(first: np.ndarray, second: np.ndarray, angle_error: float) ->
     nu = first.shape[-1]
     # Angular mismatch moves features by up to radius * delta-angle. Marginalize
     # that unresolved bandwidth rather than trying to correlate fine texture.
-    sigma = max(0.5, nu * np.deg2rad(angle_error) / 4)
+    # A one-pixel derivative bandwidth suppresses near-Nyquist noise before
+    # interpolation. A half-pixel derivative gives that noise nearly the same
+    # weight as resolved edges, making the subpixel mode unstable.
+    sigma = max(1.0, nu * np.deg2rad(angle_error) / 4)
     # Derivatives remove row backgrounds without introducing the padded-edge
     # bias of subtracting a finite detector mean before linear correlation.
     a = gaussian_filter1d(first, sigma, axis=-1, order=1)
