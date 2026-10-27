@@ -570,12 +570,16 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
 
 
 @pytest.mark.parametrize(("available", "expected"), [(None, False), (831, False), (832, True)])
-def test_host_columns_reserve_krylov_workspace(monkeypatch, available, expected):
+@pytest.mark.parametrize("refinement", [None, object()])
+def test_host_columns_reserve_krylov_workspace(monkeypatch, available, expected, refinement):
     spec = SimpleNamespace(
         grid=SimpleNamespace(nx=2, ny=2, nz=2),
         detector=SimpleNamespace(nv=3, nu=4),
         active_columns=(0, 3),
+        refinement=refinement,
     )
+    if available is not None and refinement is not None:
+        available += 4 * 32
     monkeypatch.setattr(_coupled_host, "device_free_memory_bytes", lambda **_: available)
     assert _coupled_host.host_columns_fit(spec, 3) is expected
 

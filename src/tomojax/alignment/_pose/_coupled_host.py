@@ -411,7 +411,7 @@ class _HostSystem:
 
 
 def host_columns_fit(spec, n_views):
-    """Leave the host Krylov workspace and half the remaining RAM uncached."""
+    """Reserve Krylov/FFT workspace and half the remaining RAM at planning time."""
     try:
         host = next(iter(jax.local_devices(backend="cpu")))
     except RuntimeError:
@@ -419,7 +419,10 @@ def host_columns_fit(spec, n_views):
     available = device_free_memory_bytes(device=host)
     volume_bytes = 4 * spec.grid.nx * spec.grid.ny * spec.grid.nz
     columns_bytes = 4 * n_views * len(spec.active_columns) * spec.detector.nv * spec.detector.nu
-    return available is not None and columns_bytes <= max(0, available - 8 * volume_bytes) // 2
+    vectors = 12 if spec.refinement is not None else 8
+    return (
+        available is not None and columns_bytes <= max(0, available - vectors * volume_bytes) // 2
+    )
 
 
 def build_host_objective(arrays: CoupledArrays, spec: CoupledSpec) -> tuple[Callable, Callable]:

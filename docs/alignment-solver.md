@@ -70,8 +70,9 @@ respectively; they are not priors on the recovered object. The returned
 iteration limit does not imply an accurate linear solve. The optional pose
 column cache on the device is capped at 64 MiB. Host-staged joint solves can
 retain the active FP32 columns in host memory for one linear update, reading
-only the current view batch on the device. Admission reserves eight image
-vectors and half the remaining available host memory; without that space,
+only the current view batch on the device. Planning reserves eight image
+vectors (twelve with spectral preconditioning) and half the remaining available
+host memory; without that space,
 columns are recomputed. Each update rebuilds the cache at its current image
 and poses, including its weights and residual filters.
 

@@ -1193,6 +1193,30 @@ accuracy. The [historical DIAD laminography images](../images/README.md#historic
 show qualitative use on real data; their raw scan and configuration are not
 bundled, so they cannot be reproduced.
 
+### Host-staged pose-column reuse
+
+On 2026-10-27, `b7e67359` was measured on I13 159815: sample views
+`0:3000:16`, detector rows `1048:1112`, columns `441:1869`, binned 4×4 to
+188×16×357. Both arms forced host staging of the same five-parameter,
+12-CG-step joint update. The command was
+`XLA_PYTHON_CLIENT_PREALLOCATE=false python shared/agent06-cache/kill_cache.py --full --steps 12`.
+
+| Input | Uncached first / warm call (s) | Cached first / warm call (s) | Warm ratio |
+|---|---:|---:|---:|
+| Original | 8.035 / 1.018 | 3.178 / 0.591 | 1.72× |
+| Injected horizontal motion | 1.039 / 1.037 | 0.582 / 0.622 | 1.67× |
+
+Arms were interleaved four times; warm time is the median of the last three
+calls. First-call times include any compilation not already shared by earlier
+calls, not fresh-process startup. Image and pose increments were bit-identical
+(reference agreement, not accuracy). Known cubic-interpolated motion of up to
+10 native pixels gave the same single-step differential RMS error, 4.2345 px,
+after removing the common-object sine/cosine translation gauge. This is not a
+successful motion-recovery or converged full-resolution alignment test.
+The paired process peaked at 352 MiB sampled GPU memory and 1.529 GiB host RSS;
+the column cache occupied 20.48 MiB. These measurements isolate host staging,
+not the automatic choice for a small scan that fits entirely on the GPU.
+
 ## Calibrated detector count noise
 
 `tomojax.datasets.DetectorModel` estimates effective photon gain and read noise
