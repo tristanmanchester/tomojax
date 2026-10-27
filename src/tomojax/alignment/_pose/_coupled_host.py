@@ -58,26 +58,62 @@ def _view_batch(arrays, start, size, spec, weighted):
     )
 
 
-def _linearization(predict, batch, params, volume, indices, key, start, gradient):
-    """Weighted residual and columns from each view's single physical ray traversal."""
-    if key is not None and not gradient:
+def _linearization(predict, batch, params, volume, indices, key, start, gradient, cached_views):
+    """Reuse complete cached batches; recompute the others at the same linearization."""
+
+    def compute():
+        residual, columns = jax.lax.map(
+            lambda k: predict(
+                params[k],
+                batch.poses[k],
+                None if batch.frames is None else batch.frames[k],
+                volume,
+                batch.projections[k],
+                batch.weights if batch.weights.ndim == 0 else batch.weights[k],
+            ),
+            jnp.arange(params.shape[0]),
+        )
+        columns *= batch.active[indices][None, :, None]
+        return residual.reshape(batch.projections.shape), columns
+
+    if key is None:
+        return compute()
+    fits = cached_views is None or start + params.shape[0] <= cached_views
+    if not gradient:
         shape = (params.shape[0], indices.size, batch.projections[0].size)
-        return jnp.float32(0), read_block(key, start, shape)
-    residual, columns = jax.lax.map(
-        lambda k: predict(
-            params[k],
-            batch.poses[k],
-            None if batch.frames is None else batch.frames[k],
-            volume,
-            batch.projections[k],
-            batch.weights if batch.weights.ndim == 0 else batch.weights[k],
-        ),
-        jnp.arange(params.shape[0]),
-    )
-    columns *= batch.active[indices][None, :, None]
-    if key is not None:
+
+        def read(_):
+            return read_block(key, start, shape)
+
+        columns = (
+            read(None)
+            if cached_views is None
+            else jax.lax.cond(fits, read, lambda _: compute()[1], None)
+        )
+        return jnp.float32(0), columns
+    residual, columns = compute()
+    if cached_views is None:
         write_block(key, start, columns)
-    return residual.reshape(batch.projections.shape), columns
+    else:
+        jax.lax.cond(fits, lambda _: write_block(key, start, columns), lambda _: jnp.int32(0), None)
+    return residual, columns
+
+
+def _column_operators(columns, indices, width, shape):
+    """Matched products using only the active columns of one view batch."""
+    size = columns.shape[0]
+    highest = jax.lax.Precision.HIGHEST
+
+    def forward(value):
+        return jnp.einsum("nk,nkp->np", value[:, indices], columns, precision=highest).reshape(
+            shape
+        )
+
+    def adjoint(value):
+        small = jnp.einsum("nkp,np->nk", columns, value.reshape(size, -1), precision=highest)
+        return jnp.zeros((size, width), jnp.float32).at[:, indices].set(small)
+
+    return forward, adjoint
 
 
 def _data_increment(mode, t, dx, dp, gram, batch, forward, pose_forward, pose_adjoint):
@@ -93,7 +129,10 @@ def _data_increment(mode, t, dx, dp, gram, batch, forward, pose_forward, pose_ad
     return y
 
 
-@partial(jax.jit, static_argnames=("spec", "mode", "weighted", "batch_size"))
+_HOST_BATCH_SIZE = 32
+
+
+@partial(jax.jit, static_argnames=("spec", "mode", "weighted", "batch_size", "cached_views"))
 def _pass(
     arrays: CoupledArrays,
     p: jax.Array,
@@ -106,7 +145,8 @@ def _pass(
     spec: CoupledSpec,
     mode: str,
     weighted: bool,
-    batch_size: int = 32,
+    batch_size: int = _HOST_BATCH_SIZE,
+    cached_views: int = 0,
 ):
     """One data-space pass, with all large arrays supplied as dynamic arguments."""
     n, width = p.shape
@@ -143,22 +183,20 @@ def _pass(
             loss += 0.5 * jnp.sum(residual**2 * valid[:, None, None])
             return ax, rows, blocks, loss
         residual, cols = _linearization(
-            predict, batch, q, masked(x), indices, columns_key, start, mode == "gradient"
+            predict,
+            batch,
+            q,
+            masked(x),
+            indices,
+            columns_key,
+            start,
+            mode == "gradient",
+            None if cached_views == n else cached_views,
         )
-        highest = jax.lax.Precision.HIGHEST
-
-        def pose_forward(value):
-            return jnp.einsum("nk,nkp->np", value[:, indices], cols, precision=highest).reshape(
-                measured.shape
-            )
-
-        def pose_adjoint(value):
-            small = jnp.einsum("nkp,np->nk", cols, value.reshape(size, -1), precision=highest)
-            return jnp.zeros((size, width), jnp.float32).at[:, indices].set(small)
-
+        pose_forward, pose_adjoint = _column_operators(cols, indices, width, measured.shape)
         if mode == "gradient":
             y = residual
-            small = jnp.einsum("nkp,nlp->nkl", cols, cols, precision=highest)
+            small = jnp.einsum("nkp,nlp->nkl", cols, cols, precision=jax.lax.Precision.HIGHEST)
             block = (
                 jnp.zeros((size, width, width), jnp.float32)
                 .at[:, indices[:, None], indices[None, :]]
@@ -259,9 +297,10 @@ _regularisation_value = jax.jit(volume_regularisation, static_argnames=("spec",)
 class _HostSystem:
     """Own the resident image and tiny pose factorisation of one linear update."""
 
-    def __init__(self, arrays, spec, p, x, weighted, columns_key=None) -> None:
+    def __init__(self, arrays, spec, p, x, weighted, columns_key, cached_views) -> None:
         self.arrays, self.spec, self.p, self.x, self.weighted = arrays, spec, p, x, weighted
         self.columns_key = columns_key
+        self.cached_views = cached_views
         self.empty = np.empty((0,), np.float32)
         self.gram = jnp.zeros((p.shape[0], p.shape[1], p.shape[1]), jnp.float32)
         gx, gp, gram, _ = self.run("gradient")
@@ -320,6 +359,7 @@ class _HostSystem:
             spec=self.spec,
             mode=mode,
             weighted=self.weighted,
+            cached_views=self.cached_views,
         )
         if mode in {"normal", "schur"}:
             if self.spec.tv_weight:
@@ -410,22 +450,29 @@ class _HostSystem:
         )
 
 
-def host_columns_fit(spec, n_views):
-    """Reserve Krylov/FFT workspace and half the remaining RAM at planning time."""
+def host_column_capacity(spec, n_views):
+    """Cache complete batches within half the RAM left after Krylov/FFT workspace."""
     try:
         host = next(iter(jax.local_devices(backend="cpu")))
     except RuntimeError:
-        return False
+        return 0
     available = device_free_memory_bytes(device=host)
+    if available is None:
+        return 0
     volume_bytes = 4 * spec.grid.nx * spec.grid.ny * spec.grid.nz
-    columns_bytes = 4 * n_views * len(spec.active_columns) * spec.detector.nv * spec.detector.nu
+    view_bytes = 4 * len(spec.active_columns) * spec.detector.nv * spec.detector.nu
     vectors = 12 if spec.refinement is not None else 8
-    return (
-        available is not None and columns_bytes <= max(0, available - vectors * volume_bytes) // 2
-    )
+    budget = max(0, available - vectors * volume_bytes) // 2
+    if n_views * view_bytes <= budget:
+        return n_views
+    # A final overlapping batch must be entirely present, not read past a
+    # partially cached prefix. The full-scan case above keeps that tail.
+    return budget // (view_bytes * _HOST_BATCH_SIZE) * _HOST_BATCH_SIZE
 
 
-def build_host_objective(arrays: CoupledArrays, spec: CoupledSpec) -> tuple[Callable, Callable]:
+def build_host_objective(
+    arrays: CoupledArrays, spec: CoupledSpec, *, cached_views: int
+) -> tuple[Callable, Callable]:
     """Bind scan arrays on the host; register callback sources only during calls."""
     projections = np.asarray(arrays.projections)
     weights = np.asarray(arrays.weights)
@@ -439,9 +486,9 @@ def build_host_objective(arrays: CoupledArrays, spec: CoupledSpec) -> tuple[Call
 
     def update(p, x):
         with ExitStack() as stack:
-            shape = (p.shape[0], len(spec.active_columns), spec.detector.nv * spec.detector.nu)
-            columns = stack.enter_context(host_buffer(shape)) if spec.cache_columns else None
-            return _HostSystem(inputs(stack), spec, p, x, weighted, columns).solve()
+            shape = (cached_views, len(spec.active_columns), spec.detector.nv * spec.detector.nu)
+            columns = stack.enter_context(host_buffer(shape)) if cached_views else None
+            return _HostSystem(inputs(stack), spec, p, x, weighted, columns, cached_views).solve()
 
     def loss(p, x):
         with ExitStack() as stack:
