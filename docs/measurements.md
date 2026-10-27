@@ -783,16 +783,16 @@ constrained FISTA reaches 0.12 after 100 iterations and 0.091 after 300
 The projection-only estimator uses a one-pixel derivative bandwidth and a
 Fourier-interpolated global correlation peak. On 2026-10-27, the fixed shift
 matrix (`JAX_PLATFORMS=cpu uv run --no-sync python
-../../shared/agent03/shift_kill.py`, implementation `00823229`) gave the following 95th-percentile absolute errors in the **change**
+../../shared/agent03/shift_kill.py`, implementation `a04e5ee7`) gave the following 95th-percentile absolute errors in the **change**
 of centre after injected ±0.25, ±0.5 and ±1 px shifts (T1):
 
 | Scan (three detector rows) | Centre-change error, px |
 |---|---:|
-| APS 2-BM test_data | 0.0018 |
-| Elettra TomoBank 00024 | 0.0047 |
-| ESRF bamboo | 0.0077 |
-| I12 3339629, rows 1050/1080/1100 | 0.0020 |
-| I13 159815, rows 690/1080/1470 | 0.0044 |
+| APS 2-BM test_data | 0.00085 |
+| Elettra TomoBank 00024 | 0.00292 |
+| ESRF bamboo | 0.00567 |
+| I12 3339629, rows 1050/1080/1100 | 0.00117 |
+| I13 159815, rows 690/1080/1470 | 0.00488 |
 
 These errors test shift equivariance, not absolute centre accuracy. Motion,
 truncation and competing correlation peaks can bias a single centre estimate.
@@ -805,10 +805,11 @@ interval under arbitrary motion. Pair disagreement is reported separately.
 The automatic workflow saves these diagnostics and reports conditional
 inconsistency without replacing it by independent per-view poses.
 
-On 2026-10-27 (`c7879013`), 64 real rows gave centre-change p95 errors
+On 2026-10-27 (`a04e5ee7`), 64 real rows gave centre-change p95 errors
 0.00422 px on Elettra 00024 and 0.00284 px on I13 159815. The report took
-0.218/0.216 s and 3.40/3.23 s cold/warm on corrected inputs; cumulative peak
-host memory was 350/666 MiB, GPU memory zero. Command:
+0.233/0.230 s and 2.30/2.27 s cold/warm on corrected inputs; cumulative peak
+host memory was 348/663 MiB, GPU memory zero. Reading and correcting the
+selected HDF5 observations took 0.035/52.61 s separately. Command:
 `OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu uv run --no-sync python
 ../../shared/agent03/full_rows.py`. I13 used rows 300:1860 and columns 441:1872;
 both scans sampled 64 evenly spaced rows. I13 pair centres ranged from
@@ -824,6 +825,29 @@ Independent analytic Gaussian line integrals with Poisson counts, seed 304,
 JAX_PLATFORMS=cpu uv run --no-sync python
 ../../shared/agent03/production_coverage.py`. This calibration excludes wrong
 matching modes, axis tilt and sample motion; it is not whole-scan coverage.
+
+Independent gVXR cuboid projections expose failures outside that calibration
+(2026-10-27, `a04e5ee7`, renderer seed 316, count seed 317, five cases per
+category, 257 by 65 pixels, 30,000 incident photons). Absolute centre p95
+errors were 0.086/0.156/0.120/0.052/0.173 px for dense, sparse, off-centre,
+phase-fringe and truncated objects, respectively, but 3.907 px at low contrast
+and 1.004 px with a one-degree axis tilt. Only one of the five low-contrast
+truths lay inside its conditional 90% interval. Tilt is outside the axial
+matching model; its apparent row-slope error reached 0.678 px p95 over the
+32-row half-height. Command: isolated gVXR Python runs
+`../../shared/agent03/gvxr_render.py`, then `JAX_PLATFORMS=cpu uv run --no-sync
+python ../../shared/agent03/gvxr_score.py`, with `LAB_ARTIFACTS` set to the
+output directory. The complete renderer-and-score job took 3.04 s; the CPU
+scoring stage took 0.564 s with 273 MiB peak host memory.
+
+Signed cSAXS porous-glass phase data gave centre-change p95 0.000512 px over
+the same six injected shifts, versus 0.006150 px for the integer-peak baseline
+(2026-10-27, `a04e5ee7`). The 51 selected views used 64 evenly spaced rows and
+1312 columns. Point estimation took 0.410/0.410 s cold/warm versus
+0.0393/0.0398 s for the baseline; data reading took 7.31 s, with 640 MiB peak
+host memory and no GPU use. Command: `OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu
+uv run --no-sync python ../../shared/agent03/psi_phase.py`. This is shift
+equivariance on phase data, not an absolute centre measurement.
 
 
 | Mode and scan | Result |

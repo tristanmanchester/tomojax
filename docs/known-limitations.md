@@ -50,6 +50,10 @@ listed with how to check a result in the
   opposing shifts determine sums, not individual per-view motion. Row-centre
   slope is an apparent detector trend, not a calibrated three-dimensional axis
   tilt. Use the pair diagnostics when automatic alignment reports disagreement.
+  In five low-contrast gVXR mesh cases, wrong-mode errors reached a 3.91 px
+  p95 and the conditional 90% intervals covered only one truth; check competing
+  modes against an independent calibration rather than treating a narrow local
+  interval as a global accuracy certificate.
 
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).
