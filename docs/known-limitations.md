@@ -80,6 +80,14 @@ measurements require independent calibration evidence and repair before `Rings`.
 - External HDF5 links require readable backing files at their recorded paths.
   The loader reports missing detector sources; it does not repair damaged files
   or guess relocated links.
+- Metadata-only files do not supply reconstruction observations. `tj.load`
+  requires an acquisition containing detector projections, even when a separate
+  metadata file describes its angles or instrument.
+- Flat/dark correction needs at least one detector pixel with resolved
+  illumination. If none exists, supply illuminated flats and matching darks,
+  or include an illuminated region in the crop. Unilluminated margins and
+  bracketed interior gaps remain supported; their correction does not certify
+  that the supplied calibration describes the acquisition.
 
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).
@@ -107,6 +115,11 @@ measurements require independent calibration evidence and repair before `Rings`.
 
 ## Implementation limitations
 
+- Held-out projection error is not an image-error certificate. Tested CGLS
+  MSE selectors miss the best tested image iteration on 2DeteCT and Walnut
+  reference comparisons and an I13 injected-response control; see the
+  [stopping-rule limits](held-out-evaluation.md#stopping-rule-limits).
+  Held-out iteration and regularisation selection are not automatic.
 - The explicit CUDA Joseph projection API supports first-order derivatives
   for linear and cubic interpolation. Cubic has negative lobes, can overshoot,
   and uses a larger stencil; it does not remove physical support truncation or
@@ -203,6 +216,16 @@ An explicit PyHST `.par` supplies its own angles and rotation axis, but only
 raw single-image EDFs with fixed axial parallel geometry are supported. PyHST
 multi-frame, cone, helical, binning and distortion modes are rejected. Every
 projection and calibration file named by the selected input must be available.
+
+An explicit file-owned reconstruction grid survives detector cropping. The
+ESRF `scan_3_.par` fixture specifies 2048×2048×1200 voxels: one float32 volume
+alone needs 20,132,659,200 bytes, above the 18 GB input-audit memory limit.
+The 2026-10-27 audit on `2626e6e5` loaded it but stopped before reconstruction
+(`TOMO_SOURCE_COMMIT=2626e6e5 JAX_PLATFORMS=cpu uv run --no-sync python
+shared/agent06-audit/run_default.py 510`, with `LAB_ARTIFACTS` set to an output
+directory).
+Supply a smaller `grid=` to `tj.load_frames` when the file grid exceeds available
+memory; a successful reduced preview is not a default full-volume result.
 
 HDF5 virtual detector stacks require all referenced pixel files and mapped
 regions to be present; missing sources are errors, not zero-filled exposures.

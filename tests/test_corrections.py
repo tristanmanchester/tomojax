@@ -609,6 +609,13 @@ def test_aps_data_exchange_files_load_with_their_flats_and_darks(tmp_path: Path)
         tj.load(tmp_path / "bare.h5")
 
 
+def test_no_illuminated_pixels_require_calibration_not_zero_attenuation() -> None:
+    geometry = tj.ParallelGeometry(tiny_grid(), tiny_detector(), [0, 90])
+    counts = np.full((2, geometry.detector.nv, geometry.detector.nu), 100.0)
+    with pytest.raises(ValueError, match="illuminated flats=.*matching darks="):
+        tj.Frames(counts, geometry, flats=counts, darks=counts).corrected()
+
+
 def test_pixels_without_a_resolved_flat_take_no_absorption() -> None:
     rng = np.random.default_rng(6)
     views, rows, cols = 4, 5, 8

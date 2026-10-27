@@ -100,7 +100,10 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
         record = load_dataset(file)
     except KeyError as exc:  # HDF5 frames not laid out as TomoJAX's
         if located is None:
-            raise
+            raise ValueError(
+                f"{file} has no supported projection dataset: supply an acquisition "
+                "file containing measured detector projections, not metadata alone"
+            ) from exc
         raise ValueError(
             f"{file} is not a TomoJAX dataset and holds no flat frames: load its frames with "
             "tomojax.load_frames(path, flats=..., angles=...)"

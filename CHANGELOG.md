@@ -14,6 +14,10 @@ Trajectory groups survive scan selection, cropping, poses and NXtomo persistence
 Centre-estimation failures explain the angular-neighbour requirement when
 near-opposite views need interpolation, including sparsely sampled previews.
 
+Flat/dark correction reports missing illumination when no detector pixel has
+a resolved calibration, rather than returning a finite zero-attenuation scan.
+Partially illuminated detector margins and interior gaps keep their correction.
+
 Python imports default to JAX's growing GPU memory pool, preserving explicit
 allocator settings, so CUDA libraries can initialize without a 75% eager
 reservation. Automatic reconstruction recognizes both `Rings` and `Stripes`
@@ -29,6 +33,7 @@ references instead of declaring every readable acquisition valid. Missing-input
 errors include applicable CLI preprocessing options. Inspection and loading
 share axial-centre seed preparation through `ProjectionDataset.prepare_center_seed`:
 a centre awaiting data-driven inference is not reported as missing external input.
+Loading a metadata-only file requests an acquisition containing projections.
 
 `tomojax.evaluation` provides frozen interleaved-view, angular-block and
 detector-block splits, guarded training masks and additive held-out scores

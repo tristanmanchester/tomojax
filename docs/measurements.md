@@ -26,12 +26,13 @@ repository; each result names the command, commit and date to rerun it.
 
 ## Raw NXtomo loading and held-out split integrity
 
-Measured 2026-10-27 on `a4a969cb` (loading) and `191c0882` (evaluation),
+Measured 2026-10-27 on `a4a969cb` (loading) and `2626e6e5` (evaluation),
 using the local Diamond files. These are functional/integrity tests, not image
 or pose accuracy measurements. Commands in the lab shared directory are
 `JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/loader_kill.py`
 (the metadata/pixel section) and
-`JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/evaluation_kill.py`.
+`JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 uv run --no-sync python
+shared/agent02/evaluation_kill.py`.
 
 - I13 NXtomo scans 159791 and 159815 classify respectively 37/80/80 and
   3001/200/100 sample/flat/dark frames. First-sample row1080 columns441:449
@@ -42,8 +43,8 @@ or pose accuracy measurements. Commands in the lab shared directory are
   interleaved-view, angular-block and detector-block splits. Changing every
   excluded value to 1234 leaves a fixed four-coefficient least-squares fit
   bitwise unchanged. Streamed versus dense squared-error relative differences
-  are 1.96e-16, 0 and 3.00e-16. Cold/warm fit-and-score times are 32.7/32.7,
-  56.4/29.5 and 24.0/22.7 ms; peak RSS 68 MiB, GPU 0. This checks held-out
+  are 1.96e-16, 0 and 3.00e-16. Cold/warm fit-and-score times are 15.29/13.51,
+  13.00/13.25 and 9.95/8.46 ms; peak RSS 69.37 MiB, GPU 0. This checks held-out
   accounting, not tomographic reconstruction or stopping-rule effectiveness.
 
 The [held-out guide](held-out-evaluation.md) describes the split and leakage

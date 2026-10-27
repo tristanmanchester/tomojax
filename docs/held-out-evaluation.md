@@ -79,3 +79,46 @@ print(total.mse)
 Sum the statistics before forming ratios; do not average per-batch MSEs when
 batch sizes or precisions differ. Cross-validation scores used to choose a model
 are selection scores, not an independent final test of that selected model.
+
+## Stopping-rule limits
+
+Minimising held-out projection MSE does not guarantee the smallest image error.
+The following CGLS checks hold out every fifth view, offset two, and compare
+iterations 1, 2, 4, 8, 16, 32 and 64. The oracle is the best **tested** iteration
+for the stated image metric, not an optimum over all iterations. Geometry and
+intensity scale are fixed; no image registration or fitted rescaling is used.
+
+| Scan and image metric | MSE-selected iteration / error | Oracle iteration / error | Error ratio |
+| --- | ---: | ---: | ---: |
+| 2DeteCT 00001 mode 1, 128²; mode-2 reference agreement | 16 / 0.22469 | 8 / 0.15918 | 1.4115 |
+| Walnut 1, all three orbits, detector binning 8, 64³; authors' AGD reference agreement | 64 / 0.28250 | 8 / 0.20272 | 1.3935 |
+| I13 159815, row 1080, every eighth sample view, 256²; injected Gaussian incremental-response error | 16 / 0.56073 | 32 / 0.25989 | 2.1576 |
+
+Errors are relative image L2 norms. The I13 metric compares the difference of
+two reconstructions with an analytic attenuation addition, not with the unknown
+whole specimen. Its binomial thinning uses rounded photon counts inferred from
+ADU values and retains original read noise; it is an approximate known-truth
+control. CGLS depends on its right-hand side, so this difference is not a linear
+reconstruction of the added signal. Walnut uses all 1200 views from each orbit
+before splitting and exact cell-overlap averaging of the published reference.
+
+Measured 2026-10-27 with numerical source `20fe1a9c` and evaluation `09437d17`.
+Commands are `OPENBLAS_NUM_THREADS=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
+uv run --no-sync python shared/agent02/` followed by
+`stopping_stack_kill.py`, `stopping_walnut_protocol.py` or
+`stopping_i13_increment.py`, with `LAB_ARTIFACTS` set to an output directory.
+The radiometric-convention comparison uses `stopping_author_protocol.py`.
+Those scripts pin the stated numerical source. Selected-iteration cold/warm
+times are respectively 0.220/0.220, 12.183/12.218 and 0.153/0.145 seconds;
+peak process GPU memory is 208, 1172 and 220 MiB, and peak host RSS is 959,
+2266 and 1005 MiB. Times include reconstruction and matched prediction/scoring;
+I13 includes both reconstructions needed for its difference metric. Cold means
+the first run of that candidate; these are not fresh-process compilation times.
+
+All three exceed the tested 1.10 oracle-gap limit. The 2DeteCT check also
+depends on radiometric convention: using the authors' plain flat/dark correction
+and crop centre gives a gap of 1.4960 on the same candidate iterations, rather
+than fixing the failure. Shared calibration noise, truncation and model mismatch
+can invalidate an independent-noise interpretation of view cross-validation.
+Use image or known-truth checks alongside prediction scores; TomoJAX does not
+adopt these failed MSE selectors as automatic stopping rules.
