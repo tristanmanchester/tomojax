@@ -617,7 +617,7 @@ def _frames_of(value: np.ndarray | float | str | PathLike[str], name: str) -> An
     return frames
 
 
-_HDF5 = frozenset({".nxs", ".h5", ".hdf", ".hdf5"})
+_HDF5 = frozenset({".nx", ".nxs", ".h5", ".hdf", ".hdf5"})
 
 
 def _located(file: Path) -> LocatedFrames | None:

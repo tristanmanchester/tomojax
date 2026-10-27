@@ -211,9 +211,13 @@ An explicit PyHST `.par` supplies its own angles and rotation axis, but only
 raw single-image EDFs with fixed axial parallel geometry are supported. PyHST
 multi-frame, cone, helical, binning and distortion modes are rejected. Every
 projection and calibration file named by the selected input must be available.
+Cropping the detector preserves an explicit PyHST output grid; supply `grid=`
+for a smaller preview or use slab reconstruction for a volume larger than memory.
 
 HDF5 virtual detector stacks require all referenced pixel files and mapped
 regions to be present; missing sources are errors, not zero-filled exposures.
+An unreadable external-root master needs its referenced files and datasets restored;
+its link names and targets are reported when no detector stack can be found.
 
 Nikon vendor reconstruction regions (including `OffsetX/Y/Z`) remain source
 metadata and are not applied: their coordinate mapping is not established.

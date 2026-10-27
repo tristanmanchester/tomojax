@@ -26,6 +26,9 @@ Raw NXtomo loading discovers nested entries and external detector links, accepts
 exact integer-valued floating-point frame labels, and treats missing pixel
 calibration as requiring an explicit detector.
 
+HDF5 dispatch accepts `.nx` containers. When no detector frames are readable,
+unresolved external root links report the files and datasets to restore.
+
 Zeiss loading uses recorded image streams instead of the planned frame count,
 supporting consistent interrupted acquisitions. Missing image streams report
 the required complete acquisition file instead of exposing an iterator failure.

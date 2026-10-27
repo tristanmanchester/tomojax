@@ -318,6 +318,22 @@ def locate_frames(
         if data_path is not None and stack is None:
             raise KeyError(f"{path} has no dataset {data_path!r}")
         if where is None or stack is None:
+            missing: list[str] = []
+            root: Any = file
+            for name in root:
+                link = root.get(name, getlink=True)
+                if isinstance(link, cast(Any, h5py).ExternalLink):
+                    try:
+                        root[name]
+                    except (KeyError, OSError):
+                        missing.append(f"/{name} -> {link.filename}:{link.path}")
+            if missing:
+                raise ValueError(
+                    f"{path}: no stack of frames found; unresolved external roots: "
+                    + "; ".join(missing)
+                    + ". Restore the referenced files and datasets, or supply a readable "
+                    "detector stack with data_path."
+                )
             raise KeyError(f"{path}: no stack of frames found; name its dataset (data_path)")
         frames = int(stack.shape[0])
 
