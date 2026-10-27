@@ -522,13 +522,13 @@ class _CorrectedRows:
 
 def _estimate_missing_center(frames: Frames) -> Frames:
     """Resolve an internal axial centre seed, or fail rather than expose its zero."""
-    from tomojax.alignment.api import estimate_center
+    from tomojax.alignment.api import estimate_center_report
 
     source = frames.source
     if source is None or source.geometry_metadata.get("detector_center_status") != "pending":
         return frames
     try:
-        geometry = estimate_center(
+        report = estimate_center_report(
             cast("Any", frames.geometry), cast("Any", _CorrectedRows(frames))
         )
     except ValueError as exc:
@@ -536,6 +536,9 @@ def _estimate_missing_center(frames: Frames) -> Frames:
             f"Cannot estimate the detector centre: {exc}; pass detector=... or geometry=... "
             "to tomojax.load_frames"
         ) from exc
+    geometry = report.geometry
+    diagnostics = report.to_dict()
+    LOG.warning("%s", diagnostics["uncertainty_reason"])
     source = replace(
         source,
         detector=geometry.detector,
@@ -545,6 +548,7 @@ def _estimate_missing_center(frames: Frames) -> Frames:
             "detector_center_calibration": {
                 "status": "estimated",
                 "method": "opposite_view_correlation",
+                "diagnostics": diagnostics,
                 "input": list(frames.geometry.detector.center),
                 "output": list(geometry.detector.center),
                 "unit": "geometry_length",

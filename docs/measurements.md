@@ -878,6 +878,80 @@ constrained FISTA reaches 0.12 after 100 iterations and 0.091 after 300
 
 ### Detector centre
 
+The projection-only estimator uses a one-pixel derivative bandwidth and a
+Fourier-interpolated global correlation peak. On 2026-10-27, the fixed shift
+matrix (`JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/shift_kill.py`, implementation `a04e5ee7`) gave the following 95th-percentile absolute errors in the **change**
+of centre after injected ±0.25, ±0.5 and ±1 px shifts (T1):
+
+| Scan (three detector rows) | Centre-change error, px |
+|---|---:|
+| APS 2-BM test_data | 0.00085 |
+| Elettra TomoBank 00024 | 0.00292 |
+| ESRF bamboo | 0.00567 |
+| I12 3339629, rows 1050/1080/1100 | 0.00117 |
+| I13 159815, rows 690/1080/1470 | 0.00488 |
+
+These errors test shift equivariance, not absolute centre accuracy. Motion,
+truncation and competing correlation peaks can bias a single centre estimate.
+
+`alignment.api.estimate_center_report` retains the weighted view-pair constraints,
+conditional 90% matching intervals, other correlation peaks and apparent
+row-centre slope. The uncertainty uses eight detector-column blocks, an observed
+cross-Hessian and leverage correction; it does not claim a physical-centre
+interval under arbitrary motion. Pair disagreement is reported separately.
+The automatic workflow saves these diagnostics and reports conditional
+inconsistency without replacing it by independent per-view poses.
+Runtime fields label the intervals `local_matching_interval90_px`, with
+`global_coverage_calibrated=false` and `uncertainty_status=local_matching_only`.
+These are local matching diagnostics, not calibrated global centre intervals;
+automatic alignment reports this limitation even without pair disagreement.
+
+On 2026-10-27 (`a04e5ee7`), 64 real rows gave centre-change p95 errors
+0.00422 px on Elettra 00024 and 0.00284 px on I13 159815. The report took
+0.233/0.230 s and 2.30/2.27 s cold/warm on corrected inputs; cumulative peak
+host memory was 348/663 MiB, GPU memory zero. Reading and correcting the
+selected HDF5 observations took 0.035/52.61 s separately. Command:
+`OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/full_rows.py`. I13 used rows 300:1860 and columns 441:1872;
+both scans sampled 64 evenly spaced rows. I13 pair centres ranged from
+−3.76 to +0.59 px, with 1.75 px scatter and conditional standard errors
+0.049–0.287 px. These conflicting pairs do not define one physical centre.
+Elettra's 50.800 px estimate and conditional interval [49.235, 52.366] px
+include the TomoBank 51.5 px centre convention (T3 agreement, not accuracy).
+
+Independent analytic Gaussian line integrals with Poisson counts, seed 304,
+100 pairs per category, gave conditional 90% coverage 93% dense, 100% sparse,
+91% low contrast and 91% truncated. Their p95 location errors were
+0.0103/0.0152/0.0861/0.0088 px. Command: `OPENBLAS_NUM_THREADS=1
+JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/production_coverage.py`. This calibration excludes wrong
+matching modes, axis tilt and sample motion; it is not whole-scan coverage.
+
+Independent gVXR cuboid projections expose failures outside that calibration
+(2026-10-27, `a04e5ee7`, renderer seed 316, count seed 317, five cases per
+category, 257 by 65 pixels, 30,000 incident photons). Absolute centre p95
+errors were 0.086/0.156/0.120/0.052/0.173 px for dense, sparse, off-centre,
+phase-fringe and truncated objects, respectively, but 3.907 px at low contrast
+and 1.004 px with a one-degree axis tilt. Only one of the five low-contrast
+truths lay inside its conditional 90% interval. Tilt is outside the axial
+matching model; its apparent row-slope error reached 0.678 px p95 over the
+32-row half-height. Command: isolated gVXR Python runs
+`../../shared/agent03/gvxr_render.py`, then `JAX_PLATFORMS=cpu uv run --no-sync
+python ../../shared/agent03/gvxr_score.py`, with `LAB_ARTIFACTS` set to the
+output directory. The complete renderer-and-score job took 3.04 s; the CPU
+scoring stage took 0.564 s with 273 MiB peak host memory.
+
+Signed cSAXS porous-glass phase data gave centre-change p95 0.000512 px over
+the same six injected shifts, versus 0.006150 px for the integer-peak baseline
+(2026-10-27, `a04e5ee7`). The 51 selected views used 64 evenly spaced rows and
+1312 columns. Point estimation took 0.410/0.410 s cold/warm versus
+0.0393/0.0398 s for the baseline; data reading took 7.31 s, with 640 MiB peak
+host memory and no GPU use. Command: `OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu
+uv run --no-sync python ../../shared/agent03/psi_phase.py`. This is shift
+equivariance on phase data, not an absolute centre measurement.
+
+
 | Mode and scan | Result |
 |---|---|
 | `cor`, +3.7 px offset, 128³ parallel / laminography (2026-10-05, `74923c1`) | 3.693 / 3.677 px in 41 / 84 s; with ±0.5°/±8 px motion as well, 2.2 / 3.3 px |

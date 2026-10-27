@@ -10,7 +10,7 @@
     "tomojax.geometry.api": 18,
     "tomojax.recon.api": 7,
     "tomojax.io.api": 20,
-    "tomojax.alignment.api": 72
+    "tomojax.alignment.api": 75
   },
   "cli_flags": {
     "inspect": 4,
