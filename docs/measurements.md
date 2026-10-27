@@ -12,8 +12,8 @@ Unless a section says otherwise, measurements use one NVIDIA GeForce RTX 4070
 Laptop GPU (Ada, 8 GB) on Linux with Python 3.12, JAX 0.11.2, ASTRA 2.5 and
 TIGRE 3.1.3. The several-GPU results use four H100 80 GB GPUs in one machine on
 Modal.
-Objects are synthetic except the FIPS walnuts, a real lab
-cone-beam scan.
+Each protocol identifies its synthetic objects or measured scans.
+Reference agreement is distinct from physical accuracy.
 
 *Cold* time is a fresh process through the first accepted result, including
 imports, compilation and transfers. *Warm* time repeats the same call in that
@@ -977,6 +977,23 @@ the same six injected shifts, versus 0.006150 px for the integer-peak baseline
 host memory and no GPU use. Command: `OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu
 uv run --no-sync python ../../shared/agent03/psi_phase.py`. This is shift
 equivariance on phase data, not an absolute centre measurement.
+
+Nonreserved TOMCAT TomoBank 00082 (dry fuel cell) gives centre-change median/p95
+errors 0.001048/0.002845 px over the same six shifts (2026-10-28, `17ed9dd1`).
+This uses rows 192:256, all 1440 columns, the first 20 flat frames, all 10 dark
+frames and sample views 0/1/999/1000. The HDF5 file has no recorded angles;
+geometry is supplied explicitly using the [TomoBank example](https://github.com/tomography/tomobank/blob/master/docs/demo/tomopy_rectv_fc.py)'s
+endpoint-excluding 1001-view, 180-degree convention. The selected opposed
+constraint has nominal angular mismatch 0.179820 degrees. First/repeated
+public-report calls on corrected inputs take 0.1307/0.1276 s, separately from
+81.30 s HTTP reading and 0.0041 s flat/dark/log correction. Peak host memory is
+329.75 MiB, with no GPU use. The 48 HTTP ranges total 6.272 MB and are held
+only in bounded RAM, discarded after scoring. Command:
+`OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/tomcat82_center.py`. This is a 64-row-band delta test,
+not full-height performance, absolute centre accuracy or default-loader
+success. The report labels its intervals as local matching diagnostics;
+global coverage remains uncalibrated.
 
 
 | Mode and scan | Result |
