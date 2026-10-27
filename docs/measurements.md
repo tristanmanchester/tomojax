@@ -71,6 +71,14 @@ maximum remains 10.5% with all 3000 views. Axis-centred Gaussians and annuli
 are reported separately as unidentifiable detector/object aliases, not as
 failures to recover uniquely determined structure.
 
+Even an off-axis Gaussian has a radial component. A follow-up physical-radial
+projection on `09437d17` assigns 1.13–6.68%, 0.76–4.09%, 1.26–6.29% and
+2.32–12.89% of the probes' energy to that component. Maximum error outside
+the radial component, normalized by nonradial truth, is
+0.04712/0.00601/0.01009/0.03771 for Rings. Thus the I13 full-increment failure
+mostly concerns the radial prior, not its uniquely varying component. The
+frozen full-increment gate above is not retrospectively changed.
+
 Algotom 1.7 uses its canonical transmission-domain chain,
 `-log(remove_all_stripe(exp(-q)))`, with unchanged defaults 3/51/21.
 Commands, from this run's checkout with its external `shared/` harness:
@@ -90,6 +98,41 @@ these exclude imports and loading and do not follow the page's fresh-process pro
 Peak host RSS is 1281 MiB and GPU use is zero. No speed comparison is claimed.
 Final ring quality requires independent rows and seeds plus reconstruction
 metrics; these perturbation controls do not establish removal of native rings.
+
+### Response-inverse feasibility
+
+On the I13 159815 runtime cut (every 25th sample view, rows 1080:1088,
+columns 441:1873, count-binned 8×8), the former final response had no real
+inverse for 166 observations. Its three Newton steps nevertheless returned
+finite values spanning −8.77 to 9.11. The constrained fit on `694a9ae7`
+changes seven of 179 final-stage coefficient pairs, gives a minimum response
+derivative of 0.5011 and maximum forward/inverse closure error of 3.58e−7.
+The final weighted data-fit SSE changes from 1325.891 to 1324.329; the first
+fine stage increases by 0.00136%. These are numerical feasibility checks,
+not reconstruction accuracy. The constraint changes the odd coefficient
+components too: RMS 0.01785 for offset and 0.02860 for response slope.
+
+```bash
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/source_coarse.py
+```
+
+The four-scan finite-reference fixture and analytic structure controls retain
+their previous pass/fail outcomes; the fit constraint repairs inversion, not
+the statistical separation of detector errors and object structure.
+
+CUDA A/B/A/B on the native I13 cut, baseline `c7d8578d` versus the constrained
+implementation, gives median warm correction times 0.01403/0.01719 and
+0.01312/0.01613 s: approximately **23% slower**, with sampled GPU peaks
+704–706 versus 742 MiB (**about 36 MiB more**). Cold calls are 9.63–9.68
+versus 9.73–9.92 s; peak host RSS is 1607 versus 1623–1628 MiB. On the same
+runs, seed-622 dense log-gain residual is 0.919913 and the independent
+Gaussian increment alteration is 0.104278 for both implementations; native
+output disagreement is at most 7.62e−8 relative. These controls still fail
+their quality gates. The correctness repair is not a speed improvement.
+
+```bash
+LAB_ARTIFACTS=OUTPUT uv run --no-sync python ../../shared/agent08/rings/paired_gpu.py
+```
 
 ## Reconstruction against ASTRA
 
