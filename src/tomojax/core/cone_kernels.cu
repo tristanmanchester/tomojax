@@ -1,3 +1,11 @@
+#ifndef VOLUME_Z_FAST
+#define VOLUME_Z_FAST 0
+#endif
+// Solver-private axis order; public buffers remain (z, y, x).
+__device__ __forceinline__ long volume_index(int x,int y,int z,int nx,int ny,int nz) {
+    return VOLUME_Z_FAST ? ((long)x * ny + y) * nz + z
+                         : ((long)z * ny + y) * nx + x;
+}
 // CUDA kernels for cone-beam Joseph projection; see tomojax/core/cone.py.
 #define NC 25
 #define TB 64
@@ -112,6 +120,101 @@ __device__ __forceinline__ bool dense_view_packet(
     return true;
 }
 
+#if VOLUME_Z_FAST
+namespace axis_packets {
+constexpr int GU=32, GV=16;
+// Planes k0..k1 of a ray, stepped by the warp through first..last (see ray_sum): plane
+// k lies sa apart, in-plane axes b and c sb and sc (SC1: c is the contiguous axis).
+template <int SC1>
+__device__ __forceinline__ float plane_sum(
+    const float* __restrict__ vol, int k0, int k1, int first, int last, float Sa, float Sb,
+    float Sc, float inv, float rb, float rc, int nb, int nc, long sa, long sb, long sc = 1)
+{
+    if (SC1) sc = 1;
+    float sum = 0.f;
+    const float* plane = vol + (long)first * sa;
+    for (int k = first; k <= last; ++k, plane += sa) {
+        if (k < k0 || k > k1) continue;
+        // Same reciprocal, multiply and FMA sequence as plane_adjoint.
+        float t = __fmul_rn(__fsub_rn((float)k, Sa), inv);
+        float fb = __fmaf_rn(t, rb, Sb), fc = __fmaf_rn(t, rc, Sc);
+        float fb0 = floorf(fb), fc0 = floorf(fc);
+        int b0 = (int)fb0, c0 = (int)fc0;
+        // The same weights as plane_adjoint's.
+        float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
+        bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
+        bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
+        const float* p = plane + (long)b0 * sb + (long)c0 * sc;
+        float s0 = 0.f, s1 = 0.f;
+        if (b0in && c0in) s0 = __ldg(p) * wc0;
+        if (b0in && c1in) s0 += __ldg(p + sc) * wc1;
+        if (b1in && c0in) s1 = __ldg(p + sb) * wc0;
+        if (b1in && c1in) s1 += __ldg(p + sb + sc) * wc1;
+        sum += wb0 * s0 + wb1 * s1;
+    }
+    return sum;
+}
+
+// Called by every lane of a warp (``live`` false for lanes without a ray). The lanes
+// step through the planes together, each sampling only its own ray's planes: rays
+// entering through the volume's top or bottom start at different planes, and lanes
+// left on different planes would not share cache lines.
+__device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu, float fv,
+                         int nx, int ny, int nz, bool live)
+{
+    float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
+    int a = ray_axis(r0, r1, r2), b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
+    int na = SEL(a, nx, ny, nz), nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
+    long s0 = (long)ny * nz, s1 = nz;
+    long sa = SEL(a, s0, s1, 1L), sb = SEL(b, s0, s1, 1L), sc = SEL(cc, s0, s1, 1L);
+    float ra = SEL(a, r0, r1, r2), rb = SEL(b, r0, r1, r2), rc = SEL(cc, r0, r1, r2);
+    float Sa = c[a], Sb = c[b], Sc = c[cc];
+    float inv = __frcp_rn(ra);
+    float lo = -1e30f, hi = 1e30f;
+    float slope = rb * inv, base = Sb - Sa * slope;
+    if (fabsf(slope) < 1e-12f) { if (base <= -1.f || base >= (float)nb) live = false; }
+    else { float k1 = (-1.f - base) / slope, k2 = ((float)nb - base) / slope;
+           lo = fmaxf(lo, fminf(k1, k2)); hi = fminf(hi, fmaxf(k1, k2)); }
+    slope = rc * inv; base = Sc - Sa * slope;
+    if (fabsf(slope) < 1e-12f) { if (base <= -1.f || base >= (float)nc) live = false; }
+    else { float k1 = (-1.f - base) / slope, k2 = ((float)nc - base) / slope;
+           lo = fmaxf(lo, fminf(k1, k2)); hi = fminf(hi, fmaxf(k1, k2)); }
+    int k0 = max((int)floorf(lo), 0), k1 = min((int)ceilf(hi), na - 1);
+    if (!live) { k0 = na; k1 = -1; }
+    int first = warp_min(k0), last = warp_max(k1);
+    // Rays of one warp nearly always share a plane axis; z (contiguous) is then the
+    // in-plane c axis at compile time.
+    unsigned busy = __ballot_sync(0xffffffffu, k0 <= k1), x = __ballot_sync(0xffffffffu, a == 0);
+    if ((busy & ~x) == 0)
+        return plane_sum<1>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc,
+                            (long)ny * nz, nz);
+    if ((busy & x) == 0 && a != 2)
+        return plane_sum<1>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc,
+                            nz, (long)ny * nz);
+    return plane_sum<0>(vol, k0, k1, first, last, Sa, Sb, Sc, inv, rb, rc, nb, nc, sa, sb, sc);
+}
+
+// One ray per thread: grid (views, u tiles, v tiles); out (view, v, u).
+extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward_z_fast(
+    const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz)
+{
+    int view = blockIdx.x;
+    const float* c = coeff + (long)view * NC;
+    int u = blockIdx.y * GU + threadIdx.x / GV, v = blockIdx.z * GV + threadIdx.x % GV;
+    bool live = u < nu && v < nv;
+    float fu = (float)u, fv = (float)v;
+    float sum = ray_sum(vol, c, fu, fv, nx, ny, nz, live);
+    if (!live) return;
+    float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
+    float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
+    // Written (view, v, u), as JAX holds projections: one store per ray, so the
+    // stride costs little, and no transposed copy of the projections is needed.
+    out[((long)view * nv + v) * nu + u] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
+}
+
+} // namespace axis_packets
+#else
 namespace dense_packets {
 constexpr int GU = 8, GV = 4;
 // Per-ray Joseph sum for one pixel, any view.
@@ -164,7 +267,8 @@ __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu
     float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
     int a = ray_axis(r0, r1, r2), b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
     int na = SEL(a, nx, ny, nz), nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
-    long s0 = 1, s1 = nx, s2 = (long)nx * ny;
+    long s0 = VOLUME_Z_FAST ? (long)ny * nz : 1;
+    long s1 = VOLUME_Z_FAST ? nz : nx, s2 = VOLUME_Z_FAST ? 1 : (long)nx * ny;
     long sa = SEL(a, s0, s1, s2), sb = SEL(b, s0, s1, s2), sc = SEL(cc, s0, s1, s2);
     float ra = SEL(a, r0, r1, r2), rb = SEL(b, r0, r1, r2), rc = SEL(cc, r0, r1, r2);
     float Sa = c[a], Sb = c[b], Sc = c[cc];
@@ -400,7 +504,8 @@ __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu
     float r0, r1, r2; ray_of(c, fu, fv, r0, r1, r2);
     int a = ray_axis(r0, r1, r2), b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
     int na = SEL(a, nx, ny, nz), nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
-    long s0 = 1, s1 = nx, s2 = (long)nx * ny;
+    long s0 = VOLUME_Z_FAST ? (long)ny * nz : 1;
+    long s1 = VOLUME_Z_FAST ? nz : nx, s2 = VOLUME_Z_FAST ? 1 : (long)nx * ny;
     long sa = SEL(a, s0, s1, s2), sb = SEL(b, s0, s1, s2), sc = SEL(cc, s0, s1, s2);
     float ra = SEL(a, r0, r1, r2), rb = SEL(b, r0, r1, r2), rc = SEL(cc, r0, r1, r2);
     float Sa = c[a], Sb = c[b], Sc = c[cc];
@@ -552,6 +657,8 @@ extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward_sparse64(
 }
 
 } // namespace sparse_packets
+
+#endif
 
 // Uniform-volume row normalization: exact boundary taps, counted interior planes.
 
@@ -774,7 +881,9 @@ __device__ __forceinline__ void sep_adjoint_tile(
     __shared__ int skip;
     int b = 1 - a;
     int nb = a == 0 ? ny : nx;
-    int c0 = blockIdx.z * ZT, b0 = blockIdx.x * TB, k = blockIdx.y;
+    int c0 = (VOLUME_Z_FAST ? blockIdx.x : blockIdx.z) * ZT;
+    int b0 = (VOLUME_Z_FAST ? blockIdx.y : blockIdx.x) * TB;
+    int k = VOLUME_Z_FAST ? blockIdx.z : blockIdx.y;
     int tid = threadIdx.x;
     int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 4);
     float my_bf = (float)my_b;
@@ -871,7 +980,7 @@ __device__ __forceinline__ void sep_adjoint_tile(
     }
     // R is no longer read by the accumulation phase. Reuse it to
     // exchange the register-z owners for contiguous-x output lanes.
-    if (a == 1) {
+    if (!VOLUME_Z_FAST && a == 1) {
         __syncthreads();
         #pragma unroll
         for (int j = 0; j < ZT / 4; ++j) {
@@ -889,9 +998,9 @@ __device__ __forceinline__ void sep_adjoint_tile(
     int na = a == 0 ? nx : ny;
     if (my_b < nb && k < na) {
         int ix = a == 0 ? k : my_b, iy = a == 0 ? my_b : k;
-        long base = ((long)(c0 + my_c) * ny + iy) * nx + ix;
+        long base = volume_index(ix, iy, c0 + my_c, nx, ny, nz);
         #pragma unroll
-        for (int j = 0; j < ZT / 4; ++j) if (c0 + my_c + j < nz) vol[base + (long)j * nx * ny] += acc[j];
+        for (int j = 0; j < ZT / 4; ++j) if (c0 + my_c + j < nz) vol[base + j * (VOLUME_Z_FAST ? 1L : (long)nx * ny)] += acc[j];
     }
 }
 
@@ -949,8 +1058,9 @@ __device__ __forceinline__ void plane_tile(
     __shared__ int first[VMAX + 1]; // each view's first run in the block's list
     int b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
     int na = SEL(a, nx, ny, nz), nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
-    int c0 = blockIdx.z * PC, b0 = (a == 0 ? blockIdx.y : blockIdx.x) * ROWS;
-    int k = (a == 0 ? blockIdx.x : blockIdx.y) * PLANES;
+    int c0 = (VOLUME_Z_FAST ? blockIdx.x : blockIdx.z) * PC;
+    int b0 = (VOLUME_Z_FAST ? blockIdx.y : (a == 0 ? blockIdx.y : blockIdx.x)) * ROWS;
+    int k = (VOLUME_Z_FAST ? blockIdx.z : (a == 0 ? blockIdx.x : blockIdx.y)) * PLANES;
     int nb0 = min(ROWS, nb - b0), nc0 = min(PC, nc - c0);
     if (!any_view(coeff, axis_box, nviews, a, false)) return;
     for (int i = threadIdx.x; i < RHS * PLANES * (ROWS + 2) * (PC + 3); i += blockDim.x) (&acc[0][0][0][0])[i] = 0.f;
@@ -1112,8 +1222,23 @@ __device__ __forceinline__ void plane_tile(
         }
     }
     __syncthreads();
-    long s0 = 1, s1 = nx, s2 = (long)nx * ny;
+    long s0 = VOLUME_Z_FAST ? (long)ny * nz : 1;
+    long s1 = VOLUME_Z_FAST ? nz : nx, s2 = VOLUME_Z_FAST ? 1 : (long)nx * ny;
     long sa = SEL(a, s0, s1, s2), sb = SEL(b, s0, s1, s2), sc = SEL(cc, s0, s1, s2);
+    if (VOLUME_Z_FAST) {
+        for (int i = threadIdx.x; i < ROWS * PC; i += blockDim.x) {
+            int jb = i / PC, jc = i % PC;
+            if (jb < nb0 && jc < nc0) {
+                #pragma unroll
+                for (int plane = 0; plane < PLANES; ++plane) if (k + plane < na) {
+                    long offset = (long)(k + plane) * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
+                    vol[offset] += acc[0][plane][jb + 1][jc + 1];
+                    if (RHS == 2) vol1[offset] += acc[1][plane][jb + 1][jc + 1];
+                }
+            }
+        }
+        return;
+    }
     for (int i = threadIdx.x; i < PLANES * ROWS * PC; i += blockDim.x) {
         int plane = a == 0 ? i % PLANES : i / (ROWS * PC);
         int jb = a == 0 ? (i / PLANES) % ROWS : i % ROWS;
@@ -1159,7 +1284,8 @@ __device__ void cone_pose_derivative(
     ray_of(c, fu, fv, r0, r1, r2);
     int a = ray_axis(r0,r1,r2), b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
     int na = SEL(a,nx,ny,nz), nb = SEL(b,nx,ny,nz), nc = SEL(cc,nx,ny,nz);
-    long s0=1, s1=nx, s2=(long)nx*ny;
+    long s0=VOLUME_Z_FAST?(long)ny*nz:1;
+    long s1=VOLUME_Z_FAST?nz:nx, s2=VOLUME_Z_FAST?1:(long)nx*ny;
     long sa=SEL(a,s0,s1,s2), sb=SEL(b,s0,s1,s2), sc=SEL(cc,s0,s1,s2);
     float ra=SEL(a,r0,r1,r2), rb=SEL(b,r0,r1,r2), rc=SEL(cc,r0,r1,r2);
     float Sa=c[a], Sb=c[b], Sc=c[cc], inv=__frcp_rn(ra);
@@ -1280,7 +1406,9 @@ __device__ __forceinline__ void sep_adjoint_cached_tile(
     __shared__ int2 all_foot[VMAX];
     int b = 1 - a;
     int nb = a == 0 ? ny : nx;
-    int c0 = blockIdx.z * ZT, b0 = blockIdx.x * TB, k = blockIdx.y;
+    int c0 = (VOLUME_Z_FAST ? blockIdx.x : blockIdx.z) * ZT;
+    int b0 = (VOLUME_Z_FAST ? blockIdx.y : blockIdx.x) * TB;
+    int k = VOLUME_Z_FAST ? blockIdx.z : blockIdx.y;
     unsigned tid = threadIdx.x;
     // Stripes of ZT / 8 cells spread the four z lanes across shared-memory banks.
     int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 8);
@@ -1409,7 +1537,7 @@ __device__ __forceinline__ void sep_adjoint_cached_tile(
     }
     // R is no longer read by the accumulation phase. Reuse it to
     // exchange the register-z owners for contiguous-x output lanes.
-    if (a == 1) {
+    if (!VOLUME_Z_FAST && a == 1) {
         __syncthreads();
         #pragma unroll
         for (int j = 0; j < ZT / 4; ++j) {
@@ -1427,11 +1555,11 @@ __device__ __forceinline__ void sep_adjoint_cached_tile(
     int na = a == 0 ? nx : ny;
     if (my_b < nb && k < na) {
         int ix = a == 0 ? k : my_b, iy = a == 0 ? my_b : k;
-        long base = ((long)(c0 + my_c) * ny + iy) * nx + ix;
+        long base = volume_index(ix, iy, c0 + my_c, nx, ny, nz);
         #pragma unroll
         for (int j = 0; j < ZT / 4; ++j) {
             int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
-            if (c0 + my_c + offset < nz) vol[base + (long)offset * nx * ny] += acc[j];
+            if (c0 + my_c + offset < nz) vol[base + offset * (VOLUME_Z_FAST ? 1L : (long)nx * ny)] += acc[j];
         }
     }
 }
@@ -1482,7 +1610,9 @@ __device__ __forceinline__ void pair_sep_adjoint_cached_tile(
     __shared__ int2 all_foot[VMAX];
     int b = 1 - a;
     int nb = a == 0 ? ny : nx;
-    int c0 = blockIdx.z * ZT, b0 = blockIdx.x * TB, k = blockIdx.y;
+    int c0 = (VOLUME_Z_FAST ? blockIdx.x : blockIdx.z) * ZT;
+    int b0 = (VOLUME_Z_FAST ? blockIdx.y : blockIdx.x) * TB;
+    int k = VOLUME_Z_FAST ? blockIdx.z : blockIdx.y;
     unsigned tid = threadIdx.x;
     // Stripes of ZT / 8 cells spread the four z lanes across shared-memory banks.
     int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 8);
@@ -1641,7 +1771,7 @@ __device__ __forceinline__ void pair_sep_adjoint_cached_tile(
     }
     // R is no longer read by the accumulation phase. Reuse it to
     // exchange the register-z owners for contiguous-x output lanes.
-    if (a == 1) {
+    if (!VOLUME_Z_FAST && a == 1) {
         __syncthreads();
         #pragma unroll
         for (int j = 0; j < ZT / 4; ++j) {
@@ -1662,12 +1792,12 @@ __device__ __forceinline__ void pair_sep_adjoint_cached_tile(
     int na = a == 0 ? nx : ny;
     if (my_b < nb && k < na) {
         int ix = a == 0 ? k : my_b, iy = a == 0 ? my_b : k;
-        long base = ((long)(c0 + my_c) * ny + iy) * nx + ix;
+        long base = volume_index(ix, iy, c0 + my_c, nx, ny, nz);
         #pragma unroll
         for (int j = 0; j < ZT / 4; ++j) {
             int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
             if (c0 + my_c + offset < nz) {
-                long address = base + (long)offset * nx * ny;
+                long address = base + offset * (VOLUME_Z_FAST ? 1L : (long)nx * ny);
                 vol[address] += acc[j]; vol1[address] += acc1[j];
             }
         }
@@ -1683,4 +1813,17 @@ extern "C" __global__ void __launch_bounds__(256) pair_sep_adjoint_cached(
 {
     pair_sep_adjoint_cached_tile<32>(coeff, axis_box, nviews, a, img, img1, vol, vol1,
                                      nx, ny, nz, nu, nv);
+}
+// Exact dense axis-0/axis-2 permutation, tiled for coalesced reads and writes.
+extern "C" __global__ void transpose_xz(const float* src,float* dst,int nx,int ny,int nz) {
+    __shared__ float tile[32][33];
+    int x=blockIdx.x*32+threadIdx.x, z=blockIdx.y*32+threadIdx.y, y=blockIdx.z;
+    #pragma unroll
+    for(int j=0;j<32;j+=8) if(x<nx && z+j<nz)
+        tile[threadIdx.y+j][threadIdx.x]=src[((long)(z+j)*ny+y)*nx+x];
+    __syncthreads();
+    x=blockIdx.x*32+threadIdx.y; z=blockIdx.y*32+threadIdx.x;
+    #pragma unroll
+    for(int j=0;j<32;j+=8) if(x+j<nx && z<nz)
+        dst[((long)(x+j)*ny+y)*nz+z]=tile[threadIdx.x][threadIdx.y+j];
 }

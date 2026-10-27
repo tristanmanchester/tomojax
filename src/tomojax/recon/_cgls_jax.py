@@ -30,6 +30,13 @@ from tomojax.recon._projection import (
     resolve_geometry_projector,
 )
 from tomojax.recon._quadratic import gradient_energy, gradient_normal, regularization_normal
+from tomojax.recon._volume_storage import (
+    pack_volume,
+    resident_model,
+    restore_volume,
+    volume_shape,
+    voxel_spacing,
+)
 from tomojax.recon.cgls import CGLSConfig, resident_bytes, validate_model
 
 if TYPE_CHECKING:
@@ -59,11 +66,15 @@ def _running(state: _State, *, max_iters: jax.Array, threshold: jax.Array) -> ja
 
 
 def _checked_inputs(
-    poses: jax.Array, data: jax.Array, initial: jax.Array | None, grid: Grid
+    poses: jax.Array,
+    data: jax.Array,
+    initial: jax.Array | None,
+    grid: Grid,
+    model: str | ConeModel,
 ) -> tuple[jax.Array, jax.Array]:
     # Check inputs inside the solve: separate eager checks would each compile.
     if initial is None:
-        initial = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
+        initial = jnp.zeros(volume_shape(model, grid), dtype=jnp.float32)
     finite = (
         jnp.all(jnp.isfinite(data)) & jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(initial))
     )
@@ -125,10 +136,11 @@ def _solve(
             absolute_weights=True,
             split=split,
         )
-    initial, inputs_finite = _checked_inputs(poses, data, initial, grid)
+    initial = pack_volume(initial, model)
+    initial, inputs_finite = _checked_inputs(poses, data, initial, grid, model)
     residual = data if zero_start else data - forward(initial)
     damp2 = damping * damping
-    spacing = (grid.vx, grid.vy, grid.vz)
+    spacing = voxel_spacing(model, grid)
 
     penalty_gradient = partial(
         regularization_normal,
@@ -282,9 +294,10 @@ def _solve_streamed(
     normal, exact = normal_equation_operators(
         poses, grid, detector, backend, batch_size, model, joseph_interpolation
     )
-    x0 = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32) if initial is None else initial
+    initial = pack_volume(initial, model)
+    x0 = jnp.zeros(volume_shape(model, grid), jnp.float32) if initial is None else initial
     damp2 = damping * damping
-    spacing = (grid.vx, grid.vy, grid.vz)
+    spacing = voxel_spacing(model, grid)
     penalty = partial(
         regularization_normal, spacing=spacing, damping=damping, gradient_damping=gradient_damping
     )
@@ -471,6 +484,8 @@ def cgls(
     )  # fmt: skip
     if hosted is not None:
         return hosted
+    public_model = model
+    model = resident_model(model, backend)
     initial = None if init_x is None else _as_float32(init_x)
     if model == "joseph":
         from tomojax.core.joseph import validate_plane_geometry
@@ -528,11 +543,12 @@ def cgls(
         "initial_normal_residual_norm": float(first_norm),
         "normal_residual_tolerance": float(tolerance),
         "projector_backend": backend,
-        "projector_model": model,
+        "projector_model": public_model,
         "joseph_interpolation": cfg.joseph_interpolation if model == "joseph" else None,
         "views_per_batch": min(batch, n),
         "formulation": "streamed_normal_equations" if stream else "cgls",
         "damping": float(cfg.damping),
         "gradient_damping": float(cfg.gradient_damping),
     }
-    return (result.x if split is None else split.gather(result.x)), info
+    volume = result.x if split is None else split.gather(result.x)
+    return restore_volume(volume, model), info
