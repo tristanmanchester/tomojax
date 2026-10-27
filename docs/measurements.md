@@ -1223,7 +1223,7 @@ draw times exclude imports and reference loading. Finite-flat noise generates
 persistent row-specific errors, but sample-ring statistics and blind-judge
 indistinguishability remain unmeasured for this model.
 
-A stricter tail check on the same frozen split (commit `808d5903`, seed 705,
+A stricter tail check on the same frozen split (commit `ebfcd1b4`, seed 705,
 `shared/agent05-detector/noise_tails.py`) divides pixels into five first-half
 signal quintiles. RMS ratios remain within 20% for every group, but ESRF's
 excess-kurtosis discrepancy is 0.269–4.804, exceeding the 0.5 gate in four of
