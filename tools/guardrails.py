@@ -41,6 +41,7 @@ RATCHET_FILE = OUT / "ratchets.json"
 PUBLIC_PACKAGES = (
     "tomojax",
     "tomojax.geometry",
+    "tomojax.evaluation",
     "tomojax.recon",
     "tomojax.io",
     "tomojax.alignment",

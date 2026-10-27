@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+`tomojax.evaluation` provides frozen interleaved-view, angular-block and
+detector-block splits, guarded training masks and additive held-out scores
+from caller-supplied matched predictions.
+
 Raw NXtomo loading discovers nested entries and external detector links, accepts
 exact integer-valued floating-point frame labels, and treats missing pixel
 calibration as requiring an explicit detector.

@@ -3,6 +3,7 @@
   "exported_names": {
     "tomojax": 23,
     "tomojax.geometry": 18,
+    "tomojax.evaluation": 2,
     "tomojax.recon": 26,
     "tomojax.io": 7,
     "tomojax.alignment": 6,
