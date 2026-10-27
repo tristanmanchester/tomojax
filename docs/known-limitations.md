@@ -77,6 +77,11 @@ supply extra calibration constraints, but `Rings` does not fit those constraints
 - External HDF5 links require readable backing files at their recorded paths.
   The loader reports missing detector sources; it does not repair damaged files
   or guess relocated links.
+- Flat/dark correction needs at least one detector pixel with resolved
+  illumination. If none exists, supply illuminated flats and matching darks,
+  or include an illuminated region in the crop. Unilluminated margins and
+  bracketed interior gaps remain supported; their correction does not certify
+  that the supplied calibration describes the acquisition.
 
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).

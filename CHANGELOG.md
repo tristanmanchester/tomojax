@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Flat/dark correction reports missing illumination when no detector pixel has
+a resolved calibration, rather than returning a finite zero-attenuation scan.
+Partially illuminated detector margins and interior gaps keep their correction.
+
 Python imports default to JAX's growing GPU memory pool, preserving explicit
 allocator settings, so CUDA libraries can initialize without a 75% eager
 reservation. Automatic reconstruction recognizes both `Rings` and `Stripes`
