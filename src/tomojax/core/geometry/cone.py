@@ -320,14 +320,20 @@ class ConeSegments:
     ----------
     segments : tuple of ScanGeometry
         Nonempty cone-beam geometries in acquisition order, sharing a grid and pixel sizes.
+    trajectory_lengths : tuple of int, optional
+        View counts of independent acquisition trajectories, in order. Empty
+        defaults to one trajectory per segment. Calibration arrangements may
+        change within a trajectory: a single acquisition with per-view detector
+        offsets has one trajectory but many geometry segments.
 
     Raises
     ------
     ValueError
-        If segments are absent, not cone beams, or disagree in grid or detector sampling.
+        If segments disagree in sampling, or trajectory counts do not partition the views.
     """
 
     segments: tuple[ScanGeometry, ...]
+    trajectory_lengths: tuple[int, ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
         if not self.segments:
@@ -343,6 +349,11 @@ class ConeSegments:
                 raise ValueError("ConeSegments' detectors have the same pixel count")
             if (detector.du, detector.dv) != (shared.du, shared.dv):
                 raise ValueError("ConeSegments' detectors have the same pixel pitch")
+        counts = tuple(len(segment.angles) for segment in self.segments)
+        lengths = self.trajectory_lengths or counts
+        if any(n <= 0 for n in lengths) or sum(lengths) != sum(counts):
+            raise ValueError("trajectory_lengths must positively partition all views")
+        object.__setattr__(self, "trajectory_lengths", tuple(lengths))
 
     @property
     def grid(self) -> Grid:

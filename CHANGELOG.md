@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+`Rings` no longer imputes detector columns from low angular variation, which
+can also be produced by object structure. Calibration-backed gap interpolation
+remains in raw-frame correction; post-log stuck columns are not repaired.
+
+Cone acquisition trajectories are recorded independently of calibration segments.
+Zeiss per-view arrangements form one acquisition trajectory; ring correction
+retains angular neighbours across those arrangements without joining separate scans.
+Trajectory groups survive scan selection, cropping, poses and NXtomo persistence.
+
+Centre-estimation failures explain the angular-neighbour requirement when
+near-opposite views need interpolation, including sparsely sampled previews.
+
+Flat/dark correction reports missing illumination when no detector pixel has
+a resolved calibration, rather than returning a finite zero-attenuation scan.
+Partially illuminated detector margins and interior gaps keep their correction.
+
 Python imports default to JAX's growing GPU memory pool, preserving explicit
 allocator settings, so CUDA libraries can initialize without a 75% eager
 reservation. Automatic reconstruction recognizes both `Rings` and `Stripes`
@@ -17,6 +33,7 @@ references instead of declaring every readable acquisition valid. Missing-input
 errors include applicable CLI preprocessing options. Inspection and loading
 share axial-centre seed preparation through `ProjectionDataset.prepare_center_seed`:
 a centre awaiting data-driven inference is not reported as missing external input.
+Loading a metadata-only file requests an acquisition containing projections.
 
 `tomojax.evaluation` provides frozen interleaved-view, angular-block and
 detector-block splits, guarded training masks and additive held-out scores
@@ -25,6 +42,18 @@ from caller-supplied matched predictions.
 Raw NXtomo loading discovers nested entries and external detector links, accepts
 exact integer-valued floating-point frame labels, and treats missing pixel
 calibration as requiring an explicit detector.
+
+`tomojax.datasets.DetectorModel` calibrates a count-domain Poisson/read-noise model
+from repeated flats and darks, simulates finite calibration references and explicit
+gain/offset changes, and returns conditional systematic-error truth. Calibration
+propagates flux normalization through shot, read and shared dark-reference noise.
+
+HDF5 dispatch accepts `.nx` containers. When no detector frames are readable,
+unresolved external root links report the files and datasets to restore.
+
+Zeiss loading uses recorded image streams instead of the planned frame count,
+supporting consistent interrupted acquisitions. Missing image streams report
+the required complete acquisition file instead of exposing an iterator failure.
 
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.

@@ -37,6 +37,7 @@ GEOMETRY_KEYS = frozenset(
     {
         "cone_beam",
         "cone_segments",
+        "trajectory_lengths",
         "tilt_deg",
         "tilt_about",
         "axis_unit_lab",
@@ -368,11 +369,21 @@ class Scan:
             raise ValueError("Scan.combine needs at least one scan")
         grid = scans[0].grid
         parts = []
+        trajectories = []
         for scan in scans:
             geometry = rebuild(scan.geometry, grid=grid)
-            parts.extend(geometry.segments if isinstance(geometry, ConeSegments) else (geometry,))
+            parts.extend(_calibration_parts(geometry))
+            layout = geometry
+            while (base := getattr(layout, "base", None)) is not None:
+                layout = base
+            trajectories.extend(
+                layout.trajectory_lengths
+                if isinstance(layout, ConeSegments)
+                else (len(layout.angles),)
+            )
         projections = np.concatenate([np.asarray(s.projections) for s in scans])
-        return cls(projections, ConeSegments(tuple(parts)), name=name or scans[0].name)
+        geometry = ConeSegments(tuple(parts), trajectory_lengths=tuple(trajectories))
+        return cls(projections, geometry, name=name or scans[0].name)
 
     def binned(self, factor: int) -> Scan:
         """The scan with ``factor x factor`` detector pixels averaged into one.
@@ -471,6 +482,32 @@ def view_indices(views: slice | Sequence[int] | np.ndarray, count: int) -> np.nd
     return chosen.astype(np.int64)
 
 
+def _calibration_parts(geometry: ScanGeometry) -> tuple[ScanGeometry, ...]:
+    """Flatten calibration blocks once, slicing enclosing pose tables in acquisition order."""
+    from tomojax._data.geometry_meta import AugmentedGeometry
+    from tomojax.geometry import ConeSegments
+
+    if isinstance(geometry, ConeSegments):
+        return geometry.segments
+    base = getattr(geometry, "base", None)
+    if base is None:
+        return (geometry,)
+    parts = _calibration_parts(base)
+    if len(parts) == 1 and parts[0] is base:
+        return (geometry,)
+    if not is_dataclass(geometry) or isinstance(geometry, type):
+        raise TypeError(f"cannot split a {type(geometry).__name__} geometry")
+    wrapped, start = [], 0
+    for part in parts:
+        stop = start + len(part.angles)
+        fields: dict[str, Any] = {"base": part}
+        if isinstance(geometry, AugmentedGeometry):
+            fields["align_params"] = np.asarray(geometry.align_params)[start:stop]
+        wrapped.append(replace(geometry, **fields))
+        start = stop
+    return tuple(wrapped)
+
+
 def views_of(geometry: ScanGeometry, kept: np.ndarray) -> ScanGeometry:
     """``geometry`` of the views ``kept`` (increasing indices), wrappers and segments kept."""
     from tomojax._data.geometry_meta import AugmentedGeometry
@@ -484,7 +521,12 @@ def views_of(geometry: ScanGeometry, kept: np.ndarray) -> ScanGeometry:
             if len(mine):
                 parts.append(views_of(segment, mine))
             start += n
-        return parts[0] if len(parts) == 1 else ConeSegments(tuple(parts))
+        stops = np.searchsorted(kept, np.cumsum(geometry.trajectory_lengths))
+        counts = np.diff(np.r_[0, stops])
+        trajectories = tuple(int(n) for n in counts if n)
+        if len(parts) == 1 and len(trajectories) == 1:
+            return parts[0]
+        return ConeSegments(tuple(parts), trajectory_lengths=trajectories)
     if isinstance(geometry, AugmentedGeometry):
         return replace(
             geometry,
@@ -578,7 +620,11 @@ def _describe_segments(
         _, meta, _, _ = describe(segment)
         detector = segment.detector.to_dict()
         entries.append({"views": len(segment.angles), "detector": detector, **meta})
-    meta = {"cone_beam": entries[0]["cone_beam"], "cone_segments": entries}
+    meta: dict[str, object] = {
+        "cone_beam": entries[0]["cone_beam"],
+        "cone_segments": entries,
+        "trajectory_lengths": list(geometry.trajectory_lengths),
+    }
     from tomojax._data.geometry_meta import detector_poses
 
     table = detector_poses(geometry)  # one frame for every segment's poses
@@ -657,7 +703,7 @@ def rebuild(
 
     if isinstance(geometry, ConeSegments):
         segments = (rebuild(s, grid=grid, detector=detector) for s in geometry.segments)
-        return ConeSegments(tuple(segments))
+        return replace(geometry, segments=tuple(segments))
     if not is_dataclass(geometry) or isinstance(geometry, type):
         raise TypeError(f"cannot rebuild a {type(geometry).__name__} geometry")
     inner = getattr(geometry, "base", None)

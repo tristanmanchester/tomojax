@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 
 type PathLike = str | Path
 
-_HDF5_SUFFIXES = {".nxs", ".h5", ".hdf", ".hdf5"}
+_HDF5_SUFFIXES = {".nx", ".nxs", ".h5", ".hdf", ".hdf5"}
 _TIFF_SUFFIXES = TIFF_SUFFIXES
 
 
@@ -363,7 +363,7 @@ class ProjectionDataset:
 def load_dataset(path: PathLike) -> ProjectionDataset:
     """Load a standard TomoJAX projection dataset.
 
-    Supported direct inputs are NXtomo/HDF5 (`.nxs`, `.h5`, `.hdf`, `.hdf5`) and TomoJAX
+    Supported direct inputs are NXtomo/HDF5 (`.nx`, `.nxs`, `.h5`, `.hdf`, `.hdf5`) and TomoJAX
     `.npz` payloads. TIFF stacks need explicit angle metadata, so use
     :func:`load_tiff_stack`.
 
@@ -626,6 +626,7 @@ def _merge_geometry_metadata_dict(
         "detector_roll_deg",
         "cone_beam",
         "cone_segments",
+        "trajectory_lengths",
     ):
         value = geometry_metadata.get(key)
         if value is not None:

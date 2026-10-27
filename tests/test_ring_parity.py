@@ -6,7 +6,6 @@ import pytest
 from tomojax.corrections._ring_parity import _plan, regularize
 from tomojax.corrections._rings import (  # check-public-imports: allow-private
     _feasible_response,
-    _fill,
     _invert,
 )
 
@@ -39,12 +38,6 @@ def test_parity_prior_preserves_odd_fields_and_units(size: int, axis: float) -> 
     for scale in [0.01, 100]:
         rescaled = np.asarray(regularize(profile * scale, axis, "significance")) / scale
         assert np.linalg.norm(rescaled - fixed) < 2e-6 * np.linalg.norm(fixed)
-
-
-def test_stuck_column_fit_does_not_invent_variation_in_constant_views() -> None:
-    profile = np.random.default_rng(7543).uniform(0, 3, 256).astype(np.float32)
-    values = jnp.asarray(np.broadcast_to(profile, (180, 256)))
-    np.testing.assert_array_equal(_fill(values), values)
 
 
 @pytest.mark.parametrize("beta", [0.0, 0.1, 1.0, 10.0, 100.0])

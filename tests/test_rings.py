@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,8 +7,31 @@ import pytest
 import tomojax as tj
 from tomojax.corrections import Rings
 from tomojax.geometry import ConeSegments
+from tomojax.geometry.api import view_frames
 
 N = 256
+
+
+@pytest.mark.parametrize("groups", [(32,), (16, 16)])
+def test_calibration_subdivision_preserves_acquisition_trajectories(groups) -> None:
+    base = _geometry(180.0, 32)
+    parts = tuple(
+        tj.ConeGeometry(
+            base.grid,
+            replace(base.detector, center=(shift, 0)),
+            base.angles[start : start + 16],
+            tj.ConeBeam(100.0, 200.0),
+        )
+        for start, shift in [(0, 0.0), (16, 0.5)]
+    )
+    coarse = ConeSegments(parts, trajectory_lengths=groups)
+    fine = ConeSegments(
+        tuple(replace(part, angles=(angle,)) for part in parts for angle in part.angles),
+        trajectory_lengths=groups,
+    )
+    np.testing.assert_array_equal(view_frames(fine), view_frames(coarse))
+    data = jnp.asarray(_errors(_sinogram(180.0, 32))[:, None], jnp.float32)
+    np.testing.assert_array_equal(Rings(fine).apply(data), Rings(coarse).apply(data))
 
 
 def _sinogram(turn: float, views: int, offset: float = 0.0) -> np.ndarray:
@@ -46,6 +71,14 @@ def test_removes_column_errors(turn: float) -> None:
     assert step.mirror_axis == (None if turn == 180.0 else (N - 1) / 2)
     fixed = np.asarray(step.apply(jnp.asarray(measured[:, None], jnp.float32)))[:, 0]
     assert _rms_offset(fixed, clean) < 0.4 * _rms_offset(measured, clean)
+
+
+@pytest.mark.parametrize("turn", [180.0, 360.0])
+def test_response_map_preserves_equal_column_observations(turn: float) -> None:
+    measured = _sinogram(turn, 32).astype(np.float32)
+    measured[:, N // 2] = 0.3
+    fixed = np.asarray(Rings(_geometry(turn, 32)).apply(jnp.asarray(measured[:, None])))
+    np.testing.assert_array_equal(fixed[:, 0, N // 2], fixed[0, 0, N // 2])
 
 
 def test_detector_reversal_and_flat_data() -> None:

@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import tomojax as tj
 from tomojax.geometry import Detector, Grid
 from tomojax.geometry.api import detector_grid_from_geometry_inputs
 from tomojax.io import (
@@ -305,10 +306,12 @@ def test_validate_dataset_reports_schema_failures(tmp_path: Path) -> None:
     invalid = tmp_path / "invalid.nxs"
     write_projection_dataset(valid)
     with h5py.File(invalid, "w") as handle:
-        handle.create_group("not_entry")
+        handle.create_group("entry1")
 
     assert validate_dataset(valid)["issues"] == []
     assert "no stack of frames found" in validate_dataset(invalid)["issues"][0]
+    with pytest.raises(ValueError, match="supply an acquisition file.*not metadata alone"):
+        tj.load(invalid)
 
 
 def test_validate_dataset_reports_scalar_axis_datasets(tmp_path: Path) -> None:

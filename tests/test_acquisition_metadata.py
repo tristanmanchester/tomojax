@@ -424,3 +424,16 @@ def test_generic_motor_without_units_requires_explicit_angles(tmp_path):
         tj.load_frames(path, detector=tj.Detector(2, 2, 1, 1), darks=0)
     frames = tj.load_frames(path, angles=[11, 72], detector=tj.Detector(2, 2, 1, 1), darks=0)
     np.testing.assert_array_equal(frames.geometry.angles, [11, 72])
+
+
+@pytest.mark.parametrize("suffix", [".nx", ".h5"])
+def test_unresolved_external_roots_do_not_hide_usable_frames(tmp_path, suffix):
+    path = tmp_path / ("master" + suffix)
+    with h5py.File(path, "w") as file:
+        file["entry"] = h5py.ExternalLink("missing.h5", "/entry")
+    for reader in (tj.load, tj.load_frames):
+        with pytest.raises(ValueError, match="missing.h5:/entry.*Restore"):
+            reader(path)
+    with h5py.File(path, "a") as file:
+        file["other/data"] = np.ones((3, 2, 2), np.float32)
+    assert locate_frames(str(path)).stack.shape == (3, 2, 2)

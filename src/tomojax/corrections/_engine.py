@@ -329,6 +329,9 @@ def flat_fields(
     three standard errors of the two calibration means. Elsewhere the ratio is
     noise: ``first_pass`` interpolates interior gaps along each detector row and
     takes pixels outside its measured span as no absorption.
+    At least one pixel must have measured illumination: without one, neither
+    a transmission ratio nor an interpolation is determined by the calibration.
+    An entirely unresolved calibration raises an input error, not an empty scan.
     """
     if darks is None and flats is not None:
         LOG.warning("no dark fields: correcting with a dark field of zero")
@@ -379,6 +382,12 @@ def flat_fields(
         epsilon, 3 * np.sqrt(variance + dark_variance * dark_scale[:, None, None] ** 2)
     )
     usable = cast("np.ndarray", (np.isfinite(light) & (light > floor)).all(axis=0))
+    if not np.any(usable):
+        raise ValueError(
+            "No detector pixels have resolved illumination above the dark field: "
+            "supply illuminated flats=... and matching darks=... (CLI --flats/--darks), "
+            "or include an illuminated detector region in the crop"
+        )
     found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(~usable))}
     fields = Fields(light.astype(np.float32), sets, dark.astype(np.float32), usable)
     return fields, (Correction("flat_dark", settings, found),)

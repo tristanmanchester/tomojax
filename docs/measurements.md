@@ -26,12 +26,13 @@ repository; each result names the command, commit and date to rerun it.
 
 ## Raw NXtomo loading and held-out split integrity
 
-Measured 2026-10-27 on `a4a969cb` (loading) and `191c0882` (evaluation),
+Measured 2026-10-27 on `a4a969cb` (loading) and `2626e6e5` (evaluation),
 using the local Diamond files. These are functional/integrity tests, not image
 or pose accuracy measurements. Commands in the lab shared directory are
 `JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/loader_kill.py`
 (the metadata/pixel section) and
-`JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/evaluation_kill.py`.
+`JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 uv run --no-sync python
+shared/agent02/evaluation_kill.py`.
 
 - I13 NXtomo scans 159791 and 159815 classify respectively 37/80/80 and
   3001/200/100 sample/flat/dark frames. First-sample row1080 columns441:449
@@ -42,8 +43,8 @@ or pose accuracy measurements. Commands in the lab shared directory are
   interleaved-view, angular-block and detector-block splits. Changing every
   excluded value to 1234 leaves a fixed four-coefficient least-squares fit
   bitwise unchanged. Streamed versus dense squared-error relative differences
-  are 1.96e-16, 0 and 3.00e-16. Cold/warm fit-and-score times are 32.7/32.7,
-  56.4/29.5 and 24.0/22.7 ms; peak RSS 68 MiB, GPU 0. This checks held-out
+  are 1.96e-16, 0 and 3.00e-16. Cold/warm fit-and-score times are 15.29/13.51,
+  13.00/13.25 and 9.95/8.46 ms; peak RSS 69.37 MiB, GPU 0. This checks held-out
   accounting, not tomographic reconstruction or stopping-rule effectiveness.
 
 The [held-out guide](held-out-evaluation.md) describes the split and leakage
@@ -1191,3 +1192,43 @@ uses the same model to simulate and reconstruct: it shows the API, not
 accuracy. The [historical DIAD laminography images](../images/README.md#historical-real-data-illustrations)
 show qualitative use on real data; their raw scan and configuration are not
 bundled, so they cannot be reproduced.
+
+## Calibrated detector count noise
+
+`tomojax.datasets.DetectorModel` estimates effective photon gain and read noise
+from repeated flats/darks and draws Poisson/read noise before flat correction.
+The following **T2 held-out-flat** check calibrates on the first temporal half
+and evaluates independent adjacent-frame differences in the second half. It
+measures noise, not reconstruction accuracy or complete ring realism.
+
+On 2026-10-27, commit `b608d187`, seed 705, the first/repeated calls generated
+100 flat exposures on a 16-row cut. Both observed and generated log differences
+used the same column high-pass (Gaussian sigma 8, 32-column edge exclusion).
+
+| Scan and training rows | Simulated/observed RMS | Adjacent-row correlation error | First/repeated draw (s) |
+|---|---:|---:|---:|
+| I13 159815, 1080:1096, columns 441:1869 | 0.9601 | -0.0095 | 0.113/0.113 |
+| I12 3339629, 1048:1064, all columns | 1.0022 | -0.0085 | 0.216/0.213 |
+| ESRF bamboo reduced, 262:278, all columns | 1.0019 | -0.0395 | 0.052/0.050 |
+
+All pass the frozen RMS-within-20% and correlation-error-within-0.1 thresholds.
+An equally calibrated independent Gaussian baseline also passes; these data do
+not require a more complicated spatial noise model at those tolerances. ESRF
+has one dark frame: its read noise is explicitly assumed zero, not measured.
+The effective gain can absorb unseparated noise under that assumption.
+
+Command: `LAB_ARTIFACTS=artifacts/agent05-count-statistics JAX_PLATFORMS=cpu uv run
+--no-sync python shared/agent05-detector/count_statistics_flux.py` in lab run
+`tomojax-20261027a`. The combined run used 620 MiB peak host RSS and no GPU memory;
+draw times exclude imports and reference loading. Finite-flat noise generates
+persistent row-specific errors, but sample-ring statistics and blind-judge
+indistinguishability remain unmeasured for this model.
+
+A stricter tail check on the same frozen split (commit `b608d187`, seed 705,
+`shared/agent05-detector/noise_tails_flux.py`) divides pixels into five first-half
+signal quintiles. RMS ratios remain within 20% for every group, but ESRF's
+excess-kurtosis discrepancy is 0.300–4.811, exceeding the 0.5 gate in four of
+five groups. I12 and I13 pass all five groups, with maximum discrepancies
+0.023 and 0.390. The model therefore fails ESRF's tail-distribution test despite
+matching its RMS; sparse transient contamination is not represented by its
+Poisson/read model.

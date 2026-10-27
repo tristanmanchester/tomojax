@@ -45,6 +45,7 @@ _GEOMETRY_PASSTHROUGH: dict[str, Callable[[Any], Any]] = {
     "tilt_about": str,
     "cone_beam": lambda value: value,
     "cone_segments": lambda value: value,
+    "trajectory_lengths": lambda value: value,
     "axis_unit_lab": lambda value: value,
     "detector_roll_deg": float,
 }

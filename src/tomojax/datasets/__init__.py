@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tomojax.datasets._impl.artefacts import SimulationArtefacts
+from tomojax.datasets._impl.detector import DetectorModel, DetectorSimulation
 from tomojax.datasets._impl.phantoms import (
     blobs,
     cube,
@@ -21,6 +22,8 @@ from tomojax.datasets._impl.simulate import (
 )
 
 __all__ = [
+    "DetectorModel",
+    "DetectorSimulation",
     "SimConfig",
     "SimulatedData",
     "SimulationArtefacts",
