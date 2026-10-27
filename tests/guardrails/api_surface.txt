@@ -770,6 +770,41 @@ def tomojax.alignment.alignment_plan(
     ) -> 'AlignmentPlan'
 
 # tomojax.datasets
+class tomojax.datasets.DetectorModel(
+        *,
+        signal: 'ArrayLike',
+        dark: 'ArrayLike',
+        photon_gain: 'float',
+        read_noise: 'float',
+    ) -> None
+    .from_flats(
+        cls,
+        flats: 'ArrayLike',
+        darks: 'ArrayLike',
+        *,
+        read_noise: 'float | None' = None,
+    ) -> 'DetectorModel'
+    .simulate(
+        self,
+        line_integrals: 'ArrayLike',
+        *,
+        flat_frames: 'int',
+        dark_frames: 'int',
+        seed: 'int',
+        gain_change: 'ArrayLike' = 1.0,
+        offset_change: 'ArrayLike' = 0.0,
+    ) -> 'DetectorSimulation'
+class tomojax.datasets.DetectorSimulation(
+        *,
+        projections: 'NDArray[np.float64]',
+        expected: 'NDArray[np.float64]',
+        ideal: 'NDArray[np.float64]',
+        counts: 'NDArray[np.float64]',
+        flat: 'NDArray[np.float64]',
+        dark: 'NDArray[np.float64]',
+        seed: 'int',
+        model: 'DetectorModel',
+    ) -> None
 class tomojax.datasets.SimConfig(
         *,
         nx: 'int',
