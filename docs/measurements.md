@@ -161,6 +161,126 @@ their quality gates. The correctness repair is not a speed improvement.
 LAB_ARTIFACTS=OUTPUT uv run --no-sync python ../../shared/agent08/rings/paired_gpu.py
 ```
 
+### Calibration-backed gaps and response-only correction
+
+`Rings` fits a scalar response map for each detector column; it does not infer
+missing measurements from low angular variation. Raw flat/dark calibration
+interpolates bracketed pixels without measured illumination in transmission.
+On Elettra TomoBank 00024, row 1024, all 400 views and 2048 columns, the maximum
+known off-axis Gaussian sinogram alteration is 0.012812 on `c46c52e3` (2026-10-27,
+seed 9027, radii 0.35/0.7, widths 2/8 pixels). The detector centre is nominal,
+not independently calibrated. Axis-centred probes remain ambiguous. An
+independent exact-source CPU replay gives first/warm correction times
+0.701/0.039 s and peak host memory 956 MiB (no GPU); this is not a paired
+speed comparison.
+
+Six I13 159815 native-row comparisons use all 3001 recorded views, columns
+441:1872, axis column 718.5, default flat/dark/log correction and pixel-unit
+1431² ramp FBP. The native radial proxy uses a 15-pixel trend and the common
+uncorrected-image scale; it includes circular object structure and is **not
+reconstruction accuracy or Savu agreement**. Analytic Gaussian increments
+use radius 0.7, widths 2/8, peak 0.05 and the third azimuth draw from seed 9027.
+
+| Native row | Radial proxy, Rings | Radial proxy, Algotom | Maximum image-increment alteration, Rings | Algotom |
+|---|---:|---:|---:|---:|
+| 500 | .003057 | .006196 | .173830 | .314045 |
+| 690 | .002455 | .006707 | .088688 | .252735 |
+| 780 | .002870 | .008635 | .075554 | .260407 |
+| 1060 | .004081 | .011083 | .070758 | .277029 |
+| 1080 | .003170 | .014322 | .066621 | .238971 |
+| 1470 | .003597 | .009529 | .100141 | .206984 |
+
+Both methods fail the 5% structure-preservation gate on every row despite
+lower radial energy. Rings' first/warm correction is 9.10–11.44 s and
+0.108–0.124 s per row in this sequential run; these timings are not a balanced speed comparison. GPU scoring
+takes 139.08 s with peak GPU/host memory 2770/2300 MiB; CPU input/reference
+preparation takes 287.70 s separately. Full temporary arrays are deleted.
+
+A separate finite-reference injection on I13 159815 row 1080 uses all 2560
+columns, 375 views (raw IDs 200:3200:8), centre 120, and the actual 100+100
+flat/100 dark acquisition schedule. For seeds 70540–70543, the reconstructed
+known-error RMS retained by Rings+FBP is .831439/.479073/.811468/.686370 of
+the uncorrected error. This measures added-error carry-through, **not the
+fraction of native rings remaining**. Source `c46c52e3` and detector model
+`97407af5` use measured gain 1.78546 and read noise 4.38286 ADU, with no added
+sample noise. CPU correction first/warm is 3.752/0.180–0.186 s; FBP first/warm
+is 0.786/0.631–0.668 s. Total including IO is 31.66 s, peak host memory
+1560 MiB, with no GPU use.
+The same seed 70540 with all 3001 views retains 0.840656 of known image-error
+RMS (`a9d0e716`, numerically unchanged Rings on `0199b919`). This full-view
+control takes 46.84 s CPU/3277 MiB, no GPU; correction first/second calls take
+7.078/1.575 s and FBP 6.557/5.727 s. It is one seed, not a four-seed transfer.
+
+Independent analytic raw-count controls (seeds 916001/916003, clean/stable
+0.1 gain/four dead single pixels/four dead eight-pixel blocks, with and without
+noise) expose another limitation: calibration-only image NRMSE medians are
+.149620/.149977/.151859/.279746, while applying Rings gives
+.257742/.258001/.258441/.320091. Recovering calibration gaps does not make
+subsequent response estimation harmless. These are analytic chord truths,
+not projections from the reconstruction operator or labelled native dead
+pixels. The control takes 2.59 s CPU/803 MiB, without a separate warm run or
+GPU use.
+
+Measured on `c46c52e3`, 2026-10-27. Commands use this run's external shared
+harness and its archived `657709f2` comparison module. Set `LAB_ARTIFACTS`
+to a scoring-output directory; native preparation uses the fixed directory
+shown below, and native scoring deletes its staged arrays:
+
+```bash
+JAX_PLATFORMS=cuda,cpu FILL_MODE=removed uv run --no-sync python ../../shared/agent08/rings/fill_ablation.py
+LAB_ARTIFACTS=../../artifacts/agent08-fill-native-prep JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/fill_native_prepare.py
+JAX_PLATFORMS=cuda,cpu uv run --no-sync python ../../shared/agent08/rings/fill_native_score.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/fill_calibration_chain.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent05-detector/carry_through.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent05-detector/carry_fullviews.py
+```
+
+## Cone-setup aliases and a conditional calibration test
+
+Geometry-only checks on recorded Nikon crystals-in-clay, Zeiss CuO2-B and
+Walnut 1 V1–V3 ray bundles expose aliases before any image fit. With an
+independent unrestricted six-DOF pose per view, translating each source and
+its detector together (including source-radius or orbit-height changes) can
+be absorbed by the poses. Scaling source-to-detector displacement, pixel
+pitch and detector offsets together leaves every ray unchanged even without
+a pose update. The maximum residual unit-ray RMS after rigid compensation is:
+
+| Recorded geometry | Radius/height camera-translation aliases | Detector homothety |
+|---|---:|---:|
+| Nikon clay, bin 4 | 8.84e−15 | 9.13e−15 |
+| Zeiss CuO2-B, bin 4 | 5.38e−16 | 5.11e−16 |
+| Walnut 1 V1–V3, bin 2 | 1.01e−14 | 1.01e−14 |
+
+These are exact geometric identities checked numerically, **not image
+accuracy, Fisher information or confidence intervals**. Restricted five-DOF
+poses can have different aliases. A flat square-pixel camera modulo a rigid
+pose retains focal length in pixels and two principal-point coordinates;
+image content and view diversity still determine whether those are estimable.
+Known pixel pitch and detector distance alone do not fix object scale when
+source positions and the object can scale together. A known source baseline
+or object length is needed to interpret absolute distances in that case.
+
+A fixed-pose Walnut 1 three-orbit experiment fits only a common focal-plane
+distance scale, preserving principal points, source positions and detector
+pitch. Its reciprocal source-chord rays require no full-panel zero extension.
+Independent analytic Gaussian projections at scales .99/1/1.01 recover the
+scale within 3.24e−9 in a noiseless control. Native data choose scale 1.000537;
+test/raw correspondence MSE is **1.000339**, failing the required 1% improvement.
+This uses 675 pairs per fold from geometry rows 0::40 and 20::40, bin 2; the
+folds were consumed by earlier experiments. It is not a fresh validation,
+matched-projector image test, free-pose self-calibration or uncertainty result.
+No focal correction is adopted from it.
+
+Measured 2026-10-27: geometric audit `ad7f9805`, 1.30 s CPU/317 MiB;
+focal experiment `c46c52e3`, 31.33 s CPU/734 MiB; neither uses the GPU.
+Commands use this run's external shared harness with `LAB_ARTIFACTS` set:
+
+```bash
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/calibration/gauge_audit.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/calibration/scale_gauge.py
+JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 uv run --no-sync python ../../shared/agent08/calibration/focal_reciprocity.py
+```
+
 ## Reconstruction against ASTRA
 
 Measured 2026-10-05 on commit `6fa1585`. The matrix has 27 cells: Gaussian,
