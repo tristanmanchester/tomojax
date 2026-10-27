@@ -151,12 +151,45 @@ def _fit(ranked: jax.Array, ref: jax.Array) -> tuple[jax.Array, jax.Array, jax.A
     return dm - beta * xm, beta, xm
 
 
+def _feasible_response(
+    q: jax.Array, ref: jax.Array, alpha: jax.Array, beta: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """Refit regularised coefficients to cover every observation on a stable branch.
+
+    For negative beta, derivative >= 1/2 requires p >= log(-2 beta).
+    Its image begins at alpha + h(beta), h = log(-2 beta) + beta + 1/2.
+    Concavity makes the tangent to h an upper bound. Projecting onto
+    alpha + tangent <= min(q) therefore guarantees an admissible inverse.
+    This is the least change in the reference regression's ridge Gram metric,
+    not a clipped output or an unconstrained fit followed by a rejected column.
+    """
+    x = -jnp.expm1(-ref)
+    w = jnp.exp(-jnp.minimum(ref, 50.0))
+    sw = w.sum(0)
+    xm = (w * x).sum(0) / sw
+    variance = (w * (x - xm) ** 2).sum(0) / sw + 1e-4
+    negative = jnp.where(beta < 0, beta, -1.0)
+    h = jnp.log(-2 * negative) + negative + 0.5
+    normal = 1 + 1 / negative - xm
+    excess = jnp.where(beta < 0, jnp.maximum(alpha + h - q.min(0), 0), 0)
+    amount = excess / (variance + normal * normal)
+    return alpha + amount * (normal * xm - variance), beta - amount * normal
+
+
 def _invert(q: jax.Array, alpha: jax.Array, beta: jax.Array) -> jax.Array:
-    """The line integrals ``p`` with ``p + alpha + beta (1 - exp(-p)) = q``, by Newton."""
-    p = q - alpha - beta * -jnp.expm1(-q)
-    for _ in range(3):
-        t = jnp.exp(-p)
-        p = p - (p + alpha + beta * (1.0 - t) - q) / (1.0 + beta * t)
+    """Invert an admissible response from monotone-branch Newton starting bounds."""
+    v = q - alpha
+    b = jnp.maximum(beta, jnp.finfo(q.dtype).tiny)
+    # For b > 0, U = max(v-b, 0) + log1p(b) is an upper bound when v >= 0.
+    # Substituting U into p = log(b) - log(p+b-v) supplies a useful lower bound.
+    logarithmic = jnp.log(b) - jnp.log(jnp.maximum(b - v, 0) + jnp.log1p(b))
+    positive = jnp.maximum(jnp.maximum(v / (1 + b), v - b), logarithmic)
+    negative = jnp.maximum(v, -jnp.log1p(jnp.maximum(-v, 0) / b))
+    # Positive beta is concave: start below the root. Negative beta is convex:
+    # v-beta starts above the root and stays on the fitted derivative >= 1/2 branch.
+    p = jnp.where(beta < 0, v - beta, jnp.where(v >= 0, positive, negative))
+    for _ in range(6):
+        p = p - (p - beta * jnp.expm1(-p) - v) / (1 + beta * jnp.exp(-p))
     return p
 
 
@@ -255,12 +288,12 @@ def _unsorted_row(
     out = _fill(q)
     taps = _quadratic_taps(6, 0)
     for _ in range(2):
-        level, beta, xm, il, ib, ml, mb = _fit_unsorted(
-            out, _correlate(out, taps), neighbours, weights
-        )
+        ref = _correlate(out, taps)
+        level, beta, xm, il, ib, ml, mb = _fit_unsorted(out, ref, neighbours, weights)
         level = _response_posterior(level, il, ml, taps, groups)
         beta = jnp.maximum(_response_posterior(beta, ib, mb, taps, groups), -0.5)
-        out = _invert(out, level - beta * xm, beta)
+        alpha, beta = _feasible_response(out, ref, level - beta * xm, beta)
+        out = _invert(out, alpha, beta)
     return out
 
 
@@ -350,15 +383,19 @@ def _row(
     out = _large_stripes(_fill(q), axis)
     for _ in range(2):
         fitted = jnp.concatenate([0.5 * (out[:1] + out[-1:]), out[1:-1]]) if closing else out
-        level, beta, xm, *_ = _fit_unsorted(fitted, _reference(fitted), neighbours, weights)
+        ref = _reference(fitted)
+        level, beta, xm, *_ = _fit_unsorted(fitted, ref, neighbours, weights)
         level = regularize(level, axis, "significance")
         beta = regularize(beta, axis, "significance")
-        out = _invert(out, level - beta * xm, beta)
+        alpha, beta = _feasible_response(out, ref, level - beta * xm, beta)
+        out = _invert(out, alpha, beta)
     ranked = jnp.sort(out, axis=0)
-    alpha, beta, xm = _fit(ranked, _correlate(ranked, _quadratic_taps(100, 1)))
+    ref = _correlate(ranked, _quadratic_taps(100, 1))
+    alpha, beta, xm = _fit(ranked, ref)
     level = regularize(alpha + beta * xm, axis, "wiener")
     beta = regularize(beta, axis, "wiener")
-    return _invert(out, level - beta * xm, beta)
+    alpha, beta = _feasible_response(out, ref, level - beta * xm, beta)
+    return _invert(out, alpha, beta)
 
 
 @dataclass(frozen=True)
@@ -521,6 +558,13 @@ class Rings(Step):
     when ``b`` is not zero. The fitted response is inverted in two passes;
     columns that do not follow the scene (stuck pixels) are first filled from
     their neighbours.
+
+    After statistical regularisation, a constrained coefficient refit ensures
+    that every observation has an inverse on a branch with response derivative
+    at least one half. It minimises coefficient displacement in the reference
+    regression metric subject to a conservative linear feasibility constraint;
+    corrected line integrals are not clipped. This also modifies the parity
+    prior where it would otherwise produce a noninvertible response.
 
     On a stationary parallel-beam scan over one evenly sampled full turn,
     each view is compared with a local quadratic through 30 columns either

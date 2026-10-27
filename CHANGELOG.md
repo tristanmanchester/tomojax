@@ -7,6 +7,11 @@ allocator settings, so CUDA libraries can initialize without a 75% eager
 reservation. Automatic reconstruction recognizes both `Rings` and `Stripes`
 correction records when reporting unassessed detector artefacts.
 
+Ring-response fits are constrained after regularisation to have a stable
+inverse for every observed value. Monotone-branch Newton initialization
+replaces the three-step inverse that could return arbitrary finite values
+when a fitted response had no real inverse.
+
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
 
