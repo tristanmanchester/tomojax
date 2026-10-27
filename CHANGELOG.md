@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Centre-estimation failures explain the angular-neighbour requirement when
+near-opposite views need interpolation, including sparsely sampled previews.
+
 Python imports default to JAX's growing GPU memory pool, preserving explicit
 allocator settings, so CUDA libraries can initialize without a 75% eager
 reservation. Automatic reconstruction recognizes both `Rings` and `Stripes`
