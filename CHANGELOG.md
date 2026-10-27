@@ -21,6 +21,7 @@ references instead of declaring every readable acquisition valid. Missing-input
 errors include applicable CLI preprocessing options. Inspection and loading
 share axial-centre seed preparation through `ProjectionDataset.prepare_center_seed`:
 a centre awaiting data-driven inference is not reported as missing external input.
+Loading a metadata-only file requests an acquisition containing projections.
 
 `tomojax.evaluation` provides frozen interleaved-view, angular-block and
 detector-block splits, guarded training masks and additive held-out scores
