@@ -401,7 +401,7 @@ def forward_into(
     )  # fmt: skip
     if z_fast:
         cuda_module(z_fast=True).get_function("cone_forward_z_fast")(
-            (views, -(-det.nu // 32), -(-det.nv // 16)), (512,), args[:-1]
+            (views, -(-det.nu // 8), -(-det.nv // 32)), (256,), args[:-1]
         )
         return
     suffix = "" if grid.nx * grid.ny * grid.nz <= 2**32 else "64"

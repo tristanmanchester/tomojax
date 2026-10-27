@@ -15,7 +15,7 @@ from tomojax.core.volume_layout import transpose_volume
 pytestmark = pytest.mark.gpu
 
 
-@pytest.fixture(params=[0, 60])
+@pytest.fixture(params=[0, 60, 90])
 def fixture(request):
     if not cone.use_cuda_cone():
         pytest.skip("requires CUDA cone kernels")

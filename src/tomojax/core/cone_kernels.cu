@@ -122,7 +122,8 @@ __device__ __forceinline__ bool dense_view_packet(
 
 #if VOLUME_Z_FAST
 namespace axis_packets {
-constexpr int GU=32, GV=16;
+// A warp follows one detector column along contiguous z samples.
+constexpr int GU=8, GV=32;
 // Planes k0..k1 of a ray, stepped by the warp through first..last (see ray_sum): plane
 // k lies sa apart, in-plane axes b and c sb and sc (SC1: c is the contiguous axis).
 template <int SC1>
