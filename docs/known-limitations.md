@@ -43,6 +43,20 @@ listed with how to check a result in the
   disagree with that derivative, and finite gradients alone do not prove
   reliable pose recovery.
 
+## Detector-ring correction
+
+`Rings` separates detector response from object structure statistically; it is
+not a no-harm guarantee. On four real parallel-scan cuts, known injected
+response fields retain 28–61% of their RMS after differential correction.
+Independent off-axis analytic structure increments change by up to 11.1% on
+I13 and 0.9–3.7% on the other three scans; see the
+[ring measurements](measurements.md#detector-response-and-structure-controls).
+Review corrected and uncorrected structures, especially on moving samples.
+A centred radial feature and an even detector error are indistinguishable in
+a stationary full turn: correction of that component depends on the method's
+prior, not information uniquely supplied by the scan. Natural motion can
+supply extra calibration constraints, but `Rings` does not fit those constraints.
+
 ## Data and geometry boundaries
 
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.

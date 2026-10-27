@@ -36,6 +36,61 @@ reference and independent analytic phantoms. The Zeiss vendor comparison uses
 a fixed registered valid-data region and an intensity-affine fit as an image
 diagnostic, not as a truth volume or an acceptance threshold.
 
+## Detector response and structure controls
+
+Measured 2026-10-27 on `e71f900f` for response injections and `271fd6e3` for
+independently scored structure increments. The `Rings` implementation is the
+same in both. These are T1 known perturbations of real line-integral data,
+not reconstruction accuracy or ring-energy rankings. All selected views are
+used; there is no held-out split, fitted registration or pose-gauge removal.
+Explicit detector centres are −5/−138/−15/0 pixels in table order; ESRF uses
+the panel centre, not an independently calibrated axis.
+
+| Scan and frozen cut | Injected-field residual, Rings | Injected-field residual, Algotom | Off-axis structure alteration, Rings | Off-axis structure alteration, Algotom |
+|---|---:|---:|---:|---:|
+| I13 159815, row 1080, columns 441:1869, every eighth of 3000 views | 0.2803 | 0.4033 | 0.1112 | 0.3501 |
+| I12 3339629, row 1080, all 2560 columns, every eighth view | 0.3917 | 0.2406 | 0.0085 | 0.2998 |
+| APS 2-BM `test_data.h5`, row 11, all 1536 columns, every eighth view | 0.6110 | 0.2302 | 0.0130 | 2.0735 |
+| ESRF bamboo, row 270, all 640 columns, every eighth view | 0.4370 | 0.1696 | 0.0367 | 0.3529 |
+
+Injected response is `a + b * (1 - exp(-q))`, with independent pixel fields,
+RMS 0.004 and 0.006, seeds 608–611, and paired sparse support. These amplitudes
+are declared perturbations, **not calibrated detector errors**. The field
+residual is `RMS(C(q + error) - C(q)) / RMS(error)`: existing structure damage
+common to both outputs cancels. Corresponding off-support ratios are
+0.246/0.298/0.221/0.307 for Rings and 0.299/0.202/0.208/0.152 for Algotom.
+Rings misses at least one of the frozen residual ≤0.5 and off-support ≤0.2
+gates on every scan. Even/odd injection variants also miss those gates.
+
+Structure increments are independent analytic Gaussian Radon traces, not
+TomoJAX projections: widths 2 and 8 pixels, peak 0.05, radii 0.35 and 0.7
+of detector half-width, azimuth seed 9027. The table gives the maximum
+`norm(C(q + increment) - C(q) - increment) / norm(increment)` per scan.
+Rings misses the 5% gate on I13; Algotom misses it on all four cuts. The I13
+maximum remains 10.5% with all 3000 views. Axis-centred Gaussians and annuli
+are reported separately as unidentifiable detector/object aliases, not as
+failures to recover uniquely determined structure.
+
+Algotom 1.7 uses its canonical transmission-domain chain,
+`-log(remove_all_stripe(exp(-q)))`, with unchanged defaults 3/51/21.
+Commands, from this run's checkout with its external `shared/` harness:
+
+```bash
+JAX_PLATFORMS=cpu ALGO_DOMAIN=transmission LAB_ARTIFACTS=OUTPUT \
+  uv run --no-sync python ../../shared/agent08/rings/injected_kill.py
+JAX_PLATFORMS=cpu LAB_ARTIFACTS=OUTPUT \
+  uv run --no-sync python ../../shared/agent02/ring_structure_score.py
+JAX_PLATFORMS=cpu LAB_ARTIFACTS=OUTPUT \
+  uv run --no-sync python ../../shared/agent02/i13_native_noharm.py
+```
+
+The response run's CPU first/warm correction times are 5.070/0.225 s,
+1.220/0.141 s, 1.235/0.038 s and 0.990/0.028 s for the table's scan order;
+these exclude imports and loading and do not follow the page's fresh-process protocol.
+Peak host RSS is 1281 MiB and GPU use is zero. No speed comparison is claimed.
+Final ring quality requires independent rows and seeds plus reconstruction
+metrics; these perturbation controls do not establish removal of native rings.
+
 ## Reconstruction against ASTRA
 
 Measured 2026-10-05 on commit `6fa1585`. The matrix has 27 cells: Gaussian,
