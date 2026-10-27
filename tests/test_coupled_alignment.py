@@ -569,6 +569,17 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     assert len(lowered) == 1  # no recompilation, nor dispatch of the oversized update
 
 
+@pytest.mark.parametrize(("available", "expected"), [(None, False), (831, False), (832, True)])
+def test_host_columns_reserve_krylov_workspace(monkeypatch, available, expected):
+    spec = SimpleNamespace(
+        grid=SimpleNamespace(nx=2, ny=2, nz=2),
+        detector=SimpleNamespace(nv=3, nu=4),
+        active_columns=(0, 3),
+    )
+    monkeypatch.setattr(_coupled_host, "device_free_memory_bytes", lambda **_: available)
+    assert _coupled_host.host_columns_fit(spec, 3) is expected
+
+
 def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
     checks = []
 
@@ -708,7 +719,8 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("smooth", [0.0, 0.03])
 @pytest.mark.parametrize("integrator", ["joseph", "joseph_cubic"])
-def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, integrator):
+@pytest.mark.parametrize("cache", [False, True])
+def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, integrator, cache):
     from dataclasses import replace
     from functools import partial
 
@@ -791,7 +803,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
     np.testing.assert_allclose(initial, derivative(probe), rtol=2e-6, atol=2e-8)
     p = jnp.zeros((3, 6), jnp.float32).at[:, 3].set(jnp.asarray([0.03, -0.01, 0.02]))
     expected = objective.update(p, x)
-    update, loss = _coupled_host.build_host_objective(arrays, replace(spec, cache_columns=False))
+    update, loss = _coupled_host.build_host_objective(arrays, replace(spec, cache_columns=cache))
     actual = update(p, x)
     assert actual.finite and expected.finite
     for a, e in zip(actual.increment, expected.increment, strict=True):

@@ -6,6 +6,7 @@ from functools import cache
 import logging
 import math
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from tomojax.backends._subprocesses import check_output_resolved_command
@@ -57,7 +58,13 @@ def _normalized_safety_fraction(safety_frac: float) -> float:
 
 
 def _host_available_memory_bytes() -> int | None:
-    """Best-effort host available-memory query using stdlib facilities only."""
+    """Best-effort host capacity, including Linux's reclaimable page cache."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError):
+        pass
     try:
         names = getattr(os, "sysconf_names", {})
         if "SC_AVPHYS_PAGES" not in names or "SC_PAGE_SIZE" not in names:

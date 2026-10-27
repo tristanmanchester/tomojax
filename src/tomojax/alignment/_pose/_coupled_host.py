@@ -1,9 +1,9 @@
 """Joint alignment whose measured data and Krylov vectors stay on the host.
 
 The physical products are compiled view-batch passes, not a monolithic CG
-program. Each pass owns one device accumulator. In the independent-pose
-Schur product, columns are computed once per batch and immediately eliminated;
-no full projected direction or Jacobian is kept on either host or device.
+program. Each pass owns one device accumulator. Active pose columns can stay
+in a host buffer for one fixed linearization; every product reads only its
+current batch. Without spare host memory, the columns are recomputed instead.
 """
 
 from __future__ import annotations
@@ -18,7 +18,14 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
-from tomojax.backends.host_stream import host_source, read_views
+from tomojax.backends import device_free_memory_bytes
+from tomojax.backends.host_stream import (
+    host_buffer,
+    host_source,
+    read_block,
+    read_views,
+    write_block,
+)
 
 from ._coupled_linear import CoupledLinearResult, solve_coupled_normal, solve_schur_normal
 from ._coupled_program import (
@@ -51,8 +58,11 @@ def _view_batch(arrays, start, size, spec, weighted):
     )
 
 
-def _linearization(predict, batch, params, volume, indices):
+def _linearization(predict, batch, params, volume, indices, key, start, gradient):
     """Weighted residual and columns from each view's single physical ray traversal."""
+    if key is not None and not gradient:
+        shape = (params.shape[0], indices.size, batch.projections[0].size)
+        return jnp.float32(0), read_block(key, start, shape)
     residual, columns = jax.lax.map(
         lambda k: predict(
             params[k],
@@ -64,7 +74,10 @@ def _linearization(predict, batch, params, volume, indices):
         ),
         jnp.arange(params.shape[0]),
     )
-    return residual.reshape(batch.projections.shape), columns * batch.active[indices][None, :, None]
+    columns *= batch.active[indices][None, :, None]
+    if key is not None:
+        write_block(key, start, columns)
+    return residual.reshape(batch.projections.shape), columns
 
 
 def _data_increment(mode, t, dx, dp, gram, batch, forward, pose_forward, pose_adjoint):
@@ -88,6 +101,7 @@ def _pass(
     dx: jax.Array,
     dp: jax.Array,
     gram: jax.Array,
+    columns_key: jax.Array | None = None,
     *,
     spec: CoupledSpec,
     mode: str,
@@ -128,7 +142,9 @@ def _pass(
             residual = weights * (forward(t, x, batch.frames) - batch.projections)
             loss += 0.5 * jnp.sum(residual**2 * valid[:, None, None])
             return ax, rows, blocks, loss
-        residual, cols = _linearization(predict, batch, q, masked(x), indices)
+        residual, cols = _linearization(
+            predict, batch, q, masked(x), indices, columns_key, start, mode == "gradient"
+        )
         highest = jax.lax.Precision.HIGHEST
 
         def pose_forward(value):
@@ -243,8 +259,9 @@ _regularisation_value = jax.jit(volume_regularisation, static_argnames=("spec",)
 class _HostSystem:
     """Own the resident image and tiny pose factorisation of one linear update."""
 
-    def __init__(self, arrays, spec, p, x, weighted) -> None:
+    def __init__(self, arrays, spec, p, x, weighted, columns_key=None) -> None:
         self.arrays, self.spec, self.p, self.x, self.weighted = arrays, spec, p, x, weighted
+        self.columns_key = columns_key
         self.empty = np.empty((0,), np.float32)
         self.gram = jnp.zeros((p.shape[0], p.shape[1], p.shape[1]), jnp.float32)
         gx, gp, gram, _ = self.run("gradient")
@@ -299,6 +316,7 @@ class _HostSystem:
             direction,
             jnp.zeros_like(self.p) if dp is None else jnp.asarray(dp),
             self.gram,
+            self.columns_key,
             spec=self.spec,
             mode=mode,
             weighted=self.weighted,
@@ -392,6 +410,18 @@ class _HostSystem:
         )
 
 
+def host_columns_fit(spec, n_views):
+    """Leave the host Krylov workspace and half the remaining RAM uncached."""
+    try:
+        host = next(iter(jax.local_devices(backend="cpu")))
+    except RuntimeError:
+        return False
+    available = device_free_memory_bytes(device=host)
+    volume_bytes = 4 * spec.grid.nx * spec.grid.ny * spec.grid.nz
+    columns_bytes = 4 * n_views * len(spec.active_columns) * spec.detector.nv * spec.detector.nu
+    return available is not None and columns_bytes <= max(0, available - 8 * volume_bytes) // 2
+
+
 def build_host_objective(arrays: CoupledArrays, spec: CoupledSpec) -> tuple[Callable, Callable]:
     """Bind scan arrays on the host; register callback sources only during calls."""
     projections = np.asarray(arrays.projections)
@@ -406,7 +436,9 @@ def build_host_objective(arrays: CoupledArrays, spec: CoupledSpec) -> tuple[Call
 
     def update(p, x):
         with ExitStack() as stack:
-            return _HostSystem(inputs(stack), spec, p, x, weighted).solve()
+            shape = (p.shape[0], len(spec.active_columns), spec.detector.nv * spec.detector.nu)
+            columns = stack.enter_context(host_buffer(shape)) if spec.cache_columns else None
+            return _HostSystem(inputs(stack), spec, p, x, weighted, columns).solve()
 
     def loss(p, x):
         with ExitStack() as stack:
