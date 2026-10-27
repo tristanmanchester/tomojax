@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -81,10 +82,16 @@ class _ZeissFrames(FrameStack):
         return result
 
 
-def _stream_entry(container: Any, name: str) -> Any:
+def _stream_entry(container: Any, name: str, *, path: Path) -> Any:
     entry = container.root
     for part in name.split("/"):
-        entry = next(child for child in entry.kids if child.name.casefold() == part.casefold())
+        try:
+            entry = next(child for child in entry.kids if child.name.casefold() == part.casefold())
+        except StopIteration as exc:
+            raise ValueError(
+                f"{path}: missing declared Zeiss image stream {name!r}; "
+                "supply the complete acquisition file"
+            ) from exc
     return entry
 
 
@@ -130,7 +137,7 @@ def _stack(
     types = {5: np.dtype("<u2"), 10: np.dtype("<f4")}
     if data_type not in types:
         raise ValueError(f"unsupported Zeiss image data type {data_type}")
-    entries = [_stream_entry(container, name) for name in streams]
+    entries = [_stream_entry(container, name, path=path) for name in streams]
     fat = None if entries[0].size < container.minisectorcutoff else np.asarray(container.fat)
     return _ZeissFrames(
         str(path.absolute()),
@@ -197,7 +204,17 @@ def _is_ole(path: Path) -> bool:
 
 
 def _images(container: Any, path: Path) -> _ZeissFrames:
-    count = int(_scalar(container, "ImageInfo/NoOfImages"))
+    # NoOfImages can be the planned count of an interrupted acquisition.
+    # The numbered streams establish which images were actually recorded;
+    # per-view metadata must still agree with their count, without truncation.
+    indices = [
+        int(match[1])
+        for parts in container.listdir()
+        if (match := re.fullmatch(r"ImageData\d+/Image(\d+)", "/".join(parts), re.IGNORECASE))
+    ]
+    if not indices:
+        raise ValueError(f"{path}: no Zeiss image streams; supply the projection acquisition file")
+    count = max(indices)
     shape = (
         int(_scalar(container, "ImageInfo/ImageHeight")),
         int(_scalar(container, "ImageInfo/ImageWidth")),
@@ -217,7 +234,14 @@ def _images(container: Any, path: Path) -> _ZeissFrames:
 def _exposures(container: Any, prefix: str, count: int) -> np.ndarray | None:
     for name in (f"{prefix}/ExpTimes", f"{prefix}/ExpTime", f"{prefix.rsplit('/', 1)[0]}/ExpTime"):
         if container.exists(name):
-            return np.broadcast_to(_values(container, name, "<f4"), (count,)).copy()
+            values = _values(container, name, "<f4")
+            try:
+                return np.broadcast_to(values, (count,)).copy()
+            except ValueError as exc:
+                raise ValueError(
+                    f"Zeiss {name} has {len(values)} exposure values for {count} stored images; "
+                    "supply an acquisition with matching image and exposure records"
+                ) from exc
     return None
 
 
@@ -389,6 +413,8 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         metadata["axis_status"] = "not_recorded"
     metadata["zeiss"] = {
         "path": str(path),
+        "declared_view_count": int(_scalar(container, "ImageInfo/NoOfImages")),
+        "stored_view_count": count,
         "detector_offset_pixels": None if shifts is None else shifts.tolist(),
     }
     hardening = _beam_hardening(container, path)

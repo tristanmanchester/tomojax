@@ -89,6 +89,17 @@ measurements require independent calibration evidence and repair before `Rings`.
   bracketed interior gaps remain supported; their correction does not certify
   that the supplied calibration describes the acquisition.
 
+
+- Zeiss frames are numbered image streams, not the planned `NoOfImages` count;
+  interrupted acquisitions load when their per-view metadata matches the stored
+  frames. Metadata-only drift records contain no reconstructible projections,
+  and missing interior image streams require a complete acquisition file.
+- MATLAB ptychography files are not raw detector-count acquisitions. Prepare
+  their complex transmission with the [ptychography example](../examples/align_ptychography.py)
+  before constructing a `Scan`. Walnut collection folders require their vector
+  geometry and calibration, as in the [walnut example](../examples/align_walnut_orbits.py).
+  2DeteCT folders require explicit fan/cone geometry and flat/dark correction;
+  the directory name does not supply that metadata to `load_frames`.
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).
 - `tomojax preprocess` of generic TIFF frames requires a `detector` table in
@@ -216,6 +227,8 @@ An explicit PyHST `.par` supplies its own angles and rotation axis, but only
 raw single-image EDFs with fixed axial parallel geometry are supported. PyHST
 multi-frame, cone, helical, binning and distortion modes are rejected. Every
 projection and calibration file named by the selected input must be available.
+Cropping the detector preserves an explicit PyHST output grid; supply `grid=`
+for a smaller preview or use slab reconstruction for a volume larger than memory.
 
 An explicit file-owned reconstruction grid survives detector cropping. The
 ESRF `scan_3_.par` fixture specifies 2048×2048×1200 voxels: one float32 volume
@@ -229,6 +242,8 @@ memory; a successful reduced preview is not a default full-volume result.
 
 HDF5 virtual detector stacks require all referenced pixel files and mapped
 regions to be present; missing sources are errors, not zero-filled exposures.
+An unreadable external-root master needs its referenced files and datasets restored;
+its link names and targets are reported when no detector stack can be found.
 
 Nikon vendor reconstruction regions (including `OffsetX/Y/Z`) remain source
 metadata and are not applied: their coordinate mapping is not established.

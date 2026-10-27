@@ -48,6 +48,13 @@ from repeated flats and darks, simulates finite calibration references and expli
 gain/offset changes, and returns conditional systematic-error truth. Calibration
 propagates flux normalization through shot, read and shared dark-reference noise.
 
+HDF5 dispatch accepts `.nx` containers. When no detector frames are readable,
+unresolved external root links report the files and datasets to restore.
+
+Zeiss loading uses recorded image streams instead of the planned frame count,
+supporting consistent interrupted acquisitions. Missing image streams report
+the required complete acquisition file instead of exposing an iterator failure.
+
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
 

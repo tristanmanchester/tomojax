@@ -145,12 +145,13 @@ def write_ole(path, streams):
     )
 
 
-def test_zeiss_content_geometry_and_raw_calibration(tmp_path):
+@pytest.mark.parametrize("declared_count", [3, 10])
+def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     path = tmp_path / "renamed.data"
     counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
     reference = np.full((8, 12), 2500, "<f4")
     fields = {
-        "ImageInfo/NoOfImages": ("<u4", [3]),
+        "ImageInfo/NoOfImages": ("<u4", [declared_count]),
         "ImageInfo/ImageWidth": ("<u4", [12]),
         "ImageInfo/ImageHeight": ("<u4", [8]),
         "ImageInfo/DataType": ("<u4", [5]),
@@ -170,6 +171,7 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path):
     streams["ReferenceData/Image"] = reference.tobytes()
     write_ole(path, streams)
     frames = tj.load_frames(path, darks=0)
+    assert frames.source.geometry_metadata["zeiss"]["declared_view_count"] == declared_count
     assert not isinstance(frames.counts, np.ndarray)
     np.testing.assert_array_equal(np.asarray(frames.counts), counts)
     np.testing.assert_array_equal(np.asarray(frames.flats)[0], reference)
@@ -217,6 +219,9 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path):
         np.testing.assert_array_equal(explicit.counts[:], counts)
     write_ole(path, {k: v for k, v in streams.items() if k != "ReferenceData/DataType"})
     with pytest.raises(ValueError, match="flats="):
+        tj.load_frames(path, darks=0)
+    write_ole(path, {k: v for k, v in streams.items() if k != "ImageData1/Image2"})
+    with pytest.raises(ValueError, match="missing declared Zeiss image stream 'ImageData1/Image2'"):
         tj.load_frames(path, darks=0)
 
 
@@ -380,3 +385,7 @@ def test_multireferences_use_recorded_times_and_exposures(tmp_path):
     explicit = tj.load_frames(path, geometry=geometry, flats=reference, darks=0).corrected()
     expected = -np.log(np.array([55, 150, 285]) / (np.array([1, 2, 3]) * 200))
     np.testing.assert_allclose(explicit.projections[:, 0, 0], expected, atol=2e-7)
+    streams["ImageInfo/ExpTimes"] = np.array([1, 2], "<f4").tobytes()
+    write_ole(path, streams)
+    with pytest.raises(ValueError, match="2 exposure values for 3 stored images"):
+        tj.load_frames(path, geometry=geometry, darks=0)
