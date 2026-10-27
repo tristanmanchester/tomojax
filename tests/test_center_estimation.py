@@ -229,7 +229,9 @@ def test_center_report_measures_row_trend_and_conditional_interval():
     assert abs(report.row_slope_px_per_row + 0.03) < 0.003
     assert abs(report.geometry.detector.center[0] - truth) < 0.03
     assert all(p.local_sigma_px > 0 for p in report.pairs)
-    assert all(p.local_interval90_px[0] < p.offset_px < p.local_interval90_px[1] for p in report.pairs)
+    assert all(
+        p.local_interval90_px[0] < p.offset_px < p.local_interval90_px[1] for p in report.pairs
+    )
 
 
 def test_single_pair_reports_uncalibrated_global_coverage_without_inconsistency(monkeypatch):

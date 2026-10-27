@@ -885,7 +885,9 @@ def test_inspect_and_preview_share_raw_acquisition_discovery(tmp_path, capsys, l
             "radians" if layout == "exchange" else "mm" if layout == "gda" else "degree"
         )
     previews = tmp_path / "previews"
-    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == (layout == "exchange")
+    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == (
+        layout == "exchange"
+    )
     report = json.loads(capsys.readouterr().out)
     assert report["valid"] == (layout != "exchange")
     assert len(report["issues"]) == (layout == "exchange")
