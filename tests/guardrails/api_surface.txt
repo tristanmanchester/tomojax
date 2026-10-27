@@ -654,6 +654,7 @@ class tomojax.io.ProjectionDataset(
         source_path: 'PathLike | None' = None,
     ) -> 'ProjectionDataset'
     .geometry_inputs(self) -> 'dict[str, Any]'
+    .prepare_center_seed(self) -> 'ProjectionDataset'
     .to_nxtomo_metadata(self) -> 'NXTomoMetadata'
 class tomojax.io.ValidationReport
 def tomojax.io.build_geometry_from_dataset_metadata(

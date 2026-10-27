@@ -334,6 +334,31 @@ class ProjectionDataset:
         _merge_geometry_metadata_dict(payload, self.geometry_metadata)
         return payload
 
+    def prepare_center_seed(self) -> ProjectionDataset:
+        """Prepare axial centre inference from recorded pitches, without reading pixels.
+
+        The pending seed is not calibrated; loading must estimate its centre before
+        returning frames. Inspection can check the remaining required metadata.
+
+        Returns
+        -------
+        ProjectionDataset
+            Original record or a copy with an internal pending detector seed.
+        """
+        if self.detector is not None or self.geometry_type != "parallel":
+            return self
+        meta = self.geometry_metadata
+        pitches = meta.get("acquisition", {}).get("detector_pixel_size", (None, None))
+        if any(p is None for p in pitches):
+            return self  # geometry_inputs names detector= for the absent pitches.
+        _, nv, nu = self.projections.shape
+        detector = Detector(nu, nv, float(pitches[0]), float(pitches[1]), (0.0, 0.0))
+        return replace(
+            self,
+            detector=detector,
+            geometry_metadata={**meta, "detector_center_status": "pending"},
+        )
+
 
 def load_dataset(path: PathLike) -> ProjectionDataset:
     """Load a standard TomoJAX projection dataset.
@@ -549,7 +574,7 @@ def _dataset_issues(input_path: Path) -> list[str]:
     if raw is not None:
         issues = calibration_issues(raw.flats, raw.darks, raw.white_level)
         try:
-            raw.record.geometry_inputs()
+            raw.record.prepare_center_seed().geometry_inputs()
         except ValueError as exc:
             issues.insert(0, str(exc))
         return issues

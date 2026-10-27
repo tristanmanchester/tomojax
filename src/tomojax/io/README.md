@@ -35,7 +35,9 @@ stacks. Optional NXtomo labels are not needed; `validate_nxtomo` remains the
 strict NXtomo schema check.
 
 Validation of recognized raw acquisitions reports missing detector/axis metadata
-and flat/dark references, using the same requirements as frame loading. CLI errors
+and flat/dark references, using the same requirements as frame loading. A missing
+axial centre with recorded pitches is pending data-driven inference, not missing
+external input; inspection does not run or certify that inference. CLI errors
 name `preprocess --config`, `--flats`, `--darks` or `--angles` where those options
 can supply the missing input. Storage validation of other datasets is not a
 geometry-calibration or reconstruction-quality certificate.
