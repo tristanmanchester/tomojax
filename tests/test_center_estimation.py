@@ -19,7 +19,7 @@ def _scan(*, pitch=0.8, views=180, span=180):
     sino = np.zeros((views, 64))
     truth = np.zeros((80, 80))
     x, y = np.meshgrid(
-        (np.arange(80) - 39.5) * pitch, (np.arange(80) - 39.5) * pitch, indexing="ij"
+        (np.arange(80) - 39.5) * pitch, (np.arange(80) - 39.5) * pitch, indexing="xy"
     )
     components = np.asarray([(5, 2, 3, 1), (-6, -3, 2, 0.7), (0, 9, 1.2, 0.4)])
     # Change physical units, not sampling bandwidth, with the pitch.
@@ -69,7 +69,7 @@ def test_estimate_center_returns_the_scan_with_its_physical_centre():
     assert abs(result.detector.center[0] - true_u) <= 0.3 * scan.detector.du
     assert scan.detector.center[0] == 2.7
     volume = np.asarray(tj.reconstruct(result).volume)
-    assert np.linalg.norm(volume[:, :, 4] - truth) / np.linalg.norm(truth) < 0.025
+    assert np.linalg.norm(volume[4] - truth) / np.linalg.norm(truth) < 0.025
 
 
 def test_estimate_center_after_crop_and_bin_keeps_absolute_physical_units():
