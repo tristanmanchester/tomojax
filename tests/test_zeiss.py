@@ -145,6 +145,29 @@ def write_ole(path, streams):
     )
 
 
+def _check_missing_zeiss_inputs(path, streams, frames, counts):
+    """Absent geometry, flat or image streams name the input they need."""
+    streams["ImageInfo/AcquisitionMode"] = np.array([0], "<u4").tobytes()
+    for key in (
+        "AutoRecon/CenterShift",
+        "alignment/y-shifts",
+        "ImageInfo/pixelsize",
+        "ImageInfo/XrayGeometry",
+    ):
+        partial = {name: value for name, value in streams.items() if name != key}
+        write_ole(path, partial)
+        with pytest.raises(ValueError, match="detector=|geometry="):
+            tj.load_frames(path, darks=0)
+        explicit = tj.load_frames(path, geometry=frames.geometry, darks=0)
+        np.testing.assert_array_equal(explicit.counts[:], counts)
+    write_ole(path, {k: v for k, v in streams.items() if k != "ReferenceData/DataType"})
+    with pytest.raises(ValueError, match="flats="):
+        tj.load_frames(path, darks=0)
+    write_ole(path, {k: v for k, v in streams.items() if k != "ImageData1/Image2"})
+    with pytest.raises(ValueError, match="missing declared Zeiss image stream 'ImageData1/Image2'"):
+        tj.load_frames(path, darks=0)
+
+
 @pytest.mark.parametrize("declared_count", [3, 10])
 def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     path = tmp_path / "renamed.data"
@@ -204,25 +227,7 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     with pytest.raises(ValueError, match="not detector frames"):
         tj.load_frames(path, darks=0)
 
-    streams["ImageInfo/AcquisitionMode"] = np.array([0], "<u4").tobytes()
-    for key in (
-        "AutoRecon/CenterShift",
-        "alignment/y-shifts",
-        "ImageInfo/pixelsize",
-        "ImageInfo/XrayGeometry",
-    ):
-        partial = {name: value for name, value in streams.items() if name != key}
-        write_ole(path, partial)
-        with pytest.raises(ValueError, match="detector=|geometry="):
-            tj.load_frames(path, darks=0)
-        explicit = tj.load_frames(path, geometry=frames.geometry, darks=0)
-        np.testing.assert_array_equal(explicit.counts[:], counts)
-    write_ole(path, {k: v for k, v in streams.items() if k != "ReferenceData/DataType"})
-    with pytest.raises(ValueError, match="flats="):
-        tj.load_frames(path, darks=0)
-    write_ole(path, {k: v for k, v in streams.items() if k != "ImageData1/Image2"})
-    with pytest.raises(ValueError, match="missing declared Zeiss image stream 'ImageData1/Image2'"):
-        tj.load_frames(path, darks=0)
+    _check_missing_zeiss_inputs(path, streams, frames, counts)
 
 
 def test_zeiss_beam_hardening_settings_come_from_the_scan_and_its_reconstruction(tmp_path):
