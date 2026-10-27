@@ -364,7 +364,16 @@ def locate_frames(
 
 
 def _dataset(file: h5py.File, where: str) -> h5py.Dataset | None:
-    found = file.get(where)
+    handle = cast(Any, file)  # h5py stubs omit link lookup and file names.
+    found = handle.get(where)
+    if found is None:
+        link = handle.get(where, getlink=True)
+        if isinstance(link, cast(Any, h5py).ExternalLink):
+            target = cast(Any, link)
+            raise ValueError(
+                f"{where}: external data unavailable; supply {target.filename!r} "
+                f"beside {handle.filename!r}, containing dataset {target.path!r}"
+            )
     return found if isinstance(found, h5py.Dataset) else None
 
 
@@ -401,16 +410,23 @@ def _degree_convention(file: h5py.File, where: str) -> bool:
     """NXtomo and Data Exchange prescribe degrees; arbitrary HDF5 names do not."""
     if where == "/exchange/theta" or where in ROTATION_ANGLE_PATHS:
         return True
-    root = "/" + where.strip("/").split("/")[0]
-    definition = file.get(root + "/definition")
-    if not isinstance(definition, h5py.Dataset):
-        return False
-    value = np.asarray(definition[()]).item()
-    value = value.decode() if isinstance(value, bytes) else str(value)
-    return value == "NXtomo" and where in {
-        root + "/sample/rotation_angle",
-        root + "/sample/transformations/rotation_angle",
-    }
+    for suffix in (
+        "/sample/rotation_angle",
+        "/sample/transformations/rotation_angle",
+        "/data/rotation_angle",
+    ):
+        if not where.endswith(suffix):
+            continue
+        root = where[: -len(suffix)]
+        while root:
+            definition = file.get(root + "/definition")
+            if isinstance(definition, h5py.Dataset):
+                value = np.asarray(definition[()]).item()
+                value = value.decode() if isinstance(value, bytes) else str(value)
+                if value == "NXtomo":
+                    return True
+            root = root.rsplit("/", 1)[0]
+    return False
 
 
 def _only(
@@ -430,14 +446,22 @@ def _only(
     found: list[str] = []
     named: list[str] = []
 
-    def visit(where: str, item: object) -> None:
-        if isinstance(item, h5py.Dataset) and where.rsplit("/", 1)[-1] == name:
+    seen = set()
+
+    def visit(where: str) -> None:
+        if where.rsplit("/", 1)[-1] != name:
+            return
+        item = _dataset(file, where)
+        if item is not None and item.id not in seen:
+            # NXdata and NXdetector commonly link to the same pixels. A link
+            # alias is not a second acquisition, even across external files.
+            seen.add(item.id)
             named.append("/" + where)
             if fits(item):
                 found.append("/" + where)
 
     visitable: Any = file
-    visitable.visititems(visit)
+    visitable.visit_links(visit)
     if validate_unmatched and not found:
         found = named
     if len(found) > 1:

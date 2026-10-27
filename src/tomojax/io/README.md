@@ -34,6 +34,12 @@ raw-frame discovery for APS Data Exchange, Diamond/GDA and uniquely named HDF5
 stacks. Optional NXtomo labels are not needed; `validate_nxtomo` remains the
 strict NXtomo schema check.
 
+Validation of recognized raw acquisitions reports missing detector/axis metadata
+and flat/dark references, using the same requirements as frame loading. CLI errors
+name `preprocess --config`, `--flats`, `--darks` or `--angles` where those options
+can supply the missing input. Storage validation of other datasets is not a
+geometry-calibration or reconstruction-quality certificate.
+
 Both raw-frame and processed NXtomo loading convert rotation angles labelled
 `rad`, `radian` or `radians` to degrees. `deg`, `degree`, `degrees` and missing
 units mean degrees at the format-defined NXtomo/Data Exchange angular paths;
@@ -41,8 +47,10 @@ generic unitless motors require an explicit `angles=` override. Angles must be a
 real one-dimensional vector with one
 entry per frame and finite sample-view angles (calibration frames may have
 NaN angles); unknown units fail rather than being guessed. An
-`image_key` must be an integer vector with one entry per frame and labels in
-`{0, 1, 2, 3}` (sample, flat, dark, other); labels are checked before conversion.
+`image_key` must be a numeric vector with one entry per frame and exact labels in
+`{0, 1, 2, 3}` (sample, flat, dark, other); labels are checked before conversion, including floating-point exports.
+Raw NXtomo entries may be nested and link to external detector files; keep those
+files beside the metadata file. Repeated links to one dataset are not ambiguous.
 For other HDF5 layouts, per-frame shape disambiguates named angle/key datasets
 from different detectors. A sole named dataset with an invalid shape is rejected,
 not treated as absent. Ambiguous candidates require an explicit metadata path.

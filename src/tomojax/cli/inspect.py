@@ -20,8 +20,8 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="tomojax inspect",
         description=(
             "Describe a dataset or recognized vendor acquisition (projections, angles, geometry, "
-            "corrections, any reconstructed volume and memory estimates) and check it is "
-            "complete enough to reconstruct."
+            "corrections, any reconstructed volume and memory estimates). Check storage and "
+            "report missing geometry and intensity calibration for recognized raw acquisitions."
         ),
         epilog=(
             "Exit status: 0 when the dataset is valid, 1 when it has issues, 2 for a usage "

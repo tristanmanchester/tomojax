@@ -24,6 +24,32 @@ Commands, adapters and physical conventions are in the
 [benchmark guide](../bench/README.md). Raw records are kept out of the
 repository; each result names the command, commit and date to rerun it.
 
+## Raw NXtomo loading and held-out split integrity
+
+Measured 2026-10-27 on `a4a969cb` (loading) and `191c0882` (evaluation),
+using the local Diamond files. These are functional/integrity tests, not image
+or pose accuracy measurements. Commands in the lab shared directory are
+`JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/loader_kill.py`
+(the metadata/pixel section) and
+`JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/evaluation_kill.py`.
+
+- I13 NXtomo scans 159791 and 159815 classify respectively 37/80/80 and
+  3001/200/100 sample/flat/dark frames. First-sample row1080 columns441:449
+  exactly match raw HDF5 pixels (maximum integer error 0). Discovery cold/warm
+  times are 55.7/4.75 ms and 46.6/15.2 ms, with 260 MiB peak process RSS and no
+  GPU allocation. Missing physical pitch requires explicit detector geometry.
+- I12 physical row1080, every thirtieth sample view (61×1×2560), tests
+  interleaved-view, angular-block and detector-block splits. Changing every
+  excluded value to 1234 leaves a fixed four-coefficient least-squares fit
+  bitwise unchanged. Streamed versus dense squared-error relative differences
+  are 1.96e-16, 0 and 3.00e-16. Cold/warm fit-and-score times are 32.7/32.7,
+  56.4/29.5 and 24.0/22.7 ms; peak RSS 68 MiB, GPU 0. This checks held-out
+  accounting, not tomographic reconstruction or stopping-rule effectiveness.
+
+The [held-out guide](held-out-evaluation.md) describes the split and leakage
+contract. Public reconstruction/alignment workflows do not automatically enforce
+arbitrary detector observation masks.
+
 ## Real-scan comparison criteria
 
 Use the same calibrated geometry and physical output grid for each library,

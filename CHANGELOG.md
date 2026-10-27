@@ -12,6 +12,18 @@ inverse for every observed value. Monotone-branch Newton initialization
 replaces the three-step inverse that could return arbitrary finite values
 when a fitted response had no real inverse.
 
+Recognized raw-acquisition validation reports missing geometry and intensity
+references instead of declaring every readable acquisition valid. Missing-input
+errors include applicable CLI preprocessing options.
+
+`tomojax.evaluation` provides frozen interleaved-view, angular-block and
+detector-block splits, guarded training masks and additive held-out scores
+from caller-supplied matched predictions.
+
+Raw NXtomo loading discovers nested entries and external detector links, accepts
+exact integer-valued floating-point frame labels, and treats missing pixel
+calibration as requiring an explicit detector.
+
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
 

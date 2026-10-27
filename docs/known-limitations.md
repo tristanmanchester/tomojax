@@ -70,6 +70,12 @@ supply extra calibration constraints, but `Rings` does not fit those constraints
   interval as a global accuracy certificate. Runtime reports mark global
   coverage uncalibrated for every estimate, including a single pair without
   a disagreement test; automatic alignment remains limited and loading warns.
+- `tomojax inspect` checks storage and missing calibration in recognized raw
+  acquisitions. A valid report for other datasets does not certify their
+  physical geometry or reconstruction readiness.
+- External HDF5 links require readable backing files at their recorded paths.
+  The loader reports missing detector sources; it does not repair damaged files
+  or guess relocated links.
 
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).

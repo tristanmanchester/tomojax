@@ -16,6 +16,7 @@ from tomojax._data import (
     LocatedFrames,
     NXTomoMetadata,
     build_geometry_from_meta,
+    calibration_issues,
     load_npz,
     load_nxtomo,
     locate_frames,
@@ -309,14 +310,17 @@ class ProjectionDataset:
         ):
             raise ValueError(
                 "Missing detector pixel sizes or centre: pass detector=... or geometry=... "
-                "to tomojax.load_frames"
+                "to tomojax.load_frames, or set detector in tomojax preprocess --config"
             )
         if self.geometry_metadata.get("axis_status") == "not_recorded":
             raise ValueError(
                 "Missing calibrated rotation axis: pass geometry=... to tomojax.load_frames"
             )
         if self.angles.shape != (self.projections.shape[0],):
-            raise ValueError("Missing view angles: pass angles=... to tomojax.load_frames")
+            raise ValueError(
+                "Missing view angles: pass angles=... to tomojax.load_frames, "
+                "or use tomojax preprocess --angles"
+            )
         payload: dict[str, Any] = {
             "detector": detector.to_dict(),
             "angles": np.asarray(self.angles, dtype=np.float32),
@@ -524,7 +528,7 @@ def validate_dataset(path: PathLike) -> ValidationReport:
     Parameters
     ----------
     path : str or pathlib.Path
-        Dataset path to inspect for structural validity.
+        Dataset path to inspect for structural validity and missing raw calibration.
 
     Returns
     -------
@@ -541,8 +545,14 @@ def validate_dataset(path: PathLike) -> ValidationReport:
 def _dataset_issues(input_path: Path) -> list[str]:
     from ._acquisition import read_acquisition
 
-    if read_acquisition(input_path) is not None:
-        return []
+    raw = read_acquisition(input_path)
+    if raw is not None:
+        issues = calibration_issues(raw.flats, raw.darks, raw.white_level)
+        try:
+            raw.record.geometry_inputs()
+        except ValueError as exc:
+            issues.insert(0, str(exc))
+        return issues
     suffix = input_path.suffix.lower()
     if suffix in _HDF5_SUFFIXES:
         located = locate_frames(str(input_path))

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tomojax._data import calibration_issues
 from tomojax._loading_geometry import frame_geometry, frame_output_grid
 from tomojax._scan import (
     Scan,
@@ -561,15 +562,9 @@ def _estimate_missing_center(frames: Frames) -> Frames:
 
 def _require_calibration(frames: Frames) -> Frames:
     """Missing file calibration requires a caller choice, not a numerical guess."""
-    if frames.flats is None and frames.white_level is None:
-        raise ValueError(
-            "No flat fields: pass flats=... (frames or one level) to tomojax.load_frames"
-        )
-    if frames.darks is None:
-        raise ValueError(
-            "No dark fields: pass darks=... to tomojax.load_frames "
-            "(darks=0 only for counts already dark-corrected)"
-        )
+    issues = calibration_issues(frames.flats, frames.darks, frames.white_level)
+    if issues:
+        raise ValueError(issues[0])
     return frames
 
 
