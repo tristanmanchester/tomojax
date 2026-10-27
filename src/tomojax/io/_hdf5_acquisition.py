@@ -78,6 +78,17 @@ def _entries(file: Any) -> list[str]:
     return containers or definitions
 
 
+def _contains(file: Any, entry: str, data_path: str) -> bool:
+    """Compare ancestor objects, not path spellings that may be link aliases."""
+    root = file[entry]
+    parent = ("/" + data_path.strip("/")).rsplit("/", 1)[0]
+    while parent:
+        if file.get(parent) == root:
+            return True
+        parent = parent.rsplit("/", 1)[0]
+    return False
+
+
 def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | None:
     """Return format, stack, key and angle paths for a recognised acquisition."""
     if "exchange/data" in file:
@@ -87,7 +98,7 @@ def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | Non
     if not entries:
         return None
     if data_path is not None:
-        entries = [entry for entry in entries if data_path.startswith(entry + "/")]
+        entries = [entry for entry in entries if _contains(file, entry, data_path)]
     if len(entries) != 1:
         raise ValueError("Several NXtomo entries: pass data_path=... for the detector stack")
     entry = entries[0]
