@@ -8,11 +8,15 @@ import pytest
 
 import tomojax as tj
 from tomojax.alignment import api as alignment
+from tomojax.corrections import Rings, Stripes
 from tomojax.io import ProjectionDataset
 from tomojax.recon import FBPConfig
 
 
-@pytest.mark.parametrize(("complete", "raw"), [(True, False), (False, False), (True, True)])
+@pytest.mark.parametrize(
+    ("complete", "raw"),
+    [(True, False), (False, False), (True, True), (True, "rings"), (True, "stripes")],
+)
 def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     complete, raw, tmp_path
 ):
@@ -22,8 +26,9 @@ def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     geometry = tj.ParallelGeometry(grid, detector, angles)
     u = np.arange(detector.nu) - (detector.nu - 1) / 2 + detector.center[0]
     data = np.broadcast_to(np.exp(-(u**2) / 10), (32, 2, 20)).astype(np.float32).copy()
+    steps = {"rings": (Rings(geometry=geometry),), "stripes": (Stripes(),)}.get(raw, ())
     scan = (
-        tj.Frames(np.exp(-data), geometry, white_level=1).corrected()
+        tj.Frames(np.exp(-data), geometry, white_level=1).corrected(*steps)
         if raw
         else tj.Scan(data, geometry)
     )
@@ -31,12 +36,12 @@ def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     actual = tj.reconstruct(scan)
     np.testing.assert_array_equal(actual.volume, expected.volume)
     assert actual.scan is scan and actual.method == expected.method
-    limited = raw or not complete
+    limited = bool(raw) or not complete
     assert actual.info["automatic"]["status"] == ("limited" if limited else "ok")
     assert bool(actual.info["automatic"]["reasons"]) == limited
     if raw:
         reasons = actual.info["automatic"]["reasons"]
-        assert any("stripe correction" in reason for reason in reasons)
+        assert any("stripe correction" in reason for reason in reasons) == (raw is True)
         assert actual.info["automatic"]["center_calibration_reason"] in reasons
     else:
         assert actual.info["automatic"]["center_calibration_reason"] is None

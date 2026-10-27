@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Python imports default to JAX's growing GPU memory pool, preserving explicit
+allocator settings, so CUDA libraries can initialize without a 75% eager
+reservation. Automatic reconstruction recognizes both `Rings` and `Stripes`
+correction records when reporting unassessed detector artefacts.
+
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
 

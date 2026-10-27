@@ -15,7 +15,9 @@ Build a scan from arrays with ``tj.Scan(projections, geometry)`` and the
 geometry classes below; ``tj.project`` simulates projections for any geometry.
 The subpackages (``tomojax.recon``, ``tomojax.alignment``, ``tomojax.geometry``,
 ``tomojax.io``) hold the building blocks these use. Names load on first use,
-so ``import tomojax`` does not import JAX.
+so ``import tomojax`` does not import JAX. Importing sets growing GPU allocation
+defaults for future JAX backends; explicit allocator environment settings are
+preserved. See ``docs/large-scans.md`` for process-wide memory configuration.
 """
 
 from __future__ import annotations
@@ -46,7 +48,10 @@ if TYPE_CHECKING:
         ParallelGeometry,
     )
 
+from tomojax._runtime import configure_jax_allocator_defaults as _configure_jax_allocator_defaults
 from tomojax._version import __version__
+
+_configure_jax_allocator_defaults()
 
 _SOURCES = {
     "Alignment": "tomojax._scan",

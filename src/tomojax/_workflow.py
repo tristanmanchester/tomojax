@@ -497,7 +497,7 @@ def _automatic_axial_setup(
             "Corrected projections were already materialized; use reconstruct_slabs on raw "
             "Frames to avoid that host round trip. Raw-workflow speed is not guaranteed here."
         )
-        if not any(step.name == "stripes" for step in scan.corrections):
+        if not any(step.name in {"stripes", "rings"} for step in scan.corrections):
             reasons.append(
                 "No stripe correction is recorded; detector-ring suppression is unassessed."
             )
