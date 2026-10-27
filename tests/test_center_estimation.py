@@ -100,15 +100,18 @@ def test_estimate_center_orders_wrapped_repeated_angles_by_direction():
     assert abs(result.detector.center[0] - true_u) <= 0.3 * scan.detector.du
 
 
-@pytest.mark.parametrize("kind", ["short_arc", "cone"])
-def test_estimate_center_rejects_scans_without_a_half_turn_of_axial_parallel_views(kind):
+@pytest.mark.parametrize("kind", ["short_arc", "cone", "sparse_views"])
+def test_estimate_center_rejects_scans_without_usable_axial_pairs(kind):
     scan, _, _ = _scan()
     if kind == "short_arc":
         scan = scan.selected(slice(0, 100))
+    elif kind == "sparse_views":
+        scan, _, _ = _scan(views=125, span=360)
     else:
         geometry = tj.ConeGeometry(scan.grid, scan.detector, scan.angles, tj.ConeBeam(100, 200))
         scan = replace(scan, geometry=geometry)
-    with pytest.raises(ValueError, match="estimate_center"):
+    message = "angular neighbours" if kind == "sparse_views" else "estimate_center"
+    with pytest.raises(ValueError, match=message):
         tj.estimate_center(scan)
 
 

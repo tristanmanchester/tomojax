@@ -364,7 +364,9 @@ def estimate_center_report(
     Raises
     ------
     ValueError
-        If geometry is unsupported or no usable near-opposite pair exists.
+        If geometry is unsupported, usable opposing data are absent, or
+        near-opposite pairs lack angular neighbours within two degrees.
+        Exact opposing views do not require angular interpolation.
     """
     if type(geometry) is not ParallelGeometry:
         raise ValueError("estimate_center requires an unposed axial ParallelGeometry")
@@ -403,7 +405,9 @@ def estimate_center_report(
             row_offsets.append(tuple(_paired_offset(a[group], b[group], error) for group in groups))
     if not pairs:
         raise ValueError(
-            "estimate_center needs finite, nonconstant near-opposite projections (within 2 degrees)"
+            "estimate_center needs finite, nonconstant opposite projections. "
+            "Near-opposite pairs need angular neighbours within 2 degrees; "
+            "use finer angular sampling when subsampling views."
         )
     return _center_summary(geometry, pairs, row_positions, row_offsets)
 
