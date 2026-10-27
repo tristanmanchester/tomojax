@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Recognized raw-acquisition validation reports missing geometry and intensity
+references instead of declaring every readable acquisition valid. Missing-input
+errors include applicable CLI preprocessing options.
+
 `tomojax.evaluation` provides frozen interleaved-view, angular-block and
 detector-block splits, guarded training masks and additive held-out scores
 from caller-supplied matched predictions.

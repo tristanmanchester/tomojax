@@ -10,6 +10,25 @@ ROTATION_ANGLE_PATHS = (
 )
 
 
+def calibration_issues(
+    flats: object | None, darks: object | None, white_level: float | None
+) -> list[str]:
+    """Required intensity references, shared by inspection and raw-frame loading."""
+    issues = []
+    if flats is None and white_level is None:
+        issues.append(
+            "No flat fields: pass flats=... (frames or one level) to tomojax.load_frames, "
+            "or use tomojax preprocess --flats"
+        )
+    if darks is None:
+        issues.append(
+            "No dark fields: pass darks=... to tomojax.load_frames, "
+            "or use tomojax preprocess --darks "
+            "(zero only for counts already dark-corrected)"
+        )
+    return issues
+
+
 def angle_scale_degrees(units: str, *, path: str) -> float:
     """The degree scale of supported acquisition-angle units."""
     unit = units.strip().lower()

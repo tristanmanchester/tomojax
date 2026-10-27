@@ -34,6 +34,12 @@ raw-frame discovery for APS Data Exchange, Diamond/GDA and uniquely named HDF5
 stacks. Optional NXtomo labels are not needed; `validate_nxtomo` remains the
 strict NXtomo schema check.
 
+Validation of recognized raw acquisitions reports missing detector/axis metadata
+and flat/dark references, using the same requirements as frame loading. CLI errors
+name `preprocess --config`, `--flats`, `--darks` or `--angles` where those options
+can supply the missing input. Storage validation of other datasets is not a
+geometry-calibration or reconstruction-quality certificate.
+
 Both raw-frame and processed NXtomo loading convert rotation angles labelled
 `rad`, `radian` or `radians` to degrees. `deg`, `degree`, `degrees` and missing
 units mean degrees at the format-defined NXtomo/Data Exchange angular paths;
