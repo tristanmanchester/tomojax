@@ -45,7 +45,34 @@ def _length(file: Any, path: str) -> float | None:
     # Without a recorded length unit, a physical pitch is not established.
     if unit not in _MM:
         return None
-    return float(np.asarray(data[()]).item()) * _MM[unit]
+    value = float(np.asarray(data[()]).item()) * _MM[unit]
+    return value if np.isfinite(value) else None
+
+
+def _entries(file: Any) -> list[str]:
+    """Acquisition containers under an NXtomo application definition."""
+    definitions: list[str] = []
+    containers: list[str] = []
+
+    def visit(name: str) -> None:
+        group = file.get(name)
+        if not isinstance(group, h5py.Group):
+            return
+        entry = cast(Any, group)  # h5py stubs omit dataset scalar indexing.
+        definition = entry.get("definition")
+        label = definition[()] if definition is not None else entry.attrs.get("definition", "")
+        if _text(label) == "NXtomo":
+            definitions.append("/" + name)
+        # An NXsubentry may inherit the application definition from its parent.
+        if "instrument/detector" in entry:
+            containers.append("/" + name)
+
+    file.visit_links(visit)
+    return [
+        parent
+        for parent in containers
+        if any(parent == entry or parent.startswith(entry + "/") for entry in definitions)
+    ] or definitions
 
 
 def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | None:
@@ -53,15 +80,7 @@ def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | Non
     if "exchange/data" in file:
         where = data_path or "/exchange/data"
         return "data_exchange", where, "", ""
-    entries = []
-    for group in file.values():
-        if not isinstance(group, h5py.Group):
-            continue
-        group = cast(Any, group)  # h5py stubs omit Group.name and dataset scalar indexing.
-        definition = group.get("definition")
-        label = definition[()] if definition is not None else group.attrs.get("definition", "")
-        if _text(label) == "NXtomo":
-            entries.append(group.name)
+    entries = _entries(file)
     if not entries:
         return None
     if data_path is not None:
@@ -75,12 +94,23 @@ def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | Non
         detector is not None and "detector_meta_json" in detector.attrs
     ):
         return None
-    where = data_path or entry + "/instrument/detector/data"
+    where = data_path or next(
+        (
+            entry + suffix
+            for suffix in ("/instrument/detector/data", "/data/data")
+            if entry + suffix in file
+        ),
+        entry + "/instrument/detector/data",
+    )
     key = entry + "/instrument/detector/image_key"
     angles = next(
         (
             entry + "/" + p
-            for p in ("sample/rotation_angle", "sample/transformations/rotation_angle")
+            for p in (
+                "sample/rotation_angle",
+                "sample/transformations/rotation_angle",
+                "data/rotation_angle",
+            )
             if entry + "/" + p in file
         ),
         "",
@@ -100,7 +130,11 @@ def _metadata(file: Any, layout: str, where: str) -> dict[str, Any]:
             if path in file:
                 acquisition[field] = _text(file[path][()])
     else:
-        prefix = where.rsplit("/", 1)[0] + "/"
+        prefix = (
+            where.rsplit("/", 2)[0] + "/instrument/detector/"
+            if where.endswith("/data/data")
+            else where.rsplit("/", 1)[0] + "/"
+        )
         names = ("x_pixel_size", "y_pixel_size")
     acquisition["detector_pixel_size"] = [_length(file, prefix + name) for name in names]
     acquisition["pixel_size_paths"] = [prefix + name for name in names if prefix + name in file]

@@ -24,8 +24,8 @@ def checked_image_key(values: np.ndarray, *, frames: int, path: str) -> np.ndarr
     """Return validated integer labels without truncating or overflowing their values."""
     if values.shape != (frames,):
         raise ValueError(f"{path}: image_key must have shape ({frames},), not {values.shape}")
-    if values.dtype.kind not in "iu":
-        raise ValueError(f"{path}: image_key must use integer dtype, not {values.dtype}")
+    if values.dtype.kind not in "iuf":
+        raise ValueError(f"{path}: image_key must use real numeric dtype, not {values.dtype}")
     if not np.isin(values, (0, 1, 2, 3)).all():
         raise ValueError(f"{path}: image_key values must be in {{0, 1, 2, 3}}")
     return values.astype(np.int32)

@@ -45,6 +45,10 @@ listed with how to check a result in the
 
 ## Data and geometry boundaries
 
+- External HDF5 links require readable backing files at their recorded paths.
+  The loader reports missing detector sources; it does not repair damaged files
+  or guess relocated links.
+
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).
 - `tomojax preprocess` of generic TIFF frames requires a `detector` table in

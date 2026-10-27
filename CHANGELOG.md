@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Raw NXtomo loading discovers nested entries and external detector links, accepts
+exact integer-valued floating-point frame labels, and treats missing pixel
+calibration as requiring an explicit detector.
+
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
 

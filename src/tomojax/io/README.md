@@ -41,8 +41,10 @@ generic unitless motors require an explicit `angles=` override. Angles must be a
 real one-dimensional vector with one
 entry per frame and finite sample-view angles (calibration frames may have
 NaN angles); unknown units fail rather than being guessed. An
-`image_key` must be an integer vector with one entry per frame and labels in
-`{0, 1, 2, 3}` (sample, flat, dark, other); labels are checked before conversion.
+`image_key` must be a numeric vector with one entry per frame and exact labels in
+`{0, 1, 2, 3}` (sample, flat, dark, other); labels are checked before conversion, including floating-point exports.
+Raw NXtomo entries may be nested and link to external detector files; keep those
+files beside the metadata file. Repeated links to one dataset are not ambiguous.
 For other HDF5 layouts, per-frame shape disambiguates named angle/key datasets
 from different detectors. A sole named dataset with an invalid shape is rejected,
 not treated as absent. Ambiguous candidates require an explicit metadata path.
