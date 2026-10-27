@@ -169,3 +169,22 @@ def test_estimate_center_retains_signed_phase_contrast_across_rows():
     phase += np.sin(np.deg2rad(scan.angles))[:, None, None]
     result = tj.estimate_center(replace(scan, projections=phase))
     assert abs(result.detector.center[0] - true_u) < 0.15 * scan.detector.du
+
+
+def test_center_resolves_subpixel_peaks_of_sharp_analytic_projections():
+    from tomojax.alignment.api import estimate_center
+
+    detector = Detector(128, 1, 1, 1)
+    geometry = ParallelGeometry(Grid(128, 128, 1, 1, 1, 1), detector, [0, 180])
+    for center in np.linspace(-5.4, 5.4, 21):
+        u = np.arange(128) - 63.5 + center
+        data = np.asarray(
+            [
+                sum(
+                    a * np.exp(-0.5 * (u - sign * x) ** 2)
+                    for x, a in [(-19, 1), (-3, 0.8), (27, 0.4)]
+                )
+                for sign in (1, -1)
+            ]
+        )[:, None]
+        assert abs(estimate_center(geometry, data).detector.center[0] - center) < 0.001

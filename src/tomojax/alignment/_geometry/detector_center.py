@@ -100,6 +100,30 @@ def _sample_pairs(
     return pairs
 
 
+def _correlation_peak(spectrum: np.ndarray, width: int) -> float | None:
+    """Find the global subpixel peak, not just the largest integer-lag sample."""
+    # Narrow competing peaks can exchange their sampled heights as the detector
+    # moves by a fraction of a pixel. Interpolate the *whole* correlation before
+    # choosing its mode. Refining only the winning integer sample cannot fix it.
+    upsample = 8
+    size = 2 * (len(spectrum) - 1)
+    spectrum = spectrum.copy()
+    # The original Nyquist coefficient splits into positive/negative frequencies
+    # when zero-padding a real spectrum; irfft supplies the negative half.
+    spectrum[-1] *= 0.5
+    correlation = np.fft.irfft(spectrum, n=size * upsample)
+    extent = (width - 1) * upsample
+    correlation = np.r_[correlation[-extent:], correlation[: extent + 1]]
+    peak = int(np.argmax(correlation))
+    if peak == 0 or peak == len(correlation) - 1:
+        return None  # No overlapping support at an endpoint maximum.
+    left, middle, right = correlation[peak - 1 : peak + 2]
+    curvature = left - 2 * middle + right
+    if curvature >= 0:
+        return None
+    return float(peak - extent + 0.5 * (left - right) / curvature) / upsample
+
+
 def _paired_offset(first: np.ndarray, second: np.ndarray, angle_error: float) -> float | None:
     """Correlate corresponding rows, not their averages (phase contrast can cancel)."""
     if not np.isfinite(first).all() or not np.isfinite(second).all():
@@ -116,17 +140,8 @@ def _paired_offset(first: np.ndarray, second: np.ndarray, angle_error: float) ->
     b = gaussian_filter1d(second[:, ::-1], sigma, axis=-1, order=1)
     size = 1 << (2 * nu - 2).bit_length()
     spectrum = (np.fft.rfft(a, n=size) * np.conj(np.fft.rfft(b, n=size))).sum(axis=0)
-    correlation = np.fft.irfft(spectrum, n=size)
-    correlation = np.r_[correlation[-nu + 1 :], correlation[:nu]]
-    peak = int(np.argmax(correlation))
-    if peak == 0 or peak == len(correlation) - 1:
-        return None  # No overlapping detector support at an endpoint maximum.
-    left, middle, right = correlation[peak - 1 : peak + 2]
-    curvature = left - 2 * middle + right
-    if curvature >= 0:
-        return None
-    lag = peak - (nu - 1) + 0.5 * (left - right) / curvature
-    return -0.5 * float(lag)
+    lag = _correlation_peak(spectrum, nu)
+    return None if lag is None else -0.5 * lag
 
 
 def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> ParallelGeometry:
