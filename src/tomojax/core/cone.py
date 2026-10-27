@@ -30,9 +30,7 @@ Two implementations agree to FP32 rounding:
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from functools import cache, partial
-from importlib.resources import files
-import os
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -40,6 +38,7 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core._cone_runtime import cuda_module, use_cuda_cone
 from tomojax.core._cuda_joseph import xla_stream
 from tomojax.core.geometry.base import grid_volume_origin
 
@@ -131,7 +130,7 @@ class ConeModel:
     ) -> jax.Array:
         """Accumulate a batch through the exact cone transpose."""
         if self._z_fast:
-            return _adjoint_cuda(images, coeff, grid, detector, accumulate, z_fast=True)
+            return adjoint_cuda(images, coeff, grid, detector, accumulate, z_fast=True)
         return cone_backproject(
             images, coeff, grid, detector, backend=backend, accumulate=accumulate
         )
@@ -360,24 +359,6 @@ def _adjoint_jax(
 
 
 # ----------------------------------------------------------------------------- CUDA
-
-
-def use_cuda_cone() -> bool:
-    """Return whether cone projections run as CUDA kernels (``TOMOJAX_CUDA_KERNELS=0`` disables)."""
-    if os.environ.get("TOMOJAX_CUDA_KERNELS", "auto") == "0":
-        return False
-    from tomojax.core._cuda_joseph import cuda_gather_available
-
-    return cuda_gather_available()
-
-
-@cache
-def cuda_module(*, z_fast: bool = False) -> Any:
-    """Shared cone CUDA kernels, compiled lazily on the active device."""
-    import cupy as cp
-
-    source = files("tomojax.core").joinpath("cone_kernels.cu").read_text(encoding="utf-8")
-    return cp.RawModule(code=source, options=(f"-DVOLUME_Z_FAST={int(z_fast)}",))
 
 
 def forward_into(
@@ -724,10 +705,10 @@ def cone_pose_columns(
     dominant axis is held fixed: its switches are not differentiable.
     Interpolation derivatives use the current bilinear cell.
     """
-    return _pose_columns_cuda(volume, coeff, tangent=tangent, grid=grid, detector=detector)
+    return pose_columns_cuda(volume, coeff, tangent=tangent, grid=grid, detector=detector)
 
 
-def _pose_columns_cuda(
+def pose_columns_cuda(
     volume: jax.Array,
     coeff: jax.Array,
     *,
@@ -746,7 +727,7 @@ def _pose_columns_cuda(
     return call(coeff, tangent, volume.astype(jnp.float32))
 
 
-def _adjoint_cuda(
+def adjoint_cuda(
     images: jax.Array,
     coeff: jax.Array,
     grid: Grid,
@@ -853,7 +834,7 @@ def cone_backproject(
     )
     images = jnp.asarray(images, jnp.float32)
     if _resolve(backend) == "cuda":
-        return _adjoint_cuda(images, coeff, grid, detector, initial)
+        return adjoint_cuda(images, coeff, grid, detector, initial)
     return _adjoint_jax(images, coeff, grid, detector, initial)
 
 

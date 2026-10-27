@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 import jax
+import jax.numpy as jnp
 
 from tomojax.core.cone import ConeModel
 from tomojax.core.volume_layout import transpose_volume
@@ -38,10 +39,18 @@ def pack_volume[T: jax.Array | None](volume: T, model: str | ConeModel) -> T:
 
 
 def restore_volume(volume: jax.Array, model: str | ConeModel) -> jax.Array:
-    """Return public zyx after releasing the recurrence's transient workspace."""
+    """Return public zyx after the compiled recurrence has completed."""
     return transpose_volume(jax.block_until_ready(volume)) if _private(model) else volume
 
 
 def voxel_spacing(model: str | ConeModel, grid: Grid) -> tuple[float, float, float]:
     """Physical spacings in the quadratic penalty's reversed-array-axis order."""
     return (grid.vz, grid.vy, grid.vx) if _private(model) else (grid.vx, grid.vy, grid.vz)
+
+
+def initialize_volume(
+    initial: jax.Array | None, model: str | ConeModel, grid: Grid
+) -> tuple[jax.Array | None, jax.Array]:
+    """Pack a warm start and make a zero iterate without losing the zero-start flag."""
+    packed = pack_volume(initial, model)
+    return packed, jnp.zeros(volume_shape(model, grid), jnp.float32) if packed is None else packed

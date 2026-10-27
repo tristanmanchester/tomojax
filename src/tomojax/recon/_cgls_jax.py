@@ -31,10 +31,9 @@ from tomojax.recon._projection import (
 )
 from tomojax.recon._quadratic import gradient_energy, gradient_normal, regularization_normal
 from tomojax.recon._volume_storage import (
-    pack_volume,
+    initialize_volume,
     resident_model,
     restore_volume,
-    volume_shape,
     voxel_spacing,
 )
 from tomojax.recon.cgls import CGLSConfig, resident_bytes, validate_model
@@ -73,8 +72,7 @@ def _checked_inputs(
     model: str | ConeModel,
 ) -> tuple[jax.Array, jax.Array]:
     # Check inputs inside the solve: separate eager checks would each compile.
-    if initial is None:
-        initial = jnp.zeros(volume_shape(model, grid), dtype=jnp.float32)
+    _, initial = initialize_volume(initial, model, grid)
     finite = (
         jnp.all(jnp.isfinite(data)) & jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(initial))
     )
@@ -136,7 +134,6 @@ def _solve(
             absolute_weights=True,
             split=split,
         )
-    initial = pack_volume(initial, model)
     initial, inputs_finite = _checked_inputs(poses, data, initial, grid, model)
     residual = data if zero_start else data - forward(initial)
     damp2 = damping * damping
@@ -294,8 +291,7 @@ def _solve_streamed(
     normal, exact = normal_equation_operators(
         poses, grid, detector, backend, batch_size, model, joseph_interpolation
     )
-    initial = pack_volume(initial, model)
-    x0 = jnp.zeros(volume_shape(model, grid), jnp.float32) if initial is None else initial
+    initial, x0 = initialize_volume(initial, model, grid)
     damp2 = damping * damping
     spacing = voxel_spacing(model, grid)
     penalty = partial(
@@ -436,6 +432,19 @@ def _laid_out(
     return split.place(projections), *split.everywhere((poses, initial))
 
 
+def _validate_config(cfg: CGLSConfig) -> tuple[int, int]:
+    """Validate iteration and regularization settings before selecting storage."""
+    iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)
+    if iterations < 0 or batch < 1:
+        raise ValueError("cgls: iterations must be nonnegative and views_per_batch positive")
+    for name in ("rtol", "atol", "damping", "gradient_damping"):
+        value = float(getattr(cfg, name))
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"cgls: {name} must be finite and nonnegative")
+    validate_model(cfg)
+    return iterations, batch
+
+
 def cgls(
     geometry: Geometry,
     grid: Grid,
@@ -456,14 +465,7 @@ def cgls(
     host diagnostics and is not a differentiable reconstruction layer.
     """
     cfg = CGLSConfig() if config is None else config
-    iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)
-    if iterations < 0 or batch < 1:
-        raise ValueError("cgls: iterations must be nonnegative and views_per_batch positive")
-    for name in ("rtol", "atol", "damping", "gradient_damping"):
-        value = float(getattr(cfg, name))
-        if not math.isfinite(value) or value < 0:
-            raise ValueError(f"cgls: {name} must be finite and nonnegative")
-    validate_model(cfg)
+    iterations, batch = _validate_config(cfg)
     model, backend = resolve_geometry_projector(
         geometry, cfg.projector_model, cfg.backend,
         detector=detector, det_grid=det_grid, context="cgls",

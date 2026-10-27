@@ -10,7 +10,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core import cone
-from tomojax.core.cone import _adjoint_cuda, _pose_columns_cuda, cuda_module, forward_cuda
+from tomojax.core._cone_runtime import cuda_module
+from tomojax.core.cone import adjoint_cuda, forward_cuda, pose_columns_cuda
 from tomojax.core.projector_autodiff import FirstOrderProjector
 
 
@@ -49,7 +50,7 @@ class _ConeProjector(FirstOrderProjector):
         return forward_cuda(volume, coeff, self.grid, self.detector, z_fast=self.z_fast)
 
     def coefficient_jvp(self, coeff, volume, dcoeff, dvolume):
-        result = _pose_columns_cuda(
+        result = pose_columns_cuda(
             volume,
             coeff,
             tangent=dcoeff[:, None, :12],
@@ -69,7 +70,7 @@ class _ConeProjector(FirstOrderProjector):
     def adjoint(self, coeff, cotangent):
         if self.z_fast:
             initial = jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), jnp.float32)
-            return _adjoint_cuda(cotangent, coeff, self.grid, self.detector, initial, z_fast=True)
+            return adjoint_cuda(cotangent, coeff, self.grid, self.detector, initial, z_fast=True)
         return cone.cone_backproject(cotangent, coeff, self.grid, self.detector, backend="cuda")
 
 

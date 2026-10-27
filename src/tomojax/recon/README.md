@@ -31,6 +31,14 @@ data; reduce their number or relaxation for final refinement. Large axial
 Joseph scans with detector rows on voxel planes run in exact independent
 slabs when needed, returning a host NumPy volume.
 
+CUDA cone CGLS, SIRT/OS-SART and MLEM/OSEM keep device-resident iterates in
+private z-contiguous storage. Warm starts and support masks enter as public
+`(z, y, x)` arrays; a tiled permutation packs them at the solve boundary and
+restores the public output without changing the physical grid or the matched
+forward/transpose pair. This also applies to CGLS with streamed projections
+and a resident volume. Host-slab solvers and CPU execution use public storage;
+the private layout is not a user option or a different reconstruction model.
+
 Built-in parallel `fbp` zero-extends measured detector rows far enough to retain
 the ramp filter's tails at every output voxel. Zero raw data outside a detector
 do not imply zero filtered data there. This prevents corner bias when the output

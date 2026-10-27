@@ -13,7 +13,8 @@ import numpy as np
 def _launch(context: Any, out: Any, volume: Any) -> None:
     import cupy as cp
 
-    from tomojax.core.cone import cuda_module, xla_stream
+    from tomojax.core._cone_runtime import cuda_module
+    from tomojax.core._cuda_joseph import xla_stream
 
     nz, ny, nx = volume.shape
     with xla_stream(context, out):
