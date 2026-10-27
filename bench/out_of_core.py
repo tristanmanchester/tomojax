@@ -15,9 +15,9 @@ A synthetic volume (spheres in a cylinder, a CuO-like cone)::
 
     python bench/out_of_core.py synthetic --size 1300 --views 180 --method cgls --scratch DIR
 
-simulates its projections with the same slab sweep and reconstructs them with
-CGLS or SIRT; with ``--scratch`` the iterate is a memmap there and CGLS keeps
-its work volumes in unnamed files beside it.
+uses independent analytic sphere chord integrals for its projections and
+reconstructs them with CGLS or SIRT; with ``--scratch`` the iterate is a memmap
+there and CGLS keeps its work volumes in unnamed files beside it.
 
 Prints one JSON record: stage times, peak host memory (sampled anonymous
 memory and ``ru_maxrss``), peak GPU memory, bytes moved to and from the device
