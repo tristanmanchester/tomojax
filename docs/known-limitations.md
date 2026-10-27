@@ -78,6 +78,17 @@ supply extra calibration constraints, but `Rings` does not fit those constraints
   The loader reports missing detector sources; it does not repair damaged files
   or guess relocated links.
 
+
+- Zeiss frames are numbered image streams, not the planned `NoOfImages` count;
+  interrupted acquisitions load when their per-view metadata matches the stored
+  frames. Metadata-only drift records contain no reconstructible projections,
+  and missing interior image streams require a complete acquisition file.
+- MATLAB ptychography files are not raw detector-count acquisitions. Prepare
+  their complex transmission with the [ptychography example](../examples/align_ptychography.py)
+  before constructing a `Scan`. Walnut collection folders require their vector
+  geometry and calibration, as in the [walnut example](../examples/align_walnut_orbits.py).
+  2DeteCT folders require explicit fan/cone geometry and flat/dark correction;
+  the directory name does not supply that metadata to `load_frames`.
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).
 - `tomojax preprocess` of generic TIFF frames requires a `detector` table in

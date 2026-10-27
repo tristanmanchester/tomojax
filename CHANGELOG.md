@@ -26,6 +26,10 @@ Raw NXtomo loading discovers nested entries and external detector links, accepts
 exact integer-valued floating-point frame labels, and treats missing pixel
 calibration as requiring an explicit detector.
 
+Zeiss loading uses recorded image streams instead of the planned frame count,
+supporting consistent interrupted acquisitions. Missing image streams report
+the required complete acquisition file instead of exposing an iterator failure.
+
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.
 
