@@ -52,3 +52,14 @@ def test_calibration_and_single_dark_requires_explicit_noise():
 def test_negative_conversion_gain_is_not_a_noiseless_model():
     with pytest.raises(ValueError, match="photon_gain must be nonnegative"):
         DetectorModel(signal=np.ones((2, 3)), dark=np.zeros((2, 3)), photon_gain=-1, read_noise=0)
+
+
+@pytest.mark.parametrize("dark_frames", [2, 100])
+def test_flux_normalization_preserves_count_gain_with_shared_dark_noise(dark_frames):
+    rng = np.random.default_rng(376)
+    flux = np.resize([0.25, 1.75], 401)[:, None, None]
+    shape = (401, 32, 128)
+    flat = 2 * rng.poisson(1000 * flux, size=shape) + rng.normal(100, 40, shape)
+    dark = rng.normal(100, 40, (dark_frames, 32, 128))
+    model = DetectorModel.from_flats(flat, dark, read_noise=40)
+    assert model.photon_gain == pytest.approx(2, rel=0.06)

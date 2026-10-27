@@ -76,6 +76,8 @@ class DetectorModel:
 
         Adjacent-frame differences remove static sensitivity. Flat images are
         normalized to their common mean flux before estimating temporal noise.
+        The normalized variance includes the rescaled shot/read noise and the
+        shared dark-reference error, which does not cancel at unequal fluxes.
         This single-exposure estimate assumes independent pixels and frames.
 
         Parameters
@@ -107,10 +109,21 @@ class DetectorModel:
             read_noise = float(np.sqrt(np.mean((d[: 2 * n : 2] - d[1 : 2 * n : 2]) ** 2) / 2))
         normalized = f - dark
         flux = normalized.mean(axis=(1, 2), keepdims=True)
-        normalized = normalized * flux.mean() / flux
+        scale = flux.mean() / flux
+        normalized = normalized * scale
         n = len(f) // 2
         variance = np.mean((normalized[: 2 * n : 2] - normalized[1 : 2 * n : 2]) ** 2) / 2
-        gain = max(0.0, float((variance - read_noise**2) / signal.mean()))
+        first, second = scale[: 2 * n : 2], scale[1 : 2 * n : 2]
+        shot_scale = np.mean((first + second) / 2)
+        read_scale = np.mean((first**2 + second**2) / 2)
+        dark_scale = np.mean((first - second) ** 2) / (2 * len(d))
+        gain = max(
+            0.0,
+            float(
+                (variance - read_noise**2 * (read_scale + dark_scale))
+                / (signal.mean() * shot_scale)
+            ),
+        )
         return cls(signal=signal, dark=dark, photon_gain=gain, read_noise=read_noise)
 
     def simulate(
