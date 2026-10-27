@@ -123,14 +123,15 @@ def test_auto_alignment_records_center_and_resolves_only_its_limitation(monkeypa
     monkeypatch.setattr(_workflow, "reconstruct", lambda s: replace(rec, scan=s))
     info = tj.align(scan).info["automatic"]
     assert info["reconstruction"] == context
-    assert info["reasons"] == ["rings"] and info["status"] == "limited"
+    assert info["reasons"][-1] == "rings" and info["status"] == "limited"
+    assert "not a calibrated centre interval" in info["reasons"][0]
     center = info["center_estimation"]
     assert center["input"] == list(scan.detector.center) and center["status"] == "estimated"
-    assert center["diagnostics"]["pairs"][0]["conditional_sigma_px"] >= 0
+    assert center["diagnostics"]["pairs"][0]["local_matching_sigma_px"] >= 0
     assert abs(center["output"][0] - true_u) <= 0.3 * scan.detector.du
 
 
-def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(tmp_path):
+def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(tmp_path, caplog):
     import h5py
 
     scan, true_u, _ = _scan()
@@ -149,6 +150,9 @@ def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(t
     frames = tj.load_frames(path)
     assert abs(frames.geometry.detector.center[0] - true_u) <= 0.3 * scan.detector.du
     assert frames.source.geometry_metadata["detector_center_status"] == "inferred"
+    diagnostics = frames.source.geometry_metadata["detector_center_calibration"]["diagnostics"]
+    assert diagnostics["global_coverage_calibrated"] is False
+    assert "not a calibrated centre interval" in caplog.text
     assert tj.load(path).detector == frames.geometry.detector
     result = frames.cropped(slice(2, 4), slice(None)).corrected()
     expected = -np.log(counts[:, 2:4].astype(np.float64) / 10000)
@@ -224,5 +228,21 @@ def test_center_report_measures_row_trend_and_conditional_interval():
     report = estimate_center_report(scan.geometry, data)
     assert abs(report.row_slope_px_per_row + 0.03) < 0.003
     assert abs(report.geometry.detector.center[0] - truth) < 0.03
-    assert all(p.sigma_px > 0 for p in report.pairs)
-    assert all(p.interval90_px[0] < p.offset_px < p.interval90_px[1] for p in report.pairs)
+    assert all(p.local_sigma_px > 0 for p in report.pairs)
+    assert all(p.local_interval90_px[0] < p.offset_px < p.local_interval90_px[1] for p in report.pairs)
+
+
+def test_single_pair_reports_uncalibrated_global_coverage_without_inconsistency(monkeypatch):
+    from tomojax import _workflow
+
+    scan, _, _ = _scan(views=2, span=360)
+    reconstruction = tj.Reconstruction(np.zeros((80, 80, 8)), scan, "fbp", {})
+    monkeypatch.setattr(_workflow, "reconstruct", lambda s: replace(reconstruction, scan=s))
+    automatic = tj.align(scan).info["automatic"]
+    diagnostics = automatic["center_estimation"]["diagnostics"]
+    assert diagnostics["consistency_pvalue"] is None
+    assert diagnostics["global_coverage_calibrated"] is False
+    assert diagnostics["uncertainty_status"] == "local_matching_only"
+    assert "local_matching_interval90_px" in diagnostics["pairs"][0]
+    assert automatic["status"] == "limited"
+    assert "not a calibrated centre interval" in automatic["reasons"][0]

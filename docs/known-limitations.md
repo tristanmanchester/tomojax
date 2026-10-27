@@ -53,7 +53,9 @@ listed with how to check a result in the
   In five low-contrast gVXR mesh cases, wrong-mode errors reached a 3.91 px
   p95 and the conditional 90% intervals covered only one truth; check competing
   modes against an independent calibration rather than treating a narrow local
-  interval as a global accuracy certificate.
+  interval as a global accuracy certificate. Runtime reports mark global
+  coverage uncalibrated for every estimate, including a single pair without
+  a disagreement test; automatic alignment remains limited and loading warns.
 
 - TIFF `import` packages data; it does not apply flat/dark correction or a log.
   Reconstruction expects line integrals (log attenuation).

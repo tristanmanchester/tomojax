@@ -537,6 +537,8 @@ def _estimate_missing_center(frames: Frames) -> Frames:
             "to tomojax.load_frames"
         ) from exc
     geometry = report.geometry
+    diagnostics = report.to_dict()
+    LOG.warning("%s", diagnostics["uncertainty_reason"])
     source = replace(
         source,
         detector=geometry.detector,
@@ -546,7 +548,7 @@ def _estimate_missing_center(frames: Frames) -> Frames:
             "detector_center_calibration": {
                 "status": "estimated",
                 "method": "opposite_view_correlation",
-                "diagnostics": report.to_dict(),
+                "diagnostics": diagnostics,
                 "input": list(frames.geometry.detector.center),
                 "output": list(geometry.detector.center),
                 "unit": "geometry_length",

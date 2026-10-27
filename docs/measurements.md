@@ -804,6 +804,10 @@ cross-Hessian and leverage correction; it does not claim a physical-centre
 interval under arbitrary motion. Pair disagreement is reported separately.
 The automatic workflow saves these diagnostics and reports conditional
 inconsistency without replacing it by independent per-view poses.
+Runtime fields label the intervals `local_matching_interval90_px`, with
+`global_coverage_calibrated=false` and `uncertainty_status=local_matching_only`.
+These are local matching diagnostics, not calibrated global centre intervals;
+automatic alignment reports this limitation even without pair disagreement.
 
 On 2026-10-27 (`a04e5ee7`), 64 real rows gave centre-change p95 errors
 0.00422 px on Elettra 00024 and 0.00284 px on I13 159815. The report took

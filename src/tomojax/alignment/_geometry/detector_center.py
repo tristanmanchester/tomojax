@@ -173,9 +173,10 @@ class CenterPair:
     tuples. A small-motion linearization constrains the sum of opposing
     shifts, not separate poses. Angular resampling blends images: with large
     or discontinuous motion its correlation location is not an exact weighted
-    average of the contributing shifts. ``sigma_px`` and ``interval90_px`` are conditional on the selected
-    matching mode. Alternatives and their correlation heights expose competing
-    modes; their uncertainty is not included in the conditional interval.
+    average of the contributing shifts. ``local_sigma_px`` and
+    ``local_interval90_px`` describe only the selected matching mode.
+    Alternatives and their correlation heights expose competing modes;
+    global coverage is uncalibrated, not included in the local interval.
 
     Parameters
     ----------
@@ -185,10 +186,11 @@ class CenterPair:
         Angular departure of the nearest acquired pair from exact opposition.
     offset_px : float
         Detector-centre placement inferred from this pair, in detector pixels.
-    sigma_px : float
-        Conditional standard error; infinity denotes no local information.
-    interval90_px : tuple of float
-        Conditional 90% interval, using effective detector-band degrees of freedom.
+    local_sigma_px : float
+        Local matching scale; infinity denotes no local information.
+        Global coverage is uncalibrated.
+    local_interval90_px : tuple of float
+        Nominal local 90% interval, not a calibrated global centre interval.
     alternatives_px : tuple of float
         Other correlation-peak locations, in detector-centre pixels.
     relative_peak_heights : tuple of float
@@ -199,8 +201,8 @@ class CenterPair:
     second: tuple[tuple[int, float], ...]
     angular_mismatch_deg: float
     offset_px: float
-    sigma_px: float
-    interval90_px: tuple[float, float]
+    local_sigma_px: float
+    local_interval90_px: tuple[float, float]
     alternatives_px: tuple[float, ...]
     relative_peak_heights: tuple[float, ...]
 
@@ -217,9 +219,13 @@ class CenterPair:
             "second": [list(item) for item in self.second],
             "angular_mismatch_deg": self.angular_mismatch_deg,
             "offset_px": self.offset_px,
-            "conditional_sigma_px": self.sigma_px if np.isfinite(self.sigma_px) else None,
-            "conditional_interval90_px": (
-                list(self.interval90_px) if np.isfinite(self.interval90_px).all() else None
+            "local_matching_sigma_px": (
+                self.local_sigma_px if np.isfinite(self.local_sigma_px) else None
+            ),
+            "local_matching_interval90_px": (
+                list(self.local_interval90_px)
+                if np.isfinite(self.local_interval90_px).all()
+                else None
             ),
             "alternatives_px": list(self.alternatives_px),
             "relative_peak_heights": list(self.relative_peak_heights),
@@ -237,7 +243,8 @@ class CenterEstimate:
     row slope is in horizontal pixels per detector row, not a calibrated 3D
     rotation-axis tilt. Arbitrary sample motion aliases the physical centre:
     no absolute-centre confidence interval is identifiable without a motion
-    assumption. The pair intervals assume a rigid match within each pair.
+    assumption. Pair intervals are local matching diagnostics; global coverage
+    is explicitly uncalibrated even when the pairs do not disagree.
 
     Parameters
     ----------
@@ -282,6 +289,12 @@ class CenterEstimate:
             "pair_scatter_px": self.pair_scatter_px,
             "consistency_pvalue": self.consistency_pvalue,
             "uncertainty_scope": "conditional rigid pair match; physical centre aliases motion",
+            "global_coverage_calibrated": False,
+            "uncertainty_status": "local_matching_only",
+            "uncertainty_reason": (
+                "Local matching uncertainty is not a calibrated centre interval; "
+                "wrong matching modes and sample motion are excluded."
+            ),
         }
 
 
@@ -292,7 +305,7 @@ def _center_summary(
     row_offsets: list[tuple[float | None, ...]],
 ) -> CenterEstimate:
     offsets = np.asarray([p.offset_px for p in pairs])
-    sigma = np.asarray([p.sigma_px for p in pairs])
+    sigma = np.asarray([p.local_sigma_px for p in pairs])
     good = np.isfinite(sigma) & (sigma > 0)
     pvalue = None
     if np.count_nonzero(good) > 1:
@@ -345,7 +358,8 @@ def estimate_center_report(
     CenterEstimate
         Geometry, weighted view-pair constraints, conditional 90% intervals,
         alternative correlation peaks, pair disagreement and row-centre slope.
-        Sample motion and wrong-mode selection are outside the intervals.
+        Global coverage is uncalibrated: sample motion and wrong-mode selection
+        are outside the local intervals, including for a single opposing pair.
 
     Raises
     ------

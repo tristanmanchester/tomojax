@@ -474,8 +474,10 @@ def _automatic_axial_setup(
     scan: Scan, *, method: Method, reasons: list[str]
 ) -> tuple[Scan, dict[str, Any] | None, str | None]:
     """Infer an absent axial centre and identify unresolved raw-workflow limitations."""
-    center_estimation = None
     source_meta = {} if scan.source is None else scan.source.geometry_metadata
+    center_estimation: dict[str, Any] | None = cast(
+        "dict[str, Any] | None", source_meta.get("detector_center_calibration")
+    )
     if method == "fourier" and source_meta.get("detector_center_status") == "not_recorded":
         try:
             scan = estimate_center(scan)
@@ -485,6 +487,11 @@ def _automatic_axial_setup(
         except ValueError as exc:
             center_estimation = {"status": "failed", "reason": str(exc)}
             reasons.append("Automatic centre estimation failed: " + str(exc))
+    if center_estimation is not None:
+        diagnostics = cast("dict[str, Any]", center_estimation.get("diagnostics", {}))
+        uncertainty = diagnostics.get("uncertainty_reason")
+        if uncertainty:
+            reasons.append(uncertainty)
     center_calibration_reason = None
     if method == "fourier" and any(step.name == "log" for step in scan.corrections):
         if source_meta.get("detector_center_status") not in {"inferred", "recorded", "provided"}:
@@ -955,14 +962,12 @@ def _align_automatically(scan: Scan, *, grid: Grid | None = None) -> Alignment:
         scan, calibration = _estimate_center(scan)
         center.update(calibration)
         diagnostics = cast("dict[str, Any]", calibration["diagnostics"])
+        automatic.update(status="limited", reasons=[diagnostics["uncertainty_reason"]])
         probability = diagnostics["consistency_pvalue"]
         if probability is not None and probability < 0.01:
-            automatic.update(
-                status="limited",
-                reasons=[
-                    "Pair centres differ beyond conditional matching errors; inspect diagnostics "
-                    "for motion or model mismatch. Pair intervals do not cover those effects."
-                ],
+            cast("list[str]", automatic["reasons"]).append(
+                "Pair centres differ beyond conditional matching errors; inspect diagnostics "
+                "for motion or model mismatch. Local intervals do not cover those effects."
             )
     except ValueError as exc:
         center.update(status="failed", reason=str(exc))
@@ -979,7 +984,7 @@ def _align_automatically(scan: Scan, *, grid: Grid | None = None) -> Alignment:
         reasons = [reason for reason in reasons if reason != resolved]
     if reconstruction.get("status") == "limited" and (reasons or not reconstruction.get("reasons")):
         automatic["status"] = "limited"
-    automatic["reasons"] = [*cast("list[str]", automatic["reasons"]), *reasons]
+    automatic["reasons"] = list(dict.fromkeys([*cast("list[str]", automatic["reasons"]), *reasons]))
     return Alignment(
         result.volume,
         result.scan,
