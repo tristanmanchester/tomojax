@@ -46,7 +46,8 @@ listed with how to check a result in the
 ## Data and geometry boundaries
 
 - `tomojax inspect` checks storage and missing calibration in recognized raw
-  acquisitions. A valid report for other datasets does not certify their
+  acquisitions. It does not run data-driven centre inference; a centre pending
+  inference can still fail during loading. A valid report does not certify
   physical geometry or reconstruction readiness.
 - External HDF5 links require readable backing files at their recorded paths.
   The loader reports missing detector sources; it does not repair damaged files
