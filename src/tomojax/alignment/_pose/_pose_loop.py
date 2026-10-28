@@ -42,7 +42,7 @@ from tomojax.alignment.optimizers import (
     prepare_pose_lbfgs,
 )
 from tomojax.backends import estimate_views_per_batch_info
-from tomojax.core import format_duration, progress_iter
+from tomojax.core import progress_iter
 from tomojax.core.cone import cone_model
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
@@ -61,7 +61,6 @@ from ._pose_context import (
     PoseConstraintContext,
     PoseMotionContext,
     _AlignSetupState,
-    _build_alignment_volume_mask,
     validate_resume_config,
     with_beam_translation,
 )
@@ -76,7 +75,6 @@ from ._pose_steps import (
     _run_alignment_step,
     _run_coupled_alignment_step,
 )
-from ._pose_summary import _format_outer_summary_lines
 
 _AlignmentStepContexts = tuple[
     AlignmentStepOptimizer,
@@ -221,7 +219,6 @@ def _prepare_align_setup(
 def _build_alignment_runtime_context(
     *,
     geometry: Geometry,
-    grid: Grid,
     detector: Detector,
     projections: jnp.ndarray,
     cfg: AlignConfig,
@@ -267,11 +264,7 @@ def _build_alignment_runtime_context(
         medium_smoothness_weights_sq=medium_smoothness_weights_sq,
         trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
         light_smoothness_weights_sq=light_smoothness_weights_sq,
-        volume_mask=_build_alignment_volume_mask(
-            grid,
-            detector,
-            mask_vol=str(getattr(cfg, "mask_vol", "off")),
-        ),
+        volume_mask=None,
         active_loss_name=active_loss_name,
         loss_adapter=loss_adapter,
         loss_mask=loss_mask,
@@ -418,16 +411,6 @@ def _finish_align_iteration(
                 state.small_impr_streak + 1 if rel < float(cfg.early_stop_rel_impr) else 0
             )
             converged = state.small_impr_streak >= int(cfg.early_stop_patience)
-            if converged and cfg.log_summary:
-                logging.info(
-                    "Early stop after %d outer iters (%s elapsed): "
-                    "rel_impr=%.3e < %.3e for %d consecutive outers",
-                    outer_idx,
-                    format_duration(stat.get("cumulative_time")),
-                    float(rel_impr),
-                    float(cfg.early_stop_rel_impr),
-                    int(cfg.early_stop_patience),
-                )
     if checkpoint_callback is not None:
         checkpoint_callback(
             AlignResumeState(
@@ -569,59 +552,6 @@ def _run_align_outer_iteration(
     return stat, rel_impr
 
 
-def _log_align_outer_summary(
-    *,
-    stat: OuterStat,
-    cfg: AlignConfig,
-    reconstruction: str,
-) -> None:
-    for line in _format_outer_summary_lines(stat, cfg=cfg, reconstruction=reconstruction):
-        logging.info(line)
-
-
-def _log_alignment_completion(
-    *,
-    cfg: AlignConfig,
-    outer_stats: list[OuterStat],
-    wall_start: float,
-) -> None:
-    if not (cfg.log_summary and outer_stats):
-        return
-    recon_total = sum(
-        float(s.get("recon_time", 0.0)) for s in outer_stats if s.get("recon_time") is not None
-    )
-    align_total = sum(
-        float(s.get("align_time", 0.0)) for s in outer_stats if s.get("align_time") is not None
-    )
-    wall_total = time.perf_counter() - wall_start
-    logging.info(
-        "Alignment completed in %s (recon %s, align %s over %d outer iters)",
-        format_duration(wall_total),
-        format_duration(recon_total),
-        format_duration(align_total),
-        len(outer_stats),
-    )
-    first_loss = outer_stats[0].get("loss_before")
-    final_loss = outer_stats[-1].get("loss_after")
-    if (first_loss is not None) and (final_loss is not None):
-        total_delta = final_loss - first_loss
-        rel_pct = (total_delta / first_loss) * 100.0 if abs(first_loss) > 1e-12 else None
-        rel_str = f", {rel_pct:+.2f}%" if rel_pct is not None else ""
-        logging.info(
-            "  Loss %s -> %s (Δ %s%s)",
-            f"{first_loss:.3e}",
-            f"{final_loss:.3e}",
-            f"{total_delta:+.3e}",
-            rel_str,
-        )
-    best_loss = min(
-        (s.get("loss_after") for s in outer_stats if s.get("loss_after") is not None),
-        default=None,
-    )
-    if best_loss is not None and final_loss is not None and best_loss < final_loss:
-        logging.info("  Best loss observed: %.3e", best_loss)
-
-
 def _final_pose_align_info(
     *,
     state: _AlignLoopState,
@@ -746,7 +676,6 @@ def align(
         outer_limit = start_outer_iter
     runtime = _build_alignment_runtime_context(
         geometry=geometry,
-        grid=grid,
         detector=detector,
         projections=projections,
         cfg=cfg,
@@ -843,8 +772,6 @@ def align(
             wall_start=wall_start,
             reconstruct_volume=joint_refinement is None,
         )
-        if cfg.log_summary:
-            _log_align_outer_summary(stat=stat, cfg=cfg, reconstruction=reconstruction)
         should_break = _finish_align_iteration(
             cfg=cfg,
             state=loop_state,
@@ -858,7 +785,6 @@ def align(
         if should_break:
             break
 
-    _log_alignment_completion(cfg=cfg, outer_stats=loop_state.outer_stats, wall_start=wall_start)
     wall_total = time.perf_counter() - wall_start
     info = _final_pose_align_info(
         state=loop_state,

@@ -240,13 +240,6 @@ class AlignConfig:
         Polynomial degree, or spline degree 1, 2 or 3. Default is 3.
     seed_translations : bool, optional
         Initialize per-view detector shifts with a global search. Default is False.
-    mask_vol : str, optional
-        Reconstruction support used for projection: "off" or an xy cylinder ("cyl").
-        Default is 'off'.
-    log_summary : bool, optional
-        Log progress after each outer iteration. Default is False.
-    log_compact : bool, optional
-        Use a compact line when summary logging is enabled. Default is True.
     lipschitz : float | None, optional
         Fixed inner-FISTA data Lipschitz constant, or None for power estimation.
     early_stop : bool, optional
@@ -256,12 +249,6 @@ class AlignConfig:
         Relative loss-improvement threshold for outer stopping. Default is 0.001.
     early_stop_patience : int, optional
         Successive small-improvement outer iterations required to stop. Default is 2.
-    gn_accept_only_improving : bool, optional
-        Accept Gauss-Newton updates only when loss improves within tolerance. Default is
-        True.
-    gn_accept_tol : float, optional
-        Allowed loss increase as a fraction of the loss before a Gauss-Newton step.
-        Default is 0.0.
     loss : AlignmentLossConfig, optional
         Projection-domain loss specification or multiresolution loss schedule. Defaults
         to soft Otsu-weighted L2.
@@ -335,21 +322,12 @@ class AlignConfig:
     knot_spacing: int = 8
     degree: int = 3
     seed_translations: bool = False
-    # Volume masking before forward projection (modeling for ROI/truncation)
-    # Options: "off" (default), "cyl" (cylindrical mask in x-y broadcast along z)
-    mask_vol: str = "off"
-    # Logging
-    log_summary: bool = False
-    log_compact: bool = True  # print one compact line per outer when log_summary is enabled
     # Fixed Lipschitz constant for the inner FISTA; None runs the power method.
     lipschitz: float | None = None
     # Early stopping across outers (alignment phase)
     early_stop: bool = True
     early_stop_rel_impr: float = 1e-3  # stop if (before-after)/before < this
     early_stop_patience: int = 2
-    # Accept GN steps only when they improve the loss, up to gn_accept_tol.
-    gn_accept_only_improving: bool = True
-    gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
     # Data term / similarity
     loss: AlignmentLossConfig = field(default_factory=L2OtsuLossSpec)
     # The reconstruction tier of the stage being run: ``quality`` until a

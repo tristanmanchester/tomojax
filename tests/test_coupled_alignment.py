@@ -79,7 +79,6 @@ def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, 
         gather_dtype="fp32",
     )
     common = dict(
-        grid=grid,
         detector=detector,
         projections=tj.project(geometry, x),
         cfg=cfg,
@@ -87,7 +86,7 @@ def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, 
         active_mask=jnp.array([0, 0, 0, 1, 1, 0], jnp.float32),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    ctx = _pose_objective_context(runtime=runtime, **common)
+    ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
     captured = []
     monkeypatch.setattr(_coupled_objective, "_pose_cache_limit", lambda: 3 * 5 * 6 * (1 + 2) * 4)
     monkeypatch.setattr(
@@ -134,7 +133,6 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
         w_trans=0.02,
     )
     common = dict(
-        grid=grid,
         detector=detector,
         projections=projections,
         cfg=cfg,
@@ -146,7 +144,7 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
         runtime = _build_alignment_runtime_context(
             geometry=geometry, det_grid_override=None, **common
         )
-        ctx = _pose_objective_context(runtime=runtime, **common)
+        ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
         return _coupled_objective.build_coupled_objective(ctx).update(p, 0.9 * truth)
 
     with jax.enable_x64(False):
@@ -244,7 +242,6 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         w_trans=0.05 + 0.003 * scan_variant,
     )
     common = dict(
-        grid=grid,
         detector=det,
         projections=target,
         cfg=cfg,
@@ -252,7 +249,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         active_mask=jnp.asarray(active),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    ctx = _pose_objective_context(runtime=runtime, **common)
+    ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
     ctx = replace(ctx, volume_mask=jnp.asarray(support))
     objective = _coupled_objective.build_coupled_objective(ctx)
     result = objective.update(jnp.asarray(p), jnp.asarray(x))
@@ -495,7 +492,6 @@ def _small_coupled_context():
     # Compare placements after an accurate solve, rather than at the loose default CG stop.
     cfg = replace(cfg, gn_damping=0.2, gn_volume_damping=0.2, gn_joint_rtol=1e-6)
     common = dict(
-        grid=grid,
         detector=det,
         projections=projections,
         cfg=cfg,
@@ -503,7 +499,7 @@ def _small_coupled_context():
         active_mask=jnp.ones(6, jnp.float32),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    return _pose_objective_context(runtime=runtime, **common)
+    return _pose_objective_context(runtime=runtime, grid=grid, **common)
 
 
 def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch):
@@ -708,7 +704,6 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         w_trans=0,
     )
     common = dict(
-        grid=grid,
         detector=detector,
         projections=jnp.asarray(measured, jnp.float32),
         cfg=cfg,
@@ -716,7 +711,9 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         active_mask=jnp.array([0, 0, 0, 1, 0, 0], jnp.float32),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    ctx = replace(_pose_objective_context(runtime=runtime, **common), volume_mask=support)
+    ctx = replace(
+        _pose_objective_context(runtime=runtime, grid=grid, **common), volume_mask=support
+    )
     ctx = replace(
         ctx,
         has_loss_mask=weighted,
@@ -792,7 +789,6 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
         w_trans=smooth,
     )
     common = dict(
-        grid=grid,
         detector=det,
         projections=tj.project(geometry, x) * 0.9,
         cfg=cfg,
@@ -800,7 +796,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
         active_mask=jnp.asarray([1, 0, 1, 1, 1, 0], jnp.float32),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    ctx = _pose_objective_context(runtime=runtime, **common)
+    ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
     if smooth:
         ctx = replace(ctx, volume_mask=jnp.ones_like(x).at[0, 0, 0].set(0))
     else:

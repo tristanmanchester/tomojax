@@ -731,15 +731,10 @@ class tomojax.alignment.AlignConfig(
         knot_spacing: 'int' = 8,
         degree: 'int' = 3,
         seed_translations: 'bool' = False,
-        mask_vol: 'str' = 'off',
-        log_summary: 'bool' = False,
-        log_compact: 'bool' = True,
         lipschitz: 'float | None' = None,
         early_stop: 'bool' = True,
         early_stop_rel_impr: 'float' = 0.001,
         early_stop_patience: 'int' = 2,
-        gn_accept_only_improving: 'bool' = True,
-        gn_accept_tol: 'float' = 0.0,
         loss: 'AlignmentLossConfig' = <factory>,
     ) -> None
 class tomojax.alignment.AlignmentPlan(

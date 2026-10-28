@@ -1,5 +1,5 @@
 {
-  "align_config_fields": 58,
+  "align_config_fields": 53,
   "exported_names": {
     "tomojax": 23,
     "tomojax.geometry": 18,
@@ -23,7 +23,6 @@
     "simulate": 45
   },
   "long_files": {
-    "src/tomojax/alignment/_pose/_pose_loop.py": 864,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1028,
     "src/tomojax/alignment/optimizers.py": 840
   },
@@ -31,7 +30,7 @@
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 165,
     "src/tomojax/alignment/_objectives/fixed_volume.py::project_and_score_stack": 160,
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 255,
-    "src/tomojax/alignment/_pose/_pose_loop.py::align": 189,
+    "src/tomojax/alignment/_pose/_pose_loop.py::align": 185,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 148,
     "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 103,
@@ -71,7 +70,6 @@
     "src/tomojax/alignment/_objectives/loss_adapters.py::C901::_build_loss_from_kind",
     "src/tomojax/alignment/_pose/_coupled_program.py::C901::_build_program",
     "src/tomojax/alignment/_pose/_coupled_program.py::PLR0915::_build_program",
-    "src/tomojax/alignment/_pose/_pose_summary.py::C901::_lbfgs_summary_parts",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::C901::_run_reconstruction_step",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0911::_rigid_detector_grid_transform",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0912::_run_reconstruction_step",
@@ -89,18 +87,17 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 259,
+    "reportArgumentType": 198,
     "reportAssignmentType": 2,
     "reportAttributeAccessIssue": 114,
     "reportCallIssue": 12,
     "reportGeneralTypeIssues": 7,
     "reportIndexIssue": 6,
     "reportInvalidTypeForm": 1,
-    "reportOperatorIssue": 2,
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 8,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 82,
+    "reportPrivateUsage": 80,
     "reportRedeclaration": 1,
     "reportReturnType": 18,
     "reportTypedDictNotRequiredAccess": 5
