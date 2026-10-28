@@ -44,8 +44,20 @@ def test_public_api_matches_the_recorded_surface() -> None:
     assert not diff, "the public API changed; if intended, " + UPDATE + ":\n" + "\n".join(diff[:80])
 
 
+class _NoTorch:
+    """Make ``import torch`` fail as it does where torch is not installed."""
+
+    def find_spec(self, name: str, *_args: object) -> None:
+        if name.partition(".")[0] == "torch":
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+
+
 def test_optional_torch_surface_needs_no_torch_installation(monkeypatch):
-    monkeypatch.setitem(sys.modules, "torch", None)
+    # Not sys.modules["torch"] = None: libraries that look torch up there
+    # (SciPy's array API support) would then fail where torch is merely absent.
+    for name in [name for name in sys.modules if name.partition(".")[0] == "torch"]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [_NoTorch(), *sys.meta_path])
     surface = _guardrails().api_surface()
     assert "class tomojax.torch.Projector(" in surface
     assert ".adjoint(self, projections: torch.Tensor) -> torch.Tensor" in surface
