@@ -29,3 +29,9 @@ html > body[data-scroll-locked] {
 .prose h3 code {
   font-size: 0.95em;
 }
+
+/* Tables: let long commands in cells wrap so a wide table fits the column. */
+.prose td code,
+.prose th code {
+  overflow-wrap: anywhere;
+}
