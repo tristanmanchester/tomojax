@@ -115,3 +115,27 @@ def test_bounded_cgls_matches_native_astra(iterations, resident):
             assert ops.work["device_to_host_bytes"] == initial.nbytes + downloads * data.nbytes
         np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=1e-6)
     assert cp.get_default_memory_pool().total_bytes() == pool_bytes
+
+
+def test_centred_tigre_geometry_preserves_physical_rays():
+    pytest.importorskip("tigre")
+    from compare_cone import astra_vectors, setup, tigre_geometry
+    from scipy.spatial.transform import Rotation
+
+    case = setup(17, 23)
+    geo, angles = tigre_geometry(case)
+    rotation = Rotation.from_euler("ZYZ", angles).as_matrix()
+    sources = rotation[:, :, 0] * geo.DSO
+    np.testing.assert_allclose(sources, astra_vectors(case)[:, :3], atol=1e-5, rtol=1e-6)
+    assert not np.any(geo.offDetector) and not np.any(geo.offOrigin)
+
+
+@pytest.mark.gpu
+def test_centred_tigre_fdk_accepts_benchmark_geometry():
+    pytest.importorskip("tigre")
+    from compare_cone import make_case, run_tigre, setup
+
+    case = setup(32, 60)
+    volume, data = make_case(case)
+    records = run_tigre(case, volume, data, repeats=1)
+    assert next(row["error"] for row in records if row["operation"] == "fdk") < 0.15
