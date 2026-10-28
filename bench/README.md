@@ -594,6 +594,46 @@ Noiseless data with phase contrast, blur and pixel integration give 0.073°,
 the same as the noisy measurements: what limits alignment on these data is the
 phase and blur that the projector does not model, not photon noise.
 
+## Watch-movement phantom
+
+[`phantoms/watch_blender.py`](phantoms/watch_blender.py) models the README's
+object in Blender: a 29 mm hand-wound Swiss-lever movement at 18,000
+vibrations an hour. A titanium skeleton main plate, carried up into a casing
+ring, and four titanium bridges carry a brass barrel with an 84-tooth drum and
+a 16-coil Nivaflex mainspring; brass centre, third and fourth wheels with
+filleted crossings and watch tooth forms on steel pinions; a silicon club-tooth
+escape wheel and pallet lever with ruby stones; and a Glucydur balance with
+twelve gold timing screws, a 12.5-turn Nivarox hairspring, its collet, stud and
+regulator. Every pivot runs in a ruby jewel with an oil sink, and slotted steel
+screws hold the bridges to titanium posts. The plate and bridges are outlined by
+smooth unions of two-dimensional distance fields. Parts are closed meshes,
+fused per material with Blender's Manifold booleans, and every hole shares the
+vertices of the part that fills it, so materials never overlap: voxelised with
+every attenuation set to one, the movement reaches at most 1.00005 on a
+768 × 768 × 161 grid. The build takes about 40 s.
+
+```bash
+# Blender 4.5 LTS from https://download.blender.org/release/Blender4.5/,
+# unpacked under .artifacts/tools/blender, and gVXR in its own environment
+uv venv --python .venv/bin/python .artifacts/gvxr-env
+uv pip install --python .artifacts/gvxr-env/bin/python gvxr==2.1.0 numpy==2.5.3
+.artifacts/tools/blender/blender-4.5.14-linux-x64/blender -b --factory-startup \
+  -P bench/phantoms/watch_blender.py -- /tmp/watch
+```
+
+[`phantoms/gvxr_transmission.py`](phantoms/gvxr_transmission.py) runs in the
+gVXR environment and returns the meshes' pixel-averaged transmission for any
+TomoJAX poses and detector: gVXR traces each mesh's path length on a detector
+supersampled 2 × 2, and the attenuations are applied before the sub-pixels are
+averaged. The [README figures](../examples/README.md#reproduce-the-readme-figures)
+drive both scripts and voxelise their truth with
+[`phantoms/mesh_voxels.py`](phantoms/mesh_voxels.py), which adds each surface
+crossing's share of every voxel in vectorised form: the whole movement takes
+about 4 s on a 512 × 512 × 107 grid. On 48 nominal views, TomoJAX's Joseph
+projection of a 77 µm voxel truth differs from gVXR's line integrals by 0.099
+relative L2, least at zero detector offset, from the partial volume of thin
+steel and gold parts and from averaging transmission over each pixel.
+
 ## Procedural documentation phantoms
 
 Three NumPy/SciPy phantoms in [`phantoms/`](phantoms) are recognisable
