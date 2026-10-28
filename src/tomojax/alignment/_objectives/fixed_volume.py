@@ -5,12 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import functools
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
 
-from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.core.backend_policy import (
     BackendProvenance,
     ProjectorBackendInput,
@@ -25,15 +24,12 @@ from tomojax.core.projector import (
 )
 from tomojax.core.view_chunks import chunk_schedule, chunk_size
 
-from .loss_adapters import LossAdapter, build_loss_adapter
+from .loss_adapters import LossAdapter
 
 if TYPE_CHECKING:
-    from tomojax.alignment._model.state import AlignmentState
     from tomojax.core.geometry import Detector, Grid
 
-    from .loss_specs import AlignmentLossSpec
 
-ObjectiveKind = Literal["fixed_volume", "bilevel_cv", "all_data_bilevel"]
 DifferentiationMode = Literal["none", "unrolled", "implicit"]
 InnerInitPolicy = Literal[
     "zeros", "current_level_volume", "previous_fold_volume", "previous_stage_volume"
@@ -67,214 +63,12 @@ class ObjectiveProvenance:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class ObjectiveResult:
-    """Objective value plus auxiliary diagnostics."""
-
-    value: jnp.ndarray
-    aux: dict[str, object]
-
-
-class AlignmentObjective:
-    """Protocol-like base for alignment objectives."""
-
-    kind: ObjectiveKind
-
-    def evaluate(self, state: AlignmentState) -> ObjectiveResult:
-        """Evaluate the objective at an alignment state."""
-        raise NotImplementedError
-
-
-@dataclass(frozen=True, slots=True)
-class FixedVolumeProjectionObjective(AlignmentObjective):
-    """Project a fixed volume under candidate geometry and score projections."""
-
-    base: BaseGeometryArrays
-    grid: Grid
-    detector: Detector
-    projections: jnp.ndarray
-    volume: jnp.ndarray
-    loss_adapter: LossAdapter
-    provenance: ObjectiveProvenance
-    views_per_batch: int = 1
-    projector_unroll: int = 1
-    checkpoint_projector: bool = True
-    gather_dtype: str = "fp32"
-    backend: ProjectorBackendInput = "jax"
-    require_differentiable_projector: bool = True
-    ray_integrator: str = "sampled"
-    kind: ObjectiveKind = "fixed_volume"
-
-    @classmethod
-    def from_loss_spec(
-        cls,
-        *,
-        base: BaseGeometryArrays,
-        grid: Grid,
-        detector: Detector,
-        projections: jnp.ndarray,
-        volume: jnp.ndarray,
-        loss_spec: AlignmentLossSpec,
-        **kwargs: Any,
-    ) -> FixedVolumeProjectionObjective:
-        """Build a fixed-volume objective from a loss specification."""
-        adapter = build_loss_adapter(loss_spec, projections)
-        return cls(
-            base=base,
-            grid=grid,
-            detector=detector,
-            projections=jnp.asarray(projections, dtype=jnp.float32),
-            volume=jnp.asarray(volume, dtype=jnp.float32),
-            loss_adapter=adapter,
-            provenance=ObjectiveProvenance(
-                outer_loss_source="AlignmentLossSpec",
-                outer_loss_kind=adapter.name,
-                inner_data_term="none",
-                inner_regulariser="none",
-                validation_split="none",
-                differentiation_mode="none",
-                initialization_policy="current_level_volume",
-            ),
-            **kwargs,
-        )
-
-    def evaluate(self, state: AlignmentState) -> ObjectiveResult:
-        """Evaluate projection loss after applying the candidate alignment state."""
-        effective = apply_alignment_state(self.base, state)
-        value = project_and_score_stack(
-            pose_stack=effective.pose_stack,
-            grid=self.grid,
-            detector=self.detector,
-            volume=self.volume,
-            det_grid=effective.det_grid,
-            targets=self.projections,
-            loss_adapter=self.loss_adapter,
-            views_per_batch=self.views_per_batch,
-            projector_unroll=self.projector_unroll,
-            checkpoint_projector=self.checkpoint_projector,
-            gather_dtype=self.gather_dtype,
-            view_indices=jnp.arange(int(self.projections.shape[0]), dtype=jnp.int32),
-            backend=self.backend,
-            require_differentiable_projector=self.require_differentiable_projector,
-            ray_integrator=self.ray_integrator,
-        )
-        backend_meta = alignment_projector_backend_provenance(
-            pose_stack=effective.pose_stack,
-            grid=self.grid,
-            detector=self.detector,
-            volume=self.volume,
-            det_grid=effective.det_grid,
-            backend=self.backend,
-            require_differentiable_projector=self.require_differentiable_projector,
-            gather_dtype=self.gather_dtype,
-            api_surface="alignment.fixed_volume_objective",
-            ray_integrator=self.ray_integrator,
-        )
-        return ObjectiveResult(
-            value=value,
-            aux={
-                "objective_kind": self.kind,
-                "loss_kind": self.loss_adapter.name,
-                "objective_provenance": self.provenance.to_dict(),
-                "backend_provenance": backend_meta.to_dict(),
-            },
-        )
-
-
 def _cone_projector_backend(requested: ProjectorBackendInput) -> str:
     from tomojax.core.cone import use_cuda_cone
 
     if normalize_projector_backend(requested) == "jax" or not use_cuda_cone():
         return "jax"
     return "cuda"
-
-
-def project_stack(
-    *,
-    pose_stack: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    volume: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
-    views_per_batch: int = 1,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
-    backend: ProjectorBackendInput = "jax",
-    require_differentiable_projector: bool = True,
-    ray_integrator: str = "sampled",
-    frames: jnp.ndarray | None = None,
-) -> jnp.ndarray:
-    """Project all views for a fixed volume in bounded-size batches."""
-    backend = normalize_projector_backend(backend)
-    n_views = int(pose_stack.shape[0])
-    if n_views == 0:
-        return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
-    if frames is not None:
-        cone_backend = _cone_projector_backend(backend)
-        return cone_views(pose_stack, grid, detector, volume, frames, cone_backend)
-    if ray_integrator == "sampled" and backend == "cuda" and not require_differentiable_projector:
-        fallback_reason = _cuda_sinogram_fallback_reason(
-            pose_stack=pose_stack,
-            grid=grid,
-            detector=detector,
-            volume=volume,
-            det_grid=det_grid,
-            gather_dtype=gather_dtype,
-        )
-        cuda_project, callable_reason = resolve_cuda_callable(
-            "forward_project_views_T_cuda",
-            missing_reason="cuda_batched_callable_missing",
-        )
-        fallback_reason = fallback_reason or callable_reason
-        if cuda_project is not None and fallback_reason is None:
-            unsupported_exc = cuda_unsupported_exception_type(resolve_cuda_callable) or ValueError
-            try:
-                options = _cuda_projector_options(
-                    gather_dtype=gather_dtype,
-                    det_grid=det_grid,
-                    state_mode="cached",
-                )
-                return cuda_project(
-                    pose_stack,
-                    grid,
-                    detector,
-                    volume,
-                    options=options,
-                )
-            except unsupported_exc as exc:
-                fallback_reason = f"{type(exc).__name__}: {exc}"
-        if fallback_reason is not None:
-            LOG.debug(
-                "Falling back to JAX projector after CUDA projection rejection: %s",
-                fallback_reason,
-            )
-    b = chunk_size(n_views, views_per_batch, default=n_views)
-    num_chunks = (n_views + b - 1) // b
-    vm_project = functools.partial(
-        project_views,
-        grid=grid,
-        detector=detector,
-        volume=volume,
-        use_checkpoint=checkpoint_projector,
-        unroll=int(projector_unroll),
-        gather_dtype=gather_dtype,
-        det_grid=det_grid,
-        ray_integrator=ray_integrator,
-    )
-
-    def body(
-        out: jnp.ndarray,
-        i: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, None]:
-        start_shifted, _vmask, view_idx = chunk_schedule(i, n_views=n_views, chunk_size=b)
-        T_chunk = jax.lax.dynamic_slice_in_dim(pose_stack, start_shifted, b)
-        pred = vm_project(T_chunk)
-        return out.at[view_idx].set(pred), None
-
-    init = jnp.zeros((n_views, detector.nv, detector.nu), dtype=jnp.float32)
-    out, _ = jax.lax.scan(body, init, jnp.arange(num_chunks, dtype=jnp.int32))
-    return out
 
 
 def project_and_score_stack(
@@ -561,25 +355,3 @@ def _cuda_projector_options(
         det_grid=det_grid,
         state_mode=state_mode,
     )
-
-
-def score_projection_stack(
-    adapter: LossAdapter,
-    pred: jnp.ndarray,
-    targets: jnp.ndarray,
-    *,
-    mask: jnp.ndarray | None = None,
-    view_indices: jnp.ndarray | None = None,
-    rng_key: jnp.ndarray | None = None,
-) -> jnp.ndarray:
-    """Score an already-projected stack with an alignment loss adapter."""
-    losses = adapter.per_view_loss(
-        pred,
-        targets,
-        getattr(adapter.state, "mask", None),
-        view_indices=view_indices,
-        rng_key=rng_key,
-    )
-    if mask is not None:
-        losses = losses * jnp.asarray(mask, dtype=jnp.float32)
-    return jnp.sum(losses)

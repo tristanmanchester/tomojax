@@ -24,7 +24,6 @@ from tomojax.alignment.api import AlignConfig, AlignmentSchedule, AlignmentStage
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import fista_tv
 
-projection_pair_det_u_seed = init.projection_pair_det_u_seed
 sinogram_det_u_seed = init.sinogram_det_u_seed
 
 
@@ -77,44 +76,6 @@ def test_theta_span_uses_sampled_geometric_coverage() -> None:
 )
 def test_alignment_reconstruction_oom_detection_is_case_insensitive(message: str) -> None:
     assert _is_oom_error_message(message)
-
-
-def test_projection_pair_detector_center_seed_uses_tomojax_sign_convention() -> None:
-    grid = Grid(nx=32, ny=32, nz=16, vx=1.0, vy=1.0, vz=1.0)
-    detector = Detector(nu=32, nv=16, du=1.0, dv=1.0)
-    geometry = ParallelGeometry(
-        grid=grid,
-        detector=detector,
-        angles=np.asarray([0.0, 180.0], dtype=np.float32),
-    )
-    u = np.arange(detector.nu, dtype=np.float32)
-    base_profile = np.exp(-0.5 * ((u - 13.0) / 2.5) ** 2)
-    base_profile += 0.4 * np.exp(-0.5 * ((u - 22.0) / 1.8) ** 2)
-    first = np.tile(base_profile[None, :], (detector.nv, 1))
-    mirrored_second = np.roll(first, shift=6, axis=1)
-    second = np.flip(mirrored_second, axis=1)
-    projections = np.stack([first, second], axis=0).astype(np.float32)
-
-    seed = projection_pair_det_u_seed(projections, geometry)
-
-    assert seed.status == "ok_pairs=1"
-    assert seed.det_u_px == pytest.approx(3.0, abs=0.25)
-
-
-def test_projection_pair_detector_center_seed_rejects_constant_projections() -> None:
-    grid = Grid(nx=32, ny=32, nz=16, vx=1.0, vy=1.0, vz=1.0)
-    detector = Detector(nu=32, nv=16, du=1.0, dv=1.0)
-    geometry = ParallelGeometry(
-        grid=grid,
-        detector=detector,
-        angles=np.asarray([0.0, 180.0], dtype=np.float32),
-    )
-    projections = np.ones((2, detector.nv, detector.nu), dtype=np.float32)
-
-    seed = projection_pair_det_u_seed(projections, geometry)
-
-    assert seed.status == "no_usable_opposite_angle_pairs"
-    assert seed.det_u_px == pytest.approx(0.0)
 
 
 def _analytic_shifted_sinogram(angles, columns):
