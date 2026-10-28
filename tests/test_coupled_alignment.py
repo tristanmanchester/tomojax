@@ -16,6 +16,7 @@ from tomojax.alignment._pose import (
     _coupled_program,
     _coupled_vectors,
     _matching_model,
+    _pose_objective,
     _pose_steps,
 )
 
@@ -182,7 +183,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     from pathlib import Path
 
     from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import PWLSLossSpec
+    from tomojax.alignment.api import L2OtsuLossSpec
     from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
 
     if backend == "cuda" and jax.default_backend() != "gpu":
@@ -239,7 +240,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         gather_dtype="fp32",
         pose_translation_frame="detector",
         tv_weight=0,
-        loss=PWLSLossSpec(a=0.3, b=0.8),
+        loss=L2OtsuLossSpec(),
         w_rot=0.03 + 0.005 * scan_variant,
         w_trans=0.05 + 0.003 * scan_variant,
     )
@@ -258,7 +259,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     result = objective.update(jnp.asarray(p), jnp.asarray(x))
     assert result.finite
     assert objective.pose_columns_cached != stream
-    weight = np.sqrt(1 / (0.3 * np.maximum(target, 0) + 0.8 + 1e-6)).ravel()
+    weight = (1 / (1 + np.exp(-(np.asarray(ctx.loss_mask) - 0.5) / 0.5))).ravel()
     a = (
         np.column_stack(
             [
@@ -768,7 +769,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
 
     import tomojax as tj
     from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import PWLSLossSpec
+    from tomojax.alignment.api import L2OtsuLossSpec
 
     grid, det = tj.Grid(3, 2, 3, 0.8, 1.1, 0.7), tj.Detector(5, 4, 0.7, 0.9, (0.13, -0.21))
     geometry = tj.LaminographyGeometry(grid, det, [13, 47, 103], tilt_deg=23)
@@ -787,7 +788,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
         gn_volume_damping=0.2,
-        loss=PWLSLossSpec(a=0.3, b=0.8),
+        loss=L2OtsuLossSpec(),
         w_rot=smooth,
         w_trans=smooth,
     )
@@ -989,3 +990,50 @@ def test_finite_sampling_and_paired_derivatives_match_dense_oracle(width, backen
         filtered(_matching_model.resample_rows(backgrounds.astype(np.float32), width)), 0, atol=2e-6
     )
     np.testing.assert_allclose(jnp.vdot(filtered(y), z), jnp.vdot(y, filtered(z)), atol=2e-6)
+
+
+@pytest.mark.parametrize("kind", ["l2", "l2_otsu", "huber"])
+def test_fixed_volume_gn_uses_true_loss_and_two_sided_irls(monkeypatch, kind):
+    # check-public-imports: allow-private
+    from tomojax.alignment._objectives.loss_adapters import build_loss_adapter
+    from tomojax.alignment.api import parse_loss_spec
+
+    residual = np.array([-4.0, -0.2, 0.0, 0.4, 3.0], np.float32)
+    columns = np.random.default_rng(1348).normal(size=(6, 5)).astype(np.float32)
+    adapter = build_loss_adapter(parse_loss_spec(kind), jnp.zeros((1, 1, 5)))
+    ctx = SimpleNamespace(
+        loss_adapter=adapter, cfg=SimpleNamespace(gn_damping=0.2), active_mask=jnp.ones(6)
+    )
+    monkeypatch.setattr(
+        _pose_objective,
+        "build_pose_prediction_and_columns",
+        lambda _: lambda *args: (jnp.asarray(residual), jnp.asarray(columns)),
+    )
+    batch = _pose_objective._build_gn_update_batch(ctx)
+    arg = jnp.zeros((1, 6))
+    system, rhs, value = batch(arg, arg, arg, arg, jnp.zeros(1), arg)
+    weight = np.minimum(1, 1 / np.maximum(1, np.abs(residual))) if kind == "huber" else 1
+    expected_value = (
+        np.where(np.abs(residual) <= 1, 0.5 * residual**2, np.abs(residual) - 0.5).sum()
+        if kind == "huber"
+        else 0.5 * np.sum(residual**2)
+    )
+    np.testing.assert_allclose(
+        system[0], (columns * weight) @ columns.T + 0.2 * np.eye(6), atol=2e-6
+    )
+    np.testing.assert_allclose(rhs[0], -columns @ (weight * residual), atol=2e-6)
+    assert float(value[0]) == pytest.approx(expected_value)
+    # The robust model gradient must equal the actual per-view objective gradient.
+    if kind == "huber":
+        gradient = jax.grad(
+            lambda r: adapter.per_view_loss(r[None, None], jnp.zeros((1, 1, 5)), None).sum()
+        )
+        np.testing.assert_allclose(gradient(jnp.asarray(residual)), weight * residual, atol=1e-6)
+
+
+def test_joint_gn_rejects_huber_with_fixed_volume_remedy():
+    from tomojax.alignment.api import HuberLossSpec
+
+    ctx = SimpleNamespace(cfg=None, loss_adapter=SimpleNamespace(spec=HuberLossSpec()))
+    with pytest.raises(ValueError, match="fixed_volume"):
+        _coupled_objective.build_coupled_objective(ctx)

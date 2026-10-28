@@ -182,7 +182,7 @@ def _loss(value: object) -> object:
 
     A loss name (``"huber"``), a table of a name and its parameters
     (``{ name = "huber", delta = 1.0 }``), or a level schedule
-    (``"4:phasecorr,2:ssim"``, l2_otsu at other levels).
+    (``"4:huber,2:l2"``, l2_otsu at other levels).
     """
     from tomojax.alignment.api import parse_loss_schedule, parse_loss_spec
 

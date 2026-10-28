@@ -57,7 +57,7 @@
   },
   "suppressions": {
     "noqa": 8,
-    "type: ignore": 32,
+    "type: ignore": 30,
     "pyright: ignore": 14
   },
   "complex_functions": [
@@ -68,7 +68,6 @@
     "src/tomojax/alignment/_model/state.py::C901::alignment_state_from_checkpoint",
     "src/tomojax/alignment/_objectives/fixed_volume.py::C901::project_and_score_stack",
     "src/tomojax/alignment/_objectives/fixed_volume.py::PLR0915::project_and_score_stack",
-    "src/tomojax/alignment/_objectives/loss_adapters.py::C901::_build_loss_from_kind",
     "src/tomojax/alignment/_pose/_coupled_program.py::C901::_build_program",
     "src/tomojax/alignment/_pose/_coupled_program.py::PLR0915::_build_program",
     "src/tomojax/alignment/_pose/_pose_summary.py::C901::_lbfgs_summary_parts",
@@ -91,14 +90,14 @@
   "type_errors": {
     "reportArgumentType": 259,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 114,
+    "reportAttributeAccessIssue": 113,
     "reportCallIssue": 12,
     "reportGeneralTypeIssues": 7,
     "reportIndexIssue": 6,
     "reportInvalidTypeForm": 1,
     "reportOperatorIssue": 2,
     "reportOptionalCall": 2,
-    "reportOptionalMemberAccess": 8,
+    "reportOptionalMemberAccess": 7,
     "reportOptionalSubscript": 1,
     "reportPrivateUsage": 82,
     "reportRedeclaration": 1,
