@@ -270,6 +270,9 @@ def test_calibration_subset_excludes_every_interpolation_contributor(form):
     from tomojax.alignment.api import estimate_center, estimate_center_report
 
     scan, _, _ = _scan(views=360, span=360)
+    angles = scan.angles.copy()
+    angles[180:] += 0.2
+    scan = replace(scan, geometry=replace(scan.geometry, angles=angles))
     chosen = slice(1, 358) if form == "slice" else np.arange(360) % 7 != 2
     kept = np.arange(360)[chosen]
     views = kept if form == "indices" else chosen
@@ -291,6 +294,7 @@ def test_calibration_subset_excludes_every_interpolation_contributor(form):
     np.testing.assert_array_equal(report.geometry.angles, scan.angles)
     assert report.to_dict()["calibration_views"] == kept.tolist()
     assert 0 < len(reads) <= 64
+    assert any(len(side) == 2 for pair in report.pairs for side in (pair.first, pair.second))
     for actual, local in zip(report.pairs, expected.pairs, strict=True):
         for side in ("first", "second"):
             assert getattr(actual, side) == tuple(
