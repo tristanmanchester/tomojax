@@ -20,6 +20,7 @@ import numpy as np
 from scipy.fft import next_fast_len
 
 from tomojax.alignment._geometry.common_lines import prepare_common_lines
+from tomojax.backends.host_stream import should_stream
 from tomojax.core.cone import cone_model
 from tomojax.core.geometry.cone import segments_of
 from tomojax.core.geometry.views import stack_view_poses
@@ -48,6 +49,22 @@ def shift_views(images: jax.Array, shifts: jax.Array) -> jax.Array:
         return jax.scipy.ndimage.map_coordinates(image, list(coords), order=1, mode="constant")
 
     return jax.vmap(one)(images, shifts)
+
+
+def _shifted_projections(
+    data: jax.Array | np.ndarray, shifts: np.ndarray, chunks: list[slice]
+) -> jax.Array | np.ndarray:
+    """Keep corrected views with their input; only a host batch visits the device."""
+    if isinstance(data, jax.Array):
+        return jnp.concatenate(
+            [shift_views(data[c], jnp.asarray(shifts[c], jnp.float32)) for c in chunks]
+        )
+    corrected = np.empty_like(data, dtype=np.float32)
+    for c in chunks:
+        corrected[c] = np.asarray(
+            shift_views(jnp.asarray(data[c]), jnp.asarray(shifts[c], jnp.float32))
+        )
+    return corrected
 
 
 @partial(jax.jit, static_argnames=("max_u", "max_v"))
@@ -271,7 +288,7 @@ def reprojector(
 
 
 def _quick_reconstruction(
-    geometry: Geometry, grid: Grid, detector: Detector, data: jax.Array
+    geometry: Geometry, grid: Grid, detector: Detector, data: jax.Array | np.ndarray
 ) -> jax.Array:
     """A fast reconstruction to correlate against.
 
@@ -314,7 +331,14 @@ def estimate_view_shifts(
     otherwise retain zero shifts. Neither initializer certifies motion
     accuracy; declining initialization does not mean the sample did not move.
     """
-    data = jnp.asarray(projections, dtype=jnp.float32)
+    # Reserve image/FBP work space before admitting the measured and corrected
+    # stacks. Small host inputs retain the resident execution schedule.
+    on_host = should_stream(projections, reserve_bytes=6 * grid.nx * grid.ny * grid.nz * 4)
+    data = (
+        np.asarray(projections, dtype=np.float32)
+        if on_host
+        else jnp.asarray(projections, dtype=jnp.float32)
+    )
     n = int(data.shape[0])
     poses = stack_view_poses(geometry, n)
     nominal = np.asarray(poses, np.float64)
@@ -326,29 +350,22 @@ def estimate_view_shifts(
     chunks = [slice(s, min(s + _CHUNK, n)) for s in range(0, n, _CHUNK)]
 
     def correlate(volume: jax.Array) -> np.ndarray:
-        # Keep only the small peak tables, then synchronize once per iteration.
-        return np.asarray(
-            jnp.concatenate(
-                [
-                    correlation_peaks(
-                        data[c],
-                        reproject(c, volume),
-                        max_u=max_u,
-                        max_v=max_v,
-                    )
-                    for c in chunks
-                ]
-            ),
-            np.float64,
-        )
+        def peaks(c: slice) -> jax.Array:
+            return correlation_peaks(
+                jnp.asarray(data[c]), reproject(c, volume), max_u=max_u, max_v=max_v
+            )
+
+        if on_host:
+            # Synchronize each host batch so queued transfers cannot retain the scan.
+            return np.concatenate([np.asarray(peaks(c), np.float64) for c in chunks])
+        # Device inputs need no transfer; synchronize only the small peak table.
+        return np.asarray(jnp.concatenate([peaks(c) for c in chunks]), np.float64)
 
     spacing = (float(detector.du), float(detector.dv))
     shifts = np.zeros((n, 2))
     change = 0.0
     for iteration in range(int(iters)):
-        corrected = jnp.concatenate(
-            [shift_views(data[c], jnp.asarray(-shifts[c], jnp.float32)) for c in chunks]
-        )
+        corrected = _shifted_projections(data, -shifts, chunks)
         volume = _quick_reconstruction(geometry, grid, detector, corrected)
         del corrected
         peaks = correlate(volume)

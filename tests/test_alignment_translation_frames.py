@@ -435,8 +435,28 @@ def test_translation_seed_subtracts_frozen_depth_motion(frame, active):
     np.testing.assert_array_equal(actual[:, [0, 1, 2, 5]], initial[:, [0, 1, 2, 5]])
 
 
+def test_shifted_host_projections_preserve_placement_and_device_values():
+    rng = np.random.default_rng(117)
+    data = rng.normal(size=(37, 7, 9)).astype(np.float32)
+    shifts = rng.uniform(-2, 2, (37, 2))
+    chunks = [slice(0, 32), slice(32, 37)]
+    host = _prealign._shifted_projections(data, shifts, chunks)
+    device = _prealign._shifted_projections(jnp.asarray(data), shifts, chunks)
+    assert isinstance(host, np.ndarray) and isinstance(device, jax.Array)
+    np.testing.assert_array_equal(host, device)
+
+
 @pytest.mark.parametrize("kind", ["parallel", "lamino"])
-def test_shift_search_recovers_large_view_shifts(kind):
+def test_shift_search_recovers_large_view_shifts(kind, monkeypatch):
+    from tomojax.backends import host_stream
+
+    reconstruct = _prealign._quick_reconstruction
+
+    def checked(geometry, grid, detector, data):
+        assert isinstance(data, np.ndarray) == (free < threshold)
+        return reconstruct(geometry, grid, detector, data)
+
+    monkeypatch.setattr(_prealign, "_quick_reconstruction", checked)
     angles = np.linspace(0.0, 180.0 if kind == "parallel" else 360.0, 40, endpoint=False)
     geometry, grid, detector = _geometry(32, kind, angles.astype(np.float32))
     c = (np.arange(32) - 15.5) / 32
@@ -449,7 +469,22 @@ def test_shift_search_recovers_large_view_shifts(kind):
     rng = np.random.default_rng(4)
     truth = rng.uniform(-5, 5, (len(angles), 2))
     data = _prealign.shift_views(clean, jnp.asarray(truth, jnp.float32))
-    found = estimate_view_shifts(geometry, grid, detector, data) / [detector.du, detector.dv]
+    threshold = 6 * volume.nbytes + data.nbytes / 0.4
+
+    def admission(projections, **kwargs):
+        assert kwargs["reserve_bytes"] == 6 * volume.nbytes
+        with monkeypatch.context() as patch:
+            patch.setattr(jax, "default_backend", lambda: "gpu")
+            patch.setattr("tomojax.backends.device_free_memory_bytes", lambda: free)
+            return host_stream.should_stream(projections, **kwargs)
+
+    monkeypatch.setattr(_prealign, "should_stream", admission)
+    found = []
+    for available in (threshold - 1, threshold + 1):
+        free = available
+        found.append(estimate_view_shifts(geometry, grid, detector, np.asarray(data)))
+    np.testing.assert_allclose(found[0], found[1], rtol=1e-6, atol=1e-6)
+    found = found[-1] / [detector.du, detector.dv]
     rotations = np.asarray(poses, np.float64)[:, :3, :3]
     spacing = (detector.du, detector.dv)
     expected = _prealign._remove_object_translation(truth, rotations[:, [0, 2], :], spacing)
