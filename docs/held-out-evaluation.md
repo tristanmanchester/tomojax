@@ -221,3 +221,64 @@ control had error
 0.1742 with 180 held-out angles versus 0.01693 with 720; a genuinely truncated
 Gaussian control had error 0.1591 despite zero extension. These failures prevent
 using this diagnostic as an automatic TomoJAX selector.
+
+#### Transfer to real I13 data
+
+The fine-grid score does not transfer unconditionally. On I13 159815, row 1080,
+columns 441:1869, all 3001 views, the same stride-five/offset-two split leaves
+600 validation views. A 1024² FBP of those views, with symmetric detector
+zero-extension and cell averaging to 256², supplies the validation proxy.
+The axis is fixed at −5 detector pixels; there is no fitted scale or registration.
+Known analytic Gaussian attenuation is added by approximate ADU-based thinning
+(seed 9134), retaining the read-noise limitation described above.
+
+For candidates 1, 2, 4, 8, 16, 32 and 64, applying the score to the **paired
+reconstruction increment** selects 32, with incremental error 0.146480, the best
+tested value. This score requires the injection pair and cannot select stopping
+for an unknown specimen. Applying the **absolute image score** to the injected
+scan, on the expanded path including 50 and 128 updates, selects eight:
+incremental error 0.457729 versus 0.110811 at 128. The ratio is at least 4.1307;
+the best tested value is an endpoint, not a resolved oracle. The absolute score
+does beat the fixed 50-update increment error of 0.765734 in this experiment.
+However, its validation projection MSE is 0.0131178 versus 0.0109171 at 50
+updates, a 20.16% increase. It therefore also fails prediction non-harm against
+that fixed iteration count, independently of the stronger oracle-gap criterion.
+These are known-perturbation checks, not whole-image accuracy estimates, and
+the two scores target different quantities.
+
+Applying the same fine-grid inverse to both predicted and measured validation
+rays, and minimizing their image-space squared difference, also selects eight
+updates. This removes the assumption that the inverse exactly recovers the
+candidate voxel values, but still targets a transformed-prediction seminorm,
+not full-image error. The same prediction non-harm failure remains. These
+fixed-iteration comparisons disable residual-tolerance stopping; they do not
+establish equivalence to the public default's nonzero tolerance.
+
+The large 50-update increment error is not caused by residual-verification
+restarts: neither solve restarts, and disabling verification changes that error
+only to 0.765740. Early-stopped CGLS has right-hand-side-dependent coefficients;
+its response to a small addition can be nonmonotonic even when the data fit
+improves. Do not treat a paired increment as a linear reconstruction operator.
+
+An independent sharp-disk control also rejects this proxy on the frozen split:
+six off-axis disks have cell-mean image errors 0.0356–0.0991, exceeding 0.03,
+despite relative mass errors below 0.001. For one narrow disk, increasing the
+FBP grid from 1024² to 4096² only reduces error from 0.0939 to 0.0867;
+using 1500 recorded angles at 1024² instead gives 0.0192. The latter is an
+angular-sampling diagnostic on a different split, not a replacement score for
+the failed split. Analytic chords and circle-cell quadrature provide this truth,
+not the reconstruction projector.
+
+Measured 2026-10-28 with numerical source `20fe1a9c` and harness `09437d17`.
+Commands use the environment above with `stopping_i13_fine.py`,
+`stopping_i13_absolute.py`, `stopping_i13_matched.py` and `cgls_trace.py`; CPU controls use
+`JAX_PLATFORMS=cpu` with `i13_sharp_gate.py` and `i13_sharp_attribution.py`.
+For the original increment score, selected-candidate first/repeat times are
+1.806/1.807 s, peak GPU 316 MiB and host RSS 1215 MiB. For the absolute score,
+they are 0.492/0.492 s, peak GPU 252 MiB and host RSS 985 MiB; its complete
+sweep takes 48.79 s. Times include both reconstructions and matched scoring,
+and are first/repeat candidate times, not fresh-process compilation times.
+The transformed-prediction follow-up takes 48.99 s, with GPU 412 MiB and host
+RSS 1088 MiB, including its additional inverse transforms.
+The six-disk CPU control takes 2.46 s with host RSS 740 MiB and no GPU allocation.
+No automatic stopping or regularisation rule is adopted from these diagnostics.
