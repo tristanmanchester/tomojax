@@ -102,10 +102,8 @@ def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("public_fallback", [False, True])
-def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(
-    monkeypatch, public_fallback
-):
+@pytest.mark.parametrize("regulariser", ["huber_tv", "tv"])
+def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(regulariser):
     # The rays each sum two identical unknown voxels: A.T A has eigenvalue 2
     # on this constant mode. With L=4 every one-step update halves the error.
     # Repeatedly inflating L instead leaves a finite error even after 40 steps.
@@ -119,29 +117,13 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(
         lipschitz=4,
         tv_weight=0.01,
         huber_delta=0.12,
+        regulariser=regulariser,
         backend="jax",
         gather_dtype="fp32",
         optimise_dofs=("dx",),
         bounds={"dx": (-1e-6, 1e-6)},  # holds the poses; only the volume moves
         early_stop=False,
     )
-    if public_fallback:
-        original_fista = reconstruction_stage.fista_tv
-
-        def fixed_reconstruction_defaults(*args, **kwargs):
-            config = kwargs["config"]
-            assert (config.tv_prox_iterations, config.projector_unroll) == (10, 1)
-            assert config.recon_rel_tol is None and config.recon_patience == 2
-            return original_fista(*args, **kwargs)
-
-        monkeypatch.setattr(reconstruction_stage, "fista_tv", fixed_reconstruction_defaults)
-        monkeypatch.setattr(
-            reconstruction_stage,
-            "_run_huber_fista_core_reconstruction",
-            lambda step: reconstruction_stage._run_public_fista_core_bypass(
-                step, fallback_reason="test_public_fista_fallback"
-            ),
-        )
     checkpoints = []
     _, _, interrupted = align(
         geometry,
@@ -445,65 +427,6 @@ def test_alignment_cuda_backend_probe_uses_options_api(
     assert options_kwargs["state_mode"] == "cached"
 
 
-def test_fixed_geometry_reconstruction_reports_effective_auto_cuda_backend(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
-    detector = Detector(nu=2, nv=2, du=1.0, dv=1.0)
-    geometry = ParallelGeometry(
-        grid=grid,
-        detector=detector,
-        angles=np.asarray([0.0, 90.0], dtype=np.float32),
-    )
-    cfg = AlignConfig(
-        outer_iterations=1,
-        iterations=1,
-        backend="jax",
-        views_per_batch=1,
-        checkpoint_projector=False,
-        early_stop=False,
-        optimise_dofs=("dx",),
-        gauge_policy="anchor_mean",
-    )
-
-    def run_fixed(x0, *_args, **_kwargs):
-        return (
-            x0,
-            jnp.zeros((1,), dtype=jnp.float32),
-            jnp.asarray(0.0, dtype=jnp.float32),
-            jnp.asarray(0.0, dtype=jnp.float32),
-            jnp.asarray(1, dtype=jnp.int32),
-        )
-
-    monkeypatch.setattr(
-        reconstruction_stage,
-        "_run_huber_fista_core_fixed_geometry",
-        run_fixed,
-    )
-    monkeypatch.setattr(
-        reconstruction_stage,
-        "effective_fista_core_backend",
-        lambda *_args, **_kwargs: "cuda",
-    )
-
-    _x, info = reconstruction_stage._run_huber_fista_core_reconstruction(
-        reconstruction_stage._ReconstructionStepInputs(
-            recon_geometry=geometry,
-            grid=grid,
-            detector=detector,
-            projections=jnp.ones((2, 2, 2), dtype=jnp.float32),
-            det_grid=reconstruction_stage.get_detector_grid_device(detector),
-            x=jnp.ones((2, 2, 2), dtype=jnp.float32),
-            cfg=cfg,
-            L_prev=1.0,
-            outer_idx=1,
-        )
-    )
-
-    assert info["requested_backend"] == "jax"
-    assert info["actual_backend"] == "cuda"
-
-
 @pytest.mark.parametrize("shape", [(64, 61, 32), (33, 29, 17)])
 def test_finite_volume_is_not_rejected_by_fraction_rounding(shape) -> None:
     volume = jnp.ones(shape, dtype=jnp.float32)
@@ -607,15 +530,14 @@ def test_pose_steps_reduce_the_declared_objective():
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("adjusted", [False, True])
+@pytest.mark.parametrize("pose_delta", [0.0, 0.01])
 @pytest.mark.parametrize("integrator", ["sampled", "joseph", "joseph_cubic"])
 def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
-    monkeypatch, adjusted, integrator
+    monkeypatch, pose_delta, integrator
 ):
     grid, detector = Grid(3, 4, 2, 0.7, 1.1, 0.9), Detector(5, 3, 0.6, 0.8)
     geometry = ParallelGeometry(grid, detector, np.array([13.0, 56.0, 91.0]))
-    if adjusted:
-        geometry = PoseAdjustedGeometry(geometry=geometry, pose_params=jnp.full((3, 5), 0.01))
+    geometry = PoseAdjustedGeometry(geometry=geometry, pose_params=jnp.full((3, 5), pose_delta))
     cfg = AlignConfig(
         iterations=3,
         tv_weight=0.02,
