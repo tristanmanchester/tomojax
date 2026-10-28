@@ -146,7 +146,11 @@ def tomojax.backproject(
         grid: 'Grid | None' = None,
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'jax.Array'
-def tomojax.estimate_center(scan: 'Scan') -> 'Scan'
+def tomojax.estimate_center(
+        scan: 'Scan',
+        *,
+        views: 'slice | Sequence[int] | np.ndarray | None' = None,
+    ) -> 'Scan'
 def tomojax.estimate_region(scan: 'Scan') -> 'RegionEstimate'
 def tomojax.load(path: 'str | PathLike[str]', *, poses: 'bool' = True) -> 'Scan'
 def tomojax.load_frames(

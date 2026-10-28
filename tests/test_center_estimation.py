@@ -263,3 +263,39 @@ def test_single_pair_reports_uncalibrated_global_coverage_without_inconsistency(
     assert "local_matching_interval90_px" in diagnostics["pairs"][0]
     assert automatic["status"] == "limited"
     assert "not a calibrated centre interval" in automatic["reasons"][0]
+
+
+@pytest.mark.parametrize("form", ["indices", "mask", "slice"])
+def test_calibration_subset_excludes_every_interpolation_contributor(form):
+    from tomojax.alignment.api import estimate_center, estimate_center_report
+
+    scan, _, _ = _scan(views=360, span=360)
+    chosen = slice(1, 358) if form == "slice" else np.arange(360) % 7 != 2
+    kept = np.arange(360)[chosen]
+    views = kept if form == "indices" else chosen
+    expected = estimate_center_report(scan.selected(kept).geometry, scan.projections[kept])
+    poisoned = scan.projections.copy()
+    poisoned[np.setdiff1d(np.arange(360), kept)] = np.nan
+    reads = []
+
+    class Rows:
+        shape = poisoned.shape
+
+        def __getitem__(self, key):
+            reads.extend(key[0].ravel())
+            assert np.isin(key[0], kept).all()
+            return poisoned[key]
+
+    report = estimate_center_report(scan.geometry, Rows(), views=views)
+    assert report.geometry.detector == expected.geometry.detector
+    np.testing.assert_array_equal(report.geometry.angles, scan.angles)
+    assert report.to_dict()["calibration_views"] == kept.tolist()
+    assert 0 < len(reads) <= 64
+    for actual, local in zip(report.pairs, expected.pairs, strict=True):
+        for side in ("first", "second"):
+            assert getattr(actual, side) == tuple(
+                (int(kept[i]), w) for i, w in getattr(local, side)
+            )
+    result = tj.estimate_center(replace(scan, projections=poisoned), views=views)
+    assert result.projections is poisoned and result.detector == report.geometry.detector
+    assert estimate_center(scan.geometry, poisoned, views=views).detector == result.detector

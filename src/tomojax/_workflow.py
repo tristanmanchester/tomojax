@@ -654,7 +654,7 @@ def reconstruct_slabs(
                 yield output
 
 
-def estimate_center(scan: Scan) -> Scan:
+def estimate_center(scan: Scan, *, views: slice | Sequence[int] | np.ndarray | None = None) -> Scan:
     """Estimate a parallel scan's rotation centre without reconstructing a volume.
 
     Returns the scan with its effective detector-u placement set in physical units, as
@@ -675,6 +675,12 @@ def estimate_center(scan: Scan) -> Scan:
     ----------
     scan : Scan
         Unposed axial parallel projections with near-opposite views.
+    views : slice, sequence of int, numpy.ndarray or None, optional
+        Eligible original acquisition views: forward slice, increasing indices or
+        boolean mask. None uses all views. Pair interpolation never reads excluded
+        views; the returned scan still contains every original view. Calibration
+        metadata records the eligible subset and original pair contributor indices.
+        Earlier fitted corrections must also exclude validation observations.
 
     Returns
     -------
@@ -693,14 +699,16 @@ def estimate_center(scan: Scan) -> Scan:
     >>> scan = tj.estimate_center(tj.load("scan.nxs"))  # doctest: +SKIP
     >>> recon = tj.reconstruct(scan)  # doctest: +SKIP
     """
-    return _estimate_center(scan)[0]
+    return _estimate_center(scan, views=views)[0]
 
 
-def _estimate_center(scan: Scan) -> tuple[Scan, dict[str, object]]:
+def _estimate_center(
+    scan: Scan, *, views: slice | Sequence[int] | np.ndarray | None = None
+) -> tuple[Scan, dict[str, object]]:
     """Share bounded centre estimation and its report without copying a scan."""
     from tomojax.alignment.api import estimate_center_report
 
-    report = estimate_center_report(cast("Geometry", scan.geometry), scan.projections)
+    report = estimate_center_report(cast("Geometry", scan.geometry), scan.projections, views=views)
     geometry = report.geometry
     calibration: dict[str, object] = {
         "status": "estimated",

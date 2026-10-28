@@ -285,6 +285,16 @@ matching intervals remain uncalibrated globally and exclude motion and wrong
 matching modes. The same diagnostics are retained in scan source metadata
 when available. No automatic workflow decision changes with these labels.
 
+For train-only calibration, pass `views=` to `tj.estimate_center`, or to the
+low-level `estimate_center_report` / `estimate_center` functions. It accepts a
+forward slice, increasing original view indices, or a boolean mask. Both anchors
+and angular interpolation contributors are restricted to those views; the
+returned scan still contains all original projections without a full-stack copy.
+`calibration_views` records the eligible subset (`None` means all), while each
+pair retains its original contributor indices. Earlier fitted corrections must
+also exclude validation observations: this option alone does not make an
+already fitted preprocessing pipeline independent of held-out data.
+
 Use `cor` mode when the main problem is a detector-u or centre-of-rotation
 offset rather than sample motion:
 

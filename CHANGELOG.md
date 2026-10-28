@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Centre estimation accepts `views=` for train-only calibration without copying
+the full projection stack. Pair interpolation excludes unselected observations;
+reports retain original contributor indices and the eligible view subset.
+The returned scan keeps all original views.
+
 Centre reports expose their median opposing-pair mean-shift-zero gauge and
 correlated pair-mean shift constraints. The physical centre is explicitly
 unresolved without a motion assumption; these fields do not recover per-view
