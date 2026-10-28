@@ -11,8 +11,9 @@ control over geometry and differentiation in a Python workflow. Synchrotron
 geometries use parallel rays; lab scans use a point source and flat detector
 (`ConeGeometry`), reconstructed with FDK or the iterative solvers. Alignment
 needs scan-specific validation. See the
-[support matrix](https://github.com/tristanmanchester/tomojax/blob/main/docs/support-matrix.md) and [known limitations](https://github.com/tristanmanchester/tomojax/blob/main/docs/known-limitations.md)
-before choosing it for an experiment.
+[support matrix](https://tomojax.dev/support-matrix/) and [known limitations](https://tomojax.dev/known-limitations/)
+before choosing it for an experiment. The documentation is at
+[tomojax.dev](https://tomojax.dev).
 
 ![A simulated mechanical watch movement reconstructed by TomoJAX and drawn by direct volume rendering: brass wheels and balance in gold, steel parts white and the titanium plate and bridges as blue glass.](https://github.com/tristanmanchester/tomojax/raw/main/images/watch-render.png)
 
@@ -55,7 +56,7 @@ uv pip install --python .venv/bin/python "tomojax[cpu]"
 ```
 
 No scan data or GPU is required. To try unreleased changes, first
-[build and install a wheel](https://github.com/tristanmanchester/tomojax/blob/main/docs/installation.md#build-and-install-an-unreleased-wheel)
+[build and install a wheel](https://tomojax.dev/installation/#build-and-install-an-unreleased-wheel)
 instead of installing from the package index, then run the same three commands.
 
 `inspect` describes the file, checks it and ends with `Valid: yes`. Open
@@ -70,20 +71,20 @@ existing file without `--force`; `tomojax <command> --help` describes it, and
 the [CLI overview](https://github.com/tristanmanchester/tomojax/blob/main/src/tomojax/cli/README.md) lists the commands.
 
 For CUDA installation, wheel installation, and device checks, see
-[installation](https://github.com/tristanmanchester/tomojax/blob/main/docs/installation.md). For your own scan, start with
-[the quickstart](https://github.com/tristanmanchester/tomojax/blob/main/docs/quickstart.md).
+[installation](https://tomojax.dev/installation/). For your own scan, start with
+[the quickstart](https://tomojax.dev/quickstart/).
 
 ## Choose a workflow
 
 | Task | Start here |
 | --- | --- |
-| Load and correct an NXtomo, APS Data Exchange, Nikon `.xtekct` or TIFF scan, then reconstruct it | [Quickstart](https://github.com/tristanmanchester/tomojax/blob/main/docs/quickstart.md) |
-| Supply measured geometry for parallel or laminography data, including TIFF stacks | [Real scan guide](https://github.com/tristanmanchester/tomojax/blob/main/docs/real-laminography.md) |
-| Import, calibrate and reconstruct a lab cone-beam CT scan, including multi-orbit scans | [Lab cone-beam CT](https://github.com/tristanmanchester/tomojax/blob/main/docs/lab-ct.md) |
-| Simulate data or use the Python API | [Synthetic workflow](https://github.com/tristanmanchester/tomojax/blob/main/docs/synthetic-tomography.md), [runnable examples](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md) |
-| Correct per-view motion or the centre of rotation | [Alignment guide](https://github.com/tristanmanchester/tomojax/blob/main/docs/alignment-guide.md) (experimental; check the recovered geometry) |
-| Reconstruct scans larger than the GPU, or use several GPUs | [Large scans and several GPUs](https://github.com/tristanmanchester/tomojax/blob/main/docs/large-scans.md) |
-| Check supported models and limitations | [Support matrix](https://github.com/tristanmanchester/tomojax/blob/main/docs/support-matrix.md), [known limitations](https://github.com/tristanmanchester/tomojax/blob/main/docs/known-limitations.md) |
+| Load and correct an NXtomo, APS Data Exchange, Nikon `.xtekct` or TIFF scan, then reconstruct it | [Quickstart](https://tomojax.dev/quickstart/) |
+| Supply measured geometry for parallel or laminography data, including TIFF stacks | [Real scan guide](https://tomojax.dev/real-laminography/) |
+| Import, calibrate and reconstruct a lab cone-beam CT scan, including multi-orbit scans | [Lab cone-beam CT](https://tomojax.dev/lab-ct/) |
+| Simulate data or use the Python API | [Synthetic workflow](https://tomojax.dev/synthetic-tomography/), [runnable examples](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md) |
+| Correct per-view motion or the centre of rotation | [Alignment guide](https://tomojax.dev/alignment-guide/) (experimental; check the recovered geometry) |
+| Reconstruct scans larger than the GPU, or use several GPUs | [Large scans and several GPUs](https://tomojax.dev/large-scans/) |
+| Check supported models and limitations | [Support matrix](https://tomojax.dev/support-matrix/), [known limitations](https://tomojax.dev/known-limitations/) |
 
 ## Python
 
@@ -117,16 +118,16 @@ use the same physical length unit. The building blocks behind these are in
 `tomojax.recon`, `tomojax.alignment`, `tomojax.corrections`,
 `tomojax.geometry`, `tomojax.io`, `tomojax.forward` and `tomojax.datasets`.
 Start with the [complete example](https://github.com/tristanmanchester/tomojax/blob/main/examples/simulate_and_reconstruct.py) or
-browse the [documentation index](https://github.com/tristanmanchester/tomojax/blob/main/docs/README.md).
+browse the [documentation index](https://tomojax.dev/).
 
 ## Evidence
 
 Measured speed, accuracy and memory against ASTRA and TIGRE, failed cases
-included, are in the [measurements](https://github.com/tristanmanchester/tomojax/blob/main/docs/measurements.md). Volumes larger than
+included, are in the [measurements](https://tomojax.dev/measurements/). Volumes larger than
 the GPU stream through it in slabs: SIRT of a whole Diamond I12 scan, 1801 views
 of 2160 × 2560 pixels into a 56.6 GB volume, ran on an 8 GB laptop GPU with
 1.4 GB of GPU memory at 1.13 times the per-voxel time of a scan that fits
-([large scans](https://github.com/tristanmanchester/tomojax/blob/main/docs/large-scans.md)).
+([large scans](https://tomojax.dev/large-scans/)).
 
 ## Development and license
 
