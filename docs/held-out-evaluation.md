@@ -146,3 +146,20 @@ first/repeat reconstruction and scoring took 0.6498/0.6494 and
 0.6496/0.6496 s. Peak GPU memory was 532/528 MiB and host RSS 6877/6700 MiB.
 Dense basis construction is a diagnostic, not a scalable stopping implementation;
 neither criterion is an automatic TomoJAX selector.
+
+### Ridge regularization
+
+The same failure occurs without iterative stopping. On 2DeteCT 00001 at 32²,
+unconstrained ridge solutions minimize `||A_train x - y_train||² + λ ||x||²`.
+Testing λ divided by the largest training normal-matrix eigenvalue at
+`0, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, .01, .1, 1` gives an oracle at `.01`
+(relative reference error 0.0807442). Prediction MSE and discrete image-space
+risk, with either low-dose or mode-2 validation, select `.0001` (0.2644305):
+an oracle gap of 3.27492. The numerical inverse residual is 1.03e-15.
+This is reference agreement, not physical accuracy; exact algebra does not
+remove representation mismatch or shared-calibration effects.
+
+Measured 2026-10-28 on `20fe1a9c`, with the same split, radiometric convention
+and fixed geometry, using `ridge_lambda_kill.py` in the environment above.
+Dense setup and all candidates took 16.73 s, with peak GPU memory 314 MiB
+and host RSS 4360 MiB. TomoJAX does not adopt this diagnostic as a λ selector.
