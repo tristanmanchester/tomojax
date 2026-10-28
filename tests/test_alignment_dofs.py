@@ -6,16 +6,24 @@ from typing import Literal
 import numpy as np
 import pytest
 
-from tomojax.alignment.api import (
-    AlignConfig,
-    GaugePolicyError,
-    alignment_params_payload,
-    dof_spec,
-    normalize_alignment_dofs,
-    normalize_bounds,
-    normalize_geometry_dofs,
-    resolve_alignment_schedule,
-)
+# check-public-imports: allow-private
+from tomojax.alignment._geometry.geometry_blocks import normalize_geometry_dofs
+
+# check-public-imports: allow-private
+from tomojax.alignment._model.diagnostics import GaugePolicyError
+
+# check-public-imports: allow-private
+from tomojax.alignment._model.dof_specs import dof_spec
+
+# check-public-imports: allow-private
+from tomojax.alignment._model.dofs import normalize_alignment_dofs, normalize_bounds
+
+# check-public-imports: allow-private
+from tomojax.alignment._model.schedules import resolve_alignment_schedule
+from tomojax.alignment.api import AlignConfig
+
+# check-public-imports: allow-private
+from tomojax.alignment.io.params_export import alignment_params_payload
 from tomojax.cli.align import build_parser
 
 

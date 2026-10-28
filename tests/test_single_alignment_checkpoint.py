@@ -8,6 +8,12 @@ import pytest
 import tomojax as tj
 from tomojax.alignment import api as alignment
 
+# check-public-imports: allow-private
+from tomojax.alignment.io.checkpoint import CheckpointError
+
+# check-public-imports: allow-private
+from tomojax.alignment.io.resume import AlignmentRun, alignment_checkpointing
+
 
 @pytest.mark.parametrize("early_stop", [False, True])
 def test_seeded_alignment_resumes_and_keeps_a_completed_run(tmp_path, early_stop):
@@ -27,7 +33,7 @@ def test_seeded_alignment_resumes_and_keeps_a_completed_run(tmp_path, early_stop
         early_stop_rel_impr=1e6,
         early_stop_patience=2,
     )
-    run = alignment.AlignmentRun(
+    run = AlignmentRun(
         projections=data,
         geometry=geometry,
         config=config,
@@ -49,7 +55,7 @@ def test_seeded_alignment_resumes_and_keeps_a_completed_run(tmp_path, early_stop
         )
 
     expected = solve()
-    resume, write = alignment.alignment_checkpointing(path, run)
+    resume, write = alignment_checkpointing(path, run)
     assert resume is None and write is not None
 
     def interrupt(state):
@@ -58,10 +64,10 @@ def test_seeded_alignment_resumes_and_keeps_a_completed_run(tmp_path, early_stop
 
     with pytest.raises(RuntimeError, match="interrupted after saved outer"):
         solve(callback=interrupt)
-    resume, write = alignment.alignment_checkpointing(path, run)
+    resume, write = alignment_checkpointing(path, run)
     assert isinstance(resume, alignment.AlignResumeState) and not resume.run_complete
     actual = solve(resume, write)
-    resume, _ = alignment.alignment_checkpointing(path, run)
+    resume, _ = alignment_checkpointing(path, run)
     assert resume.run_complete
     assert (resume.start_outer_iter < config.outer_iterations) == early_stop
     for result in (actual, solve(resume)):
@@ -70,6 +76,6 @@ def test_seeded_alignment_resumes_and_keeps_a_completed_run(tmp_path, early_stop
         np.testing.assert_allclose(result[2]["loss"], expected[2]["loss"], rtol=2e-5)
     saved = path.read_bytes()
     other = replace(run, config=replace(config, gn_damping=config.gn_damping * 2))
-    with pytest.raises(alignment.CheckpointError, match="cannot resume this alignment"):
-        alignment.alignment_checkpointing(path, other)
+    with pytest.raises(CheckpointError, match="cannot resume this alignment"):
+        alignment_checkpointing(path, other)
     assert path.read_bytes() == saved

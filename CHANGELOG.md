@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+`alignment.api` exposes user-facing configuration, schedules, losses, geometry
+helpers and execution. Internal state, checkpoint plumbing and normalisation
+helpers are no longer exported there; checkpoint files remain supported by
+`tomojax.align` and the CLI.
+
+The API reference and docstring checks include `tomojax.datasets`,
+`tomojax.forward` and `tomojax.forward.api`. Their simulation, projection and
+residual helpers document parameters, return shapes and units.
+
 The README's figures image a simulated 29 mm mechanical watch movement,
 modelled in Blender (`bench/phantoms/watch_blender.py`) and projected by gVXR,
 so no figure's data come from TomoJAX's projector: a volume rendering of a

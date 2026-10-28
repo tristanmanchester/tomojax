@@ -11,7 +11,7 @@
     "tomojax.geometry.api": 18,
     "tomojax.recon.api": 7,
     "tomojax.io.api": 20,
-    "tomojax.alignment.api": 75
+    "tomojax.alignment.api": 33
   },
   "cli_flags": {
     "inspect": 4,
@@ -107,5 +107,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 118
+  "test_private_imports": 142
 }

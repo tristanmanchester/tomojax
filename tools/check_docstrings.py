@@ -21,6 +21,9 @@ PUBLIC_MODULES = (
     "tomojax.alignment",
     "tomojax.geometry",
     "tomojax.evaluation",
+    "tomojax.datasets",
+    "tomojax.forward",
+    "tomojax.forward.api",
     "tomojax.recon.api",
     "tomojax.io.api",
     "tomojax.alignment.api",
@@ -29,6 +32,16 @@ PUBLIC_MODULES = (
 # Immutable values and typing aliases cannot own docstrings. Their reference
 # entries live here so every export is covered by either numpydoc or this prose.
 PUBLIC_DATA = {
+    "tomojax.forward.api.PROJECTION_OPERATOR": (
+        "Reference projection operator name, core_trilinear_ray."
+    ),
+    "tomojax.forward.api.ProjectionOperatorName": (
+        "Literal name of the reference projection operator."
+    ),
+    "tomojax.forward.api.ResidualFilterKind": (
+        "Residual filter: raw, lowpass_gaussian or bandpass_difference_of_gaussians."
+    ),
+    "tomojax.forward.api.ResidualLossMode": "Residual loss: l2 or pseudo_huber.",
     "tomojax.__version__": "Installed TomoJAX release version.",
     "tomojax.alignment.MODES": (
         "Explicit workflow alignment modes: pose, cor, cor-then-pose and full."

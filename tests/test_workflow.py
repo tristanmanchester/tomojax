@@ -329,7 +329,8 @@ def test_an_interrupted_alignment_resumes_from_its_checkpoint(
     class Interrupted(Exception):
         pass
 
-    from tomojax.alignment.api import load_alignment_checkpoint, save_alignment_checkpoint
+    # check-public-imports: allow-private
+    from tomojax.alignment.io.checkpoint import load_alignment_checkpoint, save_alignment_checkpoint
 
     def save_then_stop(*args: object, **kwargs: object) -> None:
         save_alignment_checkpoint(*args, **kwargs)  # pyright: ignore[reportArgumentType]

@@ -16,7 +16,16 @@ from scipy.spatial.transform import Rotation
 from tomojax.alignment import AlignConfig, _prealign, align_multires
 
 # check-public-imports: allow-private
+from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+
+# check-public-imports: allow-private
 from tomojax.alignment._geometry.initializers import reprojection_det_u_seed
+
+# check-public-imports: allow-private
+from tomojax.alignment._geometry.parametrizations import apply_pose_update
+
+# check-public-imports: allow-private
+from tomojax.alignment._model.state import AlignmentState, PoseState, SetupGeometryState
 
 # check-public-imports: allow-private
 from tomojax.alignment._objectives import fold_recon
@@ -29,16 +38,10 @@ from tomojax.alignment._prealign import estimate_view_shifts, translation_params
 from tomojax.alignment.api import (
     AlignmentSchedule,
     AlignmentStage,
-    AlignmentState,
     AlignMultiresResumeState,
     AlignResumeState,
-    BaseGeometryArrays,
     L2LossSpec,
-    PoseState,
-    SetupGeometryState,
     align,
-    apply_alignment_state,
-    apply_pose_update,
     apply_pose_updates,
     least_motion_estimate,
     save_alignment_params_csv,

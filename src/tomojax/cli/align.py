@@ -167,7 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _settings() -> dict[str, object]:
     """A config file's expert settings: ``AlignConfig`` fields as the pose profile sets them."""
     from tomojax.alignment import AlignConfig, alignment_plan
-    from tomojax.alignment.api import loss_spec_name
+    from tomojax.alignment._integration import loss_spec_name
     from tomojax.geometry import Grid
 
     # The mode's configuration does not depend on the grid, only its levels do.
@@ -184,7 +184,7 @@ def _loss(value: object) -> object:
     (``{ name = "huber", delta = 1.0 }``), or a level schedule
     (``"4:phasecorr,2:ssim"``, l2_otsu at other levels).
     """
-    from tomojax.alignment.api import parse_loss_schedule, parse_loss_spec
+    from tomojax.alignment._integration import parse_loss_schedule, parse_loss_spec
 
     if isinstance(value, str):
         if ":" in value:
@@ -271,7 +271,7 @@ class _Run:
 
 def _plan_payload(run: _Run, plan: AlignmentPlan, grid: Grid) -> str:
     """The resolved plan and grid, as ``--dry-run`` prints them."""
-    from tomojax.alignment.api import resolved_schedule_for_config
+    from tomojax.alignment._integration import resolved_schedule_for_config
     from tomojax.io.api import normalize_json
 
     payload: dict[str, object] = {
