@@ -91,7 +91,7 @@ def test_align_config_resolves_stage_dofs() -> None:
     cfg = AlignConfig(
         reconstruction="fista",
         opt_method="gd",
-        schedule="pose_dx_dz_after_phi",
+        optimise_dofs=("dx", "dz"),
         freeze=("dx",),
         backend="jax",
         gather_dtype="FP32",

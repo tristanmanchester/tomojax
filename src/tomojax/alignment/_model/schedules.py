@@ -33,14 +33,8 @@ DifferentiabilityRequirement = Literal["gradient_safe", "performance_only", "not
 PUBLIC_SCHEDULE_PRESETS = (
     "lightning_pose",
     "tortoise_pose",
-    "pose_only",
-    "pose_phi_only",
-    "pose_dx_dz_after_phi",
     "cor",
     "cor_then_pose",
-    "detector_roll",
-    "axis_direction",
-    "lamino_tilt",
     "setup_safe",
     "spectral_setup",
 )
@@ -167,8 +161,6 @@ class AlignmentSchedule:
                 stage.optimizer != "gn" or any(d in GEOMETRY_DOF_NAMES for d in stage.active_dofs)
             ):
                 raise ValueError("joint_volume_pose stages require GN and only per-view pose DOFs")
-            if stage.name == "expert_coupled" and stage.gauge_policy == "reject":
-                raise ValueError("expert_coupled stages must declare an explicit GaugePolicy")
             if (
                 stage.objective_kind in {"bilevel_cv", "all_data_bilevel"}
                 and stage.optimizer != "validation_lm"
@@ -416,32 +408,6 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             speed_claim_eligible=False,
         ),
     ),
-    "pose_only": (
-        AlignmentStage(
-            name="pose_only",
-            active_dofs=("alpha", "beta", "phi", "dx", "dz"),
-            objective_kind="fixed_volume",
-            optimizer="gn",
-        ),
-    ),
-    "pose_phi_only": (
-        AlignmentStage(
-            name="pose_phi_only",
-            active_dofs=("phi",),
-            objective_kind="fixed_volume",
-            optimizer="gn",
-            gauge_policy="anchor_mean",
-        ),
-    ),
-    "pose_dx_dz_after_phi": (
-        AlignmentStage(
-            name="pose_dx_dz_after_phi",
-            active_dofs=("dx", "dz"),
-            objective_kind="fixed_volume",
-            optimizer="gn",
-            gauge_policy="anchor_mean",
-        ),
-    ),
     "cor": (
         AlignmentStage(
             name="cor",
@@ -456,41 +422,6 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
     # Pose alignment whose constant detector-u shift becomes the detector centre
     # (folded in align_multires; needs detector-frame translations).
     "cor_then_pose": _LIGHTNING_POSE,
-    "detector_roll": (
-        AlignmentStage(
-            name="detector_roll",
-            active_dofs=("detector_roll_deg",),
-            objective_kind="bilevel_cv",
-            optimizer="validation_lm",
-            stage_role="setup",
-            differentiability="gradient_safe",
-            quality_tier="reference",
-        ),
-    ),
-    "axis_direction": (
-        AlignmentStage(
-            name="axis_direction",
-            active_dofs=("axis_rot_x_deg", "axis_rot_y_deg"),
-            objective_kind="bilevel_cv",
-            optimizer="validation_lm",
-            gauge_policy="diagnose_only",
-            stage_role="setup",
-            differentiability="gradient_safe",
-            quality_tier="reference",
-        ),
-    ),
-    "lamino_tilt": (
-        AlignmentStage(
-            name="lamino_tilt",
-            active_dofs=("axis_rot_x_deg",),
-            objective_kind="bilevel_cv",
-            optimizer="validation_lm",
-            gauge_policy="diagnose_only",
-            stage_role="setup",
-            differentiability="gradient_safe",
-            quality_tier="reference",
-        ),
-    ),
     # Detector roll and axis-y share a volume-frame gauge. Keep the supplied
     # roll fixed and calibrate centre/axis together before local pose fitting.
     "setup_safe": (
@@ -527,41 +458,16 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
 }
 
 
-def schedule_preset(
-    name: str,
-    *,
-    active_dofs: Iterable[str] | None = None,
-    gauge_policy: GaugePolicy | None = None,
-) -> AlignmentSchedule:
-    """Return a named public or expert alignment schedule preset."""
+def schedule_preset(name: str) -> AlignmentSchedule:
+    """Return a named alignment schedule preset."""
     key = str(name)
-    if key == "detector_center_2d":
-        raise ValueError(
-            "Unknown alignment schedule preset 'detector_center_2d'. "
-            "Use low-level optimise_dofs=('det_u_px', 'det_v_px') only for expert diagnostics."
-        )
-    if key == "expert_coupled":
-        dofs = tuple(active_dofs or ())
-        if not dofs:
-            raise ValueError("expert_coupled requires explicit active_dofs")
-        return AlignmentSchedule(
-            name=key,
-            stages=(
-                AlignmentStage(
-                    name="expert_coupled",
-                    active_dofs=dofs,
-                    objective_kind="bilevel_cv",
-                    optimizer="validation_lm",
-                    gauge_policy=gauge_policy or "prior_required",
-                    stage_role="setup",
-                    quality_tier="reference",
-                ),
-            ),
-        ).validate()
     stages = _PUBLIC_PRESET_STAGES.get(key)
     if stages is not None:
         return AlignmentSchedule(name=key, stages=stages).validate()
-    raise ValueError(f"Unknown alignment schedule preset {name!r}")
+    raise ValueError(
+        f"Unknown alignment schedule preset {name!r}; presets are "
+        + ", ".join(PUBLIC_SCHEDULE_PRESETS)
+    )
 
 
 def _stage_iterations(stage: AlignmentStage, outer_iterations: int | None) -> int:

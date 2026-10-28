@@ -53,7 +53,7 @@ def test_joint_coupling_selects_the_solver_for_every_pose_stage():
 
     implicit = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint"))
     named = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint", schedule="lightning_pose"))
-    alternating = _resolved_schedule_for_cfg(AlignConfig(schedule="pose_only"))
+    alternating = _resolved_schedule_for_cfg(AlignConfig(schedule="tortoise_pose"))
     assert implicit.stages[0].objective_kind == "joint_volume_pose"
     assert {stage.objective_kind for stage in named.stages} == {"joint_volume_pose"}
     assert alternating.stages[0].objective_kind == "fixed_volume"

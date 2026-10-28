@@ -30,6 +30,11 @@ unresolved without a motion assumption; these fields do not recover per-view
 poses or turn local matching intervals into calibrated centre uncertainty.
 Centre estimates and automatic workflow decisions are unchanged.
 
+The alignment schedule presets `pose_only`, `pose_phi_only`,
+`pose_dx_dz_after_phi`, `detector_roll`, `axis_direction` and `lamino_tilt` are
+removed; no mode selected them. `optimise_dofs` names the same parameters
+directly, for example `("dx", "dz")` or `("detector_roll_deg",)`.
+
 `tomojax simulate` takes phantom details and detector artefacts (other than
 `--poisson-scale`) only from a `--config` TOML file, as `align` and `recon` take
 their expert settings; the command has 19 options instead of 45.
