@@ -71,9 +71,6 @@ class LaminographyGeometry:
     tilt_deg: float = 30.0
     tilt_about: str = "x"  # or "z"
 
-    def _tilt_matrix(self) -> np.ndarray:
-        return laminography_tilt_matrix(self.tilt_deg, self.tilt_about)
-
     @property
     def axis_unit_lab(self) -> np.ndarray:
         """The rotation axis in the lab frame, a unit vector.

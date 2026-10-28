@@ -23,16 +23,6 @@ class FoldArrays:
         """Return the number of configured folds."""
         return int(self.train_idx.shape[0])
 
-    def to_metadata(self) -> dict[str, object]:
-        """Return JSON-compatible fold metadata."""
-        return {
-            "n_folds": int(self.train_idx.shape[0]),
-            "max_train": int(self.train_idx.shape[1]),
-            "max_val": int(self.val_idx.shape[1]),
-            "train_counts": [int(v) for v in np.asarray(jnp.sum(self.train_mask, axis=1))],
-            "val_counts": [int(v) for v in np.asarray(jnp.sum(self.val_mask, axis=1))],
-        }
-
 
 @dataclass(frozen=True, slots=True)
 class FoldSpec:

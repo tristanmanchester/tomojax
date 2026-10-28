@@ -12,7 +12,6 @@ from .dof_specs import ActiveParameterView
 from .dofs import (
     DOF_NAMES,
     GEOMETRY_DOF_NAMES,
-    ScopedAlignmentDofs,
     normalize_alignment_dofs,
     resolve_scoped_alignment_dofs,
 )
@@ -237,16 +236,6 @@ class ResolvedAlignmentStage:
     differentiability: DifferentiabilityRequirement
     quality_tier: StageQualityTier
     speed_claim_eligible: bool
-
-    @property
-    def scoped_dofs(self) -> ScopedAlignmentDofs:
-        """Return active DOFs split into pose and geometry scopes."""
-        return ScopedAlignmentDofs(
-            active_pose_dofs=self.active_pose_dofs,
-            active_geometry_dofs=self.active_geometry_dofs,
-            frozen_pose_dofs=(),
-            frozen_geometry_dofs=(),
-        )
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible resolved-stage description."""

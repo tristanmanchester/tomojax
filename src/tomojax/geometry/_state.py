@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -26,9 +26,6 @@ class ScalarParameter:
     prior: float | None = None
     trust_radius: float | None = None
     gauge_group: GaugeGroup = "none"
-
-    def with_value(self, value: float) -> ScalarParameter:
-        return replace(self, value=float(value))
 
 
 @dataclass(frozen=True)
@@ -80,28 +77,6 @@ class SetupParameters:
             theta_scale=ScalarParameter("theta_scale", 1.0, "dimensionless", active=False),
         )
 
-    def replace_parameter(self, name: str, parameter: ScalarParameter) -> SetupParameters:
-        """Replace one named setup parameter.
-
-        Parameters
-        ----------
-        name : str
-            Setup field to replace.
-        parameter : ScalarParameter
-            Replacement value and optimization metadata.
-
-        Returns
-        -------
-        SetupParameters
-            Setup with the named parameter replaced.
-
-        Raises
-        ------
-        TypeError
-            If name is not a setup field.
-        """
-        return replace(self, **{name: parameter})
-
 
 @dataclass(frozen=True)
 class AcquisitionParameters:
@@ -131,33 +106,6 @@ class AcquisitionParameters:
             Axial parallel-beam model with no fixed tilt.
         """
         return cls()
-
-    @classmethod
-    def parallel_laminography(
-        cls,
-        *,
-        tilt_rad: float,
-        tilt_about: LaminographyTiltAbout = "x",
-    ) -> AcquisitionParameters:
-        """Construct tilted parallel-ray acquisition parameters.
-
-        Parameters
-        ----------
-        tilt_rad : float
-            Nominal laminography-axis tilt in radians.
-        tilt_about : {'x', 'z'}
-            Tilt convention; defaults to x.
-
-        Returns
-        -------
-        AcquisitionParameters
-            Tilted parallel-ray acquisition model.
-        """
-        return cls(
-            model="parallel_laminography",
-            laminography_tilt_rad=float(tilt_rad),
-            laminography_tilt_about=tilt_about,
-        )
 
 
 @dataclass(frozen=True)
@@ -236,54 +184,6 @@ class PoseParameters:
             raise ValueError("all pose parameter arrays must have the same shape")
         if len(next(iter(shapes))) != 1:
             raise ValueError("pose parameter arrays must be one-dimensional")
-
-    def with_updates(
-        self,
-        *,
-        alpha_rad: NDArray[np.float64] | None = None,
-        beta_rad: NDArray[np.float64] | None = None,
-        theta_nominal_rad: NDArray[np.float64] | None = None,
-        phi_residual_rad: NDArray[np.float64] | None = None,
-        dx_px: NDArray[np.float64] | None = None,
-        dz_px: NDArray[np.float64] | None = None,
-    ) -> PoseParameters:
-        """Replace selected pose parameter vectors.
-
-        Parameters
-        ----------
-        alpha_rad, beta_rad : numpy.ndarray or None, optional
-            Per-view angular corrections in radians. None retains the current vector.
-        theta_nominal_rad : numpy.ndarray or None, optional
-            Nominal stage angles in radians. None retains the current vector.
-        phi_residual_rad : numpy.ndarray or None, optional
-            Per-view residual rotation about the nominal axis, in radians.
-            None retains the current vector.
-        dx_px, dz_px : numpy.ndarray or None, optional
-            Per-view detector-plane translations in pixels. None retains the current vector.
-
-        Returns
-        -------
-        PoseParameters
-            Pose table with the supplied vectors replaced.
-
-        Raises
-        ------
-        ValueError
-            If updated vectors do not share a one-dimensional shape.
-        """
-        return replace(
-            self,
-            alpha_rad=self.alpha_rad if alpha_rad is None else alpha_rad,
-            beta_rad=self.beta_rad if beta_rad is None else beta_rad,
-            theta_nominal_rad=(
-                self.theta_nominal_rad if theta_nominal_rad is None else theta_nominal_rad
-            ),
-            phi_residual_rad=(
-                self.phi_residual_rad if phi_residual_rad is None else phi_residual_rad
-            ),
-            dx_px=self.dx_px if dx_px is None else dx_px,
-            dz_px=self.dz_px if dz_px is None else dz_px,
-        )
 
 
 @dataclass(frozen=True)

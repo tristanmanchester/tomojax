@@ -321,9 +321,6 @@ def grad_data_term(  # noqa: PLR0915
     det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
     mask_arr = None if vol_mask is None else jnp.asarray(vol_mask, dtype=jnp.float32)
 
-    def apply_mask(vol: jnp.ndarray) -> jnp.ndarray:
-        return vol * mask_arr if mask_arr is not None else vol
-
     def adjoint(resid: jnp.ndarray, T_i: jnp.ndarray) -> jnp.ndarray:
         grad_i = backproject_view_T(
             T_i,

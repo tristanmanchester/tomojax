@@ -270,11 +270,6 @@ class ActiveParameterView:
         """Return active pose DOFs in canonical order."""
         return tuple(spec.name for spec in self.specs if spec.is_pose)
 
-    @property
-    def active_setup_dofs(self) -> tuple[str, ...]:
-        """Return active setup geometry DOFs in canonical order."""
-        return tuple(spec.name for spec in self.specs if spec.is_setup)
-
     def pack(self, state: AlignmentState) -> jnp.ndarray:
         """Pack active state values into a whitened vector."""
         parts: list[jnp.ndarray] = []

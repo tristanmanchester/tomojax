@@ -51,13 +51,6 @@ class ObjectMotionTrace:
         if len(next(iter(shapes))) != 1:
             raise ValueError("object-motion arrays must be one-dimensional")
 
-    def tx_rmse_px(self, reference: ObjectMotionTrace) -> float:
-        """Return object-frame tx RMSE against a reference trace."""
-        if self.n_views != reference.n_views:
-            raise ValueError("object-motion traces must have matching view counts")
-        error = self.tx_obj_px - reference.tx_obj_px
-        return float(np.sqrt(np.mean(error**2)))
-
 
 def read_object_motion_csv(path: Path) -> ObjectMotionTrace:
     """Read a `true_motion.csv` object-frame motion sidecar."""

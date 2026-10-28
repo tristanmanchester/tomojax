@@ -26,11 +26,6 @@ def exp_so3(w: np.ndarray) -> np.ndarray:
     return np.eye(3) + np.sin(theta) * K + (1.0 - np.cos(theta)) * (K @ K)
 
 
-def compose(T_a: np.ndarray, T_b: np.ndarray) -> np.ndarray:
-    """Compose homogeneous transforms: returns T_a @ T_b."""
-    return T_a @ T_b
-
-
 def invert(T: np.ndarray) -> np.ndarray:
     """Invert a homogeneous SE(3) transform."""
     R = T[:3, :3]

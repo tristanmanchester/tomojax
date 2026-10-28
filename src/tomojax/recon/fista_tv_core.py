@@ -93,16 +93,6 @@ class FistaCoreResult[Array: jnp.ndarray | np.ndarray | SlabStore]:
             "status": self.status,
         }
 
-    def python_info(self) -> dict[str, object]:
-        """Return Python scalar/list metadata for JSON reports."""
-        return {
-            "loss": [float(v) for v in list(self.loss)],
-            "data_loss": float(self.data_loss),
-            "regulariser_value": float(self.regulariser_value),
-            "effective_iterations": int(self.effective_iterations),
-            "status": self.status,
-        }
-
 
 def fista_tv_core_arrays(
     *,
