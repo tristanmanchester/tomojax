@@ -108,6 +108,15 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(
         early_stop=False,
     )
     if public_fallback:
+        original_fista = reconstruction_stage.fista_tv
+
+        def fixed_reconstruction_defaults(*args, **kwargs):
+            config = kwargs["config"]
+            assert (config.tv_prox_iterations, config.projector_unroll) == (10, 1)
+            assert config.recon_rel_tol is None and config.recon_patience == 2
+            return original_fista(*args, **kwargs)
+
+        monkeypatch.setattr(reconstruction_stage, "fista_tv", fixed_reconstruction_defaults)
         monkeypatch.setattr(
             reconstruction_stage,
             "_run_huber_fista_core_reconstruction",

@@ -143,20 +143,12 @@ class AlignConfig:
         Volume regularization model, "tv" or "huber_tv". Default is 'huber_tv'.
     huber_delta : float, optional
         Positive transition scale for Huber-TV. Default is 0.01.
-    tv_prox_iterations : int, optional
-        Iterations per TV proximal solve. Default is 10.
     reconstruction : Reconstruction, optional
         Inner reconstruction method, "fista" or "spdhg". Default is 'fista'.
     nonnegative : bool, optional
         Constrain reconstructed voxel values to be nonnegative. Default is True.
     seed : int, optional
         Random seed for stochastic reconstruction. Default is 0.
-    recon_rel_tol : float | None, optional
-        Relative objective-change threshold for inner reconstruction stopping. None
-        disables the threshold.
-    recon_patience : int, optional
-        Successive small-change iterations required for reconstruction stopping. Default
-        is 2.
     lr_rot : float, optional
         Gradient-descent rotation step size in radians. Default is 0.001.
     lr_trans : float, optional
@@ -164,8 +156,6 @@ class AlignConfig:
     views_per_batch : int, optional
         View batch size; zero chooses it from free device memory at alignment startup.
         Default is 0.
-    projector_unroll : int, optional
-        Unrolling factor for the reference projector loop. Default is 1.
     checkpoint_projector : bool, optional
         Recompute intermediate projector arrays during differentiation to save memory.
         Default is True.
@@ -265,20 +255,15 @@ class AlignConfig:
     tv_weight: float = 0.005
     regulariser: Regulariser = "huber_tv"
     huber_delta: float = 1e-2
-    tv_prox_iterations: int = 10
     reconstruction: Reconstruction = "fista"
     nonnegative: bool = True
     seed: int = 0
-    # Reconstruction stopping criteria
-    recon_rel_tol: float | None = None
-    recon_patience: int = 2
     # Alignment step sizes
     lr_rot: float = 1e-3  # radians
     lr_trans: float = 1e-1  # world units
     # Memory/throughput knobs. views_per_batch=0 sizes reconstruction batches
     # from free device memory when alignment starts.
     views_per_batch: int = 0
-    projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "auto"
     backend: ProjectorBackendInput = "cuda"

@@ -17,7 +17,6 @@ def fista_config(cfg: AlignConfig, *, iterations: int, **overrides: Any) -> Fist
         "tv_weight": float(cfg.tv_weight),
         "regulariser": cfg.regulariser,
         "huber_delta": float(cfg.huber_delta),
-        "tv_prox_iterations": int(cfg.tv_prox_iterations),
         "lipschitz": cfg.lipschitz,
         "nonnegative": bool(cfg.nonnegative),
         "ray_integrator": getattr(cfg, "ray_integrator", "sampled"),
