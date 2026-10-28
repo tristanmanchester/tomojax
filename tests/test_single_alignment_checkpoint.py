@@ -17,6 +17,9 @@ def test_seeded_alignment_resumes_and_keeps_a_completed_run(tmp_path, early_stop
     data = tj.project(geometry, truth)
     config = alignment.AlignConfig(
         quality="reference",
+        backend="jax",
+        gather_dtype="fp32",
+        regulariser="tv",
         outer_iterations=5 if early_stop else 2,
         iterations=2,
         optimise_dofs=("dx", "dz"),

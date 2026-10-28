@@ -61,7 +61,6 @@ from tomojax.alignment._prealign import implied_detector_offset
 from tomojax.alignment._profiles import (
     QualityTier,
     profile_policy_from_config,
-    resolve_profiled_cli_defaults,
 )
 from tomojax.alignment._projection_matching import ProjectionMatchingConfig, match_projections
 from tomojax.alignment.io.checkpoint import (
@@ -161,7 +160,6 @@ __all__ = [
     "profile_policy_from_config",
     "resolve_alignment_schedule",
     "resolve_loss_for_level",
-    "resolve_profiled_cli_defaults",
     "resolved_schedule_for_config",
     "resume_state_from_checkpoint",
     "save_alignment_checkpoint",

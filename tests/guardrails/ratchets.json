@@ -11,7 +11,7 @@
     "tomojax.geometry.api": 18,
     "tomojax.recon.api": 7,
     "tomojax.io.api": 20,
-    "tomojax.alignment.api": 75
+    "tomojax.alignment.api": 74
   },
   "cli_flags": {
     "inspect": 4,
@@ -57,7 +57,7 @@
   },
   "suppressions": {
     "noqa": 8,
-    "type: ignore": 32,
+    "type: ignore": 30,
     "pyright: ignore": 14
   },
   "complex_functions": [

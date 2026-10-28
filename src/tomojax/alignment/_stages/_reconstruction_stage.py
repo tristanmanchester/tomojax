@@ -15,7 +15,7 @@ import numpy as np
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
 from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
-from tomojax.alignment._quality_policy import (
+from tomojax.alignment._profiles import (
     ReconstructionQualityPolicy,
     reconstruction_quality_policy,
     scaled_reconstruction_iterations,

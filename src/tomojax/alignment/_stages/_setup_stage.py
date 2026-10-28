@@ -36,7 +36,7 @@ from tomojax.alignment._objectives.validation_residuals import (
     accumulate_validation_normals,
     validation_scorer,
 )
-from tomojax.alignment._quality_policy import (
+from tomojax.alignment._profiles import (
     reconstruction_quality_policy,
     scaled_reconstruction_iterations,
 )

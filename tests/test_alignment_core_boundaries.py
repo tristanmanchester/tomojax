@@ -43,7 +43,7 @@ from tomojax.alignment._objectives.loss_specs import (
 from tomojax.alignment._observer import _normalize_observer_action, adapt_observer_callback
 
 # check-public-imports: allow-private
-from tomojax.alignment._quality_policy import (
+from tomojax.alignment._profiles import (
     reconstruction_quality_policy,
     scaled_reconstruction_iterations,
 )
@@ -134,11 +134,13 @@ def test_align_config_takes_one_spelling_of_each_option(option: dict[str, Any]) 
 
 
 def test_reconstruction_quality_policy_scales_iteration_budget() -> None:
-    assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("proposal")) == 2
     assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("fast")) == 8
-    assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("refine")) == 12
-    assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("reference")) == 16
-    assert scaled_reconstruction_iterations(1, reconstruction_quality_policy("proposal")) == 1
+    for tier in ("reference", "verify"):
+        assert scaled_reconstruction_iterations(8, reconstruction_quality_policy(tier)) == 16
+    assert scaled_reconstruction_iterations(0, reconstruction_quality_policy("fast")) == 1
+    for tier in ("proposal", "refine", "final"):
+        with pytest.raises(ValueError, match="quality tier"):
+            reconstruction_quality_policy(tier)
 
 
 def test_loss_specs_round_trip_params_and_scheduled_levels() -> None:
