@@ -538,9 +538,7 @@ def resolve_alignment_schedule(
             source = "direct"
             name = "direct"
         if scoped.active_geometry_dofs and scoped.active_pose_dofs:
-            # Direct mixed setup/pose requests are only an expert surface, and
-            # still execute as explicit setup then pose stages so product setup
-            # discovery remains validation-LM and pose remains fixed-volume.
+            # Direct mixed setup/pose requests are only an expert surface.
             if gauge_policy == "reject":
                 raise GaugePolicyError(
                     "Direct mixed setup+pose DOFs require an explicit expert "
@@ -555,48 +553,25 @@ def resolve_alignment_schedule(
                 policy=gauge_policy,
                 priors=gauge_priors,
             )
-            stages = (
-                AlignmentStage(
-                    name="direct_setup",
-                    active_dofs=scoped.active_geometry_dofs,
-                    objective_kind="bilevel_cv",
-                    optimizer="validation_lm",
-                    gauge_policy=gauge_policy,
-                    stage_role="setup",
-                    quality_tier="reference",
-                ),
-                AlignmentStage(
-                    name="direct_pose",
-                    active_dofs=scoped.active_pose_dofs,
-                    objective_kind="fixed_volume",
-                    optimizer=_normalize_pose_optimizer(opt_method),
-                    gauge_policy=gauge_policy,
-                    stage_role="refine",
-                ),
-            )
-        elif scoped.active_geometry_dofs:
-            stages = (
-                AlignmentStage(
-                    name="direct_setup",
-                    active_dofs=scoped.active_geometry_dofs,
-                    objective_kind="bilevel_cv",
-                    optimizer="validation_lm",
-                    gauge_policy=gauge_policy,
-                    stage_role="setup",
-                    quality_tier="reference",
-                ),
-            )
-        else:
-            stages = (
-                AlignmentStage(
-                    name="direct_pose",
-                    active_dofs=scoped.active_pose_dofs,
-                    objective_kind="fixed_volume",
-                    optimizer=_normalize_pose_optimizer(opt_method),
-                    gauge_policy=gauge_policy,
-                    stage_role="refine",
-                ),
-            )
+        setup = AlignmentStage(
+            name="direct_setup",
+            active_dofs=scoped.active_geometry_dofs,
+            objective_kind="bilevel_cv",
+            optimizer="validation_lm",
+            gauge_policy=gauge_policy,
+            stage_role="setup",
+            quality_tier="reference",
+        )
+        pose = AlignmentStage(
+            name="direct_pose",
+            active_dofs=scoped.active_pose_dofs,
+            objective_kind="fixed_volume",
+            optimizer=_normalize_pose_optimizer(opt_method),
+            gauge_policy=gauge_policy,
+            stage_role="refine",
+        )
+        # Setup before pose, so product setup discovery stays validation-LM.
+        stages = tuple(stage for stage in (setup, pose) if stage.active_dofs) or (pose,)
         base_schedule = AlignmentSchedule(name=name, stages=stages).validate()
 
     requested = normalize_alignment_dofs(
