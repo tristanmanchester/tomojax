@@ -94,15 +94,18 @@ def occupancy(
         sign = np.where(det[t] < 0, 1.0, -1.0)  # det < 0: outward normal points down
         balance += np.bincount(i * ny * s + j, weights=sign, minlength=balance.size)
         k = np.floor((z - bottom) / spacing[2]).astype(np.int64)
-        column = ((i // s) * ny + j // s) * (nz + 1)
+        column = (j // s) * nx + i // s
+        plane = nx * ny
         below, inside = k < 0, (k >= 0) & (k < nz)
         steps += np.bincount(column[below], weights=sign[below], minlength=cells)
         above = (bottom + (k[inside] + 1) * spacing[2] - z[inside]) / spacing[2]
         partial += np.bincount(
-            column[inside] + k[inside], weights=sign[inside] * above, minlength=cells
+            column[inside] + k[inside] * plane, weights=sign[inside] * above, minlength=cells
         )
-        steps += np.bincount(column[inside] + k[inside] + 1, weights=sign[inside], minlength=cells)
+        steps += np.bincount(
+            column[inside] + (k[inside] + 1) * plane, weights=sign[inside], minlength=cells
+        )
     if np.any(np.abs(balance) > 0.5):
         raise ValueError("ray crossed an open surface; the mesh is not closed")
-    filled = partial.reshape(nx, ny, nz + 1) + np.cumsum(steps.reshape(nx, ny, nz + 1), axis=-1)
-    return (filled[..., :nz] / (s * s)).transpose(2, 1, 0)
+    filled = partial.reshape(nz + 1, ny, nx) + np.cumsum(steps.reshape(nz + 1, ny, nx), axis=0)
+    return filled[:nz] / (s * s)

@@ -79,9 +79,10 @@ def test_mesh_occupancy_uses_non_cubic_zyx_shape():
             [1, 7, 3],
         ]
     )
-    volume = occupancy(vertices[faces], (3, 5, 7), (0.5, 0.5, 0.5), (-1.5, -1, -0.5))
+    volume = occupancy(vertices[faces[:, ::-1]], (3, 5, 7), (0.5, 0.5, 0.5), (-1.5, -1, -0.5))
     assert volume.shape == (3, 5, 7) and volume.flags.c_contiguous
     assert volume[1, 2, 3] == 1 and not volume[:, :, 0].any()
+    np.testing.assert_allclose(volume[:, 2, 3], [0.3, 1.0, 0.3])
 
 
 def test_projection_benchmark_phantom_support_and_slice_are_zyx(monkeypatch):
