@@ -1,5 +1,9 @@
 """The public docstring gate validates objects, not similarly named modules."""
 
+import ast
+from pathlib import Path
+
+from numpydoc.docscrape import NumpyDocString
 from tools.check_docstrings import PUBLIC_DATA, docstring_errors, public_data, public_objects
 
 
@@ -35,3 +39,19 @@ def test_missing_parameters_and_entrypoint_examples_are_rejected():
     assert "RT01" in helper_errors
     assert "EX01" not in helper_errors
     assert "EX01" in dict(docstring_errors("tomojax.load", incomplete))
+
+
+def test_optional_torch_sections_without_importing_pytorch():
+    source = Path(__file__).parents[1] / "src/tomojax/torch.py"
+    tree = ast.parse(source.read_text())
+    cls = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Projector"
+    )
+    methods = {node.name: node for node in cls.body if isinstance(node, ast.FunctionDef)}
+    for name in ("__init__", "forward", "adjoint"):
+        method = methods[name]
+        doc = NumpyDocString(ast.get_docstring(cls if name == "__init__" else method) or "")
+        expected = {arg.arg for arg in [*method.args.args, *method.args.kwonlyargs]} - {"self"}
+        assert expected == {param.name for param in doc["Parameters"]}
+        if name != "__init__":
+            assert doc["Returns"] and doc["Raises"]
