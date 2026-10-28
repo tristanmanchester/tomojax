@@ -177,7 +177,6 @@ def _force_uncached_pose_columns(monkeypatch):
 def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     monkeypatch, stream, backend, solver, scan_variant, integrator
 ):
-    from dataclasses import replace
     from pathlib import Path
 
     from tomojax.alignment import AlignConfig
@@ -212,9 +211,6 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     nominal = np.asarray(stack_view_poses(geometry, 3), np.float64)
     rng = np.random.default_rng(34 + scan_variant)
     x = rng.uniform(0.2, 1.3, (2, 3, 2)).astype(np.float32)
-    support = np.ones_like(x)
-    support[0, 0, 0] = 1 - scan_variant
-    x *= support
     # The sixth column, dy along the beam, is inactive for parallel rays.
     p = np.concatenate([rng.normal(0, 0.01, (3, 5)), np.zeros((3, 1))], axis=1).astype(np.float32)
     pose = physical_poses(nominal, p[:, :5])
@@ -251,7 +247,6 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
-    ctx = replace(ctx, volume_mask=jnp.asarray(support))
     objective = _coupled_objective.build_coupled_objective(ctx)
     result = objective.update(jnp.asarray(p), jnp.asarray(x))
     assert result.finite
@@ -260,7 +255,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     a = (
         np.column_stack(
             [
-                project_voxel_truth(v.reshape(x.shape) * support, pose, grid, det).ravel()
+                project_voxel_truth(v.reshape(x.shape), pose, grid, det).ravel()
                 for v in np.eye(x.size)
             ]
         )
@@ -665,16 +660,14 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     grid, detector = tj.Grid(3, 4, 2, 1, 1, 1), tj.Detector(7, 3, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, [12, 57, 103])
     volume = rng.uniform(0.2, 1, (3, 4, 2)).astype(np.float32)
-    support = np.ones_like(volume)
-    support[0, 0, 0] = not stream
     poses = np.zeros((3, 6), np.float32)
     poses[:, 3] = [0.02, -0.01, 0.03]
 
     def project(x, p):
         shifted = tj.Scan(np.zeros((3, 3, 7), np.float32), geometry).with_poses(p)
         frames = stack_view_poses(shifted.geometry, 3)
-        model = _matching_model.projectors(grid, detector, backend="jax", masked=lambda v: v)
-        return np.asarray(model.forward(frames, jnp.asarray(x) * support), np.float64)
+        model = _matching_model.projectors(grid, detector, backend="jax")
+        return np.asarray(model.forward(frames, jnp.asarray(x)), np.float64)
 
     native = np.arange(2 * detector.nu, dtype=np.float64) - (2 * detector.nu - 1) / 2
     spectrum = np.fft.fft(native) * np.exp(1j * np.pi * np.fft.fftfreq(native.size))
@@ -712,9 +705,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         active_mask=jnp.array([0, 0, 0, 1, 0, 0], jnp.float32),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    ctx = replace(
-        _pose_objective_context(runtime=runtime, grid=grid, **common), volume_mask=support
-    )
+    ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
     ctx = replace(
         ctx,
         has_loss_mask=weighted,
@@ -798,11 +789,8 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
-    if smooth:
-        ctx = replace(ctx, volume_mask=jnp.ones_like(x).at[0, 0, 0].set(0))
-    else:
-        # Exercise implicit unit-support row sums even on this tiny CUDA grid.
-        monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    # Exercise implicit unit-support row sums even on this tiny CUDA grid.
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
     monkeypatch.setattr(_coupled_host, "_pass", partial(_coupled_host._pass, batch_size=2))
     captured = []
     monkeypatch.setattr(
@@ -920,7 +908,7 @@ def test_finite_sampling_and_paired_derivatives_match_dense_oracle(width, backen
     poses = poses.at[:, 0, 3].set(jnp.array([0.21, -0.37, 0.13]))
     x = jnp.asarray(rng.normal(size=(5, 4, 2)), jnp.float32)
     y, z = (jnp.asarray(rng.normal(size=(3, 2, width)), jnp.float32) for _ in range(2))
-    model = _matching_model.projectors(grid, detector, backend=backend, masked=lambda value: value)
+    model = _matching_model.projectors(grid, detector, backend=backend)
     # Independently form the finite Shannon matrix on the physical fine detector.
     fine, length, pitch = 2 * width, 4 * width + 1, detector.du / 2
     begin = (length - fine) // 2
@@ -956,9 +944,7 @@ def test_finite_sampling_and_paired_derivatives_match_dense_oracle(width, backen
         rtol=3e-3,
     )
     # The coupled positive metric must use this model's unit image, not bare Joseph.
-    absolute = _matching_model.projectors(
-        grid, detector, backend=backend, masked=lambda v: v, absolute=True
-    )
+    absolute = _matching_model.projectors(grid, detector, backend=backend, absolute=True)
     spec = SimpleNamespace(
         grid=grid,
         detector=detector,
@@ -969,9 +955,9 @@ def test_finite_sampling_and_paired_derivatives_match_dense_oracle(width, backen
             cone_beam=False, translation_frame="detector", integrator="joseph"
         ),
     )
-    arrays = SimpleNamespace(mask=jnp.float32(1), weights=jnp.float32(1), frames=None)
+    arrays = SimpleNamespace(weights=jnp.float32(1), frames=None)
     bound = _coupled_program.positive_sensitivity(
-        spec, arrays, poses, lambda v: v, x.shape, jnp.ones(3), jnp.zeros_like(x)
+        spec, arrays, poses, x.shape, jnp.ones(3), jnp.zeros_like(x)
     )
     expected_bound = absolute.adjoint(poses, absolute.forward(poses, jnp.ones_like(x)))
     np.testing.assert_allclose(bound, expected_bound, rtol=2e-6, atol=2e-6)

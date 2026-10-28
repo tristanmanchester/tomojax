@@ -229,7 +229,6 @@ class AlignmentRuntimeContext:
     medium_smoothness_weights_sq: jnp.ndarray
     trans_only_smoothness_weights_sq: jnp.ndarray
     light_smoothness_weights_sq: jnp.ndarray
-    volume_mask: jnp.ndarray | None
     active_loss_name: str
     loss_adapter: LossAdapter
     loss_mask: jnp.ndarray | None
@@ -256,7 +255,6 @@ class _PoseObjectiveContext:
     pose_stack: jnp.ndarray
     det_grid: tuple[jnp.ndarray, jnp.ndarray]
     smoothness_weights: jnp.ndarray
-    volume_mask: jnp.ndarray | None
     loss_adapter: LossAdapter
     nv: int
     nu: int
@@ -290,7 +288,6 @@ def _pose_objective_context(
         pose_stack=runtime.pose_stack,
         det_grid=runtime.det_grid,
         smoothness_weights=runtime.smoothness_weights,
-        volume_mask=runtime.volume_mask,
         loss_adapter=runtime.loss_adapter,
         nv=runtime.nv,
         nu=runtime.nu,

@@ -257,7 +257,6 @@ def _build_alignment_runtime_context(
         medium_smoothness_weights_sq=medium_smoothness_weights_sq,
         trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
         light_smoothness_weights_sq=light_smoothness_weights_sq,
-        volume_mask=None,
         active_loss_name=active_loss_name,
         loss_adapter=loss_adapter,
         loss_mask=loss_mask,

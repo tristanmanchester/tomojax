@@ -164,16 +164,12 @@ def _pass(
         valid = (start + jnp.arange(size) >= i * size) * take(counts, start)
         batch = _view_batch(arrays, start, size, spec, weighted)
         measured, weights = batch.projections, batch.weights
-
-        def masked(v):
-            return v if arrays.mask.ndim == 0 else arrays.mask * v
-
-        forward, adjoint = physical_projectors(spec, batch, masked)
+        forward, adjoint = physical_projectors(spec, batch)
         filtered, predict = data_residual_filter(spec, physical_columns(spec, batch))
         t, q = take(poses, start), take(p, start)
         ax, rows, blocks, loss = carry
         if mode == "bound":
-            ax = positive_sensitivity(spec, batch, t, masked, shape, valid, ax)
+            ax = positive_sensitivity(spec, batch, t, shape, valid, ax)
             return ax, rows, blocks, loss
         if mode == "loss":
             residual = weights * (forward(t, x, batch.frames) - batch.projections)
@@ -184,7 +180,7 @@ def _pass(
             predict,
             batch,
             q,
-            masked(x),
+            x,
             indices,
             columns_key,
             start,
@@ -316,7 +312,7 @@ class _HostSystem:
         self.movable = counts * active
         device_gradient = jax.device_put(gx) if spec.nonnegative else jnp.float32(0)
         self.free = np.array(
-            free_volume_support(x, device_gradient, arrays.mask, nonnegative=spec.nonnegative),
+            free_volume_support(x, device_gradient, nonnegative=spec.nonnegative),
             order="C",
         )
         np.multiply(gx, self.free, out=gx)
