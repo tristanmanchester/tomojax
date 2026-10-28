@@ -51,6 +51,13 @@ response fields retain 28–61% of their RMS after differential correction.
 Independent off-axis analytic structure increments change by up to 11.1% on
 I13 and 0.9–3.7% on the other three scans; see the
 [ring measurements](measurements.md#detector-response-and-structure-controls).
+On six native I13 rows, off-axis image increments change by 6.7–17.4%,
+and a separate four-seed finite-reference test retains 48–83% of known added
+image-error RMS; see the
+[image-domain controls](measurements.md#calibration-backed-gaps-and-response-only-correction).
+Further image-domain checks fail the 5% no-harm gate on ESRF bamboo (28.5%)
+and Elettra (8.0%), despite sinogram-domain passes; see the
+[cross-facility controls](measurements.md#cross-facility-image-domain-controls).
 Review corrected and uncorrected structures, especially on moving samples.
 A centred radial feature and an even detector error are indistinguishable in
 a stationary full turn: correction of that component depends on the method's
@@ -159,7 +166,12 @@ measurements require independent calibration evidence and repair before `Rings`.
   roll (`calibrate_cone_axis`, also `tomojax align --mode cor`) from slab
   sharpness, which needs in-plane structure at the slab heights and a scan of
   at least 180 degrees plus the fan angle; it does not estimate detector pitch
-  or yaw, the axis direction, or the source distances. The alternating
+  or yaw, the axis direction, or the source distances. The
+  [cone-setup alias measurements](measurements.md#cone-setup-aliases-and-a-conditional-calibration-test)
+  show exact redundancies under unrestricted per-view poses; they do not
+  provide uncertainty or identify a calibrated setup. A fixed-pose Walnut
+  focal-distance test fails the 1% held-out correspondence improvement gate.
+  The alternating
   solver's non-Gauss-Newton optimisers are not validated for cone geometry.
 - FBP weights every view exactly for rotation about one fixed axis, at any
   tilt, arc length or angular spacing. It cannot recover frequencies no view
