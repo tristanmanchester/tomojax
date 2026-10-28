@@ -17,9 +17,10 @@ Shepp–Logan. Simulation writes geometry and projection metadata into the
 dataset, and `inspect` writes the central projection and the volume's central
 slices to `previews/`. Use `tomojax simulate --help` for other phantoms,
 Poisson noise (`--poisson-scale`) and the random seed (`--seed`). Detector
-artifacts such as dead and hot pixels, zingers and stripes, and grids or
-detectors of other shapes (`grid`, `detector`), are keys of a `--config` TOML
-file; `tomojax simulate --config-keys` lists them.
+artifacts such as dead and hot pixels, zingers and stripes, phantom details
+such as the random shapes' count and sizes, and grids or detectors of other
+shapes (`grid`, `detector`), are keys of a `--config` TOML file;
+`tomojax simulate --config-keys` lists them.
 
 ## Try tilted geometry
 

@@ -514,6 +514,7 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
 
     def fake_simulate_to_file(config: object, out: str) -> str:
         captured["shape"] = (config.nx, config.ny, config.nz, config.nu, config.nv, config.n_views)
+        captured["expert"] = (config.single_rotate, config.artefacts.zinger_fraction)
         dataset = make_projection_dataset(
             projections=np.zeros(
                 (int(config.n_views), int(config.nv), int(config.nu)), dtype=np.float32
@@ -527,11 +528,16 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
         return out
 
     monkeypatch.setattr(simulate_cli, "simulate_to_file", fake_simulate_to_file)
+    # Phantom details and detector artefacts are config-file settings.
+    settings = tmp_path / "simulate.toml"
+    _ = settings.write_text("single_rotate = false\nzinger_fraction = 0.25\n", encoding="utf-8")
 
     assert (
         main(
             [
                 "simulate",
+                "--config",
+                str(settings),
                 "-o",
                 str(out_path),
                 "--grid",
@@ -545,13 +551,13 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
                 "8",
                 "--phantom",
                 "sphere",
-                "--no-single-rotate",
             ]
         )
         == 0
     )
 
     assert captured["shape"] == (2, 2, 2, 2, 2, 8)
+    assert captured["expert"] == (False, 0.25)
     loaded = load_dataset(out_path)
     assert loaded.projections.shape == (8, 2, 2)
     assert loaded.volume is not None

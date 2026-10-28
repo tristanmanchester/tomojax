@@ -30,6 +30,10 @@ unresolved without a motion assumption; these fields do not recover per-view
 poses or turn local matching intervals into calibrated centre uncertainty.
 Centre estimates and automatic workflow decisions are unchanged.
 
+`tomojax simulate` takes phantom details and detector artefacts (other than
+`--poisson-scale`) only from a `--config` TOML file, as `align` and `recon` take
+their expert settings; the command has 19 options instead of 45.
+
 Alignment no longer offers L-BFGS pose optimization: `opt_method="lbfgs"` and
 the `lbfgs_*` settings are removed, and TOML configs naming them fail with a
 "removed" error. Gauss-Newton is the pose solver; Optax is no longer a dependency.
