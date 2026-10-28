@@ -128,14 +128,20 @@ def tomojax_reconstruct(scan: Any, grid: Any, args: argparse.Namespace) -> np.nd
     options: dict[str, Any] = {}
     if args.method != "fdk":
         options.update(iterations=args.iterations, warm_start=args.start == "fdk")
+    batch = {} if args.views_per_batch is None else {"views_per_batch": args.views_per_batch}
     if args.method in {"sirt", "ossart"}:
         options["config"] = SIRTConfig(
             lower_bound=0,
             subsets=1 if args.method == "sirt" else args.subsets,
             acceleration=args.acceleration,
+            **batch,
         )
     elif args.method == "osem":
-        options["config"] = MLEMConfig(subsets=args.subsets)
+        options["config"] = MLEMConfig(subsets=args.subsets, **batch)
+    elif args.method == "cgls" and batch:
+        from tomojax.recon import CGLSConfig
+
+        options["config"] = CGLSConfig(**batch)
     return np.asarray(tj.reconstruct(scan, method, grid=grid, **options).volume)
 
 
@@ -295,6 +301,9 @@ def main() -> None:
     )
     parser.add_argument("--batch", type=int, default=512, help="ASTRA host CGLS views per batch")
     parser.add_argument("--acceleration", action="store_true", help="TomoJAX SIRT acceleration")
+    parser.add_argument(
+        "--views-per-batch", type=int, help="TomoJAX solver views per batch (default: solver's)"
+    )
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument(
         "--compare-to", type=Path, help="Same-grid reference volume for full image diagnostics"
