@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+CUDA cone transposes walk all of a call's views in one launch per kernel and
+add each tile to the volume once, rather than once per 32 views; private
+z-contiguous launches order planes first, so concurrent blocks share detector
+footprints.
+
 Resident CUDA cone CGLS, SIRT/OS-SART and MLEM/OSEM use private z-contiguous
 iterates while preserving public `(z, y, x)` inputs and outputs. Bounded tiled
 boundary permutations avoid volume-sized compiler-autotuning buffers; the

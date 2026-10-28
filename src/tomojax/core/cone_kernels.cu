@@ -35,13 +35,14 @@ __device__ __forceinline__ float vertical_support_margin(
         ((float)nz + fabsf(Sc) + fabsf(t) *
          (fabsf(rc0) + fabsf(Sc) + (float)nv * fabsf(DVc)) + 1.f);
 }
-// Whether any of the block's nviews (<= blockDim.x) views is (non-)separable and has rays
-// sampled along axis a; every thread of the block must call it.
+// Whether any of the block's nviews views is (non-)separable and has rays sampled
+// along axis a; every thread of the block must call it.
 __device__ __forceinline__ bool any_view(const float* coeff, const int* axis_box, int nviews,
                                          int a, bool sep) {
-    int i = threadIdx.x;
-    bool hit = i < nviews && separable(coeff + (long)i * NC) == sep
-        && axis_box[((long)i * 3 + a) * 4 + 1] >= axis_box[((long)i * 3 + a) * 4];
+    bool hit = false;
+    for (int i = threadIdx.x; i < nviews; i += blockDim.x)
+        hit = hit || (separable(coeff + (long)i * NC) == sep
+                      && axis_box[((long)i * 3 + a) * 4 + 1] >= axis_box[((long)i * 3 + a) * 4]);
     return __syncthreads_or(hit);
 }
 // Component i of the 3-vector at p.
@@ -882,9 +883,10 @@ __device__ __forceinline__ void sep_adjoint_tile(
     __shared__ int skip;
     int b = 1 - a;
     int nb = a == 0 ? ny : nx;
-    int c0 = (VOLUME_Z_FAST ? blockIdx.x : blockIdx.z) * ZT;
+    // Private storage keeps planes in grid x: concurrent blocks share footprints.
+    int c0 = blockIdx.z * ZT;
     int b0 = (VOLUME_Z_FAST ? blockIdx.y : blockIdx.x) * TB;
-    int k = VOLUME_Z_FAST ? blockIdx.z : blockIdx.y;
+    int k = VOLUME_Z_FAST ? blockIdx.x : blockIdx.y;
     int tid = threadIdx.x;
     int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 4);
     float my_bf = (float)my_b;
@@ -1041,7 +1043,8 @@ __device__ __forceinline__ void add4(float* p0, float x0, float* p1, float x1, f
 // are then walked as one list, without a barrier per view. Each run's crossings of a plane
 // step monotonically through the tile, so its thread keeps the 2 x 2 cells around the
 // current crossing in registers and adds them to the tile only as it moves on. img is
-// path-weighted; nviews <= VMAX.
+// path-weighted. Views are taken VMAX at a time, and the tile is added to the volume
+// once, after all of them.
 #define VMAX 32
 template <int PC, int RHS = 1, int PLANES = 1>
 __device__ __forceinline__ void plane_tile(
@@ -1057,172 +1060,181 @@ __device__ __forceinline__ void plane_tile(
     __shared__ float cf[VMAX][12];  // source, detector origin, u and v axes
     __shared__ int foot[VMAX][4];   // first column and row, rows, runs per column
     __shared__ int first[VMAX + 1]; // each view's first run in the block's list
+    __shared__ int touched;         // whether any view's footprint met the tile
     int b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
     int na = SEL(a, nx, ny, nz), nb = SEL(b, nx, ny, nz), nc = SEL(cc, nx, ny, nz);
-    int c0 = (VOLUME_Z_FAST ? blockIdx.x : blockIdx.z) * PC;
-    int b0 = (VOLUME_Z_FAST ? blockIdx.y : (a == 0 ? blockIdx.y : blockIdx.x)) * ROWS;
-    int k = (VOLUME_Z_FAST ? blockIdx.z : (a == 0 ? blockIdx.x : blockIdx.y)) * PLANES;
+    // Private storage keeps planes in grid x: concurrent blocks share footprints.
+    int c0 = blockIdx.z * PC;
+    int b0 = (VOLUME_Z_FAST || a == 0 ? blockIdx.y : blockIdx.x) * ROWS;
+    int k = (VOLUME_Z_FAST || a == 0 ? blockIdx.x : blockIdx.y) * PLANES;
     int nb0 = min(ROWS, nb - b0), nc0 = min(PC, nc - c0);
     if (!any_view(coeff, axis_box, nviews, a, false)) return;
     for (int i = threadIdx.x; i < RHS * PLANES * (ROWS + 2) * (PC + 3); i += blockDim.x) (&acc[0][0][0][0])[i] = 0.f;
-    int t = threadIdx.x, runs_here = 0;
-    if (t < nviews) {
-        const float* c = coeff + (long)t * NC;
-        const int* ab = axis_box + ((long)t * 3 + a) * 4;
-        #pragma unroll
-        for (int i = 0; i < 4; ++i) {
-            cf[t][3*i] = comp(c + 3*i, a);
-            cf[t][3*i + 1] = comp(c + 3*i, b);
-            cf[t][3*i + 2] = comp(c + 3*i, cc);
-        }
-        if (!separable(c) && ab[1] >= ab[0]) {
-            float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
-            float denmin = 1e30f, denmax = -1e30f;
+    int t = threadIdx.x;
+    if (t == 0) touched = 0;
+    for (int start = 0; start < nviews; start += VMAX) {
+        int count = min(VMAX, nviews - start);
+        int runs_here = 0;
+        if (start > 0) __syncthreads();  // the last chunk's views are no longer read
+        if (t < count) {
+            const float* c = coeff + (long)(start + t) * NC;
+            const int* ab = axis_box + ((long)(start + t) * 3 + a) * 4;
             #pragma unroll
-            for (int q = 0; q < 4 * PLANES; ++q) {
-                // Corners of the tile's part inside the volume (see sep_adjoint).
-                float pb = q & 1 ? (float)(b0 + nb0) : (float)(b0 - 1);
-                float pc = q & 2 ? (float)(c0 + nc0) : (float)(c0 - 1);
-                float pk = PLANES == 1 ? (float)k : (float)min(k + q / 4, na - 1);
-                float d0 = (a == 0 ? pk : pb) - c[0];
-                float d1 = (a == 1 ? pk : (a == 0 ? pb : pc)) - c[1];
-                float d2 = (a == 2 ? pk : pc) - c[2];
-                float den = c[13] * d0 + c[14] * d1 + c[15] * d2;
-                denmin = fminf(denmin, den); denmax = fmaxf(denmax, den);
-                float lam = c[16] / den;
-                float uu = c[23] + lam * (c[17] * d0 + c[18] * d1 + c[19] * d2);
-                float vv = c[24] + lam * (c[20] * d0 + c[21] * d1 + c[22] * d2);
-                umin = fminf(umin, uu); umax = fmaxf(umax, uu);
-                vmin = fminf(vmin, vv); vmax = fmaxf(vmax, vv);
+            for (int i = 0; i < 4; ++i) {
+                cf[t][3*i] = comp(c + 3*i, a);
+                cf[t][3*i + 1] = comp(c + 3*i, b);
+                cf[t][3*i + 2] = comp(c + 3*i, cc);
             }
-            // The denominator is affine over the tile. If it crosses zero, its
-            // footprint passes through infinity: the corners cannot bound it.
-            bool unbounded = crosses_zero(denmin, denmax);
-            int ulo = ab[0], uhi = ab[1], vlo = ab[2], vhi = ab[3];
-            if (!unbounded) {
-                // Rounded forward crossings can lie just inside a voxel while
-                // an inverse corner rounds past an integer detector pixel.
-                // Round candidate bounds outwards; the forward cell and axis
-                // tests below still determine every interpolation weight.
-                ulo = max((int)floorf(pixel_bound(umin, nu)), ulo);
-                uhi = min((int)ceilf(pixel_bound(umax, nu)), uhi);
-                vlo = max((int)floorf(pixel_bound(vmin, nv)), vlo);
-                vhi = min((int)ceilf(pixel_bound(vmax, nv)), vhi);
+            if (!separable(c) && ab[1] >= ab[0]) {
+                float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
+                float denmin = 1e30f, denmax = -1e30f;
+                #pragma unroll
+                for (int q = 0; q < 4 * PLANES; ++q) {
+                    // Corners of the tile's part inside the volume (see sep_adjoint).
+                    float pb = q & 1 ? (float)(b0 + nb0) : (float)(b0 - 1);
+                    float pc = q & 2 ? (float)(c0 + nc0) : (float)(c0 - 1);
+                    float pk = PLANES == 1 ? (float)k : (float)min(k + q / 4, na - 1);
+                    float d0 = (a == 0 ? pk : pb) - c[0];
+                    float d1 = (a == 1 ? pk : (a == 0 ? pb : pc)) - c[1];
+                    float d2 = (a == 2 ? pk : pc) - c[2];
+                    float den = c[13] * d0 + c[14] * d1 + c[15] * d2;
+                    denmin = fminf(denmin, den); denmax = fmaxf(denmax, den);
+                    float lam = c[16] / den;
+                    float uu = c[23] + lam * (c[17] * d0 + c[18] * d1 + c[19] * d2);
+                    float vv = c[24] + lam * (c[20] * d0 + c[21] * d1 + c[22] * d2);
+                    umin = fminf(umin, uu); umax = fmaxf(umax, uu);
+                    vmin = fminf(vmin, vv); vmax = fmaxf(vmax, vv);
+                }
+                // The denominator is affine over the tile. If it crosses zero, its
+                // footprint passes through infinity: the corners cannot bound it.
+                bool unbounded = crosses_zero(denmin, denmax);
+                int ulo = ab[0], uhi = ab[1], vlo = ab[2], vhi = ab[3];
+                if (!unbounded) {
+                    // Rounded forward crossings can lie just inside a voxel while
+                    // an inverse corner rounds past an integer detector pixel.
+                    // Round candidate bounds outwards; the forward cell and axis
+                    // tests below still determine every interpolation weight.
+                    ulo = max((int)floorf(pixel_bound(umin, nu)), ulo);
+                    uhi = min((int)ceilf(pixel_bound(umax, nu)), uhi);
+                    vlo = max((int)floorf(pixel_bound(vmin, nv)), vlo);
+                    vhi = min((int)ceilf(pixel_bound(vmax, nv)), vhi);
+                }
+                int wu = uhi - ulo + 1, wv = vhi - vlo + 1;
+                if (wu > 0 && wv > 0) {
+                    int runs = (wv + RUN - 1) / RUN;
+                    runs_here = wu * runs;
+                    foot[t][0] = ulo; foot[t][1] = vlo; foot[t][2] = wv; foot[t][3] = runs;
+                }
             }
-            int wu = uhi - ulo + 1, wv = vhi - vlo + 1;
-            if (wu > 0 && wv > 0) {
-                int runs = (wv + RUN - 1) / RUN;
-                runs_here = wu * runs;
-                foot[t][0] = ulo; foot[t][1] = vlo; foot[t][2] = wv; foot[t][3] = runs;
-            }
         }
-    }
-    if (t < 32) {  // each view's first run: a prefix sum over the (<= 32) views
-        int x = runs_here;
-        #pragma unroll
-        for (int o = 1; o < 32; o <<= 1) {
-            int y = __shfl_up_sync(0xffffffffu, x, o);
-            if (t >= o) x += y;
-        }
-        first[t + 1] = x;
-        if (t == 0) first[0] = 0;
-    }
-    __syncthreads();
-    int total = first[nviews];
-    if (total == 0) return;
-    int w = 0, cw = -1, ulo = 0, vlo = 0, wv = 0, runs = 1;
-    const float* image = img;
-    float Sa = 0.f, Sb = 0.f, Sc = 0.f, DVa = 0.f, DVb = 0.f, DVc = 0.f;
-    for (int p = t; p < total; p += blockDim.x) {
-        while (p >= first[w + 1]) ++w;
-        const float* c = cf[w];
-        if (w != cw) {  // the view's constants, while this thread stays on it
-            cw = w;
-            ulo = foot[w][0]; vlo = foot[w][1]; wv = foot[w][2]; runs = foot[w][3];
-            image = img + (long)w * nu * nv;
-            Sa = c[0]; Sb = c[1]; Sc = c[2];
-            DVa = c[9]; DVb = c[10]; DVc = c[11];
-        }
-        int q = p - first[w];
-        int u = ulo + q / runs, v0 = vlo + RUN * (q % runs), v1 = min(v0 + RUN, vlo + wv);
-        float fu = (float)u;
-        // Keep the detector-column position, not position minus source: ray_of
-        // adds the v displacement first, then subtracts the source.
-        float ra = __fmaf_rn(fu, c[6], c[3]);
-        float rb = __fmaf_rn(fu, c[7], c[4]);
-        float rc = __fmaf_rn(fu, c[8], c[5]);
-        const float* col = image + (long)u * nv;
-        const float* col1 = RHS == 2 ? img1 + ((long)w * nu + u) * nv : nullptr;
-        // Load the run's pixels together: one wait for memory instead of RUN.
-        float values[RHS][RUN];
-        #pragma unroll
-        for (int i = 0; i < RUN; ++i) {
-            values[0][i] = v0 + i < v1 ? __ldg(col + v0 + i) : 0.f;
-            if (RHS == 2) values[1][i] = v0 + i < v1 ? __ldg(col1 + v0 + i) : 0.f;
-        }
-        // The run's crossings of plane k first, independent of each other, so their
-        // divisions overlap; then their cells, in order.
-        float fbs[PLANES][RUN], fcs[PLANES][RUN];
-        #pragma unroll
-        for (int i = 0; i < RUN; ++i) {
-            float fv = (float)(v0 + i);
-            float r_a = __fsub_rn(__fmaf_rn(fv, DVa, ra), Sa);
-            float r_b = __fsub_rn(__fmaf_rn(fv, DVb, rb), Sb);
-            float r_c = __fsub_rn(__fmaf_rn(fv, DVc, rc), Sc);
-            float aa = fabsf(r_a), ab = fabsf(r_b), ac = fabsf(r_c);
-            float inverse = __frcp_rn(r_a);
-            bool hit = v0 + i < v1
-                && (a == 0 ? aa >= ab : aa > ab)
-                && (a == 2 ? aa > ac : aa >= ac);
+        if (t < 32) {  // each view's first run: a prefix sum over the (<= 32) views
+            int x = runs_here;
             #pragma unroll
-            for (int plane = 0; plane < PLANES; ++plane) {
-                // Preserve each plane's original FP32 crossing, not a recurrence.
-                float K = __fsub_rn((float)(k + plane), Sa);
-                float t_ = __fmul_rn(K, inverse);
-                fbs[plane][i] = hit && (PLANES == 1 || k + plane < na) ? __fmaf_rn(t_, r_b, Sb) : -1e9f;
-                fcs[plane][i] = __fmaf_rn(t_, r_c, Sc);
+            for (int o = 1; o < 32; o <<= 1) {
+                int y = __shfl_up_sync(0xffffffffu, x, o);
+                if (t >= o) x += y;
             }
+            first[t + 1] = x;
+            if (t == 0) first[0] = 0;
         }
-        #pragma unroll
-        for (int plane = 0; plane < PLANES; ++plane) {
-            int cb = -100, ccj = -100;
-            float x00[RHS] = {}, x01[RHS] = {}, x10[RHS] = {}, x11[RHS] = {};
+        __syncthreads();
+        int total = first[count];
+        if (t == 0 && total > 0) touched = 1;
+        int w = 0, cw = -1, ulo = 0, vlo = 0, wv = 0, runs = 1;
+        const float* image = img;
+        float Sa = 0.f, Sb = 0.f, Sc = 0.f, DVa = 0.f, DVb = 0.f, DVc = 0.f;
+        for (int p = t; p < total; p += blockDim.x) {
+            while (p >= first[w + 1]) ++w;
+            const float* c = cf[w];
+            if (w != cw) {  // the view's constants, while this thread stays on it
+                cw = w;
+                ulo = foot[w][0]; vlo = foot[w][1]; wv = foot[w][2]; runs = foot[w][3];
+                image = img + (long)(start + w) * nu * nv;
+                Sa = c[0]; Sb = c[1]; Sc = c[2];
+                DVa = c[9]; DVb = c[10]; DVc = c[11];
+            }
+            int q = p - first[w];
+            int u = ulo + q / runs, v0 = vlo + RUN * (q % runs), v1 = min(v0 + RUN, vlo + wv);
+            float fu = (float)u;
+            // Keep the detector-column position, not position minus source: ray_of
+            // adds the v displacement first, then subtracts the source.
+            float ra = __fmaf_rn(fu, c[6], c[3]);
+            float rb = __fmaf_rn(fu, c[7], c[4]);
+            float rc = __fmaf_rn(fu, c[8], c[5]);
+            const float* col = image + (long)u * nv;
+            const float* col1 = RHS == 2 ? img1 + ((long)(start + w) * nu + u) * nv : nullptr;
+            // Load the run's pixels together: one wait for memory instead of RUN.
+            float values[RHS][RUN];
             #pragma unroll
             for (int i = 0; i < RUN; ++i) {
-                float fb = fbs[plane][i], fc = fcs[plane][i];
-                float fb0 = floorf(fb), fc0 = floorf(fc);
-                int jb = (int)fb0 - b0, jc = (int)fc0 - c0;
-                if (jb < -1 || jb >= ROWS || jc < -1 || jc >= PC) continue;
-                float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
-                if (jb != cb || jc != ccj) {
-                    bool next = jb == cb && jc == ccj + 1;
+                values[0][i] = v0 + i < v1 ? __ldg(col + v0 + i) : 0.f;
+                if (RHS == 2) values[1][i] = v0 + i < v1 ? __ldg(col1 + v0 + i) : 0.f;
+            }
+            // The run's crossings of plane k first, independent of each other, so their
+            // divisions overlap; then their cells, in order.
+            float fbs[PLANES][RUN], fcs[PLANES][RUN];
+            #pragma unroll
+            for (int i = 0; i < RUN; ++i) {
+                float fv = (float)(v0 + i);
+                float r_a = __fsub_rn(__fmaf_rn(fv, DVa, ra), Sa);
+                float r_b = __fsub_rn(__fmaf_rn(fv, DVb, rb), Sb);
+                float r_c = __fsub_rn(__fmaf_rn(fv, DVc, rc), Sc);
+                float aa = fabsf(r_a), ab = fabsf(r_b), ac = fabsf(r_c);
+                float inverse = __frcp_rn(r_a);
+                bool hit = v0 + i < v1
+                    && (a == 0 ? aa >= ab : aa > ab)
+                    && (a == 2 ? aa > ac : aa >= ac);
+                #pragma unroll
+                for (int plane = 0; plane < PLANES; ++plane) {
+                    // Preserve each plane's original FP32 crossing, not a recurrence.
+                    float K = __fsub_rn((float)(k + plane), Sa);
+                    float t_ = __fmul_rn(K, inverse);
+                    fbs[plane][i] = hit && (PLANES == 1 || k + plane < na) ? __fmaf_rn(t_, r_b, Sb) : -1e9f;
+                    fcs[plane][i] = __fmaf_rn(t_, r_c, Sc);
+                }
+            }
+            #pragma unroll
+            for (int plane = 0; plane < PLANES; ++plane) {
+                int cb = -100, ccj = -100;
+                float x00[RHS] = {}, x01[RHS] = {}, x10[RHS] = {}, x11[RHS] = {};
+                #pragma unroll
+                for (int i = 0; i < RUN; ++i) {
+                    float fb = fbs[plane][i], fc = fcs[plane][i];
+                    float fb0 = floorf(fb), fc0 = floorf(fc);
+                    int jb = (int)fb0 - b0, jc = (int)fc0 - c0;
+                    if (jb < -1 || jb >= ROWS || jc < -1 || jc >= PC) continue;
+                    float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
+                    if (jb != cb || jc != ccj) {
+                        bool next = jb == cb && jc == ccj + 1;
+                        #pragma unroll
+                        for (int r = 0; r < RHS; ++r) {
+                            float* cell = &acc[r][plane][cb + 1][ccj + 1];
+                            add4(cell, x00[r], cell + 1, next ? 0.f : x01[r],
+                                 cell + (PC + 3), x10[r], cell + (PC + 4), next ? 0.f : x11[r]);
+                            x00[r] = next ? x01[r] : 0.f; x10[r] = next ? x11[r] : 0.f;
+                            x01[r] = x11[r] = 0.f;
+                        }
+                        cb = jb; ccj = jc;
+                    }
+                    #pragma unroll
+                    for (int r = 0; r < RHS; ++r) {
+                        float value = values[r][i];
+                        x00[r] += value * wb0 * wc0; x01[r] += value * wb0 * wc1;
+                        x10[r] += value * wb1 * wc0; x11[r] += value * wb1 * wc1;
+                    }
+                }
+                if (cb > -100) {
                     #pragma unroll
                     for (int r = 0; r < RHS; ++r) {
                         float* cell = &acc[r][plane][cb + 1][ccj + 1];
-                        add4(cell, x00[r], cell + 1, next ? 0.f : x01[r],
-                             cell + (PC + 3), x10[r], cell + (PC + 4), next ? 0.f : x11[r]);
-                        x00[r] = next ? x01[r] : 0.f; x10[r] = next ? x11[r] : 0.f;
-                        x01[r] = x11[r] = 0.f;
+                        add4(cell, x00[r], cell + 1, x01[r], cell + (PC + 3), x10[r], cell + (PC + 4), x11[r]);
                     }
-                    cb = jb; ccj = jc;
-                }
-                #pragma unroll
-                for (int r = 0; r < RHS; ++r) {
-                    float value = values[r][i];
-                    x00[r] += value * wb0 * wc0; x01[r] += value * wb0 * wc1;
-                    x10[r] += value * wb1 * wc0; x11[r] += value * wb1 * wc1;
-                }
-            }
-            if (cb > -100) {
-                #pragma unroll
-                for (int r = 0; r < RHS; ++r) {
-                    float* cell = &acc[r][plane][cb + 1][ccj + 1];
-                    add4(cell, x00[r], cell + 1, x01[r], cell + (PC + 3), x10[r], cell + (PC + 4), x11[r]);
                 }
             }
         }
     }
     __syncthreads();
+    if (!touched) return;
     long s0 = VOLUME_Z_FAST ? (long)ny * nz : 1;
     long s1 = VOLUME_Z_FAST ? nz : nx, s2 = VOLUME_Z_FAST ? 1 : (long)nx * ny;
     long sa = SEL(a, s0, s1, s2), sb = SEL(b, s0, s1, s2), sc = SEL(cc, s0, s1, s2);
@@ -1407,130 +1419,137 @@ __device__ __forceinline__ void sep_adjoint_cached_tile(
     __shared__ int2 all_foot[VMAX];
     int b = 1 - a;
     int nb = a == 0 ? ny : nx;
-    int c0 = (VOLUME_Z_FAST ? blockIdx.x : blockIdx.z) * ZT;
+    // Private storage keeps planes in grid x: concurrent blocks share footprints.
+    int c0 = blockIdx.z * ZT;
     int b0 = (VOLUME_Z_FAST ? blockIdx.y : blockIdx.x) * TB;
-    int k = VOLUME_Z_FAST ? blockIdx.z : blockIdx.y;
+    int k = VOLUME_Z_FAST ? blockIdx.x : blockIdx.y;
     unsigned tid = threadIdx.x;
     // Stripes of ZT / 8 cells spread the four z lanes across shared-memory banks.
     int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 8);
     float my_bf = (float)my_b;
     if (!any_view(coeff, axis_box, nviews, a, true)) return;
-    for (int i = tid; i < nviews * 12; i += blockDim.x)
-        (&all_cf[0][0])[i] = coeff[(i / 12) * NC + i % 12];
-    // Bounds depend on the lateral tile, not z. Cache them with each view.
-    for (int i = tid; i < nviews; i += blockDim.x) {
-        const float* c = coeff + i * NC;
-        const int* ab = axis_box + (i * 3 + a) * 4;
-        all_skip[i] = !separable(c) || ab[1] < ab[0];
-        float K = (float)k - c[a], Sb = c[b];
-        float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b];
-        float DUa = c[6 + a], DUb = c[6 + b];
-        // Clip the far tile edge to the volume before projecting its bounds.
-        float g1 = (float)b0 - 1.f - Sb, g2 = (float)min(b0 + TB, nb) - Sb;
-        float den1 = g1 * DUa - K * DUb, den2 = g2 * DUa - K * DUb;
-        int lo = ab[0], hi = ab[1];
-        if (!crosses_zero(den1, den2)) {
-            float u1 = (K * rb0 - g1 * ra0) / den1, u2 = (K * rb0 - g2 * ra0) / den2;
-            lo = max((int)floorf(pixel_bound(fminf(u1, u2), nu)) - 1, ab[0]);
-            hi = min((int)ceilf(pixel_bound(fmaxf(u1, u2), nu)) + 1, ab[1]);
-        }
-        all_foot[i] = make_int2(lo, hi);
-    }
-
-    __syncthreads();
     float acc[ZT / 4];
     #pragma unroll
     for (int j = 0; j < ZT / 4; ++j) acc[j] = 0.f;
-    for (int w = 0; w < nviews; ++w) {
-        if (all_skip[w]) continue;
-        const float* c = all_cf[w];
-        float Sa = c[a], Sb = c[b], Sc = c[2], DVc = c[11];
-        float K = (float)k - Sa;
-        float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b], DUa = c[6 + a], DUb = c[6 + b];
-        int ulo_all = all_foot[w].x, uhi = all_foot[w].y;
-        const float* image = img + (long)w * nu * nv;
-        for (int ulo = ulo_all; ulo <= uhi; ulo += CACHED_ULEN) {
-            int ulen = min(CACHED_ULEN, uhi - ulo + 1);
-            __syncthreads();
-            for (int i = tid; i < ulen; i += blockDim.x) {
-                float fu = (float)(ulo + i);
-                float r0 = (c[3] + fu * c[6]) - c[0], r1 = (c[4] + fu * c[7]) - c[1];
-                int col_axis = fabsf(r1) > fabsf(r0) ? 1 : 0;
-                float ra = a == 0 ? r0 : r1, rb = a == 0 ? r1 : r0;
-                float t = K * (1.0f / ra);
-                float rc0 = c[5] + fu * c[8];
-                // Columns sampled along the other axis contribute nothing here.
-                s_t[i] = t; s_fb[i] = col_axis == a ? Sb + t * rb : -1e30f; s_rc0[i] = rc0;
-                // z cells step with v at 1/idf per row (either sign). Cell j takes
-                // the rows strictly between (j - 1 - f0) idf and (j + 1 - f0) idf,
-                // at most taps of them.
-                float idf = 1.f / (t * DVc);
-                s_f0[i] = Sc + t * (rc0 - Sc); s_idf[i] = idf;
-                // A footprint wider than the image still needs at most nv rows.
-                float margin = vertical_support_margin(idf, Sc, t, rc0, DVc, nz, nv);
-                s_margin[i] = margin;
-                // Widen both endpoints, keeping the tap count warp-uniform.
-                float taps = fminf(2.f * (fabsf(idf) + margin), (float)nv);
-                s_taps[i] = col_axis == a ? min((int)floorf(taps) + 1, nv) : 0;
+    // Views are cached VMAX at a time; the tile is added to the volume once.
+    const int all_views = nviews;
+    for (int start = 0; start < all_views; start += VMAX) {
+        nviews = min(VMAX, all_views - start);
+        if (start > 0) __syncthreads();  // the last chunk's views are no longer read
+        for (int i = tid; i < nviews * 12; i += blockDim.x)
+            (&all_cf[0][0])[i] = coeff[(start + i / 12) * NC + i % 12];
+        // Bounds depend on the lateral tile, not z. Cache them with each view.
+        for (int i = tid; i < nviews; i += blockDim.x) {
+            const float* c = coeff + (long)(start + i) * NC;
+            const int* ab = axis_box + ((long)(start + i) * 3 + a) * 4;
+            all_skip[i] = !separable(c) || ab[1] < ab[0];
+            float K = (float)k - c[a], Sb = c[b];
+            float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b];
+            float DUa = c[6 + a], DUb = c[6 + b];
+            // Clip the far tile edge to the volume before projecting its bounds.
+            float g1 = (float)b0 - 1.f - Sb, g2 = (float)min(b0 + TB, nb) - Sb;
+            float den1 = g1 * DUa - K * DUb, den2 = g2 * DUa - K * DUb;
+            int lo = ab[0], hi = ab[1];
+            if (!crosses_zero(den1, den2)) {
+                float u1 = (K * rb0 - g1 * ra0) / den1, u2 = (K * rb0 - g2 * ra0) / den2;
+                lo = max((int)floorf(pixel_bound(fminf(u1, u2), nu)) - 1, ab[0]);
+                hi = min((int)ceilf(pixel_bound(fmaxf(u1, u2), nu)) + 1, ab[1]);
             }
-            __syncthreads();
-            const float* col = image + (long)(ulo + tid / (ZT / 2)) * nv;
-            for (int i = tid / (ZT / 2), j = tid % (ZT / 2); i < ulen;
-                 i += blockDim.x / (ZT / 2), col += (blockDim.x / (ZT / 2)) * nv) {
-                float t = s_t[i], rc0 = s_rc0[i], f0 = s_f0[i], idf = s_idf[i];
-                int taps = s_taps[i];
-                #pragma unroll
-                for (int run = 0; run < 2; ++run) {
-                    int jj = j + run * (ZT / 2);
-                    float jcf = (float)(c0 + jj);
-                    float v1 = (jcf - 1.f - f0) * idf, v2 = (jcf + 1.f - f0) * idf;
-                    int va = max((int)floorf(pixel_bound(fminf(v1, v2) - s_margin[i], nv)) + 1, 0);
-                    float s = 0.f;
-                    // Common interior footprints avoid repeated bounds checks;
-                    // boundary and wider footprints keep every original tap.
-                    if (taps == 2 && va + 1 < nv) {
-                        s += __ldg(col + va) * trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
-                        s += __ldg(col + va + 1) * trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
-                    } else if (taps == 3 && va + 2 < nv) {
-                        s += __ldg(col + va) * trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
-                        s += __ldg(col + va + 1) * trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
-                        s += __ldg(col + va + 2) * trif(Sc + t * ((rc0 + (float)(va + 2) * DVc) - Sc), jcf);
-                    } else if (taps <= 3) {
-                        if (taps > 0 && va < nv)
-                            s += __ldg(col + va) * trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
-                        if (taps > 1 && va + 1 < nv)
-                            s += __ldg(col + va + 1) * trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
-                        if (taps > 2 && va + 2 < nv)
-                            s += __ldg(col + va + 2) * trif(Sc + t * ((rc0 + (float)(va + 2) * DVc) - Sc), jcf);
-                    } else {
-                        #pragma unroll 4
-                        for (int q = 0; q < taps; ++q) {
-                            int vv = va + q;
-                            if (vv < 0 || vv >= nv) continue;
-                            s += __ldg(col + vv) * trif(Sc + t * ((rc0 + (float)vv * DVc) - Sc), jcf);
-                        }
-                    }
-                    R[i][jj] = s;
+            all_foot[i] = make_int2(lo, hi);
+        }
+
+        __syncthreads();
+        for (int w = 0; w < nviews; ++w) {
+            if (all_skip[w]) continue;
+            const float* c = all_cf[w];
+            float Sa = c[a], Sb = c[b], Sc = c[2], DVc = c[11];
+            float K = (float)k - Sa;
+            float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b], DUa = c[6 + a], DUb = c[6 + b];
+            int ulo_all = all_foot[w].x, uhi = all_foot[w].y;
+            const float* image = img + (long)(start + w) * nu * nv;
+            for (int ulo = ulo_all; ulo <= uhi; ulo += CACHED_ULEN) {
+                int ulen = min(CACHED_ULEN, uhi - ulo + 1);
+                __syncthreads();
+                for (int i = tid; i < ulen; i += blockDim.x) {
+                    float fu = (float)(ulo + i);
+                    float r0 = (c[3] + fu * c[6]) - c[0], r1 = (c[4] + fu * c[7]) - c[1];
+                    int col_axis = fabsf(r1) > fabsf(r0) ? 1 : 0;
+                    float ra = a == 0 ? r0 : r1, rb = a == 0 ? r1 : r0;
+                    float t = K * (1.0f / ra);
+                    float rc0 = c[5] + fu * c[8];
+                    // Columns sampled along the other axis contribute nothing here.
+                    s_t[i] = t; s_fb[i] = col_axis == a ? Sb + t * rb : -1e30f; s_rc0[i] = rc0;
+                    // z cells step with v at 1/idf per row (either sign). Cell j takes
+                    // the rows strictly between (j - 1 - f0) idf and (j + 1 - f0) idf,
+                    // at most taps of them.
+                    float idf = 1.f / (t * DVc);
+                    s_f0[i] = Sc + t * (rc0 - Sc); s_idf[i] = idf;
+                    // A footprint wider than the image still needs at most nv rows.
+                    float margin = vertical_support_margin(idf, Sc, t, rc0, DVc, nz, nv);
+                    s_margin[i] = margin;
+                    // Widen both endpoints, keeping the tap count warp-uniform.
+                    float taps = fminf(2.f * (fabsf(idf) + margin), (float)nv);
+                    s_taps[i] = col_axis == a ? min((int)floorf(taps) + 1, nv) : 0;
                 }
-            }
-            __syncthreads();
-            if (my_b < nb) {
-                float h1 = my_bf - 1.f - Sb, h2 = my_bf + 1.f - Sb;
-                float den1 = h1 * DUa - K * DUb, den2 = h2 * DUa - K * DUb;
-                int ia = 0, ib = ulen - 1;
-                if (!crosses_zero(den1, den2)) {
-                    float w1 = (K * rb0 - h1 * ra0) / den1;
-                    float w2 = (K * rb0 - h2 * ra0) / den2;
-                    ia = max((int)floorf(pixel_bound(fminf(w1, w2), nu)) - 1 - ulo, 0);
-                    ib = min((int)ceilf(pixel_bound(fmaxf(w1, w2), nu)) + 1 - ulo, ulen - 1);
-                }
-                for (int i = ia; i <= ib; ++i) {
-                    float wb = trif(s_fb[i], my_bf);
-                    if (wb == 0.f) continue;
+                __syncthreads();
+                const float* col = image + (long)(ulo + tid / (ZT / 2)) * nv;
+                for (int i = tid / (ZT / 2), j = tid % (ZT / 2); i < ulen;
+                     i += blockDim.x / (ZT / 2), col += (blockDim.x / (ZT / 2)) * nv) {
+                    float t = s_t[i], rc0 = s_rc0[i], f0 = s_f0[i], idf = s_idf[i];
+                    int taps = s_taps[i];
                     #pragma unroll
-                    for (int j = 0; j < ZT / 4; ++j) {
-                        int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
-                        acc[j] += wb * R[i][my_c + offset];
+                    for (int run = 0; run < 2; ++run) {
+                        int jj = j + run * (ZT / 2);
+                        float jcf = (float)(c0 + jj);
+                        float v1 = (jcf - 1.f - f0) * idf, v2 = (jcf + 1.f - f0) * idf;
+                        int va = max((int)floorf(pixel_bound(fminf(v1, v2) - s_margin[i], nv)) + 1, 0);
+                        float s = 0.f;
+                        // Common interior footprints avoid repeated bounds checks;
+                        // boundary and wider footprints keep every original tap.
+                        if (taps == 2 && va + 1 < nv) {
+                            s += __ldg(col + va) * trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
+                            s += __ldg(col + va + 1) * trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
+                        } else if (taps == 3 && va + 2 < nv) {
+                            s += __ldg(col + va) * trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
+                            s += __ldg(col + va + 1) * trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
+                            s += __ldg(col + va + 2) * trif(Sc + t * ((rc0 + (float)(va + 2) * DVc) - Sc), jcf);
+                        } else if (taps <= 3) {
+                            if (taps > 0 && va < nv)
+                                s += __ldg(col + va) * trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
+                            if (taps > 1 && va + 1 < nv)
+                                s += __ldg(col + va + 1) * trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
+                            if (taps > 2 && va + 2 < nv)
+                                s += __ldg(col + va + 2) * trif(Sc + t * ((rc0 + (float)(va + 2) * DVc) - Sc), jcf);
+                        } else {
+                            #pragma unroll 4
+                            for (int q = 0; q < taps; ++q) {
+                                int vv = va + q;
+                                if (vv < 0 || vv >= nv) continue;
+                                s += __ldg(col + vv) * trif(Sc + t * ((rc0 + (float)vv * DVc) - Sc), jcf);
+                            }
+                        }
+                        R[i][jj] = s;
+                    }
+                }
+                __syncthreads();
+                if (my_b < nb) {
+                    float h1 = my_bf - 1.f - Sb, h2 = my_bf + 1.f - Sb;
+                    float den1 = h1 * DUa - K * DUb, den2 = h2 * DUa - K * DUb;
+                    int ia = 0, ib = ulen - 1;
+                    if (!crosses_zero(den1, den2)) {
+                        float w1 = (K * rb0 - h1 * ra0) / den1;
+                        float w2 = (K * rb0 - h2 * ra0) / den2;
+                        ia = max((int)floorf(pixel_bound(fminf(w1, w2), nu)) - 1 - ulo, 0);
+                        ib = min((int)ceilf(pixel_bound(fmaxf(w1, w2), nu)) + 1 - ulo, ulen - 1);
+                    }
+                    for (int i = ia; i <= ib; ++i) {
+                        float wb = trif(s_fb[i], my_bf);
+                        if (wb == 0.f) continue;
+                        #pragma unroll
+                        for (int j = 0; j < ZT / 4; ++j) {
+                            int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
+                            acc[j] += wb * R[i][my_c + offset];
+                        }
                     }
                 }
             }
@@ -1565,7 +1584,8 @@ __device__ __forceinline__ void sep_adjoint_cached_tile(
     }
 }
 
-extern "C" __global__ void sep_adjoint_cached(
+// Four 24 KiB blocks fill an SM's shared memory; registers must not admit fewer.
+extern "C" __global__ void __launch_bounds__(256, 4) sep_adjoint_cached(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol,
     int nx, int ny, int nz, int nu, int nv)
@@ -1574,7 +1594,7 @@ extern "C" __global__ void sep_adjoint_cached(
 }
 
 // At most 32 planes, as sep_adjoint_thin.
-extern "C" __global__ void sep_adjoint_cached_thin(
+extern "C" __global__ void __launch_bounds__(256, 4) sep_adjoint_cached_thin(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol,
     int nx, int ny, int nz, int nu, int nv)
@@ -1611,160 +1631,167 @@ __device__ __forceinline__ void pair_sep_adjoint_cached_tile(
     __shared__ int2 all_foot[VMAX];
     int b = 1 - a;
     int nb = a == 0 ? ny : nx;
-    int c0 = (VOLUME_Z_FAST ? blockIdx.x : blockIdx.z) * ZT;
+    // Private storage keeps planes in grid x: concurrent blocks share footprints.
+    int c0 = blockIdx.z * ZT;
     int b0 = (VOLUME_Z_FAST ? blockIdx.y : blockIdx.x) * TB;
-    int k = VOLUME_Z_FAST ? blockIdx.z : blockIdx.y;
+    int k = VOLUME_Z_FAST ? blockIdx.x : blockIdx.y;
     unsigned tid = threadIdx.x;
     // Stripes of ZT / 8 cells spread the four z lanes across shared-memory banks.
     int my_b = b0 + tid / 4, my_c = (tid % 4) * (ZT / 8);
     float my_bf = (float)my_b;
     if (!any_view(coeff, axis_box, nviews, a, true)) return;
-    for (int i = tid; i < nviews * 12; i += blockDim.x)
-        (&all_cf[0][0])[i] = coeff[(i / 12) * NC + i % 12];
-    // Bounds depend on the lateral tile, not z. Cache them with each view.
-    for (int i = tid; i < nviews; i += blockDim.x) {
-        const float* c = coeff + i * NC;
-        const int* ab = axis_box + (i * 3 + a) * 4;
-        all_skip[i] = !separable(c) || ab[1] < ab[0];
-        float K = (float)k - c[a], Sb = c[b];
-        float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b];
-        float DUa = c[6 + a], DUb = c[6 + b];
-        // Clip the far tile edge to the volume before projecting its bounds.
-        float g1 = (float)b0 - 1.f - Sb, g2 = (float)min(b0 + TB, nb) - Sb;
-        float den1 = g1 * DUa - K * DUb, den2 = g2 * DUa - K * DUb;
-        int lo = ab[0], hi = ab[1];
-        if (!crosses_zero(den1, den2)) {
-            float u1 = (K * rb0 - g1 * ra0) / den1, u2 = (K * rb0 - g2 * ra0) / den2;
-            lo = max((int)floorf(pixel_bound(fminf(u1, u2), nu)) - 1, ab[0]);
-            hi = min((int)ceilf(pixel_bound(fmaxf(u1, u2), nu)) + 1, ab[1]);
-        }
-        all_foot[i] = make_int2(lo, hi);
-    }
-
-    __syncthreads();
     float acc[ZT / 4], acc1[ZT / 4];
     #pragma unroll
     for (int j = 0; j < ZT / 4; ++j) acc[j] = acc1[j] = 0.f;
-    for (int w = 0; w < nviews; ++w) {
-        if (all_skip[w]) continue;
-        const float* c = all_cf[w];
-        float Sa = c[a], Sb = c[b], Sc = c[2], DVc = c[11];
-        float K = (float)k - Sa;
-        float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b], DUa = c[6 + a], DUb = c[6 + b];
-        int ulo_all = all_foot[w].x, uhi = all_foot[w].y;
-        const float* image = img + (long)w * nu * nv;
-        const float* image1 = img1 + (long)w * nu * nv;
-        for (int ulo = ulo_all; ulo <= uhi; ulo += PAIRED_ULEN) {
-            int ulen = min(PAIRED_ULEN, uhi - ulo + 1);
-            __syncthreads();
-            for (int i = tid; i < ulen; i += blockDim.x) {
-                float fu = (float)(ulo + i);
-                float r0 = (c[3] + fu * c[6]) - c[0], r1 = (c[4] + fu * c[7]) - c[1];
-                int col_axis = fabsf(r1) > fabsf(r0) ? 1 : 0;
-                float ra = a == 0 ? r0 : r1, rb = a == 0 ? r1 : r0;
-                float t = K * (1.0f / ra);
-                float rc0 = c[5] + fu * c[8];
-                // Columns sampled along the other axis contribute nothing here.
-                s_t[i] = t; s_fb[i] = col_axis == a ? Sb + t * rb : -1e30f; s_rc0[i] = rc0;
-                // z cells step with v at 1/idf per row (either sign). Cell j takes
-                // the rows strictly between (j - 1 - f0) idf and (j + 1 - f0) idf,
-                // at most taps of them.
-                float idf = 1.f / (t * DVc);
-                s_f0[i] = Sc + t * (rc0 - Sc); s_idf[i] = idf;
-                // A footprint wider than the image still needs at most nv rows.
-                float margin = vertical_support_margin(idf, Sc, t, rc0, DVc, nz, nv);
-                s_margin[i] = margin;
-                // Widen both endpoints, keeping the tap count warp-uniform.
-                float taps = fminf(2.f * (fabsf(idf) + margin), (float)nv);
-                s_taps[i] = col_axis == a ? min((int)floorf(taps) + 1, nv) : 0;
+    // Views are cached VMAX at a time; the tile is added to the volume once.
+    const int all_views = nviews;
+    for (int start = 0; start < all_views; start += VMAX) {
+        nviews = min(VMAX, all_views - start);
+        if (start > 0) __syncthreads();  // the last chunk's views are no longer read
+        for (int i = tid; i < nviews * 12; i += blockDim.x)
+            (&all_cf[0][0])[i] = coeff[(start + i / 12) * NC + i % 12];
+        // Bounds depend on the lateral tile, not z. Cache them with each view.
+        for (int i = tid; i < nviews; i += blockDim.x) {
+            const float* c = coeff + (long)(start + i) * NC;
+            const int* ab = axis_box + ((long)(start + i) * 3 + a) * 4;
+            all_skip[i] = !separable(c) || ab[1] < ab[0];
+            float K = (float)k - c[a], Sb = c[b];
+            float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b];
+            float DUa = c[6 + a], DUb = c[6 + b];
+            // Clip the far tile edge to the volume before projecting its bounds.
+            float g1 = (float)b0 - 1.f - Sb, g2 = (float)min(b0 + TB, nb) - Sb;
+            float den1 = g1 * DUa - K * DUb, den2 = g2 * DUa - K * DUb;
+            int lo = ab[0], hi = ab[1];
+            if (!crosses_zero(den1, den2)) {
+                float u1 = (K * rb0 - g1 * ra0) / den1, u2 = (K * rb0 - g2 * ra0) / den2;
+                lo = max((int)floorf(pixel_bound(fminf(u1, u2), nu)) - 1, ab[0]);
+                hi = min((int)ceilf(pixel_bound(fmaxf(u1, u2), nu)) + 1, ab[1]);
             }
-            __syncthreads();
-            const float* col = image + (long)(ulo + tid / ZT) * nv;
-            const float* col1 = image1 + (long)(ulo + tid / ZT) * nv;
-            for (int i = tid / ZT, j = tid % ZT; i < ulen;
-                 i += blockDim.x / ZT, col += (blockDim.x / ZT) * nv,
-                 col1 += (blockDim.x / ZT) * nv) {
-                float t = s_t[i], rc0 = s_rc0[i], f0 = s_f0[i], idf = s_idf[i];
-                int taps = s_taps[i];
-                {
-                    int jj = j;
-                    float jcf = (float)(c0 + jj);
-                    float v1 = (jcf - 1.f - f0) * idf, v2 = (jcf + 1.f - f0) * idf;
-                    int va = max((int)floorf(pixel_bound(fminf(v1, v2) - s_margin[i], nv)) + 1, 0);
-                    float s = 0.f, s1 = 0.f;
-                    // Common interior footprints avoid repeated bounds checks;
-                    // boundary and wider footprints keep every original tap.
-                    if (taps == 2 && va + 1 < nv) {
-                        {
-                            float weight = trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
-                            s += __ldg(col + va) * weight; s1 += __ldg(col1 + va) * weight;
-                        }
-                        {
-                            float weight = trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
-                            s += __ldg(col + va + 1) * weight; s1 += __ldg(col1 + va + 1) * weight;
-                        }
-                    } else if (taps == 3 && va + 2 < nv) {
-                        {
-                            float weight = trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
-                            s += __ldg(col + va) * weight; s1 += __ldg(col1 + va) * weight;
-                        }
-                        {
-                            float weight = trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
-                            s += __ldg(col + va + 1) * weight; s1 += __ldg(col1 + va + 1) * weight;
-                        }
-                        {
-                            float weight = trif(Sc + t * ((rc0 + (float)(va + 2) * DVc) - Sc), jcf);
-                            s += __ldg(col + va + 2) * weight; s1 += __ldg(col1 + va + 2) * weight;
-                        }
-                    } else if (taps <= 3) {
-                        if (taps > 0 && va < nv)
+            all_foot[i] = make_int2(lo, hi);
+        }
+
+        __syncthreads();
+        for (int w = 0; w < nviews; ++w) {
+            if (all_skip[w]) continue;
+            const float* c = all_cf[w];
+            float Sa = c[a], Sb = c[b], Sc = c[2], DVc = c[11];
+            float K = (float)k - Sa;
+            float ra0 = c[3 + a] - c[a], rb0 = c[3 + b] - c[b], DUa = c[6 + a], DUb = c[6 + b];
+            int ulo_all = all_foot[w].x, uhi = all_foot[w].y;
+            const float* image = img + (long)(start + w) * nu * nv;
+            const float* image1 = img1 + (long)(start + w) * nu * nv;
+            for (int ulo = ulo_all; ulo <= uhi; ulo += PAIRED_ULEN) {
+                int ulen = min(PAIRED_ULEN, uhi - ulo + 1);
+                __syncthreads();
+                for (int i = tid; i < ulen; i += blockDim.x) {
+                    float fu = (float)(ulo + i);
+                    float r0 = (c[3] + fu * c[6]) - c[0], r1 = (c[4] + fu * c[7]) - c[1];
+                    int col_axis = fabsf(r1) > fabsf(r0) ? 1 : 0;
+                    float ra = a == 0 ? r0 : r1, rb = a == 0 ? r1 : r0;
+                    float t = K * (1.0f / ra);
+                    float rc0 = c[5] + fu * c[8];
+                    // Columns sampled along the other axis contribute nothing here.
+                    s_t[i] = t; s_fb[i] = col_axis == a ? Sb + t * rb : -1e30f; s_rc0[i] = rc0;
+                    // z cells step with v at 1/idf per row (either sign). Cell j takes
+                    // the rows strictly between (j - 1 - f0) idf and (j + 1 - f0) idf,
+                    // at most taps of them.
+                    float idf = 1.f / (t * DVc);
+                    s_f0[i] = Sc + t * (rc0 - Sc); s_idf[i] = idf;
+                    // A footprint wider than the image still needs at most nv rows.
+                    float margin = vertical_support_margin(idf, Sc, t, rc0, DVc, nz, nv);
+                    s_margin[i] = margin;
+                    // Widen both endpoints, keeping the tap count warp-uniform.
+                    float taps = fminf(2.f * (fabsf(idf) + margin), (float)nv);
+                    s_taps[i] = col_axis == a ? min((int)floorf(taps) + 1, nv) : 0;
+                }
+                __syncthreads();
+                const float* col = image + (long)(ulo + tid / ZT) * nv;
+                const float* col1 = image1 + (long)(ulo + tid / ZT) * nv;
+                for (int i = tid / ZT, j = tid % ZT; i < ulen;
+                     i += blockDim.x / ZT, col += (blockDim.x / ZT) * nv,
+                     col1 += (blockDim.x / ZT) * nv) {
+                    float t = s_t[i], rc0 = s_rc0[i], f0 = s_f0[i], idf = s_idf[i];
+                    int taps = s_taps[i];
+                    {
+                        int jj = j;
+                        float jcf = (float)(c0 + jj);
+                        float v1 = (jcf - 1.f - f0) * idf, v2 = (jcf + 1.f - f0) * idf;
+                        int va = max((int)floorf(pixel_bound(fminf(v1, v2) - s_margin[i], nv)) + 1, 0);
+                        float s = 0.f, s1 = 0.f;
+                        // Common interior footprints avoid repeated bounds checks;
+                        // boundary and wider footprints keep every original tap.
+                        if (taps == 2 && va + 1 < nv) {
                             {
                                 float weight = trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
                                 s += __ldg(col + va) * weight; s1 += __ldg(col1 + va) * weight;
                             }
-                        if (taps > 1 && va + 1 < nv)
                             {
                                 float weight = trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
                                 s += __ldg(col + va + 1) * weight; s1 += __ldg(col1 + va + 1) * weight;
                             }
-                        if (taps > 2 && va + 2 < nv)
+                        } else if (taps == 3 && va + 2 < nv) {
+                            {
+                                float weight = trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
+                                s += __ldg(col + va) * weight; s1 += __ldg(col1 + va) * weight;
+                            }
+                            {
+                                float weight = trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
+                                s += __ldg(col + va + 1) * weight; s1 += __ldg(col1 + va + 1) * weight;
+                            }
                             {
                                 float weight = trif(Sc + t * ((rc0 + (float)(va + 2) * DVc) - Sc), jcf);
                                 s += __ldg(col + va + 2) * weight; s1 += __ldg(col1 + va + 2) * weight;
                             }
-                    } else {
-                        #pragma unroll 4
-                        for (int q = 0; q < taps; ++q) {
-                            int vv = va + q;
-                            if (vv < 0 || vv >= nv) continue;
-                            {
-                                float weight = trif(Sc + t * ((rc0 + (float)vv * DVc) - Sc), jcf);
-                                s += __ldg(col + vv) * weight; s1 += __ldg(col1 + vv) * weight;
+                        } else if (taps <= 3) {
+                            if (taps > 0 && va < nv)
+                                {
+                                    float weight = trif(Sc + t * ((rc0 + (float)va * DVc) - Sc), jcf);
+                                    s += __ldg(col + va) * weight; s1 += __ldg(col1 + va) * weight;
+                                }
+                            if (taps > 1 && va + 1 < nv)
+                                {
+                                    float weight = trif(Sc + t * ((rc0 + (float)(va + 1) * DVc) - Sc), jcf);
+                                    s += __ldg(col + va + 1) * weight; s1 += __ldg(col1 + va + 1) * weight;
+                                }
+                            if (taps > 2 && va + 2 < nv)
+                                {
+                                    float weight = trif(Sc + t * ((rc0 + (float)(va + 2) * DVc) - Sc), jcf);
+                                    s += __ldg(col + va + 2) * weight; s1 += __ldg(col1 + va + 2) * weight;
+                                }
+                        } else {
+                            #pragma unroll 4
+                            for (int q = 0; q < taps; ++q) {
+                                int vv = va + q;
+                                if (vv < 0 || vv >= nv) continue;
+                                {
+                                    float weight = trif(Sc + t * ((rc0 + (float)vv * DVc) - Sc), jcf);
+                                    s += __ldg(col + vv) * weight; s1 += __ldg(col1 + vv) * weight;
+                                }
                             }
                         }
+                        R[i][jj] = s; R1[i][jj] = s1;
                     }
-                    R[i][jj] = s; R1[i][jj] = s1;
                 }
-            }
-            __syncthreads();
-            if (my_b < nb) {
-                float h1 = my_bf - 1.f - Sb, h2 = my_bf + 1.f - Sb;
-                float den1 = h1 * DUa - K * DUb, den2 = h2 * DUa - K * DUb;
-                int ia = 0, ib = ulen - 1;
-                if (!crosses_zero(den1, den2)) {
-                    float w1 = (K * rb0 - h1 * ra0) / den1;
-                    float w2 = (K * rb0 - h2 * ra0) / den2;
-                    ia = max((int)floorf(pixel_bound(fminf(w1, w2), nu)) - 1 - ulo, 0);
-                    ib = min((int)ceilf(pixel_bound(fmaxf(w1, w2), nu)) + 1 - ulo, ulen - 1);
-                }
-                for (int i = ia; i <= ib; ++i) {
-                    float wb = trif(s_fb[i], my_bf);
-                    if (wb == 0.f) continue;
-                    #pragma unroll
-                    for (int j = 0; j < ZT / 4; ++j) {
-                        int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
-                        acc[j] += wb * R[i][my_c + offset];
-                        acc1[j] += wb * R1[i][my_c + offset];
+                __syncthreads();
+                if (my_b < nb) {
+                    float h1 = my_bf - 1.f - Sb, h2 = my_bf + 1.f - Sb;
+                    float den1 = h1 * DUa - K * DUb, den2 = h2 * DUa - K * DUb;
+                    int ia = 0, ib = ulen - 1;
+                    if (!crosses_zero(den1, den2)) {
+                        float w1 = (K * rb0 - h1 * ra0) / den1;
+                        float w2 = (K * rb0 - h2 * ra0) / den2;
+                        ia = max((int)floorf(pixel_bound(fminf(w1, w2), nu)) - 1 - ulo, 0);
+                        ib = min((int)ceilf(pixel_bound(fmaxf(w1, w2), nu)) + 1 - ulo, ulen - 1);
+                    }
+                    for (int i = ia; i <= ib; ++i) {
+                        float wb = trif(s_fb[i], my_bf);
+                        if (wb == 0.f) continue;
+                        #pragma unroll
+                        for (int j = 0; j < ZT / 4; ++j) {
+                            int offset = j % (ZT / 8) + (j / (ZT / 8)) * (ZT / 2);
+                            acc[j] += wb * R[i][my_c + offset];
+                            acc1[j] += wb * R1[i][my_c + offset];
+                        }
                     }
                 }
             }

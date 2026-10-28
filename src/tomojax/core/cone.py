@@ -48,7 +48,6 @@ if TYPE_CHECKING:
 
 NC = 25
 _HI = jax.lax.Precision.HIGHEST
-_VIEW_CHUNK = 32  # adjoint views per launch, so their images stay in L2 (<= 32: VMAX)
 
 
 def cone_coefficients(
@@ -501,37 +500,35 @@ def adjoint_into(
     sizes = (grid.nx, grid.ny, grid.nz, det.nu, det.nv)
     dims = tuple(np.int32(x) for x in sizes)
     extent = (grid.nx, grid.ny, grid.nz)
-    for start in range(0, views, _VIEW_CHUNK):
-        count = min(_VIEW_CHUNK, views - start)
-        part = (coeff[start : start + count], boxes[start : start + count], np.int32(count))
-        i_part = weighted[start : start + count]
-        for axis in (0, 1):
-            na, nb = extent[axis], extent[1 - axis]
-            separable_adjoint(
-                (
-                    (-(-grid.nz // 64), -(-nb // 64), na)
-                    if z_fast
-                    else (-(-nb // 64), na, -(-grid.nz // 64))
-                ),
-                (256,),
-                (*part, np.int32(axis), i_part, target, *dims),
-            )
-        for axis in (0, 1, 2):
-            # In-plane axes (b, c): the other two, in order.
-            nb, nc = (extent[i] for i in range(3) if i != axis)
-            wide = axis != 2 and grid.nz >= 128
-            tile_c = 64 if wide else 32
-            module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")(
-                (
-                    (-(-nc // tile_c), -(-nb // 15), -(-extent[axis] // 2))
-                    if z_fast
-                    else (-(-extent[axis] // 2), -(-nb // 15), -(-nc // tile_c))
-                    if axis == 0
-                    else (-(-nb // 15), -(-extent[axis] // 2), -(-nc // tile_c))
-                ),
-                (128,),
-                (*part, np.int32(axis), i_part, target, *dims),
-            )
+    # Each kernel walks every view, adding each of its tiles to the volume once.
+    # Private storage puts planes first in the grid, as axis 0 does: concurrent
+    # blocks then share detector footprints, keeping the views' images in L2.
+    part = (coeff, boxes, np.int32(views))
+    for axis in (0, 1):
+        na, nb = extent[axis], extent[1 - axis]
+        separable_adjoint(
+            (
+                (na, -(-nb // 64), -(-grid.nz // 64))
+                if z_fast
+                else (-(-nb // 64), na, -(-grid.nz // 64))
+            ),
+            (256,),
+            (*part, np.int32(axis), weighted, target, *dims),
+        )
+    for axis in (0, 1, 2):
+        # In-plane axes (b, c): the other two, in order.
+        nb, nc = (extent[i] for i in range(3) if i != axis)
+        wide = axis != 2 and grid.nz >= 128
+        tile_c = 64 if wide else 32
+        module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")(
+            (
+                (-(-extent[axis] // 2), -(-nb // 15), -(-nc // tile_c))
+                if z_fast or axis == 0
+                else (-(-nb // 15), -(-extent[axis] // 2), -(-nc // tile_c))
+            ),
+            (128,),
+            (*part, np.int32(axis), weighted, target, *dims),
+        )
 
 
 def _launch_adjoint(context: Any, out: Any, *args: Any, **options: Any) -> None:
@@ -573,54 +570,31 @@ def adjoint_pair_into(
     dims = tuple(np.int32(x) for x in (grid.nx, grid.ny, grid.nz, det.nu, det.nv))
     extent = (grid.nx, grid.ny, grid.nz)
     views = int(coeff.shape[0])
-    for start in range(0, views, _VIEW_CHUNK):
-        count = min(_VIEW_CHUNK, views - start)
-        part = (coeff[start : start + count], boxes[start : start + count], np.int32(count))
-        for axis in (0, 1):
-            depth = 32 if paired_separable else 64
-            shape = (
-                (-(-grid.nz // depth), -(-extent[1 - axis] // 64), extent[axis])
-                if z_fast
-                else (-(-extent[1 - axis] // 64), extent[axis], -(-grid.nz // depth))
-            )
-            if paired_separable:
-                separable(
-                    shape,
-                    (256,),
-                    (
-                        *part,
-                        np.int32(axis),
-                        *(image[start : start + count] for image in separate),
-                        *targets,
-                        *dims,
-                    ),
-                )
-            else:
-                for image, target in zip(separate, targets, strict=True):
-                    separable(
-                        shape,
-                        (256,),
-                        (*part, np.int32(axis), image[start : start + count], target, *dims),
-                    )
-        for axis in (0, 1, 2):
-            nb, nc = (extent[i] for i in range(3) if i != axis)
-            module.get_function("pair_plane_adjoint")(
-                (
-                    (-(-nc // 32), -(-nb // 32), extent[axis])
-                    if z_fast
-                    else (extent[axis], -(-nb // 32), -(-nc // 32))
-                    if axis == 0
-                    else (-(-nb // 32), extent[axis], -(-nc // 32))
-                ),
-                (128,),
-                (
-                    *part,
-                    np.int32(axis),
-                    *(image[start : start + count] for image in separate),
-                    *targets,
-                    *dims,
-                ),
-            )
+    # Each kernel walks every view, adding each of its tiles to the volume once.
+    part = (coeff, boxes, np.int32(views))
+    for axis in (0, 1):
+        depth = 32 if paired_separable else 64
+        shape = (
+            (extent[axis], -(-extent[1 - axis] // 64), -(-grid.nz // depth))
+            if z_fast
+            else (-(-extent[1 - axis] // 64), extent[axis], -(-grid.nz // depth))
+        )
+        if paired_separable:
+            separable(shape, (256,), (*part, np.int32(axis), *separate, *targets, *dims))
+        else:
+            for image, target in zip(separate, targets, strict=True):
+                separable(shape, (256,), (*part, np.int32(axis), image, target, *dims))
+    for axis in (0, 1, 2):
+        nb, nc = (extent[i] for i in range(3) if i != axis)
+        module.get_function("pair_plane_adjoint")(
+            (
+                (extent[axis], -(-nb // 32), -(-nc // 32))
+                if z_fast or axis == 0
+                else (-(-nb // 32), extent[axis], -(-nc // 32))
+            ),
+            (128,),
+            (*part, np.int32(axis), *separate, *targets, *dims),
+        )
 
 
 def _launch_adjoint_pair(context: Any, out: Any, *args: Any, **options: Any) -> None:

@@ -330,12 +330,13 @@ def test_cuda_cone_dense_transpose_with_empty_views_and_masked_pixels():
     grid = Grid(5, 4, 3, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
     detector = Detector(9, 17, 1.3, 0.8)
     directions = [(1, 1, 0), (1, 0, 1), (1, 1, 1)]
+    # More views than one block has threads: each kernel walks them all.
     frames = [
         _frame(directions[i % 3], 0.0 if i % 3 == 0 else 0.13, reverse_v=i % 2 == 0)
-        for i in range(33)
+        for i in range(300)
     ]
     coeff = frame_coefficients(
-        jnp.broadcast_to(jnp.eye(4), (33, 4, 4)), np.asarray(frames), grid, detector
+        jnp.broadcast_to(jnp.eye(4), (300, 4, 4)), np.asarray(frames), grid, detector
     )
     shape = (grid.nz, grid.ny, grid.nx)
     basis = jnp.eye(np.prod(shape), dtype=jnp.float32).reshape((-1, *shape))
@@ -343,8 +344,8 @@ def test_cuda_cone_dense_transpose_with_empty_views_and_masked_pixels():
     matrix = np.asarray(forward(basis), np.float64).reshape((np.prod(shape), -1))
     rng = np.random.default_rng(2043)
     initial = rng.normal(size=shape).astype(np.float32)
-    for included in ([], [32], [0, 15, 32]):
-        images = np.zeros((33, detector.nv, detector.nu), np.float32)
+    for included in ([], [299], [0, 150, 299]):
+        images = np.zeros((300, detector.nv, detector.nu), np.float32)
         images[included] = rng.normal(size=(len(included), detector.nv, detector.nu))
         images[:, ::2, 1::2] = 0
         expected = (matrix @ images.ravel()).reshape(shape) + initial
