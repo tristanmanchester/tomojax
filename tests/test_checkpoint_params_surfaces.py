@@ -4,19 +4,31 @@ import numpy as np
 import pytest
 
 import tomojax.alignment.api as align_api
-from tomojax.alignment.api import (
-    AlignConfig,
+from tomojax.alignment.api import AlignConfig, AlignMultiresResumeState
+
+# check-public-imports: allow-private
+# check-public-imports: allow-private
+from tomojax.alignment.io.checkpoint import (
     AlignmentCheckpoint,
-    AlignmentRun,
-    AlignMultiresResumeState,
     CheckpointError,
-    alignment_checkpoint_metadata,
-    alignment_params_payload,
+    load_alignment_checkpoint,
+    save_alignment_checkpoint,
     validate_alignment_checkpoint,
 )
 
 # check-public-imports: allow-private
-from tomojax.alignment.io.resume import _schedule_resume_state_from_checkpoint
+from tomojax.alignment.io.params_export import alignment_params_payload
+
+# check-public-imports: allow-private
+# check-public-imports: allow-private
+# check-public-imports: allow-private
+from tomojax.alignment.io.resume import (
+    AlignmentRun,
+    _schedule_resume_state_from_checkpoint,
+    alignment_checkpoint_metadata,
+    alignment_checkpointing,
+    write_alignment_checkpoint,
+)
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 
 pytestmark = pytest.mark.surface
@@ -165,7 +177,7 @@ def test_checkpoint_metadata_is_lazy_and_arrays_keep_the_open_file(tmp_path, mon
 
     path = tmp_path / "state.npz"
     run, state = _run(), _state(x=np.ones((2, 3, 4), np.float32))
-    align_api.write_alignment_checkpoint(path, run, state)
+    write_alignment_checkpoint(path, run, state)
     read = np.lib.npyio.NpzFile.__getitem__
     accesses = []
 
@@ -174,20 +186,20 @@ def test_checkpoint_metadata_is_lazy_and_arrays_keep_the_open_file(tmp_path, mon
         return read(archive, key)
 
     monkeypatch.setattr(np.lib.npyio.NpzFile, "__getitem__", track)
-    loaded = align_api.load_alignment_checkpoint(path)
+    loaded = load_alignment_checkpoint(path)
     assert loaded.metadata["level_index"] == 1
     assert not {"x", "pose_params", "motion_coeffs"}.intersection(accesses)
-    align_api.write_alignment_checkpoint(path, run, _state())
+    write_alignment_checkpoint(path, run, _state())
     with ThreadPoolExecutor(2) as pool:
         first, second = list(pool.map(lambda _: loaded.x, range(2)))
     assert first is second and accesses.count("x") == 1
     np.testing.assert_array_equal(first, state.x)
     np.testing.assert_array_equal(loaded.pose_params, state.pose_params)
     assert loaded.motion_coeffs is None
-    assert np.count_nonzero(align_api.load_alignment_checkpoint(path).x) == 0
+    assert np.count_nonzero(load_alignment_checkpoint(path).x) == 0
     accesses.clear()
     with pytest.raises(CheckpointError, match="cannot resume this alignment"):
-        align_api.alignment_checkpointing(path, _run(mode="full"))
+        alignment_checkpointing(path, _run(mode="full"))
     assert "x" not in accesses
 
 
@@ -207,7 +219,7 @@ def test_checkpoint_writes_bounded_windows_from_a_reused_source(tmp_path):
             return buffer
 
     path = tmp_path / "windows.npz"
-    align_api.save_alignment_checkpoint(path, x=Source(), pose_params=np.zeros((1, 6)), metadata={})
+    save_alignment_checkpoint(path, x=Source(), pose_params=np.zeros((1, 6)), metadata={})
     buffer.fill(1)
     with np.load(path, allow_pickle=False) as archive:
         saved = archive["x"].view(np.uint32)

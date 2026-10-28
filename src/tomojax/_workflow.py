@@ -997,14 +997,13 @@ def _run_alignment(
     scan: Scan, plan: AlignmentPlan, checkpoint: str | PathLike[str] | None
 ) -> tuple[Geometry, np.ndarray | jax.Array, np.ndarray, str, dict[str, object]]:
     """Calibrated geometry, volume, ``(views, 6)`` poses, their frame and record of ``plan``."""
-    from tomojax.alignment.api import (
+    from tomojax.alignment._integration import (
         AlignmentRun,
-        AlignMultiresResumeState,
-        align_multires,
         alignment_checkpointing,
         cone_setup,
         pad_pose_params,
     )
+    from tomojax.alignment.api import AlignMultiresResumeState, align_multires
 
     geometry, grid, detector = scan.geometry, scan.grid, scan.detector
     # Keep host scans there through the resolution pyramid; each solver owns

@@ -4,7 +4,7 @@ Most code calls :func:`tomojax.align` on a :class:`tomojax.Scan`. This package
 holds what that uses: :class:`AlignConfig` (expert solver settings),
 :func:`alignment_plan` (the configuration and levels a mode runs) and
 :func:`align_multires`, which aligns arrays against a geometry. Schedules,
-losses, gauges and the single-resolution solver are in
+losses, geometry helpers and the single-resolution solver are in
 ``tomojax.alignment.api``.
 """
 

@@ -316,3 +316,21 @@ def test_recon_help_does_not_import_jax() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "JAX_IMPORTED False" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("caller", "allowed"),
+    [
+        ("src/tomojax/_workflow.py", True),
+        ("src/tomojax/cli/align.py", True),
+        ("src/tomojax/cli/recon.py", False),
+        ("examples/custom_alignment.py", False),
+    ],
+)
+def test_alignment_integration_is_not_a_public_facade(tmp_path, caller, allowed):
+    from tools.check_public_imports import find_violations
+
+    source = tmp_path / caller
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("from tomojax.alignment._integration import AlignmentRun\n")
+    assert (not find_violations([source], root=tmp_path)) == allowed

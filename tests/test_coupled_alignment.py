@@ -182,7 +182,9 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     from pathlib import Path
 
     from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import PWLSLossSpec
+
+    # check-public-imports: allow-private
+    from tomojax.alignment._objectives.loss_specs import PWLSLossSpec
     from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
 
     if backend == "cuda" and jax.default_backend() != "gpu":
@@ -768,7 +770,9 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
 
     import tomojax as tj
     from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import PWLSLossSpec
+
+    # check-public-imports: allow-private
+    from tomojax.alignment._objectives.loss_specs import PWLSLossSpec
 
     grid, det = tj.Grid(3, 2, 3, 0.8, 1.1, 0.7), tj.Detector(5, 4, 0.7, 0.9, (0.13, -0.21))
     geometry = tj.LaminographyGeometry(grid, det, [13, 47, 103], tilt_deg=23)

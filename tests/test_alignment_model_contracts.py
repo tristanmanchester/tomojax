@@ -16,8 +16,11 @@ from tomojax.alignment._geometry import common_lines, initializers as init, spec
 from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometry
 
 # check-public-imports: allow-private
+from tomojax.alignment._model.state import SetupGeometryState
+
+# check-public-imports: allow-private
 from tomojax.alignment._stages._reconstruction_stage import _is_oom_error_message
-from tomojax.alignment.api import AlignConfig, AlignmentSchedule, AlignmentStage, SetupGeometryState
+from tomojax.alignment.api import AlignConfig, AlignmentSchedule, AlignmentStage
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import fista_tv
 
