@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from tomojax.alignment._profiles import StageQualityTier
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 ObjectiveKind = Literal[
     "fixed_volume", "joint_volume_pose", "bilevel_cv", "all_data_bilevel", "projection_consistency"
 ]
-OptimizerKind = Literal["gd", "gn", "validation_lm", "spectral"]
+OptimizerKind = Literal["gn", "validation_lm", "spectral"]
 GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"]
 ScheduleSource = Literal["preset", "direct", "default", "expert"]
 StageRole = Literal["proposal", "setup", "reconstruction", "refine", "verify"]
@@ -63,7 +63,7 @@ class AlignmentStage:
         Objective model: "fixed_volume", "joint_volume_pose", "bilevel_cv",
         "all_data_bilevel" or "projection_consistency".
     optimizer : OptimizerKind
-        Optimizer for the chosen objective: "gd", "gn", "validation_lm" or "spectral".
+        Optimizer for the chosen objective: "gn", "validation_lm" or "spectral".
         The schedule validates supported combinations.
     gauge_policy : GaugePolicy, optional
         Gauge policy: "reject", "anchor_mean", "prior_required" or "diagnose_only".
@@ -169,10 +169,10 @@ class AlignmentSchedule:
                     f"{stage.optimizer!r}; setup/bilevel stages currently support only "
                     "'validation_lm'"
                 )
-            if stage.objective_kind == "fixed_volume" and stage.optimizer not in {"gd", "gn"}:
+            if stage.objective_kind == "fixed_volume" and stage.optimizer != "gn":
                 raise ValueError(
                     f"fixed_volume stage {stage.name!r} uses unsupported optimizer "
-                    f"{stage.optimizer!r}; fixed_volume stages support only 'gd' or 'gn'"
+                    f"{stage.optimizer!r}; fixed_volume stages support only 'gn'"
                 )
         return self
 
@@ -475,7 +475,6 @@ def resolve_alignment_schedule(
     freeze: str | Iterable[str] | None = None,
     gauge_policy: GaugePolicy = "reject",
     gauge_priors: Mapping[str, object] | None = None,
-    opt_method: str = "gn",
     outer_iterations: int | None = None,
     early_stop: bool | None = None,
 ) -> ResolvedAlignmentSchedule:
@@ -493,8 +492,6 @@ def resolve_alignment_schedule(
         Policy for coupled parameter gauges. Default is 'reject'.
     gauge_priors : mapping or None, optional
         Named priors for gauge-policy validation.
-    opt_method : str, optional
-        Optimizer used when resolving direct/default pose stages. Default is 'gn'.
     outer_iterations : int or None, optional
         Override stage iteration budgets. None leaves schedule defaults.
     early_stop : bool or None, optional
@@ -566,7 +563,7 @@ def resolve_alignment_schedule(
             name="direct_pose",
             active_dofs=scoped.active_pose_dofs,
             objective_kind="fixed_volume",
-            optimizer=_normalize_pose_optimizer(opt_method),
+            optimizer="gn",
             gauge_policy=gauge_policy,
             stage_role="refine",
         )
@@ -641,9 +638,3 @@ def resolve_alignment_schedule(
         gauge_decision=top_level_decision,
         metadata=dict(base_schedule.metadata),
     )
-
-
-def _normalize_pose_optimizer(value: str) -> OptimizerKind:
-    if value not in {"gd", "gn"}:
-        raise ValueError("pose optimizer must be 'gn' or 'gd'")
-    return cast("OptimizerKind", value)

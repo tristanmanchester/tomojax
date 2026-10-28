@@ -71,8 +71,7 @@ def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):
             backend="jax",
             gather_dtype="fp32",
             optimise_dofs=("dx",),
-            opt_method="gd",
-            lr_trans=0,
+            bounds={"dx": (-1e-6, 1e-6)},  # holds the poses; only the volume moves
             early_stop=False,
         )
         volume, _, info = align(geometry, grid, detector, data, config=cfg)
@@ -103,8 +102,7 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(
         backend="jax",
         gather_dtype="fp32",
         optimise_dofs=("dx",),
-        opt_method="gd",
-        lr_trans=0,
+        bounds={"dx": (-1e-6, 1e-6)},  # holds the poses; only the volume moves
         early_stop=False,
     )
     if public_fallback:
@@ -496,19 +494,19 @@ def test_alignment_partial_view_batches_run_under_global_x64() -> None:
         tv_weight=0,
         backend="jax",
         optimise_dofs=("dx",),
-        opt_method="gd",
-        lr_trans=0,
         early_stop=False,
         views_per_batch=2,
         checkpoint_projector=False,
     )
     with jax.enable_x64(False):
-        expected, _, _ = align(geometry, grid, detector, data, init_x=volume, config=config)
+        expected, expected_poses, _ = align(
+            geometry, grid, detector, data, init_x=volume, config=config
+        )
     with jax.enable_x64():
         actual, poses, _ = align(geometry, grid, detector, data, init_x=volume, config=config)
     assert actual.dtype == np.float32
     np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=3e-6)
-    np.testing.assert_array_equal(poses, 0)
+    np.testing.assert_allclose(poses, expected_poses, rtol=3e-5, atol=3e-6)
 
 
 def _shifted_laminography_scan(truth):
@@ -536,12 +534,8 @@ def _shifted_laminography_scan(truth):
     return geometry, grid, detector, volume, data, project
 
 
-@pytest.mark.parametrize(
-    ("optimizer", "settings"), [("gd", {"lr_trans": 0.5}), ("gn", {"w_trans": 10.0})]
-)
-def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
-    # A gradient step much longer than the remaining motion must backtrack, and
-    # a Gauss-Newton step must account for its curvature prior.
+def test_pose_steps_reduce_the_declared_objective():
+    # A Gauss-Newton step must account for its curvature prior.
     coordinate = np.linspace(-1, 1, 9)
     truth = np.column_stack([0.012 * coordinate, 0.008 - 0.006 * coordinate])
     geometry, grid, detector, volume, data, project = _shifted_laminography_scan(truth)
@@ -550,7 +544,6 @@ def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
     config = AlignConfig(
         outer_iterations=8,
         iterations=0,
-        opt_method=optimizer,
         backend="jax",
         gather_dtype="fp32",
         views_per_batch=4,
@@ -559,7 +552,7 @@ def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
         optimise_dofs=("dx", "dz"),
         pose_translation_frame="detector",
         tv_weight=0,
-        **settings,
+        w_trans=10.0,
     )
     checkpoints = []
     align(
@@ -579,9 +572,8 @@ def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
         return 0.5 * jnp.sum((project(shifts) - data) ** 2) + prior
 
     assert float(objective(found)) < float(objective(jnp.asarray(initial_shifts, jnp.float32)))
-    if optimizer == "gn":
-        assert np.linalg.norm(found - truth) < 0.2 * np.linalg.norm(initial_shifts - truth)
-        assert float(jnp.linalg.norm(jax.grad(objective)(found))) < 1e-3
+    assert np.linalg.norm(found - truth) < 0.2 * np.linalg.norm(initial_shifts - truth)
+    assert float(jnp.linalg.norm(jax.grad(objective)(found))) < 1e-3
 
 
 @pytest.mark.numerical

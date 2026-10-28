@@ -62,7 +62,6 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
         def call() -> tuple:
             return spdhg_tv(geometry, grid, detector, data, config=config)
     else:
-        optimizer = method.removeprefix("align_")
         config = AlignConfig(
             outer_iterations=args.outer_iters,
             iterations=args.inner_iters,
@@ -73,7 +72,6 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
             loss=L2LossSpec(),
             early_stop=False,
             gauge_policy="anchor_mean",
-            opt_method=optimizer,
         )
         phase = np.linspace(0.0, 2 * np.pi, n_views, endpoint=False)
         initial = np.zeros((n_views, 5), dtype=np.float32)
@@ -142,7 +140,7 @@ def main() -> int:
     parser.add_argument(
         "--methods",
         nargs="+",
-        choices=["fista", "spdhg", "align_gn", "align_gd"],
+        choices=["fista", "spdhg", "align_gn"],
         default=["fista", "spdhg", "align_gn"],
     )
     parser.add_argument("--views", type=int, default=12)

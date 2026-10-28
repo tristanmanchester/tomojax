@@ -185,8 +185,6 @@ uv run --no-sync python bench/adjoint_benchmark.py --stack \
 uv run --no-sync python bench/workflow_benchmark.py \
   --sizes 32 64 --geometries parallel lamino anisotropic \
   --methods fista spdhg align_gn --repeats 3
-uv run --no-sync python bench/workflow_benchmark.py \
-  --sizes 32 --methods align_gd --repeats 3
 ```
 
 This runner times entire public calls with resident inputs: validation, geometry

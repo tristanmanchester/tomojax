@@ -88,7 +88,6 @@ def project_and_score_stack(
     view_indices: jnp.ndarray | None = None,
     backend: ProjectorBackendInput = "jax",
     require_differentiable_projector: bool = True,
-    loss_rng_key: jnp.ndarray | None = None,
     ray_integrator: str = "sampled",
     frames: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
@@ -188,7 +187,6 @@ def project_and_score_stack(
             targets,
             loss_mask,
             view_indices=local_indices,
-            rng_key=loss_rng_key,
         )
         return jnp.sum(losses * per_view_weight, dtype=jnp.float32)
 
@@ -211,7 +209,6 @@ def project_and_score_stack(
             y_chunk,
             image_mask,
             view_indices=idx_chunk,
-            rng_key=loss_rng_key,
         )
         return loss_acc + jnp.sum(losses * valid_mask * weight_chunk), None
 

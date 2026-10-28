@@ -41,7 +41,6 @@ from ._stage_types import (
     StageRunResult,
     StageRuntime,
     _accumulate_stage_wall_time,
-    _pose_stage_optimizer_or_raise,
 )
 
 
@@ -370,12 +369,10 @@ def _pose_stage_resume_state(
 
 
 def _pose_stage_config(cfg, stage, active_loss_spec, level_factor):
-    pose_optimizer = _pose_stage_optimizer_or_raise(stage)
     cfg_stage = replace(
         cfg,
         schedule=None,
         optimise_dofs=stage.active_pose_dofs,
-        opt_method=str(pose_optimizer),
         outer_iterations=int(stage.maxiter),
         # A fixed-volume objective holds the volume fixed during each pose step;
         # alternation still refreshes it between steps. Skipping reconstruction

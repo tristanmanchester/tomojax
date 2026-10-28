@@ -38,7 +38,6 @@ class PerViewLossFn(Protocol):
         tar_chunk: jnp.ndarray,
         mask_chunk: jnp.ndarray | None,
         view_indices: jnp.ndarray | None = None,
-        rng_key: jnp.ndarray | None = None,
     ) -> jnp.ndarray: ...
 
 
@@ -53,7 +52,6 @@ class LossAdapter:
     name: str
     state: LossState
     per_view_loss: PerViewLossFn
-    supports_gauss_newton: bool
     gauss_newton_weights: GaussNewtonWeightFn
     supports_setup_validation_lm: bool
 
@@ -106,9 +104,7 @@ def _build_loss_from_kind(
         tar_chunk: jnp.ndarray,
         mask_chunk: jnp.ndarray | None,
         view_indices: jnp.ndarray | None = None,
-        rng_key: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
-        del rng_key
         if mask_chunk is None and state.mask is None:
             return jax.vmap(lambda a, b: f(a, b, state))(pred_chunk, tar_chunk)
 
@@ -142,9 +138,9 @@ def _build_loss_from_kind(
     return per_view_fn, state
 
 
-def _gauss_newton_weight_builder(spec: AlignmentLossSpec) -> tuple[bool, GaussNewtonWeightFn]:
+def _gauss_newton_weight_builder(spec: AlignmentLossSpec) -> GaussNewtonWeightFn:
     if isinstance(spec, L2LossSpec | HuberLossSpec):
-        return True, lambda y_chunk, _mask_chunk: jnp.ones_like(y_chunk)
+        return lambda y_chunk, _mask_chunk: jnp.ones_like(y_chunk)
     if isinstance(spec, L2OtsuLossSpec):
         temp = jnp.float32(max(float(spec.temp), 1e-6))
 
@@ -154,7 +150,7 @@ def _gauss_newton_weight_builder(spec: AlignmentLossSpec) -> tuple[bool, GaussNe
             base = mask_chunk.astype(jnp.float32)
             return jax.nn.sigmoid((base - 0.5) / temp)
 
-        return True, _otsu_weights
+        return _otsu_weights
     raise TypeError(f"Unsupported loss spec: {type(spec)!r}")
 
 
@@ -168,14 +164,12 @@ def build_loss_adapter(spec: AlignmentLossSpec, targets: jnp.ndarray) -> LossAda
     name = loss_spec_name(spec)
     params = loss_spec_params(spec)
     per_view_loss, state = _build_loss_from_kind(name, params, targets)
-    supports_gauss_newton, gauss_newton_weights = _gauss_newton_weight_builder(spec)
     return LossAdapter(
         spec=spec,
         name=name,
         state=state,
         per_view_loss=per_view_loss,
-        supports_gauss_newton=supports_gauss_newton,
-        gauss_newton_weights=gauss_newton_weights,
+        gauss_newton_weights=_gauss_newton_weight_builder(spec),
         supports_setup_validation_lm=loss_supports_setup_validation_lm(spec),
     )
 

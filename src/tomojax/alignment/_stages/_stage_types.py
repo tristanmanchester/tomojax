@@ -20,9 +20,6 @@ from tomojax.core.geometry.base import Detector, Grid
 
 from ._setup_stage import _geometry_calibration_payload
 
-_SUPPORTED_POSE_STAGE_OPTIMIZERS = frozenset({"gd", "gn"})
-
-
 _PROPOSAL_STEP_BY_DOF = {
     "alpha": 0.01,
     "beta": 0.01,
@@ -262,18 +259,6 @@ def _accumulate_stage_wall_time(
             errors_key="level_stats_errors",
         )
         return level_wall_time
-
-
-def _pose_stage_optimizer_or_raise(stage: ResolvedAlignmentStage) -> str:
-    optimizer = str(stage.optimizer_kind)
-    if optimizer in _SUPPORTED_POSE_STAGE_OPTIMIZERS:
-        return optimizer
-    supported = ", ".join(f"{name!r}" for name in sorted(_SUPPORTED_POSE_STAGE_OPTIMIZERS))
-    raise ValueError(
-        f"Unsupported pose-stage optimizer {optimizer!r} for alignment stage {stage.name!r}; "
-        f"pose stages support {supported}. Add a pose-stage implementation before selecting "
-        "this optimizer."
-    )
 
 
 def _build_multires_checkpoint_state(

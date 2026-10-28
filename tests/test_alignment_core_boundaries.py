@@ -90,7 +90,6 @@ def test_gauge_policy_rejects_or_reports_coupled_dofs() -> None:
 def test_align_config_resolves_stage_dofs() -> None:
     cfg = AlignConfig(
         reconstruction="fista",
-        opt_method="gd",
         optimise_dofs=("dx", "dz"),
         freeze=("dx",),
         backend="jax",
@@ -107,7 +106,6 @@ def test_align_config_resolves_stage_dofs() -> None:
     "option",
     [
         {"reconstruction": "fista_tv"},
-        {"opt_method": "l-bfgs-b"},
         {"gauge_policy": "anchor-mean"},
         {"pose_model": "per-view"},
         {"quality": "tortoise"},
