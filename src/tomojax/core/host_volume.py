@@ -12,7 +12,7 @@ import mmap
 import os
 from pathlib import Path
 import tempfile
-from typing import Any, Protocol
+from typing import Any
 import weakref
 
 import numpy as np
