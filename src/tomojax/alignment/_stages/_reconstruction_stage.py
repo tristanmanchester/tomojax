@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 import functools
-import hashlib
 import logging
 import time
 from typing import TYPE_CHECKING, cast
@@ -34,7 +33,6 @@ from tomojax.core.projector import get_detector_grid_device
 from tomojax.recon.fista_tv import fista_tv, huber_tv_lipschitz
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
-    effective_fista_core_backend,
     fista_tv_core_arrays,
 )
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
@@ -47,7 +45,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class _ReconstructionStepInputs:
-    recon_geometry: Geometry
+    recon_geometry: PoseAdjustedGeometry
     grid: Grid
     detector: Detector
     projections: jnp.ndarray
@@ -293,8 +291,6 @@ def _reconstruction_step_stat(
         "data_loss_computed": bool(info_mapping.get("data_loss_computed", False)),
         "regulariser_value_computed": bool(info_mapping.get("regulariser_value_computed", False)),
     }
-    if bool(info_mapping.get("recon_public_fista_fallback", False)):
-        stat["recon_public_fista_fallback"] = True
     if bool(info_mapping.get("detector_grid_folded_into_pose", False)):
         stat["detector_grid_folded_into_pose"] = True
         stat["detector_grid_fold_reason"] = info_mapping.get("detector_grid_fold_reason")
@@ -406,27 +402,6 @@ def _retry_info_after_nonfinite_core(
     }
 
 
-def _public_fista_info_after_core_bypass(
-    *,
-    public_info: Mapping[str, object],
-    fallback_reason: str,
-    cfg: object,
-) -> Mapping[str, object]:
-    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
-    return {
-        **dict(public_info),
-        "recon_public_fista_fallback": True,
-        "fallback_reason": fallback_reason,
-        "actual_backend": "jax",
-        "requested_backend": str(getattr(cfg, "backend", "jax")),
-        "regulariser": str(getattr(cfg, "regulariser", "")),
-        "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
-        "data_loss_computed": bool(quality_policy.compute_final_data_loss),
-        "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
-        "quality_policy": quality_policy.to_dict(),
-    }
-
-
 @functools.partial(jax.jit, static_argnames=("grid", "detector", "cfg"))
 def _run_huber_fista_core_dynamic_geometry(
     x0: jnp.ndarray,
@@ -458,82 +433,6 @@ def _run_huber_fista_core_dynamic_geometry(
         result.regulariser_value,
         result.effective_iterations,
     )
-
-
-def _run_huber_fista_core_fixed_geometry(
-    x0: jnp.ndarray,
-    T_all: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-    projections: jnp.ndarray,
-    L_value: jnp.ndarray,
-    *,
-    grid: Grid,
-    detector: Detector,
-    cfg: FistaCoreConfig,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    runner = _cached_huber_fista_core_runner(
-        _array_cache_key(T_all),
-        None if det_grid is None else tuple(_array_cache_key(v) for v in det_grid),
-        grid,
-        detector,
-        cfg,
-    )
-    return runner(x0, projections, L_value)
-
-
-def _array_cache_key(array: jnp.ndarray) -> tuple[tuple[int, ...], str, bytes, str]:
-    arr = np.asarray(array)
-    contiguous = np.ascontiguousarray(arr)
-    data = contiguous.tobytes()
-    digest = hashlib.sha256(data).hexdigest()
-    return tuple(int(v) for v in contiguous.shape), str(contiguous.dtype), data, digest
-
-
-@functools.lru_cache(maxsize=16)
-def _cached_huber_fista_core_runner(
-    T_key: tuple[tuple[int, ...], str, bytes, str],
-    det_grid_key: tuple[tuple[tuple[int, ...], str, bytes, str], ...] | None,
-    grid: Grid,
-    detector: Detector,
-    cfg: FistaCoreConfig,
-) -> object:
-    T_all = _array_from_cache_key(T_key)
-    det_grid = (
-        None
-        if det_grid_key is None
-        else (_array_from_cache_key(det_grid_key[0]), _array_from_cache_key(det_grid_key[1]))
-    )
-
-    def run(
-        x_init: jnp.ndarray,
-        y: jnp.ndarray,
-        L_current: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        result = fista_tv_core_arrays(
-            x0=x_init,
-            T_all=T_all,
-            det_grid=det_grid,
-            projections=y,
-            grid=grid,
-            detector=detector,
-            cfg=cfg,
-            L_override=L_current,
-        )
-        return (
-            result.x,
-            result.loss,
-            result.data_loss,
-            result.regulariser_value,
-            result.effective_iterations,
-        )
-
-    return jax.jit(run)
-
-
-def _array_from_cache_key(key: tuple[tuple[int, ...], str, bytes, str]) -> jnp.ndarray:
-    shape, dtype_name, data, _digest = key
-    arr = np.frombuffer(data, dtype=np.dtype(dtype_name)).reshape(shape).copy()
-    return jnp.asarray(arr)
 
 
 def _run_public_fista_reconstruction(
@@ -572,7 +471,7 @@ def _run_public_fista_reconstruction(
         devices=shared_devices() if cone else None,  # the run's, see tomojax.align
     )
     return fista_tv(
-        step.recon_geometry,
+        cast("Geometry", step.recon_geometry),
         step.grid,
         step.detector,
         step.projections,
@@ -583,14 +482,12 @@ def _run_public_fista_reconstruction(
 
 
 def _huber_fista_pose_stack(step: _ReconstructionStepInputs, *, n_views: int) -> jnp.ndarray:
-    if isinstance(step.recon_geometry, PoseAdjustedGeometry):
-        nominal = stack_view_poses(step.recon_geometry.geometry, n_views)
-        return apply_pose_updates(
-            nominal,
-            step.recon_geometry.pose_params,
-            translation_frame=step.recon_geometry.translation_frame,
-        )
-    return stack_view_poses(step.recon_geometry, n_views)
+    nominal = stack_view_poses(step.recon_geometry.geometry, n_views)
+    return apply_pose_updates(
+        nominal,
+        step.recon_geometry.pose_params,
+        translation_frame=step.recon_geometry.translation_frame,
+    )
 
 
 def _resolve_huber_fista_backend_plan(
@@ -646,25 +543,6 @@ def _resolve_huber_fista_backend_plan(
     )
 
 
-def _run_public_fista_core_bypass(
-    step: _ReconstructionStepInputs,
-    *,
-    fallback_reason: str,
-) -> tuple[jnp.ndarray, Mapping[str, object]]:
-    x_public, public_info = _run_public_fista_reconstruction(
-        step,
-        views_per_batch=1,
-        projector_unroll=1,
-        gather_dtype="fp32",
-        grad_mode="stream",
-    )
-    return x_public, _public_fista_info_after_core_bypass(
-        public_info=public_info,
-        fallback_reason=fallback_reason,
-        cfg=step.cfg,
-    )
-
-
 def _huber_fista_core_config(
     step: _ReconstructionStepInputs,
     *,
@@ -710,7 +588,6 @@ def _huber_fista_core_info(
     L_core: float,
     quality_policy: object,
     backend_plan: _HuberFistaBackendPlan,
-    effective_backend: str | None = None,
 ) -> dict[str, object]:
     return {
         "loss": loss,
@@ -724,7 +601,7 @@ def _huber_fista_core_info(
         "quality_policy": quality_policy.to_dict(),
         "lipschitz": float(L_core),
         "requested_backend": backend_plan.requested_backend,
-        "actual_backend": effective_backend or backend_plan.actual_backend,
+        "actual_backend": backend_plan.actual_backend,
         "fallback_reason": backend_plan.fallback_reason,
         "detector_grid_folded_into_pose": backend_plan.detector_grid_folded_into_pose,
         "detector_grid_fold_reason": backend_plan.detector_grid_fold_reason,
@@ -751,7 +628,7 @@ def _run_spdhg_reconstruction(
         ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
     )
     return spdhg_tv(
-        step.recon_geometry,
+        cast("Geometry", step.recon_geometry),
         step.grid,
         step.detector,
         step.projections,
@@ -781,10 +658,8 @@ def _run_huber_fista_core_reconstruction(
         step,
         T_all=poses,
     )
-    is_pose_adjusted = isinstance(step.recon_geometry, PoseAdjustedGeometry)
     if (
-        is_pose_adjusted
-        and backend_plan.actual_backend == "cuda"
+        backend_plan.actual_backend == "cuda"
         and getattr(cfg, "ray_integrator", "sampled") == "sampled"
     ):
         backend_plan = _HuberFistaBackendPlan(
@@ -794,15 +669,6 @@ def _run_huber_fista_core_reconstruction(
             fallback_reason="dynamic_geometry_alignment_uses_jax_core",
             detector_grid_folded_into_pose=backend_plan.detector_grid_folded_into_pose,
             detector_grid_fold_reason=backend_plan.detector_grid_fold_reason,
-        )
-    if (
-        backend_plan.actual_backend == "jax"
-        and backend_plan.fallback_reason
-        and not is_pose_adjusted
-    ):
-        return _run_public_fista_core_bypass(
-            step,
-            fallback_reason=backend_plan.fallback_reason,
         )
     quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     core_cfg = _huber_fista_core_config(
@@ -819,25 +685,13 @@ def _run_huber_fista_core_reconstruction(
     )
     stream = should_stream(step.projections, reserve_bytes=6 * step.x.nbytes)
     core_cfg = replace(core_cfg, stream_projections=stream)
-    effective_backend = backend_plan.actual_backend
-    if not is_pose_adjusted:
-        effective_backend = effective_fista_core_backend(
-            core_cfg,
-            T_all=backend_plan.T_all,
-            det_grid=det_grid_for_core,
-        )
-    if is_pose_adjusted:
-        run = functools.partial(
-            _run_huber_fista_core_dynamic_geometry,
-            step.x,
-            backend_plan.T_all,
-            None if det_grid_for_core is None else det_grid_for_core[0],
-            None if det_grid_for_core is None else det_grid_for_core[1],
-        )
-    else:
-        run = functools.partial(
-            _run_huber_fista_core_fixed_geometry, step.x, backend_plan.T_all, det_grid_for_core
-        )
+    run = functools.partial(
+        _run_huber_fista_core_dynamic_geometry,
+        step.x,
+        backend_plan.T_all,
+        None if det_grid_for_core is None else det_grid_for_core[0],
+        None if det_grid_for_core is None else det_grid_for_core[1],
+    )
     source = host_source(np.asarray(step.projections)) if stream else nullcontext(step.projections)
     with source as data:
         result = run(
@@ -858,7 +712,6 @@ def _run_huber_fista_core_reconstruction(
         L_core=L_core,
         quality_policy=quality_policy,
         backend_plan=backend_plan,
-        effective_backend=effective_backend,
     )
 
 
@@ -939,8 +792,6 @@ def _run_reconstruction_step(
             )
         elif str(cfg.regulariser) == "huber_tv":
             x_out, info_rec = _run_huber_fista_core_reconstruction(step)
-            if bool(info_rec.get("recon_public_fista_fallback", False)):
-                recon_retry = True
             jax.block_until_ready(x_out)
             core_finite_fraction = _finite_fraction(x_out)
             if core_finite_fraction < 1.0:
