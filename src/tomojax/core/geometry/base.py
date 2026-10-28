@@ -334,8 +334,7 @@ class Geometry(Protocol):
 
     Concrete geometries may expose ``rays_for_view(i)`` as an optional
     metadata/inspection helper, but that helper is not part of the projector
-    contract and custom rays are not supported by ``forward_project_view`` or
-    ``backproject_view``.
+    contract and custom rays are not supported by the projectors.
     """
 
     def pose_for_view(self, i: int) -> PoseMatrix:

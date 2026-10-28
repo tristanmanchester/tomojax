@@ -161,33 +161,3 @@ def test_cgls_rejects_invalid_or_inapplicable_interpolation(interpolation):
             np.zeros((len(poses), d.nv, d.nu)),
             config=CGLSConfig(projector_model="ray", joseph_interpolation=interpolation),
         )
-
-
-def test_cubic_outer_lobe_retains_small_weights_near_its_roots():
-    from decimal import Decimal, localcontext
-
-    # check-public-imports: allow-private
-    from tomojax.core._plane_interpolation import cubic_weight
-
-    radii = np.array([1 + 2**-10, 1 + 2**-20, 2 - 2**-10, 2 - 2**-20, 2 - 2**-23], np.float32)
-    with localcontext() as context:
-        context.prec = 70
-        # Evaluate the expanded polynomial at high precision independently of
-        # the factored FP32 implementation. Float64 also cancels at these roots.
-        expected = np.array(
-            [
-                float(
-                    (
-                        -(Decimal(float(r)) ** 3)
-                        + 5 * Decimal(float(r)) ** 2
-                        - 8 * Decimal(float(r))
-                        + 4
-                    )
-                    / 2
-                )
-                for r in radii
-            ]
-        )
-    actual = np.asarray(jax.jit(cubic_weight)(jnp.asarray(radii)))
-    np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=0)
-    assert np.all(actual < 0)

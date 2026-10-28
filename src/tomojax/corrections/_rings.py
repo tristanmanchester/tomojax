@@ -61,12 +61,6 @@ def _correlate(x: jax.Array, kernel: np.ndarray) -> jax.Array:
     return out
 
 
-def _median(x: jax.Array, footprint: np.ndarray) -> jax.Array:
-    """The rank ``size // 2`` value over a 1-D footprint along columns."""
-    taken = [s for keep, s in zip(footprint, _shifts(x, len(footprint) // 2), strict=True) if keep]
-    return bitonic_median(taken)
-
-
 def _weighted_quadratic(
     values: jax.Array, weights: jax.Array, window: int, guard: int
 ) -> jax.Array:
