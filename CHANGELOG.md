@@ -6,6 +6,10 @@ Fixed-volume alignment compiles its Gauss-Newton step and objective once per
 problem shape and configuration. New scans of the same shape reuse them instead
 of retracing and recompiling on every `align` call; results are unchanged.
 
+CUDA parallel-beam and laminography transposes of long scans split their views
+into chunks that fit the axial kernels' scratch, rather than falling back to
+the generic gather for every view.
+
 `alignment.api` exposes user-facing configuration, schedules, losses, geometry
 helpers and execution. Internal state, checkpoint plumbing and normalisation
 helpers are no longer exported there; checkpoint files remain supported by

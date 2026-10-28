@@ -558,7 +558,9 @@ def test_axial_cuda_pair_matches_physical_matrix_near_axis(
     monkeypatch.setattr(cuda, "_MIN_AXIAL_VOXELS", 1)
     g = Grid(7, 6, nz, 0.8, 1.1, 1.3)
     d = Detector(9, nz + 2 if fractional else nz, 0.7, 1.2 if fractional else 1.3, (0.17, v_center))
-    # Cross the native forward's view-batch boundary, including its final tail.
+    # Cross the native forward's view-batch boundary, including its final tail,
+    # and split the transpose into chunks of five views.
+    monkeypatch.setattr("tomojax.core._cuda_axial._SCRATCH", 5 * 9 * nz)
     angles = np.r_[0, 1e-7, 43, 90, 179, np.linspace(2, 178, 12)]
     poses = np.broadcast_to(np.eye(4, dtype=np.float32), (len(angles), 4, 4)).copy()
     poses[:, :3, :3] = Rotation.from_euler("z", angles[:, None], degrees=True).as_matrix()
