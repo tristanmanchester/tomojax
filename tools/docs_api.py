@@ -120,7 +120,14 @@ class Pages:
         mod = self.package if module == "tomojax" else self.package[module.removeprefix("tomojax.")]
         names = [str(name) for name in mod.exports or [] if str(name) not in SKIP]
         names.sort(key=lambda name: FIRST.index(name) if name in FIRST else len(FIRST))
-        found = [mod.members[name] for name in names]
+        # Loading child modules can replace same-named TYPE_CHECKING re-exports
+        # in Griffe's member table. Resolve the declared import path first.
+        found = [
+            self.package.modules_collection[mod.imports[name]]
+            if name in mod.imports
+            else mod.members[name]
+            for name in names
+        ]
         return [(n, self._exported(n, m)) for n, m in zip(names, found, strict=True)]
 
     @staticmethod
