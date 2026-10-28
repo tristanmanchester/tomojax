@@ -75,7 +75,8 @@ numerical follow-ups, not full-volume completion.
 The independent CLI audit `shared/agent02/cli_input_audit.py` checks APS, PSI,
 two Nikon families and SkyScan with `inspect`, `preprocess`, `recon` and `align`,
 twice each. All 40 calls stopped with actionable missing-input messages and no
-traceback: 131.53 s total, 670.76 MiB peak RSS, GPU 0 on the same source/date.
+traceback: 117.91 s total, 671.81 MiB peak RSS, GPU 0 on `adbf6b52`
+(2026-10-28).
 Missing-input contracts do not establish reconstruction quality.
 
 ## Real-scan comparison criteria
