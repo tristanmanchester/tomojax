@@ -141,7 +141,7 @@ def _apply_pose_proposal_stage(
         backend=cfg.backend,
         gather_dtype=cfg.gather_dtype,
         views_per_batch=cfg.views_per_batch,
-        projector_unroll=cfg.projector_unroll,
+        projector_unroll=1,
         checkpoint_projector=cfg.checkpoint_projector,
         ray_integrator=cfg.ray_integrator,
         frames=None if cone is None else jnp.asarray(cone.frames(projections.shape[0])),

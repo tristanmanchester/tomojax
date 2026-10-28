@@ -1,5 +1,5 @@
 {
-  "align_config_fields": 45,
+  "align_config_fields": 41,
   "exported_names": {
     "tomojax": 23,
     "tomojax.geometry": 18,
@@ -23,13 +23,13 @@
     "simulate": 19
   },
   "long_files": {
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1006
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1000
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 139,
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 255,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 179,
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 162,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 142,
     "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 103,
     "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 117,
@@ -50,7 +50,7 @@
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 120,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
-  "alignment_code_lines": 17022,
+  "alignment_code_lines": 17010,
   "suppressions": {
     "noqa": 6,
     "type: ignore": 28,
@@ -76,7 +76,7 @@
   "type_errors": {
     "reportArgumentType": 188,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 106,
+    "reportAttributeAccessIssue": 98,
     "reportCallIssue": 10,
     "reportGeneralTypeIssues": 5,
     "reportIndexIssue": 6,

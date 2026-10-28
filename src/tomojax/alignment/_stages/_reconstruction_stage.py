@@ -83,7 +83,7 @@ def _initial_projection_lipschitz(
             detector=step.detector,
             batch_size=max(1, int(cfg.views_per_batch)),
             iterations=1,
-            unroll=int(cfg.projector_unroll),
+            unroll=1,
             checkpoint=bool(cfg.checkpoint_projector),
             gather_dtype=str(cfg.gather_dtype),
             upper_bound=True,
@@ -521,7 +521,6 @@ def _run_public_fista_reconstruction(
     step: _ReconstructionStepInputs,
     *,
     views_per_batch: int | None,
-    projector_unroll: int,
     gather_dtype: str,
     grad_mode: str,
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
@@ -544,12 +543,12 @@ def _run_public_fista_reconstruction(
         iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
         lipschitz=data_lipschitz,
         views_per_batch=views_per_batch,
-        projector_unroll=int(projector_unroll),
+        projector_unroll=1,
         checkpoint_projector=cfg.checkpoint_projector,
         gather_dtype=gather_dtype,
         grad_mode=grad_mode,
-        recon_rel_tol=cfg.recon_rel_tol,
-        recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
+        recon_rel_tol=None,
+        recon_patience=2,
         devices=shared_devices() if cone else None,  # the run's, see tomojax.align
     )
     return fista_tv(
@@ -635,7 +634,6 @@ def _run_public_fista_core_bypass(
     x_public, public_info = _run_public_fista_reconstruction(
         step,
         views_per_batch=1,
-        projector_unroll=1,
         gather_dtype="fp32",
         grad_mode="stream",
     )
@@ -662,7 +660,7 @@ def _huber_fista_core_config(
         lipschitz=1.0,
         nonnegative=bool(cfg.nonnegative),
         checkpoint_projector=bool(cfg.checkpoint_projector),
-        projector_unroll=int(cfg.projector_unroll),
+        projector_unroll=1,
         gather_dtype=str(cfg.gather_dtype),
         views_per_batch=_resolve_auto_views_per_batch(
             requested=int(cfg.views_per_batch),
@@ -724,7 +722,7 @@ def _run_spdhg_reconstruction(
         huber_delta=float(cfg.huber_delta),
         views_per_batch=max(1, int(cfg.views_per_batch)),
         seed=int(cfg.seed) + int(step.outer_idx) - 1,
-        projector_unroll=int(cfg.projector_unroll),
+        projector_unroll=1,
         checkpoint_projector=cfg.checkpoint_projector,
         gather_dtype=cfg.gather_dtype,
         nonnegative=bool(cfg.nonnegative),
@@ -914,7 +912,6 @@ def _run_reconstruction_step(
             x_out, info_rec = _run_public_fista_reconstruction(
                 step,
                 views_per_batch=vpb0,
-                projector_unroll=int(cfg.projector_unroll),
                 gather_dtype=cfg.gather_dtype,
                 grad_mode="auto",
             )
@@ -935,7 +932,6 @@ def _run_reconstruction_step(
                 x_out, info_rec = _run_public_fista_reconstruction(
                     step,
                     views_per_batch=1,
-                    projector_unroll=1,
                     gather_dtype="fp32",
                     grad_mode="stream",
                 )
@@ -950,7 +946,6 @@ def _run_reconstruction_step(
                 x_out, info_rec = _run_public_fista_reconstruction(
                     step,
                     views_per_batch=vpb0,
-                    projector_unroll=int(cfg.projector_unroll),
                     gather_dtype=cfg.gather_dtype,
                     grad_mode="auto",
                 )
@@ -967,7 +962,6 @@ def _run_reconstruction_step(
                     x_out, info_rec = _run_public_fista_reconstruction(
                         step,
                         views_per_batch=1,
-                        projector_unroll=1,
                         gather_dtype=cfg.gather_dtype,
                         grad_mode="stream",
                     )

@@ -45,7 +45,7 @@ class PoseJacobianOptions:
             float(cfg.gn_difference_step),
             cfg.pose_translation_frame,
             bool(cfg.checkpoint_projector),
-            int(cfg.projector_unroll),
+            1,
             cfg.gather_dtype,
             cfg.ray_integrator,
             cfg.gn_jacobian,
