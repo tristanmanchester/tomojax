@@ -657,7 +657,7 @@ def reconstruct_slabs(
 def estimate_center(scan: Scan) -> Scan:
     """Estimate a parallel scan's rotation centre without reconstructing a volume.
 
-    Returns the scan with its absolute physical detector-u centre set, available as
+    Returns the scan with its effective detector-u placement set in physical units, as
     ``result.detector.center[0]``; no pixels are shifted. For a cropped or binned
     preview, add ``result.detector.center[0] - preview.detector.center[0]`` to the
     full scan's centre rather than copying the preview's. Needs corrected
@@ -665,8 +665,11 @@ def estimate_center(scan: Scan) -> Scan:
     near-opposite views (within two degrees). The estimate uses row-wise
     gradient correlations and can be ambiguous for repetitive structure. Source
     metadata, when present, records pair offsets, conditional uncertainty,
-    alternative matches and row trends without changing the input. Physical centre and sample motion
-    are aliases; conditional matching intervals do not cover motion.
+    alternative matches and row trends without changing the input. The reported
+    centre fixes the median sampled-pair mean shift to zero, not the mean motion
+    over all views. Metadata exposes this gauge and correlated pair-mean shift
+    constraints, not recovered per-view motion. Physical centre and common sample
+    motion remain unresolved; conditional matching intervals do not cover motion.
 
     Parameters
     ----------
@@ -676,7 +679,8 @@ def estimate_center(scan: Scan) -> Scan:
     Returns
     -------
     Scan
-        Scan with the inferred absolute physical detector-u centre; pixels are unchanged.
+        Scan with the effective detector-u placement in physical units;
+        pixels are unchanged and the physical centre still aliases sample motion.
 
     Raises
     ------

@@ -216,6 +216,16 @@ def test_center_report_keeps_opposing_constraints_and_exposes_motion():
     assert all(abs(sum(w for _, w in p.first) - 1) < 1e-10 for p in report.pairs)
     assert all(abs(sum(w for _, w in p.second) - 1) < 1e-10 for p in report.pairs)
     assert len(report.to_dict()["pairs"]) == 16
+    diagnostics = report.to_dict()
+    assert diagnostics["physical_center_status"] == "unresolved_without_motion_assumption"
+    assert diagnostics["center_motion_gauge"] == "median_pair_mean_shift_zero"
+    constraints = diagnostics["pair_mean_shift_constraints_px"]
+    expected = [
+        0.5 * sum(w * (2 if i % 180 < 90 else -2) for i, w in p.first + p.second)
+        for p in report.pairs
+    ]
+    np.testing.assert_allclose(constraints, expected, atol=0.05)
+    assert abs(np.median(constraints)) < 1e-12
 
 
 def test_center_report_measures_row_trend_and_conditional_interval():
@@ -248,6 +258,8 @@ def test_single_pair_reports_uncalibrated_global_coverage_without_inconsistency(
     assert diagnostics["consistency_pvalue"] is None
     assert diagnostics["global_coverage_calibrated"] is False
     assert diagnostics["uncertainty_status"] == "local_matching_only"
+    assert diagnostics["physical_center_status"] == "unresolved_without_motion_assumption"
+    assert diagnostics["pair_mean_shift_constraints_px"] == [0.0]
     assert "local_matching_interval90_px" in diagnostics["pairs"][0]
     assert automatic["status"] == "limited"
     assert "not a calibrated centre interval" in automatic["reasons"][0]

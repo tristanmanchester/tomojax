@@ -236,7 +236,10 @@ class CenterPair:
 class CenterEstimate:
     """Centre geometry and the opposing-view evidence behind it.
 
-    A common centre is the median pair location. ``pair_scatter_px`` describes
+    The reported centre is the median pair location, fixing the median
+    opposing-pair mean shift to zero, not the mean motion over all views.
+    Changing the sampled pairs can change that gauge when the sample moves.
+    ``pair_scatter_px`` describes
     disagreement, not the standard error of that median. ``consistency_pvalue``
     is a conditional inverse-variance heterogeneity diagnostic; correlated
     pairs and ambiguous matches invalidate its chi-square reference. Apparent
@@ -249,7 +252,7 @@ class CenterEstimate:
     Parameters
     ----------
     geometry : ParallelGeometry
-        Geometry with the median pair centre in physical detector units.
+        Geometry with the effective median pair centre in physical detector units.
     pairs : tuple of CenterPair
         Opposing-view constraints and their conditional uncertainties.
     row_positions_px : tuple of float
@@ -279,9 +282,23 @@ class CenterEstimate:
         -------
         dict
             JSON-native pair constraints, row trend and consistency diagnostics.
+            ``pair_mean_shift_constraints_px`` gives the reported centre minus
+            each pair offset, in the same order as ``pairs``. In the linearized
+            rigid-match model, a pair offset is the physical centre minus half
+            the sum of its two weighted detector-u sample shifts. The weights
+            and view indices are stored in each pair's ``first`` and ``second``.
+            These constraints share the same fitted centre and are correlated;
+            they are not per-view poses or independently calibrated intervals.
+            Common centre/shift changes and the null space of the weighted
+            pair averages remain unresolved. Large or discontinuous motion,
+            wrong matching modes and model mismatch invalidate the linearization.
         """
+        center_px = self.geometry.detector.center[0] / self.geometry.detector.du
         return {
-            "offset_px": self.geometry.detector.center[0] / self.geometry.detector.du,
+            "offset_px": center_px,
+            "physical_center_status": "unresolved_without_motion_assumption",
+            "center_motion_gauge": "median_pair_mean_shift_zero",
+            "pair_mean_shift_constraints_px": [center_px - p.offset_px for p in self.pairs],
             "pairs": [pair.to_dict() for pair in self.pairs],
             "row_positions_px": list(self.row_positions_px),
             "row_offsets_px": [list(row) for row in self.row_offsets_px],
@@ -413,7 +430,7 @@ def estimate_center_report(
 
 
 def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> ParallelGeometry:
-    """Estimate an axial parallel detector's absolute physical u centre from projections.
+    """Estimate an axial parallel detector's effective u-centre placement.
 
     Opposing projections agree after detector-u reflection and a shift of twice
     the centre offset. Gradient correlations of up to 64 corresponding rows are summed,
@@ -422,7 +439,11 @@ def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> 
     scan, and their angular neighbors are read. Pairs within half a detector-edge
     pixel of the best angular match are eligible. Linear angular resampling
     removes the mismatch. Nothing is reconstructed. Non-axial and posed
-    geometries raise.
+    geometries raise. The result is an absolute placement in physical units,
+    not an increment to the input geometry. It fixes the median sampled-pair
+    mean motion to zero; physical centre and common sample motion cannot be
+    separated from these observations alone. Use ``estimate_center_report``
+    to retain the conditional constraints and unresolved-centre status.
 
     Parameters
     ----------
@@ -434,7 +455,8 @@ def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> 
     Returns
     -------
     ParallelGeometry
-        Geometry with the estimated absolute physical detector-u centre.
+        Geometry with the effective detector-u centre in physical units,
+        conditional on the median opposing-pair mean-shift-zero gauge.
 
     Raises
     ------

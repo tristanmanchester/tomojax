@@ -267,9 +267,23 @@ scan = tj.estimate_center(tj.load_frames("raw.nxs").corrected())
 recon = tj.reconstruct(scan)
 ```
 
-It returns a new `Scan` whose `detector.center[0]` is the absolute physical
-detector-u coordinate, estimated from up to three detector rows. The Fourier
-metric can have false minima for compact objects, so check the reconstruction.
+It returns a new `Scan` whose `detector.center[0]` is an effective detector-u
+placement in physical units, not an increment to the input geometry. Gradient
+correlations use up to 64 rows and 16 near-opposite pairs. Competing matches,
+truncation and sample motion can bias the estimate; inspect the reconstruction.
+
+The reported centre fixes the **median sampled-pair mean shift to zero**, not
+the mean motion over all acquired views. Physical centre and common sample
+motion cannot be separated by these pair constraints alone. The diagnostics
+from `tomojax.alignment.api.estimate_center_report(...).to_dict()` record
+`center_motion_gauge="median_pair_mean_shift_zero"` and
+`physical_center_status="unresolved_without_motion_assumption"`.
+`pair_mean_shift_constraints_px` gives the reported centre minus each pair's
+offset, in pair order and detector-u pixels. These correlated constraints share
+the fitted centre; they are not recovered per-view poses. Existing local
+matching intervals remain uncalibrated globally and exclude motion and wrong
+matching modes. The same diagnostics are retained in scan source metadata
+when available. No automatic workflow decision changes with these labels.
 
 Use `cor` mode when the main problem is a detector-u or centre-of-rotation
 offset rather than sample motion:

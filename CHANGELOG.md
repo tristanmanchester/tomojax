@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Centre reports expose their median opposing-pair mean-shift-zero gauge and
+correlated pair-mean shift constraints. The physical centre is explicitly
+unresolved without a motion assumption; these fields do not recover per-view
+poses or turn local matching intervals into calibrated centre uncertainty.
+Centre estimates and automatic workflow decisions are unchanged.
+
 The README's figures image a simulated 29 mm mechanical watch movement,
 modelled in Blender (`bench/phantoms/watch_blender.py`) and projected by gVXR,
 so no figure's data come from TomoJAX's projector: a volume rendering of a
