@@ -992,7 +992,9 @@ def test_finite_sampling_and_paired_derivatives_match_dense_oracle(width, backen
 def test_fixed_volume_gn_uses_true_loss_and_two_sided_irls(monkeypatch, kind):
     # check-public-imports: allow-private
     from tomojax.alignment._objectives.loss_adapters import build_loss_adapter
-    from tomojax.alignment.api import parse_loss_spec
+
+    # check-public-imports: allow-private
+    from tomojax.alignment._objectives.loss_specs import parse_loss_spec
 
     residual = np.array([-4.0, -0.2, 0.0, 0.4, 3.0], np.float32)
     columns = np.random.default_rng(1348).normal(size=(6, 5)).astype(np.float32)
