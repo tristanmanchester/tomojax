@@ -1,0 +1,148 @@
+{
+  "object": "29 mm watch movement, meshes from bench/phantoms/watch_blender.py",
+  "beam": "parallel, monochromatic 120 keV",
+  "views": 600,
+  "photons_per_pixel": 30000.0,
+  "voxel_mm": 0.03854166666666667,
+  "grid": [
+    768,
+    768,
+    164
+  ],
+  "reconstruction": {
+    "method": "fista",
+    "iterations": 60,
+    "tv_weight": 0.01,
+    "nonnegative": true,
+    "warm_start": "fbp",
+    "seconds": 55.18066600599559
+  },
+  "transfer_function": {
+    "stops_mm": [
+      0.0,
+      0.028,
+      0.04,
+      0.052,
+      0.062,
+      0.072,
+      0.085,
+      0.115,
+      0.14,
+      0.17,
+      0.23,
+      0.27,
+      0.45,
+      1.2,
+      4.5
+    ],
+    "colours": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.25,
+        0.34,
+        0.5
+      ],
+      [
+        0.32,
+        0.44,
+        0.66
+      ],
+      [
+        0.4,
+        0.3,
+        0.45
+      ],
+      [
+        0.95,
+        0.14,
+        0.2
+      ],
+      [
+        0.72,
+        0.84,
+        1.0
+      ],
+      [
+        0.76,
+        0.87,
+        1.0
+      ],
+      [
+        0.8,
+        0.89,
+        1.0
+      ],
+      [
+        0.8,
+        0.84,
+        0.93
+      ],
+      [
+        0.88,
+        0.9,
+        0.96
+      ],
+      [
+        0.93,
+        0.92,
+        0.9
+      ],
+      [
+        1.0,
+        0.74,
+        0.38
+      ],
+      [
+        1.0,
+        0.76,
+        0.4
+      ],
+      [
+        1.0,
+        0.84,
+        0.36
+      ],
+      [
+        1.0,
+        0.95,
+        0.6
+      ]
+    ],
+    "opacity_per_mm": [
+      0.0,
+      0.0,
+      0.5,
+      0.45,
+      1.2,
+      0.6,
+      0.75,
+      0.75,
+      1.2,
+      5.0,
+      9.0,
+      12.0,
+      14.0,
+      30.0,
+      40.0
+    ]
+  },
+  "camera": {
+    "azimuth_deg": -112,
+    "elevation_deg": 48,
+    "fov_deg": 24
+  },
+  "render_seconds": 20.481711599000846,
+  "renderer": "direct volume rendering, examples/_volume_render.py",
+  "device": "cuda:0",
+  "versions": {
+    "tomojax": "0.3.0",
+    "jax": "0.11.2",
+    "numpy": "2.4.5",
+    "matplotlib": "3.11.2"
+  },
+  "total_seconds": 184.40282126799866
+}

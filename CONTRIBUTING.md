@@ -135,10 +135,12 @@ outputs, and material limitations alongside each feature. Check commands against
 the actual CLI or public API. Keep user guides in `docs/`; module-level READMEs
 explain the corresponding Python interfaces.
 
-Use [examples/plot_reconstruction.py](examples/plot_reconstruction.py) for the
-README's synthetic figure. Keep scientific image scales explicit and retain its
-JSON provenance. Record missing provenance for historical assets in
-[images/README.md](images/README.md); visual quality is not an accuracy metric.
+The README's figures come from [examples/reconstruct_watch.py](examples/reconstruct_watch.py),
+[examples/align_watch.py](examples/align_watch.py) and
+[examples/render_watch.py](examples/render_watch.py). Keep scientific image
+scales explicit and retain their JSON records. Record missing provenance for
+historical assets in [images/README.md](images/README.md); visual quality is
+not an accuracy metric.
 
 ## Repository layout and measurement records
 

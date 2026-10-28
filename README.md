@@ -14,19 +14,30 @@ needs scan-specific validation. See the
 [support matrix](https://github.com/tristanmanchester/tomojax/blob/main/docs/support-matrix.md) and [known limitations](https://github.com/tristanmanchester/tomojax/blob/main/docs/known-limitations.md)
 before choosing it for an experiment.
 
-![Central xy and xz slices of a synthetic phantom, its CGLS reconstruction, and absolute error, with shared attenuation scales.](https://github.com/tristanmanchester/tomojax/raw/main/images/reconstruction-example.png)
+![A simulated mechanical watch movement reconstructed by TomoJAX and drawn by direct volume rendering: brass wheels and balance in gold, steel parts white and the titanium plate and bridges as blue glass.](https://github.com/tristanmanchester/tomojax/raw/main/images/watch-render.png)
 
-64³ voxels, 90 parallel views, 40 CGLS iterations. This example uses the same
-Joseph model for simulation and reconstruction; it demonstrates the API, not
-independent reconstruction accuracy. [Reproduce the figure](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#reproduce-the-readme-figure).
+A 29 mm mechanical watch movement, scanned in simulation with 600 views of a
+120 keV parallel beam, reconstructed with FISTA-TV on 38.5 µm voxels in
+55 s on a laptop GPU and drawn by direct volume rendering. The
+projections are traced through the movement's Blender meshes by gVXR, not made
+by TomoJAX's projector. [Reproduce it](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#volume-render-a-reconstruction).
 
-![Truth, a nominal-pose reconstruction, and a jointly aligned reconstruction of a laminography scan with random per-view motion.](https://github.com/tristanmanchester/tomojax/raw/main/images/alignment-example.png)
+![Truth, filtered backprojection and FISTA-TV slices through the hairspring of the watch movement, with close-ups of the balance on one grey scale.](https://github.com/tristanmanchester/tomojax/raw/main/images/reconstruction-example.png)
 
-`tomojax align` and `tomojax.alignment` solve the volume and each view's pose
-together. Here a 96³ laminography scan with ±1° and ±2 px of random per-view
-motion goes from 0.68 to 0.047 relative error, with rotations recovered to
-0.0022°, in 18 s on a laptop GPU including compilation. The measurements are
-analytic integrals of continuous objects. [Reproduce it](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#align-a-scan-with-per-view-motion).
+From 200 views with 10⁴ photons per pixel, filtered backprojection of a slab
+through the hairspring has relative error 0.357 against the exact voxel
+average of the meshes, and FISTA-TV 0.125, in 15 s.
+[Reproduce the figure](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#reconstruct-a-few-view-noisy-scan).
+
+![Nominal-geometry, aligned and true slices of the watch movement, close-ups of the balance, and recovered against true shifts for every view.](https://github.com/tristanmanchester/tomojax/raw/main/images/alignment-example.png)
+
+`tomojax align` and `tj.align` solve the volume and each view's pose together.
+On a 400-view scan of the movement with its axis 5.3 px off centre and every
+view tilted by up to 0.25° and shifted by up to 2.4 px, `mode="cor-then-pose"`
+recovers the rotations to 0.06° RMS or better and the shifts to 0.07 px
+RMS in 300 s, and the reconstruction error falls from 0.928 to 0.235.
+Poses and volume are compared with the truth after removing the rigid motion
+the data cannot determine. [Reproduce it](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#align-a-scan-with-per-view-motion).
 
 ## First reconstruction
 
@@ -51,8 +62,7 @@ instead of installing from the package index, then run the same three commands.
 slices (`projection.png` is the central projection). `recon.nxs` contains the
 projections, volume, and geometry metadata. The PNGs are display-scaled
 previews; use the stored volume for quantitative analysis. This CLI example
-automatically selects Fourier inversion for its axial parallel geometry; the
-figure above uses the Python CGLS example.
+automatically selects Fourier inversion for its axial parallel geometry.
 
 Every command reads an input and writes `-o OUTPUT`, refusing to replace an
 existing file without `--force`; `tomojax <command> --help` describes it, and

@@ -1,25 +1,64 @@
 {
-  "size": 96,
-  "views": 240,
-  "motion": "uniform +/-1 deg rotations, +/-2 px detector-frame shifts per view",
-  "removed_rigid_motion": {
+  "object": "29 mm watch movement, meshes from bench/phantoms/watch_blender.py",
+  "beam": "parallel, monochromatic 120 keV",
+  "views": 400,
+  "angles_deg": [
+    0,
+    180
+  ],
+  "photons_per_pixel": 20000.0,
+  "voxel_mm": 0.07708333333333334,
+  "grid": [
+    384,
+    384,
+    82
+  ],
+  "slice_z_mm": 2.965,
+  "true_axis_offset_px": 5.3,
+  "motion": "wobble and jitter, up to 0.25 deg per rotation, 2.4 px dx, 1.5 px dz",
+  "mode": "cor-then-pose",
+  "align_seconds": 300.04429467099544,
+  "reconstruction": {
+    "method": "fista",
+    "iterations": 100,
+    "tv_weight": 0.01,
+    "nonnegative": true,
+    "warm_start": "fbp"
+  },
+  "relative_l2_nominal": 0.9278868436813354,
+  "relative_l2_aligned": 0.23517754673957825,
+  "least_motion_gauge": {
     "rotation_deg": [
-      0.7127006703218891,
-      -0.3043323212599596,
-      -0.3695115778561962
+      -0.0013424847296410677,
+      0.005390596580597795,
+      -0.003809713117389459
     ],
     "shift": [
-      0.5364941111420419,
-      -0.5067538991901028,
-      -0.09144508532110451
+      -0.05017038274010468,
+      -0.24180447258618948,
+      0.0016245456463646942
     ],
-    "detector_offset": 0.0
+    "detector_offset": 0.25537508235680817
   },
-  "nominal_cgls_relative_l2": 0.6764291524887085,
-  "aligned_relative_l2": 0.04678880423307419,
-  "rotation_rmse_deg": 0.0022193770855665207,
-  "translation_rmse_px": 0.0005500732222571969,
-  "outer_iterations": 43,
-  "alignment_seconds_including_compile": 17.631459841999458,
-  "device_platform": "gpu"
+  "centre_px": {
+    "found": 3.2617781162261963,
+    "true": 3.3129740413856195
+  },
+  "rotation_rmse_deg": [
+    0.027077635750174522,
+    0.04518955200910568,
+    0.06436115503311157
+  ],
+  "shift_rmse_px": [
+    0.06505217403173447,
+    0.03672932833433151
+  ],
+  "device": "cuda:0",
+  "versions": {
+    "tomojax": "0.3.0",
+    "jax": "0.11.2",
+    "numpy": "2.4.5",
+    "matplotlib": "3.11.2"
+  },
+  "total_seconds": 360.3211354739906
 }

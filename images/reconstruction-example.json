@@ -1,57 +1,50 @@
 {
-  "description": "Matched-model usage example; not independent accuracy evidence.",
-  "metrics": {
-    "size": 64,
-    "views": 90,
-    "iteration_budget": 40,
-    "projector": "joseph_linear",
-    "backend": "pallas",
-    "device_platform": "gpu",
-    "termination": "iteration_limit",
-    "volume_relative_l2": 0.05127157177076562
+  "object": "29 mm watch movement, meshes from bench/phantoms/watch_blender.py",
+  "beam": "parallel, monochromatic 120 keV",
+  "views": 200,
+  "angles_deg": [
+    0,
+    180
+  ],
+  "photons_per_pixel": 10000.0,
+  "voxel_mm": 0.03854166666666667,
+  "grid": [
+    768,
+    768,
+    32
+  ],
+  "slice_z_mm": 2.965,
+  "fbp": {
+    "filter": "hann",
+    "relative_l2": 0.35711902379989624,
+    "seconds": 0.2829280860023573
   },
-  "geometry": {
-    "type": "parallel",
-    "angle_range_deg": [
-      0,
-      180
-    ],
-    "endpoint": false,
-    "voxel_pitch": [
-      1.0,
-      1.0,
-      1.0
-    ],
-    "detector_pitch": [
-      1.0,
-      1.0
-    ]
+  "fista_tv": {
+    "tv_weight": 0.01,
+    "iterations": 200,
+    "nonnegative": true,
+    "warm_start": "fbp",
+    "relative_l2": 0.12479984015226364,
+    "seconds": 15.433243392006261
   },
-  "display": {
-    "slice_index": 32,
-    "planes": [
-      "xy",
-      "xz"
-    ],
-    "attenuation_range": [
-      -0.1793554723262787,
-      1.1468331813812256
-    ],
-    "absolute_error_range": [
-      0.0,
-      0.15885603427886963
-    ]
+  "error_region": "the whole reconstructed slab",
+  "attenuation_mm": {
+    "titanium": 0.0917,
+    "brass": 0.3323,
+    "steel": 0.2102,
+    "silicon": 0.0379,
+    "ruby": 0.0597,
+    "glucydur": 0.2604,
+    "gold": 4.0475,
+    "nivarox": 0.2297,
+    "nivaflex": 0.345
   },
+  "device": "cuda:0",
   "versions": {
-    "tomojax": "0.2.0",
+    "tomojax": "0.3.0",
     "jax": "0.11.2",
-    "jaxlib": "0.11.2",
     "numpy": "2.4.5",
     "matplotlib": "3.11.2"
   },
-  "sources_sha256": {
-    "plot_reconstruction.py": "d32049e4cf85b8889ec2a9c27f75e75ba77a944e27d59cc2e35affcc34c5963a",
-    "simulate_and_reconstruct.py": "210512527cbec0bc8116ec9afb537c14ea5258200ee39906ffdcae1bfb13090a"
-  },
-  "image_sha256": "13088cd29d4332b270d6dd39907f1802a6f4d931487ee96d1bd0f9e2efdbb2cd"
+  "total_seconds": 70.698507891997
 }
