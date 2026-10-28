@@ -20,56 +20,75 @@ Simulation and reconstruction share a discretization, so this is a usage example
 not independent accuracy evidence. See the [measurements](../docs/measurements.md)
 for independent data and accepted-result comparisons.
 
-## Reproduce the README figure
+## Reproduce the README figures
 
-Install the optional plotting group in your chosen environment. For CPU:
+The README's figures image one phantom: a 29 mm skeletonised mechanical watch
+movement with a mainspring barrel, a going train, a club-tooth escapement and a
+screwed balance with its hairspring, modelled in Blender as one closed mesh per
+material ([watch_blender.py](../bench/phantoms/watch_blender.py)). gVXR traces
+each ray's path length through the meshes, so the projections are exact line
+integrals of the meshes and share nothing with TomoJAX's projector; each
+detector pixel averages the transmission of 2 × 2 rays before Poisson noise and
+the logarithm. The beam is monochromatic at 120 keV, with xraylib attenuation
+for titanium, brass, steel, silicon, ruby, Glucydur, 18-carat gold, Nivarox and
+Nivaflex. The truth on each reconstruction grid is the exact voxel average of
+the meshes ([mesh_voxels.py](../bench/phantoms/mesh_voxels.py)).
 
-```bash
-uv sync --locked --extra cpu --group examples --no-dev
-JAX_PLATFORMS=cpu uv run --no-sync python examples/plot_reconstruction.py \
-  --size 64 --views 90 --iterations 40 \
-  --out images/reconstruction-example.png
-```
-
-The checked-in figure was generated on CUDA using:
-
-```bash
-uv sync --locked --extra cuda12 --group examples --no-dev
-uv run --no-sync python examples/plot_reconstruction.py \
-  --size 64 --views 90 --iterations 40 \
-  --out images/reconstruction-example.png
-```
-
-CPU and CUDA use matched models but floating-point reductions can differ; byte
-identical images across backends or plotting-library versions are not expected.
-Use another output path to preserve the checked-in illustration.
-
-[plot_reconstruction.py](plot_reconstruction.py) writes the PNG and an adjacent
-JSON file containing solver settings, full-volume error, termination, display
-ranges, versions, and script/image hashes. Both planes share attenuation and
-absolute-error scales, with no per-panel contrast fitting. Error is measured
-before display and uses the entire volume. The figure includes negative
-reconstruction values rather than clipping them away.
-
-## Align a scan with per-view motion
+The scripts need a CUDA GPU, Blender 4.5 and the gVXR environment of the
+[watch phantom](../bench/README.md#watch-movement-phantom), found under
+`.artifacts` or given with `--blender` and `--gvxr-python`:
 
 ```bash
 uv sync --locked --extra cuda12 --group examples --no-dev
-uv run --no-sync python examples/align_misaligned_scan.py
+uv run --no-sync python examples/reconstruct_watch.py
+uv run --no-sync python examples/align_watch.py
+uv run --no-sync python examples/render_watch.py
 ```
 
-[align_misaligned_scan.py](align_misaligned_scan.py) simulates a 96³, 240-view,
-full-turn 30° laminography scan of continuous Gaussian blobs, with analytic
-line integrals at randomly perturbed poses (±1° rotations, ±2 px shifts per
-view) and 0.2% noise. The data match no voxel discretisation. It reconstructs
-once with the nominal poses (CGLS) and once jointly with the poses using
-`tj.align`, then writes `images/alignment-example.png` and its JSON metrics,
-replacing the checked-in figure; it takes no options.
-On an RTX 4070 Laptop GPU it recovers rotations to 0.0022° RMS in about 18 s
-including compilation, lowering the volume error from 0.68 to 0.047.
-`tj.align` reports the least-motion estimate, so the truth is compared in its
-least-motion version too (see
-[where the aligned volume sits](../docs/alignment-guide.md#where-the-aligned-volume-sits)).
+Each writes its figure to `images/` (or `--out`) with a JSON record of its
+settings, errors and run times beside it. Meshes, projections and truths are
+cached under `.artifacts/figures/watch`; the first run builds the meshes in
+about 40 s. Times are on an RTX 4070 Laptop GPU.
+
+### Reconstruct a few-view, noisy scan
+
+[reconstruct_watch.py](reconstruct_watch.py) scans the movement with 200 views
+over a half turn and 10⁴ photons per pixel, and reconstructs a 32-slice slab
+through the hairspring on 38.5 µm voxels with filtered backprojection (Hann
+filter) and with 200 iterations of non-negative FISTA-TV (weight 0.01) started
+from it. Over the whole slab the relative L2 error is 0.357 for FBP and
+0.125 for FISTA-TV, which takes 15 s. The script takes about a minute.
+
+### Align a scan with per-view motion
+
+[align_watch.py](align_watch.py) scans the whole movement on 77 µm voxels with
+400 views over a half turn and 2 × 10⁴ photons per pixel. The rotation axis
+projects 5.3 px off the detector centre, and every view has its own pose: a
+slow wobble plus jitter of up to 0.25° in each rotation, 2.4 px across the axis
+and 1.5 px along it. `tj.align(scan, mode="cor-then-pose")` takes 300 s. It
+recovers the rotations to 0.06° RMS or better and the shifts to 0.07 px
+(across) and 0.04 px (along) RMS, and the error of a FISTA-TV reconstruction
+falls from 0.928 with the nominal geometry to 0.235. The script takes about
+6 minutes.
+
+Moving the whole movement rigidly, with every pose moved back, predicts the
+same data, as does trading the detector centre against a shift of every view,
+so `tj.align` reports the estimate with the least per-view motion. The truth,
+its poses and its centre are moved to that estimate before they are compared
+(see [where the aligned volume sits](../docs/alignment-guide.md#where-the-aligned-volume-sits));
+there the centre is found at 3.26 px against 3.31 px.
+
+### Volume-render a reconstruction
+
+[render_watch.py](render_watch.py) scans the whole movement with 600 views and
+3 × 10⁴ photons per pixel, reconstructs it on a 768 × 768 × 164 grid of 38.5 µm
+voxels with 60 FISTA-TV iterations (55 s), and draws the reconstruction
+by direct volume rendering in JAX ([_volume_render.py](_volume_render.py)).
+Rays march through the volume, and a transfer function of the reconstructed
+attenuation sets colour and opacity: steel white, brass and the balance gold,
+the timing screws yellow, the ruby jewels red, and titanium blue glass drawn by
+its boundaries. The picture is drawn from the reconstruction alone; the meshes
+only make the projections. The script takes about 3 minutes.
 
 ## Prepare and align complex ptychography projections
 
@@ -196,7 +215,7 @@ reconstruction with the authors' reference.
 [align_laminography.py](align_laminography.py) combines public setup/motion
 initialization, data-selected region, sparse pose fitting, untouched-view checks
 and positive reconstruction. It is a conservative example, not a new alignment
-mode or default. See the [raw K11 recipe](../docs/real-laminography.md#k11-nominal-geometry-recipe)
+mode or default. See the [automatic laminography section](../docs/real-laminography.md#automatic-nexus-laminography)
 for the command and limitations. Its HDF5 dataset paths and nominal tilt are
 explicit arguments; it writes nothing unless `-o` is supplied.
 

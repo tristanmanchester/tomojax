@@ -1,37 +1,50 @@
 # Image provenance
 
-The README uses a reproducible synthetic reconstruction. Other assets are kept
-as historical illustrations and are not presented as current validation.
-Large GIFs are linked here rather than loaded automatically on the project page.
+The README's three figures are reproducible simulations of one object, a 29 mm
+mechanical watch movement modelled in Blender
+([watch_blender.py](../bench/phantoms/watch_blender.py)) and scanned with gVXR
+at 120 keV, so no projection is made by TomoJAX's projector. Each figure has a
+JSON record beside it with its settings, errors, run times and versions; the
+[examples README](../examples/README.md#reproduce-the-readme-figures) gives
+the commands. Other assets are kept as historical illustrations and are not
+presented as current validation. Large GIFs are linked here rather than
+loaded automatically on the project page.
 
-## Reproducible synthetic reconstruction
+## Volume rendering of a reconstruction
 
-![Reference, CGLS reconstruction, and absolute error in two central planes, with labelled shared scales.](reconstruction-example.png)
+![A simulated mechanical watch movement reconstructed by TomoJAX and drawn by direct volume rendering.](watch-render.png)
+
+[watch-render.png](watch-render.png) comes from
+[render_watch.py](../examples/render_watch.py): a FISTA-TV reconstruction of
+600 noisy views on 38.5 µm voxels, drawn by ray casting through the volume with
+a transfer function of the reconstructed attenuation. Colour and opacity are
+display choices recorded in [watch-render.json](watch-render.json); the shapes
+are the reconstruction's.
+
+## Few-view reconstruction
+
+![Truth, FBP and FISTA-TV slices through the hairspring, full and close up.](reconstruction-example.png)
 
 [reconstruction-example.png](reconstruction-example.png) comes from
-[the public Python example](../examples/simulate_and_reconstruct.py) and
-[its plotting script](../examples/plot_reconstruction.py). It uses a 64³
-Shepp–Logan phantom, 90 uniform half-turn parallel views, unit voxel/detector
-pitch, and 40 Joseph-model CGLS iterations on CUDA/Pallas. Full-volume relative
-L2 error is about 5.13%; termination is the iteration limit. Simulation and
-reconstruction share the same model, so this does not measure independent
-forward-model accuracy.
+[reconstruct_watch.py](../examples/reconstruct_watch.py): 200 views with
+10⁴ photons per pixel, a 32-slice slab on 38.5 µm voxels, FBP with a Hann
+filter and FISTA-TV. Every panel shares one grey scale, 0 to 0.36 mm⁻¹, so
+steel and brass saturate. Errors are relative L2 over the whole slab against
+the exact voxel average of the meshes, recorded in
+[reconstruction-example.json](reconstruction-example.json).
 
-The adjacent [JSON record](reconstruction-example.json) contains exact settings,
-versions, display ranges, and hashes. Reference and reconstruction use one
-attenuation scale; both error panels use one absolute-error scale. No volume
-crop, intensity fit, or display clipping of negative values is used. Follow
-[reproduction instructions](../examples/README.md#reproduce-the-readme-figure)
-to regenerate the image on CPU or CUDA.
+## Joint alignment of a moving scan
 
-## Joint alignment of a misaligned scan
+![Nominal-geometry, aligned and true slices of the movement with recovered and true per-view shifts.](alignment-example.png)
 
-![Central slice of the truth, a nominal-pose CGLS reconstruction, and a jointly aligned reconstruction of a laminography scan with per-view motion.](alignment-example.png)
-
-[alignment-example.png](alignment-example.png) and its [JSON metrics](alignment-example.json)
-come from [the alignment example](../examples/align_misaligned_scan.py): analytic
-data from continuous objects at perturbed poses, so neither reconstruction
-shares the measurement model. All panels share one display range.
+[alignment-example.png](alignment-example.png) comes from
+[align_watch.py](../examples/align_watch.py): 400 views on 77 µm voxels with
+the axis 5.3 px off centre and per-view wobble and jitter, aligned with
+`tj.align(scan, mode="cor-then-pose")`. Both volumes are FISTA-TV
+reconstructions with the same settings and every panel shares one grey scale.
+The truth, its poses and its centre are compared in the least-motion frame
+`tj.align` reports; [alignment-example.json](alignment-example.json) records
+the gauge removed and every error.
 
 ## Historical real-data illustrations
 
