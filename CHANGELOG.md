@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+CUDA cone transposes accumulate their shared-memory tiles in exact two-word
+fixed point with native integer atomics, instead of compare-and-swap float
+atomics. Each block bounds its cells' sums from the views' peak weighted
+magnitudes and rays per cell, so every cell holds the exact sum of its float
+additions and rounds once when written; results no longer depend on thread
+order.
+
 CUDA cone transposes walk all of a call's views in one launch per kernel and
 add each tile to the volume once, rather than once per 32 views; private
 z-contiguous launches order planes first, so concurrent blocks share detector

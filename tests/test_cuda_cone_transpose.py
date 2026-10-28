@@ -155,6 +155,42 @@ def test_cuda_cone_dense_transpose_across_row_and_plane_tile_tails():
 
 
 @pytest.mark.gpu
+def test_cuda_cone_dense_transpose_with_many_rays_per_cell():
+    # Pixels a fifth of a voxel at the centre put ~25 rays on each cell per view: the
+    # fixed-point tiles' largest sums, from positive images, must not wrap.
+    grid = Grid(7, 6, 5, 1.0, 1.0, 1.0, vol_center=(0.2, -0.1, 0.3))
+    detector = Detector(41, 37, 0.3, 0.3)
+    frames = [_frame((1, 0.2 * i, 0.3), 0.13) for i in range(5)]
+    _check_dense_transpose(grid, detector, frames)
+
+
+@pytest.mark.gpu
+def test_cuda_cone_pair_transpose_is_reproducible_with_one_bright_view():
+    # A view a thousand times brighter sets the fixed-point range of every tile it
+    # reaches; each voxel must still keep FP32 accuracy relative to its own terms.
+    grid = Grid(7, 6, 5, 1.0, 1.0, 1.0)
+    detector = Detector(9, 7, 1.1, 1.1)
+    frames = np.stack([_frame((1, 0.3 * i, 0.2), 0.13) for i in range(40)])
+    coeff = frame_coefficients(jnp.broadcast_to(jnp.eye(4), (40, 4, 4)), frames, grid, detector)
+    count = grid.nx * grid.ny * grid.nz
+    basis = jnp.eye(count, dtype=jnp.float32).reshape((count, grid.nz, grid.ny, grid.nx))
+    forward = jax.jit(jax.vmap(lambda x: cone_project(x, coeff, grid, detector, backend="cuda")))
+    matrix = np.asarray(forward(basis), np.float64).reshape((count, -1))
+    rng = np.random.default_rng(47)
+    images = rng.normal(size=(2, 40, detector.nv, detector.nu)).astype(np.float32)
+    images[0, 3] *= 1e3
+    first = cone.cone_backproject_pair(tuple(images), coeff, grid, detector, backend="cuda")
+    second = cone.cone_backproject_pair(tuple(images), coeff, grid, detector, backend="cuda")
+    for channel in (0, 1):
+        # Integer tile sums do not depend on the order threads add them in.
+        np.testing.assert_array_equal(first[channel], second[channel])
+        expected = matrix @ images[channel].ravel()
+        bound = np.abs(matrix) @ np.abs(images[channel]).ravel()
+        error = np.abs(np.asarray(first[channel]).ravel() - expected)
+        assert np.all(error <= 5e-7 * bound)
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("tilt", [0.0, 20.0])
 def test_cuda_cone_cgls_recovers_an_image_across_wide_tiles(tilt):
     # A fixed-budget wide-grid image control, independent of the CUDA forward

@@ -769,19 +769,24 @@ extern "C" __global__ void cone_box_forward(const float* coeff, float* out, int 
 
 // Weight and transpose (view, v, u) images in coalesced 32x32 tiles,
 // recording exact nonzero pixel bounds without reading images/rays a second time.
-// Views occupy grid x so their count is not limited by CUDA grid z.
+// Views occupy grid x so their count is not limited by CUDA grid z. peak, (view, tile v,
+// tile u, 2), receives the bits of each right-hand side's largest weighted magnitude in
+// the tile; as unsigned integers these order like the magnitudes, NaN above all.
 template <int RHS>
 __device__ __forceinline__ void weight_images_boxes(
     const float* __restrict__ coeff, const float* __restrict__ img, const float* __restrict__ img1, float* __restrict__ out,
-    int nviews, int nu, int nv, float sx, float sy, float sz, int* __restrict__ partial)
+    int nviews, int nu, int nv, float sx, float sy, float sz, int* __restrict__ partial,
+    unsigned* __restrict__ peak)
 {
     __shared__ float tile[RHS][32][33];
     __shared__ int warp_boxes[8][12];
+    __shared__ unsigned warp_top[8][RHS];
     int view = blockIdx.x;
     const float* c = coeff + (long)view * NC;
     int u = blockIdx.y * 32 + threadIdx.x;
     int v0 = blockIdx.z * 32 + threadIdx.y;
     int lo[3][2], hi[3][2];
+    unsigned top[RHS] = {};
     #pragma unroll
     for (int a = 0; a < 3; ++a) { lo[a][0] = nu; hi[a][0] = -1; lo[a][1] = nv; hi[a][1] = -1; }
     #pragma unroll
@@ -797,6 +802,8 @@ __device__ __forceinline__ void weight_images_boxes(
             float value1 = RHS == 2 ? img1[pixel] * weight : 0.f;
             tile[0][threadIdx.y + j][threadIdx.x] = value;
             if (RHS == 2) tile[1][threadIdx.y + j][threadIdx.x] = value1;
+            top[0] = max(top[0], __float_as_uint(fabsf(value)));
+            if (RHS == 2) top[RHS - 1] = max(top[RHS - 1], __float_as_uint(fabsf(value1)));
             // Exact-zero contributions need no footprint, including shifted-batch padding.
             if (value != 0.f || value1 != 0.f) {
                 #pragma unroll
@@ -806,6 +813,11 @@ __device__ __forceinline__ void weight_images_boxes(
                 }
             }
         }
+    }
+    #pragma unroll
+    for (int r = 0; r < RHS; ++r) {
+        unsigned x = __reduce_max_sync(0xffffffffu, top[r]);
+        if (threadIdx.x == 0) warp_top[threadIdx.y][r] = x;
     }
     #pragma unroll
     for (int a = 0; a < 3; ++a) {
@@ -825,6 +837,12 @@ __device__ __forceinline__ void weight_images_boxes(
         for (int w = 1; w < 8; ++w) value = lower ? min(value, warp_boxes[w][tid]) : max(value, warp_boxes[w][tid]);
         long id = ((long)view * gridDim.z + blockIdx.z) * gridDim.y + blockIdx.y;
         partial[id * 12 + tid] = value;
+        if (tid < RHS) {
+            unsigned x = warp_top[0][tid];
+            #pragma unroll
+            for (int w = 1; w < 8; ++w) x = max(x, warp_top[w][tid]);
+            peak[id * 2 + tid] = x;
+        }
     }
     int vo = blockIdx.z * 32 + threadIdx.x;
     int u0 = blockIdx.y * 32 + threadIdx.y;
@@ -842,15 +860,17 @@ __device__ __forceinline__ void weight_images_boxes(
 }
 extern "C" __global__ void weight_images_boxes_tiled(
     const float* __restrict__ coeff, const float* __restrict__ img, float* __restrict__ out,
-    int nviews, int nu, int nv, float sx, float sy, float sz, int* __restrict__ partial)
+    int nviews, int nu, int nv, float sx, float sy, float sz, int* __restrict__ partial,
+    unsigned* __restrict__ peak)
 {
-    weight_images_boxes<1>(coeff, img, nullptr, out, nviews, nu, nv, sx, sy, sz, partial);
+    weight_images_boxes<1>(coeff, img, nullptr, out, nviews, nu, nv, sx, sy, sz, partial, peak);
 }
 extern "C" __global__ void pair_weight_images_boxes_tiled(
     const float* __restrict__ coeff, const float* __restrict__ img, const float* __restrict__ img1, float* __restrict__ out,
-    int nviews, int nu, int nv, float sx, float sy, float sz, int* __restrict__ partial)
+    int nviews, int nu, int nv, float sx, float sy, float sz, int* __restrict__ partial,
+    unsigned* __restrict__ peak)
 {
-    weight_images_boxes<2>(coeff, img, img1, out, nviews, nu, nv, sx, sy, sz, partial);
+    weight_images_boxes<2>(coeff, img, img1, out, nviews, nu, nv, sx, sy, sz, partial, peak);
 }
 extern "C" __global__ void reduce_axis_boxes_tiled(
     const int* __restrict__ partial, int* __restrict__ boxes, int ntiles, int nu, int nv)
@@ -1024,17 +1044,112 @@ extern "C" __global__ void sep_adjoint_thin(
     sep_adjoint_tile<32>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
 }
 
+// Adds x, in units of 1/scale, to a two-word fixed-point cell: the whole units to p[0]
+// and the fraction, in units of 1/(scale fine), to p[words] (see plane_tile). Integer
+// shared atomics are native; float ones are compare-and-swap loops.
+__device__ __forceinline__ void add_fixed(int* p, int words, float x, float scale, float fine)
+{
+    float y = x * scale, whole = rintf(y);
+    // y - whole is exact (Sterbenz), and so is its power-of-two scaling.
+    atomicAdd(p, (int)whole);
+    atomicAdd(p + words, __float2int_rn((y - whole) * fine));
+}
+
 // Adds x0..x3 to four padded shared cells. Pair the two rows of each column:
 // moving one column retains both right-hand cells, so their flush is all zero.
-__device__ __forceinline__ void add4(float* p0, float x0, float* p1, float x1, float* p2,
-                                     float x2, float* p3, float x3)
+__device__ __forceinline__ void add4(int* p0, float x0, int* p1, float x1, int* p2,
+                                     float x2, int* p3, float x3, int words, float scale,
+                                     float fine)
 {
     if (x0 != 0.f || x2 != 0.f) {
-        atomicAdd(p0, x0); atomicAdd(p2, x2);
+        add_fixed(p0, words, x0, scale, fine); add_fixed(p2, words, x2, scale, fine);
     }
     if (x1 != 0.f || x3 != 0.f) {
-        atomicAdd(p1, x1); atomicAdd(p3, x3);
+        add_fixed(p1, words, x1, scale, fine); add_fixed(p3, words, x3, scale, fine);
     }
+}
+
+// A two-word fixed-point cell's value, rounded once.
+__device__ __forceinline__ float fixed_value(const int* p, int words, float unit, double fine)
+{
+    return (float)(((double)p[0] + (double)p[words] * fine) * (double)unit);
+}
+
+// Bounds how many of a view's rays can reach one cell of a tile, from the footprint
+// corners' extremes of the detector-plane depth den = n.d and of Au.d and Av.d
+// (d = point - source): the detector position u = cu + h Au.d / den varies over a
+// cell's 2 x 2 support by at most 2 sup|du/db| + 2 sup|du/dc|, likewise v.
+__device__ __forceinline__ float cell_rays(const float* c, int b, int cc, float denmin,
+                                           float denmax, float au, float av)
+{
+    float lo = fminf(fabsf(denmin), fabsf(denmax)), hi = fmaxf(fabsf(denmin), fabsf(denmax));
+    float g = fabsf(c[16]) / (lo * lo), n = fabsf(comp(c + 13, b)) + fabsf(comp(c + 13, cc));
+    float lu = 2.f * g * ((fabsf(comp(c + 17, b)) + fabsf(comp(c + 17, cc))) * hi + n * au);
+    float lv = 2.f * g * ((fabsf(comp(c + 20, b)) + fabsf(comp(c + 20, cc))) * hi + n * av);
+    // An interval of length l holds at most floor(l) + 1 pixels; one more absorbs rounding.
+    return (floorf(lu * 1.001f) + 2.f) * (floorf(lv * 1.001f) + 2.f);
+}
+
+// A tile's detector footprint for one view: the pixels [ulo, uhi] x [vlo, vhi] whose rays
+// can reach it, and a bound on the rays reaching any one of its cells. False if empty.
+template <int PLANES>
+__device__ __forceinline__ bool tile_footprint(
+    const float* c, const int* ab, int a, int b, int cc, int b0, int nb0, int c0, int nc0,
+    int k, int na, int nu, int nv, int& ulo, int& uhi, int& vlo, int& vhi, float& rays)
+{
+    float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
+    float denmin = 1e30f, denmax = -1e30f, au = 0.f, av = 0.f;
+    #pragma unroll
+    for (int q = 0; q < 4 * PLANES; ++q) {
+        // Corners of the tile's part inside the volume (see sep_adjoint).
+        float pb = q & 1 ? (float)(b0 + nb0) : (float)(b0 - 1);
+        float pc = q & 2 ? (float)(c0 + nc0) : (float)(c0 - 1);
+        float pk = PLANES == 1 ? (float)k : (float)min(k + q / 4, na - 1);
+        float d0 = (a == 0 ? pk : pb) - c[0];
+        float d1 = (a == 1 ? pk : (a == 0 ? pb : pc)) - c[1];
+        float d2 = (a == 2 ? pk : pc) - c[2];
+        float den = c[13] * d0 + c[14] * d1 + c[15] * d2;
+        denmin = fminf(denmin, den); denmax = fmaxf(denmax, den);
+        float lam = c[16] / den;
+        float pu = c[17] * d0 + c[18] * d1 + c[19] * d2;
+        float pv = c[20] * d0 + c[21] * d1 + c[22] * d2;
+        au = fmaxf(au, fabsf(pu)); av = fmaxf(av, fabsf(pv));
+        float uu = c[23] + lam * pu;
+        float vv = c[24] + lam * pv;
+        umin = fminf(umin, uu); umax = fmaxf(umax, uu);
+        vmin = fminf(vmin, vv); vmax = fmaxf(vmax, vv);
+    }
+    // The denominator is affine over the tile. If it crosses zero, its
+    // footprint passes through infinity: the corners cannot bound it.
+    bool unbounded = crosses_zero(denmin, denmax);
+    ulo = ab[0]; uhi = ab[1]; vlo = ab[2]; vhi = ab[3];
+    if (!unbounded) {
+        // Rounded forward crossings can lie just inside a voxel while
+        // an inverse corner rounds past an integer detector pixel.
+        // Round candidate bounds outwards; the forward cell and axis
+        // tests below still determine every interpolation weight.
+        ulo = max((int)floorf(pixel_bound(umin, nu)), ulo);
+        uhi = min((int)ceilf(pixel_bound(umax, nu)), uhi);
+        vlo = max((int)floorf(pixel_bound(vmin, nv)), vlo);
+        vhi = min((int)ceilf(pixel_bound(vmax, nv)), vhi);
+    }
+    // The footprint holds every ray reaching the tile.
+    rays = (float)(uhi - ulo + 1) * (float)(vhi - vlo + 1);
+    if (!unbounded) rays = fminf(rays, cell_rays(c, b, cc, denmin, denmax, au, av));
+    return uhi >= ulo && vhi >= vlo;
+}
+
+// The largest weighted magnitude of right-hand side r over a view's footprint, from the
+// per-32 x 32-tile peaks of weight_images_boxes.
+__device__ __forceinline__ float footprint_peak(const unsigned* peak, int view, int r, int ulo,
+                                               int uhi, int vlo, int vhi, int nu, int nv)
+{
+    int tiles_u = (nu + 31) / 32;
+    const unsigned* tiles = peak + (long)view * ((nv + 31) / 32) * tiles_u * 2;
+    unsigned top = 0;
+    for (int y = vlo / 32; y <= vhi / 32; ++y)
+        for (int x = ulo / 32; x <= uhi / 32; ++x) top = max(top, tiles[(y * tiles_u + x) * 2 + r]);
+    return __uint_as_float(top);
 }
 
 // Non-separable views, rays sampled along axis a: grid (c tiles, b tiles, planes k).
@@ -1045,18 +1160,41 @@ __device__ __forceinline__ void add4(float* p0, float x0, float* p1, float x1, f
 // current crossing in registers and adds them to the tile only as it moves on. img is
 // path-weighted. Views are taken VMAX at a time, and the tile is added to the volume
 // once, after all of them.
+//
+// The tile accumulates in fixed point, exactly and so in any order. Each cell's sum is
+// below a bound B (over the views, the peak weighted magnitude of the image tiles under
+// the footprint times the rays per cell), and the scale 2^(30 - e), with B < 2^e,
+// keeps every partial sum of whole units within 2^30. A second word holds each
+// addition's fraction in units of 2^-f; with at most m additions per cell (the rays per
+// cell), f = 31 - ceil(log2 m) keeps that word's sum within 2^30 too. A cell thus sums
+// its float additions exactly down to 2^-(30 + f) B, and rounds once when written.
 #define VMAX 32
+// Plane-tile kernels' threads per block (set by the compiler options), and the blocks
+// per SM their registers allow.
+#ifndef PLANE_THREADS
+#define PLANE_THREADS 256
+#endif
+#ifndef PLANE_BLOCKS
+#define PLANE_BLOCKS 4
+#endif
+#ifndef WIDE_BLOCKS
+#define WIDE_BLOCKS 3
+#endif
 template <int PC, int RHS = 1, int PLANES = 1>
 __device__ __forceinline__ void plane_tile(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv,
-    float* __restrict__ vol1 = nullptr, const float* __restrict__ img1 = nullptr)
+    const unsigned* __restrict__ peak, float* __restrict__ vol1 = nullptr,
+    const float* __restrict__ img1 = nullptr)
 {
     // Two planes share ray arithmetic and pixel loads. Their 15-row tiles
     // retain the single-plane shared-memory footprint and occupancy.
     constexpr int ROWS = PLANES == 1 ? PB : 15;
     constexpr int RUN = PLANES == 1 ? VRUN : 4;
-    __shared__ float acc[RHS][PLANES][ROWS + 2][PC + 3];  // a cell of padding round the tile: no bounds tests
+    // Whole and fractional words, with a cell of padding round the tile: no bounds tests.
+    constexpr int WORDS = PLANES * (ROWS + 2) * (PC + 3);
+    __shared__ int acc[RHS][2][PLANES][ROWS + 2][PC + 3];
+    __shared__ float scale[RHS], unit[RHS], fine[2], partial[RHS + 1][32];
     __shared__ float cf[VMAX][12];  // source, detector origin, u and v axes
     __shared__ int foot[VMAX][4];   // first column and row, rows, runs per column
     __shared__ int first[VMAX + 1]; // each view's first run in the block's list
@@ -1069,9 +1207,60 @@ __device__ __forceinline__ void plane_tile(
     int k = (VOLUME_Z_FAST || a == 0 ? blockIdx.x : blockIdx.y) * PLANES;
     int nb0 = min(ROWS, nb - b0), nc0 = min(PC, nc - c0);
     if (!any_view(coeff, axis_box, nviews, a, false)) return;
-    for (int i = threadIdx.x; i < RHS * PLANES * (ROWS + 2) * (PC + 3); i += blockDim.x) (&acc[0][0][0][0])[i] = 0.f;
+    for (int i = threadIdx.x; i < RHS * 2 * WORDS; i += blockDim.x) (&acc[0][0][0][0][0])[i] = 0;
     int t = threadIdx.x;
     if (t == 0) touched = 0;
+    {
+        // The fixed-point scales bound every view's contributions.
+        float bound[RHS + 1] = {};  // the right-hand sides', then the additions per cell
+        for (int view = t; view < nviews; view += blockDim.x) {
+            const float* c = coeff + (long)view * NC;
+            const int* ab = axis_box + ((long)view * 3 + a) * 4;
+            int ulo, uhi, vlo, vhi;
+            float rays;
+            if (!separable(c) && ab[1] >= ab[0]
+                && tile_footprint<PLANES>(c, ab, a, b, cc, b0, nb0, c0, nc0, k, na, nu, nv,
+                                          ulo, uhi, vlo, vhi, rays)) {
+                #pragma unroll
+                for (int r = 0; r < RHS; ++r)
+                    bound[r] += footprint_peak(peak, view, r, ulo, uhi, vlo, vhi, nu, nv) * rays;
+                bound[RHS] += rays;
+            }
+        }
+        #pragma unroll
+        for (int r = 0; r <= RHS; ++r) {
+            #pragma unroll
+            for (int o = 16; o; o >>= 1) bound[r] += __shfl_xor_sync(0xffffffffu, bound[r], o);
+            if (t % 32 == 0) partial[r][t / 32] = bound[r];
+        }
+        __syncthreads();
+        if (t == 0) {
+            int e;
+            float additions = 0.f, sums[RHS] = {};
+            for (int w = 0; w < (int)blockDim.x / 32; ++w) {
+                additions += partial[RHS][w];
+                #pragma unroll
+                for (int r = 0; r < RHS; ++r) sums[r] += partial[r][w];
+            }
+            frexpf(fmaxf(additions, 1.f), &e);  // additions < 2^e
+            fine[0] = ldexpf(1.f, min(31 - e, 30));
+            fine[1] = ldexpf(1.f, -min(31 - e, 30));
+            #pragma unroll
+            for (int r = 0; r < RHS; ++r) {
+                float sum = sums[r];
+                // NaN or infinite bounds give a NaN unit, so the output shows the input.
+                frexpf(sum, &e);
+                e = max(e, -96);
+                bool finite = sum <= 3.4028235e38f;
+                scale[r] = finite ? ldexpf(1.f, 30 - e) : 0.f;
+                unit[r] = sum == 0.f ? 0.f : (finite ? ldexpf(1.f, e - 30) : __int_as_float(0x7fc00000));
+            }
+        }
+        __syncthreads();
+    }
+    float scales[RHS], fraction = fine[0];
+    #pragma unroll
+    for (int r = 0; r < RHS; ++r) scales[r] = scale[r];
     for (int start = 0; start < nviews; start += VMAX) {
         int count = min(VMAX, nviews - start);
         int runs_here = 0;
@@ -1085,46 +1274,14 @@ __device__ __forceinline__ void plane_tile(
                 cf[t][3*i + 1] = comp(c + 3*i, b);
                 cf[t][3*i + 2] = comp(c + 3*i, cc);
             }
-            if (!separable(c) && ab[1] >= ab[0]) {
-                float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
-                float denmin = 1e30f, denmax = -1e30f;
-                #pragma unroll
-                for (int q = 0; q < 4 * PLANES; ++q) {
-                    // Corners of the tile's part inside the volume (see sep_adjoint).
-                    float pb = q & 1 ? (float)(b0 + nb0) : (float)(b0 - 1);
-                    float pc = q & 2 ? (float)(c0 + nc0) : (float)(c0 - 1);
-                    float pk = PLANES == 1 ? (float)k : (float)min(k + q / 4, na - 1);
-                    float d0 = (a == 0 ? pk : pb) - c[0];
-                    float d1 = (a == 1 ? pk : (a == 0 ? pb : pc)) - c[1];
-                    float d2 = (a == 2 ? pk : pc) - c[2];
-                    float den = c[13] * d0 + c[14] * d1 + c[15] * d2;
-                    denmin = fminf(denmin, den); denmax = fmaxf(denmax, den);
-                    float lam = c[16] / den;
-                    float uu = c[23] + lam * (c[17] * d0 + c[18] * d1 + c[19] * d2);
-                    float vv = c[24] + lam * (c[20] * d0 + c[21] * d1 + c[22] * d2);
-                    umin = fminf(umin, uu); umax = fmaxf(umax, uu);
-                    vmin = fminf(vmin, vv); vmax = fmaxf(vmax, vv);
-                }
-                // The denominator is affine over the tile. If it crosses zero, its
-                // footprint passes through infinity: the corners cannot bound it.
-                bool unbounded = crosses_zero(denmin, denmax);
-                int ulo = ab[0], uhi = ab[1], vlo = ab[2], vhi = ab[3];
-                if (!unbounded) {
-                    // Rounded forward crossings can lie just inside a voxel while
-                    // an inverse corner rounds past an integer detector pixel.
-                    // Round candidate bounds outwards; the forward cell and axis
-                    // tests below still determine every interpolation weight.
-                    ulo = max((int)floorf(pixel_bound(umin, nu)), ulo);
-                    uhi = min((int)ceilf(pixel_bound(umax, nu)), uhi);
-                    vlo = max((int)floorf(pixel_bound(vmin, nv)), vlo);
-                    vhi = min((int)ceilf(pixel_bound(vmax, nv)), vhi);
-                }
-                int wu = uhi - ulo + 1, wv = vhi - vlo + 1;
-                if (wu > 0 && wv > 0) {
-                    int runs = (wv + RUN - 1) / RUN;
-                    runs_here = wu * runs;
-                    foot[t][0] = ulo; foot[t][1] = vlo; foot[t][2] = wv; foot[t][3] = runs;
-                }
+            int ulo, uhi, vlo, vhi;
+            float rays;
+            if (!separable(c) && ab[1] >= ab[0]
+                && tile_footprint<PLANES>(c, ab, a, b, cc, b0, nb0, c0, nc0, k, na, nu, nv,
+                                          ulo, uhi, vlo, vhi, rays)) {
+                int wv = vhi - vlo + 1, runs = (wv + RUN - 1) / RUN;
+                runs_here = (uhi - ulo + 1) * runs;
+                foot[t][0] = ulo; foot[t][1] = vlo; foot[t][2] = wv; foot[t][3] = runs;
             }
         }
         if (t < 32) {  // each view's first run: a prefix sum over the (<= 32) views
@@ -1208,9 +1365,9 @@ __device__ __forceinline__ void plane_tile(
                         bool next = jb == cb && jc == ccj + 1;
                         #pragma unroll
                         for (int r = 0; r < RHS; ++r) {
-                            float* cell = &acc[r][plane][cb + 1][ccj + 1];
-                            add4(cell, x00[r], cell + 1, next ? 0.f : x01[r],
-                                 cell + (PC + 3), x10[r], cell + (PC + 4), next ? 0.f : x11[r]);
+                            int* cell = &acc[r][0][plane][cb + 1][ccj + 1];
+                            add4(cell, x00[r], cell + 1, next ? 0.f : x01[r], cell + (PC + 3), x10[r],
+                                 cell + (PC + 4), next ? 0.f : x11[r], WORDS, scales[r], fraction);
                             x00[r] = next ? x01[r] : 0.f; x10[r] = next ? x11[r] : 0.f;
                             x01[r] = x11[r] = 0.f;
                         }
@@ -1226,8 +1383,9 @@ __device__ __forceinline__ void plane_tile(
                 if (cb > -100) {
                     #pragma unroll
                     for (int r = 0; r < RHS; ++r) {
-                        float* cell = &acc[r][plane][cb + 1][ccj + 1];
-                        add4(cell, x00[r], cell + 1, x01[r], cell + (PC + 3), x10[r], cell + (PC + 4), x11[r]);
+                        int* cell = &acc[r][0][plane][cb + 1][ccj + 1];
+                        add4(cell, x00[r], cell + 1, x01[r], cell + (PC + 3), x10[r], cell + (PC + 4),
+                             x11[r], WORDS, scales[r], fraction);
                     }
                 }
             }
@@ -1245,8 +1403,10 @@ __device__ __forceinline__ void plane_tile(
                 #pragma unroll
                 for (int plane = 0; plane < PLANES; ++plane) if (k + plane < na) {
                     long offset = (long)(k + plane) * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
-                    vol[offset] += acc[0][plane][jb + 1][jc + 1];
-                    if (RHS == 2) vol1[offset] += acc[1][plane][jb + 1][jc + 1];
+                    vol[offset] += fixed_value(&acc[0][0][plane][jb + 1][jc + 1], WORDS, unit[0], fine[1]);
+                    if (RHS == 2)
+                        vol1[offset] += fixed_value(&acc[RHS - 1][0][plane][jb + 1][jc + 1], WORDS,
+                                                    unit[RHS - 1], fine[1]);
                 }
             }
         }
@@ -1258,27 +1418,32 @@ __device__ __forceinline__ void plane_tile(
         int jc = a == 0 ? i / (PLANES * ROWS) : (i / ROWS) % PC;
         if (jb < nb0 && jc < nc0 && k + plane < na) {
             long offset = (long)(k + plane) * sa + (long)(b0 + jb) * sb + (long)(c0 + jc) * sc;
-            vol[offset] += acc[0][plane][jb + 1][jc + 1];
-            if (RHS == 2) vol1[offset] += acc[1][plane][jb + 1][jc + 1];
+            vol[offset] += fixed_value(&acc[0][0][plane][jb + 1][jc + 1], WORDS, unit[0], fine[1]);
+            if (RHS == 2)
+                vol1[offset] += fixed_value(&acc[RHS - 1][0][plane][jb + 1][jc + 1], WORDS,
+                                            unit[RHS - 1], fine[1]);
         }
     }
 
 }
 
-extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint(
+extern "C" __global__ void __launch_bounds__(PLANE_THREADS, PLANE_BLOCKS) plane_adjoint(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
-    const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
+    const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv,
+    const unsigned* __restrict__ peak)
 {
-    plane_tile<32, 1, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
+    plane_tile<32, 1, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, peak);
 }
 
 // Wider physical-z tiles amortize detector footprints and tile boundaries;
-// z-dominant rays and short z extents retain the narrower shared-memory tile.
-extern "C" __global__ void __launch_bounds__(128, 8) plane_adjoint_wide(
+// z-dominant rays and short z extents retain the narrower shared-memory tile. Its
+// two-word tile allows four blocks per SM, so registers need not be capped for eight.
+extern "C" __global__ void __launch_bounds__(PLANE_THREADS, WIDE_BLOCKS) plane_adjoint_wide(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
-    const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv)
+    const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv,
+    const unsigned* __restrict__ peak)
 {
-    plane_tile<64, 1, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
+    plane_tile<64, 1, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, peak);
 }
 
 // One traversal accumulates the two spatial gradients and their plane moments.
@@ -1602,14 +1767,15 @@ extern "C" __global__ void __launch_bounds__(256, 4) sep_adjoint_cached_thin(
     sep_adjoint_cached_tile<32>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv);
 }
 
-// Two independent right-hand sides share ray coordinates; narrower tiles retain occupancy.
-extern "C" __global__ void __launch_bounds__(128, 8) pair_plane_adjoint(
+// Two independent right-hand sides share ray coordinates. Their two-word tiles allow
+// four blocks per SM.
+extern "C" __global__ void __launch_bounds__(PLANE_THREADS, WIDE_BLOCKS) pair_plane_adjoint(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, const float* __restrict__ img1,
     float* __restrict__ vol, float* __restrict__ vol1,
-    int nx, int ny, int nz, int nu, int nv)
+    int nx, int ny, int nz, int nu, int nv, const unsigned* __restrict__ peak)
 {
-    plane_tile<32, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, vol1, img1);
+    plane_tile<32, 2, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, peak, vol1, img1);
 }
 
 // Two 32-plane row tiles and cached geometry stay within 24 KiB per block.

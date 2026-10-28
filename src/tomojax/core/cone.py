@@ -38,7 +38,7 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core._cone_runtime import cuda_module, use_cuda_cone
+from tomojax.core._cone_runtime import PLANE_THREADS, cuda_module, use_cuda_cone
 from tomojax.core._cuda_joseph import xla_stream
 from tomojax.core.geometry.base import grid_volume_origin
 
@@ -439,7 +439,13 @@ def _separable_adjoint_kernel(grid: Grid, detector: Detector) -> str:
 
 def _weighted_images(
     module: Any, coeff: Any, images: tuple[Any, ...], grid: Grid, det: Detector
-) -> tuple[Any, Any]:
+) -> tuple[Any, Any, Any]:
+    """Path-weighted ``(view, u, v)`` images, their nonzero boxes and peak magnitudes.
+
+    ``peak`` is ``(views, tiles v, tiles u, 2)`` uint32: the FP32 bits of each
+    right-hand side's largest weighted magnitude per 32 x 32 pixel tile, which
+    bound the transposes' fixed-point tiles.
+    """
     import cupy as cp
 
     views = int(coeff.shape[0])
@@ -452,6 +458,7 @@ def _weighted_images(
     # view the rest holds each tile's bounds. One tile writes its box directly.
     boxes = cp.empty((views * (ntiles + 1 if ntiles > 1 else 1), 3, 4), cp.int32)
     partial = boxes[views:] if ntiles > 1 else boxes
+    peak = cp.empty((views, tiles_v, tiles_u, 2), cp.uint32)
     kernel = "pair_weight_images_boxes_tiled" if paired else "weight_images_boxes_tiled"
     module.get_function(kernel)(
         (views, tiles_u, tiles_v),
@@ -459,7 +466,7 @@ def _weighted_images(
         (
             coeff, *(cp.asarray(image) for image in images), weighted,
             np.int32(views), np.int32(det.nu), np.int32(det.nv),
-            np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz), partial,
+            np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz), partial, peak,
         ),
     )  # fmt: skip
     if ntiles > 1:
@@ -468,7 +475,7 @@ def _weighted_images(
             (32, 12),
             (partial, boxes, np.int32(ntiles), np.int32(det.nu), np.int32(det.nv)),
         )
-    return weighted, boxes[:views]
+    return weighted, boxes[:views], peak
 
 
 def adjoint_into(
@@ -496,7 +503,7 @@ def adjoint_into(
     if target.data.ptr != initial.data.ptr:
         target[...] = initial
     coeff, images = cp.asarray(coeff), cp.asarray(images)
-    weighted, boxes = _weighted_images(module, coeff, (images,), grid, det)
+    weighted, boxes, peak = _weighted_images(module, coeff, (images,), grid, det)
     sizes = (grid.nx, grid.ny, grid.nz, det.nu, det.nv)
     dims = tuple(np.int32(x) for x in sizes)
     extent = (grid.nx, grid.ny, grid.nz)
@@ -526,8 +533,8 @@ def adjoint_into(
                 if z_fast or axis == 0
                 else (-(-nb // 15), -(-extent[axis] // 2), -(-nc // tile_c))
             ),
-            (128,),
-            (*part, np.int32(axis), weighted, target, *dims),
+            (PLANE_THREADS,),
+            (*part, np.int32(axis), weighted, target, *dims, peak),
         )
 
 
@@ -561,7 +568,7 @@ def adjoint_pair_into(
         if target.data.ptr != initial.data.ptr:
             target[...] = initial
     coeff = cp.asarray(coeff)
-    weighted, boxes = _weighted_images(module, coeff, (images0, images1), grid, det)
+    weighted, boxes, peak = _weighted_images(module, coeff, (images0, images1), grid, det)
     # Channel-major planes also feed the original separable kernels without copies.
     separate = (weighted[0], weighted[1])
     name = _separable_adjoint_kernel(grid, det)
@@ -588,12 +595,12 @@ def adjoint_pair_into(
         nb, nc = (extent[i] for i in range(3) if i != axis)
         module.get_function("pair_plane_adjoint")(
             (
-                (extent[axis], -(-nb // 32), -(-nc // 32))
+                (-(-extent[axis] // 2), -(-nb // 15), -(-nc // 32))
                 if z_fast or axis == 0
-                else (-(-nb // 32), extent[axis], -(-nc // 32))
+                else (-(-nb // 15), -(-extent[axis] // 2), -(-nc // 32))
             ),
-            (128,),
-            (*part, np.int32(axis), *separate, *targets, *dims),
+            (PLANE_THREADS,),
+            (*part, np.int32(axis), *separate, *targets, *dims, peak),
         )
 
 
