@@ -140,7 +140,7 @@ def project_and_score_stack(
         and use_plain_l2_fast_path
         and not require_differentiable_projector
     ):
-        fallback_reason = _cuda_sinogram_fallback_reason(
+        fallback_reason = cuda_sinogram_fallback_reason(
             pose_stack=pose_stack,
             grid=grid,
             detector=detector,
@@ -283,7 +283,7 @@ def alignment_projector_backend_provenance(
             fallback_reason="alignment objectives require gradient-safe projector semantics",
             differentiability="gradient_safe",
         )
-    reason = _cuda_sinogram_fallback_reason(
+    reason = cuda_sinogram_fallback_reason(
         pose_stack=pose_stack,
         grid=grid,
         detector=detector,
@@ -300,7 +300,7 @@ def alignment_projector_backend_provenance(
     )
 
 
-def _cuda_sinogram_fallback_reason(
+def cuda_sinogram_fallback_reason(
     *,
     pose_stack: jnp.ndarray,
     grid: Grid,

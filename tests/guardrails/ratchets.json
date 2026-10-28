@@ -23,7 +23,7 @@
     "simulate": 19
   },
   "long_files": {
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1025
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1006
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 139,
@@ -51,7 +51,7 @@
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 120,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
-  "alignment_code_lines": 17088,
+  "alignment_code_lines": 17069,
   "suppressions": {
     "noqa": 6,
     "type: ignore": 28,

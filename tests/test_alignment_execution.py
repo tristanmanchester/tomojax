@@ -394,7 +394,8 @@ def test_alignment_cuda_backend_probe_uses_options_api(
         return None, missing_reason
 
     monkeypatch.setattr(reconstruction_stage.jax, "default_backend", lambda: "gpu")
-    monkeypatch.setattr(reconstruction_stage, "resolve_cuda_callable", resolve)
+    # The stage shares the fixed-volume objective's support probe.
+    monkeypatch.setattr("tomojax.alignment._objectives.fixed_volume.resolve_cuda_callable", resolve)
 
     backend, reason = reconstruction_stage._resolve_reconstruction_projector_backend(
         requested_backend="cuda",

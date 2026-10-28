@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
+from tomojax.alignment._objectives.fixed_volume import cuda_sinogram_fallback_reason
 from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.alignment._profiles import (
     ReconstructionQualityPolicy,
@@ -25,7 +26,6 @@ from tomojax.alignment._results import record_reconstruction_info as _record_rec
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.backend_policy import normalize_projector_backend
-from tomojax.core.cuda_projector_resolver import resolve_cuda_callable
 from tomojax.core.devices import shared_devices
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
@@ -140,33 +140,14 @@ def _resolve_reconstruction_projector_backend(
         backend = "unknown"
     if backend != "gpu":
         return "jax", f"cuda alignment reconstruction requires gpu backend; got {backend}"
-    support_fn, reason = resolve_cuda_callable(
-        "cuda_projector_sinogram_unsupported_reason",
-        missing_reason="cuda_sinogram_support_check_missing",
+    reason = cuda_sinogram_fallback_reason(
+        pose_stack=T_all,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        det_grid=det_grid,
+        gather_dtype=gather_dtype,
     )
-    if support_fn is not None:
-        try:
-            options_cls, options_reason = resolve_cuda_callable(
-                "CudaProjectorOptions",
-                missing_reason="cuda_projector_options_missing",
-            )
-            if options_cls is None:
-                reason = options_reason
-            else:
-                options = options_cls(
-                    gather_dtype=gather_dtype,
-                    det_grid=det_grid,
-                    state_mode="cached",
-                )
-                reason = support_fn(
-                    T_all,
-                    grid,
-                    detector,
-                    volume,
-                    options=options,
-                )
-        except Exception as exc:
-            reason = f"{type(exc).__name__}: {exc}"
     if reason:
         return "jax", reason
     return "cuda", None
