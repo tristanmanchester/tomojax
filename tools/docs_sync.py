@@ -34,6 +34,12 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
             ("docs/installation.md", "installation", None, "CPU or CUDA dependencies."),
             ("docs/quickstart.md", "quickstart", None, "From a scan file to inspected slices."),
             (
+                "docs/beamline-exports.md",
+                "beamline-exports",
+                None,
+                "First slices from ESRF, TOMCAT/SYRMEP and I13 exports.",
+            ),
+            (
                 "docs/synthetic-tomography.md",
                 "synthetic-tomography",
                 None,
@@ -65,6 +71,12 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "Command line",
                 "The commands, their conventions and --config files.",
             ),
+            (
+                "docs/pytorch.md",
+                "pytorch",
+                None,
+                "Use the projector as a differentiable PyTorch operator.",
+            ),
         ],
     ),
     (
@@ -82,6 +94,12 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 None,
                 "AlignConfig settings, Jacobians, coupling and linear-solve diagnostics.",
             ),
+            (
+                "docs/held-out-evaluation.md",
+                "held-out-evaluation",
+                None,
+                "Split views or detector columns to test a fit on data it did not see.",
+            ),
         ],
     ),
     (
@@ -92,6 +110,41 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "corrections",
                 "Correction steps",
                 "From detector counts to line integrals, and steps on line integrals.",
+            ),
+        ],
+    ),
+    (
+        "Package guides",
+        [
+            (
+                "src/tomojax/geometry/README.md",
+                "geometry",
+                "Geometry",
+                "Grids, detectors, geometries and poses.",
+            ),
+            (
+                "src/tomojax/forward/README.md",
+                "forward-projection",
+                "Forward projection",
+                "Projector model and derivative choices.",
+            ),
+            (
+                "src/tomojax/recon/README.md",
+                "reconstruction",
+                "Reconstruction",
+                "Algorithms and their configuration.",
+            ),
+            (
+                "src/tomojax/io/README.md",
+                "io",
+                "IO",
+                "Datasets, acquisition metadata and TIFF angle files.",
+            ),
+            (
+                "src/tomojax/alignment/README.md",
+                "alignment-configuration",
+                "Alignment configuration",
+                "Configurations, plans and checkpoints behind tj.align.",
             ),
         ],
     ),
@@ -147,6 +200,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
     ),
 ]
 
+REPO_URL = re.compile(rf"{re.escape(GITHUB)}/(?:blob|tree|raw)/main/")
 LINK = re.compile(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)")
 CODE_SPAN = re.compile(r"(`+)(.+?)\1")
 
@@ -177,10 +231,15 @@ def _rewrite(line: str, source: str, routes: dict[str, str], images: set[str]) -
 
     def replace(match: re.Match[str]) -> str:
         bang, text, target = match[1], match[2], match[3]
-        if re.match(r"[a-z]+:", target) or target.startswith("#"):
+        base = posixpath.dirname(source)
+        if repo := REPO_URL.match(target):
+            # Links written for GitHub (the README is also the PyPI page) are
+            # relative to the repository root.
+            target, base = target[repo.end() :], ""
+        elif re.match(r"[a-z]+:", target) or target.startswith("#"):
             return match.group(0)
         path, _, anchor = target.partition("#")
-        resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), path))
+        resolved = posixpath.normpath(posixpath.join(base, path))
         suffix = f"#{anchor}" if anchor else ""
         if resolved.lower().endswith(IMAGE_SUFFIXES):
             images.add(resolved)
