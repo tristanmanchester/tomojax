@@ -26,7 +26,6 @@ from .loss_specs import (
     loss_spec_name,
     loss_spec_params,
     loss_spec_supports_setup_validation_lm,
-    parse_loss_spec,
 )
 from .loss_state import LossState
 
@@ -37,7 +36,6 @@ class PerViewLossFn(Protocol):
         pred_chunk: jnp.ndarray,
         tar_chunk: jnp.ndarray,
         mask_chunk: jnp.ndarray | None,
-        view_indices: jnp.ndarray | None = None,
     ) -> jnp.ndarray: ...
 
 
@@ -103,37 +101,15 @@ def _build_loss_from_kind(
         pred_chunk: jnp.ndarray,
         tar_chunk: jnp.ndarray,
         mask_chunk: jnp.ndarray | None,
-        view_indices: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
-        if mask_chunk is None and state.mask is None:
+        """Each view's loss; ``mask_chunk`` is these views' slice of ``state.mask``."""
+        if mask_chunk is None:
             return jax.vmap(lambda a, b: f(a, b, state))(pred_chunk, tar_chunk)
 
-        bsz = pred_chunk.shape[0]
-        local_indices = jnp.arange(bsz, dtype=jnp.int32)
-        if view_indices is None:
-            global_indices = local_indices
-        else:
-            global_indices = jnp.asarray(view_indices, dtype=jnp.int32)
+        def apply_one(a: jnp.ndarray, b: jnp.ndarray, m: jnp.ndarray) -> jnp.ndarray:
+            return f(a, b, LossState(kind=state.kind, params=state.params, mask=m))
 
-        def apply_one(
-            a: jnp.ndarray,
-            b: jnp.ndarray,
-            local_idx: jnp.ndarray,
-            global_idx: jnp.ndarray,
-        ) -> jnp.ndarray:
-            ls = LossState(kind=state.kind, params=state.params)
-            if state.mask is not None:
-                ls.mask = state.mask[global_idx]
-            if mask_chunk is not None:
-                ls.mask = mask_chunk[local_idx]
-            return f(a, b, ls)
-
-        return jax.vmap(apply_one, in_axes=(0, 0, 0, 0))(
-            pred_chunk,
-            tar_chunk,
-            local_indices,
-            global_indices,
-        )
+        return jax.vmap(apply_one)(pred_chunk, tar_chunk, mask_chunk)
 
     return per_view_fn, state
 
@@ -174,21 +150,10 @@ def build_loss_adapter(spec: AlignmentLossSpec, targets: jnp.ndarray) -> LossAda
     )
 
 
-def build_loss(
-    kind: str,
-    params: dict[str, float] | None,
-    targets: jnp.ndarray,
-) -> tuple[PerViewLossFn, LossState]:
-    """Build a per-view loss function and its precomputed state."""
-    adapter = build_loss_adapter(parse_loss_spec(kind, params), targets)
-    return adapter.per_view_loss, adapter.state
-
-
 __all__ = [
     "GaussNewtonWeightFn",
     "LossAdapter",
     "PerViewLossFn",
-    "build_loss",
     "build_loss_adapter",
     "loss_supports_setup_validation_lm",
 ]

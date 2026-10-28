@@ -27,7 +27,6 @@
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 139,
-    "src/tomojax/alignment/_objectives/fixed_volume.py::project_and_score_stack": 157,
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 255,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 179,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
@@ -51,7 +50,7 @@
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 120,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
-  "alignment_code_lines": 17069,
+  "alignment_code_lines": 17002,
   "suppressions": {
     "noqa": 6,
     "type: ignore": 28,
@@ -59,8 +58,6 @@
   },
   "complex_functions": [
     "src/tomojax/alignment/_model/state.py::C901::alignment_state_from_checkpoint",
-    "src/tomojax/alignment/_objectives/fixed_volume.py::C901::project_and_score_stack",
-    "src/tomojax/alignment/_objectives/fixed_volume.py::PLR0915::project_and_score_stack",
     "src/tomojax/alignment/_pose/_coupled_program.py::C901::_build_program",
     "src/tomojax/alignment/_pose/_coupled_program.py::PLR0915::_build_program",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::C901::_run_reconstruction_step",

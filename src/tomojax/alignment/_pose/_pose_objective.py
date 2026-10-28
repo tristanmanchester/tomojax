@@ -85,7 +85,6 @@ def _build_pose_align_loss(
             projector_unroll=int(ctx.cfg.projector_unroll),
             checkpoint_projector=ctx.cfg.checkpoint_projector,
             gather_dtype=ctx.cfg.gather_dtype,
-            view_indices=jnp.arange(ctx.n_views, dtype=jnp.int32),
             backend=ctx.cfg.backend,
             # Gauss-Newton only evaluates this loss; its pose columns are separate.
             require_differentiable_projector=ctx.cone is None,
