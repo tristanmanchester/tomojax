@@ -32,6 +32,7 @@ from tomojax.recon._projection import (
     poisson_operators,
     resolve_geometry_projector,
 )
+from tomojax.recon._volume_storage import pack_volume, resident_model, restore_volume, volume_shape
 
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
@@ -173,6 +174,7 @@ def _solve(
     axial: bool,
     sensitivities: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
+    initial, support = pack_volume(initial, model), pack_volume(support, model)
     sensitivity, correction = poisson_operators(
         poses, grid, detector, det_grid, backend, batch_size, model, indices, valid, stream=stream
     )
@@ -183,7 +185,7 @@ def _solve(
         sensitivity, _ = poisson_operators(
             poses, normal_grid, normal_detector, None, backend, batch_size, model, indices, valid
         )
-    shape = (grid.nz, grid.ny, grid.nx)
+    shape = volume_shape(model, grid)
     x = jnp.ones(shape, jnp.float32) if initial is None else initial
     if support is not None:
         x = jnp.where(support, x, 0.0)
@@ -247,6 +249,7 @@ def _run_device(
     det_grid: tuple[jax.Array, jax.Array] | None,
 ) -> jax.Array:
     """The existing resident-volume update, retaining view-streaming and norm placement."""
+    model = resident_model(model, backend)
     iterations, subsets, batch = map(
         operator.index, (config.iterations, config.subsets, config.views_per_batch)
     )
@@ -302,7 +305,7 @@ def _run_device(
             volume.block_until_ready()  # Host registrations must outlive every callback.
     if not bool(good):
         raise ValueError("mlem: projections and initial volume must be finite and nonnegative")
-    return volume
+    return restore_volume(volume, model)
 
 
 def mlem(

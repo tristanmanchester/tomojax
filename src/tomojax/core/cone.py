@@ -29,10 +29,8 @@ Two implementations agree to FP32 rounding:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from functools import cache, partial
-from importlib.resources import files
-import os
+from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -40,6 +38,7 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core._cone_runtime import cuda_module, use_cuda_cone
 from tomojax.core._cuda_joseph import xla_stream
 from tomojax.core.geometry.base import grid_volume_origin
 
@@ -90,6 +89,34 @@ class ConeModel:
     """
 
     parts: tuple[tuple[int | None, ConeBeam, Detector], ...]
+    _z_fast: bool = field(default=False, repr=False)
+
+    def volume_shape(self, grid: Grid) -> tuple[int, int, int]:
+        """The model's internal buffer shape; geometry coordinates stay physical xyz."""
+        return (grid.nx, grid.ny, grid.nz) if self._z_fast else (grid.nz, grid.ny, grid.nx)
+
+    @property
+    def private_storage(self) -> bool:
+        """Whether this internal model uses solver-private volume storage."""
+        return self._z_fast
+
+    def project(
+        self, volume: jax.Array, coeff: jax.Array, *, grid: Grid, detector: Detector, backend: str
+    ) -> jax.Array:
+        """Project a batch in this model's storage order."""
+        if self._z_fast:
+            from tomojax.core._cone_autodiff import differentiable_forward
+
+            return differentiable_forward(coeff, volume, grid, detector, z_fast=True)
+        return cone_project(volume, coeff, grid, detector, backend=backend)
+
+    def project_ones(
+        self, coeff: jax.Array, *, grid: Grid, detector: Detector, backend: str
+    ) -> jax.Array:
+        """Project uniform support without allocating a private volume."""
+        if self._z_fast:
+            return _project_ones_cuda(coeff, grid, detector, z_fast=True)
+        return cone_project_ones(coeff, grid, detector, backend=backend)
 
     def backproject(
         self,
@@ -102,6 +129,8 @@ class ConeModel:
         accumulate: jax.Array,
     ) -> jax.Array:
         """Accumulate a batch through the exact cone transpose."""
+        if self._z_fast:
+            return adjoint_cuda(images, coeff, grid, detector, accumulate, z_fast=True)
         return cone_backproject(
             images, coeff, grid, detector, backend=backend, accumulate=accumulate
         )
@@ -117,6 +146,8 @@ class ConeModel:
         accumulate: tuple[jax.Array, jax.Array],
     ) -> tuple[jax.Array, jax.Array]:
         """Accumulate two batch transposes sharing ray geometry and image workspace."""
+        if self._z_fast:
+            return _adjoint_pair_cuda(images, coeff, grid, detector, accumulate, z_fast=True)
         return cone_backproject_pair(
             images, coeff, grid, detector, backend=backend, accumulate=accumulate
         )
@@ -330,29 +361,14 @@ def _adjoint_jax(
 # ----------------------------------------------------------------------------- CUDA
 
 
-def use_cuda_cone() -> bool:
-    """Return whether cone projections run as CUDA kernels (``TOMOJAX_CUDA_KERNELS=0`` disables)."""
-    if os.environ.get("TOMOJAX_CUDA_KERNELS", "auto") == "0":
-        return False
-    from tomojax.core._cuda_joseph import cuda_gather_available
-
-    return cuda_gather_available()
-
-
-@cache
-def cuda_module() -> Any:
-    """Shared cone CUDA kernels, compiled lazily on the active device."""
-    import cupy as cp
-
-    source = files("tomojax.core").joinpath("cone_kernels.cu").read_text(encoding="utf-8")
-    return cp.RawModule(code=source)
-
-
-def forward_into(out: Any, coeff: Any, volume: Any, *, grid: Grid, det: Detector) -> None:
+def forward_into(
+    out: Any, coeff: Any, volume: Any, *, grid: Grid, det: Detector, z_fast: bool = False
+) -> None:
     """Launch the forward kernels on CuPy's current stream: ``out`` is ``(views, nv, nu)``.
 
     The arrays are CuPy arrays (or CUDA buffers) on the current device;
-    ``volume`` is C-ordered ``(nz, ny, nx)``.
+    ``volume`` is C-ordered ``(nz, ny, nx)``, or solver-private
+    ``(nx, ny, nz)`` when ``z_fast`` is set.
     Nearby source directions share view packets; separated directions use spatial packets.
     """
     import cupy as cp
@@ -364,6 +380,11 @@ def forward_into(out: Any, coeff: Any, volume: Any, *, grid: Grid, det: Detector
         np.int32(det.nu), np.int32(det.nv),
         np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz), np.int32(views),
     )  # fmt: skip
+    if z_fast:
+        cuda_module(z_fast=True).get_function("cone_forward_z_fast")(
+            (views, -(-det.nu // 8), -(-det.nv // 32)), (256,), args[:-1]
+        )
+        return
     suffix = "" if grid.nx * grid.ny * grid.nz <= 2**32 else "64"
     module = cuda_module()
     module.get_function("cone_forward_dense" + suffix)(
@@ -379,11 +400,14 @@ def _launch_forward(context: Any, out: Any, *args: Any, **options: Any) -> None:
         forward_into(out, *args, **options)
 
 
-def box_forward_into(out: Any, coeff: Any, *, grid: Grid, det: Detector) -> None:
+def box_forward_into(
+    out: Any, coeff: Any, *, grid: Grid, det: Detector, z_fast: bool = False
+) -> None:
     """Launch the uniform-support forward on CuPy's current stream (see :func:`forward_into`)."""
     import cupy as cp
 
-    cuda_module().get_function("cone_box_forward")(
+    module = cuda_module(z_fast=True) if z_fast else cuda_module()
+    module.get_function("cone_box_forward")(
         (int(coeff.shape[0]), -(-(det.nu * det.nv) // 128)),
         (128,),
         (
@@ -456,16 +480,18 @@ def adjoint_into(
     *,
     grid: Grid,
     det: Detector,
+    z_fast: bool = False,
 ) -> None:
     """Set ``out`` to ``accumulate`` plus the exact transpose, on CuPy's current stream.
 
     ``images`` is ``(views, nv, nu)``; ``out`` and ``accumulate`` are
-    ``(nz, ny, nx)`` and may be the same array.
+    ``(nz, ny, nx)`` (or private ``(nx, ny, nz)`` with ``z_fast``)
+    and may be the same array.
     """
     import cupy as cp
 
     views = int(coeff.shape[0])
-    module = cuda_module()
+    module = cuda_module(z_fast=True) if z_fast else cuda_module()
     separable_adjoint = module.get_function(_separable_adjoint_kernel(grid, det))
     target, initial = cp.asarray(out), cp.asarray(accumulate)
     if target.data.ptr != initial.data.ptr:
@@ -482,7 +508,11 @@ def adjoint_into(
         for axis in (0, 1):
             na, nb = extent[axis], extent[1 - axis]
             separable_adjoint(
-                (-(-nb // 64), na, -(-grid.nz // 64)),
+                (
+                    (-(-grid.nz // 64), -(-nb // 64), na)
+                    if z_fast
+                    else (-(-nb // 64), na, -(-grid.nz // 64))
+                ),
                 (256,),
                 (*part, np.int32(axis), i_part, target, *dims),
             )
@@ -493,7 +523,9 @@ def adjoint_into(
             tile_c = 64 if wide else 32
             module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")(
                 (
-                    (-(-extent[axis] // 2), -(-nb // 15), -(-nc // tile_c))
+                    (-(-nc // tile_c), -(-nb // 15), -(-extent[axis] // 2))
+                    if z_fast
+                    else (-(-extent[axis] // 2), -(-nb // 15), -(-nc // tile_c))
                     if axis == 0
                     else (-(-nb // 15), -(-extent[axis] // 2), -(-nc // tile_c))
                 ),
@@ -517,6 +549,7 @@ def adjoint_pair_into(
     *,
     grid: Grid,
     det: Detector,
+    z_fast: bool = False,
 ) -> None:
     """Two exact transposes sharing ray geometry, on CuPy's current stream.
 
@@ -524,7 +557,7 @@ def adjoint_pair_into(
     """
     import cupy as cp
 
-    module = cuda_module()
+    module = cuda_module(z_fast=True) if z_fast else cuda_module()
     targets = tuple(cp.asarray(value) for value in out)
     for target, value in zip(targets, (initial0, initial1), strict=True):
         initial = cp.asarray(value)
@@ -545,7 +578,11 @@ def adjoint_pair_into(
         part = (coeff[start : start + count], boxes[start : start + count], np.int32(count))
         for axis in (0, 1):
             depth = 32 if paired_separable else 64
-            shape = (-(-extent[1 - axis] // 64), extent[axis], -(-grid.nz // depth))
+            shape = (
+                (-(-grid.nz // depth), -(-extent[1 - axis] // 64), extent[axis])
+                if z_fast
+                else (-(-extent[1 - axis] // 64), extent[axis], -(-grid.nz // depth))
+            )
             if paired_separable:
                 separable(
                     shape,
@@ -569,7 +606,9 @@ def adjoint_pair_into(
             nb, nc = (extent[i] for i in range(3) if i != axis)
             module.get_function("pair_plane_adjoint")(
                 (
-                    (extent[axis], -(-nb // 32), -(-nc // 32))
+                    (-(-nc // 32), -(-nb // 32), extent[axis])
+                    if z_fast
+                    else (extent[axis], -(-nb // 32), -(-nc // 32))
                     if axis == 0
                     else (-(-nb // 32), extent[axis], -(-nc // 32))
                 ),
@@ -594,10 +633,12 @@ def forward_cuda(
     coeff: jax.Array,
     grid: Grid,
     detector: Detector,
+    *,
+    z_fast: bool = False,
 ) -> jax.Array:
     """Raw CUDA projection; AD rules wrap this same launch."""
     call = buffer_callback(
-        partial(_launch_forward, grid=grid, det=detector),
+        partial(_launch_forward, grid=grid, det=detector, z_fast=z_fast),
         jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
         vmap_method="sequential",
     )
@@ -606,7 +647,15 @@ def forward_cuda(
 
 
 def _launch_pose_columns(
-    context: Any, out: Any, coeff: Any, tangent: Any, volume: Any, *, grid: Grid, det: Detector
+    context: Any,
+    out: Any,
+    coeff: Any,
+    tangent: Any,
+    volume: Any,
+    *,
+    grid: Grid,
+    det: Detector,
+    z_fast: bool = False,
 ) -> None:
     import cupy as cp
 
@@ -616,8 +665,9 @@ def _launch_pose_columns(
         views, width = coeff.shape[-2], tangent.shape[-2]
         coeff = cp.broadcast_to(coeff, (*batch, views, NC))
         tangent = cp.broadcast_to(tangent, (*batch, views, width, 12))
-        kernel = cuda_module().get_function("cone_pose_columns")
-        shape = (grid.nz, grid.ny, grid.nx)
+        module = cuda_module(z_fast=True) if z_fast else cuda_module()
+        kernel = module.get_function("cone_pose_columns")
+        shape = (grid.nx, grid.ny, grid.nz) if z_fast else (grid.nz, grid.ny, grid.nx)
         dimensions = (
             np.int32(grid.nx), np.int32(grid.ny), np.int32(grid.nz),
             np.int32(det.nu), np.int32(det.nv), np.int32(width),
@@ -655,8 +705,20 @@ def cone_pose_columns(
     dominant axis is held fixed: its switches are not differentiable.
     Interpolation derivatives use the current bilinear cell.
     """
+    return pose_columns_cuda(volume, coeff, tangent=tangent, grid=grid, detector=detector)
+
+
+def pose_columns_cuda(
+    volume: jax.Array,
+    coeff: jax.Array,
+    *,
+    tangent: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    z_fast: bool = False,
+) -> jax.Array:
     call = buffer_callback(
-        partial(_launch_pose_columns, grid=grid, det=detector),
+        partial(_launch_pose_columns, grid=grid, det=detector, z_fast=z_fast),
         jax.ShapeDtypeStruct(
             (coeff.shape[0], 1 + tangent.shape[1], detector.nv, detector.nu), jnp.float32
         ),
@@ -665,20 +727,25 @@ def cone_pose_columns(
     return call(coeff, tangent, volume.astype(jnp.float32))
 
 
-def _adjoint_cuda(
+def adjoint_cuda(
     images: jax.Array,
     coeff: jax.Array,
     grid: Grid,
     detector: Detector,
     accumulate: jax.Array,
+    *,
+    z_fast: bool = False,
 ) -> jax.Array:
     call = buffer_callback(
         partial(
             _launch_adjoint,
             grid=grid,
             det=detector,
+            z_fast=z_fast,
         ),
-        jax.ShapeDtypeStruct((grid.nz, grid.ny, grid.nx), jnp.float32),
+        jax.ShapeDtypeStruct(
+            (grid.nx, grid.ny, grid.nz) if z_fast else (grid.nz, grid.ny, grid.nx), jnp.float32
+        ),
         input_output_aliases={2: 0},
         vmap_method="sequential",
     )
@@ -736,8 +803,14 @@ def cone_project_ones(
     if _resolve(backend) != "cuda":
         ones = jnp.ones((grid.nz, grid.ny, grid.nx), jnp.float32)
         return cone_project(ones, coeff, grid, detector, backend="jax")
+    return _project_ones_cuda(coeff, grid, detector)
+
+
+def _project_ones_cuda(
+    coeff: jax.Array, grid: Grid, detector: Detector, *, z_fast: bool = False
+) -> jax.Array:
     call = buffer_callback(
-        partial(_launch_box_forward, grid=grid, det=detector),
+        partial(_launch_box_forward, grid=grid, det=detector, z_fast=z_fast),
         jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
         vmap_method="sequential",
     )
@@ -761,7 +834,7 @@ def cone_backproject(
     )
     images = jnp.asarray(images, jnp.float32)
     if _resolve(backend) == "cuda":
-        return _adjoint_cuda(images, coeff, grid, detector, initial)
+        return adjoint_cuda(images, coeff, grid, detector, initial)
     return _adjoint_jax(images, coeff, grid, detector, initial)
 
 
@@ -795,13 +868,18 @@ def _adjoint_pair_cuda(
     grid: Grid,
     detector: Detector,
     initial: tuple[jax.Array, jax.Array],
+    *,
+    z_fast: bool = False,
 ) -> tuple[jax.Array, jax.Array]:
-    shape = jax.ShapeDtypeStruct((grid.nz, grid.ny, grid.nx), jnp.float32)
+    shape = jax.ShapeDtypeStruct(
+        (grid.nx, grid.ny, grid.nz) if z_fast else (grid.nz, grid.ny, grid.nx), jnp.float32
+    )
     call = buffer_callback(
         partial(
             _launch_adjoint_pair,
             grid=grid,
             det=detector,
+            z_fast=z_fast,
         ),
         (shape, shape),
         input_output_aliases={3: 0, 4: 1},

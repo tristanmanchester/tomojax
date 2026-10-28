@@ -30,6 +30,7 @@ from tomojax.recon._projection import (
     resolve_geometry_projector,
     subset_operators,
 )
+from tomojax.recon._volume_storage import pack_volume, resident_model, restore_volume, volume_shape
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -164,10 +165,11 @@ def _solve(
     host_columns: jax.Array | None = None,
     column_device: jax.sharding.Sharding | None = None,
 ) -> jax.Array:
+    initial, support = pack_volume(initial, model), pack_volume(support, model)
     select = subset_operators(
         poses, grid, detector, det_grid, backend, batch, model, subsets, stream=stream
     )
-    shape = (grid.nz, grid.ny, grid.nx)
+    shape = volume_shape(model, grid)
     normalization = select
     normal_rows = detector.nv
     normal_shape = shape
@@ -480,6 +482,8 @@ class SIRTCall:
                 model=model, backend=backend, poses=stack_view_poses(geometry, n),
                 bounds=(lower, upper), out=out,
             )  # fmt: skip
+        public_model = model
+        model = resident_model(model, backend)
         initial, stream, cache_columns = _storage(
             projections,
             init_x,
@@ -519,13 +523,13 @@ class SIRTCall:
             )  # fmt: skip
             if stream:
                 volume.block_until_ready()  # callbacks must finish before unregistering the source
-        return volume, {
+        return restore_volume(volume, model), {
             "effective_iterations": iterations,
             "subset_updates": iterations * subsets,
             "termination": "iteration_limit",
             "stream_projections": stream,
             "projector_backend": backend,
-            "projector_model": model,
+            "projector_model": public_model,
         }
 
     def _host_columns(

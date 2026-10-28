@@ -58,6 +58,10 @@ workflow policy stays outside core.
   the package, but the core root should not become a broad facade for them.
 - CUDA implementations must be optional fast paths with explicit fallback
   reasons; unexpected kernel errors should not be silently swallowed.
+- Public volume arrays are `(z, y, x)`. Resident CUDA cone solvers may use a
+  private z-contiguous representation, with matching projector, transpose and
+  pose derivatives. Boundary permutations allocate one output and a bounded
+  shared-memory tile, rather than volume-sized autotuning trials.
 - Domain orchestration belongs outside core. Core modules should expose reusable
   math and validation primitives, not alignment, reconstruction, data-loading, or
   CLI workflows.

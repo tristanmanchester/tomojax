@@ -91,6 +91,102 @@ reference and independent analytic phantoms. The Zeiss vendor comparison uses
 a fixed registered valid-data region and an intensity-affine fit as an image
 diagnostic, not as a truth volume or an acceptance threshold.
 
+## Resident cone volume storage
+
+Measured 2026-10-27–28 on Omarchy, RTX 4070 Laptop 8 GB, under concurrent
+CPU load. The control is `c7d8578d`, with public `(x, y, z)` volumes. The
+candidate commits below use public `(z, y, x)` volumes and private
+z-contiguous resident iterates. All original views and calibrated grids are
+retained: Walnut one/three orbits at binning 2, Nikon and Zeiss at binning 2,
+and both CuO scans at binning 4. Every solve starts from FDK. CGLS uses three
+iterations; ordered-subset rows use one sweep with the subset counts below.
+
+These are **T3 pipeline agreements, not reconstruction accuracy**. Image
+differences compare physical voxels after axis permutation, without fitting
+scale or alignment. The maximum relative peak difference over these pairs is
+5.18e-7. Walnut-support agreement with the authors' reconstruction is unchanged
+to the shown precision: CGLS 0.087821/0.061075, OS-SART 0.083891/0.055488,
+and OSEM 0.071995/0.048422 for one/three orbits. No views are held out.
+
+Each row uses two fresh processes per implementation, interleaved in one GPU
+job. Cold includes loading, numerical imports, compilation, FDK, solving and
+host output; warm repeats the complete reconstruction including FDK, but not
+loading. Times average the two process cold times or warm medians. Scoring
+and saving comparisons are outside timing and the reported memory boundary.
+GPU peaks use 20 ms sampling; host peaks are process RSS high-water marks
+before scoring. Memory columns give the maximum over the two processes,
+control / candidate. Filesystem caches are uncontrolled.
+
+| Scan, method | Control cold / warm (s) | Candidate cold / warm (s) | Image relative L2 | GPU peak MiB | Host peak GB | Candidate commit |
+|---|---:|---:|---:|---:|---:|---|
+| walnut1, cgls | 22.85 / 14.76 | 22.12 / 14.69 | 6.69e-08 | 4308 / 4308 | 5.757 / 5.757 | `11833821` |
+| nikon, cgls | 29.61 / 22.95 | 28.12 / 22.51 | 4.09e-08 | 4574 / 4574 | 4.253 / 4.216 | `e2f8010f` |
+| zeiss, cgls | 15.23 / 10.03 | 15.27 / 9.79 | 0 | 4576 / 4576 | 3.537 / 3.532 | `e2f8010f` |
+| walnut3, cgls | 60.63 / 44.24 | 61.03 / 43.36 | 7.53e-08 | 4312 / 4312 | 7.539 / 7.537 | `11833821` |
+| cuo-spl1, cgls | 64.66 / 38.86 | 62.91 / 37.39 | 0 | 4576 / 4576 | 6.194 / 6.193 | `11833821` |
+| cuo2, cgls | 63.14 / 38.72 | 61.62 / 36.84 | 1.92e-08 | 4576 / 4717 | 6.176 / 6.171 | `e2f8010f` |
+| walnut1, ossart | 16.51 / 8.50 | 15.92 / 8.40 | 1.82e-08 | 6152 / 6152 | 5.755 / 5.756 | `e2f8010f` |
+| walnut1, osem | 16.16 / 7.59 | 17.72 / 7.57 | 2.19e-07 | 4282 / 4282 | 5.755 / 5.756 | `11833821` |
+| nikon, ossart | 18.35 / 11.45 | 17.05 / 11.73 | 1.86e-08 | 3606 / 3606 | 4.181 / 4.154 | `11833821` |
+| zeiss, ossart | 12.45 / 6.88 | 12.09 / 6.37 | 0 | 6204 / 6204 | 4.124 / 4.121 | `bd49f888` |
+| zeiss, osem | 10.55 / 4.73 | 10.22 / 4.73 | 0 | 4546 / 4546 | 4.917 / 4.918 | `bd49f888` |
+| walnut3, ossart | 40.69 / 25.04 | 44.18 / 23.79 | 1.95e-08 | 3318 / 3318 | 7.538 / 7.539 | `bd49f888` |
+| walnut3, osem | 42.55 / 22.38 | 35.83 / 21.87 | 2.21e-07 | 3266 / 3266 | 7.885 / 7.880 | `bd49f888` |
+
+The Nikon OS-SART pairs in the table are slower warm by 0.73% and 4.32%.
+A balanced repeat on `e74bd197` (2026-10-28, three warm calls per process,
+`shared/agent01/nikon_repeat.sh`) gives 11.162/11.270 s for the control and
+11.110/11.124 s for the candidate: 0.47% and 1.29% faster. Cold times including
+loading are 16.971/16.810 s and 16.184/17.262 s respectively. The image relative
+L2 difference is at most 1.86e-8, both GPU peaks are 3606 MiB, and maximum
+host RSS is 4.186 GB for both. These results show run-to-run timing variation;
+they do not establish a uniform cold speedup. Walnut-one OSEM and Zeiss OSEM
+also have mixed-sign warm timing differences.
+
+One CuO2 candidate process in the table reaches 4717 MiB rather than 4576 MiB.
+An instrumented four-process repeat on `e74bd197` (`shared/agent01/cuo_peak.sh`,
+2026-10-28) gives 4576 MiB globally and 4566 MiB per compute process for every
+arm, with identical JAX peak live allocation (3.712 GB) and pool (4.563 GB).
+The extra 141 MiB in the table has no retained per-process trace and remains
+unattributed. Prescoring host RSS spans 6.156–6.168 GB. Instrumentation includes
+corrected-input hashing, so its cold times are not a loading benchmark.
+
+CuO2 fresh-process comparisons can differ by 2.83e-6 relative L2 because
+preprocessing uses sequential or balanced four-pixel sums during binning.
+With identical pre-binning logarithms, those two sum trees reproduce every
+corrected pixel and the differing FDK/final-image hashes; the solver is not
+the first divergence. This is T3 arithmetic agreement, not an accuracy result.
+The attribution commands are `shared/agent04-preprocess/run_tree.sh` and
+`run_fingerprint.sh` on `c7d8578d` (2026-10-28). The instrumented repeat gives
+the same 2.83e-6 difference between two control processes whose binning trees
+differ, as between control and candidate.
+The executable protocol is `bench/cone_matrix.py`; set the input environment
+variables to the scans named in the full-view sections below. CGLS uses
+`--iterations 3`; all ordered-subset cases use `--iterations 1`. Other options
+are unchanged defaults, including FDK initialization and recomputed
+normalization:
+
+```bash
+python bench/cone_matrix.py "$CASE" "$INPUT" --library tomojax \
+  --method "$METHOD" --iterations "$ITERATIONS" --subsets "$SUBSETS" \
+  --repeats "$REPEATS" --output result.json
+```
+
+Use `CASE=walnut1/walnut3/nikon/zeiss/cuo` and the corresponding path; both
+CuO inputs use `CASE=cuo`. OS-SART subset counts are 12/17/13/13 for
+Walnut-one/Walnut-three/Nikon/Zeiss; OSEM counts are 12/13/1 for
+Walnut-one/Walnut-three/Zeiss. The lab pairing commands are
+`shared/agent01/all13.sh 0 4 0,3`, `all13.sh 4 9 4,7,8`, and
+`all13.sh 9 13`, with the corresponding original command list in
+`shared/baseline/cmds.txt`. These use two warm CGLS repeats for Walnut-one
+and one elsewhere. `shared/agent04-transfer/run.sh` measures Nikon CGLS
+(two warm repeats) and CuO2 CGLS (one), control/candidate/control/candidate.
+`shared/agent01/balanced_pair.sh` measures Walnut-one OS-SART and Zeiss CGLS
+with three warm repeats, candidate/control/control/candidate. The all13
+pairing uses control first on even command indices and candidate first on
+odd indices, repeating that order twice. The drivers perform canonical
+voxel comparisons and delete scratch volumes after scoring.
+
 ## Detector response and structure controls
 
 Measured 2026-10-27 on `e71f900f` for response injections and `271fd6e3` for

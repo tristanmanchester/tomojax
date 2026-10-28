@@ -69,6 +69,7 @@ def test_estimate_center_returns_the_scan_with_its_physical_centre():
     assert abs(result.detector.center[0] - true_u) <= 0.3 * scan.detector.du
     assert scan.detector.center[0] == 2.7
     volume = np.asarray(tj.reconstruct(result).volume)
+    assert volume.shape == (scan.grid.nz, scan.grid.ny, scan.grid.nx)
     assert np.linalg.norm(volume[4] - truth) / np.linalg.norm(truth) < 0.025
 
 

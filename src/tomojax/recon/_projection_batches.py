@@ -12,11 +12,7 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
-from tomojax.core.cone import (
-    ConeModel,
-    cone_project,
-    cone_project_ones,
-)
+from tomojax.core.cone import ConeModel
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 
 if TYPE_CHECKING:
@@ -102,8 +98,11 @@ class ViewBatches:
     def project_ones(self, start: jax.Array, batch: jax.Array) -> jax.Array:
         """Project uniform unit support, retaining the ordinary weights at its boundary."""
         if isinstance(self.model, ConeModel):
-            return cone_project_ones(
-                self._coefficients(start), self.grid, self.detector, backend=self.cone_backend
+            return self.model.project_ones(
+                self._coefficients(start),
+                grid=self.grid,
+                detector=self.detector,
+                backend=self.cone_backend,
             )
         if self.model == "joseph" and self.backend == "cuda":
             from tomojax.core.joseph import project_ones_native
@@ -116,8 +115,12 @@ class ViewBatches:
     def project(self, volume: jax.Array, start: jax.Array, batch: jax.Array) -> jax.Array:
         grid, detector = self.grid, self.detector
         if isinstance(self.model, ConeModel):
-            return cone_project(
-                volume, self._coefficients(start), grid, detector, backend=self.cone_backend
+            return self.model.project(
+                volume,
+                self._coefficients(start),
+                grid=grid,
+                detector=detector,
+                backend=self.cone_backend,
             )
         if self.model == "joseph":
             from tomojax.core.joseph import forward_project_planes
@@ -205,4 +208,9 @@ class ViewBatches:
         )
 
     def zeros_volume(self) -> jax.Array:
-        return jnp.zeros((self.grid.nz, self.grid.ny, self.grid.nx), dtype=jnp.float32)
+        shape = (
+            self.model.volume_shape(self.grid)
+            if isinstance(self.model, ConeModel)
+            else (self.grid.nz, self.grid.ny, self.grid.nx)
+        )
+        return jnp.zeros(shape, dtype=jnp.float32)

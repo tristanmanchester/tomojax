@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Resident CUDA cone CGLS, SIRT/OS-SART and MLEM/OSEM use private z-contiguous
+iterates while preserving public `(z, y, x)` inputs and outputs. Bounded tiled
+boundary permutations avoid volume-sized compiler-autotuning buffers; the
+forward projector and its exact transpose share the internal representation.
+
 `Rings` no longer imputes detector columns from low angular variation, which
 can also be produced by object structure. Calibration-backed gap interpolation
 remains in raw-frame correction; post-log stuck columns are not repaired.
