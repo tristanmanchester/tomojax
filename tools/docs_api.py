@@ -41,6 +41,13 @@ MODULES = [
     ("tomojax.geometry", "geometry"),
     ("tomojax.forward", "forward"),
     ("tomojax.datasets", "datasets"),
+    ("tomojax.evaluation", "evaluation"),
+    ("tomojax.torch", "torch"),
+    ("tomojax.recon.api", "recon-api"),
+    ("tomojax.io.api", "io-api"),
+    ("tomojax.alignment.api", "alignment-api"),
+    ("tomojax.geometry.api", "geometry-api"),
+    ("tomojax.forward.api", "forward-api"),
 ]
 # The workflow names in reading order; the rest of a module follows its __all__.
 FIRST = [
