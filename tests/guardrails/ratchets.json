@@ -50,7 +50,7 @@
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 120,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
-  "alignment_code_lines": 16862,
+  "alignment_code_lines": 16856,
   "suppressions": {
     "noqa": 6,
     "type: ignore": 28,

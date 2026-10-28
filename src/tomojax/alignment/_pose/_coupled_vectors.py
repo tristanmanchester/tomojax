@@ -31,14 +31,8 @@ def host_dot(left, right) -> float:
     for a, b in zip(left, right, strict=True):
         av, bv = _flat(a), _flat(b)
         for start in range(0, a.size, _CHUNK):
-            total += float(
-                np.einsum(
-                    "i,i->",
-                    av[start : start + _CHUNK],
-                    bv[start : start + _CHUNK],
-                    dtype=np.float64,
-                )
-            )
+            chunk = slice(start, start + _CHUNK)
+            total += float(np.einsum("i,i->", av[chunk], bv[chunk], dtype=np.float64))
     return total
 
 
