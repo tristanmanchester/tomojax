@@ -87,11 +87,7 @@ def adjoint_cuda(
             c, y, x, grid, detector, interpolation=interpolation, absolute_weights=absolute_weights
         )
 
-    if (
-        not absolute_weights
-        and use_cuda_gather(grid, axial=True)
-        and coeff.shape[0] * detector.nu * grid.nz <= 32 * 1024**2
-    ):
+    if not absolute_weights and use_cuda_gather(grid, axial=True):
 
         @sequential_vmap
         def dispatch(c, y, x):

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+CUDA parallel-beam and laminography transposes of long scans split their views
+into chunks that fit the axial kernels' scratch, rather than falling back to
+the generic gather for every view.
+
 `alignment.api` exposes user-facing configuration, schedules, losses, geometry
 helpers and execution. Internal state, checkpoint plumbing and normalisation
 helpers are no longer exported there; checkpoint files remain supported by

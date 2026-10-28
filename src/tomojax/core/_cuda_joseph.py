@@ -146,18 +146,16 @@ def gather_transpose_cuda(
     def generic(_: None) -> jax.Array:
         return call(coeff, images_uv, initial)
 
-    # Bound the additional vertical-resampling scratch independently of scan
-    # aspect ratio. Nonseparable views keep the existing gather unchanged.
-    if images_uv.shape[0] * images_uv.shape[1] * grid.nz <= 32 * 1024**2:
-        from tomojax.core._cuda_axial import axial_coefficients, transpose_axial_cuda
+    # The axial transpose bounds its vertical-resampling scratch by splitting
+    # views. Nonseparable views keep the existing gather unchanged.
+    from tomojax.core._cuda_axial import axial_coefficients, transpose_axial_cuda
 
-        return jax.lax.cond(
-            axial_coefficients(coeff),
-            lambda _: transpose_axial_cuda(coeff, images_uv, initial, grid=grid),
-            generic,
-            operand=None,
-        ).reshape(shape)
-    return generic(None).reshape(shape)
+    return jax.lax.cond(
+        axial_coefficients(coeff),
+        lambda _: transpose_axial_cuda(coeff, images_uv, initial, grid=grid),
+        generic,
+        operand=None,
+    ).reshape(shape)
 
 
 def _launch_uniform(context: Any, out: Any, coeff: Any, *, grid: Grid, detector: Detector) -> None:
