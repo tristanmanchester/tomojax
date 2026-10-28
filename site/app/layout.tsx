@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { Provider } from "@/components/provider";
-import { appName, tagline } from "@/lib/shared";
+import { appName, siteUrl, tagline } from "@/lib/shared";
 import "./global.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -11,6 +11,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: { template: `%s | ${appName}`, default: appName },
   description: tagline,
 };

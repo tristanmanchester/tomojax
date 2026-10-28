@@ -1,6 +1,7 @@
 import { createGetUrl } from "fumadocs-core/source";
 
 export const appName = "TomoJAX";
+export const siteUrl = "https://tomojax.dev";
 export const tagline =
   "Parallel-beam, laminography and cone-beam CT reconstruction and alignment in JAX.";
 export const docsRoute = "/";

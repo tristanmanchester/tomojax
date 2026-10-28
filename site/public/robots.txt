@@ -1,0 +1,28 @@
+# TomoJAX documentation. Open-source docs: crawl, cite and learn from them.
+User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Allow: /
+
+# AI search crawlers
+User-agent: OAI-SearchBot
+User-agent: Claude-SearchBot
+User-agent: PerplexityBot
+Allow: /
+
+# AI training crawlers
+User-agent: GPTBot
+User-agent: ClaudeBot
+User-agent: Google-Extended
+User-agent: Applebot-Extended
+User-agent: CCBot
+User-agent: Bytespider
+User-agent: Amazonbot
+Allow: /
+
+# User-triggered fetchers
+User-agent: ChatGPT-User
+User-agent: Claude-User
+User-agent: Perplexity-User
+Allow: /
+
+Sitemap: https://tomojax.dev/sitemap.xml

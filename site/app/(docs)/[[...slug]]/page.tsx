@@ -66,5 +66,6 @@ export async function generateMetadata(
   return {
     title: page.slugs.length === 0 ? { absolute: appName } : page.data.title,
     description: page.data.description,
+    alternates: { canonical: page.url },
   };
 }
