@@ -201,7 +201,11 @@ geometry is calibrated.
 Known failure modes:
 
 - Abrupt jumps may need jump-aware pose handling, and short bursts of bad views
-  a robust loss or bad-view detection.
+  a robust loss. Fixed-volume GN supports `HuberLossSpec(delta=...)` (or TOML
+  `loss = "huber"`): choose the threshold in projection units for the noise
+  scale. It bounds individual residual influence, but is not a remedy for
+  large motion or a whole incorrectly modelled view. Joint GN supports only
+  L2 and soft-Otsu-weighted L2.
 - A per-view shift with a nonzero mean over the scan cannot be told apart from
   a detector-centre offset; `cor-then-pose` assigns it to the offset.
 - Detector-v or sample-elevation reference shifts are physically ambiguous and
@@ -234,7 +238,7 @@ solvers alone converge only from shifts of a few pixels.
 
 The setting `gn_coupling = "fixed_volume"` restores the older scheme that
 refines poses against a reconstruction held fixed between volume updates. It
-accepts other losses, smooth pose models and optimisers, but on the free-voxel
+accepts Huber loss and smooth pose models, but on the free-voxel
 pilot it left rotation errors of 0.1–1° that the coupled solver removes.
 
 ### Smooth pose models
@@ -267,9 +271,33 @@ scan = tj.estimate_center(tj.load_frames("raw.nxs").corrected())
 recon = tj.reconstruct(scan)
 ```
 
-It returns a new `Scan` whose `detector.center[0]` is the absolute physical
-detector-u coordinate, estimated from up to three detector rows. The Fourier
-metric can have false minima for compact objects, so check the reconstruction.
+It returns a new `Scan` whose `detector.center[0]` is an effective detector-u
+placement in physical units, not an increment to the input geometry. Gradient
+correlations use up to 64 rows and 16 near-opposite pairs. Competing matches,
+truncation and sample motion can bias the estimate; inspect the reconstruction.
+
+The reported centre fixes the **median sampled-pair mean shift to zero**, not
+the mean motion over all acquired views. Physical centre and common sample
+motion cannot be separated by these pair constraints alone. The diagnostics
+from `tomojax.alignment.api.estimate_center_report(...).to_dict()` record
+`center_motion_gauge="median_pair_mean_shift_zero"` and
+`physical_center_status="unresolved_without_motion_assumption"`.
+`pair_mean_shift_constraints_px` gives the reported centre minus each pair's
+offset, in pair order and detector-u pixels. These correlated constraints share
+the fitted centre; they are not recovered per-view poses. Existing local
+matching intervals remain uncalibrated globally and exclude motion and wrong
+matching modes. The same diagnostics are retained in scan source metadata
+when available. No automatic workflow decision changes with these labels.
+
+For train-only calibration, pass `views=` to `tj.estimate_center`, or to the
+low-level `estimate_center_report` / `estimate_center` functions. It accepts a
+forward slice, increasing original view indices, or a boolean mask. Both anchors
+and angular interpolation contributors are restricted to those views; the
+returned scan still contains all original projections without a full-stack copy.
+`calibration_views` records the eligible subset (`None` means all), while each
+pair retains its original contributor indices. Earlier fitted corrections must
+also exclude validation observations: this option alone does not make an
+already fitted preprocessing pipeline independent of held-out data.
 
 Use `cor` mode when the main problem is a detector-u or centre-of-rotation
 offset rather than sample motion:

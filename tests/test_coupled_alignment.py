@@ -16,6 +16,7 @@ from tomojax.alignment._pose import (
     _coupled_program,
     _coupled_vectors,
     _matching_model,
+    _pose_objective,
     _pose_steps,
 )
 
@@ -80,7 +81,6 @@ def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, 
         gather_dtype="fp32",
     )
     common = dict(
-        grid=grid,
         detector=detector,
         projections=tj.project(geometry, x),
         cfg=cfg,
@@ -88,7 +88,7 @@ def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, 
         active_mask=jnp.array([0, 0, 0, 1, 1, 0], jnp.float32),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    ctx = _pose_objective_context(runtime=runtime, **common)
+    ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
     captured = []
     monkeypatch.setattr(_coupled_objective, "_pose_cache_limit", lambda: 3 * 5 * 6 * (1 + 2) * 4)
     monkeypatch.setattr(
@@ -135,7 +135,6 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
         w_trans=0.02,
     )
     common = dict(
-        grid=grid,
         detector=detector,
         projections=projections,
         cfg=cfg,
@@ -147,7 +146,7 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
         runtime = _build_alignment_runtime_context(
             geometry=geometry, det_grid_override=None, **common
         )
-        ctx = _pose_objective_context(runtime=runtime, **common)
+        ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
         return _coupled_objective.build_coupled_objective(ctx).update(p, 0.9 * truth)
 
     with jax.enable_x64(False):
@@ -183,7 +182,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     from pathlib import Path
 
     from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import PWLSLossSpec
+    from tomojax.alignment.api import L2OtsuLossSpec
     from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
 
     if backend == "cuda" and jax.default_backend() != "gpu":
@@ -240,12 +239,11 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         gather_dtype="fp32",
         pose_translation_frame="detector",
         tv_weight=0,
-        loss=PWLSLossSpec(a=0.3, b=0.8),
+        loss=L2OtsuLossSpec(),
         w_rot=0.03 + 0.005 * scan_variant,
         w_trans=0.05 + 0.003 * scan_variant,
     )
     common = dict(
-        grid=grid,
         detector=det,
         projections=target,
         cfg=cfg,
@@ -253,13 +251,13 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         active_mask=jnp.asarray(active),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    ctx = _pose_objective_context(runtime=runtime, **common)
+    ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
     ctx = replace(ctx, volume_mask=jnp.asarray(support))
     objective = _coupled_objective.build_coupled_objective(ctx)
     result = objective.update(jnp.asarray(p), jnp.asarray(x))
     assert result.finite
     assert objective.pose_columns_cached != stream
-    weight = np.sqrt(1 / (0.3 * np.maximum(target, 0) + 0.8 + 1e-6)).ravel()
+    weight = (1 / (1 + np.exp(-(np.asarray(ctx.loss_mask) - 0.5) / 0.5))).ravel()
     a = (
         np.column_stack(
             [
@@ -496,7 +494,6 @@ def _small_coupled_context():
     # Compare placements after an accurate solve, rather than at the loose default CG stop.
     cfg = replace(cfg, gn_damping=0.2, gn_volume_damping=0.2, gn_joint_rtol=1e-6)
     common = dict(
-        grid=grid,
         detector=det,
         projections=projections,
         cfg=cfg,
@@ -504,7 +501,7 @@ def _small_coupled_context():
         active_mask=jnp.ones(6, jnp.float32),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    return _pose_objective_context(runtime=runtime, **common)
+    return _pose_objective_context(runtime=runtime, grid=grid, **common)
 
 
 def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch):
@@ -709,7 +706,6 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         w_trans=0,
     )
     common = dict(
-        grid=grid,
         detector=detector,
         projections=jnp.asarray(measured, jnp.float32),
         cfg=cfg,
@@ -717,7 +713,9 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         active_mask=jnp.array([0, 0, 0, 1, 0, 0], jnp.float32),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    ctx = replace(_pose_objective_context(runtime=runtime, **common), volume_mask=support)
+    ctx = replace(
+        _pose_objective_context(runtime=runtime, grid=grid, **common), volume_mask=support
+    )
     ctx = replace(
         ctx,
         has_loss_mask=weighted,
@@ -769,7 +767,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
 
     import tomojax as tj
     from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import PWLSLossSpec
+    from tomojax.alignment.api import L2OtsuLossSpec
 
     grid, det = tj.Grid(3, 2, 3, 0.8, 1.1, 0.7), tj.Detector(5, 4, 0.7, 0.9, (0.13, -0.21))
     geometry = tj.LaminographyGeometry(grid, det, [13, 47, 103], tilt_deg=23)
@@ -788,12 +786,11 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
         gn_volume_damping=0.2,
-        loss=PWLSLossSpec(a=0.3, b=0.8),
+        loss=L2OtsuLossSpec(),
         w_rot=smooth,
         w_trans=smooth,
     )
     common = dict(
-        grid=grid,
         detector=det,
         projections=tj.project(geometry, x) * 0.9,
         cfg=cfg,
@@ -801,7 +798,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
         active_mask=jnp.asarray([1, 0, 1, 1, 1, 0], jnp.float32),
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
-    ctx = _pose_objective_context(runtime=runtime, **common)
+    ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
     if smooth:
         ctx = replace(ctx, volume_mask=jnp.ones_like(x).at[0, 0, 0].set(0))
     else:
@@ -1012,3 +1009,52 @@ def test_joint_ramp_preconditioner_filters_xy_not_z(placement):
         volume_ramp=0.01,
     )
     np.testing.assert_allclose(result.increment[0], expected, rtol=2e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("kind", ["l2", "l2_otsu", "huber"])
+def test_fixed_volume_gn_uses_true_loss_and_two_sided_irls(monkeypatch, kind):
+    # check-public-imports: allow-private
+    from tomojax.alignment._objectives.loss_adapters import build_loss_adapter
+
+    # check-public-imports: allow-private
+    from tomojax.alignment._objectives.loss_specs import parse_loss_spec
+
+    residual = np.array([-4.0, -0.2, 0.0, 0.4, 3.0], np.float32)
+    columns = np.random.default_rng(1348).normal(size=(6, 5)).astype(np.float32)
+    adapter = build_loss_adapter(parse_loss_spec(kind), jnp.zeros((1, 1, 5)))
+    ctx = SimpleNamespace(
+        loss_adapter=adapter, cfg=SimpleNamespace(gn_damping=0.2), active_mask=jnp.ones(6)
+    )
+    monkeypatch.setattr(
+        _pose_objective,
+        "build_pose_prediction_and_columns",
+        lambda _: lambda *args: (jnp.asarray(residual), jnp.asarray(columns)),
+    )
+    batch = _pose_objective._build_gn_update_batch(ctx)
+    arg = jnp.zeros((1, 6))
+    system, rhs, value = batch(arg, arg, arg, arg, jnp.zeros(1), arg)
+    weight = np.minimum(1, 1 / np.maximum(1, np.abs(residual))) if kind == "huber" else 1
+    expected_value = (
+        np.where(np.abs(residual) <= 1, 0.5 * residual**2, np.abs(residual) - 0.5).sum()
+        if kind == "huber"
+        else 0.5 * np.sum(residual**2)
+    )
+    np.testing.assert_allclose(
+        system[0], (columns * weight) @ columns.T + 0.2 * np.eye(6), atol=2e-6
+    )
+    np.testing.assert_allclose(rhs[0], -columns @ (weight * residual), atol=2e-6)
+    assert float(value[0]) == pytest.approx(expected_value)
+    # The robust model gradient must equal the actual per-view objective gradient.
+    if kind == "huber":
+        gradient = jax.grad(
+            lambda r: adapter.per_view_loss(r[None, None], jnp.zeros((1, 1, 5)), None).sum()
+        )
+        np.testing.assert_allclose(gradient(jnp.asarray(residual)), weight * residual, atol=1e-6)
+
+
+def test_joint_gn_rejects_huber_with_fixed_volume_remedy():
+    from tomojax.alignment.api import HuberLossSpec
+
+    ctx = SimpleNamespace(cfg=None, loss_adapter=SimpleNamespace(spec=HuberLossSpec()))
+    with pytest.raises(ValueError, match="fixed_volume"):
+        _coupled_objective.build_coupled_objective(ctx)

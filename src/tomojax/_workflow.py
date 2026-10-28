@@ -655,10 +655,10 @@ def reconstruct_slabs(
                 yield output
 
 
-def estimate_center(scan: Scan) -> Scan:
+def estimate_center(scan: Scan, *, views: slice | Sequence[int] | np.ndarray | None = None) -> Scan:
     """Estimate a parallel scan's rotation centre without reconstructing a volume.
 
-    Returns the scan with its absolute physical detector-u centre set, available as
+    Returns the scan with its effective detector-u placement set in physical units, as
     ``result.detector.center[0]``; no pixels are shifted. For a cropped or binned
     preview, add ``result.detector.center[0] - preview.detector.center[0]`` to the
     full scan's centre rather than copying the preview's. Needs corrected
@@ -666,18 +666,28 @@ def estimate_center(scan: Scan) -> Scan:
     near-opposite views (within two degrees). The estimate uses row-wise
     gradient correlations and can be ambiguous for repetitive structure. Source
     metadata, when present, records pair offsets, conditional uncertainty,
-    alternative matches and row trends without changing the input. Physical centre and sample motion
-    are aliases; conditional matching intervals do not cover motion.
+    alternative matches and row trends without changing the input. The reported
+    centre fixes the median sampled-pair mean shift to zero, not the mean motion
+    over all views. Metadata exposes this gauge and correlated pair-mean shift
+    constraints, not recovered per-view motion. Physical centre and common sample
+    motion remain unresolved; conditional matching intervals do not cover motion.
 
     Parameters
     ----------
     scan : Scan
         Unposed axial parallel projections with near-opposite views.
+    views : slice, sequence of int, numpy.ndarray or None, optional
+        Eligible original acquisition views: forward slice, increasing indices or
+        boolean mask. None uses all views. Pair interpolation never reads excluded
+        views; the returned scan still contains every original view. Calibration
+        metadata records the eligible subset and original pair contributor indices.
+        Earlier fitted corrections must also exclude validation observations.
 
     Returns
     -------
     Scan
-        Scan with the inferred absolute physical detector-u centre; pixels are unchanged.
+        Scan with the effective detector-u placement in physical units;
+        pixels are unchanged and the physical centre still aliases sample motion.
 
     Raises
     ------
@@ -690,14 +700,16 @@ def estimate_center(scan: Scan) -> Scan:
     >>> scan = tj.estimate_center(tj.load("scan.nxs"))  # doctest: +SKIP
     >>> recon = tj.reconstruct(scan)  # doctest: +SKIP
     """
-    return _estimate_center(scan)[0]
+    return _estimate_center(scan, views=views)[0]
 
 
-def _estimate_center(scan: Scan) -> tuple[Scan, dict[str, object]]:
+def _estimate_center(
+    scan: Scan, *, views: slice | Sequence[int] | np.ndarray | None = None
+) -> tuple[Scan, dict[str, object]]:
     """Share bounded centre estimation and its report without copying a scan."""
     from tomojax.alignment.api import estimate_center_report
 
-    report = estimate_center_report(cast("Geometry", scan.geometry), scan.projections)
+    report = estimate_center_report(cast("Geometry", scan.geometry), scan.projections, views=views)
     geometry = report.geometry
     calibration: dict[str, object] = {
         "status": "estimated",
@@ -998,14 +1010,13 @@ def _run_alignment(
     scan: Scan, plan: AlignmentPlan, checkpoint: str | PathLike[str] | None
 ) -> tuple[Geometry, np.ndarray | jax.Array, np.ndarray, str, dict[str, object]]:
     """Calibrated geometry, volume, ``(views, 6)`` poses, their frame and record of ``plan``."""
-    from tomojax.alignment.api import (
+    from tomojax.alignment._integration import (
         AlignmentRun,
-        AlignMultiresResumeState,
-        align_multires,
         alignment_checkpointing,
         cone_setup,
         pad_pose_params,
     )
+    from tomojax.alignment.api import AlignMultiresResumeState, align_multires
 
     geometry, grid, detector = scan.geometry, scan.grid, scan.detector
     # Keep host scans there through the resolution pyramid; each solver owns

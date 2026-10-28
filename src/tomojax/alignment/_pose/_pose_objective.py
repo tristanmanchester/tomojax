@@ -211,7 +211,9 @@ def _build_gn_update_batch(ctx: _PoseObjectiveContext) -> Callable[..., object]:
 
     def _gn_update_one(p5_i, t_nom_i, frame_i, y_i, vol, w_i):
         residual, cols = predict_and_columns(p5_i, t_nom_i, frame_i, vol, y_i, w_i)
-        current_loss = jnp.float32(0.5) * jnp.vdot(residual, residual).real
+        current_loss, robust_weights = ctx.loss_adapter.residual_model(residual)
+        residual = residual * robust_weights
+        cols = cols * robust_weights
         gradient = jnp.matmul(cols, residual, precision=jax.lax.Precision.HIGHEST)
         hessian = jnp.matmul(cols, cols.T, precision=jax.lax.Precision.HIGHEST)
         lam = jnp.float32(ctx.cfg.gn_damping)

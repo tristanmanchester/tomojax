@@ -10,7 +10,7 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 from scipy.stats import chi2
 
-from tomojax.core.validation import validate_projection_stack
+from tomojax.core.validation import validate_projection_stack, view_indices
 from tomojax.geometry import ParallelGeometry
 
 from .center_statistics import PairStatistics, refine_pair
@@ -22,6 +22,8 @@ from .initializers import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import jax
 
     from tomojax.geometry import Geometry
@@ -236,7 +238,10 @@ class CenterPair:
 class CenterEstimate:
     """Centre geometry and the opposing-view evidence behind it.
 
-    A common centre is the median pair location. ``pair_scatter_px`` describes
+    The reported centre is the median pair location, fixing the median
+    opposing-pair mean shift to zero, not the mean motion over all views.
+    Changing the sampled pairs can change that gauge when the sample moves.
+    ``pair_scatter_px`` describes
     disagreement, not the standard error of that median. ``consistency_pvalue``
     is a conditional inverse-variance heterogeneity diagnostic; correlated
     pairs and ambiguous matches invalidate its chi-square reference. Apparent
@@ -249,7 +254,7 @@ class CenterEstimate:
     Parameters
     ----------
     geometry : ParallelGeometry
-        Geometry with the median pair centre in physical detector units.
+        Geometry with the effective median pair centre in physical detector units.
     pairs : tuple of CenterPair
         Opposing-view constraints and their conditional uncertainties.
     row_positions_px : tuple of float
@@ -262,6 +267,9 @@ class CenterEstimate:
         Sample standard deviation of pair centre locations, not their mean error.
     consistency_pvalue : float or None
         Conditional chi-square diagnostic, or None without two informative pairs.
+    calibration_views : tuple of int or None, optional
+        Eligible original view indices; None means all acquisition views. Pair
+        contributors are a subset, and retain original acquisition indices.
     """
 
     geometry: ParallelGeometry
@@ -271,6 +279,7 @@ class CenterEstimate:
     row_slope_px_per_row: float | None
     pair_scatter_px: float
     consistency_pvalue: float | None
+    calibration_views: tuple[int, ...] | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return the estimate and diagnostics without serializing the geometry.
@@ -279,9 +288,26 @@ class CenterEstimate:
         -------
         dict
             JSON-native pair constraints, row trend and consistency diagnostics.
+            ``pair_mean_shift_constraints_px`` gives the reported centre minus
+            each pair offset, in the same order as ``pairs``. In the linearized
+            rigid-match model, a pair offset is the physical centre minus half
+            the sum of its two weighted detector-u sample shifts. The weights
+            and view indices are stored in each pair's ``first`` and ``second``.
+            These constraints share the same fitted centre and are correlated;
+            they are not per-view poses or independently calibrated intervals.
+            Common centre/shift changes and the null space of the weighted
+            pair averages remain unresolved. Large or discontinuous motion,
+            wrong matching modes and model mismatch invalidate the linearization.
         """
+        center_px = self.geometry.detector.center[0] / self.geometry.detector.du
         return {
-            "offset_px": self.geometry.detector.center[0] / self.geometry.detector.du,
+            "offset_px": center_px,
+            "calibration_views": (
+                None if self.calibration_views is None else list(self.calibration_views)
+            ),
+            "physical_center_status": "unresolved_without_motion_assumption",
+            "center_motion_gauge": "median_pair_mean_shift_zero",
+            "pair_mean_shift_constraints_px": [center_px - p.offset_px for p in self.pairs],
             "pairs": [pair.to_dict() for pair in self.pairs],
             "row_positions_px": list(self.row_positions_px),
             "row_offsets_px": [list(row) for row in self.row_offsets_px],
@@ -336,7 +362,10 @@ def _center_summary(
 
 
 def estimate_center_report(
-    geometry: Geometry, projections: np.ndarray | jax.Array
+    geometry: Geometry,
+    projections: np.ndarray | jax.Array,
+    *,
+    views: slice | Sequence[int] | np.ndarray | None = None,
 ) -> CenterEstimate:
     """Estimate an axial parallel centre and retain pair and row diagnostics.
 
@@ -352,6 +381,12 @@ def estimate_center_report(
         Unposed axial parallel geometry, including angles in degrees.
     projections : array-like
         Corrected line integrals shaped (views, rows, columns).
+    views : slice, sequence of int, numpy.ndarray or None, optional
+        Eligible acquisition views: forward slice, increasing indices or boolean
+        mask. None uses all views. Both pair anchors and angular interpolation
+        contributors come only from this subset. The returned geometry and pair
+        indices stay in the original acquisition coordinates; no full-stack copy
+        is made. Exclude validation views from all earlier fitted corrections too.
 
     Returns
     -------
@@ -375,7 +410,17 @@ def estimate_center_report(
         projections, geometry.detector, geometry=geometry, context="estimate_center"
     )
     detector = geometry.detector
-    samples = _sample_pairs(np.asarray(geometry.angles, np.float64), detector.nu)
+    angles = np.asarray(geometry.angles, np.float64)
+    eligible = np.arange(len(angles)) if views is None else view_indices(views, len(angles))
+    calibration_views = None if views is None else tuple(int(i) for i in eligible)
+    samples = [
+        (
+            [(int(eligible[i]), w) for i, w in first],
+            [(int(eligible[i]), w) for i, w in second],
+            error,
+        )
+        for first, second, error in _sample_pairs(angles[eligible], detector.nu)
+    ]
     rows = np.linspace(0, detector.nv - 1, min(64, detector.nv)).round().astype(int)
     groups = np.array_split(np.arange(len(rows)), min(8, len(rows)))
     row_positions = np.asarray([np.mean(rows[group]) for group in groups])
@@ -409,11 +454,19 @@ def estimate_center_report(
             "Near-opposite pairs need angular neighbours within 2 degrees; "
             "use finer angular sampling when subsampling views."
         )
-    return _center_summary(geometry, pairs, row_positions, row_offsets)
+    return replace(
+        _center_summary(geometry, pairs, row_positions, row_offsets),
+        calibration_views=calibration_views,
+    )
 
 
-def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> ParallelGeometry:
-    """Estimate an axial parallel detector's absolute physical u centre from projections.
+def estimate_center(
+    geometry: Geometry,
+    projections: np.ndarray | jax.Array,
+    *,
+    views: slice | Sequence[int] | np.ndarray | None = None,
+) -> ParallelGeometry:
+    """Estimate an axial parallel detector's effective u-centre placement.
 
     Opposing projections agree after detector-u reflection and a shift of twice
     the centre offset. Gradient correlations of up to 64 corresponding rows are summed,
@@ -422,7 +475,11 @@ def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> 
     scan, and their angular neighbors are read. Pairs within half a detector-edge
     pixel of the best angular match are eligible. Linear angular resampling
     removes the mismatch. Nothing is reconstructed. Non-axial and posed
-    geometries raise.
+    geometries raise. The result is an absolute placement in physical units,
+    not an increment to the input geometry. It fixes the median sampled-pair
+    mean motion to zero; physical centre and common sample motion cannot be
+    separated from these observations alone. Use ``estimate_center_report``
+    to retain the conditional constraints and unresolved-centre status.
 
     Parameters
     ----------
@@ -430,11 +487,15 @@ def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> 
         Scan geometry with its view angles and physical detector placement.
     projections : array-like
         Projections with shape (views, nv, nu), in geometry view order.
+    views : slice, sequence of int, numpy.ndarray or None, optional
+        Eligible original acquisition views, as in ``estimate_center_report``.
+        None uses all views; the returned geometry retains all views.
 
     Returns
     -------
     ParallelGeometry
-        Geometry with the estimated absolute physical detector-u centre.
+        Geometry with the effective detector-u centre in physical units,
+        conditional on the median opposing-pair mean-shift-zero gauge.
 
     Raises
     ------
@@ -442,7 +503,7 @@ def estimate_center(geometry: Geometry, projections: np.ndarray | jax.Array) -> 
         If the scan is non-axial, posed, lacks usable near-opposite projections,
         or has incompatible data.
     """
-    return estimate_center_report(geometry, projections).geometry
+    return estimate_center_report(geometry, projections, views=views).geometry
 
 
 __all__ = [

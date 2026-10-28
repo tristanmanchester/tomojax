@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._model.dofs import POSE_WIDTH
-from tomojax.alignment._objectives.loss_specs import L2LossSpec
+from tomojax.alignment._objectives.loss_specs import HuberLossSpec, L2LossSpec
 from tomojax.core.devices import ViewSplit, shared_devices, view_split
 from tomojax.core.projector import get_detector_grid_device
 
@@ -175,6 +175,10 @@ def build_coupled_objective(
     ctx: _PoseObjectiveContext, *, refinement: JointRefinement | None = None
 ) -> CoupledObjective:
     cfg = ctx.cfg
+    if isinstance(ctx.loss_adapter.spec, HuberLossSpec):
+        raise ValueError(
+            "Huber loss requires gn_coupling='fixed_volume'; joint GN supports L2 losses"
+        )
     if not ctx.loss_adapter.supports_gauss_newton:
         raise ValueError("joint GN requires a least-squares alignment loss")
     if cfg.gather_dtype not in {"fp32", "float32"}:

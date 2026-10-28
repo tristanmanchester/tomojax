@@ -39,7 +39,10 @@ PRODUCT_BOUNDARY_IMPORT_RULES = (
         "core geometry namespace must be reached through tomojax.geometry",
     ),
 )
-ALLOWED_PRODUCT_SURFACE_IMPORTS: set[tuple[str, str]] = set()
+ALLOWED_PRODUCT_SURFACE_IMPORTS = {
+    ("tomojax._workflow", "tomojax.alignment._integration"),
+    ("tomojax.cli.align", "tomojax.alignment._integration"),
+}
 
 
 @dataclass(frozen=True)

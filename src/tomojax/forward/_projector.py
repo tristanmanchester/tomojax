@@ -29,7 +29,35 @@ PROJECTION_OPERATOR: ProjectionOperatorName = "core_trilinear_ray"
 
 @dataclass(frozen=True)
 class ProjectionArrayGeometryInput:
-    """Pose and setup arrays for reference forward projection."""
+    """Group pose and setup arrays for unit-spacing reference projection.
+
+    Parameters
+    ----------
+    theta_rad : jax.Array
+        Nominal view angles in radians, shape (views,).
+    dx_px, dz_px : jax.Array
+        Horizontal and vertical detector shifts in pixels, shape (views,).
+        Pose matrices use translations (-dx_px, 0, -dz_px) in the lab frame.
+    alpha_rad, beta_rad : jax.Array or float, optional
+        Per-view object x and y residual rotations in radians, or scalar values
+        broadcast across views; default is zero.
+    detector_roll_rad : jax.Array or float, optional
+        Global in-plane detector rotation in radians; default is zero.
+    axis_rot_x_rad, axis_rot_y_rad : jax.Array or float, optional
+        Global rotation-axis corrections in radians; default is zero.
+    nominal_axis_unit : array-like, optional
+        Nominal rotation axis in lab coordinates, shape (3,), normalized on use.
+        Default is (0, 0, 1). This defines the axis, including any nominal tilt.
+    acquisition_model : str, optional
+        Acquisition label recorded as provenance; default is 'parallel'.
+    laminography_tilt_rad : jax.Array or float, optional
+        Nominal tilt recorded as provenance, in radians; default is zero.
+        Supply its actual axis through nominal_axis_unit.
+    laminography_tilt_about : str, optional
+        Nominal tilt-axis provenance; default is 'x'.
+    detector_shape : tuple of int or None, optional
+        Detector (rows, columns). None uses (nz, nx) from the volume shape.
+    """
 
     theta_rad: jax.Array
     dx_px: jax.Array
@@ -48,7 +76,44 @@ class ProjectionArrayGeometryInput:
 
 @dataclass(frozen=True)
 class CoreProjectionGeometry:
-    """Core projector geometry derived from the supported geometry state."""
+    """Store resolved geometry and settings for the reference ray projector.
+
+    Parameters
+    ----------
+    grid : Grid
+        Physical volume grid.
+    detector : Detector
+        Physical detector grid in the same length unit as grid.
+    t_all : jax.Array
+        World-from-object transforms of shape (views, 4, 4).
+    det_grid : tuple of jax.Array
+        Flattened detector-plane u and v coordinates, each of shape (nv * nu,),
+        with detector-u varying fastest.
+    operator : {'core_trilinear_ray'}, optional
+        Recorded projector name.
+    step_size : float or None, optional
+        Ray sample spacing in physical grid units; None uses the core default.
+    n_steps : int or None, optional
+        Ray sample count; None uses the core default.
+    gather_dtype : str, optional
+        Core gather precision; default is 'fp32'.
+    checkpoint_projector : bool, optional
+        Recompute projector intermediates during differentiation; default is True.
+    projector_unroll : int, optional
+        Core ray-loop unrolling factor; default is 1.
+    detector_roll_rad : object, optional
+        Recorded global detector roll in radians; default is zero.
+    axis_rot_x_rad, axis_rot_y_rad : object, optional
+        Recorded global axis corrections in radians; default is zero.
+    alpha_rad_max_abs, beta_rad_max_abs : object, optional
+        Recorded maximum absolute residual pose angles in radians; default is zero.
+    acquisition_model : str, optional
+        Recorded acquisition model; default is 'parallel'.
+    laminography_tilt_rad : object, optional
+        Recorded nominal tilt in radians; default is zero.
+    laminography_tilt_about : str, optional
+        Recorded nominal tilt axis; default is 'x'.
+    """
 
     grid: Grid
     detector: Detector
@@ -70,7 +135,14 @@ class CoreProjectionGeometry:
     laminography_tilt_about: str = "x"
 
     def provenance(self) -> dict[str, object]:
-        """Return serialisable operator metadata for run artifacts."""
+        """Return serializable operator metadata.
+
+        Returns
+        -------
+        dict
+            Geometry, sampling settings and setup summaries. Traced scalar values
+            that cannot be converted to Python floats are recorded as 'dynamic'.
+        """
         return {
             "projection_operator": self.operator,
             "grid": self.grid.to_dict(),
@@ -92,7 +164,27 @@ class CoreProjectionGeometry:
 
 
 def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> jax.Array:
-    """Project a 3D volume from a GeometryState with the core trilinear ray projector."""
+    """Project a volume from a geometry state using trilinear ray sampling.
+
+    Parameters
+    ----------
+    volume : jax.Array
+        Three-dimensional volume in (nz, ny, nx) order, converted to float32.
+        Voxel and detector spacing are both one in this reference adapter.
+    geometry : GeometryState
+        Nominal acquisition, setup corrections and per-view poses. Angles use
+        radians and detector translations use pixels.
+
+    Returns
+    -------
+    jax.Array
+        Float32 projections of shape (views, nz, nx).
+
+    Raises
+    ------
+    ValueError
+        If the volume is not three-dimensional or pose array shapes disagree.
+    """
     vol = jnp.asarray(volume, dtype=jnp.float32)
     if vol.ndim != 3:
         raise ValueError("volume must be 3D")
@@ -129,7 +221,26 @@ def project_parallel_reference_from_input(
     volume: jax.Array,
     geometry_input: ProjectionArrayGeometryInput,
 ) -> jax.Array:
-    """Project a volume from supported pose/setup arrays using core trilinear rays."""
+    """Project a volume from grouped arrays using trilinear ray sampling.
+
+    Parameters
+    ----------
+    volume : jax.Array
+        Volume of shape (nz, ny, nx), converted to float32, with unit voxel spacing.
+    geometry_input : ProjectionArrayGeometryInput
+        Pose and setup arrays, including optional detector (rows, columns).
+
+    Returns
+    -------
+    jax.Array
+        Float32 projections of shape (views, rows, columns); the default detector
+        shape is (nz, nx), with unit pixel spacing.
+
+    Raises
+    ------
+    ValueError
+        If the volume is not three-dimensional or pose array shapes disagree.
+    """
     vol = jnp.asarray(volume, dtype=jnp.float32)
     if vol.ndim != 3:
         raise ValueError("volume must be 3D")
@@ -170,7 +281,38 @@ def core_projection_geometry_from_state(
     step_size: float | None = None,
     n_steps: int | None = None,
 ) -> CoreProjectionGeometry:
-    """Adapt a supported geometry state to core Grid/Detector/T_all."""
+    """Resolve a geometry state into unit-spacing core projector geometry.
+
+    Parameters
+    ----------
+    volume_shape : tuple of int
+        Volume dimensions (nz, ny, nx).
+    geometry : GeometryState
+        Nominal acquisition, setup corrections and per-view poses.
+    detector_shape : tuple of int or None, optional
+        Detector (rows, columns); None uses (nz, nx).
+    gather_dtype : str, optional
+        Gather precision of the core projector; default is 'fp32'.
+    checkpoint_projector : bool, optional
+        Recompute projector intermediates during differentiation; default is True.
+    projector_unroll : int, optional
+        Core ray-loop unrolling factor; default is 1.
+    step_size : float or None, optional
+        Ray sample spacing in unit-grid lengths; None uses the core default.
+    n_steps : int or None, optional
+        Number of ray samples; None uses the core default. With a fixed sample
+        count, step_size still controls the spacing.
+
+    Returns
+    -------
+    CoreProjectionGeometry
+        Unit-spacing voxel grid and detector, pose matrices and sampling settings.
+
+    Raises
+    ------
+    ValueError
+        If the volume shape or per-view geometry arrays are inconsistent.
+    """
     theta = jnp.asarray(geometry.theta_total_rad(), dtype=jnp.float32)
     alpha = jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32)
     beta = jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32)
@@ -214,7 +356,36 @@ def core_projection_geometry_from_input(
     step_size: float | None = None,
     n_steps: int | None = None,
 ) -> CoreProjectionGeometry:
-    """Adapt grouped pose/setup arrays to core Grid/Detector/T_all geometry."""
+    """Resolve grouped arrays into unit-spacing core projector geometry.
+
+    Parameters
+    ----------
+    volume_shape : tuple of int
+        Volume dimensions (nz, ny, nx).
+    geometry_input : ProjectionArrayGeometryInput
+        Pose and setup arrays and optional detector shape.
+    gather_dtype : str, optional
+        Gather precision of the core projector; default is 'fp32'.
+    checkpoint_projector : bool, optional
+        Recompute projector intermediates during differentiation; default is True.
+    projector_unroll : int, optional
+        Core ray-loop unrolling factor; default is 1.
+    step_size : float or None, optional
+        Ray sample spacing in unit-grid lengths; None uses the core default.
+    n_steps : int or None, optional
+        Number of ray samples; None uses the core default. With a fixed sample
+        count, step_size still controls the spacing.
+
+    Returns
+    -------
+    CoreProjectionGeometry
+        Unit-spacing voxel grid and detector, pose matrices and sampling settings.
+
+    Raises
+    ------
+    ValueError
+        If the volume shape or per-view geometry arrays are inconsistent.
+    """
     return _core_projection_geometry_from_arrays(
         volume_shape,
         theta_rad=geometry_input.theta_rad,
@@ -363,7 +534,19 @@ def _pose_array_like(value: jax.Array | float, theta: jax.Array, *, name: str) -
 
 
 def nominal_axis_unit_from_geometry(geometry: GeometryState) -> jax.Array:
-    """Return the nominal rotation-axis unit vector for a geometry state."""
+    """Return the nominal lab-frame rotation axis for a geometry state.
+
+    Parameters
+    ----------
+    geometry : GeometryState
+        Acquisition model and nominal laminography tilt; setup corrections
+        and residual per-view rotations are not applied here.
+
+    Returns
+    -------
+    jax.Array
+        Float32 unit vector of shape (3,). Parallel geometry returns (0, 0, 1).
+    """
     acquisition = geometry.acquisition
     if acquisition.model == "parallel":
         return jnp.asarray([0.0, 0.0, 1.0], dtype=jnp.float32)

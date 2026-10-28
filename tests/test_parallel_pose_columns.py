@@ -7,7 +7,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.alignment.api import apply_pose_update
+# check-public-imports: allow-private
+from tomojax.alignment._geometry.parametrizations import apply_pose_update
 from tomojax.core.joseph import forward_project_planes, plane_coefficients, plane_pose_columns
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
 

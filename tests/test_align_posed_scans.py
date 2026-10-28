@@ -12,6 +12,13 @@ import tomojax as tj
 # check-public-imports: allow-private
 from tomojax._data.geometry_meta import AugmentedGeometry, DetectorRollGeometry, composed_poses
 from tomojax.alignment.api import apply_pose_updates
+
+# check-public-imports: allow-private
+from tomojax.alignment.io.resume import (
+    AlignmentRun,
+    resume_state_from_checkpoint,
+    write_alignment_checkpoint,
+)
 from tomojax.core.cone import cone_model
 from tomojax.geometry import stack_view_poses
 
@@ -226,7 +233,6 @@ def test_a_level_that_does_not_fit_in_device_memory_ends_alignment_at_the_one_be
 
 def test_a_run_ended_by_a_level_that_does_not_fit_is_complete(monkeypatch, tmp_path):
     from tomojax.alignment import align_multires, alignment_plan
-    import tomojax.alignment.api as alignment
 
     n = 16
     grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
@@ -250,12 +256,12 @@ def test_a_run_ended_by_a_level_that_does_not_fit_is_complete(monkeypatch, tmp_p
 
     assert checkpoints[-1].run_complete
     assert sizes == [n // 2, n, n]
-    run = alignment.AlignmentRun(
+    run = AlignmentRun(
         projections=data, geometry=geometry, config=config, mode="pose", levels=(2, 1)
     )
     path = tmp_path / "limited.npz"
-    alignment.write_alignment_checkpoint(path, run, checkpoints[-1])
-    restored = alignment.resume_state_from_checkpoint(path, run)
+    write_alignment_checkpoint(path, run, checkpoints[-1])
+    restored = resume_state_from_checkpoint(path, run)
     resumed_volume, resumed_params, info = align_multires(
         geometry, grid, detector, data, factors=(2, 1), config=config, resume_state=restored
     )

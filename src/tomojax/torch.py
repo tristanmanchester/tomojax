@@ -66,6 +66,15 @@ class Projector(torch.nn.Module):
     Both directions support differentiation, including higher derivatives of
     compositions. Install PyTorch separately for your CUDA version; it is not
     required by the rest of TomoJAX.
+
+    Parameters
+    ----------
+    geometry : ScanGeometry
+        Fixed acquisition geometry, including detector, angles and any poses.
+        All lengths use a common physical unit.
+    grid : Grid or None, optional
+        Reconstruction grid; None uses geometry.grid. Geometry and grid are
+        copied at construction, so later caller mutations do not affect the operator.
     """
 
     def __init__(self, geometry: ScanGeometry, *, grid: Grid | None = None) -> None:
@@ -77,12 +86,51 @@ class Projector(torch.nn.Module):
         self.projection_shape = self._operator.projection_shape
 
     def forward(self, volume: torch.Tensor) -> torch.Tensor:
-        """Project a CUDA float32 volume; its gradient uses the exact transpose."""
+        """Project a CUDA volume; its gradient uses the exact transpose.
+
+        Parameters
+        ----------
+        volume : torch.Tensor
+            Contiguous CUDA float32 volume of shape (nz, ny, nx), or (ny, nx)
+            for a 2D operator, with
+            16-byte-aligned storage, on the operator's JAX-compatible device.
+
+        Returns
+        -------
+        torch.Tensor
+            CUDA float32 line integrals of shape (views, detector.nv, detector.nu),
+            or (views, detector.nu) for a 2D operator.
+
+        Raises
+        ------
+        ValueError
+            If dtype, device, shape, contiguity or storage alignment is unsupported.
+        """
         self._validate(volume)
         return _Projection.apply(volume, self._operator, self._operator.adjoint)
 
     def adjoint(self, projections: torch.Tensor) -> torch.Tensor:
-        """Backproject with the exact transpose; its gradient uses the projector."""
+        """Backproject with the exact transpose; its gradient uses the projector.
+
+        Parameters
+        ----------
+        projections : torch.Tensor
+            Contiguous CUDA float32 projections of shape
+            (views, detector.nv, detector.nu), or (views, detector.nu) for a 2D
+            operator, with 16-byte-aligned storage,
+            on the operator's JAX-compatible device.
+
+        Returns
+        -------
+        torch.Tensor
+            CUDA float32 adjoint volume of shape (nz, ny, nx), or (ny, nx)
+            for a 2D operator.
+
+        Raises
+        ------
+        ValueError
+            If dtype, device, shape, contiguity or storage alignment is unsupported.
+        """
         self._validate(projections)
         return _Projection.apply(projections, self._operator.adjoint, self._operator)
 

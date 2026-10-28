@@ -25,6 +25,16 @@ For calibrated, unrolled laminography, a separate `projection_consistency` /
 `spectral` setup stage with `("dx", "dz")` initializes smooth detector-frame
 motion from zero poses, also without reconstructing or claiming validation.
 
+## Quality defaults and explicit settings
+
+`alignment_plan(mode, grid, quality="reference")` selects the JAX/fp32 reference
+profile; the default `fast` profile selects CUDA. CLI config-file fields override
+the selected profile, including an explicitly chosen backend.
+`AlignConfig` is an expert configuration: its `quality` sets the reconstruction
+budget, not other fields. For example, `AlignConfig(quality="reference",
+backend="cuda")` keeps CUDA, including after configuration copies. Use
+`alignment_plan` for a complete quality-dependent preset.
+
 ## Gauss–Newton updates at interpolation boundaries
 
 The default `gn_jacobian="autodiff"` differentiates the ray model within its

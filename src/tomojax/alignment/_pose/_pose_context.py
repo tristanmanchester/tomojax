@@ -27,7 +27,6 @@ from tomojax.alignment._results import AlignResumeState
 from tomojax.core.cone import ConeModel
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.cone import is_cone_beam
-from tomojax.geometry import cylindrical_mask_xy
 
 
 def with_beam_translation(
@@ -58,24 +57,6 @@ def validate_resume_config(resume_state: AlignResumeState, cfg: AlignConfig) -> 
         raise ValueError("align resume_state pose_translation_frame differs from config")
     if resume_state.ray_integrator != cfg.ray_integrator:
         raise ValueError("align resume_state ray_integrator differs from config")
-
-
-def _build_alignment_volume_mask(
-    grid: Grid,
-    detector: Detector,
-    *,
-    mask_vol: str,
-) -> jnp.ndarray | None:
-    mask_mode = str(mask_vol).lower()
-    if mask_mode in ("off", "none", ""):
-        return None
-    if mask_mode not in ("cyl", "cylindrical"):
-        raise ValueError("align mask_vol must be one of 'off' or 'cyl'")
-    try:
-        m_xy = cylindrical_mask_xy(grid, detector)
-        return jnp.asarray(m_xy, dtype=jnp.float32)[None]
-    except Exception as exc:
-        raise ValueError(f"Failed to apply requested mask_vol={mask_mode!r}") from exc
 
 
 @dataclass(frozen=True)

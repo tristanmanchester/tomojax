@@ -117,19 +117,41 @@ def joseph_l2_value_and_grad(
     backend: Literal["jax", "cuda"] = "jax",
     interpolation: Literal["linear", "cubic"] = "linear",
 ) -> tuple[jax.Array, tuple[jax.Array, jax.Array]]:
-    """Return half squared error and ``(volume_gradient, pose_gradient)``.
+    """Return the Joseph projection loss and volume and matrix-pose gradients.
 
-    Compute half the sum of squared projection residuals using the selected
-    interpolation, without normalization, masking or fitted scale. Inputs follow
-    ``project_joseph``'s contract; target is a finite real ``(views, nv, nu)`` stack. Pose gradients
-    are with respect to the matrix entries: use a VJP through a rigid pose
-    parameterization before taking an optimization step.
+    Compute half the sum of squared residuals, without normalization, masking or
+    fitted scale. Pose gradients are with respect to matrix entries: use a VJP
+    through a rigid pose parameterization before taking an optimization step.
+    The CUDA path provides first derivatives only; use JAX for higher derivatives.
 
-    The CUDA path fuses projection and pose derivatives, retaining a residual
-    sinogram and tile reductions, then applies the matched volume transpose.
-    This CUDA operation provides first derivatives only; the JAX reference can
-    be differentiated further. For other losses, compose ``project_joseph``
-    with ordinary JAX functions and differentiate it.
+    Parameters
+    ----------
+    volume : jax.Array
+        Finite real volume of shape (grid.nz, grid.ny, grid.nx), converted to float32.
+    poses : jax.Array
+        Rigid world-from-object matrices of shape (views, 4, 4).
+    target : jax.Array
+        Finite real target projections of shape (views, detector.nv, detector.nu).
+    grid : Grid
+        Physical voxel grid; its origin locates voxel (0, 0, 0)'s center.
+    detector : Detector
+        Physical detector grid, including offsets, in the same length unit as grid.
+    backend : {'jax', 'cuda'}, optional
+        Explicit reference or NVIDIA CUDA implementation; default is 'jax', with no fallback.
+    interpolation : {'linear', 'cubic'}, optional
+        Bilinear or Keys cubic convolution (a=-1/2); default is 'linear'.
+
+    Returns
+    -------
+    loss : jax.Array
+        Scalar half-squared projection error.
+    gradients : tuple of jax.Array
+        Volume and matrix-pose gradients, with the same shapes as volume and poses.
+
+    Raises
+    ------
+    ValueError
+        If shapes, interpolation or backend are unsupported, including CUDA without a GPU.
     """
     validate_interpolation(interpolation)
     volume, poses = _inputs(volume, poses, grid, detector, backend)
@@ -156,28 +178,49 @@ def joseph_pose_normal_equations(
     backend: Literal["jax", "cuda"] = "jax",
     interpolation: Literal["linear", "cubic"] = "linear",
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Return per-view least-squares loss, gradient, Gauss-Newton matrix, residual.
+    """Return per-view Joseph loss, gradient, Gauss-Newton matrix and residual.
 
-    ``pose_directions`` has shape ``(views, 4, 4, P)``, with 1 <= P <= 16.
-    Its last axis gives matrix-pose tangents for each view's parameters, in the
-    caller's chosen units. For example, use ``vmap(jacfwd(make_pose))`` for a
-    function that maps one view's rigid parameters to its world-from-object
-    matrix. Inputs otherwise follow ``project_joseph``; target and directions
-    must be finite and real, including under JIT. Directions should correspond
-    to a rigid parameterization when optimizing physical poses.
+    For directional projection Jacobian J and residual r=prediction-target, return
+    (0.5*r.T@r, J.T@r, J.T@J, r) per view. Shared parameters can sum these blocks.
+    Priors, cross-view coupling, damping and gauge constraints are not included.
+    CUDA provides first-order information only; use JAX for higher derivatives.
 
-    For residual ``r = prediction - target`` and directional projection Jacobian
-    ``J``, return ``(0.5*r.T@r, J.T@r, J.T@J, r)`` independently per view. Shapes
-    are ``(views,)``, ``(views, P)``, ``(views, P, P)``, and ``(views, nv, nu)``.
-    The matrix is the Gauss-Newton approximation, not the full loss Hessian.
-    Shared global parameters can sum these contributions; per-view parameters
-    use separate blocks. Priors and cross-view coupling are not included.
+    Parameters
+    ----------
+    volume : jax.Array
+        Finite real volume of shape (grid.nz, grid.ny, grid.nx), converted to float32.
+    poses : jax.Array
+        Rigid world-from-object matrices of shape (views, 4, 4).
+    pose_directions : jax.Array
+        Finite real matrix-pose tangents of shape (views, 4, 4, P), with
+        1 <= P <= 16. Tangents use the caller's parameter units and should come
+        from a rigid parameterization when optimizing physical poses.
+    target : jax.Array
+        Finite real target projections of shape (views, detector.nv, detector.nu).
+    grid : Grid
+        Physical voxel grid; its origin locates voxel (0, 0, 0)'s center.
+    detector : Detector
+        Physical detector grid, including offsets, in the same length unit as grid.
+    backend : {'jax', 'cuda'}, optional
+        Explicit reference or NVIDIA CUDA implementation; default is 'jax', with no fallback.
+    interpolation : {'linear', 'cubic'}, optional
+        Bilinear or Keys cubic convolution (a=-1/2); default is 'linear'.
 
-    CUDA recomputes plane samples once, reduces tile-local columns and retains
-    the residual for a subsequent line search. It stores neither the full
-    detector-by-parameter Jacobian nor a ray-by-plane tape. This explicit CUDA
-    operation provides first-order information only; use the JAX reference for
-    further differentiation. No damping, parameter step or gauge is chosen.
+    Returns
+    -------
+    loss : jax.Array
+        Half-squared residual sums, shape (views,).
+    gradient : jax.Array
+        Directional gradients, shape (views, P).
+    normal : jax.Array
+        Gauss-Newton matrices, shape (views, P, P), not full loss Hessians.
+    residual : jax.Array
+        Prediction minus target, shape (views, detector.nv, detector.nu).
+
+    Raises
+    ------
+    ValueError
+        If shapes, interpolation or backend are unsupported, including CUDA without a GPU.
     """
     validate_interpolation(interpolation)
     volume, poses = _inputs(volume, poses, grid, detector, backend)

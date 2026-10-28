@@ -7,7 +7,7 @@ import functools
 import hashlib
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
@@ -15,11 +15,12 @@ import numpy as np
 
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
 from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
-from tomojax.alignment._quality_policy import (
+from tomojax.alignment._profiles import (
     ReconstructionQualityPolicy,
     reconstruction_quality_policy,
     scaled_reconstruction_iterations,
 )
+from tomojax.alignment._reconstruction_config import fista_config
 from tomojax.alignment._results import record_reconstruction_info as _record_reconstruction_info
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.backends.host_stream import host_source, should_stream
@@ -30,7 +31,7 @@ from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import get_detector_grid_device
-from tomojax.recon.fista_tv import FistaConfig, fista_tv, huber_tv_lipschitz
+from tomojax.recon.fista_tv import fista_tv, huber_tv_lipschitz
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     effective_fista_core_backend,
@@ -39,6 +40,7 @@ from tomojax.recon.fista_tv_core import (
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 
 if TYPE_CHECKING:
+    from tomojax.alignment._config import AlignConfig
     from tomojax.alignment._observer import OuterStat
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
@@ -554,24 +556,19 @@ def _run_public_fista_reconstruction(
             # a usable data bound. Let FISTA estimate it from the operator.
             data_lipschitz = None
     cone = is_cone_beam(step.recon_geometry)
-    fista_cfg = FistaConfig(
+    fista_cfg = fista_config(
+        cast("AlignConfig", cfg),
         projector_model="auto" if cone else "ray",  # cone beams: Joseph, on CUDA if there
         backend="auto" if cone else "jax",
         iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
-        tv_weight=cfg.tv_weight,
-        regulariser=cfg.regulariser,
-        huber_delta=cfg.huber_delta,
         lipschitz=data_lipschitz,
         views_per_batch=views_per_batch,
         projector_unroll=int(projector_unroll),
         checkpoint_projector=cfg.checkpoint_projector,
         gather_dtype=gather_dtype,
         grad_mode=grad_mode,
-        tv_prox_iterations=int(cfg.tv_prox_iterations),
-        nonnegative=bool(cfg.nonnegative),
         recon_rel_tol=cfg.recon_rel_tol,
         recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
-        ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
         devices=shared_devices() if cone else None,  # the run's, see tomojax.align
     )
     return fista_tv(

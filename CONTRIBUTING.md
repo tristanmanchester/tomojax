@@ -53,7 +53,11 @@ import passing is not enough to establish that the wheel works.
 
 - Import application code through public module roots or `.api` facades. Keep
   CLI orchestration separate from numerical implementation and honor the
-  [import contracts](.importlinter).
+  [import contracts](.importlinter). The scan workflow and alignment CLI share
+  private checkpoint/configuration plumbing through `alignment._integration`;
+  it is not an expert API. White-box unit tests may import definition modules
+  with an explicit `check-public-imports: allow-private` marker. Do not export
+  implementation details just to make them available to tests.
 - Keep geometry explicit: Python volumes are `(z, y, x)`, projections are
   `(view, v, u)`, and voxel/detector lengths use consistent physical units.
   Document parameter frames and units at API boundaries.

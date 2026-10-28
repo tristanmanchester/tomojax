@@ -613,13 +613,13 @@ def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
         L_prev=100.0,
         outer_idx=1,
     )
-    policy = reconstruction_stage.reconstruction_quality_policy("final")
+    policy = reconstruction_stage.reconstruction_quality_policy("verify")
     monkeypatch.setattr(reconstruction_stage, "reconstruction_quality_policy", lambda _: policy)
     monkeypatch.setattr(reconstruction_stage, "should_stream", lambda *a, **k: False)
     expected, expected_info = reconstruction_stage._run_huber_fista_core_reconstruction(step)
     monkeypatch.setattr(reconstruction_stage, "should_stream", lambda *a, **k: True)
     actual, actual_info = reconstruction_stage._run_huber_fista_core_reconstruction(step)
     np.testing.assert_allclose(actual, expected, rtol=3e-6, atol=2e-6)
-    assert actual_info["effective_iterations"] == expected_info["effective_iterations"] == 12
+    assert actual_info["effective_iterations"] == expected_info["effective_iterations"] == 6
     assert actual_info["actual_backend"] == expected_info["actual_backend"]
     np.testing.assert_allclose(actual_info["loss"], expected_info["loss"], rtol=3e-6)

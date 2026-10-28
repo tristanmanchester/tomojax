@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from tomojax.core.array_ops import mean_detector_pixels
+from tomojax.core.validation import view_indices
 from tomojax.geometry import (
     ConeGeometry,
     LaminographyGeometry,
@@ -457,29 +458,6 @@ def detector_window(rows: slice, cols: slice, detector: Detector) -> Callable[[D
         return replace(d, nu=c1 - c0, nv=r1 - r0, center=moved)
 
     return crop
-
-
-def view_indices(views: slice | Sequence[int] | np.ndarray, count: int) -> np.ndarray:
-    """``views`` of ``count`` as nonempty, increasing integer indices."""
-    if isinstance(views, slice):
-        if views.step is not None and views.step <= 0:
-            raise ValueError("views must follow a forward slice with a positive step")
-        chosen = np.arange(count)[views]
-    else:
-        chosen = np.asarray(views)
-    if chosen.dtype == bool:
-        if chosen.shape != (count,):
-            raise ValueError(f"a mask of views needs {count} entries, not {chosen.shape}")
-        chosen = np.flatnonzero(chosen)
-    if not chosen.size:
-        raise ValueError("views must select at least one view")
-    if chosen.ndim != 1 or chosen.dtype.kind not in "iu":
-        raise ValueError("views must be a one-dimensional array of integer indices")
-    if chosen.min() < 0 or chosen.max() >= count:
-        raise ValueError(f"views must be in 0..{count - 1}")
-    if np.any(chosen[1:] <= chosen[:-1]):
-        raise ValueError("views must be increasing indices, each once")
-    return chosen.astype(np.int64)
 
 
 def _calibration_parts(geometry: ScanGeometry) -> tuple[ScanGeometry, ...]:

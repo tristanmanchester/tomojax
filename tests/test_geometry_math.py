@@ -8,12 +8,11 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from tomojax.alignment.api import (
-    AlignmentState,
-    BaseGeometryArrays,
-    SetupGeometryState,
-    apply_alignment_state,
-)
+# check-public-imports: allow-private
+from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+
+# check-public-imports: allow-private
+from tomojax.alignment._model.state import AlignmentState, SetupGeometryState
 
 # check-public-imports: allow-private
 from tomojax.core.geometry.transforms import align_u_to_v

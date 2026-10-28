@@ -23,11 +23,14 @@ from dataclasses import dataclass, replace
 import logging
 from typing import TYPE_CHECKING, Literal
 
-from tomojax.alignment._config import AlignConfig, resolved_schedule_for_config
+from tomojax.alignment._config import (
+    AlignConfig,
+    coupled_pose_defaults,
+    resolved_schedule_for_config,
+)
 from tomojax.alignment._model.dofs import DOF_NAMES
 from tomojax.alignment._model.schedules import AlignmentSchedule, schedule_preset
-from tomojax.alignment._objectives.loss_specs import L2LossSpec
-from tomojax.alignment._profiles import normalize_quality, resolve_profiled_cli_defaults
+from tomojax.alignment._profiles import alignment_profile_policy, normalize_quality
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -42,15 +45,6 @@ type AlignmentMode = Literal["pose", "cor", "cor-then-pose", "full"]
 MODES: tuple[AlignmentMode, ...] = ("pose", "cor", "cor-then-pose", "full")
 
 _SCHEDULES = {"cor": "cor", "cor-then-pose": "cor_then_pose", "full": "setup_safe"}
-_PROFILE_KEYS = (
-    "backend",
-    "gather_dtype",
-    "regulariser",
-    "reconstruction",
-    "views_per_batch",
-    "checkpoint_projector",
-    "pose_model",
-)
 # Setup DOFs a cone beam calibrates as its axis offset and detector roll.
 _CONE_AXIS_DOFS = frozenset({"det_u_px", "detector_roll_deg"})
 
@@ -93,27 +87,6 @@ def coupled_levels(grid: Grid) -> tuple[int, ...]:
     """
     shortest = min(grid.nx, grid.ny, grid.nz)
     return (*(factor for factor in (4, 2) if shortest // factor >= 32), 1)
-
-
-def coupled_overrides(config: AlignConfig, *, explicit: Iterable[str] = ()) -> dict[str, object]:
-    """Settings the coupled pose solver needs, keeping the ``explicit`` fields' values."""
-    keep = set(explicit)
-    options: dict[str, object] = {
-        "gn_coupling": "joint",
-        "gn_joint_solver": "pose_eliminated",
-        "ray_integrator": config.ray_integrator if "ray_integrator" in keep else "joseph",
-        "gather_dtype": "fp32",
-        "opt_method": "gn",
-        "pose_model": "per_view",
-        # A global shift search extends the local solver's capture range.
-        "seed_translations": config.seed_translations if "seed_translations" in keep else True,
-    }
-    if "loss" not in keep:
-        options["loss"] = L2LossSpec()
-    if "tv_weight" not in keep:
-        # Default-weight TV biased coupled pose recovery in the free-voxel pilot.
-        options["tv_weight"] = 0.0
-    return options
 
 
 def alignment_plan(
@@ -179,14 +152,7 @@ def alignment_plan(
     expert = config is not None
     cfg = config or AlignConfig(quality=tier, pose_translation_frame="detector")
     if not expert:
-        current = {key: getattr(cfg, key) for key in _PROFILE_KEYS}
-        resolved = resolve_profiled_cli_defaults(
-            quality=tier, current=current, configured_keys=set()
-        )
-        cfg = replace(
-            cfg,
-            **{key: resolved[key] for key in _PROFILE_KEYS},  # type: ignore[arg-type]
-        )
+        cfg = replace(cfg, **alignment_profile_policy(tier).to_dict())
     if cfg.schedule is None and cfg.optimise_dofs is None:
         if name == "pose":
             schedule = "lightning_pose" if tier == "fast" else "tortoise_pose"
@@ -202,11 +168,10 @@ def alignment_plan(
     if pose_solver == "coupled" and not expert:
         cfg = replace(
             cfg,
-            outer_iterations=30,
             gn_joint_iterations=(
                 10 if tier == "fast" and is_cone_beam(geometry) else cfg.gn_joint_iterations
             ),
-            **coupled_overrides(cfg),  # type: ignore[arg-type]
+            **coupled_pose_defaults(),
         )
     elif not expert:
         # Joseph plane sampling is the fastest forward model for every mode.
@@ -375,7 +340,6 @@ __all__ = [
     "alignment_plan",
     "cone_setup",
     "coupled_levels",
-    "coupled_overrides",
     "normalize_mode",
     "pose_stages_only",
 ]

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
+from tomojax.alignment._profiles import StageQualityTier
+
 from .diagnostics import GaugeDecision, GaugePolicyError, validate_active_gauge_policy
 from .dof_specs import ActiveParameterView
 from .dofs import (
@@ -26,7 +28,6 @@ GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"
 ScheduleSource = Literal["preset", "direct", "default", "expert"]
 StageRole = Literal["proposal", "setup", "reconstruction", "refine", "verify"]
 DifferentiabilityRequirement = Literal["gradient_safe", "performance_only", "not_required"]
-StageQualityTier = Literal["fast", "reference", "verify"]
 
 
 PUBLIC_SCHEDULE_PRESETS = (

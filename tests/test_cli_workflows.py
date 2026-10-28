@@ -736,7 +736,7 @@ def test_align_cli_dry_run_reports_the_effective_public_plan(
     aligned = tmp_path / "aligned.nxs"
     config = tmp_path / "align.toml"
     write_projection_dataset(scan)
-    _ = config.write_text('loss = "4:phasecorr,2:ssim,1:l2_otsu"\n', encoding="utf-8")
+    _ = config.write_text('loss = "4:huber,2:l2,1:l2_otsu"\nbackend = "cuda"\n', encoding="utf-8")
     args = ["align", str(scan), "-o", str(aligned), "--mode", "full", "--quality", quality]
     assert main([*args, "--roi", "off", "--config", str(config), "--dry-run"]) == 0
 
@@ -745,7 +745,8 @@ def test_align_cli_dry_run_reports_the_effective_public_plan(
     assert payload["levels"] == [4, 2, 1]
     assert payload["output_path"] == str(aligned)
     assert payload["config"]["quality"] == quality
-    assert "phasecorr" in payload["loss"]
+    assert payload["config"]["backend"] == "cuda"
+    assert "HuberLossSpec" in payload["loss"]
     stages = payload["schedule"]["stages"]
     assert [stage["stage_name"] for stage in stages][:2] == ["setup", "pose_polish"]
     assert not aligned.exists()

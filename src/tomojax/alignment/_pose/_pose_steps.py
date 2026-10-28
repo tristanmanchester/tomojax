@@ -299,7 +299,6 @@ def _gn_smooth_candidate_fn(
 
 
 def _run_gn_alignment_step(
-    cfg: AlignConfig,
     objective: AlignmentStepObjective,
     constraints: AlignmentStepConstraints,
     motion: AlignmentStepMotion,
@@ -321,7 +320,7 @@ def _run_gn_alignment_step(
         if motion.use_smooth_pose_model
         else constraints.apply_full_constraints
     )
-    if cfg.gn_accept_only_improving and (loss_before is not None):
+    if loss_before is not None:
         pose_params_out, loss_after = _select_gn_candidate(
             pose_params_prev,
             dp_all,
@@ -333,7 +332,7 @@ def _run_gn_alignment_step(
                     context="Treating GN candidate as rejected during alignment loss evaluation",
                 )
             ),
-            gn_accept_tol=cfg.gn_accept_tol,
+            gn_accept_tol=0.0,
             candidate_context=GNCandidateContext(
                 constrain_candidate=constrain_candidate,
                 smooth_candidate=_gn_smooth_candidate_fn(constrain_candidate, pose_params_in),
@@ -393,7 +392,6 @@ def _run_alignment_step_core(
     if step_kind == "gn":
         pose_params_out, motion_coeffs_out, loss_before, loss_after, gn_stat = (
             _run_gn_alignment_step(
-                cfg,
                 objective,
                 constraints,
                 motion,
@@ -625,10 +623,10 @@ def _run_alignment_step(
         stat=stat,
         loss_rng_key=loss_rng_key,
     )
-    if cfg.gn_accept_only_improving and _should_reject_post_constraint_loss(
+    if _should_reject_post_constraint_loss(
         loss_before=result.loss_before,
         total_loss=total_loss,
-        rel_tol=float(cfg.gn_accept_tol),
+        rel_tol=0.0,
     ):
         pose_params_out = pose_params_in
         motion_coeffs_out = motion_coeffs_in
@@ -680,8 +678,8 @@ def _run_coupled_alignment_step(
                 pose_params_in + trial_scale * dp
             )
             value = float(objective.loss(trial_params, trial_volume))
-            improves = loss_is_within_relative_tolerance(before, value, cfg.gn_accept_tol)
-            if math.isfinite(value) and (improves or not cfg.gn_accept_only_improving):
+            improves = loss_is_within_relative_tolerance(before, value, 0.0)
+            if math.isfinite(value) and improves:
                 volume_out, params_out, after, scale = (
                     trial_volume,
                     trial_params,

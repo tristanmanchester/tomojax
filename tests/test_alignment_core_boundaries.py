@@ -43,7 +43,7 @@ from tomojax.alignment._objectives.loss_specs import (
 from tomojax.alignment._observer import _normalize_observer_action, adapt_observer_callback
 
 # check-public-imports: allow-private
-from tomojax.alignment._quality_policy import (
+from tomojax.alignment._profiles import (
     reconstruction_quality_policy,
     scaled_reconstruction_iterations,
 )
@@ -134,11 +134,13 @@ def test_align_config_takes_one_spelling_of_each_option(option: dict[str, Any]) 
 
 
 def test_reconstruction_quality_policy_scales_iteration_budget() -> None:
-    assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("proposal")) == 2
     assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("fast")) == 8
-    assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("refine")) == 12
-    assert scaled_reconstruction_iterations(8, reconstruction_quality_policy("reference")) == 16
-    assert scaled_reconstruction_iterations(1, reconstruction_quality_policy("proposal")) == 1
+    for tier in ("reference", "verify"):
+        assert scaled_reconstruction_iterations(8, reconstruction_quality_policy(tier)) == 16
+    assert scaled_reconstruction_iterations(0, reconstruction_quality_policy("fast")) == 1
+    for tier in ("proposal", "refine", "final"):
+        with pytest.raises(ValueError, match="quality tier"):
+            reconstruction_quality_policy(tier)
 
 
 def test_loss_specs_round_trip_params_and_scheduled_levels() -> None:
@@ -147,11 +149,11 @@ def test_loss_specs_round_trip_params_and_scheduled_levels() -> None:
     assert loss_spec_name(huber) == "huber"
     assert loss_spec_params(huber) == {"delta": 2.5}
 
-    schedule = parse_loss_schedule("4:phasecorr,2:ssim,1:l2_otsu", default=L2LossSpec())
+    schedule = parse_loss_schedule("4:huber,2:l2,1:l2_otsu", default=L2LossSpec())
     validate_loss_schedule_levels(schedule, factors=(1, 2, 4))
 
-    assert loss_spec_name(resolve_loss_for_level(schedule, 4)) == "phasecorr"
-    assert loss_spec_name(resolve_loss_for_level(schedule, 2)) == "ssim"
+    assert loss_spec_name(resolve_loss_for_level(schedule, 4)) == "huber"
+    assert loss_spec_name(resolve_loss_for_level(schedule, 2)) == "l2"
     assert isinstance(resolve_loss_for_level(schedule, 1), L2OtsuLossSpec)
     assert isinstance(resolve_loss_for_level(schedule, 8), L2LossSpec)
 
@@ -167,7 +169,7 @@ def test_stage_runtime_enriches_resume_stats_with_global_stage_context() -> None
         level_factor=2,
         global_before_level=5,
         global_elapsed_offset=10.0,
-        active_loss_name="ssim",
+        active_loss_name="l2",
         schedule_name=schedule.name,
         stats_before_level=[],
         loss_before_level=[],
@@ -328,9 +330,7 @@ def test_stage_runtime_checkpoint_preserves_schedule_resume_fields() -> None:
     assert checkpoint.geometry_calibration_state is not None
 
 
-def test_information_losses_share_fields_but_keep_their_variant():
-    params = {"bins": 16.0, "bw_x": 0.2, "bw_y": 0.3}
-    for kind, extra in (("mi", {}), ("nmi", {"nmi": 1.0}), ("renyi_mi", {"alpha": 1.5})):
-        spec = parse_loss_spec(kind, params)
-        assert loss_spec_name(spec) == kind
-        assert loss_spec_params(spec) == params | extra
+@pytest.mark.parametrize("kind", ["pwls", "ssim", "phasecorr", "mi", "cauchy"])
+def test_removed_losses_fail_with_supported_alternatives(kind):
+    with pytest.raises(ValueError, match="removed.*l2.*l2_otsu.*huber"):
+        parse_loss_spec(kind)

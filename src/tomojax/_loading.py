@@ -27,9 +27,9 @@ from tomojax._scan import (
     detector_window,
     rebuild,
     scan_from_record,
-    view_indices,
     views_of,
 )
+from tomojax.core.validation import view_indices
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

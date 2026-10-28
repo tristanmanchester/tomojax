@@ -1,5 +1,5 @@
 {
-  "align_config_fields": 58,
+  "align_config_fields": 53,
   "exported_names": {
     "tomojax": 24,
     "tomojax.geometry": 18,
@@ -11,7 +11,7 @@
     "tomojax.geometry.api": 12,
     "tomojax.recon.api": 7,
     "tomojax.io.api": 20,
-    "tomojax.alignment.api": 75
+    "tomojax.alignment.api": 34
   },
   "cli_flags": {
     "inspect": 4,
@@ -23,17 +23,16 @@
     "simulate": 45
   },
   "long_files": {
-    "src/tomojax/alignment/_pose/_pose_loop.py": 864,
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1028,
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 1025,
     "src/tomojax/alignment/optimizers.py": 840
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 165,
     "src/tomojax/alignment/_objectives/fixed_volume.py::project_and_score_stack": 160,
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 255,
-    "src/tomojax/alignment/_pose/_pose_loop.py::align": 189,
+    "src/tomojax/alignment/_pose/_pose_loop.py::align": 185,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 166,
-    "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 148,
+    "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 142,
     "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 103,
     "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 117,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 143,
@@ -56,7 +55,7 @@
   },
   "suppressions": {
     "noqa": 8,
-    "type: ignore": 31,
+    "type: ignore": 27,
     "pyright: ignore": 12
   },
   "complex_functions": [
@@ -67,10 +66,8 @@
     "src/tomojax/alignment/_model/state.py::C901::alignment_state_from_checkpoint",
     "src/tomojax/alignment/_objectives/fixed_volume.py::C901::project_and_score_stack",
     "src/tomojax/alignment/_objectives/fixed_volume.py::PLR0915::project_and_score_stack",
-    "src/tomojax/alignment/_objectives/loss_adapters.py::C901::_build_loss_from_kind",
     "src/tomojax/alignment/_pose/_coupled_program.py::C901::_build_program",
     "src/tomojax/alignment/_pose/_coupled_program.py::PLR0915::_build_program",
-    "src/tomojax/alignment/_pose/_pose_summary.py::C901::_lbfgs_summary_parts",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::C901::_run_reconstruction_step",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0911::_rigid_detector_grid_transform",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0912::_run_reconstruction_step",
@@ -86,18 +83,17 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 259,
+    "reportArgumentType": 196,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 102,
+    "reportAttributeAccessIssue": 96,
     "reportCallIssue": 12,
     "reportGeneralTypeIssues": 7,
     "reportIndexIssue": 6,
     "reportInvalidTypeForm": 1,
-    "reportOperatorIssue": 2,
     "reportOptionalCall": 2,
-    "reportOptionalMemberAccess": 8,
+    "reportOptionalMemberAccess": 7,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 82,
+    "reportPrivateUsage": 80,
     "reportRedeclaration": 1,
     "reportReturnType": 18,
     "reportTypedDictNotRequiredAccess": 5
@@ -107,5 +103,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 120
+  "test_private_imports": 143
 }

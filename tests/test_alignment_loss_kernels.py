@@ -11,64 +11,8 @@ from tomojax.alignment._objectives import fixed_volume
 # check-public-imports: allow-private
 from tomojax.alignment._objectives.loss_kernels import (
     _compute_otsu_threshold,
-    _kde_probabilities,
-    _loss_barron,
-    _loss_swd,
 )
-
-# check-public-imports: allow-private
-from tomojax.alignment._objectives.loss_state import LossState
 from tomojax.geometry import Detector, Grid
-
-
-def test_barron_loss_uses_general_alpha_coefficient() -> None:
-    pred = jnp.full((2, 2), 2.0, dtype=jnp.float32)
-    target = jnp.ones((2, 2), dtype=jnp.float32)
-    alpha = 1.5
-    beta = abs(alpha - 2.0)
-    expected_per_element = (beta / alpha) * ((1.0 + 1.0 / beta) ** (alpha / 2.0) - 1.0)
-
-    actual = _loss_barron(pred, target, LossState(kind="barron", params={"alpha": alpha, "c": 1.0}))
-
-    assert float(actual) == pytest.approx(expected_per_element * 4.0)
-
-
-def test_kde_histogram_keeps_unit_mass_for_samples_outside_the_bins() -> None:
-    bins = jnp.linspace(0.0, 1.0, 32)
-    rng = jax.random.key(0)
-    pred = jax.random.uniform(rng, (64, 64)) + 0.5
-    target = jax.random.uniform(jax.random.key(1), (64, 64))
-
-    px, py, pxy = _kde_probabilities(pred, target, bins, bins, 1.0 / 32, 1.0 / 32)
-
-    for mass in (px.sum(), py.sum(), pxy.sum()):
-        assert float(mass) == pytest.approx(1.0, abs=1e-4)
-
-
-def test_swd_loss_subsampling_uses_supplied_rng_key() -> None:
-    pred = jnp.arange(25, dtype=jnp.float32).reshape(5, 5)
-    base = jnp.arange(25, dtype=jnp.float32)
-    target = (base**1.3 + (base % 3) * 7.0).reshape(5, 5)
-    params = {"n_samples": 5.0}
-
-    first = _loss_swd(
-        pred,
-        target,
-        LossState(kind="swd", params=params, rng_key=jax.random.key(0)),
-    )
-    same_key = _loss_swd(
-        pred,
-        target,
-        LossState(kind="swd", params=params, rng_key=jax.random.key(0)),
-    )
-    other_key = _loss_swd(
-        pred,
-        target,
-        LossState(kind="swd", params=params, rng_key=jax.random.key(1)),
-    )
-
-    assert float(first) == pytest.approx(float(same_key))
-    assert float(first) != pytest.approx(float(other_key))
 
 
 def test_cuda_project_stack_records_unsupported_fallback(

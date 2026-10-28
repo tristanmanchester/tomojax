@@ -56,7 +56,27 @@ class SimMetadata(TypedDict, total=False):
 
 
 class SimulatedData(TypedDict):
-    """Generated projections, geometry metadata, and ground-truth volume."""
+    """Store generated projections, geometry metadata and the phantom.
+
+    Attributes
+    ----------
+    projections : jax.Array
+        Float32 line integrals of shape (n_views, nv, nu), including artefacts.
+    angles : numpy.ndarray
+        Nominal projection angles in degrees, shape (n_views,).
+    grid, detector : dict
+        Serialized voxel-grid and detector geometry with physical spacing.
+    geometry_type : {'parallel', 'lamino', 'cone'}
+        Acquisition geometry family.
+    volume : jax.Array
+        Ground-truth phantom of shape (nz, ny, nx).
+    geometry_meta : dict or None
+        Additional acquisition geometry, or None for parallel scans.
+    meta : dict
+        Simulation seed and artefact provenance.
+    simulation_artefacts : dict or None
+        Applied artefact parameters and affected sample indices, when present.
+    """
 
     projections: jnp.ndarray
     angles: np.ndarray
@@ -71,7 +91,63 @@ class SimulatedData(TypedDict):
 
 @dataclass(kw_only=True)
 class SimConfig:
-    """Configuration for deterministic synthetic dataset generation."""
+    """Configure deterministic synthetic dataset generation.
+
+    Lengths use one common physical unit. Phantom size parameters are in voxels,
+    not physical lengths; anisotropic voxel spacing changes their physical shape.
+
+    Parameters
+    ----------
+    nx, ny, nz : int
+        Number of voxels along the object x, y and z axes.
+    nu, nv : int
+        Detector width and height, in pixels.
+    n_views : int
+        Number of uniformly spaced views; the final rotation endpoint is excluded.
+    du, dv : float, optional
+        Detector pixel pitches; both default to 1.
+    vx, vy, vz : float, optional
+        Object voxel pitches; all default to 1.
+    rotation_deg : float or None, optional
+        Total angular range in degrees. None gives 180 for parallel geometry
+        and 360 for laminography or cone geometry.
+    geometry : {'parallel', 'lamino', 'cone'}, optional
+        Acquisition geometry; default is 'parallel'.
+    tilt_deg : float, optional
+        Laminography or cone rotation-axis tilt in degrees; default is 30.
+    tilt_about : {'x', 'y'}, optional
+        Axis about which the nominal rotation axis is tilted; default is 'x'.
+    source_to_axis : float or None, optional
+        Cone source-to-axis distance. None uses three times the largest physical
+        volume extent.
+    source_to_detector : float or None, optional
+        Cone source-to-detector distance. None uses 1.5 times source_to_axis.
+    phantom : {'shepp', 'cube', 'sphere', 'blobs', 'random_shapes', 'lamino_disk'}, optional
+        Phantom family; default is 'shepp'.
+    single_size : float, optional
+        Cube side or sphere diameter as a fraction of the smallest dimension;
+        default is 0.5.
+    single_value : float, optional
+        Cube or sphere intensity; default is 1.
+    single_rotate : bool, optional
+        Randomly rotate a single cube; default is True. Ignored for other phantoms.
+    n_cubes, n_spheres : int, optional
+        Numbers of requested objects for random_shapes and lamino_disk;
+        defaults are 8 and 7. Objects too large to fit are skipped.
+    min_size, max_size : int, optional
+        Bounds on random cube sides and sphere diameters, in voxels;
+        defaults are 4 and 32.
+    min_value, max_value : float, optional
+        Bounds on random object intensities; defaults are 0.1 and 1.
+    max_rot_deg : float, optional
+        Maximum absolute random cube Euler angle in degrees; default is 180.
+    artefacts : SimulationArtefacts or None, optional
+        Projection-domain artefacts; None disables them.
+    seed : int, optional
+        Random seed for the phantom and artefacts; default is 0.
+    lamino_thickness_ratio : float, optional
+        Central slab thickness relative to nz for lamino_disk; default is 0.2.
+    """
 
     nx: int
     ny: int
@@ -109,7 +185,23 @@ class SimConfig:
 
 
 def make_phantom(cfg: SimConfig) -> jnp.ndarray:
-    """Construct the configured phantom volume."""
+    """Construct the configured phantom volume.
+
+    Parameters
+    ----------
+    cfg : SimConfig
+        Phantom dimensions, family, seed and shape parameters.
+
+    Returns
+    -------
+    jax.Array
+        Float32 phantom of shape (cfg.nz, cfg.ny, cfg.nx).
+
+    Raises
+    ------
+    ValueError
+        If the phantom name is unsupported.
+    """
     if cfg.phantom == "shepp":
         vol = shepp_logan_3d(cfg.nx, cfg.ny, cfg.nz)
     elif cfg.phantom == "cube":
@@ -225,7 +317,23 @@ def _project_phantom(
 
 
 def simulate(cfg: SimConfig) -> SimulatedData:
-    """Generate projections and metadata from a simulation config."""
+    """Generate projections and metadata from a simulation configuration.
+
+    Parameters
+    ----------
+    cfg : SimConfig
+        Phantom, acquisition geometry and optional line-integral artefacts.
+
+    Returns
+    -------
+    SimulatedData
+        Projections, angles, geometry metadata and the ground-truth volume.
+
+    Raises
+    ------
+    ValueError
+        If the phantom, geometry or artefact settings are unsupported.
+    """
     grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz)
     det = Detector(cfg.nu, cfg.nv, cfg.du, cfg.dv, center=(0.0, 0.0))
     # Determine total rotation based on geometry unless overridden
@@ -302,7 +410,25 @@ def simulate(cfg: SimConfig) -> SimulatedData:
 
 
 def simulate_to_file(cfg: SimConfig, out_path: str) -> str:
-    """Generate a synthetic dataset and save it as NXtomo."""
+    """Generate a synthetic dataset and save its projections as NXtomo.
+
+    Parameters
+    ----------
+    cfg : SimConfig
+        Phantom, geometry and artefact configuration.
+    out_path : str
+        Destination NXtomo file path.
+
+    Returns
+    -------
+    str
+        Destination path. The file contains projections and metadata, not the phantom.
+
+    Raises
+    ------
+    ValueError
+        If simulation settings are unsupported.
+    """
     data = simulate(cfg)
     metadata = NXTomoMetadata.from_dataset(data)
     metadata.image_key = np.zeros((cfg.n_views,), dtype=np.int32)
