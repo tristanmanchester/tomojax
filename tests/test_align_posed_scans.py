@@ -193,10 +193,10 @@ def _fine_level_does_not_fit(monkeypatch, n):
     monkeypatch.setattr(coupled, "_check_device_memory", check)
     host_build = host.build_host_objective
 
-    def no_host(arrays, spec):
+    def no_host(arrays, spec, *, cached_views):
         if spec.grid.nx == n:
             raise coupled.AlignmentMemoryError(2**34, 2**30)
-        return host_build(arrays, spec)
+        return host_build(arrays, spec, cached_views=cached_views)
 
     monkeypatch.setattr(host, "build_host_objective", no_host)
     return sizes

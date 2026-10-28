@@ -372,27 +372,21 @@ def pose_metric_inverse(diagonal, smoothness, damping):
     return 1 / (diagonal + 12 * smoothness**2 + damping)
 
 
-def filtered_operators(spec, arrays, forward, adjoint, columns):
+def data_residual_filter(spec, columns):
+    """Profile nuisance terms after whitening, including in pose derivatives."""
     if spec.refinement is None:
-        return arrays, forward, adjoint, columns
-    # Profile the native backgrounds after the same sampling as the data/model.
-    assert arrays.weights.ndim == 0
+        return lambda value, _weights: value, columns
     nu, nv = spec.detector.nu, spec.detector.nv
     filtered = _matching_model.nuisance_filter(spec.refinement.native_width, spec.detector)
 
     def filtered_columns(params, nominal, frame, volume, target, weight):
-        prediction, derivative = columns(
-            params, nominal, frame, volume, jnp.zeros_like(target), weight
+        residual, derivative = columns(params, nominal, frame, volume, target, weight)
+        return (
+            filtered(residual.reshape(nv, nu), weight).ravel(),
+            filtered(derivative.reshape(-1, nv, nu), weight).reshape(derivative.shape),
         )
-        residual = filtered(prediction.reshape(nv, nu)).ravel() - weight.ravel() * target.ravel()
-        return residual, filtered(derivative.reshape(-1, nv, nu)).reshape(derivative.shape)
 
-    return (
-        arrays._replace(projections=filtered(arrays.projections)),
-        lambda t, x, frames=None: filtered(forward(t, x, frames)),
-        lambda t, y, frames=None, accumulate=None: adjoint(t, filtered(y), frames, accumulate),
-        filtered_columns,
-    )
+    return filtered, filtered_columns
 
 
 def physical_columns(spec: CoupledSpec, arrays: CoupledArrays) -> Callable:
@@ -450,6 +444,14 @@ def _pose_column_cache(p, x, *, spec: CoupledSpec, arrays: CoupledArrays, predic
     return residual, cached, columns
 
 
+def _batch_residual(ops, start, volume, measured):
+    """Reuse cached weighted residuals or evaluate the same batch from its image."""
+    if ops.residual is None:
+        return ops.project(start, volume) - measured
+    cached = jax.lax.dynamic_slice_in_dim(ops.residual, start, measured.shape[0])
+    return cached.reshape(measured.shape)
+
+
 def _build_program(
     spec: CoupledSpec, arrays: CoupledArrays
 ) -> tuple[
@@ -490,10 +492,8 @@ def _build_program(
             arrays.poses, p, translation_frame=spec.jacobian.translation_frame
         )
 
-    raw_forward, raw_adjoint = physical_projectors(spec, arrays, masked)
-    arrays, forward, adjoint, predict_columns = filtered_operators(
-        spec, arrays, raw_forward, raw_adjoint, predict_columns
-    )
+    forward, adjoint = physical_projectors(spec, arrays, masked)
+    filtered, predict_columns = data_residual_filter(spec, predict_columns)
 
     # Data-space work runs over batches of views: projecting, comparing and
     # transposing a batch before the next, so no projection-sized array is
@@ -528,6 +528,7 @@ def _build_program(
             residual = batch_weights(start) * (
                 forward(take(t, start), x, batch_frames(start)) - take(arrays.projections, start)
             )
+            residual = filtered(residual, batch_weights(start))
             squares = jnp.sum(jnp.square(residual), axis=(1, 2))
             return total + 0.5 * jnp.sum(valid * squares)
 
@@ -550,10 +551,12 @@ def _build_program(
             return _map_columns(columns, start + jnp.arange(size), spec)
 
         def project(start, dx):
-            return batch_weights(start) * forward(take(t, start), dx, batch_frames(start))
+            weight = batch_weights(start)
+            return filtered(weight * forward(take(t, start), dx, batch_frames(start)), weight)
 
         def transpose(start, valid, y, out):
-            y = batch_weights(start) * y * valid[:, None, None]
+            weight = batch_weights(start)
+            y = weight * filtered(y, weight) * valid[:, None, None]
             return adjoint(take(t, start), y, batch_frames(start), accumulate=out)
 
         def pose_forward(start, cols, dp):
@@ -649,12 +652,9 @@ def _build_program(
 
         def gradient_body(start, valid, carry):
             gx, gp = carry
-            measured = batch_weights(start) * take(arrays.projections, start)
-            residual = (
-                ops.project(start, x) - measured
-                if ops.residual is None
-                else take(ops.residual, start).reshape(size, spec.detector.nv, spec.detector.nu)
-            )
+            weight = batch_weights(start)
+            measured = filtered(weight * take(arrays.projections, start), weight)
+            residual = _batch_residual(ops, start, x, measured)
             cols = ops.batch_columns(start)
             return (
                 ops.transpose(start, valid, residual, gx),

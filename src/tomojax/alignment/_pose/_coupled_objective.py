@@ -257,11 +257,13 @@ def _prepare_execution(arrays: CoupledArrays, spec: CoupledSpec) -> CoupledObjec
                 continue
             if spec.split is not None:
                 raise
-            from ._coupled_host import build_host_objective
+            from ._coupled_host import build_host_objective, host_column_capacity
 
             LOG.info("Device joint update does not fit (%s); staging Krylov vectors on host", error)
-            update, loss = build_host_objective(arrays, spec)
-            return CoupledObjective(update, loss, spec.backend, False)
+            cached_views = host_column_capacity(spec, arrays.poses.shape[0])
+            spec = replace(spec, cache_columns=cached_views > 0)
+            update, loss = build_host_objective(arrays, spec, cached_views=cached_views)
+            return CoupledObjective(update, loss, spec.backend, spec.cache_columns)
     update = (
         partial(run_update, arrays, spec=spec) if compiled is None else partial(compiled, arrays)
     )

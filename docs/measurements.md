@@ -12,8 +12,8 @@ Unless a section says otherwise, measurements use one NVIDIA GeForce RTX 4070
 Laptop GPU (Ada, 8 GB) on Linux with Python 3.12, JAX 0.11.2, ASTRA 2.5 and
 TIGRE 3.1.3. The several-GPU results use four H100 80 GB GPUs in one machine on
 Modal.
-Objects are synthetic except the FIPS walnuts, a real lab
-cone-beam scan.
+Each protocol identifies its synthetic objects or measured scans.
+Reference agreement is distinct from physical accuracy.
 
 *Cold* time is a fresh process through the first accepted result, including
 imports, compilation and transfers. *Warm* time repeats the same call in that
@@ -26,8 +26,8 @@ repository; each result names the command, commit and date to rerun it.
 
 ## Raw NXtomo loading and held-out split integrity
 
-Measured 2026-10-27 on `a4a969cb` (loading) and `2626e6e5` (evaluation),
-using the local Diamond files. These are functional/integrity tests, not image
+Loading was measured 2026-10-27 on `a4a969cb`; evaluation was measured
+2026-10-28 on `0199b919`, using the local Diamond files. These are functional/integrity tests, not image
 or pose accuracy measurements. Commands in the lab shared directory are
 `JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/loader_kill.py`
 (the metadata/pixel section) and
@@ -43,13 +43,41 @@ shared/agent02/evaluation_kill.py`.
   interleaved-view, angular-block and detector-block splits. Changing every
   excluded value to 1234 leaves a fixed four-coefficient least-squares fit
   bitwise unchanged. Streamed versus dense squared-error relative differences
-  are 1.96e-16, 0 and 3.00e-16. Cold/warm fit-and-score times are 15.29/13.51,
-  13.00/13.25 and 9.95/8.46 ms; peak RSS 69.37 MiB, GPU 0. This checks held-out
+  are 1.96e-16, 0 and 3.00e-16. First/repeat fit-and-score times are 23.17/20.02,
+  20.07/19.93 and 15.05/13.36 ms; peak RSS 70.48 MiB, GPU 0. This checks held-out
   accounting, not tomographic reconstruction or stopping-rule effectiveness.
 
 The [held-out guide](held-out-evaluation.md) describes the split and leakage
 contract. Public reconstruction/alignment workflows do not automatically enforce
 arbitrary detector observation masks.
+
+## Raw-input inventory and bounded workflows
+
+A CPU audit on 2026-10-28 (`0199b919`) tested 521 acquisition and metadata
+candidates, not 521 complete scans. Literal `tj.load` calls returned 513
+`ValueError` exceptions identifying missing calibration, geometry, unavailable
+external pixels or unsupported/incomplete inputs; five errors named missing paths.
+ESRF bamboo and Elettra 00024 completed separate public correction,
+reconstruction, alignment, save and reload checks on 128 selected views and
+central 64² detector cuts. Their automatic alignments report `limited`; finite
+outputs and exact save/reload agreement are not image or pose accuracy tests.
+PyHST's file-owned 2048²×1200 grid alone requires 20.13 GB, exceeding the audit's
+18 GB job limit; that numerical workflow was not run at unchanged defaults.
+
+The sweep took 601.92 s, with 6.77 GiB peak anonymous-plus-shared host memory,
+no GPU allocation, no watchdog stops and no timeouts. Generated datasets were
+deleted. Command: `JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+TOMO_SOURCE_COMMIT=0199b919 PYTHONPATH=PINNED/src LAB_ARTIFACTS=OUTPUT taskset -c 24
+python run_default.py`, using the frozen lab inventory and its per-record
+16.75 GiB/180 s watchdog. This is a full-input loading audit with bounded
+numerical follow-ups, not full-volume completion.
+
+The independent CLI audit `shared/agent02/cli_input_audit.py` checks APS, PSI,
+two Nikon families and SkyScan with `inspect`, `preprocess`, `recon` and `align`,
+twice each. All 40 calls stopped with actionable missing-input messages and no
+traceback: 117.91 s total, 671.81 MiB peak RSS, GPU 0 on `adbf6b52`
+(2026-10-28).
+Missing-input contracts do not establish reconstruction quality.
 
 ## Real-scan comparison criteria
 
@@ -159,6 +187,201 @@ their quality gates. The correctness repair is not a speed improvement.
 
 ```bash
 LAB_ARTIFACTS=OUTPUT uv run --no-sync python ../../shared/agent08/rings/paired_gpu.py
+```
+
+### Calibration-backed gaps and response-only correction
+
+`Rings` fits a scalar response map for each detector column; it does not infer
+missing measurements from low angular variation. Raw flat/dark calibration
+interpolates bracketed pixels without measured illumination in transmission.
+On Elettra TomoBank 00024, row 1024, all 400 views and 2048 columns, the maximum
+known off-axis Gaussian sinogram alteration is 0.012812 on `c46c52e3` (2026-10-27,
+seed 9027, radii 0.35/0.7, widths 2/8 pixels). The detector centre is nominal,
+not independently calibrated. Axis-centred probes remain ambiguous. An
+independent exact-source CPU replay gives first/warm correction times
+0.701/0.039 s and peak host memory 956 MiB (no GPU); this is not a paired
+speed comparison.
+
+Six I13 159815 native-row comparisons use all 3001 recorded views, columns
+441:1872, axis column 718.5, default flat/dark/log correction and pixel-unit
+1431² ramp FBP. The native radial proxy uses a 15-pixel trend and the common
+uncorrected-image scale; it includes circular object structure and is **not
+reconstruction accuracy or Savu agreement**. Analytic Gaussian increments
+use radius 0.7, widths 2/8, peak 0.05 and the third azimuth draw from seed 9027.
+
+| Native row | Radial proxy, Rings | Radial proxy, Algotom | Maximum image-increment alteration, Rings | Algotom |
+|---|---:|---:|---:|---:|
+| 500 | .003057 | .006196 | .173830 | .314045 |
+| 690 | .002455 | .006707 | .088688 | .252735 |
+| 780 | .002870 | .008635 | .075554 | .260407 |
+| 1060 | .004081 | .011083 | .070758 | .277029 |
+| 1080 | .003170 | .014322 | .066621 | .238971 |
+| 1470 | .003597 | .009529 | .100141 | .206984 |
+
+Both methods fail the 5% structure-preservation gate on every row despite
+lower radial energy. Rings' first/warm correction is 9.10–11.44 s and
+0.108–0.124 s per row in this sequential run; these timings are not a balanced speed comparison. GPU scoring
+takes 139.08 s with peak GPU/host memory 2770/2300 MiB; CPU input/reference
+preparation takes 287.70 s separately. Full temporary arrays are deleted.
+
+A separate finite-reference injection on I13 159815 row 1080 uses all 2560
+columns, 375 views (raw IDs 200:3200:8), centre 120, and the actual 100+100
+flat/100 dark acquisition schedule. For seeds 70540–70543, the reconstructed
+known-error RMS retained by Rings+FBP is .831439/.479073/.811468/.686370 of
+the uncorrected error. This measures added-error carry-through, **not the
+fraction of native rings remaining**. Source `c46c52e3` and detector model
+`97407af5` use measured gain 1.78546 and read noise 4.38286 ADU, with no added
+sample noise. CPU correction first/warm is 3.752/0.180–0.186 s; FBP first/warm
+is 0.786/0.631–0.668 s. Total including IO is 31.66 s, peak host memory
+1560 MiB, with no GPU use.
+The same seed 70540 with all 3001 views retains 0.840656 of known image-error
+RMS (`a9d0e716`, numerically unchanged Rings on `0199b919`). This full-view
+control takes 46.84 s CPU/3277 MiB, no GPU; correction first/second calls take
+7.078/1.575 s and FBP 6.557/5.727 s. It is one seed, not a four-seed transfer.
+
+Independent analytic raw-count controls (seeds 916001/916003, clean/stable
+0.1 gain/four dead single pixels/four dead eight-pixel blocks, with and without
+noise) expose another limitation: calibration-only image NRMSE medians are
+.149620/.149977/.151859/.279746, while applying Rings gives
+.257742/.258001/.258441/.320091. Recovering calibration gaps does not make
+subsequent response estimation harmless. These are analytic chord truths,
+not projections from the reconstruction operator or labelled native dead
+pixels. The control takes 2.59 s CPU/803 MiB, without a separate warm run or
+GPU use.
+
+Measured on `c46c52e3`, 2026-10-27. Commands use this run's external shared
+harness and its archived `657709f2` comparison module. Set `LAB_ARTIFACTS`
+to a scoring-output directory; native preparation uses the fixed directory
+shown below, and native scoring deletes its staged arrays:
+
+```bash
+JAX_PLATFORMS=cuda,cpu FILL_MODE=removed uv run --no-sync python ../../shared/agent08/rings/fill_ablation.py
+LAB_ARTIFACTS=../../artifacts/agent08-fill-native-prep JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/fill_native_prepare.py
+JAX_PLATFORMS=cuda,cpu uv run --no-sync python ../../shared/agent08/rings/fill_native_score.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/fill_calibration_chain.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent05-detector/carry_through.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent05-detector/carry_fullviews.py
+```
+
+### Cross-facility image-domain controls
+
+Measured 2026-10-28 on `a3bef73d` (runtime `0199b919`), using the same
+raw-image normalization and 15-pixel radial trend as above. Native radial
+energy includes specimen structure: it is **not reconstruction accuracy**.
+The structural check compares reconstructed corrected and uncorrected
+increments from independent analytic Gaussians, not a solver-generated
+phantom. Peak line integral is 0.05, radius 0.7 and azimuth is the third draw
+from seed 9027. The dense detector-field check injects log-gain RMS 0.002.
+No intensity fit, registration or parameter tuning is used.
+
+| Input | Radial proxy, raw / Rings / Algotom | Maximum Gaussian image alteration, Rings / Algotom | Gain image-error fraction, Rings / Algotom | Raw Gaussian image NRMSE, narrow / wide |
+|---|---:|---:|---:|---:|
+| I12 | 0.029959 / 0.021835 / 0.008991 | 0.026669 / 2.470997 | 0.251673 / 0.141547 | 1.202109 / 0.199304 |
+| APS | 0.030843 / 0.021202 / 0.007688 | 0.034996 / 18.042499 | 0.499524 / 0.078955 | 1.610583 / 0.449732 |
+| ESRF | 0.071829 / 0.046719 / 0.010100 | 0.284594 / 2.396933 | 0.181807 / 0.100796 | 0.558084 / 0.016571 |
+| Elettra | 0.046728 / 0.034904 / 0.006028 | 0.079931 / 2.485404 | 0.233622 / 0.073352 | 0.557697 / 0.003074 |
+| 2DeteCT | 0.027762 / 0.023853 / 0.006060 | 0.005527 / 2.308251 | 0.278180 / 0.144948 | 0.677629 / 0.078820 |
+| PSI-00071 | 0.023069 / 0.021458 / 0.004511 | 0.003431 / 3.858773 | 0.412902 / 0.061021 | 1.610184 / 0.449757 |
+| Walnut1V2 | 0.028809 / 0.028624 / 0.017158 | 0.037258 / 0.656604 | 0.400968 / 0.382335 | 0.077549 / 0.440996 |
+
+Rings fails the 5% image no-harm gate on ESRF and Elettra, despite passing
+the sinogram-domain gate. Their wide-Gaussian uncorrected image NRMSEs are only
+1.66% and 0.31%: these failures are not explained by a poor reconstruction
+baseline. All seven Algotom comparisons fail the image no-harm gate despite
+lower native radial proxies. Both methods retain at most 50% of the injected
+gain-image error on these cuts; this does not identify the native detector
+field. Sparse-view and truncated-panel raw baselines can be weak, so a small
+differential alteration alone is not absolute image fidelity.
+
+I12/APS/ESRF use rows 32/11/270, views `::8` (226/90/126), all
+2560/1536/640 columns and centres -138/-15/0 pixels. Elettra uses all 400
+views, row 1024, 2048 columns and the nominal centre. PSI 00071 uses row
+1200, 151 views `::8`, 2560 columns, centre -23 and the measured 200-flat/
+10-dark schedule, without phase retrieval. These parallel grids have unit
+pitch and one voxel per detector column; Gaussian widths are 2/8 pixels.
+2DeteCT slice 00001 mode 1 uses 450 views `::8`, all 1912 columns and
+recorded circular fan geometry; widths are 2/8 object-plane detector pixels.
+The dense-field seeds in table order are 609/610/611/642/643/646/647.
+The frozen cuts retain their original calibration and transmission floors;
+this is not a default-loading audit. Algotom 1.7 uses canonical transmission-
+domain `remove_all_stripe`, followed by minus-log, independently per row.
+
+Walnut 1 orbit 2 uses all 1200 views, authors' corrected vectors and a
+501² central plane at 0.1 mm. Native rows 456:484 cover every plane ray
+vertically with interpolation margin; calibration/log precedes additional
+2×2 binning, giving 14×384 detector pixels. Its Gaussian widths are 0.2/0.8 mm
+and radius is 0.7 of the image half-width; its injected gain varies in both
+detector directions. The 50.1 mm square is horizontally truncated. Increasing
+the slab from 14 to 42 binned rows leaves raw Gaussian NRMSE unchanged.
+Analytic-only doubling of physical panel width reduces those errors to
+.042561/.002946; zero-extending only the measured panel instead gives
+.042561/.201345. Retaining filtered tails cannot recover genuinely missing
+observations. Neither extension changes the native scores in the table.
+
+The five local GPU cuts take 26.13 s, with peak GPU/host memory 364/1854 MiB;
+CPU calibration/reference preparation takes 17.64 s/409 MiB separately.
+Rings first/warm calls span 1.36–1.70 s / 2.84–5.69 ms in this sequential
+run, not a balanced speed comparison. PSI runs CPU-only with all public data
+in RAM: 471.98 s total, including 462.42 s HTTP reading, peak host 1321 MiB;
+Rings first/warm is 0.658/0.0208 s and FBP 0.459/0.289 s. Walnut CPU scoring
+takes 8.81 s/1243 MiB after 26.83 s/709 MiB preparation; Rings first/warm is
+1.203/0.622 s and FDK 0.896/0.259 s. All temporary staged arrays are deleted.
+
+Commands use this run's external shared harness. Set `LAB_ARTIFACTS` for
+scoring output and `SCORE_SOURCE_COMMIT` to the source being tested:
+
+```bash
+LAB_ARTIFACTS=../../artifacts/agent08-image-coverage-stage JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/image_coverage_prepare.py
+JAX_PLATFORMS=cuda,cpu uv run --no-sync python ../../shared/agent08/rings/image_coverage_score.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/psi_image_memory.py
+LAB_ARTIFACTS=../../artifacts/agent08-walnut-image-stage JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/walnut_image_prepare.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/walnut_image_cpu.py
+```
+
+## Cone-setup aliases and a conditional calibration test
+
+Geometry-only checks on recorded Nikon crystals-in-clay, Zeiss CuO2-B and
+Walnut 1 V1–V3 ray bundles expose aliases before any image fit. With an
+independent unrestricted six-DOF pose per view, translating each source and
+its detector together (including source-radius or orbit-height changes) can
+be absorbed by the poses. Scaling source-to-detector displacement, pixel
+pitch and detector offsets together leaves every ray unchanged even without
+a pose update. The maximum residual unit-ray RMS after rigid compensation is:
+
+| Recorded geometry | Radius/height camera-translation aliases | Detector homothety |
+|---|---:|---:|
+| Nikon clay, bin 4 | 8.84e−15 | 9.13e−15 |
+| Zeiss CuO2-B, bin 4 | 5.38e−16 | 5.11e−16 |
+| Walnut 1 V1–V3, bin 2 | 1.01e−14 | 1.01e−14 |
+
+These are exact geometric identities checked numerically, **not image
+accuracy, Fisher information or confidence intervals**. Restricted five-DOF
+poses can have different aliases. A flat square-pixel camera modulo a rigid
+pose retains focal length in pixels and two principal-point coordinates;
+image content and view diversity still determine whether those are estimable.
+Known pixel pitch and detector distance alone do not fix object scale when
+source positions and the object can scale together. A known source baseline
+or object length is needed to interpret absolute distances in that case.
+
+A fixed-pose Walnut 1 three-orbit experiment fits only a common focal-plane
+distance scale, preserving principal points, source positions and detector
+pitch. Its reciprocal source-chord rays require no full-panel zero extension.
+Independent analytic Gaussian projections at scales .99/1/1.01 recover the
+scale within 3.24e−9 in a noiseless control. Native data choose scale 1.000537;
+test/raw correspondence MSE is **1.000339**, failing the required 1% improvement.
+This uses 675 pairs per fold from geometry rows 0::40 and 20::40, bin 2; the
+folds were consumed by earlier experiments. It is not a fresh validation,
+matched-projector image test, free-pose self-calibration or uncertainty result.
+No focal correction is adopted from it.
+
+Measured 2026-10-27: geometric audit `ad7f9805`, 1.30 s CPU/317 MiB;
+focal experiment `c46c52e3`, 31.33 s CPU/734 MiB; neither uses the GPU.
+Commands use this run's external shared harness with `LAB_ARTIFACTS` set:
+
+```bash
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/calibration/gauge_audit.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/calibration/scale_gauge.py
+JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 uv run --no-sync python ../../shared/agent08/calibration/focal_reciprocity.py
 ```
 
 ## Reconstruction against ASTRA
@@ -978,6 +1201,23 @@ host memory and no GPU use. Command: `OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu
 uv run --no-sync python ../../shared/agent03/psi_phase.py`. This is shift
 equivariance on phase data, not an absolute centre measurement.
 
+Nonreserved TOMCAT TomoBank 00082 (dry fuel cell) gives centre-change median/p95
+errors 0.001048/0.002845 px over the same six shifts (2026-10-28, `17ed9dd1`).
+This uses rows 192:256, all 1440 columns, the first 20 flat frames, all 10 dark
+frames and sample views 0/1/999/1000. The HDF5 file has no recorded angles;
+geometry is supplied explicitly using the [TomoBank example](https://github.com/tomography/tomobank/blob/master/docs/demo/tomopy_rectv_fc.py)'s
+endpoint-excluding 1001-view, 180-degree convention. The selected opposed
+constraint has nominal angular mismatch 0.179820 degrees. First/repeated
+public-report calls on corrected inputs take 0.1307/0.1276 s, separately from
+81.30 s HTTP reading and 0.0041 s flat/dark/log correction. Peak host memory is
+329.75 MiB, with no GPU use. The 48 HTTP ranges total 6.272 MB and are held
+only in bounded RAM, discarded after scoring. Command:
+`OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu uv run --no-sync python
+../../shared/agent03/tomcat82_center.py`. This is a 64-row-band delta test,
+not full-height performance, absolute centre accuracy or default-loader
+success. The report labels its intervals as local matching diagnostics;
+global coverage remains uncalibrated.
+
 
 | Mode and scan | Result |
 |---|---|
@@ -1193,6 +1433,30 @@ accuracy. The [historical DIAD laminography images](../images/README.md#historic
 show qualitative use on real data; their raw scan and configuration are not
 bundled, so they cannot be reproduced.
 
+### Host-staged pose-column reuse
+
+On 2026-10-27, `b7e67359` was measured on I13 159815: sample views
+`0:3000:16`, detector rows `1048:1112`, columns `441:1869`, binned 4×4 to
+188×16×357. Both arms forced host staging of the same five-parameter,
+12-CG-step joint update. The command was
+`XLA_PYTHON_CLIENT_PREALLOCATE=false python shared/agent06-cache/kill_cache.py --full --steps 12`.
+
+| Input | Uncached first / warm call (s) | Cached first / warm call (s) | Warm ratio |
+|---|---:|---:|---:|
+| Original | 8.035 / 1.018 | 3.178 / 0.591 | 1.72× |
+| Injected horizontal motion | 1.039 / 1.037 | 0.582 / 0.622 | 1.67× |
+
+Arms were interleaved four times; warm time is the median of the last three
+calls. First-call times include any compilation not already shared by earlier
+calls, not fresh-process startup. Image and pose increments were bit-identical
+(reference agreement, not accuracy). Known cubic-interpolated motion of up to
+10 native pixels gave the same single-step differential RMS error, 4.2345 px,
+after removing the common-object sine/cosine translation gauge. This is not a
+successful motion-recovery or converged full-resolution alignment test.
+The paired process peaked at 352 MiB sampled GPU memory and 1.529 GiB host RSS;
+the column cache occupied 20.48 MiB. These measurements isolate host staging,
+not the automatic choice for a small scan that fits entirely on the GPU.
+
 ## Calibrated detector count noise
 
 `tomojax.datasets.DetectorModel` estimates effective photon gain and read noise
@@ -1232,3 +1496,71 @@ five groups. I12 and I13 pass all five groups, with maximum discrepancies
 0.023 and 0.390. The model therefore fails ESRF's tail-distribution test despite
 matching its RMS; sparse transient contamination is not represented by its
 Poisson/read model.
+
+### Finite-reference noise in reconstructed images
+
+A **T2 held-out-flat** check on 2026-10-28 (`0199b919`, seed 70552) propagates
+reference noise through a common centered, unit-pitch, 360-view full-turn FBP
+at each detector's native width. Calibration uses the first half of the flats;
+second-half adjacent log-flat differences are averaged over 50 pairs for I13
+and 12 for I12/ESRF. Simulations use two independent flat means with the same
+number of references. Both differences are divided by sqrt(2), conditional on
+a shared dark mean. Four fixed row offsets (0, 5, 10, 15) are scored in radial
+annuli 0.1–0.3, 0.3–0.6 and 0.6–0.9 of the image half-width.
+
+| Scan, rows (all columns) | RMS ratio, Gaussian difference bands sigma 1 / 2 / 4 / 8 px |
+|---|---:|
+| I13 159815, 1112:1128 | 0.985 / 0.941 / 0.919 / 0.994 |
+| I12 3339629, 1080:1096 | 1.064 / 1.006 / 0.969 / 0.953 |
+| ESRF bamboo reduced, 294:310 | 0.985 / 1.038 / 0.960 / 1.100 |
+
+Each band is the difference of Gaussian smoothings at sigma and twice sigma.
+Energies pooled over rows and annuli pass the frozen 20% RMS gate for all
+12 entries. Individual annuli do not all pass: ESRF ratios span 0.661–1.300;
+I13 and I12 span 0.893–1.013 and 0.934–1.080. These are finite-reference noise
+statistics under a standardized scoring geometry, not native total-ring
+statistics or a demonstration of realistic detector drift.
+
+Command: `JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 LAB_ARTIFACTS=artifacts/reference-image
+uv run --no-sync python shared/agent05-detector/reference_image_statistics.py`
+in lab run `tomojax-20261027a`. Combined time was 39.81 s, peak host RSS 922 MiB,
+GPU memory zero. First/repeated FBP calls were 1.254/0.644–0.707 s for I12 and
+0.152/0.044–0.049 s for ESRF; I13 reused the 2560-column compilation.
+
+The independent-pixel law does not predict all spatial averages. On I13 159850
+(2026-10-28, numerical source `0199b919`), adjacent differences of the first
+20 pre-flats and last 20 post-flats were averaged over a symmetric detector
+window at offset -128.6201 px. Rows 8:1056 and 1105:2152 were retained; the first
+10 darks were shared. With gain 1.78546 and read noise 4.38286 counts, removing
+an affine row trend in each interval gave observed/predicted row-mean RMS
+ratios 1.929 and 1.585. With only a per-frame constant removed, column-bin
+widths 1/64/256/1024/2048 gave ratios 1.013/1.162/1.495/2.384/3.176 before the
+scan and 1.024/1.063/1.136/1.353/1.549 after it. Small pixel-level discrepancies
+therefore do not establish correct uncertainty after averaging many columns.
+
+Commands: `i13_vertical_flat_variance.py` and `i13_column_noise.py` under
+`shared/agent05-detector/`, with the CPU environment above. They took 9.15 and
+6.85 s, with peak host RSS 318 and 409 MiB and no GPU allocation. These
+conditional calibration-noise diagnostics do not identify the physical source
+of the dependence; the simulator has no correlated-noise component.
+
+## Weighted alignment background profiling
+
+Measured 2026-10-27 on `cf827cf8`, CPU, with
+`JAX_PLATFORMS=cpu uv run --no-sync python artifacts/agent07/weighted_profile_kill.py`
+(the experiment script is archived outside the package). Native-texture joint
+alignment profiles row offsets and a shared detector slope after whitening,
+using the same orthogonal projection in the forward map, transpose and pose
+Jacobian. Per-pixel weights can exclude observations from the background fit.
+
+On I13 159815, row 1080, columns 441:1869, every 40th view of the frozen
+`0:3000:8` selection and every fourth column, a masked block and a completely
+excluded view give relative agreement `1.37e-7` with an independent dense
+weighted least-squares projection. The adjoint inner-product discrepancy is
+`5.82e-7`; replacing excluded measurements by 1234 changes the result by zero.
+This is numerical agreement and exclusion integrity, not motion accuracy.
+First/repeated filter evaluations take 0.0325/0.000553 s, excluding imports and
+file reading; peak process host memory is 615 MiB and GPU use is zero.
+
+Fourier resampling of measured rows can transfer excluded observations into
+training data; weighted background profiling alone does not prevent that leak.

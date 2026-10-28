@@ -48,12 +48,20 @@ from repeated flats and darks, simulates finite calibration references and expli
 gain/offset changes, and returns conditional systematic-error truth. Calibration
 propagates flux normalization through shot, read and shared dark-reference noise.
 
+Host-staged joint alignment can reuse exact FP32 pose columns between Krylov
+products when host memory permits, without retaining the full cache on the GPU.
+When only part fits, complete view batches are cached and the rest are recomputed.
+
 HDF5 dispatch accepts `.nx` containers. When no detector frames are readable,
 unresolved external root links report the files and datasets to restore.
 
 Zeiss loading uses recorded image streams instead of the planned frame count,
 supporting consistent interrupted acquisitions. Missing image streams report
 the required complete acquisition file instead of exposing an iterator failure.
+
+Native-texture joint alignment profiles detector backgrounds with per-pixel
+statistical weights, including excluded observations, in both resident and
+host-streamed solves.
 
 Removed `BeamHardening.recorded` and `--beam-hardening recorded`: vendor settings
 are retained unapplied; use `BeamHardening.from_polynomial` for an explicit curve.

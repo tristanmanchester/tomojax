@@ -163,6 +163,12 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
     np.testing.assert_allclose(actual.relative_residual, expected.relative_residual, rtol=3e-4)
 
 
+def _force_uncached_pose_columns(monkeypatch):
+    """Stream pose columns on both the device and host paths."""
+    monkeypatch.setattr(_coupled_objective, "_POSE_CACHE_BYTES", 0)
+    monkeypatch.setattr(_coupled_host, "host_column_capacity", lambda spec, views: 0)
+
+
 @pytest.mark.numerical
 @pytest.mark.usefixtures("views_per_batch")
 @pytest.mark.parametrize("scan_variant", [0, 1])
@@ -198,7 +204,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         return np.asarray(projected, np.float64)
 
     if stream:
-        monkeypatch.setattr(_coupled_objective, "_POSE_CACHE_BYTES", 0)
+        _force_uncached_pose_columns(monkeypatch)
     grid = Grid(2, 3, 2, 0.7, 1.1, 1.4, vol_origin=(-0.32, -0.71, -0.53))
     det = Detector(4, 3, 0.65, 0.91, (0.23, -0.17))
     # Identical shapes/configuration must accept new scan arrays without
@@ -570,6 +576,33 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     assert len(lowered) == 1  # no recompilation, nor dispatch of the oversized update
 
 
+@pytest.mark.parametrize(
+    ("available", "views", "expected"),
+    [
+        (None, 3, 0),
+        (255, 3, 0),
+        (831, 3, 0),
+        (832, 3, 3),
+        (6399, 67, 0),
+        (6400, 67, 32),
+        (13119, 67, 64),
+        (13120, 67, 67),
+    ],
+)
+@pytest.mark.parametrize("refinement", [None, object()])
+def test_host_columns_reserve_krylov_workspace(monkeypatch, available, views, expected, refinement):
+    spec = SimpleNamespace(
+        grid=SimpleNamespace(nx=2, ny=2, nz=2),
+        detector=SimpleNamespace(nv=3, nu=4),
+        active_columns=(0, 3),
+        refinement=refinement,
+    )
+    if available is not None and refinement is not None:
+        available += 4 * 32
+    monkeypatch.setattr(_coupled_host, "device_free_memory_bytes", lambda **_: available)
+    assert _coupled_host.host_column_capacity(spec, views) == expected
+
+
 def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
     checks = []
 
@@ -598,12 +631,28 @@ def joint_placement(request, monkeypatch):
         )
 
 
+def _affine_residual_reference(ramp, rng, weighted):
+    weights = rng.uniform(0.5, 1.5, (3, 3, 7)) if weighted else np.ones((3, 3, 7))
+    if weighted:
+        weights[:, :, 2:4] = 0
+        weights[0, 0] = 0
+    basis = np.column_stack([np.repeat(np.eye(3), 7, axis=0), ramp.ravel()])
+    whitened = weights.reshape(3, -1, 1) * basis
+    residualizers = np.eye(21) - whitened @ np.linalg.pinv(whitened)
+
+    def filtered(y):
+        return np.einsum("nij,nj->ni", residualizers, (weights * y).reshape(3, -1)).reshape(y.shape)
+
+    return weights, filtered
+
+
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("weighted", [False, True])
 @pytest.mark.usefixtures("joint_placement")
 def test_affine_joint_increment_and_loss_match_dense_physical_model(
-    monkeypatch, solver, backend, stream
+    monkeypatch, solver, backend, stream, weighted
 ):
     from dataclasses import replace
 
@@ -615,7 +664,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     from tomojax.geometry import stack_view_poses
 
     if stream:
-        monkeypatch.setattr(_coupled_objective, "_POSE_CACHE_BYTES", 0)
+        _force_uncached_pose_columns(monkeypatch)
     rng = np.random.default_rng(2)
     grid, detector = tj.Grid(3, 4, 2, 1, 1, 1), tj.Detector(7, 3, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, [12, 57, 103])
@@ -637,10 +686,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         signal.resample(spectrum, detector.nu, domain="freq").real, (detector.nv, detector.nu)
     )
 
-    def filtered(y):
-        centred = y - y.mean(axis=-1, keepdims=True)
-        slope = (centred * ramp).sum(axis=(-2, -1), keepdims=True) / np.sum(ramp**2)
-        return centred - slope * ramp
+    weights, filtered = _affine_residual_reference(ramp, rng, weighted)
 
     measured = project(volume, poses) + rng.normal(0, 0.03, (3, 3, 7))
     cfg = AlignConfig(
@@ -672,10 +718,18 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     ctx = replace(_pose_objective_context(runtime=runtime, **common), volume_mask=support)
+    ctx = replace(
+        ctx,
+        has_loss_mask=weighted,
+        loss_adapter=replace(
+            ctx.loss_adapter, gauss_newton_weights=lambda *_: jnp.asarray(weights, jnp.float32)
+        ),
+    )
     objective = _coupled_objective.build_coupled_objective(
         ctx,
         refinement=_matching_model.JointRefinement(native_width=2 * detector.nu),
     )
+    assert objective.pose_columns_cached != stream
     result = objective.update(jnp.asarray(poses), jnp.asarray(volume))
     design = np.column_stack(
         [
@@ -792,13 +846,20 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
     np.testing.assert_allclose(initial, derivative(probe), rtol=2e-6, atol=2e-8)
     p = jnp.zeros((3, 6), jnp.float32).at[:, 3].set(jnp.asarray([0.03, -0.01, 0.02]))
     expected = objective.update(p, x)
-    update, loss = _coupled_host.build_host_objective(arrays, replace(spec, cache_columns=False))
-    actual = update(p, x)
-    assert actual.finite and expected.finite
-    for a, e in zip(actual.increment, expected.increment, strict=True):
-        np.testing.assert_allclose(a, e, rtol=3e-3, atol=3e-5)
-    np.testing.assert_allclose(loss(p, x), objective.loss(p, x), rtol=2e-6)
-    np.testing.assert_allclose(actual.relative_residual, expected.relative_residual, atol=2e-5)
+    streamed = None
+    for cached_views in (0, 2, 3):
+        update, loss = _coupled_host.build_host_objective(
+            arrays, replace(spec, cache_columns=cached_views > 0), cached_views=cached_views
+        )
+        actual = update(p, x)
+        assert actual.finite and expected.finite
+        if streamed is None:
+            streamed = actual.increment
+        for a, e, direct in zip(actual.increment, expected.increment, streamed, strict=True):
+            np.testing.assert_allclose(a, e, rtol=3e-3, atol=3e-5)
+            np.testing.assert_array_equal(a, direct)
+        np.testing.assert_allclose(loss(p, x), objective.loss(p, x), rtol=2e-6)
+        np.testing.assert_allclose(actual.relative_residual, expected.relative_residual, atol=2e-5)
 
 
 @pytest.mark.parametrize("budget", [2, 100])

@@ -194,17 +194,33 @@ def astra_vectors(case: dict[str, Any]) -> np.ndarray:
 
 
 def tigre_geometry(case: dict[str, Any]) -> tuple[Any, np.ndarray]:
-    """The scan as a TIGRE cone geometry, with TIGRE's angles."""
-    from tigre_cone import geometry
+    """Describe the benchmark's centred circular scan analytically in TIGRE.
 
-    from tomojax.geometry import Detector, Grid
+    Exact zero offsets preserve its centred FDK weighting. Recovering this
+    geometry from rotated vectors introduces roundoff detector offsets, which
+    TIGRE interprets as a displaced detector requiring offset weighting.
+    """
+    import tigre
 
     n = case["size"]
-    return geometry(
-        astra_vectors(case),
-        grid=Grid(n, n, n, 1.0, 1.0, 1.0),
-        detector=Detector(case["nu"], case["nv"], 1.0, 1.0),
-    )
+    geo = tigre.geometry(mode="cone", default=False)
+    geo.DSO = case["sod"]
+    geo.DSD = case["sdd"]
+    geo.nDetector = np.array([case["nv"], case["nu"]])
+    geo.dDetector = np.ones(2)
+    geo.sDetector = geo.nDetector * geo.dDetector
+    geo.nVoxel = np.full(3, n)
+    geo.dVoxel = np.ones(3)
+    geo.sVoxel = geo.nVoxel * geo.dVoxel
+    geo.offOrigin = np.zeros(3)
+    geo.offDetector = np.zeros(2)
+    geo.rotDetector = np.zeros(3)
+    geo.COR = 0.0
+    geo.accuracy = 0.5
+    # TIGRE's source is +x; here it starts on -y and turns opposite the object.
+    angle = np.pi - (1.5 * np.pi + np.deg2rad(case["angles"])) % (2 * np.pi)
+    angles = np.column_stack([angle, np.zeros((len(angle), 2))])
+    return geo, angles.astype(np.float32)
 
 
 def run_astra(
