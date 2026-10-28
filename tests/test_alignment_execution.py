@@ -44,6 +44,26 @@ def test_validation_scorer_reuses_one_program_for_changing_candidates(monkeypatc
     assert len(traces) == 1
 
 
+def test_fixed_volume_alignment_reuses_its_programs_for_new_scans_of_one_shape():
+    # check-public-imports: allow-private
+    from tomojax.alignment._pose import _pose_objective
+
+    grid, det = Grid(12, 12, 1, 1, 1, 1), Detector(12, 1, 1, 1)
+    geometry = ParallelGeometry(grid, det, np.linspace(0, 180, 8, endpoint=False))
+    x = np.zeros((12, 12, 1), np.float32)
+    x[3:8, 4:10] = 1
+    cfg = AlignConfig(outer_iterations=1, iterations=2, optimise_dofs=("dx",), views_per_batch=3)
+    scans = [np.asarray(project(geometry, np.roll(x, shift, axis=1))) for shift in (0, 3)]
+    jax.clear_caches()
+    _first, second = (align(geometry, grid, det, y, config=cfg) for y in scans)
+    assert _pose_objective.gn_update._cache_size() == 1
+    jax.clear_caches()
+    fresh = align(geometry, grid, det, scans[1], config=cfg)
+    # A recompiled GPU program may round differently; stale targets would move the poses.
+    np.testing.assert_allclose(second[0], fresh[0], rtol=1e-3, atol=1e-4)
+    np.testing.assert_allclose(second[1], fresh[1], atol=1e-4)
+
+
 @pytest.mark.numerical
 @pytest.mark.parametrize("tilt", [False, True])
 def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):

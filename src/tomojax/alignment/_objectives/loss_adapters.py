@@ -74,28 +74,13 @@ def _otsu_thresholds(targets: jnp.ndarray) -> np.ndarray:
     return np.array([_compute_otsu_threshold(Ys[i]) for i in range(Ys.shape[0])], dtype=np.float32)
 
 
-def _build_l2_otsu_loss(
-    state: LossState,
-    targets: jnp.ndarray,
-) -> Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray]:
-    temp = _safe_epsilon(state.params, "temp", 0.5)
+def _otsu_mask(targets: jnp.ndarray, temp: float) -> jnp.ndarray:
     thr = _otsu_thresholds(targets)
-    state.mask = jax.device_put(jax.nn.sigmoid((targets - jnp.asarray(thr)[:, None, None]) / temp))
-    return _loss_l2_otsu_soft
+    return jax.device_put(jax.nn.sigmoid((targets - jnp.asarray(thr)[:, None, None]) / temp))
 
 
-def _build_loss_from_kind(
-    kind: str,
-    params: dict[str, float] | None,
-    targets: jnp.ndarray,
-) -> tuple[PerViewLossFn, LossState]:
-    k = canonicalize_loss_kind(kind)
-    p = {} if params is None else {str(a): float(b) for a, b in params.items()}
-    state = LossState(kind=k, params=p)
-    if k == "l2_otsu":
-        f = _build_l2_otsu_loss(state, targets)
-    else:
-        f = _loss_huber if k == "huber" else _loss_l2
+def _per_view_loss(state: LossState) -> PerViewLossFn:
+    f = {"l2_otsu": _loss_l2_otsu_soft, "huber": _loss_huber}.get(state.kind, _loss_l2)
 
     def per_view_fn(
         pred_chunk: jnp.ndarray,
@@ -111,7 +96,7 @@ def _build_loss_from_kind(
 
         return jax.vmap(apply_one)(pred_chunk, tar_chunk, mask_chunk)
 
-    return per_view_fn, state
+    return per_view_fn
 
 
 def _gauss_newton_weight_builder(spec: AlignmentLossSpec) -> GaussNewtonWeightFn:
@@ -135,19 +120,31 @@ def loss_supports_setup_validation_lm(spec: AlignmentLossSpec) -> bool:
     return loss_spec_supports_setup_validation_lm(spec)
 
 
-def build_loss_adapter(spec: AlignmentLossSpec, targets: jnp.ndarray) -> LossAdapter:
-    """Build a prepared loss adapter for a target projection stack."""
+def loss_mask(spec: AlignmentLossSpec, targets: jnp.ndarray) -> jnp.ndarray | None:
+    """The per-pixel mask a loss derives from its targets once, or None."""
+    if not isinstance(spec, L2OtsuLossSpec):
+        return None
+    return _otsu_mask(targets, _safe_epsilon(loss_spec_params(spec), "temp", 0.5))
+
+
+def loss_adapter(spec: AlignmentLossSpec, mask: jnp.ndarray | None) -> LossAdapter:
+    """The loss adapter for ``spec`` with its precomputed ``mask`` (see :func:`loss_mask`)."""
     name = loss_spec_name(spec)
-    params = loss_spec_params(spec)
-    per_view_loss, state = _build_loss_from_kind(name, params, targets)
+    params = {str(a): float(b) for a, b in loss_spec_params(spec).items()}
+    state = LossState(kind=canonicalize_loss_kind(name), params=params, mask=mask)
     return LossAdapter(
         spec=spec,
         name=name,
         state=state,
-        per_view_loss=per_view_loss,
+        per_view_loss=_per_view_loss(state),
         gauss_newton_weights=_gauss_newton_weight_builder(spec),
         supports_setup_validation_lm=loss_supports_setup_validation_lm(spec),
     )
+
+
+def build_loss_adapter(spec: AlignmentLossSpec, targets: jnp.ndarray) -> LossAdapter:
+    """Build a prepared loss adapter for a target projection stack."""
+    return loss_adapter(spec, loss_mask(spec, targets))
 
 
 __all__ = [
@@ -155,5 +152,7 @@ __all__ = [
     "LossAdapter",
     "PerViewLossFn",
     "build_loss_adapter",
+    "loss_adapter",
+    "loss_mask",
     "loss_supports_setup_validation_lm",
 ]

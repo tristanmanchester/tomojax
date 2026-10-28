@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import partial
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -9,14 +11,16 @@ import jax.numpy as jnp
 from tomojax.alignment._config import AlignConfig
 from tomojax.alignment._geometry.parametrizations import apply_pose_updates
 from tomojax.alignment._objectives.fixed_volume import project_and_score_stack
+from tomojax.alignment._objectives.loss_adapters import LossAdapter, loss_adapter
+from tomojax.alignment._objectives.loss_specs import AlignmentLossSpec
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.view_chunks import chunk_schedule
 
 from ._coupled_objective import CoupledObjective, build_coupled_objective
 from ._matching_model import JointRefinement
 from ._pose_block import pose_block_solver
-from ._pose_context import AlignmentRuntimeContext, _pose_objective_context, _PoseObjectiveContext
-from ._pose_jacobian import build_pose_prediction_and_columns
+from ._pose_context import AlignmentRuntimeContext, _pose_objective_context
+from ._pose_jacobian import PoseJacobianOptions, pose_prediction_and_columns
 
 
 @dataclass(frozen=True)
@@ -26,16 +30,32 @@ class PoseObjectiveBundle:
     coupled: CoupledObjective | None = None
 
 
-def _objective_apply_vol_mask(ctx: _PoseObjectiveContext, vol: jnp.ndarray) -> jnp.ndarray:
-    return vol * ctx.volume_mask if ctx.volume_mask is not None else vol
+@dataclass(frozen=True)
+class PoseSpec:
+    """Only choices that change the compiled program, never measurement arrays."""
+
+    grid: Grid
+    detector: Detector
+    jacobian: PoseJacobianOptions
+    loss: AlignmentLossSpec
+    backend: str
+    chunk_size: int
+    gn_damping: float
+    # The per-view curvature prior enters the normal equations, not only the loss.
+    smoothness_prior: bool
 
 
-def _objective_loss_mask_chunk(
-    ctx: _PoseObjectiveContext, start_shifted: jnp.ndarray
-) -> jnp.ndarray:
-    if ctx.has_loss_mask:
-        return jax.lax.dynamic_slice_in_dim(ctx.loss_mask, start_shifted, ctx.chunk_size)
-    return ctx.empty_loss_mask_chunk
+class PoseArrays(NamedTuple):
+    """Per-scan numerical inputs; changing values can reuse a compiled program."""
+
+    poses: jax.Array
+    projections: jax.Array
+    det_grid: tuple[jax.Array, jax.Array]
+    active: jax.Array
+    smoothness: jax.Array
+    loss_mask: jax.Array | None
+    # The views' cone-beam lab frames; None for a parallel beam.
+    frames: jax.Array | None
 
 
 def _apply_pose_smoothness_loss(
@@ -66,128 +86,118 @@ def _apply_pose_smoothness_gradient(
     return total, grad
 
 
-def _build_pose_align_loss(
-    ctx: _PoseObjectiveContext,
-) -> Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]:
-    def align_loss(pose_params: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
-        t_aug = apply_pose_updates(
-            ctx.pose_stack, pose_params, translation_frame=ctx.cfg.pose_translation_frame
+@partial(jax.jit, static_argnames=("spec",))
+def align_loss(
+    arrays: PoseArrays, pose_params: jax.Array, vol: jax.Array, *, spec: PoseSpec
+) -> jax.Array:
+    """The fixed-volume objective at ``pose_params``, including the pose smoothness term."""
+    options = spec.jacobian
+    loss_tot = project_and_score_stack(
+        pose_stack=apply_pose_updates(
+            arrays.poses, pose_params, translation_frame=options.translation_frame
+        ),
+        grid=spec.grid,
+        detector=spec.detector,
+        volume=vol,
+        det_grid=arrays.det_grid,
+        targets=arrays.projections,
+        loss_adapter=loss_adapter(spec.loss, arrays.loss_mask),
+        views_per_batch=spec.chunk_size,
+        projector_unroll=options.unroll,
+        checkpoint_projector=options.checkpoint,
+        gather_dtype=options.gather_dtype,
+        backend=spec.backend,
+        # Gauss-Newton only evaluates this loss; its pose columns are separate.
+        require_differentiable_projector=not options.cone_beam,
+        ray_integrator=options.integrator,
+        frames=arrays.frames,
+    )
+    return _apply_pose_smoothness_loss(pose_params, loss_tot, arrays.smoothness)
+
+
+def gn_view_system(
+    residual: jax.Array,
+    cols: jax.Array,
+    *,
+    adapter: LossAdapter,
+    active: jax.Array,
+    damping: float,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """One view's damped Gauss-Newton system, right-hand side and true objective."""
+    current_loss, robust_weights = adapter.residual_model(residual)
+    residual = residual * robust_weights
+    cols = cols * robust_weights
+    gradient = jnp.matmul(cols, residual, precision=jax.lax.Precision.HIGHEST)
+    hessian = jnp.matmul(cols, cols.T, precision=jax.lax.Precision.HIGHEST)
+    active = active.astype(hessian.dtype)
+    inactive = jnp.float32(1.0) - active
+    hessian_active = hessian * active[:, None] * active[None, :]
+    system = hessian_active + jnp.float32(damping) * jnp.diag(active)
+    return system + jnp.diag(inactive), -gradient * active, current_loss
+
+
+@partial(jax.jit, static_argnames=("spec",))
+def gn_update(
+    arrays: PoseArrays, pose_params: jax.Array, vol: jax.Array, *, spec: PoseSpec
+) -> tuple[jax.Array, jax.Array]:
+    """The damped per-view Gauss-Newton step and the objective at ``pose_params``."""
+    adapter = loss_adapter(spec.loss, arrays.loss_mask)
+    n_views, b = int(pose_params.shape[0]), spec.chunk_size
+    columns = partial(
+        pose_prediction_and_columns,
+        grid=spec.grid,
+        detector=spec.detector,
+        det_grid=arrays.det_grid,
+        options=spec.jacobian,
+    )
+
+    def one_view(p5_i, t_nom_i, frame_i, y_i, w_i):
+        residual, cols = columns(p5_i, t_nom_i, frame_i, vol, y_i, w_i)
+        return gn_view_system(
+            residual, cols, adapter=adapter, active=arrays.active, damping=spec.gn_damping
         )
-        loss_tot = project_and_score_stack(
-            pose_stack=t_aug,
-            grid=ctx.grid,
-            detector=ctx.detector,
-            volume=_objective_apply_vol_mask(ctx, vol),
-            det_grid=ctx.det_grid,
-            targets=ctx.projections,
-            loss_adapter=ctx.loss_adapter,
-            views_per_batch=ctx.chunk_size,
-            projector_unroll=int(ctx.cfg.projector_unroll),
-            checkpoint_projector=ctx.cfg.checkpoint_projector,
-            gather_dtype=ctx.cfg.gather_dtype,
-            backend=ctx.cfg.backend,
-            # Gauss-Newton only evaluates this loss; its pose columns are separate.
-            require_differentiable_projector=ctx.cone is None,
-            ray_integrator=ctx.cfg.ray_integrator,
-            frames=ctx.frames,
-        )
-        return _apply_pose_smoothness_loss(pose_params, loss_tot, ctx.smoothness_weights)
 
-    return align_loss
+    def body(carry, i):
+        system_acc, rhs_acc, loss_acc = carry
+        start, vmask, views = chunk_schedule(i, n_views=n_views, chunk_size=b)
 
+        def take(a: jax.Array) -> jax.Array:
+            return jax.lax.dynamic_slice_in_dim(a, start, b)
 
-def _objective_frames_chunk(ctx: _PoseObjectiveContext, start: jnp.ndarray) -> jnp.ndarray | None:
-    """The chunk's cone-beam lab frames, or None for a parallel beam."""
-    if ctx.frames is None:
-        return None
-    return jax.lax.dynamic_slice_in_dim(ctx.frames, start, ctx.chunk_size)
-
-
-def _build_gn_update_batch(ctx: _PoseObjectiveContext) -> Callable[..., object]:
-    predict_and_columns = build_pose_prediction_and_columns(ctx)
-
-    def _gn_update_one(p5_i, t_nom_i, frame_i, y_i, vol, w_i):
-        residual, cols = predict_and_columns(p5_i, t_nom_i, frame_i, vol, y_i, w_i)
-        current_loss, robust_weights = ctx.loss_adapter.residual_model(residual)
-        residual = residual * robust_weights
-        cols = cols * robust_weights
-        gradient = jnp.matmul(cols, residual, precision=jax.lax.Precision.HIGHEST)
-        hessian = jnp.matmul(cols, cols.T, precision=jax.lax.Precision.HIGHEST)
-        lam = jnp.float32(ctx.cfg.gn_damping)
-        active = ctx.active_mask.astype(hessian.dtype)
-        inactive = jnp.float32(1.0) - active
-        hessian_active = hessian * active[:, None] * active[None, :]
-        system = hessian_active + lam * jnp.diag(active) + jnp.diag(inactive)
-        return system, -gradient * active, current_loss
-
-    return jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, 0, None, 0)))
-
-
-def _build_gn_update_all(
-    ctx: _PoseObjectiveContext,
-    gn_update_batch: Callable[..., object],
-) -> Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]:
-    def _ls_weight_chunk(y_chunk: jnp.ndarray, mask_chunk: jnp.ndarray) -> jnp.ndarray:
-        return ctx.loss_adapter.gauss_newton_weights(
+        y_chunk = take(arrays.projections)
+        mask = None if arrays.loss_mask is None else take(arrays.loss_mask)
+        frames = None if arrays.frames is None else take(arrays.frames)
+        systems, rhs_values, loss_values = jax.vmap(one_view)(
+            take(pose_params),
+            take(arrays.poses),
+            frames,
             y_chunk,
-            mask_chunk if ctx.has_loss_mask else None,
+            adapter.gauss_newton_weights(y_chunk, mask),
         )
+        system_acc = system_acc.at[views].add(systems * vmask[:, None, None])
+        rhs_acc = rhs_acc.at[views].add(rhs_values * vmask[:, None])
+        return (system_acc, rhs_acc, loss_acc + jnp.sum(loss_values * vmask)), None
 
-    def gn_update_all(
-        pose_params: jnp.ndarray, vol: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        masked_vol = _objective_apply_vol_mask(ctx, vol)
-
-        def body(
-            carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], i: jnp.ndarray
-        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
-            system_acc, rhs_acc, loss_acc = carry
-            start_shifted, vmask, view_idx_chunk = chunk_schedule(
-                i, n_views=ctx.n_views, chunk_size=ctx.chunk_size
-            )
-            params_chunk = jax.lax.dynamic_slice_in_dim(pose_params, start_shifted, ctx.chunk_size)
-            t_chunk = jax.lax.dynamic_slice_in_dim(ctx.pose_stack, start_shifted, ctx.chunk_size)
-            y_chunk = jax.lax.dynamic_slice_in_dim(ctx.projections, start_shifted, ctx.chunk_size)
-            systems, rhs_values, loss_values = gn_update_batch(
-                params_chunk,
-                t_chunk,
-                _objective_frames_chunk(ctx, start_shifted),
-                y_chunk,
-                masked_vol,
-                _ls_weight_chunk(y_chunk, _objective_loss_mask_chunk(ctx, start_shifted)),
-            )
-            system_acc = system_acc.at[view_idx_chunk].add(systems * vmask[:, None, None])
-            rhs_acc = rhs_acc.at[view_idx_chunk].add(rhs_values * vmask[:, None])
-            loss_acc = loss_acc + jnp.sum(loss_values * vmask)
-            return (system_acc, rhs_acc, loss_acc), None
-
-        width = int(pose_params.shape[1])
-        (systems, rhs, current_loss), _ = jax.lax.scan(
-            body,
-            (
-                jnp.zeros((ctx.n_views, width, width), dtype=pose_params.dtype),
-                jnp.zeros_like(pose_params),
-                jnp.float32(0.0),
-            ),
-            jnp.arange(ctx.num_chunks, dtype=jnp.int32),
+    width = int(pose_params.shape[1])
+    (systems, rhs, current_loss), _ = jax.lax.scan(
+        body,
+        (
+            jnp.zeros((n_views, width, width), dtype=pose_params.dtype),
+            jnp.zeros_like(pose_params),
+            jnp.float32(0.0),
+        ),
+        jnp.arange((n_views + b - 1) // b, dtype=jnp.int32),
+    )
+    if spec.smoothness_prior:
+        current_loss, prior_gradient = _apply_pose_smoothness_gradient(
+            pose_params, current_loss, jnp.zeros_like(pose_params), arrays.smoothness
         )
-        if ctx.cfg.pose_model == "per_view" and (ctx.cfg.w_rot or ctx.cfg.w_trans):
-            # The curvature prior is part of the objective the step scores, so
-            # its gradient and (view-coupling) Hessian belong in the normal
-            # equations rather than only in the loss.
-            current_loss, prior_gradient = _apply_pose_smoothness_gradient(
-                pose_params, current_loss, jnp.zeros_like(pose_params), ctx.smoothness_weights
-            )
-            rhs = rhs - prior_gradient * ctx.active_mask
-            delta_all = pose_block_solver(systems, ctx.smoothness_weights, has_smoothness=True)(rhs)
-        else:
-            current_loss = _apply_pose_smoothness_loss(
-                pose_params, current_loss, ctx.smoothness_weights
-            )
-            delta_all = jax.vmap(jnp.linalg.solve)(systems, rhs)
-        return delta_all * ctx.active_mask, current_loss
-
-    return jax.jit(gn_update_all)
+        rhs = rhs - prior_gradient * arrays.active
+        delta_all = pose_block_solver(systems, arrays.smoothness, has_smoothness=True)(rhs)
+    else:
+        current_loss = _apply_pose_smoothness_loss(pose_params, current_loss, arrays.smoothness)
+        delta_all = jax.vmap(jnp.linalg.solve)(systems, rhs)
+    return delta_all * arrays.active, current_loss
 
 
 def _build_pose_objective_bundle(
@@ -211,11 +221,28 @@ def _build_pose_objective_bundle(
         active_mask=active_mask,
         runtime=runtime,
     )
-    align_loss = _build_pose_align_loss(ctx)
-    gn_update_batch = _build_gn_update_batch(ctx)
+    arrays = PoseArrays(
+        poses=ctx.pose_stack,
+        projections=ctx.projections,
+        det_grid=ctx.det_grid,
+        active=ctx.active_mask,
+        smoothness=ctx.smoothness_weights,
+        loss_mask=ctx.loss_mask,
+        frames=ctx.frames,
+    )
+    spec = PoseSpec(
+        grid=grid,
+        detector=detector,
+        jacobian=replace(PoseJacobianOptions.from_config(cfg), cone_beam=ctx.cone is not None),
+        loss=ctx.loss_adapter.spec,
+        backend=str(cfg.backend),
+        chunk_size=ctx.chunk_size,
+        gn_damping=float(cfg.gn_damping),
+        smoothness_prior=cfg.pose_model == "per_view" and bool(cfg.w_rot or cfg.w_trans),
+    )
     return PoseObjectiveBundle(
-        align_loss_jit=jax.jit(align_loss),
-        gn_update_all=_build_gn_update_all(ctx, gn_update_batch),
+        align_loss_jit=partial(align_loss, arrays, spec=spec),
+        gn_update_all=partial(gn_update, arrays, spec=spec),
         coupled=build_coupled_objective(ctx, refinement=refinement)
         if cfg.gn_coupling == "joint"
         else None,

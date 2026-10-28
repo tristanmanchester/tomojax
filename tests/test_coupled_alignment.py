@@ -989,7 +989,7 @@ def test_finite_sampling_and_paired_derivatives_match_dense_oracle(width, backen
 
 
 @pytest.mark.parametrize("kind", ["l2", "l2_otsu", "huber"])
-def test_fixed_volume_gn_uses_true_loss_and_two_sided_irls(monkeypatch, kind):
+def test_fixed_volume_gn_uses_true_loss_and_two_sided_irls(kind):
     # check-public-imports: allow-private
     from tomojax.alignment._objectives.loss_adapters import build_loss_adapter
 
@@ -999,28 +999,22 @@ def test_fixed_volume_gn_uses_true_loss_and_two_sided_irls(monkeypatch, kind):
     residual = np.array([-4.0, -0.2, 0.0, 0.4, 3.0], np.float32)
     columns = np.random.default_rng(1348).normal(size=(6, 5)).astype(np.float32)
     adapter = build_loss_adapter(parse_loss_spec(kind), jnp.zeros((1, 1, 5)))
-    ctx = SimpleNamespace(
-        loss_adapter=adapter, cfg=SimpleNamespace(gn_damping=0.2), active_mask=jnp.ones(6)
+    system, rhs, value = _pose_objective.gn_view_system(
+        jnp.asarray(residual),
+        jnp.asarray(columns),
+        adapter=adapter,
+        active=jnp.ones(6),
+        damping=0.2,
     )
-    monkeypatch.setattr(
-        _pose_objective,
-        "build_pose_prediction_and_columns",
-        lambda _: lambda *args: (jnp.asarray(residual), jnp.asarray(columns)),
-    )
-    batch = _pose_objective._build_gn_update_batch(ctx)
-    arg = jnp.zeros((1, 6))
-    system, rhs, value = batch(arg, arg, arg, arg, jnp.zeros(1), arg)
     weight = np.minimum(1, 1 / np.maximum(1, np.abs(residual))) if kind == "huber" else 1
     expected_value = (
         np.where(np.abs(residual) <= 1, 0.5 * residual**2, np.abs(residual) - 0.5).sum()
         if kind == "huber"
         else 0.5 * np.sum(residual**2)
     )
-    np.testing.assert_allclose(
-        system[0], (columns * weight) @ columns.T + 0.2 * np.eye(6), atol=2e-6
-    )
-    np.testing.assert_allclose(rhs[0], -columns @ (weight * residual), atol=2e-6)
-    assert float(value[0]) == pytest.approx(expected_value)
+    np.testing.assert_allclose(system, (columns * weight) @ columns.T + 0.2 * np.eye(6), atol=2e-6)
+    np.testing.assert_allclose(rhs, -columns @ (weight * residual), atol=2e-6)
+    assert float(value) == pytest.approx(expected_value)
     # The robust model gradient must equal the actual per-view objective gradient.
     if kind == "huber":
         gradient = jax.grad(
