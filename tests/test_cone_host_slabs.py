@@ -94,7 +94,8 @@ def test_slab_sweep_is_the_matched_normal_operator(kind, depth, host):
     assert _relative(applied, expected) < 1e-6
 
 
-def test_host_cgls_matches_streamed_normal_equations(host):
+@pytest.mark.parametrize("depth", [3, 4])
+def test_host_cgls_matches_streamed_normal_equations(host, depth):
     geometry = _geometry("cone")
     data = _data(geometry)
     start = np.random.default_rng(3).random((5, 4, 9), np.float32)
@@ -115,7 +116,7 @@ def test_host_cgls_matches_streamed_normal_equations(host):
         )  # fmt: skip
         for config, initial in cases
     ]
-    host(3)
+    host(depth)
     for (config, initial), (volume, reference) in zip(cases, expected, strict=True):
         result, info = cgls(geometry, GRID, DETECTOR, data, init_x=initial, config=config)
         assert isinstance(result, np.ndarray) and info["host_slabs"]
