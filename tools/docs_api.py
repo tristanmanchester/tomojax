@@ -3,9 +3,12 @@
 One MDX page per public module: its docstring, a summary table, then each
 exported name with its signature and docstring, and a class's public methods
 and properties. griffe reads the source statically, so nothing is imported.
-Docstrings are prose with reST inline markup (``code``, :class:`Name`,
-``::`` literal blocks, definition lists); they become Markdown, with roles
-linked to the page that documents their target.
+Docstrings are NumPy style: prose with reST inline markup (``code``,
+:class:`Name`, ``::`` literal blocks, definition lists) and underlined sections
+(Parameters, Returns, Raises, Examples and so on). They become Markdown, with
+sections as bold labels rather than headings, so the page's contents list holds
+only the documented objects, and with roles linked to the page that documents
+their target.
 
 Run with griffe available, for example
 ``uv run --no-project --with griffe python tools/docs_api.py``.
@@ -55,7 +58,20 @@ FIRST = [
     "Alignment",
 ]
 SKIP = {"__version__"}
-SECTION = re.compile(r"(Args|Arguments|Parameters|Returns|Raises|Yields|Attributes|Notes?):$")
+# NumPy section titles by how their body is laid out.
+ENTRIES = {
+    "Parameters",
+    "Other Parameters",
+    "Attributes",
+    "Returns",
+    "Yields",
+    "Receives",
+    "Raises",
+    "Warns",
+}
+SECTIONS = ENTRIES | {"Notes", "Warnings", "References", "See Also", "Examples", "Methods"}
+UNDERLINE = re.compile(r"-{3,}$")
+DOCTEST = re.compile(r"\s*#\s*doctest:.*$")
 ROLE = re.compile(r":(\w+):`(~?)([^`]+)`")
 CODE_SPAN = re.compile(r"(`+)(.+?)\1")
 
@@ -156,13 +172,6 @@ class Pages:
                 body, i = block(i + 1, base)
                 out += [self.inline(head, context), "", "```python", body, "```", ""]
                 continue
-            if follows and SECTION.match(stripped):
-                body, i = block(i + 1, base)
-                out += [f"**{stripped[:-1]}**", ""]
-                entries = re.split(r"\n(?=\S)", body)
-                out += [f"- {self.inline(' '.join(e.split()), context)}" for e in entries]
-                out.append("")
-                continue
             starts = i == 0 or not lines[i - 1].strip() or in_list
             if follows and stripped and starts and stripped[0] not in "-*":
                 body, i = block(i + 1, base)
@@ -175,6 +184,105 @@ class Pages:
             in_list = False
             out.append(self.inline(line, context))
             i += 1
+        return "\n".join(out).strip()
+
+    @staticmethod
+    def split(text: str) -> tuple[str, list[tuple[str, str]]]:
+        """Split a NumPy docstring into its leading prose and its (title, body) sections."""
+        lines = text.expandtabs().splitlines()
+        starts = [
+            i
+            for i in range(len(lines) - 1)
+            if lines[i].strip() in SECTIONS and UNDERLINE.match(lines[i + 1].strip())
+        ]
+        prose = "\n".join(lines[: starts[0]] if starts else lines)
+        ends = [*starts[1:], len(lines)][: len(starts)]
+        sections = [
+            (lines[i].strip(), textwrap.dedent("\n".join(lines[i + 2 : end])).strip("\n"))
+            for i, end in zip(starts, ends, strict=True)
+        ]
+        return prose, sections
+
+    def entries(self, title: str, body: str, context: list[str]) -> list[str]:
+        """Render a Parameters-like section as a list of name, type and description."""
+        out = []
+        for entry in re.split(r"\n(?=\S)", body):
+            head, _, desc = entry.partition("\n")
+            name, colon, kind = head.partition(" : ")
+            if not colon and title in {"Returns", "Yields", "Receives", "Raises", "Warns"}:
+                name, kind = "", head
+            name, kind = name.strip(), kind.strip()
+            label = (
+                "**" + ", ".join(f"`{n.strip()}`" for n in name.split(",")) + "**" if name else ""
+            )
+            if kind:
+                typed = f"*{self.inline(kind, context)}*"
+                label = f"{label} ({typed})" if name else typed
+            text = self.docstring(textwrap.dedent(desc).strip("\n"), context) if desc else ""
+            first, _, rest = text.partition("\n")
+            if first.startswith(("```", "- ")):  # a block cannot share the label's line
+                first, rest = "", text
+            lines = [f"- {label}{': ' if first and label else ''}{first}"]
+            lines += [f"  {line}" if line else "" for line in rest.splitlines()]
+            out += lines
+        return [*out, ""]
+
+    @staticmethod
+    def doctest(line: str) -> str:
+        """Return a doctest line as plain code, its expected output as a comment."""
+        line = DOCTEST.sub("", line)
+        if line.startswith((">>> ", "... ")):
+            return line[4:]
+        return "" if line == "..." else f"# {line}"
+
+    def examples(self, body: str, context: list[str]) -> list[str]:
+        """Render an Examples section: prose as prose and each ``>>>`` block as code."""
+        out = []
+        for chunk in re.split(r"\n\s*\n", body):
+            if chunk.lstrip().startswith(">>>"):
+                out += [
+                    "```python",
+                    *(self.doctest(line) for line in chunk.splitlines()),
+                    "```",
+                    "",
+                ]
+            else:
+                out += [self.docstring(chunk, context), ""]
+        return out
+
+    def see_also(self, body: str, context: list[str]) -> list[str]:
+        """Render a See Also section as links, each with its description."""
+        out = []
+        for entry in re.split(r"\n(?=\S)", body):
+            names, _, desc = entry.partition(" : ")
+            links = [
+                self.link("obj", name.strip(), context, short=False) for name in names.split(",")
+            ]
+            desc = " ".join(desc.split()) or " ".join(entry.partition("\n")[2].split())
+            out.append(
+                f"- {', '.join(links)}" + (f": {self.inline(desc, context)}" if desc else "")
+            )
+        return [*out, ""]
+
+    def describe(self, text: str, context: list[str]) -> str:
+        """Convert a NumPy docstring to Markdown, its sections as bold labels."""
+        prose, sections = self.split(text)
+        out = [self.docstring(prose, context), ""]
+        for title, body in sections:
+            out += [f"**{title}**", ""]
+            if title in ENTRIES:
+                out += self.entries(title, body, context)
+            elif title == "Examples":
+                out += self.examples(body, context)
+            elif title == "See Also":
+                out += self.see_also(body, context)
+            elif title == "References":
+                out += [
+                    self.docstring(re.sub(r"^\.\. (?=\[)", "- ", body, flags=re.M), context),
+                    "",
+                ]
+            else:
+                out += [self.docstring(body, context), ""]
         return "\n".join(out).strip()
 
     @staticmethod
@@ -226,7 +334,7 @@ class Pages:
         """Render one exported object as Markdown."""
         context = [module, f"{module}.{name}", "tomojax"]
         out = [f"## `{name}`", ""]
-        doc = self.docstring(obj.docstring.value, context) if obj.docstring else ""
+        doc = self.describe(obj.docstring.value, context) if obj.docstring else ""
         if obj.is_function or obj.is_class:
             prefix = "class " if obj.is_class else ""
             out += ["```python", self.signature(name, obj, prefix=prefix), "```", ""]
@@ -248,7 +356,7 @@ class Pages:
                 )
                 out += ["```python", labels + self.signature(member.name, member), "```", ""]
             if member.docstring:
-                out += [self.docstring(member.docstring.value, context), ""]
+                out += [self.describe(member.docstring.value, context), ""]
         return out
 
     def page(self, module: str) -> str:
@@ -257,7 +365,7 @@ class Pages:
         context = [module, "tomojax"]
         text = mod.docstring.value.strip() if mod.docstring else ""
         first, _, rest = text.partition("\n\n")
-        body = [self.docstring(rest, context), "", "| Name | Summary |", "| --- | --- |"]
+        body = [self.describe(rest, context), "", "| Name | Summary |", "| --- | --- |"]
         rendered = []
         for name, obj in self.exports(module):
             public = f"{module}.{name}"
@@ -266,7 +374,7 @@ class Pages:
                 rendered += self.render(name, obj, module)
         front = {
             "title": module,
-            "description": " ".join(first.split()),
+            "description": " ".join(ROLE.sub(r"\3", first).replace("``", "").split()),
             "source": Path(mod.filepath).resolve().relative_to(ROOT).as_posix(),
         }
         header = "\n".join(f"{key}: {json.dumps(value)}" for key, value in front.items())
