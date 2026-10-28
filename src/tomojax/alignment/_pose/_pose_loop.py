@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 import copy
 from dataclasses import dataclass
 import logging
@@ -65,14 +65,12 @@ from ._pose_steps import (
     AlignmentStepGauge,
     AlignmentStepMotion,
     AlignmentStepObjective,
-    AlignmentStepOptimizer,
     AlignmentStepSmoothing,
     _run_alignment_step,
     _run_coupled_alignment_step,
 )
 
 _AlignmentStepContexts = tuple[
-    AlignmentStepOptimizer,
     AlignmentStepObjective,
     AlignmentStepConstraints,
     AlignmentStepMotion,
@@ -264,7 +262,6 @@ def _build_alignment_runtime_context(
         loss_adapter=loss_adapter,
         loss_mask=loss_mask,
         has_loss_mask=loss_mask is not None,
-        supports_gauss_newton=loss_adapter.supports_gauss_newton,
         objective_provenance=ObjectiveProvenance(
             outer_loss_source="AlignmentLossSpec",
             outer_loss_kind=active_loss_name,
@@ -284,25 +281,16 @@ def _build_alignment_runtime_context(
 
 def _build_alignment_step_contexts(
     *,
-    opt_mode: str,
     runtime: AlignmentRuntimeContext,
     objective: PoseObjectiveBundle,
     setup: _AlignSetupState,
     motion_ctx: PoseMotionContext,
     motion_model: Any,
     constraint_ctx: PoseConstraintContext,
-    motion_loss_and_grad: (
-        Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None
-    ),
 ) -> _AlignmentStepContexts:
     return (
-        AlignmentStepOptimizer(opt_mode=opt_mode),
         AlignmentStepObjective(
-            active_loss_name=runtime.active_loss_name,
-            ls_like=runtime.supports_gauss_newton,
-            align_loss=objective.align_loss,
             align_loss_jit=objective.align_loss_jit,
-            loss_and_grad_manual=objective.loss_and_grad_manual,
             gn_update_all=objective.gn_update_all,
             coupled=objective.coupled,
         ),
@@ -320,7 +308,6 @@ def _build_alignment_step_contexts(
             project_params_to_smooth=motion_ctx.project_params_to_smooth,
             coeffs_to_constrained_params=motion_ctx.coeffs_to_constrained_params,
             use_smooth_pose_model=motion_ctx.use_smooth_pose_model,
-            motion_loss_and_grad=motion_loss_and_grad,
             motion_model=motion_model,
         ),
         AlignmentStepSmoothing(
@@ -475,7 +462,7 @@ def _run_align_outer_iteration(
         stat["cumulative_time"] = time.perf_counter() - wall_start
         state.outer_stats.append(stat)
         return stat, None
-    optimizer, objective, constraints, motion, smoothing, gauge = step_contexts
+    objective, constraints, motion, smoothing, gauge = step_contexts
     if objective.coupled is not None:
         (
             state.x,
@@ -502,8 +489,6 @@ def _run_align_outer_iteration(
             rel_impr,
             align_stat,
         ) = _run_alignment_step(
-            cfg=cfg,
-            optimizer=optimizer,
             objective=objective,
             constraints=constraints,
             motion=motion,
@@ -513,7 +498,6 @@ def _run_align_outer_iteration(
             motion_coeffs_in=state.motion_coeffs,
             vol=state.x,
             loss_hist=state.loss_hist,
-            outer_idx=outer_idx,
         )
     state.loss_hist.append(total_loss)
     stat.update(align_stat)
@@ -570,7 +554,7 @@ def _final_pose_align_info(
         ),
         "optimizer_kind": str(outer_stats[-1].get("optimizer_kind"))
         if outer_stats and outer_stats[-1].get("optimizer_kind") is not None
-        else str(cfg.opt_method),
+        else "gn",
         "completed_outer_iterations": len(outer_stats),
         "small_impr_streak": int(state.small_impr_streak),
         "motion_coeffs": state.motion_coeffs,
@@ -667,9 +651,6 @@ def align(
         refinement=joint_refinement,
     )
 
-    motion_loss_and_grad = motion_ctx.loss_and_grad_for(objective.align_loss)
-
-    opt_mode = str(cfg.opt_method).lower()
     elapsed_offset = float(resume_state.elapsed_offset) if resume_state is not None else 0.0
     wall_start = time.perf_counter() - elapsed_offset
     reconstruction = str(cfg.reconstruction)
@@ -693,12 +674,10 @@ def align(
     )
 
     step_contexts = _build_alignment_step_contexts(
-        opt_mode=opt_mode,
         runtime=runtime,
         objective=objective,
         setup=setup,
         motion_ctx=motion_ctx,
-        motion_loss_and_grad=motion_loss_and_grad,
         motion_model=motion_model,
         constraint_ctx=constraint_ctx,
     )

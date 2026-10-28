@@ -130,9 +130,13 @@ _RETIRED_KEYS = {
 
 # Config keys whose setting was removed, and why.
 _REMOVED_KEYS: dict[str, str] = dict.fromkeys(
-    ("lbfgs_maxiter", "lbfgs_ftol", "lbfgs_gtol", "lbfgs_maxls", "lbfgs_memory_size"),
-    "L-BFGS pose optimization was removed; Gauss-Newton is the pose solver",
-)
+    (
+        "lbfgs_maxiter", "lbfgs_ftol", "lbfgs_gtol", "lbfgs_maxls", "lbfgs_memory_size",
+        "opt_method", "lr_rot", "lr_trans",
+    ),
+    "gradient-descent and L-BFGS pose optimization were removed; "
+    "Gauss-Newton is the pose solver",
+)  # fmt: skip
 
 
 def _validate_config_keys(

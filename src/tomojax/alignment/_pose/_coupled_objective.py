@@ -179,8 +179,6 @@ def build_coupled_objective(
         raise ValueError(
             "Huber loss requires gn_coupling='fixed_volume'; joint GN supports L2 losses"
         )
-    if not ctx.loss_adapter.supports_gauss_newton:
-        raise ValueError("joint GN requires a least-squares alignment loss")
     if cfg.gather_dtype not in {"fp32", "float32"}:
         raise ValueError("joint GN requires gather_dtype='fp32' for matched linear operators")
     # CUDA exact and Joseph integration accept dynamic rigid poses. The

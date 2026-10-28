@@ -100,7 +100,6 @@ def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
         freeze=cfg.freeze,
         gauge_policy=cfg.gauge_policy,
         gauge_priors=cfg.gauge_priors,
-        opt_method=cfg.opt_method,
         outer_iterations=int(cfg.outer_iterations),
         early_stop=bool(cfg.early_stop),
     )
@@ -143,29 +142,15 @@ class AlignConfig:
         Volume regularization model, "tv" or "huber_tv". Default is 'huber_tv'.
     huber_delta : float, optional
         Positive transition scale for Huber-TV. Default is 0.01.
-    tv_prox_iterations : int, optional
-        Iterations per TV proximal solve. Default is 10.
     reconstruction : Reconstruction, optional
         Inner reconstruction method, "fista" or "spdhg". Default is 'fista'.
     nonnegative : bool, optional
         Constrain reconstructed voxel values to be nonnegative. Default is True.
     seed : int, optional
         Random seed for stochastic reconstruction. Default is 0.
-    recon_rel_tol : float | None, optional
-        Relative objective-change threshold for inner reconstruction stopping. None
-        disables the threshold.
-    recon_patience : int, optional
-        Successive small-change iterations required for reconstruction stopping. Default
-        is 2.
-    lr_rot : float, optional
-        Gradient-descent rotation step size in radians. Default is 0.001.
-    lr_trans : float, optional
-        Gradient-descent translation step size in physical length units. Default is 0.1.
     views_per_batch : int, optional
         View batch size; zero chooses it from free device memory at alignment startup.
         Default is 0.
-    projector_unroll : int, optional
-        Unrolling factor for the reference projector loop. Default is 1.
     checkpoint_projector : bool, optional
         Recompute intermediate projector arrays during differentiation to save memory.
         Default is True.
@@ -175,9 +160,6 @@ class AlignConfig:
         Projector implementation: "jax" or "cuda". Default is 'cuda'.
     ray_integrator : Literal['sampled', 'exact', 'joseph', 'joseph_cubic'], optional
         Ray model: "sampled", "exact", "joseph" or "joseph_cubic". Default is 'sampled'.
-    opt_method : str, optional
-        Pose optimizer: "gn" (Gauss-Newton), or "gd" for losses Gauss-Newton cannot
-        use. Default is 'gn'.
     gn_damping : float, optional
         Gauss-Newton pose damping; must be finite and positive for joint solves. Default
         is 0.001.
@@ -265,20 +247,12 @@ class AlignConfig:
     tv_weight: float = 0.005
     regulariser: Regulariser = "huber_tv"
     huber_delta: float = 1e-2
-    tv_prox_iterations: int = 10
     reconstruction: Reconstruction = "fista"
     nonnegative: bool = True
     seed: int = 0
-    # Reconstruction stopping criteria
-    recon_rel_tol: float | None = None
-    recon_patience: int = 2
-    # Alignment step sizes
-    lr_rot: float = 1e-3  # radians
-    lr_trans: float = 1e-1  # world units
     # Memory/throughput knobs. views_per_batch=0 sizes reconstruction batches
     # from free device memory when alignment starts.
     views_per_batch: int = 0
-    projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "auto"
     backend: ProjectorBackendInput = "cuda"
@@ -286,7 +260,6 @@ class AlignConfig:
         default="sampled", kw_only=True
     )
     # Solver and regularization
-    opt_method: str = "gn"
     gn_damping: float = 1e-3
     gn_jacobian: Literal["autodiff", "central"] = field(default="autodiff", kw_only=True)
     # Central-difference displacement as a fraction of the smallest voxel pitch.
@@ -334,8 +307,8 @@ class AlignConfig:
         self._normalize_gauge_options()
         self._normalize_pose_model_options()
         if self.gn_coupling == "joint":
-            if self.pose_model != "per_view" or self.opt_method != "gn":
-                raise ValueError("joint GN requires opt_method='gn' and pose_model='per_view'")
+            if self.pose_model != "per_view":
+                raise ValueError("joint GN requires pose_model='per_view'")
             if self.tv_weight != 0 and self.regulariser != "huber_tv":
                 raise ValueError("joint GN supports Huber-TV or zero volume regularisation")
 
@@ -350,8 +323,6 @@ class AlignConfig:
         self.gather_dtype = str(self.gather_dtype).strip().lower()
 
     def _normalize_optimizer_options(self) -> None:
-        if self.opt_method not in {"gd", "gn"}:
-            raise ValueError("opt_method must be 'gn' or 'gd'; L-BFGS was removed")
         if self.gn_jacobian not in {"autodiff", "central"}:
             raise ValueError("gn_jacobian must be 'autodiff' or 'central'")
         if not math.isfinite(self.gn_difference_step) or self.gn_difference_step <= 0:
@@ -421,7 +392,6 @@ def coupled_pose_defaults() -> dict[str, object]:
     return {
         "gn_coupling": "joint",
         "gn_joint_solver": "pose_eliminated",
-        "opt_method": "gn",
         "pose_model": "per_view",
         "ray_integrator": "joseph",
         "gather_dtype": "fp32",

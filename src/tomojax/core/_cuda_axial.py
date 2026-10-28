@@ -19,6 +19,24 @@ from tomojax.core.cuda import initialize_buffer, launch_kernel
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
 
+# Elements of the transposes' (views, nu, nz) vertical scratch; longer scans run in view chunks.
+_SCRATCH = 32 * 1024**2
+
+
+def _chunks(views: int, nu: int, nz: int) -> tuple[int, list[tuple[int, int]]]:
+    """Scratch views, and the first view and view count of each chunk."""
+    size = max(1, min(views, _SCRATCH // (nu * nz)))
+    return size, [(first, min(size, views - first)) for first in range(0, views, size)]
+
+
+class _Offset:
+    """A float32 callback buffer's storage from element ``elements`` on, without a copy."""
+
+    def __init__(self, buffer: Any, elements: int) -> None:
+        address = buffer.__cuda_array_interface__["data"][0] + 4 * elements
+        self.__cuda_array_interface__: dict[str, Any] = {"data": (address, False)}
+
+
 _FORWARD = r"""
 extern "C" __global__ void axial_forward(
     const float* __restrict__ coeff, const float* __restrict__ x, float* __restrict__ out,
@@ -257,24 +275,27 @@ def _transpose_launch(
         target, previous = cp.asarray(out), cp.asarray(initial)
         if target.data.ptr != previous.data.ptr:
             target[...] = previous
-        c, y = cp.asarray(coeff), cp.asarray(images)
-        weighted = cp.empty((views, nu, nz), cp.float32)
+        size, chunks = _chunks(views, nu, nz)
+        weighted = cp.empty((size, nu, nz), cp.float32)
         # Aligned float4 loads amortize global-load instructions. Odd axial
         # extents retain guarded scalar reads, including the last partial run.
         vector = nz % 8 == 0
         run, threads = (8, 256) if vector else (4, 128)
         module = _transpose_module(vector=vector, cubic=cubic)
-        module.get_function("joseph_vertical")(
-            (-(-(views * nu * nz) // 256),),
-            (256,),
-            (c, y, weighted, *map(np.int32, (views, nz, nu, nv))),
-        )
         runs = nx * ny * -(-nz // run)
-        module.get_function("joseph_axial")(
-            (-(-runs // threads),),
-            (threads,),
-            (c, weighted, target, *map(np.int32, (views, nx, ny, nz, nu))),
-        )
+        for first, count in chunks:
+            c = cp.asarray(coeff)[first : first + count]
+            y = cp.asarray(images)[first : first + count]
+            module.get_function("joseph_vertical")(
+                (-(-(count * nu * nz) // 256),),
+                (256,),
+                (c, y, weighted, *map(np.int32, (count, nz, nu, nv))),
+            )
+            module.get_function("joseph_axial")(
+                (-(-runs // threads),),
+                (threads,),
+                (c, weighted, target, *map(np.int32, (count, nx, ny, nz, nu))),
+            )
 
 
 def transpose_axial_cuda(
@@ -403,32 +424,41 @@ def transpose_axial_vu_cuda(
     run, threads = (8, 256) if vector else (4, 128)
     text = _transpose_source(vector=vector, cubic=interpolation == "cubic")
 
+    size, chunks = _chunks(views, nu, nz)
+    runs = nx * ny * -(-nz // run)
+
     def launch(context: Any, outputs: Any, c: Any, y: Any, x: Any) -> None:
         out, weighted = outputs
         initialize_buffer(out, stream=context.stream, source=x)
-        launch_kernel(
-            text,
-            "joseph_vertical",
-            stream=context.stream,
-            grid=(-(-(views * nu * nz) // 256),),
-            block=(256,),
-            arguments=(c, y, weighted, *map(np.int32, (views, nz, nu, nv))),
-        )
-        runs = nx * ny * -(-nz // run)
-        launch_kernel(
-            text,
-            "joseph_axial",
-            stream=context.stream,
-            grid=(-(-runs // threads),),
-            block=(threads,),
-            arguments=(c, weighted, out, *map(np.int32, (views, nx, ny, nz, nu))),
-        )
+        for first, count in chunks:
+            part = _Offset(c, 14 * first)
+            launch_kernel(
+                text,
+                "joseph_vertical",
+                stream=context.stream,
+                grid=(-(-(count * nu * nz) // 256),),
+                block=(256,),
+                arguments=(
+                    part,
+                    _Offset(y, first * nv * nu),
+                    weighted,
+                    *map(np.int32, (count, nz, nu, nv)),
+                ),
+            )
+            launch_kernel(
+                text,
+                "joseph_axial",
+                stream=context.stream,
+                grid=(-(-runs // threads),),
+                block=(threads,),
+                arguments=(part, weighted, out, *map(np.int32, (count, nx, ny, nz, nu))),
+            )
 
     result, _ = buffer_callback(
         launch,
         (
             jax.ShapeDtypeStruct(initial.shape, jnp.float32),
-            jax.ShapeDtypeStruct((views, nu, nz), jnp.float32),
+            jax.ShapeDtypeStruct((size, nu, nz), jnp.float32),
         ),
         input_output_aliases={2: 0},
         command_buffer_compatible=True,

@@ -19,6 +19,14 @@ iterates while preserving public `(z, y, x)` inputs and outputs. Bounded tiled
 boundary permutations avoid volume-sized compiler-autotuning buffers; the
 forward projector and its exact transpose share the internal representation.
 
+Fixed-volume alignment compiles its Gauss-Newton step and objective once per
+problem shape and configuration. New scans of the same shape reuse them instead
+of retracing and recompiling on every `align` call; results are unchanged.
+
+CUDA parallel-beam and laminography transposes of long scans split their views
+into chunks that fit the axial kernels' scratch, rather than falling back to
+the generic gather for every view.
+
 `alignment.api` exposes user-facing configuration, schedules, losses, geometry
 helpers and execution. Internal state, checkpoint plumbing and normalisation
 helpers are no longer exported there; checkpoint files remain supported by
@@ -56,9 +64,10 @@ directly, for example `("dx", "dz")` or `("detector_roll_deg",)`.
 `--poisson-scale`) only from a `--config` TOML file, as `align` and `recon` take
 their expert settings; the command has 19 options instead of 45.
 
-Alignment no longer offers L-BFGS pose optimization: `opt_method="lbfgs"` and
-the `lbfgs_*` settings are removed, and TOML configs naming them fail with a
-"removed" error. Gauss-Newton is the pose solver; Optax is no longer a dependency.
+Alignment no longer offers L-BFGS or gradient-descent pose optimization:
+`opt_method`, `lr_rot`, `lr_trans` and the `lbfgs_*` settings are removed, and
+TOML configs naming them fail with a "removed" error. Gauss-Newton is the pose
+solver for every loss; Optax is no longer a dependency.
 
 The README's figures image a simulated 29 mm mechanical watch movement,
 modelled in Blender (`bench/phantoms/watch_blender.py`) and projected by gVXR,

@@ -44,6 +44,26 @@ def test_validation_scorer_reuses_one_program_for_changing_candidates(monkeypatc
     assert len(traces) == 1
 
 
+def test_fixed_volume_alignment_reuses_its_programs_for_new_scans_of_one_shape():
+    # check-public-imports: allow-private
+    from tomojax.alignment._pose import _pose_objective
+
+    grid, det = Grid(12, 12, 1, 1, 1, 1), Detector(12, 1, 1, 1)
+    geometry = ParallelGeometry(grid, det, np.linspace(0, 180, 8, endpoint=False))
+    x = np.zeros((1, 12, 12), np.float32)
+    x[:, 4:10, 3:8] = 1
+    cfg = AlignConfig(outer_iterations=1, iterations=2, optimise_dofs=("dx",), views_per_batch=3)
+    scans = [np.asarray(project(geometry, np.roll(x, shift, axis=1))) for shift in (0, 3)]
+    jax.clear_caches()
+    _first, second = (align(geometry, grid, det, y, config=cfg) for y in scans)
+    assert _pose_objective.gn_update._cache_size() == 1
+    jax.clear_caches()
+    fresh = align(geometry, grid, det, scans[1], config=cfg)
+    # A recompiled GPU program may round differently; stale targets would move the poses.
+    np.testing.assert_allclose(second[0], fresh[0], rtol=1e-3, atol=1e-4)
+    np.testing.assert_allclose(second[1], fresh[1], atol=1e-4)
+
+
 @pytest.mark.numerical
 @pytest.mark.parametrize("tilt", [False, True])
 def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):
@@ -71,8 +91,7 @@ def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):
             backend="jax",
             gather_dtype="fp32",
             optimise_dofs=("dx",),
-            opt_method="gd",
-            lr_trans=0,
+            bounds={"dx": (-1e-6, 1e-6)},  # holds the poses; only the volume moves
             early_stop=False,
         )
         volume, _, info = align(geometry, grid, detector, data, config=cfg)
@@ -83,10 +102,8 @@ def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("public_fallback", [False, True])
-def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(
-    monkeypatch, public_fallback
-):
+@pytest.mark.parametrize("regulariser", ["huber_tv", "tv"])
+def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(regulariser):
     # The rays each sum two identical unknown voxels: A.T A has eigenvalue 2
     # on this constant mode. With L=4 every one-step update halves the error.
     # Repeatedly inflating L instead leaves a finite error even after 40 steps.
@@ -100,21 +117,13 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(
         lipschitz=4,
         tv_weight=0.01,
         huber_delta=0.12,
+        regulariser=regulariser,
         backend="jax",
         gather_dtype="fp32",
         optimise_dofs=("dx",),
-        opt_method="gd",
-        lr_trans=0,
+        bounds={"dx": (-1e-6, 1e-6)},  # holds the poses; only the volume moves
         early_stop=False,
     )
-    if public_fallback:
-        monkeypatch.setattr(
-            reconstruction_stage,
-            "_run_huber_fista_core_reconstruction",
-            lambda step: reconstruction_stage._run_public_fista_core_bypass(
-                step, fallback_reason="test_public_fista_fallback"
-            ),
-        )
     checkpoints = []
     _, _, interrupted = align(
         geometry,
@@ -396,7 +405,8 @@ def test_alignment_cuda_backend_probe_uses_options_api(
         return None, missing_reason
 
     monkeypatch.setattr(reconstruction_stage.jax, "default_backend", lambda: "gpu")
-    monkeypatch.setattr(reconstruction_stage, "resolve_cuda_callable", resolve)
+    # The stage shares the fixed-volume objective's support probe.
+    monkeypatch.setattr("tomojax.alignment._objectives.fixed_volume.resolve_cuda_callable", resolve)
 
     backend, reason = reconstruction_stage._resolve_reconstruction_projector_backend(
         requested_backend="cuda",
@@ -415,65 +425,6 @@ def test_alignment_cuda_backend_probe_uses_options_api(
     assert options_kwargs["gather_dtype"] == "fp32"
     assert options_kwargs["det_grid"] is det_grid
     assert options_kwargs["state_mode"] == "cached"
-
-
-def test_fixed_geometry_reconstruction_reports_effective_auto_cuda_backend(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
-    detector = Detector(nu=2, nv=2, du=1.0, dv=1.0)
-    geometry = ParallelGeometry(
-        grid=grid,
-        detector=detector,
-        angles=np.asarray([0.0, 90.0], dtype=np.float32),
-    )
-    cfg = AlignConfig(
-        outer_iterations=1,
-        iterations=1,
-        backend="jax",
-        views_per_batch=1,
-        checkpoint_projector=False,
-        early_stop=False,
-        optimise_dofs=("dx",),
-        gauge_policy="anchor_mean",
-    )
-
-    def run_fixed(x0, *_args, **_kwargs):
-        return (
-            x0,
-            jnp.zeros((1,), dtype=jnp.float32),
-            jnp.asarray(0.0, dtype=jnp.float32),
-            jnp.asarray(0.0, dtype=jnp.float32),
-            jnp.asarray(1, dtype=jnp.int32),
-        )
-
-    monkeypatch.setattr(
-        reconstruction_stage,
-        "_run_huber_fista_core_fixed_geometry",
-        run_fixed,
-    )
-    monkeypatch.setattr(
-        reconstruction_stage,
-        "effective_fista_core_backend",
-        lambda *_args, **_kwargs: "cuda",
-    )
-
-    _x, info = reconstruction_stage._run_huber_fista_core_reconstruction(
-        reconstruction_stage._ReconstructionStepInputs(
-            recon_geometry=geometry,
-            grid=grid,
-            detector=detector,
-            projections=jnp.ones((2, 2, 2), dtype=jnp.float32),
-            det_grid=reconstruction_stage.get_detector_grid_device(detector),
-            x=jnp.ones((2, 2, 2), dtype=jnp.float32),
-            cfg=cfg,
-            L_prev=1.0,
-            outer_idx=1,
-        )
-    )
-
-    assert info["requested_backend"] == "jax"
-    assert info["actual_backend"] == "cuda"
 
 
 @pytest.mark.parametrize("shape", [(64, 61, 32), (33, 29, 17)])
@@ -496,19 +447,19 @@ def test_alignment_partial_view_batches_run_under_global_x64() -> None:
         tv_weight=0,
         backend="jax",
         optimise_dofs=("dx",),
-        opt_method="gd",
-        lr_trans=0,
         early_stop=False,
         views_per_batch=2,
         checkpoint_projector=False,
     )
     with jax.enable_x64(False):
-        expected, _, _ = align(geometry, grid, detector, data, init_x=volume, config=config)
+        expected, expected_poses, _ = align(
+            geometry, grid, detector, data, init_x=volume, config=config
+        )
     with jax.enable_x64():
         actual, poses, _ = align(geometry, grid, detector, data, init_x=volume, config=config)
     assert actual.dtype == np.float32
     np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=3e-6)
-    np.testing.assert_array_equal(poses, 0)
+    np.testing.assert_allclose(poses, expected_poses, rtol=3e-5, atol=3e-6)
 
 
 def _shifted_laminography_scan(truth):
@@ -536,12 +487,8 @@ def _shifted_laminography_scan(truth):
     return geometry, grid, detector, volume, data, project
 
 
-@pytest.mark.parametrize(
-    ("optimizer", "settings"), [("gd", {"lr_trans": 0.5}), ("gn", {"w_trans": 10.0})]
-)
-def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
-    # A gradient step much longer than the remaining motion must backtrack, and
-    # a Gauss-Newton step must account for its curvature prior.
+def test_pose_steps_reduce_the_declared_objective():
+    # A Gauss-Newton step must account for its curvature prior.
     coordinate = np.linspace(-1, 1, 9)
     truth = np.column_stack([0.012 * coordinate, 0.008 - 0.006 * coordinate])
     geometry, grid, detector, volume, data, project = _shifted_laminography_scan(truth)
@@ -550,7 +497,6 @@ def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
     config = AlignConfig(
         outer_iterations=8,
         iterations=0,
-        opt_method=optimizer,
         backend="jax",
         gather_dtype="fp32",
         views_per_batch=4,
@@ -559,7 +505,7 @@ def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
         optimise_dofs=("dx", "dz"),
         pose_translation_frame="detector",
         tv_weight=0,
-        **settings,
+        w_trans=10.0,
     )
     checkpoints = []
     align(
@@ -579,21 +525,19 @@ def test_pose_steps_reduce_the_declared_objective(optimizer, settings):
         return 0.5 * jnp.sum((project(shifts) - data) ** 2) + prior
 
     assert float(objective(found)) < float(objective(jnp.asarray(initial_shifts, jnp.float32)))
-    if optimizer == "gn":
-        assert np.linalg.norm(found - truth) < 0.2 * np.linalg.norm(initial_shifts - truth)
-        assert float(jnp.linalg.norm(jax.grad(objective)(found))) < 1e-3
+    assert np.linalg.norm(found - truth) < 0.2 * np.linalg.norm(initial_shifts - truth)
+    assert float(jnp.linalg.norm(jax.grad(objective)(found))) < 1e-3
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("adjusted", [False, True])
+@pytest.mark.parametrize("pose_delta", [0.0, 0.01])
 @pytest.mark.parametrize("integrator", ["sampled", "joseph", "joseph_cubic"])
 def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
-    monkeypatch, adjusted, integrator
+    monkeypatch, pose_delta, integrator
 ):
     grid, detector = Grid(3, 4, 2, 0.7, 1.1, 0.9), Detector(5, 3, 0.6, 0.8)
     geometry = ParallelGeometry(grid, detector, np.array([13.0, 56.0, 91.0]))
-    if adjusted:
-        geometry = PoseAdjustedGeometry(geometry=geometry, pose_params=jnp.full((3, 5), 0.01))
+    geometry = PoseAdjustedGeometry(geometry=geometry, pose_params=jnp.full((3, 5), pose_delta))
     cfg = AlignConfig(
         iterations=3,
         tv_weight=0.02,

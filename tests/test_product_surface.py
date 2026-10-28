@@ -281,18 +281,19 @@ def test_align_config_files_name_the_new_key_for_a_retired_one(
     assert capsys.readouterr().err.rstrip().endswith(f"was renamed '{new}'")
 
 
-def test_align_config_files_reject_removed_lbfgs_settings(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("key", ["lbfgs_maxiter", "opt_method", "lr_rot"])
+def test_align_config_files_reject_removed_pose_optimizer_settings(
+    key: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from tomojax.cli.main import main
 
     config = tmp_path / "align.toml"
-    _ = config.write_text("lbfgs_maxiter = 5\n", encoding="utf-8")
+    _ = config.write_text(f"{key} = 5\n", encoding="utf-8")
     with pytest.raises(SystemExit) as exc:
         _ = main(["align", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
     assert exc.value.code == 2
-    assert "'lbfgs_maxiter'" in (err := capsys.readouterr().err)
-    assert "L-BFGS pose optimization was removed" in err
+    assert f"'{key}'" in (err := capsys.readouterr().err)
+    assert "Gauss-Newton is the pose solver" in err
 
 
 def test_recon_parser_defers_loading_expert_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

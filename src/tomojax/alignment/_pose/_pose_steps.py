@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-import logging
 import math
 import time
 from typing import Any
@@ -13,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._config import AlignConfig
-from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.alignment._model.motion_models import (
     expand_motion_coefficients,
     fit_motion_coefficients,
@@ -32,19 +30,8 @@ from ._pose_candidates import (
 
 
 @dataclass(frozen=True)
-class AlignmentStepOptimizer:
-    opt_mode: str
-
-
-@dataclass(frozen=True)
 class AlignmentStepObjective:
-    active_loss_name: str
-    ls_like: bool
-    align_loss: Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
-    align_loss_jit: Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
-    loss_and_grad_manual: Callable[
-        [jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]
-    ]
+    align_loss_jit: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
     gn_update_all: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
 
     coupled: CoupledObjective | None = None
@@ -70,9 +57,6 @@ class AlignmentStepMotion:
     project_params_to_smooth: Callable[[jnp.ndarray], jnp.ndarray]
     coeffs_to_constrained_params: Callable[[jnp.ndarray], jnp.ndarray]
     use_smooth_pose_model: bool
-    motion_loss_and_grad: (
-        Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None
-    )
     motion_model: Any
 
 
@@ -96,23 +80,7 @@ class _AlignmentStepCoreResult:
     motion_coeffs: jnp.ndarray | None
     loss_before: float | None
     loss_after: float | None
-    step_kind: str
     stat: OuterStat
-
-
-def _alignment_step_kind(
-    optimizer: AlignmentStepOptimizer,
-    objective: AlignmentStepObjective,
-) -> tuple[str, OuterStat]:
-    if optimizer.opt_mode == "gn" and objective.ls_like:
-        return "gn", {}
-    if optimizer.opt_mode == "gn":
-        logging.warning(
-            "Gauss-Newton is incompatible with loss=%s; falling back to GD for this step",
-            objective.active_loss_name,
-        )
-        return "gd", {"optimizer_fallback": "gn->gd"}
-    return "gd", {}
 
 
 def _pre_alignment_step_loss(
@@ -121,109 +89,14 @@ def _pre_alignment_step_loss(
     *,
     pose_params: jnp.ndarray,
     vol: jnp.ndarray,
-    step_kind: str,
-    loss_rng_key: jnp.ndarray,
 ) -> float | None:
-    if step_kind == "gn" and not motion.use_smooth_pose_model:
+    if not motion.use_smooth_pose_model:
         return None
     return _evaluate_align_loss(
-        lambda: objective.align_loss_jit(pose_params, vol, loss_rng_key),
+        lambda: objective.align_loss_jit(pose_params, vol),
         fallback=None,
         context="Skipping pre-step alignment loss evaluation",
     )
-
-
-def _select_gd_step_candidate(
-    objective: AlignmentStepObjective,
-    *,
-    candidate_from_scale: Callable[[float], jnp.ndarray],
-    previous_params: jnp.ndarray,
-    loss_before_value: float | None,
-    vol: jnp.ndarray,
-    loss_rng_key: jnp.ndarray,
-) -> tuple[jnp.ndarray, float | None]:
-    """Take the better of the full and doubled steps, halving them if neither improves.
-
-    RMS-normalized gradients have nearly fixed step lengths even close to a
-    solution, so without backtracking they overshoot and the loss stops falling.
-    """
-    best_loss = math.inf if loss_before_value is None else loss_before_value
-
-    def evaluate(scale: float) -> tuple[jnp.ndarray, float]:
-        candidate = candidate_from_scale(scale)
-        loss = _evaluate_align_loss(
-            lambda: objective.align_loss_jit(candidate, vol, loss_rng_key),
-            fallback=math.inf,
-            context="Treating GD candidate as rejected during alignment loss evaluation",
-        )
-        return candidate, math.inf if loss is None else float(loss)
-
-    for scales in ((1.0, 2.0), *((0.5**halvings,) for halvings in range(1, 11))):
-        candidate, loss = min((evaluate(scale) for scale in scales), key=lambda trial: trial[1])
-        if loss < best_loss:
-            return candidate, loss
-    return previous_params, loss_before_value
-
-
-def _run_gd_alignment_step(
-    cfg: AlignConfig,
-    objective: AlignmentStepObjective,
-    constraints: AlignmentStepConstraints,
-    motion: AlignmentStepMotion,
-    pose_params_in: jnp.ndarray,
-    motion_coeffs_in: jnp.ndarray | None,
-    vol: jnp.ndarray,
-    loss_before_value: float | None,
-    loss_rng_key: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray | None, float | None, jnp.ndarray]:
-    scales = jnp.array(
-        [cfg.lr_rot] * 3 + [cfg.lr_trans] * (POSE_WIDTH - 3),
-        dtype=jnp.float32,
-    )
-    if motion.use_smooth_pose_model:
-        if motion_coeffs_in is None or motion.motion_loss_and_grad is None:
-            raise RuntimeError("smooth pose model coefficients were not initialized")
-        coeffs_in = motion_coeffs_in
-        _, g_coeffs = motion.motion_loss_and_grad(coeffs_in, vol, loss_rng_key)
-        active_scales = scales[motion.active_coeff_indices]
-        rms_active = jnp.sqrt(jnp.mean(jnp.square(g_coeffs), axis=0)) + 1e-6
-        eff_scales = active_scales / rms_active
-        step = g_coeffs * eff_scales[None, :]
-        pose_params_out, loss_after_value = _select_gd_step_candidate(
-            objective,
-            candidate_from_scale=lambda scale: motion.coeffs_to_constrained_params(
-                coeffs_in - scale * step
-            ),
-            previous_params=motion.coeffs_to_constrained_params(coeffs_in),
-            loss_before_value=loss_before_value,
-            vol=vol,
-            loss_rng_key=loss_rng_key,
-        )
-        motion_coeffs_out = fit_motion_coefficients(motion.motion_model, pose_params_out)
-        pose_params_out = motion.coeffs_to_constrained_params(motion_coeffs_out)
-        rms = (
-            jnp.zeros((POSE_WIDTH,), dtype=jnp.float32)
-            .at[motion.active_coeff_indices]
-            .set(rms_active)
-        )
-        return pose_params_out, motion_coeffs_out, loss_after_value, rms
-
-    _, g_params = objective.loss_and_grad_manual(pose_params_in, vol, loss_rng_key)
-    g_params = g_params * constraints.active_mask
-    rms = jnp.sqrt(jnp.mean(jnp.square(g_params), axis=0)) + 1e-6
-    eff_scales = scales / rms
-    step = g_params * eff_scales
-    pose_params_out, loss_after_value = _select_gd_step_candidate(
-        objective,
-        candidate_from_scale=lambda scale: constraints.apply_full_constraints(
-            pose_params_in - scale * step
-        ),
-        previous_params=pose_params_in,
-        loss_before_value=loss_before_value,
-        vol=vol,
-        loss_rng_key=loss_rng_key,
-    )
-    return pose_params_out, motion_coeffs_in, loss_after_value, rms
 
 
 def _gn_smooth_candidate_fn(
@@ -248,7 +121,6 @@ def _run_gn_alignment_step(
     motion_coeffs_in: jnp.ndarray | None,
     vol: jnp.ndarray,
     loss_before_value: float | None,
-    loss_rng_key: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray | None, float | None, float | None, OuterStat]:
     pose_params_prev = pose_params_in
     dp_raw, gn_loss_before = objective.gn_update_all(pose_params_prev, vol)
@@ -268,7 +140,7 @@ def _run_gn_alignment_step(
             loss_before=loss_before,
             eval_loss=lambda candidate: float(
                 _evaluate_align_loss(
-                    lambda: objective.align_loss_jit(candidate, vol, loss_rng_key),
+                    lambda: objective.align_loss_jit(candidate, vol),
                     fallback=math.inf,
                     context="Treating GN candidate as rejected during alignment loss evaluation",
                 )
@@ -289,7 +161,7 @@ def _run_gn_alignment_step(
     else:
         pose_params_out = constrain_candidate(pose_params_prev + dp_all)
         candidate_loss = _evaluate_align_loss(
-            lambda: objective.align_loss_jit(pose_params_out, vol, loss_rng_key),
+            lambda: objective.align_loss_jit(pose_params_out, vol),
             fallback=math.inf,
             context="Treating GN step as rejected during alignment loss evaluation",
         )
@@ -310,8 +182,6 @@ def _run_gn_alignment_step(
 
 def _run_alignment_step_core(
     *,
-    cfg: AlignConfig,
-    optimizer: AlignmentStepOptimizer,
     objective: AlignmentStepObjective,
     constraints: AlignmentStepConstraints,
     motion: AlignmentStepMotion,
@@ -319,52 +189,23 @@ def _run_alignment_step_core(
     pose_params_in: jnp.ndarray,
     motion_coeffs_in: jnp.ndarray | None,
     vol: jnp.ndarray,
-    loss_rng_key: jnp.ndarray,
 ) -> _AlignmentStepCoreResult:
-    step_kind, stat = _alignment_step_kind(optimizer, objective)
-    loss_before = _pre_alignment_step_loss(
+    loss_before = _pre_alignment_step_loss(objective, motion, pose_params=pose_params_in, vol=vol)
+    pose_params_out, motion_coeffs_out, loss_before, loss_after, stat = _run_gn_alignment_step(
         objective,
+        constraints,
         motion,
-        pose_params=pose_params_in,
-        vol=vol,
-        step_kind=step_kind,
-        loss_rng_key=loss_rng_key,
+        smoothing,
+        pose_params_in,
+        motion_coeffs_in,
+        vol,
+        loss_before,
     )
-    if step_kind == "gn":
-        pose_params_out, motion_coeffs_out, loss_before, loss_after, gn_stat = (
-            _run_gn_alignment_step(
-                objective,
-                constraints,
-                motion,
-                smoothing,
-                pose_params_in,
-                motion_coeffs_in,
-                vol,
-                loss_before,
-                loss_rng_key,
-            )
-        )
-        stat.update(gn_stat)
-    else:
-        pose_params_out, motion_coeffs_out, loss_after, rms = _run_gd_alignment_step(
-            cfg,
-            objective,
-            constraints,
-            motion,
-            pose_params_in,
-            motion_coeffs_in,
-            vol,
-            loss_before,
-            loss_rng_key,
-        )
-        _set_float_stat(stat, "rot_rms", jnp.mean(rms[:3]))
-        _set_float_stat(stat, "trans_rms", jnp.mean(rms[3:]))
     return _AlignmentStepCoreResult(
         pose_params=pose_params_out,
         motion_coeffs=motion_coeffs_out,
         loss_before=loss_before,
         loss_after=loss_after,
-        step_kind=step_kind,
         stat=stat,
     )
 
@@ -408,10 +249,8 @@ def _alignment_total_loss(
     vol: jnp.ndarray,
     loss_before: float | None,
     loss_after: float | None,
-    step_kind: str,
     loss_hist: list[float],
     stat: OuterStat,
-    loss_rng_key: jnp.ndarray,
 ) -> float:
     final_loss_fallback = loss_after
     if final_loss_fallback is None:
@@ -419,8 +258,7 @@ def _alignment_total_loss(
     if final_loss_fallback is None and loss_hist:
         final_loss_fallback = loss_hist[-1]
     can_reuse_validated_gn_loss = (
-        step_kind == "gn"
-        and not motion.use_smooth_pose_model
+        not motion.use_smooth_pose_model
         and loss_after is not None
         and math.isfinite(float(loss_after))
     )
@@ -428,7 +266,7 @@ def _alignment_total_loss(
         stat["loss_after_reused"] = True
         return float(loss_after)
     total_loss_eval = _evaluate_align_loss(
-        lambda: objective.align_loss_jit(pose_params, vol, loss_rng_key),
+        lambda: objective.align_loss_jit(pose_params, vol),
         fallback=final_loss_fallback,
         context="Using fallback for final alignment loss bookkeeping",
     )
@@ -476,8 +314,6 @@ def _should_reject_post_constraint_loss(
 
 def _run_alignment_step(
     *,
-    cfg: AlignConfig,
-    optimizer: AlignmentStepOptimizer,
     objective: AlignmentStepObjective,
     constraints: AlignmentStepConstraints,
     motion: AlignmentStepMotion,
@@ -487,7 +323,6 @@ def _run_alignment_step(
     motion_coeffs_in: jnp.ndarray | None,
     vol: jnp.ndarray,
     loss_hist: list[float],
-    outer_idx: int,
 ) -> tuple[
     jnp.ndarray,
     jnp.ndarray | None,
@@ -497,10 +332,7 @@ def _run_alignment_step(
     OuterStat,
 ]:
     align_start = time.perf_counter()
-    loss_rng_key = jax.random.fold_in(jax.random.key(int(cfg.seed)), int(outer_idx))
     result = _run_alignment_step_core(
-        cfg=cfg,
-        optimizer=optimizer,
         objective=objective,
         constraints=constraints,
         motion=motion,
@@ -508,7 +340,6 @@ def _run_alignment_step(
         pose_params_in=pose_params_in,
         motion_coeffs_in=motion_coeffs_in,
         vol=vol,
-        loss_rng_key=loss_rng_key,
     )
     pose_params_out, motion_coeffs_out, gauge_stats = _apply_final_alignment_constraints(
         constraints,
@@ -518,8 +349,8 @@ def _run_alignment_step(
     )
     stat = result.stat
     stat["loss_before"] = result.loss_before
-    stat["step_kind"] = result.step_kind
-    stat["optimizer_kind"] = result.step_kind
+    stat["step_kind"] = "gn"
+    stat["optimizer_kind"] = "gn"
     stat["loss_after_step"] = result.loss_after
     _record_gauge_stats(stat, gauge, gauge_stats)
     jax.block_until_ready(pose_params_out)
@@ -531,10 +362,8 @@ def _run_alignment_step(
         vol=vol,
         loss_before=result.loss_before,
         loss_after=result.loss_after,
-        step_kind=result.step_kind,
         loss_hist=loss_hist,
         stat=stat,
-        loss_rng_key=loss_rng_key,
     )
     if _should_reject_post_constraint_loss(
         loss_before=result.loss_before,

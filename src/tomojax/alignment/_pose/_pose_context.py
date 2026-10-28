@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -221,20 +219,6 @@ class PoseMotionContext:
         coeffs = fit_motion_coefficients(self.motion_model, constrained)
         return self.coeffs_to_constrained_params(coeffs)
 
-    def loss_and_grad_for(
-        self,
-        align_loss: Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray],
-    ) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None:
-        if not self.use_smooth_pose_model:
-            return None
-
-        def motion_align_loss(
-            coeffs: jnp.ndarray, vol: jnp.ndarray, loss_rng_key: jnp.ndarray
-        ) -> jnp.ndarray:
-            return align_loss(self.coeffs_to_constrained_params(coeffs), vol, loss_rng_key)
-
-        return jax.jit(jax.value_and_grad(motion_align_loss))
-
 
 @dataclass(frozen=True)
 class AlignmentRuntimeContext:
@@ -250,7 +234,6 @@ class AlignmentRuntimeContext:
     loss_adapter: LossAdapter
     loss_mask: jnp.ndarray | None
     has_loss_mask: bool
-    supports_gauss_newton: bool
     objective_provenance: dict[str, str]
     nv: int
     nu: int
@@ -275,7 +258,6 @@ class _PoseObjectiveContext:
     smoothness_weights: jnp.ndarray
     volume_mask: jnp.ndarray | None
     loss_adapter: LossAdapter
-    per_view_loss_fn: Callable[..., jnp.ndarray]
     nv: int
     nu: int
     chunk_size: int
@@ -310,7 +292,6 @@ def _pose_objective_context(
         smoothness_weights=runtime.smoothness_weights,
         volume_mask=runtime.volume_mask,
         loss_adapter=runtime.loss_adapter,
-        per_view_loss_fn=runtime.loss_adapter.per_view_loss,
         nv=runtime.nv,
         nu=runtime.nu,
         chunk_size=runtime.chunk_size,

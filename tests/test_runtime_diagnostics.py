@@ -122,7 +122,7 @@ def test_cuda_support_probe_logs_debug_before_jax_fallback(
         logging.DEBUG,
         logger="tomojax.alignment._objectives.fixed_volume",
     ):
-        reason = fixed_volume._cuda_sinogram_fallback_reason(
+        reason = fixed_volume.cuda_sinogram_fallback_reason(
             pose_stack=jnp.eye(4, dtype=jnp.float32)[None, :, :],
             grid=Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
             detector=Detector(nu=2, nv=2, du=1.0, dv=1.0),

@@ -68,7 +68,7 @@ uses a `joint_volume_pose` stage when this option is enabled. Explicitly
 fixed-volume schedule stages continue to keep the volume fixed; a custom joint
 stage must declare `objective_kind="joint_volume_pose"` and `optimizer="gn"`.
 
-Joint GN requires `opt_method="gn"`, `pose_model="per_view"` and
+Joint GN requires `pose_model="per_view"` and
 `gather_dtype="fp32"`. It supports sampled and exact integration, active/frozen
 pose parameters, pose bounds, volume masks, nonnegative voxels, pose smoothness,
 and Huber-TV or zero volume regularisation. It does not support nonsmooth TV
