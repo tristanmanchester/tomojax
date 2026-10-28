@@ -121,7 +121,16 @@ class Pages:
         names = [str(name) for name in mod.exports or [] if str(name) not in SKIP]
         names.sort(key=lambda name: FIRST.index(name) if name in FIRST else len(FIRST))
         found = [mod.members[name] for name in names]
-        return [(n, m.final_target if m.is_alias else m) for n, m in zip(names, found, strict=True)]
+        return [(n, self._exported(n, m)) for n, m in zip(names, found, strict=True)]
+
+    @staticmethod
+    def _exported(name: str, member: Any) -> Any:
+        """The object an export refers to: a submodule named like its own function is that function."""
+        obj = member.final_target if member.is_alias else member
+        if obj.is_module and name in obj.members:
+            inner = obj.members[name]
+            return inner.final_target if inner.is_alias else inner
+        return obj
 
     @staticmethod
     def members(obj: Any) -> list[Any]:
