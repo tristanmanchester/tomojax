@@ -36,11 +36,6 @@ from tomojax.alignment._prealign import seeded_translation_params
 from tomojax.alignment._profiles import profile_policy_from_config
 from tomojax.alignment._results import AlignCheckpointCallback, AlignInfo, AlignResumeState
 from tomojax.alignment._stages._reconstruction_stage import _run_reconstruction_step
-from tomojax.alignment.optimizers import (
-    PoseLbfgsConfig,
-    PoseOptimizationContext,
-    prepare_pose_lbfgs,
-)
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core import progress_iter
 from tomojax.core.cone import cone_model
@@ -289,7 +284,6 @@ def _build_alignment_runtime_context(
 
 def _build_alignment_step_contexts(
     *,
-    cfg: AlignConfig,
     opt_mode: str,
     runtime: AlignmentRuntimeContext,
     objective: PoseObjectiveBundle,
@@ -301,28 +295,6 @@ def _build_alignment_step_contexts(
         Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None
     ),
 ) -> _AlignmentStepContexts:
-    lbfgs_problem = None
-    if opt_mode == "lbfgs" and setup.active_col_indices_np.size:
-        lbfgs_problem = prepare_pose_lbfgs(
-            pose_params=setup.pose_params,
-            motion_coeffs=motion_ctx.motion_coeffs,
-            context=PoseOptimizationContext(
-                active_cols=setup.active_col_indices_np,
-                frozen_pose_params=setup.frozen_pose_params,
-                bounds_lower=constraint_ctx.bounds_lower,
-                bounds_upper=constraint_ctx.bounds_upper,
-                apply_param_constraints=constraint_ctx.apply_full_constraints,
-                motion_model=motion_model if motion_ctx.use_smooth_pose_model else None,
-            ),
-            config=PoseLbfgsConfig(
-                maxiter=int(cfg.lbfgs_maxiter),
-                ftol=float(cfg.lbfgs_ftol),
-                gtol=float(cfg.lbfgs_gtol),
-                maxls=int(cfg.lbfgs_maxls),
-                memory_size=int(cfg.lbfgs_memory_size),
-            ),
-            objective_fn=objective.align_loss,
-        )
     return (
         AlignmentStepOptimizer(opt_mode=opt_mode),
         AlignmentStepObjective(
@@ -332,7 +304,6 @@ def _build_alignment_step_contexts(
             align_loss_jit=objective.align_loss_jit,
             loss_and_grad_manual=objective.loss_and_grad_manual,
             gn_update_all=objective.gn_update_all,
-            lbfgs_problem=lbfgs_problem,
             coupled=objective.coupled,
         ),
         AlignmentStepConstraints(
@@ -722,7 +693,6 @@ def align(
     )
 
     step_contexts = _build_alignment_step_contexts(
-        cfg=cfg,
         opt_mode=opt_mode,
         runtime=runtime,
         objective=objective,

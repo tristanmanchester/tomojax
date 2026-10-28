@@ -128,6 +128,13 @@ _RETIRED_KEYS = {
 }
 
 
+# Config keys whose setting was removed, and why.
+_REMOVED_KEYS: dict[str, str] = dict.fromkeys(
+    ("lbfgs_maxiter", "lbfgs_ftol", "lbfgs_gtol", "lbfgs_maxls", "lbfgs_memory_size"),
+    "L-BFGS pose optimization was removed; Gauss-Newton is the pose solver",
+)
+
+
 def _validate_config_keys(
     parser: argparse.ArgumentParser,
     path: Path,
@@ -138,6 +145,8 @@ def _validate_config_keys(
         new = _RETIRED_KEYS.get(str(key))
         if new is not None and new in valid_keys:
             parser.error(f"config key '{key}' in {path} was renamed '{new}'")
+        if str(key) in _REMOVED_KEYS:
+            parser.error(f"config key '{key}' in {path} was removed: {_REMOVED_KEYS[str(key)]}")
     unknown = sorted(str(key) for key in values if str(key) not in valid_keys)
     if unknown:
         parser.error(

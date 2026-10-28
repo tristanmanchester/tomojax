@@ -90,7 +90,7 @@ def test_gauge_policy_rejects_or_reports_coupled_dofs() -> None:
 def test_align_config_resolves_stage_dofs() -> None:
     cfg = AlignConfig(
         reconstruction="fista",
-        opt_method="lbfgs",
+        opt_method="gd",
         schedule="pose_dx_dz_after_phi",
         freeze=("dx",),
         backend="jax",

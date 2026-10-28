@@ -27,7 +27,7 @@ from tomojax.recon import fista_tv
 sinogram_det_u_seed = init.sinogram_det_u_seed
 
 
-@pytest.mark.parametrize("optimizer", ["adam", "validation_lm"])
+@pytest.mark.parametrize("optimizer", ["lbfgs", "validation_lm"])
 def test_fixed_volume_stages_reject_unsupported_optimizers(optimizer: str) -> None:
     schedule = AlignmentSchedule(
         name="bad",
@@ -41,7 +41,7 @@ def test_fixed_volume_stages_reject_unsupported_optimizers(optimizer: str) -> No
         ),
     )
 
-    with pytest.raises(ValueError, match="fixed_volume.*'gd', 'gn', or 'lbfgs'"):
+    with pytest.raises(ValueError, match="fixed_volume.*'gd' or 'gn'"):
         schedule.validate()
 
 

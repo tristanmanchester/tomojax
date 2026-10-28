@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 ObjectiveKind = Literal[
     "fixed_volume", "joint_volume_pose", "bilevel_cv", "all_data_bilevel", "projection_consistency"
 ]
-OptimizerKind = Literal["lbfgs", "adam", "gd", "gn", "validation_lm", "spectral"]
+OptimizerKind = Literal["gd", "gn", "validation_lm", "spectral"]
 GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"]
 ScheduleSource = Literal["preset", "direct", "default", "expert"]
 StageRole = Literal["proposal", "setup", "reconstruction", "refine", "verify"]
@@ -70,8 +70,8 @@ class AlignmentStage:
         Objective model: "fixed_volume", "joint_volume_pose", "bilevel_cv",
         "all_data_bilevel" or "projection_consistency".
     optimizer : OptimizerKind
-        Optimizer for the chosen objective: "lbfgs", "adam", "gd", "gn", "validation_lm"
-        or "spectral". The schedule validates supported combinations.
+        Optimizer for the chosen objective: "gd", "gn", "validation_lm" or "spectral".
+        The schedule validates supported combinations.
     gauge_policy : GaugePolicy, optional
         Gauge policy: "reject", "anchor_mean", "prior_required" or "diagnose_only".
         Default is 'reject'.
@@ -178,15 +178,10 @@ class AlignmentSchedule:
                     f"{stage.optimizer!r}; setup/bilevel stages currently support only "
                     "'validation_lm'"
                 )
-            if stage.objective_kind == "fixed_volume" and stage.optimizer not in {
-                "gd",
-                "gn",
-                "lbfgs",
-            }:
+            if stage.objective_kind == "fixed_volume" and stage.optimizer not in {"gd", "gn"}:
                 raise ValueError(
                     f"fixed_volume stage {stage.name!r} uses unsupported optimizer "
-                    f"{stage.optimizer!r}; fixed_volume stages currently support only "
-                    "'gd', 'gn', or 'lbfgs'"
+                    f"{stage.optimizer!r}; fixed_volume stages support only 'gd' or 'gn'"
                 )
         return self
 
@@ -779,6 +774,6 @@ def resolve_alignment_schedule(
 
 
 def _normalize_pose_optimizer(value: str) -> OptimizerKind:
-    if value not in {"gd", "gn", "lbfgs"}:
-        raise ValueError("pose optimizer must be one of 'gd', 'gn', or 'lbfgs'")
+    if value not in {"gd", "gn"}:
+        raise ValueError("pose optimizer must be 'gn' or 'gd'")
     return cast("OptimizerKind", value)
