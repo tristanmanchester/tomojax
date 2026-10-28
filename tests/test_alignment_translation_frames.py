@@ -62,6 +62,7 @@ from tomojax.geometry import (
     stack_view_poses,
 )
 from tomojax.io import build_geometry_from_dataset_metadata
+from tomojax.recon import FistaConfig
 
 
 def _geometry(size, kind, angles):
@@ -285,25 +286,32 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
 
 
 @pytest.mark.parametrize("frame", ["object", "detector"])
-def test_train_fold_preserves_pose_frame_and_excludes_padding(monkeypatch, frame):
+@pytest.mark.parametrize("roll", [0.0, 0.2])
+def test_train_fold_preserves_pose_frame_and_excludes_padding(monkeypatch, frame, roll):
     geometry, grid, detector = _geometry(8, "lamino", np.array([17.0, 90.0, 143.0], np.float32))
     base = BaseGeometryArrays.from_geometry(geometry, detector)
     state = AlignmentState.zeros(n_views=3)
     params = jnp.array([[0.02, 0, 0, 0.3, -0.7], [0, 0.01, 0, 0.2, -0.4], [0, 0, -0.03, -0.2, 0.6]])
     state = state.replace(
-        setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit),
+        setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit, detector_roll_rad=roll),
         pose=PoseState(params, translation_frame=frame),
     )
     expected = apply_alignment_state(base, state).pose_stack[jnp.array([2, 0])]
     observed = []
+    configurations = []
 
     def fake_reconstruct(actual_geometry, actual_grid, actual_detector, data, **kwargs):
         observed.append(stack_view_poses(actual_geometry, data.shape[0]))
+        configurations.append(kwargs["config"])
         return jnp.zeros((8, 8, 8)), {}
 
     monkeypatch.setattr(fold_recon, "fista_tv", fake_reconstruct)
-    config = fold_recon.FoldReconstructionConfig(
-        iterations=1,
+    config = FistaConfig(
+        iterations=0,
+        ray_integrator="exact",
+        projector_unroll=3,
+        checkpoint_projector=False,
+        gather_dtype="fp16",
         tv_weight=0,
         regulariser="huber_tv",
         huber_delta=0.01,
@@ -324,6 +332,20 @@ def test_train_fold_preserves_pose_frame_and_excludes_padding(monkeypatch, frame
     )
     np.testing.assert_allclose(observed[0], expected, atol=2e-7)
     assert info["train_indices"] == [2, 0]
+    expected_cfg = replace(config, iterations=1)
+    if roll:
+        expected_cfg = replace(
+            expected_cfg,
+            projector_model="ray",
+            backend="jax",
+            views_per_batch=1,
+            grad_mode="stream",
+        )
+    else:
+        expected_cfg = replace(
+            expected_cfg, projector_unroll=1, checkpoint_projector=True, gather_dtype="fp32"
+        )
+    assert configurations == [expected_cfg]
 
 
 def test_train_fold_preserves_represented_degree_metadata(monkeypatch):
@@ -351,7 +373,7 @@ def test_train_fold_preserves_represented_degree_metadata(monkeypatch):
         train_mask=jnp.asarray([1, 1, 0]),
         init_x=None,
         level_factor=1,
-        cfg=fold_recon.FoldReconstructionConfig(
+        cfg=FistaConfig(
             iterations=1,
             tv_weight=0,
             regulariser="huber_tv",

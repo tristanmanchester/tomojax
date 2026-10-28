@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from dataclasses import replace
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -19,26 +19,6 @@ from tomojax.recon.fista_tv import FistaConfig, fista_tv
 if TYPE_CHECKING:
     from tomojax.alignment._model.state import AlignmentState
     from tomojax.core.geometry import Detector, Geometry, Grid
-    from tomojax.recon.types import Regulariser
-
-
-@dataclass(frozen=True, slots=True)
-class FoldReconstructionConfig:
-    """Configuration for per-fold stopped FISTA reconstruction."""
-
-    iterations: int
-    tv_weight: float
-    regulariser: str
-    huber_delta: float
-    tv_prox_iterations: int
-    nonnegative: bool
-    views_per_batch: int | None = None
-    projector_unroll: int = 1
-    checkpoint_projector: bool = True
-    gather_dtype: str = "fp32"
-    lipschitz: float | None = None
-    ray_integrator: str = "sampled"
-    backend: Literal["auto", "jax", "cuda"] = "auto"
 
 
 def reconstruct_train_fold_nograd(
@@ -52,7 +32,7 @@ def reconstruct_train_fold_nograd(
     train_mask: jnp.ndarray,
     init_x: jnp.ndarray | None,
     level_factor: int,
-    cfg: FoldReconstructionConfig,
+    cfg: FistaConfig,
 ) -> tuple[jnp.ndarray, dict[str, object]]:
     """Reconstruct a train-fold volume with setup fixed and no setup AD path."""
     idx_np = np.asarray(train_idx, dtype=np.int32).reshape(-1)
@@ -84,17 +64,12 @@ def reconstruct_train_fold_nograd(
             moved,
             y_fold,
             init_x=init_x,
-            config=FistaConfig(
+            config=replace(
+                cfg,
                 iterations=max(1, int(cfg.iterations)),
-                tv_weight=float(cfg.tv_weight),
-                regulariser=cast("Regulariser", cfg.regulariser),
-                huber_delta=float(cfg.huber_delta),
-                tv_prox_iterations=int(cfg.tv_prox_iterations),
-                lipschitz=cfg.lipschitz,
-                nonnegative=bool(cfg.nonnegative),
-                ray_integrator=cfg.ray_integrator,
-                backend=cfg.backend,
-                views_per_batch=cfg.views_per_batch,
+                projector_unroll=1,
+                checkpoint_projector=True,
+                gather_dtype="fp32",
             ),
         )
         return x, _fold_metadata(valid_idx, cfg, info)
@@ -109,31 +84,20 @@ def reconstruct_train_fold_nograd(
         detector,
         y_fold,
         init_x=init_x,
-        config=FistaConfig(
+        config=replace(
+            cfg,
+            iterations=max(1, int(cfg.iterations)),
             projector_model="ray",
             backend="jax",
-            iterations=max(1, int(cfg.iterations)),
-            tv_weight=float(cfg.tv_weight),
-            regulariser=cfg.regulariser,
-            huber_delta=float(cfg.huber_delta),
-            tv_prox_iterations=int(cfg.tv_prox_iterations),
-            lipschitz=cfg.lipschitz,
             views_per_batch=max(1, int(cfg.views_per_batch or 1)),
-            projector_unroll=int(cfg.projector_unroll),
-            checkpoint_projector=bool(cfg.checkpoint_projector),
-            gather_dtype=str(cfg.gather_dtype),
             grad_mode="stream",
-            nonnegative=bool(cfg.nonnegative),
-            ray_integrator=cfg.ray_integrator,
         ),
         det_grid=det_grid,
     )
     return x, _fold_metadata(valid_idx, cfg, info)
 
 
-def _fold_metadata(
-    valid_idx: np.ndarray, cfg: FoldReconstructionConfig, info: object
-) -> dict[str, object]:
+def _fold_metadata(valid_idx: np.ndarray, cfg: FistaConfig, info: object) -> dict[str, object]:
     return {
         "train_view_count": int(valid_idx.size),
         "train_indices": [int(v) for v in valid_idx],

@@ -21,6 +21,7 @@ from tomojax.alignment._objectives import fold_recon, recon_layer
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
 from tomojax.geometry import Detector, Grid, ParallelGeometry
+from tomojax.recon import FistaConfig
 
 
 def _problem():
@@ -175,7 +176,7 @@ def test_train_fold_keeps_the_requested_ray_integrator():
         train_mask=jnp.asarray([1, 1, 1]),
         init_x=None,
         level_factor=1,
-        cfg=fold_recon.FoldReconstructionConfig(
+        cfg=FistaConfig(
             iterations=200,
             tv_weight=0,
             regulariser="huber_tv",
