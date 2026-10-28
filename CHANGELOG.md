@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+Alignment data losses are reduced to `L2LossSpec`, `L2OtsuLossSpec` and
+`HuberLossSpec`; other loss specifications and names are removed. L2 and Otsu
+weighting are unchanged. Fixed-volume Huber uses the true robust objective for
+line search and weights both residuals and pose derivatives in its IRLS model;
+joint alignment does not support Huber. Injected-outlier tests showed improved
+relative robustness, not qualified absolute motion-recovery accuracy. The
+alignment defaults are unchanged.
+
 Centre estimation accepts `views=` for train-only calibration without copying
 the full projection stack. Pair interpolation excludes unselected observations;
 reports retain original contributor indices and the eligible view subset.
