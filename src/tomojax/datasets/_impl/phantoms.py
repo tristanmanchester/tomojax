@@ -6,12 +6,22 @@ import numpy as np
 
 
 def sphere(nx: int, ny: int, nz: int, *, size: float = 0.5, value: float = 1.0) -> np.ndarray:
-    """Centered solid sphere in a zero background.
+    """Create a centered solid sphere in a zero background.
 
-    The sphere diameter is ``size * min(nx, ny, nz)`` so that ``size`` matches the
-    semantics of :func:`cube` (whose side length uses the same scale). The sphere is
-    centered in the volume and clamped to fit. Returns float32 array of shape
-    ``(nx, ny, nz)``.
+    Parameters
+    ----------
+    nx, ny, nz : int
+        Number of voxels along the object x, y and z axes.
+    size : float, optional
+        Sphere diameter as a fraction of the smallest volume dimension, with a
+        minimum diameter of one voxel. The volume boundary crops larger spheres.
+    value : float, optional
+        Intensity inside the sphere; default is 1.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 phantom of shape (nx, ny, nz).
     """
     X = np.zeros((nx, ny, nz), dtype=np.float32)
     # diameter matches cube's "size" scale; radius is half that in voxels
@@ -31,9 +41,24 @@ def sphere(nx: int, ny: int, nz: int, *, size: float = 0.5, value: float = 1.0) 
 def cube(
     nx: int, ny: int, nz: int, *, size: float = 0.5, value: float = 1.0, seed: int | None = None
 ) -> np.ndarray:
-    """Axis-aligned cube in a zero background with side length = size * min(nx,ny,nz).
+    """Create a centered axis-aligned cube in a zero background.
 
-    Centered in the volume. Returns float32 array of shape (nx, ny, nz).
+    Parameters
+    ----------
+    nx, ny, nz : int
+        Number of voxels along the object x, y and z axes.
+    size : float, optional
+        Cube side as a fraction of the smallest dimension, rounded to at least
+        one voxel. Use a value between zero and one to fit inside the volume.
+    value : float, optional
+        Intensity inside the cube; default is 1.
+    seed : int or None, optional
+        Unused; this phantom has no random component.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 phantom of shape (nx, ny, nz).
     """
     del seed
     x = np.zeros((nx, ny, nz), dtype=np.float32)
@@ -56,10 +81,28 @@ def rotated_centered_cube(
     seed: int | None = 0,
     edge_softness: float = 1.0,
 ) -> np.ndarray:
-    """Centered cube with random 3D rotation.
+    """Create a centered cube with a specified or random 3D rotation.
 
-    - ``size`` is side length as a fraction of ``min(nx, ny, nz)`` (matches :func:`cube`).
-    - If ``angles`` is None, sample rx, ry, rz uniformly in [-pi, pi] using ``seed``.
+    Parameters
+    ----------
+    nx, ny, nz : int
+        Number of voxels along the object x, y and z axes.
+    size : float, optional
+        Cube side as a fraction of the smallest volume dimension; default is 0.5.
+    value : float, optional
+        Interior intensity; default is 1.
+    angles : tuple of float or None, optional
+        Object x, y and z rotations in radians, applied in that order. If None,
+        draw each uniformly from [-pi, pi] using ``seed``.
+    seed : int or None, optional
+        NumPy random seed for unspecified angles; default is 0.
+    edge_softness : float, optional
+        Width of the linear intensity taper at cube faces, in voxels; default is 1.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 phantom of shape (nx, ny, nz).
     """
     vol = np.zeros((nx, ny, nz), dtype=np.float32)
     side = int(max(1, round(float(size) * float(min(nx, ny, nz)))))
@@ -74,9 +117,21 @@ def rotated_centered_cube(
 
 
 def blobs(nx: int, ny: int, nz: int, *, n_blobs: int = 5, seed: int | None = 0) -> np.ndarray:
-    """Random Gaussian blobs normalized to [0, 1]. Deterministic with seed.
+    """Create random Gaussian blobs normalized to the interval [0, 1].
 
-    Returns float32 array (nx, ny, nz).
+    Parameters
+    ----------
+    nx, ny, nz : int
+        Number of voxels along the object x, y and z axes.
+    n_blobs : int, optional
+        Number of Gaussian components; default is 5.
+    seed : int or None, optional
+        NumPy random seed for centers, widths and amplitudes; default is 0.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 phantom of shape (nx, ny, nz).
     """
     rng = np.random.default_rng(seed)
     X = np.zeros((nx, ny, nz), dtype=np.float32)
@@ -101,9 +156,19 @@ def blobs(nx: int, ny: int, nz: int, *, n_blobs: int = 5, seed: int | None = 0) 
 
 
 def shepp_logan_3d(nx: int, ny: int, nz: int) -> np.ndarray:
-    """Simplified 3D Shepp-Logan-like phantom using stacked ellipsoids.
+    """Create a simplified three-ellipsoid Shepp-Logan-like phantom.
 
-    Not a strict reference, but adequate for testing filters and reconstruction.
+    This is not a standard reference phantom. Intensities are normalized to [0, 1].
+
+    Parameters
+    ----------
+    nx, ny, nz : int
+        Number of voxels along the object x, y and z axes.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 phantom of shape (nx, ny, nz).
     """
     X = np.zeros((nx, ny, nz), dtype=np.float32)
     cx, cy, cz = (nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0
@@ -320,9 +385,34 @@ def random_cubes_spheres(
     radial_exponent: float = 0.75,
     seed: int = 0,
 ) -> np.ndarray:
-    """Random rotated cubes + spheres phantom (deterministic).
+    """Create random rotated cubes and spheres in a zero background.
 
-    Ensures objects fit within FOV if `use_inscribed_fov=True`.
+    Overlapping objects combine by maximum intensity rather than addition.
+
+    Parameters
+    ----------
+    nx, ny, nz : int
+        Number of voxels along the object x, y and z axes.
+    n_cubes, n_spheres : int, optional
+        Requested numbers of cubes and spheres. Objects too large to fit are skipped.
+    min_size, max_size : int, optional
+        Bounds on cube sides and sphere diameters, in voxels.
+    min_value, max_value : float, optional
+        Bounds on randomly drawn object intensities.
+    max_rot_degrees : float, optional
+        Cube Euler angles are uniform between plus and minus this value, in degrees.
+    use_inscribed_fov : bool, optional
+        Restrict object support to the inscribed field of view; default is True.
+    radial_exponent : float, optional
+        Exponent applied to a uniform radial draw when choosing centers in the
+        inscribed field. Larger values concentrate centers more strongly at the origin.
+    seed : int, optional
+        NumPy random seed; default is 0.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 phantom of shape (nx, ny, nz).
     """
     vol = np.zeros((nx, ny, nz), dtype=np.float32)
     rng = np.random.default_rng(seed)
@@ -389,11 +479,33 @@ def lamino_disk(
     max_value: float = 1.0,
     max_rot_degrees: float = 180.0,
 ) -> np.ndarray:
-    """Random cubes+spheres phantom constrained to a thin central slab.
+    """Create random cubes and spheres cropped to a central axial slab.
 
-    Sample-frame convention: the reconstructed/object volume is in (x, y, z)
-    coordinates, and the nominal rotation axis is the +z axis. The thin slab is
-    therefore orthogonal to +z, i.e., confined to the central few z-slices.
+    The slab is perpendicular to the object z axis. After cropping, intensities
+    are divided by the volume maximum when it is positive.
+
+    Parameters
+    ----------
+    nx, ny, nz : int
+        Number of voxels along the object x, y and z axes.
+    thickness_ratio : float, optional
+        Slab thickness as a fraction of nz, clipped to [0, 1] with at least one
+        requested voxel; default is 0.2.
+    seed : int, optional
+        NumPy random seed; default is 0.
+    n_cubes, n_spheres : int, optional
+        Requested numbers of cubes and spheres. Objects too large to fit are skipped.
+    min_size, max_size : int, optional
+        Bounds on cube sides and sphere diameters, in voxels.
+    min_value, max_value : float, optional
+        Bounds on randomly drawn object intensities.
+    max_rot_degrees : float, optional
+        Cube Euler angles are uniform between plus and minus this value, in degrees.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 phantom of shape (nx, ny, nz).
     """
     ratio = float(np.clip(thickness_ratio, 0.0, 1.0))
     nz_thin = round(ratio * nz)

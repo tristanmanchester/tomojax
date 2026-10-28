@@ -41,7 +41,47 @@ class ArtefactMetadata(TypedDict, total=False):
 
 @dataclass(frozen=True, slots=True)
 class SimulationArtefacts:
-    """Configurable projection-domain artefacts for synthetic tomography data."""
+    """Configure simple projection-domain simulation artefacts.
+
+    These operations modify line integrals, not a physical photon-count detector
+    response. Use ``DetectorModel`` for count-domain detector simulations.
+
+    Parameters
+    ----------
+    poisson_scale : float, optional
+        Multiply nonnegative line integrals by this count scale before Poisson
+        sampling, then divide by it. Zero disables sampling.
+    gaussian_sigma : float, optional
+        Standard deviation of additive line-integral noise; zero disables it.
+    dead_pixel_fraction : float, optional
+        Fraction of detector pixels replaced by dead values in every view;
+        default is zero.
+    dead_pixel_value : float, optional
+        Replacement line integral for dead pixels; default is zero.
+    hot_pixel_fraction : float, optional
+        Fraction of detector pixels replaced by hot values in every view;
+        default is zero.
+    hot_pixel_value : float, optional
+        Replacement line integral for hot pixels; default is 1.
+    zinger_fraction : float, optional
+        Fraction of individual projection samples receiving a spike; default is zero.
+    zinger_value : float, optional
+        Additive line-integral spike amplitude; default is 1.
+    stripe_fraction : float, optional
+        Fraction of detector-u columns with multiplicative gains; default is zero.
+    stripe_gain_sigma : float, optional
+        Standard deviation of column gains about one, clipped below at zero.
+    dropped_view_fraction : float, optional
+        Fraction of projection views replaced; default is zero.
+    dropped_view_fill : float, optional
+        Replacement line integral for dropped views; default is zero.
+    detector_blur_sigma : float, optional
+        Gaussian blur standard deviation in detector pixels; zero disables it.
+    intensity_drift_amplitude : float, optional
+        Amplitude of multiplicative intensity drift across views; default is zero.
+    intensity_drift_mode : {'none', 'linear', 'sinusoidal'}, optional
+        Drift profile; default is 'none'.
+    """
 
     poisson_scale: float = 0.0
     gaussian_sigma: float = 0.0
@@ -60,11 +100,23 @@ class SimulationArtefacts:
     intensity_drift_mode: IntensityDriftMode = "none"
 
     def to_dict(self) -> JsonObject:
-        """Return a JSON-compatible artefact configuration."""
+        """Return a JSON-compatible artefact configuration.
+
+        Returns
+        -------
+        dict
+            Parameter names mapped to JSON scalar values.
+        """
         return {key: _json_scalar(value) for key, value in asdict(self).items()}
 
     def has_enabled(self) -> bool:
-        """Return whether any artefact field will alter projections."""
+        """Return whether any artefact field will alter projections.
+
+        Returns
+        -------
+        bool
+            Whether at least one configured artefact is enabled.
+        """
         return (
             self.poisson_scale > 0.0
             or self.gaussian_sigma > 0.0

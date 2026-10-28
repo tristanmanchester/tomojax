@@ -16,6 +16,20 @@ ResidualFilterKind = Literal["raw", "lowpass_gaussian", "bandpass_difference_of_
 
 @dataclass(frozen=True)
 class ResidualFilterConfig:
+    """Configure a periodic detector-plane residual filter.
+
+    Parameters
+    ----------
+    kind : {'raw', 'lowpass_gaussian', 'bandpass_difference_of_gaussians'}, optional
+        Filter family; default is 'raw'. Filtering acts on the last two axes.
+    weight : float, optional
+        Multiplicative output weight; default is 1.
+    sigma_px : float, optional
+        Gaussian width, or inner bandpass width, in pixels; default is 1.
+    outer_sigma_px : float, optional
+        Outer bandpass Gaussian width in pixels; default is 2.
+    """
+
     kind: ResidualFilterKind = "raw"
     weight: float = 1.0
     sigma_px: float = 1.0
@@ -25,6 +39,18 @@ class ResidualFilterConfig:
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class ResidualFilterResult:
+    """Store a summed residual-filter schedule and its individual outputs.
+
+    Parameters
+    ----------
+    residual : jax.Array
+        Sum of all weighted, masked filter outputs, with the input shape.
+    components : tuple of jax.Array
+        Individual weighted, masked outputs in schedule order.
+    configs : tuple of ResidualFilterConfig
+        Settings used for each component, retained as static JAX metadata.
+    """
+
     residual: jax.Array
     components: tuple[jax.Array, ...]
     configs: tuple[ResidualFilterConfig, ...] = field(metadata={"static": True})
@@ -36,7 +62,30 @@ def apply_residual_filter(
     *,
     mask: jax.Array | None = None,
 ) -> jax.Array:
-    """Apply a named projection-domain residual filter."""
+    """Apply a weighted residual filter over the last two detector axes.
+
+    Gaussian filters use periodic boundaries. The mask is applied after filtering,
+    not before it, so mask invalid input samples before calling when necessary.
+
+    Parameters
+    ----------
+    residual : jax.Array
+        Residual array with at least two dimensions, ending in (nv, nu).
+    config : ResidualFilterConfig
+        Filter family, width and multiplicative weight.
+    mask : jax.Array or None, optional
+        Same-shaped multiplicative output mask; None leaves the output unmasked.
+
+    Returns
+    -------
+    jax.Array
+        Float32 filtered residual with the input shape.
+
+    Raises
+    ------
+    ValueError
+        If dimensions, filter name or mask shape are unsupported.
+    """
     arr = jnp.asarray(residual, dtype=jnp.float32)
     if arr.ndim < 2:
         raise ValueError("residual must have at least two detector dimensions")
@@ -67,7 +116,27 @@ def apply_residual_filter_schedule(
     *,
     mask: jax.Array | None = None,
 ) -> ResidualFilterResult:
-    """Apply and sum a deterministic residual-filter schedule."""
+    """Apply and sum a deterministic residual-filter schedule.
+
+    Parameters
+    ----------
+    residual : jax.Array
+        Residual array ending in the detector axes (nv, nu).
+    configs : tuple of ResidualFilterConfig
+        Nonempty sequence of weighted filter settings.
+    mask : jax.Array or None, optional
+        Same-shaped multiplicative mask applied to every filtered output.
+
+    Returns
+    -------
+    ResidualFilterResult
+        Summed residual, individual components and their settings.
+
+    Raises
+    ------
+    ValueError
+        If the schedule is empty or any filter input is unsupported.
+    """
     if not configs:
         raise ValueError("at least one residual filter config is required")
     components = tuple(apply_residual_filter(residual, config, mask=mask) for config in configs)

@@ -76,7 +76,8 @@ def detector_grid_from_calibration(
     Returns
     -------
     tuple of jax.Array
-        Detector-plane u and v coordinate grids in physical units, each shape (nv, nu).
+        Flattened detector-plane u and v coordinates in physical units, each
+        shape (nv * nu,), with detector-u varying fastest.
     """
     return transform_detector_grid(
         zero_center_detector_grid(detector),

@@ -13,6 +13,20 @@ import jax.numpy as jnp
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class ResidualResult:
+    """Store whitened residuals and their reduced robust loss.
+
+    Parameters
+    ----------
+    residual : jax.Array
+        Masked, whitened differences with the projection shape.
+    loss : jax.Array
+        Scalar sum of elementwise loss divided by max(valid_count, 1).
+    weights : jax.Array
+        Elementwise robust weights, or ones for L2, with the residual shape.
+    valid_count : jax.Array
+        Sum of mask values, or sample count when no mask was supplied.
+    """
+
     residual: jax.Array
     loss: jax.Array
     weights: jax.Array
@@ -29,7 +43,31 @@ def masked_whitened_residual(
     mask: jax.Array | None = None,
     sigma: float | jax.Array = 1.0,
 ) -> jax.Array:
-    """Whiten differences, excluding zero-mask entries before unsafe arithmetic."""
+    """Whiten differences, excluding zero-mask entries before unsafe arithmetic.
+
+    Parameters
+    ----------
+    predicted, observed : jax.Array
+        Prediction and measured projections with identical shapes, usually
+        (views, nv, nu). Values are converted to float32.
+    mask : jax.Array or None, optional
+        Multiplicative weights of the same shape. Zero entries are excluded
+        before subtraction and division; None keeps every sample.
+    sigma : float or jax.Array, optional
+        Positive noise standard deviations, broadcastable to the projection
+        shape; default is 1.
+
+    Returns
+    -------
+    jax.Array
+        Float32 (predicted-observed)/sigma multiplied by mask, or unmasked
+        when mask is None. The shape matches the inputs.
+
+    Raises
+    ------
+    ValueError
+        If prediction, observation or mask shapes disagree.
+    """
     pred = jnp.asarray(predicted, dtype=jnp.float32)
     obs = jnp.asarray(observed, dtype=jnp.float32)
     if pred.shape != obs.shape:
@@ -48,7 +86,21 @@ def masked_whitened_residual(
 
 
 def pseudo_huber_loss(residual: jax.Array, *, delta: float = 1.0) -> jax.Array:
-    """Elementwise pseudo-Huber loss, without cancellation for small residuals."""
+    """Compute elementwise pseudo-Huber loss without small-residual cancellation.
+
+    Parameters
+    ----------
+    residual : jax.Array
+        Residual array of any shape, converted to float32.
+    delta : float, optional
+        Positive transition scale in residual units; default is 1.
+
+    Returns
+    -------
+    jax.Array
+        Elementwise delta**2 * (sqrt(1 + (residual/delta)**2) - 1),
+        with the residual shape.
+    """
     r = jnp.asarray(residual, dtype=jnp.float32)
     d = jnp.asarray(delta, dtype=jnp.float32)
     # d^2 (sqrt(1 + (r/d)^2) - 1), rewritten so that |r| << d does not give 0.
@@ -56,16 +108,48 @@ def pseudo_huber_loss(residual: jax.Array, *, delta: float = 1.0) -> jax.Array:
 
 
 def pseudo_huber_weights(residual: jax.Array, *, delta: float = 1.0) -> jax.Array:
+    """Compute the iteratively reweighted least-squares weights for pseudo-Huber.
+
+    Parameters
+    ----------
+    residual : jax.Array
+        Residual array of any shape, converted to float32.
+    delta : float, optional
+        Positive transition scale in residual units; default is 1.
+
+    Returns
+    -------
+    jax.Array
+        Elementwise 1 / sqrt(1 + (residual/delta)**2), with the residual shape.
+    """
     r = jnp.asarray(residual, dtype=jnp.float32)
     d = jnp.asarray(delta, dtype=jnp.float32)
     return 1.0 / jnp.sqrt(1.0 + (r / d) ** 2)
 
 
 def robust_residual_scale(residual: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
-    """Estimate normal-consistent MAD, including dynamic masks under JAX transforms.
+    """Estimate normal-consistent median absolute deviation under JAX transforms.
 
-    Empty, constant, or nonfinite-MAD samples retain the fallback scale of one.
-    Nonzero masks select samples; their magnitudes do not weight the medians.
+    Empty, constant or nonfinite-MAD samples retain the fallback scale of one.
+
+    Parameters
+    ----------
+    residual : jax.Array
+        Residual samples of any shape, converted to float32.
+    mask : jax.Array or None, optional
+        Same-shaped sample selector; nonzero entries select samples and their
+        magnitudes do not weight the medians. None selects all samples.
+
+    Returns
+    -------
+    jax.Array
+        Scalar 1.4826 times the selected median absolute deviation about the
+        selected median, or one when that estimate is unusable.
+
+    Raises
+    ------
+    ValueError
+        If mask and residual shapes differ.
     """
     values = jnp.asarray(residual, dtype=jnp.float32)
     valid = jnp.asarray(True)
@@ -109,6 +193,35 @@ def residual_loss(
     delta: float = 1.0,
     mode: ResidualLossMode = "pseudo_huber",
 ) -> ResidualResult:
+    """Compute masked whitened residuals and their mean robust or L2 loss.
+
+    Parameters
+    ----------
+    predicted, observed : jax.Array
+        Prediction and measured projections with identical shapes, usually
+        (views, nv, nu). Values are converted to float32.
+    mask : jax.Array or None, optional
+        Multiplicative weights of the same shape. Zero entries are excluded
+        before subtraction and division; None keeps every sample.
+    sigma : float or jax.Array, optional
+        Positive noise standard deviations, broadcastable to the projection
+        shape; default is 1.
+    delta : float, optional
+        Positive pseudo-Huber transition in whitened residual units; default is 1.
+    mode : {'l2', 'pseudo_huber'}, optional
+        Elementwise loss; default is 'pseudo_huber'. L2 uses half squared error.
+
+    Returns
+    -------
+    ResidualResult
+        Residuals, scalar reduced loss, robust weights and normalization count.
+        A nonbinary mask weights residuals and uses its sum for normalization.
+
+    Raises
+    ------
+    ValueError
+        If array shapes disagree or the loss mode is unsupported.
+    """
     residual = masked_whitened_residual(predicted, observed, mask=mask, sigma=sigma)
     if mode == "pseudo_huber":
         loss_map = pseudo_huber_loss(residual, delta=delta)
