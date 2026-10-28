@@ -73,18 +73,6 @@ def write_image(path: object, image: object) -> None:
     iio.imwrite(path, image)
 
 
-def shape1(array: object) -> tuple[int]:
-    """Return a one-dimensional shape as a concrete int tuple."""
-    shape = np.shape(array)
-    return (int(shape[0]),)
-
-
-def shape3(array: object) -> tuple[int, int, int]:
-    """Return a three-dimensional shape as concrete ints."""
-    shape = np.shape(array)
-    return int(shape[0]), int(shape[1]), int(shape[2])
-
-
 def scalar_int(value: object) -> int:
     """Convert a scalar-like value to int."""
     return int(value)

@@ -222,16 +222,6 @@ class CalibrationState:
         """
         return {variable.name: variable for variable in self.variables()}
 
-    def estimated_names(self) -> set[str]:
-        """Return names of variables marked as estimated.
-
-        Returns
-        -------
-        set of str
-            Names whose status is estimated.
-        """
-        return {variable.name for variable in self.variables() if variable.status == "estimated"}
-
     def to_dict(self) -> dict[str, JsonValue]:
         """Return this state as JSON-compatible metadata.
 

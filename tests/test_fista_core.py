@@ -12,8 +12,9 @@ from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import FistaConfig, fista_tv
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
-    fista_objective_arrays,
     fista_tv_core_arrays,
+    projection_loss_arrays,
+    regulariser_value_arrays,
 )
 
 
@@ -128,16 +129,8 @@ def test_core_rejects_nonsmooth_tv_instead_of_solving_an_unregularized_problem()
     # Gradient-only FISTA previously returned (0,1) and claimed status='ok'.
     cfg = FistaCoreConfig(iterations=1, tv_weight=0.2, regulariser="tv", ray_integrator="joseph")
     # Objective-only evaluations still need exact TV, including coupled alignment.
-    objective = fista_objective_arrays(
-        T_all=jnp.eye(4)[None],
-        grid=Grid(2, 1, 1, 1.0, 1.0, 1.0),
-        detector=Detector(2, 1, 1.0, 1.0),
-        volume=jnp.asarray([0.0, 1.0]).reshape(1, 1, 2),
-        det_grid=None,
-        projections=jnp.asarray([[[0.0, 1.0]]]),
-        cfg=cfg,
-    )
-    np.testing.assert_allclose(objective, 0.2, rtol=1e-6)
+    tv = regulariser_value_arrays(jnp.asarray([0.0, 1.0]).reshape(1, 1, 2), cfg)
+    np.testing.assert_allclose(tv, 1.0, rtol=1e-6)
     with pytest.raises(ValueError, match="huber_tv or tv_weight=0"):
         fista_tv_core_arrays(
             x0=jnp.zeros((1, 1, 2)),
@@ -203,7 +196,7 @@ def test_zero_view_weight_has_finite_smooth_parameter_derivatives():
     cfg = FistaCoreConfig(tv_weight=0, ray_integrator="joseph")
 
     def objective(parameter):
-        return fista_objective_arrays(
+        return projection_loss_arrays(
             T_all=poses,
             grid=grid,
             detector=detector,

@@ -20,7 +20,7 @@ from tomojax.core.geometry.base import Detector, Grid
 
 from ._setup_stage import _geometry_calibration_payload
 
-_SUPPORTED_POSE_STAGE_OPTIMIZERS = frozenset({"gd", "gn", "lbfgs"})
+_SUPPORTED_POSE_STAGE_OPTIMIZERS = frozenset({"gd", "gn"})
 
 
 _PROPOSAL_STEP_BY_DOF = {

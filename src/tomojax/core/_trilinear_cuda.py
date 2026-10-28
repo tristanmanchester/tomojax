@@ -1,4 +1,4 @@
-"""CUDA exact trilinear line integrals, transpose, and pose normal equations."""
+"""CUDA exact trilinear line integrals and their transpose."""
 
 from functools import cache, partial
 from pathlib import Path
@@ -57,65 +57,14 @@ def _launch(context, out, cf, data, *, shape, detector, mode):
 
 
 def run(cf, data, grid, detector, *, mode="forward"):
-    """Project, apply the exact transpose, or return seven ray-coordinate derivatives."""
-    operation = {"forward": 0, "adjoint": 1, "jacobian": 2}[mode]
+    """Project or apply the exact transpose."""
+    operation = {"forward": 0, "adjoint": 1}[mode]
     n = cf.shape[0]
     shape = (grid.nx, grid.ny, grid.nz)
-    output_shape = (
-        shape[::-1]
-        if operation == 1
-        else (7, n, detector.nv, detector.nu)
-        if operation == 2
-        else (n, detector.nv, detector.nu)
-    )
+    output_shape = shape[::-1] if operation == 1 else (n, detector.nv, detector.nu)
     return buffer_callback(
         partial(_launch, shape=shape, detector=(detector.nv, detector.nu), mode=operation),
         jax.ShapeDtypeStruct(output_shape, jnp.float32),
         vmap_method="sequential",
         command_buffer_compatible=True,
     )(cf, data)
-
-
-def _launch_normals(context, outputs, cf, volume, directions, targets, weights, *, shape, detector):
-    nv, nu = detector
-    tiles = -(-nu * nv // 128)
-    launch_kernel(
-        _source(3),
-        "normals",
-        options=("--fmad=false",),
-        stream=context.stream,
-        grid=(cf.shape[0] * tiles,),
-        block=(128,),
-        arguments=(
-            cf,
-            volume,
-            directions,
-            targets,
-            weights,
-            *outputs,
-            *map(np.int32, (*shape, nu, nv, tiles, cf.shape[0])),
-        ),
-    )
-
-
-def normal_equations(cf, volume, directions, targets, weights, grid, detector):
-    """Weighted per-view loss, five-parameter gradient/Hessian, and data residual."""
-    n = cf.shape[0]
-    tiles = -(-detector.nu * detector.nv // 128)
-    partials, residual = buffer_callback(
-        partial(
-            _launch_normals, shape=(grid.nx, grid.ny, grid.nz), detector=(detector.nv, detector.nu)
-        ),
-        (
-            jax.ShapeDtypeStruct((n, tiles, 21), jnp.float32),
-            jax.ShapeDtypeStruct(targets.shape, jnp.float32),
-        ),
-        vmap_method="sequential",
-        command_buffer_compatible=True,
-    )(cf, volume, directions, targets, weights)
-    totals = jnp.sum(partials, axis=1)
-    rows, cols = jnp.triu_indices(5)
-    hessian = jnp.zeros((n, 5, 5), jnp.float32)
-    hessian = hessian.at[:, rows, cols].set(totals[:, 6:])
-    hessian = hessian.at[:, cols, rows].set(totals[:, 6:])
-    return totals[:, 0], totals[:, 1:6], hessian, residual

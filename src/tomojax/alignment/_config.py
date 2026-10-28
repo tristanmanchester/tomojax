@@ -176,7 +176,8 @@ class AlignConfig:
     ray_integrator : Literal['sampled', 'exact', 'joseph', 'joseph_cubic'], optional
         Ray model: "sampled", "exact", "joseph" or "joseph_cubic". Default is 'sampled'.
     opt_method : str, optional
-        Pose optimizer: "gd", "gn" or "lbfgs". Default is 'gn'.
+        Pose optimizer: "gn" (Gauss-Newton), or "gd" for losses Gauss-Newton cannot
+        use. Default is 'gn'.
     gn_damping : float, optional
         Gauss-Newton pose damping; must be finite and positive for joint solves. Default
         is 0.001.
@@ -199,16 +200,6 @@ class AlignConfig:
         0.0001.
     gn_volume_damping : float, optional
         Positive volume damping in the joint Gauss-Newton system. Default is 0.001.
-    lbfgs_maxiter : int, optional
-        Maximum L-BFGS iterations per pose update. Default is 20.
-    lbfgs_ftol : float, optional
-        L-BFGS objective-change stopping tolerance. Default is 1e-06.
-    lbfgs_gtol : float, optional
-        L-BFGS gradient stopping tolerance. Default is 1e-05.
-    lbfgs_maxls : int, optional
-        Maximum line-search steps per L-BFGS update. Default is 20.
-    lbfgs_memory_size : int, optional
-        Number of correction pairs retained by L-BFGS. Default is 10.
     w_rot : float, optional
         Rotation regularization weight for pose updates. Default is 0.0.
     w_trans : float, optional
@@ -305,11 +296,6 @@ class AlignConfig:
     gn_joint_iterations: int = field(default=40, kw_only=True)
     gn_joint_rtol: float = field(default=1e-4, kw_only=True)
     gn_volume_damping: float = field(default=1e-3, kw_only=True)
-    lbfgs_maxiter: int = 20
-    lbfgs_ftol: float = 1e-6
-    lbfgs_gtol: float = 1e-5
-    lbfgs_maxls: int = 20
-    lbfgs_memory_size: int = 10
     w_rot: float = 0.0
     w_trans: float = 0.0
     schedule: str | AlignmentSchedule | None = None
@@ -364,8 +350,8 @@ class AlignConfig:
         self.gather_dtype = str(self.gather_dtype).strip().lower()
 
     def _normalize_optimizer_options(self) -> None:
-        if self.opt_method not in {"gd", "gn", "lbfgs"}:
-            raise ValueError("opt_method must be one of 'gd', 'gn', or 'lbfgs'")
+        if self.opt_method not in {"gd", "gn"}:
+            raise ValueError("opt_method must be 'gn' or 'gd'; L-BFGS was removed")
         if self.gn_jacobian not in {"autodiff", "central"}:
             raise ValueError("gn_jacobian must be 'autodiff' or 'central'")
         if not math.isfinite(self.gn_difference_step) or self.gn_difference_step <= 0:
@@ -387,16 +373,6 @@ class AlignConfig:
             not math.isfinite(self.gn_damping) or self.gn_damping <= 0
         ):
             raise ValueError("joint GN requires finite positive gn_damping")
-        if int(self.lbfgs_maxiter) < 1:
-            raise ValueError("lbfgs_maxiter must be >= 1")
-        if int(self.lbfgs_maxls) < 1:
-            raise ValueError("lbfgs_maxls must be >= 1")
-        if int(self.lbfgs_memory_size) < 1:
-            raise ValueError("lbfgs_memory_size must be >= 1")
-        if float(self.lbfgs_ftol) < 0.0:
-            raise ValueError("lbfgs_ftol must be >= 0")
-        if float(self.lbfgs_gtol) < 0.0:
-            raise ValueError("lbfgs_gtol must be >= 0")
 
     def _normalize_schedule_options(self) -> None:
         if self.schedule is not None and self.optimise_dofs is not None:

@@ -74,7 +74,6 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
             early_stop=False,
             gauge_policy="anchor_mean",
             opt_method=optimizer,
-            lbfgs_maxiter=args.lbfgs_iters,
         )
         phase = np.linspace(0.0, 2 * np.pi, n_views, endpoint=False)
         initial = np.zeros((n_views, 5), dtype=np.float32)
@@ -143,7 +142,7 @@ def main() -> int:
     parser.add_argument(
         "--methods",
         nargs="+",
-        choices=["fista", "spdhg", "align_gn", "align_gd", "align_lbfgs"],
+        choices=["fista", "spdhg", "align_gn", "align_gd"],
         default=["fista", "spdhg", "align_gn"],
     )
     parser.add_argument("--views", type=int, default=12)
@@ -152,7 +151,6 @@ def main() -> int:
     parser.add_argument("--spdhg-iters", type=int, default=20)
     parser.add_argument("--inner-iters", type=int, default=4)
     parser.add_argument("--outer-iters", type=int, default=3)
-    parser.add_argument("--lbfgs-iters", type=int, default=5)
     parser.add_argument("--auto-norm", action="store_true")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--max-nrmse", type=float, default=0.6)
@@ -168,7 +166,6 @@ def main() -> int:
             args.spdhg_iters,
             args.inner_iters,
             args.outer_iters,
-            args.lbfgs_iters,
         )
         <= 0
     ):

@@ -5,9 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-import jax.numpy as jnp
-import numpy as np
-
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -112,34 +109,3 @@ def validate_active_gauge_policy(
             )
     warnings = conflicts if conflicts and policy in {"anchor_mean", "diagnose_only"} else ()
     return GaugeDecision(policy=policy, active_dofs=active, conflicts=conflicts, warnings=warnings)
-
-
-def conditioning_diagnostics(
-    sensitivity: jnp.ndarray,
-    *,
-    dof_names: Sequence[str],
-    rtol: float = 1e-4,
-) -> dict[str, object]:
-    """Return singular-value diagnostics for an alignment sensitivity matrix."""
-    mat = jnp.asarray(sensitivity, dtype=jnp.float32)
-    if mat.ndim != 2:
-        raise ValueError("conditioning sensitivity must be a 2-D matrix")
-    _u, s, vh = jnp.linalg.svd(mat, full_matrices=False)
-    s_np = np.asarray(s)
-    threshold = 0.0 if s_np.size == 0 else float(np.max(s_np)) * float(rtol)
-    weak = np.where(s_np <= threshold)[0]
-    near_null: list[dict[str, object]] = []
-    names = tuple(str(name) for name in dof_names)
-    for idx in weak:
-        vec = np.asarray(vh[int(idx)])
-        terms = [
-            {"dof": names[col], "weight": float(weight)}
-            for col, weight in enumerate(vec)
-            if col < len(names) and abs(float(weight)) > 1e-3
-        ]
-        near_null.append({"singular_value": float(s_np[int(idx)]), "terms": terms})
-    return {
-        "singular_values": [float(v) for v in s_np],
-        "near_null_vectors": near_null,
-        "status": "weak" if near_null else "ok",
-    }

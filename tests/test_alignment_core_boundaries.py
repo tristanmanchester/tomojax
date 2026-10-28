@@ -17,7 +17,6 @@ from tomojax.alignment._geometry.parametrizations import compose_R, se3_from_pos
 # check-public-imports: allow-private
 from tomojax.alignment._model.diagnostics import (
     GaugePolicyError,
-    conditioning_diagnostics,
     validate_active_gauge_policy,
 )
 
@@ -88,25 +87,11 @@ def test_gauge_policy_rejects_or_reports_coupled_dofs() -> None:
     assert decision.to_dict()["status"] == "allowed_with_gauge_policy"
 
 
-def test_conditioning_diagnostics_reports_near_null_dofs() -> None:
-    diagnostics = conditioning_diagnostics(
-        jnp.asarray([[1.0, 0.0], [0.0, 0.0]], dtype=jnp.float32),
-        dof_names=("alpha", "dx"),
-        rtol=1e-4,
-    )
-
-    assert diagnostics["status"] == "weak"
-    assert diagnostics["singular_values"] == [1.0, 0.0]
-    assert diagnostics["near_null_vectors"] == [
-        {"singular_value": 0.0, "terms": [{"dof": "dx", "weight": 1.0}]}
-    ]
-
-
 def test_align_config_resolves_stage_dofs() -> None:
     cfg = AlignConfig(
         reconstruction="fista",
-        opt_method="lbfgs",
-        schedule="pose_dx_dz_after_phi",
+        opt_method="gd",
+        optimise_dofs=("dx", "dz"),
         freeze=("dx",),
         backend="jax",
         gather_dtype="FP32",

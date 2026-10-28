@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING
 
-import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._model.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
@@ -100,52 +99,6 @@ class GeometryCalibrationState:
         )
         validate_calibration_gauges(state.to_calibration_state())
         return state
-
-    @classmethod
-    def from_checkpoint(
-        cls,
-        payload: Mapping[str, object] | None,
-        geometry: Geometry,
-        *,
-        active_geometry_dofs: Iterable[str] | None = None,
-    ) -> GeometryCalibrationState:
-        """Restore calibration state values from a checkpoint payload."""
-        state = cls.from_geometry(geometry, active_geometry_dofs=active_geometry_dofs)
-        if not isinstance(payload, Mapping):
-            return state
-
-        values: dict[str, float] = {}
-        for section_name in ("detector", "scan"):
-            section = payload.get(section_name)
-            if not isinstance(section, list | tuple):
-                continue
-            for item in section:
-                if not isinstance(item, Mapping):
-                    continue
-                name = item.get("name")
-                if name in {
-                    "det_u_px",
-                    "det_v_px",
-                    "detector_roll_deg",
-                    "axis_rot_x_deg",
-                    "axis_rot_y_deg",
-                }:
-                    raw_value = item.get("value")
-                    if isinstance(raw_value, int | float):
-                        values[str(name)] = float(raw_value)
-        return replace(state, **values)
-
-    def replace_values(self, names: Sequence[str], values: jnp.ndarray) -> GeometryCalibrationState:
-        """Return a copy with named calibration values replaced."""
-        updates: dict[str, float] = {}
-        arr = np.asarray(values, dtype=np.float32).reshape(-1)
-        for idx, name in enumerate(names):
-            updates[str(name)] = float(arr[idx])
-        return replace(self, **updates)
-
-    def values_for(self, names: Sequence[str]) -> jnp.ndarray:
-        """Return calibration values for named geometry DOFs."""
-        return jnp.asarray([float(getattr(self, name)) for name in names], dtype=jnp.float32)
 
     def to_calibration_state(self) -> CalibrationState:
         """Convert alignment geometry state to the public calibration schema."""

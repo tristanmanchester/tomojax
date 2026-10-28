@@ -14,12 +14,7 @@ from tomojax.core.validation import validate_projection_stack, view_indices
 from tomojax.geometry import ParallelGeometry
 
 from .center_statistics import PairStatistics, refine_pair
-from .initializers import (
-    DetectorCenterSeed,
-    projection_com_det_u_seed,
-    projection_pair_det_u_seed,
-    train_heldout_view_indices,
-)
+from .initializers import DetectorCenterSeed
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -512,7 +507,4 @@ __all__ = [
     "DetectorCenterSeed",
     "estimate_center",
     "estimate_center_report",
-    "projection_com_det_u_seed",
-    "projection_pair_det_u_seed",
-    "train_heldout_view_indices",
 ]

@@ -9,13 +9,33 @@ import pytest
 from tomojax.alignment._objectives import fixed_volume
 
 # check-public-imports: allow-private
+from tomojax.alignment._objectives.loss_adapters import build_loss_adapter
+
+# check-public-imports: allow-private
 from tomojax.alignment._objectives.loss_kernels import (
     _compute_otsu_threshold,
 )
+from tomojax.alignment.api import L2LossSpec
 from tomojax.geometry import Detector, Grid
 
 
-def test_cuda_project_stack_records_unsupported_fallback(
+def _score_tiny_stack(**options):
+    targets = jnp.zeros((1, 2, 2), dtype=jnp.float32)
+    return fixed_volume.project_and_score_stack(
+        pose_stack=jnp.eye(4, dtype=jnp.float32)[None, ...],
+        grid=Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
+        detector=Detector(nu=2, nv=2, du=1.0, dv=1.0),
+        volume=jnp.ones((2, 2, 2), dtype=jnp.float32),
+        det_grid=(jnp.zeros((2, 2), dtype=jnp.float32), jnp.zeros((2, 2), dtype=jnp.float32)),
+        targets=targets,
+        loss_adapter=build_loss_adapter(L2LossSpec(), targets),
+        backend="cuda",
+        require_differentiable_projector=False,
+        **options,
+    )
+
+
+def test_cuda_project_and_score_records_unsupported_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class UnsupportedCuda(ValueError):
@@ -26,7 +46,7 @@ def test_cuda_project_stack_records_unsupported_fallback(
             return (lambda *_args, **_kwargs: None), None
         if name == "CudaProjectorUnsupported":
             return UnsupportedCuda, None
-        if name == "forward_project_views_T_cuda":
+        if name == "forward_project_residual_sse_T_cuda":
             return (
                 lambda *_args, **_kwargs: (_ for _ in ()).throw(
                     UnsupportedCuda("tile shape not supported")
@@ -41,21 +61,11 @@ def test_cuda_project_stack_records_unsupported_fallback(
         lambda *_args, **_kwargs: jnp.ones((1, 2, 2), dtype=jnp.float32),
     )
 
-    result = fixed_volume.project_stack(
-        pose_stack=jnp.eye(4, dtype=jnp.float32)[None, ...],
-        grid=Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
-        detector=Detector(nu=2, nv=2, du=1.0, dv=1.0),
-        volume=jnp.ones((2, 2, 2), dtype=jnp.float32),
-        det_grid=(jnp.zeros((2, 2), dtype=jnp.float32), jnp.zeros((2, 2), dtype=jnp.float32)),
-        backend="cuda",
-        require_differentiable_projector=False,
-    )
-
-    assert result.shape == (1, 2, 2)
-    assert float(jnp.sum(result)) == pytest.approx(4.0)
+    # The JAX fallback projects ones against zero targets: half the squared sum.
+    assert float(_score_tiny_stack()) == pytest.approx(2.0)
 
 
-def test_cuda_project_stack_propagates_unexpected_fast_path_errors(
+def test_cuda_project_and_score_propagates_unexpected_fast_path_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def resolve(name: str, *, missing_reason: str):
@@ -63,7 +73,7 @@ def test_cuda_project_stack_propagates_unexpected_fast_path_errors(
             return (lambda *_args, **_kwargs: None), None
         if name == "CudaProjectorUnsupported":
             return ValueError, None
-        if name == "forward_project_views_T_cuda":
+        if name == "forward_project_residual_sse_T_cuda":
             return (
                 lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("broken kernel"))
             ), None
@@ -72,18 +82,7 @@ def test_cuda_project_stack_propagates_unexpected_fast_path_errors(
     monkeypatch.setattr(fixed_volume, "resolve_cuda_callable", resolve)
 
     with pytest.raises(RuntimeError, match="broken kernel"):
-        fixed_volume.project_stack(
-            pose_stack=jnp.eye(4, dtype=jnp.float32)[None, ...],
-            grid=Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
-            detector=Detector(nu=2, nv=2, du=1.0, dv=1.0),
-            volume=jnp.ones((2, 2, 2), dtype=jnp.float32),
-            det_grid=(
-                jnp.zeros((2, 2), dtype=jnp.float32),
-                jnp.zeros((2, 2), dtype=jnp.float32),
-            ),
-            backend="cuda",
-            require_differentiable_projector=False,
-        )
+        _score_tiny_stack()
 
 
 def test_otsu_resolves_adjacent_float32_intensities():
@@ -117,10 +116,14 @@ def test_cone_alignment_objective_uses_cuda_pose_derivatives():
     assert provenance.actual_backend == "cuda"
     assert provenance.differentiability == "gradient_safe"
 
+    targets = jnp.full((3, 7, 9), 0.5, jnp.float32)
+    adapter = build_loss_adapter(L2LossSpec(), targets)
+
     def value_grad(backend):
         def loss(t):
-            predictions = fixed_volume.project_stack(pose_stack=t, backend=backend, **options)
-            return jnp.sum(jnp.square(predictions - 0.5))
+            return fixed_volume.project_and_score_stack(
+                pose_stack=t, backend=backend, targets=targets, loss_adapter=adapter, **options
+            )
 
         return jax.jit(jax.value_and_grad(loss))(poses)
 

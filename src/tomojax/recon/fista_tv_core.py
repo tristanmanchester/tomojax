@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tomojax.core.geometry import Detector, Grid
-    from tomojax.core.host_volume import SlabStore
     from tomojax.recon.types import Regulariser
 
 
@@ -73,7 +72,7 @@ class FistaCoreConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class FistaCoreResult[Array: jnp.ndarray | np.ndarray | SlabStore]:
+class FistaCoreResult[Array: jnp.ndarray | np.ndarray]:
     """Array-level FISTA result and diagnostics."""
 
     x: Array
@@ -90,16 +89,6 @@ class FistaCoreResult[Array: jnp.ndarray | np.ndarray | SlabStore]:
             "data_loss": self.data_loss,
             "regulariser_value": self.regulariser_value,
             "effective_iterations": self.effective_iterations,
-            "status": self.status,
-        }
-
-    def python_info(self) -> dict[str, object]:
-        """Return Python scalar/list metadata for JSON reports."""
-        return {
-            "loss": [float(v) for v in list(self.loss)],
-            "data_loss": float(self.data_loss),
-            "regulariser_value": float(self.regulariser_value),
-            "effective_iterations": int(self.effective_iterations),
             "status": self.status,
         }
 
@@ -281,36 +270,6 @@ def regulariser_value_arrays(volume: jnp.ndarray, cfg: FistaCoreConfig) -> jnp.n
     if cfg.regulariser == "huber_tv":
         return huber_tv_value(volume, float(cfg.huber_delta))
     return isotropic_tv_value(volume)
-
-
-def fista_objective_arrays(
-    *,
-    T_all: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    volume: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-    projections: jnp.ndarray,
-    cfg: FistaCoreConfig,
-    view_weights: jnp.ndarray | None = None,
-) -> jnp.ndarray:
-    """Return the differentiable FISTA objective value for a candidate volume."""
-    data = projection_loss_arrays(
-        T_all=T_all,
-        grid=grid,
-        detector=detector,
-        volume=volume,
-        det_grid=det_grid,
-        projections=projections,
-        cfg=cfg,
-        view_weights=view_weights,
-    )
-    if cfg.tv_weight == 0.0:
-        return data
-    return data + jnp.asarray(cfg.tv_weight, dtype=jnp.float32) * regulariser_value_arrays(
-        volume,
-        cfg,
-    )
 
 
 def _requested_sampled_step(grid: Grid, cfg: FistaCoreConfig) -> float | None:

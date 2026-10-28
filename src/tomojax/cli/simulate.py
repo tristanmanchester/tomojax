@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 import math
 import os
 from typing import TYPE_CHECKING, Literal, cast
@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 GeometryName = Literal["parallel", "lamino", "cone"]
-TiltAxis = Literal["x", "z"]
 PhantomName = Literal["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"]
 TransferGuardName = Literal["off", "log", "disallow"]
 
@@ -65,7 +64,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     add_output(parser, "Dataset to write (.nxs)")
-    add_config(parser)
+    add_config(parser, settings=_settings)
     _ = parser.add_argument(
         "--size",
         type=int,
@@ -139,53 +138,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Detector shape (default: --size, or enough to see the whole cone-beam volume)",
     )
-    _ = parser.add_argument("--tilt-about", choices=["x", "z"], default="x")
-    _ = parser.add_argument(
-        "--single-rotate",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Rotate the single cube randomly in 3D",
-    )
-    _ = parser.add_argument(
-        "--single-size",
-        type=float,
-        default=0.5,
-        help="Relative size of cube side or sphere diameter (0-1). Default 0.5",
-    )
-    _ = parser.add_argument(
-        "--single-value", type=float, default=1.0, help="Intensity value for the single object"
-    )
-    _ = parser.add_argument("--n-cubes", type=int, default=8)
-    _ = parser.add_argument("--n-spheres", type=int, default=7)
-    _ = parser.add_argument("--min-size", type=int, default=4)
-    _ = parser.add_argument("--max-size", type=int, default=32)
-    _ = parser.add_argument("--min-value", type=float, default=0.1)
-    _ = parser.add_argument("--max-value", type=float, default=1.0)
-    _ = parser.add_argument("--max-rot-deg", type=float, default=180.0)
-    _ = parser.add_argument(
-        "--lamino-thickness-ratio",
-        type=float,
-        default=0.2,
-        help="Relative slab thickness (0-1) used by the lamino disk phantom",
-    )
-    _ = parser.add_argument("--gaussian-sigma", type=float, default=0.0)
-    _ = parser.add_argument("--dead-pixel-fraction", type=float, default=0.0)
-    _ = parser.add_argument("--dead-pixel-value", type=float, default=0.0)
-    _ = parser.add_argument("--hot-pixel-fraction", type=float, default=0.0)
-    _ = parser.add_argument("--hot-pixel-value", type=float, default=1.0)
-    _ = parser.add_argument("--zinger-fraction", type=float, default=0.0)
-    _ = parser.add_argument("--zinger-value", type=float, default=1.0)
-    _ = parser.add_argument("--stripe-fraction", type=float, default=0.0)
-    _ = parser.add_argument("--stripe-gain-sigma", type=float, default=0.0)
-    _ = parser.add_argument("--dropped-view-fraction", type=float, default=0.0)
-    _ = parser.add_argument("--dropped-view-fill", type=float, default=0.0)
-    _ = parser.add_argument("--detector-blur-sigma", type=float, default=0.0)
-    _ = parser.add_argument("--intensity-drift-amplitude", type=float, default=0.0)
-    _ = parser.add_argument(
-        "--intensity-drift-mode",
-        choices=["none", "linear", "sinusoidal"],
-        default="none",
-    )
     _ = parser.add_argument(
         "--seed", type=int, default=0, metavar="N", help="Random seed (phantom and noise)"
     )
@@ -205,6 +157,34 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Phantom details a config file may set; the detector artefacts besides
+# --poisson-scale are config settings too.
+_PHANTOM_SETTINGS = (
+    "tilt_about",
+    "single_size",
+    "single_value",
+    "single_rotate",
+    "n_cubes",
+    "n_spheres",
+    "min_size",
+    "max_size",
+    "min_value",
+    "max_value",
+    "max_rot_deg",
+    "lamino_thickness_ratio",
+)
+_ARTEFACT_SETTINGS = tuple(f.name for f in fields(SimulationArtefacts) if f.name != "poisson_scale")
+
+
+def _settings() -> dict[str, object]:
+    """A config file's expert settings: phantom details and detector artefacts."""
+    phantom = SimConfig(nx=1, ny=1, nz=1, nu=1, nv=1, n_views=1)
+    artefacts = SimulationArtefacts()
+    return {name: getattr(phantom, name) for name in _PHANTOM_SETTINGS} | {
+        name: getattr(artefacts, name) for name in _ARTEFACT_SETTINGS
+    }
+
+
 def _cone_detector(size: int, source_to_axis: float, source_to_detector: float) -> int:
     """Detector pixels that see a ``size``-voxel cube from ``source_to_axis``."""
     radius = size / math.sqrt(2.0)
@@ -218,9 +198,13 @@ def _cone_detector(size: int, source_to_axis: float, source_to_detector: float) 
 def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
     """Parse CLI arguments into a typed simulation command plan."""
     parser = _build_parser()
-    args, _ = parse_args_with_config(parser, argv)
+    args, metadata = parse_args_with_config(parser, argv)
+    settings = cast("dict[str, object]", metadata["settings"])
     check_paths(parser, outputs=[cast("str", args.out)], force=cast("bool", args.force))
-    artefacts = _build_artefacts(args)
+    artefacts = replace(
+        SimulationArtefacts(poisson_scale=cast("float", args.poisson_scale)),
+        **{name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings},
+    )
     rotation_deg = cast("float | None", args.rotation_deg)
     geometry = cast("GeometryName", args.geometry)
     tilt_deg = cast("float | None", args.tilt_deg)
@@ -252,24 +236,15 @@ def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
         n_views=int(n_views),
         geometry=geometry,
         tilt_deg=tilt_deg if tilt_deg is not None else (30.0 if geometry == "lamino" else 0.0),
-        tilt_about=cast("TiltAxis", args.tilt_about),
         source_to_axis=sod,
         source_to_detector=sdd,
         rotation_deg=rotation_deg,
         phantom=cast("PhantomName", args.phantom),
         seed=cast("int", args.seed),
-        artefacts=artefacts,
-        single_size=cast("float", args.single_size),
-        single_value=cast("float", args.single_value),
-        single_rotate=cast("bool", args.single_rotate),
-        n_cubes=cast("int", args.n_cubes),
-        n_spheres=cast("int", args.n_spheres),
-        min_size=cast("int", args.min_size),
-        max_size=cast("int", args.max_size),
-        min_value=cast("float", args.min_value),
-        max_value=cast("float", args.max_value),
-        max_rot_deg=cast("float", args.max_rot_deg),
-        lamino_thickness_ratio=cast("float", args.lamino_thickness_ratio),
+        artefacts=artefacts if artefacts.has_enabled() else None,
+    )
+    config = replace(
+        config, **{name: settings[name] for name in _PHANTOM_SETTINGS if name in settings}
     )
     return SimulateCommand(
         out=cast("str", args.out),
@@ -277,14 +252,6 @@ def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
         transfer_guard=cast("TransferGuardName", args.transfer_guard),
         progress=cast("bool", args.progress),
     )
-
-
-def _build_artefacts(args: argparse.Namespace) -> SimulationArtefacts | None:
-    """The artefacts the options ask for, or None when every one is off."""
-    artefacts = SimulationArtefacts(
-        **{field.name: getattr(args, field.name) for field in fields(SimulationArtefacts)}
-    )
-    return artefacts if artefacts.has_enabled() else None
 
 
 def main(argv: Sequence[str] | None = None) -> None:

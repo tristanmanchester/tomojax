@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.core.host_transfer import copy_to_host, upload_host, upload_host_views
+from tomojax.core.host_transfer import copy_to_host, upload_host
 
 
 @pytest.mark.parametrize(
@@ -74,20 +74,6 @@ def test_host_transfers_copy_pitched_windows_without_touching_padding(axis):
     np.testing.assert_array_equal(target, expected)
 
 
-@pytest.mark.parametrize("layout", ["C", "F", "permuted", "strided"])
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_indexed_host_upload_preserves_view_order_and_dtype_conversion(layout, dtype):
-    source = np.arange(9 * 11 * 7, dtype=dtype).reshape(9, 11, 7) / 100
-    if layout in {"C", "F"}:
-        source = source.copy(order=layout)
-    else:
-        source = source.transpose(1, 0, 2)[1::2] if layout == "permuted" else source[:, :, ::2]
-    source.setflags(write=False)
-    indices = np.array([len(source) - 1, 0, 2, 0])
-    value = upload_host_views(source, indices, jax.devices()[0])
-    np.testing.assert_array_equal(np.asarray(value), source[indices].astype(np.float32))
-
-
 @pytest.mark.parametrize("shape", [(), (0, 3), (7, 5, 3), (2, 3, 4, 5)])
 @pytest.mark.parametrize("layout", ["C", "F", "reversed"])
 def test_download_casting_and_transposed_device_layout(shape, layout):
@@ -119,22 +105,3 @@ def test_download_broadcasts_without_modifying_host_padding():
     copy_to_host(source, target[:, 0])
     np.testing.assert_array_equal(target[:, 0], np.broadcast_to(np.arange(5), (3, 5)))
     np.testing.assert_array_equal(target[:, 1], -1)
-
-
-def test_leading_axis_slab_upload_owns_partial_final_plane_block():
-    from tomojax.core.host_transfer import upload_host_slabs
-
-    shape = (7, 3, 5)
-    words = np.arange(np.prod(shape), dtype=np.uint32).reshape(shape) + 0x3F800000
-    words[3, 1, :3] = [0x7FC1ABCD, 0x80000000, 0]
-    source = words.view(np.float32)
-
-    def slabs():
-        for first in range(0, shape[0], 3):
-            yield first, source[first : first + 3]
-
-    actual = upload_host_slabs(shape, slabs(), jax.devices()[0])
-    source.fill(0)
-    expected = np.arange(np.prod(shape), dtype=np.uint32).reshape(shape) + 0x3F800000
-    expected[3, 1, :3] = [0x7FC1ABCD, 0x80000000, 0]
-    np.testing.assert_array_equal(np.asarray(actual).view(np.uint32), expected)

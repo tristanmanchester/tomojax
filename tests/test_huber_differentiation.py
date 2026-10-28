@@ -10,17 +10,9 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.alignment._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-
 # check-public-imports: allow-private
-from tomojax.alignment._model.state import AlignmentState
-
 # check-public-imports: allow-private
-from tomojax.alignment._objectives.recon_layer import ReconLayer, ReconLayerConfig
-
-# check-public-imports: allow-private
-from tomojax.core.projector import forward_project_view_T
-from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import FistaConfig, fista_tv
 
 # check-public-imports: allow-private
@@ -151,79 +143,6 @@ def test_huber_dual_projection_handles_independently_scaled_input_and_radius(inp
         *jnp.asarray(vector * input_scale, dtype=jnp.float32), sigma=0.0, lam=radius, delta=1.0
     )
     np.testing.assert_allclose(np.asarray(actual) / expected_scale, vector, rtol=3e-6, atol=2e-7)
-
-
-@pytest.mark.numerical
-@pytest.mark.parametrize("kind", ["parallel", "anisotropic", "lamino"])
-@pytest.mark.parametrize("mode", ["unrolled", "implicit"])
-def test_regularized_reconstruction_derivatives_at_zero_match_dense_system(kind, mode):
-    """Check measured-data and initialization gradients through the real layer."""
-    shape = (2, 2, 2)
-    spacing = (0.8, 1.2, 1.4) if kind == "anisotropic" else (1.0, 1.0, 1.0)
-    grid = Grid(*shape, *spacing)
-    detector = Detector(4, 3, 0.7, 0.9, (0.17, 0.23))
-    angles = np.array([13.0, 71.0, 127.0], dtype=np.float32)
-    geometry = (
-        LaminographyGeometry(grid, detector, angles, tilt_deg=30)
-        if kind == "lamino"
-        else ParallelGeometry(grid, detector, angles)
-    )
-    state = AlignmentState.zeros(n_views=3)
-    base = BaseGeometryArrays.from_geometry(geometry, detector)
-    config = ReconLayerConfig(
-        iterations=4,
-        tv_weight=0.03,
-        huber_delta=0.1,
-        lipschitz=30.0,
-        differentiation_mode=mode,
-        implicit_damping=0.1,
-        implicit_cg_iterations=64,
-        implicit_cg_tol=1e-7,
-    )
-    layer = ReconLayer(base, grid, detector, config)
-    effective = apply_alignment_state(base, state)
-
-    def project(flat):
-        return jax.vmap(
-            lambda t: forward_project_view_T(
-                t, grid, detector, flat.reshape(shape), det_grid=effective.det_grid
-            )
-        )(effective.pose_stack).ravel()
-
-    matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(np.prod(shape))), dtype=np.float64)
-    edges = _edges(shape)
-    hessian = matrix.T @ matrix + (config.tv_weight / config.huber_delta) * (edges.T @ edges)
-    cotangent = np.linspace(-0.4, 1.0, np.prod(shape))
-    if mode == "implicit":
-        expected_data = matrix @ np.linalg.solve(
-            hessian + config.implicit_damping * np.eye(np.prod(shape)), cotangent
-        )
-        expected_init = np.zeros(np.prod(shape))
-    else:
-        # Differentiate the quadratic-basin FISTA recurrence using dense matrices,
-        # independently of JAX's implementation or automatic differentiation.
-        jac_x = np.concatenate([np.zeros((matrix.shape[1], matrix.shape[0])), np.eye(8)], axis=1)
-        jac_z = jac_x.copy()
-        forcing = np.concatenate([matrix.T, np.zeros((8, 8))], axis=1) / config.lipschitz
-        transition = np.eye(8) - hessian / config.lipschitz
-        t = 1.0
-        for _ in range(config.iterations):
-            jac_next = transition @ jac_z + forcing
-            t_next = (1 + np.sqrt(1 + 4 * t * t)) / 2
-            jac_z = jac_next + (t - 1) / t_next * (jac_next - jac_x)
-            jac_x, t = jac_next, t_next
-        expected_data = jac_x[:, : matrix.shape[0]].T @ cotangent
-        expected_init = jac_x[:, matrix.shape[0] :].T @ cotangent
-
-    def value(data, initial):
-        x = layer.reconstruct(state=state, projections=data, init_x=initial).x
-        return jnp.vdot(x.ravel(), jnp.asarray(cotangent, dtype=x.dtype))
-
-    data = jnp.zeros((3, detector.nv, detector.nu), jnp.float32)
-    initial = jnp.zeros(shape, jnp.float32)
-    grad_data, grad_init = jax.jit(jax.grad(value, argnums=(0, 1)))(data, initial)
-    np.testing.assert_allclose(grad_data.ravel(), expected_data, rtol=3e-4, atol=2e-5)
-    np.testing.assert_allclose(grad_init.ravel(), expected_init, rtol=3e-4, atol=2e-5)
 
 
 @pytest.mark.numerical

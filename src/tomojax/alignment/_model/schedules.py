@@ -12,7 +12,6 @@ from .dof_specs import ActiveParameterView
 from .dofs import (
     DOF_NAMES,
     GEOMETRY_DOF_NAMES,
-    ScopedAlignmentDofs,
     normalize_alignment_dofs,
     resolve_scoped_alignment_dofs,
 )
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
 ObjectiveKind = Literal[
     "fixed_volume", "joint_volume_pose", "bilevel_cv", "all_data_bilevel", "projection_consistency"
 ]
-OptimizerKind = Literal["lbfgs", "adam", "gd", "gn", "validation_lm", "spectral"]
+OptimizerKind = Literal["gd", "gn", "validation_lm", "spectral"]
 GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"]
 ScheduleSource = Literal["preset", "direct", "default", "expert"]
 StageRole = Literal["proposal", "setup", "reconstruction", "refine", "verify"]
@@ -33,14 +32,8 @@ DifferentiabilityRequirement = Literal["gradient_safe", "performance_only", "not
 PUBLIC_SCHEDULE_PRESETS = (
     "lightning_pose",
     "tortoise_pose",
-    "pose_only",
-    "pose_phi_only",
-    "pose_dx_dz_after_phi",
     "cor",
     "cor_then_pose",
-    "detector_roll",
-    "axis_direction",
-    "lamino_tilt",
     "setup_safe",
     "spectral_setup",
 )
@@ -70,8 +63,8 @@ class AlignmentStage:
         Objective model: "fixed_volume", "joint_volume_pose", "bilevel_cv",
         "all_data_bilevel" or "projection_consistency".
     optimizer : OptimizerKind
-        Optimizer for the chosen objective: "lbfgs", "adam", "gd", "gn", "validation_lm"
-        or "spectral". The schedule validates supported combinations.
+        Optimizer for the chosen objective: "gd", "gn", "validation_lm" or "spectral".
+        The schedule validates supported combinations.
     gauge_policy : GaugePolicy, optional
         Gauge policy: "reject", "anchor_mean", "prior_required" or "diagnose_only".
         Default is 'reject'.
@@ -167,8 +160,6 @@ class AlignmentSchedule:
                 stage.optimizer != "gn" or any(d in GEOMETRY_DOF_NAMES for d in stage.active_dofs)
             ):
                 raise ValueError("joint_volume_pose stages require GN and only per-view pose DOFs")
-            if stage.name == "expert_coupled" and stage.gauge_policy == "reject":
-                raise ValueError("expert_coupled stages must declare an explicit GaugePolicy")
             if (
                 stage.objective_kind in {"bilevel_cv", "all_data_bilevel"}
                 and stage.optimizer != "validation_lm"
@@ -178,15 +169,10 @@ class AlignmentSchedule:
                     f"{stage.optimizer!r}; setup/bilevel stages currently support only "
                     "'validation_lm'"
                 )
-            if stage.objective_kind == "fixed_volume" and stage.optimizer not in {
-                "gd",
-                "gn",
-                "lbfgs",
-            }:
+            if stage.objective_kind == "fixed_volume" and stage.optimizer not in {"gd", "gn"}:
                 raise ValueError(
                     f"fixed_volume stage {stage.name!r} uses unsupported optimizer "
-                    f"{stage.optimizer!r}; fixed_volume stages currently support only "
-                    "'gd', 'gn', or 'lbfgs'"
+                    f"{stage.optimizer!r}; fixed_volume stages support only 'gd' or 'gn'"
                 )
         return self
 
@@ -250,16 +236,6 @@ class ResolvedAlignmentStage:
     differentiability: DifferentiabilityRequirement
     quality_tier: StageQualityTier
     speed_claim_eligible: bool
-
-    @property
-    def scoped_dofs(self) -> ScopedAlignmentDofs:
-        """Return active DOFs split into pose and geometry scopes."""
-        return ScopedAlignmentDofs(
-            active_pose_dofs=self.active_pose_dofs,
-            active_geometry_dofs=self.active_geometry_dofs,
-            frozen_pose_dofs=(),
-            frozen_geometry_dofs=(),
-        )
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible resolved-stage description."""
@@ -421,32 +397,6 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             speed_claim_eligible=False,
         ),
     ),
-    "pose_only": (
-        AlignmentStage(
-            name="pose_only",
-            active_dofs=("alpha", "beta", "phi", "dx", "dz"),
-            objective_kind="fixed_volume",
-            optimizer="gn",
-        ),
-    ),
-    "pose_phi_only": (
-        AlignmentStage(
-            name="pose_phi_only",
-            active_dofs=("phi",),
-            objective_kind="fixed_volume",
-            optimizer="gn",
-            gauge_policy="anchor_mean",
-        ),
-    ),
-    "pose_dx_dz_after_phi": (
-        AlignmentStage(
-            name="pose_dx_dz_after_phi",
-            active_dofs=("dx", "dz"),
-            objective_kind="fixed_volume",
-            optimizer="gn",
-            gauge_policy="anchor_mean",
-        ),
-    ),
     "cor": (
         AlignmentStage(
             name="cor",
@@ -461,41 +411,6 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
     # Pose alignment whose constant detector-u shift becomes the detector centre
     # (folded in align_multires; needs detector-frame translations).
     "cor_then_pose": _LIGHTNING_POSE,
-    "detector_roll": (
-        AlignmentStage(
-            name="detector_roll",
-            active_dofs=("detector_roll_deg",),
-            objective_kind="bilevel_cv",
-            optimizer="validation_lm",
-            stage_role="setup",
-            differentiability="gradient_safe",
-            quality_tier="reference",
-        ),
-    ),
-    "axis_direction": (
-        AlignmentStage(
-            name="axis_direction",
-            active_dofs=("axis_rot_x_deg", "axis_rot_y_deg"),
-            objective_kind="bilevel_cv",
-            optimizer="validation_lm",
-            gauge_policy="diagnose_only",
-            stage_role="setup",
-            differentiability="gradient_safe",
-            quality_tier="reference",
-        ),
-    ),
-    "lamino_tilt": (
-        AlignmentStage(
-            name="lamino_tilt",
-            active_dofs=("axis_rot_x_deg",),
-            objective_kind="bilevel_cv",
-            optimizer="validation_lm",
-            gauge_policy="diagnose_only",
-            stage_role="setup",
-            differentiability="gradient_safe",
-            quality_tier="reference",
-        ),
-    ),
     # Detector roll and axis-y share a volume-frame gauge. Keep the supplied
     # roll fixed and calibrate centre/axis together before local pose fitting.
     "setup_safe": (
@@ -532,41 +447,16 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
 }
 
 
-def schedule_preset(
-    name: str,
-    *,
-    active_dofs: Iterable[str] | None = None,
-    gauge_policy: GaugePolicy | None = None,
-) -> AlignmentSchedule:
-    """Return a named public or expert alignment schedule preset."""
+def schedule_preset(name: str) -> AlignmentSchedule:
+    """Return a named alignment schedule preset."""
     key = str(name)
-    if key == "detector_center_2d":
-        raise ValueError(
-            "Unknown alignment schedule preset 'detector_center_2d'. "
-            "Use low-level optimise_dofs=('det_u_px', 'det_v_px') only for expert diagnostics."
-        )
-    if key == "expert_coupled":
-        dofs = tuple(active_dofs or ())
-        if not dofs:
-            raise ValueError("expert_coupled requires explicit active_dofs")
-        return AlignmentSchedule(
-            name=key,
-            stages=(
-                AlignmentStage(
-                    name="expert_coupled",
-                    active_dofs=dofs,
-                    objective_kind="bilevel_cv",
-                    optimizer="validation_lm",
-                    gauge_policy=gauge_policy or "prior_required",
-                    stage_role="setup",
-                    quality_tier="reference",
-                ),
-            ),
-        ).validate()
     stages = _PUBLIC_PRESET_STAGES.get(key)
     if stages is not None:
         return AlignmentSchedule(name=key, stages=stages).validate()
-    raise ValueError(f"Unknown alignment schedule preset {name!r}")
+    raise ValueError(
+        f"Unknown alignment schedule preset {name!r}; presets are "
+        + ", ".join(PUBLIC_SCHEDULE_PRESETS)
+    )
 
 
 def _stage_iterations(stage: AlignmentStage, outer_iterations: int | None) -> int:
@@ -648,9 +538,7 @@ def resolve_alignment_schedule(
             source = "direct"
             name = "direct"
         if scoped.active_geometry_dofs and scoped.active_pose_dofs:
-            # Direct mixed setup/pose requests are only an expert surface, and
-            # still execute as explicit setup then pose stages so product setup
-            # discovery remains validation-LM and pose remains fixed-volume.
+            # Direct mixed setup/pose requests are only an expert surface.
             if gauge_policy == "reject":
                 raise GaugePolicyError(
                     "Direct mixed setup+pose DOFs require an explicit expert "
@@ -665,48 +553,25 @@ def resolve_alignment_schedule(
                 policy=gauge_policy,
                 priors=gauge_priors,
             )
-            stages = (
-                AlignmentStage(
-                    name="direct_setup",
-                    active_dofs=scoped.active_geometry_dofs,
-                    objective_kind="bilevel_cv",
-                    optimizer="validation_lm",
-                    gauge_policy=gauge_policy,
-                    stage_role="setup",
-                    quality_tier="reference",
-                ),
-                AlignmentStage(
-                    name="direct_pose",
-                    active_dofs=scoped.active_pose_dofs,
-                    objective_kind="fixed_volume",
-                    optimizer=_normalize_pose_optimizer(opt_method),
-                    gauge_policy=gauge_policy,
-                    stage_role="refine",
-                ),
-            )
-        elif scoped.active_geometry_dofs:
-            stages = (
-                AlignmentStage(
-                    name="direct_setup",
-                    active_dofs=scoped.active_geometry_dofs,
-                    objective_kind="bilevel_cv",
-                    optimizer="validation_lm",
-                    gauge_policy=gauge_policy,
-                    stage_role="setup",
-                    quality_tier="reference",
-                ),
-            )
-        else:
-            stages = (
-                AlignmentStage(
-                    name="direct_pose",
-                    active_dofs=scoped.active_pose_dofs,
-                    objective_kind="fixed_volume",
-                    optimizer=_normalize_pose_optimizer(opt_method),
-                    gauge_policy=gauge_policy,
-                    stage_role="refine",
-                ),
-            )
+        setup = AlignmentStage(
+            name="direct_setup",
+            active_dofs=scoped.active_geometry_dofs,
+            objective_kind="bilevel_cv",
+            optimizer="validation_lm",
+            gauge_policy=gauge_policy,
+            stage_role="setup",
+            quality_tier="reference",
+        )
+        pose = AlignmentStage(
+            name="direct_pose",
+            active_dofs=scoped.active_pose_dofs,
+            objective_kind="fixed_volume",
+            optimizer=_normalize_pose_optimizer(opt_method),
+            gauge_policy=gauge_policy,
+            stage_role="refine",
+        )
+        # Setup before pose, so product setup discovery stays validation-LM.
+        stages = tuple(stage for stage in (setup, pose) if stage.active_dofs) or (pose,)
         base_schedule = AlignmentSchedule(name=name, stages=stages).validate()
 
     requested = normalize_alignment_dofs(
@@ -779,6 +644,6 @@ def resolve_alignment_schedule(
 
 
 def _normalize_pose_optimizer(value: str) -> OptimizerKind:
-    if value not in {"gd", "gn", "lbfgs"}:
-        raise ValueError("pose optimizer must be one of 'gd', 'gn', or 'lbfgs'")
+    if value not in {"gd", "gn"}:
+        raise ValueError("pose optimizer must be 'gn' or 'gd'")
     return cast("OptimizerKind", value)

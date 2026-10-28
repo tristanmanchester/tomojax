@@ -1,9 +1,9 @@
 """Exact line integration of the zero-extended trilinear voxel basis.
 
 The JAX reference supports ordinary differentiation. CUDA exposes an explicit
-matched adjoint and fused five-parameter pose normal equations; its raw calls
-are not automatically differentiable. All distances use the grid's physical
-units, and poses map object coordinates to world coordinates.
+matched adjoint; its raw calls are not automatically differentiable. All
+distances use the grid's physical units, and poses map object coordinates to
+world coordinates.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal
 import jax
 import jax.numpy as jnp
 
-from tomojax.core._trilinear_reference import forward_project_view_exact_T, project_pose_jacobian
+from tomojax.core._trilinear_reference import forward_project_view_exact_T
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.validation import (
     validate_detector,
@@ -114,70 +114,3 @@ def exact_adjoint(
 
     result, _ = jax.lax.scan(add_view, initial, (poses, images))
     return result
-
-
-def exact_pose_normal_equations(
-    poses: jax.Array,
-    pose_directions: jax.Array,
-    grid: Grid,
-    detector: Detector,
-    volume: jax.Array,
-    targets: jax.Array,
-    weights: jax.Array,
-    *,
-    backend: Literal["jax", "cuda"] = "jax",
-    det_grid: tuple[jax.Array, jax.Array] | None = None,
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Return per-view weighted loss, gradient, Hessian approximation and residual.
-
-    ``pose_directions`` has shape ``(views, 5, 4, 4)`` and supplies derivatives
-    of the rigid matrices with respect to the five chosen pose coordinates.
-    ``weights`` multiplies the residual, so its square weights normal equations.
-    The returned data residual is also multiplied by squared weights. CUDA
-    integrates pose derivatives with constant per-ray state and reduces small
-    matrices, without retaining a full projection Jacobian.
-    """
-    n, _, _ = validate_projection_stack(targets, detector, context="exact pose normals")
-    validate_pose_stack(poses, n, context="exact pose normals")
-    validate_volume(volume, grid, context="exact pose normals")
-    validate_detector_grid(det_grid, detector, context="exact pose normals")
-    if pose_directions.shape != (n, 5, 4, 4):
-        raise ValueError("exact pose normals: pose_directions must have shape (views, 5, 4, 4)")
-    if weights.shape != targets.shape:
-        raise ValueError("exact pose normals: weights and targets must have the same shape")
-    _validate_backend(backend, detector, det_grid)
-    poses, volume, targets, weights, pose_directions = (
-        _real_fp32(x) for x in (poses, volume, targets, weights, pose_directions)
-    )
-    if backend == "cuda":
-        from tomojax.core._trilinear_cuda import coefficients, normal_equations
-
-        def coefficients_jvp(direction: jax.Array) -> jax.Array:
-            return jax.jvp(lambda t: coefficients(t, grid, detector), (poses,), (direction,))[1]
-
-        directions = jax.vmap(coefficients_jvp, in_axes=1)(pose_directions).swapaxes(0, 1)
-        return normal_equations(
-            coefficients(poses, grid, detector),
-            volume,
-            directions,
-            targets,
-            weights,
-            grid,
-            detector,
-        )
-
-    def one_view(
-        inputs: tuple[jax.Array, jax.Array, jax.Array, jax.Array],
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-        pose, directions, target, weight = inputs
-
-        prediction, jacobian = project_pose_jacobian(
-            pose, directions, grid, detector, volume, det_grid=det_grid
-        )
-        residual = weight * (prediction - target)
-        columns = (jacobian * weight).reshape((5, -1))
-        gradient = jnp.matmul(columns, residual.ravel(), precision=jax.lax.Precision.HIGHEST)
-        hessian = jnp.matmul(columns, columns.T, precision=jax.lax.Precision.HIGHEST)
-        return 0.5 * jnp.vdot(residual, residual).real, gradient, hessian, weight * residual
-
-    return jax.lax.map(one_view, (poses, pose_directions, targets, weights))
