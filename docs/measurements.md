@@ -235,6 +235,81 @@ JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent05-detector/carry_th
 JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent05-detector/carry_fullviews.py
 ```
 
+### Cross-facility image-domain controls
+
+Measured 2026-10-28 on `a3bef73d` (runtime `0199b919`), using the same
+raw-image normalization and 15-pixel radial trend as above. Native radial
+energy includes specimen structure: it is **not reconstruction accuracy**.
+The structural check compares reconstructed corrected and uncorrected
+increments from independent analytic Gaussians, not a solver-generated
+phantom. Peak line integral is 0.05, radius 0.7 and azimuth is the third draw
+from seed 9027. The dense detector-field check injects log-gain RMS 0.002.
+No intensity fit, registration or parameter tuning is used.
+
+| Input | Radial proxy, raw / Rings / Algotom | Maximum Gaussian image alteration, Rings / Algotom | Gain image-error fraction, Rings / Algotom | Raw Gaussian image NRMSE, narrow / wide |
+|---|---:|---:|---:|---:|
+| I12 | 0.029959 / 0.021835 / 0.008991 | 0.026669 / 2.470997 | 0.251673 / 0.141547 | 1.202109 / 0.199304 |
+| APS | 0.030843 / 0.021202 / 0.007688 | 0.034996 / 18.042499 | 0.499524 / 0.078955 | 1.610583 / 0.449732 |
+| ESRF | 0.071829 / 0.046719 / 0.010100 | 0.284594 / 2.396933 | 0.181807 / 0.100796 | 0.558084 / 0.016571 |
+| Elettra | 0.046728 / 0.034904 / 0.006028 | 0.079931 / 2.485404 | 0.233622 / 0.073352 | 0.557697 / 0.003074 |
+| 2DeteCT | 0.027762 / 0.023853 / 0.006060 | 0.005527 / 2.308251 | 0.278180 / 0.144948 | 0.677629 / 0.078820 |
+| PSI-00071 | 0.023069 / 0.021458 / 0.004511 | 0.003431 / 3.858773 | 0.412902 / 0.061021 | 1.610184 / 0.449757 |
+| Walnut1V2 | 0.028809 / 0.028624 / 0.017158 | 0.037258 / 0.656604 | 0.400968 / 0.382335 | 0.077549 / 0.440996 |
+
+Rings fails the 5% image no-harm gate on ESRF and Elettra, despite passing
+the sinogram-domain gate. Their wide-Gaussian uncorrected image NRMSEs are only
+1.66% and 0.31%: these failures are not explained by a poor reconstruction
+baseline. All seven Algotom comparisons fail the image no-harm gate despite
+lower native radial proxies. Both methods retain at most 50% of the injected
+gain-image error on these cuts; this does not identify the native detector
+field. Sparse-view and truncated-panel raw baselines can be weak, so a small
+differential alteration alone is not absolute image fidelity.
+
+I12/APS/ESRF use rows 32/11/270, views `::8` (226/90/126), all
+2560/1536/640 columns and centres -138/-15/0 pixels. Elettra uses all 400
+views, row 1024, 2048 columns and the nominal centre. PSI 00071 uses row
+1200, 151 views `::8`, 2560 columns, centre -23 and the measured 200-flat/
+10-dark schedule, without phase retrieval. These parallel grids have unit
+pitch and one voxel per detector column; Gaussian widths are 2/8 pixels.
+2DeteCT slice 00001 mode 1 uses 450 views `::8`, all 1912 columns and
+recorded circular fan geometry; widths are 2/8 object-plane detector pixels.
+The dense-field seeds in table order are 609/610/611/642/643/646/647.
+The frozen cuts retain their original calibration and transmission floors;
+this is not a default-loading audit. Algotom 1.7 uses canonical transmission-
+domain `remove_all_stripe`, followed by minus-log, independently per row.
+
+Walnut 1 orbit 2 uses all 1200 views, authors' corrected vectors and a
+501² central plane at 0.1 mm. Native rows 456:484 cover every plane ray
+vertically with interpolation margin; calibration/log precedes additional
+2×2 binning, giving 14×384 detector pixels. Its Gaussian widths are 0.2/0.8 mm
+and radius is 0.7 of the image half-width; its injected gain varies in both
+detector directions. The 50.1 mm square is horizontally truncated. Increasing
+the slab from 14 to 42 binned rows leaves raw Gaussian NRMSE unchanged.
+Analytic-only doubling of physical panel width reduces those errors to
+.042561/.002946; zero-extending only the measured panel instead gives
+.042561/.201345. Retaining filtered tails cannot recover genuinely missing
+observations. Neither extension changes the native scores in the table.
+
+The five local GPU cuts take 26.13 s, with peak GPU/host memory 364/1854 MiB;
+CPU calibration/reference preparation takes 17.64 s/409 MiB separately.
+Rings first/warm calls span 1.36–1.70 s / 2.84–5.69 ms in this sequential
+run, not a balanced speed comparison. PSI runs CPU-only with all public data
+in RAM: 471.98 s total, including 462.42 s HTTP reading, peak host 1321 MiB;
+Rings first/warm is 0.658/0.0208 s and FBP 0.459/0.289 s. Walnut CPU scoring
+takes 8.81 s/1243 MiB after 26.83 s/709 MiB preparation; Rings first/warm is
+1.203/0.622 s and FDK 0.896/0.259 s. All temporary staged arrays are deleted.
+
+Commands use this run's external shared harness. Set `LAB_ARTIFACTS` for
+scoring output and `SCORE_SOURCE_COMMIT` to the source being tested:
+
+```bash
+LAB_ARTIFACTS=../../artifacts/agent08-image-coverage-stage JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/image_coverage_prepare.py
+JAX_PLATFORMS=cuda,cpu uv run --no-sync python ../../shared/agent08/rings/image_coverage_score.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/psi_image_memory.py
+LAB_ARTIFACTS=../../artifacts/agent08-walnut-image-stage JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/walnut_image_prepare.py
+JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/walnut_image_cpu.py
+```
+
 ## Cone-setup aliases and a conditional calibration test
 
 Geometry-only checks on recorded Nikon crystals-in-clay, Zeiss CuO2-B and

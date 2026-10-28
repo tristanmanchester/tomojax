@@ -55,6 +55,9 @@ On six native I13 rows, off-axis image increments change by 6.7–17.4%,
 and a separate four-seed finite-reference test retains 48–83% of known added
 image-error RMS; see the
 [image-domain controls](measurements.md#calibration-backed-gaps-and-response-only-correction).
+Further image-domain checks fail the 5% no-harm gate on ESRF bamboo (28.5%)
+and Elettra (8.0%), despite sinogram-domain passes; see the
+[cross-facility controls](measurements.md#cross-facility-image-domain-controls).
 Review corrected and uncorrected structures, especially on moving samples.
 A centred radial feature and an even detector error are indistinguishable in
 a stationary full turn: correction of that component depends on the method's
