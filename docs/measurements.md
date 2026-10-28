@@ -1479,6 +1479,53 @@ five groups. I12 and I13 pass all five groups, with maximum discrepancies
 matching its RMS; sparse transient contamination is not represented by its
 Poisson/read model.
 
+### Finite-reference noise in reconstructed images
+
+A **T2 held-out-flat** check on 2026-10-28 (`0199b919`, seed 70552) propagates
+reference noise through a common centered, unit-pitch, 360-view full-turn FBP
+at each detector's native width. Calibration uses the first half of the flats;
+second-half adjacent log-flat differences are averaged over 50 pairs for I13
+and 12 for I12/ESRF. Simulations use two independent flat means with the same
+number of references. Both differences are divided by sqrt(2), conditional on
+a shared dark mean. Four fixed row offsets (0, 5, 10, 15) are scored in radial
+annuli 0.1–0.3, 0.3–0.6 and 0.6–0.9 of the image half-width.
+
+| Scan, rows (all columns) | RMS ratio, Gaussian difference bands sigma 1 / 2 / 4 / 8 px |
+|---|---:|
+| I13 159815, 1112:1128 | 0.985 / 0.941 / 0.919 / 0.994 |
+| I12 3339629, 1080:1096 | 1.064 / 1.006 / 0.969 / 0.953 |
+| ESRF bamboo reduced, 294:310 | 0.985 / 1.038 / 0.960 / 1.100 |
+
+Each band is the difference of Gaussian smoothings at sigma and twice sigma.
+Energies pooled over rows and annuli pass the frozen 20% RMS gate for all
+12 entries. Individual annuli do not all pass: ESRF ratios span 0.661–1.300;
+I13 and I12 span 0.893–1.013 and 0.934–1.080. These are finite-reference noise
+statistics under a standardized scoring geometry, not native total-ring
+statistics or a demonstration of realistic detector drift.
+
+Command: `JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 LAB_ARTIFACTS=artifacts/reference-image
+uv run --no-sync python shared/agent05-detector/reference_image_statistics.py`
+in lab run `tomojax-20261027a`. Combined time was 39.81 s, peak host RSS 922 MiB,
+GPU memory zero. First/repeated FBP calls were 1.254/0.644–0.707 s for I12 and
+0.152/0.044–0.049 s for ESRF; I13 reused the 2560-column compilation.
+
+The independent-pixel law does not predict all spatial averages. On I13 159850
+(2026-10-28, numerical source `0199b919`), adjacent differences of the first
+20 pre-flats and last 20 post-flats were averaged over a symmetric detector
+window at offset -128.6201 px. Rows 8:1056 and 1105:2152 were retained; the first
+10 darks were shared. With gain 1.78546 and read noise 4.38286 counts, removing
+an affine row trend in each interval gave observed/predicted row-mean RMS
+ratios 1.929 and 1.585. With only a per-frame constant removed, column-bin
+widths 1/64/256/1024/2048 gave ratios 1.013/1.162/1.495/2.384/3.176 before the
+scan and 1.024/1.063/1.136/1.353/1.549 after it. Small pixel-level discrepancies
+therefore do not establish correct uncertainty after averaging many columns.
+
+Commands: `i13_vertical_flat_variance.py` and `i13_column_noise.py` under
+`shared/agent05-detector/`, with the CPU environment above. They took 9.15 and
+6.85 s, with peak host RSS 318 and 409 MiB and no GPU allocation. These
+conditional calibration-noise diagnostics do not identify the physical source
+of the dependence; the simulator has no correlated-noise component.
+
 ## Weighted alignment background profiling
 
 Measured 2026-10-27 on `cf827cf8`, CPU, with
