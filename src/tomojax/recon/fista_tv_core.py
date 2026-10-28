@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tomojax.core.geometry import Detector, Grid
-    from tomojax.core.host_volume import SlabStore
     from tomojax.recon.types import Regulariser
 
 
@@ -73,7 +72,7 @@ class FistaCoreConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class FistaCoreResult[Array: jnp.ndarray | np.ndarray | SlabStore]:
+class FistaCoreResult[Array: jnp.ndarray | np.ndarray]:
     """Array-level FISTA result and diagnostics."""
 
     x: Array

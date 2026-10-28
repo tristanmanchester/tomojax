@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from .geometry.base import Detector, Grid, grid_volume_origin
-from .validation import validate_detector, validate_grid, validate_projection_stack
+from .validation import validate_detector, validate_grid
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable
 
     import jax.numpy as jnp
 
@@ -179,26 +179,3 @@ def upsample_volume[Array: jnp.ndarray | np.ndarray](
     v = jimage.resize(vol, out_shape, method="linear", antialias=False)
     converted = v.astype(vol.dtype)
     return cast("Array", np.asarray(converted) if isinstance(vol, np.ndarray) else converted)
-
-
-def create_resolution_pyramid(
-    grid: Grid, detector: Detector, projections: jnp.ndarray, factors: Iterable[int]
-) -> list[dict[str, Any]]:
-    """Create coarser grid/detector/projection levels for each scale factor."""
-    levels: list[dict[str, Any]] = []
-    for f in factors:
-        factor = validate_scale_factor(f)
-        levels.append(
-            {
-                "factor": factor,
-                "grid": scale_grid(grid, factor),
-                "detector": scale_detector(detector, factor),
-                "projections": bin_projections(projections, factor),
-            }
-        )
-        validate_projection_stack(
-            levels[-1]["projections"],
-            levels[-1]["detector"],
-            context=f"create_resolution_pyramid factor {factor} projections",
-        )
-    return levels

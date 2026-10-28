@@ -217,56 +217,6 @@ def test_host_volume_storage_fills_checks_and_unlinks_work_files(tmp_path):
         host_volume.check_rows(data, "test")
 
 
-def test_slab_store_keeps_every_word_and_shares_blocks():
-    host_volume = import_module("tomojax.core.host_volume")
-    words = np.random.default_rng(3).integers(0, 2**32, (5, 3, 11), dtype=np.uint32)
-    words[0, 0, :3] = [0x7FC00001, 0x80000000, 0]  # a NaN payload, -0, +0
-    values = words.view(np.float32)
-    store = host_volume.SlabStore(values.shape, depth=4)
-    store[:, :, :] = values
-    snapshot = store.copy()
-    store.write(2, 7, np.ones((5, 3, 5), np.float32))
-    np.testing.assert_array_equal(snapshot.materialize().view(np.uint32), words)
-    coded = host_volume.SlabStore(values.shape, depth=3, reference=snapshot)
-    assert coded.encoded_nbytes == 0 and coded.nbytes == values.nbytes
-    coded[:, :, 4:9] = store[:, :, 4:9]
-    expected = values.copy()
-    expected[:, :, 4:9] = store[:, :, 4:9]
-    np.testing.assert_array_equal(coded.materialize().view(np.uint32), expected.view(np.uint32))
-    dense = coded.copy().materialize(consume=True)  # the copy is emptied, coded is kept
-    np.testing.assert_array_equal(dense, coded.materialize())
-
-    class Halves:  # a reference computed plane by plane
-        shape = values.shape
-
-        def read(self, z0, z1):
-            return np.asfortranarray(values[:, :, z0:z1] * np.float32(0.5))
-
-    computed = host_volume.SlabStore(values.shape, depth=4, reference=Halves())
-    computed[:, :, :] = values
-    np.testing.assert_array_equal(computed.materialize().view(np.uint32), words)
-    with pytest.raises(TypeError, match="materialize"):
-        np.asarray(store)
-
-
-def test_slab_store_spills_blocks_to_an_unnamed_file(tmp_path):
-    host_volume = import_module("tomojax.core.host_volume")
-    values = np.random.default_rng(4).standard_normal((6, 4, 10)).astype(np.float32)
-    store = host_volume.SlabStore(values.shape, depth=3)
-    store[:, :, :] = values
-    before = store.copy()
-    store.spill(tmp_path)
-    assert store.resident_nbytes == 0 and store.encoded_nbytes == before.resident_nbytes > 0
-    assert list(tmp_path.iterdir()) == []  # the file has no name
-    after = store.copy()
-    store[:, :, 2:4] = np.zeros((6, 4, 2), np.float32)  # back in memory
-    for kept in (before, after):
-        np.testing.assert_array_equal(kept.materialize(), values)
-    expected = values.copy()
-    expected[:, :, 2:4] = 0
-    np.testing.assert_array_equal(store.materialize(), expected)
-
-
 def test_row_reader_reads_each_row_once_per_sweep(host):
     host(2)
     geometry = _geometry("cone")

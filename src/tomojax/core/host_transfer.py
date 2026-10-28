@@ -106,39 +106,6 @@ def upload_host(array: np.ndarray, device: Device) -> jax.Array:
         return result
 
 
-def upload_host_slabs(
-    shape: tuple[int, int, int], slabs: Iterator[tuple[int, np.ndarray]], device: Device
-) -> jax.Array:
-    """Assemble a private FP32 device volume from disjoint C-order z slabs.
-
-    Each pair gives the starting plane and its values. The slabs cover ``shape``
-    in order. Only the current host slab is retained, and its copy completes
-    before requesting the next one.
-    """
-    if device.platform != "gpu":
-        output = np.empty(shape, np.float32)
-        for first, values in slabs:
-            output[:, :, first : first + values.shape[2]] = values
-            del values
-        return jax.device_put(output, device)
-    import cupy as cp
-
-    with cp.cuda.Device(device.local_hardware_id):
-        result = allocate_device(shape, dtype=np.dtype(np.float32), device=device)
-        target = cp.from_dlpack(result)
-        stream = cp.cuda.get_current_stream()
-        for first, values in slabs:
-            width = values.shape[2] * 4
-            cp.cuda.runtime.memcpy2DAsync(
-                target.data.ptr + first * 4, shape[2] * 4,
-                values.ctypes.data, width, width, shape[0] * shape[1],
-                cp.cuda.runtime.memcpyHostToDevice, stream.ptr,
-            )  # fmt: skip
-            stream.synchronize()
-            del values
-    return result
-
-
 def copy_to_host(
     array: jax.Array,
     target: np.ndarray,
