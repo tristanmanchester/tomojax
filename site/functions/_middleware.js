@@ -2,8 +2,8 @@
 // Markdown (the same text as /llms.mdx/docs/<page>/content.md) instead of HTML.
 export async function onRequest(context) {
   const url = new URL(context.request.url);
-  // The production pages.dev address moves to the custom domain; previews stay.
-  if (url.hostname === "tomojax.pages.dev") {
+  // The production pages.dev address and www move to the custom domain; previews stay.
+  if (url.hostname === "tomojax.pages.dev" || url.hostname === "www.tomojax.dev") {
     url.hostname = "tomojax.dev";
     return Response.redirect(url.toString(), 301);
   }
