@@ -27,7 +27,7 @@ class _Pair:
 
     def __init__(self, x: SlabStore) -> None:
         self.x, self.shape = x, x.shape
-        self._difference = SlabStore(x.shape, depth=x.depth, storage=x.storage)
+        self._difference = SlabStore(x.shape, depth=x.depth)
 
     def __getitem__(self, key: tuple[slice, slice, slice | int]) -> np.ndarray:
         z = self.x[key]
@@ -192,12 +192,7 @@ def fista_tv_core_host(
         else np.maximum(np.asarray(view_weights, np.float32), 0)
     )
     x = (
-        SlabStore(
-            operator.shape,
-            depth=initial.depth,
-            reference=initial.reference,
-            storage=initial.storage,
-        )
+        SlabStore(operator.shape, depth=initial.depth, reference=initial.reference)
         if isinstance(initial, SlabStore)
         else np.empty(operator.shape, np.float32, order="F")
     )

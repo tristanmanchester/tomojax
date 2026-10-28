@@ -165,14 +165,6 @@ class SlabPayload(Protocol):
         ...
 
 
-class PayloadStorage(Protocol):
-    """Where a :class:`SlabStore` puts the encoded bytes of the blocks it writes."""
-
-    def put(self, data: np.ndarray) -> SlabPayload:
-        """An immutable payload holding a copy of the contiguous ``uint8`` ``data``."""
-        ...
-
-
 type _Block = tuple[SlabPayload, bool]  # payload and whether it is compressed
 
 
@@ -201,8 +193,8 @@ class SlabStore:
     them, so a copy is a cheap snapshot. Reads return new Fortran-ordered arrays
     and writes copy their input. ``store[:, :, z0:z1]`` reads and assigns whole
     planes; nothing converts the whole volume implicitly, and :meth:`materialize`
-    does so on request. ``storage`` holds the encoded bytes of written blocks
-    (private anonymous memory by default).
+    does so on request. Encoded blocks are held in private anonymous memory
+    until :meth:`spill` moves them to a file.
     """
 
     def __init__(
@@ -211,13 +203,11 @@ class SlabStore:
         *,
         depth: int,
         reference: SlabSource | None = None,
-        storage: PayloadStorage | None = None,
     ) -> None:
         if reference is not None and reference.shape != tuple(shape):
             raise ValueError(f"reference shape {reference.shape} differs from {tuple(shape)}")
         self.shape = (int(shape[0]), int(shape[1]), int(shape[2]))
         self.depth, self.reference = depth, reference
-        self.storage: PayloadStorage = storage or MEMORY_STORAGE
         self._blocks: list[_Block | None] = [None] * -(-shape[2] // depth)
 
     dtype = np.dtype(np.float32)
@@ -256,9 +246,7 @@ class SlabStore:
 
     def copy(self) -> SlabStore:
         """A snapshot sharing the stored blocks; later writes to either leave the other."""
-        result = SlabStore(
-            self.shape, depth=self.depth, reference=self.reference, storage=self.storage
-        )
+        result = SlabStore(self.shape, depth=self.depth, reference=self.reference)
         result._blocks = self._blocks.copy()
         return result
 
@@ -358,7 +346,7 @@ class SlabStore:
         )  # fmt: skip
         compressed = len(packed) < words.nbytes
         data = np.frombuffer(packed, np.uint8) if compressed else words.view(np.uint8)
-        return self.storage.put(data), compressed
+        return _Memory(data), compressed
 
 
 class _Memory:
@@ -370,15 +358,6 @@ class _Memory:
 
     def read(self) -> np.ndarray:
         return self.data
-
-
-class _MemoryStorage:
-    def put(self, data: np.ndarray) -> SlabPayload:
-        return _Memory(data)
-
-
-MEMORY_STORAGE: PayloadStorage = _MemoryStorage()
-"""The default storage: each payload in its own private anonymous mapping, read without a copy."""
 
 
 class _SpillFile:

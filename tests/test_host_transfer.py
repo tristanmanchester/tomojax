@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.core.host_transfer import copy_to_host, upload_host, upload_host_views
+from tomojax.core.host_transfer import copy_to_host, upload_host
 
 
 @pytest.mark.parametrize(
@@ -72,20 +72,6 @@ def test_host_transfers_copy_pitched_windows_without_touching_padding(axis):
     expected = np.full_like(base, -19)
     expected[window] = base[window] * np.float32(1.000001)
     np.testing.assert_array_equal(target, expected)
-
-
-@pytest.mark.parametrize("layout", ["C", "F", "permuted", "strided"])
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_indexed_host_upload_preserves_view_order_and_dtype_conversion(layout, dtype):
-    source = np.arange(9 * 11 * 7, dtype=dtype).reshape(9, 11, 7) / 100
-    if layout in {"C", "F"}:
-        source = source.copy(order=layout)
-    else:
-        source = source.transpose(1, 0, 2)[1::2] if layout == "permuted" else source[:, :, ::2]
-    source.setflags(write=False)
-    indices = np.array([len(source) - 1, 0, 2, 0])
-    value = upload_host_views(source, indices, jax.devices()[0])
-    np.testing.assert_array_equal(np.asarray(value), source[indices].astype(np.float32))
 
 
 @pytest.mark.parametrize("shape", [(), (0, 3), (7, 5, 3), (2, 3, 4, 5)])

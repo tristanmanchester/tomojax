@@ -283,36 +283,6 @@ def regulariser_value_arrays(volume: jnp.ndarray, cfg: FistaCoreConfig) -> jnp.n
     return isotropic_tv_value(volume)
 
 
-def fista_objective_arrays(
-    *,
-    T_all: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    volume: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-    projections: jnp.ndarray,
-    cfg: FistaCoreConfig,
-    view_weights: jnp.ndarray | None = None,
-) -> jnp.ndarray:
-    """Return the differentiable FISTA objective value for a candidate volume."""
-    data = projection_loss_arrays(
-        T_all=T_all,
-        grid=grid,
-        detector=detector,
-        volume=volume,
-        det_grid=det_grid,
-        projections=projections,
-        cfg=cfg,
-        view_weights=view_weights,
-    )
-    if cfg.tv_weight == 0.0:
-        return data
-    return data + jnp.asarray(cfg.tv_weight, dtype=jnp.float32) * regulariser_value_arrays(
-        volume,
-        cfg,
-    )
-
-
 def _requested_sampled_step(grid: Grid, cfg: FistaCoreConfig) -> float | None:
     # Backend fallback must not change the requested discretization.
     return grid.vy * cfg.cuda_step_size_scale if cfg.forward_projector == "cuda" else None

@@ -18,7 +18,7 @@ from tomojax.recon import FBPConfig, FDKConfig, FistaConfig, api, fbp, fista_tv
 from tomojax.recon._fbp_detector_grid import _run_fbp_generic_with_oom_fallback
 from tomojax.recon.api import clear_filter_caches, default_fbp_scale
 from tomojax.recon.fdk import fdk, view_weights
-from tomojax.recon.filters import get_filter_np
+from tomojax.recon.filters import get_fbp_filter_np
 
 
 def _tiny_geometry() -> tuple[Grid, Detector, ParallelGeometry]:
@@ -40,12 +40,12 @@ def test_default_fbp_scale_uses_positive_view_count() -> None:
 
 def test_clear_filter_caches_rebuilds_read_only_filters() -> None:
     clear_filter_caches()
-    first = get_filter_np("ramp", 4, 1.0)
-    second = get_filter_np("ramp", 4, 1.0)
+    first = get_fbp_filter_np("ramp", 4, 1.0, "float32")
+    second = get_fbp_filter_np("ramp", 4, 1.0, "float32")
     assert first is second
 
     clear_filter_caches()
-    rebuilt = get_filter_np("ramp", 4, 1.0)
+    rebuilt = get_fbp_filter_np("ramp", 4, 1.0, "float32")
 
     assert rebuilt is not first
     assert not rebuilt.flags.writeable

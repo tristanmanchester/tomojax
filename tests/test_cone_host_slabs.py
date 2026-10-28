@@ -267,33 +267,6 @@ def test_slab_store_spills_blocks_to_an_unnamed_file(tmp_path):
     np.testing.assert_array_equal(store.materialize(), expected)
 
 
-def test_slab_store_puts_its_payloads_in_the_given_storage(tmp_path):
-    host_volume = import_module("tomojax.core.host_volume")
-
-    class Elsewhere:  # held outside host memory, so never spilled
-        nbytes, resident_nbytes = 0, 0
-
-    class Storage:
-        def __init__(self):
-            self.payloads = []
-
-        def put(self, data):
-            payload = Elsewhere()
-            payload.nbytes, payload.read = data.nbytes, data.copy
-            self.payloads.append(payload)
-            return payload
-
-    values = np.random.default_rng(5).standard_normal((4, 3, 7)).astype(np.float32)
-    storage = Storage()
-    store = host_volume.SlabStore(values.shape, depth=3, storage=storage)
-    store[:, :, :] = values
-    copy = store.copy()
-    copy.spill(tmp_path)
-    assert len(storage.payloads) == 3 and copy.storage is storage
-    assert copy.resident_nbytes == 0 and copy.encoded_nbytes == store.encoded_nbytes > 0
-    np.testing.assert_array_equal(copy.materialize(), values)
-
-
 def test_row_reader_reads_each_row_once_per_sweep(host):
     host(2)
     geometry = _geometry("cone")

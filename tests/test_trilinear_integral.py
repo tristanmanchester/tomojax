@@ -12,7 +12,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from tomojax.core.projector import get_detector_grid_device
-from tomojax.core.trilinear import exact_adjoint, exact_forward, exact_pose_normal_equations
+from tomojax.core.trilinear import exact_adjoint, exact_forward
 from tomojax.geometry import Detector, Grid
 
 
@@ -94,49 +94,6 @@ def test_exact_pose_derivatives_match_independent_rigid_perturbations(problem):
         oracle(volume, plus[None], grid, detector) - oracle(volume, minus[None], grid, detector)
     ) / (2 * step)
     np.testing.assert_allclose(actual, expected, rtol=3e-3, atol=3e-3)
-
-
-@pytest.mark.numerical
-@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
-def test_exact_weighted_normals_match_dense_pose_jacobian(problem, backend):
-    if backend == "cuda" and jax.default_backend() != "gpu":
-        pytest.skip("CUDA required")
-    grid, detector, poses, volume, _, _ = problem
-    directions = np.zeros((3, 5, 4, 4), np.float32)
-    for i, axis in enumerate(np.eye(3)):
-        skew = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
-        directions[:, i, :3, :3] = np.asarray(poses[:, :3, :3]) @ skew
-    directions[:, 3, 0, 3] = 1
-    directions[:, 4, 2, 3] = 1
-    directions = jnp.asarray(directions)
-    prediction = exact_forward(poses, grid, detector, volume)
-    rng = np.random.default_rng(19)
-    targets = prediction + jnp.asarray(rng.normal(0, 0.1, prediction.shape), jnp.float32)
-    weights = jnp.asarray(rng.uniform(0.2, 1.2, prediction.shape), jnp.float32).at[:, 0, :].set(0)
-    result = jax.jit(
-        lambda t, x, y, w: exact_pose_normal_equations(
-            t, directions, grid, detector, x, y, w, backend=backend
-        )
-    )(poses, volume, targets, weights)
-    losses, gradients, hessians, residual = result
-    for i in range(3):
-        jacobian = jax.jacfwd(
-            lambda params, i=i: exact_forward(
-                poses[i : i + 1]
-                + jnp.einsum(
-                    "k,kab->ab", params, directions[i], precision=jax.lax.Precision.HIGHEST
-                )[None],
-                grid,
-                detector,
-                volume,
-            ).ravel()
-        )(jnp.zeros(5))
-        matrix = np.asarray(weights[i]).ravel()[:, None] * np.asarray(jacobian)
-        r = np.asarray(weights[i] * (prediction[i] - targets[i])).ravel()
-        np.testing.assert_allclose(gradients[i], matrix.T @ r, rtol=3e-4, atol=8e-6)
-        np.testing.assert_allclose(hessians[i], matrix.T @ matrix, rtol=3e-4, atol=2e-5)
-        np.testing.assert_allclose(losses[i], 0.5 * np.vdot(r, r), rtol=3e-5, atol=2e-6)
-    np.testing.assert_allclose(residual, weights**2 * (prediction - targets), rtol=2e-4, atol=3e-6)
 
 
 def test_exact_integrator_rejects_complex_data_and_invalid_backend(problem):
@@ -259,8 +216,7 @@ def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, 
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("axis", [0, 2])
-@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
-def test_cardinal_right_cell_derivative(axis, backend):
+def test_cardinal_right_cell_derivative(axis):
     g = Grid(3, 3, 3, 0.5, 1.0, 2.0)
     d = Detector(3, 3, 0.5, 2.0)
     x = jnp.arange(27, dtype=jnp.float32).reshape(3, 3, 3) / 10
@@ -270,35 +226,23 @@ def test_cardinal_right_cell_derivative(axis, backend):
     integrals = np.pad(np.asarray(x).sum(axis=1) * g.vy, ((0, 1), (0, 1)))
     step = np.diff(integrals, axis=axis // 2)
     expected = -(step[:, :3] / g.vx if axis == 0 else step[:3, :] / g.vz).T[None]
-    y, jac = jax.jvp(lambda p: exact_forward(p, g, d, x), (t,), (dt,))
+    _, jac = jax.jvp(lambda p: exact_forward(p, g, d, x), (t,), (dt,))
     np.testing.assert_allclose(jac, expected, rtol=2e-6, atol=2e-6)
-    directions = jnp.zeros((1, 5, 4, 4), jnp.float32).at[:, 0].set(dt)
-    _, grad, hess, _ = exact_pose_normal_equations(
-        t, directions, g, d, x, jnp.zeros_like(y), jnp.ones_like(y), backend=backend
-    )
-    np.testing.assert_allclose(grad[0, 0], jnp.sum(y * expected), rtol=2e-6, atol=2e-6)
-    np.testing.assert_allclose(hess[0, 0, 0], jnp.sum(expected**2), rtol=2e-6, atol=2e-6)
 
 
 @pytest.mark.numerical
 def test_exact_fp32_contract_survives_global_x64(problem):
     grid, detector, poses, volume, *_ = problem
-    directions = jnp.zeros((3, 5, 4, 4), jnp.float32).at[:, 0, 0, 3].set(1).at[:, 1, 2, 3].set(1)
     rng = np.random.default_rng(731)
     targets = jnp.asarray(rng.normal(size=(3, detector.nv, detector.nu)), jnp.float32)
-    weights = jnp.asarray(rng.uniform(0.2, 1.2, targets.shape), jnp.float32)
 
-    def evaluate(t, x, y, w, dt):
-        return (
-            exact_forward(t, grid, detector, x),
-            exact_adjoint(t, grid, detector, y),
-            *exact_pose_normal_equations(t, dt, grid, detector, x, y, w),
-        )
+    def evaluate(t, x, y):
+        return exact_forward(t, grid, detector, x), exact_adjoint(t, grid, detector, y)
 
     with jax.enable_x64(False):
-        expected = jax.jit(evaluate)(poses, volume, targets, weights, directions)
+        expected = jax.jit(evaluate)(poses, volume, targets)
     with jax.enable_x64():
-        arrays = (poses, volume, targets, weights, directions)
+        arrays = (poses, volume, targets)
         actual = jax.jit(evaluate)(*(a.astype(jnp.float64) for a in arrays))
         for value, reference in zip(actual, expected, strict=True):
             assert value.dtype == jnp.float32

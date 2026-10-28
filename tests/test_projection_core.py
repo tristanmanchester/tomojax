@@ -26,7 +26,7 @@ from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     _fixed_geometry_is_available,
     effective_fista_core_backend,
-    fista_objective_arrays,
+    projection_loss_arrays,
 )
 
 
@@ -292,7 +292,7 @@ def test_sampled_objective_uses_the_requested_step_when_geometry_is_traced(geome
                 )
             )(dynamic_poses)
             return 0.5 * jnp.sum((pred - data) ** 2 * weights[:, None, None])
-        return fista_objective_arrays(
+        return projection_loss_arrays(
             T_all=dynamic_poses,
             grid=grid,
             detector=detector,

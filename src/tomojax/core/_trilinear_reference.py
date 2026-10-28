@@ -18,7 +18,7 @@ from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.projector import get_detector_grid_device
 
 
-def _integrate_cell(volume, base, direction, current, length, derivatives):
+def _integrate_cell(volume, base, direction, current, length):
     """Integrate both Gauss nodes using one load per shared cell corner."""
     times = [current + f * length for f in (0.5 - math.sqrt(3) / 6, 0.5 + math.sqrt(3) / 6)]
     midpoint = base + direction * (current + 0.5 * length)
@@ -29,8 +29,6 @@ def _integrate_cell(volume, base, direction, current, length, derivatives):
     # halve that derivative at its endpoints.
     fractions = [jnp.where(f < 0, 0, jnp.where(f > 1, 1, f)) for f in fractions]
     value = jnp.zeros_like(current)
-    gb = jnp.zeros_like(base)
-    gd = jnp.zeros_like(base)
     for dx in range(2):
         for dy in range(2):
             for dz in range(2):
@@ -57,14 +55,7 @@ def _integrate_cell(volume, base, direction, current, length, derivatives):
                     * (jnp.prod(weights[0], axis=0) + jnp.prod(weights[1], axis=0))
                     * sample
                 )
-                if derivatives:
-                    signs = 2 * offsets - 1
-                    dw = [
-                        signs * jnp.stack([w[1] * w[2], w[0] * w[2], w[0] * w[1]]) for w in weights
-                    ]
-                    gb += 0.5 * length * (dw[0] + dw[1]) * sample
-                    gd += 0.5 * length * (dw[0] * times[0] + dw[1] * times[1]) * sample
-    return value, gb, gd
+    return value
 
 
 def _ray_coordinates(pose, grid, det_grid):
@@ -81,9 +72,9 @@ def _ray_coordinates(pose, grid, det_grid):
     return base, direction
 
 
-@partial(jax.jit, static_argnames=("grid", "detector", "derivatives"))
-def integrate(pose, grid, detector, volume, det_grid, *, derivatives=False):
-    """Return one projection and optionally its ray-base/direction derivatives."""
+@partial(jax.jit, static_argnames=("grid", "detector"))
+def integrate(pose, grid, detector, volume, det_grid):
+    """Return one projection."""
     base, direction = _ray_coordinates(pose, grid, det_grid)
     moving = jnp.abs(direction) > 1e-12
     safe_direction = jnp.where(moving, direction, 1)
@@ -101,15 +92,12 @@ def integrate(pose, grid, detector, volume, det_grid, *, derivatives=False):
     period = jnp.where(moving, 1 / jnp.abs(safe_direction), jnp.inf)
 
     def advance(carry):
-        current, crossing, accumulated, grad_base, grad_direction = carry
+        current, crossing, accumulated = carry
         end = jnp.minimum(t_exit, jnp.min(crossing, axis=0))
         length = jnp.maximum(end - current, 0)
-        density, gb, gd = _integrate_cell(volume, base, direction, current, length, derivatives)
-        accumulated += density
-        grad_base += gb
-        grad_direction += gd
+        accumulated += _integrate_cell(volume, base, direction, current, length)
         crossing = jnp.where(crossing <= end, crossing + period, crossing)
-        return end, crossing, accumulated, grad_base, grad_direction
+        return end, crossing, accumulated
 
     def chunk(carry, length):
         # Test once per group, not per interval: on CUDA, tiny conditional
@@ -122,7 +110,7 @@ def integrate(pose, grid, detector, volume, det_grid, *, derivatives=False):
             carry,
         )
 
-    initial = (entry, crossing, jnp.zeros_like(entry), jnp.zeros_like(base), jnp.zeros_like(base))
+    initial = (entry, crossing, jnp.zeros_like(entry))
     groups, remainder = divmod(sum(volume.shape) + 9, 16)
     state, _ = jax.lax.scan(
         jax.checkpoint(lambda carry, _: (chunk(carry, 16), None)),
@@ -132,30 +120,7 @@ def integrate(pose, grid, detector, volume, det_grid, *, derivatives=False):
     )
     if remainder:
         state = jax.checkpoint(lambda carry: chunk(carry, remainder))(state)
-    _, _, result, grad_base, grad_direction = state
-    image = result.reshape((detector.nv, detector.nu))
-    return (image, grad_base, grad_direction) if derivatives else image
-
-
-def project_pose_jacobian(pose, directions, grid, detector, volume, *, det_grid=None):
-    """Integrate spatial derivatives once, then apply each pose tangent.
-
-    The zero-extended trilinear field is continuous and vanishes at the support
-    boundary. Thus moving cell/support endpoints cancel from the first
-    derivative, leaving the integral of the field's spatial gradient.
-    """
-    if det_grid is None:
-        det_grid = get_detector_grid_device(detector)
-    image, grad_base, grad_direction = integrate(
-        pose, grid, detector, volume, det_grid, derivatives=True
-    )
-    dbase, ddirection = jax.vmap(
-        lambda tangent: jax.jvp(lambda t: _ray_coordinates(t, grid, det_grid), (pose,), (tangent,))[
-            1
-        ]
-    )(directions)
-    jacobian = jnp.sum(dbase * grad_base + ddirection * grad_direction, axis=1)
-    return image, jacobian.reshape((directions.shape[0], detector.nv, detector.nu))
+    return state[2].reshape((detector.nv, detector.nu))
 
 
 def forward_project_view_exact_T(pose, grid, detector, volume, *, det_grid=None):
