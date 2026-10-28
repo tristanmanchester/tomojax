@@ -35,7 +35,8 @@ average of the meshes, and FISTA-TV 0.125, in 15 s.
 On a 400-view scan of the movement with its axis 5.3 px off centre and every
 view tilted by up to 0.25° and shifted by up to 2.4 px, `mode="cor-then-pose"`
 recovers the rotations to 0.06° RMS or better and the shifts to 0.07 px
-RMS in 300 s, and the reconstruction error falls from 0.928 to 0.235.
+RMS in 300 s, and the reconstruction error falls from 0.928 to 0.235. The same
+reconstruction from the true poses reaches 0.224.
 Poses and volume are compared with the truth after removing the rigid motion
 the data cannot determine. [Reproduce it](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#align-a-scan-with-per-view-motion).
 

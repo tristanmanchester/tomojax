@@ -17,7 +17,7 @@
   "true_axis_offset_px": 5.3,
   "motion": "wobble and jitter, up to 0.25 deg per rotation, 2.4 px dx, 1.5 px dz",
   "mode": "cor-then-pose",
-  "align_seconds": 300.04429467099544,
+  "align_seconds": 306.03550272100256,
   "reconstruction": {
     "method": "fista",
     "iterations": 100,
@@ -27,6 +27,7 @@
   },
   "relative_l2_nominal": 0.9278868436813354,
   "relative_l2_aligned": 0.23517754673957825,
+  "relative_l2_true_poses": 0.22368745505809784,
   "least_motion_gauge": {
     "rotation_deg": [
       -0.0013424847296410677,
@@ -60,5 +61,5 @@
     "numpy": "2.4.5",
     "matplotlib": "3.11.2"
   },
-  "total_seconds": 360.3211354739906
+  "total_seconds": 390.0379518580012
 }

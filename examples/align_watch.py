@@ -23,6 +23,7 @@ record beside it.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from importlib.metadata import version
 import json
 from pathlib import Path
@@ -108,6 +109,12 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
     difference = found - true_poses[:, :5]
     true_centre = gauge.detector_offset if gauge is not None else -float(np.mean(true_table[:, 3]))
     found_centre = float(result.scan.geometry.detector.center[0])
+    # The same reconstruction from the true poses bounds what any alignment can reach.
+    true_detector = dataclasses.replace(detector, center=(true_centre, MIDDLE))
+    true_scan = tj.Scan(scan.projections, dataclasses.replace(geometry, detector=true_detector))
+    ideal = tj.reconstruct(
+        true_scan.with_poses(np.asarray(true_poses)[:, :6]), "fista", **RECONSTRUCTION
+    )
 
     def error(volume: np.ndarray, reference: np.ndarray) -> float:
         return float(np.linalg.norm(volume - reference) / np.linalg.norm(reference))
@@ -139,6 +146,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
         "reconstruction": {"method": "fista", **RECONSTRUCTION, "warm_start": "fbp"},
         "relative_l2_nominal": error(before, truth),
         "relative_l2_aligned": error(after, moved),
+        "relative_l2_true_poses": error(np.asarray(ideal.volume), moved),
         "least_motion_gauge": gauge.to_dict() if gauge is not None else None,
         "centre_px": {"found": found_centre / voxel, "true": true_centre / voxel},
         "rotation_rmse_deg": np.rad2deg(np.sqrt(np.mean(difference[:, :3] ** 2, 0))).tolist(),
@@ -153,7 +161,7 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
     """Nominal, aligned and true slices, close-ups, and the recovered motion."""
     panel, gap, margin, top = 560, 30, 30, 158
     strip = 250
-    card = Card(3 * panel + 2 * gap + 2 * margin, top + 2 * panel + strip + 168)
+    card = Card(3 * panel + 2 * gap + 2 * margin, top + 2 * panel + strip + 202)
     card.text(
         margin,
         54,
@@ -234,6 +242,15 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
         y + strip + 50,
         "Poses, centre and truth are compared in the least-motion frame tj.align reports "
         f"(centre {found:.2f} px found, {true:.2f} px true in that frame).",
+        21,
+        MUTED,
+    )
+    card.text(
+        margin + 60,
+        y + strip + 84,
+        "The same FISTA-TV reconstruction from the true poses reaches error "
+        f"{metrics['relative_l2_true_poses']:.3f}, against {metrics['relative_l2_aligned']:.3f} "
+        "from the recovered ones.",
         21,
         MUTED,
     )
