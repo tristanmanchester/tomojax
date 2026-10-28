@@ -294,13 +294,17 @@ class _HostCGLS:
             bound = xp.maximum(xp.abs(current), _TINY)
             bound *= np.float32(_EPS)
             roundoff &= not bool(xp.any(xp.abs(step) > bound))
+            del step, bound
             applied = self.W.view(z0, z1)
             applied *= alpha
             residual = self.G.view(z0, z1)
             residual -= applied
+            del applied
             gamma, size = gamma + self.total(residual), size + self.total(current)
             self.X.put(z0, z1, current)
             self.G.put(z0, z1, residual)
+            # Do not retain completed slabs across the next upload.
+            del current, residual
         return gamma, roundoff, size
 
     def run(self) -> dict[str, object]:
