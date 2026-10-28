@@ -162,6 +162,12 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
     np.testing.assert_allclose(actual.relative_residual, expected.relative_residual, rtol=3e-4)
 
 
+def _force_uncached_pose_columns(monkeypatch):
+    """Stream pose columns on both the device and host paths."""
+    monkeypatch.setattr(_coupled_objective, "_POSE_CACHE_BYTES", 0)
+    monkeypatch.setattr(_coupled_host, "host_column_capacity", lambda spec, views: 0)
+
+
 @pytest.mark.numerical
 @pytest.mark.usefixtures("views_per_batch")
 @pytest.mark.parametrize("scan_variant", [0, 1])
@@ -197,7 +203,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         return np.asarray(projected, np.float64)
 
     if stream:
-        monkeypatch.setattr(_coupled_objective, "_POSE_CACHE_BYTES", 0)
+        _force_uncached_pose_columns(monkeypatch)
     grid = Grid(2, 3, 2, 0.7, 1.1, 1.4, vol_origin=(-0.32, -0.71, -0.53))
     det = Detector(4, 3, 0.65, 0.91, (0.23, -0.17))
     # Identical shapes/configuration must accept new scan arrays without
@@ -657,7 +663,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     from tomojax.geometry import stack_view_poses
 
     if stream:
-        monkeypatch.setattr(_coupled_objective, "_POSE_CACHE_BYTES", 0)
+        _force_uncached_pose_columns(monkeypatch)
     rng = np.random.default_rng(2)
     grid, detector = tj.Grid(3, 4, 2, 1, 1, 1), tj.Detector(7, 3, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, [12, 57, 103])
@@ -722,6 +728,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         ctx,
         refinement=_matching_model.JointRefinement(native_width=2 * detector.nu),
     )
+    assert objective.pose_columns_cached != stream
     result = objective.update(jnp.asarray(poses), jnp.asarray(volume))
     design = np.column_stack(
         [
