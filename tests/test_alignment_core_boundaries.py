@@ -149,11 +149,11 @@ def test_loss_specs_round_trip_params_and_scheduled_levels() -> None:
     assert loss_spec_name(huber) == "huber"
     assert loss_spec_params(huber) == {"delta": 2.5}
 
-    schedule = parse_loss_schedule("4:phasecorr,2:ssim,1:l2_otsu", default=L2LossSpec())
+    schedule = parse_loss_schedule("4:huber,2:l2,1:l2_otsu", default=L2LossSpec())
     validate_loss_schedule_levels(schedule, factors=(1, 2, 4))
 
-    assert loss_spec_name(resolve_loss_for_level(schedule, 4)) == "phasecorr"
-    assert loss_spec_name(resolve_loss_for_level(schedule, 2)) == "ssim"
+    assert loss_spec_name(resolve_loss_for_level(schedule, 4)) == "huber"
+    assert loss_spec_name(resolve_loss_for_level(schedule, 2)) == "l2"
     assert isinstance(resolve_loss_for_level(schedule, 1), L2OtsuLossSpec)
     assert isinstance(resolve_loss_for_level(schedule, 8), L2LossSpec)
 
@@ -169,7 +169,7 @@ def test_stage_runtime_enriches_resume_stats_with_global_stage_context() -> None
         level_factor=2,
         global_before_level=5,
         global_elapsed_offset=10.0,
-        active_loss_name="ssim",
+        active_loss_name="l2",
         schedule_name=schedule.name,
         stats_before_level=[],
         loss_before_level=[],
@@ -330,9 +330,7 @@ def test_stage_runtime_checkpoint_preserves_schedule_resume_fields() -> None:
     assert checkpoint.geometry_calibration_state is not None
 
 
-def test_information_losses_share_fields_but_keep_their_variant():
-    params = {"bins": 16.0, "bw_x": 0.2, "bw_y": 0.3}
-    for kind, extra in (("mi", {}), ("nmi", {"nmi": 1.0}), ("renyi_mi", {"alpha": 1.5})):
-        spec = parse_loss_spec(kind, params)
-        assert loss_spec_name(spec) == kind
-        assert loss_spec_params(spec) == params | extra
+@pytest.mark.parametrize("kind", ["pwls", "ssim", "phasecorr", "mi", "cauchy"])
+def test_removed_losses_fail_with_supported_alternatives(kind):
+    with pytest.raises(ValueError, match="removed.*l2.*l2_otsu.*huber"):
+        parse_loss_spec(kind)

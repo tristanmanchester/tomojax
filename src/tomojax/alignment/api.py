@@ -18,7 +18,12 @@ from tomojax.alignment._geometry.parametrizations import (
 )
 from tomojax.alignment._model.schedules import AlignmentSchedule, AlignmentStage
 from tomojax.alignment._modes import MODES, AlignmentMode, AlignmentPlan, alignment_plan
-from tomojax.alignment._objectives.loss_specs import AlignmentLossSpec, L2LossSpec, L2OtsuLossSpec
+from tomojax.alignment._objectives.loss_specs import (
+    AlignmentLossSpec,
+    HuberLossSpec,
+    L2LossSpec,
+    L2OtsuLossSpec,
+)
 from tomojax.alignment._prealign import implied_detector_offset
 from tomojax.alignment._profiles import QualityTier
 from tomojax.alignment._projection_matching import ProjectionMatchingConfig, match_projections
@@ -48,6 +53,7 @@ __all__ = [
     "AlignmentStage",
     "CenterEstimate",
     "CenterPair",
+    "HuberLossSpec",
     "L2LossSpec",
     "L2OtsuLossSpec",
     "OuterStat",

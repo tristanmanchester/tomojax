@@ -216,6 +216,16 @@ def test_center_report_keeps_opposing_constraints_and_exposes_motion():
     assert all(abs(sum(w for _, w in p.first) - 1) < 1e-10 for p in report.pairs)
     assert all(abs(sum(w for _, w in p.second) - 1) < 1e-10 for p in report.pairs)
     assert len(report.to_dict()["pairs"]) == 16
+    diagnostics = report.to_dict()
+    assert diagnostics["physical_center_status"] == "unresolved_without_motion_assumption"
+    assert diagnostics["center_motion_gauge"] == "median_pair_mean_shift_zero"
+    constraints = diagnostics["pair_mean_shift_constraints_px"]
+    expected = [
+        0.5 * sum(w * (2 if i % 180 < 90 else -2) for i, w in p.first + p.second)
+        for p in report.pairs
+    ]
+    np.testing.assert_allclose(constraints, expected, atol=0.05)
+    assert abs(np.median(constraints)) < 1e-12
 
 
 def test_center_report_measures_row_trend_and_conditional_interval():
@@ -248,6 +258,48 @@ def test_single_pair_reports_uncalibrated_global_coverage_without_inconsistency(
     assert diagnostics["consistency_pvalue"] is None
     assert diagnostics["global_coverage_calibrated"] is False
     assert diagnostics["uncertainty_status"] == "local_matching_only"
+    assert diagnostics["physical_center_status"] == "unresolved_without_motion_assumption"
+    assert diagnostics["pair_mean_shift_constraints_px"] == [0.0]
     assert "local_matching_interval90_px" in diagnostics["pairs"][0]
     assert automatic["status"] == "limited"
     assert "not a calibrated centre interval" in automatic["reasons"][0]
+
+
+@pytest.mark.parametrize("form", ["indices", "mask", "slice"])
+def test_calibration_subset_excludes_every_interpolation_contributor(form):
+    from tomojax.alignment.api import estimate_center, estimate_center_report
+
+    scan, _, _ = _scan(views=360, span=360)
+    angles = scan.angles.copy()
+    angles[180:] += 0.2
+    scan = replace(scan, geometry=replace(scan.geometry, angles=angles))
+    chosen = slice(1, 358) if form == "slice" else np.arange(360) % 7 != 2
+    kept = np.arange(360)[chosen]
+    views = kept if form == "indices" else chosen
+    expected = estimate_center_report(scan.selected(kept).geometry, scan.projections[kept])
+    poisoned = scan.projections.copy()
+    poisoned[np.setdiff1d(np.arange(360), kept)] = np.nan
+    reads = []
+
+    class Rows:
+        shape = poisoned.shape
+
+        def __getitem__(self, key):
+            reads.extend(key[0].ravel())
+            assert np.isin(key[0], kept).all()
+            return poisoned[key]
+
+    report = estimate_center_report(scan.geometry, Rows(), views=views)
+    assert report.geometry.detector == expected.geometry.detector
+    np.testing.assert_array_equal(report.geometry.angles, scan.angles)
+    assert report.to_dict()["calibration_views"] == kept.tolist()
+    assert 0 < len(reads) <= 64
+    assert any(len(side) == 2 for pair in report.pairs for side in (pair.first, pair.second))
+    for actual, local in zip(report.pairs, expected.pairs, strict=True):
+        for side in ("first", "second"):
+            assert getattr(actual, side) == tuple(
+                (int(kept[i]), w) for i, w in getattr(local, side)
+            )
+    result = tj.estimate_center(replace(scan, projections=poisoned), views=views)
+    assert result.projections is poisoned and result.detector == report.geometry.detector
+    assert estimate_center(scan.geometry, poisoned, views=views).detector == result.detector

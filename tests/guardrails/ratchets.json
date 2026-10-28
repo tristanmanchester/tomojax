@@ -11,7 +11,7 @@
     "tomojax.geometry.api": 18,
     "tomojax.recon.api": 7,
     "tomojax.io.api": 20,
-    "tomojax.alignment.api": 33
+    "tomojax.alignment.api": 34
   },
   "cli_flags": {
     "inspect": 4,
@@ -56,7 +56,7 @@
   },
   "suppressions": {
     "noqa": 8,
-    "type: ignore": 32,
+    "type: ignore": 28,
     "pyright: ignore": 14
   },
   "complex_functions": [
@@ -67,7 +67,6 @@
     "src/tomojax/alignment/_model/state.py::C901::alignment_state_from_checkpoint",
     "src/tomojax/alignment/_objectives/fixed_volume.py::C901::project_and_score_stack",
     "src/tomojax/alignment/_objectives/fixed_volume.py::PLR0915::project_and_score_stack",
-    "src/tomojax/alignment/_objectives/loss_adapters.py::C901::_build_loss_from_kind",
     "src/tomojax/alignment/_pose/_coupled_program.py::C901::_build_program",
     "src/tomojax/alignment/_pose/_coupled_program.py::PLR0915::_build_program",
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::C901::_run_reconstruction_step",
@@ -87,15 +86,15 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "type_errors": {
-    "reportArgumentType": 198,
+    "reportArgumentType": 196,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 109,
+    "reportAttributeAccessIssue": 108,
     "reportCallIssue": 12,
     "reportGeneralTypeIssues": 7,
     "reportIndexIssue": 6,
     "reportInvalidTypeForm": 1,
     "reportOptionalCall": 2,
-    "reportOptionalMemberAccess": 8,
+    "reportOptionalMemberAccess": 7,
     "reportOptionalSubscript": 1,
     "reportPrivateUsage": 80,
     "reportRedeclaration": 1,
@@ -107,5 +106,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 142
+  "test_private_imports": 140
 }
