@@ -136,3 +136,10 @@ def test_cuda_support_probe_logs_debug_before_jax_fallback(
 
     assert reason == "RuntimeError: support probe failed"
     assert "CUDA sinogram support probe failed" in caplog.text
+
+
+@pytest.mark.parametrize(("info", "expected"), [("MemAvailable: 512 kB", 524288), ("", 4096)])
+def test_host_capacity_includes_reclaimable_page_cache(monkeypatch, info, expected):
+    monkeypatch.setattr(_memory.Path, "read_text", lambda _: info)
+    monkeypatch.setattr(_memory.os, "sysconf", lambda _: 64)
+    assert _memory._host_available_memory_bytes() == expected

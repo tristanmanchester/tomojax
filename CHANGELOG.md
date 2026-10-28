@@ -48,6 +48,10 @@ from repeated flats and darks, simulates finite calibration references and expli
 gain/offset changes, and returns conditional systematic-error truth. Calibration
 propagates flux normalization through shot, read and shared dark-reference noise.
 
+Host-staged joint alignment can reuse exact FP32 pose columns between Krylov
+products when host memory permits, without retaining the full cache on the GPU.
+When only part fits, complete view batches are cached and the rest are recomputed.
+
 HDF5 dispatch accepts `.nx` containers. When no detector frames are readable,
 unresolved external root links report the files and datasets to restore.
 
