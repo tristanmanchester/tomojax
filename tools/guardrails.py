@@ -257,6 +257,12 @@ def _file_lines() -> dict[str, int]:
     return {path: n for path, n in lengths.items() if n > LONG_FILE_LINES}
 
 
+def _alignment_code_lines() -> int:
+    """Alignment's lines, excluding docstrings: the package that grew by patching."""
+    files = (p for p in _python_files() if p.is_relative_to(SRC / "alignment"))
+    return sum(_code_line_count(p.read_text(encoding="utf-8")) for p in files)
+
+
 def _function_lines() -> dict[str, int]:
     """Long functions as ``path::qualified.name``, excluding docstring spans."""
     found: dict[str, int] = {}
@@ -347,6 +353,8 @@ def ratchets() -> dict[str, object]:
         "cli_flags": _cli_flags(),
         "long_files": _file_lines(),
         "long_functions": _function_lines(),
+        # It may rise only in a commit that says why next to the new number.
+        "alignment_code_lines": _alignment_code_lines(),
         "suppressions": {
             "noqa": _count(r"#\s*noqa"),
             "type: ignore": _count(r"#\s*type:\s*ignore"),

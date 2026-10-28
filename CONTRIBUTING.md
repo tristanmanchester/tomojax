@@ -116,7 +116,8 @@ surface, check the change against these rules.
   over the complexity limits, type errors in modules CI does not yet
   type-check, public functions, methods and `*Config` classes taking options
   positionally, code that assumes the first device, private imports in tests,
-  and other known debt;
+  the alignment package's total lines (excluding docstrings), and other known
+  debt;
 - CLI options map to Python keywords, and `--help` stays short.
 
 After an intended change, run `just guardrails` and commit the updated
