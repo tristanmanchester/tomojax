@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Out-of-core CGLS releases each device slab after its last use, lowering peak GPU
+memory for a 1300³ host-slab solve from 6476 MiB to 3998 MiB with identical results.
+
 `Rings` no longer imputes detector columns from low angular variation, which
 can also be produced by object structure. Calibration-backed gap interpolation
 remains in raw-frame correction; post-log stuck columns are not repaired.
