@@ -132,7 +132,7 @@ def _run_one_multires_level(
         resuming_this_level=resuming_this_level,
         level_resume=level_run,
         global_elapsed_offset=state.global_elapsed_offset,
-        x_lvl=x0 if x0 is not None else jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32),
+        x_lvl=x0,
         seed_translations=params0 is None and level_index == 0,
         pose_params=params0
         if params0 is not None

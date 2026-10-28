@@ -625,8 +625,18 @@ def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
     geometry, grid, detector = _geometry(8, "parallel", np.linspace(0, 180, 6, endpoint=False))
     data = jnp.zeros((6, detector.nv, detector.nu), jnp.float32)
     calls = []
+    allocations = []
+    zeros = jnp.zeros
+
+    def track_zeros(shape, *args, **kwargs):
+        allocations.append(shape)
+        return zeros(shape, *args, **kwargs)
+
+    monkeypatch.setattr(jnp, "zeros", track_zeros)
 
     def record(geometry, grid, detector, projections, cfg):
+        if factors is not None:
+            assert (grid.nz, grid.ny, grid.nx) not in allocations
         calls.append((projections.shape, cfg.seed_translations))
 
     monkeypatch.setattr(_pose_loop, "seeded_translation_params", record)

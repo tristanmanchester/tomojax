@@ -186,7 +186,7 @@ def _run_proposal_stage(
         active_loss_spec=active_loss_spec,
         setup_alignment_state=setup_alignment_state,
         level_factor=int(level_factor),
-        x_lvl=state.x_lvl,
+        x_lvl=cast("jnp.ndarray", state.x_lvl),
         pose_params=state.pose_params,
     )
     setup_alignment_state = setup_alignment_state.replace(
@@ -584,7 +584,7 @@ def _run_multires_level_stages(
     resuming_this_level: bool,
     level_resume: LevelResumePlan,
     global_elapsed_offset: float,
-    x_lvl: jnp.ndarray,
+    x_lvl: jnp.ndarray | None,
     pose_params: jnp.ndarray,
     seed_translations: bool,
     level_stats: list[OuterStat],
@@ -630,6 +630,10 @@ def _run_multires_level_stages(
                 level_factor=level_factor,
             )
             seed_translations = False
+        # Seed before reserving a fresh reconstruction volume. A preceding
+        # setup stage still gets its volume first, preserving stage order.
+        if state.x_lvl is None:
+            state = replace(state, x_lvl=jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32))
         stage_global_start = level_resume.global_before_level + len(level_stats)
         if stage.stage_role == "proposal":
             state = _run_proposal_stage(
@@ -697,7 +701,9 @@ def _run_multires_level_stages(
             break
 
     return StageRunResult(
-        x_lvl=state.x_lvl,
+        x_lvl=state.x_lvl
+        if state.x_lvl is not None
+        else jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32),
         pose_params=state.pose_params,
         info=state.info,
         setup_alignment_state=state.setup_alignment_state,

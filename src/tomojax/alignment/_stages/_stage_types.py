@@ -190,7 +190,9 @@ class StageRunResult:
 
 @dataclass(frozen=True)
 class StageLoopState:
-    x_lvl: jnp.ndarray
+    # A fresh level has no volume until its first stage needs one. Translation
+    # seeding uses only projections and must not share its workspace with it.
+    x_lvl: jnp.ndarray | None
     pose_params: jnp.ndarray
     info: dict[str, object]
     setup_alignment_state: object
