@@ -132,6 +132,36 @@ def test_coupled_pose_config_matches_the_cli_pose_solver() -> None:
     assert (cfg.tv_weight, cfg.gather_dtype, cfg.outer_iterations) == (0.0, "fp32", 7)
 
 
+@pytest.mark.parametrize("copy", [False, True])
+def test_reference_quality_preserves_explicit_expert_settings(copy: bool) -> None:
+    values = dict(
+        backend="cuda",
+        gather_dtype="auto",
+        regulariser="huber_tv",
+        reconstruction="spdhg",
+        views_per_batch=3,
+        checkpoint_projector=False,
+        pose_model="spline",
+    )
+    cfg = AlignConfig(quality="reference", **values)
+    if copy:
+        cfg = replace(cfg, iterations=7)
+    assert all(getattr(cfg, name) == value for name, value in values.items())
+    assert cfg.stage_quality_tier == "reference"
+
+
+def test_reference_plan_applies_defaults_before_expert_overrides() -> None:
+    from tomojax.alignment import alignment_plan
+    from tomojax.geometry import Grid
+
+    grid = Grid(8, 8, 8, 1, 1, 1)
+    plan = alignment_plan("pose", grid, quality="reference")
+    assert (plan.config.backend, plan.config.gather_dtype) == ("jax", "fp32")
+    config = replace(plan.config, backend="cuda", views_per_batch=3)
+    kept = alignment_plan("pose", grid, quality="reference", config=config)
+    assert (kept.config.backend, kept.config.views_per_batch) == ("cuda", 3)
+
+
 def test_normalized_angular_bounds_survive_configuration_copies() -> None:
     cfg = AlignConfig(
         bounds={"axis_rot_x_deg": (-2, 2), "detector_roll_deg": (-3, 3), "dx": (-4, 4)}

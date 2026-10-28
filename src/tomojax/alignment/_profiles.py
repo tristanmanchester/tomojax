@@ -4,13 +4,12 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from tomojax.core.backend_policy import ProjectorBackend
     from tomojax.recon.types import Regulariser
 
 
 type QualityTier = Literal["fast", "reference"]
+type StageQualityTier = Literal["fast", "reference", "verify"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,51 +118,42 @@ def profile_policy_from_config(cfg: object) -> AlignmentProfilePolicy:
     )
 
 
-def resolve_profiled_cli_defaults(
-    *,
-    quality: QualityTier,
-    current: Mapping[str, object],
-    configured_keys: set[str],
-) -> dict[str, object]:
-    """Apply profile defaults only for options the user/config did not specify.
+@dataclass(frozen=True, slots=True)
+class ReconstructionQualityPolicy:
+    """Stage-level reconstruction quality and diagnostic policy."""
 
-    Parameters
-    ----------
-    quality : {"fast", "reference"}
-        Alignment quality policy.
-    current : mapping
-        Current CLI/config values before profile defaults are applied.
-    configured_keys : set of str
-        Fields explicitly provided by the user; these are not replaced.
+    tier: StageQualityTier
+    iterations_multiplier: float
+    compute_iteration_loss: bool
+    compute_final_data_loss: bool
+    compute_final_regulariser_value: bool
 
-    Returns
-    -------
-    dict
-        Resolved settings and profile provenance, preserving explicit values.
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
 
-    Raises
-    ------
-    ValueError
-        If quality is not a supported policy.
-    """
-    policy = alignment_profile_policy(quality)
-    defaults = policy.to_dict()
-    resolved = dict(current)
-    for key in (
-        "backend",
-        "gather_dtype",
-        "regulariser",
-        "reconstruction",
-        "views_per_batch",
-        "checkpoint_projector",
-        "pose_model",
-    ):
-        if key not in configured_keys:
-            resolved[key] = defaults[key]
-    resolved["quality"] = policy.quality
-    resolved["profile_defaults"] = defaults
-    resolved["profile_configured_keys"] = sorted(configured_keys)
-    return resolved
+
+_POLICIES: dict[StageQualityTier, ReconstructionQualityPolicy] = {
+    "fast": ReconstructionQualityPolicy("fast", 1.0, False, False, False),
+    "verify": ReconstructionQualityPolicy("verify", 2.0, True, True, True),
+    "reference": ReconstructionQualityPolicy("reference", 2.0, True, True, True),
+}
+
+
+def normalize_quality_tier(value: str) -> StageQualityTier:
+    if value in _POLICIES:
+        return cast("StageQualityTier", value)
+    raise ValueError("quality tier must be 'fast', 'verify', or 'reference'")
+
+
+def reconstruction_quality_policy(value: str) -> ReconstructionQualityPolicy:
+    return _POLICIES[normalize_quality_tier(value)]
+
+
+def scaled_reconstruction_iterations(
+    iterations: int | float,
+    policy: ReconstructionQualityPolicy,
+) -> int:
+    return max(1, int(float(iterations) * float(policy.iterations_multiplier)))
 
 
 __all__ = [
@@ -172,5 +162,4 @@ __all__ = [
     "alignment_profile_policy",
     "normalize_quality",
     "profile_policy_from_config",
-    "resolve_profiled_cli_defaults",
 ]

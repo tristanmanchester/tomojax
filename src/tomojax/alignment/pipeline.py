@@ -199,7 +199,7 @@ def align_multires(
     >>> detector = tj.Detector(4, 2, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
     >>> data = project(geometry, jnp.ones((4, 4, 2)))
-    >>> config = AlignConfig(quality="reference", outer_iterations=1, iterations=1)
+    >>> config = AlignConfig(backend="jax", outer_iterations=1, iterations=1)
     >>> volume, poses, info = align_multires(
     ...     geometry,
     ...     grid,

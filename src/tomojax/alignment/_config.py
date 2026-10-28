@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import math
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.projector import RAY_INTEGRATORS
@@ -22,7 +22,7 @@ from ._model.schedules import (
     resolve_alignment_schedule,
 )
 from ._objectives.loss_specs import L2LossSpec, L2OtsuLossSpec
-from ._profiles import QualityTier, alignment_profile_policy, normalize_quality
+from ._profiles import QualityTier, normalize_quality
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -130,8 +130,9 @@ class AlignConfig:
     Parameters
     ----------
     quality : QualityTier, optional
-        Quality policy, "fast" or "reference". Reference forces the JAX reference
-        reconstruction settings. Default is 'fast'.
+        Stage reconstruction budget, "fast" or "reference". This expert config
+        keeps all explicitly supplied solver fields. Use ``alignment_plan`` to
+        select quality-dependent backend and solver defaults. Default is 'fast'.
     outer_iterations : int, optional
         Maximum number of outer alignment/reconstruction iterations. Default is 5.
     iterations : int, optional
@@ -262,7 +263,7 @@ class AlignConfig:
     Examples
     --------
     >>> from tomojax.alignment import AlignConfig
-    >>> config = AlignConfig(quality="reference", iterations=5)
+    >>> config = AlignConfig(quality="reference", backend="jax", iterations=5)
     >>> config.backend
     'jax'
     """
@@ -337,7 +338,8 @@ class AlignConfig:
     def __post_init__(self) -> None:
         if self.ray_integrator not in RAY_INTEGRATORS:
             raise ValueError(f"ray_integrator must be one of {RAY_INTEGRATORS}")
-        self._apply_profile_policy()
+        self.quality = normalize_quality(self.quality)
+        self.stage_quality_tier = self.quality
         self._normalize_reconstruction_options()
         self._normalize_backend_options()
         self._normalize_optimizer_options()
@@ -350,19 +352,6 @@ class AlignConfig:
                 raise ValueError("joint GN requires opt_method='gn' and pose_model='per_view'")
             if self.tv_weight != 0 and self.regulariser != "huber_tv":
                 raise ValueError("joint GN supports Huber-TV or zero volume regularisation")
-
-    def _apply_profile_policy(self) -> None:
-        self.quality = normalize_quality(self.quality)
-        self.stage_quality_tier = self.quality
-        if self.quality == "reference":
-            policy = alignment_profile_policy(self.quality)
-            self.backend = policy.backend
-            self.gather_dtype = policy.gather_dtype
-            self.regulariser = policy.regulariser
-            self.reconstruction = cast("Reconstruction", policy.reconstruction)
-            self.views_per_batch = int(policy.views_per_batch)
-            self.checkpoint_projector = bool(policy.checkpoint_projector)
-            self.pose_model = cast("PoseModel", policy.pose_model)
 
     def _normalize_reconstruction_options(self) -> None:
         if self.reconstruction not in {"fista", "spdhg"}:
@@ -451,6 +440,22 @@ class AlignConfig:
                 raise ValueError("degree must be one of 1, 2, or 3 for spline pose_model")
 
 
+def coupled_pose_defaults() -> dict[str, object]:
+    """One set of defaults for the public coupled preset and product modes."""
+    return {
+        "gn_coupling": "joint",
+        "gn_joint_solver": "pose_eliminated",
+        "opt_method": "gn",
+        "pose_model": "per_view",
+        "ray_integrator": "joseph",
+        "gather_dtype": "fp32",
+        "loss": L2LossSpec(),
+        "tv_weight": 0.0,
+        "outer_iterations": 30,
+        "seed_translations": True,
+    }
+
+
 def coupled_pose_config(**overrides: object) -> AlignConfig:
     """Return the recommended configuration for per-view pose alignment.
 
@@ -479,16 +484,7 @@ def coupled_pose_config(**overrides: object) -> AlignConfig:
     ValueError
         If the resulting settings are inconsistent or invalid.
     """
-    settings: dict[str, object] = {
-        "gn_coupling": "joint",
-        "gn_joint_solver": "pose_eliminated",
-        "ray_integrator": "joseph",
-        "gather_dtype": "fp32",
-        "loss": L2LossSpec(),
-        "tv_weight": 0.0,
-        "outer_iterations": 30,
-        "seed_translations": True,
-    }
+    settings = coupled_pose_defaults()
     settings.update(overrides)
     return AlignConfig(**settings)  # type: ignore[arg-type]
 
