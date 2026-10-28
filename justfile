@@ -99,7 +99,7 @@ surface-check:
 
 # Build the documentation site into site/out: the guides are copied from the
 # repository's Markdown and the API pages generated from the source by griffe.
-docs:
+site:
     python3 tools/docs_sync.py
     uv run --no-project --with "griffe>=1.14" python tools/docs_api.py
     cd site && pnpm install --frozen-lockfile && pnpm build
