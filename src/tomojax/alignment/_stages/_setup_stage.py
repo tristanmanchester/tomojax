@@ -26,7 +26,6 @@ from tomojax.alignment._model.dof_specs import ActiveParameterView
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.alignment._model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.alignment._objectives.fold_recon import (
-    FoldReconstructionConfig,
     reconstruct_train_fold_nograd,
 )
 from tomojax.alignment._objectives.folds import FoldSpec
@@ -40,6 +39,7 @@ from tomojax.alignment._profiles import (
     reconstruction_quality_policy,
     scaled_reconstruction_iterations,
 )
+from tomojax.alignment._reconstruction_config import fista_config
 from tomojax.alignment.optimizers import ValidationLmConfig, run_active_validation_lm
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
@@ -104,7 +104,7 @@ def _run_setup_validation_objective(
     base: BaseGeometryArrays,
     folds: FoldArrays,
     loss_adapter: LossAdapter,
-    fold_recon_cfg: FoldReconstructionConfig,
+    fold_recon_cfg: FistaConfig,
     cfg: AlignConfig,
     init_x: jnp.ndarray | None,
     factor: int,
@@ -213,7 +213,7 @@ def _build_geometry_stage_stat(
     objective_result: SetupValidationObjectiveResult,
     active_view: ActiveParameterView,
     cfg: AlignConfig,
-    fold_recon_cfg: FoldReconstructionConfig,
+    fold_recon_cfg: FistaConfig,
     folds: FoldArrays,
     loss_name: str,
     schedule_name: str | None,
@@ -309,15 +309,9 @@ def _refresh_setup_reconstruction(
             moved,
             projections,
             init_x=init_x,
-            config=FistaConfig(
+            config=fista_config(
+                cfg,
                 iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
-                tv_weight=float(cfg.tv_weight),
-                regulariser=cfg.regulariser,
-                huber_delta=float(cfg.huber_delta),
-                tv_prox_iterations=int(cfg.tv_prox_iterations),
-                lipschitz=cfg.lipschitz,
-                nonnegative=bool(cfg.nonnegative),
-                ray_integrator=cfg.ray_integrator,
                 backend="jax" if cfg.backend == "jax" else "auto",
                 views_per_batch=int(cfg.views_per_batch) or None,
             ),
@@ -335,21 +329,15 @@ def _refresh_setup_reconstruction(
         detector,
         projections,
         init_x=init_x,
-        config=FistaConfig(
+        config=fista_config(
+            cfg,
             projector_model="ray",
             backend="jax",
             iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
-            tv_weight=float(cfg.tv_weight),
-            regulariser=cfg.regulariser,
-            huber_delta=float(cfg.huber_delta),
-            tv_prox_iterations=int(cfg.tv_prox_iterations),
-            lipschitz=cfg.lipschitz,
             views_per_batch=max(1, int(cfg.views_per_batch)),
             projector_unroll=int(cfg.projector_unroll),
             checkpoint_projector=bool(cfg.checkpoint_projector),
             gather_dtype=str(cfg.gather_dtype),
-            nonnegative=bool(cfg.nonnegative),
-            ray_integrator=cfg.ray_integrator,
         ),
         det_grid=det_grid,
     )
@@ -685,19 +673,13 @@ def _optimize_setup_geometry_bilevel_for_level(
             f"level {int(factor)} stage {stage_name!r} resolved loss {loss_name!r}"
         )
     quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
-    fold_recon_cfg = FoldReconstructionConfig(
+    fold_recon_cfg = fista_config(
+        cfg,
         iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
-        tv_weight=float(cfg.tv_weight),
-        regulariser=str(cfg.regulariser),
-        huber_delta=float(cfg.huber_delta),
-        tv_prox_iterations=int(cfg.tv_prox_iterations),
-        lipschitz=cfg.lipschitz,
-        nonnegative=bool(cfg.nonnegative),
         views_per_batch=int(cfg.views_per_batch) or None,
         projector_unroll=int(cfg.projector_unroll),
         checkpoint_projector=bool(cfg.checkpoint_projector),
         gather_dtype=str(cfg.gather_dtype),
-        ray_integrator=cfg.ray_integrator,
         backend="jax" if cfg.backend == "jax" else "auto",
     )
     seed_diagnostics = _setup_seed_diagnostics(
