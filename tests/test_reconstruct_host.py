@@ -4,12 +4,13 @@ from dataclasses import replace
 import importlib
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import tomojax as tj
 import tomojax.backends
-from tomojax.backends.host_stream import should_stream
+from tomojax.backends.host_stream import host_buffer, read_block, should_stream, write_block
 
 
 def test_measurement_placement_reserves_solver_workspace(monkeypatch):
@@ -20,6 +21,17 @@ def test_measurement_placement_reserves_solver_workspace(monkeypatch):
     assert should_stream(data, reserve_bytes=512)
     assert should_stream(data, reserve_bytes=2048)
     assert not should_stream(jax.device_put(data), reserve_bytes=2048)
+
+
+def test_host_block_read_stays_a_snapshot_after_a_later_write():
+    def step(key, shape=(1, 2, 3)):  # the first read is consumed only after the write
+        start = jnp.int32(0)
+        old = read_block(key, start, shape)
+        return old + write_block(key, start, jnp.ones(shape)), read_block(key, start, shape)
+
+    with host_buffer((1, 2, 3)) as key:
+        old, new = jax.jit(step)(key)
+        assert not old.any() and new.all()  # read while the buffer is registered
 
 
 @pytest.mark.parametrize("order", ["C", "F"])

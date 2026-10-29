@@ -101,8 +101,9 @@ def host_buffer(shape: tuple[int, ...]) -> Iterator[jax.Array]:
 
 
 def _read_block(key: np.ndarray, start: np.ndarray, *, size: int) -> np.ndarray:
+    # The callback copies its result to the device before later ordered writes.
     first = int(start)
-    return np.array(_SOURCES[int(key)][first : first + size], dtype=np.float32)
+    return _SOURCES[int(key)][first : first + size]
 
 
 def _write_block(key: np.ndarray, start: np.ndarray, block: np.ndarray) -> np.int32:

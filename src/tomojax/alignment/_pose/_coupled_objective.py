@@ -128,7 +128,6 @@ def _shared(arrays: CoupledArrays, split: ViewSplit) -> CoupledArrays:
         poses=split.place(arrays.poses, repeat=True),
         projections=split.place(arrays.projections),
         weights=split.everywhere(weights) if weights.ndim == 0 else split.place(weights),
-        mask=split.everywhere(arrays.mask),
         active=split.everywhere(arrays.active),
         smoothness=split.everywhere(arrays.smoothness),
         det_grid=(split.everywhere(arrays.det_grid[0]), split.everywhere(arrays.det_grid[1])),
@@ -210,7 +209,6 @@ def build_coupled_objective(
         else ctx.loss_adapter.gauss_newton_weights(
             ctx.projections, ctx.loss_mask if ctx.has_loss_mask else None
         ),
-        mask=ctx.volume_mask if ctx.volume_mask is not None else jnp.float32(1),
         active=ctx.active_mask.astype(jnp.float32),
         smoothness=ctx.smoothness_weights,
         det_grid=ctx.det_grid,

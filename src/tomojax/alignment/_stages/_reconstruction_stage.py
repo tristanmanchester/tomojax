@@ -442,12 +442,9 @@ def _run_public_fista_reconstruction(
         iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
         lipschitz=data_lipschitz,
         views_per_batch=views_per_batch,
-        projector_unroll=1,
         checkpoint_projector=cfg.checkpoint_projector,
         gather_dtype=gather_dtype,
         grad_mode=grad_mode,
-        recon_rel_tol=None,
-        recon_patience=2,
         devices=shared_devices() if cone else None,  # the run's, see tomojax.align
     )
     return fista_tv(
@@ -539,7 +536,6 @@ def _huber_fista_core_config(
         lipschitz=1.0,
         nonnegative=bool(cfg.nonnegative),
         checkpoint_projector=bool(cfg.checkpoint_projector),
-        projector_unroll=1,
         gather_dtype=str(cfg.gather_dtype),
         views_per_batch=_resolve_auto_views_per_batch(
             requested=int(cfg.views_per_batch),

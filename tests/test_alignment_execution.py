@@ -124,6 +124,9 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(reg
         bounds={"dx": (-1e-6, 1e-6)},  # holds the poses; only the volume moves
         early_stop=False,
     )
+    defaults = reconstruction_stage.fista_config(cfg, iterations=1)
+    assert (defaults.tv_prox_iterations, defaults.projector_unroll) == (10, 1)
+    assert defaults.recon_rel_tol is None and defaults.recon_patience == 0
     checkpoints = []
     _, _, interrupted = align(
         geometry,

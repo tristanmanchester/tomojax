@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, replace
-from functools import partial
+from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING, Literal
 
@@ -16,8 +14,6 @@ from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import cone_pose_columns, cone_project, frame_coefficients, use_cuda_cone
 from tomojax.core.joseph import plane_coefficients, plane_pose_columns
 from tomojax.core.projector import forward_project_view_T
-
-from ._pose_context import _PoseObjectiveContext
 
 if TYPE_CHECKING:
     from tomojax.alignment._config import AlignConfig
@@ -50,16 +46,6 @@ class PoseJacobianOptions:
             cfg.ray_integrator,
             cfg.gn_jacobian,
         )
-
-
-def build_pose_prediction_and_columns(ctx: _PoseObjectiveContext) -> Callable:
-    return partial(
-        pose_prediction_and_columns,
-        grid=ctx.grid,
-        detector=ctx.detector,
-        det_grid=ctx.det_grid,
-        options=replace(PoseJacobianOptions.from_config(ctx.cfg), cone_beam=ctx.cone is not None),
-    )
 
 
 def _cone_autodiff_columns(

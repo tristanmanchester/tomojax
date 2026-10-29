@@ -94,7 +94,6 @@ class CoupledArrays(NamedTuple):
     projections: jax.Array
     # Per-pixel least-squares weights, or a scalar when every pixel weighs the same.
     weights: jax.Array
-    mask: jax.Array
     active: jax.Array
     smoothness: jax.Array
     det_grid: tuple[jax.Array, jax.Array]
@@ -127,7 +126,6 @@ def _view_specs(arrays: CoupledArrays) -> CoupledArrays:
         "poses": cut,
         "projections": cut,
         "weights": whole if arrays.weights.ndim == 0 else cut,
-        "mask": whole,
         "active": whole,
         "smoothness": whole,
         "det_grid": (whole, whole),
@@ -201,10 +199,8 @@ def _pose_gram(ops: _BatchOps, n_views: int, width: int, indices: jax.Array) -> 
     )
 
 
-def _finish_adjoint(value, masked, initial, accumulate):
-    """Mask only the new transpose contribution, never the existing sum."""
-    value = masked(value)
-    return value if accumulate is None or initial is not None else accumulate + value
+def _finish_adjoint(value, accumulate):
+    return value if accumulate is None else accumulate + value
 
 
 def _map_columns[T](fn: Callable[..., T], views: jax.Array, spec: CoupledSpec) -> T:
@@ -219,7 +215,7 @@ def _map_columns[T](fn: Callable[..., T], views: jax.Array, spec: CoupledSpec) -
 
 
 def physical_projectors(
-    spec: CoupledSpec, arrays: CoupledArrays, masked: Callable, *, absolute_weights: bool = False
+    spec: CoupledSpec, arrays: CoupledArrays, *, absolute_weights: bool = False
 ) -> tuple[Callable, Callable]:
     """Physical forward/transpose, or their absolute weights for sensitivity bounds."""
     if spec.refinement is not None:
@@ -227,13 +223,13 @@ def physical_projectors(
         assert spec.jacobian.translation_frame == "detector"
         assert set(spec.active_columns) <= {3, 5}
         model = _matching_model.projectors(
-            spec.grid, spec.detector, backend=spec.backend, masked=masked, absolute=absolute_weights
+            spec.grid, spec.detector, backend=spec.backend, absolute=absolute_weights
         )
         return model.forward, model.adjoint
-    return _geometric_projectors(spec, arrays, masked, absolute_weights=absolute_weights)
+    return _geometric_projectors(spec, arrays, absolute_weights=absolute_weights)
 
 
-def _geometric_projectors(spec, arrays, masked, *, absolute_weights):
+def _geometric_projectors(spec, arrays, *, absolute_weights):
     """The exact/sample/Joseph physical models in the scan's current geometry."""
     backend = spec.backend
     det_grid = None if backend == "cuda" else arrays.det_grid
@@ -247,11 +243,11 @@ def _geometric_projectors(spec, arrays, masked, *, absolute_weights):
         if spec.jacobian.cone_beam:  # each view in its lab frame
             assert frames is not None
             coeff = frame_coefficients(t, frames, spec.grid, spec.detector)
-            return cone_project(masked(x), coeff, spec.grid, spec.detector, backend=cone_backend)
+            return cone_project(x, coeff, spec.grid, spec.detector, backend=cone_backend)
         if joseph is not None:
             return forward_project_planes(
                 plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),
-                masked(x),
+                x,
                 spec.grid,
                 spec.detector,
                 backend=backend,
@@ -259,15 +255,13 @@ def _geometric_projectors(spec, arrays, masked, *, absolute_weights):
                 absolute_weights=absolute_weights,
             )
         if spec.jacobian.integrator == "exact":
-            return exact_forward(
-                t, spec.grid, spec.detector, masked(x), backend=backend, det_grid=det_grid
-            )
+            return exact_forward(t, spec.grid, spec.detector, x, backend=backend, det_grid=det_grid)
         return jax.lax.map(
             lambda ti: forward_project_view_T(
                 ti,
                 spec.grid,
                 spec.detector,
-                masked(x),
+                x,
                 gather_dtype="fp32",
                 det_grid=det_grid,
                 unroll=spec.jacobian.unroll,
@@ -277,38 +271,30 @@ def _geometric_projectors(spec, arrays, masked, *, absolute_weights):
         )
 
     def adjoint(t, y, frames=None, accumulate=None):
-        # With no support multiplication the physical kernel can own the
-        # accumulator, avoiding a second full volume for each view batch.
-        initial = accumulate if arrays.mask.ndim == 0 else None
-
-        finish = partial(_finish_adjoint, masked=masked, initial=initial, accumulate=accumulate)
-
+        # The physical kernels own the accumulator, avoiding a second full
+        # volume for each view batch.
         if spec.jacobian.cone_beam:
             assert frames is not None
             coeff = frame_coefficients(t, frames, spec.grid, spec.detector)
-            return finish(
-                cone_backproject(
-                    y, coeff, spec.grid, spec.detector, backend=cone_backend, accumulate=initial
-                )
+            return cone_backproject(
+                y, coeff, spec.grid, spec.detector, backend=cone_backend, accumulate=accumulate
             )
         if joseph is not None:
-            return finish(
-                sum_backproject_planes(
-                    plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),
-                    y,
-                    spec.grid,
-                    spec.detector,
-                    backend=backend,
-                    interpolation=joseph,
-                    accumulate=initial,
-                    absolute_weights=absolute_weights,
-                )
+            return sum_backproject_planes(
+                plane_coefficients(t, spec.grid, spec.detector, arrays.det_grid),
+                y,
+                spec.grid,
+                spec.detector,
+                backend=backend,
+                interpolation=joseph,
+                accumulate=accumulate,
+                absolute_weights=absolute_weights,
             )
         if spec.jacobian.integrator == "exact":
             value = exact_adjoint(
                 t, spec.grid, spec.detector, y, backend=backend, det_grid=det_grid
             )
-            return _finish_adjoint(value, masked, None, accumulate)
+            return _finish_adjoint(value, accumulate)
 
         # Accumulate one volume, never a volume stack per view.
         def add(x, pair):
@@ -326,7 +312,7 @@ def _geometric_projectors(spec, arrays, masked, *, absolute_weights):
         value = jax.lax.scan(
             add, jnp.zeros((spec.grid.nz, spec.grid.ny, spec.grid.nx), jnp.float32), (t, y)
         )[0]
-        return _finish_adjoint(value, masked, None, accumulate)
+        return _finish_adjoint(value, accumulate)
 
     return forward, adjoint
 
@@ -338,7 +324,6 @@ def _unit_prediction(spec, arrays, poses, forward, shape):
         and spec.backend == "cuda"
         and spec.jacobian.integrator == "joseph"
         and not spec.jacobian.cone_beam
-        and arrays.mask.ndim == 0
     ):
         coefficients = plane_coefficients(poses, spec.grid, spec.detector, arrays.det_grid)
         prediction = project_ones_native(coefficients, spec.grid, spec.detector)
@@ -347,18 +332,18 @@ def _unit_prediction(spec, arrays, poses, forward, shape):
     return forward(poses, jnp.ones(shape, jnp.float32), arrays.frames)
 
 
-def positive_sensitivity(spec, arrays, poses, masked, shape, valid, out):
+def positive_sensitivity(spec, arrays, poses, shape, valid, out):
     """Accumulate |A|^T W^2 |A|1, without filtering the positive metric."""
-    forward, adjoint = physical_projectors(spec, arrays, masked, absolute_weights=True)
+    forward, adjoint = physical_projectors(spec, arrays, absolute_weights=True)
     y = _unit_prediction(spec, arrays, poses, forward, shape)
     y = y * arrays.weights**2 * valid[:, None, None]
     return adjoint(poses, y, arrays.frames, out)
 
 
 @partial(jax.jit, static_argnames=("nonnegative",))
-def free_volume_support(x, gradient, mask, *, nonnegative):
+def free_volume_support(x, gradient, *, nonnegative):
     """KKT support: a zero voxel can move only if its gradient points inward."""
-    return ((x > 0) | (gradient < 0)) & (mask != 0) if nonnegative else mask != 0
+    return (x > 0) | (gradient < 0) if nonnegative else jnp.asarray(True)
 
 
 def volume_metric_inverse(bound, *, spec, array=jnp):
@@ -466,17 +451,11 @@ def _build_program(
     # This factory executes during tracing, behind stable module-level jit
     # functions. Its closures contain tracers rather than embedded scan arrays.
     cfg = spec
-    mask, weights, active = arrays.mask, arrays.weights, arrays.active
+    weights, active = arrays.weights, arrays.active
     # Only active derivative images are cached. Keep the small pose vectors
     # and normal matrices full-width, so frozen nonzero poses and smoothness
     # retain exactly the same coordinates throughout the linear solve.
     indices = jnp.asarray(spec.active_columns, jnp.int32)
-    # A scalar mask means none: skip multiplying volumes by it, which would copy them.
-    unmasked = mask.ndim == 0
-
-    def masked(v):
-        return v if unmasked else mask * v
-
     n_views = arrays.poses.shape[0]  # a device's share, with a split
     shares = _Shares(spec.split, n_views)
     across = shares.across
@@ -492,7 +471,7 @@ def _build_program(
             arrays.poses, p, translation_frame=spec.jacobian.translation_frame
         )
 
-    forward, adjoint = physical_projectors(spec, arrays, masked)
+    forward, adjoint = physical_projectors(spec, arrays)
     filtered, predict_columns = data_residual_filter(spec, predict_columns)
 
     # Data-space work runs over batches of views: projecting, comparing and
@@ -539,7 +518,7 @@ def _build_program(
 
     def batch_ops(t, p, x):  # the batch operators of one pose stack; see _BatchOps
         residual, cached, columns = _pose_column_cache(
-            p, masked(x), spec=spec, arrays=arrays, predict_columns=predict_columns
+            p, x, spec=spec, arrays=arrays, predict_columns=predict_columns
         )
 
         def view_columns(i):
@@ -664,7 +643,7 @@ def _build_program(
         gx, gp = over_batches(gradient_body, (volume_zeros, jnp.zeros_like(p)))
         gx = across(gx) + reg_grad
         gp = project_pose((gp + smooth_grad) * movable)
-        free = free_volume_support(x, gx, mask, nonnegative=cfg.nonnegative)
+        free = free_volume_support(x, gx, nonnegative=cfg.nonnegative)
 
         def normal(increment):  # y = W A dx + C dp, then (A^T W y, C^T y), batch by batch
             dx, dp = free * increment[0], project_pose(movable * increment[1])
@@ -683,9 +662,7 @@ def _build_program(
 
         def ones_body(start, valid, out):
             batch = arrays._replace(weights=batch_weights(start), frames=batch_frames(start))
-            return positive_sensitivity(
-                spec, batch, take(poses(p), start), masked, x.shape, valid, out
-            )
+            return positive_sensitivity(spec, batch, take(poses(p), start), x.shape, valid, out)
 
         row_bound = across(over_batches(ones_body, volume_zeros))
         volume_inverse = volume_metric_inverse(row_bound, spec=spec)
