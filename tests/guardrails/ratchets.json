@@ -105,6 +105,11 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
+  "single_use_helpers": {
+    "tiny": 101,
+    "forwarders": 11,
+    "chained": 61
+  },
   "type_errors": {
     "reportArgumentType": 187,
     "reportAssignmentType": 2,
