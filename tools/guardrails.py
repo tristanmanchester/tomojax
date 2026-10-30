@@ -3,8 +3,9 @@
 ``tests/guardrails/api_surface.txt`` lists every public name of the user-facing
 packages with its signature, so an API change shows up as a diff in review.
 ``tests/guardrails/ratchets.json`` records measures of debt (configuration
-fields, exported names, CLI flags, long files, lint suppressions, complex
-functions...) that may fall but not rise.
+fields, exported names, CLI flags, lines per package, CUDA kernels and their
+compile-time switches, environment reads, long files, lint suppressions,
+complex functions...) that may fall but not rise.
 
 After an intended change run ``python tools/guardrails.py --write`` and commit
 the updated files with it; ``tests/test_architecture.py`` fails until then.
@@ -61,6 +62,8 @@ LONG_FILE_LINES = 800
 LONG_FUNCTION_LINES = 100
 # Public functions whose leading optional argument is deliberately positional.
 POSITIONAL_OPTIONS_ALLOWED = {"tomojax.reconstruct": ("method",)}
+# Preprocessor conditionals in kernel source; Python comments carry a space.
+CUDA_SWITCH = re.compile(r"^\s*#if(?:n?def)?\b", re.MULTILINE)
 
 
 # ----------------------------------------------------------------------- surface
@@ -160,13 +163,22 @@ def _python_files() -> list[Path]:
     return sorted(p for p in SRC.rglob("*.py") if "__pycache__" not in p.parts)
 
 
+def _source_files() -> list[Path]:
+    """Python and CUDA sources; many kernels are embedded in Python strings."""
+    suffixes = {".py", ".cu", ".cuh"}
+    return sorted(
+        p for p in SRC.rglob("*") if p.suffix in suffixes and "__pycache__" not in p.parts
+    )
+
+
 def _relative(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
 
 
-def _count(pattern: str) -> int:
+def _count(pattern: str | re.Pattern[str], files: list[Path] | None = None) -> int:
     regex = re.compile(pattern)
-    return sum(len(regex.findall(p.read_text(encoding="utf-8"))) for p in _python_files())
+    paths = _python_files() if files is None else files
+    return sum(len(regex.findall(p.read_text(encoding="utf-8"))) for p in paths)
 
 
 def _complex_functions() -> list[str]:
@@ -257,10 +269,16 @@ def _file_lines() -> dict[str, int]:
     return {path: n for path, n in lengths.items() if n > LONG_FILE_LINES}
 
 
-def _alignment_code_lines() -> int:
-    """Alignment's lines, excluding docstrings: the package that grew by patching."""
-    files = (p for p in _python_files() if p.is_relative_to(SRC / "alignment"))
-    return sum(_code_line_count(p.read_text(encoding="utf-8")) for p in files)
+def _code_lines() -> dict[str, int]:
+    """Lines of each top-level package, excluding Python docstrings."""
+    counts: dict[str, int] = {}
+    for path in _source_files():
+        parts = path.relative_to(SRC).parts
+        package = parts[0] if len(parts) > 1 else "(modules)"
+        source = path.read_text(encoding="utf-8")
+        lines = _code_line_count(source) if path.suffix == ".py" else len(source.splitlines())
+        counts[package] = counts.get(package, 0) + lines
+    return dict(sorted(counts.items()))
 
 
 def _function_lines() -> dict[str, int]:
@@ -281,6 +299,18 @@ def _function_lines() -> dict[str, int]:
         source = p.read_text(encoding="utf-8")
         visit(ast.parse(source), "", _relative(p), source)
     return dict(sorted(found.items()))
+
+
+def _config_fields() -> dict[str, int]:
+    """Field count of every public ``*Config`` dataclass."""
+    counts: dict[str, int] = {}
+    for module in (*PUBLIC_PACKAGES, *EXPERT_MODULES):
+        imported = importlib.import_module(module)
+        for name in imported.__all__:
+            obj = getattr(imported, name, None)
+            if dataclasses.is_dataclass(obj) and name.endswith("Config"):
+                counts[name] = len(dataclasses.fields(obj))
+    return dict(sorted(counts.items()))
 
 
 def _test_private_imports() -> int:
@@ -342,10 +372,8 @@ def _cli_flags() -> dict[str, int]:
 
 def ratchets() -> dict[str, object]:
     """Current values of every ratcheted measure."""
-    from tomojax.alignment import AlignConfig
-
     return {
-        "align_config_fields": len(dataclasses.fields(AlignConfig)),
+        "config_fields": _config_fields(),
         "exported_names": {
             module: len(importlib.import_module(module).__all__)
             for module in (*PUBLIC_PACKAGES, *EXPERT_MODULES)
@@ -353,8 +381,12 @@ def ratchets() -> dict[str, object]:
         "cli_flags": _cli_flags(),
         "long_files": _file_lines(),
         "long_functions": _function_lines(),
-        # It may rise only in a commit that says why next to the new number.
-        "alignment_code_lines": _alignment_code_lines(),
+        # These may rise only in a commit that says why next to the new number.
+        "code_lines": _code_lines(),
+        "cuda_kernels": _count(r"__global__", _source_files()),
+        "cuda_switches": _count(CUDA_SWITCH, _source_files()),
+        # Each is a setting that bypasses the public configuration.
+        "environment_reads": _count(r"\bos\.(?:environ|getenv)\b"),
         "suppressions": {
             "noqa": _count(r"#\s*noqa"),
             "type: ignore": _count(r"#\s*type:\s*ignore"),

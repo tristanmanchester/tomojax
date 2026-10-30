@@ -259,6 +259,11 @@ def test_size_ratchets_exclude_only_docstrings():
     assert count('"""Module prose."""  # A comment') == 1
 
 
+def test_kernel_switch_ratchet_skips_python_comments():
+    switches = _guardrails().CUDA_SWITCH.findall
+    assert len(switches("#ifndef A\n#if B\n  #ifdef C\n#include <d>\n# if a comment\n")) == 3
+
+
 def test_type_ratchet_uses_running_interpreter(monkeypatch):
     guardrails = _guardrails()
 
