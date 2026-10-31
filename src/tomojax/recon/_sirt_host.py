@@ -166,7 +166,7 @@ class _HostSIRT:
         if not sources:  # unkept slabs are fetched again
             sources = (None if self.zero else self.point.view(z0, z1), *self._support(k))
         updated, norm = (a[: z1 - z0, :, :] for a in accumulated)
-        norm[norm <= 0] = xp.inf  # zero column sums give zero weight
+        xp.copyto(norm, xp.inf, where=norm <= 0)  # zero column sums give zero weight
         updated /= norm
         updated *= self.relaxation
         if sources[0] is not None:

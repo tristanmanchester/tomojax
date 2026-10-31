@@ -133,6 +133,7 @@ def test_host_cgls_matches_streamed_normal_equations(host, depth):
 @pytest.mark.parametrize(
     "config",
     [
+        SIRTConfig(iterations=3),
         SIRTConfig(iterations=3, subsets=3, lower_bound=0.0, upper_bound=0.9),
         SIRTConfig(iterations=3, support=np.arange(180).reshape(9, 4, 5) % 7 > 0),
         SIRTConfig(iterations=4, acceleration=True, relaxation=0.9),
