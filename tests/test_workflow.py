@@ -355,6 +355,46 @@ def test_an_interrupted_alignment_resumes_from_its_checkpoint(
     np.testing.assert_allclose(finished.poses, uninterrupted.poses, atol=1e-5)
 
 
+@pytest.mark.parametrize("boundary", ["stage", "level"])
+def test_alignment_resumes_after_a_completed_stage_or_coarse_level(boundary):
+    from tomojax.alignment import align_multires
+
+    scan = _shifted_scan(6)
+    config = replace(_few_iterations(scan), outer_iterations=2)
+
+    def solve(**kwargs):
+        return align_multires(
+            scan.geometry,
+            scan.grid,
+            scan.detector,
+            scan.projections,
+            factors=(2, 1),
+            config=config,
+            **kwargs,
+        )
+
+    expected = solve()
+    saved = []
+
+    def interrupt(state):
+        completed = state.level_complete if boundary == "level" else state.stage_completed
+        if completed:
+            saved.append(state)
+            raise RuntimeError("checkpoint boundary")
+
+    with pytest.raises(RuntimeError, match="checkpoint boundary"):
+        solve(checkpoint_callback=interrupt)
+    assert saved[0].level_factor == 2 and not saved[0].run_complete
+    actual = solve(resume_state=saved[0])
+    np.testing.assert_allclose(actual[0], expected[0], atol=1e-5)
+    np.testing.assert_allclose(actual[1], expected[1], atol=1e-5)
+    np.testing.assert_allclose(actual[2]["loss"], expected[2]["loss"], rtol=1e-5)
+    for key in ("level_factor", "schedule_stage_index", "global_outer_idx"):
+        assert [s[key] for s in actual[2]["outer_stats"]] == [
+            s[key] for s in expected[2]["outer_stats"]
+        ]
+
+
 def test_alignment_refuses_the_checkpoint_of_another_alignment(tmp_path: Path) -> None:
     scan = _shifted_scan()
     config = _few_iterations(scan)

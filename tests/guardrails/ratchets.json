@@ -47,9 +47,9 @@
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 160,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 141,
     "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 103,
-    "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 117,
+    "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 128,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 143,
-    "src/tomojax/alignment/_stages/_stage_runners.py::_run_pose_alignment_stage": 106,
+    "src/tomojax/alignment/_stages/_stage_runners.py::_run_pose_alignment_stage": 107,
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
     "src/tomojax/cli/simulate.py::_build_parser": 106,
     "src/tomojax/core/cuda_projector/_loss.py::forward_project_residual_sse_T_cuda": 119,
@@ -68,7 +68,7 @@
   "code_lines": {
     "(modules)": 3325,
     "_data": 2091,
-    "alignment": 16789,
+    "alignment": 16585,
     "backends": 570,
     "cli": 2562,
     "core": 11788,
@@ -108,12 +108,12 @@
   "single_use_helpers": {
     "tiny": 101,
     "forwarders": 11,
-    "chained": 61
+    "chained": 56
   },
   "type_errors": {
-    "reportArgumentType": 187,
+    "reportArgumentType": 183,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 98,
+    "reportAttributeAccessIssue": 95,
     "reportCallIssue": 9,
     "reportGeneralTypeIssues": 5,
     "reportIndexIssue": 6,
