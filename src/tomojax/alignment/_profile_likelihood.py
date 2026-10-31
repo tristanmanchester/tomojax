@@ -10,7 +10,12 @@ from scipy import fft, interpolate, linalg, optimize
 
 @dataclass(frozen=True)
 class ProfileLikelihood:
-    """Translations and local likelihood errors in the zero-mean gauge, in pixels."""
+    """Translations and local model-based scales in the zero-mean gauge, in pixels.
+
+    ``covariance`` is profile-space noise covariance, not joint pose covariance.
+    Standard errors treat the fitted template and covariance as exact; their
+    coverage is not calibrated for native poses.
+    """
 
     shifts: np.ndarray
     standard_error: np.ndarray
