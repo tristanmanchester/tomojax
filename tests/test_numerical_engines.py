@@ -74,6 +74,13 @@ def test_tv_components_follow_physical_axes_in_zyx_storage() -> None:
     np.testing.assert_array_equal(gx[:, :, -1], 0)
     np.testing.assert_array_equal(gy[:, -1], 0)
     np.testing.assert_array_equal(gz[-1], 0)
+    # Solver-private (x, y, z) storage gives the same components and divergence.
+    u, p = 7 * z + 3 * y + 2 * x * x, jnp.sin(z + 2 * y - x)
+    private = [g.transpose(2, 1, 0) for g in grad3(u.transpose(2, 1, 0), z_fast=True)]
+    for got, want in zip(private, grad3(u), strict=True):
+        np.testing.assert_array_equal(got, want)
+    div = div3(*(q.transpose(2, 1, 0) for q in (p, 2 * p, 3 * p)), z_fast=True)
+    np.testing.assert_array_equal(div.transpose(2, 1, 0), div3(p, 2 * p, 3 * p))
 
 
 def test_spdhg_one_iteration_smoke_is_finite_and_positive() -> None:

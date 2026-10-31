@@ -107,15 +107,16 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
             raise ValueError("cgls: projections, initial volume and poses must be finite")
         if initial is not None and initial.shape != shape:
             raise ValueError("cgls: init_x must have the volume shape")
-        ops = JosephCUDA(poses, grid, detector, views_per_batch=cfg.views_per_batch)
+        # The iterate stays in private z-fast storage, read contiguously by every view.
+        ops = JosephCUDA(poses, grid, detector, views_per_batch=cfg.views_per_batch, z_fast=True)
         data = cp.asarray(projections, dtype=cp.float32)
         x = (
-            cp.zeros(shape, cp.float32)
+            cp.zeros(shape[::-1], cp.float32)
             if initial is None
-            else cp.array(initial, dtype=cp.float32, order="C")
+            else cp.array(initial.transpose(2, 1, 0), dtype=cp.float32, order="C")
         )
         result, info = _iterate(cp, ops, data, x, cfg, zero_start=initial is None)
-        return cp.asnumpy(result), info
+        return np.ascontiguousarray(cp.asnumpy(result).transpose(2, 1, 0)), info
 
 
 def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):

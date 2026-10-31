@@ -13,20 +13,19 @@ if TYPE_CHECKING:
     from .types import Regulariser
 
 
-def grad3(u: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    dx = jnp.concatenate(
-        [jnp.diff(u, axis=2), jnp.zeros((u.shape[0], u.shape[1], 1), u.dtype)],
-        axis=2,
-    )
-    dy = jnp.concatenate(
-        [jnp.diff(u, axis=1), jnp.zeros((u.shape[0], 1, u.shape[2]), u.dtype)],
-        axis=1,
-    )
-    dz = jnp.concatenate(
-        [jnp.diff(u, axis=0), jnp.zeros((1, u.shape[1], u.shape[2]), u.dtype)],
-        axis=0,
-    )
-    return dx, dy, dz
+def _forward_difference(u: jnp.ndarray, axis: int) -> jnp.ndarray:
+    edge = list(u.shape)
+    edge[axis] = 1
+    return jnp.concatenate([jnp.diff(u, axis=axis), jnp.zeros(edge, u.dtype)], axis=axis)
+
+
+def grad3(u: jnp.ndarray, *, z_fast: bool = False) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Neumann forward differences along physical x, y and z.
+
+    A volume is (z, y, x), or solver-private (x, y, z) with ``z_fast``.
+    """
+    x, z = (0, 2) if z_fast else (2, 0)
+    return _forward_difference(u, x), _forward_difference(u, 1), _forward_difference(u, z)
 
 
 def gradient_norm_squared(shape: tuple[int, ...]) -> float:
@@ -38,38 +37,22 @@ def gradient_norm_squared(shape: tuple[int, ...]) -> float:
     return sum(2 + 2 * math.cos(math.pi / n) for n in shape if n > 1)
 
 
-def div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray) -> jnp.ndarray:
+def _backward_difference(p: jnp.ndarray, axis: int) -> jnp.ndarray:
+    n = p.shape[axis]
+    if n == 1:
+        return jnp.zeros_like(p)
+
+    def take(first: int, stop: int) -> jnp.ndarray:
+        return jax.lax.slice_in_dim(p, first, stop, axis=axis)
+
+    middle = [take(1, n - 1) - take(0, n - 2)] if n > 2 else []
+    return jnp.concatenate([take(0, 1), *middle, -take(n - 2, n - 1)], axis=axis)
+
+
+def div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray, *, z_fast: bool = False) -> jnp.ndarray:
     """Discrete divergence matching the TV updates: ``div3 = -grad3*``."""
-    if px.shape[2] == 1:
-        dx = jnp.zeros_like(px)
-    else:
-        first_x = px[:, :, 0:1]
-        if px.shape[2] > 2:
-            mid_x = px[:, :, 1:-1] - px[:, :, 0:-2]
-            dx = jnp.concatenate([first_x, mid_x, -px[:, :, -2:-1]], axis=2)
-        else:
-            dx = jnp.concatenate([first_x, -px[:, :, -2:-1]], axis=2)
-
-    if py.shape[1] == 1:
-        dy = jnp.zeros_like(py)
-    else:
-        first_y = py[:, 0:1, :]
-        if py.shape[1] > 2:
-            mid_y = py[:, 1:-1, :] - py[:, 0:-2, :]
-            dy = jnp.concatenate([first_y, mid_y, -py[:, -2:-1, :]], axis=1)
-        else:
-            dy = jnp.concatenate([first_y, -py[:, -2:-1, :]], axis=1)
-
-    if pz.shape[0] == 1:
-        dz = jnp.zeros_like(pz)
-    else:
-        first_z = pz[0:1, :, :]
-        if pz.shape[0] > 2:
-            mid_z = pz[1:-1, :, :] - pz[0:-2, :, :]
-            dz = jnp.concatenate([first_z, mid_z, -pz[-2:-1, :, :]], axis=0)
-        else:
-            dz = jnp.concatenate([first_z, -pz[-2:-1, :, :]], axis=0)
-    return dx + dy + dz
+    x, z = (0, 2) if z_fast else (2, 0)
+    return _backward_difference(px, x) + _backward_difference(py, 1) + _backward_difference(pz, z)
 
 
 def validate_regulariser(
@@ -89,8 +72,8 @@ def validate_regulariser(
     return cast("Regulariser", reg)
 
 
-def _gradient_norm_sq(u: jnp.ndarray) -> jnp.ndarray:
-    gx, gy, gz = grad3(u)
+def _gradient_norm_sq(u: jnp.ndarray, *, z_fast: bool = False) -> jnp.ndarray:
+    gx, gy, gz = grad3(u, z_fast=z_fast)
     return gx * gx + gy * gy + gz * gz
 
 
@@ -107,18 +90,18 @@ def _norm_with_zero_subgradient(squared: jnp.ndarray) -> jnp.ndarray:
     return jnp.where(zero, jnp.zeros_like(squared), jnp.sqrt(safe))
 
 
-def isotropic_tv_value(u: jnp.ndarray, eps: float = 0.0) -> jnp.ndarray:
+def isotropic_tv_value(u: jnp.ndarray, eps: float = 0.0, *, z_fast: bool = False) -> jnp.ndarray:
     """Return isotropic 3D TV using the repo's forward-difference operator."""
-    sq = _gradient_norm_sq(u)
+    sq = _gradient_norm_sq(u, z_fast=z_fast)
     if eps == 0.0:
         return jnp.sum(jnp.sqrt(sq))
     return jnp.sum(jnp.sqrt(sq + jnp.asarray(eps, dtype=u.dtype)))
 
 
-def huber_tv_value(u: jnp.ndarray, delta: float) -> jnp.ndarray:
+def huber_tv_value(u: jnp.ndarray, delta: float, *, z_fast: bool = False) -> jnp.ndarray:
     """Return isotropic Huber-TV with a quadratic basin of radius ``delta``."""
     delta_arr = jnp.asarray(delta, dtype=u.dtype)
-    sq = _gradient_norm_sq(u)
+    sq = _gradient_norm_sq(u, z_fast=z_fast)
     tiny = jnp.asarray(jnp.finfo(u.dtype).tiny, dtype=u.dtype)
     norm = jnp.sqrt(jnp.maximum(sq, tiny))
     quadratic = 0.5 * sq / delta_arr
@@ -126,29 +109,29 @@ def huber_tv_value(u: jnp.ndarray, delta: float) -> jnp.ndarray:
     return jnp.sum(jnp.where(norm <= delta_arr, quadratic, linear))
 
 
-def _huber_tv_grad(u: jnp.ndarray, delta: float) -> jnp.ndarray:
+def _huber_tv_grad(u: jnp.ndarray, delta: float, *, z_fast: bool) -> jnp.ndarray:
     """Return the gradient of isotropic Huber-TV under ``grad3``/``div3``."""
     delta_arr = jnp.asarray(delta, dtype=u.dtype)
-    gx, gy, gz = grad3(u)
+    gx, gy, gz = grad3(u, z_fast=z_fast)
     norm = _norm_with_zero_subgradient(gx * gx + gy * gy + gz * gz)
     denom = jnp.maximum(norm, delta_arr)
     qx = gx / denom
     qy = gy / denom
     qz = gz / denom
-    return -div3(qx, qy, qz)
+    return -div3(qx, qy, qz, z_fast=z_fast)
 
 
 _HUBER_TILE_BYTES = 64 << 20
 
 
-def huber_tv_grad(u: jnp.ndarray, delta: float) -> jnp.ndarray:
+def huber_tv_grad(u: jnp.ndarray, delta: float, *, z_fast: bool = False) -> jnp.ndarray:
     """Huber gradient with bounded vector-field scratch and exact derivatives.
 
     Each output uses one neighbour along each axis. Haloed slabs preserve the
     Neumann boundary and mixed components without storing full gradient fields.
     """
     if 5 * u.size * u.dtype.itemsize <= _HUBER_TILE_BYTES:
-        return _huber_tv_grad(u, delta)
+        return _huber_tv_grad(u, delta, z_fast=z_fast)
     axis = max(range(3), key=u.shape.__getitem__)
     length = u.shape[axis]
     plane_bytes = u.dtype.itemsize * u.size // length
@@ -159,7 +142,7 @@ def huber_tv_grad(u: jnp.ndarray, delta: float) -> jnp.ndarray:
         first = jnp.minimum(i * core, length - core)
         start = jnp.clip(first - 1, 0, length - width)
         tile = jax.lax.dynamic_slice_in_dim(u, start, width, axis=axis)
-        gradient = _huber_tv_grad(tile, delta)
+        gradient = _huber_tv_grad(tile, delta, z_fast=z_fast)
         local = jax.lax.dynamic_slice_in_dim(gradient, first - start, core, axis=axis)
         # The final short slab may overwrite overlap with the same exact values.
         return jax.lax.dynamic_update_slice_in_dim(out, local, first, axis=axis)

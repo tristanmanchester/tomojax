@@ -503,6 +503,14 @@ def test_native_cuda_clipped_planes_keep_the_matched_pair(narrow):
     np.testing.assert_allclose(ax, expected, rtol=3e-5, atol=5e-5)
     lhs, rhs = np.vdot(ax.astype(float), y), np.vdot(x.astype(float), aty)
     assert abs(lhs - rhs) < 1e-6 * np.linalg.norm(ax) * np.linalg.norm(y)
+    # Solver-private z-fast storage gives the same bits.
+    private = JosephCUDA(poses, grid, detector, views_per_batch=4, z_fast=True)
+    private.forward_kernel = forward_kernel(narrow=narrow, z_fast=True)
+    xt = cp.asarray(np.ascontiguousarray(x.transpose(2, 1, 0)))
+    np.testing.assert_array_equal(cp.asnumpy(private.forward(xt)), ax)
+    np.testing.assert_array_equal(
+        cp.asnumpy(private.adjoint(cp.asarray(y))).transpose(2, 1, 0), aty
+    )
 
 
 @pytest.mark.gpu

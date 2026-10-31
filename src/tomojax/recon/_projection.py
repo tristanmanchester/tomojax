@@ -20,6 +20,7 @@ from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.operator_norm import unit
 from tomojax.recon._projection_batches import ViewBatches
+from tomojax.recon._volume_storage import Model, is_joseph
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -152,7 +153,7 @@ def chunk_operators(
     detector: Detector,
     backend: str,
     batch_size: int,
-    model: str | ConeModel,
+    model: Model,
 ) -> tuple[
     Callable[[jax.Array, jax.Array, jax.Array], jax.Array],
     Callable[[jax.Array, jax.Array, jax.Array, jax.Array], jax.Array],
@@ -178,7 +179,7 @@ def projection_operators(
     det_grid: tuple[jax.Array, jax.Array] | None,
     backend: str,
     batch_size: int,
-    model: str | ConeModel = "ray",
+    model: Model = "ray",
     joseph_interpolation: str = "linear",
     *,
     absolute_weights: bool = False,
@@ -241,7 +242,7 @@ def subset_operators(
     det_grid: tuple[jax.Array, jax.Array] | None,
     backend: str,
     batch_size: int,
-    model: str | ConeModel,
+    model: Model,
     subsets: int,
     *,
     stream: bool = False,
@@ -326,6 +327,13 @@ def subset_operators(
 
 def _forward_views(ops: ViewBatches, volume: jax.Array) -> jax.Array:
     project = ops.projector(volume)
+    if ops.model == "joseph" and ops.backend == "cuda":
+        # Its kernels bound their own workspace, so one call writes the whole
+        # stack: no batch temporary, and each band of the volume is staged once.
+        projected = project(jnp.int32(0), ops.poses)
+        if ops.counts is None:
+            return projected
+        return jnp.where(ops.counts[:, None, None], projected, 0.0)
 
     def body(chunk: jax.Array, output: jax.Array) -> jax.Array:
         start, batch, _ = ops.select(chunk)
@@ -386,7 +394,7 @@ def least_squares_operators(
     detector: Detector,
     backend: str,
     batch_size: int,
-    model: str | ConeModel = "ray",
+    model: Model = "ray",
     joseph_interpolation: str = "linear",
     *,
     stream: bool = False,
@@ -491,7 +499,7 @@ def normal_equation_operators(
     detector: Detector,
     backend: str,
     batch_size: int,
-    model: str | ConeModel = "ray",
+    model: Model = "ray",
     joseph_interpolation: str = "linear",
 ) -> tuple[
     Callable[[jax.Array], tuple[jax.Array, jax.Array]],
@@ -528,7 +536,7 @@ def normal_equation_operators(
             joseph_interpolation,
             absolute_weights=True,
         )
-        if model == "joseph" and joseph_interpolation == "cubic"
+        if is_joseph(model) and joseph_interpolation == "cubic"
         else ops
     )
     shape = (ops.size, detector.nv, detector.nu)
@@ -578,7 +586,7 @@ def poisson_operators(
     det_grid: tuple[jax.Array, jax.Array] | None,
     backend: str,
     batch_size: int,
-    model: str | ConeModel,
+    model: Model,
     indices: jax.Array,
     valid: jax.Array,
     *,

@@ -32,7 +32,14 @@ from tomojax.recon._projection import (
     poisson_operators,
     resolve_geometry_projector,
 )
-from tomojax.recon._volume_storage import pack_volume, resident_model, restore_volume, volume_shape
+from tomojax.recon._volume_storage import (
+    Model,
+    is_joseph,
+    pack_volume,
+    resident_model,
+    restore_volume,
+    volume_shape,
+)
 
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
@@ -128,7 +135,7 @@ def _normalizer(
     detector: Detector,
     backend: str,
     batch_size: int,
-    model: str | ConeModel,
+    model: Model,
     axial: bool,
 ) -> jax.Array:
     """Own a large norm stack separately from the iterative solver's workspace."""
@@ -168,7 +175,7 @@ def _solve(
     detector: Detector,
     backend: str,
     batch_size: int,
-    model: str | ConeModel,
+    model: Model,
     cache: bool,
     stream: bool,
     axial: bool,
@@ -243,7 +250,7 @@ def _run_device(
     projections: jax.Array | np.ndarray,
     *,
     config: MLEMConfig,
-    model: str | ConeModel,
+    model: Model,
     backend: str,
     initial: jax.Array | np.ndarray | None,
     det_grid: tuple[jax.Array, jax.Array] | None,
@@ -260,7 +267,7 @@ def _run_device(
         if config.support is None
         else jnp.broadcast_to(jnp.asarray(config.support, bool), shape)
     )
-    axial = model == "joseph" and det_grid is None and independent_planes(geometry, grid, detector)
+    axial = is_joseph(model) and det_grid is None and independent_planes(geometry, grid, detector)
     order = np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable")
     count = (n + subsets - 1) // subsets
     indices = np.arange(subsets)[:, None] + subsets * np.arange(count)[None, :]

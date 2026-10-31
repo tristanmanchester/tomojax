@@ -30,7 +30,13 @@ from tomojax.recon._projection import (
     resolve_geometry_projector,
     subset_operators,
 )
-from tomojax.recon._volume_storage import pack_volume, resident_model, restore_volume, volume_shape
+from tomojax.recon._volume_storage import (
+    Model,
+    pack_volume,
+    resident_model,
+    restore_volume,
+    volume_shape,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -156,7 +162,7 @@ def _solve(
     detector: Detector,
     backend: str,
     batch: int,
-    model: str | ConeModel,
+    model: Model,
     subsets: int,
     cache_columns: bool,
     axial: bool,
@@ -181,7 +187,7 @@ def _solve(
         normalization = subset_operators(
             poses, normal_grid, normal_detector, None, backend, batch, model, subsets
         )
-        normal_rows, normal_shape = 1, (1, grid.ny, grid.nx)
+        normal_rows, normal_shape = 1, volume_shape(model, normal_grid)
     mask = jnp.ones(shape, jnp.float32) if support is None else (support != 0).astype(jnp.float32)
 
     def constrain(x: jax.Array) -> jax.Array:
@@ -221,7 +227,7 @@ def _solve(
             column = _inverse(norm)
         else:
             column = (
-                jax.device_put(host_columns[index], column_device)[None, :, :]
+                jax.device_put(host_columns[index], column_device)
                 if host_columns is not None
                 else column_weights(index)
                 if columns is None
@@ -406,10 +412,10 @@ def _axial_column(
     detector: Detector,
     backend: str,
     batch: int,
-    model: str | ConeModel,
+    model: Model,
     subsets: int,
 ) -> jax.Array:
-    """Build one exact single-plane column map without a device-sized stack."""
+    """Build one exact single-plane column map, in volume storage, without a device stack."""
     from tomojax.geometry import grid_volume_origin
 
     grid = replace(grid, nz=1, vol_origin=(*grid_volume_origin(grid)[:2], 0.0))
@@ -417,7 +423,7 @@ def _axial_column(
     select = subset_operators(poses, grid, detector, None, backend, batch, model, subsets)
     _, adjoint, _ = select(index)
     count = (poses.shape[0] + subsets - 1) // subsets
-    return _inverse(adjoint(jnp.ones((count, 1, detector.nu), jnp.float32)))[0]
+    return _inverse(adjoint(jnp.ones((count, 1, detector.nu), jnp.float32)))
 
 
 class SIRTCall:
@@ -540,7 +546,7 @@ class SIRTCall:
         detector: Detector,
         backend: str,
         batch: int,
-        model: str | ConeModel,
+        model: Model,
         subsets: int,
         enabled: bool,
     ) -> tuple[jax.Array | None, jax.sharding.Sharding | None]:
@@ -552,7 +558,8 @@ class SIRTCall:
             device = next(iter(poses.devices()))
             column_device = jax.sharding.SingleDeviceSharding(device)
             if self.columns is None:
-                maps = np.empty((subsets, grid.ny, grid.nx), np.float32)
+                plane = replace(grid, nz=1)
+                maps = np.empty((subsets, *volume_shape(model, plane)), np.float32)
                 for index in range(subsets):
                     maps[index] = np.asarray(
                         _axial_column(

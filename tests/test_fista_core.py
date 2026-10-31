@@ -213,3 +213,45 @@ def test_zero_view_weight_has_finite_smooth_parameter_derivatives():
     np.testing.assert_allclose(value, 0.5 * 2.6**2, rtol=2e-6)
     np.testing.assert_allclose(gradient, 0.0, atol=0)
     np.testing.assert_allclose(curvature, 0.6**2, rtol=2e-6)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("integrator", ["joseph", "joseph_cubic"])
+@pytest.mark.parametrize("backends", [("cuda", "cuda"), ("cuda", "jax"), ("jax", "cuda")])
+@pytest.mark.parametrize("iterations", [0, 3])
+def test_core_private_storage_preserves_supported_tv_trajectory(integrator, backends, iterations):
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid, detector = Grid(4, 3, 2, 0.7, 1.1, 1.3), Detector(5, 3, 0.8, 1.2)
+    poses = jnp.repeat(jnp.eye(4, dtype=jnp.float32)[None], 3, axis=0)
+    initial = jnp.linspace(-0.2, 0.8, 24).reshape(2, 3, 4)
+    cfg = FistaCoreConfig(
+        iterations=iterations,
+        tv_weight=0.3,
+        huber_delta=0.2,
+        lipschitz=20,
+        ray_integrator=integrator,
+        views_per_batch=2,
+        nonnegative=True,
+        upper_bound=0.6,
+        support=jnp.asarray([0.3, 1, 0.7, 0.0]),
+    )
+    inputs = dict(
+        x0=initial,
+        T_all=poses,
+        det_grid=None,
+        grid=grid,
+        detector=detector,
+        projections=jnp.linspace(0.1, 0.5, 45).reshape(3, 3, 5),
+        view_weights=jnp.asarray([0.4, 0.0, 1.3]),
+    )
+    expected = fista_tv_core_arrays(**inputs, cfg=cfg)
+    run = replace(cfg, forward_projector=backends[0], backprojector=backends[1])
+    actual = fista_tv_core_arrays(**inputs, cfg=run)
+    # A private-storage result is (x, y, z), restored by the caller.
+    x = actual.x.transpose(2, 1, 0) if run.private_storage else actual.x
+    np.testing.assert_allclose(x, expected.x, rtol=2e-5, atol=2e-6)
+    for field in ("loss", "data_loss", "regulariser_value", "effective_iterations"):
+        np.testing.assert_allclose(
+            getattr(actual, field), getattr(expected, field), rtol=2e-5, atol=2e-6
+        )

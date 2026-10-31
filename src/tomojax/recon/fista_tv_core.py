@@ -19,6 +19,7 @@ from tomojax.core.projector import (
     sum_backproject_views_T,
 )
 from tomojax.core.view_chunks import chunk_schedule, chunk_size
+from tomojax.core.volume_layout import transpose_volume
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
 
 if TYPE_CHECKING:
@@ -70,6 +71,17 @@ class FistaCoreConfig:
         if self.ray_integrator not in RAY_INTEGRATORS:
             raise ValueError("ray_integrator must be 'sampled' or 'exact'")
 
+    @property
+    def private_storage(self) -> bool:
+        """Whether the core's volumes are solver-private (x, y, z), z contiguous.
+
+        Joseph sampling with both projectors on CUDA reads them so; the result
+        ``x`` then stays in that storage, for the caller to restore outside the
+        compiled program (``transpose_volume``), where no work array is live.
+        """
+        joseph = self.ray_integrator in {"joseph", "joseph_cubic"}
+        return joseph and self.forward_projector == self.backprojector == "cuda"
+
 
 @dataclass(frozen=True, slots=True)
 class FistaCoreResult[Array: jnp.ndarray | np.ndarray]:
@@ -117,6 +129,7 @@ def fista_tv_core_arrays(
     the reconstruction remains differentiable in the volume, not the host data.
     If final data diagnostics are disabled, ``data_loss`` is the last evaluated
     data term, or zero when none was computed; it never includes regularization.
+    With ``cfg.private_storage`` the returned ``x`` is (x, y, z), z contiguous.
     """
     if cfg.tv_weight != 0.0 and cfg.regulariser != "huber_tv":
         raise ValueError("fista_tv_core_arrays requires huber_tv or tv_weight=0")
@@ -130,6 +143,13 @@ def fista_tv_core_arrays(
         det_grid=det_grid,
     )
 
+    # Joseph operators resolve to the configured projectors, so storage follows cfg.
+    z_fast = cfg.private_storage
+    support = cfg.support
+    if z_fast:
+        if support is not None:
+            support = transpose_volume(jnp.broadcast_to(support, x_init.shape))
+        x_init = transpose_volume(x_init)
     sampled_step = _requested_sampled_step(grid, cfg)
 
     def data_loss_fn(x: jnp.ndarray) -> jnp.ndarray:
@@ -137,7 +157,7 @@ def fista_tv_core_arrays(
             T_all=T_all,
             grid=grid,
             detector=detector,
-            volume=_apply_support(x, cfg.support),
+            volume=_apply_support(x, support),
             det_grid=det_grid,
             projections=projections,
             stream_projections=cfg.stream_projections,
@@ -153,6 +173,7 @@ def fista_tv_core_arrays(
             cuda_unroll=cfg.cuda_unroll,
             ray_integrator=cfg.ray_integrator,
             sampled_step_size=sampled_step,
+            z_fast=z_fast,
         )
 
     def data_loss_and_grad_fn(x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -160,7 +181,7 @@ def fista_tv_core_arrays(
             T_all=T_all,
             grid=grid,
             detector=detector,
-            volume=_apply_support(x, cfg.support),
+            volume=_apply_support(x, support),
             det_grid=det_grid,
             projections=projections,
             stream_projections=cfg.stream_projections,
@@ -177,9 +198,10 @@ def fista_tv_core_arrays(
             cuda_unroll=cfg.cuda_unroll,
             ray_integrator=cfg.ray_integrator,
             sampled_step_size=sampled_step,
+            z_fast=z_fast,
             compute_loss=bool(cfg.compute_iteration_loss or cfg.compute_final_data_loss),
         )
-        return loss, _apply_support(grad, cfg.support)
+        return loss, _apply_support(grad, support)
 
     def body(
         carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
@@ -188,7 +210,7 @@ def fista_tv_core_arrays(
         x_prev, z_prev, t_prev, loss_arr, _last_data_loss = carry
         data_loss, grad = data_loss_and_grad_fn(z_prev)
         if cfg.regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
-            grad = grad + lam * huber_tv_grad(z_prev, float(cfg.huber_delta))
+            grad = grad + lam * huber_tv_grad(z_prev, float(cfg.huber_delta), z_fast=z_fast)
         # The differentiable reference path intentionally uses gradient FISTA for
         # smoothed regularisers. Exact TV belongs to the public reconstruction
         # adapter or a future nonsmooth implicit path, not the bilevel hot path.
@@ -201,7 +223,7 @@ def fista_tv_core_arrays(
         if cfg.compute_iteration_loss and cfg.iterations > 0:
             objective = data_loss
             if cfg.tv_weight != 0.0:
-                objective = objective + lam * regulariser_value_arrays(z_prev, cfg)
+                objective = objective + lam * regulariser_value_arrays(z_prev, cfg, z_fast=z_fast)
             loss_arr = loss_arr.at[k].set(objective.astype(jnp.float32))
         return (x_next, z_next, t_next, loss_arr, data_loss.astype(jnp.float32)), None
 
@@ -214,7 +236,7 @@ def fista_tv_core_arrays(
     )
     data_final = data_loss_fn(x_final) if cfg.compute_final_data_loss else last_data_loss
     reg_final = (
-        regulariser_value_arrays(x_final, cfg)
+        regulariser_value_arrays(x_final, cfg, z_fast=z_fast)
         if cfg.compute_final_regulariser_value
         else jnp.zeros((), dtype=jnp.float32)
     )
@@ -265,11 +287,13 @@ def projection_loss_arrays(
     )
 
 
-def regulariser_value_arrays(volume: jnp.ndarray, cfg: FistaCoreConfig) -> jnp.ndarray:
+def regulariser_value_arrays(
+    volume: jnp.ndarray, cfg: FistaCoreConfig, *, z_fast: bool = False
+) -> jnp.ndarray:
     """Return the reconstruction regulariser value selected by ``cfg``."""
     if cfg.regulariser == "huber_tv":
-        return huber_tv_value(volume, float(cfg.huber_delta))
-    return isotropic_tv_value(volume)
+        return huber_tv_value(volume, float(cfg.huber_delta), z_fast=z_fast)
+    return isotropic_tv_value(volume, z_fast=z_fast)
 
 
 def _requested_sampled_step(grid: Grid, cfg: FistaCoreConfig) -> float | None:
@@ -347,6 +371,7 @@ def _project_chunk(
     cuda_unroll: int | None,
     ray_integrator: str = "sampled",
     sampled_step_size: float | None = None,
+    z_fast: bool = False,
 ) -> jnp.ndarray:
     if ray_integrator == "exact":
         from tomojax.core.trilinear import exact_forward
@@ -364,6 +389,7 @@ def _project_chunk(
             detector,
             backend=forward_projector,
             interpolation="cubic" if ray_integrator == "joseph_cubic" else "linear",
+            z_fast=z_fast,
         )
     if forward_projector == "jax":
         return project_views(
@@ -425,6 +451,7 @@ def _projection_loss(
     ray_integrator: str = "sampled",
     sampled_step_size: float | None = None,
     stream_projections: bool = False,
+    z_fast: bool = False,
 ) -> jnp.ndarray:
     n_views = int(T_all.shape[0])
     if n_views == 0:
@@ -460,6 +487,7 @@ def _projection_loss(
             cuda_unroll=cuda_unroll,
             ray_integrator=ray_integrator,
             sampled_step_size=sampled_step_size,
+            z_fast=z_fast,
         )
         resid = (pred - y_chunk).astype(jnp.float32) * valid_mask[:, None, None]
         return loss_acc + jnp.float32(0.5) * jnp.vdot(resid, resid * w_chunk).real, None
@@ -510,6 +538,7 @@ def _projection_loss_and_explicit_grad(
     sampled_step_size: float | None = None,
     compute_loss: bool = True,
     stream_projections: bool = False,
+    z_fast: bool = False,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     if sampled_step_size is None and forward_projector == "cuda":
         sampled_step_size = float(grid.vy) * float(cuda_step_size_scale)
@@ -584,6 +613,7 @@ def _projection_loss_and_explicit_grad(
             cuda_unroll=cuda_unroll,
             ray_integrator=ray_integrator,
             sampled_step_size=sampled_step_size,
+            z_fast=z_fast,
         )
         raw_resid = (pred - y_chunk).astype(jnp.float32) * valid
         grad_resid = raw_resid * w_chunk
@@ -602,6 +632,7 @@ def _projection_loss_and_explicit_grad(
             backprojector=backprojector,
             ray_integrator=ray_integrator,
             sampled_step_size=sampled_step_size,
+            z_fast=z_fast,
             projector_unroll=projector_unroll,
             gather_dtype=gather_dtype,
         )
@@ -629,6 +660,7 @@ def _accumulate_backprojection(
     sampled_step_size: float | None,
     projector_unroll: int,
     gather_dtype: str,
+    z_fast: bool = False,
 ) -> jnp.ndarray:
     """Accumulate the selected forward model's exact transpose, not a surrogate."""
     if ray_integrator in {"joseph", "joseph_cubic"}:
@@ -642,6 +674,7 @@ def _accumulate_backprojection(
             backend=backprojector,
             interpolation="cubic" if ray_integrator == "joseph_cubic" else "linear",
             accumulate=accumulate,
+            z_fast=z_fast,
         )
     if ray_integrator == "exact":
         from tomojax.core.trilinear import exact_adjoint

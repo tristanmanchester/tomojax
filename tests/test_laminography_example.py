@@ -156,7 +156,7 @@ def test_automatic_binning_is_only_an_initializer(monkeypatch, nu):
     native_grid = tj.Grid(8, 10, 12, 1, 1.5, 2, vol_center=grid.vol_center)
     geometry = tj.LaminographyGeometry(native_grid, detector, [0, 90, 180], tilt_deg=30.9)
     scan = tj.Scan(np.ones((3, 7, nu), np.float32), geometry)
-    initial = np.full((4, 5, 6), 0.2, np.float32)
+    initial = np.full((6, 5, 4), 0.2, np.float32)
     seed = np.zeros((3, 6), np.float32)
     seed[:, 3] = [0.1, 0.2, -0.3]
 
@@ -177,7 +177,7 @@ def test_automatic_binning_is_only_an_initializer(monkeypatch, nu):
         np.testing.assert_allclose(det.center, (0.83, -0.6 if nu == 320 else -0.05))
         np.testing.assert_allclose(g.axis_unit_lab, (0, 0.5, np.sqrt(0.75)))
         assert config.gn_coupling == "joint" and not config.seed_translations
-        np.testing.assert_allclose(init_x, np.full((8, 10, 12), 0.2), atol=1e-7)
+        np.testing.assert_allclose(init_x, np.full((12, 10, 8), 0.2), atol=1e-7)
         np.testing.assert_array_equal(init_pose_params, seed)
         return init_x + 0.01, seed + 0.001, {"completed_outer_iterations": 2}
 
@@ -188,7 +188,7 @@ def test_automatic_binning_is_only_an_initializer(monkeypatch, nu):
         reconstruct=lambda s, *a, **kw: tj.Reconstruction(initial, s, "fista", {}),
     )
     assert result.scan.projections is scan.projections
-    assert result.volume.shape == (8, 10, 12)
+    assert result.volume.shape == (12, 10, 8)
     assert result.info["automatic"]["detector_binning"] == 1
     assert result.info["automatic"]["setup_binning"] == (1 if nu == 320 else 2)
     np.testing.assert_array_equal(result.scan.poses, seed + 0.001)
@@ -218,7 +218,7 @@ def test_automatic_explicit_region_preserves_faces_and_final_sampling(monkeypatc
             upper = lower + pitch * (g.nx, g.ny, g.nz)
             np.testing.assert_allclose(lower, (0.85, -4.55, 0.05))
             np.testing.assert_allclose(upper, (5.75, 5.35, 4.55))
-        return tj.Reconstruction(np.ones((4, 5, 3), np.float32), s, "fista", {})
+        return tj.Reconstruction(np.ones((3, 5, 4), np.float32), s, "fista", {})
 
     monkeypatch.setattr(workflow, "_align_explicit", seed)
     monkeypatch.setattr(workflow, "reconstruct", reconstruct)
@@ -228,7 +228,7 @@ def test_automatic_explicit_region_preserves_faces_and_final_sampling(monkeypatc
         automatic, "align_arrays", lambda *args, **kw: (kw["init_x"], kw["init_pose_params"], {})
     )
     result = operation(scan, grid=grid)
-    assert result.scan.grid == grid and result.volume.shape == (7, 9, 5)
+    assert result.scan.grid == grid and result.volume.shape == (5, 9, 7)
     assert result.scan.projections is scan.projections
     assert result.info["automatic"]["region"]["status"] == "provided_region"
     assert result.info["automatic"]["setup_binning"] == 2

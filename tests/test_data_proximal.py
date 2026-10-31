@@ -155,7 +155,9 @@ def test_weighted_data_extreme_masked_outliers_keep_dense_reconstruction_and_tru
     poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=jnp.float32)
 
     def project(flat):
-        return project_joseph(flat.reshape(shape), poses, grid, detector, backend="jax").ravel()
+        return project_joseph(
+            flat.reshape(shape[::-1]), poses, grid, detector, backend="jax"
+        ).ravel()
 
     matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(2)), dtype=np.float64)
     truth = np.asarray([0.2, 1.0])

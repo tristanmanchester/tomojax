@@ -38,7 +38,13 @@ condition number of each step's recurrence. It recomputes the exact gradient
 periodically, as in-core CGLS recomputes its residual.
 
 The iterative solvers need the whole volume and their work arrays on the GPU;
-a volume larger than the GPU cannot be reconstructed iteratively. The
+a volume larger than the GPU cannot be reconstructed iteratively. On CUDA they
+keep their volumes in a private z-contiguous order and convert once at entry and
+exit, which needs one volume-sized copy at those two points. `tj.project`,
+`tj.backproject` and `tj.Projector` make the same copy when one more volume fits
+in free GPU memory and otherwise read the `(z, y, x)` array in place; the result
+is the same to the bit. An axial parallel-beam projection never needs the copy:
+it reads 32 planes at a time. The
 [memory measurements](measurements.md#memory) give peak use for 512³
 laminography on an 8 GB GPU.
 

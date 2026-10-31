@@ -13,7 +13,9 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.core.cone import ConeModel
+from tomojax.core.joseph import PrivateJoseph
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
+from tomojax.recon._volume_storage import Model, volume_shape
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,11 +34,14 @@ class ViewBatches:
         det_grid: tuple[jax.Array, jax.Array] | None,
         backend: str,
         batch_size: int,
-        model: str | ConeModel,
+        model: Model,
         joseph_interpolation: str,
         *,
         absolute_weights: bool,
     ) -> None:
+        # The Joseph plane model reads solver-private volumes in z-fast storage.
+        self.storage, self.z_fast = model, isinstance(model, PrivateJoseph)
+        model = "joseph" if self.z_fast else model
         self.batch_size = batch_size
         self.lay_out(int(poses.shape[0]))
         self.poses, self.grid, self.detector, self.det_grid = poses, grid, detector, det_grid
@@ -91,9 +96,9 @@ class ViewBatches:
         shape = (self.size, self.detector.nv, self.detector.nu)
         return jax.lax.dynamic_slice(stack, (start, 0, 0), shape)
 
-    def _coefficients(self, start: jax.Array) -> jax.Array:
+    def _coefficients(self, start: jax.Array, size: int | None = None) -> jax.Array:
         assert self.coefficients is not None
-        return jax.lax.dynamic_slice_in_dim(self.coefficients, start, self.size)
+        return jax.lax.dynamic_slice_in_dim(self.coefficients, start, size or self.size)
 
     def project_ones(self, start: jax.Array, batch: jax.Array) -> jax.Array:
         """Project uniform unit support, retaining the ordinary weights at its boundary."""
@@ -126,12 +131,13 @@ class ViewBatches:
             from tomojax.core.joseph import forward_project_planes
 
             return forward_project_planes(
-                self._coefficients(start),
+                self._coefficients(start, batch.shape[0]),
                 volume,
                 grid,
                 detector,
                 backend=self.backend,
                 interpolation=self.interpolation,
+                z_fast=self.z_fast,
             )
         if self.backend == "cuda":
             from tomojax.core.cuda_projector.api import (
@@ -180,6 +186,7 @@ class ViewBatches:
                 interpolation=self.interpolation,
                 absolute_weights=self.absolute_weights,
                 accumulate=output,
+                z_fast=self.z_fast,
             )
         if self.backend == "cuda":
             from tomojax.core.cuda_projector.api import sum_backproject_views_T_cuda
@@ -208,9 +215,4 @@ class ViewBatches:
         )
 
     def zeros_volume(self) -> jax.Array:
-        shape = (
-            self.model.volume_shape(self.grid)
-            if isinstance(self.model, ConeModel)
-            else (self.grid.nz, self.grid.ny, self.grid.nx)
-        )
-        return jnp.zeros(shape, dtype=jnp.float32)
+        return jnp.zeros(volume_shape(self.storage, self.grid), dtype=jnp.float32)

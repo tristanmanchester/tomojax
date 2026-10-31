@@ -118,16 +118,19 @@ def test_fortran_output_with_ragged_axial_slabs(tmp_path):
     np.testing.assert_array_equal(backing[[0, -1]], -71)
 
 
-def test_fortran_output_propagates_write_failures():
+def test_fortran_output_propagates_write_failures(monkeypatch):
     scan = _scan("parallel", nz=19)
     writes = []
 
-    class FailingStorage(np.ndarray):
-        def __setitem__(self, key, value):
-            writes.append(value.shape)
-            raise OSError("output write failed")
+    def failing_copy(volume, target, **_):
+        writes.append(target.shape)
+        raise OSError("output write failed")
 
-    out = np.empty((19, 7, 9), np.float32, order="F").view(FailingStorage)
+    # Slabs reach the output through copy_to_host, not the array's __setitem__.
+    monkeypatch.setattr(
+        importlib.import_module("tomojax.recon.fbp_host"), "copy_to_host", failing_copy
+    )
+    out = np.empty((19, 7, 9), np.float32, order="F")
     with pytest.raises(OSError, match="output write failed"):
         tj.reconstruct(scan, "fbp", out=out)
     assert len(writes) == 1

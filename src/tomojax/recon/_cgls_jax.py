@@ -31,7 +31,9 @@ from tomojax.recon._projection import (
 )
 from tomojax.recon._quadratic import gradient_energy, gradient_normal, regularization_normal
 from tomojax.recon._volume_storage import (
+    Model,
     initialize_volume,
+    is_joseph,
     resident_model,
     restore_volume,
     voxel_spacing,
@@ -69,7 +71,7 @@ def _checked_inputs(
     data: jax.Array,
     initial: jax.Array | None,
     grid: Grid,
-    model: str | ConeModel,
+    model: Model,
 ) -> tuple[jax.Array, jax.Array]:
     # Check inputs inside the solve: separate eager checks would each compile.
     _, initial = initialize_volume(initial, model, grid)
@@ -119,7 +121,7 @@ def _solve(
         split=split,
     )  # fmt: skip
     magnitude_adjoint = adjoint
-    if model == "joseph" and joseph_interpolation == "cubic":
+    if is_joseph(model) and joseph_interpolation == "cubic":
         # Cubic convolution has negative lobes. A.T @ abs(residual) is not
         # a cancellation bound: the roundoff estimate needs abs(A).T instead.
         _, magnitude_adjoint = _operators(
@@ -489,7 +491,7 @@ def cgls(
     public_model = model
     model = resident_model(model, backend)
     initial = None if init_x is None else _as_float32(init_x)
-    if model == "joseph":
+    if is_joseph(model):
         from tomojax.core.joseph import validate_plane_geometry
 
         validate_plane_geometry(poses, grid, detector)
@@ -546,7 +548,7 @@ def cgls(
         "normal_residual_tolerance": float(tolerance),
         "projector_backend": backend,
         "projector_model": public_model,
-        "joseph_interpolation": cfg.joseph_interpolation if model == "joseph" else None,
+        "joseph_interpolation": cfg.joseph_interpolation if is_joseph(model) else None,
         "views_per_batch": min(batch, n),
         "formulation": "streamed_normal_equations" if stream else "cgls",
         "damping": float(cfg.damping),

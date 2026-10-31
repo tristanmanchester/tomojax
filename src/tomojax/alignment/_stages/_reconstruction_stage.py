@@ -30,6 +30,7 @@ from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import get_detector_grid_device
+from tomojax.core.volume_layout import transpose_volume
 from tomojax.recon.fista_tv import fista_tv, huber_tv_lipschitz
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
@@ -681,6 +682,9 @@ def _run_huber_fista_core_reconstruction(
         if stream:
             jax.block_until_ready(result)
     x_core, loss, _data_loss, _regulariser_value, effective_iters = result
+    if core_cfg.private_storage:
+        # Restored once the compiled solve has finished and released its work arrays.
+        x_core = transpose_volume(jax.block_until_ready(x_core))
     return x_core, _huber_fista_core_info(
         cfg=cfg,
         loss=loss,
