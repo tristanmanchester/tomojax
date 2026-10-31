@@ -32,6 +32,7 @@ def solve_coupled_normal(
     dot: Callable[[BlockVector, BlockVector], Scalar] | None = None,
     placement: BlockPlacement = DEVICE,
     volume_ramp: float | None = None,
+    volume_z_fast: bool = False,
 ) -> CoupledLinearResult:
     """Solve a positive (semi)definite block normal system by preconditioned CG.
 
@@ -56,13 +57,15 @@ def solve_coupled_normal(
         volume, pose = r
         fft = placement.fft
         scale = xp.sqrt(inverse_diagonal[0])
-        _, ny, nx = volume.shape
+        nx, ny, _ = volume.shape if volume_z_fast else volume.shape[::-1]
+        axes = (0, 1) if volume_z_fast else (2, 1)
         fx = fft.fftfreq(nx).astype(volume.dtype)[:, None]
         fy = fft.rfftfreq(ny).astype(volume.dtype)[None, :]
         ramp = xp.sqrt(fx * fx + fy * fy + 1 / (nx * ny))
         ramp = ramp / (1 + volume_ramp * (nx * ny) ** 0.5 * ramp)
-        spectrum = fft.rfft2(scale * volume, axes=(2, 1))
-        filtered = xp.asarray(fft.irfft2(spectrum * ramp.T[None, :, :], s=(nx, ny), axes=(2, 1)))
+        ramp = ramp[:, :, None] if volume_z_fast else ramp.T[None, :, :]
+        spectrum = fft.rfft2(scale * volume, axes=axes)
+        filtered = xp.asarray(fft.irfft2(spectrum * ramp, s=(nx, ny), axes=axes))
         return scale * filtered, pose * inverse_diagonal[1]
 
     z0 = precondition(residual)
@@ -123,6 +126,7 @@ def solve_schur_normal(
     placement=DEVICE,
     dot=None,
     volume_ramp=None,
+    volume_z_fast=False,
 ):
     """Eliminate pose blocks, retaining the full system's stopping scale.
 
@@ -147,6 +151,7 @@ def solve_schur_normal(
         placement=placement,
         dot=dot,
         volume_ramp=volume_ramp,
+        volume_z_fast=volume_z_fast,
     )
     dx = placement.multiply(reduced.increment[0], free)
     dp = movable * solve_pose(rhs[1] - pose_rows(dx))

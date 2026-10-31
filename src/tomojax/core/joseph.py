@@ -329,6 +329,7 @@ def plane_pose_columns(
     *,
     backend: str,
     interpolation: str = "linear",
+    z_fast: bool = False,
 ) -> jax.Array:
     """Values and directional derivatives, shaped ``(views, 1 + directions, nv, nu)``.
 
@@ -341,12 +342,18 @@ def plane_pose_columns(
 
         if cuda_gather_available():
             return pose_columns_cuda(
-                coefficients, volume, tangent, grid, detector, interpolation=interpolation
+                coefficients,
+                volume,
+                tangent,
+                grid,
+                detector,
+                interpolation=interpolation,
+                z_fast=z_fast,
             )
 
     def project(cf: jax.Array) -> jax.Array:
         return forward_project_planes(
-            cf, volume, grid, detector, backend=backend, interpolation=interpolation
+            cf, volume, grid, detector, backend=backend, interpolation=interpolation, z_fast=z_fast
         )
 
     value = project(coefficients)

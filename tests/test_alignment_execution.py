@@ -573,3 +573,69 @@ def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
     assert actual_info["effective_iterations"] == expected_info["effective_iterations"] == 6
     assert actual_info["actual_backend"] == expected_info["actual_backend"]
     np.testing.assert_allclose(actual_info["loss"], expected_info["loss"], rtol=3e-6)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("coupling", ["fixed_volume", "joint"])
+@pytest.mark.parametrize("jacobian", ["autodiff", "central"])
+@pytest.mark.parametrize("resume", [False, True])
+def test_private_pose_steps_restore_public_borrowers_and_observers(coupling, jacobian, resume):
+    if jax.default_backend() != "gpu":
+        pytest.skip("CUDA required")
+    grid = Grid(5, 4, 3, 0.7, 1.1, 1.3)
+    detector = Detector(7, 5, 0.8, 1.2)
+    geometry = LaminographyGeometry(grid, detector, [13, 47, 103], tilt_deg=23)
+    original = np.random.default_rng(1682).uniform(0.2, 1, (3, 4, 5)).astype(np.float32)
+    caller = jnp.asarray(original)
+    retained = []
+    checkpoints = []
+
+    def observe(volume, _poses, _stat):
+        assert volume.shape == original.shape
+        retained.append((volume, np.array(volume)))
+        if coupling == "fixed_volume":
+            assert volume.unsafe_buffer_pointer() == caller.unsafe_buffer_pointer()
+        return "stop_run" if resume and len(retained) == 1 else "continue"
+
+    cfg = AlignConfig(
+        backend="cuda",
+        gather_dtype="fp32",
+        ray_integrator="joseph",
+        gn_coupling=coupling,
+        gn_jacobian=jacobian,
+        outer_iterations=2,
+        iterations=0,
+        gn_joint_iterations=3,
+        gn_damping=0.1,
+        gn_volume_damping=0.1,
+        tv_weight=0.01,
+        optimise_dofs=("dx",),
+        early_stop=False,
+        loss=L2LossSpec(),
+    )
+    inputs = geometry, grid, detector, jnp.zeros((3, 5, 7), jnp.float32)
+    volume, poses, info = align(
+        *inputs,
+        config=cfg,
+        init_x=caller,
+        observer=observe,
+        checkpoint_callback=checkpoints.append,
+    )
+    if resume:
+        volume, poses, info = align(
+            *inputs,
+            config=cfg,
+            resume_state=checkpoints[0],
+            observer=observe,
+            checkpoint_callback=checkpoints.append,
+        )
+    assert len(retained) == 2
+    assert volume.shape == original.shape
+    assert np.isfinite(volume).all() and np.isfinite(poses).all()
+    np.testing.assert_array_equal(caller, original)
+    for value, snapshot in retained:
+        np.testing.assert_array_equal(value, snapshot)
+    assert info["backend_provenance"]["actual_backend"] == "cuda"
+    if coupling == "fixed_volume":
+        np.testing.assert_array_equal(volume, original)
+        assert info["backend_provenance"]["differentiability"] == "performance_only"

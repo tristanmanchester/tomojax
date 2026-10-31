@@ -19,25 +19,27 @@ if TYPE_CHECKING:
 
 
 @cache
-def _kernel(directions: int, interpolation: str):
+def _kernel(directions: int, interpolation: str, *, z_fast: bool):
     import cupy as cp
 
     root = Path(__file__).parent
-    source = (root / "joseph_sampling.cuh").read_text() + (
-        root / "joseph_pose_columns.cu"
-    ).read_text()
+    source = (
+        f"#define Z_FAST {int(z_fast)}\n"
+        + (root / "joseph_sampling.cuh").read_text()
+        + (root / "joseph_pose_columns.cu").read_text()
+    )
     source = source.replace("DIRECTIONS", str(directions)).replace(
         "CUBIC", str(int(interpolation == "cubic"))
     )
     return cp.RawModule(code=source, options=("--fmad=false",)).get_function("pose_columns")
 
 
-def _launch(context, out, coeff, tangent, volume, *, grid, detector, interpolation):
+def _launch(context, out, coeff, tangent, volume, *, grid, detector, interpolation, z_fast):
     import cupy as cp
 
     views, directions = tangent.shape[:2]
     with xla_stream(context, out):
-        _kernel(directions, interpolation)(
+        _kernel(directions, interpolation, z_fast=z_fast)(
             (-(-detector.nu // 8) * -(-detector.nv // 16) * views,),
             (128,),
             (
@@ -63,6 +65,7 @@ def pose_columns_cuda(
     detector: Detector,
     *,
     interpolation: str = "linear",
+    z_fast: bool = False,
 ) -> jax.Array:
     """Return ``(views, 1 + directions, nv, nu)`` values and coefficient tangents.
 
@@ -72,7 +75,7 @@ def pose_columns_cuda(
     """
     validate_interpolation(interpolation)
     call = buffer_callback(
-        partial(_launch, grid=grid, detector=detector, interpolation=interpolation),
+        partial(_launch, grid=grid, detector=detector, interpolation=interpolation, z_fast=z_fast),
         jax.ShapeDtypeStruct(
             (coefficients.shape[0], 1 + tangent.shape[1], detector.nv, detector.nu), jnp.float32
         ),
@@ -83,7 +86,7 @@ def pose_columns_cuda(
         from .joseph import plane_pose_columns
 
         return plane_pose_columns(
-            c, v, t, grid, detector, backend="jax", interpolation=interpolation
+            c, v, t, grid, detector, backend="jax", interpolation=interpolation, z_fast=z_fast
         )
 
     return jax.lax.platform_dependent(

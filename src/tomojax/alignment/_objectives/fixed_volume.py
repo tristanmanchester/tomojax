@@ -17,6 +17,7 @@ from tomojax.core.backend_policy import (
     normalize_projector_backend,
 )
 from tomojax.core.cuda_projector_resolver import resolve_cuda_callable
+from tomojax.core.joseph import forward_project_planes, plane_coefficients
 from tomojax.core.projector import (
     cone_views,
     cuda_unsupported_exception_type,
@@ -88,6 +89,7 @@ def project_and_score_stack(
     require_differentiable_projector: bool = True,
     ray_integrator: str = "sampled",
     frames: jnp.ndarray | None = None,
+    z_fast: bool = False,
 ) -> jnp.ndarray:
     """Project and score views in parallel rays, or in cone-beam lab ``frames``."""
     backend = normalize_projector_backend(backend)
@@ -113,6 +115,20 @@ def project_and_score_stack(
 
     def vm_project(T: jnp.ndarray, start: jnp.ndarray | int) -> jnp.ndarray:
         """Project the views ``start, start + 1, ...`` at poses ``T``."""
+        if z_fast:
+            assert frames is None
+            assert backend == "cuda"
+            assert ray_integrator in {"joseph", "joseph_cubic"}
+            coefficients = plane_coefficients(T, grid, detector, det_grid)
+            return forward_project_planes(
+                coefficients,
+                volume,
+                grid,
+                detector,
+                backend="cuda",
+                z_fast=True,
+                interpolation="cubic" if ray_integrator == "joseph_cubic" else "linear",
+            )
         if frames is None:
             return parallel_project(T)
         # One batched cone call per chunk, not one launch per view.

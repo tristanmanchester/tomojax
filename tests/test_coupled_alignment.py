@@ -975,7 +975,7 @@ def test_finite_sampling_and_paired_derivatives_match_dense_oracle(width, backen
         active_columns=(3, 5),
         refinement=_matching_model.JointRefinement(native_width=2 * width),
         jacobian=SimpleNamespace(
-            cone_beam=False, translation_frame="detector", integrator="joseph"
+            cone_beam=False, translation_frame="detector", integrator="joseph", z_fast=False
         ),
     )
     arrays = SimpleNamespace(weights=jnp.float32(1), frames=None)
@@ -1060,3 +1060,31 @@ def test_joint_gn_rejects_huber_with_fixed_volume_remedy():
     ctx = SimpleNamespace(cfg=None, loss_adapter=SimpleNamespace(spec=HuberLossSpec()))
     with pytest.raises(ValueError, match="fixed_volume"):
         _coupled_objective.build_coupled_objective(ctx)
+
+
+@pytest.mark.parametrize("placement", [_coupled_vectors.HOST, _coupled_vectors.DEVICE])
+def test_private_volume_ramp_matches_public_physical_axes(placement):
+    xp = placement.array
+    rhs = xp.asarray(np.random.default_rng(1682).normal(size=(3, 4, 5)), dtype=xp.float32)
+    diagonal = xp.asarray(np.linspace(0.5, 2, rhs.size).reshape(rhs.shape), dtype=xp.float32)
+    pose = xp.asarray([0.3, -0.2], dtype=xp.float32)
+    results = []
+    for private in (False, True):
+        x = rhs.transpose(2, 1, 0) if private else rhs
+        d = diagonal.transpose(2, 1, 0) if private else diagonal
+        result = solve_coupled_normal(
+            lambda block, d=d: (block[0] * d, block[1] * 2),
+            (x, pose),
+            (1 / d, xp.full_like(pose, 0.5)),
+            max_iters=3,
+            rtol=0,
+            placement=placement,
+            volume_ramp=0.6,
+            volume_z_fast=private,
+        )
+        assert result.finite
+        assert int(result.iterations) == 3
+        dx, dp = result.increment
+        results.append((np.asarray(dx.transpose(2, 1, 0) if private else dx), np.asarray(dp)))
+    for actual, expected in zip(results[1], results[0], strict=True):
+        np.testing.assert_allclose(actual, expected, rtol=3e-6, atol=3e-7)
