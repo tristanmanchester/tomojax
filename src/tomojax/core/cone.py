@@ -361,7 +361,14 @@ def _adjoint_jax(
 
 
 def forward_into(
-    out: Any, coeff: Any, volume: Any, *, grid: Grid, det: Detector, z_fast: bool = False
+    out: Any,
+    coeff: Any,
+    volume: Any,
+    *,
+    grid: Grid,
+    det: Detector,
+    z_fast: bool = False,
+    ring_start: int | None = None,
 ) -> None:
     """Launch the forward kernels on CuPy's current stream: ``out`` is ``(views, nv, nu)``.
 
@@ -369,6 +376,11 @@ def forward_into(
     ``volume`` is C-ordered ``(nz, ny, nx)``, or solver-private
     ``(nx, ny, nz)`` when ``z_fast`` is set.
     Nearby source directions share view packets; separated directions use spatial packets.
+
+    With ``ring_start``, add the projection to circular rows of ``out``, starting
+    at that row modulo its height. The contiguous destination holds the same
+    views and columns and at least ``det.nv`` rows. Each ray is rounded before
+    adding, as with a separately stored projection. No temporary image is made.
     """
     import cupy as cp
 
@@ -379,18 +391,22 @@ def forward_into(
         np.int32(det.nu), np.int32(det.nv),
         np.float32(grid.vx), np.float32(grid.vy), np.float32(grid.vz), np.int32(views),
     )  # fmt: skip
+    destination = (
+        np.int32(out.shape[1]),
+        np.int32(-1 if ring_start is None else ring_start % out.shape[1]),
+    )
     if z_fast:
         cuda_module(z_fast=True).get_function("cone_forward_z_fast")(
-            (views, -(-det.nu // 8), -(-det.nv // 32)), (256,), args[:-1]
+            (views, -(-det.nu // 8), -(-det.nv // 32)), (256,), (*args[:-1], *destination)
         )
         return
     suffix = "" if grid.nx * grid.ny * grid.nz <= 2**32 else "64"
     module = cuda_module()
     module.get_function("cone_forward_dense" + suffix)(
-        (-(-views // 8), -(-det.nu // 8), -(-det.nv // 4)), (256,), args
+        (-(-views // 8), -(-det.nu // 8), -(-det.nv // 4)), (256,), (*args, *destination)
     )
     module.get_function("cone_forward_sparse" + suffix)(
-        (views, -(-det.nu // 16), -(-det.nv // 16)), (256,), args
+        (views, -(-det.nu // 16), -(-det.nv // 16)), (256,), (*args, *destination)
     )
 
 

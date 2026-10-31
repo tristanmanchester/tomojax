@@ -121,6 +121,19 @@ __device__ __forceinline__ bool dense_view_packet(
     return true;
 }
 
+// first < 0 stores; otherwise add into a ring no shorter than the projection.
+__device__ __forceinline__ void write_projection(float* out, float value,
+    int view, int u, int v, int nu, int out_nv, int first)
+{
+    int row = v;
+    if (first >= 0) {
+        row += first;
+        if (row >= out_nv) row -= out_nv;
+    }
+    long pixel = ((long)view * out_nv + row) * nu + u;
+    out[pixel] = first >= 0 ? __fadd_rn(out[pixel], value) : value;
+}
+
 #if VOLUME_Z_FAST
 namespace axis_packets {
 // A warp follows one detector column along contiguous z samples.
@@ -199,7 +212,7 @@ __device__ float ray_sum(const float* __restrict__ vol, const float* c, float fu
 // One ray per thread: grid (views, u tiles, v tiles); out (view, v, u).
 extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward_z_fast(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
-    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz)
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int out_nv, int first)
 {
     int view = blockIdx.x;
     const float* c = coeff + (long)view * NC;
@@ -212,7 +225,7 @@ extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward_z_fast(
     float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
     // Written (view, v, u), as JAX holds projections: one store per ray, so the
     // stride costs little, and no transposed copy of the projections is needed.
-    out[((long)view * nv + v) * nu + u] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
+    write_projection(out, __fmul_rn(sum, path_w(r0, r1, r2, ra, sx, sy, sz)), view, u, v, nu, out_nv, first);
 }
 
 } // namespace axis_packets
@@ -403,7 +416,7 @@ __device__ __forceinline__ int wrap_pixel(int pixel,int shift,int size)
 template <typename Offset>
 __device__ __forceinline__ void cone_forward_body(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
-    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews, int out_nv, int first)
 {
     if (!dense_view_packet(coeff, blockIdx.x * 8, nviews, nx, ny, nz)) return;
     constexpr int GROUP=8;
@@ -437,21 +450,21 @@ __device__ __forceinline__ void cone_forward_body(
     if(!live)return;
     float r0,r1,r2;ray_of(c,fu,fv,r0,r1,r2);
     float ra=SEL(ray_axis(r0,r1,r2),r0,r1,r2);
-    out[((long)view*nv+v)*nu+u]=sum*path_w(r0,r1,r2,ra,sx,sy,sz);
+    write_projection(out, __fmul_rn(sum, path_w(r0,r1,r2,ra,sx,sy,sz)), view, u, v, nu, out_nv, first);
 }
 
 extern "C" __global__ void __launch_bounds__(GU * GV * 8) cone_forward_dense(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
-    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews, int out_nv, int first)
 {
-    cone_forward_body<unsigned>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews);
+    cone_forward_body<unsigned>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews,out_nv,first);
 }
 
 extern "C" __global__ void __launch_bounds__(GU * GV * 8) cone_forward_dense64(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
-    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews, int out_nv, int first)
 {
-    cone_forward_body<unsigned long long>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews);
+    cone_forward_body<unsigned long long>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews,out_nv,first);
 }
 
 } // namespace dense_packets
@@ -607,7 +620,7 @@ __device__ float register_ray_sum(const float* __restrict__ vol,const float* c,f
 template <typename Offset>
 __device__ __forceinline__ void cone_forward_body(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
-    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews, int out_nv, int first)
 {
     if (dense_view_packet(coeff, (blockIdx.x / 8) * 8, nviews, nx, ny, nz)) return;
     int view = blockIdx.x;
@@ -641,21 +654,21 @@ __device__ __forceinline__ void cone_forward_body(
     float ra = SEL(ray_axis(r0, r1, r2), r0, r1, r2);
     // Written (view, v, u), as JAX holds projections: one store per ray, so the
     // stride costs little, and no transposed copy of the projections is needed.
-    out[((long)view * nv + v) * nu + u] = sum * path_w(r0, r1, r2, ra, sx, sy, sz);
+    write_projection(out, __fmul_rn(sum, path_w(r0,r1,r2,ra,sx,sy,sz)), view, u, v, nu, out_nv, first);
 }
 
 extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward_sparse(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
-    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews, int out_nv, int first)
 {
-    cone_forward_body<unsigned>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews);
+    cone_forward_body<unsigned>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews,out_nv,first);
 }
 
 extern "C" __global__ void __launch_bounds__(GU * GV) cone_forward_sparse64(
     const float* __restrict__ coeff, const float* __restrict__ vol, float* __restrict__ out,
-    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews)
+    int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz, int nviews, int out_nv, int first)
 {
-    cone_forward_body<unsigned long long>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews);
+    cone_forward_body<unsigned long long>(coeff,vol,out,nx,ny,nz,nu,nv,sx,sy,sz,nviews,out_nv,first);
 }
 
 } // namespace sparse_packets

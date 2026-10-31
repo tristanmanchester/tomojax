@@ -42,6 +42,8 @@ def test_packet_paths_partition_pixels_and_match_individual_views(views, suffix,
         *(np.int32(v) for v in (grid.nx, grid.ny, grid.nz, detector.nu, detector.nv)),
         *(np.float32(v) for v in (grid.vx, grid.vy, grid.vz)),
         np.int32(views),
+        np.int32(detector.nv),
+        np.int32(-1),
     )
     outputs = []
     for name, gu, gv, group in [("dense", 8, 4, 8), ("sparse", 16, 16, 1)]:
@@ -62,3 +64,20 @@ def test_packet_paths_partition_pixels_and_match_individual_views(views, suffix,
     np.testing.assert_array_equal(combined.view(cp.uint32).get(), expected.view(cp.uint32).get())
     assert bool(cp.array_equal(coeff, saved_coeff))
     assert bool(cp.array_equal(volume, saved_volume))
+
+    # Every ray adds once to a circular destination; untouched rows stay exact.
+    ring, start = detector.nv + 5, detector.nv + 2
+    target = cp.asarray(
+        np.random.default_rng(56).uniform(-1, 1, (views, ring, detector.nu)).astype(np.float32)
+    )
+    reference = target.copy()
+    for row in range(detector.nv):
+        reference[:, (start + row) % ring] += expected[:, row]
+    ring_args = (*args[:-2], np.int32(ring), np.int32(start))
+    for name, gu, gv, group in [("dense", 8, 4, 8), ("sparse", 16, 16, 1)]:
+        cone.cuda_module().get_function("cone_forward_" + name + suffix)(
+            (-(-views // group), -(-detector.nu // gu), -(-detector.nv // gv)),
+            (256,),
+            (coeff, volume, target, *ring_args),
+        )
+    np.testing.assert_array_equal(target.view(cp.uint32).get(), reference.view(cp.uint32).get())

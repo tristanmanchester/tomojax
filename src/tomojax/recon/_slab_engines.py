@@ -37,7 +37,7 @@ class Engine(Protocol):
 
     def download(self, array: Any, out: np.ndarray) -> None: ...
 
-    def project(self, volume: Any, coeff: Any, rows: int) -> Any: ...
+    def project(self, volume: Any, coeff: Any, rows: int, *, out: Any, row_start: int) -> None: ...
 
     def transpose(
         self, images: tuple[Any, ...], coeff: Any, accumulate: tuple[Any, ...]
@@ -93,12 +93,18 @@ class CudaEngine:
         else:
             out[...] = array.get()
 
-    def project(self, volume: Any, coeff: Any, rows: int) -> Any:
+    def project(self, volume: Any, coeff: Any, rows: int, *, out: Any, row_start: int) -> None:
+        """Add a slab's projection directly to circular rows of ``out``."""
         from tomojax.core.cone import forward_into
 
-        out = self.xp.empty((coeff.shape[0], rows, self.detector.nu), self.xp.float32)
-        forward_into(out, coeff, volume, grid=self._grid(volume.shape[0]), det=self._detector(rows))
-        return out
+        forward_into(
+            out,
+            coeff,
+            volume,
+            grid=self._grid(volume.shape[0]),
+            det=self._detector(rows),
+            ring_start=row_start,
+        )
 
     def transpose(
         self, images: tuple[Any, ...], coeff: Any, accumulate: tuple[Any, ...]
@@ -171,9 +177,17 @@ class JaxEngine:
         self.traffic["to_host"] += out.nbytes
         out[...] = array
 
-    def project(self, volume: np.ndarray, coeff: np.ndarray, rows: int) -> np.ndarray:
+    def project(
+        self, volume: np.ndarray, coeff: np.ndarray, rows: int, *, out: np.ndarray, row_start: int
+    ) -> None:
+        """Add a slab's projection to circular rows of the NumPy destination."""
         shapes = self._shapes(volume.shape[0], rows)
-        return np.array(_project(volume, coeff, **shapes))
+        values = np.array(_project(volume, coeff, **shapes))
+        first = row_start % out.shape[1]
+        length = min(rows, out.shape[1] - first)
+        out[:, first : first + length] += values[:, :length]
+        if length < rows:
+            out[:, : rows - length] += values[:, length:]
 
     def transpose(
         self, images: tuple[np.ndarray, ...], coeff: np.ndarray, accumulate: tuple[np.ndarray, ...]

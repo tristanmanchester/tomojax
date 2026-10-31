@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Host-slab CUDA cone solvers accumulate forward projections directly into their
+circular detector-row buffer, without temporary projection batches. The ray
+product is rounded before accumulation, preserving the separate-step arithmetic.
+
 CUDA cone transposes accumulate their shared-memory tiles in exact two-word
 fixed point with native integer atomics, instead of compare-and-swap float
 atomics. Each block bounds its cells' sums from the views' peak weighted

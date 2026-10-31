@@ -488,10 +488,13 @@ class _Ring:
         self.sources[j] = volumes if self.keep else ()
         for channel, volume in enumerate(volumes):
             for b0, b1, batch in self.batches if volume is not None else ():
-                values = self.engine.project(volume, coeff[batch.index], stop - first)
-                for row, slot, length in self.spans(first, stop):
-                    part = values[:, row - first : row - first + length]
-                    self.rows[channel, b0:b1, slot : slot + length] += part
+                self.engine.project(
+                    volume,
+                    coeff[batch.index],
+                    stop - first,
+                    out=self.rows[channel, b0:b1],
+                    row_start=first,
+                )
 
     def finish(self, window: tuple[int, int], finish: Callable[..., None]) -> None:
         """Finish the rows of ``window`` not finished yet: every slab reaching them is in."""
