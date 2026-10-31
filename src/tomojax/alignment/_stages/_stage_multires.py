@@ -29,6 +29,7 @@ from tomojax.alignment._results import (
     AlignMultiresCheckpointCallback,
     AlignMultiresInfo,
     AlignMultiresResumeState,
+    AlignResumeState,
 )
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.cone import is_cone_beam
@@ -49,7 +50,7 @@ from ._stage_state import (
     _prepare_multires_level_state,
     _state_after_multires_level,
 )
-from ._stage_types import MultiresContext, MultiresLevel, MultiresRunState
+from ._stage_types import LevelContext, MultiresContext, MultiresLevel, MultiresRunState
 
 LOG = logging.getLogger(__name__)
 # Warnings name the first caller outside the package, whichever entry point it used.
@@ -105,40 +106,51 @@ def _run_one_multires_level(
     )
     level_stats: list[OuterStat] = [dict(stat) for stat in level_run.preserved_level_stats]
     level_losses: list[float] = [float(value) for value in level_run.preserved_level_losses]
+    stage_resume = None
+    if resuming_this_level and resume_state is not None and not level_run.resume_stage_completed:
+        stage_resume = AlignResumeState(
+            x=resume_state.x,
+            pose_params=resume_state.pose_params,
+            motion_coeffs=resume_state.motion_coeffs,
+            start_outer_iter=level_run.resume_stage_iters,
+            loss=list(level_run.resume_stage_losses),
+            outer_stats=[dict(stat) for stat in level_run.resume_stage_stats],
+            lipschitz=resume_state.lipschitz,
+            small_impr_streak=int(resume_state.small_impr_streak),
+            elapsed_offset=float(resume_state.elapsed_offset - state.global_elapsed_offset),
+            pose_translation_frame=resume_state.pose_translation_frame,
+            ray_integrator=resume_state.ray_integrator,
+        )
     stage_result = _run_multires_level_stages(
-        geometry=geometry,
-        grid=grid,
-        detector=detector,
-        projections=projections,
-        cfg=context.cfg,
-        resolved_schedule=context.resolved_schedule,
-        active_loss_spec=active_loss_spec,
-        active_loss_name=active_loss_name,
-        setup_alignment_state=state.setup_alignment_state,
-        active_geometry_dofs=context.active_geometry_dofs,
-        level_factor=level_factor,
-        stage_runtime=_build_stage_runtime(
-            context=context,
-            level_index=level_index,
-            level_factor=level_factor,
-            level_run=level_run,
-            state=state,
-            level_stats=level_stats,
-            level_losses=level_losses,
-            active_loss_name=active_loss_name,
-            checkpoint_callback=checkpoint_callback,
+        LevelContext(
+            geometry=geometry,
+            grid=grid,
+            detector=detector,
+            projections=projections,
+            cfg=context.cfg,
+            schedule=context.resolved_schedule,
+            loss=active_loss_spec,
+            active_geometry_dofs=context.active_geometry_dofs,
+            runtime=_build_stage_runtime(
+                context=context,
+                level_index=level_index,
+                level_factor=level_factor,
+                level_run=level_run,
+                state=state,
+                level_stats=level_stats,
+                level_losses=level_losses,
+                active_loss_name=active_loss_name,
+                checkpoint_callback=checkpoint_callback,
+            ),
+            start_stage=level_run.resume_stage_index + int(level_run.resume_stage_completed),
+            resume=stage_resume,
         ),
-        resume_state=resume_state,
-        resuming_this_level=resuming_this_level,
-        level_resume=level_run,
-        global_elapsed_offset=state.global_elapsed_offset,
+        setup_alignment_state=state.setup_alignment_state,
         x_lvl=x0,
         seed_translations=params0 is None and level_index == 0,
         pose_params=params0
         if params0 is not None
         else jnp.zeros((projections.shape[0], POSE_WIDTH), dtype=jnp.float32),
-        level_stats=level_stats,
-        level_losses=level_losses,
         final_gauge_fix=state.final_gauge_fix,
         final_gauge_fix_dofs=state.final_gauge_fix_dofs,
         final_gauge_fix_stats=state.final_gauge_fix_stats or {},

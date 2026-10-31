@@ -41,8 +41,9 @@ def solve_coupled_normal(
     zero operator coupling. A final *explicit* normal residual is returned;
     exhausting the budget never implies convergence. The nonlinear caller must
     independently check its actual constrained objective before accepting a step.
-    ``dot`` is the inner product of block vectors (one summing across devices,
-    say, when each holds part of a block).
+    ``dot`` supplies the device reduction, for example summing across devices
+    when each holds part of a block. Host vectors use the chunked Euclidean
+    inner product of their placement.
     """
     xp = placement.array
     dot = placement.dot if dot is None else dot
@@ -83,13 +84,17 @@ def solve_coupled_normal(
         alpha = xp.where(valid, gamma / xp.where(valid, denominator, 1), 0)
         updated = placement.combine(x, direction, other_scale=alpha)
         next_residual = placement.combine(residual, normal_direction, other_scale=-alpha)
-        # The host preconditioned vector replaces this borrowed normal output,
-        # so they never occupy full-volume scratch at the same time.
+        # Release the borrowed normal output before applying the preconditioner.
         del normal_direction
-        z = precondition(next_residual)
-        next_gamma = dot(next_residual, z)
-        beta = next_gamma / xp.where(gamma > 0, gamma, 1)
-        next_direction = placement.combine(direction, z, scale=beta)
+        if volume_ramp is None:
+            next_direction, next_gamma = placement.diagonal_direction(
+                direction, next_residual, inverse_diagonal, gamma, dot
+            )
+        else:
+            z = precondition(next_residual)
+            next_gamma = dot(next_residual, z)
+            beta = next_gamma / xp.where(gamma > 0, gamma, 1)
+            next_direction = placement.combine(direction, z, scale=beta)
         failed = failed | ~valid | ~xp.isfinite(next_gamma)
         return iteration + 1, updated, next_residual, next_direction, next_gamma, failed
 

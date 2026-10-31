@@ -23,6 +23,9 @@ iterates while preserving public `(z, y, x)` inputs and outputs. Bounded tiled
 boundary permutations avoid volume-sized compiler-autotuning buffers; the
 forward projector and its exact transpose share the internal representation.
 
+Cone-axis alignment respects frozen offset and detector-roll parameters. Roll-only
+calibration fits slab offsets with the supplied axis offset held fixed.
+
 Fixed-volume alignment compiles its Gauss-Newton step and objective once per
 problem shape and configuration. New scans of the same shape reuse them instead
 of retracing and recompiling on every `align` call; results are unchanged.

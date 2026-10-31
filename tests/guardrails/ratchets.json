@@ -2,7 +2,7 @@
   "config_fields": {
     "AlignConfig": 41,
     "CGLSConfig": 11,
-    "ConeAxisConfig": 5,
+    "ConeAxisConfig": 6,
     "FBPConfig": 5,
     "FBPHostConfig": 5,
     "FDKConfig": 4,
@@ -47,9 +47,9 @@
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 160,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 141,
     "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 103,
-    "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 117,
-    "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 149,
-    "src/tomojax/alignment/_stages/_stage_runners.py::_run_pose_alignment_stage": 106,
+    "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 128,
+    "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 150,
+    "src/tomojax/alignment/_stages/_stage_runners.py::_run_pose_alignment_stage": 107,
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
     "src/tomojax/cli/simulate.py::_build_parser": 106,
     "src/tomojax/core/cuda_projector/_loss.py::forward_project_residual_sse_T_cuda": 119,
@@ -67,7 +67,7 @@
   "code_lines": {
     "(modules)": 3318,
     "_data": 2044,
-    "alignment": 16834,
+    "alignment": 16666,
     "backends": 570,
     "cli": 2562,
     "core": 12959,
@@ -78,7 +78,7 @@
     "io": 3633,
     "motion": 143,
     "nuisance": 232,
-    "recon": 13907
+    "recon": 13909
   },
   "cuda_kernels": 46,
   "cuda_switches": 29,
@@ -105,12 +105,12 @@
   "single_use_helpers": {
     "tiny": 107,
     "forwarders": 11,
-    "chained": 61
+    "chained": 56
   },
   "type_errors": {
-    "reportArgumentType": 187,
+    "reportArgumentType": 183,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 86,
+    "reportAttributeAccessIssue": 83,
     "reportCallIssue": 9,
     "reportGeneralTypeIssues": 5,
     "reportIndexIssue": 6,
@@ -118,7 +118,7 @@
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 7,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 76,
+    "reportPrivateUsage": 75,
     "reportRedeclaration": 1,
     "reportReturnType": 17,
     "reportTypedDictNotRequiredAccess": 5
@@ -128,5 +128,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 141
+  "test_private_imports": 143
 }

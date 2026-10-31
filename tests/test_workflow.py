@@ -355,6 +355,46 @@ def test_an_interrupted_alignment_resumes_from_its_checkpoint(
     np.testing.assert_allclose(finished.poses, uninterrupted.poses, atol=1e-5)
 
 
+@pytest.mark.parametrize("boundary", ["stage", "level"])
+def test_alignment_resumes_after_a_completed_stage_or_coarse_level(boundary):
+    from tomojax.alignment import align_multires
+
+    scan = _shifted_scan(6)
+    config = replace(_few_iterations(scan), outer_iterations=2)
+
+    def solve(**kwargs):
+        return align_multires(
+            scan.geometry,
+            scan.grid,
+            scan.detector,
+            scan.projections,
+            factors=(2, 1),
+            config=config,
+            **kwargs,
+        )
+
+    expected = solve()
+    saved = []
+
+    def interrupt(state):
+        completed = state.level_complete if boundary == "level" else state.stage_completed
+        if completed:
+            saved.append(state)
+            raise RuntimeError("checkpoint boundary")
+
+    with pytest.raises(RuntimeError, match="checkpoint boundary"):
+        solve(checkpoint_callback=interrupt)
+    assert saved[0].level_factor == 2 and not saved[0].run_complete
+    actual = solve(resume_state=saved[0])
+    np.testing.assert_allclose(actual[0], expected[0], atol=1e-5)
+    np.testing.assert_allclose(actual[1], expected[1], atol=1e-5)
+    np.testing.assert_allclose(actual[2]["loss"], expected[2]["loss"], rtol=1e-5)
+    for key in ("level_factor", "schedule_stage_index", "global_outer_idx"):
+        assert [s[key] for s in actual[2]["outer_stats"]] == [
+            s[key] for s in expected[2]["outer_stats"]
+        ]
+
+
 def test_alignment_refuses_the_checkpoint_of_another_alignment(tmp_path: Path) -> None:
     scan = _shifted_scan()
     config = _few_iterations(scan)
@@ -499,3 +539,43 @@ def test_single_slice_operator_output_feeds_scan_and_reconstruction():
     actual = tj.reconstruct(scan, "cgls", iterations=20).volume
     assert actual.shape == (1, 7, 9)
     assert np.linalg.norm(np.asarray(actual)[0] - truth) / np.linalg.norm(truth) < 0.06
+
+
+@pytest.mark.parametrize(
+    ("schedule", "dofs", "frozen", "wanted"),
+    [
+        ("cor_then_pose", None, (), (True, True)),
+        ("cor", None, ("detector_roll_deg",), (True, False)),
+        ("cor_then_pose", None, ("det_u_px", "detector_roll_deg"), None),
+        ("setup_safe", None, ("det_u_px", "detector_roll_deg"), None),
+        (None, ("detector_roll_deg",), ("det_u_px",), (False, True)),
+        (None, ("det_u_px",), (), (True, False)),
+    ],
+)
+def test_cone_setup_respects_active_parameters(monkeypatch, schedule, dofs, frozen, wanted):
+    from tomojax.alignment import AlignConfig
+    from tomojax.alignment._modes import (  # check-public-imports: allow-private
+        cone_setup,
+        resolved_schedule_for_config,
+    )
+    from tomojax.recon import ConeAxisCalibration
+
+    geometry = _geometries(8)["cone"]
+    calls = []
+
+    def calibrate(*args, config):
+        calls.append((config.estimate_offset, config.estimate_roll))
+        return ConeAxisCalibration(0.0, 0.0, (), ())
+
+    monkeypatch.setattr("tomojax.recon.calibrate_cone_axis", calibrate)
+    config = AlignConfig(
+        schedule=schedule,
+        optimise_dofs=dofs,
+        freeze=frozen,
+        pose_translation_frame="detector",
+    )
+    setup = cone_setup(geometry, geometry.grid, geometry.detector, np.zeros((1, 8, 8)), config)
+    assert setup is not None
+    if setup.config is not None:
+        assert not resolved_schedule_for_config(setup.config).active_geometry_dofs
+    assert calls == ([] if wanted is None else [wanted])

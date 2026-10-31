@@ -206,8 +206,10 @@ def _synthetic(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
         error = norm = 0.0
         for z0 in range(0, size, 64):
             truth = _sphere_planes(size, z0, min(size, z0 + 64))
-            error += float(np.sum((np.asarray(volume[z0 : z0 + 64]) - truth) ** 2))
-            norm += float(np.sum(truth.astype(np.float64) ** 2))
+            norm += float(np.einsum("ijk,ijk->", truth, truth, dtype=np.float64, optimize=False))
+            np.subtract(np.asarray(volume[z0 : z0 + 64]), truth, out=truth)
+            np.square(truth, out=truth)
+            error += float(np.sum(truth))
         record["relative_image_error"] = (error / norm) ** 0.5
     finally:
         del out

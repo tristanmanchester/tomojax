@@ -67,6 +67,11 @@ class ConeAxisConfig:
     estimate_roll : bool, optional
         Estimate roll from three slab heights; False uses only the central slab.
         Default is True.
+    estimate_offset : bool, optional
+        Estimate the axis offset. False holds the supplied offset fixed, including
+        the intercept of the slab-offset fit when estimating roll. Default is True.
+        A fixed offset permits roll estimation from one nonzero-height slab;
+        a sole zero-height slab cannot determine roll and raises ValueError.
     slices : int, optional
         Requested slab thickness in full-resolution voxels. Default is 32.
     max_roll_deg : float, optional
@@ -78,6 +83,7 @@ class ConeAxisConfig:
 
     search_range: float | None = None
     estimate_roll: bool = True
+    estimate_offset: bool = True
     slices: int = 32
     max_roll_deg: float = 3.0
     fdk: FDKConfig = field(default_factory=lambda: FDKConfig(filter="hann", views_per_batch=1024))
@@ -311,6 +317,20 @@ def _slab_offset(
     return best
 
 
+def _fit_axis_offsets(
+    heights: Sequence[float], offsets: Sequence[float], fixed_offset: float | None
+) -> tuple[float, float]:
+    """Fit slab offsets against height, optionally fixing the physical axis intercept."""
+    if fixed_offset is None:
+        slope, intercept = np.polyfit(np.asarray(heights), np.asarray(offsets), 1)
+        return float(slope), float(intercept)
+    z = np.asarray(heights)
+    if not np.any(z):
+        raise ValueError("A slab at zero height cannot determine detector roll with fixed offset")
+    slope = z @ (np.asarray(offsets) - fixed_offset) / (z @ z)
+    return float(slope), fixed_offset
+
+
 def calibrate_cone_axis(
     geometry: ConeGeometry,
     grid: Grid,
@@ -358,6 +378,8 @@ def calibrate_cone_axis(
         projections, detector, geometry=geometry, context="calibrate_cone_axis projections"
     )
     beam = geometry.beam
+    if not cfg.estimate_offset and not cfg.estimate_roll:
+        raise ValueError("calibrate_cone_axis needs at least one active axis parameter")
     radius = 0.25 * grid.nx * grid.vx if cfg.search_range is None else float(cfg.search_range)
     radius = max(radius, 2 * grid.vx)
     factors = [f for f in (4, 2) if min(grid.nx, grid.ny) // f >= 48] + [1]
@@ -385,13 +407,13 @@ def calibrate_cone_axis(
             "range (+-%.4g); widen ConeAxisConfig.search_range",
             radius,
         )
-    if len(heights) == 1:
+    if len(heights) == 1 and cfg.estimate_offset:
         return ConeAxisCalibration(offsets[0], roll, heights, tuple(offsets))
-    intercept = float(np.mean(offsets))
+    fixed_offset = None if cfg.estimate_offset else offset0
     for _ in range(2):
         # Offsets move as -tan(roll) * z: apply the fitted roll and search again,
         # around the common offset the slabs should then share.
-        slope, intercept = np.polyfit(np.asarray(heights), np.asarray(offsets), 1)
+        slope, intercept = _fit_axis_offsets(heights, offsets, fixed_offset)
         roll += math.degrees(-math.atan(float(slope)))
         offsets = [
             _search(
@@ -399,7 +421,7 @@ def calibrate_cone_axis(
             )
             for z in heights
         ]
-    slope, intercept = np.polyfit(np.asarray(heights), np.asarray(offsets), 1)
+    slope, intercept = _fit_axis_offsets(heights, offsets, fixed_offset)
     roll += math.degrees(-math.atan(float(slope)))
     return ConeAxisCalibration(
         axis_offset=float(intercept),

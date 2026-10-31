@@ -25,7 +25,7 @@ from tomojax.recon import fista_tv_core
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     _fixed_geometry_is_available,
-    effective_fista_core_backend,
+    _resolve_fista_core_data_projectors,
     projection_loss_arrays,
 )
 
@@ -103,33 +103,13 @@ def test_fixed_geometry_core_respects_explicit_jax_backend(
     cfg = FistaCoreConfig(forward_projector="jax", backprojector="jax")
     canonical_det_grid = get_detector_grid_device(detector)
 
-    assert (
-        effective_fista_core_backend(
-            cfg,
-            T_all=pose_stack,
-            det_grid=None,
-        )
-        == "jax"
-    )
-    assert (
-        effective_fista_core_backend(
-            cfg,
-            T_all=pose_stack,
-            det_grid=canonical_det_grid,
-        )
-        == "jax"
-    )
-    assert (
-        effective_fista_core_backend(
-            cfg,
-            T_all=pose_stack,
-            det_grid=(canonical_det_grid[0] + jnp.float32(0.25), canonical_det_grid[1]),
-        )
-        == "jax"
-    )
+    shifted_grid = (canonical_det_grid[0] + jnp.float32(0.25), canonical_det_grid[1])
+    for det_grid in (None, canonical_det_grid, shifted_grid):
+        result = _resolve_fista_core_data_projectors(cfg, T_all=pose_stack, det_grid=det_grid)
+        assert result == ("jax", "jax")
 
 
-def test_fixed_geometry_auto_backend_stays_jax_when_fused_cuda_is_missing(
+def test_explicit_jax_backend_does_not_need_cuda_callable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
@@ -141,14 +121,8 @@ def test_fixed_geometry_auto_backend_stays_jax_when_fused_cuda_is_missing(
     pose_stack = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (16, 4, 4))
     cfg = FistaCoreConfig(forward_projector="jax", backprojector="jax")
 
-    assert (
-        effective_fista_core_backend(
-            cfg,
-            T_all=pose_stack,
-            det_grid=None,
-        )
-        == "jax"
-    )
+    result = _resolve_fista_core_data_projectors(cfg, T_all=pose_stack, det_grid=None)
+    assert result == ("jax", "jax")
 
 
 def test_forward_adapter_rejects_mismatched_pose_arrays() -> None:

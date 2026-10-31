@@ -8,6 +8,7 @@ import jax.numpy as jnp
 
 from tomojax.alignment._config import AlignConfig
 from tomojax.alignment._model.schedules import ResolvedAlignmentSchedule, ResolvedAlignmentStage
+from tomojax.alignment._objectives.loss_specs import AlignmentLossSpec
 from tomojax.alignment._observer import ObserverAction, ObserverCallback, OuterStat
 from tomojax.alignment._results import (
     AlignMultiresCheckpointCallback,
@@ -16,7 +17,7 @@ from tomojax.alignment._results import (
     _record_stat_conversion_error,
     enrich_multires_stage_stat as _enrich_multires_stage_stat,
 )
-from tomojax.core.geometry.base import Detector, Grid
+from tomojax.core.geometry.base import Detector, Geometry, Grid
 
 from ._setup_stage import _geometry_calibration_payload
 
@@ -168,6 +169,23 @@ class StageRuntime:
             )
 
         return emit_multires_checkpoint
+
+
+@dataclass(frozen=True)
+class LevelContext:
+    """Geometry, policy and continuation data shared by one level's stages."""
+
+    geometry: Geometry
+    grid: Grid
+    detector: Detector
+    projections: jnp.ndarray
+    cfg: AlignConfig
+    schedule: ResolvedAlignmentSchedule
+    loss: AlignmentLossSpec
+    active_geometry_dofs: tuple[str, ...]
+    runtime: StageRuntime
+    start_stage: int
+    resume: AlignResumeState | None
 
 
 @dataclass(frozen=True)
