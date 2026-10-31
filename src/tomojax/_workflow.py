@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from contextlib import closing, contextmanager
 from dataclasses import is_dataclass, replace
+from functools import partial
 import json
 from typing import TYPE_CHECKING, Any, Literal, cast
 import warnings
@@ -851,7 +852,7 @@ def align(
             from tomojax.core.devices import sharing
 
             with sharing(devices):
-                return _align_automatically(scan, grid=grid)
+                return _align_automatically(scan, grid=grid, devices=devices)
         if explicit and describe(scan.geometry)[0] != "cone":
             from tomojax._laminography import uses_laminography_workflow
 
@@ -952,16 +953,23 @@ def _align_explicit(
     )
 
 
-def _align_automatically(scan: Scan, *, grid: Grid | None = None) -> Alignment:
+def _align_automatically(
+    scan: Scan, *, grid: Grid | None = None, devices: Device | Sequence[Device] | None = None
+) -> Alignment:
     """Geometry-aware policy; every numerical operation below has an explicit mode."""
     from tomojax._laminography import reconstruct_laminography, uses_laminography_workflow
 
     if grid is not None:
         scan = with_grid(scan, grid)
     if scan.poses is not None:
-        return align(scan, mode="pose")
+        return align(scan, mode="pose", devices=devices)
     if uses_laminography_workflow(scan):
-        result = reconstruct_laminography(scan, align=align, reconstruct=reconstruct, grid=grid)
+        result = reconstruct_laminography(
+            scan,
+            align=partial(align, devices=devices),
+            reconstruct=partial(reconstruct, devices=devices),
+            grid=grid,
+        )
         poses = result.scan.poses
         if poses is None:
             poses = np.zeros((len(result.scan.angles), 6), np.float32)
@@ -986,7 +994,7 @@ def _align_automatically(scan: Scan, *, grid: Grid | None = None) -> Alignment:
         center.update(status="failed", reason=str(exc))
         automatic.update(status="limited", reasons=[str(exc)])
     automatic["center_estimation"] = center
-    result = reconstruct(scan)
+    result = reconstruct(scan, devices=devices)
     reconstruction = dict(cast("Mapping[str, Any]", result.info.get("automatic", {})))
     automatic["reconstruction"] = reconstruction
     reasons = list(reconstruction.get("reasons", []))

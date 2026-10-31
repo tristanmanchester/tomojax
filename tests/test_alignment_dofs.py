@@ -182,3 +182,33 @@ def test_dof_tokens_keep_order_and_reject_repeated_names(value):
     assert normalize_alignment_dofs(value) == ("alpha", "dx", "dz")
     with pytest.raises(ValueError, match="Duplicate alignment DOF for chosen: 'alpha'"):
         normalize_alignment_dofs(["alpha", " ALPHA "], option_name="chosen")
+
+
+@pytest.mark.parametrize("mode", ["pose", "auto"])
+def test_automatic_alignment_keeps_the_explicit_devices(monkeypatch, mode):
+    import jax
+
+    import tomojax as tj
+
+    # check-public-imports: allow-private
+    from tomojax import _workflow
+    from tomojax.core.devices import shared_devices
+    from tomojax.geometry import ParallelGeometry
+
+    class Reached(Exception):
+        pass
+
+    seen = []
+
+    def run(*_args, **_kwargs):
+        seen.append(shared_devices())
+        raise Reached
+
+    monkeypatch.setattr(_workflow, "_run_alignment", run)
+    angles = np.linspace(0.0, 180.0, 12, endpoint=False, dtype=np.float32)
+    geometry = ParallelGeometry(tj.Grid(8, 8, 8, 1, 1, 1), tj.Detector(8, 8, 1, 1), angles)
+    scan = tj.Scan(np.zeros((12, 8, 8), np.float32), geometry)
+    cpu = jax.devices("cpu")[0]
+    with pytest.raises(Reached):
+        tj.align(scan.with_poses(np.zeros((12, 6), np.float32)), mode=mode, devices=cpu)
+    assert seen == [(cpu,)]
