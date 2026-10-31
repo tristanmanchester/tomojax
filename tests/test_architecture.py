@@ -259,6 +259,30 @@ def test_size_ratchets_exclude_only_docstrings():
     assert count('"""Module prose."""  # A comment') == 1
 
 
+def test_kernel_switch_ratchet_skips_python_comments():
+    switches = _guardrails().CUDA_SWITCH.findall
+    assert len(switches("#ifndef A\n#if B\n  #ifdef C\n#include <d>\n# if a comment\n")) == 3
+
+
+def test_helper_ratchet_counts_tiny_forwarding_and_chained_helpers():
+    source = """
+def public():
+    return _outer()
+def _outer():
+    return _middle()
+def _middle():
+    return _inner(1)
+def _inner(x):
+    return x + 1
+def _shared():
+    return 1
+def a():
+    return _shared() + _shared()
+"""
+    debt = _guardrails()._helper_debt([source])
+    assert debt == {"tiny": 3, "forwarders": 2, "chained": 1}
+
+
 def test_type_ratchet_uses_running_interpreter(monkeypatch):
     guardrails = _guardrails()
 

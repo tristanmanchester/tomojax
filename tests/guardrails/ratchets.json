@@ -1,5 +1,20 @@
 {
-  "align_config_fields": 41,
+  "config_fields": {
+    "AlignConfig": 41,
+    "CGLSConfig": 11,
+    "ConeAxisConfig": 5,
+    "FBPConfig": 5,
+    "FBPHostConfig": 5,
+    "FDKConfig": 4,
+    "FDKHostConfig": 2,
+    "FistaConfig": 25,
+    "FourierConfig": 2,
+    "MLEMConfig": 6,
+    "ProjectionMatchingConfig": 1,
+    "SIRTConfig": 10,
+    "SPDHGConfig": 20,
+    "SimConfig": 31
+  },
   "exported_names": {
     "tomojax": 24,
     "tomojax.geometry": 18,
@@ -49,7 +64,25 @@
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_arrays": 120,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
-  "alignment_code_lines": 16830,
+  "code_lines": {
+    "(modules)": 3318,
+    "_data": 2044,
+    "alignment": 16830,
+    "backends": 570,
+    "cli": 2562,
+    "core": 12678,
+    "corrections": 2105,
+    "datasets": 1125,
+    "forward": 824,
+    "geometry": 1101,
+    "io": 3633,
+    "motion": 143,
+    "nuisance": 232,
+    "recon": 13752
+  },
+  "cuda_kernels": 45,
+  "cuda_switches": 28,
+  "environment_reads": 29,
   "suppressions": {
     "noqa": 6,
     "type: ignore": 27,
@@ -69,6 +102,11 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
+  "single_use_helpers": {
+    "tiny": 104,
+    "forwarders": 11,
+    "chained": 61
+  },
   "type_errors": {
     "reportArgumentType": 187,
     "reportAssignmentType": 2,

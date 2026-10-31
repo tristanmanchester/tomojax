@@ -3,8 +3,9 @@
 ``tests/guardrails/api_surface.txt`` lists every public name of the user-facing
 packages with its signature, so an API change shows up as a diff in review.
 ``tests/guardrails/ratchets.json`` records measures of debt (configuration
-fields, exported names, CLI flags, long files, lint suppressions, complex
-functions...) that may fall but not rise.
+fields, exported names, CLI flags, lines per package, CUDA kernels and their
+compile-time switches, environment reads, long files, lint suppressions,
+complex functions, single-use helpers...) that may fall but not rise.
 
 After an intended change run ``python tools/guardrails.py --write`` and commit
 the updated files with it; ``tests/test_architecture.py`` fails until then.
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from collections import Counter
 import dataclasses
 import importlib
 import inspect
@@ -29,7 +31,7 @@ import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "tomojax"
@@ -59,8 +61,14 @@ CLI_COMMANDS = ("inspect", "import", "preprocess", "recon", "align", "export", "
 # may only fall: debt inside an already long one counts too.
 LONG_FILE_LINES = 800
 LONG_FUNCTION_LINES = 100
+# A private function used once and no longer than this has to earn its name.
+TINY_HELPER_LINES = 5
+# Single-use helpers this many single-use callers deep are one function in pieces.
+HELPER_CHAIN_DEPTH = 2
 # Public functions whose leading optional argument is deliberately positional.
 POSITIONAL_OPTIONS_ALLOWED = {"tomojax.reconstruct": ("method",)}
+# Preprocessor conditionals in kernel source; Python comments carry a space.
+CUDA_SWITCH = re.compile(r"^\s*#if(?:n?def)?\b", re.MULTILINE)
 
 
 # ----------------------------------------------------------------------- surface
@@ -160,13 +168,22 @@ def _python_files() -> list[Path]:
     return sorted(p for p in SRC.rglob("*.py") if "__pycache__" not in p.parts)
 
 
+def _source_files() -> list[Path]:
+    """Python and CUDA sources; many kernels are embedded in Python strings."""
+    suffixes = {".py", ".cu", ".cuh"}
+    return sorted(
+        p for p in SRC.rglob("*") if p.suffix in suffixes and "__pycache__" not in p.parts
+    )
+
+
 def _relative(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
 
 
-def _count(pattern: str) -> int:
+def _count(pattern: str | re.Pattern[str], files: list[Path] | None = None) -> int:
     regex = re.compile(pattern)
-    return sum(len(regex.findall(p.read_text(encoding="utf-8"))) for p in _python_files())
+    paths = _python_files() if files is None else files
+    return sum(len(regex.findall(p.read_text(encoding="utf-8"))) for p in paths)
 
 
 def _complex_functions() -> list[str]:
@@ -257,10 +274,16 @@ def _file_lines() -> dict[str, int]:
     return {path: n for path, n in lengths.items() if n > LONG_FILE_LINES}
 
 
-def _alignment_code_lines() -> int:
-    """Alignment's lines, excluding docstrings: the package that grew by patching."""
-    files = (p for p in _python_files() if p.is_relative_to(SRC / "alignment"))
-    return sum(_code_line_count(p.read_text(encoding="utf-8")) for p in files)
+def _code_lines() -> dict[str, int]:
+    """Lines of each top-level package, excluding Python docstrings."""
+    counts: dict[str, int] = {}
+    for path in _source_files():
+        parts = path.relative_to(SRC).parts
+        package = parts[0] if len(parts) > 1 else "(modules)"
+        source = path.read_text(encoding="utf-8")
+        lines = _code_line_count(source) if path.suffix == ".py" else len(source.splitlines())
+        counts[package] = counts.get(package, 0) + lines
+    return dict(sorted(counts.items()))
 
 
 def _function_lines() -> dict[str, int]:
@@ -281,6 +304,86 @@ def _function_lines() -> dict[str, int]:
         source = p.read_text(encoding="utf-8")
         visit(ast.parse(source), "", _relative(p), source)
     return dict(sorted(found.items()))
+
+
+def _config_fields() -> dict[str, int]:
+    """Field count of every public ``*Config`` dataclass."""
+    counts: dict[str, int] = {}
+    for module in (*PUBLIC_PACKAGES, *EXPERT_MODULES):
+        imported = importlib.import_module(module)
+        for name in imported.__all__:
+            obj = getattr(imported, name, None)
+            if dataclasses.is_dataclass(obj) and name.endswith("Config"):
+                counts[name] = len(dataclasses.fields(obj))
+    return dict(sorted(counts.items()))
+
+
+def _body(function: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.stmt]:
+    """The statements of ``function`` after its docstring."""
+    return function.body[1:] if ast.get_docstring(function) is not None else function.body
+
+
+def _is_forwarder(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether ``function`` only calls something else with its arguments as they came."""
+    body = _body(function)
+    if len(body) != 1 or not isinstance(body[0], ast.Return | ast.Expr):
+        return False
+    call = body[0].value
+    if not isinstance(call, ast.Call):
+        return False
+    arguments = (*call.args, *(keyword.value for keyword in call.keywords))
+    plain = ast.Name | ast.Constant | ast.Attribute | ast.Starred
+    return all(isinstance(argument, plain) for argument in arguments)
+
+
+def _helper_debt(sources: Iterable[str]) -> dict[str, int]:
+    """Count single-use private functions: tiny ones, forwarders and those in chains.
+
+    References are matched by name across all sources, so this measures the code's
+    shape rather than proving a call graph. A chain is what a length limit tempts one
+    to write: each link has one caller, and reading one path still means reading them all.
+    """
+    functions: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    references: Counter[str] = Counter()
+    referrers: dict[str, str] = {}
+
+    def visit(node: ast.AST, owner: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = owner
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                functions.append(child)
+                inner = child.name
+            name = child.id if isinstance(child, ast.Name) else getattr(child, "attr", None)
+            if name is not None and isinstance(getattr(child, "ctx", None), ast.Load):
+                references[name] += 1
+                if owner is not None:
+                    referrers[name] = owner
+            visit(child, inner)
+
+    for source in sources:
+        visit(ast.parse(source), None)
+
+    def private(name: str) -> bool:
+        return name.startswith("_") and not name.startswith("__")
+
+    helpers = [f for f in functions if private(f.name) and references[f.name] == 1]
+    single_use = {f.name for f in helpers}
+
+    def depth(name: str) -> int:
+        seen = {name}
+        while (name := referrers.get(name, "")) in single_use and name not in seen:
+            seen.add(name)
+        return len(seen) - 1
+
+    def lines(function: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
+        body = _body(function)
+        return (body[-1].end_lineno or 0) - body[0].lineno + 1 if body else 0
+
+    return {
+        "tiny": sum(lines(f) <= TINY_HELPER_LINES for f in helpers),
+        "forwarders": sum(_is_forwarder(f) for f in helpers),
+        "chained": sum(depth(name) >= HELPER_CHAIN_DEPTH for name in single_use),
+    }
 
 
 def _test_private_imports() -> int:
@@ -342,10 +445,8 @@ def _cli_flags() -> dict[str, int]:
 
 def ratchets() -> dict[str, object]:
     """Current values of every ratcheted measure."""
-    from tomojax.alignment import AlignConfig
-
     return {
-        "align_config_fields": len(dataclasses.fields(AlignConfig)),
+        "config_fields": _config_fields(),
         "exported_names": {
             module: len(importlib.import_module(module).__all__)
             for module in (*PUBLIC_PACKAGES, *EXPERT_MODULES)
@@ -353,14 +454,19 @@ def ratchets() -> dict[str, object]:
         "cli_flags": _cli_flags(),
         "long_files": _file_lines(),
         "long_functions": _function_lines(),
-        # It may rise only in a commit that says why next to the new number.
-        "alignment_code_lines": _alignment_code_lines(),
+        # These may rise only in a commit that says why next to the new number.
+        "code_lines": _code_lines(),
+        "cuda_kernels": _count(r"__global__", _source_files()),
+        "cuda_switches": _count(CUDA_SWITCH, _source_files()),
+        # Each is a setting that bypasses the public configuration.
+        "environment_reads": _count(r"\bos\.(?:environ|getenv)\b"),
         "suppressions": {
             "noqa": _count(r"#\s*noqa"),
             "type: ignore": _count(r"#\s*type:\s*ignore"),
             "pyright: ignore": _count(r"#\s*pyright:\s*ignore"),
         },
         "complex_functions": _complex_functions(),
+        "single_use_helpers": _helper_debt(p.read_text(encoding="utf-8") for p in _python_files()),
         "type_errors": _type_errors(),
         "positional_options": _positional_options(),
         # The internal five-column pose array; public poses have six columns.

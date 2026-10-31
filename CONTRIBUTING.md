@@ -101,6 +101,10 @@ surface, check the change against these rules.
   let a worse result through on drifted data. The fix belongs in the estimator:
   weight residuals by their noise, regularise each pose by how well the data
   determine it, and report the pose uncertainties.
+- **A helper earns its name** by having two or more callers, being tested on its
+  own, or naming a concept its caller shouldn't have to know. Otherwise keep the
+  code inline. A long function split into a chain of one-caller helpers is the
+  same function, harder to read.
 - **The CLI shape is fixed:** `tomojax <command> INPUT -o OUTPUT`, existing
   outputs refused without `--force`, exit status 0/1/2. `--help` shows what
   most runs need; expert settings are `--config` keys.
@@ -110,20 +114,21 @@ surface, check the change against these rules.
 - the public API matches `tests/guardrails/api_surface.txt`, so every change
   to it shows in review;
 - the measures in `tests/guardrails/ratchets.json` may fall but never rise:
-  configuration fields, exported names, CLI flags, the length of every file
-  over 800 lines and every function over 100 (excluding docstrings, but counting
-  comments and code), lint suppressions, functions
-  over the complexity limits, type errors in modules CI does not yet
-  type-check, public functions, methods and `*Config` classes taking options
-  positionally, code that assumes the first device, private imports in tests,
-  the alignment package's total lines (excluding docstrings), and other known
-  debt;
+  the fields of every public `*Config`, exported names, CLI flags, the length
+  of every file over 800 lines and every function over 100 (excluding
+  docstrings, but counting comments and code), each package's total lines, CUDA
+  kernels and their compile-time switches, environment-variable reads, lint
+  suppressions, functions over the complexity limits, single-use private
+  helpers (tiny ones, forwarders and those in single-caller chains), type errors
+  in modules CI does not yet type-check, public functions, methods and `*Config`
+  classes taking options positionally, code that assumes the first device,
+  private imports in tests, and other known debt;
 - CLI options map to Python keywords, and `--help` stays short.
 
 After an intended change, run `just guardrails` and commit the updated
 records with it. When a ratchet falls, lock it in the same way. Do not raise
-a ratchet to make a change pass; fix the change instead, or explain in the
-review why the debt is worth taking on.
+a ratchet to make a change pass; fix the change instead. If the debt is worth
+taking on, say why in the commit that raises the number.
 
 ## Documentation and figures
 
