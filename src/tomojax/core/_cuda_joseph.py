@@ -26,7 +26,13 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core._joseph_cuda_kernels import RUN, THREADS, forward_kernel, gather_kernel
+from tomojax.core._joseph_cuda_kernels import (
+    RUN,
+    THREADS,
+    forward_kernel,
+    gather_kernel,
+    gather_source,
+)
 from tomojax.core.backend_policy import cuda_backend
 
 if TYPE_CHECKING:
@@ -122,6 +128,7 @@ def _launch(
                 np.int32(nz),
                 np.int32(nu),
                 np.int32(nv),
+                np.int32(0),
             ),
         )
 
@@ -168,6 +175,60 @@ def gather_transpose_cuda(
         generic,
         operand=None,
     ).reshape(shape if z_fast else shape[::-1])
+
+
+def gather_bands_cuda(coeff: jax.Array, images: jax.Array, grid: Grid, *, batch: int) -> jax.Array:
+    """The linear Joseph transpose of ``(view, v, u)`` images into a new (z, y, x) volume.
+
+    The gather fills 32 planes at a time of a z-fast band, at their global z,
+    ``batch`` views a launch as one call per batch would; each voxel so adds
+    the same batch sums in the same order as from z-fast storage. A band and
+    one batch of ``(view, u, v)`` images are the workspace.
+    """
+    from tomojax.core.cuda import Offset, initialize_buffer, launch_kernel
+    from tomojax.core.volume_layout import reverse_axes, swap_last_axes
+
+    views, nv, nu = images.shape
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    depth, size = min(nz, 32), min(batch, views)
+    gather = gather_source(z_fast=True)
+
+    def launch(context: Any, outputs: Any, c: Any, y: Any) -> None:
+        out, band, swapped = outputs
+        stream = context.stream
+        for z0 in range(0, nz, depth):
+            planes = min(depth, nz - z0)
+            initialize_buffer(band, stream=stream)
+            runs = nx * ny * -(-planes // RUN)
+            for first in range(0, views, size):
+                count = min(size, views - first)
+                swap_last_axes(Offset(y, first * nv * nu), swapped, (count, nv, nu), stream=stream)
+                launch_kernel(
+                    gather,
+                    "joseph_gather",
+                    stream=stream,
+                    grid=(-(-runs // THREADS),),
+                    block=(THREADS,),
+                    arguments=(
+                        Offset(c, 14 * first),
+                        swapped,
+                        band,
+                        *map(np.int32, (count, nx, ny, planes, nu, nv, z0)),
+                    ),
+                )
+            reverse_axes(band, Offset(out, z0 * ny * nx), (nx, ny, planes), stream=stream, depth=nx)
+
+    volume, *_ = buffer_callback(
+        launch,
+        (
+            jax.ShapeDtypeStruct((nz, ny, nx), jnp.float32),
+            jax.ShapeDtypeStruct((nx, ny, depth), jnp.float32),
+            jax.ShapeDtypeStruct((size, nu, nv), jnp.float32),
+        ),
+        command_buffer_compatible=True,
+        vmap_method="sequential",
+    )(coeff.astype(jnp.float32), images.astype(jnp.float32))
+    return volume
 
 
 def _launch_uniform(context: Any, out: Any, coeff: Any, *, grid: Grid, detector: Detector) -> None:

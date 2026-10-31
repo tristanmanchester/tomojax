@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core._joseph_cuda_kernels import storage_source
-from tomojax.core.cuda import initialize_buffer, launch_kernel
+from tomojax.core.cuda import Offset, initialize_buffer, launch_kernel
 from tomojax.core.volume_layout import reverse_axes
 
 if TYPE_CHECKING:
@@ -43,18 +43,12 @@ def _chunks(
     ]
 
 
-class _Offset:
-    """A float32 callback buffer's storage from element ``elements`` on, without a copy."""
-
-    def __init__(self, buffer: Any, elements: int) -> None:
-        address = buffer.__cuda_array_interface__["data"][0] + 4 * elements
-        self.__cuda_array_interface__: dict[str, Any] = {"data": (address, False)}
-
-
 _FORWARD = r"""
+// x holds planes zb..zb+zs-1 of the storage (all nz of them, or a z-fast band). A row is
+// written only by the band holding its lower plane, rows outside the volume by the end bands.
 extern "C" __global__ void axial_forward(
     const float* __restrict__ coeff, const float* __restrict__ x, float* __restrict__ out,
-    int nx, int ny, int nz, int nu, int nv)
+    int nx, int ny, int nz, int nu, int nv, int zb, int zs, int zhi)
 {
     int view=blockIdx.x,tile=blockIdx.y;
     int tiles_v=(nv+TV-1)/TV;
@@ -67,6 +61,8 @@ extern "C" __global__ void axial_forward(
     float qz=(a==0?c[6]:c[2])*(float)v+(a==0?c[8]:c[4]);
     int z0=(int)floorf(qz);float wz=qz-(float)z0;
     bool loz=(unsigned)z0<(unsigned)nz,hiz=(unsigned)(z0+1)<(unsigned)nz;
+    if((zb>0 && z0<zb) || (zhi<nz && z0>=zhi)) return;
+    x-=zb;
     float total=0.f;
     if(loz || (hiz && wz!=0.f)) {
         int start=0,stop=na;
@@ -79,6 +75,7 @@ extern "C" __global__ void axial_forward(
         // Steps along the plane axis k and the in-plane axis h, in either storage.
         long sk=a==0?VOXEL(long,1,0,0):VOXEL(long,0,1,0),dz=Z_STRIDE;
         long stride=a==0?VOXEL(long,0,1,0):VOXEL(long,1,0,0);
+        if(zs!=nz) { sk=a==0?(long)ny*zs:zs; stride=a==0?zs:(long)ny*zs; }  // a z-fast band
         for(int k=start;k<stop;++k) {
             float q=p+(slope*(float)k+offset);
             int h0=(int)floorf(q);float wh=q-(float)h0;
@@ -460,7 +457,12 @@ def forward_dispatch_cuda(
                     stream=context.stream,
                     grid=(tiles * cf.shape[0],),
                     block=(threads,),
-                    arguments=(cf, image, out, *map(np.int32, (*dims, cf.shape[0]))),
+                    arguments=(
+                        cf,
+                        image,
+                        out,
+                        *map(np.int32, (*dims, cf.shape[0], 0, grid.nz, grid.nz, 0)),
+                    ),
                 )
             else:
                 launch_kernel(
@@ -470,7 +472,7 @@ def forward_dispatch_cuda(
                     stream=context.stream,
                     grid=(cf.shape[0], -(-nu // (128 // scalar_tile)) * -(-nv // scalar_tile)),
                     block=(128,),
-                    arguments=(cf, image, out, *map(np.int32, dims)),
+                    arguments=(cf, image, out, *map(np.int32, (*dims, 0, grid.nz, grid.nz))),
                 )
 
         return buffer_callback(
@@ -496,6 +498,80 @@ def forward_dispatch_cuda(
         lambda args: call(args[0], args[1], 0),
         (coeff, volume),
     )
+
+
+def forward_bands_cuda(
+    coeff: jax.Array,
+    volume: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    *,
+    depth: int,
+    axial: bool,
+) -> jax.Array:
+    """The linear forward of a (z, y, x) volume from z-fast bands of ``depth`` < nz planes.
+
+    Each band, with one halo plane, is staged once for all views. The scalar
+    kernel sums an ``axial`` row whole in the band holding its lower plane; the
+    generic kernel's rays add each band's samples in their own z order, resuming
+    their sums from the output. So the bits are those of the forward from
+    z-fast storage.
+    """
+    from tomojax.core.cuda_projector._joseph_generic import source, storage_tile
+
+    nx, ny, nz, nu, nv = grid.nx, grid.ny, grid.nz, detector.nu, detector.nv
+    planes, threads = depth + 1, 32 if nv == 1 else 128
+    tile_v = storage_tile(detector, z_fast=True)
+    scalar_tile = min(32 if nz >= 512 else 16, 1 << (nv.bit_length() - 1))
+    generic = source(
+        "forward",
+        INDEX_TYPE="int" if nx * ny * nz < 2**31 else "long",
+        TILE_V=tile_v,
+        BLOCK=threads,
+        CUBIC=0,
+        ABSOLUTE=0,
+        Z_FAST=1,
+        BAND=1,
+    )
+    text = generic + _FORWARD.replace("TV", str(scalar_tile))
+    tiles = -(-nu // (threads // tile_v)) * -(-nv // tile_v)
+    scalar_tiles = -(-nu // (128 // scalar_tile)) * -(-nv // scalar_tile)
+    views = coeff.shape[0]
+    if axial:
+        kernel, blocks, block = "axial_forward", (views, scalar_tiles), 128
+    else:
+        kernel, blocks, block = "forward", (views * tiles,), threads
+    starts = range(0, nz, depth)
+
+    def launch(context: Any, outputs: Any, cf: Any, x: Any) -> None:
+        out, band = outputs
+        initialize_buffer(out, stream=context.stream)
+        # Generic rays whose z falls take the bands top down in a second pass.
+        for descending in (0,) if axial else (0, 1):
+            for z0 in starts[::-1] if descending else starts:
+                reverse_axes(x, band, (nz, ny, nx), stream=context.stream, z0=z0, depth=planes)
+                zhi = min(z0 + depth, nz)
+                ranges = (z0, planes, zhi) if axial else (views, z0, planes, zhi, descending)
+                launch_kernel(
+                    text,
+                    kernel,
+                    options=("--fmad=false",),
+                    stream=context.stream,
+                    grid=blocks,
+                    block=(block,),
+                    arguments=(cf, band, out, *map(np.int32, (nx, ny, nz, nu, nv, *ranges))),
+                )
+
+    projections, _ = buffer_callback(
+        launch,
+        (
+            jax.ShapeDtypeStruct((views, nv, nu), jnp.float32),
+            jax.ShapeDtypeStruct((nx, ny, planes), jnp.float32),
+        ),
+        command_buffer_compatible=True,
+        vmap_method="sequential",
+    )(coeff.astype(jnp.float32), volume.astype(jnp.float32))
+    return projections
 
 
 @cache
@@ -543,7 +619,7 @@ def transpose_axial_vu_cuda(
         )
         runs = nx * ny * -(-planes // run)
         for first, count in chunks:
-            part = _Offset(c, 14 * first)
+            part = Offset(c, 14 * first)
             launch_kernel(
                 text,
                 "joseph_vertical",
@@ -552,7 +628,7 @@ def transpose_axial_vu_cuda(
                 block=(256,),
                 arguments=(
                     part,
-                    _Offset(y, first * nv * nu),
+                    Offset(y, first * nv * nu),
                     weighted,
                     *map(np.int32, (count, planes, nu, nv, z0)),
                 ),
@@ -587,7 +663,7 @@ def transpose_axial_vu_cuda(
                 initialize_buffer(band[0], stream=stream)
             add(stream, c, y, weighted, band[0], z0, planes)
             reverse_axes(
-                band[0], _Offset(out, z0 * ny * nx), (nx, ny, planes), stream=stream, depth=nx
+                band[0], Offset(out, z0 * ny * nx), (nx, ny, planes), stream=stream, depth=nx
             )
 
     staged = () if z_fast else (jax.ShapeDtypeStruct((nx, ny, depth), jnp.float32),)

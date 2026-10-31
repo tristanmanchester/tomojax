@@ -31,6 +31,36 @@ extern "C" __global__ void reverse_axes(
 """
 
 
+_SWAP = r"""
+extern "C" __global__ void swap_axes(const float* input,float* output,int nu,int nv) {
+ __shared__ float tile[32][33];
+ int u=blockIdx.x*32+threadIdx.x,v=blockIdx.y*32+threadIdx.y;
+ long base=(long)blockIdx.z*nu*nv;
+ #pragma unroll
+ for(int j=0;j<32;j+=8)
+  if(u<nu && v+j<nv) tile[threadIdx.y+j][threadIdx.x]=input[base+(long)(v+j)*nu+u];
+ __syncthreads();
+ v=blockIdx.y*32+threadIdx.x;u=blockIdx.x*32+threadIdx.y;
+ #pragma unroll
+ for(int j=0;j<32;j+=8)
+  if(u+j<nu && v<nv) output[base+(long)(u+j)*nv+v]=tile[threadIdx.x][threadIdx.y+j];
+}
+"""
+
+
+def swap_last_axes(source: Any, target: Any, shape: tuple[int, int, int], *, stream: int) -> None:
+    """Launch the transpose of each (rows, columns) matrix of a C-order (n, rows, columns) array."""
+    n, rows, columns = shape
+    launch_kernel(
+        _SWAP,
+        "swap_axes",
+        stream=stream,
+        grid=(-(-columns // 32), -(-rows // 32), n),
+        block=(32, 8),
+        arguments=(source, target, np.int32(columns), np.int32(rows)),
+    )
+
+
 def reverse_axes(
     source: Any, target: Any, shape: tuple[int, int, int], *, stream: int, z0: int = 0, depth: int
 ) -> None:

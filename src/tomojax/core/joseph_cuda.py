@@ -80,6 +80,6 @@ class JosephCUDA:
             self.gather_kernel(
                 (-(-runs // THREADS),),
                 (THREADS,),
-                (self.coeff[first:stop], uv, out, np.int32(stop - first), *self.args),
+                (self.coeff[first:stop], uv, out, np.int32(stop - first), *self.args, np.int32(0)),
             )
         return out

@@ -37,6 +37,17 @@ iterates while preserving public `(z, y, x)` inputs and outputs. Bounded tiled
 boundary permutations avoid volume-sized compiler-autotuning buffers; the
 forward projector and its exact transpose share the internal representation.
 
+Parallel-beam and laminography CUDA projections read volumes z-contiguous, as
+before the `(z, y, x)` layout. Resident CUDA Joseph SIRT, CGLS, MLEM and FISTA-TV
+keep private z-contiguous iterates, converted once at entry and exit. A
+standalone projection of a `(z, y, x)` array stages 32-plane z-contiguous bands
+for aligned axial forwards and for linear transposes, with the same bits as
+z-contiguous storage; other forwards take a z-contiguous copy when one more
+volume fits in free memory, else z-contiguous bands as deep as fit, and other
+transposes a copy when it fits, with the same bits any way. `tj.project` and
+`tj.backproject` reuse one compiled projector across calls with equal
+arguments outside a trace.
+
 Cone-axis alignment respects frozen offset and detector-roll parameters. Roll-only
 calibration fits slab offsets with the supplied axis offset held fixed.
 

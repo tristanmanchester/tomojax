@@ -1,6 +1,7 @@
 """The reusable projector is the matched functional pair, with stable geometry."""
 
 from dataclasses import replace
+import math
 
 import jax
 import jax.numpy as jnp
@@ -92,6 +93,18 @@ def test_single_slice_is_only_a_squeeze_of_the_three_dimensional_pair(kind):
     )
 
 
+class _LastViewTilted(tj.ParallelGeometry):
+    """A parallel scan whose last view leans 1 mrad: axial and non-axial views mixed."""
+
+    @staticmethod
+    def stack_poses(geometry, n_views, dtype):
+        plain = tj.ParallelGeometry(geometry.grid, geometry.detector, geometry.angles)
+        poses = np.array([plain.pose_for_view(i) for i in range(n_views)], np.float64)
+        c, s = np.cos(1e-3), np.sin(1e-3)
+        poses[-1] = np.array([[1, 0, 0, 0], [0, c, -s, 0], [0, s, c, 0], [0, 0, 0, 1]]) @ poses[-1]
+        return jnp.asarray(poses.astype(dtype))
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("kind", ["parallel", "lamino"])
 def test_private_storage_calls_give_the_public_bits(kind, monkeypatch):
@@ -115,14 +128,38 @@ def test_private_storage_calls_give_the_public_bits(kind, monkeypatch):
             np.testing.assert_array_equal(
                 np.asarray(private).view(np.uint32), np.asarray(other).view(np.uint32)
             )
-    # Axial views are transposed in bands in one call, adding the batches' sums in turn.
+    # The transpose fills 32-plane bands in one call, adding the batches' sums in turn,
+    # through a partial last band and a last batch shifted back over earlier views.
     monkeypatch.setattr("tomojax.recon._operators._BATCH", 3)
     monkeypatch.setattr("tomojax.recon._operators._AXIAL_STACK_BYTES", 0)
-    batched = tj.Projector(geometry)
+    grid = tj.Grid(7, 5, 37, 0.8, 1.1, 1.3, vol_center=(0.2, -0.1, 0.3))
+    tall = replace(geometry, grid=grid, detector=tj.Detector(9, 40, 0.9, 1.2, (0.17, -0.23)))
+    batched = tj.Projector(tall)
+    assert batched._bands[1]
+    y = jnp.asarray(rng.normal(size=(4, 40, 9)), dtype=jnp.float32)
     one_call, per_batch = (
         np.asarray(v).view(np.uint32) for v in (batched.adjoint(y), batched._adjoint(y))
     )
     np.testing.assert_array_equal(one_call, per_batch)
+    # A forward whose copy does not fit takes z-fast bands, here 8 planes and a halo,
+    # with the kernel of the whole roster: scalar axial, generic, or generic for a mix.
+    x = jnp.asarray(rng.normal(size=batched.volume_shape), dtype=jnp.float32)
+    rosters = {"axial": tall} if kind == "parallel" else {"generic": tall}
+    if kind == "parallel":
+        rosters["generic"] = _LastViewTilted(
+            **{f: getattr(tall, f) for f in ("grid", "detector", "angles")}
+        )
+    for expected, scan in rosters.items():
+        banded, calls = tj.Projector(scan), []
+        for planes in (0, 9, 10**6):  # flat, bands, copy
+            free = 4 * (math.prod(banded.projection_shape) + 7 * 5 * planes)
+            monkeypatch.setattr(
+                "tomojax.recon._operators.device_free_memory_bytes", lambda f=free: f
+            )
+            calls.append(np.asarray(banded(x)).view(np.uint32))
+        assert banded._bands[0] == expected and banded._band_forward._cache_size() == 1
+        np.testing.assert_array_equal(calls[0], calls[1])
+        np.testing.assert_array_equal(calls[2], calls[1])
 
 
 @pytest.mark.gpu
