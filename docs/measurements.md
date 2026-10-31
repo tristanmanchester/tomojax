@@ -746,51 +746,80 @@ these are image diagnostics, not reconstruction errors.
 
 ### Full-view CGLS
 
-The Walnut rows were refreshed 2026-10-31 on `c4682913`, with ASTRA 2.5.0,
-CuPy 14.2.0 and one OpenBLAS/OMP thread per process. Nikon and Zeiss remain
-**historical**, measured 2026-10-20 on `e2cd2101`. Walnut uses all 1200 views
-of orbit 2, detector binning 2 × 2 and a 501³ grid of 0.1 mm voxels. Nikon and
-Zeiss use the full-view inputs and physical grids above; the Nikon input is
+The Walnut rows were refreshed 2026-10-31 on `c4682913`, and Nikon and
+Zeiss on `22571a59`, with ASTRA 2.5.0, CuPy 14.2.0 and one OpenBLAS/OMP
+thread per process.
+Walnut uses all 1200 views of orbit 2, detector binning 2 × 2 and a 501³ grid
+of 0.1 mm voxels. Nikon and Zeiss use the full-view inputs and physical grids
+above; the Nikon input is
 `47209 testscan korn01_recon.xtekct`. Both libraries start from their own FDK.
 TomoJAX uses three iterations and ASTRA four. ASTRA's native CGLS fits Walnut
 and Zeiss; Nikon uses an explicit FP32 recurrence over ASTRA's projectors,
 with GPU residuals, host search projections and 128-view batches.
 
-| Scan | Library | Cold / warm (s) | Full / support image error, or common-projector fit | Volume difference to ASTRA |
+| Scan | Library | Cold / warm (s) | Full / support reference disagreement, or common-projector fit | Volume difference to ASTRA |
 |---|---|---:|---:|---:|
 | Walnut, one orbit | TomoJAX | 20.83 / 13.57 | 0.184222 / 0.087821 | 0.013025 |
 | Walnut, one orbit | ASTRA | 17.43 / 13.78 | 0.182273 / 0.086669 | — |
-| Nikon | TomoJAX | 31.74 / 26.74 | 0.034928 | 0.027400 |
-| Nikon | ASTRA | 33.74 / 26.14 | 0.029934 | — |
-| Zeiss | TomoJAX | 17.87 / 12.24 | 0.163861 | 0.042137 |
-| Zeiss | ASTRA | 16.53 / 12.90 | 0.155535 | — |
+| Nikon | TomoJAX | 27.99 / 22.83 | 0.034928 | 0.027397 |
+| Nikon | ASTRA | 35.41 / 31.60 | 0.029934 | — |
+| Zeiss | TomoJAX | 15.30 / 10.15 | 0.163861 | 0.042137 |
+| Zeiss | ASTRA | 14.10 / 11.87 | 0.155535 | — |
 
 Each pair uses two fresh processes per library in ASTRA–TomoJAX–TomoJAX–ASTRA
 order, with two warm solves per process. The table averages all four warm
-samples. Cold includes numerical imports, loading and the first host volume
-with fresh compilation caches; warm includes FDK, setup, transfers and the host
-volume. Filesystem caches are not cleared. Scoring is outside the timer.
+samples; cold averages the two first-call values. Cold includes numerical
+imports, loading and the first host volume with fresh compilation caches;
+warm includes FDK, setup, transfers and the host volume. Filesystem caches
+are not cleared. Scoring is outside the timer.
 
-Walnut errors use the authors' reference, in the full volume and its fixed
-support. Nikon and Zeiss match data fit, not physical reconstruction error:
+Walnut disagreement uses the authors' reference, in the full volume and its
+fixed support; it is reference agreement, not physical reconstruction accuracy.
+Nikon and Zeiss report data fit, not physical reconstruction error:
 all original corrected log projections are scored with one common calibrated
 ASTRA forward projector. Full-volume differences use no alignment or intensity
-fit. The fixed orthogonal sections retain the same structures; differences
-include smooth background fields, support boundaries, edges and streaks.
+fit. Historical orthogonal-section comparisons showed the same structures,
+with differences in smooth backgrounds, support boundaries, edges and streaks.
 On the refreshed Walnut pair, TomoJAX's mean warm time is 1.5% lower, but
-cold time is 19.5% higher and support error is 1.33% higher. This is **not a
-matched-error speed win**. Sampled total-device GPU peaks are 4308 / 5064 MiB
+cold time is 19.5% higher and support disagreement is 1.33% higher. This is
+**not a matched-error speed win**. Sampled total-device GPU peaks are 4308 / 5064 MiB
 (TomoJAX / ASTRA, 20 ms sampling); prescoring host RSS peaks are 5.619 GB for
 both. A separate 100 ms whole-job trace including scoring peaks at 5064 MiB.
 The temporary comparison volume was deleted after scoring.
 
-The historical Walnut times on `e2cd2101` were 27.48 / 18.84 s for TomoJAX
-and 22.28 / 16.30 s for ASTRA. They are not a paired speedup comparison with
-the refresh. Historical Nikon and Zeiss warm differences are respectively
-2.3% slower and 5.1% faster for TomoJAX at the quality targets shown.
+On the refreshed Nikon pair, TomoJAX's observed warm time is 27.7% lower,
+but its common-projector residual is 16.7% higher: again **not a matched-error
+speed win**. Prescoring total-device GPU peaks are 4574 / 4922 MiB and host
+RSS peaks 4.226 / 6.088 GB (TomoJAX / ASTRA); the whole-job trace including
+scoring peaks at 5620 MiB. Whole-process host peaks including scoring are
+5.160 / 6.088 GB. Both TomoJAX processes give identical reported
+image differences and residuals; ASTRA's repeat image difference is zero.
+The temporary reference volume was deleted. CPU affinity was 0–31. Other
+lab agents were quiet, but recent host-memory pressure was observed and
+per-arm pressure history was not recorded. Major page faults in ABBA order
+were 1599 / 1588 / 1 / 22; reported process swaps were zero. These observations
+do not establish absence of system swapping or equal filesystem-cache state.
 
-Set `WALNUT`, `NIKON` and `ZEISS` to those inputs. For the refreshed Walnut
-protocol, also set `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1`,
+On the refreshed Zeiss pair, TomoJAX's warm time is 14.5% lower, but cold
+time is 8.6% higher and common-projector residual 5.35% higher: **not a
+matched-error speed win**. Prescoring total-device GPU peaks are 4576 / 5166
+MiB and host RSS peaks 3.514 / 3.854 GB (TomoJAX / ASTRA). Whole-process host
+peaks including scoring are 4.478 / 3.854 GB; the whole-job GPU trace peaks
+at 5666 MiB. The temporary reference volume was deleted. CPU affinity was
+0–7. Each process recorded cumulative full-memory PSI stalls at its start
+and end. Total stalls per arm, divided conservatively by that arm's shortest
+reported solve time, are at most 0.00740%, below the 1% exclusion threshold.
+All four arms qualify; none was discarded. This bounds pressure within the
+solve timers without assuming that the whole-process average applies to each.
+
+The historical Walnut times on `e2cd2101` were 27.48 / 18.84 s for TomoJAX
+and 22.28 / 16.30 s for ASTRA. Historical Nikon times were 31.74 / 26.74 s
+and 33.74 / 26.14 s, respectively. Neither is a paired speedup comparison
+with the refresh. Historical Zeiss times were 17.87 / 12.24 s for TomoJAX
+and 16.53 / 12.90 s for ASTRA, also not a paired comparison with this refresh.
+
+Set `WALNUT`, `NIKON` and `ZEISS` to those inputs. For these refreshed
+protocols, also set `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1`,
 `JAX_PLATFORMS=cuda,cpu` and `TOMOJAX_CUDA_KERNELS=1`. These commands configure one
 fresh process each; run each pair in the order above, with separate output
 filenames for the two processes:
@@ -830,7 +859,7 @@ on the 501³, 0.1 mm grid. Both CuO scans use all 3201 views, detector binning
 4 × 4, and grids of 509³ at 4.51024 µm (spl1) and 507³ at 4.53458 µm (CuO2).
 ASTRA uses its bounded device-residual recurrence with 128-view batches.
 
-| Input, source commit | Library, iterations | Cold / warm (s) | Full / support image error, or common-projector fit | Volume difference to ASTRA |
+| Input, source commit | Library, iterations | Cold / warm (s) | Full / support reference disagreement, or common-projector fit | Volume difference to ASTRA |
 |---|---|---:|---:|---:|
 | Walnut, three orbits, `3ba80328` | TomoJAX, 3 | 79.06 / 59.25 | 0.149590 / 0.061075 | 0.010133 |
 | Same | ASTRA, 4 | 74.56 / 60.26 | 0.146930 / 0.058154 | — |
