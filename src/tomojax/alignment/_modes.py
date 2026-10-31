@@ -213,6 +213,10 @@ class ConeSetup:
 
     ``geometry`` carries the calibrated axis offset and detector roll;
     ``config`` keeps only the pose stages, or is None when none remain.
+    Source-object distance, source-detector distance and pixel pitch are inputs,
+    not estimated here; ``axis_offset``, ``heights`` and ``slab_offsets`` are
+    physical lengths conditional on them. The detector-space offset is
+    ``axis_offset * magnification``; absolute values are final, not increments.
 
     Parameters
     ----------
