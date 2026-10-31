@@ -65,16 +65,16 @@ only the neighbouring mean; their missing angular information is not recovered.
 
 `Rings` models each detector column as reporting `q + a + b (1 - exp(-q))`
 and fits `a` and `b` against a reference built from the neighbouring columns,
-then inverts the model (two passes). For a stationary parallel full turn,
-the reference compares equal ranks of the view-sorted row.
-The reference narrows from 30 columns either side toward 6 where the sample's
-own sorted values change faster, so sample edges are not taken for stripes;
-stuck columns are filled from their neighbours first. Given the scan's geometry,
-it checks for a stationary parallel-beam scan over one evenly sampled full
-turn: mirror columns about the rotation axis then see the same lines, the odd
-part of the fitted errors is pure detector error, and large stripes (detected
-as in Vo, Atwood and Drakopoulos 2018, algorithms 4 and 5) and broad rings are
-corrected too, each kept only as far as that odd part supports. The record says
+then inverts the model (two passes). Given the scan's geometry, it checks for
+a stationary parallel-beam scan over one evenly sampled full turn. There each
+unsorted view is compared with a local quadratic through 30 columns either side,
+narrowed toward 6 where the sample changes faster, so sample edges are not taken
+for stripes; unsorted references stay spatially smooth at the axis. Mirror
+columns about the rotation axis see the same lines, so the odd part of the fitted
+errors estimates detector error, and large stripes (detected in sorted columns
+as in Vo, Atwood and Drakopoulos 2018, algorithms 4 and 5) and broad rings (a
+last sorted fit) are corrected too, each kept only as far as that odd part
+supports. Interpolating over bad pixels belongs to calibration. The record says
 which axis was used, if any. The CLI binds `--rings` to the selected and cropped
 acquisition geometry and applies it before view rejection and detector binning.
 Otherwise it uses unsorted local quadratics, independent neighbouring-view
