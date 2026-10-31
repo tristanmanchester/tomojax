@@ -126,3 +126,22 @@ def test_axial_roi_follows_off_centre_detector_rows(crop):
     result = crop(grid, detector)
     assert result.nz == 2 and result.vz == 1
     assert grid_volume_origin(result)[2] == 1.5
+
+
+@pytest.mark.parametrize("shape", [(9, 7, 3), (5, 4, 3), (7, 9, 3)])
+def test_automatic_roi_keeps_a_rectangular_grid_the_detector_covers(shape):
+    # check-public-imports: allow-private
+    from tomojax.cli._reconstruction_region import _roi_grid
+
+    grid = Grid(*shape, 0.7, 1.1, 1.9, vol_origin=(2, 3, 4))
+    assert _roi_grid(grid, Detector(101, 101, 1, 1), is_parallel=True, roi_mode="auto") == grid
+
+
+def test_automatic_roi_still_crops_what_the_detector_cannot_see():
+    # check-public-imports: allow-private
+    from tomojax.cli._reconstruction_region import _roi_grid
+
+    cropped = _roi_grid(
+        Grid(11, 11, 5, 1, 1, 1), Detector(9, 3, 1, 1), is_parallel=True, roi_mode="auto"
+    )
+    assert (cropped.nx, cropped.ny, cropped.nz) == (9, 9, 3)

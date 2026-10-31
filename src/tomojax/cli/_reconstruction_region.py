@@ -82,7 +82,7 @@ def _roi_grid(grid: Grid, detector: Detector, *, is_parallel: bool, roi_mode: st
     """The grid ``roi_mode`` asks for; ``auto`` crops only when the detector sees less."""
     if roi_mode == "auto":
         roi = compute_roi(grid, detector, crop_y_to_u=is_parallel)
-        if (roi.nx_roi, roi.ny_roi, roi.nz_roi) == (grid.nz, grid.ny, grid.nx):
+        if (roi.nx_roi, roi.ny_roi, roi.nz_roi) == (grid.nx, grid.ny, grid.nz):
             return grid
         if is_parallel:
             return grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)
