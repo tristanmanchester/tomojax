@@ -2,6 +2,7 @@
 
 Host vectors are owned C-order FP32 arrays. Only those owned vectors may be
 updated in place; right-hand sides, diagonals and operator outputs are borrowed.
+Diagonal CG regenerates its preconditioned residual in bounded chunks.
 Device vectors use the same combinations functionally inside a compiled loop.
 """
 
@@ -100,6 +101,35 @@ class BlockPlacement:
             jnp.vdot(a, b, precision=jax.lax.Precision.HIGHEST).real
             for a, b in zip(left, right, strict=True)
         )
+
+    def diagonal_direction(self, direction, residual, inverse, gamma, dot):
+        """Update a CG direction without a host-sized preconditioned residual."""
+        if not self.host:
+            z = tuple(r * m for r, m in zip(residual, inverse, strict=True))
+            next_gamma = dot(residual, z)
+            beta = next_gamma / jnp.where(gamma > 0, gamma, 1)
+            return self.combine(direction, z, scale=beta), next_gamma
+        dtype = np.result_type(*(a.dtype for a in (*residual, *inverse)))
+        scratch = np.empty(min(_CHUNK, max(a.size for a in residual)), dtype)
+        next_gamma = 0.0
+        # Round each product before the FP64 dot, in host_dot's chunk order.
+        for r, m in zip(residual, inverse, strict=True):
+            rf, mf = _flat(r), _flat(m)
+            for start in range(0, r.size, _CHUNK):
+                stop = min(start + _CHUNK, r.size)
+                z = scratch[: stop - start]
+                np.multiply(rf[start:stop], mf[start:stop], out=z)
+                next_gamma += float(np.einsum("i,i->", rf[start:stop], z, dtype=np.float64))
+        beta = np.float32(float(next_gamma / np.where(gamma > 0, gamma, 1)))
+        for p, r, m in zip(direction, residual, inverse, strict=True):
+            pf, rf, mf = _flat(p), _flat(r), _flat(m)
+            for start in range(0, r.size, _CHUNK):
+                stop = min(start + _CHUNK, r.size)
+                z = scratch[: stop - start]
+                np.multiply(rf[start:stop], mf[start:stop], out=z)
+                pf[start:stop] *= beta
+                pf[start:stop] += z
+        return direction, next_gamma
 
     def while_loop(self, condition, body, state):
         if self.host:
