@@ -688,21 +688,6 @@ def _cuda_projector_options(**kwargs: object) -> object:
     return options_cls(**kwargs)
 
 
-def effective_fista_core_backend(
-    cfg: FistaCoreConfig,
-    *,
-    T_all: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-) -> str:
-    """Return the effective data projector backend selected by the core."""
-    forward_projector, backprojector = _resolve_fista_core_data_projectors(
-        cfg,
-        T_all=T_all,
-        det_grid=det_grid,
-    )
-    return "cuda" if forward_projector == "cuda" and backprojector == "cuda" else "jax"
-
-
 def _resolve_fista_core_data_projectors(
     cfg: FistaCoreConfig,
     *,
