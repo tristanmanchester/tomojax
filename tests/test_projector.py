@@ -93,6 +93,34 @@ def test_single_slice_is_only_a_squeeze_of_the_three_dimensional_pair(kind):
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("nz", [4, 8, 12, 28, 32, 36])
+def test_a_thin_volume_stages_only_its_planes_with_the_same_bits(monkeypatch, nz):
+    if jax.default_backend() != "gpu":
+        pytest.skip("needs the CUDA kernels")
+    # check-public-imports: allow-private
+    from tomojax.core import joseph
+
+    # check-public-imports: allow-private
+    from tomojax.core.geometry.views import stack_view_poses
+
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    grid = tj.Grid(48, 40, nz, 1.0, 1.0, 1.0)
+    detector = tj.Detector(48, nz, 1.0, 1.0)
+    angles = np.linspace(0.0, 180.0, 9, dtype=np.float32)
+    poses = stack_view_poses(tj.ParallelGeometry(grid, detector, angles), len(angles))
+    coefficients = joseph.plane_coefficients(poses, grid, detector)
+    assert joseph.stages_bands(coefficients, grid, detector)
+    private = np.random.default_rng(nz).random((48, 40, nz), np.float32)
+    public = jnp.asarray(private.transpose(2, 1, 0).copy())
+    shared = {"backend": "cuda"}
+    direct = joseph.forward_project_planes(
+        coefficients, jnp.asarray(private), grid, detector, z_fast=True, **shared
+    )
+    staged = joseph.forward_project_planes(coefficients, public, grid, detector, **shared)
+    assert np.asarray(staged).tobytes() == np.asarray(direct).tobytes()
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize("kind", ["parallel", "lamino"])
 def test_private_storage_calls_give_the_public_bits(kind, monkeypatch):
     # A call takes a z-fast copy when it fits; without room, or inside a trace,
