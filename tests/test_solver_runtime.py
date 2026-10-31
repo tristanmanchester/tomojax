@@ -254,11 +254,14 @@ def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(
     expected = np.max(np.abs(matrix).T @ np.abs(matrix) @ np.ones(12))
     if jax.default_backend() == "gpu":
         monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+        from tomojax.core import joseph
+
+        def poisoned(model):
+            return lambda *a, **kw: model(*a, **kw) * jnp.nan
+
+        # The JAX model is traced as the off-GPU branch; running it poisons the bound.
         for operation in ("forward_jax", "adjoint_jax"):
-            monkeypatch.setattr(
-                f"tomojax.core.joseph.{operation}",
-                lambda *a, **kw: pytest.fail("CUDA norm must use the bounded-workspace pair"),
-            )
+            monkeypatch.setattr(joseph, operation, poisoned(getattr(joseph, operation)))
     actual = float(
         estimate_normal_norm(
             poses,
