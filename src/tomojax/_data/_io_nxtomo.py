@@ -412,25 +412,50 @@ def _volume_in_internal_axes(
     valid, else from the volume's shape against the grid; a malformed attribute
     and every inferred order are logged.
     """
-    attr_norm = None
-    if volume_axes_attr:
-        try:
-            _volume_permutation(volume_axes_attr)
-            attr_norm = volume_axes_attr.lower()
-        except ValueError:
-            _axes_log_warning(
-                "Ignoring malformed volume_axes_order=%r on %s", volume_axes_attr, path
-            )
-    disk_axes = attr_norm or _infer_volume_axes(volume_raw.shape, grid_hint)
-    source = "attr" if attr_norm else "heuristic"
+    disk_axes, source = saved_volume_axes(volume_raw.shape, volume_axes_attr, grid_hint, path)
     volume_np = np.asarray(volume_raw)
-    if disk_axes is None:
-        raise ValueError(f"{path}: volume axis order is unknown; declare volume_axes_order")
-    if source == "heuristic":
-        _axes_log_warning("load_nxtomo: inferred disk volume axes %s for %s", disk_axes, path)
     if disk_axes != "zyx":
         volume_np = np.ascontiguousarray(volume_np.transpose(_volume_permutation(disk_axes)))
     return volume_np, disk_axes, source
+
+
+def saved_volume_axes(
+    shape: tuple[int, ...], attribute: str | None, grid: object, path: object
+) -> tuple[str, str]:
+    """The disk order of a saved volume and how it was found, from metadata alone.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        Shape of the saved volume.
+    attribute : str or None
+        Its ``volume_axes_order`` attribute, if any.
+    grid : mapping or None
+        The saved grid metadata, with ``nx``, ``ny`` and ``nz``.
+    path : object
+        The file, for messages.
+
+    Returns
+    -------
+    tuple of str
+        The order, such as ``"zyx"``, and ``"attr"`` or ``"heuristic"``.
+
+    Raises
+    ------
+    ValueError
+        If neither the attribute nor the grid decides the order.
+    """
+    if attribute:
+        try:
+            _volume_permutation(attribute)
+            return attribute.lower(), "attr"
+        except ValueError:
+            _axes_log_warning("Ignoring malformed volume_axes_order=%r on %s", attribute, path)
+    axes = _infer_volume_axes(shape, grid)
+    if axes is None:
+        raise ValueError(f"{path}: volume axis order is unknown; declare volume_axes_order")
+    _axes_log_warning("load_nxtomo: inferred disk volume axes %s for %s", axes, path)
+    return axes, "heuristic"
 
 
 def _volume_permutation(axes: str) -> tuple[int, int, int]:

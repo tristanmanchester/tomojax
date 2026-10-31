@@ -307,17 +307,22 @@ def _slab_offset(
     factors: Sequence[int],
     voxel: float,
 ) -> float:
-    """Sharpest axis offset of one slab, searched coarse to fine around ``start``."""
+    """Sharpest axis offset of one slab, searched coarse to fine within ``radius`` of ``start``."""
+
+    def bounded(candidates: np.ndarray) -> np.ndarray:
+        return np.unique(np.clip(candidates, start - radius, start + radius))
+
     best = start
     for level, f in enumerate(factors):
         slab = slabs.get(height, f)
         step = voxel * f
         reach = radius if level == 0 else 3 * step
         count = max(1, round(reach / step))
-        best = _search(geometry, slab, best + step * np.arange(-count, count + 1), roll, 2)
+        candidates = bounded(best + step * np.arange(-count, count + 1))
+        best = _search(geometry, slab, candidates, roll, 2)
         if f == 1:
             # Final quarter-voxel fit over +-1.5 voxels of the full-resolution estimate.
-            best = _search(geometry, slab, best + 0.25 * step * np.arange(-6, 7), roll, 6)
+            best = _search(geometry, slab, bounded(best + 0.25 * step * np.arange(-6, 7)), roll, 6)
     return best
 
 

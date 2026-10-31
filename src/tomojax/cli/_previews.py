@@ -5,6 +5,7 @@ Slices are read plane by plane, so previews of large reconstructions stay cheap.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import cast
 
@@ -12,7 +13,7 @@ import h5py
 import numpy as np
 
 from tomojax._typed_arrays import numpy_float32_array, write_image
-from tomojax.io.api import locate_frames, read_acquisition
+from tomojax.io.api import locate_frames, read_acquisition, saved_volume_axes
 from tomojax.recon.quicklook import scale_to_uint8
 
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
@@ -62,7 +63,11 @@ def _hdf5_images(path: str | Path) -> dict[str, np.ndarray]:
         images["projection"] = numpy_float32_array(projections[int(samples[len(samples) // 2])])
         volume = file.get(_VOLUME_PATH)
         if isinstance(volume, h5py.Dataset):
-            axes = str(file["/entry/processing/tomojax"].attrs.get("volume_axes_order", "zyx"))
+            attribute = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
+            grid = json.loads(file["/entry"].attrs.get("grid_meta_json", "{}"))
+            axes, _ = saved_volume_axes(
+                volume.shape, None if attribute is None else str(attribute), grid, path
+            )
             images.update({f"slice_{axis}": _central_slice(volume, axes, axis) for axis in "zyx"})
     return images
 

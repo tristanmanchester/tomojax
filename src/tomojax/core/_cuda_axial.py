@@ -372,12 +372,12 @@ def _banded_forward(
     """
     nx, ny, nz = grid.nx, grid.ny, grid.nz
     nu, nv = detector.nu, detector.nv
-    depth = nz if z_fast else 32
+    depth = nz if z_fast else min(nz, 32)
     tiles = -(-nu // (128 // tile)) * -(-depth // (4 * tile))
     # Views 16 a launch share their reads in L2; narrow scans take more, so
     # that each launch has about a wave of blocks.
     chunk = max(16, -(-512 // tiles))
-    staged = () if z_fast else (jax.ShapeDtypeStruct((nx, ny, 32), jnp.float32),)
+    staged = () if z_fast else (jax.ShapeDtypeStruct((nx, ny, depth), jnp.float32),)
 
     def launch(context: Any, outputs: Any, cf: Any, x: Any) -> None:
         out, *band = outputs if staged else (outputs,)
@@ -393,7 +393,7 @@ def _banded_forward(
         )
         for z0 in range(0, nz, depth):
             if band:
-                reverse_axes(x, band[0], (nz, ny, nx), stream=stream, z0=z0, depth=32)
+                reverse_axes(x, band[0], (nz, ny, nx), stream=stream, z0=z0, depth=depth)
             for first in range(0, views, chunk):
                 launch_kernel(
                     text,

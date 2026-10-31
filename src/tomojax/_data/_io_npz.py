@@ -7,6 +7,7 @@ from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata
 # The file's key for the view angles (``NXTomoMetadata.angles``); earlier
 # versions wrote it, so it stays.
 _ANGLES_KEY = "thetas_deg"
+_AXES_KEY = "volume_axes_order"
 
 
 def save_npz(
@@ -25,6 +26,8 @@ def save_npz(
     ).to_dataset_dict()
     if "angles" in payload:
         payload[_ANGLES_KEY] = payload.pop("angles")
+    if "volume" in payload:
+        payload[_AXES_KEY] = "zyx"
     np.savez_compressed(path, **payload)
 
 
@@ -38,7 +41,9 @@ def _load_npz_dataset(path: str) -> LoadedDataset:
                 out[key] = val.item()
             else:
                 out[key] = val
-        return out
+    if "volume" in out and str(out.pop(_AXES_KEY, "")) != "zyx":
+        raise ValueError(f"{path}: volume has no zyx axes tag; declare it or re-export the file")
+    return out
 
 
 def load_npz(path: str) -> LoadedNXTomo:

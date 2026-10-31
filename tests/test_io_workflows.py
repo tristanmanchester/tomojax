@@ -441,3 +441,29 @@ def test_single_sinogram_npz_load_infers_one_slice_and_saves_fixed_rank(tmp_path
     tj.save(target, scan)
     assert not validate_dataset(target)["issues"]
     np.testing.assert_array_equal(tj.load(target).projections, scan.projections)
+
+
+def _coordinate_volume(nz: int, ny: int, nx: int) -> np.ndarray:
+    z, y, x = np.indices((nz, ny, nx))
+    return (100 * x + 10 * y + z).astype(np.float32)
+
+
+def test_npz_volume_round_trips_and_an_untagged_one_is_refused(tmp_path: Path):
+    volume = _coordinate_volume(3, 4, 3)
+    grid, detector = Grid(3, 4, 3, 1, 1, 1), Detector(7, 6, 1, 1)
+    saved = ProjectionDataset(
+        projections=np.zeros((2, 6, 7), np.float32),
+        angles=np.asarray([0.0, 90.0], np.float32),
+        volume=volume,
+        detector=detector,
+        grid=grid,
+    )
+    save_dataset(tmp_path / "new.npz", saved)
+    np.testing.assert_array_equal(load_dataset(tmp_path / "new.npz").volume, volume)
+
+    with np.load(tmp_path / "new.npz", allow_pickle=True) as stored:
+        fields = {key: stored[key] for key in stored.files if key != "volume_axes_order"}
+    fields["volume"] = volume.transpose(2, 1, 0)  # the same shape, read wrongly
+    np.savez_compressed(tmp_path / "old.npz", **fields)
+    with pytest.raises(ValueError, match="axes tag"):
+        load_dataset(tmp_path / "old.npz")

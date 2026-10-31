@@ -22,6 +22,7 @@ from tomojax._data import (
     locate_frames,
     save_npz,
     save_nxtomo,
+    saved_volume_axes,
     validate_nxtomo,
 )
 from tomojax.core.geometry import Detector, Grid, ScanGeometry
@@ -41,6 +42,7 @@ __all__ = [
     "locate_frames",
     "save_dataset",
     "save_nxtomo",
+    "saved_volume_axes",
     "validate_dataset",
     "validate_nxtomo",
 ]

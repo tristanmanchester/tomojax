@@ -666,6 +666,65 @@ def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):
     assert info["shape_zyx"] == [4, 5, 6] and info["voxel_size_xyz"] == [0.5, 0.5, 0.25]
 
 
+@pytest.mark.parametrize(
+    ("shape", "stored_as", "loads"), [((3, 4, 5), "xyz", True), ((3, 4, 3), "xyz", False)]
+)
+def test_export_and_previews_decide_an_untagged_volume_as_the_loader_does(
+    tmp_path: Path, shape: tuple[int, int, int], stored_as: str, loads: bool
+):
+    import h5py
+
+    # check-public-imports: allow-private
+    from tomojax.cli._previews import _hdf5_images
+    from tomojax.cli.main import main
+    from tomojax.io import ProjectionDataset
+
+    nz, ny, nx = shape
+    z, y, x = np.indices(shape)
+    volume = (100 * x + 10 * y + z).astype(np.float32)
+    dataset = ProjectionDataset(
+        projections=np.zeros((2, 6, 7), np.float32),
+        angles=np.asarray([0.0, 90.0], np.float32),
+        volume=volume,
+        detector=Detector(7, 6, 1.0, 1.0),
+        grid=Grid(nx, ny, nz, 1.0, 1.0, 1.0),
+    )
+    path = tmp_path / "old.nxs"
+    save_dataset(path, dataset)
+    with h5py.File(path, "r+") as file:
+        group = file["/entry/processing/tomojax"]
+        del group["volume"], group.attrs["volume_axes_order"]
+        group["volume"] = volume.transpose(2, 1, 0)
+    out = tmp_path / "out.raw"
+    if loads:
+        assert main(["export", str(path), "-o", str(out)]) == 0
+        np.testing.assert_array_equal(
+            np.fromfile(out, "<f4").reshape(shape), volume
+        )
+        np.testing.assert_array_equal(_hdf5_images(path)["slice_z"].shape, (ny, nx))
+    else:
+        with pytest.raises(SystemExit):
+            main(["export", str(path), "-o", str(out)])
+        assert not out.exists()
+        with pytest.raises(ValueError, match="axis order is unknown"):
+            _hdf5_images(path)
+
+
+def test_calibrate_cone_axis_stays_within_its_search_range():
+    n = 32
+    geometry, data = _blob_scan(n, 60, ConeBeam(3 * n, 4.5 * n, axis_offset=2.4))
+    config = ConeAxisConfig(
+        search_range=2.0,
+        estimate_roll=False,
+        slices=4,
+        fdk=FDKConfig(filter="hann", backend="jax", views_per_batch=60),
+    )
+    calibration = calibrate_cone_axis(
+        geometry, geometry.grid, geometry.detector, data, config=config
+    )
+    assert abs(calibration.axis_offset) <= 2.0
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize(
     ("n", "nz", "tilt"), [(8, 8, 0.0), (8, 40, 0.0), (12, 12, 5.0), (8, 40, 5.0)]

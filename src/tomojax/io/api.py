@@ -16,6 +16,7 @@ from tomojax.io._datasets import (
     load_nxtomo,
     locate_frames,
     save_nxtomo,
+    saved_volume_axes,
     validate_nxtomo,
 )
 from tomojax.io._hdf5_array import read_hdf5_array
@@ -44,5 +45,6 @@ __all__ = [
     "read_tiff_frames",
     "save_nxtomo",
     "save_projection_quicklook",
+    "saved_volume_axes",
     "validate_nxtomo",
 ]
