@@ -105,8 +105,9 @@ class ProjectionOperators(NamedTuple):
 class _FiniteSampling:
     """Own detector coordinates, Fourier factors and the nominal Joseph map."""
 
-    def __init__(self, grid, detector, backend, absolute) -> None:
+    def __init__(self, grid, detector, backend, absolute, z_fast) -> None:
         self.grid, self.backend, self.absolute = grid, backend, absolute
+        self.z_fast = z_fast
         self.width = 2 * detector.nu
         self.pitch = detector.du / 2
         self.length = 2 * self.width + 1
@@ -142,7 +143,7 @@ class _FiniteSampling:
 
     def spectrum(self, coefficients, volume):
         rays = forward_project_planes(
-            coefficients, volume, self.grid, self.extended, backend=self.backend
+            coefficients, volume, self.grid, self.extended, backend=self.backend, z_fast=self.z_fast
         )
         return jnp.fft.rfft(rays, n=self.size)
 
@@ -159,7 +160,7 @@ class _FiniteSampling:
     def transpose_spectrum(self, coefficients, spectrum):
         rays = jnp.fft.irfft(spectrum, n=self.size)[..., : self.length]
         return sum_backproject_planes(
-            coefficients, rays, self.grid, self.extended, backend=self.backend
+            coefficients, rays, self.grid, self.extended, backend=self.backend, z_fast=self.z_fast
         )
 
     def forward(self, poses, volume, _frames=None):
@@ -197,16 +198,18 @@ class _FiniteSampling:
         return FixedPoseOperators(value_and_derivative, transpose_pair, value_and_derivatives)
 
 
-def projectors(grid, detector, *, backend: str, absolute: bool = False):
+def projectors(grid, detector, *, backend: str, absolute: bool = False, z_fast: bool = False):
     """Matched products; absolute factors bound the operator, not the likelihood."""
-    model = _FiniteSampling(grid, detector, backend, absolute)
+    model = _FiniteSampling(grid, detector, backend, absolute, z_fast)
     return ProjectionOperators(model.forward, model.adjoint, model.derivative, model.fixed_pose)
 
 
-def pose_columns(grid, detector, *, backend: str, indices: tuple[int, ...]) -> Callable:
+def pose_columns(
+    grid, detector, *, backend: str, indices: tuple[int, ...], z_fast: bool = False
+) -> Callable:
     """Bind the same physical prediction and its active translation columns."""
     assert set(indices) <= {3, 5}
-    model = projectors(grid, detector, backend=backend)
+    model = projectors(grid, detector, backend=backend, z_fast=z_fast)
 
     def columns(params, nominal, _frame, volume, target, weight):
         poses = apply_pose_update(nominal, params, translation_frame="detector")[None]

@@ -152,7 +152,7 @@ def _pass(
     n, width = p.shape
     size = min(batch_size, n)
     indices = jnp.asarray(spec.active_columns, jnp.int32)
-    shape = (spec.grid.nz, spec.grid.ny, spec.grid.nx)
+    shape = spec.volume_shape
     counts = arrays.counts if arrays.counts is not None else jnp.ones(n, jnp.float32)
     poses = apply_pose_updates(arrays.poses, p, translation_frame=spec.jacobian.translation_frame)
 
@@ -414,6 +414,7 @@ class _HostSystem:
                 placement=HOST,
                 rtol=spec.gn_joint_rtol,
                 volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
+                volume_z_fast=spec.jacobian.z_fast,
             )
         else:
             result = solve_schur_normal(
@@ -430,6 +431,7 @@ class _HostSystem:
                 max_iters=spec.gn_joint_iterations,
                 rtol=spec.gn_joint_rtol,
                 volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
+                volume_z_fast=spec.jacobian.z_fast,
             )
         # Project before transfer, without allocating another host image.
         dx = np.asarray(result.increment[0])

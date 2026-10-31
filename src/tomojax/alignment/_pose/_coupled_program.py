@@ -86,6 +86,13 @@ class CoupledSpec:
     split: ViewSplit | None = None
     refinement: JointRefinement | None = None
 
+    @property
+    def volume_shape(self) -> tuple[int, int, int]:
+        """Owned volume dimensions; physical geometry remains unchanged."""
+        assert not self.jacobian.z_fast or (self.backend == "cuda" and not self.jacobian.cone_beam)
+        shape = (self.grid.nx, self.grid.ny, self.grid.nz)
+        return shape if self.jacobian.z_fast else (shape[2], shape[1], shape[0])
+
 
 class CoupledArrays(NamedTuple):
     """Per-scan numerical inputs; changing values can reuse a compiled program."""
@@ -106,7 +113,7 @@ def volume_regularisation(x: jax.Array, *, spec: CoupledSpec) -> jax.Array:
     if spec.tv_weight == 0:
         return jnp.float32(0)
     config = FistaCoreConfig(regulariser=spec.regulariser, huber_delta=spec.huber_delta)
-    return spec.tv_weight * regulariser_value_arrays(x, config)
+    return spec.tv_weight * regulariser_value_arrays(x, config, z_fast=spec.jacobian.z_fast)
 
 
 def pose_smoothness(p: jax.Array, *, weights: jax.Array) -> jax.Array:
@@ -223,7 +230,11 @@ def physical_projectors(
         assert spec.jacobian.translation_frame == "detector"
         assert set(spec.active_columns) <= {3, 5}
         model = _matching_model.projectors(
-            spec.grid, spec.detector, backend=spec.backend, absolute=absolute_weights
+            spec.grid,
+            spec.detector,
+            backend=spec.backend,
+            absolute=absolute_weights,
+            z_fast=spec.jacobian.z_fast,
         )
         return model.forward, model.adjoint
     return _geometric_projectors(spec, arrays, absolute_weights=absolute_weights)
@@ -252,6 +263,7 @@ def _geometric_projectors(spec, arrays, *, absolute_weights):
                 spec.detector,
                 backend=backend,
                 interpolation=joseph,
+                z_fast=spec.jacobian.z_fast,
                 absolute_weights=absolute_weights,
             )
         if spec.jacobian.integrator == "exact":
@@ -287,6 +299,7 @@ def _geometric_projectors(spec, arrays, *, absolute_weights):
                 spec.detector,
                 backend=backend,
                 interpolation=joseph,
+                z_fast=spec.jacobian.z_fast,
                 accumulate=accumulate,
                 absolute_weights=absolute_weights,
             )
@@ -309,9 +322,7 @@ def _geometric_projectors(spec, arrays, *, absolute_weights):
                 unroll=spec.jacobian.unroll,
             ), None
 
-        value = jax.lax.scan(
-            add, jnp.zeros((spec.grid.nz, spec.grid.ny, spec.grid.nx), jnp.float32), (t, y)
-        )[0]
+        value = jax.lax.scan(add, jnp.zeros(spec.volume_shape, jnp.float32), (t, y))[0]
         return _finish_adjoint(value, accumulate)
 
     return forward, adjoint
@@ -378,7 +389,11 @@ def physical_columns(spec: CoupledSpec, arrays: CoupledArrays) -> Callable:
     """Bind columns from the same physical model used by every volume product."""
     if spec.refinement is not None:
         return _matching_model.pose_columns(
-            spec.grid, spec.detector, backend=spec.backend, indices=spec.active_columns
+            spec.grid,
+            spec.detector,
+            backend=spec.backend,
+            indices=spec.active_columns,
+            z_fast=spec.jacobian.z_fast,
         )
     return partial(
         pose_prediction_and_columns,
@@ -481,7 +496,7 @@ def _build_program(
     # end at the last view; ``valid`` marks its views not seen before.
     size = min(n_views, _VIEWS_PER_BATCH)
     count = -(-n_views // size)
-    volume_zeros = jnp.zeros((spec.grid.nz, spec.grid.ny, spec.grid.nx), jnp.float32)
+    volume_zeros = jnp.zeros(spec.volume_shape, jnp.float32)
 
     def take(a, start):
         return jax.lax.dynamic_slice_in_dim(a, start, size)
@@ -619,6 +634,7 @@ def _build_program(
             rtol=cfg.gn_joint_rtol,
             dot=block_dot,
             volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
+            volume_z_fast=spec.jacobian.z_fast,
         )
 
     def update(p, x):
@@ -686,6 +702,7 @@ def _build_program(
             rtol=cfg.gn_joint_rtol,
             dot=block_dot,
             volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
+            volume_z_fast=spec.jacobian.z_fast,
         )
         return step._replace(increment=(free * step.increment[0], project_pose(step.increment[1])))
 

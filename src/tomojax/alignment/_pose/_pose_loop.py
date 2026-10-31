@@ -8,6 +8,7 @@ import math
 import time
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -38,6 +39,7 @@ from tomojax.alignment._results import AlignCheckpointCallback, AlignInfo, Align
 from tomojax.alignment._stages._reconstruction_stage import _run_reconstruction_step
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core import progress_iter
+from tomojax.core.backend_policy import backend_provenance as selected_backend, cuda_backend
 from tomojax.core.cone import cone_model
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
@@ -49,6 +51,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.core.volume_layout import transpose_volume
 
 from ._matching_model import JointRefinement
 from ._pose_context import (
@@ -292,6 +295,7 @@ def _build_alignment_step_contexts(
             align_loss_jit=objective.align_loss_jit,
             gn_update_all=objective.gn_update_all,
             coupled=objective.coupled,
+            private=objective.private,
         ),
         AlignmentStepConstraints(
             active_mask=setup.active_mask,
@@ -325,6 +329,7 @@ def _build_alignment_step_contexts(
 @dataclass
 class _AlignLoopState:
     x: jnp.ndarray
+    input_x: jnp.ndarray  # align's entry volume, which align and its setup hold throughout
     pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None
     final_gauge_stats: dict[str, float | str | list[str]]
@@ -462,6 +467,11 @@ def _run_align_outer_iteration(
         state.outer_stats.append(stat)
         return stat, None
     objective, constraints, motion, smoothing, gauge = step_contexts
+    # A pose-only step leaves x as it was: the entry volume comes back as
+    # itself, and holding it costs nothing as align holds it too.
+    kept = state.x if objective.coupled is None and state.x is state.input_x else None
+    if objective.private:  # the loop holds x in the pose cores' storage while they run
+        state.x = transpose_volume(jax.block_until_ready(state.x))
     if objective.coupled is not None:
         (
             state.x,
@@ -498,6 +508,8 @@ def _run_align_outer_iteration(
             vol=state.x,
             loss_hist=state.loss_hist,
         )
+    if objective.private:
+        state.x = transpose_volume(jax.block_until_ready(state.x)) if kept is None else kept
     state.loss_hist.append(total_loss)
     stat.update(align_stat)
     stat["outer_time"] = time.perf_counter() - outer_start
@@ -648,6 +660,10 @@ def align(
         active_mask=active_mask,
         runtime=runtime,
         refinement=joint_refinement,
+        # Parallel Joseph pose cores on CUDA read a private z-fast copy of the volume.
+        private=cfg.ray_integrator in {"joseph", "joseph_cubic"}
+        and cfg.backend == "cuda"
+        and cuda_backend(),
     )
 
     elapsed_offset = float(resume_state.elapsed_offset) if resume_state is not None else 0.0
@@ -655,6 +671,7 @@ def align(
     reconstruction = str(cfg.reconstruction)
     loop_state = _AlignLoopState(
         x=x,
+        input_x=x,
         pose_params=pose_params,
         motion_coeffs=motion_coeffs,
         final_gauge_stats=final_gauge_stats,
@@ -681,17 +698,27 @@ def align(
         constraint_ctx=constraint_ctx,
     )
 
-    backend_provenance = alignment_projector_backend_provenance(
-        pose_stack=runtime.pose_stack,
-        grid=grid,
-        detector=detector,
-        volume=loop_state.x,
-        det_grid=runtime.det_grid,
-        backend=cfg.backend,
-        require_differentiable_projector=True,
-        api_surface="alignment.pose_objective",
-        ray_integrator=cfg.ray_integrator,
-        gather_dtype=cfg.gather_dtype,
+    # Private pose cores run the CUDA Joseph kernels with analytic pose columns.
+    backend_provenance = (
+        selected_backend(
+            requested_backend=cfg.backend,
+            actual_backend="cuda",
+            api_surface="alignment.pose_objective",
+            differentiability="performance_only",
+        )
+        if objective.private
+        else alignment_projector_backend_provenance(
+            pose_stack=runtime.pose_stack,
+            grid=grid,
+            detector=detector,
+            volume=loop_state.x,
+            det_grid=runtime.det_grid,
+            backend=cfg.backend,
+            require_differentiable_projector=True,
+            api_surface="alignment.pose_objective",
+            ray_integrator=cfg.ray_integrator,
+            gather_dtype=cfg.gather_dtype,
+        )
     ).to_dict()
     profile_policy = profile_policy_from_config(cfg).to_dict()
 

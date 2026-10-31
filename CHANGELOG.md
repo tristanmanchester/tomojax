@@ -6,6 +6,12 @@ Joseph and cone projection, transpose and pose-column calls use their JAX
 reference when executed on a CPU, even on a CUDA host. Explicit Projector
 devices now place the input volume before compiling its forward operation.
 
+CUDA parallel-beam and laminography alignment use private z-contiguous volumes
+inside their Joseph pose steps, including the fixed-volume objective. Inputs,
+outputs, observers and checkpoints remain public `(z, y, x)` arrays; backend
+provenance identifies the CUDA objective and its analytic pose derivatives.
+Fixed-volume steps reuse an unchanged entry volume rather than duplicating it.
+
 Host-slab CUDA cone solvers accumulate forward projections directly into their
 circular detector-row buffer, without temporary projection batches. The ray
 product is rounded before accumulation, preserving the separate-step arithmetic.

@@ -43,8 +43,8 @@
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 139,
-    "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 247,
-    "src/tomojax/alignment/_pose/_pose_loop.py::align": 179,
+    "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 249,
+    "src/tomojax/alignment/_pose/_pose_loop.py::align": 194,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 160,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 141,
     "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 103,
@@ -68,10 +68,10 @@
   "code_lines": {
     "(modules)": 3318,
     "_data": 2044,
-    "alignment": 16666,
+    "alignment": 16764,
     "backends": 570,
     "cli": 2562,
-    "core": 13062,
+    "core": 13072,
     "corrections": 2105,
     "datasets": 1125,
     "forward": 824,

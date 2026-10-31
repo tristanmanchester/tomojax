@@ -28,6 +28,8 @@ class PoseObjectiveBundle:
     align_loss_jit: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
     gn_update_all: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
     coupled: CoupledObjective | None = None
+    # Whether its volumes are solver-private (x, y, z), z contiguous.
+    private: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,7 @@ def align_loss(
         require_differentiable_projector=not options.cone_beam,
         ray_integrator=options.integrator,
         frames=arrays.frames,
+        z_fast=options.z_fast,
     )
     return _apply_pose_smoothness_loss(pose_params, loss_tot, arrays.smoothness)
 
@@ -211,6 +214,7 @@ def _build_pose_objective_bundle(
     active_mask: jnp.ndarray,
     runtime: AlignmentRuntimeContext,
     refinement: JointRefinement | None = None,
+    private: bool = False,
 ) -> PoseObjectiveBundle:
     ctx = _pose_objective_context(
         grid=grid,
@@ -233,7 +237,11 @@ def _build_pose_objective_bundle(
     spec = PoseSpec(
         grid=grid,
         detector=detector,
-        jacobian=replace(PoseJacobianOptions.from_config(cfg), cone_beam=ctx.cone is not None),
+        jacobian=replace(
+            PoseJacobianOptions.from_config(cfg),
+            cone_beam=ctx.cone is not None,
+            z_fast=private and ctx.cone is None,
+        ),
         loss=ctx.loss_adapter.spec,
         backend=str(cfg.backend),
         chunk_size=ctx.chunk_size,
@@ -243,7 +251,8 @@ def _build_pose_objective_bundle(
     return PoseObjectiveBundle(
         align_loss_jit=partial(align_loss, arrays, spec=spec),
         gn_update_all=partial(gn_update, arrays, spec=spec),
-        coupled=build_coupled_objective(ctx, refinement=refinement)
+        coupled=build_coupled_objective(ctx, refinement=refinement, private=private)
         if cfg.gn_coupling == "joint"
         else None,
+        private=spec.jacobian.z_fast,
     )

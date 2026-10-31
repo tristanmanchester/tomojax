@@ -35,6 +35,7 @@ class AlignmentStepObjective:
     gn_update_all: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
 
     coupled: CoupledObjective | None = None
+    private: bool = False
 
 
 @dataclass(frozen=True)

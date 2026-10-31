@@ -16,7 +16,8 @@ from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_po
 @pytest.mark.gpu
 @pytest.mark.parametrize("integrator", ["joseph", "joseph_cubic"])
 @pytest.mark.parametrize("indices", [(3, 4), (0, 1, 2, 3, 4), (0, 1, 2, 3, 4, 5)])
-def test_parallel_pose_columns_match_reference(integrator, indices):
+@pytest.mark.parametrize("private", [False, True])
+def test_parallel_pose_columns_match_reference(integrator, indices, private):
     if jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
     grid = Grid(77, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.23, -0.17, 0.31))
@@ -42,8 +43,9 @@ def test_parallel_pose_columns_match_reference(integrator, indices):
             detector=detector,
             backend="cuda",
             interpolation=interpolation,
+            z_fast=private,
         )
-    )(coeff[None], volume, tangent[None])[0]
+    )(coeff[None], volume.transpose(2, 1, 0) if private else volume, tangent[None])[0]
     actual = (
         weight.ravel() * (images[0].ravel() - target.ravel()),
         weight.ravel() * images[1:].reshape(len(indices), -1),
@@ -74,7 +76,10 @@ def test_parallel_pose_columns_match_reference(integrator, indices):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
-def test_fused_columns_keep_cell_and_support_boundary_derivatives(interpolation, projector_device):
+@pytest.mark.parametrize("private", [False, True])
+def test_fused_columns_keep_cell_and_support_boundary_derivatives(
+    interpolation, private, projector_device
+):
     if jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
     grid, detector = Grid(73, 4, 3, 1, 1, 1), Detector(1, 1, 1, 1)
@@ -86,7 +91,9 @@ def test_fused_columns_keep_cell_and_support_boundary_derivatives(interpolation,
     function = partial(
         plane_pose_columns, grid=grid, detector=detector, interpolation=interpolation
     )
-    actual = jax.jit(partial(function, backend="cuda"))(coeff, volume, tangent)
+    actual = jax.jit(partial(function, backend="cuda", z_fast=private))(
+        coeff, volume.transpose(2, 1, 0) if private else volume, tangent
+    )
     expected = jax.jit(partial(function, backend="jax"))(coeff, volume, tangent)
     assert actual.devices() == {projector_device}
     np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)

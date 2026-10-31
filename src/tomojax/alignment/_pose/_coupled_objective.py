@@ -100,7 +100,7 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     if _MEMORY_MARGIN * (13 * volume + sinograms * sinogram) < available:
         return None
     p = jax.ShapeDtypeStruct((int(arrays.poses.shape[0]), POSE_WIDTH), jnp.float32)
-    x = jax.ShapeDtypeStruct((grid.nz, grid.ny, grid.nx), jnp.float32)
+    x = jax.ShapeDtypeStruct(spec.volume_shape, jnp.float32)
     compiled = run_update.lower(arrays, p, x, spec=spec).compile()
     analysis = compiled.memory_analysis()
     if analysis is None:
@@ -171,8 +171,12 @@ class CoupledObjective:
 
 
 def build_coupled_objective(
-    ctx: _PoseObjectiveContext, *, refinement: JointRefinement | None = None
+    ctx: _PoseObjectiveContext,
+    *,
+    refinement: JointRefinement | None = None,
+    private: bool = False,
 ) -> CoupledObjective:
+    """The coupled objective; ``private`` volumes are (x, y, z), z contiguous, on parallel beams."""
     cfg = ctx.cfg
     if isinstance(ctx.loss_adapter.spec, HuberLossSpec):
         raise ValueError(
@@ -225,7 +229,11 @@ def build_coupled_objective(
         grid=ctx.grid,
         detector=ctx.detector,
         backend=backend,
-        jacobian=replace(PoseJacobianOptions.from_config(cfg), cone_beam=ctx.cone is not None),
+        jacobian=replace(
+            PoseJacobianOptions.from_config(cfg),
+            cone_beam=ctx.cone is not None,
+            z_fast=private and ctx.cone is None,
+        ),
         active_columns=active_columns,
         cache_columns=cache_columns,
         regulariser=cfg.regulariser,

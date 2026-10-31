@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from tomojax.alignment._geometry.parametrizations import apply_pose_update
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import cone_pose_columns, cone_project, frame_coefficients, use_cuda_cone
-from tomojax.core.joseph import plane_coefficients, plane_pose_columns
+from tomojax.core.joseph import forward_project_planes, plane_coefficients, plane_pose_columns
 from tomojax.core.projector import forward_project_view_T
 
 if TYPE_CHECKING:
@@ -34,6 +34,7 @@ class PoseJacobianOptions:
     jacobian: Literal["central", "autodiff"]
     # Cone beams project each view in its lab frame (``frame_i`` below).
     cone_beam: bool = False
+    z_fast: bool = False
 
     @classmethod
     def from_config(cls, cfg: AlignConfig) -> PoseJacobianOptions:
@@ -143,6 +144,7 @@ def _parallel_autodiff_columns(
         detector,
         backend="cuda",
         interpolation="cubic" if options.integrator == "joseph_cubic" else "linear",
+        z_fast=options.z_fast,
     )[0].reshape(1 + len(indices), -1)
     return weight.ravel() * (images[0] - target.ravel()), weight.ravel() * images[1:]
 
@@ -220,6 +222,16 @@ def pose_prediction_and_columns(
         if options.cone_beam:
             return forward_project_view_T(
                 t_i, grid, detector, masked_vol, backend=cone_backend, frames=frame_i
+            ).ravel()
+        if options.z_fast:
+            return forward_project_planes(
+                plane_coefficients(t_i[None], grid, detector, det_grid),
+                masked_vol,
+                grid,
+                detector,
+                backend="cuda",
+                interpolation="cubic" if options.integrator == "joseph_cubic" else "linear",
+                z_fast=options.z_fast,
             ).ravel()
         return forward_project_view_T(
             t_i,
