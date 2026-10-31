@@ -464,3 +464,43 @@ def test_parallel_center_alignment_stays_axial_after_save(tmp_path):
         expected = tj.project(nominal, _phantom(8))
         np.testing.assert_allclose(tj.project(aligned.geometry, _phantom(8)), expected, atol=1e-5)
         assert tj.reconstruct(aligned).method == "fbp"
+
+
+@pytest.mark.parametrize(
+    ("schedule", "dofs", "frozen", "wanted"),
+    [
+        ("cor_then_pose", None, (), (True, True)),
+        ("cor", None, ("detector_roll_deg",), (True, False)),
+        ("cor_then_pose", None, ("det_u_px", "detector_roll_deg"), None),
+        ("setup_safe", None, ("det_u_px", "detector_roll_deg"), None),
+        (None, ("detector_roll_deg",), ("det_u_px",), (False, True)),
+        (None, ("det_u_px",), (), (True, False)),
+    ],
+)
+def test_cone_setup_respects_active_parameters(monkeypatch, schedule, dofs, frozen, wanted):
+    from tomojax.alignment import AlignConfig
+    from tomojax.alignment._modes import (  # check-public-imports: allow-private
+        cone_setup,
+        resolved_schedule_for_config,
+    )
+    from tomojax.recon import ConeAxisCalibration
+
+    geometry = _geometries(8)["cone"]
+    calls = []
+
+    def calibrate(*args, config):
+        calls.append((config.estimate_offset, config.estimate_roll))
+        return ConeAxisCalibration(0.0, 0.0, (), ())
+
+    monkeypatch.setattr("tomojax.recon.calibrate_cone_axis", calibrate)
+    config = AlignConfig(
+        schedule=schedule,
+        optimise_dofs=dofs,
+        freeze=frozen,
+        pose_translation_frame="detector",
+    )
+    setup = cone_setup(geometry, geometry.grid, geometry.detector, np.zeros((1, 8, 8)), config)
+    assert setup is not None
+    if setup.config is not None:
+        assert not resolved_schedule_for_config(setup.config).active_geometry_dofs
+    assert calls == ([] if wanted is None else [wanted])

@@ -292,7 +292,7 @@ def cone_setup(
     """
     from tomojax.core.geometry.cone import is_cone_beam
     from tomojax.geometry import ConeGeometry
-    from tomojax.recon import calibrate_cone_axis
+    from tomojax.recon import ConeAxisConfig, calibrate_cone_axis
 
     resolved = resolved_schedule_for_config(config)
     setup = set(resolved.active_geometry_dofs)
@@ -314,7 +314,30 @@ def cone_setup(
         if config.optimise_dofs is not None:
             raise ValueError(message)
         LOG.warning("%s, so those setup stages are skipped", message)
-    calibration = calibrate_cone_axis(geometry, grid, detector, projections)
+    # These presets describe parallel-beam stages; the cone modes documented above
+    # estimate offset and roll. Explicit stage/DOF lists retain their own scope.
+    active = setup & _CONE_AXIS_DOFS
+    if isinstance(config.schedule, str) and resolved.name in _SCHEDULES.values():
+        active = _CONE_AXIS_DOFS - set(config.freeze)
+    if not active:
+        return ConeSetup(
+            geometry=geometry,
+            config=pose_stages_only(config),
+            axis_offset=float(geometry.beam.axis_offset),
+            detector_roll_deg=float(geometry.beam.detector_roll_deg),
+            heights=(),
+            slab_offsets=(),
+        )
+    calibration = calibrate_cone_axis(
+        geometry,
+        grid,
+        detector,
+        projections,
+        config=ConeAxisConfig(
+            estimate_offset="det_u_px" in active,
+            estimate_roll="detector_roll_deg" in active,
+        ),
+    )
     calibrated = calibration.apply(geometry)
     LOG.info(
         "Cone-beam axis offset %.4f (%.3f detector px at the axis), detector roll %.4f deg",

@@ -2,7 +2,7 @@
   "config_fields": {
     "AlignConfig": 41,
     "CGLSConfig": 11,
-    "ConeAxisConfig": 5,
+    "ConeAxisConfig": 6,
     "FBPConfig": 5,
     "FBPHostConfig": 5,
     "FDKConfig": 4,
@@ -68,7 +68,7 @@
   "code_lines": {
     "(modules)": 3325,
     "_data": 2091,
-    "alignment": 16802,
+    "alignment": 16825,
     "backends": 570,
     "cli": 2562,
     "core": 11788,
@@ -79,7 +79,7 @@
     "io": 3633,
     "motion": 143,
     "nuisance": 232,
-    "recon": 13574
+    "recon": 13590
   },
   "cuda_kernels": 42,
   "cuda_switches": 23,
@@ -131,5 +131,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 139
+  "test_private_imports": 141
 }
