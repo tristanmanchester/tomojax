@@ -641,9 +641,7 @@ def test_private_pose_steps_restore_public_borrowers_and_observers(coupling, jac
         assert info["backend_provenance"]["differentiability"] == "performance_only"
 
 
-@pytest.mark.parametrize(
-    ("rejected", "reason"), [(True, "stalled"), (False, "small_improvement")]
-)
+@pytest.mark.parametrize(("rejected", "reason"), [(True, "stalled"), (False, "small_improvement")])
 def test_an_early_stop_says_whether_the_last_step_was_rejected(rejected, reason):
     from types import SimpleNamespace
 

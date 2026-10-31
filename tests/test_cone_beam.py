@@ -698,9 +698,7 @@ def test_export_and_previews_decide_an_untagged_volume_as_the_loader_does(
     out = tmp_path / "out.raw"
     if loads:
         assert main(["export", str(path), "-o", str(out)]) == 0
-        np.testing.assert_array_equal(
-            np.fromfile(out, "<f4").reshape(shape), volume
-        )
+        np.testing.assert_array_equal(np.fromfile(out, "<f4").reshape(shape), volume)
         np.testing.assert_array_equal(_hdf5_images(path)["slice_z"].shape, (ny, nx))
     else:
         with pytest.raises(SystemExit):

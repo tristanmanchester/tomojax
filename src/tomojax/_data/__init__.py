@@ -34,7 +34,7 @@ __all__ = [
     "load_nxtomo",
     "locate_frames",
     "save_npz",
-    "saved_volume_axes",
     "save_nxtomo",
+    "saved_volume_axes",
     "validate_nxtomo",
 ]

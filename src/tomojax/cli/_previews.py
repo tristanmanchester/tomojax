@@ -64,7 +64,7 @@ def _hdf5_images(path: str | Path) -> dict[str, np.ndarray]:
         volume = file.get(_VOLUME_PATH)
         if isinstance(volume, h5py.Dataset):
             attribute = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
-            grid = json.loads(file["/entry"].attrs.get("grid_meta_json", "{}"))
+            grid = json.loads(str(file["/entry"].attrs.get("grid_meta_json", "{}")))
             axes, _ = saved_volume_axes(
                 volume.shape, None if attribute is None else str(attribute), grid, path
             )
