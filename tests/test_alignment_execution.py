@@ -573,3 +573,27 @@ def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
     assert actual_info["effective_iterations"] == expected_info["effective_iterations"] == 6
     assert actual_info["actual_backend"] == expected_info["actual_backend"]
     np.testing.assert_allclose(actual_info["loss"], expected_info["loss"], rtol=3e-6)
+
+
+@pytest.mark.parametrize(
+    ("rejected", "reason"), [(True, "stalled"), (False, "small_improvement")]
+)
+def test_an_early_stop_says_whether_the_last_step_was_rejected(rejected, reason):
+    from types import SimpleNamespace
+
+    # check-public-imports: allow-private
+    from tomojax.alignment._pose._pose_loop import _finish_align_iteration
+
+    state = SimpleNamespace(small_impr_streak=1, observer_action=None, stopped_by_observer=False)
+    stat = {"post_constraint_rejected": rejected}
+    stopped = _finish_align_iteration(
+        cfg=AlignConfig(early_stop=True, early_stop_patience=2),
+        state=state,
+        stat=stat,
+        rel_impr=0.0,
+        outer_idx=2,
+        observer_fn=None,
+        checkpoint_callback=None,
+        wall_start=0.0,
+    )
+    assert stopped and stat["stop_reason"] == reason

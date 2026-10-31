@@ -368,6 +368,10 @@ def _finish_align_iteration(
                 state.small_impr_streak + 1 if rel < float(cfg.early_stop_rel_impr) else 0
             )
             converged = state.small_impr_streak >= int(cfg.early_stop_patience)
+    if converged:
+        # Small improvement is not stationarity, and a rejected step is no improvement at all.
+        rejected = bool(stat.get("post_constraint_rejected"))
+        stat["stop_reason"] = "stalled" if rejected else "small_improvement"
     if checkpoint_callback is not None:
         checkpoint_callback(
             AlignResumeState(
