@@ -93,7 +93,11 @@ class ConeAxisConfig:
 class ConeAxisCalibration:
     """Calibrated axis offset and detector roll, with the per-slab estimates.
 
-    ``axis_offset`` and ``detector_roll_deg`` are absolute ``ConeBeam`` values.
+    ``axis_offset`` and ``detector_roll_deg`` are final ``ConeBeam`` values,
+    not increments. Source-object distance, source-detector distance and pixel
+    pitch are inputs, not estimated here; ``axis_offset``, ``heights`` and
+    ``slab_offsets`` are physical lengths conditional on them. The detector-space
+    offset is ``axis_offset * magnification``.
     ``slab_offsets[i]`` is the sharpest axis offset of the slab centred at
     height ``heights[i]`` (physical z), with the calibrated roll applied.
 

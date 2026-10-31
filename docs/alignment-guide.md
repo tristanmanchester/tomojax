@@ -401,6 +401,12 @@ result = tj.align(scan, mode="cor")      # or "cor-then-pose" to align the poses
 recon = tj.reconstruct(result.scan)      # result.scan carries the calibrated beam
 ```
 
+The source-object distance, source-detector distance and pixel pitch stay as
+supplied; this axis calibration does not estimate them. Its physical axis
+offsets and slab heights are conditional on those inputs, with detector-space
+offset `axis_offset * magnification`. “Absolute” calibrated values mean final
+parameters rather than increments, not independently measured metric lengths.
+
 `tomojax.recon.calibrate_cone_axis` runs the calibration alone on a geometry
 and arrays. Of the six pose parameters, `phi` about the rotation axis is the
 weakest; the [measurements](measurements.md#cone-beam-scans) give the accuracy
