@@ -88,6 +88,7 @@ def forward(
                 x,
                 out,
                 *map(np.int32, (grid.nx, grid.ny, grid.nz, detector.nu, detector.nv, views)),
+                *map(np.int32, (0, grid.nz, grid.nz, 0)),  # all planes, one band
             ),
         )
 

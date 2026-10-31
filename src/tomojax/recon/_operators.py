@@ -19,8 +19,9 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.joseph import (
     PrivateJoseph,
     backproject_bands,
+    forward_bands,
+    forward_kind,
     plane_coefficients,
-    stages_bands,
     transpose_bands,
 )
 from tomojax.core.volume_layout import transpose_volume
@@ -248,21 +249,37 @@ class Projector:
         return _view_batch_size(self.grid, self.geometry.detector, views, axial_cuda=parallel)
 
     @functools.cached_property
-    def _bands(self) -> tuple[bool, Literal["axial", "gather"] | None]:
-        """Whether the forward stages its own z-fast bands, and how the transpose does."""
+    def _bands(
+        self,
+    ) -> tuple[Literal["bands", "axial", "generic"], Literal["axial", "gather"] | None]:
+        """Which forward the views take, and how the transpose fills z-fast bands."""
         coefficients, detector = self._coefficients, self.geometry.detector
         with jax.ensure_compile_time_eval():
-            forward = stages_bands(coefficients, self.grid, detector)
+            forward = forward_kind(coefficients, self.grid, detector)
             return forward, transpose_bands(coefficients, self.grid, batch=self._batch)
 
     # One more volume in z-fast storage lets the kernels read z contiguously;
-    # calls take that copy when it fits, with the same result bits either way,
-    # except for views whose kernels stage their own z-fast bands.
+    # calls take that copy when it fits, and forwards else z-fast bands, with
+    # the same result bits any way, except for views whose kernels stage
+    # their own z-fast bands.
     @functools.cached_property
     def _private_forward(self):
-        if self._bands[0]:
+        if self._bands[0] == "bands":
             return None
         return jax.jit(lambda x: self._private_operators[0](transpose_volume(x)))
+
+    @functools.cached_property
+    def _band_forward(self):
+        """The forward from z-fast bands, for when the copy does not fit; band depth is static."""
+        if self._build_private is None or (kind := self._bands[0]) == "bands":
+            return None
+        coefficients, detector, axial = self._coefficients, self.geometry.detector, kind == "axial"
+        return jax.jit(
+            lambda x, depth: forward_bands(
+                coefficients, x, self.grid, detector, depth=depth, axial=axial
+            ),
+            static_argnames="depth",
+        )
 
     @functools.cached_property
     def _private_adjoint(self):
@@ -284,15 +301,27 @@ class Projector:
     def _private_call(self, values: jax.Array, direction: int, elements: int):
         """The private-storage call for ``direction`` when ``elements`` more floats fit.
 
+        A forward for which they do not takes z-fast bands as deep as fit instead.
+
         Traced calls read the public array in place: free memory at trace time
         says nothing about the memory when the compiled program runs.
         """
         if self._build_private is None or isinstance(values, Tracer):
             return None
         free = device_free_memory_bytes()
-        if free is None or 4 * elements > free:
+        if free is None:
             return None
-        return self._private_adjoint if direction else self._private_forward
+        if 4 * elements <= free:
+            return self._private_adjoint if direction else self._private_forward
+        if direction or self._band_forward is None:
+            return None
+        # Else the deepest band of a power of two planes, and a halo plane, that fits.
+        grid = self.grid
+        planes = (free // 4 - math.prod(self.projection_shape)) // (grid.nx * grid.ny) - 1
+        if planes < 8:
+            return None
+        depth = 1 << (min(planes, grid.nz - 1).bit_length() - 1)
+        return functools.partial(self._band_forward, depth=depth)
 
     @staticmethod
     def _validate(values, shape: tuple[int, int, int], context: str) -> None:

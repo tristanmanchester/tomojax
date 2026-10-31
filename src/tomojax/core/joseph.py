@@ -183,18 +183,24 @@ class PrivateJoseph:
         return (grid.nx, grid.ny, grid.nz)
 
 
-def stages_bands(coefficients: jax.Array, grid: Grid, detector: Detector) -> bool:
-    """Whether the CUDA forward of these views stages its own z-fast bands.
+def forward_kind(
+    coefficients: jax.Array, grid: Grid, detector: Detector
+) -> Literal["bands", "axial", "generic"]:
+    """Which CUDA forward these views take, as one call over all of them.
 
-    Aligned axial views take the four-row forward, 32 planes at a time, so a
-    private z-fast copy of the volume cannot help them.
+    Aligned axial views take the four-row forward, which stages its own
+    z-fast bands, so a private z-fast copy cannot help them. Other axial views
+    take the scalar axial kernel and the rest the generic one, from z-fast
+    storage: a copy or bands.
     """
-    from ._cuda_axial import aligned_axial
+    from ._cuda_axial import aligned_axial, axial_coefficients
     from ._cuda_joseph import use_cuda_gather
 
-    if not use_cuda_gather(grid, axial=True):
-        return False
-    return grid.nz % 4 == 0 and detector.nv >= 4 and bool(aligned_axial(coefficients))
+    if not use_cuda_gather(grid, axial=True) or not bool(axial_coefficients(coefficients)):
+        return "generic"
+    if grid.nz % 4 == 0 and detector.nv >= 4 and bool(aligned_axial(coefficients)):
+        return "bands"
+    return "axial"
 
 
 def transpose_bands(
@@ -219,6 +225,32 @@ def transpose_bands(
     starts = {min(first, views - size) for first in range(0, views, size)}
     axial = (bool(axial_coefficients(coefficients[s : s + size])) for s in starts)
     return "gather" if use_cuda_gather(grid) and not any(axial) else None
+
+
+def forward_bands(
+    coefficients: jax.Array,
+    volume: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    *,
+    depth: int,
+    axial: bool,
+) -> jax.Array:
+    """The linear CUDA forward of a (z, y, x) volume from z-fast bands of ``depth`` < nz planes.
+
+    ``axial`` views take the scalar axial kernel, others the generic one (see
+    :func:`forward_kind`), with the same bits as from a z-fast copy of the
+    volume but one band of workspace. Off a GPU it is the JAX model.
+    """
+    from ._cuda_axial import forward_bands_cuda
+
+    def on_cuda(c: jax.Array, x: jax.Array) -> jax.Array:
+        return forward_bands_cuda(c, x, grid, detector, depth=depth, axial=axial)
+
+    def on_jax(c: jax.Array, x: jax.Array) -> jax.Array:
+        return forward_jax(c, x, grid, detector)
+
+    return jax.lax.platform_dependent(coefficients, volume, cuda=on_cuda, default=on_jax)
 
 
 def backproject_bands(

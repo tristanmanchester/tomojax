@@ -11,12 +11,17 @@ __device__ float sample(const float* x, int a, int k, int b, int c,
     int ix=a==0?k:(a==1?c:b), iy=a==0?b:(a==1?k:c), iz=a==0?c:(a==1?b:k);
     return x[VOXEL(INDEX_TYPE, ix, iy, iz)];
 }
+// x holds planes z0..z0+zs-1 of z-fast storage (all of them unless BAND). With BAND, a ray
+// adds only the samples whose lower z plane lies in [z0, zhi), the first and last bands
+// taking the edges, and resumes its sum from out, so bands taken in the ray's z order
+// keep the reference addition order (zhi <= nz). Views whose z falls along the ray (descending)
+// take the bands top down in their own launches.
 extern "C" __global__ void forward(const float* coeff, const float* x, float* out,
-        int nx,int ny,int nz,int nu,int nv,int nviews) {
+        int nx,int ny,int nz,int nu,int nv,int nviews,int z0,int zs,int zhi,int descending) {
     int tiles_v=(nv+TILE_V-1)/TILE_V;
     int tiles=((nu+BLOCK/TILE_V-1)/(BLOCK/TILE_V))*tiles_v;
     long batch=blockIdx.x/(nviews*tiles);
-    coeff+=COEFF_OFFSET;x+=VOLUME_OFFSET;out+=batch*nviews*nv*nu;
+    coeff+=COEFF_OFFSET;x+=VOLUME_OFFSET-z0;out+=batch*nviews*nv*nu;
     int tile=(blockIdx.x/nviews)%tiles, view=blockIdx.x%nviews;
     int u=(tile/tiles_v)*(BLOCK/TILE_V)+threadIdx.x/TILE_V;
     int v=(tile%tiles_v)*TILE_V+threadIdx.x%TILE_V;
@@ -39,6 +44,23 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
             low=fmaxf(low,fminf(a,b)); high=fminf(high,fmaxf(a,b));
         }
     }
+#if BAND
+    int zlo=z0==0?-1:z0;
+    float zslope=a==0?c[7]:(a==1?c[3]:1.f);
+    if ((zslope<0.f)!=(descending!=0)) valid=false;
+    if (a==2) { low=fmaxf(low,(float)zlo); high=fminf(high,zhi-1.f); }
+    else {
+        float p=a==0?pc:pb, offset=a==0?c[8]:c[4], start=p+offset;
+        float margin=8*1.1920928955078125e-7f*(fabsf(p)+fabsf(offset)+fabsf(zslope)*na+1.f);
+        if (zslope==0.f) {
+            if (start < zlo-1.f-margin || start > zhi+1.f+margin) { low=na; high=-1.f; }
+        } else {
+            float l=(zlo-1.f-margin-start)/zslope, h=(zhi+1.f+margin-start)/zslope;
+            low=fmaxf(low,fminf(l,h)); high=fminf(high,fmaxf(l,h));
+        }
+    }
+    if (valid) total=out[((long)view*nv+v)*nu+u];
+#endif
     int first=(int)fminf((float)na,fmaxf(0.f,floorf(low)-1.f));
     int stop=(int)fminf((float)na,fmaxf(0.f,ceilf(high)+2.f));
     if (!valid) { first=na; stop=0; }
@@ -67,20 +89,24 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
             float row=0.f;
             #pragma unroll
             for(int c=0;c<4;++c)
-                row+=sample(x,a,k,ib+b-1,ic+c-1,nx,ny,nz,nb,nc)*fabsf(wc[c]);
+                row+=sample(x,a,k,ib+b-1,ic+c-1,nx,ny,zs,nb,nc)*fabsf(wc[c]);
             val+=row*fabsf(wb[b]);
         }
 #else
         float db,dc;
-        joseph_value_derivatives<true>(x,a,k,qb,qc,nx,ny,nz,nb,nc,val,db,dc);
+        joseph_value_derivatives<true>(x,a,k,qb,qc,nx,ny,zs,nb,nc,val,db,dc);
 #endif
 #else
         int ib=(int)floorf(qb),ic=(int)floorf(qc);
+#if BAND
+        int iz=a==0?ic:(a==1?ib:k);
+        if (iz<zlo || iz>=zhi) continue;
+#endif
         float wb=qb-ib,wc=qc-ic;
-        val=(sample(x,a,k,ib,ic,nx,ny,nz,nb,nc)*(1-wc)
-             +sample(x,a,k,ib,ic+1,nx,ny,nz,nb,nc)*wc)*(1-wb)
-            +(sample(x,a,k,ib+1,ic,nx,ny,nz,nb,nc)*(1-wc)
-             +sample(x,a,k,ib+1,ic+1,nx,ny,nz,nb,nc)*wc)*wb;
+        val=(sample(x,a,k,ib,ic,nx,ny,zs,nb,nc)*(1-wc)
+             +sample(x,a,k,ib,ic+1,nx,ny,zs,nb,nc)*wc)*(1-wb)
+            +(sample(x,a,k,ib+1,ic,nx,ny,zs,nb,nc)*(1-wc)
+             +sample(x,a,k,ib+1,ic+1,nx,ny,zs,nb,nc)*wc)*wb;
 #endif
         // Keep the original sequential additions, even for uniform support.
         total+=val*c[9];
