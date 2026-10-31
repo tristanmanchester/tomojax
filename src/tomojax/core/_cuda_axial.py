@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core._joseph_cuda_kernels import storage_source
-from tomojax.core.cuda import initialize_buffer, launch_kernel
+from tomojax.core.cuda import Offset, initialize_buffer, launch_kernel
 from tomojax.core.volume_layout import reverse_axes
 
 if TYPE_CHECKING:
@@ -41,14 +41,6 @@ def _chunks(
         for count in [min(batch, views - first)]
         for offset in range(0, count, size)
     ]
-
-
-class _Offset:
-    """A float32 callback buffer's storage from element ``elements`` on, without a copy."""
-
-    def __init__(self, buffer: Any, elements: int) -> None:
-        address = buffer.__cuda_array_interface__["data"][0] + 4 * elements
-        self.__cuda_array_interface__: dict[str, Any] = {"data": (address, False)}
 
 
 _FORWARD = r"""
@@ -539,7 +531,7 @@ def transpose_axial_vu_cuda(
         )
         runs = nx * ny * -(-planes // run)
         for first, count in chunks:
-            part = _Offset(c, 14 * first)
+            part = Offset(c, 14 * first)
             launch_kernel(
                 text,
                 "joseph_vertical",
@@ -548,7 +540,7 @@ def transpose_axial_vu_cuda(
                 block=(256,),
                 arguments=(
                     part,
-                    _Offset(y, first * nv * nu),
+                    Offset(y, first * nv * nu),
                     weighted,
                     *map(np.int32, (count, planes, nu, nv, z0)),
                 ),
@@ -578,7 +570,7 @@ def transpose_axial_vu_cuda(
                 initialize_buffer(band[0], stream=stream)
             add(stream, c, y, weighted, band[0], z0, planes)
             reverse_axes(
-                band[0], _Offset(out, z0 * ny * nx), (nx, ny, planes), stream=stream, depth=nx
+                band[0], Offset(out, z0 * ny * nx), (nx, ny, planes), stream=stream, depth=nx
             )
 
     staged = () if z_fast else (jax.ShapeDtypeStruct((nx, ny, depth), jnp.float32),)

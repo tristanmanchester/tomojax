@@ -288,6 +288,14 @@ def launch_kernel(
         _check(_libraries()[0].cuLaunchKernel(func, *grid, *block, 0, int(stream), params, None))
 
 
+class Offset:
+    """A float32 callback buffer's storage from element ``elements`` on, without a copy."""
+
+    def __init__(self, buffer: Any, elements: int) -> None:
+        address = buffer.__cuda_array_interface__["data"][0] + 4 * elements
+        self.__cuda_array_interface__: dict[str, Any] = {"data": (address, False)}
+
+
 def initialize_buffer(buffer: _Buffer, *, stream: int, source: _Buffer | None = None) -> None:
     """Initialize contiguous JAX-owned output storage on its execution stream.
 

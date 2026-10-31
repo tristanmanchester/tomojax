@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.cuda import broadcast_offset, launch_kernel
+from tomojax.core.volume_layout import swap_last_axes
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
@@ -145,23 +146,6 @@ def adjoint(
     )(coeff, images, initial)
 
 
-_SWAP = r"""
-extern "C" __global__ void swap_axes(const float* input,float* output,int nu,int nv) {
- __shared__ float tile[32][33];
- int u=blockIdx.x*32+threadIdx.x,v=blockIdx.y*32+threadIdx.y;
- long base=(long)blockIdx.z*nu*nv;
- #pragma unroll
- for(int j=0;j<32;j+=8)
-  if(u<nu && v+j<nv) tile[threadIdx.y+j][threadIdx.x]=input[base+(long)(v+j)*nu+u];
- __syncthreads();
- v=blockIdx.y*32+threadIdx.x;u=blockIdx.x*32+threadIdx.y;
- #pragma unroll
- for(int j=0;j<32;j+=8)
-  if(u+j<nu && v<nv) output[base+(long)(u+j)*nv+v]=tile[threadIdx.x][threadIdx.y+j];
-}
-"""
-
-
 def swap_detector_axes(images: jax.Array) -> jax.Array:
     """Transpose through an opaque call, keeping loop-carried sinograms in VU order."""
     views, nv, nu = images.shape
@@ -169,14 +153,7 @@ def swap_detector_axes(images: jax.Array) -> jax.Array:
         return images.reshape(views, nu, nv)
 
     def launch(context: Any, out: Any, data: Any) -> None:
-        launch_kernel(
-            _SWAP,
-            "swap_axes",
-            stream=context.stream,
-            grid=((nu + 31) // 32, (nv + 31) // 32, views),
-            block=(32, 8),
-            arguments=(data, out, np.int32(nu), np.int32(nv)),
-        )
+        swap_last_axes(data, out, (views, nv, nu), stream=context.stream)
 
     return buffer_callback(
         launch,

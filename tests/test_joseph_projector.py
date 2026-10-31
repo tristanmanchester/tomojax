@@ -751,9 +751,9 @@ def test_axial_cpu_reference_respects_batch_bound(views, batch, monkeypatch):
             return adjoint_jax(c, y, *args)
 
         monkeypatch.setattr(joseph, "adjoint_jax", bounded)
-        actual = jax.jit(lambda c, y: joseph.axial_backproject(c, y, grid, detector, batch=batch))(
-            coefficients, images
-        )
+        actual = jax.jit(
+            lambda c, y: joseph.backproject_bands(c, y, grid, detector, batch=batch, axial=True)
+        )(coefficients, images)
         assert actual.devices() == {jax.devices("cpu")[0]}
         assert traced_sizes == ([min(batch, views)] if views else [])
         np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=3e-6)

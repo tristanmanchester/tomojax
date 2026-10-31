@@ -10,7 +10,7 @@ differs from the ray-entry-phased trilinear sampler in ``projector.py``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -183,37 +183,68 @@ class PrivateJoseph:
         return (grid.nx, grid.ny, grid.nz)
 
 
-def stages_bands(
-    coefficients: jax.Array, grid: Grid, detector: Detector, *, adjoint: bool = False
-) -> bool:
-    """Whether the CUDA projection of these views stages its own z-fast bands.
+def stages_bands(coefficients: jax.Array, grid: Grid, detector: Detector) -> bool:
+    """Whether the CUDA forward of these views stages its own z-fast bands.
 
-    Axial views take the separable transpose, and aligned axial views the
-    four-row forward; each stages 32 planes at a time, so a private z-fast copy
-    of the volume cannot help them.
+    Aligned axial views take the four-row forward, 32 planes at a time, so a
+    private z-fast copy of the volume cannot help them.
     """
-    from ._cuda_axial import aligned_axial, axial_coefficients
+    from ._cuda_axial import aligned_axial
     from ._cuda_joseph import use_cuda_gather
 
     if not use_cuda_gather(grid, axial=True):
         return False
-    if adjoint:
-        return bool(axial_coefficients(coefficients))
     return grid.nz % 4 == 0 and detector.nv >= 4 and bool(aligned_axial(coefficients))
 
 
-def axial_backproject(
-    coefficients: jax.Array, images: jax.Array, grid: Grid, detector: Detector, *, batch: int
+def transpose_bands(
+    coefficients: jax.Array, grid: Grid, *, batch: int
+) -> Literal["axial", "gather"] | None:
+    """How the CUDA transpose of these views fills its own z-fast bands, if it does.
+
+    All-axial views take the separable transpose; other views gather, unless a
+    ``batch`` of them is axial, which the operators give the separable transpose.
+    Either fills 32 planes at a time, so a private z-fast copy cannot help them.
+    """
+    from ._cuda_axial import axial_coefficients
+    from ._cuda_joseph import use_cuda_gather
+
+    if not use_cuda_gather(grid, axial=True):
+        return None
+    if bool(axial_coefficients(coefficients)):
+        return "axial"
+    views = coefficients.shape[0]
+    size = min(batch, views)
+    # The operators' batches, the last one shifted back to end at the last view.
+    starts = {min(first, views - size) for first in range(0, views, size)}
+    axial = (bool(axial_coefficients(coefficients[s : s + size])) for s in starts)
+    return "gather" if use_cuda_gather(grid) and not any(axial) else None
+
+
+def backproject_bands(
+    coefficients: jax.Array,
+    images: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    *,
+    batch: int,
+    axial: bool,
 ) -> jax.Array:
-    """The CUDA transpose of axial views into a new (z, y, x) volume, in bands.
+    """The CUDA transpose into a new (z, y, x) volume, 32 z-fast planes at a time.
 
     It adds ``batch`` views at a time, as one call per batch would, and stages
-    each band of the volume once for all of them. Off a GPU it is the JAX model.
+    each band of the volume once for all of them: ``axial`` views by the
+    separable transpose, others by the gather. Off a GPU it is the JAX model.
     """
     from ._cuda_axial import transpose_axial_vu_cuda
+    from ._cuda_joseph import gather_bands_cuda
 
     def on_cuda(c: jax.Array, y: jax.Array) -> jax.Array:
-        return transpose_axial_vu_cuda(c, y, None, grid=grid, interpolation="linear", batch=batch)
+        if axial:
+            return transpose_axial_vu_cuda(
+                c, y, None, grid=grid, interpolation="linear", batch=batch
+            )
+        return gather_bands_cuda(c, y, grid, batch=batch)
 
     def on_jax(c: jax.Array, y: jax.Array) -> jax.Array:
         initial = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=y.dtype)

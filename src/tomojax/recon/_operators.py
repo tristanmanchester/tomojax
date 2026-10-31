@@ -7,7 +7,7 @@ import functools
 import math
 import os
 import pickle
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import jax
 from jax.core import Tracer
@@ -18,9 +18,10 @@ from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.joseph import (
     PrivateJoseph,
-    axial_backproject,
+    backproject_bands,
     plane_coefficients,
     stages_bands,
+    transpose_bands,
 )
 from tomojax.core.volume_layout import transpose_volume
 from tomojax.geometry import ParallelGeometry
@@ -242,12 +243,17 @@ class Projector:
             return plane_coefficients(poses, self.grid, self.geometry.detector)
 
     @functools.cached_property
-    def _bands(self) -> tuple[bool, bool]:
-        """Whether the forward and the transpose of these views stage their own z-fast bands."""
+    def _batch(self) -> int:
+        views, parallel = self.projection_shape[0], isinstance(self.geometry, ParallelGeometry)
+        return _view_batch_size(self.grid, self.geometry.detector, views, axial_cuda=parallel)
+
+    @functools.cached_property
+    def _bands(self) -> tuple[bool, Literal["axial", "gather"] | None]:
+        """Whether the forward stages its own z-fast bands, and how the transpose does."""
         coefficients, detector = self._coefficients, self.geometry.detector
         with jax.ensure_compile_time_eval():
             forward = stages_bands(coefficients, self.grid, detector)
-            return forward, stages_bands(coefficients, self.grid, detector, adjoint=True)
+            return forward, transpose_bands(coefficients, self.grid, batch=self._batch)
 
     # One more volume in z-fast storage lets the kernels read z contiguously;
     # calls take that copy when it fits, with the same result bits either way,
@@ -264,14 +270,15 @@ class Projector:
 
     @functools.cached_property
     def _band_adjoint(self):
-        """The transpose of axial views, in bands, batch by batch as the operators add them."""
-        if self._build_private is None or not self._bands[1]:
+        """The transpose in z-fast bands, batch by batch as the operators add them."""
+        if self._build_private is None or (kind := self._bands[1]) is None:
             return None
-        views, parallel = self.projection_shape[0], isinstance(self.geometry, ParallelGeometry)
-        batch = _view_batch_size(self.grid, self.geometry.detector, views, axial_cuda=parallel)
+        coefficients, batch, axial = self._coefficients, self._batch, kind == "axial"
         detector = self.geometry.detector
         return jax.jit(
-            lambda y: axial_backproject(self._coefficients, y, self.grid, detector, batch=batch)
+            lambda y: backproject_bands(
+                coefficients, y, self.grid, detector, batch=batch, axial=axial
+            )
         )
 
     def _private_call(self, values: jax.Array, direction: int, elements: int):

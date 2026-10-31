@@ -31,9 +31,9 @@ Parallel-beam and laminography CUDA projections read volumes z-contiguous, as
 before the `(z, y, x)` layout. Resident CUDA Joseph SIRT, CGLS, MLEM and FISTA-TV
 keep private z-contiguous iterates, converted once at entry and exit. A
 standalone projection of a `(z, y, x)` array stages 32-plane z-contiguous bands
-for aligned axial forwards and for axial transposes, with the same bits as
-z-contiguous storage; other views take a z-contiguous copy when one more volume
-fits in free memory, with the same bits either way. `tj.project` and
+for aligned axial forwards and for linear transposes, with the same bits as
+z-contiguous storage; other projections take a z-contiguous copy when one more
+volume fits in free memory, with the same bits either way. `tj.project` and
 `tj.backproject` reuse one compiled projector across calls with equal
 arguments outside a trace.
 

@@ -115,10 +115,15 @@ def test_private_storage_calls_give_the_public_bits(kind, monkeypatch):
             np.testing.assert_array_equal(
                 np.asarray(private).view(np.uint32), np.asarray(other).view(np.uint32)
             )
-    # Axial views are transposed in bands in one call, adding the batches' sums in turn.
+    # The transpose fills 32-plane bands in one call, adding the batches' sums in turn,
+    # through a partial last band and a last batch shifted back over earlier views.
     monkeypatch.setattr("tomojax.recon._operators._BATCH", 3)
     monkeypatch.setattr("tomojax.recon._operators._AXIAL_STACK_BYTES", 0)
-    batched = tj.Projector(geometry)
+    grid = tj.Grid(7, 5, 37, 0.8, 1.1, 1.3, vol_center=(0.2, -0.1, 0.3))
+    tall = replace(geometry, grid=grid, detector=tj.Detector(9, 40, 0.9, 1.2, (0.17, -0.23)))
+    batched = tj.Projector(tall)
+    assert batched._bands[1]
+    y = jnp.asarray(rng.normal(size=(4, 40, 9)), dtype=jnp.float32)
     one_call, per_batch = (
         np.asarray(v).view(np.uint32) for v in (batched.adjoint(y), batched._adjoint(y))
     )

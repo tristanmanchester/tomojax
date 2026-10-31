@@ -65,8 +65,9 @@ __device__ __forceinline__ void gather_view(
 
 extern "C" __global__ void joseph_gather(
     const float* __restrict__ coeff, const float* __restrict__ images,
-    float* __restrict__ out, int nviews, int nx, int ny, int nz, int nu, int nv)
+    float* __restrict__ out, int nviews, int nx, int ny, int nz, int nu, int nv, int z0)
 {
+    // Volume planes z0 to z0 + nz: geometry at global z, storage local.
     const int R = RUN, VB = VIEWS;
     __shared__ float cf[VB * 14];
     long run = (long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -87,9 +88,9 @@ extern "C" __global__ void joseph_gather(
             const float* c = cf + view * 14;
             const float* image = images + (long)(first + view) * nu * nv;
             switch ((int)c[0]) {
-                case 0: gather_view<0,R>(c, image, ix, iy, iz0, nu, nv, total); break;
-                case 1: gather_view<1,R>(c, image, ix, iy, iz0, nu, nv, total); break;
-                case 2: gather_view<2,R>(c, image, ix, iy, iz0, nu, nv, total); break;
+                case 0: gather_view<0,R>(c, image, ix, iy, z0 + iz0, nu, nv, total); break;
+                case 1: gather_view<1,R>(c, image, ix, iy, z0 + iz0, nu, nv, total); break;
+                case 2: gather_view<2,R>(c, image, ix, iy, z0 + iz0, nu, nv, total); break;
             }
         }
     }
@@ -109,12 +110,17 @@ def storage_source(*, z_fast: bool) -> str:
     return f"#define Z_FAST {int(z_fast)}\n{header}\n"
 
 
+def gather_source(*, z_fast: bool) -> str:
+    """Source of the ``joseph_gather`` kernel for one volume storage."""
+    source = _GATHER_SOURCE.replace("RUN", str(RUN)).replace("VIEWS", str(_VIEWS_PER_STAGE))
+    return storage_source(z_fast=z_fast) + source
+
+
 @cache
 def gather_kernel(*, z_fast: bool = False) -> Any:
     import cupy as cp
 
-    source = _GATHER_SOURCE.replace("RUN", str(RUN)).replace("VIEWS", str(_VIEWS_PER_STAGE))
-    return cp.RawModule(code=storage_source(z_fast=z_fast) + source).get_function("joseph_gather")
+    return cp.RawModule(code=gather_source(z_fast=z_fast)).get_function("joseph_gather")
 
 
 _FORWARD_SOURCE = r"""
