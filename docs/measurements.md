@@ -746,7 +746,9 @@ these are image diagnostics, not reconstruction errors.
 
 ### Full-view CGLS
 
-Measured 2026-10-20 on `e2cd2101`, with ASTRA 2.5.0. Walnut uses all 1200 views
+The Walnut rows were refreshed 2026-10-31 on `c4682913`, with ASTRA 2.5.0,
+CuPy 14.2.0 and one OpenBLAS/OMP thread per process. Nikon and Zeiss remain
+**historical**, measured 2026-10-20 on `e2cd2101`. Walnut uses all 1200 views
 of orbit 2, detector binning 2 × 2 and a 501³ grid of 0.1 mm voxels. Nikon and
 Zeiss use the full-view inputs and physical grids above; the Nikon input is
 `47209 testscan korn01_recon.xtekct`. Both libraries start from their own FDK.
@@ -756,8 +758,8 @@ with GPU residuals, host search projections and 128-view batches.
 
 | Scan | Library | Cold / warm (s) | Full / support image error, or common-projector fit | Volume difference to ASTRA |
 |---|---|---:|---:|---:|
-| Walnut, one orbit | TomoJAX | 27.48 / 18.84 | 0.184222 / 0.087821 | 0.013025 |
-| Walnut, one orbit | ASTRA | 22.28 / 16.30 | 0.182273 / 0.086669 | — |
+| Walnut, one orbit | TomoJAX | 20.83 / 13.57 | 0.184222 / 0.087821 | 0.013025 |
+| Walnut, one orbit | ASTRA | 17.43 / 13.78 | 0.182273 / 0.086669 | — |
 | Nikon | TomoJAX | 31.74 / 26.74 | 0.034928 | 0.027400 |
 | Nikon | ASTRA | 33.74 / 26.14 | 0.029934 | — |
 | Zeiss | TomoJAX | 17.87 / 12.24 | 0.163861 | 0.042137 |
@@ -775,10 +777,21 @@ all original corrected log projections are scored with one common calibrated
 ASTRA forward projector. Full-volume differences use no alignment or intensity
 fit. The fixed orthogonal sections retain the same structures; differences
 include smooth background fields, support boundaries, edges and streaks.
-TomoJAX is 15.6% slower warm on Walnut, 2.3% slower on Nikon and 5.1% faster on
-Zeiss at these quality targets.
+On the refreshed Walnut pair, TomoJAX's mean warm time is 1.5% lower, but
+cold time is 19.5% higher and support error is 1.33% higher. This is **not a
+matched-error speed win**. Sampled total-device GPU peaks are 4308 / 5064 MiB
+(TomoJAX / ASTRA, 20 ms sampling); prescoring host RSS peaks are 5.619 GB for
+both. A separate 100 ms whole-job trace including scoring peaks at 5064 MiB.
+The temporary comparison volume was deleted after scoring.
 
-Set `WALNUT`, `NIKON` and `ZEISS` to those inputs. These commands configure one
+The historical Walnut times on `e2cd2101` were 27.48 / 18.84 s for TomoJAX
+and 22.28 / 16.30 s for ASTRA. They are not a paired speedup comparison with
+the refresh. Historical Nikon and Zeiss warm differences are respectively
+2.3% slower and 5.1% faster for TomoJAX at the quality targets shown.
+
+Set `WALNUT`, `NIKON` and `ZEISS` to those inputs. For the refreshed Walnut
+protocol, also set `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1`,
+`JAX_PLATFORMS=cuda,cpu` and `TOMOJAX_CUDA_KERNELS=1`. These commands configure one
 fresh process each; run each pair in the order above, with separate output
 filenames for the two processes:
 
