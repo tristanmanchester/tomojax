@@ -124,7 +124,7 @@ def test_auto_alignment_records_center_and_resolves_only_its_limitation(monkeypa
         status="limited", reasons=["centre", "rings"], center_calibration_reason="centre"
     )
     rec = tj.Reconstruction(np.zeros((80, 80, 8)), scan, "fbp", {"automatic": context})
-    monkeypatch.setattr(_workflow, "reconstruct", lambda s: replace(rec, scan=s))
+    monkeypatch.setattr(_workflow, "reconstruct", lambda s, **_: replace(rec, scan=s))
     info = tj.align(scan).info["automatic"]
     assert info["reconstruction"] == context
     assert info["reasons"][-1] == "rings" and info["status"] == "limited"
@@ -253,7 +253,7 @@ def test_single_pair_reports_uncalibrated_global_coverage_without_inconsistency(
 
     scan, _, _ = _scan(views=2, span=360)
     reconstruction = tj.Reconstruction(np.zeros((80, 80, 8)), scan, "fbp", {})
-    monkeypatch.setattr(_workflow, "reconstruct", lambda s: replace(reconstruction, scan=s))
+    monkeypatch.setattr(_workflow, "reconstruct", lambda s, **_: replace(reconstruction, scan=s))
     automatic = tj.align(scan).info["automatic"]
     diagnostics = automatic["center_estimation"]["diagnostics"]
     assert diagnostics["consistency_pvalue"] is None
