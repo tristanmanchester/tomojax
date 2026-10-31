@@ -9,7 +9,11 @@ import pytest
 from tomojax.alignment import AlignConfig
 
 # check-public-imports: allow-private
-from tomojax.alignment._config import _active_dof_mask_for_cfg, _active_dofs_for_cfg
+from tomojax.alignment._config import (
+    _active_dof_mask_for_cfg,
+    _active_dofs_for_cfg,
+    _scoped_dofs_for_cfg,
+)
 
 # check-public-imports: allow-private
 from tomojax.alignment._geometry.parametrizations import compose_R, se3_from_pose_params
@@ -88,6 +92,8 @@ def test_gauge_policy_rejects_or_reports_coupled_dofs() -> None:
 
 
 def test_align_config_resolves_stage_dofs() -> None:
+    scoped = _scoped_dofs_for_cfg(AlignConfig(optimise_dofs=("det_u_px",)))
+    assert scoped.active_geometry_dofs == ("det_u_px",)
     cfg = AlignConfig(
         reconstruction="fista",
         optimise_dofs=("dx", "dz"),

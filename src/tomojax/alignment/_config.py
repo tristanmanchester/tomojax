@@ -45,12 +45,6 @@ def _active_dofs_for_cfg(cfg: AlignConfig) -> tuple[str, ...]:
     return _scoped_dofs_for_cfg(cfg).active_pose_dofs
 
 
-def _active_geometry_dofs_for_cfg(
-    cfg: AlignConfig,
-) -> tuple[str, ...]:
-    return _scoped_dofs_for_cfg(cfg).active_geometry_dofs
-
-
 def _scoped_dofs_for_cfg(cfg: AlignConfig) -> ScopedAlignmentDofs:
     resolved = _resolved_schedule_for_cfg(cfg)
     return ScopedAlignmentDofs(
@@ -439,7 +433,6 @@ __all__ = [
     "AlignConfig",
     "_active_dof_mask_for_cfg",
     "_active_dofs_for_cfg",
-    "_active_geometry_dofs_for_cfg",
     "_resolved_schedule_for_cfg",
     "_scoped_dofs_for_cfg",
     "coupled_pose_config",
