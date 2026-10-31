@@ -2021,16 +2021,3 @@ extern "C" __global__ void __launch_bounds__(256) pair_sep_adjoint_cached(
     pair_sep_adjoint_cached_tile<32>(coeff, axis_box, nviews, a, img, img1, vol, vol1,
                                      nx, ny, nz, nu, nv);
 }
-// Exact dense axis-0/axis-2 permutation, tiled for coalesced reads and writes.
-extern "C" __global__ void transpose_xz(const float* src,float* dst,int nx,int ny,int nz) {
-    __shared__ float tile[32][33];
-    int x=blockIdx.x*32+threadIdx.x, z=blockIdx.y*32+threadIdx.y, y=blockIdx.z;
-    #pragma unroll
-    for(int j=0;j<32;j+=8) if(x<nx && z+j<nz)
-        tile[threadIdx.y+j][threadIdx.x]=src[((long)(z+j)*ny+y)*nx+x];
-    __syncthreads();
-    x=blockIdx.x*32+threadIdx.y; z=blockIdx.y*32+threadIdx.x;
-    #pragma unroll
-    for(int j=0;j<32;j+=8) if(x+j<nx && z<nz)
-        dst[((long)(x+j)*ny+y)*nz+z]=tile[threadIdx.x][threadIdx.y+j];
-}

@@ -9,7 +9,8 @@ differs from the ray-entry-phased trilinear sampler in ``projector.py``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -164,6 +165,56 @@ def adjoint_jax(
     )(images)[0]
 
 
+@dataclass(frozen=True)
+class PrivateJoseph:
+    """The plane model over solver-private CUDA volumes: (nx, ny, nz), z contiguous.
+
+    Resident solves keep their volumes in this storage so the kernels read z
+    contiguously, as rays of every view cross z planes; they convert at entry
+    and exit. Coordinates and geometry are unchanged.
+    """
+
+    private_storage: ClassVar[bool] = True
+
+    def volume_shape(self, grid: Grid) -> tuple[int, int, int]:
+        """The buffer shape of a volume on ``grid``."""
+        return (grid.nx, grid.ny, grid.nz)
+
+
+def stages_bands(
+    coefficients: jax.Array, grid: Grid, detector: Detector, *, adjoint: bool = False
+) -> bool:
+    """Whether the CUDA projection of these views stages its own z-fast bands.
+
+    Axial views take the separable transpose, and aligned axial views the
+    four-row forward; each stages 32 planes at a time, so a private z-fast copy
+    of the volume cannot help them.
+    """
+    from ._cuda_axial import aligned_axial, axial_coefficients
+    from ._cuda_joseph import use_cuda_gather
+
+    if not use_cuda_gather(grid, axial=True):
+        return False
+    if adjoint:
+        return bool(axial_coefficients(coefficients))
+    return grid.nz % 4 == 0 and detector.nv >= 4 and bool(aligned_axial(coefficients))
+
+
+def axial_backproject(
+    coefficients: jax.Array, images: jax.Array, grid: Grid, *, batch: int
+) -> jax.Array:
+    """The CUDA transpose of axial views into a new (z, y, x) volume, in bands.
+
+    It adds ``batch`` views at a time, as one call per batch would, and stages
+    each band of the volume once for all of them.
+    """
+    from ._cuda_axial import transpose_axial_vu_cuda
+
+    return transpose_axial_vu_cuda(
+        coefficients, images, None, grid=grid, interpolation="linear", batch=batch
+    )
+
+
 def forward_project_planes(
     coefficients: jax.Array,
     volume: jax.Array,
@@ -173,8 +224,12 @@ def forward_project_planes(
     backend: str,
     interpolation: str = "linear",
     absolute_weights: bool = False,
+    z_fast: bool = False,
 ) -> jax.Array:
-    """Apply a prepared plane model, or abs(A) for positive sensitivity bounds."""
+    """Apply a prepared plane model, or abs(A) for positive sensitivity bounds.
+
+    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) on CUDA with ``z_fast``.
+    """
     if backend == "jax":
         return forward_jax(
             coefficients,
@@ -195,11 +250,12 @@ def forward_project_planes(
                 detector,
                 interpolation=interpolation,
                 absolute_weights=True,
+                z_fast=z_fast,
             )
         from .cuda_projector._joseph_autodiff import differentiable_forward
 
         return differentiable_forward(
-            coefficients, volume, grid, detector, interpolation=interpolation
+            coefficients, volume, grid, detector, interpolation=interpolation, z_fast=z_fast
         )
     raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
 
@@ -214,10 +270,12 @@ def sum_backproject_planes(
     interpolation: str = "linear",
     absolute_weights: bool = False,
     accumulate: jax.Array | None = None,
+    z_fast: bool = False,
 ) -> jax.Array:
     """Apply the matched transpose, or abs(A).T when estimating cancellation.
 
     A given ``accumulate`` volume is added to the result; CUDA adds in place.
+    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) on CUDA with ``z_fast``.
     """
     if backend == "jax":
         volume = adjoint_jax(
@@ -240,6 +298,7 @@ def sum_backproject_planes(
             interpolation=interpolation,
             absolute_weights=absolute_weights,
             accumulate=accumulate,
+            z_fast=z_fast,
         )
     raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
 

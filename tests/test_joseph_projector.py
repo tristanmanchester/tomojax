@@ -462,7 +462,7 @@ def test_cuda_gather_auto_size_threshold(monkeypatch):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("nz", [4, 5, 7, 13])
+@pytest.mark.parametrize("nz", [1, 2, 4, 5, 7, 13, 257])
 @pytest.mark.parametrize(
     ("voxel", "spacing"), [((0.8, 1.1, 1.3), (0.7, 1.2)), ((2.0, 0.4, 1.3), (0.3, 0.5))]
 )
@@ -666,3 +666,67 @@ def test_batched_cubic_transpose_executes_only_each_geometry_branch(monkeypatch)
     )
     assert len(calls) == 2
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=5e-6)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(("nz", "v_center"), [(72, 0.0), (40, -8.0), (8, 12.0)])
+def test_banded_axial_forward_equals_generic_kernel_bits(nz, v_center, monkeypatch):
+    # Several 32-plane bands, a partial last band and detector rows beyond the volume.
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    if not cuda.cuda_gather_available():
+        pytest.skip("requires CUDA and CuPy")
+    g, d = Grid(37, 29, nz, 1, 1, 1), Detector(41, nz + 16, 1, 1, (0.3, v_center))
+    angles = np.r_[0, 1e-7, 30, 45, 90, 137, 179]
+    poses = np.broadcast_to(np.eye(4, dtype=np.float32), (len(angles), 4, 4)).copy()
+    poses[:, :3, :3] = Rotation.from_euler("z", angles[:, None], degrees=True).as_matrix()
+    coeff = plane_coefficients(jnp.asarray(poses), g, d)
+    volume = jnp.asarray(np.random.default_rng(5).normal(size=(nz, 29, 37)), jnp.float32)
+    banded = np.asarray(forward_cuda(coeff, volume, g, d))
+    monkeypatch.setattr(axial, "axial_coefficients", lambda c: jnp.bool_(False))
+    generic = np.asarray(forward_cuda.__wrapped__(coeff, volume, g, d))
+    np.testing.assert_array_equal(banded.view(np.uint32), generic.view(np.uint32))
+    assert np.any(banded == 0) and np.any(banded != 0)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    ("tilt", "v_center", "interpolation", "nz"),
+    [
+        (0, 0, "linear", 72),
+        (0, 0.3, "linear", 72),
+        (0, 0, "linear", 45),
+        (3, 0, "linear", 72),
+        (0, 0, "cubic", 72),
+    ],
+)
+def test_z_fast_storage_projects_and_transposes_the_same_bits(
+    tilt, v_center, interpolation, nz, monkeypatch
+):
+    # Aligned bands with a partial last band, fractional rows, a scalar last
+    # band, nonseparable views and the cubic pair.
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    if not cuda.cuda_gather_available():
+        pytest.skip("requires CUDA and CuPy")
+    g, d = Grid(37, 29, nz, 1, 1, 1), Detector(41, nz + 8, 1, 1, (0.3, v_center))
+    angles = np.r_[0, 30, 45, 90, 137]
+    poses = np.broadcast_to(np.eye(4, dtype=np.float32), (len(angles), 4, 4)).copy()
+    poses[:, :3, :3] = Rotation.from_euler(
+        "zx", np.c_[angles, np.full(5, tilt)], degrees=True
+    ).as_matrix()
+    coeff = plane_coefficients(jnp.asarray(poses), g, d)
+    rng = np.random.default_rng(9)
+    volume = jnp.asarray(rng.normal(size=(nz, 29, 37)), jnp.float32)
+    data = jnp.asarray(rng.normal(size=(5, nz + 8, 41)), jnp.float32)
+    private = jnp.transpose(volume, (2, 1, 0))
+    options = {"interpolation": interpolation}
+    public_fp = forward_cuda(coeff, volume, g, d, **options)
+    private_fp = forward_cuda(coeff, private, g, d, z_fast=True, **options)
+    public_bp = adjoint_cuda(coeff, data, g, d, **options)
+    private_bp = adjoint_cuda(coeff, data, g, d, z_fast=True, **options)
+    for private_result, public_result in (
+        (private_fp, public_fp),
+        (jnp.transpose(private_bp, (2, 1, 0)), public_bp),
+    ):
+        np.testing.assert_array_equal(
+            np.asarray(private_result).view(np.uint32), np.asarray(public_result).view(np.uint32)
+        )

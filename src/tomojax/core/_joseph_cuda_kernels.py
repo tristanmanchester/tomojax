@@ -1,6 +1,7 @@
 """JAX-independent CUDA kernels for the exact linear Joseph projector pair."""
 
 from functools import cache
+from pathlib import Path
 from typing import Any
 
 RUN = 4
@@ -71,9 +72,8 @@ extern "C" __global__ void joseph_gather(
     long run = (long)blockIdx.x * blockDim.x + threadIdx.x;
     int runs_z = (nz + R - 1) / R;
     bool valid = run < (long)nx * ny * runs_z;
-    int ix = valid ? run % nx : 0;
-    int iy = valid ? (run / nx) % ny : 0;
-    int iz0 = valid ? R * (int)(run / ((long)nx * ny)) : 0;
+    int ix = 0, iy = 0, iz0 = 0;
+    if (valid) FIRST_VOXEL(run, R, ix, iy, iz0);
     float total[R];
     #pragma unroll
     for (int j = 0; j < R; ++j) total[j] = 0.f;
@@ -94,21 +94,27 @@ extern "C" __global__ void joseph_gather(
         }
     }
     if (valid) {
-        long base = ((long)iz0 * ny + iy) * nx + ix;
+        long base = VOXEL(long, ix, iy, iz0);
         #pragma unroll
         for (int j = 0; j < R; ++j)
-            if (iz0 + j < nz) out[base + (long)j*nx*ny] += total[j];
+            if (iz0 + j < nz) out[base + j * Z_STRIDE] += total[j];
     }
 }
 """
 
 
+def storage_source(*, z_fast: bool) -> str:
+    """Kernel source defining the volume storage macros the projector kernels share."""
+    header = Path(__file__).with_name("joseph_sampling.cuh").read_text()
+    return f"#define Z_FAST {int(z_fast)}\n{header}\n"
+
+
 @cache
-def gather_kernel() -> Any:
+def gather_kernel(*, z_fast: bool = False) -> Any:
     import cupy as cp
 
     source = _GATHER_SOURCE.replace("RUN", str(RUN)).replace("VIEWS", str(_VIEWS_PER_STAGE))
-    return cp.RawModule(code=source).get_function("joseph_gather")
+    return cp.RawModule(code=storage_source(z_fast=z_fast) + source).get_function("joseph_gather")
 
 
 _FORWARD_SOURCE = r"""
@@ -117,14 +123,15 @@ __device__ float sample(const float* x, int a, int k, int b, int c,
     if (b<0 || b>=nb || c<0 || c>=nc) return 0.f;
     if (UNIFORM) return 1.f;
     int ix=a==0?k:(a==1?c:b), iy=a==0?b:(a==1?k:c), iz=a==0?c:(a==1?b:k);
-    return x[((INDEX)iz*ny+iy)*nx+ix];
+    return x[VOXEL(INDEX, ix, iy, iz)];
 }
 extern "C" __global__ void forward(const float* coeff, const float* x, float* out,
         int nx,int ny,int nz,int nu,int nv,int nviews) {
-    int tiles_v=nv;
+    // TILE_V lanes follow v, contiguous in the volume's z when Z_FAST.
+    int tiles_v=(nv+TILE_V-1)/TILE_V;
     int tile=blockIdx.x/nviews, view=blockIdx.x%nviews;
-    int u=(tile/tiles_v)*128+threadIdx.x;
-    int v=tile%tiles_v;
+    int u=(tile/tiles_v)*(128/TILE_V)+threadIdx.x/TILE_V;
+    int v=(tile%tiles_v)*TILE_V+threadIdx.x%TILE_V;
     bool valid=(u<nu && v<nv);
     const float* c=coeff+14*view;
     int a=(int)c[0];
@@ -179,10 +186,11 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
 
 
 @cache
-def forward_kernel(*, narrow: bool, uniform: bool = False) -> Any:
+def forward_kernel(*, narrow: bool, uniform: bool = False, z_fast: bool = False) -> Any:
     import cupy as cp
 
     source = _FORWARD_SOURCE.replace("INDEX", "int" if narrow else "long").replace(
         "UNIFORM", str(int(uniform))
     )
+    source = storage_source(z_fast=z_fast) + source.replace("TILE_V", "16" if z_fast else "1")
     return cp.RawModule(code=source, options=("--fmad=false",)).get_function("forward")

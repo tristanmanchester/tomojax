@@ -24,7 +24,10 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
 
 
-@partial(jax.jit, static_argnames=("grid", "detector", "interpolation", "absolute_weights"))
+_STATIC = ("grid", "detector", "interpolation", "absolute_weights", "z_fast")
+
+
+@partial(jax.jit, static_argnames=_STATIC)
 def forward_cuda(
     coeff: jax.Array,
     volume: jax.Array,
@@ -33,12 +36,16 @@ def forward_cuda(
     *,
     interpolation: str = "linear",
     absolute_weights: bool = False,
+    z_fast: bool = False,
 ) -> jax.Array:
-    """Project voxel-centre planes, optionally using absolute interpolation weights."""
+    """Project voxel-centre planes, optionally using absolute interpolation weights.
+
+    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
+    """
     validate_interpolation(interpolation)
     if interpolation == "linear" and use_cuda_gather(grid, axial=True):
         threads = 32 if detector.nv == 1 else 128
-        tile_v = 1
+        tile_v = generic.storage_tile(detector, z_fast=z_fast)
         text = generic.source(
             "forward",
             INDEX_TYPE="int" if grid.nx * grid.ny * grid.nz < 2**31 else "long",
@@ -46,11 +53,14 @@ def forward_cuda(
             BLOCK=threads,
             CUBIC=0,
             ABSOLUTE=0,
+            Z_FAST=int(z_fast),
         )
 
         @sequential_vmap
         def dispatch(c, x):
-            return forward_dispatch_cuda(c, x, grid, detector, generic_source=text)
+            return forward_dispatch_cuda(
+                c, x, grid, detector, generic_source=text, tile_v=tile_v, z_fast=z_fast
+            )
 
         return dispatch(coeff, volume)
     return generic.forward(
@@ -60,10 +70,11 @@ def forward_cuda(
         detector,
         interpolation=interpolation,
         absolute_weights=absolute_weights,
+        z_fast=z_fast,
     )
 
 
-@partial(jax.jit, static_argnames=("grid", "detector", "interpolation", "absolute_weights"))
+@partial(jax.jit, static_argnames=_STATIC)
 def adjoint_cuda(
     coeff: jax.Array,
     images: jax.Array,
@@ -73,18 +84,30 @@ def adjoint_cuda(
     interpolation: str = "linear",
     absolute_weights: bool = False,
     accumulate: jax.Array | None = None,
+    z_fast: bool = False,
 ) -> jax.Array:
-    """Add the matched transpose to an initializer without scattered atomics."""
+    """Add the matched transpose to an initializer without scattered atomics.
+
+    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
+    """
     validate_interpolation(interpolation)
-    shape = (grid.nz, grid.ny, grid.nx)
+    shape = (grid.nx, grid.ny, grid.nz) if z_fast else (grid.nz, grid.ny, grid.nx)
     initial = jnp.zeros(shape, jnp.float32) if accumulate is None else accumulate
 
     def fallback(args):
         c, y, x = args
         if interpolation == "linear" and not absolute_weights and use_cuda_gather(grid):
-            return gather_transpose_cuda(c, generic.swap_detector_axes(y), grid, detector, x)
+            y = generic.swap_detector_axes(y)
+            return gather_transpose_cuda(c, y, grid, detector, x, z_fast=z_fast)
         return generic.adjoint(
-            c, y, x, grid, detector, interpolation=interpolation, absolute_weights=absolute_weights
+            c,
+            y,
+            x,
+            grid,
+            detector,
+            interpolation=interpolation,
+            absolute_weights=absolute_weights,
+            z_fast=z_fast,
         )
 
     if not absolute_weights and use_cuda_gather(grid, axial=True):
@@ -94,10 +117,13 @@ def adjoint_cuda(
             def native(args):
                 c, y, x = args
                 if interpolation == "cubic":
+                    y = generic.swap_detector_axes(y)
                     return transpose_axial_cuda(
-                        c, generic.swap_detector_axes(y), x, grid=grid, interpolation=interpolation
+                        c, y, x, grid=grid, interpolation=interpolation, z_fast=z_fast
                     ).reshape(shape)
-                return transpose_axial_vu_cuda(c, y, x, grid=grid, interpolation=interpolation)
+                return transpose_axial_vu_cuda(
+                    c, y, x, grid=grid, interpolation=interpolation, z_fast=z_fast
+                )
 
             # Batch the complete decision, not only its callbacks: a batched
             # cond would execute both generic and axial projection kernels.

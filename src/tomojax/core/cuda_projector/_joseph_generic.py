@@ -29,6 +29,11 @@ def source(name: str, **constants: int | str) -> str:
     return "\n".join(f"#define {key} {value}" for key, value in constants.items()) + "\n" + text
 
 
+def storage_tile(detector: Detector, *, z_fast: bool) -> int:
+    """Forward rows per thread tile: rows follow contiguous z only in z-fast storage."""
+    return min(16, 1 << (detector.nv.bit_length() - 1)) if z_fast else 1
+
+
 def forward(
     coeff: jax.Array,
     volume: jax.Array,
@@ -37,10 +42,15 @@ def forward(
     *,
     interpolation: str,
     absolute_weights: bool,
+    z_fast: bool = False,
 ) -> jax.Array:
-    """Sum bilinear or cubic plane samples in the reference plane order."""
+    """Sum bilinear or cubic plane samples in the reference plane order.
+
+    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``,
+    whose rows lanes then follow along contiguous z.
+    """
     threads = 32 if detector.nv == 1 else 128
-    tile_v = 1
+    tile_v = storage_tile(detector, z_fast=z_fast)
     tile_u = threads // tile_v
     tiles = ((detector.nu + tile_u - 1) // tile_u) * ((detector.nv + tile_v - 1) // tile_v)
     views = coeff.shape[0]
@@ -57,6 +67,7 @@ def forward(
             BLOCK=threads,
             CUBIC=int(interpolation == "cubic"),
             ABSOLUTE=int(absolute_weights),
+            Z_FAST=int(z_fast),
             COEFF_OFFSET=broadcast_offset(
                 batch_shape, tuple(cf.shape[:-2]), item_size=math.prod(cf.shape[-2:])
             ),
@@ -96,8 +107,12 @@ def adjoint(
     *,
     interpolation: str,
     absolute_weights: bool,
+    z_fast: bool = False,
 ) -> jax.Array:
-    """Gather the exact plane weights at each voxel and add an initial volume."""
+    """Gather the exact plane weights at each voxel and add an initial volume.
+
+    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
+    """
     shape = (grid.nx, grid.ny, grid.nz)
     run = min(4, grid.nz)
     text = source(
@@ -105,6 +120,7 @@ def adjoint(
         RUN=run,
         CUBIC=int(interpolation == "cubic"),
         ABSOLUTE=int(absolute_weights),
+        Z_FAST=int(z_fast),
     )
     runs = grid.nx * grid.ny * ((grid.nz + run - 1) // run)
     views = coeff.shape[0]
@@ -122,7 +138,7 @@ def adjoint(
 
     return buffer_callback(
         launch,
-        jax.ShapeDtypeStruct(shape[::-1], jnp.float32),
+        jax.ShapeDtypeStruct(shape if z_fast else shape[::-1], jnp.float32),
         input_output_aliases={2: 0},
         command_buffer_compatible=True,
         vmap_method="sequential",

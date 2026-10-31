@@ -9,7 +9,7 @@ __device__ float sample(const float* x, int a, int k, int b, int c,
                        int nx, int ny, int nz, int nb, int nc) {
     if (b<0 || b>=nb || c<0 || c>=nc) return 0.f;
     int ix=a==0?k:(a==1?c:b), iy=a==0?b:(a==1?k:c), iz=a==0?c:(a==1?b:k);
-    return x[((INDEX_TYPE)iz*ny+iy)*nx+ix];
+    return x[VOXEL(INDEX_TYPE, ix, iy, iz)];
 }
 extern "C" __global__ void forward(const float* coeff, const float* x, float* out,
         int nx,int ny,int nz,int nu,int nv,int nviews) {

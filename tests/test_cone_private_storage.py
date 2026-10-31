@@ -46,6 +46,15 @@ def test_bounded_transpose_and_linear_derivatives(shape, fixture):
     np.testing.assert_array_equal(transpose_volume(actual), x)
 
 
+def test_eager_transpose_keeps_no_input_alive():
+    if not cone.use_cuda_cone():
+        pytest.skip("requires CUDA cone kernels")
+    before = jax.devices()[0].memory_stats()["bytes_in_use"]
+    for _ in range(3):  # each input held would be another 4 MiB
+        transpose_volume(jnp.ones((64, 128, 128))).block_until_ready().delete()
+    assert jax.devices()[0].memory_stats()["bytes_in_use"] - before < 2**22
+
+
 def test_private_model_forward_and_pose_volume_pullbacks(fixture):
     geometry, grid, detector, initial, images = fixture
     model = cone.cone_model(geometry)

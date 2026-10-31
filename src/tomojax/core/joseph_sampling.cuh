@@ -1,4 +1,20 @@
 // Shared zero-padded Joseph samples: exact cell weights and their derivatives.
+
+// Volume storage. With Z_FAST, (nx, ny, nz) C-order with z contiguous: the solver-private
+// layout. Otherwise (nz, ny, nx) C-order with x contiguous: the public layout.
+#if Z_FAST
+#define VOXEL(T, ix, iy, iz) (((T)(ix) * ny + (iy)) * nz + (iz))
+#define Z_STRIDE 1L
+#else
+#define VOXEL(T, ix, iy, iz) (((T)(iz) * ny + (iy)) * nx + (ix))
+#define Z_STRIDE ((long)nx * ny)
+#endif
+// A transpose thread owns a run of R voxels along z. Neighbouring threads take neighbouring
+// runs of one column in either storage: their gathers read neighbouring detector rows, which
+// matters more than coalescing the single final store.
+#define FIRST_VOXEL(run, R, ix, iy, iz0) { int runs_z_ = (nz + (R) - 1) / (R); \
+    ix = (int)((run) / ((long)ny * runs_z_)); iy = (int)(((run) / runs_z_) % ny); \
+    iz0 = (R) * (int)((run) % runs_z_); }
 __device__ __forceinline__ float joseph_cubic_weight(float distance) {
     float r = fabsf(distance);
     if (r < 1.f) return 1.f + r*r * (1.5f*r - 2.5f);
@@ -13,7 +29,7 @@ __device__ __forceinline__ float joseph_sample(
     int ix = a == 0 ? k : (a == 1 ? c : b);
     int iy = a == 0 ? b : (a == 1 ? k : c);
     int iz = a == 0 ? c : (a == 1 ? b : k);
-    return x[((long)iz * ny + iy) * nx + ix];
+    return x[VOXEL(long, ix, iy, iz)];
 }
 
 __device__ __forceinline__ void joseph_cubic_weights(float t, float* w, float* d) {

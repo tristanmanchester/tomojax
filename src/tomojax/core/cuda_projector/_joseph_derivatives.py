@@ -30,6 +30,7 @@ def _source(
     *,
     has_coeff: bool,
     has_volume: bool,
+    z_fast: bool,
 ) -> str:
     width = 1 << (parameters + parameters * (parameters + 1) // 2).bit_length() if mode == 3 else 16
     constants: dict[str, int | str] = dict(
@@ -42,6 +43,7 @@ def _source(
         CUBIC=int(interpolation == "cubic"),
         HAS_COEFF=int(has_coeff),
         HAS_VOLUME=int(has_volume),
+        Z_FAST=int(z_fast),
     )
     ranks = (2, 3, 2 if mode == 2 else 3, 3 if mode == 3 else 2, 3)
     for name, full, rank in zip(
@@ -72,6 +74,7 @@ def _run(
     interpolation: str,
     has_coeff: bool = True,
     has_volume: bool = False,
+    z_fast: bool = False,
 ) -> tuple[jax.Array, jax.Array]:
     shape = (grid.nx, grid.ny, grid.nz)
     det_shape = (detector.nv, detector.nu)
@@ -100,6 +103,7 @@ def _run(
                 input_shapes,
                 has_coeff=has_coeff,
                 has_volume=has_volume,
+                z_fast=z_fast,
             ),
             "derivatives",
             options=("--fmad=false",),
@@ -132,10 +136,20 @@ def coefficient_vjp(
     detector: Detector,
     *,
     interpolation: str = "linear",
+    z_fast: bool = False,
 ) -> jax.Array:
     """Pull a projection cotangent back to the 14 coefficients per view."""
     partials, _ = _run(
-        coeff, volume, cotangent, coeff, volume, grid, detector, mode=0, interpolation=interpolation
+        coeff,
+        volume,
+        cotangent,
+        coeff,
+        volume,
+        grid,
+        detector,
+        mode=0,
+        interpolation=interpolation,
+        z_fast=z_fast,
     )
     return jnp.sum(partials, axis=1)[:, :14]
 
@@ -149,6 +163,7 @@ def projection_jvp(
     detector: Detector,
     *,
     interpolation: str = "linear",
+    z_fast: bool = False,
 ) -> jax.Array:
     """Project coefficient and/or volume tangents without a sample tape."""
     _, output = _run(
@@ -163,6 +178,7 @@ def projection_jvp(
         interpolation=interpolation,
         has_coeff=dcoeff is not None,
         has_volume=dvolume is not None,
+        z_fast=z_fast,
     )
     return output
 
@@ -175,19 +191,17 @@ def l2_loss_and_grads(
     detector: Detector,
     *,
     interpolation: str = "linear",
+    z_fast: bool = False,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Return half squared error, coefficient gradient and matched volume gradient."""
     from tomojax.core.cuda_projector._joseph import adjoint_cuda
 
+    options = {"interpolation": interpolation, "z_fast": z_fast}
     partials, residual = _run(
-        coeff, volume, target, coeff, volume, grid, detector, mode=1, interpolation=interpolation
+        coeff, volume, target, coeff, volume, grid, detector, mode=1, **options
     )
     sums = jnp.sum(partials, axis=1)
-    return (
-        sums[:, 15].sum(),
-        sums[:, :14],
-        adjoint_cuda(coeff, residual, grid, detector, interpolation=interpolation),
-    )
+    return sums[:, 15].sum(), sums[:, :14], adjoint_cuda(coeff, residual, grid, detector, **options)
 
 
 def pose_normal_equations(
@@ -199,6 +213,7 @@ def pose_normal_equations(
     detector: Detector,
     *,
     interpolation: str,
+    z_fast: bool = False,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Return per-view loss, directional gradient, Gauss-Newton matrix and residual."""
     partials, residual = _run(
@@ -211,6 +226,7 @@ def pose_normal_equations(
         detector,
         mode=3,
         interpolation=interpolation,
+        z_fast=z_fast,
     )
     sums = jnp.sum(partials, axis=1)
     views, parameters = coeff.shape[0], directions.shape[-1]

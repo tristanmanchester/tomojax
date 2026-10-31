@@ -15,21 +15,34 @@ from .geometry.base import Detector, Grid
 
 
 class JosephCUDA:
-    """Matched physical plane interpolation; batches bound transpose scratch space."""
+    """Matched physical plane interpolation; batches bound transpose scratch space.
+
+    Volumes are (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
+    """
 
     def __init__(
-        self, poses: np.ndarray, grid: Grid, detector: Detector, *, views_per_batch: int
+        self,
+        poses: np.ndarray,
+        grid: Grid,
+        detector: Detector,
+        *,
+        views_per_batch: int,
+        z_fast: bool = False,
     ) -> None:
         import cupy as cp
 
         self.cp = cp
-        self.shape = (grid.nz, grid.ny, grid.nx)
+        self.shape = (grid.nx, grid.ny, grid.nz) if z_fast else (grid.nz, grid.ny, grid.nx)
         self.image_shape = (len(poses), detector.nv, detector.nu)
         self.batch = min(int(views_per_batch), len(poses))
         self.coeff = cp.asarray(coefficients(poses, grid, detector, xp=np))
-        self.args = tuple(np.int32(n) for n in (*self.shape[::-1], detector.nu, detector.nv))
-        self.forward_kernel = forward_kernel(narrow=grid.nx * grid.ny * grid.nz < 2**31)
-        self.gather_kernel = gather_kernel()
+        dims = (grid.nx, grid.ny, grid.nz, detector.nu, detector.nv)
+        self.args = tuple(np.int32(n) for n in dims)
+        narrow = grid.nx * grid.ny * grid.nz < 2**31
+        self.forward_kernel = forward_kernel(narrow=narrow, z_fast=z_fast)
+        self.gather_kernel = gather_kernel(z_fast=z_fast)
+        # Forward rows per thread tile, as compiled: they follow contiguous z when z-fast.
+        self.tile_v = 16 if z_fast else 1
 
     def forward(self, volume: Any) -> Any:
         """Project a device volume; return (view, v, u) CuPy storage."""
@@ -37,7 +50,7 @@ class JosephCUDA:
         volume = cp.ascontiguousarray(volume, dtype=cp.float32)
         n, nv, nu = self.image_shape
         out = cp.empty(self.image_shape, cp.float32)
-        tiles = -(-nu // 128) * nv
+        tiles = -(-nu // (128 // self.tile_v)) * -(-nv // self.tile_v)
         # Interleave nearby views for volume-cache reuse; a flat grid avoids
         # CUDA's grid.y limit for large detectors.
         for first in range(0, n, 64):
@@ -59,7 +72,7 @@ class JosephCUDA:
         """Apply the exact transpose, using bounded per-batch detector scratch."""
         cp = self.cp
         out = cp.zeros(self.shape, cp.float32)
-        nz, ny, nx = self.shape
+        nx, ny, nz = (int(n) for n in self.args[:3])
         runs = nx * ny * -(-nz // RUN)
         for first in range(0, self.image_shape[0], self.batch):
             stop = min(first + self.batch, self.image_shape[0])

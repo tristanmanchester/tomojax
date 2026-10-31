@@ -91,7 +91,14 @@ def xla_stream(context: Any, buffer: Any) -> Iterator[Any]:
 
 
 def _launch(
-    context: Any, out: Any, coeff: Any, images: Any, accumulate: Any, *, shape: tuple[int, int, int]
+    context: Any,
+    out: Any,
+    coeff: Any,
+    images: Any,
+    accumulate: Any,
+    *,
+    shape: tuple[int, int, int],
+    z_fast: bool,
 ) -> None:
     import cupy as cp
 
@@ -102,7 +109,7 @@ def _launch(
         if target.data.ptr != initial.data.ptr:
             target[...] = initial
         runs = nx * ny * -(-nz // RUN)
-        gather_kernel()(
+        gather_kernel(z_fast=z_fast)(
             (-(-runs // THREADS),),
             (THREADS,),
             (
@@ -125,8 +132,13 @@ def gather_transpose_cuda(
     grid: Grid,
     detector: Detector,
     accumulate: jax.Array | None = None,
+    *,
+    z_fast: bool = False,
 ) -> jax.Array:
-    """Add the linear Joseph transpose of ``(view, u, v)`` images to ``accumulate``."""
+    """Add the linear Joseph transpose of ``(view, u, v)`` images to ``accumulate``.
+
+    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
+    """
     del detector  # Detector sizes come from the image array.
     shape = (grid.nx, grid.ny, grid.nz)
     count = grid.nx * grid.ny * grid.nz
@@ -136,7 +148,7 @@ def gather_transpose_cuda(
         else accumulate.astype(jnp.float32).reshape(count)
     )
     call = buffer_callback(
-        partial(_launch, shape=shape),
+        partial(_launch, shape=shape, z_fast=z_fast),
         jax.ShapeDtypeStruct((count,), jnp.float32),
         input_output_aliases={2: 0},
         vmap_method="sequential",
@@ -152,10 +164,10 @@ def gather_transpose_cuda(
 
     return jax.lax.cond(
         axial_coefficients(coeff),
-        lambda _: transpose_axial_cuda(coeff, images_uv, initial, grid=grid),
+        lambda _: transpose_axial_cuda(coeff, images_uv, initial, grid=grid, z_fast=z_fast),
         generic,
         operand=None,
-    ).reshape(shape[::-1])
+    ).reshape(shape if z_fast else shape[::-1])
 
 
 def _launch_uniform(context: Any, out: Any, coeff: Any, *, grid: Grid, detector: Detector) -> None:
