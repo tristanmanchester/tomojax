@@ -214,7 +214,7 @@ extern "C" __global__ void joseph_vertical(
 
 extern "C" __global__ void joseph_axial(
     const float* __restrict__ coeff, const float* __restrict__ weighted,
-    float* __restrict__ out, int nviews, int nx, int ny, int nz, int nu)
+    float* __restrict__ out, int nviews, int nx, int ny, int nz, int nu, int fresh)
 {
     const int R = RUN, VB = 32;
     long run=(long)blockIdx.x*blockDim.x+threadIdx.x;
@@ -256,8 +256,10 @@ extern "C" __global__ void joseph_axial(
     }
     if(live) {
         long base=VOXEL(long,ix,iy,z);
+        // Keep the same +0 addition as a zero-initialized output.
         #pragma unroll
-        for(int j=0;j<R;++j) if(z+j<nz) out[base+j*Z_STRIDE]+=total[j];
+        for(int j=0;j<R;++j) if(z+j<nz)
+            out[base+j*Z_STRIDE]=(fresh ? 0.f : out[base+j*Z_STRIDE])+total[j];
     }
 }
 """
@@ -327,7 +329,7 @@ def _transpose_launch(
             module.get_function("joseph_axial")(
                 (-(-runs // threads),),
                 (threads,),
-                (c, weighted, target, *map(np.int32, (count, nx, ny, nz, nu))),
+                (c, weighted, target, *map(np.int32, (count, nx, ny, nz, nu, 0))),
             )
 
 
@@ -522,11 +524,13 @@ def transpose_axial_vu_cuda(
     A (z, y, x) volume is added to 32 planes at a time in a z-fast band, so
     each voxel adds the same chunk sums in the same order in either storage.
     ``batch`` views at a time make the chunks of one call per batch. With no
-    ``initial`` the output is new, and each band starts from zeros.
+    ``initial`` the first chunk writes the new output without reading it.
     """
     views, nv, nu = images.shape
     nx, ny, nz = grid.nx, grid.ny, grid.nz
     depth = nz if z_fast else min(nz, 32)
+    # Capture ownership, not the initial array, in the callback.
+    fresh = initial is None
     size, chunks = _chunks(views, nu, nz, batch)
 
     def add(stream: int, c: Any, y: Any, weighted: Any, target: Any, z0: int, planes: int) -> None:
@@ -559,13 +563,18 @@ def transpose_axial_vu_cuda(
                 stream=stream,
                 grid=(-(-runs // threads),),
                 block=(threads,),
-                arguments=(part, weighted, target, *map(np.int32, (count, nx, ny, planes, nu))),
+                arguments=(
+                    part,
+                    weighted,
+                    target,
+                    *map(np.int32, (count, nx, ny, planes, nu, fresh and first == 0)),
+                ),
             )
 
     def launch(context: Any, outputs: Any, c: Any, y: Any, *x: Any) -> None:
         out, weighted, *band = outputs
         stream = context.stream
-        if x or not band:
+        if x or (not band and not chunks):
             initialize_buffer(out, stream=stream, source=x[0] if x else None)
         if not band:
             add(stream, c, y, weighted, out, 0, nz)
@@ -574,7 +583,7 @@ def transpose_axial_vu_cuda(
             planes = min(depth, nz - z0)
             if x:
                 reverse_axes(out, band[0], (nz, ny, nx), stream=stream, z0=z0, depth=planes)
-            else:
+            elif not chunks:
                 initialize_buffer(band[0], stream=stream)
             add(stream, c, y, weighted, band[0], z0, planes)
             reverse_axes(

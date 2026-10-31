@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -730,6 +732,20 @@ def test_z_fast_storage_projects_and_transposes_the_same_bits(
         np.testing.assert_array_equal(
             np.asarray(private_result).view(np.uint32), np.asarray(public_result).view(np.uint32)
         )
+    if not tilt:
+        for z_fast in (False, True):
+            call = partial(
+                axial.transpose_axial_vu_cuda,
+                grid=g,
+                interpolation=interpolation,
+                z_fast=z_fast,
+                batch=2,
+            )
+            for count in (0, len(data)):
+                zero = jnp.zeros(volume.size, jnp.float32)
+                fresh = np.asarray(call(coeff[:count], data[:count], None))
+                initialized = np.asarray(call(coeff[:count], data[:count], zero))
+                np.testing.assert_array_equal(fresh.view(np.uint32), initialized.view(np.uint32))
 
 
 @pytest.mark.parametrize(
