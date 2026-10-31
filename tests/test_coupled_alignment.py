@@ -751,7 +751,8 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("smooth", [0.0, 0.03])
 @pytest.mark.parametrize("integrator", ["joseph", "joseph_cubic"])
-def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, integrator):
+@pytest.mark.parametrize("nonnegative", [False, True])
+def test_staged_update_matches_device_model(monkeypatch, solver, smooth, integrator, nonnegative):
     from dataclasses import replace
     from functools import partial
 
@@ -767,6 +768,7 @@ def test_staged_joint_update_matches_device_model(monkeypatch, solver, smooth, i
         .set(0)
     )
     cfg = AlignConfig(
+        nonnegative=nonnegative,
         gn_coupling="joint",
         gn_joint_solver=solver,
         ray_integrator=integrator,

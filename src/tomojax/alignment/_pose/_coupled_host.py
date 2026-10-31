@@ -310,9 +310,13 @@ class _HostSystem:
         active = np.asarray(arrays.active)
         counts = 1 if arrays.counts is None else np.asarray(arrays.counts)[:, None]
         self.movable = counts * active
-        device_gradient = jax.device_put(gx) if spec.nonnegative else jnp.float32(0)
+        # The device copy of the gradient lives only for this call, not through "bound".
         self.free = np.array(
-            free_volume_support(x, device_gradient, nonnegative=spec.nonnegative),
+            free_volume_support(
+                x,
+                jax.device_put(gx) if spec.nonnegative else jnp.float32(0),
+                nonnegative=spec.nonnegative,
+            ),
             order="C",
         )
         np.multiply(gx, self.free, out=gx)
