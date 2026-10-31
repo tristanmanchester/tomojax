@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from functools import partial
 import importlib
 from pathlib import Path
 
@@ -11,7 +13,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from tomojax.core.projector import get_detector_grid_device
+from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.core.trilinear import exact_adjoint, exact_forward
 from tomojax.geometry import Detector, Grid
 
@@ -247,3 +249,47 @@ def test_exact_fp32_contract_survives_global_x64(problem):
         for value, reference in zip(actual, expected, strict=True):
             assert value.dtype == jnp.float32
             np.testing.assert_allclose(value, reference, rtol=2e-5, atol=3e-6)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("method", ["sampled", "exact", "adjoint"])
+@pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.parametrize("staged", [False, True])
+@pytest.mark.parametrize("batched", [False, True])
+def test_generic_rays_use_cpu_reference_on_cuda_host(method, committed, staged, batched):
+    cpu = jax.devices("cpu")[0]
+    grid, detector = Grid(5, 4, 3, 0.7, 1.1, 0.9), Detector(7, 5, 1.3, 0.8, (0.2, -0.3))
+    shape = (2, 5, 7) if method == "adjoint" else (3, 4, 5)
+    original = np.random.default_rng(2306).normal(size=(2, *shape)).astype(np.float32)
+    host_poses = np.repeat(np.eye(4, dtype=np.float32)[None], 2, axis=0)
+    host_poses[1, :3, 3] = [0.13, -0.27, 0.21]
+    with nullcontext() if committed else jax.default_device(cpu):
+        values = jax.device_put(original, cpu) if committed else jnp.asarray(original)
+        poses = jax.device_put(host_poses, cpu) if committed else jnp.asarray(host_poses)
+        assert values.committed == poses.committed == committed
+
+        def call(x, backend):
+            if method == "sampled":
+                return forward_project_view_T(
+                    poses[1], grid, detector, x, backend=backend, step_size=0.4, n_steps=16
+                )
+            function = exact_adjoint if method == "adjoint" else exact_forward
+            return function(poses, grid, detector, x, backend=backend)
+
+        results = []
+        for backend in ("jax", "cuda"):
+            function = partial(call, backend=backend)
+            if batched:
+                function = jax.vmap(function)
+            if staged:
+                function = jax.jit(function)
+            result = function(values if batched else values[0])
+            assert result.devices() == {cpu}
+            results.append(np.asarray(result))
+        reference, actual = results
+        assert actual.shape == reference.shape
+        assert actual.dtype == reference.dtype == np.float32
+        assert np.isfinite(actual).all()
+        assert np.max(abs(actual.astype(float) - reference)) <= 1e-6 * max(1, abs(reference).max())
+        np.testing.assert_array_equal(values, original)
+        np.testing.assert_array_equal(poses, host_poses)
