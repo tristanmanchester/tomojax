@@ -13,6 +13,7 @@ import imageio.v3 as iio
 import numpy as np
 
 from tomojax.cli._options import add_output, check_paths
+from tomojax.io.api import saved_volume_axes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -91,14 +92,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         dataset = handle.get(_VOLUME_PATH)
         if not isinstance(dataset, h5py.Dataset) or dataset.ndim != 3:
             parser.error(f"{data} holds no reconstructed volume; reconstruct it with tomojax recon")
-        axes = _decode(handle["/entry/processing/tomojax"].attrs.get(_AXES_ATTR), "zyx").lower()
-        if sorted(axes) != ["x", "y", "z"]:
-            parser.error(f"unsupported saved volume axes {axes!r}")
-        shape = {axis: int(n) for axis, n in zip(axes, dataset.shape, strict=True)}
         grid = cast(
             "dict[str, float]",
             json.loads(_decode(handle["/entry"].attrs.get("grid_meta_json"), "{}")),
         )
+        attribute = handle["/entry/processing/tomojax"].attrs.get(_AXES_ATTR)
+        try:
+            axes, _ = saved_volume_axes(
+                dataset.shape, None if attribute is None else _decode(attribute, ""), grid, data
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        shape = {axis: int(n) for axis, n in zip(axes, dataset.shape, strict=True)}
         low, high = (
             _value_range(dataset, axes, shape["z"], cast("list[float] | None", args.range))
             if dtype == "uint16"

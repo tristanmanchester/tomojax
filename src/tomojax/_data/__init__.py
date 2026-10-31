@@ -13,6 +13,7 @@ from tomojax._data._io_npz import load_npz, save_npz
 from tomojax._data._io_nxtomo import (
     load_nxtomo,
     save_nxtomo,
+    saved_volume_axes,
     validate_nxtomo,
 )
 from tomojax._data._io_types import LoadedNXTomo, NXTomoMetadata
@@ -33,6 +34,7 @@ __all__ = [
     "load_nxtomo",
     "locate_frames",
     "save_npz",
+    "saved_volume_axes",
     "save_nxtomo",
     "validate_nxtomo",
 ]
