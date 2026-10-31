@@ -12,6 +12,10 @@ outputs, observers and checkpoints remain public `(z, y, x)` arrays; backend
 provenance identifies the CUDA objective and its analytic pose derivatives.
 Fixed-volume steps reuse an unchanged entry volume rather than duplicating it.
 
+Fresh axial CUDA backprojections write their first view chunk directly, without
+zero-filling the output first. Later chunks and supplied initial volumes retain
+the same accumulation order.
+
 Host-slab CUDA cone solvers accumulate forward projections directly into their
 circular detector-row buffer, without temporary projection batches. The ray
 product is rounded before accumulation, preserving the separate-step arithmetic.
