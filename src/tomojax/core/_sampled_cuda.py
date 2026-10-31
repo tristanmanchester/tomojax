@@ -137,11 +137,20 @@ def run(poses, volume, target=None, weights=None, initial=None, *, mode, params,
         vmap_method="sequential",
         command_buffer_compatible=True,
     )
-    return call(
+
+    def on_jax(p, v, t, w, i, *cached: Any):
+        from ._sampled_reference import run as reference
+
+        return reference(p, v, t, w, i, mode=mode, params=params, state=cached)
+
+    # The prepared callers stage this choice inside their cached jitted launch.
+    return jax.lax.platform_dependent(
         poses,
         volume,
         poses if target is None else target,
         poses if weights is None else weights,
         poses if initial is None else initial,
         *state,
+        cuda=call,
+        default=on_jax,
     )

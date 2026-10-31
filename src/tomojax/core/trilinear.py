@@ -8,6 +8,7 @@ world coordinates.
 
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, Literal
 
 import jax
@@ -72,9 +73,12 @@ def exact_forward(
     _validate_backend(backend, detector, det_grid)
     poses, volume = _real_fp32(poses), _real_fp32(volume)
     if backend == "cuda":
-        from tomojax.core._trilinear_cuda import coefficients, run
+        from tomojax.core._trilinear_cuda import coefficients
 
-        return run(coefficients(poses, grid, detector), volume, grid, detector)
+        cf = coefficients(poses, grid, detector)
+        return _on_platform(
+            cf, poses, volume, det_grid, grid=grid, detector=detector, adjoint=False
+        )
     return jax.lax.map(
         lambda t: forward_project_view_exact_T(t, grid, detector, volume, det_grid=det_grid), poses
     )
@@ -97,9 +101,10 @@ def exact_adjoint(
     _validate_backend(backend, detector, det_grid)
     poses, images = _real_fp32(poses), _real_fp32(images)
     if backend == "cuda":
-        from tomojax.core._trilinear_cuda import coefficients, run
+        from tomojax.core._trilinear_cuda import coefficients
 
-        return run(coefficients(poses, grid, detector), images, grid, detector, mode="adjoint")
+        cf = coefficients(poses, grid, detector)
+        return _on_platform(cf, poses, images, det_grid, grid=grid, detector=detector, adjoint=True)
     initial = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
 
     def add_view(
@@ -114,3 +119,32 @@ def exact_adjoint(
 
     result, _ = jax.lax.scan(add_view, initial, (poses, images))
     return result
+
+
+@partial(jax.jit, static_argnames=("grid", "detector", "adjoint"))
+def _on_platform(
+    cf: jax.Array,
+    poses: jax.Array,
+    data: jax.Array,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+    *,
+    grid: Grid,
+    detector: Detector,
+    adjoint: bool,
+) -> jax.Array:
+    """The CUDA kernels where the program runs on a GPU, the JAX reference elsewhere.
+
+    Compiled, so the arrays' placement picks the platform; an eager
+    platform_dependent follows the default backend. The coefficients come
+    from the caller, formed eagerly as the kernels always took them.
+    """
+    from tomojax.core._trilinear_cuda import run
+
+    reference, mode = (exact_adjoint, "adjoint") if adjoint else (exact_forward, "forward")
+    return jax.lax.platform_dependent(
+        cf,
+        poses,
+        data,
+        cuda=lambda c, _p, x: run(c, x, grid, detector, mode=mode),
+        default=lambda _c, p, x: reference(p, grid, detector, x, det_grid=det_grid),
+    )
