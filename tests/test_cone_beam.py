@@ -690,3 +690,14 @@ def test_cuda_cone_transpose_handles_volumes_smaller_than_a_tile(n, nz, tilt):
     expected = cone_backproject(y, coeff, grid, detector, backend="jax")
     actual = cone_backproject(y, coeff, grid, detector, backend="cuda")
     assert float(jnp.abs(actual - expected).max() / jnp.abs(expected).max()) < 1e-5
+
+
+def test_axis_offset_fit_constrains_the_intercept_not_only_the_output():
+    from tomojax.recon.cone_axis import _fit_axis_offsets  # check-public-imports: allow-private
+
+    heights, offsets = (1.0, 2.0, 3.0), (0.031, 0.032, 0.033)
+    np.testing.assert_allclose(_fit_axis_offsets(heights, offsets, None), (0.001, 0.03))
+    np.testing.assert_allclose(_fit_axis_offsets(heights, offsets, 0.02), (37 / 7000, 0.02))
+    np.testing.assert_allclose(_fit_axis_offsets((2.0,), (0.03,), 0.02), (0.005, 0.02))
+    with pytest.raises(ValueError, match="zero height"):
+        _fit_axis_offsets((0.0,), (0.03,), 0.02)
