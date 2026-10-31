@@ -122,7 +122,7 @@ def test_a_thin_volume_stages_only_its_planes_with_the_same_bits(monkeypatch, nz
     angles = np.linspace(0.0, 180.0, 9, dtype=np.float32)
     poses = stack_view_poses(tj.ParallelGeometry(grid, detector, angles), len(angles))
     coefficients = joseph.plane_coefficients(poses, grid, detector)
-    assert joseph.stages_bands(coefficients, grid, detector)
+    assert joseph.forward_kind(coefficients, grid, detector) == "bands"
     private = np.random.default_rng(nz).random((48, 40, nz), np.float32)
     public = jnp.asarray(private.transpose(2, 1, 0).copy())
     shared = {"backend": "cuda"}
