@@ -730,3 +730,58 @@ def test_z_fast_storage_projects_and_transposes_the_same_bits(
         np.testing.assert_array_equal(
             np.asarray(private_result).view(np.uint32), np.asarray(public_result).view(np.uint32)
         )
+
+
+@pytest.mark.parametrize(
+    ("views", "batch"), [(0, 3), (1, 3), (5, 3), (6, 3), (33, 3), (33, 32), (5, 40)]
+)
+def test_axial_cpu_reference_respects_batch_bound(views, batch, monkeypatch):
+    from tomojax.core import joseph
+
+    with jax.default_device(jax.devices("cpu")[0]):
+        grid, detector = Grid(7, 5, 4, 1, 1, 1), Detector(9, 4, 1, 1)
+        poses = jnp.tile(jnp.eye(4, dtype=jnp.float32), (views, 1, 1))
+        coefficients = plane_coefficients(poses, grid, detector)
+        images = jnp.asarray(np.random.default_rng(19).normal(size=(views, 4, 9)), jnp.float32)
+        expected = adjoint_jax(coefficients, images, grid, detector)
+        traced_sizes = []
+
+        def bounded(c, y, *args):
+            traced_sizes.append(c.shape[0])
+            return adjoint_jax(c, y, *args)
+
+        monkeypatch.setattr(joseph, "adjoint_jax", bounded)
+        actual = jax.jit(lambda c, y: joseph.axial_backproject(c, y, grid, detector, batch=batch))(
+            coefficients, images
+        )
+        assert actual.devices() == {jax.devices("cpu")[0]}
+        assert traced_sizes == ([min(batch, views)] if views else [])
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=3e-6)
+
+
+@pytest.mark.gpu
+def test_eager_coefficient_device_roundoff_is_bounded():
+    # The same poses can give different eager coefficient arithmetic on CPU/GPU.
+    # This fixed cross-construction case reached 1.484444672e-6 scaled max error;
+    # it is not a lowering error: both coefficient arrays execute on the CPU.
+    rng = np.random.default_rng(1571)
+    for shape, views in [((12, 9, 13), 3), ((3, 4, 5), 3), ((8, 7, 9), 33)]:
+        volume = rng.normal(size=shape).astype(np.float32)
+        rng.normal(size=(views, shape[0], shape[2] + 2))
+    grid, detector = Grid(9, 7, 8, 1.1, 1.3, 1.7), Detector(11, 8, 1.1, 1.7)
+    geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, 33, endpoint=False))
+    poses = np.asarray([geometry.pose_for_view(i) for i in range(33)], np.float32)
+    cpu = jax.devices("cpu")[0]
+    value = jax.device_put(volume, cpu)
+    outputs = []
+    for device in (cpu, jax.devices("gpu")[0]):
+        with jax.default_device(device):
+            coefficients = plane_coefficients(jax.device_put(poses, device), grid, detector)
+        assert coefficients.devices() == {device}
+        coefficients = jax.device_put(coefficients, cpu)
+        actual = jax.jit(lambda x, c=coefficients: forward_jax(c, x, grid, detector))(value)
+        assert actual.devices() == {cpu}
+        outputs.append(np.asarray(actual).astype(np.float64))
+    difference = outputs[1] - outputs[0]
+    assert np.max(np.abs(difference)) / max(1.0, np.max(np.abs(outputs[0]))) <= 1.48445e-6
+    assert np.linalg.norm(difference) / np.linalg.norm(outputs[0]) <= 4.40001e-7

@@ -78,6 +78,18 @@ def pose_columns_cuda(
         ),
         vmap_method="sequential",
     )
-    return call(
-        coefficients.astype(jnp.float32), tangent.astype(jnp.float32), volume.astype(jnp.float32)
+
+    def on_jax(c, t, v):
+        from .joseph import plane_pose_columns
+
+        return plane_pose_columns(
+            c, v, t, grid, detector, backend="jax", interpolation=interpolation
+        )
+
+    return jax.lax.platform_dependent(
+        coefficients.astype(jnp.float32),
+        tangent.astype(jnp.float32),
+        volume.astype(jnp.float32),
+        cuda=call,
+        default=on_jax,
     )

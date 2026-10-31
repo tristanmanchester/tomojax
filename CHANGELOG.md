@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Joseph and cone projection, transpose and pose-column calls use their JAX
+reference when executed on a CPU, even on a CUDA host. Explicit Projector
+devices now place the input volume before compiling its forward operation.
+
 Host-slab CUDA cone solvers accumulate forward projections directly into their
 circular detector-row buffer, without temporary projection batches. The ray
 product is rounded before accumulation, preserving the separate-step arithmetic.

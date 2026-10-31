@@ -193,6 +193,8 @@ class Projector:
         if squeezed:
             volume = volume[None, :, :]
         self._validate(volume, self.volume_shape, "project: volume")
+        if self._split is not None:
+            volume = self._split.everywhere(volume)
         volume = jnp.asarray(volume, jnp.float32)
         private = self._private_call(volume, 0, volume.size + math.prod(self.projection_shape))
         projections = (private or self._forward)(volume)
@@ -267,7 +269,10 @@ class Projector:
             return None
         views, parallel = self.projection_shape[0], isinstance(self.geometry, ParallelGeometry)
         batch = _view_batch_size(self.grid, self.geometry.detector, views, axial_cuda=parallel)
-        return jax.jit(lambda y: axial_backproject(self._coefficients, y, self.grid, batch=batch))
+        detector = self.geometry.detector
+        return jax.jit(
+            lambda y: axial_backproject(self._coefficients, y, self.grid, detector, batch=batch)
+        )
 
     def _private_call(self, values: jax.Array, direction: int, elements: int):
         """The private-storage call for ``direction`` when ``elements`` more floats fit.

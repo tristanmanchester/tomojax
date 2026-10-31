@@ -74,7 +74,7 @@ def test_parallel_pose_columns_match_reference(integrator, indices):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
-def test_fused_columns_keep_cell_and_support_boundary_derivatives(interpolation):
+def test_fused_columns_keep_cell_and_support_boundary_derivatives(interpolation, projector_device):
     if jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
     grid, detector = Grid(73, 4, 3, 1, 1, 1), Detector(1, 1, 1, 1)
@@ -88,4 +88,5 @@ def test_fused_columns_keep_cell_and_support_boundary_derivatives(interpolation)
     )
     actual = jax.jit(partial(function, backend="cuda"))(coeff, volume, tangent)
     expected = jax.jit(partial(function, backend="jax"))(coeff, volume, tangent)
+    assert actual.devices() == {projector_device}
     np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)

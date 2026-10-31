@@ -46,3 +46,15 @@ def _release_compiled_programs() -> Iterator[None]:
         import ctypes
 
         ctypes.CDLL("libc.so.6").malloc_trim(0)
+
+
+@pytest.fixture(params=["gpu", "cpu"])
+def projector_device(request):
+    """Exercise both lowerings on a CUDA host, without changing its default backend."""
+    import jax
+
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires a CUDA host")
+    device = jax.devices(request.param)[0]
+    with jax.default_device(device):
+        yield device

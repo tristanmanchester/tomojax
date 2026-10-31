@@ -13,6 +13,7 @@ from tomojax.core import cone
 from tomojax.core._cone_runtime import cuda_module
 from tomojax.core.cone import adjoint_cuda, forward_cuda, pose_columns_cuda
 from tomojax.core.projector_autodiff import FirstOrderProjector
+from tomojax.core.volume_layout import swap_private_axes
 
 
 def _launch_vjp(context, out, coeff, volume, cotangent, *, grid, detector, z_fast):
@@ -68,15 +69,22 @@ class _ConeProjector(FirstOrderProjector):
         return _coefficient_vjp(coeff, volume, cotangent, self.grid, self.detector, self.z_fast)
 
     def adjoint(self, coeff, cotangent):
-        if self.z_fast:
-            initial = jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), jnp.float32)
-            return adjoint_cuda(cotangent, coeff, self.grid, self.detector, initial, z_fast=True)
-        return cone.cone_backproject(cotangent, coeff, self.grid, self.detector, backend="cuda")
+        shape = (self.grid.nx, self.grid.ny, self.grid.nz)
+        initial = jnp.zeros(shape if self.z_fast else shape[::-1], jnp.float32)
+        return adjoint_cuda(cotangent, coeff, self.grid, self.detector, initial, z_fast=self.z_fast)
 
 
 def differentiable_forward(coeff, volume, grid, detector, *, z_fast=False):
     """CUDA projection with first-order pose/volume derivatives."""
-    args = (coeff, volume)
-    return _ConeProjector(
-        tuple(jax.typeof(arg) for arg in args), grid=grid, detector=detector, z_fast=z_fast
-    )(*args)
+
+    def on_cuda(c, v):
+        args = (c, v)
+        return _ConeProjector(
+            tuple(jax.typeof(arg) for arg in args), grid=grid, detector=detector, z_fast=z_fast
+        )(*args)
+
+    def on_jax(c, v):
+        v = swap_private_axes(v, z_fast=z_fast)
+        return cone.cone_project(v, c, grid, detector, backend="jax")
+
+    return jax.lax.platform_dependent(coeff, volume, cuda=on_cuda, default=on_jax)

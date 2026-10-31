@@ -190,8 +190,16 @@ def _launch_uniform(context: Any, out: Any, coeff: Any, *, grid: Grid, detector:
 
 def project_ones_cuda(coeff: jax.Array, grid: Grid, detector: Detector) -> jax.Array:
     """Exact unit-support row sums without allocating or reading a ones volume."""
-    return buffer_callback(
+    call = buffer_callback(
         partial(_launch_uniform, grid=grid, detector=detector),
         jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
         vmap_method="sequential",
-    )(coeff.astype(jnp.float32))
+    )
+
+    def on_jax(c):
+        from .joseph import forward_jax
+
+        ones = jnp.ones((grid.nz, grid.ny, grid.nx), jnp.float32)
+        return forward_jax(c, ones, grid, detector)
+
+    return jax.lax.platform_dependent(coeff.astype(jnp.float32), cuda=call, default=on_jax)

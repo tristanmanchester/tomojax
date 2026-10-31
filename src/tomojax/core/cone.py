@@ -41,6 +41,7 @@ import numpy as np
 from tomojax.core._cone_runtime import PLANE_THREADS, cuda_module, use_cuda_cone
 from tomojax.core._cuda_joseph import xla_stream
 from tomojax.core.geometry.base import grid_volume_origin
+from tomojax.core.volume_layout import swap_private_axes
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
@@ -336,9 +337,16 @@ def _forward_jax(volume: jax.Array, coeff: jax.Array, grid: Grid, detector: Dete
 
 
 def _adjoint_jax(
-    images: jax.Array, coeff: jax.Array, grid: Grid, detector: Detector, accumulate: jax.Array
+    images: jax.Array,
+    coeff: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    accumulate: jax.Array,
+    *,
+    z_fast: bool = False,
 ) -> jax.Array:
     """Explicit transpose of :func:`_forward_jax`: scatter each plane's taps."""
+    accumulate = swap_private_axes(accumulate, z_fast=z_fast)
     rays = jax.vmap(lambda row: _rays(row, detector))(coeff)
     frames = _ray_frame(rays, grid)
     values = images * _path_weight(rays, frames, grid)
@@ -354,7 +362,8 @@ def _adjoint_jax(
 
     planes = max(grid.nx, grid.ny, grid.nz)
     total, _ = jax.lax.scan(step, flat, jnp.arange(planes, dtype=jnp.float32))
-    return total.reshape(grid.nz, grid.ny, grid.nx)
+    volume = total.reshape(grid.nz, grid.ny, grid.nx)
+    return swap_private_axes(volume, z_fast=z_fast)
 
 
 # ----------------------------------------------------------------------------- CUDA
@@ -721,7 +730,22 @@ def pose_columns_cuda(
         ),
         vmap_method="expand_dims",
     )
-    return call(coeff, tangent, volume.astype(jnp.float32))
+
+    def on_jax(c: jax.Array, t: jax.Array, v: jax.Array) -> jax.Array:
+        v = swap_private_axes(v, z_fast=z_fast)
+
+        def project(cf: jax.Array) -> jax.Array:
+            return _forward_jax(v, cf, grid, detector)
+
+        value = project(c[:, :12])
+        columns = jax.vmap(
+            lambda dc: jax.jvp(project, (c[:, :12],), (dc,))[1], in_axes=1, out_axes=1
+        )(t)
+        return jnp.concatenate((value[:, None], columns), axis=1)
+
+    return jax.lax.platform_dependent(
+        coeff, tangent, volume.astype(jnp.float32), cuda=call, default=on_jax
+    )
 
 
 def adjoint_cuda(
@@ -746,7 +770,17 @@ def adjoint_cuda(
         input_output_aliases={2: 0},
         vmap_method="sequential",
     )
-    return call(coeff, images.astype(jnp.float32), accumulate.astype(jnp.float32))
+
+    def on_jax(c: jax.Array, y: jax.Array, initial: jax.Array) -> jax.Array:
+        return _adjoint_jax(y, c, grid, detector, initial, z_fast=z_fast)
+
+    return jax.lax.platform_dependent(
+        coeff,
+        images.astype(jnp.float32),
+        accumulate.astype(jnp.float32),
+        cuda=call,
+        default=on_jax,
+    )
 
 
 # ----------------------------------------------------------------------------- public
@@ -811,7 +845,14 @@ def _project_ones_cuda(
         jax.ShapeDtypeStruct((coeff.shape[0], detector.nv, detector.nu), jnp.float32),
         vmap_method="sequential",
     )
-    return call(jax.lax.stop_gradient(coeff).astype(jnp.float32))
+
+    def on_jax(c: jax.Array) -> jax.Array:
+        ones = jnp.ones((grid.nz, grid.ny, grid.nx), jnp.float32)
+        return _forward_jax(ones, c, grid, detector)
+
+    return jax.lax.platform_dependent(
+        jax.lax.stop_gradient(coeff).astype(jnp.float32), cuda=call, default=on_jax
+    )
 
 
 def cone_backproject(
@@ -882,7 +923,21 @@ def _adjoint_pair_cuda(
         input_output_aliases={3: 0, 4: 1},
         vmap_method="sequential",
     )
-    return call(coeff, *(jnp.asarray(x, jnp.float32) for x in (*images, *initial)))
+
+    def on_jax(
+        c: jax.Array, y0: jax.Array, y1: jax.Array, x0: jax.Array, x1: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        first, second = (
+            _adjoint_jax(y, c, grid, detector, x, z_fast=z_fast) for y, x in ((y0, x0), (y1, x1))
+        )
+        return first, second
+
+    return jax.lax.platform_dependent(
+        coeff,
+        *(jnp.asarray(x, jnp.float32) for x in (*images, *initial)),
+        cuda=call,
+        default=on_jax,
+    )
 
 
 __all__ = [
