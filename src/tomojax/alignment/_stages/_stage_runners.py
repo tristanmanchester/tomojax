@@ -11,6 +11,7 @@ from tomojax.alignment._geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_alignment_state,
     apply_setup_to_detector_grid,
+    materialize_setup_geometry,
     pose_stack_for_setup,
     setup_moved_detector,
 )
@@ -29,7 +30,6 @@ from tomojax.core.cone import cone_model
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 
 from ._setup_stage import (
-    _geometry_with_setup_state,
     _optimize_setup_geometry_bilevel_for_level,
     initialize_setup_geometry_for_level,
 )
@@ -316,7 +316,7 @@ def _pose_stage_geometry_context(
     if not active_geometry_dofs:
         return geometry, {}
     return (
-        _geometry_with_setup_state(
+        materialize_setup_geometry(
             geometry,
             grid,
             detector,
@@ -554,7 +554,7 @@ def _seed_stage_translations(
         if moved is None:
             return state  # The image-domain seed does not support a rolled ray grid.
         detector = moved
-        geometry = _geometry_with_setup_state(geometry, grid, detector, setup)
+        geometry = materialize_setup_geometry(geometry, grid, detector, setup)
     seed = seeded_translation_params(geometry, grid, detector, projections, cfg)
     return replace(
         state,

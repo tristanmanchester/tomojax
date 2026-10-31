@@ -24,7 +24,7 @@ from tomojax.alignment._geometry.initializers import (
 from tomojax.alignment._model.diagnostics import validate_active_gauge_policy
 from tomojax.alignment._model.dof_specs import ActiveParameterView
 from tomojax.alignment._model.dofs import POSE_WIDTH
-from tomojax.alignment._model.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.alignment._model.state import AlignmentState, PoseState
 from tomojax.alignment._objectives.fold_recon import (
     reconstruct_train_fold_nograd,
 )
@@ -72,18 +72,7 @@ class SetupStageResult:
     x: jnp.ndarray
     state: AlignmentState
     losses: list[float]
-    public_outer_stats: list[OuterStat]
     checkpoint_outer_stats: list[OuterStat]
-    diagnostics: dict[str, object]
-
-
-def _geometry_with_setup_state(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    setup: SetupGeometryState,
-) -> Geometry:
-    return materialize_setup_geometry(geometry, grid, detector, setup)
 
 
 def _geometry_calibration_payload(
@@ -304,7 +293,7 @@ def _refresh_setup_reconstruction(
     moved = setup_moved_detector(detector, setup_state.setup, level_factor=int(factor))
     if moved is not None:  # the batched (CUDA) operators, as in the folds
         x_next, _ = fista_tv(
-            _geometry_with_setup_state(geometry, grid, moved, setup_state.setup),
+            materialize_setup_geometry(geometry, grid, moved, setup_state.setup),
             grid,
             moved,
             projections,
@@ -317,7 +306,7 @@ def _refresh_setup_reconstruction(
             ),
         )
         return x_next
-    geom = _geometry_with_setup_state(geometry, grid, detector, setup_state.setup)
+    geom = materialize_setup_geometry(geometry, grid, detector, setup_state.setup)
     det_grid = apply_setup_to_detector_grid(
         detector,
         setup_state.setup,
@@ -358,9 +347,7 @@ def _build_setup_stage_result(
         x=x,
         state=state.replace(volume=x),
         losses=losses,
-        public_outer_stats=[dict(stat) for stat in setup_stats],
         checkpoint_outer_stats=[dict(stat) for stat in setup_stats],
-        diagnostics={},
     )
 
 

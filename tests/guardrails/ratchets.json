@@ -68,7 +68,7 @@
   "code_lines": {
     "(modules)": 3325,
     "_data": 2091,
-    "alignment": 16802,
+    "alignment": 16789,
     "backends": 570,
     "cli": 2562,
     "core": 11788,
@@ -121,7 +121,7 @@
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 7,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 76,
+    "reportPrivateUsage": 75,
     "reportRedeclaration": 1,
     "reportReturnType": 17,
     "reportTypedDictNotRequiredAccess": 5

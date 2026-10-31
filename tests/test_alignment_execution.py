@@ -310,6 +310,9 @@ def test_align_multires_executes_a_setup_then_pose_schedule_with_real_stages() -
     assert final_state.completed_outer_iterations_in_stage == 0
     assert final_state.global_outer_iterations_completed == 2
     assert final_state.outer_stats == outer_stats
+    assert final_state.outer_stats[0] is not outer_stats[0]
+    assert final_state.loss == info["loss"]
+    np.testing.assert_array_equal(final_state.x, x)
 
 
 def test_pose_adjusted_cuda_fallback_keeps_folded_detector_grid_out_of_jax_core(
