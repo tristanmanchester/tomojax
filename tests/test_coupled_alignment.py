@@ -878,6 +878,7 @@ def test_cg_placements_match_dense_system_without_modifying_inputs(budget, place
         max_iters=budget,
         rtol=1e-5,
         placement=placement,
+        dot=None if placement.host else lambda a, b: 2 * placement.dot(a, b),
     )
     x = np.concatenate([a.ravel() for a in result.increment])
     np.testing.assert_array_equal(saved, b)
@@ -891,6 +892,28 @@ def test_cg_placements_match_dense_system_without_modifying_inputs(budget, place
     else:
         assert result.iterations == budget
         assert result.relative_residual > 1e-5
+
+
+@pytest.mark.parametrize("empty_pose", [False, True])
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_host_diagonal_direction_preserves_product_and_dot_rounding(monkeypatch, empty_pose, order):
+    monkeypatch.setattr(_coupled_vectors, "_CHUNK", 17)
+    rng = np.random.default_rng(147)
+    shapes = [(3, 7, 5), (0,) if empty_pose else (7, 3)]
+    residual = tuple(rng.normal(size=s).astype(np.float32) for s in shapes)
+    inverse = tuple(
+        np.array(rng.uniform(0.01, 2, size=s), dtype=dtype, order=order)
+        for s, dtype in zip(shapes, [np.float32, np.float64], strict=True)
+    )
+    direction = tuple(rng.normal(size=s).astype(np.float32) for s in shapes)
+    placement = _coupled_vectors.HOST
+    z = tuple(r * m for r, m in zip(residual, inverse, strict=True))
+    expected_gamma = placement.dot(residual, z)
+    expected = placement.combine(placement.own(direction), z, scale=expected_gamma / 0.1)
+    actual, gamma = placement.diagonal_direction(direction, residual, inverse, 0.1, placement.dot)
+    assert gamma == expected_gamma
+    for a, b in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(a.view(np.uint32), b.view(np.uint32))
 
 
 @pytest.mark.parametrize("width", [7, 8])
