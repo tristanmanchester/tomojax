@@ -56,6 +56,7 @@ def test_snapshot_grid_override_and_shape_checks():
 
 
 def test_equal_calls_share_a_projector_until_a_setting_changes(monkeypatch):
+    # check-public-imports: allow-private
     from tomojax.recon._operators import _projector
 
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
