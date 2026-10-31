@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import time
 from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.alignment._config import AlignConfig
 from tomojax.alignment._geometry.common_lines import prepare_common_lines
 from tomojax.alignment._geometry.geometry_applier import (
     materialize_setup_geometry,
@@ -19,10 +17,10 @@ from tomojax.alignment._geometry.spectral_motion import refine_common_line_motio
 from tomojax.alignment._model.schedules import ResolvedAlignmentStage
 from tomojax.alignment._model.state import AlignmentState, PoseState
 from tomojax.alignment._observer import OuterStat
-from tomojax.core.geometry.base import Detector, Geometry, Grid
+from tomojax.core.geometry.base import Detector
 from tomojax.geometry import LaminographyGeometry, RotationAxisGeometry, stack_view_poses
 
-from ._stage_types import StageLoopState, StageRuntime
+from ._stage_types import LevelContext, LevelState
 
 
 def _seed_motion(geometry, detector, projections):
@@ -113,23 +111,19 @@ def _candidate(state, stage, geometry, grid, detector, projections, cfg, level_f
 
 
 def run_spectral_motion_stage(
-    state: StageLoopState,
-    stage: ResolvedAlignmentStage,
-    *,
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
-    cfg: AlignConfig,
-    level_factor: int,
-    stage_runtime: StageRuntime,
-    stage_global_start: int,
-    level_stats: list[OuterStat],
-) -> StageLoopState:
+    level: LevelContext, stage: ResolvedAlignmentStage, state: LevelState
+) -> None:
     """Update only zero-initialized detector translations, with no scored volume loss."""
     start = time.perf_counter()
     params, diagnostics = _candidate(
-        state, stage, geometry, grid, detector, projections, cfg, level_factor
+        state,
+        stage,
+        level.geometry,
+        level.grid,
+        level.detector,
+        level.projections,
+        level.cfg,
+        level.runtime.level_factor,
     )
     seconds = time.perf_counter() - start
     stat = cast(
@@ -143,21 +137,10 @@ def run_spectral_motion_stage(
             "wall_time": seconds,
         },
     )
-    level_stats.extend(
-        stage_runtime.enrich_stats([stat], stage=stage, global_start=stage_global_start)
-    )
-    info = dict(state.info)
-    info.update(
-        wall_time_total=state.level_wall_time + seconds, completed_outer_iterations=len(level_stats)
-    )
-    aligned = cast("AlignmentState", state.setup_alignment_state).replace(
-        pose=PoseState(params, translation_frame=cfg.pose_translation_frame),
+    level.runtime.record([stat], stage=stage)
+    state.pose_params = params
+    state.setup_alignment_state = cast("AlignmentState", state.setup_alignment_state).replace(
+        pose=PoseState(params, translation_frame=level.cfg.pose_translation_frame),
         volume=state.x_lvl,
     )
-    return replace(
-        state,
-        pose_params=params,
-        setup_alignment_state=aligned,
-        info=info,
-        level_wall_time=state.level_wall_time + seconds,
-    )
+    state.level_wall_time += seconds
