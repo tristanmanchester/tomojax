@@ -38,7 +38,8 @@
     "simulate": 19
   },
   "long_files": {
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 852
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 852,
+    "src/tomojax/core/cone.py": 830
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 139,
@@ -70,7 +71,7 @@
     "alignment": 16666,
     "backends": 570,
     "cli": 2562,
-    "core": 12959,
+    "core": 13062,
     "corrections": 2105,
     "datasets": 1125,
     "forward": 824,
@@ -78,7 +79,7 @@
     "io": 3633,
     "motion": 143,
     "nuisance": 232,
-    "recon": 13909
+    "recon": 13914
   },
   "cuda_kernels": 46,
   "cuda_switches": 29,
@@ -103,8 +104,8 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "single_use_helpers": {
-    "tiny": 107,
-    "forwarders": 11,
+    "tiny": 105,
+    "forwarders": 10,
     "chained": 56
   },
   "type_errors": {

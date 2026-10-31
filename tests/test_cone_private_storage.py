@@ -35,9 +35,10 @@ def fixture(request):
 
 
 @pytest.mark.parametrize("shape", [(37, 19, 23), (1, 3, 65), (63, 2, 1)])
-def test_bounded_transpose_and_linear_derivatives(shape, fixture):
+def test_bounded_transpose_and_linear_derivatives(shape, fixture, projector_device):
     x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
     actual = jax.jit(transpose_volume)(x)
+    assert actual.devices() == {projector_device}
     np.testing.assert_array_equal(actual, np.asarray(x).transpose(2, 1, 0))
     _, tangent = jax.jvp(transpose_volume, (x,), (x,))
     np.testing.assert_array_equal(tangent, actual)
@@ -55,7 +56,7 @@ def test_eager_transpose_keeps_no_input_alive():
     assert jax.devices()[0].memory_stats()["bytes_in_use"] - before < 2**22
 
 
-def test_private_model_forward_and_pose_volume_pullbacks(fixture):
+def test_private_model_forward_and_pose_volume_pullbacks(fixture, projector_device):
     geometry, grid, detector, initial, images = fixture
     model = cone.cone_model(geometry)
     private = replace(model, _z_fast=True)
@@ -83,6 +84,32 @@ def test_private_model_forward_and_pose_volume_pullbacks(fixture):
     np.testing.assert_allclose(transpose_volume(x1), x0, rtol=2e-5, atol=2e-5)
     lhs, rhs = jnp.vdot(packed(coeff, xp), y), jnp.vdot(xp, x1)
     np.testing.assert_allclose(lhs, rhs, rtol=2e-6)
+
+    for layout, value in ((model, x), (private, xp)):
+        options = dict(grid=grid, detector=detector, backend="cuda")
+        initial = jnp.zeros_like(value)
+        pair = layout.backproject_pair((y, y), coeff, accumulate=(initial, initial), **options)
+        expected = layout.backproject(y, coeff, accumulate=initial, **options)
+        for result in pair:
+            assert result.devices() == {projector_device}
+            np.testing.assert_allclose(result, expected, rtol=2e-6, atol=2e-6)
+        ones = layout.project_ones(coeff, **options)
+        np.testing.assert_allclose(
+            ones, layout.project(jnp.ones_like(value), coeff, **options), rtol=2e-6, atol=2e-6
+        )
+        columns = cone.pose_columns_cuda(
+            value,
+            coeff,
+            tangent=jnp.zeros((len(coeff), 1, 12)),
+            grid=grid,
+            detector=detector,
+            z_fast=layout.private_storage,
+        )
+        assert columns.devices() == {projector_device}
+        np.testing.assert_allclose(
+            columns[:, 0], project(coeff, value, layout), rtol=2e-6, atol=2e-6
+        )
+        np.testing.assert_array_equal(columns[:, 1], 0)
 
 
 @pytest.mark.parametrize("method", ["sirt", "mlem", "cgls"])

@@ -46,6 +46,11 @@ def reverse_axes(
     )
 
 
+def swap_private_axes(volume: jax.Array, *, z_fast: bool) -> jax.Array:
+    """Exchange public and private JAX orders, or retain the public-only order."""
+    return jnp.transpose(volume, (2, 1, 0)) if z_fast else volume
+
+
 @jax.custom_jvp
 @jax.jit
 def transpose_volume(volume: jax.Array) -> jax.Array:
@@ -66,7 +71,10 @@ def transpose_volume(volume: jax.Array) -> jax.Array:
         jax.ShapeDtypeStruct(volume.shape[::-1], jnp.float32),
         vmap_method="sequential",
     )
-    return call(volume)
+    # Off a GPU the same permutation is an ordinary transpose.
+    return jax.lax.platform_dependent(
+        volume, cuda=call, default=lambda v: jnp.transpose(v, (2, 1, 0))
+    )
 
 
 @transpose_volume.defjvp

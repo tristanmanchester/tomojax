@@ -699,3 +699,29 @@ def test_axis_offset_fit_constrains_the_intercept_not_only_the_output():
     np.testing.assert_allclose(_fit_axis_offsets((2.0,), (0.03,), 0.02), (0.005, 0.02))
     with pytest.raises(ValueError, match="zero height"):
         _fit_axis_offsets((0.0,), (0.03,), 0.02)
+
+
+def test_cuda_cone_entry_can_lower_and_differentiate_on_cpu(monkeypatch):
+    # Model a CUDA-capable host without requiring its driver for this CPU lowering.
+    monkeypatch.setattr("tomojax.core.cone.use_cuda_cone", lambda: True)
+    with jax.default_device(jax.devices("cpu")[0]):
+        grid, detector = Grid(5, 4, 3, 0.7, 1.1, 0.9), Detector(7, 5, 1.3, 0.8)
+        geometry = ConeGeometry(grid, detector, [0, 31], ConeBeam(30, 50), tilt_deg=37)
+        coeff = cone_coefficients(geometry.poses(), grid, detector, geometry.beam)
+        volume = jnp.arange(60, dtype=jnp.float32).reshape(3, 4, 5) / 60
+
+        def project(c, x, backend):
+            return cone_project(x, c, grid, detector, backend=backend)
+
+        actual = jax.jit(lambda c, x: project(c, x, "cuda"))(coeff, volume)
+        expected = jax.jit(lambda c, x: project(c, x, "jax"))(coeff, volume)
+        np.testing.assert_array_equal(actual, expected)
+        gradient = jax.jit(
+            jax.grad(lambda c, x, backend: project(c, x, backend).sum(), argnums=(0, 1)),
+            static_argnums=(2,),
+        )
+        for a, b in zip(
+            gradient(coeff, volume, "cuda"), gradient(coeff, volume, "jax"), strict=True
+        ):
+            assert a.devices() == b.devices() == {jax.devices("cpu")[0]}
+            np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-6)

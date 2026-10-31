@@ -123,3 +123,33 @@ def test_private_storage_calls_give_the_public_bits(kind, monkeypatch):
         np.asarray(v).view(np.uint32) for v in (batched.adjoint(y), batched._adjoint(y))
     )
     np.testing.assert_array_equal(one_call, per_batch)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("kind", ["parallel", "lamino", "cone"])
+@pytest.mark.parametrize("first", ["cpu", "gpu"])
+def test_cpu_calls_and_explicit_placement_on_cuda_host(kind, first, monkeypatch):
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
+    geometry = _geometry(kind)
+    operator = tj.Projector(geometry)
+    rng = np.random.default_rng(1571)
+    x = rng.normal(size=operator.volume_shape).astype(np.float32)
+    y = rng.normal(size=operator.projection_shape).astype(np.float32)
+    cpu, gpu = jax.devices("cpu")[0], jax.devices("gpu")[0]
+    order = (cpu, gpu, cpu) if first == "cpu" else (gpu, cpu, gpu)
+    for device in order:
+        xx, yy = jax.device_put(x, device), jax.device_put(y, device)
+        forward, adjoint = jax.jit(operator)(xx), operator.adjoint(yy)
+        gradient = jax.grad(lambda v, target: jnp.vdot(operator(v), target))(xx, yy)
+        assert forward.devices() == adjoint.devices() == gradient.devices() == {device}
+        np.testing.assert_allclose(gradient, adjoint, rtol=3e-5, atol=1e-5)
+        np.testing.assert_array_equal(np.asarray(xx).view(np.uint32), x.view(np.uint32))
+        np.testing.assert_array_equal(np.asarray(yy).view(np.uint32), y.view(np.uint32))
+    for value, function in ((x, tj.project), (y, tj.backproject)):
+        placed = function(geometry, jax.device_put(value, gpu), devices=cpu)
+        assert placed.devices() == {cpu}
+        assert np.isfinite(placed).all()
+        with jax.default_device(cpu):
+            contextual = function(geometry, value)
+            assert contextual.devices() == {cpu}
+            assert np.isfinite(contextual).all()

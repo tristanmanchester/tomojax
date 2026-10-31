@@ -16,6 +16,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.volume_layout import swap_private_axes
+
 from ._plane_interpolation import cubic_weights_and_derivatives, validate_interpolation
 from .compilation_cache import enable_persistent_compilation_cache
 from .geometry.base import grid_volume_origin
@@ -201,18 +203,36 @@ def stages_bands(
 
 
 def axial_backproject(
-    coefficients: jax.Array, images: jax.Array, grid: Grid, *, batch: int
+    coefficients: jax.Array, images: jax.Array, grid: Grid, detector: Detector, *, batch: int
 ) -> jax.Array:
     """The CUDA transpose of axial views into a new (z, y, x) volume, in bands.
 
     It adds ``batch`` views at a time, as one call per batch would, and stages
-    each band of the volume once for all of them.
+    each band of the volume once for all of them. Off a GPU it is the JAX model.
     """
     from ._cuda_axial import transpose_axial_vu_cuda
 
-    return transpose_axial_vu_cuda(
-        coefficients, images, None, grid=grid, interpolation="linear", batch=batch
-    )
+    def on_cuda(c: jax.Array, y: jax.Array) -> jax.Array:
+        return transpose_axial_vu_cuda(c, y, None, grid=grid, interpolation="linear", batch=batch)
+
+    def on_jax(c: jax.Array, y: jax.Array) -> jax.Array:
+        initial = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=y.dtype)
+        n = int(c.shape[0])
+        if n == 0:
+            return initial
+        size = min(batch, n)
+
+        def add_views(i: jax.Array, volume: jax.Array) -> jax.Array:
+            start = jnp.minimum(i * size, n - size)
+            cf = jax.lax.dynamic_slice_in_dim(c, start, size)
+            images = jax.lax.dynamic_slice_in_dim(y, start, size)
+            # The shifted last batch overlaps earlier views; count each once.
+            valid = start + jnp.arange(size) >= i * size
+            return volume + adjoint_jax(cf, images * valid[:, None, None], grid, detector)
+
+        return jax.lax.fori_loop(0, (n + size - 1) // size, add_views, initial)
+
+    return jax.lax.platform_dependent(coefficients, images, cuda=on_cuda, default=on_jax)
 
 
 def forward_project_planes(
@@ -228,36 +248,34 @@ def forward_project_planes(
 ) -> jax.Array:
     """Apply a prepared plane model, or abs(A) for positive sensitivity bounds.
 
-    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) on CUDA with ``z_fast``.
+    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
+    The CUDA backend runs the CUDA kernels where the program runs on a GPU,
+    and the JAX model elsewhere.
     """
+
+    def on_jax(c: jax.Array, v: jax.Array) -> jax.Array:
+        v = swap_private_axes(v, z_fast=z_fast)
+        options = {"interpolation": interpolation, "absolute_weights": absolute_weights}
+        return forward_jax(c, v, grid, detector, **options)
+
     if backend == "jax":
-        return forward_jax(
-            coefficients,
-            volume,
-            grid,
-            detector,
-            interpolation=interpolation,
-            absolute_weights=absolute_weights,
-        )
-    if backend == "cuda":
+        return on_jax(coefficients, volume)
+    if backend != "cuda":
+        raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
+
+    def on_cuda(c: jax.Array, v: jax.Array) -> jax.Array:
         if absolute_weights:
             from .cuda_projector._joseph import forward_cuda
 
-            return forward_cuda(
-                coefficients,
-                volume,
-                grid,
-                detector,
-                interpolation=interpolation,
-                absolute_weights=True,
-                z_fast=z_fast,
-            )
+            options = {"interpolation": interpolation, "absolute_weights": True}
+            return forward_cuda(c, v, grid, detector, **options, z_fast=z_fast)
         from .cuda_projector._joseph_autodiff import differentiable_forward
 
         return differentiable_forward(
-            coefficients, volume, grid, detector, interpolation=interpolation, z_fast=z_fast
+            c, v, grid, detector, interpolation=interpolation, z_fast=z_fast
         )
-    raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
+
+    return jax.lax.platform_dependent(coefficients, volume, cuda=on_cuda, default=on_jax)
 
 
 def sum_backproject_planes(
@@ -275,32 +293,31 @@ def sum_backproject_planes(
     """Apply the matched transpose, or abs(A).T when estimating cancellation.
 
     A given ``accumulate`` volume is added to the result; CUDA adds in place.
-    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) on CUDA with ``z_fast``.
+    The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
+    The CUDA backend runs the CUDA kernels where the program runs on a GPU,
+    and the JAX model elsewhere.
     """
+
+    def on_jax(c: jax.Array, y: jax.Array, *initial: jax.Array) -> jax.Array:
+        options = {"interpolation": interpolation, "absolute_weights": absolute_weights}
+        volume = adjoint_jax(c, y, grid, detector, **options)
+        volume = swap_private_axes(volume, z_fast=z_fast)
+        return volume + initial[0] if initial else volume
+
+    initial = () if accumulate is None else (accumulate,)
     if backend == "jax":
-        volume = adjoint_jax(
-            coefficients,
-            images,
-            grid,
-            detector,
-            interpolation=interpolation,
-            absolute_weights=absolute_weights,
-        )
-        return volume if accumulate is None else accumulate + volume
-    if backend == "cuda":
+        return on_jax(coefficients, images, *initial)
+    if backend != "cuda":
+        raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
+
+    def on_cuda(c: jax.Array, y: jax.Array, *initial: jax.Array) -> jax.Array:
         from .cuda_projector._joseph import adjoint_cuda
 
-        return adjoint_cuda(
-            coefficients,
-            images,
-            grid,
-            detector,
-            interpolation=interpolation,
-            absolute_weights=absolute_weights,
-            accumulate=accumulate,
-            z_fast=z_fast,
-        )
-    raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
+        options = {"interpolation": interpolation, "absolute_weights": absolute_weights}
+        accumulate = initial[0] if initial else None
+        return adjoint_cuda(c, y, grid, detector, **options, accumulate=accumulate, z_fast=z_fast)
+
+    return jax.lax.platform_dependent(coefficients, images, *initial, cuda=on_cuda, default=on_jax)
 
 
 def plane_pose_columns(
