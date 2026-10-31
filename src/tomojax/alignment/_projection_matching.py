@@ -45,9 +45,11 @@ class ProjectionMatchingConfig:
     resampling.
 
     Read per-view vertical standard deviations from
-    ``info["vertical_uncertainty"]``, in detector length units.
-    These condition on the fitted template and covariance and do not cover
-    horizontal alignment.
+    ``info["vertical_uncertainty"]``, in detector length units. They are
+    local model-based scales: they take the fitted template and covariance
+    as exact, are not calibrated intervals, and do not cover horizontal
+    alignment or the joint pose covariance. Vertical shifts have zero mean
+    by convention, not by measurement.
 
     Parameters
     ----------
@@ -328,8 +330,11 @@ def match_projections(
             "relative_noise_variance": vertical_fit.relative_noise_variance.tolist(),
             "translation_frame": "detector",
             "units": "geometry_length",
-            "scope": "Local vertical likelihood conditional on the fitted profile template and "
-            "stationary covariance; horizontal uncertainty is not estimated.",
+            "scope": "Local scales with template and covariance exact; not calibrated intervals "
+            "or joint pose covariance; horizontal uncertainty is not estimated.",
+            "global_coverage_calibrated": False,
+            "uncertainty_status": "local_matching_only",
+            "vertical_gauge": "mean_vertical_shift_zero",
         },
         "joint": dict(joint_info),
         "initialization": initialization,

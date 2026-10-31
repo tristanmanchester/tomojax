@@ -55,6 +55,10 @@ def test_public_matching_recovers_motion_without_resampling_input():
     assert standard.shape == (n,) and np.all(np.isfinite(standard)) and np.all(standard > 0)
     assert uncertainty["translation_frame"] == "detector"
     assert uncertainty["units"] == "geometry_length"
+    assert uncertainty["global_coverage_calibrated"] is False
+    assert uncertainty["uncertainty_status"] == "local_matching_only"
+    assert uncertainty["vertical_gauge"] == "mean_vertical_shift_zero"
+    assert abs(result.poses[:, 4].mean()) < 1e-6
     assert result.scan.projections is moved
     assert result.volume.shape == volume.shape
     # Compare after removing only the common object translation gauge.
