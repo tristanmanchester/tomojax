@@ -270,7 +270,7 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
 def _project_phantom(
     geom: Geometry, grid: Grid, det: Detector, vol: jax.Array, beam: ConeBeam | None, n_views: int
 ) -> jax.Array:
-    """Project one device phantom in native (z, y, x) order."""
+    """Release projection workspaces before the caller allocates artefact buffers."""
     # Choose a default mixed-precision gather on accelerators
     gather = default_gather_dtype()
 

@@ -434,19 +434,6 @@ def _laid_out(
     return split.place(projections), *split.everywhere((poses, initial))
 
 
-def _validate_config(cfg: CGLSConfig) -> tuple[int, int]:
-    """Validate iteration and regularization settings before selecting storage."""
-    iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)
-    if iterations < 0 or batch < 1:
-        raise ValueError("cgls: iterations must be nonnegative and views_per_batch positive")
-    for name in ("rtol", "atol", "damping", "gradient_damping"):
-        value = float(getattr(cfg, name))
-        if not math.isfinite(value) or value < 0:
-            raise ValueError(f"cgls: {name} must be finite and nonnegative")
-    validate_model(cfg)
-    return iterations, batch
-
-
 def cgls(
     geometry: Geometry,
     grid: Grid,
@@ -467,7 +454,15 @@ def cgls(
     host diagnostics and is not a differentiable reconstruction layer.
     """
     cfg = CGLSConfig() if config is None else config
-    iterations, batch = _validate_config(cfg)
+    # Validate settings before resolving the backend or selecting storage.
+    iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)
+    if iterations < 0 or batch < 1:
+        raise ValueError("cgls: iterations must be nonnegative and views_per_batch positive")
+    for name in ("rtol", "atol", "damping", "gradient_damping"):
+        value = float(getattr(cfg, name))
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"cgls: {name} must be finite and nonnegative")
+    validate_model(cfg)
     model, backend = resolve_geometry_projector(
         geometry, cfg.projector_model, cfg.backend,
         detector=detector, det_grid=det_grid, context="cgls",

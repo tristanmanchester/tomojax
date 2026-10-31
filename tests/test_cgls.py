@@ -218,19 +218,20 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
 
 
 @pytest.mark.parametrize(
-    "bad_config",
+    ("bad_config", "message"),
     [
-        CGLSConfig(iterations=-1),
-        CGLSConfig(views_per_batch=0),
-        CGLSConfig(rtol=-0.1),
-        CGLSConfig(damping=np.inf),
-        CGLSConfig(atol=np.nan),
-        CGLSConfig(backend="invalid"),
+        (CGLSConfig(iterations=-1), "iterations must be nonnegative"),
+        (CGLSConfig(views_per_batch=0), "views_per_batch positive"),
+        (CGLSConfig(rtol=-0.1), "rtol must be finite and nonnegative"),
+        (CGLSConfig(damping=np.inf), "damping must be finite and nonnegative"),
+        (CGLSConfig(atol=np.nan), "atol must be finite and nonnegative"),
+        (CGLSConfig(backend="invalid"), "backend must be"),
+        (CGLSConfig(iterations=-1, backend="invalid"), "iterations must be nonnegative"),
     ],
 )
-def test_cgls_rejects_invalid_configuration(bad_config):
+def test_cgls_rejects_invalid_configuration(bad_config, message):
     grid, detector, geometry, _ = small_problem()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
         cgls(geometry, grid, detector, jnp.zeros((5, 4, 5)), config=bad_config)
 
 

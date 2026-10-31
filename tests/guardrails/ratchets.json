@@ -57,7 +57,7 @@
     "src/tomojax/core/cuda_projector/_stack_state.py::prepare_forward_project_views_T_cuda_state": 109,
     "src/tomojax/recon/_cgls_jax.py::_solve": 165,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 112,
-    "src/tomojax/recon/_cgls_jax.py::cgls": 101,
+    "src/tomojax/recon/_cgls_jax.py::cgls": 109,
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 108,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 146,
     "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 130,
@@ -78,7 +78,7 @@
     "io": 3633,
     "motion": 143,
     "nuisance": 232,
-    "recon": 13909
+    "recon": 13905
   },
   "cuda_kernels": 46,
   "cuda_switches": 29,
