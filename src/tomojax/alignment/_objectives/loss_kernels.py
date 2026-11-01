@@ -27,12 +27,6 @@ def _loss_huber(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarr
     return jnp.sum(0.5 * quad * quad + delta * (absr - quad))
 
 
-def _required_state_precompute[T](value: T | None, message: str) -> T:
-    if value is None:
-        raise ValueError(message)
-    return value
-
-
 def _compute_otsu_threshold(x: np.ndarray, nbins: int = 256) -> float:
     """Choose a foreground threshold by maximizing between-class variance.
 
@@ -60,7 +54,9 @@ def _compute_otsu_threshold(x: np.ndarray, nbins: int = 256) -> float:
 
 
 def _loss_l2_otsu_soft(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
-    mask = _required_state_precompute(st.mask, "Otsu mask required")
+    mask = st.mask
+    if mask is None:
+        raise ValueError("Otsu mask required")
     temp = _safe_epsilon(st.params, "temp", 0.5)
     base = mask.astype(jnp.float32)
     r = (pred - tar).astype(jnp.float32)
