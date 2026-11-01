@@ -3,11 +3,46 @@
 from dataclasses import dataclass
 from typing import ClassVar
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from tomojax.corrections import Step, correct_frames, corrected_row_source
+
+
+def test_whole_row_workers_preserve_cpu_placement_and_tail(monkeypatch):
+    from tomojax.corrections import _engine  # check-public-imports: allow-private
+
+    def apply(steps, batch):
+        assert batch.device.platform == "cpu"
+        return batch + 1
+
+    monkeypatch.setattr(_engine, "_apply", apply)
+    monkeypatch.setattr(_engine, "_BATCH_BYTES", 8 * 3 * 4 * 2)
+    out = np.zeros((3, 5, 4), np.float32)
+    with jax.default_device(jax.devices("cpu")[0]):
+        _engine._whole_rows(out, PhaseRows())
+    np.testing.assert_array_equal(out, 1)
+
+
+def test_fused_row_workers_read_on_caller_and_preserve_tail(monkeypatch):
+    from threading import get_ident
+
+    from tomojax.corrections import _engine  # check-public-imports: allow-private
+
+    owner = get_ident()
+
+    class SerialCounts(np.ndarray):
+        def __getitem__(self, key):
+            assert get_ident() == owner
+            return super().__getitem__(key)
+
+    raw, t, calibration = inputs()
+    monkeypatch.setattr(_engine, "_BATCH_BYTES", 8 * 5 * 7 * 2)
+    with jax.default_device(jax.devices("cpu")[0]):
+        done = correct_frames(raw.view(SerialCounts), **calibration, steps=(PhaseRows(),))
+    np.testing.assert_allclose(done.projections, -2 * np.log(t), atol=1e-6)
 
 
 @dataclass(frozen=True)
