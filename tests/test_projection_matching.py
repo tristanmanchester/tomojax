@@ -58,6 +58,9 @@ def test_public_matching_recovers_motion_without_resampling_input():
     assert uncertainty["global_coverage_calibrated"] is False
     assert uncertainty["uncertainty_status"] == "local_matching_only"
     assert uncertainty["vertical_gauge"] == "mean_vertical_shift_zero"
+    spread = result.info["initialization"]["horizontal_disagreement"]
+    assert 0 <= spread["p95"] <= spread["max"] and np.isfinite(spread["rms"])
+    assert spread["units"] == "geometry_length"
     assert abs(result.poses[:, 4].mean()) < 1e-6
     assert result.scan.projections is moved
     assert result.volume.shape == volume.shape
