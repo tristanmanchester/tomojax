@@ -80,7 +80,7 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 13948
+    "recon": 13963
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,

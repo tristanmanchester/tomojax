@@ -681,27 +681,25 @@ def _data_term(
     def val_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         if runtime.projector is not None:
             v, g = batched_value_and_grad(z)
-            if regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
-                g = g + jnp.asarray(cfg.tv_weight, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
-            return v, g
-        g, v = grad_data_term(
-            None,
-            grid,
-            detector,
-            projections,
-            z,
-            views_per_batch=cfg.views_per_batch,
-            projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            grad_mode=cfg.grad_mode,
-            T_all=runtime.poses,
-            vol_mask=runtime.volume_mask,
-            det_grid=runtime.detector_grid,
-            ray_integrator=cfg.ray_integrator,
-        )
+        else:
+            g, v = grad_data_term(
+                None,
+                grid,
+                detector,
+                projections,
+                z,
+                views_per_batch=cfg.views_per_batch,
+                projector_unroll=cfg.projector_unroll,
+                checkpoint_projector=cfg.checkpoint_projector,
+                gather_dtype=cfg.gather_dtype,
+                grad_mode=cfg.grad_mode,
+                T_all=runtime.poses,
+                vol_mask=runtime.volume_mask,
+                det_grid=runtime.detector_grid,
+                ray_integrator=cfg.ray_integrator,
+            )
         if regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
-            g = g + jnp.asarray(cfg.tv_weight, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
+            g = huber_tv_grad(z, huber_delta, base=g, scale=cfg.tv_weight)
         return v, g
 
     return val_and_grad_fn

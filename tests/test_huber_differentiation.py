@@ -269,3 +269,49 @@ def test_tiled_huber_gradient_and_derivatives_match_value_oracle(monkeypatch, sh
     expected = jax.jvp(reference, (x,), (v,))[1]
     np.testing.assert_allclose(jvp, expected, rtol=2e-6, atol=2e-6)
     np.testing.assert_allclose(vjp, expected, rtol=2e-6, atol=2e-6)
+
+
+@pytest.mark.parametrize("tile_bytes", [48, 384, 64 << 20])
+@pytest.mark.parametrize("shape", [(7, 3, 2), (2, 7, 3), (2, 3, 7), (1, 7, 1), (5, 5, 3)])
+@pytest.mark.parametrize(
+    ("z_fast", "flat"), [(False, False), (True, False), (False, True), (True, True)]
+)
+def test_huber_gradient_adds_into_a_base_once_with_the_same_bits(
+    monkeypatch, shape, tile_bytes, z_fast, flat
+):
+    # Seven planes in slabs of two: the last slab overlaps its predecessor by one.
+    monkeypatch.setattr("tomojax.recon._tv_ops._HUBER_TILE_BYTES", tile_bytes)
+    rng = np.random.default_rng(98)
+    x, base = (jnp.asarray(rng.normal(size=shape), jnp.float32) for _ in range(2))
+    x = jnp.zeros_like(x) if flat else x
+    scale = jnp.float32(0.3)
+
+    def added(u, b, s):
+        return huber_tv_grad(u, 0.7, z_fast=z_fast, base=b, scale=s)
+
+    def legacy(u, b, s):
+        return b + s * huber_tv_grad(u, 0.7, z_fast=z_fast)
+
+    def reference(u, b, s):
+        return b + s * jax.grad(lambda v: huber_tv_value(v, 0.7, z_fast=z_fast))(u)
+
+    with jax.enable_x64(True):
+        for initial in (None, base):
+            result = jax.jit(added)(x, initial, jnp.float64(0.3))
+            assert result.dtype == x.dtype
+    args = (x, base, scale)
+    actual, expected = (jax.jit(fn)(*args) for fn in (added, legacy))
+    np.testing.assert_array_equal(
+        np.asarray(actual).view(np.uint32), np.asarray(expected).view(np.uint32)
+    )
+    directions = (base, jnp.ones_like(base) * 0.2, jnp.float32(0.13))
+    left, right = (
+        jax.jit(lambda *a, fn=fn: jax.jvp(fn, a, directions)[1])(*args) for fn in (added, reference)
+    )
+    reverse = [
+        jax.jit(lambda *a, fn=fn: jax.vjp(fn, *a)[1](base))(*args) for fn in (added, reference)
+    ]
+    for a, b in [(actual, reference(*args)), (left, right), *zip(*reverse, strict=True)]:
+        assert np.isfinite(np.asarray(a)).all()
+        assert np.isfinite(np.asarray(b)).all()
+        np.testing.assert_allclose(a, b, rtol=3e-6, atol=3e-6)

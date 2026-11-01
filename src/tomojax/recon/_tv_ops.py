@@ -124,30 +124,49 @@ def _huber_tv_grad(u: jnp.ndarray, delta: float, *, z_fast: bool) -> jnp.ndarray
 _HUBER_TILE_BYTES = 64 << 20
 
 
-def huber_tv_grad(u: jnp.ndarray, delta: float, *, z_fast: bool = False) -> jnp.ndarray:
-    """Huber gradient with bounded vector-field scratch and exact derivatives.
+def huber_tv_grad(
+    u: jnp.ndarray,
+    delta: float,
+    *,
+    z_fast: bool = False,
+    base: jnp.ndarray | None = None,
+    scale: float | jnp.ndarray = 1.0,
+) -> jnp.ndarray:
+    """``scale`` times the Huber gradient, added to ``base`` when given.
 
-    Each output uses one neighbour along each axis. Haloed slabs preserve the
-    Neumann boundary and mixed components without storing full gradient fields.
+    Scratch is bounded and derivatives exact: each output uses one neighbour along
+    each axis, and haloed slabs preserve the Neumann boundary and mixed components
+    without storing full gradient fields. A slab's terms are added into ``base`` as
+    it goes, so a solver's data gradient takes the regulariser with no second volume.
     """
+    scale = jnp.asarray(scale, u.dtype)
     if 5 * u.size * u.dtype.itemsize <= _HUBER_TILE_BYTES:
-        return _huber_tv_grad(u, delta, z_fast=z_fast)
+        scaled = scale * _huber_tv_grad(u, delta, z_fast=z_fast)
+        return scaled if base is None else base + scaled
     axis = max(range(3), key=u.shape.__getitem__)
     length = u.shape[axis]
     plane_bytes = u.dtype.itemsize * u.size // length
     core = min(length, max(1, _HUBER_TILE_BYTES // (8 * plane_bytes)))
     width = min(length, core + 2)
+    shape = [1, 1, 1]
+    shape[axis] = core
+    offsets = jnp.arange(core).reshape(shape)
 
     def body(i, out):
         first = jnp.minimum(i * core, length - core)
         start = jnp.clip(first - 1, 0, length - width)
         tile = jax.lax.dynamic_slice_in_dim(u, start, width, axis=axis)
         gradient = _huber_tv_grad(tile, delta, z_fast=z_fast)
-        local = jax.lax.dynamic_slice_in_dim(gradient, first - start, core, axis=axis)
-        # The final short slab may overwrite overlap with the same exact values.
+        local = scale * jax.lax.dynamic_slice_in_dim(gradient, first - start, core, axis=axis)
+        if base is not None:
+            # The final short slab overlaps its predecessor: add only the new planes.
+            old = jax.lax.dynamic_slice_in_dim(out, first, core, axis=axis)
+            local = jnp.where(first + offsets >= i * core, old + local, old)
+        # Without a base, the overlap is overwritten with the same exact values.
         return jax.lax.dynamic_update_slice_in_dim(out, local, first, axis=axis)
 
-    return jax.lax.fori_loop(0, (length + core - 1) // core, body, jnp.zeros_like(u))
+    initial = jnp.zeros_like(u) if base is None else base
+    return jax.lax.fori_loop(0, (length + core - 1) // core, body, initial)
 
 
 def project_tv_duals(
