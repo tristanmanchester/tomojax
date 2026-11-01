@@ -571,6 +571,34 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     assert len(lowered) == 1  # no recompilation, nor dispatch of the oversized update
 
 
+def test_an_update_whose_temporaries_fit_no_single_block_is_not_admitted(monkeypatch):
+    coupled = _coupled_objective
+    # One block: the larger of the largest free chunk and a new region within the limit.
+    stats = dict(bytes_limit=1000, bytes_in_use=100, pool_bytes=700, largest_free_block_bytes=50)
+    device = SimpleNamespace(platform="gpu", memory_stats=lambda: stats)
+    array = SimpleNamespace(devices=lambda: (device,))
+    assert coupled._largest_device_block(array) == 300
+    del stats["pool_bytes"]  # unknown, not zero
+    assert coupled._largest_device_block(array) is None
+    device.memory_stats = lambda: (_ for _ in ()).throw(RuntimeError("no statistics"))
+    assert coupled._largest_device_block(array) is None
+    # Free in total but fragmented: XLA asks for the temporaries as one allocation.
+    monkeypatch.setattr(coupled, "_free_device_memory", lambda _array: 10**12)
+    monkeypatch.setattr(coupled, "_largest_device_block", lambda _array: 0)
+    errors, check = [], coupled._check_device_memory
+
+    def recorded(arrays, spec):
+        try:
+            return check(arrays, spec)
+        except coupled.AlignmentMemoryError as error:
+            errors.append(error)
+            raise
+
+    monkeypatch.setattr(coupled, "_check_device_memory", recorded)
+    coupled.build_coupled_objective(_small_coupled_context())
+    assert errors and all(error.available == 0 < error.needed for error in errors)
+
+
 @pytest.mark.parametrize(
     ("available", "views", "expected"),
     [

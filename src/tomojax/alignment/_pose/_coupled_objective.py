@@ -62,10 +62,8 @@ _MEMORY_MARGIN = 2
 def _free_device_memory(array: jax.Array) -> int | None:
     """Free allocator capacity on the GPU holding ``array``, when queryable.
 
-    The compiled update reports total live storage, not one allocation. A pool's
-    largest free block is not a bound on that total; it can even be zero while
-    a non-preallocating allocator still has capacity to grow. Fragmentation can
-    still cause an actual OOM, handled by the alignment level's normal fallback.
+    This bounds total live storage, separately from the conservative single-block
+    estimate in :func:`_largest_device_block`.
     """
     device = next(iter(array.devices()))
     if device.platform != "gpu":
@@ -75,19 +73,41 @@ def _free_device_memory(array: jax.Array) -> int | None:
     return device_free_memory_bytes(device=device)
 
 
+def _largest_device_block(array: jax.Array) -> int | None:
+    """Conservative single-block capacity of the reported GPU pool, if known.
+
+    Use an existing free chunk or remaining pool growth. This does not account
+    for reclaiming regions, future frees, or allocations before dispatch.
+    Missing pool statistics are unknown, not zero or bytes_reserved.
+    """
+    device = next(iter(array.devices()))
+    if device.platform != "gpu":
+        return None
+    try:
+        stats = device.memory_stats()
+        return max(
+            int(stats["largest_free_block_bytes"]),
+            int(stats["bytes_limit"]) - int(stats["pool_bytes"]),
+        )
+    except (AttributeError, KeyError, TypeError, ValueError, RuntimeError):
+        return None
+
+
 def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable | None:
     """Raise :class:`AlignmentMemoryError` if the update cannot fit on its GPU.
 
     The update keeps about a dozen volume-sized and a few projection-sized
     arrays, plus the cached residual/pose columns and per-pixel weights. Only when
-    that estimate comes within a factor of two of free memory is the update compiled
-    ahead to read XLA's own figure; the compiled update is then returned for
-    use, so it is compiled once. Recheck current free memory at dispatch: an
-    intervening reconstruction can retain another volume after this admission.
+    that estimate comes within a factor of two of free memory, or of the largest
+    block the allocator can hand out, is the update compiled ahead to read XLA's
+    own figures; the compiled update is then returned for use, so it is compiled
+    once. Recheck at dispatch: an intervening reconstruction can retain another
+    volume after this admission.
     """
     available = _free_device_memory(arrays.poses)
     if available is None:
         return None
+    block = _largest_device_block(arrays.poses)
     grid, detector = spec.grid, spec.detector
     n_views = int(arrays.poses.shape[0])
     volume = 4 * grid.nx * grid.ny * grid.nz
@@ -97,7 +117,8 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     sinograms = (
         3 + (1 + len(spec.active_columns) if spec.cache_columns else 0) + (arrays.weights.ndim > 0)
     )
-    if _MEMORY_MARGIN * (13 * volume + sinograms * sinogram) < available:
+    capacity = available if block is None else min(available, block)
+    if _MEMORY_MARGIN * (13 * volume + sinograms * sinogram) < capacity:
         return None
     p = jax.ShapeDtypeStruct((int(arrays.poses.shape[0]), POSE_WIDTH), jnp.float32)
     x = jax.ShapeDtypeStruct(spec.volume_shape, jnp.float32)
@@ -109,13 +130,21 @@ def _check_device_memory(arrays: CoupledArrays, spec: CoupledSpec) -> Callable |
     # A host scan has not occupied device memory yet; include its input
     # transfer as well as XLA's temporaries in the admission decision.
     needed += sum(a.nbytes for a in jax.tree.leaves(arrays) if isinstance(a, np.ndarray))
-    if needed > available:
-        raise AlignmentMemoryError(needed, available)
+    temp = -(-int(analysis.temp_size_in_bytes) // 256) * 256  # as the allocator rounds it
 
-    def checked_update(arrays: CoupledArrays, p: jax.Array, x: jax.Array) -> CoupledLinearResult:
-        available = _free_device_memory(x)
+    def admit(available: int | None, block: int | None) -> None:
+        # CUDA uses one temporary arena; treating the sum as one is conservative
+        # for executables that split their temporaries across multiple heaps.
         if available is not None and needed > available:
             raise AlignmentMemoryError(needed, available)
+        if block is not None and temp > block:
+            raise AlignmentMemoryError(temp, block)
+
+    # Compilation can leave autotuning allocations in the growing pool.
+    admit(_free_device_memory(arrays.poses), _largest_device_block(arrays.poses))
+
+    def checked_update(arrays: CoupledArrays, p: jax.Array, x: jax.Array) -> CoupledLinearResult:
+        admit(_free_device_memory(x), _largest_device_block(x))
         return compiled(arrays, p, x)
 
     return checked_update
