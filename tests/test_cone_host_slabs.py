@@ -298,3 +298,21 @@ def test_cgls_lazy_rows_preserve_views_and_close_on_failure(monkeypatch, tmp_pat
     with pytest.raises(RuntimeError):
         cgls(geometry, GRID, DETECTOR, rows, config=cfg, out=output)
     assert closed == [None] * 4
+
+
+def test_unpenalized_cgls_sinks_do_not_read_unused_volumes(monkeypatch, host):
+    host(4)
+    module = import_module("tomojax.recon._cgls_host")
+
+    def run(solver):
+        solver.keep, solver.zero = False, False
+        solver.gradient()
+        solver.bounded()
+        assert not solver.X._held
+        monkeypatch.setattr(solver.D, "get", lambda *_: pytest.fail("unused direction read"))
+        solver.normal(None)
+        return {}
+
+    monkeypatch.setattr(module._HostCGLS, "run", run)
+    geometry = _geometry("cone")
+    cgls(geometry, GRID, DETECTOR, _data(geometry), config=CGLSConfig(iterations=1))

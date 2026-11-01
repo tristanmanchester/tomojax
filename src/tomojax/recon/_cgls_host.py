@@ -137,6 +137,7 @@ class _HostCGLS:
         self.views = np.arange(problem.data.shape[0])
         self.damp2 = np.float32(cfg.damping) ** 2
         self.smooth2 = np.float32(cfg.gradient_damping) ** 2
+        self.penalized = bool(self.damp2 or self.smooth2)
         self.total = problem.engine.norm2
         self.keep = problem.keep
 
@@ -179,7 +180,9 @@ class _HostCGLS:
         plan, stats = self.plan, {"gamma": 0.0, "gap": 0.0}
 
         def source(k: int) -> tuple[Any, ...]:
-            return () if self.zero else (self.X.get(*plan.planes(k), retain=not self.keep),)
+            if self.zero:
+                return ()
+            return (self.X.get(*plan.planes(k), retain=not self.keep and self.penalized),)
 
         def finish(batch: Batch, first: int, stop: int, rows: tuple[Any, ...]) -> None:
             rows[0][...] = self.problem.measured(batch, first, stop) - rows[0]
@@ -187,7 +190,7 @@ class _HostCGLS:
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
             z0, z1 = plan.planes(k)
             value = accumulated[0][: z1 - z0, :, :]
-            if not self.zero:
+            if not self.zero and self.penalized:
                 sources = sources or (self.X.get(z0, z1),)
             if self.smooth2 and sources:
                 value -= self.smoothing(k, sources[0], self.iterate_plane)
@@ -218,7 +221,8 @@ class _HostCGLS:
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
             z0, z1 = plan.planes(k)
             cancellation = accumulated[0][: z1 - z0, :, :]
-            sources = sources or (self.X.get(z0, z1),)
+            if self.penalized:
+                sources = sources or (self.X.get(z0, z1),)
             if self.smooth2:
                 cancellation += self.smoothing(k, sources[0], self.iterate_plane, absolute=True)
             if self.damp2:
@@ -229,7 +233,7 @@ class _HostCGLS:
             within[0] &= not bool(xp.any(xp.abs(self.G.view(z0, z1)) > cancellation))
 
         def source(k: int) -> tuple[Any, ...]:
-            return (self.X.get(*plan.planes(k), retain=not self.keep),)
+            return (self.X.get(*plan.planes(k), retain=not self.keep and self.penalized),)
 
         self.sweep.run(
             self.views, source=source, finish=finish, sink=sink,
@@ -274,14 +278,16 @@ class _HostCGLS:
             stats["energy"] += self.total(rows[0])
 
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
-            value, direction = accumulated[0], (sources or (self.D.get(*plan.planes(k)),))[0]
-            if self.smooth2:
-                z0, z1 = plan.planes(k)
-                value[: z1 - z0, :, :] += self.smoothing(k, direction, halo)
-                self.edge_energy += self.edges(k, direction, halo)
-            if self.damp2:
-                direction *= self.damp2
-                value += direction
+            value = accumulated[0]
+            if self.penalized:
+                direction = (sources or (self.D.get(*plan.planes(k)),))[0]
+                if self.smooth2:
+                    z0, z1 = plan.planes(k)
+                    value[: z1 - z0, :, :] += self.smoothing(k, direction, halo)
+                    self.edge_energy += self.edges(k, direction, halo)
+                if self.damp2:
+                    direction *= self.damp2
+                    value += direction
             self.W.put(*plan.planes(k), value)
 
         self.sweep.run(
