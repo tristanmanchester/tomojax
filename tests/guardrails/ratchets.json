@@ -38,7 +38,6 @@
     "simulate": 19
   },
   "long_files": {
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 868,
     "src/tomojax/core/cone.py": 830
   },
   "long_functions": {
@@ -110,7 +109,7 @@
   "type_errors": {
     "reportArgumentType": 176,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 82,
+    "reportAttributeAccessIssue": 77,
     "reportCallIssue": 9,
     "reportGeneralTypeIssues": 5,
     "reportIndexIssue": 6,
