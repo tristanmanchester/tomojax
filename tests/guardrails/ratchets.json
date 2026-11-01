@@ -49,7 +49,6 @@
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 160,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 138,
     "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 101,
-    "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 109,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 121,
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
     "src/tomojax/cli/simulate.py::_build_parser": 106,
@@ -68,7 +67,7 @@
   "code_lines": {
     "(modules)": 3326,
     "_data": 2053,
-    "alignment": 16522,
+    "alignment": 16507,
     "backends": 615,
     "cli": 2572,
     "core": 13335,

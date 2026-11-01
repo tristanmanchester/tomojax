@@ -121,34 +121,35 @@ def _run_one_multires_level(
             pose_translation_frame=resume_state.pose_translation_frame,
             ray_integrator=resume_state.ray_integrator,
         )
-    result = _run_multires_level_stages(
-        LevelContext(
-            geometry=geometry,
-            grid=grid,
-            detector=detector,
-            projections=projections,
-            cfg=context.cfg,
-            schedule=context.resolved_schedule,
-            loss=active_loss_spec,
-            active_geometry_dofs=context.active_geometry_dofs,
-            runtime=StageRuntime(
-                level_index=level_index,
-                level_factor=level_factor,
-                global_before_level=level_run.global_before_level,
-                global_elapsed_offset=state.global_elapsed_offset,
-                active_loss_name=active_loss_name,
-                schedule_name=context.resolved_schedule.name,
-                stats_before_level=level_run.stats_before_level,
-                loss_before_level=level_run.loss_before_level,
-                level_stats=level_stats,
-                level_losses=level_losses,
-                prev_factor=state.prev_factor,
-                observer_fn=context.observer_fn,
-                checkpoint_callback=checkpoint_callback,
-            ),
-            start_stage=level_run.resume_stage_index + int(level_run.resume_stage_completed),
-            resume=stage_resume,
+    level_context = LevelContext(
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        cfg=context.cfg,
+        schedule=context.resolved_schedule,
+        loss=active_loss_spec,
+        active_geometry_dofs=context.active_geometry_dofs,
+        runtime=StageRuntime(
+            level_index=level_index,
+            level_factor=level_factor,
+            global_before_level=level_run.global_before_level,
+            global_elapsed_offset=state.global_elapsed_offset,
+            active_loss_name=active_loss_name,
+            schedule_name=context.resolved_schedule.name,
+            stats_before_level=level_run.stats_before_level,
+            loss_before_level=level_run.loss_before_level,
+            level_stats=level_stats,
+            level_losses=level_losses,
+            prev_factor=state.prev_factor,
+            observer_fn=context.observer_fn,
+            checkpoint_callback=checkpoint_callback,
         ),
+        start_stage=level_run.resume_stage_index + int(level_run.resume_stage_completed),
+        resume=stage_resume,
+    )
+    result = _run_multires_level_stages(
+        level_context,
         setup_alignment_state=state.setup_alignment_state,
         x_lvl=x0,
         seed_translations=params0 is None and level_index == 0,
@@ -159,17 +160,7 @@ def _run_one_multires_level(
         final_gauge_fix_dofs=state.final_gauge_fix_dofs,
         final_gauge_fix_stats=state.final_gauge_fix_stats or {},
     )
-    return _finish_level(
-        state=state,
-        context=context,
-        level=level,
-        level_index=level_index,
-        level_run=level_run,
-        result=result,
-        level_stats=level_stats,
-        level_losses=level_losses,
-        checkpoint_callback=checkpoint_callback,
-    )
+    return _finish_level(state, level_context, result)
 
 
 def _run_multires_levels(
