@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import jax.numpy as jnp
-import numpy as np
 
 from tomojax.alignment._config import AlignConfig
 from tomojax.alignment._model.dofs import DOF_INDEX
@@ -69,7 +68,6 @@ class _AlignSetupState:
     frozen_pose_params: jnp.ndarray
     active_mask_tuple: tuple[bool, ...]
     active_mask_bool: jnp.ndarray
-    active_col_indices_np: np.ndarray
     active_names: tuple[str, ...]
     active_mask: jnp.ndarray
     bounds_lower: jnp.ndarray
@@ -174,10 +172,8 @@ class PoseConstraintContext:
 class PoseMotionContext:
     motion_model: Any
     use_smooth_pose_model: bool
-    active_coeff_indices: jnp.ndarray
     pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None
-    constraint_ctx: PoseConstraintContext
 
     @classmethod
     def build(
@@ -202,7 +198,6 @@ class PoseMotionContext:
             degree=int(cfg.degree),
         )
         use_smooth_pose_model = motion_model.name != "per_view"
-        active_coeff_indices = jnp.asarray(motion_model.active_indices, dtype=jnp.int32)
         motion_coeffs = None
         constrained_params = pose_params
         if use_smooth_pose_model:
@@ -226,21 +221,9 @@ class PoseMotionContext:
         return cls(
             motion_model=motion_model,
             use_smooth_pose_model=use_smooth_pose_model,
-            active_coeff_indices=active_coeff_indices,
             pose_params=constrained_params,
             motion_coeffs=motion_coeffs,
-            constraint_ctx=constraint_ctx,
         )
-
-    def coeffs_to_constrained_params(self, coeffs: jnp.ndarray) -> jnp.ndarray:
-        return self.constraint_ctx.apply_full_constraints(
-            expand_motion_coefficients(self.motion_model, coeffs)
-        )
-
-    def project_params_to_smooth(self, candidate: jnp.ndarray) -> jnp.ndarray:
-        constrained = self.constraint_ctx.apply_full_constraints(candidate)
-        coeffs = fit_motion_coefficients(self.motion_model, constrained)
-        return self.coeffs_to_constrained_params(coeffs)
 
 
 @dataclass(frozen=True)
@@ -248,10 +231,6 @@ class AlignmentRuntimeContext:
     pose_stack: jnp.ndarray
     det_grid: tuple[jnp.ndarray, jnp.ndarray]
     smoothness_weights: jnp.ndarray
-    smoothness_weights_sq: jnp.ndarray
-    medium_smoothness_weights_sq: jnp.ndarray
-    trans_only_smoothness_weights_sq: jnp.ndarray
-    light_smoothness_weights_sq: jnp.ndarray
     active_loss_name: str
     loss_adapter: LossAdapter
     loss_mask: jnp.ndarray | None
@@ -259,9 +238,6 @@ class AlignmentRuntimeContext:
     objective_provenance: dict[str, str]
     nv: int
     nu: int
-    chunk_size: int
-    num_chunks: int
-    empty_loss_mask_chunk: jnp.ndarray
     # The views' cone arrangements and lab frames; None for a parallel beam.
     cone: ConeModel | None = None
     frames: jnp.ndarray | None = None
@@ -281,11 +257,8 @@ class _PoseObjectiveContext:
     loss_adapter: LossAdapter
     nv: int
     nu: int
-    chunk_size: int
-    num_chunks: int
     loss_mask: jnp.ndarray | None
     has_loss_mask: bool
-    empty_loss_mask_chunk: jnp.ndarray
     # The views' cone arrangements and lab frames; None for a parallel beam.
     cone: ConeModel | None = None
     frames: jnp.ndarray | None = None
@@ -314,11 +287,8 @@ def _pose_objective_context(
         loss_adapter=runtime.loss_adapter,
         nv=runtime.nv,
         nu=runtime.nu,
-        chunk_size=runtime.chunk_size,
-        num_chunks=runtime.num_chunks,
         loss_mask=runtime.loss_mask,
         has_loss_mask=runtime.has_loss_mask,
-        empty_loss_mask_chunk=runtime.empty_loss_mask_chunk,
         cone=runtime.cone,
         frames=runtime.frames,
     )

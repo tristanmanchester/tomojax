@@ -279,7 +279,6 @@ def _plan_payload(run: _Run, plan: AlignmentPlan, grid: Grid) -> str:
         "output_path": run.out,
         "mode": plan.mode,
         "quality": run.quality,
-        "pose_solver": plan.pose_solver,
         "levels": list(plan.levels),
         "roi": run.roi,
         "grid": grid.to_dict(),

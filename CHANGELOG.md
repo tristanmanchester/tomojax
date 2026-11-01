@@ -7,6 +7,13 @@ Its volume updates are unregularised, retaining positivity and increment damping
 Apply TV or Huber-TV in the final `tj.reconstruct` call instead; reconstruction
 regularisation is unchanged.
 - Joint alignment now uses pose elimination only; remove the redundant `gn_joint_solver` selection.
+Alignment pose stages now always solve volume and poses jointly. The alternate
+fixed-volume GN route, its Huber projection loss, and the `gn_coupling` option
+are removed; smooth trajectories, setup calibration and reconstruction refreshes
+remain. Expert alignment defaults use unregularized volumes and fp32 gathers.
+The fixed-image stationarity test is replaced by joint image/pose recovery
+against independent FP64 cell-split voxel integrals, retaining its pose-error
+and stationarity thresholds and checking the image too.
 
 Automatic unposed laminography now fits a smooth detector-frame trajectory on a
 bounded coarse grid, preserving declared geometry, physical support and native

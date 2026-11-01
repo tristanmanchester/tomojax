@@ -16,7 +16,6 @@ from tomojax.alignment._pose import (
     _coupled_program,
     _coupled_vectors,
     _matching_model,
-    _pose_objective,
     _pose_steps,
 )
 
@@ -55,14 +54,14 @@ def test_joint_coupling_selects_the_solver_for_every_pose_stage():
     # check-public-imports: allow-private
     from tomojax.alignment._config import _resolved_schedule_for_cfg
 
-    implicit = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint"))
-    named = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint", schedule="lightning_pose"))
-    alternating = _resolved_schedule_for_cfg(AlignConfig(schedule="tortoise_pose"))
+    implicit = _resolved_schedule_for_cfg(AlignConfig())
+    named = _resolved_schedule_for_cfg(AlignConfig(schedule="lightning_pose"))
+    tortoise = _resolved_schedule_for_cfg(AlignConfig(schedule="tortoise_pose"))
     assert implicit.stages[0].objective_kind == "joint_volume_pose"
     assert {stage.objective_kind for stage in named.stages} == {"joint_volume_pose"}
-    assert alternating.stages[0].objective_kind == "fixed_volume"
+    assert tortoise.stages[0].objective_kind == "joint_volume_pose"
     # Setup stages keep their own objectives.
-    cor = _resolved_schedule_for_cfg(AlignConfig(gn_coupling="joint", schedule="setup_safe"))
+    cor = _resolved_schedule_for_cfg(AlignConfig(schedule="setup_safe"))
     assert cor.stages[0].objective_kind != "joint_volume_pose"
 
 
@@ -77,7 +76,6 @@ def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch):
     geometry = tj.LaminographyGeometry(grid, detector, [13, 47, 103], tilt_deg=23)
     x = jnp.asarray(np.random.default_rng(9).uniform(0.2, 1.0, (5, 3, 4)), jnp.float32)
     cfg = AlignConfig(
-        gn_coupling="joint",
         ray_integrator="joseph",
         gather_dtype="fp32",
     )
@@ -125,7 +123,6 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
     projections = jnp.asarray(tj.project(geometry, truth), jnp.float32)
     p = jnp.zeros((3, 6), jnp.float32)
     cfg = AlignConfig(
-        gn_coupling="joint",
         gn_joint_iterations=3,
         gn_damping=0.2,
         gn_volume_damping=0.2,
@@ -219,7 +216,6 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     target = jnp.asarray(target, jnp.float32)
     active = np.array([1 - scan_variant, scan_variant, 1, 1, 0, 0], np.float32)
     cfg = AlignConfig(
-        gn_coupling="joint",
         gn_joint_iterations=100,
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
@@ -430,7 +426,6 @@ def _joint_constraints_and_resume(integrator):
         stack_view_poses(geometry, 3),
     )
     cfg = AlignConfig(
-        gn_coupling="joint",
         gn_jacobian="central",
         gather_dtype="fp32",
         ray_integrator=integrator,
@@ -490,7 +485,7 @@ def _small_coupled_context(**settings):
     grid, det = Grid(4, 4, 4, 1.0, 1.0, 1.0), Detector(5, 4, 1.0, 1.0)
     geometry = ParallelGeometry(grid, det, [0.0, 60.0, 120.0])
     projections = jnp.asarray(np.random.default_rng(3).uniform(0, 1, (3, 4, 5)), jnp.float32)
-    cfg = AlignConfig(gn_coupling="joint", gather_dtype="fp32", backend="jax")
+    cfg = AlignConfig(gather_dtype="fp32", backend="jax")
     # Compare placements after an accurate solve, rather than at the loose default CG stop.
     cfg = replace(cfg, gn_damping=0.2, gn_volume_damping=0.2, gn_joint_rtol=1e-6, **settings)
     common = dict(
@@ -745,7 +740,6 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     measured = project(volume, poses) + rng.normal(0, 0.03, (3, 3, 7))
     cfg = AlignConfig(
         loss=L2LossSpec(),
-        gn_coupling="joint",
         gn_joint_iterations=100,
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
@@ -831,7 +825,6 @@ def test_staged_update_matches_device_model(monkeypatch, smooth, integrator, non
     )
     cfg = AlignConfig(
         nonnegative=nonnegative,
-        gn_coupling="joint",
         ray_integrator=integrator,
         backend="cuda" if jax.default_backend() == "gpu" else "jax",
         gather_dtype="fp32",
@@ -1055,49 +1048,6 @@ def test_joint_ramp_preconditioner_filters_xy_not_z(placement):
         volume_ramp=0.01,
     )
     np.testing.assert_allclose(result.increment[0], expected, rtol=2e-5, atol=1e-6)
-
-
-@pytest.mark.parametrize("kind", ["l2", "l2_otsu", "huber"])
-def test_fixed_volume_gn_uses_true_loss_and_two_sided_irls(kind):
-    # check-public-imports: allow-private
-    from tomojax.alignment._objectives.loss_adapters import build_loss_adapter
-
-    # check-public-imports: allow-private
-    from tomojax.alignment._objectives.loss_specs import parse_loss_spec
-
-    residual = np.array([-4.0, -0.2, 0.0, 0.4, 3.0], np.float32)
-    columns = np.random.default_rng(1348).normal(size=(6, 5)).astype(np.float32)
-    adapter = build_loss_adapter(parse_loss_spec(kind), jnp.zeros((1, 1, 5)))
-    system, rhs, value = _pose_objective.gn_view_system(
-        jnp.asarray(residual),
-        jnp.asarray(columns),
-        adapter=adapter,
-        active=jnp.ones(6),
-        damping=0.2,
-    )
-    weight = np.minimum(1, 1 / np.maximum(1, np.abs(residual))) if kind == "huber" else 1
-    expected_value = (
-        np.where(np.abs(residual) <= 1, 0.5 * residual**2, np.abs(residual) - 0.5).sum()
-        if kind == "huber"
-        else 0.5 * np.sum(residual**2)
-    )
-    np.testing.assert_allclose(system, (columns * weight) @ columns.T + 0.2 * np.eye(6), atol=2e-6)
-    np.testing.assert_allclose(rhs, -columns @ (weight * residual), atol=2e-6)
-    assert float(value) == pytest.approx(expected_value)
-    # The robust model gradient must equal the actual per-view objective gradient.
-    if kind == "huber":
-        gradient = jax.grad(
-            lambda r: adapter.per_view_loss(r[None, None], jnp.zeros((1, 1, 5)), None).sum()
-        )
-        np.testing.assert_allclose(gradient(jnp.asarray(residual)), weight * residual, atol=1e-6)
-
-
-def test_joint_gn_rejects_huber_with_fixed_volume_remedy():
-    from tomojax.alignment.api import HuberLossSpec
-
-    ctx = SimpleNamespace(cfg=None, loss_adapter=SimpleNamespace(spec=HuberLossSpec()))
-    with pytest.raises(ValueError, match="fixed_volume"):
-        _coupled_objective.build_coupled_objective(ctx)
 
 
 @pytest.mark.parametrize("placement", [_coupled_vectors.HOST, _coupled_vectors.DEVICE])

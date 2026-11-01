@@ -628,8 +628,7 @@ def test_align_cli_config_settings_replace_fields_of_the_modes_configuration(
     assert call["factors"] == [1]
     assert (cfg.optimise_dofs, cfg.schedule, cfg.outer_iterations) == (("det_u_px",), None, 3)
     # The rest is pose mode's configuration.
-    assert (cfg.gn_coupling, cfg.ray_integrator, cfg.pose_translation_frame) == (
-        "joint",
+    assert (cfg.ray_integrator, cfg.pose_translation_frame) == (
         "joseph",
         "detector",
     )
@@ -671,7 +670,6 @@ def test_align_cli_cor_then_pose_saves_the_detector_centre_and_motion(
     assert call["factors"] == [1]
     assert config.schedule == "cor_then_pose"
     assert config.pose_translation_frame == "detector"
-    assert config.gn_coupling == "joint"
     saved = load_dataset(aligned)
     assert saved.detector.center[0] == pytest.approx(offset_px * du, abs=1e-6)
     assert saved.align_gauge["pose_translation_frame"] == "detector"
@@ -742,7 +740,7 @@ def test_align_cli_dry_run_reports_the_effective_public_plan(
     aligned = tmp_path / "aligned.nxs"
     config = tmp_path / "align.toml"
     write_projection_dataset(scan)
-    _ = config.write_text('loss = "4:huber,2:l2,1:l2_otsu"\nbackend = "cuda"\n', encoding="utf-8")
+    _ = config.write_text('loss = "4:l2_otsu,2:l2,1:l2_otsu"\nbackend = "cuda"\n', encoding="utf-8")
     args = ["align", str(scan), "-o", str(aligned), "--mode", "full", "--quality", quality]
     assert main([*args, "--roi", "off", "--config", str(config), "--dry-run"]) == 0
 
@@ -752,7 +750,7 @@ def test_align_cli_dry_run_reports_the_effective_public_plan(
     assert payload["output_path"] == str(aligned)
     assert payload["config"]["quality"] == quality
     assert payload["config"]["backend"] == "cuda"
-    assert "HuberLossSpec" in payload["loss"]
+    assert "L2OtsuLossSpec" in payload["loss"]
     stages = payload["schedule"]["stages"]
     assert [stage["stage_name"] for stage in stages][:2] == ["setup", "pose_polish"]
     assert not aligned.exists()
@@ -783,7 +781,6 @@ def test_align_cli_pose_mode_defaults_to_the_coupled_solver(
 ) -> None:
     plan = _pose_plan(tmp_path, capsys, geometry_type=geometry_type)
     config = plan["config"]
-    assert plan["pose_solver"] == "coupled"
     assert plan["loss"] == "L2LossSpec()"
     assert (config["ray_integrator"], config["gather_dtype"]) == (
         "joseph",
@@ -795,13 +792,13 @@ def test_align_cli_pose_mode_defaults_to_the_coupled_solver(
     assert {stage["objective_kind"] for stage in stages} == {"joint_volume_pose"}
 
 
-def test_align_cli_settings_select_the_alternating_pose_solver(
+def test_align_cli_settings_select_weighted_joint_pose_loss(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    plan = _pose_plan(tmp_path, capsys, 'gn_coupling = "fixed_volume"\nloss = "l2_otsu"\n')
+    plan = _pose_plan(tmp_path, capsys, 'loss = "l2_otsu"\n')
     assert plan["loss"] == "L2OtsuLossSpec(temp=0.5)"
     stages = plan["schedule"]["stages"]
-    assert {stage["objective_kind"] for stage in stages} == {"fixed_volume"}
+    assert {stage["objective_kind"] for stage in stages} == {"joint_volume_pose"}
 
 
 @pytest.mark.parametrize("model", ["spline", "polynomial"])
@@ -810,7 +807,6 @@ def test_align_cli_selects_smooth_coupled_solver(
 ) -> None:
     plan = _pose_plan(tmp_path, capsys, f'pose_model = "{model}"\n')
     assert plan["config"]["pose_model"] == model
-    assert plan["config"]["gn_coupling"] == "joint"
 
 
 @pytest.mark.parametrize("command", ["align", "recon"])

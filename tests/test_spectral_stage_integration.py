@@ -34,7 +34,6 @@ def _fixture():
         schedule=schedule,
         pose_translation_frame="detector",
         seed_translations=True,
-        gn_coupling="joint",
         iterations=1,
         outer_iterations=1,
         backend="jax",

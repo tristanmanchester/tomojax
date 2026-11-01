@@ -226,13 +226,14 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
     poses[:, 2, 3] += truth[:, 4]
     data = jax.vmap(lambda t: forward_project_view_T(t, grid, detector, volume))(jnp.asarray(poses))
     saved = []
+    initial_params = jnp.asarray(np.pad(truth, ((0, 0), (0, 1))))
     cfg = AlignConfig(
         pose_translation_frame="detector",
         backend=backend,
         optimise_dofs=("dx", "dz") if motion == "translation" else None,
         outer_iterations=8,
         iterations=1,
-        # This is a fixed-volume API/derivative regression, not joint-recovery evidence.
+        # Preserve a known fixed point to test frame/checkpoint transport, not recovery.
         lipschitz=1e12,
         loss=L2LossSpec(),
         early_stop=False,
@@ -241,7 +242,7 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
     )
     if multires:
         initial = AlignMultiresResumeState(
-            volume, jnp.zeros((3, 6)), pose_translation_frame="detector"
+            volume, initial_params, pose_translation_frame="detector"
         )
         _, params, info = align_multires(
             geometry,
@@ -261,6 +262,7 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
             data,
             config=cfg,
             init_x=volume,
+            init_pose_params=initial_params,
             checkpoint_callback=saved.append,
         )
     # Alignment reports the least-motion estimate of the truth.
@@ -872,7 +874,7 @@ def _cone_proposal_config(backend, *, dof="dx"):
             AlignmentStage(
                 "pose",
                 (dof,),
-                "fixed_volume",
+                "joint_volume_pose",
                 "gn",
                 stage_role="proposal",
                 differentiability="performance_only",

@@ -69,14 +69,11 @@ class AlignmentPlan:
         Resolved solver configuration.
     levels : tuple of int
         Coarse-to-fine resolution factors.
-    pose_solver : {"coupled", "alternating"}
-        Joint volume/pose updates or alternating fixed-volume pose updates.
     """
 
     mode: AlignmentMode
     config: AlignConfig
     levels: tuple[int, ...]
-    pose_solver: Literal["coupled", "alternating"]
 
 
 def coupled_levels(grid: Grid) -> tuple[int, ...]:
@@ -162,10 +159,8 @@ def alignment_plan(
     frozen = tuple(dict.fromkeys((*(cfg.freeze or ()), *freeze)))
     if frozen:
         cfg = replace(cfg, freeze=frozen)
-    pose_solver: Literal["coupled", "alternating"] = (
-        "coupled" if name in {"pose", "cor-then-pose"} else "alternating"
-    )
-    if pose_solver == "coupled" and not expert:
+    pose_mode = name in {"pose", "cor-then-pose"}
+    if pose_mode and not expert:
         cfg = replace(
             cfg,
             gn_joint_iterations=(
@@ -180,11 +175,11 @@ def alignment_plan(
         run_levels = tuple(int(f) for f in levels)
     elif name == "full":
         run_levels = (4, 2, 1)
-    elif pose_solver == "coupled":
+    elif pose_mode:
         run_levels = coupled_levels(grid)
     else:
         run_levels = (1,)
-    return AlignmentPlan(mode=name, config=cfg, levels=run_levels, pose_solver=pose_solver)
+    return AlignmentPlan(mode=name, config=cfg, levels=run_levels)
 
 
 def pose_stages_only(config: AlignConfig) -> AlignConfig | None:

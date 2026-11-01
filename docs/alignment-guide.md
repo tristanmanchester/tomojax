@@ -195,12 +195,8 @@ geometry is calibrated.
 
 Known failure modes:
 
-- Abrupt jumps may need jump-aware pose handling, and short bursts of bad views
-  a robust loss. Fixed-volume GN supports `HuberLossSpec(delta=...)` (or TOML
-  `loss = "huber"`): choose the threshold in projection units for the noise
-  scale. It bounds individual residual influence, but is not a remedy for
-  large motion or a whole incorrectly modelled view. Joint GN supports only
-  L2 and soft-Otsu-weighted L2.
+- Abrupt jumps and short bursts of badly modelled views remain difficult;
+  alignment supports L2 and soft-Otsu-weighted L2, not a robust projection loss.
 - A per-view shift with a nonzero mean over the scan cannot be told apart from
   a detector-centre offset; `cor-then-pose` assigns it to the offset.
 - Detector-v or sample-elevation reference shifts are physically ambiguous and
@@ -231,11 +227,6 @@ the current shifts removed, reproject, and move each view to its
 cross-correlation peak, searching up to a quarter of the detector. Local
 solvers alone converge only from shifts of a few pixels.
 
-The setting `gn_coupling = "fixed_volume"` restores the older scheme that
-refines poses against a reconstruction held fixed between volume updates. It
-accepts Huber loss and smooth pose models, but on the free-voxel
-pilot it left rotation errors of 0.1–1° that the coupled solver removes.
-
 ### Smooth pose models
 
 The default pose model is `per_view`, which optimises an independent pose for
@@ -244,7 +235,6 @@ smoothly over the scan. The joint solver fits its trajectory coefficients
 together with the image. For example, put these settings in `spline.toml`:
 
 ```toml
-gn_coupling = "joint"
 pose_model = "spline"
 knot_spacing = 128
 pose_translation_frame = "detector"

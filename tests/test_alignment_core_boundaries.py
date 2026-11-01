@@ -135,15 +135,15 @@ def test_reconstruction_quality_policy_scales_iteration_budget() -> None:
 
 
 def test_loss_specs_round_trip_params_and_scheduled_levels() -> None:
-    huber = parse_loss_spec("huber", {"delta": 2.5})
+    weighted = parse_loss_spec("l2_otsu", {"temp": 2.5})
 
-    assert loss_spec_name(huber) == "huber"
-    assert loss_spec_params(huber) == {"delta": 2.5}
+    assert loss_spec_name(weighted) == "l2_otsu"
+    assert loss_spec_params(weighted) == {"temp": 2.5}
 
-    schedule = parse_loss_schedule("4:huber,2:l2,1:l2_otsu", default=L2LossSpec())
+    schedule = parse_loss_schedule("4:l2_otsu,2:l2,1:l2_otsu", default=L2LossSpec())
     validate_loss_schedule_levels(schedule, factors=(1, 2, 4))
 
-    assert loss_spec_name(resolve_loss_for_level(schedule, 4)) == "huber"
+    assert loss_spec_name(resolve_loss_for_level(schedule, 4)) == "l2_otsu"
     assert loss_spec_name(resolve_loss_for_level(schedule, 2)) == "l2"
     assert isinstance(resolve_loss_for_level(schedule, 1), L2OtsuLossSpec)
     assert isinstance(resolve_loss_for_level(schedule, 8), L2LossSpec)
@@ -321,7 +321,7 @@ def test_stage_runtime_checkpoint_preserves_schedule_resume_fields() -> None:
     assert checkpoint.geometry_calibration_state is not None
 
 
-@pytest.mark.parametrize("kind", ["pwls", "ssim", "phasecorr", "mi", "cauchy"])
+@pytest.mark.parametrize("kind", ["pwls", "ssim", "phasecorr", "mi", "cauchy", "huber"])
 def test_removed_losses_fail_with_supported_alternatives(kind):
-    with pytest.raises(ValueError, match="removed.*l2.*l2_otsu.*huber"):
+    with pytest.raises(ValueError, match="removed.*l2.*l2_otsu"):
         parse_loss_spec(kind)

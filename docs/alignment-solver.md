@@ -9,10 +9,9 @@ mode selection, and interpreting recovered parameters, start with the
 `tj.align` and `tomojax align` in `pose` and `cor-then-pose` modes start from
 `coupled_pose_config()`: the joint coupling with
 pose elimination, Joseph plane sampling
-(`ray_integrator="joseph"`) and fp32 gathers. `cor` and `full` keep the
-fixed-volume coupling, also with Joseph sampling. `--dry-run` prints the full
-set for a mode. A bare `AlignConfig()` keeps the older alternating defaults,
-which the statements of defaults below describe.
+(`ray_integrator="joseph"`) and fp32 gathers. Setup modes keep their calibration
+stages, followed by joint pose stages where requested. `--dry-run` prints the
+full configuration for a mode; `AlignConfig()` exposes expert budgets.
 
 The opt-in `spectral_setup` schedule (or a setup stage with
 `objective_kind="projection_consistency", optimizer="spectral"`) initializes
@@ -57,15 +56,11 @@ Small rigid-transform products and Gauss–Newton normal equations explicitly
 request full FP32 multiplication precision. This prevents reduced global JAX
 matrix-multiply settings from quantising small pose updates on CUDA.
 
-The `gn_coupling="joint"` option, which `tj.align` uses in `pose` and
-`cor-then-pose` modes, is for least-squares alignment. It solves a damped linearised volume-and-pose
-problem after each reconstruction refresh, then accepts the updated pair only
-after scoring its constrained nonlinear objective. This addresses slow
-alternation when free voxels can compensate for pose errors. `AlignConfig()`
-keeps `gn_coupling="fixed_volume"`. In `align_multires`, the implicit schedule
-uses a `joint_volume_pose` stage when this option is enabled. Explicitly
-fixed-volume schedule stages continue to keep the volume fixed; a custom joint
-stage must declare `objective_kind="joint_volume_pose"` and `optimizer="gn"`.
+Alignment solves a damped linearised volume-and-pose least-squares problem
+after each reconstruction refresh, then accepts the updated pair only after
+scoring its constrained nonlinear objective. Pose stages use
+`objective_kind="joint_volume_pose"` and `optimizer="gn"`; setup stages keep
+their own calibration objectives.
 
 Joint GN requires `gather_dtype="fp32"`. It supports sampled and exact integration, active/frozen
 pose parameters, pose bounds, volume masks, nonnegative voxels, pose smoothness,
