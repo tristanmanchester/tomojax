@@ -1,3 +1,5 @@
+from itertools import pairwise
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -50,14 +52,16 @@ def test_response_inverse_including_negative_attenuation(beta: float) -> None:
 
 
 def test_feasible_negative_response_is_unchanged() -> None:
-    slope = jnp.array([-2.0, -0.9, -0.5, -0.1])
+    slope = jnp.array([-100.0, -2.0, -0.9, -0.5, -0.1, -0.001])
     truth = jnp.log(-2 * slope) + jnp.linspace(0.1, 4.0, 101)[:, None]
-    alpha = jnp.array([0.0, 0.2, -0.1, 0.0])
+    alpha = jnp.array([0.0, 0.2, -0.1, 0.0, 0.1, 0.0])
     observed = truth + alpha - slope * jnp.expm1(-truth)
     fitted_alpha, fitted_slope = _feasible_response(observed, truth, alpha, slope)
     np.testing.assert_array_equal(fitted_alpha, alpha)
     np.testing.assert_array_equal(fitted_slope, slope)
-    np.testing.assert_allclose(_invert(observed, alpha, slope), truth, atol=2e-6)
+    # Forward float32 rounding grows with the response offset; inverse slope is at most two.
+    error = np.max(np.abs(np.asarray(_invert(observed, alpha, slope) - truth)), axis=0)
+    np.testing.assert_array_less(error, 2e-6 + 2 * np.finfo(np.float32).eps * np.abs(slope))
 
 
 def test_regularised_response_is_refit_before_inversion() -> None:
@@ -85,3 +89,25 @@ def test_feasibility_boundary_refit_is_continuous() -> None:
     assert float(jnp.abs(a - alpha).max() + jnp.abs(b - slope).max()) < 1e-3
     p = _invert(q, a, b)
     np.testing.assert_allclose(p + a - b * jnp.expm1(-p), q, atol=5e-7)
+
+
+def test_parity_scales_match_scalar_reference():
+    profile = np.random.default_rng(4827).normal(0, 0.02, 128).astype(np.float32)
+    even, odd = (profile + profile[::-1]) / 2, (profile - profile[::-1]) / 2
+    edges, counts, filters, weights, log_df, log_critical = _plan(128)
+    power = 2 * abs(np.fft.rfft(odd)) ** 2 / 128
+    power[-1] *= 0.5
+    spectra = np.array([power[a:b].mean() for a, b in pairwise(edges)])
+    expected = odd.astype(np.float64)
+    for filt, weight in zip(filters, weights, strict=True):
+        coefficient = np.fft.irfft(np.fft.rfft(even) * filt, n=128)
+        terms = weight * spectra[:, None]
+        variance = terms.sum(0)
+        degrees = np.clip(variance**2 / (terms**2 / counts[:, None]).sum(0), 1, 128 // 2 + 1)
+        scale = np.exp(np.interp(np.log(degrees), log_df, log_critical))
+        expected += np.minimum(scale * variance / coefficient**2, 1) * coefficient
+    np.testing.assert_allclose(
+        regularize(jnp.asarray(profile), 63.5, "significance"),
+        expected,
+        atol=4 * np.finfo(np.float32).eps * np.max(np.abs(profile)),
+    )
