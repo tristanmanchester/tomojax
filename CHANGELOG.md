@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Alignment no longer accepts `tv_weight`, `regulariser` or `huber_delta`.
+Its volume updates are unregularised, retaining positivity and increment damping.
+Apply TV or Huber-TV in the final `tj.reconstruct` call instead; reconstruction
+regularisation is unchanged.
+
 Automatic unposed laminography now fits a smooth detector-frame trajectory on a
 bounded coarse grid, preserving declared geometry, physical support and native
 projections. It no longer guesses the axis, infers support, selects per-view

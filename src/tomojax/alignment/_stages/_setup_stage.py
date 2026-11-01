@@ -513,7 +513,7 @@ def _optimize_setup_geometry_bilevel_for_level(
             "outer_loss_source": "AlignmentLossSpec",
             "outer_loss_kind": str(loss_name),
             "inner_data_term": "l2_projection",
-            "inner_regulariser": str(fold_recon_cfg.regulariser),
+            "inner_regulariser": "none",
             "validation_split": "interleaved_kfold",
             "differentiation_mode": "none",
             "initialization_policy": "current_level_volume" if init_x is not None else "zeros",

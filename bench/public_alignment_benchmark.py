@@ -347,7 +347,6 @@ def one_run(
         gn_jacobian=gn_jacobian,
         outer_iterations=OUTERS,
         iterations=INNER_ITERS,
-        tv_weight=0,
         loss=L2LossSpec(),
         early_stop=False,
         views_per_batch=views_per_batch,

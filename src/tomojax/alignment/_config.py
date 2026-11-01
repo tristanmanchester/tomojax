@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from tomojax.core.backend_policy import ProjectorBackendInput
-    from tomojax.recon.types import Regulariser
 
     from ._model.dofs import DofBounds
     from ._objectives.loss_specs import AlignmentLossConfig
@@ -130,12 +129,6 @@ class AlignConfig:
         Maximum number of outer alignment/reconstruction iterations. Default is 5.
     iterations : int, optional
         Inner reconstruction iterations per outer iteration. Default is 10.
-    tv_weight : float, optional
-        Nonnegative volume regularization weight. Default is 0.005.
-    regulariser : Regulariser, optional
-        Volume regularization model, "tv" or "huber_tv". Default is 'huber_tv'.
-    huber_delta : float, optional
-        Positive transition scale for Huber-TV. Default is 0.01.
     reconstruction : Reconstruction, optional
         Inner reconstruction method, "fista" or "spdhg". Default is 'fista'.
     nonnegative : bool, optional
@@ -238,9 +231,6 @@ class AlignConfig:
     quality: QualityTier = "fast"
     outer_iterations: int = 5
     iterations: int = 10
-    tv_weight: float = 0.005
-    regulariser: Regulariser = "huber_tv"
-    huber_delta: float = 1e-2
     reconstruction: Reconstruction = "fista"
     nonnegative: bool = True
     seed: int = 0
@@ -300,8 +290,6 @@ class AlignConfig:
         self._normalize_dof_options()
         self._normalize_gauge_options()
         self._normalize_pose_model_options()
-        if self.gn_coupling == "joint" and self.tv_weight != 0 and self.regulariser != "huber_tv":
-            raise ValueError("joint GN supports Huber-TV or zero volume regularisation")
 
     def _normalize_reconstruction_options(self) -> None:
         if self.reconstruction not in {"fista", "spdhg"}:
@@ -388,7 +376,6 @@ def coupled_pose_defaults() -> dict[str, object]:
         "ray_integrator": "joseph",
         "gather_dtype": "fp32",
         "loss": L2LossSpec(),
-        "tv_weight": 0.0,
         "outer_iterations": 30,
         "seed_translations": True,
     }

@@ -17,9 +17,6 @@ from tomojax.alignment._geometry.geometry_blocks import _theta_span_from_geometr
 
 # check-public-imports: allow-private
 from tomojax.alignment._model.state import SetupGeometryState
-
-# check-public-imports: allow-private
-from tomojax.alignment._stages._reconstruction_stage import _is_oom_error_message
 from tomojax.alignment.api import AlignConfig, AlignmentSchedule, AlignmentStage
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import fista_tv
@@ -63,19 +60,6 @@ def test_theta_span_uses_sampled_geometric_coverage() -> None:
     )
 
     assert _theta_span_from_geometry(geometry) == pytest.approx(247.5)
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "RESOURCE_EXHAUSTED: allocator failed",
-        "resource_exhausted: allocator failed",
-        "out of memory while allocating buffer",
-        "Allocator could not reserve memory",
-    ],
-)
-def test_alignment_reconstruction_oom_detection_is_case_insensitive(message: str) -> None:
-    assert _is_oom_error_message(message)
 
 
 def _analytic_shifted_sinogram(angles, columns):
@@ -207,9 +191,7 @@ def test_sinogram_real_spectrum_metric_matches_the_full_spectrum(columns):
     np.testing.assert_allclose(init._vo_metrics(sino, offsets, 0.5, 3), expected, rtol=2e-6)
 
 
-_COR_CONFIG = AlignConfig(
-    outer_iterations=1, iterations=1, tv_weight=0, ray_integrator="joseph", backend="jax"
-)
+_COR_CONFIG = AlignConfig(outer_iterations=1, iterations=1, ray_integrator="joseph", backend="jax")
 
 
 @pytest.mark.numerical

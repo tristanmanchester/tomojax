@@ -130,7 +130,7 @@ def test_coupled_pose_config_matches_the_cli_pose_solver() -> None:
         "joseph",
     )
     assert isinstance(cfg.loss, L2LossSpec)
-    assert (cfg.tv_weight, cfg.gather_dtype, cfg.outer_iterations) == (0.0, "fp32", 7)
+    assert (cfg.gather_dtype, cfg.outer_iterations) == ("fp32", 7)
 
 
 @pytest.mark.parametrize("copy", [False, True])
@@ -138,7 +138,6 @@ def test_reference_quality_preserves_explicit_expert_settings(copy: bool) -> Non
     values = dict(
         backend="cuda",
         gather_dtype="auto",
-        regulariser="huber_tv",
         reconstruction="spdhg",
         views_per_batch=3,
         checkpoint_projector=False,
@@ -213,3 +212,9 @@ def test_automatic_alignment_keeps_the_explicit_devices(monkeypatch, mode):
     with pytest.raises(Reached):
         tj.align(scan.with_poses(np.zeros((12, 6), np.float32)), mode=mode, devices=cpu)
     assert seen == [(cpu,)]
+
+
+@pytest.mark.parametrize("removed", ["tv_weight", "regulariser", "huber_delta"])
+def test_alignment_has_no_volume_regularization_options(removed):
+    with pytest.raises(TypeError, match=removed):
+        AlignConfig(**{removed: 0})

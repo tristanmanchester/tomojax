@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     from tomojax.core.backend_policy import ProjectorBackend
-    from tomojax.recon.types import Regulariser
 
 
 type QualityTier = Literal["fast", "reference"]
@@ -24,8 +23,6 @@ class AlignmentProfilePolicy:
         Projector implementation, "jax" or "cuda".
     gather_dtype : str
         Precision used for projection gathers.
-    regulariser : Regulariser
-        Volume regularizer, "tv" or "huber_tv".
     reconstruction : str
         Inner reconstruction method, "fista" or "spdhg".
     views_per_batch : int
@@ -39,7 +36,6 @@ class AlignmentProfilePolicy:
     quality: QualityTier
     backend: ProjectorBackend
     gather_dtype: str
-    regulariser: Regulariser
     reconstruction: str
     views_per_batch: int
     checkpoint_projector: bool
@@ -70,7 +66,6 @@ def alignment_profile_policy(quality: QualityTier) -> AlignmentProfilePolicy:
             quality="reference",
             backend="jax",
             gather_dtype="fp32",
-            regulariser="tv",
             reconstruction="fista",
             views_per_batch=0,
             checkpoint_projector=True,
@@ -80,7 +75,6 @@ def alignment_profile_policy(quality: QualityTier) -> AlignmentProfilePolicy:
         quality="fast",
         backend="cuda",
         gather_dtype="auto",
-        regulariser="huber_tv",
         reconstruction="fista",
         views_per_batch=0,
         checkpoint_projector=True,
@@ -110,7 +104,6 @@ def profile_policy_from_config(cfg: object) -> AlignmentProfilePolicy:
         quality=normalize_quality(getattr(cfg, "quality", "fast")),
         backend=cast("ProjectorBackend", getattr(cfg, "backend", "jax")),
         gather_dtype=str(getattr(cfg, "gather_dtype", "fp32")),
-        regulariser=cast("Regulariser", getattr(cfg, "regulariser", "tv")),
         reconstruction=str(getattr(cfg, "reconstruction", "fista")),
         views_per_batch=int(getattr(cfg, "views_per_batch", 0)),
         checkpoint_projector=bool(getattr(cfg, "checkpoint_projector", True)),

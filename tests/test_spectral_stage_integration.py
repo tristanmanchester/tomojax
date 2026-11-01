@@ -37,7 +37,6 @@ def _fixture():
         gn_coupling="joint",
         iterations=1,
         outer_iterations=1,
-        tv_weight=0,
         backend="jax",
     )
     return scan, cfg, basis, truth

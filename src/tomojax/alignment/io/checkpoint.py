@@ -24,7 +24,7 @@ from tomojax.io.api import normalize_json as _normalize_json
 
 CHECKPOINT_KIND = "tomojax.alignment.checkpoint"
 # 2: pose tables are stored as "pose_params".
-# 3: settings and progress use the solver vocabulary (iterations, tv_weight,
+# 3: settings and progress use the solver vocabulary (iterations,
 #    lipschitz, outer_iterations, ...).
 # 4: a run is identified by its mode, configuration, levels, grid and a
 #    fingerprint of its projections and geometry; the command line's

@@ -31,7 +31,7 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.operator_norm import estimate_normal_norm
 from tomojax.core.projector import get_detector_grid_device
 from tomojax.core.volume_layout import transpose_volume
-from tomojax.recon.fista_tv import fista_tv, huber_tv_lipschitz
+from tomojax.recon.fista_tv import fista_tv
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     fista_tv_core_iterates,
@@ -80,7 +80,7 @@ def _initial_projection_lipschitz(
             ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
         )
     )
-    return 1.2 * projection_l + huber_tv_lipschitz(cfg.tv_weight, cfg.huber_delta, step.grid)
+    return 1.2 * projection_l
 
 
 def _resolve_auto_views_per_batch(
@@ -141,11 +141,6 @@ def _resolve_reconstruction_projector_backend(
     if reason:
         return "jax", reason
     return "cuda", None
-
-
-def _is_oom_error_message(message: str) -> bool:
-    msg = message.lower()
-    return any(term in msg for term in ("resource_exhausted", "out of memory", "allocator"))
 
 
 def _rigid_detector_grid_transform(
@@ -260,7 +255,7 @@ def _reconstruction_step_stat(
         "recon_fallback_reason": str(fallback_reason) if fallback_reason else None,
         "quality": str(getattr(cfg, "quality", "fast")),
         "quality_tier": str(getattr(cfg, "stage_quality_tier", "")),
-        "regulariser": str(info_mapping.get("regulariser") or getattr(cfg, "regulariser", "")),
+        "regulariser": "none",
         "data_loss_computed": bool(info_mapping.get("data_loss_computed", False)),
         "regulariser_value_computed": bool(info_mapping.get("regulariser_value_computed", False)),
     }
@@ -307,10 +302,10 @@ def _retry_info_after_nonfinite_core(
             "fallback_reason": core_info.get("fallback_reason"),
             "lipschitz": core_info.get("lipschitz"),
         },
-        "fallback_reason": "huber_fista_core_nonfinite_retry_public_stream",
+        "fallback_reason": "fista_core_nonfinite_retry_public_stream",
         "actual_backend": "jax",
         "requested_backend": str(getattr(cfg, "backend", "jax")),
-        "regulariser": str(getattr(cfg, "regulariser", "")),
+        "regulariser": "none",
         "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
         "data_loss_computed": bool(quality_policy.compute_final_data_loss),
         "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
@@ -322,7 +317,7 @@ _initial_core_iterate = jax.jit(initial_iterate, static_argnames="cfg")
 
 
 @functools.partial(jax.jit, static_argnames=("grid", "detector", "cfg"), donate_argnums=(0, 1))
-def _run_huber_fista_core_dynamic_geometry(
+def _run_fista_core_dynamic_geometry(
     x: jnp.ndarray,
     z: jnp.ndarray,
     T_all: jnp.ndarray,
@@ -369,22 +364,13 @@ def _run_public_fista_reconstruction(
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
     cfg = step.cfg
     quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
-    # Alignment carries the previous solve's whole bound; public FISTA takes the
-    # data term's and adds smooth-TV curvature itself, so convert, or TV counts twice.
-    data_lipschitz = step.L_prev
-    if data_lipschitz is not None and str(cfg.regulariser) == "huber_tv":
-        data_lipschitz -= huber_tv_lipschitz(cfg.tv_weight, cfg.huber_delta, step.grid)
-        if data_lipschitz <= 0:
-            # An initial override below the regulariser's bound cannot provide
-            # a usable data bound. Let FISTA estimate it from the operator.
-            data_lipschitz = None
     cone = is_cone_beam(step.recon_geometry)
     fista_cfg = fista_config(
         cast("AlignConfig", cfg),
         projector_model="auto" if cone else "ray",  # cone beams: Joseph, on CUDA if there
         backend="auto" if cone else "jax",
         iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
-        lipschitz=data_lipschitz,
+        lipschitz=step.L_prev,
         views_per_batch=views_per_batch,
         checkpoint_projector=cfg.checkpoint_projector,
         gather_dtype=gather_dtype,
@@ -404,7 +390,7 @@ def _run_public_fista_reconstruction(
     return jnp.asarray(volume), info
 
 
-def _huber_fista_backend(
+def _fista_backend(
     step: _ReconstructionStepInputs, poses: jnp.ndarray
 ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray] | None, dict[str, object]]:
     """The core's poses and detector grid, and a record of its backend.
@@ -448,7 +434,7 @@ def _huber_fista_backend(
     )
 
 
-def _huber_fista_core_config(
+def _fista_core_config(
     step: _ReconstructionStepInputs,
     *,
     n_views: int,
@@ -458,9 +444,8 @@ def _huber_fista_core_config(
     cfg = step.cfg
     return FistaCoreConfig(
         iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
-        tv_weight=float(cfg.tv_weight),
+        tv_weight=0.0,
         regulariser="huber_tv",
-        huber_delta=float(cfg.huber_delta),
         lipschitz=1.0,
         nonnegative=bool(cfg.nonnegative),
         checkpoint_projector=bool(cfg.checkpoint_projector),
@@ -491,9 +476,8 @@ def _run_spdhg_reconstruction(
     quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     spdhg_cfg = SPDHGConfig(
         iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
-        tv_weight=float(cfg.tv_weight),
-        regulariser=cfg.regulariser,
-        huber_delta=float(cfg.huber_delta),
+        tv_weight=0.0,
+        regulariser="huber_tv",
         views_per_batch=max(1, int(cfg.views_per_batch)),
         seed=int(cfg.seed) + int(step.outer_idx) - 1,
         projector_unroll=1,
@@ -514,7 +498,7 @@ def _run_spdhg_reconstruction(
     )
 
 
-def _run_huber_fista_core_reconstruction(
+def _run_fista_core_reconstruction(
     step: _ReconstructionStepInputs,
 ) -> tuple[jnp.ndarray, Mapping[str, object]]:
     """Reconstruct with a six-image reserve for iterates, gradient and TV scratch.
@@ -536,9 +520,9 @@ def _run_huber_fista_core_reconstruction(
         if step.L_prev is not None
         else _initial_projection_lipschitz(step, poses)
     )
-    poses, det_grid_for_core, backend = _huber_fista_backend(step, poses)
+    poses, det_grid_for_core, backend = _fista_backend(step, poses)
     quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
-    core_cfg = _huber_fista_core_config(
+    core_cfg = _fista_core_config(
         step,
         n_views=n_views,
         actual_backend=str(backend["actual_backend"]),
@@ -550,7 +534,7 @@ def _run_huber_fista_core_reconstruction(
     # workspaces never overlap the solve's.
     x = jax.block_until_ready(_initial_core_iterate(step.x, cfg=core_cfg))
     run = functools.partial(
-        _run_huber_fista_core_dynamic_geometry,
+        _run_fista_core_dynamic_geometry,
         x,
         jax.block_until_ready(jnp.array(x, copy=True)),
         poses,
@@ -580,8 +564,7 @@ def _run_huber_fista_core_reconstruction(
         "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
         "effective_iterations": int(effective_iters),
         "early_stop": False,
-        "regulariser": "huber_tv",
-        "huber_delta": float(cfg.huber_delta),
+        "regulariser": "none",
         "data_loss_computed": bool(quality_policy.compute_final_data_loss),
         "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
         "quality_policy": quality_policy.to_dict(),
@@ -655,21 +638,23 @@ def _run_reconstruction_step(
         return x, L_next, stat
 
     if reconstruction == "fista":
-        if is_cone_beam(step.recon_geometry):
-            # Cone beams: the public solver, which models diverging rays.
+        reference = getattr(cfg, "quality", "fast") == "reference" and cfg.backend == "jax"
+        if is_cone_beam(step.recon_geometry) or reference:
+            # The reference JAX policy retains the public solver's power-method
+            # bound. Cone beams also use it to model diverging rays.
             x_out, info_rec = _run_public_fista_reconstruction(
                 step,
                 views_per_batch=vpb0,
                 gather_dtype=cfg.gather_dtype,
                 grad_mode="auto",
             )
-        elif str(cfg.regulariser) == "huber_tv":
-            x_out, info_rec = _run_huber_fista_core_reconstruction(step)
+        else:
+            x_out, info_rec = _run_fista_core_reconstruction(step)
             jax.block_until_ready(x_out)
             core_finite_fraction = _finite_fraction(x_out)
             if core_finite_fraction < 1.0:
                 logging.warning(
-                    "Huber-FISTA core returned non-finite reconstruction "
+                    "FISTA core returned non-finite reconstruction "
                     "(finite_fraction=%.6g); retrying public streamed FISTA",
                     core_finite_fraction,
                 )
@@ -687,36 +672,6 @@ def _run_reconstruction_step(
                     core_finite_fraction=core_finite_fraction,
                     cfg=cfg,
                 )
-        else:
-            try:
-                x_out, info_rec = _run_public_fista_reconstruction(
-                    step,
-                    views_per_batch=vpb0,
-                    gather_dtype=cfg.gather_dtype,
-                    grad_mode="auto",
-                )
-            except Exception as e:
-                if not _is_oom_error_message(str(e)):
-                    raise
-                logging.warning(
-                    "FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)"
-                )
-                try:
-                    recon_retry = True
-                    x_out, info_rec = _run_public_fista_reconstruction(
-                        step,
-                        views_per_batch=1,
-                        gather_dtype=cfg.gather_dtype,
-                        grad_mode="stream",
-                    )
-                except Exception as e2:
-                    if _is_oom_error_message(str(e2)):
-                        logging.error(
-                            "FISTA still OOM at finest level. Reduce memory pressure "
-                            "(smaller problem size or lower internal batching), or "
-                            "provide --lipschitz to skip power-method."
-                        )
-                    raise
     else:
         x_out, info_rec = _run_spdhg_reconstruction(step)
 

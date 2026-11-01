@@ -237,7 +237,6 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
         backend=backend,
         gather_dtype="fp32",
         pose_translation_frame="detector",
-        tv_weight=0,
         loss=L2OtsuLossSpec(),
         w_rot=0.03 + 0.005 * scan_variant,
         w_trans=0.05 + 0.003 * scan_variant,
@@ -414,16 +413,16 @@ def test_coupled_solve_reports_actual_residual_at_budget_and_handles_zero_rhs(pl
 @pytest.mark.usefixtures("views_per_batch")
 @pytest.mark.parametrize("integrator", ["sampled", "exact"])
 @pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
-def test_public_joint_huber_constraints_and_resume(integrator, solver):
+def test_public_joint_constraints_and_resume(integrator, solver):
     # Resuming must reproduce the uninterrupted run, which needs reproducible
     # arithmetic: on a GPU the sampled transpose adds with atomics in varying
     # order, and this tiny ill-conditioned solve amplifies that past any
     # tolerance by the second iteration. The bookkeeping is the same on any device.
     with jax.default_device(jax.devices("cpu")[0]):
-        _joint_huber_constraints_and_resume(integrator, solver)
+        _joint_constraints_and_resume(integrator, solver)
 
 
-def _joint_huber_constraints_and_resume(integrator, solver):
+def _joint_constraints_and_resume(integrator, solver):
     from tomojax.alignment import AlignConfig
     from tomojax.alignment.api import L2LossSpec, align
     from tomojax.core.projector import forward_project_view_T
@@ -443,7 +442,6 @@ def _joint_huber_constraints_and_resume(integrator, solver):
         gather_dtype="fp32",
         ray_integrator=integrator,
         backend="jax",
-        tv_weight=0.002,
         outer_iterations=2,
         iterations=2,
         lipschitz=100,
@@ -666,7 +664,7 @@ def test_a_cached_host_update_parks_an_owned_image_and_restores_its_bytes(monkey
         lambda *_: (_ for _ in ()).throw(jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED")),
     )
     monkeypatch.setattr(_coupled_host, "device_free_memory_bytes", lambda **_: 2**30)
-    ctx = _small_coupled_context(tv_weight=0.0)
+    ctx = _small_coupled_context()
     objective = _coupled_objective.build_coupled_objective(ctx)
     p = jnp.zeros((3, 6), jnp.float32)
     x = jnp.asarray(np.random.default_rng(4).uniform(-1, 1, (4, 4, 4)), jnp.float32)
@@ -768,7 +766,6 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         gather_dtype="fp32",
         pose_translation_frame="detector",
         nonnegative=False,
-        tv_weight=0,
         w_rot=0,
         w_trans=0,
     )
@@ -880,36 +877,6 @@ def test_staged_update_matches_device_model(monkeypatch, solver, smooth, integra
     )
     objective = _coupled_objective.build_coupled_objective(ctx, pose_basis=basis)
     arrays, spec = captured[0]
-    gradient = jax.grad(partial(_coupled_program.volume_regularisation, spec=spec))
-    expected_gradient, hessian = jax.linearize(gradient, x)
-    direction = jnp.linspace(-1, 1, x.size).reshape(x.shape)
-    np.testing.assert_allclose(
-        _coupled_host._regularisation_derivative(x, None, spec=spec), expected_gradient, atol=2e-8
-    )
-    np.testing.assert_allclose(
-        _coupled_host._regularisation_derivative(x, direction, spec=spec),
-        hessian(direction),
-        rtol=2e-6,
-        atol=2e-8,
-    )
-    monkeypatch.setattr(_coupled_host, "_REGULARISATION_TILE_BYTES", 384)
-    _coupled_host._finish_regularised_product.clear_cache()
-    probe = jnp.tile(x, (3, 1, 1))
-    probe_spec = replace(spec, grid=replace(grid, nx=probe.shape[0]))
-    derivative = jax.grad(partial(_coupled_program.volume_regularisation, spec=probe_spec))
-    tangent = jnp.linspace(-1, 1, probe.size).reshape(probe.shape)
-    free = tangent > -0.5
-    curvature = jax.jvp(derivative, (probe,), (tangent,))[1]
-    product = _coupled_host._finish_regularised_product(
-        jnp.ones_like(probe), tangent, probe, free, 0.1, spec=probe_spec
-    )
-    np.testing.assert_allclose(
-        product, free * (1 + 0.1 * tangent + curvature), rtol=2e-6, atol=2e-8
-    )
-    initial = _coupled_host._finish_regularised_product(
-        jnp.zeros_like(probe), None, probe, jnp.float32(1), 0.0, spec=probe_spec
-    )
-    np.testing.assert_allclose(initial, derivative(probe), rtol=2e-6, atol=2e-8)
     p = jnp.zeros((3, 6), jnp.float32).at[:, 3].set(jnp.asarray([0.03, -0.01, 0.02]))
     expected = objective.update(p, borrowed(x))
     streamed = None

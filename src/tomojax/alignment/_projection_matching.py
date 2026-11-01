@@ -231,7 +231,6 @@ def _horizontal_fit(
         early_stop_rel_impr=1e-4,
         seed_translations=False,
         gn_volume_damping=1e-3 * bound,
-        tv_weight=0,
     )
     nominal = np.asarray(stack_view_poses(sparse, len(samples)))
     frame = nominal[:, 0, :3]
