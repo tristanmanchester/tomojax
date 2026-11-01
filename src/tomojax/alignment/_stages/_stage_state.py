@@ -43,6 +43,7 @@ from tomojax.core.validation import validate_grid, validate_projection_stack
 
 from ._setup_stage import _geometry_calibration_payload
 from ._stage_types import (
+    LevelContext,
     LevelResumePlan,
     LevelState,
     MultiresContext,
@@ -497,18 +498,11 @@ def _levels_to_run(
 
 
 def _finish_level(
-    *,
-    state: MultiresRunState,
-    context: MultiresContext,
-    level: MultiresLevel,
-    level_index: int,
-    level_run: LevelResumePlan,
-    result: LevelState,
-    level_stats: list[OuterStat],
-    level_losses: list[float],
-    checkpoint_callback: AlignMultiresCheckpointCallback | None,
+    state: MultiresRunState, level: LevelContext, result: LevelState
 ) -> MultiresRunState:
     """The run state after a level, checkpointed at the level's end."""
+    runtime = level.runtime
+    level_stats, level_losses = runtime.level_stats, runtime.level_losses
     info = result.info
     info["loss"] = level_losses
     info["outer_stats"] = [
@@ -519,14 +513,14 @@ def _finish_level(
     info["completed_outer_iterations"] = len(level_stats)
     info["wall_time_total"] = float(result.level_wall_time)
     info["observer_action"] = result.level_action
-    global_outer_idx = level_run.global_before_level + len(level_stats)
+    global_outer_idx = runtime.global_before_level + len(level_stats)
     state = replace(
         state,
         x_init=result.x_lvl,
         pose_params=result.pose_params,
-        prev_factor=level["factor"],
-        loss_hist=level_run.loss_before_level + level_losses,
-        global_outer_stats=level_run.stats_before_level + level_stats,
+        prev_factor=runtime.level_factor,
+        loss_hist=runtime.loss_before_level + level_losses,
+        global_outer_stats=runtime.stats_before_level + level_stats,
         stopped_by_observer=result.level_action == "stop_run",
         final_observer_action=result.level_action,
         global_outer_idx=global_outer_idx,
@@ -539,12 +533,12 @@ def _finish_level(
         final_gauge_fix=str(info.get("gauge_fix", result.final_gauge_fix)),
         final_gauge_fix_dofs=list(info.get("gauge_fix_dofs", result.final_gauge_fix_dofs)),
         final_gauge_fix_stats=dict(info.get("gauge_fix_final", {}) or {}),
-        last_level_index_processed=level_index,
+        last_level_index_processed=runtime.level_index,
         setup_alignment_state=result.setup_alignment_state,
     )
-    if checkpoint_callback is None:
+    if runtime.checkpoint_callback is None:
         return state
-    schedule = context.resolved_schedule
+    schedule = level.schedule
     last_stage = schedule.stages[-1]
     # Unfinished only if an observer stopped it short, other than to advance a level.
     level_complete = (
@@ -552,16 +546,16 @@ def _finish_level(
         or result.level_action == "advance_level"
         or not bool(info.get("stopped_by_observer", False))
     )
-    checkpoint_callback(
+    runtime.checkpoint_callback(
         _build_multires_checkpoint_state(
             x=cast("jnp.ndarray", result.x_lvl),
             pose_params=result.pose_params,
             motion_coeffs=info.get("motion_coeffs"),
-            level_index=level_index,
-            level_factor=int(level["factor"]),
+            level_index=runtime.level_index,
+            level_factor=runtime.level_factor,
             completed_outer_iterations_in_level=len(level_stats),
             global_outer_iterations_completed=global_outer_idx,
-            prev_factor=level["factor"],
+            prev_factor=runtime.level_factor,
             loss=list(state.loss_hist),
             outer_stats=[dict(stat) for stat in state.global_outer_stats],
             lipschitz=info.get("lipschitz"),
@@ -570,13 +564,13 @@ def _finish_level(
             level_complete=level_complete,
             run_complete=False,
             setup_alignment_state=result.setup_alignment_state,
-            active_geometry_dofs=context.active_geometry_dofs,
+            active_geometry_dofs=level.active_geometry_dofs,
             stage=last_stage,
             stage_completed=level_complete,
             completed_outer_iterations_in_stage=sum(
                 stat.get("schedule_stage_index") == int(last_stage.index) for stat in level_stats
             ),
-            ray_integrator=context.cfg.ray_integrator,
+            ray_integrator=level.cfg.ray_integrator,
         )
     )
     return state
