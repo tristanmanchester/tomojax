@@ -34,7 +34,7 @@ def reconstruct_train_fold_nograd(
     level_factor: int,
     cfg: FistaConfig,
 ) -> tuple[jnp.ndarray, dict[str, object]]:
-    """Reconstruct a train-fold volume with setup fixed and no setup AD path."""
+    """Reconstruct from the train views, or all of them, with setup fixed and no setup AD path."""
     idx_np = np.asarray(train_idx, dtype=np.int32).reshape(-1)
     mask_np = np.asarray(train_mask, dtype=np.float32).reshape(-1)
     valid_idx = idx_np[mask_np > 0.0]
@@ -56,7 +56,9 @@ def reconstruct_train_fold_nograd(
         state.pose.pose_params[jnp.asarray(valid_idx, dtype=jnp.int32)],
         translation_frame=state.pose.translation_frame,
     )
-    y_fold = jnp.asarray(projections, dtype=jnp.float32)[jnp.asarray(valid_idx, dtype=jnp.int32)]
+    y_fold = jnp.asarray(projections, dtype=jnp.float32)
+    if not np.array_equal(valid_idx, np.arange(len(y_fold))):  # no copy of a whole scan
+        y_fold = y_fold[jnp.asarray(valid_idx, dtype=jnp.int32)]
     if moved is not None:
         x, info = fista_tv(
             cast("Geometry", fold_geometry),

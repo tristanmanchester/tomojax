@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+A setup stage's validation-LM fit returns a volume reconstructed with the
+level's pose corrections, the same reconstruction its folds use over every
+view. It previously ignored them, so in `mode="full"` the finer level's pose
+fit started from a volume blurred by the motion found at the coarser level.
+
 Projection matching reports how far its two starts' horizontal shifts disagree
 beyond a common object translation, in `info["initialization"]["horizontal_disagreement"]`.
 

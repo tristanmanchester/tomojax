@@ -302,7 +302,6 @@ def test_public_cor_reconstructs_with_the_configured_integrator_and_batches(monk
         seen.append((config.ray_integrator, config.views_per_batch, config.backend))
         return fista_tv(*args, config=config, **kwargs)
 
-    monkeypatch.setattr("tomojax.alignment._stages._setup_stage.fista_tv", record)
     monkeypatch.setattr("tomojax.alignment._objectives.fold_recon.fista_tv", record)
     angles = np.linspace(0, 180, 120, endpoint=False)
     data, centre = _analytic_shifted_sinogram(angles, 48)
