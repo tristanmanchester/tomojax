@@ -131,9 +131,57 @@ def fista_tv_core_arrays(
     data term, or zero when none was computed; it never includes regularization.
     With ``cfg.private_storage`` the returned ``x`` is (x, y, z), z contiguous.
     """
+    x_init = initial_iterate(x0, cfg)
+    result, _ = fista_tv_core_iterates(
+        x_init,
+        x_init,
+        T_all=T_all,
+        det_grid=det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=cfg,
+        L_override=L_override,
+        view_weights=view_weights,
+        owned=False,
+    )
+    return result
+
+
+def initial_iterate(x0: jnp.ndarray, cfg: FistaCoreConfig) -> jnp.ndarray:
+    """The core's first iterate: ``x0`` constrained, in the core's storage.
+
+    Always a new array, even when nothing constrains ``x0`` and the storage is
+    public, so that a caller may donate it while ``x0`` stays borrowed.
+    """
+    x = _project_constraints(jnp.asarray(x0, dtype=jnp.float32), cfg)
+    return transpose_volume(x) if cfg.private_storage else jnp.array(x, copy=True)
+
+
+def fista_tv_core_iterates(
+    x_init: jnp.ndarray,
+    z_init: jnp.ndarray,
+    *,
+    T_all: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    projections: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    cfg: FistaCoreConfig,
+    L_override: jnp.ndarray | float | None,
+    view_weights: jnp.ndarray | None,
+    owned: bool,
+) -> tuple[FistaCoreResult[jnp.ndarray], jnp.ndarray]:
+    """:func:`fista_tv_core_arrays` from given iterates, also returning the final momentum.
+
+    Both start as :func:`initial_iterate`'s result. ``owned`` iterates are two
+    distinct arrays the caller donates: each pair of steps then ends with them
+    back in the buffers they started in, so the compiled loop reuses them rather
+    than copying its carries. Drop the returned momentum, never delete it, since
+    a solve of fewer than two steps can return it as ``x`` too.
+    """
     if cfg.tv_weight != 0.0 and cfg.regulariser != "huber_tv":
         raise ValueError("fista_tv_core_arrays requires huber_tv or tv_weight=0")
-    x_init = _project_constraints(jnp.asarray(x0, dtype=jnp.float32), cfg)
     L = jnp.asarray(cfg.lipschitz if L_override is None else L_override, dtype=jnp.float32)
     lam = jnp.asarray(cfg.tv_weight, dtype=jnp.float32)
     weights = _view_weights(int(T_all.shape[0]), view_weights)
@@ -146,10 +194,8 @@ def fista_tv_core_arrays(
     # Joseph operators resolve to the configured projectors, so storage follows cfg.
     z_fast = cfg.private_storage
     support = cfg.support
-    if z_fast:
-        if support is not None:
-            support = transpose_volume(jnp.broadcast_to(support, x_init.shape))
-        x_init = transpose_volume(x_init)
+    if z_fast and support is not None:
+        support = transpose_volume(jnp.broadcast_to(support, x_init.shape[::-1]))
     sampled_step = _requested_sampled_step(grid, cfg)
 
     def data_loss_fn(x: jnp.ndarray) -> jnp.ndarray:
@@ -215,6 +261,8 @@ def fista_tv_core_arrays(
         # smoothed regularisers. Exact TV belongs to the public reconstruction
         # adapter or a future nonsmooth implicit path, not the bilevel hot path.
         x_next = _project_constraints(z_prev - grad / L, cfg)
+        if owned:  # materialised once, so two steps swap the two carry buffers
+            x_next = jax.lax.optimization_barrier(x_next)
         t_next = jnp.float32(0.5) * (
             jnp.float32(1.0) + jnp.sqrt(jnp.float32(1.0) + 4.0 * t_prev * t_prev)
         )
@@ -229,10 +277,11 @@ def fista_tv_core_arrays(
 
     n_iters = int(cfg.iterations)
     loss0 = jnp.zeros((n_iters,), dtype=jnp.float32)
-    (x_final, _, _, loss, last_data_loss), _ = jax.lax.scan(
+    (x_final, z_final, _, loss, last_data_loss), _ = jax.lax.scan(
         body,
-        (x_init, x_init, jnp.float32(1.0), loss0, jnp.float32(0.0)),
+        (x_init, z_init, jnp.float32(1.0), loss0, jnp.float32(0.0)),
         jnp.arange(n_iters, dtype=jnp.int32),
+        unroll=2 if owned else 1,
     )
     data_final = data_loss_fn(x_final) if cfg.compute_final_data_loss else last_data_loss
     reg_final = (
@@ -240,7 +289,7 @@ def fista_tv_core_arrays(
         if cfg.compute_final_regulariser_value
         else jnp.zeros((), dtype=jnp.float32)
     )
-    return FistaCoreResult(
+    result = FistaCoreResult(
         x=x_final,
         loss=loss,
         data_loss=data_final,
@@ -248,6 +297,7 @@ def fista_tv_core_arrays(
         effective_iterations=jnp.asarray(n_iters, dtype=jnp.int32),
         status="ok",
     )
+    return result, z_final
 
 
 def projection_loss_arrays(
@@ -584,7 +634,7 @@ def _projection_loss_and_explicit_grad(
     num_chunks = (n_views + b - 1) // b
 
     def body(
-        carry: tuple[jnp.ndarray, jnp.ndarray],
+        carry: tuple[jnp.ndarray, jnp.ndarray | None],
         i: jnp.ndarray,
     ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
         loss_acc, grad_acc = carry
@@ -638,11 +688,12 @@ def _projection_loss_and_explicit_grad(
         )
         return (loss_acc + loss_batch, grad_acc), None
 
-    init = (jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume))
+    # Seed the reduction from the first adjoint, preserving the chunk order.
+    init, _ = body((jnp.asarray(0.0, dtype=jnp.float32), None), jnp.int32(0))
     (loss, grad), _ = jax.lax.scan(
         body,
         init,
-        jnp.arange(num_chunks, dtype=jnp.int32),
+        jnp.arange(1, num_chunks, dtype=jnp.int32),
     )
     return loss, grad
 
@@ -650,7 +701,7 @@ def _projection_loss_and_explicit_grad(
 def _accumulate_backprojection(
     poses: jnp.ndarray,
     residual: jnp.ndarray,
-    accumulate: jnp.ndarray,
+    accumulate: jnp.ndarray | None,
     *,
     grid: Grid,
     detector: Detector,
@@ -694,7 +745,7 @@ def _accumulate_backprojection(
             gather_dtype=gather_dtype,
             det_grid=det_grid,
         )
-    return accumulate + batch
+    return batch if accumulate is None else accumulate + batch
 
 
 def _resolve_sum_backproject_views(backprojector: str) -> Callable[..., jnp.ndarray]:

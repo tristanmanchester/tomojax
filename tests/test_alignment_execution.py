@@ -342,11 +342,12 @@ def test_pose_adjusted_cuda_fallback_keeps_folded_detector_grid_out_of_jax_core(
     def resolve_backend(*, det_grid, **_kwargs):
         return ("cuda", None) if det_grid is None else ("jax", "det_grid_unsupported")
 
-    def run_dynamic(x0, _T_all, det_u, det_v, _projections, _L_value, **_kwargs):
+    def run_dynamic(x, z, _T_all, det_u, det_v, _projections, _L_value, **_kwargs):
         captured["det_u"] = det_u
         captured["det_v"] = det_v
         return (
-            x0,
+            x,
+            z,
             jnp.zeros((1,), dtype=jnp.float32),
             jnp.asarray(0.0, dtype=jnp.float32),
             jnp.asarray(0.0, dtype=jnp.float32),
@@ -661,3 +662,46 @@ def test_an_early_stop_says_whether_the_last_step_was_rejected(rejected, reason)
         wall_start=0.0,
     )
     assert stopped and stat["stop_reason"] == reason
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("iterations", [0, 1, 3])
+@pytest.mark.parametrize("nonnegative", [False, True])
+def test_owned_stage_core_matches_the_pure_core_and_spares_its_input(
+    backend, iterations, nonnegative
+):
+    from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
+
+    stage = reconstruction_stage
+    grid, detector = Grid(3, 2, 2, 0.8, 1.1, 0.9), Detector(4, 3, 0.7, 0.95)
+    poses = jnp.repeat(jnp.eye(4, dtype=jnp.float32)[None], 4, axis=0)
+    initial = jnp.linspace(-0.1, 0.4, 12, dtype=jnp.float32).reshape(2, 2, 3)
+    data = jnp.full((4, 3, 4), 0.3, dtype=jnp.float32)
+    before = [np.asarray(a).copy() for a in (initial, poses, data)]
+    cfg = FistaCoreConfig(
+        iterations=iterations, nonnegative=nonnegative, lipschitz=300, tv_weight=0.005,
+        views_per_batch=3, ray_integrator="joseph",
+        forward_projector=backend, backprojector=backend,
+    )  # fmt: skip
+    pure = fista_tv_core_arrays(
+        x0=initial, T_all=poses, det_grid=None, projections=data,
+        grid=grid, detector=detector, cfg=cfg,
+    )  # fmt: skip
+    # Unconstrained public storage must still give the solver its own two buffers.
+    x = jax.block_until_ready(stage._initial_core_iterate(initial, cfg=cfg))
+    z = jax.block_until_ready(jnp.array(x, copy=True))
+    assert len({a.unsafe_buffer_pointer() for a in (initial, x, z)}) == 3
+    output, _momentum, *fields = stage._run_huber_fista_core_dynamic_geometry(
+        x, z, poses, None, None, data, jnp.float32(300), grid=grid, detector=detector, cfg=cfg
+    )
+    expected = (pure.loss, pure.data_loss, pure.regulariser_value, pure.effective_iterations)
+    assert np.isfinite(np.asarray(output)).all() and int(fields[-1]) == iterations
+    np.testing.assert_allclose(output, pure.x, rtol=3e-5, atol=2e-7)
+    for a, b in zip(fields, expected, strict=True):
+        assert np.isfinite(np.asarray(a)).all()
+        np.testing.assert_allclose(a, b, rtol=3e-6, atol=0)
+    del _momentum  # it may alias the output: dropped, never deleted
+    output.delete()
+    for a, b in zip((initial, poses, data), before, strict=True):
+        np.testing.assert_array_equal(np.asarray(a), b)
