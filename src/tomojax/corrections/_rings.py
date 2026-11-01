@@ -210,7 +210,8 @@ def _fit_unsorted(q: jax.Array, ref: jax.Array, instrument: jax.Array) -> tuple[
     xm, zm, level = (w * x).sum(0) / sw, (w * z).sum(0) / sw, (w * d).sum(0) / sw
     xc, zc = x - xm, z - zm
     denominator = jnp.maximum((w * xc * zc).sum(0), 0) + 1e-4 * sw
-    beta = jnp.maximum((w * zc * (d - level)).sum(0) / denominator, -0.5)
+    # a dead column sees no spread of transmission, so its slope only amplifies its neighbours
+    beta = jnp.clip((w * zc * (d - level)).sum(0) / denominator, -0.5, 0.5)
     residual = d - level - beta * xc
     scene_level = (w * q).sum(0) / sw
     scene_slope = (w * zc * (q - scene_level)).sum(0) / denominator

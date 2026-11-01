@@ -229,3 +229,17 @@ def test_angular_phase_wrap_does_not_change_correction(angles: np.ndarray) -> No
     order = np.random.default_rng(17).permutation(len(angles))
     shuffled = corrected((angles % 360)[order], measured[order])
     np.testing.assert_array_equal(fixed, shuffled[np.argsort(order)])
+
+
+def test_a_dead_detector_edge_stays_finite_and_in_range() -> None:
+    # As on I13 159815 row 0: dead columns at the edge, saturated ones beside them.
+    rng = np.random.default_rng(0)
+    views, columns = 720, 256
+    x = np.linspace(-1, 1, columns, dtype=np.float32)
+    q = 0.6 * np.exp(-(x**2) / 0.2) + rng.normal(0, 0.01, (views, 1, columns)).astype(np.float32)
+    q[:, 0, :9] = 13.8
+    q[:, 0, 9:14] = rng.uniform(1.0, 8.0, (views, 5)).astype(np.float32)
+    q[::97, 0, 11] = -1.4
+    out = np.asarray(Rings(_geometry(360.0, views)).apply(jnp.asarray(q)))
+    assert np.isfinite(out).all()
+    assert out.max() <= 1.5 * q.max() and out.min() >= 1.5 * q.min()
