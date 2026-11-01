@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
 ObjectiveKind = Literal[
-    "fixed_volume", "joint_volume_pose", "bilevel_cv", "all_data_bilevel", "projection_consistency"
+    "joint_volume_pose", "bilevel_cv", "all_data_bilevel", "projection_consistency"
 ]
 OptimizerKind = Literal["gn", "validation_lm", "spectral"]
 GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"]
@@ -60,7 +60,7 @@ class AlignmentStage:
     active_dofs : tuple[str, ...]
         Public parameter names optimized by this stage.
     objective_kind : ObjectiveKind
-        Objective model: "fixed_volume", "joint_volume_pose", "bilevel_cv",
+        Objective model: "joint_volume_pose", "bilevel_cv",
         "all_data_bilevel" or "projection_consistency".
     optimizer : OptimizerKind
         Optimizer for the chosen objective: "gn", "validation_lm" or "spectral".
@@ -143,6 +143,13 @@ class AlignmentSchedule:
         for stage in self.stages:
             if not stage.active_dofs:
                 raise ValueError(f"alignment stage {stage.name!r} has no active DOFs")
+            if stage.objective_kind not in {
+                "joint_volume_pose",
+                "bilevel_cv",
+                "all_data_bilevel",
+                "projection_consistency",
+            }:
+                raise ValueError(f"Unknown alignment objective: {stage.objective_kind!r}")
             stage.active_view()
             if stage.objective_kind == "projection_consistency" and (
                 stage.optimizer != "spectral"
@@ -168,11 +175,6 @@ class AlignmentSchedule:
                     f"{stage.objective_kind} stage {stage.name!r} uses unsupported optimizer "
                     f"{stage.optimizer!r}; setup/bilevel stages currently support only "
                     "'validation_lm'"
-                )
-            if stage.objective_kind == "fixed_volume" and stage.optimizer != "gn":
-                raise ValueError(
-                    f"fixed_volume stage {stage.name!r} uses unsupported optimizer "
-                    f"{stage.optimizer!r}; fixed_volume stages support only 'gn'"
                 )
         return self
 
@@ -361,7 +363,7 @@ _LIGHTNING_POSE = (
     AlignmentStage(
         name="lightning_pose_proposal",
         active_dofs=("alpha", "beta", "phi", "dx", "dz"),
-        objective_kind="fixed_volume",
+        objective_kind="joint_volume_pose",
         optimizer="gn",
         gauge_policy="anchor_mean",
         maxiter=1,
@@ -373,7 +375,7 @@ _LIGHTNING_POSE = (
     AlignmentStage(
         name="lightning_pose_refine",
         active_dofs=("alpha", "beta", "phi", "dx", "dz"),
-        objective_kind="fixed_volume",
+        objective_kind="joint_volume_pose",
         optimizer="gn",
         gauge_policy="anchor_mean",
         stage_role="refine",
@@ -388,7 +390,7 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
         AlignmentStage(
             name="tortoise_pose_refine",
             active_dofs=("alpha", "beta", "phi", "dx", "dz"),
-            objective_kind="fixed_volume",
+            objective_kind="joint_volume_pose",
             optimizer="gn",
             gauge_policy="anchor_mean",
             stage_role="refine",
@@ -425,7 +427,7 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
         AlignmentStage(
             "pose_polish",
             ("alpha", "beta", "phi", "dx", "dz"),
-            "fixed_volume",
+            "joint_volume_pose",
             "gn",
             gauge_policy="anchor_mean",
             stage_role="refine",
@@ -562,7 +564,7 @@ def resolve_alignment_schedule(
         pose = AlignmentStage(
             name="direct_pose",
             active_dofs=scoped.active_pose_dofs,
-            objective_kind="fixed_volume",
+            objective_kind="joint_volume_pose",
             optimizer="gn",
             gauge_policy=gauge_policy,
             stage_role="refine",

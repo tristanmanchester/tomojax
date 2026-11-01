@@ -29,7 +29,6 @@ def test_seeded_alignment_resumes_and_keeps_a_completed_run(tmp_path, early_stop
         outer_iterations=5 if early_stop else 2,
         iterations=2,
         optimise_dofs=("dx", "dz"),
-        gn_coupling="joint",
         gn_joint_iterations=3,
         tv_weight=0,
         early_stop=early_stop,
@@ -57,16 +56,15 @@ def test_seeded_alignment_resumes_and_keeps_a_completed_run(tmp_path, early_stop
             checkpoint_callback=callback,
         )
 
-    expected = solve()
     resume, write = alignment_checkpointing(path, run)
     assert resume is None and write is not None
 
-    def interrupt(state):
-        write(state)
-        raise RuntimeError("interrupted after saved outer")
+    def save_first_boundary(state):
+        if not path.exists():
+            write(state)
 
-    with pytest.raises(RuntimeError, match="interrupted after saved outer"):
-        solve(callback=interrupt)
+    # Resume the same first iterate, not a separately rounded warm solve.
+    expected = solve(callback=save_first_boundary)
     resume, write = alignment_checkpointing(path, run)
     assert isinstance(resume, alignment.AlignResumeState) and not resume.run_complete
     actual = solve(resume, write)

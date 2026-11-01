@@ -210,7 +210,7 @@ slabs, each GPU reconstructs its own z-slabs (`FDKConfig(devices=...)` in
   never streamed from the host; asking for both raises `ValueError`.
 - In `tj.align`, only `pose` mode's joint pose-and-volume update and cone-beam
   reconstruction steps are shared. Parallel-beam reconstruction steps, the
-  alternating solver of the other modes and setup calibration run on the first
+  setup calibration run on the first
   GPU. A checkpoint written on some GPUs resumes on others.
 - The GPUs must belong to one process; runs across several machines are not
   supported.

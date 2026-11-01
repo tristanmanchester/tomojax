@@ -706,7 +706,7 @@ class tomojax.alignment.AlignConfig(
         quality: 'QualityTier' = 'fast',
         outer_iterations: 'int' = 5,
         iterations: 'int' = 10,
-        tv_weight: 'float' = 0.005,
+        tv_weight: 'float' = 0.0,
         regulariser: 'Regulariser' = 'huber_tv',
         huber_delta: 'float' = 0.01,
         reconstruction: 'Reconstruction' = 'fista',
@@ -714,14 +714,13 @@ class tomojax.alignment.AlignConfig(
         seed: 'int' = 0,
         views_per_batch: 'int' = 0,
         checkpoint_projector: 'bool' = True,
-        gather_dtype: 'str' = 'auto',
+        gather_dtype: 'str' = 'fp32',
         backend: 'ProjectorBackendInput' = 'cuda',
         ray_integrator: "Literal['sampled', 'exact', 'joseph', 'joseph_cubic']" = 'sampled',
         gn_damping: 'float' = 0.001,
         gn_jacobian: "Literal['autodiff', 'central']" = 'autodiff',
         gn_difference_step: 'float' = 0.001,
-        gn_coupling: "Literal['fixed_volume', 'joint']" = 'fixed_volume',
-        gn_joint_solver: "Literal['stacked', 'pose_eliminated']" = 'stacked',
+        gn_joint_solver: "Literal['stacked', 'pose_eliminated']" = 'pose_eliminated',
         gn_joint_iterations: 'int' = 40,
         gn_joint_rtol: 'float' = 0.0001,
         gn_volume_damping: 'float' = 0.001,
@@ -748,7 +747,6 @@ class tomojax.alignment.AlignmentPlan(
         mode: 'AlignmentMode',
         config: 'AlignConfig',
         levels: 'tuple[int, ...]',
-        pose_solver: "Literal['coupled', 'alternating']",
     ) -> None
 tomojax.alignment.MODES: tuple
 class tomojax.alignment.ProjectionMatchingConfig(*, iterations: 'int' = 20) -> None

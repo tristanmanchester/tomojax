@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._model.dofs import POSE_WIDTH
-from tomojax.alignment._objectives.loss_specs import HuberLossSpec, L2LossSpec
+from tomojax.alignment._objectives.loss_specs import L2LossSpec
 from tomojax.backends.api import is_oom_error
 from tomojax.core.devices import ViewSplit, shared_devices, view_split
 from tomojax.core.projector import get_detector_grid_device
@@ -238,10 +238,7 @@ def build_coupled_objective(
 ) -> CoupledObjective:
     """The coupled objective; ``private`` volumes are (x, y, z), z contiguous, on parallel beams."""
     cfg = ctx.cfg
-    if isinstance(ctx.loss_adapter.spec, HuberLossSpec):
-        raise ValueError(
-            "Huber loss requires gn_coupling='fixed_volume'; joint GN supports L2 losses"
-        )
+
     if cfg.gather_dtype not in {"fp32", "float32"}:
         raise ValueError("joint GN requires gather_dtype='fp32' for matched linear operators")
     # CUDA exact and Joseph integration accept dynamic rigid poses. The

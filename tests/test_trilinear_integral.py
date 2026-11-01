@@ -159,8 +159,7 @@ def test_exact_fista_matches_dense_projected_steps(problem, backend):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("multires", [False, True])
-@pytest.mark.parametrize("coupling", ["fixed_volume", "joint"])
-def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, multires, coupling):
+def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, multires):
     from dataclasses import replace
 
     from tomojax.alignment import AlignConfig, align_multires
@@ -183,7 +182,6 @@ def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, 
         loss=L2LossSpec(),
         early_stop=False,
         gn_jacobian="central",
-        gn_coupling=coupling,
     )
     checkpoints = []
     run = align_multires if multires else align
@@ -201,8 +199,7 @@ def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, 
     residual = oracle(x, actual_poses, grid, detector) - np.asarray(target)
     np.testing.assert_allclose(info["loss"][-1], 0.5 * np.sum(residual**2), rtol=2e-4, atol=2e-6)
     assert info["ray_integrator"] == "exact"
-    if coupling == "joint":
-        assert info["objective_kind"] == "joint_volume_pose"
+    assert info["objective_kind"] == "joint_volume_pose"
     assert checkpoints and all(c.ray_integrator == "exact" for c in checkpoints)
     with pytest.raises(ValueError, match="ray_integrator differs"):
         run(

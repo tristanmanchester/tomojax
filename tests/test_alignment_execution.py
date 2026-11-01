@@ -44,19 +44,28 @@ def test_validation_scorer_reuses_one_program_for_changing_candidates(monkeypatc
     assert len(traces) == 1
 
 
-def test_fixed_volume_alignment_reuses_its_programs_for_new_scans_of_one_shape():
+def test_joint_alignment_reuses_its_programs_for_new_scans_of_one_shape():
     # check-public-imports: allow-private
-    from tomojax.alignment._pose import _pose_objective
+    from tomojax.alignment._pose import _coupled_program
 
     grid, det = Grid(12, 12, 1, 1, 1, 1), Detector(12, 1, 1, 1)
     geometry = ParallelGeometry(grid, det, np.linspace(0, 180, 8, endpoint=False))
     x = np.zeros((1, 12, 12), np.float32)
     x[:, 4:10, 3:8] = 1
-    cfg = AlignConfig(outer_iterations=1, iterations=2, optimise_dofs=("dx",), views_per_batch=3)
+    # One joint step isolates cache/input reuse from iterative rounding amplification.
+    cfg = AlignConfig(
+        outer_iterations=1,
+        iterations=2,
+        tv_weight=0,
+        optimise_dofs=("dx",),
+        views_per_batch=3,
+        gn_joint_iterations=1,
+    )
     scans = [np.asarray(project(geometry, np.roll(x, shift, axis=1))) for shift in (0, 3)]
     jax.clear_caches()
-    _first, second = (align(geometry, grid, det, y, config=cfg) for y in scans)
-    assert _pose_objective.gn_update._cache_size() == 1
+    first, second = (align(geometry, grid, det, y, config=cfg) for y in scans)
+    assert np.linalg.norm(np.asarray(first[0]) - np.asarray(second[0])) > 0.1
+    assert _coupled_program.run_update._cache_size() == 1
     jax.clear_caches()
     fresh = align(geometry, grid, det, scans[1], config=cfg)
     # A recompiled GPU program may round differently; stale targets would move the poses.
@@ -94,16 +103,27 @@ def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):
             bounds={"dx": (-1e-6, 1e-6)},  # holds the poses; only the volume moves
             early_stop=False,
         )
-        volume, _, info = align(geometry, grid, detector, data, config=cfg)
-        results.append((np.asarray(volume), info["lipschitz"] / scale**2))
+        volume, bound, _ = reconstruction_stage._run_reconstruction_step(
+            geometry=geometry,
+            grid=grid,
+            detector=detector,
+            projections=data,
+            det_grid=reconstruction_stage.get_detector_grid_device(detector),
+            pose_params=jnp.zeros((3, 6)),
+            x=jnp.zeros_like(truth),
+            cfg=cfg,
+            L_prev=None,
+            outer_idx=1,
+            reconstruction="fista",
+        )
+        results.append((np.asarray(volume), bound / scale**2))
     for volume, bound in results[1:]:
         np.testing.assert_allclose(volume, results[0][0], rtol=3e-5, atol=3e-6)
         np.testing.assert_allclose(bound, results[0][1], rtol=3e-5)
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("regulariser", ["huber_tv", "tv"])
-def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(regulariser):
+def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes():
     # The rays each sum two identical unknown voxels: A.T A has eigenvalue 2
     # on this constant mode. With L=4 every one-step update halves the error.
     # Repeatedly inflating L instead leaves a finite error even after 40 steps.
@@ -117,7 +137,7 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(reg
         lipschitz=4,
         tv_weight=0.01,
         huber_delta=0.12,
-        regulariser=regulariser,
+        regulariser="huber_tv",
         backend="jax",
         gather_dtype="fp32",
         optimise_dofs=("dx",),
@@ -494,71 +514,64 @@ def test_alignment_partial_view_batches_run_under_global_x64() -> None:
     np.testing.assert_allclose(poses, expected_poses, rtol=3e-5, atol=3e-6)
 
 
-def _shifted_laminography_scan(truth):
-    """Noisy projections of a small volume whose views carry detector-plane shifts ``truth``."""
-    grid = Grid(7, 6, 5, 0.8, 1.1, 1.3)
-    detector = Detector(11, 9, 0.7, 0.9, (0.13, -0.21))
-    geometry = LaminographyGeometry(grid, detector, np.linspace(13, 157, len(truth)), tilt_deg=23.0)
-    axes = [(np.arange(n) - (n - 1) / 2) * h for n, h in [(7, 0.8), (6, 1.1), (5, 1.3)]]
-    z, y, x = np.meshgrid(*axes[::-1], indexing="ij")
-    volume = jnp.asarray(
-        sum(
-            np.exp(-((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / width)
-            for (cx, cy, cz), width in [((1.1, -0.3, 0.7), 1.2), ((-1.3, 1.5, -1.0), 0.8)]
-        ),
-        jnp.float32,
-    )
-    nominal = jnp.asarray([geometry.pose_for_view(i) for i in range(len(truth))])
+def test_joint_pose_recovery_and_prior_against_independent_integrals():
+    from bench.voxel_truth import project_voxel_truth as oracle
 
-    def project(shifts):
-        poses = nominal.at[:, 0, 3].add(shifts[:, 0]).at[:, 2, 3].add(shifts[:, 1])
-        return jax.vmap(lambda pose: forward_project_view_T(pose, grid, detector, volume))(poses)
+    from tomojax.geometry import stack_view_poses
 
-    noise = np.random.default_rng(227).normal(size=(len(truth), detector.nv, detector.nu))
-    data = project(jnp.asarray(truth, jnp.float32)) + 0.03 * noise.astype(np.float32)
-    return geometry, grid, detector, volume, data, project
-
-
-def test_pose_steps_reduce_the_declared_objective():
-    # A Gauss-Newton step must account for its curvature prior.
+    grid, detector = Grid(4, 4, 3, 0.7, 0.9, 1.1), Detector(8, 6, 0.6, 0.8)
+    geometry = LaminographyGeometry(grid, detector, np.linspace(3.7, 343.7, 9), tilt_deg=30)
+    volume = np.random.default_rng(8).uniform(0.2, 1.3, (3, 4, 4)).astype(np.float32)
     coordinate = np.linspace(-1, 1, 9)
     truth = np.column_stack([0.012 * coordinate, 0.008 - 0.006 * coordinate])
-    geometry, grid, detector, volume, data, project = _shifted_laminography_scan(truth)
+    nominal = np.array(stack_view_poses(geometry, 9))
+    physical = nominal.copy()
+    physical[:, [0, 2], 3] += truth  # independent detector-frame shifts, no solver update
+    data = oracle(volume, physical, grid, detector)
     initial_shifts = truth + np.random.default_rng(3).normal(0, 0.012, truth.shape)
-    initial = jnp.zeros((9, 6)).at[:, 3:5].set(initial_shifts)
     config = AlignConfig(
         outer_iterations=8,
         iterations=0,
         backend="jax",
-        gather_dtype="fp32",
+        ray_integrator="exact",
+        gn_jacobian="central",
         views_per_batch=4,
         loss=L2LossSpec(),
         early_stop=False,
         optimise_dofs=("dx", "dz"),
         pose_translation_frame="detector",
-        tv_weight=0,
         w_trans=10.0,
     )
-    checkpoints = []
-    align(
+    result, params, _ = align(
         geometry,
         grid,
         detector,
-        data,
-        init_x=volume,
-        init_pose_params=initial,
+        jnp.asarray(data),
+        init_x=jnp.asarray(volume),
+        init_pose_params=jnp.zeros((9, 6)).at[:, 3:5].set(initial_shifts),
         config=config,
-        checkpoint_callback=checkpoints.append,
     )
-    found = checkpoints[-1].pose_params[:, 3:5]
+    found = np.asarray(params[:, 3:5], dtype=np.float64)
 
-    def objective(shifts):
-        prior = config.w_trans**2 * jnp.sum(jnp.diff(shifts, n=2, axis=0) ** 2)
-        return 0.5 * jnp.sum((project(shifts) - data) ** 2) + prior
+    def objective(image, shifts):
+        physical = nominal.copy()
+        physical[:, [0, 2], 3] += shifts
+        residual = oracle(image, physical, grid, detector).astype(np.float64) - data
+        return 0.5 * np.sum(residual**2) + config.w_trans**2 * np.sum(
+            np.diff(shifts, n=2, axis=0) ** 2
+        )
 
-    assert float(objective(found)) < float(objective(jnp.asarray(initial_shifts, jnp.float32)))
+    assert objective(result, found) < objective(volume, initial_shifts)
     assert np.linalg.norm(found - truth) < 0.2 * np.linalg.norm(initial_shifts - truth)
-    assert float(jnp.linalg.norm(jax.grad(objective)(found))) < 1e-3
+    np.testing.assert_allclose(result, volume, rtol=2e-5, atol=2e-6)
+    gradient = []
+    for i, column in np.ndindex(found.shape):
+        delta = np.zeros_like(found)
+        delta[i, column] = 1e-4
+        gradient.append(
+            (objective(result, found + delta) - objective(result, found - delta)) / 2e-4
+        )
+    assert np.linalg.norm(gradient) < 1e-3
 
 
 @pytest.mark.numerical
@@ -602,10 +615,9 @@ def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("coupling", ["fixed_volume", "joint"])
 @pytest.mark.parametrize("jacobian", ["autodiff", "central"])
 @pytest.mark.parametrize("resume", [False, True])
-def test_private_pose_steps_restore_public_borrowers_and_observers(coupling, jacobian, resume):
+def test_private_pose_steps_restore_public_borrowers_and_observers(jacobian, resume):
     if jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
     grid = Grid(5, 4, 3, 0.7, 1.1, 1.3)
@@ -619,15 +631,12 @@ def test_private_pose_steps_restore_public_borrowers_and_observers(coupling, jac
     def observe(volume, _poses, _stat):
         assert volume.shape == original.shape
         retained.append((volume, np.array(volume)))
-        if coupling == "fixed_volume":
-            assert volume.unsafe_buffer_pointer() == caller.unsafe_buffer_pointer()
         return "stop_run" if resume and len(retained) == 1 else "continue"
 
     cfg = AlignConfig(
         backend="cuda",
         gather_dtype="fp32",
         ray_integrator="joseph",
-        gn_coupling=coupling,
         gn_jacobian=jacobian,
         outer_iterations=2,
         iterations=0,
@@ -662,9 +671,6 @@ def test_private_pose_steps_restore_public_borrowers_and_observers(coupling, jac
     for value, snapshot in retained:
         np.testing.assert_array_equal(value, snapshot)
     assert info["backend_provenance"]["actual_backend"] == "cuda"
-    if coupling == "fixed_volume":
-        np.testing.assert_array_equal(volume, original)
-        assert info["backend_provenance"]["differentiability"] == "performance_only"
 
 
 @pytest.mark.parametrize(("rejected", "reason"), [(True, "stalled"), (False, "small_improvement")])

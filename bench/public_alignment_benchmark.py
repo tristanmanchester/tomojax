@@ -300,7 +300,6 @@ def load_fixture(path: Path) -> dict[str, Any]:
 def one_run(
     path: Path,
     ray_integrator: str = "sampled",
-    gn_coupling: str = "fixed_volume",
     gn_jacobian: str = "central",
     gn_joint_solver: str = "stacked",
     views_per_batch: int = 1,
@@ -339,7 +338,6 @@ def one_run(
 
     config = AlignConfig(
         ray_integrator=ray_integrator,
-        gn_coupling=gn_coupling,
         gn_joint_solver=gn_joint_solver,
         pose_translation_frame="detector",
         backend="cuda",
@@ -407,7 +405,6 @@ def worker(args: argparse.Namespace) -> None:
             row = one_run(
                 args.fixture,
                 args.ray_integrator,
-                args.gn_coupling,
                 args.gn_jacobian,
                 args.gn_joint_solver,
                 args.views_per_batch,
@@ -441,7 +438,6 @@ def main() -> None:
     parser.add_argument("--process-start", type=float)
     parser.add_argument("--repeats", type=int, default=7)
     parser.add_argument("--ray-integrator", choices=("sampled", "exact"), default="sampled")
-    parser.add_argument("--gn-coupling", choices=("fixed_volume", "joint"), default="fixed_volume")
     parser.add_argument("--gn-jacobian", choices=("central", "autodiff"), default="central")
     parser.add_argument(
         "--gn-joint-solver", choices=("stacked", "pose_eliminated"), default="stacked"
@@ -481,7 +477,6 @@ def main() -> None:
     payload = {
         "suite": SUITE,
         "ray_integrator": args.ray_integrator,
-        "gn_coupling": args.gn_coupling,
         "gn_jacobian": args.gn_jacobian,
         "gn_joint_solver": args.gn_joint_solver,
         "views_per_batch": args.views_per_batch,
@@ -546,8 +541,6 @@ def main() -> None:
             str(args.repeats),
             "--ray-integrator",
             args.ray_integrator,
-            "--gn-coupling",
-            args.gn_coupling,
             "--gn-jacobian",
             args.gn_jacobian,
             "--gn-joint-solver",

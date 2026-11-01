@@ -28,20 +28,20 @@ sinogram_det_u_seed = init.sinogram_det_u_seed
 
 
 @pytest.mark.parametrize("optimizer", ["gd", "validation_lm"])
-def test_fixed_volume_stages_reject_unsupported_optimizers(optimizer: str) -> None:
+def test_joint_stages_reject_unsupported_optimizers(optimizer: str) -> None:
     schedule = AlignmentSchedule(
         name="bad",
         stages=(
             AlignmentStage(
                 name="bad",
                 active_dofs=("dx",),
-                objective_kind="fixed_volume",
+                objective_kind="joint_volume_pose",
                 optimizer=optimizer,  # type: ignore[arg-type]
             ),
         ),
     )
 
-    with pytest.raises(ValueError, match="fixed_volume.*'gn'"):
+    with pytest.raises(ValueError, match="joint_volume_pose stages require GN"):
         schedule.validate()
 
 
@@ -613,7 +613,6 @@ def test_full_setup_seeds_jointly_in_native_units_and_preserves_frozen_axes(
                 np.stack(kwargs["det_grid_override"]), selected.reshape(2, -1), atol=5e-7
             )
         kwargs["config"] = kwargs.pop("cfg")
-        kwargs.pop("anchor_translations")
         return pose_align(geometry, grid, level_detector, projections, **kwargs)
 
     monkeypatch.setattr("tomojax.alignment._stages._stage_runners.align", check)

@@ -20,7 +20,6 @@ from tomojax.alignment._model.schedules import AlignmentSchedule, AlignmentStage
 from tomojax.alignment._modes import MODES, AlignmentMode, AlignmentPlan, alignment_plan
 from tomojax.alignment._objectives.loss_specs import (
     AlignmentLossSpec,
-    HuberLossSpec,
     L2LossSpec,
     L2OtsuLossSpec,
 )
@@ -53,7 +52,6 @@ __all__ = [
     "AlignmentStage",
     "CenterEstimate",
     "CenterPair",
-    "HuberLossSpec",
     "L2LossSpec",
     "L2OtsuLossSpec",
     "OuterStat",

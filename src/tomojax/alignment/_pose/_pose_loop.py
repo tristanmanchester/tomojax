@@ -53,32 +53,28 @@ from tomojax.core.validation import (
 )
 from tomojax.core.volume_layout import transpose_volume
 
-from ._coupled_objective import VolumeHandle
+from ._coupled_objective import VolumeHandle, build_coupled_objective
 from ._matching_model import JointRefinement
 from ._pose_context import (
     AlignmentRuntimeContext,
     PoseConstraintContext,
     PoseMotionContext,
     _AlignSetupState,
+    _pose_objective_context,
     validate_resume_config,
     with_beam_translation,
 )
-from ._pose_objective import PoseObjectiveBundle, _build_pose_objective_bundle
 from ._pose_steps import (
     AlignmentStepConstraints,
     AlignmentStepGauge,
-    AlignmentStepMotion,
     AlignmentStepObjective,
-    AlignmentStepSmoothing,
-    _run_alignment_step,
     _run_coupled_alignment_step,
 )
 
 _AlignmentStepContexts = tuple[
     AlignmentStepObjective,
     AlignmentStepConstraints,
-    AlignmentStepMotion,
-    AlignmentStepSmoothing,
+    PoseMotionContext,
     AlignmentStepGauge,
 ]
 
@@ -125,7 +121,6 @@ def _prepare_align_setup(
     init_pose_params: jnp.ndarray | None,
     observer: ObserverCallback | None,
     resume_state: AlignResumeState | None,
-    anchor_translations: bool = False,
 ) -> _AlignSetupState:
     if cfg is None:
         cfg = AlignConfig()
@@ -168,23 +163,10 @@ def _prepare_align_setup(
         pose_params = pose_params if seeded is None else seeded
     frozen_pose_params = pose_params
     active_mask_bool = jnp.asarray(active_mask_tuple, dtype=bool)
-    active_col_indices_np = np.asarray(
-        [idx for idx, is_active in enumerate(active_mask_tuple) if is_active],
-        dtype=np.int32,
-    )
     active_names = _active_dofs_for_cfg(cfg)
     active_mask = active_mask_bool.astype(jnp.float32)
     bounds_lower, bounds_upper = bounds_vectors(cfg.bounds)
-    # Setup stages anchor mean object-frame translations so the poses cannot
-    # absorb the setup geometry. Otherwise the solve is free along the gauge,
-    # and the caller reports the least-motion estimate (alignment._gauge). The
-    # coupled step moves volume and poses together, so it is never anchored.
-    anchored = (
-        anchor_translations
-        and cfg.pose_translation_frame == "object"
-        and cfg.gn_coupling != "joint"
-    )
-    gauge_fix = normalize_gauge_fix("mean_translation" if anchored else "none")
+    gauge_fix = normalize_gauge_fix("none")
     gauge_dofs = active_gauge_dofs(mode=gauge_fix, active_mask=active_mask_tuple)
     validate_alignment_gauge_feasible(
         mode=gauge_fix,
@@ -201,7 +183,6 @@ def _prepare_align_setup(
         frozen_pose_params=frozen_pose_params,
         active_mask_tuple=active_mask_tuple,
         active_mask_bool=active_mask_bool,
-        active_col_indices_np=active_col_indices_np,
         active_names=active_names,
         active_mask=active_mask,
         bounds_lower=bounds_lower,
@@ -234,17 +215,11 @@ def _build_alignment_runtime_context(
         )
         * active_mask
     )
-    smoothness_weights_sq = smoothness_weights * smoothness_weights
-    medium_smoothness_weights_sq = smoothness_weights_sq * jnp.float32(0.4)
-    trans_only_smoothness_weights_sq = smoothness_weights_sq.at[:3].set(0.0)
-    light_smoothness_weights_sq = smoothness_weights_sq * jnp.float32(0.25)
 
     active_loss_spec = resolve_loss_for_level(cfg.loss, level_factor=1)
     active_loss_name = loss_spec_name(active_loss_spec)
     loss_adapter = build_loss_adapter(active_loss_spec, projections)
     loss_mask = getattr(loss_adapter.state, "mask", None)
-    chunk_size = max(1, int(cfg.views_per_batch))
-    chunk_size = min(chunk_size, n_views)
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])
 
@@ -255,10 +230,6 @@ def _build_alignment_runtime_context(
         pose_stack=pose_stack,
         det_grid=det_grid,
         smoothness_weights=smoothness_weights,
-        smoothness_weights_sq=smoothness_weights_sq,
-        medium_smoothness_weights_sq=medium_smoothness_weights_sq,
-        trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
-        light_smoothness_weights_sq=light_smoothness_weights_sq,
         active_loss_name=active_loss_name,
         loss_adapter=loss_adapter,
         loss_mask=loss_mask,
@@ -274,50 +245,25 @@ def _build_alignment_runtime_context(
         ).to_dict(),
         nv=nv,
         nu=nu,
-        chunk_size=chunk_size,
-        num_chunks=(n_views + chunk_size - 1) // chunk_size,
-        empty_loss_mask_chunk=jnp.zeros((chunk_size, nv, nu), dtype=jnp.float32),
     )
 
 
 def _build_alignment_step_contexts(
     *,
-    runtime: AlignmentRuntimeContext,
-    objective: PoseObjectiveBundle,
+    objective: AlignmentStepObjective,
     setup: _AlignSetupState,
     motion_ctx: PoseMotionContext,
-    motion_model: Any,
     constraint_ctx: PoseConstraintContext,
 ) -> _AlignmentStepContexts:
     return (
-        AlignmentStepObjective(
-            align_loss_jit=objective.align_loss_jit,
-            gn_update_all=objective.gn_update_all,
-            coupled=objective.coupled,
-            private=objective.private,
-        ),
+        objective,
         AlignmentStepConstraints(
             active_mask=setup.active_mask,
-            active_col_indices_np=setup.active_col_indices_np,
-            frozen_pose_params=setup.frozen_pose_params,
             bounds_lower=constraint_ctx.bounds_lower,
             bounds_upper=constraint_ctx.bounds_upper,
-            apply_full_constraints=constraint_ctx.apply_full_constraints,
             apply_full_constraints_with_stats=constraint_ctx.apply_full_constraints_with_stats,
         ),
-        AlignmentStepMotion(
-            active_coeff_indices=motion_ctx.active_coeff_indices,
-            project_params_to_smooth=motion_ctx.project_params_to_smooth,
-            coeffs_to_constrained_params=motion_ctx.coeffs_to_constrained_params,
-            use_smooth_pose_model=motion_ctx.use_smooth_pose_model,
-            motion_model=motion_model,
-        ),
-        AlignmentStepSmoothing(
-            light_smoothness_weights_sq=runtime.light_smoothness_weights_sq,
-            medium_smoothness_weights_sq=runtime.medium_smoothness_weights_sq,
-            smoothness_weights_sq=runtime.smoothness_weights_sq,
-            trans_only_smoothness_weights_sq=runtime.trans_only_smoothness_weights_sq,
-        ),
+        motion_ctx,
         AlignmentStepGauge(
             gauge_fix=constraint_ctx.gauge_fix,
             gauge_dofs=tuple(constraint_ctx.gauge_dofs),
@@ -328,7 +274,6 @@ def _build_alignment_step_contexts(
 @dataclass
 class _AlignLoopState:
     x: jnp.ndarray
-    input_x: jnp.ndarray  # align's entry volume, which align and its setup hold throughout
     pose_params: jnp.ndarray
     motion_coeffs: jnp.ndarray | None
     final_gauge_stats: dict[str, float | str | list[str]]
@@ -410,7 +355,7 @@ def _initial_outer_stat(
         "outer_idx": outer_idx,
         "loss_kind": active_loss_name,
         "reconstruction": reconstruction,
-        "objective_kind": "joint_volume_pose" if cfg.gn_coupling == "joint" else "fixed_volume",
+        "objective_kind": "joint_volume_pose",
         "objective_provenance": dict(objective_provenance),
         "backend_provenance": dict(backend_provenance),
         "outer_loss_kind": active_loss_name,
@@ -469,56 +414,33 @@ def _run_align_outer_iteration(
         stat["cumulative_time"] = time.perf_counter() - wall_start
         state.outer_stats.append(stat)
         return stat, None
-    objective, constraints, motion, smoothing, gauge = step_contexts
-    # A pose-only step leaves x as it was: the entry volume comes back as
-    # itself, and holding it costs nothing as align holds it too.
-    kept = state.x if objective.coupled is None and state.x is state.input_x else None
+    objective, constraints, motion, gauge = step_contexts
     if objective.private:  # the loop holds x in the pose cores' storage while they run
         state.x = transpose_volume(jax.block_until_ready(state.x))
-    if objective.coupled is not None:
-        # Only the private copy is the loop's alone; the public image may be align's input.
-        # The handle then holds it alone, so a release leaves no stale reference.
-        volume, state.x = VolumeHandle(state.x, owned=objective.private), cast("jnp.ndarray", None)
-        (
-            state.x,
-            state.pose_params,
-            state.motion_coeffs,
-            state.final_gauge_stats,
-            total_loss,
-            rel_impr,
-            align_stat,
-        ) = _run_coupled_alignment_step(
-            cfg=cfg,
-            objective=objective.coupled,
-            constraints=constraints,
-            gauge=gauge,
-            pose_params_in=state.pose_params,
-            vol=volume,
-        )
-        if motion.use_smooth_pose_model:
-            state.motion_coeffs = fit_motion_coefficients(motion.motion_model, state.pose_params)
-        del volume  # the entry image dies here, not beside the transpose back
-    else:
-        (
-            state.pose_params,
-            state.motion_coeffs,
-            state.final_gauge_stats,
-            total_loss,
-            rel_impr,
-            align_stat,
-        ) = _run_alignment_step(
-            objective=objective,
-            constraints=constraints,
-            motion=motion,
-            smoothing=smoothing,
-            gauge=gauge,
-            pose_params_in=state.pose_params,
-            motion_coeffs_in=state.motion_coeffs,
-            vol=state.x,
-            loss_hist=state.loss_hist,
-        )
+    # Only the private copy is the loop's alone; the public image may be align's input.
+    # The handle then holds it alone, so a release leaves no stale reference.
+    volume, state.x = VolumeHandle(state.x, owned=objective.private), cast("jnp.ndarray", None)
+    (
+        state.x,
+        state.pose_params,
+        state.motion_coeffs,
+        state.final_gauge_stats,
+        total_loss,
+        rel_impr,
+        align_stat,
+    ) = _run_coupled_alignment_step(
+        cfg=cfg,
+        objective=objective.coupled,
+        constraints=constraints,
+        gauge=gauge,
+        pose_params_in=state.pose_params,
+        vol=volume,
+    )
+    if motion.use_smooth_pose_model:
+        state.motion_coeffs = fit_motion_coefficients(motion.motion_model, state.pose_params)
+    del volume  # the entry image dies here, not beside the transpose back
     if objective.private:
-        state.x = transpose_volume(jax.block_until_ready(state.x)) if kept is None else kept
+        state.x = transpose_volume(jax.block_until_ready(state.x))
     state.loss_hist.append(total_loss)
     stat.update(align_stat)
     stat["outer_time"] = time.perf_counter() - outer_start
@@ -560,7 +482,7 @@ def _final_pose_align_info(
         "active_dofs": list(motion_model.active_names),
         "active_pose_dofs": list(motion_model.active_names),
         "active_geometry_dofs": [],
-        "objective_kind": "joint_volume_pose" if cfg.gn_coupling == "joint" else "fixed_volume",
+        "objective_kind": "joint_volume_pose",
         "objective_kinds": sorted({str(s["objective_kind"]) for s in outer_stats}),
         "objective_provenance": (
             dict(outer_stats[-1].get("objective_provenance", {}))
@@ -597,10 +519,9 @@ def align(
     resume_state: AlignResumeState | None = None,
     checkpoint_callback: AlignCheckpointCallback | None = None,
     det_grid_override: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-    anchor_translations: bool = False,
     joint_refinement: JointRefinement | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignInfo]:
-    """Alternating reconstruction + per-view pose alignment on small cases.
+    """Joint volume and pose alignment with reconstruction refreshes.
 
     Returns (x, pose_params, info) with loss history and optional metrics.
     """
@@ -614,14 +535,11 @@ def align(
         init_pose_params=init_pose_params,
         observer=observer,
         resume_state=resume_state,
-        anchor_translations=anchor_translations,
     )
     cfg = setup.cfg
-    observer_fn = setup.observer_fn
     n_views = setup.n_views
     x = setup.x
     pose_params = setup.pose_params
-    active_names = setup.active_names
     active_mask = setup.active_mask
     constraint_ctx = PoseConstraintContext.from_setup(setup)
 
@@ -633,7 +551,7 @@ def align(
         geometry=geometry,
         cfg=cfg,
         n_views=n_views,
-        active_names=active_names,
+        active_names=setup.active_names,
         pose_params=pose_params,
         resume_state=resume_state,
         constraint_ctx=constraint_ctx,
@@ -659,25 +577,32 @@ def align(
         det_grid_override=det_grid_override,
     )
 
-    objective = _build_pose_objective_bundle(
-        geometry=geometry,
-        grid=grid,
-        detector=detector,
-        projections=projections,
-        cfg=cfg,
-        n_views=n_views,
-        active_mask=active_mask,
-        runtime=runtime,
-        refinement=joint_refinement,
-        pose_basis=None
-        if motion_model.basis is None
-        else jnp.asarray(
-            np.linalg.qr(np.asarray(motion_model.basis, dtype=np.float64))[0], dtype=jnp.float32
-        ),
-        # Parallel Joseph pose cores on CUDA read a private z-fast copy of the volume.
-        private=cfg.ray_integrator in {"joseph", "joseph_cubic"}
+    private = (
+        cfg.ray_integrator in {"joseph", "joseph_cubic"}
         and cfg.backend == "cuda"
-        and cuda_backend(),
+        and cuda_backend()
+        and runtime.cone is None
+    )
+    objective = AlignmentStepObjective(
+        coupled=build_coupled_objective(
+            _pose_objective_context(
+                grid=grid,
+                detector=detector,
+                projections=projections,
+                cfg=cfg,
+                n_views=n_views,
+                active_mask=active_mask,
+                runtime=runtime,
+            ),
+            refinement=joint_refinement,
+            private=private,
+            pose_basis=None
+            if motion_model.basis is None
+            else jnp.asarray(
+                np.linalg.qr(np.asarray(motion_model.basis, dtype=np.float64))[0], dtype=jnp.float32
+            ),
+        ),
+        private=private,
     )
 
     elapsed_offset = float(resume_state.elapsed_offset) if resume_state is not None else 0.0
@@ -685,7 +610,6 @@ def align(
     reconstruction = str(cfg.reconstruction)
     loop_state = _AlignLoopState(
         x=x,
-        input_x=x,
         pose_params=pose_params,
         motion_coeffs=motion_coeffs,
         final_gauge_stats=final_gauge_stats,
@@ -704,11 +628,9 @@ def align(
     )
 
     step_contexts = _build_alignment_step_contexts(
-        runtime=runtime,
         objective=objective,
         setup=setup,
         motion_ctx=motion_ctx,
-        motion_model=motion_model,
         constraint_ctx=constraint_ctx,
     )
 
@@ -767,7 +689,7 @@ def align(
             stat=stat,
             rel_impr=rel_impr,
             outer_idx=outer_idx,
-            observer_fn=observer_fn,
+            observer_fn=setup.observer_fn,
             checkpoint_callback=checkpoint_callback,
             wall_start=wall_start,
         )

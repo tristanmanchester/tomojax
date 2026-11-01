@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import math
 from typing import TYPE_CHECKING, Literal
 
@@ -88,7 +88,7 @@ def resolved_schedule_for_config(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
 
 
 def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
-    resolved = resolve_alignment_schedule(
+    return resolve_alignment_schedule(
         schedule=cfg.schedule,
         optimise_dofs=cfg.optimise_dofs,
         freeze=cfg.freeze,
@@ -97,20 +97,6 @@ def _resolved_schedule_for_cfg(cfg: AlignConfig) -> ResolvedAlignmentSchedule:
         outer_iterations=int(cfg.outer_iterations),
         early_stop=bool(cfg.early_stop),
     )
-    if cfg.gn_coupling == "joint":
-        # Pose-only stages solve volume and poses together; setup stages keep theirs.
-        resolved = replace(
-            resolved,
-            stages=tuple(
-                replace(stage, objective_kind="joint_volume_pose")
-                if stage.active_pose_dofs
-                and not stage.active_geometry_dofs
-                and stage.objective_kind != "projection_consistency"
-                else stage
-                for stage in resolved.stages
-            ),
-        )
-    return resolved
 
 
 @dataclass(kw_only=True)
@@ -131,7 +117,7 @@ class AlignConfig:
     iterations : int, optional
         Inner reconstruction iterations per outer iteration. Default is 10.
     tv_weight : float, optional
-        Nonnegative volume regularization weight. Default is 0.005.
+        Nonnegative volume regularization weight. Default is 0.0.
     regulariser : Regulariser, optional
         Volume regularization model, "tv" or "huber_tv". Default is 'huber_tv'.
     huber_delta : float, optional
@@ -149,7 +135,7 @@ class AlignConfig:
         Recompute intermediate projector arrays during differentiation to save memory.
         Default is True.
     gather_dtype : str, optional
-        Reference gather precision: "auto", "fp32", "fp16" or "bf16". Default is 'auto'.
+        Matched joint-operator gather precision. Default is 'fp32'.
     backend : ProjectorBackendInput, optional
         Projector implementation: "jax" or "cuda". Default is 'cuda'.
     ray_integrator : Literal['sampled', 'exact', 'joseph', 'joseph_cubic'], optional
@@ -163,12 +149,9 @@ class AlignConfig:
     gn_difference_step : float, optional
         Positive central-difference displacement as a fraction of the smallest voxel
         pitch. Default is 0.001.
-    gn_coupling : Literal['fixed_volume', 'joint'], optional
-        Gauss-Newton update model: "fixed_volume" or "joint" volume and poses. Default
-        is 'fixed_volume'.
     gn_joint_solver : Literal['stacked', 'pose_eliminated'], optional
         Joint linear-system formulation, "stacked" or "pose_eliminated". Default is
-        'stacked'.
+        'pose_eliminated'.
     gn_joint_iterations : int, optional
         Positive limit on iterations of each joint linear solve. Default is 40.
     gn_joint_rtol : float, optional
@@ -238,7 +221,7 @@ class AlignConfig:
     quality: QualityTier = "fast"
     outer_iterations: int = 5
     iterations: int = 10
-    tv_weight: float = 0.005
+    tv_weight: float = 0.0
     regulariser: Regulariser = "huber_tv"
     huber_delta: float = 1e-2
     reconstruction: Reconstruction = "fista"
@@ -248,7 +231,7 @@ class AlignConfig:
     # from free device memory when alignment starts.
     views_per_batch: int = 0
     checkpoint_projector: bool = True
-    gather_dtype: str = "auto"
+    gather_dtype: str = "fp32"
     backend: ProjectorBackendInput = "cuda"
     ray_integrator: Literal["sampled", "exact", "joseph", "joseph_cubic"] = field(
         default="sampled", kw_only=True
@@ -258,8 +241,9 @@ class AlignConfig:
     gn_jacobian: Literal["autodiff", "central"] = field(default="autodiff", kw_only=True)
     # Central-difference displacement as a fraction of the smallest voxel pitch.
     gn_difference_step: float = field(default=1e-3, kw_only=True)
-    gn_coupling: Literal["fixed_volume", "joint"] = field(default="fixed_volume", kw_only=True)
-    gn_joint_solver: Literal["stacked", "pose_eliminated"] = field(default="stacked", kw_only=True)
+    gn_joint_solver: Literal["stacked", "pose_eliminated"] = field(
+        default="pose_eliminated", kw_only=True
+    )
     gn_joint_iterations: int = field(default=40, kw_only=True)
     gn_joint_rtol: float = field(default=1e-4, kw_only=True)
     gn_volume_damping: float = field(default=1e-3, kw_only=True)
@@ -300,7 +284,7 @@ class AlignConfig:
         self._normalize_dof_options()
         self._normalize_gauge_options()
         self._normalize_pose_model_options()
-        if self.gn_coupling == "joint" and self.tv_weight != 0 and self.regulariser != "huber_tv":
+        if self.tv_weight != 0 and self.regulariser != "huber_tv":
             raise ValueError("joint GN supports Huber-TV or zero volume regularisation")
 
     def _normalize_reconstruction_options(self) -> None:
@@ -318,8 +302,6 @@ class AlignConfig:
             raise ValueError("gn_jacobian must be 'autodiff' or 'central'")
         if not math.isfinite(self.gn_difference_step) or self.gn_difference_step <= 0:
             raise ValueError("gn_difference_step must be finite and > 0")
-        if self.gn_coupling not in {"fixed_volume", "joint"}:
-            raise ValueError("gn_coupling must be fixed_volume or joint")
         if self.gn_joint_solver not in {"stacked", "pose_eliminated"}:
             raise ValueError("gn_joint_solver must be stacked or pose_eliminated")
         if (
@@ -331,9 +313,7 @@ class AlignConfig:
             raise ValueError("gn_joint_rtol must be finite and between zero and one")
         if not math.isfinite(self.gn_volume_damping) or self.gn_volume_damping <= 0:
             raise ValueError("gn_volume_damping must be finite and positive")
-        if self.gn_coupling == "joint" and (
-            not math.isfinite(self.gn_damping) or self.gn_damping <= 0
-        ):
+        if not math.isfinite(self.gn_damping) or self.gn_damping <= 0:
             raise ValueError("joint GN requires finite positive gn_damping")
 
     def _normalize_schedule_options(self) -> None:
@@ -381,7 +361,6 @@ class AlignConfig:
 def coupled_pose_defaults() -> dict[str, object]:
     """One set of defaults for the public coupled preset and product modes."""
     return {
-        "gn_coupling": "joint",
         "gn_joint_solver": "pose_eliminated",
         "pose_model": "per_view",
         "pose_translation_frame": "detector",
@@ -402,8 +381,7 @@ def coupled_pose_config(**overrides: object) -> AlignConfig:
     plane sampling, an unregularised least-squares fit, fp32 gathers and up to
     30 early-stopped outer iterations, after a global search for each view's
     detector shift. Pass keyword overrides for any
-    :class:`AlignConfig` field. ``AlignConfig()`` itself keeps the older
-    alternating defaults for compatibility.
+    :class:`AlignConfig` field.
 
     Parameters
     ----------

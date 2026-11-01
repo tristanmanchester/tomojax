@@ -177,17 +177,11 @@ def _run_pose_alignment_stage(
         run_spectral_motion_stage(level, stage, state)
         return
     stage_global_start = runtime.global_before_level + len(runtime.level_stats)
-    anchored = stage.gauge_policy == "anchor_mean" and level.cfg.pose_translation_frame == "object"
     cfg_stage = replace(
         level.cfg,
         schedule=None,
         optimise_dofs=stage.active_pose_dofs,
         outer_iterations=int(stage.maxiter),
-        # A fixed-volume objective holds the volume fixed during each pose step;
-        # alternation still refreshes it between steps. Skipping reconstruction
-        # left pose-only schedules optimising against an all-zero volume.
-        iterations=int(level.cfg.iterations),
-        gn_coupling="joint" if stage.objective_kind == "joint_volume_pose" else "fixed_volume",
         early_stop=bool(stage.early_stop),
         # A supplied Lipschitz constant describes the full-resolution grid only.
         lipschitz=level.cfg.lipschitz if runtime.level_factor == 1 else None,
@@ -227,7 +221,6 @@ def _run_pose_alignment_stage(
             setup_alignment_state=state.setup_alignment_state,
             active_geometry_dofs=level.active_geometry_dofs,
         ),
-        anchor_translations=anchored,
         **align_kwargs,
     )
     state.setup_alignment_state = state.setup_alignment_state.replace(

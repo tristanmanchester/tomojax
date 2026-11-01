@@ -6,7 +6,6 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from tomojax.core.geometry.transforms import rot_x, rot_y, rot_z
 
@@ -45,32 +44,6 @@ def se3_from_pose_params(pose_params: jnp.ndarray) -> jnp.ndarray:
     T = jnp.eye(4, dtype=jnp.float32)
     T = T.at[:3, :3].set(R)
     return T.at[:3, 3].set(jnp.stack([dx, dy, dz]).astype(jnp.float32))
-
-
-def pad_pose_params(params: object) -> np.ndarray:
-    """Return an ``(n_views, 6)`` FP32 pose table, adding dy = 0 to five-column tables.
-
-    Parameters
-    ----------
-    params : array-like
-        Per-view pose table with five or six columns in radians and physical lengths.
-
-    Returns
-    -------
-    numpy.ndarray
-        Float32 pose table with shape (views, 6); five-column input gains zero dy.
-
-    Raises
-    ------
-    ValueError
-        If the input is not a two-dimensional five- or six-column table.
-    """
-    arr = np.asarray(params, dtype=np.float32)
-    if arr.ndim != 2 or arr.shape[1] not in (5, 6):
-        raise ValueError(f"pose parameters must have shape (n_views, 5 or 6), got {arr.shape}")
-    if arr.shape[1] == 5:
-        arr = np.concatenate([arr, np.zeros((arr.shape[0], 1), np.float32)], axis=1)
-    return arr
 
 
 def apply_pose_update(

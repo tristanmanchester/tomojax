@@ -1,6 +1,6 @@
 {
   "config_fields": {
-    "AlignConfig": 41,
+    "AlignConfig": 40,
     "CGLSConfig": 11,
     "ConeAxisConfig": 6,
     "FBPConfig": 5,
@@ -26,7 +26,7 @@
     "tomojax.geometry.api": 12,
     "tomojax.recon.api": 7,
     "tomojax.io.api": 21,
-    "tomojax.alignment.api": 34
+    "tomojax.alignment.api": 33
   },
   "cli_flags": {
     "inspect": 4,
@@ -43,7 +43,6 @@
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 139,
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 253,
-    "src/tomojax/alignment/_pose/_pose_loop.py::_run_align_outer_iteration": 105,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 199,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 156,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 126,
@@ -65,9 +64,9 @@
   "code_lines": {
     "(modules)": 3085,
     "_data": 2050,
-    "alignment": 16238,
+    "alignment": 15445,
     "backends": 617,
-    "cli": 2572,
+    "cli": 2571,
     "core": 13412,
     "corrections": 2203,
     "datasets": 1125,
@@ -82,7 +81,7 @@
   "cuda_switches": 31,
   "environment_reads": 30,
   "suppressions": {
-    "noqa": 6,
+    "noqa": 5,
     "type: ignore": 26,
     "pyright: ignore": 12
   },
@@ -101,12 +100,12 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "single_use_helpers": {
-    "tiny": 102,
+    "tiny": 100,
     "forwarders": 9,
-    "chained": 33
+    "chained": 32
   },
   "type_errors": {
-    "reportArgumentType": 172,
+    "reportArgumentType": 170,
     "reportAssignmentType": 1,
     "reportAttributeAccessIssue": 77,
     "reportCallIssue": 9,
@@ -116,7 +115,7 @@
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 7,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 70,
+    "reportPrivateUsage": 65,
     "reportRedeclaration": 1,
     "reportReturnType": 17,
     "reportTypedDictNotRequiredAccess": 5
@@ -126,5 +125,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 153
+  "test_private_imports": 151
 }

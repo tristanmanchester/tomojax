@@ -216,7 +216,7 @@ def test_alignment_modes_plan_their_schedules() -> None:
 
     grid = tj.Grid(128, 128, 128, 1.0, 1.0, 1.0)
     pose = alignment_plan("pose", grid)
-    assert pose.pose_solver == "coupled" and pose.levels == (4, 2, 1)
+    assert pose.levels == (4, 2, 1)
     assert pose.config.gn_joint_iterations == 40
     geometry = _geometries(16)
     cone = tj.geometry.ConeSegments((geometry["cone"], geometry["cone"]))

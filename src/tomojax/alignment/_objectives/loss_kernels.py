@@ -1,4 +1,4 @@
-"""Projection-domain L2, foreground-weighted L2 and Huber losses."""
+"""Projection-domain L2, foreground-weighted L2 losses."""
 
 from __future__ import annotations
 
@@ -17,14 +17,6 @@ def _safe_epsilon(p: dict[str, float], key: str, default: float) -> float:
 def _loss_l2(pred: jnp.ndarray, tar: jnp.ndarray, _: LossState) -> jnp.ndarray:
     r = (pred - tar).astype(jnp.float32)
     return 0.5 * jnp.sum(r * r)
-
-
-def _loss_huber(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
-    r = (pred - tar).astype(jnp.float32)
-    delta = float(st.params.get("delta", 1.0))
-    absr = jnp.abs(r)
-    quad = jnp.minimum(absr, delta)
-    return jnp.sum(0.5 * quad * quad + delta * (absr - quad))
 
 
 def _compute_otsu_threshold(x: np.ndarray, nbins: int = 256) -> float:
@@ -66,7 +58,6 @@ def _loss_l2_otsu_soft(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jn
 
 __all__ = [
     "_compute_otsu_threshold",
-    "_loss_huber",
     "_loss_l2",
     "_loss_l2_otsu_soft",
     "_safe_epsilon",

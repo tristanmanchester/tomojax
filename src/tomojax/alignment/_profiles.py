@@ -79,7 +79,7 @@ def alignment_profile_policy(quality: QualityTier) -> AlignmentProfilePolicy:
     return AlignmentProfilePolicy(
         quality="fast",
         backend="cuda",
-        gather_dtype="auto",
+        gather_dtype="fp32",
         regulariser="huber_tv",
         reconstruction="fista",
         views_per_batch=0,

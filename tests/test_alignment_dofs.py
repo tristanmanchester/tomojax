@@ -124,8 +124,7 @@ def test_coupled_pose_config_matches_the_cli_pose_solver() -> None:
 
     cfg = coupled_pose_config(outer_iterations=7)
     assert cfg.pose_translation_frame == "detector"
-    assert (cfg.gn_coupling, cfg.gn_joint_solver, cfg.ray_integrator) == (
-        "joint",
+    assert (cfg.gn_joint_solver, cfg.ray_integrator) == (
         "pose_eliminated",
         "joseph",
     )

@@ -12,14 +12,12 @@ import numpy as np
 
 from .loss_kernels import (
     _compute_otsu_threshold,
-    _loss_huber,
     _loss_l2,
     _loss_l2_otsu_soft,
     _safe_epsilon,
 )
 from .loss_specs import (
     AlignmentLossSpec,
-    HuberLossSpec,
     L2LossSpec,
     L2OtsuLossSpec,
     canonicalize_loss_kind,
@@ -53,24 +51,9 @@ class LossAdapter:
     gauss_newton_weights: GaussNewtonWeightFn
     supports_setup_validation_lm: bool
 
-    def residual_model(self, residual: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Return the true objective and square-root IRLS weights at this residual.
-
-        The residual already includes any target-only foreground weighting.
-        Huber weights multiply both residuals and Jacobian columns, not just
-        residuals. Line search must use the true objective, not its surrogate.
-        """
-        if isinstance(self.spec, HuberLossSpec):
-            delta = self.spec.delta
-            magnitude = jnp.abs(residual)
-            quadratic = jnp.minimum(magnitude, delta)
-            value = jnp.sum(0.5 * quadratic**2 + delta * (magnitude - quadratic))
-            return value, jnp.sqrt(delta / jnp.maximum(delta, magnitude))
-        return jnp.float32(0.5) * jnp.vdot(residual, residual).real, jnp.float32(1.0)
-
 
 def _per_view_loss(state: LossState) -> PerViewLossFn:
-    f = {"l2_otsu": _loss_l2_otsu_soft, "huber": _loss_huber}.get(state.kind, _loss_l2)
+    f = _loss_l2_otsu_soft if state.kind == "l2_otsu" else _loss_l2
 
     def per_view_fn(
         pred_chunk: jnp.ndarray,
@@ -90,7 +73,7 @@ def _per_view_loss(state: LossState) -> PerViewLossFn:
 
 
 def _gauss_newton_weight_builder(spec: AlignmentLossSpec) -> GaussNewtonWeightFn:
-    if isinstance(spec, L2LossSpec | HuberLossSpec):
+    if isinstance(spec, L2LossSpec):
         return lambda y_chunk, _mask_chunk: jnp.ones_like(y_chunk)
     if isinstance(spec, L2OtsuLossSpec):
         temp = jnp.float32(max(float(spec.temp), 1e-6))

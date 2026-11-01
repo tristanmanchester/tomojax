@@ -25,22 +25,7 @@ class L2OtsuLossSpec:
     temp: float = 0.5
 
 
-@dataclass(frozen=True, slots=True)
-class HuberLossSpec:
-    """Convex robust projection loss for fixed-volume Gauss-Newton alignment.
-
-    Parameters
-    ----------
-    delta : float, optional
-        Positive residual threshold in projection units. Residuals above this
-        threshold have bounded influence. Default is 1.0; choose it for the
-        noise scale of the measured projections. Joint GN is not supported.
-    """
-
-    delta: float = 1.0
-
-
-type AlignmentLossSpec = L2LossSpec | L2OtsuLossSpec | HuberLossSpec
+type AlignmentLossSpec = L2LossSpec | L2OtsuLossSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,8 +90,6 @@ def loss_spec_name(spec: AlignmentLossSpec) -> str:
         return "l2"
     if isinstance(spec, L2OtsuLossSpec):
         return "l2_otsu"
-    if isinstance(spec, HuberLossSpec):
-        return "huber"
     raise TypeError(f"Unsupported loss spec: {type(spec)!r}")
 
 
@@ -132,8 +115,6 @@ def loss_spec_params(spec: AlignmentLossSpec) -> dict[str, float]:
         return {}
     if isinstance(spec, L2OtsuLossSpec):
         return {"temp": float(spec.temp)}
-    if isinstance(spec, HuberLossSpec):
-        return {"delta": float(spec.delta)}
     raise TypeError(f"Unsupported loss spec: {type(spec)!r}")
 
 
@@ -167,17 +148,15 @@ def parse_loss_spec(
     """
     canonical = canonicalize_loss_kind(kind)
     raw = {} if params is None else {str(k): float(v) for k, v in params.items()}
-    allowed = {"l2": (), "l2_otsu": ("temp",), "huber": ("delta",)}
+    allowed = {"l2": (), "l2_otsu": ("temp",)}
     if canonical not in allowed:
-        raise ValueError(f"Unknown or removed loss kind: {kind}; use l2, l2_otsu or huber")
+        raise ValueError(f"Unknown or removed loss kind: {kind}; use l2 or l2_otsu")
     extras = sorted(set(raw) - set(allowed[canonical]))
     if extras:
         raise ValueError(f"Unsupported parameters for {canonical}: {', '.join(extras)}")
     if canonical == "l2":
         return L2LossSpec()
-    if canonical == "l2_otsu":
-        return L2OtsuLossSpec(temp=raw.get("temp", 0.5))
-    return HuberLossSpec(delta=raw.get("delta", 1.0))
+    return L2OtsuLossSpec(temp=raw.get("temp", 0.5))
 
 
 def _parse_loss_schedule_level(raw_level: object) -> int:
@@ -351,7 +330,6 @@ __all__ = [
     "AlignmentLossConfig",
     "AlignmentLossSchedule",
     "AlignmentLossSpec",
-    "HuberLossSpec",
     "L2LossSpec",
     "L2OtsuLossSpec",
     "LossScheduleEntry",

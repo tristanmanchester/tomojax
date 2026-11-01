@@ -181,8 +181,6 @@ measurements require independent calibration evidence and repair before `Rings`.
   show exact redundancies under unrestricted per-view poses; they do not
   provide uncertainty or identify a calibrated setup. A fixed-pose Walnut
   focal-distance test fails the 1% held-out correspondence improvement gate.
-  The alternating
-  solver's non-Gauss-Newton optimisers are not validated for cone geometry.
 - FBP weights every view exactly for rotation about one fixed axis, at any
   tilt, arc length or angular spacing. It cannot recover frequencies no view
   measured: laminography's missing cone reconstructs as zero, so FBP gives

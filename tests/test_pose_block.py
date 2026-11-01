@@ -10,7 +10,6 @@ import pytest
 # check-public-imports: allow-private
 from tomojax.alignment._pose._pose_block import (
     pose_block_solver,
-    smooth_pose_candidate,
     trajectory_block_solver,
 )
 
@@ -47,27 +46,10 @@ def test_pose_factorization_matches_dense_second_difference_system(views, smooth
     )
 
 
-@pytest.mark.numerical
-@pytest.mark.parametrize("views", [2, 3, 40])
-def test_candidate_smoothing_solves_the_curvature_prior(views):
-    candidate = np.random.default_rng(views).normal(size=(views, 3)).astype(np.float32)
-    weights = np.asarray([0.0, 0.5, 20.0], np.float32)
-    second = np.diff(np.eye(views), n=2, axis=0)
-    expected = np.stack(
-        [
-            np.linalg.solve(np.eye(views) + 2 * w * second.T @ second, candidate[:, k])
-            for k, w in enumerate(weights)
-        ],
-        axis=1,
-    )
-    actual = smooth_pose_candidate(jnp.asarray(candidate), jnp.asarray(weights))
-    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-5)
-
-
 def test_joint_solver_configuration_rejects_unknown_selection():
     from tomojax.alignment import AlignConfig
 
-    assert AlignConfig().gn_joint_solver == "stacked"
+    assert AlignConfig().gn_joint_solver == "pose_eliminated"
     with pytest.raises(ValueError, match="gn_joint_solver"):
         AlignConfig(gn_joint_solver="unrecognized")
 

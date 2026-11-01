@@ -109,7 +109,7 @@ def cor_then_polish_schedule() -> AlignmentSchedule:
             AlignmentStage(
                 name="pose_polish",
                 active_dofs=("alpha", "beta", "phi", "dx", "dz"),
-                objective_kind="fixed_volume",
+                objective_kind="joint_volume_pose",
                 optimizer="gn",
                 gauge_policy="anchor_mean",
                 stage_role="refine",
