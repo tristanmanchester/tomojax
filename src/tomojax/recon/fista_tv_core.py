@@ -210,7 +210,7 @@ def fista_tv_core_arrays(
         x_prev, z_prev, t_prev, loss_arr, _last_data_loss = carry
         data_loss, grad = data_loss_and_grad_fn(z_prev)
         if cfg.regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
-            grad = grad + lam * huber_tv_grad(z_prev, float(cfg.huber_delta), z_fast=z_fast)
+            grad = huber_tv_grad(z_prev, cfg.huber_delta, z_fast=z_fast, base=grad, scale=lam)
         # The differentiable reference path intentionally uses gradient FISTA for
         # smoothed regularisers. Exact TV belongs to the public reconstruction
         # adapter or a future nonsmooth implicit path, not the bilevel hot path.
