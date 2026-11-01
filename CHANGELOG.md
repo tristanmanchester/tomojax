@@ -7,6 +7,10 @@ contiguous angular bins of views (`views=512`, the new default), and corrects
 every view with that response, several times faster than fitting every view.
 Corrected values change. `Rings(views=None)` fits every view twice, as before.
 
+Cone-axis calibration refines detector roll to a voxel-scaled numerical tolerance
+instead of stopping after a fixed two refits. It warns if twelve updates do not
+converge; reported slab offsets correspond to the returned roll.
+
 Projection matching reports how far its two starts' horizontal shifts disagree
 beyond a common object translation, in `info["initialization"]["horizontal_disagreement"]`.
 

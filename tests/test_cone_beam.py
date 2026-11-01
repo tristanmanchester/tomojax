@@ -510,6 +510,8 @@ def test_calibrate_cone_axis_recovers_the_axis_offset_and_detector_roll():
     calibration = calibrate_cone_axis(geometry, geometry.grid, geometry.detector, data)
     assert abs(calibration.axis_offset + 4.3) < 0.1
     assert abs(calibration.detector_roll_deg - 0.7) < 0.1
+    slope = np.polyfit(calibration.heights, calibration.slab_offsets, 1)[0]
+    assert abs(slope) * np.ptp(calibration.heights) <= 0.005 * geometry.grid.vx
     calibrated = calibration.apply(geometry)
     assert calibrated.beam.axis_offset == calibration.axis_offset
     np.testing.assert_allclose(calibrated.poses()[:, 0, 3], calibration.axis_offset)
@@ -790,3 +792,10 @@ def test_axis_slabs_keep_only_reused_full_resolution_bands(monkeypatch):
     slabs = _Slabs(None, None, None, None, None)
     assert slabs.get(0.0, 2) is not slabs.get(0.0, 2)
     assert slabs.get(0.0, 1) is slabs.get(0.0, 1)
+
+
+def test_axis_refinement_warns_at_its_cap(monkeypatch, caplog):
+    geometry, data = _blob_scan(32, 12, ConeBeam(96, 144))
+    monkeypatch.setattr("tomojax.recon.cone_axis._fit_axis_offsets", lambda *args: (0.01, 0.0))
+    calibrate_cone_axis(geometry, geometry.grid, geometry.detector, data)
+    assert "did not converge after 12 updates" in caplog.text

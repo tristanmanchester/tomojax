@@ -58,6 +58,9 @@ class ConeAxisConfig:
     volume), ``max_roll_deg`` the
     largest roll the slabs leave detector rows for, and ``fdk`` the filter
     (Hann by default, so noise does not swamp the sharpness) and backend.
+    Roll refinement stops when its remaining offset change across the slab
+    heights is below 0.005 in-plane voxels, or warns after twelve updates.
+    This is numerical convergence, not a statistical error estimate.
 
     Parameters
     ----------
@@ -425,10 +428,13 @@ def calibrate_cone_axis(
     if len(heights) == 1 and cfg.estimate_offset:
         return ConeAxisCalibration(offsets[0], roll, heights, tuple(offsets))
     fixed_offset = None if cfg.estimate_offset else offset0
-    for _ in range(2):
+    span = max(heights) - min(heights) if fixed_offset is None else max(abs(z) for z in heights)
+    for _ in range(12):
         # Offsets move as -tan(roll) * z: apply the fitted roll and search again,
         # around the common offset the slabs should then share.
         slope, intercept = _fit_axis_offsets(heights, offsets, fixed_offset)
+        if abs(slope) * span <= 0.005 * grid.vx:
+            break
         roll += math.degrees(-math.atan(float(slope)))
         offsets = [
             _search(
@@ -436,8 +442,10 @@ def calibrate_cone_axis(
             )
             for z in heights
         ]
-    slope, intercept = _fit_axis_offsets(heights, offsets, fixed_offset)
-    roll += math.degrees(-math.atan(float(slope)))
+    else:
+        slope, intercept = _fit_axis_offsets(heights, offsets, fixed_offset)
+        if abs(slope) * span > 0.005 * grid.vx:
+            LOG.warning("calibrate_cone_axis: roll refinement did not converge after 12 updates")
     return ConeAxisCalibration(
         axis_offset=float(intercept),
         detector_roll_deg=roll,
