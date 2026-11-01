@@ -183,7 +183,8 @@ def _invert(q: jax.Array, alpha: jax.Array, beta: jax.Array) -> jax.Array:
     # v-beta starts above the root and stays on the fitted derivative >= 1/2 branch.
     p = jnp.where(beta < 0, v - beta, jnp.where(v >= 0, positive, negative))
     for _ in range(6):
-        p = p - (p - beta * jnp.expm1(-p) - v) / (1 + beta * jnp.exp(-p))
+        e = jnp.exp(-p)
+        p = p - (p - beta * (e - 1) - v) / (1 + beta * e)
     return p
 
 
@@ -230,8 +231,8 @@ def _angular_variance(influence: jax.Array, groups: tuple[int, ...]) -> jax.Arra
         offset += size
         length = max(1, int(np.sqrt(size)))
         centered = part - part.mean(0, keepdims=True)
-        integrated = jnp.cumsum(jnp.pad(centered, ((length, length - 1), (0, 0))), axis=0)
-        windows = integrated[length:] - integrated[:-length]
+        padded = jnp.pad(centered, ((length - 1, length - 1), (0, 0)))
+        windows = jax.lax.reduce_window(padded, 0.0, jax.lax.add, (length, 1), (1, 1), "VALID")
         power = jnp.abs(jnp.fft.rfft(windows, axis=1)) ** 2
         effective = size - length + (length * length - 1) / (3 * size)
         variance = variance + power.sum(0) / length * size / max(effective, 1)
