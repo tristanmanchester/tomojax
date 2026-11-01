@@ -7,6 +7,7 @@ import logging
 import math
 import os
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, cast
 
 from tomojax.backends._subprocesses import check_output_resolved_command
@@ -57,8 +58,53 @@ def _normalized_safety_fraction(safety_frac: float) -> float:
     return min(max(frac, 1e-6), 1.0)
 
 
-def _host_available_memory_bytes() -> int | None:
-    """Best-effort host capacity, including Linux's reclaimable page cache."""
+_OWN_CGROUP, _CGROUP_MOUNTS = Path("/proc/self/cgroup"), Path("/proc/self/mountinfo")
+
+
+def _cgroup_room_bytes() -> int | None:
+    """Conservative no-reclaim room under visible cgroup v2 limits.
+
+    ``memory.high`` is a throttle boundary, not a hard allocation limit. Current
+    usage includes reclaimable page cache, so this can underestimate capacity.
+    Hidden ancestors cannot be measured from inside a cgroup namespace.
+    """
+    try:
+        paths = [
+            line[3:] for line in _OWN_CGROUP.read_text().splitlines() if line.startswith("0::")
+        ]
+        mounts = _CGROUP_MOUNTS.read_text().splitlines()
+    except OSError:
+        return None
+    if len(paths) != 1 or not paths[0].startswith("/") or ".." in Path(paths[0]).parts:
+        return None
+    own, rooms = Path(paths[0]), []
+    for entry in mounts:
+        header, separator, filesystem = entry.partition(" - ")
+        fields = header.split()
+        if not separator or not filesystem.startswith("cgroup2 ") or len(fields) < 5:
+            continue
+        root, mount = [
+            Path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), text)) for text in fields[3:5]
+        ]
+        if not own.is_relative_to(root) or not mount.is_absolute():
+            continue
+        # Every level from the process's group up to the mount has its own limits.
+        relative = own.relative_to(root)
+        group = mount / relative
+        for level in (group, *group.parents[: len(relative.parts)]):
+            for limit in ("memory.high", "memory.max"):
+                try:
+                    text = (level / limit).read_text().strip()
+                    if text != "max":
+                        used = int((level / "memory.current").read_text())
+                        rooms.append(max(0, int(text) - used))
+                except (OSError, ValueError):
+                    pass
+    return min(rooms, default=None)
+
+
+def _system_available_bytes() -> int | None:
+    """The machine's available memory, including Linux's reclaimable page cache."""
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
             if line.startswith("MemAvailable:"):
@@ -76,6 +122,12 @@ def _host_available_memory_bytes() -> int | None:
         return avail_pages * page_size
     except (AttributeError, OSError, TypeError, ValueError):
         return None
+
+
+def _host_available_memory_bytes() -> int | None:
+    """Best-effort host capacity: the machine's available memory, within any cgroup limits."""
+    known = [n for n in (_system_available_bytes(), _cgroup_room_bytes()) if n is not None]
+    return min(known, default=None)
 
 
 def _free_bytes_from_memory_info(info: object) -> int | None:
@@ -243,7 +295,7 @@ def estimate_views_per_batch_info(
     if free_bytes is None:
         free_bytes = device_free_memory_bytes()
 
-    if not free_bytes or free_bytes <= 0:
+    if free_bytes is None or free_bytes < 0:
         # Fallback heuristics: pick a small-but-reasonable batch
         fallback = max(1, min(n_views_i, int(fallback_batch)))
         return ViewsPerBatchEstimate(
