@@ -73,6 +73,22 @@ def test_removes_column_errors(turn: float) -> None:
     assert _rms_offset(fixed, clean) < 0.4 * _rms_offset(measured, clean)
 
 
+def test_fit_on_angular_bins_still_removes_column_errors() -> None:
+    clean = _sinogram(180.0, 180)
+    measured = jnp.asarray(_errors(clean)[:, None], jnp.float32)
+    geometry = _geometry(180.0, 180)
+    full = np.asarray(Rings(geometry).apply(measured))[:, 0]
+    np.testing.assert_array_equal(
+        np.asarray(Rings(geometry, views=180).apply(measured))[:, 0], full
+    )
+    fewer = np.asarray(Rings(geometry, views=60).apply(measured))[:, 0]
+    assert _rms_offset(fewer, clean) < 1.1 * _rms_offset(full, clean)
+    assert Rings(geometry, views=60).record().settings == {"mirror_axis": None, "views": 60}
+    for bad in (1, 2.5, True):
+        with pytest.raises(ValueError, match="views"):
+            Rings(geometry, views=bad)
+
+
 @pytest.mark.parametrize("turn", [180.0, 360.0])
 def test_response_map_preserves_equal_column_observations(turn: float) -> None:
     measured = _sinogram(turn, 32).astype(np.float32)
