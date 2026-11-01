@@ -75,44 +75,6 @@ class AlignmentStepGauge:
     gauge_dofs: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class _AlignmentStepCoreResult:
-    pose_params: jnp.ndarray
-    motion_coeffs: jnp.ndarray | None
-    loss_before: float | None
-    loss_after: float | None
-    stat: OuterStat
-
-
-def _pre_alignment_step_loss(
-    objective: AlignmentStepObjective,
-    motion: AlignmentStepMotion,
-    *,
-    pose_params: jnp.ndarray,
-    vol: jnp.ndarray,
-) -> float | None:
-    if not motion.use_smooth_pose_model:
-        return None
-    return _evaluate_align_loss(
-        lambda: objective.align_loss_jit(pose_params, vol),
-        fallback=None,
-        context="Skipping pre-step alignment loss evaluation",
-    )
-
-
-def _gn_smooth_candidate_fn(
-    constrain_candidate: Callable[[jnp.ndarray], jnp.ndarray],
-    pose_params_in: jnp.ndarray,
-) -> Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray] | None:
-    if int(pose_params_in.shape[0]) < 3:
-        return None
-
-    def smooth_candidate(candidate: jnp.ndarray, weights: jnp.ndarray) -> jnp.ndarray:
-        return smooth_pose_candidate(constrain_candidate(candidate), weights)
-
-    return smooth_candidate
-
-
 def _run_gn_alignment_step(
     objective: AlignmentStepObjective,
     constraints: AlignmentStepConstraints,
@@ -149,7 +111,12 @@ def _run_gn_alignment_step(
             gn_accept_tol=0.0,
             candidate_context=GNCandidateContext(
                 constrain_candidate=constrain_candidate,
-                smooth_candidate=_gn_smooth_candidate_fn(constrain_candidate, pose_params_in),
+                # Smoothing needs neighbours on both sides of a view.
+                smooth_candidate=None
+                if int(pose_params_in.shape[0]) < 3
+                else lambda candidate, weights: smooth_pose_candidate(
+                    constrain_candidate(candidate), weights
+                ),
                 smoothing_weights=(
                     smoothing.light_smoothness_weights_sq,
                     smoothing.medium_smoothness_weights_sq,
@@ -179,36 +146,6 @@ def _run_gn_alignment_step(
     _set_float_stat(stat, "rot_mean", jnp.mean(jnp.abs(dp_all[:, :3])))
     _set_float_stat(stat, "trans_mean", jnp.mean(jnp.abs(dp_all[:, 3:])))
     return pose_params_out, motion_coeffs_out, loss_before, loss_after, stat
-
-
-def _run_alignment_step_core(
-    *,
-    objective: AlignmentStepObjective,
-    constraints: AlignmentStepConstraints,
-    motion: AlignmentStepMotion,
-    smoothing: AlignmentStepSmoothing,
-    pose_params_in: jnp.ndarray,
-    motion_coeffs_in: jnp.ndarray | None,
-    vol: jnp.ndarray,
-) -> _AlignmentStepCoreResult:
-    loss_before = _pre_alignment_step_loss(objective, motion, pose_params=pose_params_in, vol=vol)
-    pose_params_out, motion_coeffs_out, loss_before, loss_after, stat = _run_gn_alignment_step(
-        objective,
-        constraints,
-        motion,
-        smoothing,
-        pose_params_in,
-        motion_coeffs_in,
-        vol,
-        loss_before,
-    )
-    return _AlignmentStepCoreResult(
-        pose_params=pose_params_out,
-        motion_coeffs=motion_coeffs_out,
-        loss_before=loss_before,
-        loss_after=loss_after,
-        stat=stat,
-    )
 
 
 def _apply_final_alignment_constraints(
@@ -333,26 +270,33 @@ def _run_alignment_step(
     OuterStat,
 ]:
     align_start = time.perf_counter()
-    result = _run_alignment_step_core(
-        objective=objective,
-        constraints=constraints,
-        motion=motion,
-        smoothing=smoothing,
-        pose_params_in=pose_params_in,
-        motion_coeffs_in=motion_coeffs_in,
-        vol=vol,
+    # A smooth pose model scores the start itself; plain GN reports its own.
+    loss_before = (
+        _evaluate_align_loss(
+            lambda: objective.align_loss_jit(pose_params_in, vol),
+            fallback=None,
+            context="Skipping pre-step alignment loss evaluation",
+        )
+        if motion.use_smooth_pose_model
+        else None
     )
-    pose_params_out, motion_coeffs_out, gauge_stats = _apply_final_alignment_constraints(
+    pose_params_out, motion_coeffs_out, loss_before, loss_after, stat = _run_gn_alignment_step(
+        objective,
         constraints,
         motion,
-        result.pose_params,
-        result.motion_coeffs,
+        smoothing,
+        pose_params_in,
+        motion_coeffs_in,
+        vol,
+        loss_before,
     )
-    stat = result.stat
-    stat["loss_before"] = result.loss_before
+    pose_params_out, motion_coeffs_out, gauge_stats = _apply_final_alignment_constraints(
+        constraints, motion, pose_params_out, motion_coeffs_out
+    )
+    stat["loss_before"] = loss_before
     stat["step_kind"] = "gn"
     stat["optimizer_kind"] = "gn"
-    stat["loss_after_step"] = result.loss_after
+    stat["loss_after_step"] = loss_after
     _record_gauge_stats(stat, gauge, gauge_stats)
     jax.block_until_ready(pose_params_out)
     stat["align_time"] = time.perf_counter() - align_start
@@ -361,19 +305,19 @@ def _run_alignment_step(
         motion,
         pose_params=pose_params_out,
         vol=vol,
-        loss_before=result.loss_before,
-        loss_after=result.loss_after,
+        loss_before=loss_before,
+        loss_after=loss_after,
         loss_hist=loss_hist,
         stat=stat,
     )
     if _should_reject_post_constraint_loss(
-        loss_before=result.loss_before,
+        loss_before=loss_before,
         total_loss=total_loss,
         rel_tol=0.0,
     ):
         pose_params_out = pose_params_in
         motion_coeffs_out = motion_coeffs_in
-        total_loss = float(result.loss_before)
+        total_loss = float(loss_before)
         stat["post_constraint_rejected"] = True
         stat["post_constraint_reject_reason"] = "loss_after_constraints_worse_than_before"
     else:
@@ -381,7 +325,7 @@ def _run_alignment_step(
     stat["loss_after"] = total_loss
     rel_impr = _alignment_relative_improvement(
         stat,
-        loss_before=result.loss_before,
+        loss_before=loss_before,
         total_loss=total_loss,
     )
     stat["rel_impr"] = rel_impr
