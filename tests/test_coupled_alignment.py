@@ -626,15 +626,24 @@ def test_host_columns_reserve_krylov_workspace(monkeypatch, available, views, ex
     assert _coupled_host.host_column_capacity(spec, views) == expected
 
 
-def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
+@pytest.mark.parametrize("message", [None, "RESOURCE_EXHAUSTED: Out of memory", "compiler bug"])
+def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch, message):
     checks = []
 
     def check(_arrays, spec):
         checks.append(spec.cache_columns)
         if spec.cache_columns:
-            raise _coupled_objective.AlignmentMemoryError(2**30, 2**29)
+            raise (
+                jax.errors.JaxRuntimeError(message)
+                if message
+                else _coupled_objective.AlignmentMemoryError(2**30, 2**29)
+            )
 
     monkeypatch.setattr(_coupled_objective, "_check_device_memory", check)
+    if message == "compiler bug":
+        with pytest.raises(jax.errors.JaxRuntimeError, match=message):
+            _coupled_objective.build_coupled_objective(_small_coupled_context())
+        return
     objective = _coupled_objective.build_coupled_objective(_small_coupled_context())
     assert checks == [True, False] and not objective.pose_columns_cached
 
@@ -643,7 +652,7 @@ def test_a_cached_host_update_parks_an_owned_image_and_restores_its_bytes(monkey
     monkeypatch.setattr(
         _coupled_objective,
         "_check_device_memory",
-        lambda *_: (_ for _ in ()).throw(_coupled_objective.AlignmentMemoryError(2, 1)),
+        lambda *_: (_ for _ in ()).throw(jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED")),
     )
     monkeypatch.setattr(_coupled_host, "device_free_memory_bytes", lambda **_: 2**30)
     ctx = _small_coupled_context(tv_weight=0.0)
