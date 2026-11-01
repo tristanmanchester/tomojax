@@ -58,16 +58,6 @@ class _ReconstructionStepInputs:
     outer_idx: int
 
 
-@dataclass(frozen=True, slots=True)
-class _HuberFistaBackendPlan:
-    T_all: jnp.ndarray
-    requested_backend: str
-    actual_backend: str
-    fallback_reason: str | None
-    detector_grid_folded_into_pose: bool
-    detector_grid_fold_reason: str | None
-
-
 def _initial_projection_lipschitz(
     step: _ReconstructionStepInputs,
     poses: jnp.ndarray,
@@ -299,63 +289,6 @@ def _mark_nonfinite_reconstruction(
     stat["reconstruction_finite_fraction"] = float(finite_fraction)
 
 
-def _nonfinite_initial_reconstruction_result(
-    *,
-    x: jnp.ndarray,
-    recon_start: float,
-    reconstruction: str,
-    cfg: object,
-    outer_idx: int,
-    L_prev: float | None,
-    finite_fraction: float,
-) -> tuple[jnp.ndarray, float | None, OuterStat]:
-    stat, L_next = _reconstruction_step_stat(
-        recon_start=recon_start,
-        recon_retry=False,
-        info_rec={},
-        reconstruction=reconstruction,
-        cfg=cfg,
-        outer_idx=outer_idx,
-        L_prev=L_prev,
-    )
-    _mark_nonfinite_reconstruction(
-        stat,
-        finite_fraction=finite_fraction,
-        reason="nonfinite_initial_reconstruction",
-    )
-    return x, L_next, stat
-
-
-def _skipped_fixed_volume_reconstruction_result(
-    *,
-    x: jnp.ndarray,
-    recon_start: float,
-    reconstruction: str,
-    cfg: object,
-    outer_idx: int,
-    L_prev: float | None,
-    finite_fraction: float,
-) -> tuple[jnp.ndarray, float | None, OuterStat]:
-    stat, L_next = _reconstruction_step_stat(
-        recon_start=recon_start,
-        recon_retry=False,
-        info_rec={
-            "loss": [],
-            "effective_iterations": 0,
-            "early_stop": False,
-            "regulariser": str(getattr(cfg, "regulariser", "")),
-            "fixed_volume_reconstruction_skipped": True,
-        },
-        reconstruction=reconstruction,
-        cfg=cfg,
-        outer_idx=outer_idx,
-        L_prev=L_prev,
-    )
-    stat["fixed_volume_reconstruction_skipped"] = True
-    stat["reconstruction_finite_fraction"] = float(finite_fraction)
-    return x, L_next, stat
-
-
 def _retry_info_after_nonfinite_core(
     *,
     retry_info: Mapping[str, object],
@@ -469,65 +402,47 @@ def _run_public_fista_reconstruction(
     )
 
 
-def _huber_fista_pose_stack(step: _ReconstructionStepInputs, *, n_views: int) -> jnp.ndarray:
-    nominal = stack_view_poses(step.recon_geometry.geometry, n_views)
-    return apply_pose_updates(
-        nominal,
-        step.recon_geometry.pose_params,
-        translation_frame=step.recon_geometry.translation_frame,
-    )
+def _huber_fista_backend(
+    step: _ReconstructionStepInputs, poses: jnp.ndarray
+) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray] | None, dict[str, object]]:
+    """The core's poses and detector grid, and a record of its backend.
 
-
-def _resolve_huber_fista_backend_plan(
-    step: _ReconstructionStepInputs,
-    *,
-    T_all: jnp.ndarray,
-) -> _HuberFistaBackendPlan:
+    CUDA takes no detector grid, so a rigid one is folded into the poses. The
+    sampled integrator keeps the JAX core, with any folded poses.
+    """
     cfg = step.cfg
-    requested_backend = str(getattr(cfg, "backend", "jax"))
-    actual_backend, fallback_reason = _resolve_reconstruction_projector_backend(
-        requested_backend=requested_backend,
-        T_all=T_all,
-        grid=step.grid,
-        detector=step.detector,
-        volume=step.x,
-        det_grid=step.det_grid,
-        gather_dtype=str(cfg.gather_dtype),
-    )
-    detector_grid_folded_into_pose = False
-    detector_grid_fold_reason = None
-    if actual_backend == "jax" and fallback_reason and requested_backend == "cuda":
-        T_folded = _fold_rigid_detector_grid_into_pose_stack(
-            T_all,
-            step.detector,
-            step.det_grid,
+    requested = str(getattr(cfg, "backend", "jax"))
+
+    def resolve(T_all: jnp.ndarray, det_grid: tuple[jnp.ndarray, jnp.ndarray] | None):
+        return _resolve_reconstruction_projector_backend(
+            requested_backend=requested,
+            T_all=T_all,
+            grid=step.grid,
+            detector=step.detector,
+            volume=step.x,
+            det_grid=det_grid,
+            gather_dtype=str(cfg.gather_dtype),
         )
-        if T_folded is not None:
-            folded_backend, folded_fallback_reason = _resolve_reconstruction_projector_backend(
-                requested_backend=requested_backend,
-                T_all=T_folded,
-                grid=step.grid,
-                detector=step.detector,
-                volume=step.x,
-                det_grid=None,
-                gather_dtype=str(cfg.gather_dtype),
-            )
-            if folded_backend == "cuda":
-                return _HuberFistaBackendPlan(
-                    T_all=T_folded,
-                    requested_backend=requested_backend,
-                    actual_backend=folded_backend,
-                    fallback_reason=folded_fallback_reason,
-                    detector_grid_folded_into_pose=True,
-                    detector_grid_fold_reason=str(fallback_reason),
-                )
-    return _HuberFistaBackendPlan(
-        T_all=T_all,
-        requested_backend=requested_backend,
-        actual_backend=actual_backend,
-        fallback_reason=fallback_reason,
-        detector_grid_folded_into_pose=detector_grid_folded_into_pose,
-        detector_grid_fold_reason=detector_grid_fold_reason,
+
+    backend, reason = resolve(poses, step.det_grid)
+    fold_reason = None
+    if backend == "jax" and reason and requested == "cuda":
+        folded = _fold_rigid_detector_grid_into_pose_stack(poses, step.detector, step.det_grid)
+        if folded is not None and resolve(folded, None)[0] == "cuda":
+            poses, backend, reason, fold_reason = folded, "cuda", None, str(reason)
+    if backend == "cuda" and getattr(cfg, "ray_integrator", "sampled") == "sampled":
+        backend, reason = "jax", "dynamic_geometry_alignment_uses_jax_core"
+    det_grid = None if backend == "cuda" or fold_reason is not None else step.det_grid
+    return (
+        poses,
+        det_grid,
+        {
+            "requested_backend": requested,
+            "actual_backend": backend,
+            "fallback_reason": reason,
+            "detector_grid_folded_into_pose": fold_reason is not None,
+            "detector_grid_fold_reason": fold_reason,
+        },
     )
 
 
@@ -565,34 +480,6 @@ def _huber_fista_core_config(
         compute_final_regulariser_value=bool(quality_policy.compute_final_regulariser_value),
         ray_integrator=getattr(cfg, "ray_integrator", "sampled"),
     )
-
-
-def _huber_fista_core_info(
-    *,
-    cfg: object,
-    loss: jnp.ndarray,
-    effective_iters: jnp.ndarray,
-    L_core: float,
-    quality_policy: object,
-    backend_plan: _HuberFistaBackendPlan,
-) -> dict[str, object]:
-    return {
-        "loss": loss,
-        "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
-        "effective_iterations": int(effective_iters),
-        "early_stop": False,
-        "regulariser": "huber_tv",
-        "huber_delta": float(cfg.huber_delta),
-        "data_loss_computed": bool(quality_policy.compute_final_data_loss),
-        "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
-        "quality_policy": quality_policy.to_dict(),
-        "lipschitz": float(L_core),
-        "requested_backend": backend_plan.requested_backend,
-        "actual_backend": backend_plan.actual_backend,
-        "fallback_reason": backend_plan.fallback_reason,
-        "detector_grid_folded_into_pose": backend_plan.detector_grid_folded_into_pose,
-        "detector_grid_fold_reason": backend_plan.detector_grid_fold_reason,
-    }
 
 
 def _run_spdhg_reconstruction(
@@ -635,40 +522,25 @@ def _run_huber_fista_core_reconstruction(
     """
     cfg = step.cfg
     n_views = int(step.projections.shape[0])
-    poses = _huber_fista_pose_stack(step, n_views=n_views)
+    geometry = step.recon_geometry
+    poses = apply_pose_updates(
+        stack_view_poses(geometry.geometry, n_views),
+        geometry.pose_params,
+        translation_frame=geometry.translation_frame,
+    )
+    # The bound is the operator's, before any detector grid is folded into the poses.
     L_core = (
         float(step.L_prev)
         if step.L_prev is not None
         else _initial_projection_lipschitz(step, poses)
     )
-    backend_plan = _resolve_huber_fista_backend_plan(
-        step,
-        T_all=poses,
-    )
-    if (
-        backend_plan.actual_backend == "cuda"
-        and getattr(cfg, "ray_integrator", "sampled") == "sampled"
-    ):
-        backend_plan = _HuberFistaBackendPlan(
-            T_all=backend_plan.T_all,
-            requested_backend=backend_plan.requested_backend,
-            actual_backend="jax",
-            fallback_reason="dynamic_geometry_alignment_uses_jax_core",
-            detector_grid_folded_into_pose=backend_plan.detector_grid_folded_into_pose,
-            detector_grid_fold_reason=backend_plan.detector_grid_fold_reason,
-        )
+    poses, det_grid_for_core, backend = _huber_fista_backend(step, poses)
     quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     core_cfg = _huber_fista_core_config(
         step,
         n_views=n_views,
-        actual_backend=backend_plan.actual_backend,
+        actual_backend=str(backend["actual_backend"]),
         quality_policy=quality_policy,
-    )
-
-    det_grid_for_core = (
-        None
-        if backend_plan.actual_backend == "cuda" or backend_plan.detector_grid_folded_into_pose
-        else step.det_grid
     )
     stream = should_stream(step.projections, reserve_bytes=6 * step.x.nbytes)
     core_cfg = replace(core_cfg, stream_projections=stream)
@@ -679,7 +551,7 @@ def _run_huber_fista_core_reconstruction(
         _run_huber_fista_core_dynamic_geometry,
         x,
         jax.block_until_ready(jnp.array(x, copy=True)),
-        backend_plan.T_all,
+        poses,
         None if det_grid_for_core is None else det_grid_for_core[0],
         None if det_grid_for_core is None else det_grid_for_core[1],
     )
@@ -701,14 +573,19 @@ def _run_huber_fista_core_reconstruction(
     if core_cfg.private_storage:
         # Restored once the compiled solve has finished and released its work arrays.
         x_core = transpose_volume(jax.block_until_ready(x_core))
-    return x_core, _huber_fista_core_info(
-        cfg=cfg,
-        loss=loss,
-        effective_iters=effective_iters,
-        L_core=L_core,
-        quality_policy=quality_policy,
-        backend_plan=backend_plan,
-    )
+    return x_core, {
+        "loss": loss,
+        "iteration_loss_computed": bool(quality_policy.compute_iteration_loss),
+        "effective_iterations": int(effective_iters),
+        "early_stop": False,
+        "regulariser": "huber_tv",
+        "huber_delta": float(cfg.huber_delta),
+        "data_loss_computed": bool(quality_policy.compute_final_data_loss),
+        "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
+        "quality_policy": quality_policy.to_dict(),
+        "lipschitz": float(L_core),
+        **backend,
+    }
 
 
 def _run_reconstruction_step(
@@ -755,26 +632,25 @@ def _run_reconstruction_step(
     recon_retry = False
     recon_start = time.perf_counter()
     x_finite_fraction = _finite_fraction(x)
-    if x_finite_fraction < 1.0:
-        return _nonfinite_initial_reconstruction_result(
-            x=x,
+    if x_finite_fraction < 1.0 or int(getattr(cfg, "iterations", 0)) <= 0:  # x is kept
+        stat, L_next = _reconstruction_step_stat(
             recon_start=recon_start,
+            recon_retry=False,
+            info_rec={},
             reconstruction=reconstruction,
             cfg=cfg,
             outer_idx=outer_idx,
             L_prev=L_prev,
-            finite_fraction=x_finite_fraction,
         )
-    if int(getattr(cfg, "iterations", 0)) <= 0:
-        return _skipped_fixed_volume_reconstruction_result(
-            x=x,
-            recon_start=recon_start,
-            reconstruction=reconstruction,
-            cfg=cfg,
-            outer_idx=outer_idx,
-            L_prev=L_prev,
-            finite_fraction=x_finite_fraction,
-        )
+        if x_finite_fraction < 1.0:
+            _mark_nonfinite_reconstruction(
+                stat, finite_fraction=x_finite_fraction, reason="nonfinite_initial_reconstruction"
+            )
+        else:
+            stat.update(
+                fixed_volume_reconstruction_skipped=True, reconstruction_finite_fraction=1.0
+            )
+        return x, L_next, stat
 
     if reconstruction == "fista":
         if is_cone_beam(step.recon_geometry):
@@ -818,9 +694,7 @@ def _run_reconstruction_step(
                     grad_mode="auto",
                 )
             except Exception as e:
-                msg = str(e)
-                is_oom = _is_oom_error_message(msg)
-                if not is_oom:
+                if not _is_oom_error_message(str(e)):
                     raise
                 logging.warning(
                     "FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)"
@@ -834,8 +708,7 @@ def _run_reconstruction_step(
                         grad_mode="stream",
                     )
                 except Exception as e2:
-                    msg2 = str(e2)
-                    if _is_oom_error_message(msg2):
+                    if _is_oom_error_message(str(e2)):
                         logging.error(
                             "FISTA still OOM at finest level. Reduce memory pressure "
                             "(smaller problem size or lower internal batching), or "

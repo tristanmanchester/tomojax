@@ -38,7 +38,6 @@
     "simulate": 19
   },
   "long_files": {
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py": 868,
     "src/tomojax/core/cone.py": 830
   },
   "long_functions": {
@@ -46,7 +45,7 @@
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 249,
     "src/tomojax/alignment/_pose/_pose_loop.py::_run_align_outer_iteration": 103,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 194,
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 160,
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 156,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 138,
     "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 101,
     "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 109,
@@ -68,7 +67,7 @@
   "code_lines": {
     "(modules)": 3326,
     "_data": 2053,
-    "alignment": 16522,
+    "alignment": 16390,
     "backends": 615,
     "cli": 2572,
     "core": 13335,
@@ -106,12 +105,12 @@
   "single_use_helpers": {
     "tiny": 105,
     "forwarders": 9,
-    "chained": 43
+    "chained": 39
   },
   "type_errors": {
     "reportArgumentType": 180,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 82,
+    "reportAttributeAccessIssue": 77,
     "reportCallIssue": 9,
     "reportGeneralTypeIssues": 5,
     "reportIndexIssue": 6,

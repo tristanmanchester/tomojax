@@ -442,6 +442,31 @@ def test_finite_volume_is_not_rejected_by_fraction_rounding(shape) -> None:
     assert reconstruction_stage._finite_fraction(damaged) == 1.0 - 2 / np.prod(shape)
 
 
+@pytest.mark.parametrize("damaged", [False, True])
+def test_reconstruction_step_returns_a_damaged_or_unrequested_volume_unchanged(damaged):
+    grid, detector = Grid(2, 2, 2, 1.0, 1.0, 1.0), Detector(2, 2, 1.0, 1.0)
+    x = jnp.ones((2, 2, 2), jnp.float32).at[0, 0, 0].set(jnp.nan if damaged else 1.0)
+    out, _, stat = reconstruction_stage._run_reconstruction_step(
+        geometry=ParallelGeometry(grid, detector, [0.0, 90.0]),
+        grid=grid,
+        detector=detector,
+        projections=jnp.ones((2, 2, 2), jnp.float32),
+        det_grid=reconstruction_stage.get_detector_grid_device(detector),
+        pose_params=jnp.zeros((2, 6), jnp.float32),
+        x=x,
+        cfg=AlignConfig(iterations=1 if damaged else 0),
+        L_prev=None,
+        outer_idx=1,
+        reconstruction="fista",
+    )
+    assert out is x
+    assert stat["reconstruction_finite_fraction"] == (7 / 8 if damaged else 1.0)
+    assert stat.get("reconstruction_failed", False) is damaged
+    assert stat.get("fixed_volume_reconstruction_skipped", False) is not damaged
+    if damaged:
+        assert stat["reconstruction_failure_reason"] == "nonfinite_initial_reconstruction"
+
+
 @pytest.mark.numerical
 def test_alignment_partial_view_batches_run_under_global_x64() -> None:
     grid, detector = Grid(3, 4, 2, 0.8, 1.1, 1.3), Detector(5, 3, 0.6, 1.2)
