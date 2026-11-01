@@ -24,8 +24,6 @@ def _metadata(columns: int, frame: str, segmented: bool) -> dict:
     table[:3, :5] = [0.01, -0.02, 0.03, 0.35, -0.25]
     if columns >= 6:
         table[:3, 5] = 0.15
-    if columns > 6:
-        table[:, 6:] = 99.0  # Not pose coordinates: documented as ignored.
     meta = {
         "grid": grid.to_dict(),
         "detector": detector.to_dict(),
@@ -61,7 +59,7 @@ def _expected_poses(meta: dict) -> np.ndarray:
         beam = meta["cone_beam"] if entries is None else entries[i // 3]["cone_beam"]
         nominal = Rotation.from_euler("Z", float(angle), degrees=True).as_matrix()
         delta = Rotation.from_euler("YXZ", params[[1, 0, 2]]).as_matrix()
-        shift = np.asarray([params[3], params[5] if len(params) >= 6 else 0.0, params[4]])
+        shift = np.asarray([params[3], params[5], params[4]])
         result[i, :3, :3] = nominal @ delta
         result[i, :3, 3] = [beam["axis_offset"], 0.0, 0.0]
         result[i, :3, 3] += shift if frame == "detector" else nominal @ shift
@@ -70,11 +68,10 @@ def _expected_poses(meta: dict) -> np.ndarray:
 
 @pytest.mark.parametrize("segmented", [False, True])
 @pytest.mark.parametrize("frame", ["object", "detector"])
-@pytest.mark.parametrize("columns", [5, 6, 8])
 def test_saved_pose_tables_have_six_coordinates_and_independent_frames(
-    segmented: bool, frame: str, columns: int
+    segmented: bool, frame: str
 ) -> None:
-    meta = _metadata(columns, frame, segmented)
+    meta = _metadata(6, frame, segmented)
     original = meta["align_params"].copy()
     scan = _scan(meta)
     assert scan.poses is not None and scan.poses.shape == (6, 6)
@@ -117,7 +114,9 @@ def test_posed_and_unposed_orbits_combine_and_round_trip(segmented: bool, tmp_pa
     [
         (np.ones(6), "detector", "2-D array"),
         (np.ones((5, 6)), "detector", "row count"),
-        (np.ones((6, 4)), "detector", "at least 5 columns"),
+        (np.ones((6, 4)), "detector", "exactly 6 columns"),
+        (np.ones((6, 5)), "detector", "exactly 6 columns"),
+        (np.ones((6, 8)), "detector", "exactly 6 columns"),
         (np.ones((6, 6)), "gantry", "unknown saved pose translation frame"),
     ],
 )
@@ -133,7 +132,7 @@ def test_saved_pose_validation_is_the_same_for_one_and_several_orbits(
 
 @pytest.mark.parametrize("segmented", [False, True])
 def test_omitted_saved_pose_frame_keeps_its_existing_meaning(segmented: bool) -> None:
-    meta = _metadata(5, "detector" if segmented else "object", segmented)
+    meta = _metadata(6, "detector" if segmented else "object", segmented)
     del meta["align_gauge"]
     scan = _scan(meta)
     np.testing.assert_allclose(
@@ -145,7 +144,7 @@ def test_omitted_saved_pose_frame_keeps_its_existing_meaning(segmented: bool) ->
 
 
 @pytest.mark.parametrize("extension", ["nxs", "npz"])
-def test_loading_five_column_pose_files_sets_missing_dy_to_zero(
+def test_loading_five_column_pose_files_rejects_legacy_shape(
     extension: str, tmp_path: Path
 ) -> None:
     meta = _metadata(5, "detector", segmented=True)
@@ -162,11 +161,5 @@ def test_loading_five_column_pose_files_sets_missing_dy_to_zero(
     )
     path = tmp_path / f"five_columns.{extension}"
     save_dataset(path, dataset)
-    loaded = tj.load(path)
-    assert loaded.poses is not None and loaded.poses.shape == (6, 6)
-    np.testing.assert_allclose(
-        [loaded.geometry.pose_for_view(i) for i in range(6)],
-        _expected_poses(meta),
-        rtol=2e-6,
-        atol=1e-7,
-    )
+    with pytest.raises(ValueError, match="exactly 6 columns"):
+        tj.load(path)

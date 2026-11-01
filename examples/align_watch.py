@@ -46,12 +46,12 @@ ZOOM = 140  # voxels on a side of the balance close-up
 
 
 def motion(angles: np.ndarray, voxel: float) -> np.ndarray:
-    """Per-view (alpha, beta, phi, dx, dz): a slow wobble plus jitter."""
+    """Six-coordinate poses: slow wobble plus jitter, with beam translation zero."""
     rng = np.random.default_rng(3)
     theta = np.deg2rad(angles)
     n = len(angles)
     rotation = np.deg2rad(ROTATION_DEG)
-    params = np.zeros((n, 5))
+    params = np.zeros((n, 6))
     params[:, 0] = rotation * (0.6 * np.sin(2 * theta + 0.4) + rng.uniform(-0.4, 0.4, n))
     params[:, 1] = rotation * (0.6 * np.cos(2 * theta) + rng.uniform(-0.4, 0.4, n))
     params[:, 2] = rotation * rng.uniform(-0.4, 0.4, n)
@@ -93,7 +93,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
 
     # The truth as the least-motion estimate: a centre offset c predicts the
     # same data as every view shifted by -c, which the gauge moves back.
-    true_table = np.pad(params, ((0, 0), (0, 1)))
+    true_table = params.copy()
     true_table[:, 3] -= centre
     moved, true_poses, gauge = least_motion_estimate(
         truth,

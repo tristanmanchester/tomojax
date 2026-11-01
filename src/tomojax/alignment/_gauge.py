@@ -263,7 +263,7 @@ def least_motion_estimate(
     volume : array-like
         Reconstructed volume in (z, y, x) order.
     params : array-like
-        Per-view pose table with five or six columns in radians and physical lengths.
+        Per-view pose table with six columns in radians and physical lengths.
     nominal : array-like
         Nominal object-to-world transforms with shape (views, 4, 4).
     grid : Grid

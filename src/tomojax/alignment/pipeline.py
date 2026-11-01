@@ -72,7 +72,7 @@ def align(
         Initial volume of shape ``(nz, ny, nx)``. None initializes reconstruction.
     init_pose_params : array-like or None, optional
         Initial pose corrections in radians and physical length units, with
-        columns ``(alpha, beta, phi, dx, dz[, dy])``. None starts from zero.
+        columns ``(alpha, beta, phi, dx, dz, dy)``. None starts from zero.
     observer : callable or None, optional
         Receives ``(volume, pose_params, outer_stat)`` after outer iterations.
         Returns "continue", "advance_level", "stop_run" or None to continue.

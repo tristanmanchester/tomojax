@@ -151,8 +151,7 @@ class DetectorRollGeometry(_WrappedGeometry):
 
 def _se3_from_pose_params_np(pose_params: np.ndarray) -> np.ndarray:
     row = np.asarray(pose_params, dtype=np.float32)
-    alpha, beta, phi, dx, dz = row[:5]
-    dy = row[5] if row.size > 5 else 0.0
+    alpha, beta, phi, dx, dz, dy = row
     R = rot_y(float(beta)) @ rot_x(float(alpha)) @ rot_z(float(phi))
     T = np.eye(4, dtype=np.float32)
     T[:3, :3] = R
@@ -370,27 +369,25 @@ def _segments_from_meta(
 def _saved_poses(
     meta: LoadedGeometryMeta, views: int, *, default_frame: str
 ) -> tuple[np.ndarray, str] | None:
-    """Validated saved poses, with missing dy set to zero and extra columns ignored."""
+    """Validated saved six-column poses and their translation frame."""
     if meta.get("align_params") is None:
         return None
     params = np.asarray(meta["align_params"], dtype=np.float32)
     if params.ndim != 2:
-        raise ValueError("align_params must be a 2-D array with shape (n_views, >=5)")
+        raise ValueError("align_params must be a 2-D array with shape (n_views, 6)")
     if params.shape[0] != views:
         raise ValueError(
             f"align_params row count ({params.shape[0]}) must match number of views ({views})"
         )
-    if params.shape[1] < 5:
+    if params.shape[1] != 6:
         raise ValueError(
-            "align_params must provide at least 5 columns "
-            f"[alpha, beta, phi, dx, dz], got {params.shape[1]}"
+            "align_params must provide exactly 6 columns "
+            f"[alpha, beta, phi, dx, dz, dy], got {params.shape[1]}"
         )
     frame = str(meta.get("align_gauge", {}).get("pose_translation_frame", default_frame))
     if frame not in {"object", "detector"}:
         raise ValueError(f"unknown saved pose translation frame {frame!r}")
-    if params.shape[1] == 5:
-        params = np.pad(params, ((0, 0), (0, 1)))
-    return params[:, :6], frame
+    return params, frame
 
 
 def build_geometry_from_meta(
@@ -406,9 +403,8 @@ def build_geometry_from_meta(
     unless an explicit `grid_override` or `volume_shape` is supplied; both reuse
     detector pixel spacings as voxel spacings. When `poses` is
     True, any saved `align_params` are composed onto the nominal poses. Saved
-    alignments must provide one row per view and five columns ordered as
-    `[alpha, beta, phi, dx, dz]`, optionally followed by `dy` (zero when absent);
-    further columns are ignored. Saved
+    alignments must provide one row per view and six columns ordered as
+    `[alpha, beta, phi, dx, dz, dy]`. Saved
     `angle_offset_deg` is applied unless it is known to have already been baked
     into `angles`.
     """

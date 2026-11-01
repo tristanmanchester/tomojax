@@ -107,7 +107,7 @@ def test_direct_mixed_dofs_explain_gauge_policy() -> None:
 
 def test_alignment_params_export_unwraps_object_dtype_scalars() -> None:
     payload = alignment_params_payload(
-        np.zeros((1, 5), dtype=np.float32),
+        np.zeros((1, 6), dtype=np.float32),
         du=1.0,
         dv=1.0,
         gauge_metadata={

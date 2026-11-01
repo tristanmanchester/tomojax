@@ -180,7 +180,7 @@ def fit_motion_coefficients(model: PoseMotionModel, pose_params: jnp.ndarray) ->
 
 
 def expand_motion_coefficients(model: PoseMotionModel, coeffs: jnp.ndarray) -> jnp.ndarray:
-    """Expand coefficient variables back to a per-view (n_views, 5) array."""
+    """Expand coefficient variables back to a per-view (n_views, 6) array."""
     if model.basis is None:
         active_params = coeffs
     else:

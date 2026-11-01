@@ -7,7 +7,6 @@ collects checkpoint and configuration plumbing, not a second public facade.
 from __future__ import annotations
 
 from tomojax.alignment._config import resolved_schedule_for_config
-from tomojax.alignment._geometry.parametrizations import pad_pose_params
 from tomojax.alignment._modes import cone_setup
 from tomojax.alignment._objectives.loss_specs import (
     loss_spec_name,
@@ -21,7 +20,6 @@ __all__ = [
     "alignment_checkpointing",
     "cone_setup",
     "loss_spec_name",
-    "pad_pose_params",
     "parse_loss_schedule",
     "parse_loss_spec",
     "resolved_schedule_for_config",

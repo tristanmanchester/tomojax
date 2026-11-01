@@ -1022,7 +1022,6 @@ def _run_alignment(
         AlignmentRun,
         alignment_checkpointing,
         cone_setup,
-        pad_pose_params,
     )
     from tomojax.alignment.api import AlignMultiresResumeState, align_multires
 
@@ -1059,7 +1058,7 @@ def _run_alignment(
         resume_state=cast("AlignMultiresResumeState | None", resume),
         checkpoint_callback=write,
     )
-    poses = np.asarray(pad_pose_params(params), np.float32)
+    poses = np.asarray(params, np.float32)
     frame = cfg.pose_translation_frame
     if plan.mode == "pose" and describe(geometry)[0] != "cone":
         record["implied_detector_u_px"] = _implied_detector_u_px(geometry, detector, poses, frame)

@@ -94,7 +94,7 @@ def test_detector_translation_is_observable_in_every_scheduled_geometry(size, ki
     pitch = jnp.array([detector.du, detector.dv])
 
     def detector_position(uv, pose):
-        parameters = jnp.zeros(5).at[3:].set(uv * pitch)
+        parameters = jnp.zeros(6).at[3:5].set(uv * pitch)
         moved = apply_pose_update(pose, parameters, translation_frame="detector")
         return moved[jnp.array([0, 2]), 3] / pitch
 
@@ -102,7 +102,7 @@ def test_detector_translation_is_observable_in_every_scheduled_geometry(size, ki
     np.testing.assert_allclose(jacobian, np.broadcast_to(np.eye(2), jacobian.shape), atol=1e-7)
 
     # Preserve the old, explicitly object-frame convention for existing poses.
-    parameters = jnp.tile(jnp.array([0.02, -0.03, 0.01, 0.4, -0.7]), (len(angles), 1))
+    parameters = jnp.tile(jnp.array([0.02, -0.03, 0.01, 0.4, -0.7, 0]), (len(angles), 1))
     expected = np.asarray(nominal, dtype=np.float64) @ np.asarray(
         jax.vmap(se3_from_pose_params)(parameters), dtype=np.float64
     )
@@ -111,7 +111,7 @@ def test_detector_translation_is_observable_in_every_scheduled_geometry(size, ki
 
 def test_detector_updates_preserve_nominal_beam_translation_and_object_rotation():
     nominal = jnp.array([[0.0, -1, 0, 4], [1, 0, 0, 7], [0, 0, 1, -2], [0, 0, 0, 1]])
-    parameters = jnp.array([0.03, -0.01, 0.05, 0.2, -0.4])
+    parameters = jnp.array([0.03, -0.01, 0.05, 0.2, -0.4, 0])
     updated = apply_pose_update(nominal, parameters, translation_frame="detector")
     np.testing.assert_allclose(updated[:3, 3], [4.2, 7, -2.4])
     np.testing.assert_allclose(
@@ -125,11 +125,11 @@ def test_rigid_geometry_retains_precision_with_reduced_matmul_defaults():
         pytest.skip("requires CUDA matrix multiplication precision modes")
     geometry, _, _ = _geometry(12, "lamino", np.array([17.0, 90.0, 143.0], np.float32))
     nominal = stack_view_poses(geometry, 3)
-    params = np.array([[0.006, -0.004, 0.005, 0.12, -0.07]] * 3, np.float32)
+    params = np.array([[0.006, -0.004, 0.005, 0.12, -0.07, 0]] * 3, np.float32)
     expected = np.asarray(nominal, dtype=np.float64).copy()
     rotation = Rotation.from_euler("YXZ", params[:, [1, 0, 2]]).as_matrix()
     expected[:, :3, :3] = expected[:, :3, :3] @ rotation
-    expected[:, [0, 2], 3] += params[:, 3:]
+    expected[:, [0, 2], 3] += params[:, 3:5]
     with jax.default_matmul_precision("bfloat16"):
         actual = jax.jit(lambda n, p: apply_pose_updates(n, p, translation_frame="detector"))(
             nominal, jnp.asarray(params)
@@ -145,7 +145,7 @@ def test_rigid_geometry_retains_precision_with_reduced_matmul_defaults():
 def test_state_and_reconstruction_use_the_same_detector_frame(kind):
     geometry, _, detector = _geometry(16, kind, np.array([11.0, 90.0, 137.0], np.float32))
     params = jnp.array(
-        [[0.02, -0.01, 0.03, 0.2, -0.7], [0, 0, 0, -0.3, 0.8], [0.01, 0, -0.03, 0.1, 0.4]]
+        [[0.02, -0.01, 0.03, 0.2, -0.7, 0], [0, 0, 0, -0.3, 0.8, 0], [0.01, 0, -0.03, 0.1, 0.4, 0]]
     )
     state = AlignmentState.zeros(n_views=3)
     base = BaseGeometryArrays.from_geometry(geometry, detector)
@@ -186,7 +186,7 @@ def test_gauss_newton_jacobian_is_explicit():
 def test_resume_cannot_silently_change_translation_frame(multires):
     geometry, grid, detector = _geometry(8, "parallel", np.array([0.0, 90.0], np.float32))
     data = jnp.zeros((2, detector.nv, detector.nu))
-    volume, params = jnp.zeros((8, 8, 8)), jnp.zeros((2, 5))
+    volume, params = jnp.zeros((8, 8, 8)), jnp.zeros((2, 6))
     cfg = AlignConfig(pose_translation_frame="detector", backend="jax")
     if multires:
         resume = AlignMultiresResumeState(volume, params)
@@ -242,7 +242,7 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
     )
     if multires:
         initial = AlignMultiresResumeState(
-            volume, jnp.zeros((3, 5)), pose_translation_frame="detector"
+            volume, jnp.zeros((3, 6)), pose_translation_frame="detector"
         )
         _, params, info = align_multires(
             geometry,
@@ -296,7 +296,9 @@ def test_train_fold_preserves_pose_frame_and_excludes_padding(monkeypatch, frame
     geometry, grid, detector = _geometry(8, "lamino", np.array([17.0, 90.0, 143.0], np.float32))
     base = BaseGeometryArrays.from_geometry(geometry, detector)
     state = AlignmentState.zeros(n_views=3)
-    params = jnp.array([[0.02, 0, 0, 0.3, -0.7], [0, 0.01, 0, 0.2, -0.4], [0, 0, -0.03, -0.2, 0.6]])
+    params = jnp.array(
+        [[0.02, 0, 0, 0.3, -0.7, 0], [0, 0.01, 0, 0.2, -0.4, 0], [0, 0, -0.03, -0.2, 0.6, 0]]
+    )
     state = state.replace(
         setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit, detector_roll_rad=roll),
         pose=PoseState(params, translation_frame=frame),
@@ -391,7 +393,7 @@ def test_train_fold_preserves_represented_degree_metadata(monkeypatch):
 
 
 def test_detector_pose_exports_carry_their_frame(tmp_path):
-    params = np.array([[0.0, 0, 0, 0.4, -0.7]], np.float32)
+    params = np.array([[0.0, 0, 0, 0.4, -0.7, 0]], np.float32)
     json_path, csv_path = tmp_path / "pose.json", tmp_path / "pose.csv"
     save_alignment_params_json(json_path, params, du=0.8, dv=1.4, translation_frame="detector")
     payload = json.loads(json_path.read_text())
@@ -409,7 +411,7 @@ def test_detector_pose_exports_carry_their_frame(tmp_path):
 def test_translation_seed_converts_image_motion_without_moving_frozen_dofs(frame, active, kind):
     geometry, _, detector = _geometry(12, kind, np.array([17.0, 90.0, 143.0], np.float32))
     shifts = np.array([[1, -2], [-1, 1], [2, 0]], np.float64) * [detector.du, detector.dv]
-    params = np.zeros((3, 5), np.float32)
+    params = np.zeros((3, 6), np.float32)
     params[:, 3] = 0.4
     poses = np.asarray(stack_view_poses(geometry, 3), np.float64)
     mapping = (
@@ -420,10 +422,10 @@ def test_translation_seed_converts_image_motion_without_moving_frozen_dofs(frame
     actual = translation_params_from_shifts(shifts, mapping, params, active=active)
     for i in range(3):
         basis = np.eye(2) if frame == "detector" else poses[i][[0, 2], :3][:, [0, 2]]
-        fixed = np.where(active, 0, params[i, 3:])
+        fixed = np.where(active, 0, params[i, 3:5])
         target = shifts[i] - basis @ fixed
         expected = np.linalg.lstsq(basis * np.array(active)[None, :], target, rcond=1e-3)[0]
-        np.testing.assert_allclose(actual[i, 3:], np.where(active, expected, fixed), atol=2e-6)
+        np.testing.assert_allclose(actual[i, 3:5], np.where(active, expected, fixed), atol=2e-6)
         # Each seeded translation reproduces its view's detector shift where observable.
         if all(active) and frame == "detector":
             moved = apply_pose_update(
@@ -768,7 +770,7 @@ def test_least_motion_moves_a_constant_u_shift_into_the_detector_centre(kind):
 def test_saved_alignment_is_reapplied_in_its_translation_frame(frame):
     angles = np.linspace(0.0, 360.0, 6, endpoint=False)
     geometry, grid, detector = _geometry(8, "lamino", angles)
-    params = np.random.default_rng(5).normal(0.0, 0.3, (angles.size, 5)).astype(np.float32)
+    params = np.random.default_rng(5).normal(0.0, 0.3, (angles.size, 6)).astype(np.float32)
     meta = {
         "detector": detector.to_dict(),
         "grid": grid.to_dict(),
@@ -810,7 +812,7 @@ def test_cor_then_pose_reports_the_constant_detector_shift_as_the_centre():
         gn_jacobian="central",
     )
     initial = AlignMultiresResumeState(
-        volume, jnp.zeros((angles.size, 5)), pose_translation_frame="detector"
+        volume, jnp.zeros((angles.size, 6)), pose_translation_frame="detector"
     )
     _, params, info = align_multires(
         geometry, grid, detector, data, config=cfg, factors=(1,), resume_state=initial

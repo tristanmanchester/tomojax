@@ -369,7 +369,7 @@ def test_pose_adjusted_cuda_fallback_keeps_folded_detector_grid_out_of_jax_core(
         reconstruction_stage._ReconstructionStepInputs(
             recon_geometry=PoseAdjustedGeometry(
                 geometry=geometry,
-                pose_params=jnp.zeros((2, 5), dtype=jnp.float32),
+                pose_params=jnp.zeros((2, 6), dtype=jnp.float32),
             ),
             grid=grid,
             detector=detector,
@@ -569,7 +569,7 @@ def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
 ):
     grid, detector = Grid(3, 4, 2, 0.7, 1.1, 0.9), Detector(5, 3, 0.6, 0.8)
     geometry = ParallelGeometry(grid, detector, np.array([13.0, 56.0, 91.0]))
-    geometry = PoseAdjustedGeometry(geometry=geometry, pose_params=jnp.full((3, 5), pose_delta))
+    geometry = PoseAdjustedGeometry(geometry=geometry, pose_params=jnp.full((3, 6), pose_delta))
     cfg = AlignConfig(
         iterations=3,
         tv_weight=0.02,

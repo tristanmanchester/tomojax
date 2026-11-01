@@ -30,7 +30,7 @@ pytestmark = pytest.mark.numerical
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("width", [5, 6])
+@pytest.mark.parametrize("n_columns", [5, 6])
 @pytest.mark.parametrize(
     ("grid_case", "direction"),
     [
@@ -41,7 +41,7 @@ pytestmark = pytest.mark.numerical
     ],
 )
 def test_cuda_columns_retain_individual_central_differences(
-    monkeypatch, width, direction, grid_case
+    monkeypatch, n_columns, direction, grid_case
 ):
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
     if not use_cuda_cone():
@@ -65,9 +65,9 @@ def test_cuda_columns_retain_individual_central_differences(
     u, v = np.cos(0.13) * u + np.sin(0.13) * v, -np.sin(0.13) * u + np.cos(0.13) * v
     frame = jnp.asarray(np.stack([40 * beam, u, v, -80 * beam]), jnp.float32)
     nominal = jnp.eye(4)
-    params = jnp.zeros(width)
+    params = jnp.zeros(6)
     if direction == (0.2, 0.7, -0.8):
-        params = jnp.asarray([0.012, -0.018, 0.031, 0.11, -0.07, 0.04][:width])
+        params = jnp.asarray([0.012, -0.018, 0.031, 0.11, -0.07, 0.04])
     rng = np.random.default_rng(533)
     volume = jnp.asarray(rng.uniform(-0.1, 1.1, (grid.nz, grid.ny, grid.nx)), jnp.float32)
     target = jnp.asarray(rng.normal(size=(detector.nv, detector.nu)), jnp.float32)
@@ -86,6 +86,7 @@ def test_cuda_columns_retain_individual_central_differences(
             detector=detector,
             det_grid=None,
             options=options,
+            column_indices=tuple(range(n_columns)),
         )
     )
 
@@ -102,12 +103,14 @@ def test_cuda_columns_retain_individual_central_differences(
         radius = 0.5 * math.sqrt(
             (grid.nx * grid.vx) ** 2 + (grid.ny * grid.vy) ** 2 + (grid.nz * grid.vz) ** 2
         )
-        steps = jnp.asarray([displacement / radius] * 3 + [displacement] * (width - 3), jnp.float32)
+        steps = jnp.asarray(
+            [displacement / radius] * 3 + [displacement] * (n_columns - 3), jnp.float32
+        )
         columns = jax.vmap(
             lambda direction, step: weight.ravel()
             * (prediction(p + step * direction) - prediction(p - step * direction))
             / (2 * step)
-        )(jnp.eye(width, dtype=jnp.float32), steps)
+        )(jnp.eye(6, dtype=jnp.float32)[:n_columns], steps)
         return weight.ravel() * (prediction(p) - target.ravel()), columns
 
     actual = candidate(params, nominal, frame, volume, target, weight)
@@ -119,10 +122,10 @@ def test_cuda_columns_retain_individual_central_differences(
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("width", [5, 6])
+@pytest.mark.parametrize("n_columns", [5, 6])
 @pytest.mark.parametrize("translation_frame", ["object", "detector"])
 @pytest.mark.parametrize("direction", [(1, 0.2, 0.1), (0.2, 1, 0.1), (0.1, 0.2, 1)])
-def test_cuda_analytic_pose_columns_match_jax(width, translation_frame, direction):
+def test_cuda_analytic_pose_columns_match_jax(n_columns, translation_frame, direction):
     if not use_cuda_cone():
         pytest.skip("CUDA cone columns require an NVIDIA GPU and CuPy")
     grid = Grid(7, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.23, -0.17, 0.31))
@@ -135,7 +138,7 @@ def test_cuda_analytic_pose_columns_match_jax(width, translation_frame, directio
     u, v = np.cos(0.13) * u + np.sin(0.13) * v, -np.sin(0.13) * u + np.cos(0.13) * v
     frame = jnp.asarray(np.stack([40 * beam, u, v, -80 * beam]), jnp.float32)
     nominal = jnp.eye(4).at[:3, 3].set(jnp.asarray([0.11, 0.09, -0.13]))
-    params = jnp.asarray([0.013, -0.019, 0.031, 0.11, -0.07, 0.04][:width])
+    params = jnp.asarray([0.013, -0.019, 0.031, 0.11, -0.07, 0.04])
     rng = np.random.default_rng(177)
     volume = jnp.asarray(rng.uniform(-0.1, 1.1, (5, 6, 7)), jnp.float32)
     target = jnp.asarray(rng.normal(size=(7, 9)), jnp.float32)
@@ -150,6 +153,7 @@ def test_cuda_analytic_pose_columns_match_jax(width, translation_frame, directio
             detector=detector,
             det_grid=None,
             options=options,
+            column_indices=tuple(range(n_columns)),
         )
     )
 
@@ -160,7 +164,7 @@ def test_cuda_analytic_pose_columns_match_jax(width, translation_frame, directio
         return weight.ravel() * (image.ravel() - target.ravel())
 
     actual = candidate(params, nominal, frame, volume, target, weight)
-    expected = predict(params), jax.jit(jax.jacfwd(predict))(params).T
+    expected = predict(params), jax.jit(jax.jacfwd(predict))(params).T[:n_columns]
     # These rays avoid interpolation knots and dominant-axis ties, where the
     # Joseph quadrature is not differentiable. Each backend retains FP32 rays.
     for a, b in zip(actual, expected, strict=True):

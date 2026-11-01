@@ -16,7 +16,7 @@ iteration and resumes an interrupted run from it. Without expert overrides,
 `tj.align` chooses centre estimation for axial parallel scans and guarded
 setup, support and motion selection for unposed laminography; its result records
 conditional outcomes and limitations. Explicit `mode="pose"` selects per-view
-corrections (five parameters, six in a cone beam). Smooth pose models, setup
+corrections (six parameters; beam-direction translation is frozen when unobservable). Smooth pose models, setup
 stages and mixed schedules remain available explicitly. See the
 [alignment guide](../../../docs/alignment-guide.md).
 
