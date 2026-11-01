@@ -59,6 +59,9 @@ Further image-domain checks fail the 5% no-harm gate on ESRF bamboo (28.5%)
 and Elettra (8.0%), despite sinogram-domain passes; see the
 [cross-facility controls](measurements.md#cross-facility-image-domain-controls).
 Review corrected and uncorrected structures, especially on moving samples.
+Without a mirror axis, `Rings` fits angular bin means of about six views each on
+a 3000-view scan; pass `views=None` to fit every view when fine structure far
+from the axis crosses several columns within a bin.
 A centred radial feature and an even detector error are indistinguishable in
 a stationary full turn: correction of that component depends on the method's
 prior, not information uniquely supplied by the scan. Natural motion can

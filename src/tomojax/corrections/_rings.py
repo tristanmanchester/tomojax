@@ -146,7 +146,7 @@ def _fit(ranked: jax.Array, ref: jax.Array) -> tuple[jax.Array, jax.Array, jax.A
 
 
 def _feasible_response(
-    q: jax.Array, ref: jax.Array, alpha: jax.Array, beta: jax.Array
+    q: jax.Array, ref: jax.Array, alpha: jax.Array, beta: jax.Array, lowest: jax.Array | None = None
 ) -> tuple[jax.Array, jax.Array]:
     """Refit regularised coefficients to cover every observation on a stable branch.
 
@@ -156,6 +156,7 @@ def _feasible_response(
     alpha + tangent <= min(q) therefore guarantees an admissible inverse.
     This is the least change in the reference regression's ridge Gram metric,
     not a clipped output or an unconstrained fit followed by a rejected column.
+    ``lowest`` is each column's least observation when ``q`` is only a sample of them.
     """
     x = -jnp.expm1(-ref)
     w = jnp.exp(-jnp.minimum(ref, 50.0))
@@ -165,7 +166,8 @@ def _feasible_response(
     negative = jnp.where(beta < 0, beta, -1.0)
     h = jnp.log(-2 * negative) + negative + 0.5
     normal = 1 + 1 / negative - xm
-    excess = jnp.where(beta < 0, jnp.maximum(alpha + h - q.min(0), 0), 0)
+    lowest = q.min(0) if lowest is None else lowest
+    excess = jnp.where(beta < 0, jnp.maximum(alpha + h - lowest, 0), 0)
     amount = excess / (variance + normal * normal)
     return alpha + amount * (normal * xm - variance), beta - amount * normal
 
@@ -183,19 +185,18 @@ def _invert(q: jax.Array, alpha: jax.Array, beta: jax.Array) -> jax.Array:
     # v-beta starts above the root and stays on the fitted derivative >= 1/2 branch.
     p = jnp.where(beta < 0, v - beta, jnp.where(v >= 0, positive, negative))
     for _ in range(6):
-        p = p - (p - beta * jnp.expm1(-p) - v) / (1 + beta * jnp.exp(-p))
+        e = jnp.exp(-p)
+        p = p - (p - beta * (e - 1) - v) / (1 + beta * e)
     return p
 
 
-def _fit_unsorted(
-    q: jax.Array, ref: jax.Array, neighbours: jax.Array, weights: jax.Array
-) -> tuple[jax.Array, ...]:
+def _fit_unsorted(q: jax.Array, ref: jax.Array, instrument: jax.Array) -> tuple[jax.Array, ...]:
     """Response contrasts and their influence, using independent neighbouring-view noise.
 
     Regressing on the noisy spatial reference itself correlates predictor and error.
-    The angular interpolation is an instrument, including distinct endpoint views.
+    The angular interpolation of the reference, ``instrument``, is the instrument,
+    including distinct endpoint views.
     """
-    instrument = (ref[neighbours] * weights[:, :, None]).sum(1)
     x, z = -jnp.expm1(-ref), -jnp.expm1(-instrument)
     w = jnp.exp(-jnp.minimum(instrument, 50.0))
     d, sw = q - ref, w.sum(0)
@@ -230,8 +231,8 @@ def _angular_variance(influence: jax.Array, groups: tuple[int, ...]) -> jax.Arra
         offset += size
         length = max(1, int(np.sqrt(size)))
         centered = part - part.mean(0, keepdims=True)
-        integrated = jnp.cumsum(jnp.pad(centered, ((length, length - 1), (0, 0))), axis=0)
-        windows = integrated[length:] - integrated[:-length]
+        padded = jnp.pad(centered, ((length - 1, length - 1), (0, 0)))
+        windows = jax.lax.reduce_window(padded, 0.0, jax.lax.add, (length, 1), (1, 1), "VALID")
         power = jnp.abs(jnp.fft.rfft(windows, axis=1)) ** 2
         effective = size - length + (length * length - 1) / (3 * size)
         variance = variance + power.sum(0) / length * size / max(effective, 1)
@@ -276,19 +277,33 @@ def _response_posterior(
     return jnp.fft.irfft(spectrum * gain, n=profile.size).astype(profile.dtype)
 
 
-def _unsorted_row(
-    q: jax.Array, neighbours: jax.Array, weights: jax.Array, groups: tuple[int, ...]
-) -> jax.Array:
-    out = q
+def _unsorted_response(
+    q: jax.Array,
+    neighbours: jax.Array,
+    weights: jax.Array,
+    groups: tuple[int, ...],
+    lowest: jax.Array,
+    passes: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """A row's fitted responses, each after inverting the ones before, and ``q`` corrected.
+
+    ``lowest`` is each column's least value over every view, which keeps the inverse
+    admissible everywhere when ``q`` only summarises the views; the inverse is
+    increasing, so it carries the least value through each pass.
+    """
     taps = _quadratic_taps(6, 0)
-    for _ in range(2):
-        ref = _correlate(out, taps)
-        level, beta, xm, il, ib, ml, mb = _fit_unsorted(out, ref, neighbours, weights)
+    responses = []
+    for _ in range(passes):
+        ref = _correlate(q, taps)
+        instrument = (ref[neighbours] * weights[:, :, None]).sum(1)
+        level, beta, xm, il, ib, ml, mb = _fit_unsorted(q, ref, instrument)
         level = _response_posterior(level, il, ml, taps, groups)
         beta = jnp.maximum(_response_posterior(beta, ib, mb, taps, groups), -0.5)
-        alpha, beta = _feasible_response(out, ref, level - beta * xm, beta)
-        out = _invert(out, alpha, beta)
-    return out
+        alpha, beta = _feasible_response(q, ref, level - beta * xm, beta, lowest)
+        responses.append((alpha, beta))
+        q, lowest = _invert(q, alpha, beta), _invert(lowest, alpha, beta)
+    alphas, betas = zip(*responses, strict=True)
+    return jnp.stack(alphas), jnp.stack(betas), q
 
 
 def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 3.0) -> jax.Array:
@@ -342,7 +357,8 @@ def _row(
     for _ in range(2):
         fitted = jnp.concatenate([0.5 * (out[:1] + out[-1:]), out[1:-1]]) if closing else out
         ref = _reference(fitted)
-        level, beta, xm, *_ = _fit_unsorted(fitted, ref, neighbours, weights)
+        instrument = (ref[neighbours] * weights[:, :, None]).sum(1)
+        level, beta, xm, *_ = _fit_unsorted(fitted, ref, instrument)
         level = regularize(level, axis, "significance")
         beta = regularize(beta, axis, "significance")
         alpha, beta = _feasible_response(out, ref, level - beta * xm, beta)
@@ -450,8 +466,7 @@ def _view_plan(geometry: object, *, cyclic: bool = False) -> _ViewPlan | None:
             left, right = (angles - angles[lo]) % 360, (angles[hi] - angles) % 360
             weight = right / (left + right)
         else:
-            lo, hi = np.maximum(i - 1, 0), np.minimum(i + 1, size - 1)
-            lo[0], hi[-1] = hi[0], lo[-1]
+            lo, hi = _open_neighbours(size)
             gap = angles[hi] - angles[lo]
             weight = np.divide(angles[hi] - angles, gap, out=np.full(size, 0.5), where=gap != 0)
         neighbours.extend((int(a + offset), int(b + offset)) for a, b in zip(lo, hi, strict=True))
@@ -461,7 +476,30 @@ def _view_plan(geometry: object, *, cyclic: bool = False) -> _ViewPlan | None:
     return _ViewPlan(tuple(order), tuple(neighbours), tuple(weights), tuple(groups), bool(closing))
 
 
-@partial(jax.jit, static_argnames=("axis", "groups", "closing"))
+def _open_neighbours(size: int) -> tuple[np.ndarray, np.ndarray]:
+    """Each of ``size`` angle-sorted views' two neighbours; an end view's one, twice."""
+    i = np.arange(size)
+    lo, hi = np.maximum(i - 1, 0), np.minimum(i + 1, size - 1)
+    lo[0], hi[-1] = hi[0], lo[-1]
+    return lo, hi
+
+
+def _bins(groups: tuple[int, ...], views: int) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
+    """About ``views`` contiguous angular bins, shared among trajectories by length.
+
+    Returns each view's bin, each bin's two neighbouring bins and the bins per trajectory.
+    """
+    total, offset, labels, neighbours, counts = sum(groups), 0, [], [], []
+    for size in groups:
+        k = min(size, max(2, round(views * size / total)))
+        labels.append(offset + np.arange(size) * k // size)
+        neighbours.append(offset + np.stack(_open_neighbours(k), axis=1))
+        counts.append(k)
+        offset += k
+    return np.concatenate(labels), np.concatenate(neighbours), tuple(counts)
+
+
+@partial(jax.jit, static_argnames=("axis", "groups", "closing", "views"))
 def correct_rings(
     batch: jax.Array,
     axis: float | None = None,
@@ -470,18 +508,18 @@ def correct_rings(
     groups: tuple[int, ...] = (),
     *,
     closing: bool = False,
+    views: int | None = None,
 ) -> jax.Array:
-    """Correct every detector row of a ``(views, rows, columns)`` batch of line integrals."""
+    """Correct every detector row of a ``(views, rows, columns)`` batch of line integrals.
+
+    ``views`` fits the half-turn responses on about that many angular bin means.
+    """
     if neighbours is None or weights is None:
         size = batch.shape[0]
         if size < 2:
             raise ValueError("Rings needs at least two views")
         i = np.arange(size)
-        if axis is None:
-            lo, hi = np.maximum(i - 1, 0), np.minimum(i + 1, size - 1)
-            lo[0], hi[-1] = hi[0], lo[-1]
-        else:
-            lo, hi = (i - 1) % size, (i + 1) % size
+        lo, hi = _open_neighbours(size) if axis is None else ((i - 1) % size, (i + 1) % size)
         neighbours = jnp.asarray(np.stack([lo, hi], axis=1), jnp.int32)
         weights = jnp.full((size, 2), 0.5, batch.dtype)
         groups = (size,)
@@ -490,10 +528,29 @@ def correct_rings(
             lambda q: _row(q, axis, neighbours, weights, closing=closing), jnp.swapaxes(batch, 0, 1)
         )
         return jnp.swapaxes(rows, 0, 1)
-    rows = jax.lax.map(
-        lambda q: _unsorted_row(q, neighbours, weights, groups), jnp.swapaxes(batch, 0, 1)
+    rows = jnp.swapaxes(batch, 0, 1)
+    if views is None or views >= sum(groups):
+        _, _, corrected = jax.lax.map(
+            lambda q: _unsorted_response(q, neighbours, weights, groups, q.min(0), 2), rows
+        )
+        return jnp.swapaxes(corrected, 0, 1)
+    # Fit once on angular bin means, which keep every view's photons; an additive
+    # column error commutes with the mean, and neighbouring bins share no views.
+    labels, bin_neighbours, groups = _bins(groups, views)
+    sizes = np.bincount(labels)
+    starts = np.cumsum(sizes) - sizes
+    means = batch[starts]
+    for j in range(1, sizes.max()):
+        means += batch[starts + np.minimum(j, sizes - 1)] * (j < sizes)[:, None, None]
+    means /= sizes[:, None, None].astype(batch.dtype)
+    neighbours = jnp.asarray(bin_neighbours, jnp.int32)
+    # equal weights: the instrument need only be independent of each bin's noise
+    weights = jnp.full(bin_neighbours.shape, 0.5, batch.dtype)
+    alpha, beta, _ = jax.lax.map(
+        lambda row: _unsorted_response(row[0], neighbours, weights, groups, row[1], 1),
+        (jnp.swapaxes(means, 0, 1), batch.min(0)),
     )
-    return jnp.swapaxes(rows, 0, 1)
+    return _invert(batch, alpha[None, :, 0], beta[None, :, 0])
 
 
 def mirror_axis(geometry: object) -> float | None:
@@ -574,11 +631,17 @@ class Rings(Step):
     geometry : object, optional
         The scan's geometry, with the detector the data were recorded on.
         Default is None.
+    views : int or None, optional
+        Fit the responses of scans without a mirror axis once, on the means of about
+        this many contiguous angular bins of views, neighbouring bins as instrument,
+        and correct every view. Default 512. None fits every view twice: several
+        times slower, for scans whose structure moves across columns within a bin.
 
     Raises
     ------
     ValueError
-        If a geometry trajectory contains fewer than two views.
+        If a geometry trajectory contains fewer than two views, or ``views`` is not
+        an integer of at least 2.
 
     Examples
     --------
@@ -597,12 +660,15 @@ class Rings(Step):
     domain: ClassVar[Domain] = "line integrals"
     whole_rows: ClassVar[bool] = True
     geometry: object = field(default=None, repr=False, compare=False)
+    views: int | None = field(default=512, kw_only=True)
     # what the geometry decides, compared and hashed so compiled kernels are not shared
     _axis: float | None = field(default=None, init=False, repr=False)
     _columns: int | None = field(default=None, init=False, repr=False)
     _plan: _ViewPlan | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.views is not None and (type(self.views) is not int or self.views < 2):
+            raise ValueError(f"Rings views must be an integer of at least 2, not {self.views!r}")
         axis = mirror_axis(self.geometry)
         object.__setattr__(self, "_axis", axis)
         if axis is not None and isinstance(self.geometry, ParallelGeometry):
@@ -622,14 +688,14 @@ class Rings(Step):
         return self._axis
 
     def record(self) -> Correction:
-        """Build this step's record: the mirror axis used, or None.
+        """Build this step's record: the mirror axis used, or None, and the bin count.
 
         Returns
         -------
         Correction
             Step name and settings, with no findings yet.
         """
-        return Correction("rings", {"mirror_axis": self.mirror_axis})
+        return Correction("rings", {"mirror_axis": self.mirror_axis, "views": self.views})
 
     def apply(self, batch: jax.Array) -> jax.Array:
         """Correct the rings of a batch of detector rows.
@@ -656,7 +722,7 @@ class Rings(Step):
                 f"Rings geometry has {self._columns} detector columns, the data {batch.shape[2]}"
             )
         if self._plan is None:
-            return correct_rings(batch, self._axis)
+            return correct_rings(batch, self._axis, views=self.views)
         plan = self._plan
         if len(plan.order) != batch.shape[0]:
             raise ValueError(
@@ -670,5 +736,6 @@ class Rings(Step):
             weights=jnp.asarray(plan.weights, batch.dtype),
             groups=plan.groups,
             closing=plan.closing,
+            views=self.views,
         )
         return out[jnp.asarray(np.argsort(plan.order), jnp.int32)]
