@@ -480,6 +480,7 @@ def cgls(
     hosted = solve_on_host(
         geometry, grid, detector, projections, init_x, cfg,
         model=model, backend=backend, poses=poses, shared=split is not None, out=out,
+        det_grid=det_grid,
     )  # fmt: skip
     if hosted is not None:
         return hosted

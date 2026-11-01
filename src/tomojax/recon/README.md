@@ -285,3 +285,16 @@ near convergence. The boolean `support` mask fixes excluded voxels to zero;
 initial zeros are absorbing under multiplicative updates. `warm_start=True`
 starts from FBP/FDK clipped to nonnegative values, retaining its zero set.
 
+
+### Parallel and laminographic CGLS beyond device memory
+
+CUDA linear Joseph CGLS streams z slabs automatically when its working volumes
+do not fit on the GPU. Slab forward projections are summed before the residual,
+and each slab uses the matched transpose; tilted scans are not reconstructed
+as independent slices. Small resident solves keep their existing execution path.
+
+If the four host volumes exceed half of available host memory, the result and
+work volumes use automatically removed temporary files. Set the standard
+`TMPDIR` environment variable to a fast local disk with space for four FP32
+volumes. The returned NumPy memmap owns its file until released. Supplying
+`out=` preserves that array and puts work files beside it when it is a memmap.

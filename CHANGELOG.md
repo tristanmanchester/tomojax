@@ -19,6 +19,10 @@ Pose inputs and saved geometry use exactly six columns: `(alpha, beta, phi, dx, 
 Set `dy=0` explicitly when beam-direction motion is frozen; five-column legacy tables
 and extra unnamed columns are no longer accepted by alignment, parameter export, or
 saved-geometry loading.
+CUDA linear Joseph CGLS now reconstructs parallel and laminographic volumes
+in host slabs automatically when its working state exceeds GPU memory.
+Large host states use owned temporary files (`TMPDIR`), without an `out=` or
+streaming flag; the matched projector and global CGLS recurrence are unchanged.
 
 `Rings` fits its responses on the means of about 512 contiguous angular bins
 of views (`views=512`, the new default) and corrects every view with them,

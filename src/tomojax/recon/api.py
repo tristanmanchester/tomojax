@@ -303,7 +303,7 @@ def reconstruct_arrays(
         return volume, {"config": cfg, "host_slabs": True, "backend": backend}
     if out is not None and method not in {"fbp", "cgls", "sirt", "mlem"}:
         raise ValueError(f"method {method!r} does not take out")
-    if out is not None and method != "fbp":
+    if out is not None and method not in {"fbp", "cgls"}:
         from tomojax.core.geometry.cone import is_cone_beam
 
         if not is_cone_beam(geometry):
