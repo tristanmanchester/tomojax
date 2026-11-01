@@ -21,7 +21,6 @@ from tomojax.alignment._geometry.initializers import (
     reprojection_det_u_seed,
     sinogram_det_u_seed,
 )
-from tomojax.alignment._model.diagnostics import validate_active_gauge_policy
 from tomojax.alignment._model.dof_specs import ActiveParameterView
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.alignment._model.state import AlignmentState, PoseState
@@ -44,7 +43,7 @@ from tomojax.alignment.optimizers import ValidationLmConfig, run_active_validati
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Iterable
 
     from tomojax.alignment._config import AlignConfig
     from tomojax.alignment._model.dofs import DofBounds
@@ -83,19 +82,13 @@ def _geometry_calibration_payload(
 
 
 def _run_setup_validation_objective(
+    fit: _FitInputs,
     *,
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
     setup_state: AlignmentState,
     active_view: ActiveParameterView,
-    base: BaseGeometryArrays,
     folds: FoldArrays,
-    loss_adapter: LossAdapter,
     fold_recon_cfg: FistaConfig,
     cfg: AlignConfig,
-    init_x: jnp.ndarray | None,
     factor: int,
 ) -> SetupValidationObjectiveResult:
     stage_start = time.monotonic()
@@ -117,25 +110,25 @@ def _run_setup_validation_objective(
         val_idx = folds.val_idx[fold]
         val_mask = folds.val_mask[fold]
         fold_volume, fold_recon_info = reconstruct_train_fold_nograd(
-            geometry=geometry,
-            grid=grid,
-            detector=detector,
-            projections=projections,
+            geometry=fit.geometry,
+            grid=fit.grid,
+            detector=fit.detector,
+            projections=fit.projections,
             state=setup_state,
             train_idx=train_idx,
             train_mask=train_mask,
-            init_x=init_x,
+            init_x=fit.init_x,
             level_factor=int(factor),
             cfg=fold_recon_cfg,
         )
         validation = FoldValidation(
             frozen_state=setup_state,
             active_view=active_view,
-            base=base,
-            grid=grid,
-            detector=detector,
-            projections=projections,
-            loss_adapter=loss_adapter,
+            base=fit.base,
+            grid=fit.grid,
+            detector=fit.detector,
+            projections=fit.projections,
+            loss_adapter=fit.loss_adapter,
             fold_volume=fold_volume,
             val_idx=val_idx,
             val_mask=val_mask,
@@ -160,7 +153,11 @@ def _run_setup_validation_objective(
             time.monotonic() - stage_start,
         )
 
-    score_candidate = _candidate_scorer(fold_cache)
+    # Each frozen fold keeps its compiled loss for the candidate search.
+    scorers = tuple(validation_scorer(validation) for _, validation, _ in fold_cache)
+
+    def score_candidate(z_candidate: jnp.ndarray) -> float:
+        return float(sum(scorer(z_candidate) for scorer in scorers))
 
     opt_result = run_active_validation_lm(
         state=setup_state,
@@ -187,16 +184,6 @@ def _run_setup_validation_objective(
     )
 
 
-def _candidate_scorer(folds: list[FoldEvaluation]) -> Callable[[jnp.ndarray], float]:
-    """Own each frozen fold's compiled loss for the candidate search."""
-    scorers = tuple(validation_scorer(validation) for _, validation, _ in folds)
-
-    def score(z_candidate: jnp.ndarray) -> float:
-        return float(sum(scorer(z_candidate) for scorer in scorers))
-
-    return score
-
-
 def _build_geometry_stage_stat(
     *,
     objective_result: SetupValidationObjectiveResult,
@@ -206,22 +193,14 @@ def _build_geometry_stage_stat(
     folds: FoldArrays,
     loss_name: str,
     schedule_name: str | None,
-    stage: ResolvedAlignmentStage | None,
+    stage: ResolvedAlignmentStage,
     outer_idx: int,
     init_x: jnp.ndarray | None,
     seed_diagnostics: dict[str, object] | None = None,
 ) -> OuterStat:
     opt_result = objective_result.opt_result
     stat = dict(opt_result.stats)
-    gauge_decision = (
-        stage.gauge_decision
-        if stage is not None
-        else validate_active_gauge_policy(
-            active_view.dofs,
-            policy=cfg.gauge_policy,
-            priors=cfg.gauge_priors,
-        )
-    )
+    gauge_decision = stage.gauge_decision
     stat.update(
         {
             "geometry_block": "setup_validation_lm",
@@ -239,12 +218,10 @@ def _build_geometry_stage_stat(
             "geometry_outer_idx": int(outer_idx),
             "quality_tier": str(getattr(cfg, "stage_quality_tier", "")),
             "schedule_name": schedule_name,
-            "schedule_stage_index": int(stage.index) if stage is not None else None,
-            "schedule_stage_name": stage.name if stage is not None else None,
-            "schedule_stage_active_dofs": (
-                ",".join(stage.active_dofs) if stage is not None else ",".join(active_view.dofs)
-            ),
-            "gauge_policy": stage.gauge_policy if stage is not None else cfg.gauge_policy,
+            "schedule_stage_index": int(stage.index),
+            "schedule_stage_name": stage.name,
+            "schedule_stage_active_dofs": ",".join(stage.active_dofs),
+            "gauge_policy": stage.gauge_policy,
             "gauge_status": gauge_decision.status,
             "gauge_decision": gauge_decision.to_dict(),
             "objective_kind": "bilevel_cv",
@@ -351,47 +328,29 @@ def _build_setup_stage_result(
     )
 
 
-def _validate_setup_stage_execution_contract(stage: ResolvedAlignmentStage | None) -> None:
-    if stage is None:
-        return
-    if stage.objective_kind != "bilevel_cv":
-        raise ValueError(
-            f"Setup alignment stage {stage.name!r} uses unsupported objective "
-            f"{stage.objective_kind!r}; setup execution currently supports only "
-            "'bilevel_cv'"
-        )
-    if stage.optimizer_kind != "validation_lm":
-        raise ValueError(
-            f"Setup alignment stage {stage.name!r} uses unsupported optimizer "
-            f"{stage.optimizer_kind!r}; setup execution currently supports only "
-            "'validation_lm'"
-        )
-
-
 _SLAB_ROWS = 8
 # Device bytes per validation view and voxel plane crossing each pixel, as
 # measured for the linearised Joseph projection (with room to spare).
 _VALIDATION_BYTES_PER_PLANE_PIXEL = 36
 
 
-def _validation_views_per_batch(grid: Grid, detector: Detector) -> int:
-    """Views the validation residuals take at once: what fits in 60% of free device memory."""
+def _validation_config(cfg: AlignConfig, grid: Grid, detector: Detector) -> AlignConfig:
+    """Size validation batches without resetting the stage's non-init quality tier.
+
+    Unless the configuration fixes it, the validation residuals take as many views
+    at once as fit in 60% of free device memory.
+    """
     from tomojax.backends import device_free_memory_bytes
 
-    free = device_free_memory_bytes()
-    if free is None:
-        return 1
-    planes = max(grid.nx, grid.ny, grid.nz)
-    per_view = _VALIDATION_BYTES_PER_PLANE_PIXEL * planes * detector.nv * detector.nu
-    return max(1, min(32, int(0.6 * free) // max(1, per_view)))
-
-
-def _validation_config(cfg: AlignConfig, grid: Grid, detector: Detector) -> AlignConfig:
-    """Size validation batches without resetting the stage's non-init quality tier."""
     if int(cfg.views_per_batch) > 0:
         return cfg
     validation = copy.copy(cfg)
-    validation.views_per_batch = _validation_views_per_batch(grid, detector)
+    free = device_free_memory_bytes()
+    planes = max(grid.nx, grid.ny, grid.nz)
+    per_view = _VALIDATION_BYTES_PER_PLANE_PIXEL * planes * detector.nv * detector.nu
+    validation.views_per_batch = (
+        1 if free is None else max(1, min(32, int(0.6 * free) // max(1, per_view)))
+    )
     return validation
 
 
@@ -411,37 +370,21 @@ class _FitInputs:
 def _fit_inputs(
     whole: _FitInputs, *, dofs: Iterable[str], loss_spec: AlignmentLossSpec, factor: int
 ) -> _FitInputs:
-    """``whole``, or for a parallel scan's axis offset alone, a slab of its central rows."""
-    slab = _parallel_row_slab(whole.geometry, whole.grid, whole.detector, whole.projections, dofs)
-    if slab is None:
-        return whole
-    geometry, grid, detector, projections = slab
-    base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=factor)
-    adapter = build_loss_adapter(loss_spec, projections)
-    return _FitInputs(geometry, grid, detector, projections, base, adapter, None)
-
-
-def _parallel_row_slab(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
-    dofs: Iterable[str],
-) -> tuple[Geometry, Grid, Detector, jnp.ndarray] | None:
-    """A slab of central detector rows, and the grid over it, for fitting ``det_u_px`` alone.
+    """``whole``, or for a parallel scan's axis offset alone, a slab of its central rows.
 
     In a parallel beam every detector row sees the same rotation axis, so its
     offset is found as well from a few rows as from all: the fit's
-    reconstructions then cost a slab, not the volume. None for other
-    geometries or parameters, or when the detector has few rows already.
+    reconstructions then cost a slab, not the volume. Other geometries or
+    parameters, and detectors with few rows already, use the whole scan.
     """
     from tomojax.core.geometry import Grid as GridType, ParallelGeometry
 
+    geometry, grid, detector = whole.geometry, whole.grid, whole.detector
+    nv = int(whole.projections.shape[1])
     if type(geometry) is not ParallelGeometry or tuple(dofs) != ("det_u_px",):
-        return None
-    nv = int(projections.shape[1])
-    if nv <= 2 * _SLAB_ROWS:
-        return None
+        return whole
+    if nv <= 2 * _SLAB_ROWS:  # few rows already
+        return whole
     r0 = (nv - _SLAB_ROWS) // 2
     r1 = r0 + _SLAB_ROWS
     u, v = detector.center
@@ -460,7 +403,10 @@ def _parallel_row_slab(
         grid.nx, grid.ny, nz, grid.vx, grid.vy, grid.vz, vol_center=(cx, cy, v_mid)
     )
     slab_geometry = replace(geometry, grid=slab_grid, detector=slab_detector)
-    return slab_geometry, slab_grid, slab_detector, projections[:, r0:r1, :]
+    projections = whole.projections[:, r0:r1, :]
+    base = BaseGeometryArrays.from_geometry(slab_geometry, slab_detector, level_factor=factor)
+    adapter = build_loss_adapter(loss_spec, projections)
+    return _FitInputs(slab_geometry, slab_grid, slab_detector, projections, base, adapter, None)
 
 
 def _seeded(
@@ -501,7 +447,7 @@ def _setup_seed_diagnostics(
     setup_state: AlignmentState,
     active_view: ActiveParameterView,
     schedule_name: str | None,
-    stage: ResolvedAlignmentStage | None,
+    stage: ResolvedAlignmentStage,
     cfg: AlignConfig,
 ) -> dict[str, object] | None:
     """Seed setup before pose fitting, retaining the axial/short-arc COR fallback."""
@@ -522,10 +468,9 @@ def _setup_seed_diagnostics(
     center_ready = seed_info is not None and seed_info.get("detector_center_seed_applied")
     if center_ready or float(setup_state.setup.detector_roll_rad) != 0.0:
         return seed_info
-    stage_name = stage.name if stage is not None else schedule_name
     if "det_u_px" not in active_view.dofs:
         return seed_info
-    if stage_name not in {"cor", "setup"} and schedule_name not in {"cor", "setup_safe"}:
+    if stage.name not in {"cor", "setup"} and schedule_name not in {"cor", "setup_safe"}:
         return seed_info
     current = float(setup_state.setup.det_u_px)
     if abs(current) > 1e-6:
@@ -627,17 +572,21 @@ def _optimize_setup_geometry_bilevel_for_level(
     init_x: jnp.ndarray | None,
     init_pose_params: jnp.ndarray | None,
     state: AlignmentState,
-    active_geometry_dofs: Iterable[str],
     factor: int,
     cfg: AlignConfig,
     loss_spec: AlignmentLossSpec,
     loss_name: str,
-    schedule_name: str | None = None,
-    stage: ResolvedAlignmentStage | None = None,
+    schedule_name: str | None,
+    stage: ResolvedAlignmentStage,
 ) -> SetupStageResult:
-    _validate_setup_stage_execution_contract(stage)
+    if (stage.objective_kind, stage.optimizer_kind) != ("bilevel_cv", "validation_lm"):
+        raise ValueError(
+            f"Setup alignment stage {stage.name!r} uses objective {stage.objective_kind!r} "
+            f"with optimizer {stage.optimizer_kind!r}; setup execution supports only "
+            "'bilevel_cv' with 'validation_lm'"
+        )
     base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=int(factor))
-    active_view = ActiveParameterView.from_dofs(active_geometry_dofs)
+    active_view = ActiveParameterView.from_dofs(stage.active_geometry_dofs)
     setup_state = state.replace(
         setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit),
         pose=PoseState(
@@ -653,7 +602,7 @@ def _optimize_setup_geometry_bilevel_for_level(
     folds = FoldSpec(n_folds=n_folds).build(n_views)
     loss_adapter = build_loss_adapter(loss_spec, projections)
     if not bool(loss_adapter.supports_setup_validation_lm):
-        stage_name = schedule_name or (stage.name if stage is not None else "setup")
+        stage_name = schedule_name or stage.name
         raise ValueError(
             "Setup validation-LM requires a setup-compatible weighted least-squares loss; "
             f"level {int(factor)} stage {stage_name!r} resolved loss {loss_name!r}"
@@ -681,7 +630,7 @@ def _optimize_setup_geometry_bilevel_for_level(
     )
     setup_state = _seeded(setup_state, seed_diagnostics, view=active_view, cfg=cfg)
     setup_stats: list[OuterStat] = []
-    outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iterations))
+    outer_limit = max(1, int(stage.maxiter))
     fit = _fit_inputs(
         _FitInputs(geometry, grid, detector, projections, base, loss_adapter, init_x),
         dofs=active_view.dofs,
@@ -690,28 +639,21 @@ def _optimize_setup_geometry_bilevel_for_level(
     )
     validation_cfg = _validation_config(cfg, fit.grid, fit.detector)
     for outer_idx in range(1, outer_limit + 1):
-        stage_name = stage.name if stage is not None else (schedule_name or "setup")
         logging.info(
             "Setup stage %s outer %d/%d level=%d DOFs=%s",
-            stage_name,
+            stage.name,
             outer_idx,
             outer_limit,
             int(factor),
             ",".join(active_view.dofs),
         )
         objective_result = _run_setup_validation_objective(
-            geometry=fit.geometry,
-            grid=fit.grid,
-            detector=fit.detector,
-            projections=fit.projections,
+            fit,
             setup_state=setup_state,
             active_view=active_view,
-            base=fit.base,
             folds=folds,
-            loss_adapter=fit.loss_adapter,
             fold_recon_cfg=fold_recon_cfg,
             cfg=validation_cfg,
-            init_x=fit.init_x,
             factor=factor,
         )
         opt_result = objective_result.opt_result
@@ -733,7 +675,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         setup_stats.append(stat)
         logging.info(
             "Setup stage %s outer %d/%d: loss %.6g -> %.6g accepted=%s step_norm=%.3g",
-            stage_name,
+            stage.name,
             outer_idx,
             outer_limit,
             float(stat.get("geometry_loss_before", math.nan)),

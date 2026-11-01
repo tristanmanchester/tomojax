@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -14,7 +14,6 @@ from tomojax.alignment._results import (
     AlignMultiresCheckpointCallback,
     AlignMultiresResumeState,
     AlignResumeState,
-    _record_stat_conversion_error,
     enrich_multires_stage_stat as _enrich_multires_stage_stat,
 )
 from tomojax.core.geometry.base import Detector, Geometry, Grid
@@ -93,6 +92,18 @@ class StageRuntime:
                 )
             )
         return enriched_stats
+
+    def record(
+        self,
+        stats: list[OuterStat],
+        *,
+        stage: ResolvedAlignmentStage,
+        losses: Iterable[float] = (),
+    ) -> None:
+        """Keep a stage's records, numbered after this level's earlier ones, and its losses."""
+        start = self.global_before_level + len(self.level_stats)
+        self.level_stats.extend(self.enrich_stats(stats, stage=stage, global_start=start))
+        self.level_losses.extend(float(value) for value in losses)
 
     def observer_for_stage(
         self,
@@ -188,34 +199,21 @@ class LevelContext:
     resume: AlignResumeState | None
 
 
-@dataclass(frozen=True)
-class StageRunResult:
-    x_lvl: jnp.ndarray
-    pose_params: jnp.ndarray
-    info: dict[str, object]
-    setup_alignment_state: object
-    level_stats: list[OuterStat]
-    level_losses: list[float]
-    level_wall_time: float
-    level_action: ObserverAction
-    final_gauge_fix: str
-    final_gauge_fix_dofs: list[str]
-    final_gauge_fix_stats: dict[str, object]
+@dataclass
+class LevelState:
+    """What one level's stages have produced so far; each stage updates it in place."""
 
-
-@dataclass(frozen=True)
-class StageLoopState:
     # A fresh level has no volume until its first stage needs one. Translation
     # seeding uses only projections and must not share its workspace with it.
     x_lvl: jnp.ndarray | None
     pose_params: jnp.ndarray
     info: dict[str, object]
     setup_alignment_state: object
-    level_wall_time: float
-    level_action: ObserverAction
     final_gauge_fix: str
     final_gauge_fix_dofs: list[str]
     final_gauge_fix_stats: dict[str, object]
+    level_wall_time: float = 0.0
+    level_action: ObserverAction = "continue"
     stage_resume_consumed: bool = False
 
 
@@ -262,23 +260,6 @@ def _stage_index_or_none(stat: Mapping[str, object]) -> int | None:
         return int(stat["schedule_stage_index"])
     except Exception:
         return None
-
-
-def _accumulate_stage_wall_time(
-    level_wall_time: float,
-    info: dict[str, object],
-) -> float:
-    raw_wall_time = info.get("wall_time_total")
-    try:
-        return level_wall_time + float(raw_wall_time or 0.0)
-    except (TypeError, ValueError, OverflowError) as exc:
-        _record_stat_conversion_error(
-            info,  # type: ignore[arg-type]
-            "wall_time_total",
-            exc,
-            errors_key="level_stats_errors",
-        )
-        return level_wall_time
 
 
 def _build_multires_checkpoint_state(

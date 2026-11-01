@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 import math
+from typing import cast
 
 import jax.numpy as jnp
 
@@ -43,11 +44,10 @@ from tomojax.core.validation import validate_grid, validate_projection_stack
 from ._setup_stage import _geometry_calibration_payload
 from ._stage_types import (
     LevelResumePlan,
+    LevelState,
     MultiresContext,
     MultiresLevel,
     MultiresRunState,
-    StageRunResult,
-    StageRuntime,
     _build_multires_checkpoint_state,
     _stage_index_or_none,
 )
@@ -187,60 +187,6 @@ def _multires_run_is_complete(
             or last_level_index_processed == level_count - 1
             or level_count == 0
             or levels_skipped
-        )
-    )
-
-
-def _emit_level_completion_checkpoint(
-    *,
-    checkpoint_callback: AlignMultiresCheckpointCallback | None,
-    x_lvl: jnp.ndarray,
-    pose_params: jnp.ndarray,
-    info: Mapping[str, object],
-    level_index: int,
-    level_factor: int,
-    level_completed_after: int,
-    global_outer_idx: int,
-    prev_factor: int | None,
-    loss_hist: list[float],
-    global_outer_stats: list[OuterStat],
-    global_elapsed_offset: float,
-    level_complete: bool,
-    setup_alignment_state: object,
-    active_geometry_dofs: tuple[str, ...],
-    resolved_schedule: object,
-    level_stats: list[OuterStat],
-    ray_integrator: str = "sampled",
-) -> None:
-    if checkpoint_callback is None:
-        return
-    last_stage = resolved_schedule.stages[-1]
-    last_stage_iters = sum(
-        1 for stat in level_stats if stat.get("schedule_stage_index") == int(last_stage.index)
-    )
-    checkpoint_callback(
-        _build_multires_checkpoint_state(
-            x=x_lvl,
-            pose_params=pose_params,
-            motion_coeffs=info.get("motion_coeffs"),
-            level_index=int(level_index),
-            level_factor=int(level_factor),
-            completed_outer_iterations_in_level=level_completed_after,
-            global_outer_iterations_completed=int(global_outer_idx),
-            prev_factor=prev_factor,
-            loss=list(loss_hist),
-            outer_stats=[dict(stat) for stat in global_outer_stats],
-            lipschitz=info.get("lipschitz"),
-            small_impr_streak=int(info.get("small_impr_streak", 0)),
-            elapsed_offset=float(global_elapsed_offset),
-            level_complete=level_complete,
-            run_complete=False,
-            setup_alignment_state=setup_alignment_state,
-            active_geometry_dofs=active_geometry_dofs,
-            stage=last_stage,
-            stage_completed=level_complete,
-            completed_outer_iterations_in_stage=last_stage_iters,
-            ray_integrator=ray_integrator,
         )
     )
 
@@ -550,98 +496,87 @@ def _levels_to_run(
     return list(enumerate(levels))[start_level:]
 
 
-def _level_initial_volume(
+def _finish_level(
     *,
-    level: MultiresLevel,
-    x_init: jnp.ndarray | None,
-    prev_factor: int | None,
-    resume_state: AlignMultiresResumeState | None,
-    resuming_this_level: bool,
-) -> jnp.ndarray | None:
-    if resuming_this_level and resume_state is not None:
-        return resume_state.x
-    if x_init is None or prev_factor is None:
-        return None
-    level_grid = level["grid"]
-    return upsample_volume(
-        x_init,
-        prev_factor // level["factor"],
-        (level_grid.nz, level_grid.ny, level_grid.nx),
-    )
-
-
-def _build_stage_runtime(
-    *,
-    context: MultiresContext,
-    level_index: int,
-    level_factor: int,
-    level_run: LevelResumePlan,
     state: MultiresRunState,
+    context: MultiresContext,
+    level: MultiresLevel,
+    level_index: int,
+    level_run: LevelResumePlan,
+    result: LevelState,
     level_stats: list[OuterStat],
     level_losses: list[float],
-    active_loss_name: str,
     checkpoint_callback: AlignMultiresCheckpointCallback | None,
-) -> StageRuntime:
-    return StageRuntime(
-        level_index=level_index,
-        level_factor=level_factor,
-        global_before_level=level_run.global_before_level,
-        global_elapsed_offset=state.global_elapsed_offset,
-        active_loss_name=active_loss_name,
-        schedule_name=context.resolved_schedule.name,
-        stats_before_level=level_run.stats_before_level,
-        loss_before_level=level_run.loss_before_level,
-        level_stats=level_stats,
-        level_losses=level_losses,
-        prev_factor=state.prev_factor,
-        observer_fn=context.observer_fn,
-        checkpoint_callback=checkpoint_callback,
-    )
-
-
-def _state_after_multires_level(
-    *,
-    state: MultiresRunState,
-    level: MultiresLevel,
-    level_index: int,
-    level_run: LevelResumePlan,
-    stage_result: StageRunResult,
-) -> tuple[MultiresRunState, dict[str, object]]:
-    info = stage_result.info
-    info["loss"] = stage_result.level_losses
+) -> MultiresRunState:
+    """The run state after a level, checkpointed at the level's end."""
+    info = result.info
+    info["loss"] = level_losses
     info["outer_stats"] = [
         dict(stat)
-        for stat in stage_result.level_stats
+        for stat in level_stats
         if not str(stat.get("geometry_block") or "").startswith("setup_")
     ]
-    info["completed_outer_iterations"] = len(stage_result.level_stats)
-    info["wall_time_total"] = float(stage_result.level_wall_time)
-    info["observer_action"] = stage_result.level_action
-    level_completed_after = len(stage_result.level_stats)
-    return (
-        replace(
-            state,
-            x_init=stage_result.x_lvl,
-            pose_params=stage_result.pose_params,
-            prev_factor=level["factor"],
-            loss_hist=level_run.loss_before_level + stage_result.level_losses,
-            global_outer_stats=level_run.stats_before_level + stage_result.level_stats,
-            stopped_by_observer=stage_result.level_action == "stop_run",
-            final_observer_action=stage_result.level_action,
-            global_outer_idx=level_run.global_before_level + level_completed_after,
-            executed_outer_iterations=level_run.global_before_level + level_completed_after,
-            global_elapsed_offset=state.global_elapsed_offset + float(stage_result.level_wall_time),
-            final_pose_model_variables=int(info.get("pose_model_variables") or 0),
-            final_per_view_variables=int(info.get("per_view_variables") or 0),
-            final_pose_model_basis_shape=list(info.get("pose_model_basis_shape") or []),
-            final_loss_kind=str(info.get("loss_kind", state.final_loss_kind or "")) or None,
-            final_gauge_fix=str(info.get("gauge_fix", stage_result.final_gauge_fix)),
-            final_gauge_fix_dofs=list(
-                info.get("gauge_fix_dofs", stage_result.final_gauge_fix_dofs)
-            ),
-            final_gauge_fix_stats=dict(info.get("gauge_fix_final", {}) or {}),
-            last_level_index_processed=level_index,
-            setup_alignment_state=stage_result.setup_alignment_state,
-        ),
-        info,
+    info["completed_outer_iterations"] = len(level_stats)
+    info["wall_time_total"] = float(result.level_wall_time)
+    info["observer_action"] = result.level_action
+    global_outer_idx = level_run.global_before_level + len(level_stats)
+    state = replace(
+        state,
+        x_init=result.x_lvl,
+        pose_params=result.pose_params,
+        prev_factor=level["factor"],
+        loss_hist=level_run.loss_before_level + level_losses,
+        global_outer_stats=level_run.stats_before_level + level_stats,
+        stopped_by_observer=result.level_action == "stop_run",
+        final_observer_action=result.level_action,
+        global_outer_idx=global_outer_idx,
+        executed_outer_iterations=global_outer_idx,
+        global_elapsed_offset=state.global_elapsed_offset + float(result.level_wall_time),
+        final_pose_model_variables=int(info.get("pose_model_variables") or 0),
+        final_per_view_variables=int(info.get("per_view_variables") or 0),
+        final_pose_model_basis_shape=list(info.get("pose_model_basis_shape") or []),
+        final_loss_kind=str(info.get("loss_kind", state.final_loss_kind or "")) or None,
+        final_gauge_fix=str(info.get("gauge_fix", result.final_gauge_fix)),
+        final_gauge_fix_dofs=list(info.get("gauge_fix_dofs", result.final_gauge_fix_dofs)),
+        final_gauge_fix_stats=dict(info.get("gauge_fix_final", {}) or {}),
+        last_level_index_processed=level_index,
+        setup_alignment_state=result.setup_alignment_state,
     )
+    if checkpoint_callback is None:
+        return state
+    schedule = context.resolved_schedule
+    last_stage = schedule.stages[-1]
+    # Unfinished only if an observer stopped it short, other than to advance a level.
+    level_complete = (
+        len(level_stats) >= sum(int(stage.maxiter) for stage in schedule.stages)
+        or result.level_action == "advance_level"
+        or not bool(info.get("stopped_by_observer", False))
+    )
+    checkpoint_callback(
+        _build_multires_checkpoint_state(
+            x=cast("jnp.ndarray", result.x_lvl),
+            pose_params=result.pose_params,
+            motion_coeffs=info.get("motion_coeffs"),
+            level_index=level_index,
+            level_factor=int(level["factor"]),
+            completed_outer_iterations_in_level=len(level_stats),
+            global_outer_iterations_completed=global_outer_idx,
+            prev_factor=level["factor"],
+            loss=list(state.loss_hist),
+            outer_stats=[dict(stat) for stat in state.global_outer_stats],
+            lipschitz=info.get("lipschitz"),
+            small_impr_streak=int(info.get("small_impr_streak", 0)),
+            elapsed_offset=float(state.global_elapsed_offset),
+            level_complete=level_complete,
+            run_complete=False,
+            setup_alignment_state=result.setup_alignment_state,
+            active_geometry_dofs=context.active_geometry_dofs,
+            stage=last_stage,
+            stage_completed=level_complete,
+            completed_outer_iterations_in_stage=sum(
+                stat.get("schedule_stage_index") == int(last_stage.index) for stat in level_stats
+            ),
+            ray_integrator=context.cfg.ray_integrator,
+        )
+    )
+    return state

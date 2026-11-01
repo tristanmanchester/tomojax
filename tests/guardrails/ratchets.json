@@ -47,11 +47,10 @@
     "src/tomojax/alignment/_pose/_pose_loop.py::_run_align_outer_iteration": 103,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 194,
     "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 160,
-    "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 141,
-    "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 103,
-    "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 128,
-    "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 150,
-    "src/tomojax/alignment/_stages/_stage_runners.py::_run_pose_alignment_stage": 107,
+    "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 138,
+    "src/tomojax/alignment/_stages/_setup_stage.py::_run_setup_validation_objective": 101,
+    "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 109,
+    "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 121,
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
     "src/tomojax/cli/simulate.py::_build_parser": 106,
     "src/tomojax/core/cuda_projector/_loss.py::forward_project_residual_sse_T_cuda": 119,
@@ -87,7 +86,7 @@
   "environment_reads": 30,
   "suppressions": {
     "noqa": 6,
-    "type: ignore": 27,
+    "type: ignore": 26,
     "pyright: ignore": 12
   },
   "complex_functions": [
@@ -105,14 +104,14 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "single_use_helpers": {
-    "tiny": 106,
-    "forwarders": 10,
-    "chained": 56
+    "tiny": 105,
+    "forwarders": 9,
+    "chained": 46
   },
   "type_errors": {
-    "reportArgumentType": 183,
+    "reportArgumentType": 180,
     "reportAssignmentType": 2,
-    "reportAttributeAccessIssue": 83,
+    "reportAttributeAccessIssue": 82,
     "reportCallIssue": 9,
     "reportGeneralTypeIssues": 5,
     "reportIndexIssue": 6,
@@ -120,7 +119,7 @@
     "reportOptionalCall": 2,
     "reportOptionalMemberAccess": 7,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 75,
+    "reportPrivateUsage": 70,
     "reportRedeclaration": 1,
     "reportReturnType": 17,
     "reportTypedDictNotRequiredAccess": 5

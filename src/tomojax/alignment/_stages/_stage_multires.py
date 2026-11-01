@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import replace
 import gc
 import logging
@@ -23,7 +23,7 @@ from tomojax.alignment._geometry.geometry_applier import (
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.alignment._model.state import AlignmentState
 from tomojax.alignment._objectives.loss_specs import loss_spec_name, resolve_loss_for_level
-from tomojax.alignment._observer import ObserverAction, ObserverCallback, OuterStat
+from tomojax.alignment._observer import ObserverCallback, OuterStat
 from tomojax.alignment._pose._coupled_objective import AlignmentMemoryError
 from tomojax.alignment._results import (
     AlignMultiresCheckpointCallback,
@@ -33,24 +33,28 @@ from tomojax.alignment._results import (
 )
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.cone import is_cone_beam
+from tomojax.core.multires import upsample_volume
 from tomojax.geometry import stack_view_poses
 
 from ._stage_runners import _run_multires_level_stages
 from ._stage_state import (
     _build_multires_context,
-    _build_stage_runtime,
-    _emit_level_completion_checkpoint,
     _emit_run_completion_checkpoint,
     _final_align_multires_info,
     _final_multires_volume,
+    _finish_level,
     _initial_multires_run_state,
-    _level_initial_volume,
     _levels_to_run,
     _multires_run_is_complete,
     _prepare_multires_level_state,
-    _state_after_multires_level,
 )
-from ._stage_types import LevelContext, MultiresContext, MultiresLevel, MultiresRunState
+from ._stage_types import (
+    LevelContext,
+    MultiresContext,
+    MultiresLevel,
+    MultiresRunState,
+    StageRuntime,
+)
 
 LOG = logging.getLogger(__name__)
 # Warnings name the first caller outside the package, whichever entry point it used.
@@ -85,18 +89,14 @@ def _run_one_multires_level(
         and not resume_state.level_complete
         and int(resume_state.level_index) == level_index
     )
-    x0 = _level_initial_volume(
-        level=level,
-        x_init=state.x_init,
-        prev_factor=state.prev_factor,
-        resume_state=resume_state,
-        resuming_this_level=resuming_this_level,
-    )
-    params0 = (
-        resume_state.pose_params
-        if resuming_this_level and resume_state is not None
-        else state.pose_params
-    )
+    if resuming_this_level and resume_state is not None:
+        x0, params0 = resume_state.x, resume_state.pose_params
+    elif state.x_init is None or state.prev_factor is None:
+        x0, params0 = None, state.pose_params
+    else:
+        shape = (grid.nz, grid.ny, grid.nx)
+        x0 = upsample_volume(state.x_init, state.prev_factor // level_factor, shape)
+        params0 = state.pose_params
     level_run = _prepare_multires_level_state(
         resume_state=resume_state,
         level_index=level_index,
@@ -121,7 +121,7 @@ def _run_one_multires_level(
             pose_translation_frame=resume_state.pose_translation_frame,
             ray_integrator=resume_state.ray_integrator,
         )
-    stage_result = _run_multires_level_stages(
+    result = _run_multires_level_stages(
         LevelContext(
             geometry=geometry,
             grid=grid,
@@ -131,15 +131,19 @@ def _run_one_multires_level(
             schedule=context.resolved_schedule,
             loss=active_loss_spec,
             active_geometry_dofs=context.active_geometry_dofs,
-            runtime=_build_stage_runtime(
-                context=context,
+            runtime=StageRuntime(
                 level_index=level_index,
                 level_factor=level_factor,
-                level_run=level_run,
-                state=state,
+                global_before_level=level_run.global_before_level,
+                global_elapsed_offset=state.global_elapsed_offset,
+                active_loss_name=active_loss_name,
+                schedule_name=context.resolved_schedule.name,
+                stats_before_level=level_run.stats_before_level,
+                loss_before_level=level_run.loss_before_level,
                 level_stats=level_stats,
                 level_losses=level_losses,
-                active_loss_name=active_loss_name,
+                prev_factor=state.prev_factor,
+                observer_fn=context.observer_fn,
                 checkpoint_callback=checkpoint_callback,
             ),
             start_stage=level_run.resume_stage_index + int(level_run.resume_stage_completed),
@@ -155,49 +159,16 @@ def _run_one_multires_level(
         final_gauge_fix_dofs=state.final_gauge_fix_dofs,
         final_gauge_fix_stats=state.final_gauge_fix_stats or {},
     )
-    next_state, info = _state_after_multires_level(
+    return _finish_level(
         state=state,
+        context=context,
         level=level,
         level_index=level_index,
         level_run=level_run,
-        stage_result=stage_result,
-    )
-    _emit_level_completion_checkpoint(
+        result=result,
+        level_stats=level_stats,
+        level_losses=level_losses,
         checkpoint_callback=checkpoint_callback,
-        x_lvl=stage_result.x_lvl,
-        pose_params=stage_result.pose_params,
-        info=info,
-        level_index=level_index,
-        level_factor=level_factor,
-        level_completed_after=len(stage_result.level_stats),
-        global_outer_idx=int(next_state.global_outer_idx),
-        prev_factor=level["factor"],
-        loss_hist=next_state.loss_hist,
-        global_outer_stats=next_state.global_outer_stats,
-        global_elapsed_offset=next_state.global_elapsed_offset,
-        level_complete=_level_is_complete(
-            context, len(stage_result.level_stats), info, stage_result.level_action
-        ),
-        setup_alignment_state=stage_result.setup_alignment_state,
-        active_geometry_dofs=context.active_geometry_dofs,
-        resolved_schedule=context.resolved_schedule,
-        level_stats=stage_result.level_stats,
-        ray_integrator=context.cfg.ray_integrator,
-    )
-    return next_state
-
-
-def _level_is_complete(
-    context: MultiresContext,
-    level_completed_after: int,
-    info: Mapping[str, object],
-    level_action: ObserverAction,
-) -> bool:
-    return (
-        level_completed_after
-        >= sum(int(stage.maxiter) for stage in context.resolved_schedule.stages)
-        or level_action == "advance_level"
-        or not bool(info.get("stopped_by_observer", False))
     )
 
 
