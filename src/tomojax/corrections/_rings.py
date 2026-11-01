@@ -284,8 +284,8 @@ def _unsorted_response(
     groups: tuple[int, ...],
     lowest: jax.Array,
     passes: int,
-) -> tuple[jax.Array, jax.Array]:
-    """A row's fitted responses, each fitted after inverting the ones before.
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """A row's fitted responses, each after inverting the ones before, and ``q`` corrected.
 
     ``lowest`` is each column's least value over every view, which keeps the inverse
     admissible everywhere when ``q`` only summarises the views; the inverse is
@@ -303,7 +303,7 @@ def _unsorted_response(
         responses.append((alpha, beta))
         q, lowest = _invert(q, alpha, beta), _invert(lowest, alpha, beta)
     alphas, betas = zip(*responses, strict=True)
-    return jnp.stack(alphas), jnp.stack(betas)
+    return jnp.stack(alphas), jnp.stack(betas), q
 
 
 def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 3.0) -> jax.Array:
@@ -528,28 +528,29 @@ def correct_rings(
             lambda q: _row(q, axis, neighbours, weights, closing=closing), jnp.swapaxes(batch, 0, 1)
         )
         return jnp.swapaxes(rows, 0, 1)
-    fitted, passes = batch, 2
-    if views is not None and views < sum(groups):
-        # Fit once on angular bin means, which keep every view's photons; an additive
-        # column error commutes with the mean, and neighbouring bins share no views.
-        labels, bin_neighbours, groups = _bins(groups, views)
-        sizes = np.bincount(labels)
-        starts = np.cumsum(sizes) - sizes
-        fitted = sum(
-            batch[starts + np.minimum(j, sizes - 1)] * (j < sizes)[:, None, None]
-            for j in range(sizes.max())
-        ) / sizes[:, None, None].astype(batch.dtype)
-        neighbours = jnp.asarray(bin_neighbours, jnp.int32)
-        # equal weights: the instrument need only be independent of each bin's noise
-        weights = jnp.full(bin_neighbours.shape, 0.5, batch.dtype)
-        passes = 1
-    alpha, beta = jax.lax.map(
-        lambda row: _unsorted_response(row[0], neighbours, weights, groups, row[1], passes),
-        (jnp.swapaxes(fitted, 0, 1), batch.min(0)),
+    rows = jnp.swapaxes(batch, 0, 1)
+    if views is None or views >= sum(groups):
+        _, _, corrected = jax.lax.map(
+            lambda q: _unsorted_response(q, neighbours, weights, groups, q.min(0), 2), rows
+        )
+        return jnp.swapaxes(corrected, 0, 1)
+    # Fit once on angular bin means, which keep every view's photons; an additive
+    # column error commutes with the mean, and neighbouring bins share no views.
+    labels, bin_neighbours, groups = _bins(groups, views)
+    sizes = np.bincount(labels)
+    starts = np.cumsum(sizes) - sizes
+    means = batch[starts]
+    for j in range(1, sizes.max()):
+        means += batch[starts + np.minimum(j, sizes - 1)] * (j < sizes)[:, None, None]
+    means /= sizes[:, None, None].astype(batch.dtype)
+    neighbours = jnp.asarray(bin_neighbours, jnp.int32)
+    # equal weights: the instrument need only be independent of each bin's noise
+    weights = jnp.full(bin_neighbours.shape, 0.5, batch.dtype)
+    alpha, beta, _ = jax.lax.map(
+        lambda row: _unsorted_response(row[0], neighbours, weights, groups, row[1], 1),
+        (jnp.swapaxes(means, 0, 1), batch.min(0)),
     )
-    for k in range(passes):
-        batch = _invert(batch, alpha[None, :, k], beta[None, :, k])
-    return batch
+    return _invert(batch, alpha[None, :, 0], beta[None, :, 0])
 
 
 def mirror_axis(geometry: object) -> float | None:
@@ -630,11 +631,11 @@ class Rings(Step):
     geometry : object, optional
         The scan's geometry, with the detector the data were recorded on.
         Default is None.
-    views : int, optional
-        Fit the responses of scans without a mirror axis on the means of about this
-        many contiguous angular bins of views, neighbouring bins as instrument, and
-        correct every view: faster, blurring the scene's angular detail within a bin.
-        Default None fits every view.
+    views : int or None, optional
+        Fit the responses of scans without a mirror axis once, on the means of about
+        this many contiguous angular bins of views, neighbouring bins as instrument,
+        and correct every view. Default 512. None fits every view twice: several
+        times slower, for scans whose structure moves across columns within a bin.
 
     Raises
     ------
@@ -659,7 +660,7 @@ class Rings(Step):
     domain: ClassVar[Domain] = "line integrals"
     whole_rows: ClassVar[bool] = True
     geometry: object = field(default=None, repr=False, compare=False)
-    views: int | None = field(default=None, kw_only=True)
+    views: int | None = field(default=512, kw_only=True)
     # what the geometry decides, compared and hashed so compiled kernels are not shared
     _axis: float | None = field(default=None, init=False, repr=False)
     _columns: int | None = field(default=None, init=False, repr=False)
@@ -687,15 +688,14 @@ class Rings(Step):
         return self._axis
 
     def record(self) -> Correction:
-        """Build this step's record: the mirror axis used, or None.
+        """Build this step's record: the mirror axis used, or None, and the bin count.
 
         Returns
         -------
         Correction
             Step name and settings, with no findings yet.
         """
-        views = {} if self.views is None else {"views": self.views}
-        return Correction("rings", {"mirror_axis": self.mirror_axis, **views})
+        return Correction("rings", {"mirror_axis": self.mirror_axis, "views": self.views})
 
     def apply(self, batch: jax.Array) -> jax.Array:
         """Correct the rings of a batch of detector rows.

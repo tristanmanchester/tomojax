@@ -163,7 +163,7 @@ def test_steps_from_the_command_line(tmp_path: Path, rings: bool) -> None:
     scan = tj.load(out)
     names = [c.name for c in scan.corrections]
     if rings:
-        assert scan.corrections[3].settings == {"mirror_axis": (nu - 1) / 2}
+        assert scan.corrections[3].settings == {"mirror_axis": (nu - 1) / 2, "views": 512}
         names.remove("rings")
     assert names == ["flat_dark", "zingers", "log", "reject_views", "stripes"]
     assert np.isfinite(np.asarray(scan.projections)).all()

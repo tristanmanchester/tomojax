@@ -111,7 +111,7 @@ def test_mirror_only_on_a_stationary_parallel_full_turn() -> None:
     assert Rings(_geometry(362.0, 181)).mirror_axis == 127.5  # last view repeats the first
     assert Rings(_geometry(540.0, 270)).mirror_axis is None
     assert Rings(_geometry(360.0, 180)) != Rings(_geometry(360.0, 180, offset=1.0))
-    assert Rings(_geometry(360.0, 180)).record().settings == {"mirror_axis": 127.5}
+    assert Rings(_geometry(360.0, 180)).record().settings == {"mirror_axis": 127.5, "views": 512}
     with pytest.raises(ValueError, match="detector columns"):
         Rings(_geometry(360.0, 180)).apply(jnp.zeros((180, 1, N // 2), jnp.float32))
 
