@@ -13,6 +13,7 @@ import numpy as np
 
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.alignment._objectives.loss_specs import HuberLossSpec, L2LossSpec
+from tomojax.backends.api import is_oom_error
 from tomojax.core.devices import ViewSplit, shared_devices, view_split
 from tomojax.core.projector import get_detector_grid_device
 
@@ -310,13 +311,22 @@ def build_coupled_objective(
 
 
 def _prepare_execution(arrays: CoupledArrays, spec: CoupledSpec) -> CoupledObjective:
-    """Admit a device program, or stage the same system without its large temporaries."""
+    """Admit a device program, or stage the same system without its large temporaries.
+
+    Compilation itself can exhaust device memory while autotuning. Treat that
+    as failed admission, retaining the compiler exception rather than inventing
+    a required-byte estimate. Unrelated compilation errors still propagate.
+    """
     for cached in (True, False) if spec.cache_columns else (False,):
         spec = replace(spec, cache_columns=cached)
         try:
             compiled = _check_device_memory(arrays, spec)
             break
-        except AlignmentMemoryError as error:
+        except Exception as error:
+            # Only admission runs here, never an executing update whose state
+            # could already have changed before failing.
+            if not isinstance(error, AlignmentMemoryError) and not is_oom_error(error):
+                raise
             if cached:
                 LOG.info("Cached pose update does not fit (%s); recomputing columns instead", error)
                 continue
