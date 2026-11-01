@@ -162,9 +162,37 @@ def _on_devices(
     return shared_update, shared_loss
 
 
+@dataclass
+class VolumeHandle:
+    """The current image of a joint update.
+
+    An owned image, one nobody else references, may be released while a solve does not read
+    it: its exact bytes and placement wait on the host, and the next get() puts them back once.
+    """
+
+    array: jax.Array | None
+    owned: bool
+    parked: tuple[np.ndarray, jax.sharding.Sharding] | None = None
+
+    def get(self) -> jax.Array:
+        array = self.array
+        if array is None:
+            assert self.parked is not None
+            array = jax.device_put(*self.parked)
+            self.array, self.parked = array, None
+        return array
+
+    def release(self) -> None:
+        assert self.owned, "a borrowed image is not the solver's to release"
+        array = self.get()
+        self.parked = np.asarray(array), array.sharding  # first, so a failed copy loses nothing
+        self.array = None
+        array.delete()
+
+
 @dataclass(frozen=True)
 class CoupledObjective:
-    update: Callable[[jax.Array, jax.Array], CoupledLinearResult]
+    update: Callable[[jax.Array, VolumeHandle], CoupledLinearResult]
     loss: Callable[[jax.Array, jax.Array], jax.Array]
     backend: str
     pose_columns_cached: bool
@@ -272,10 +300,13 @@ def _prepare_execution(arrays: CoupledArrays, spec: CoupledSpec) -> CoupledObjec
             spec = replace(spec, cache_columns=cached_views > 0)
             update, loss = build_host_objective(arrays, spec, cached_views=cached_views)
             return CoupledObjective(update, loss, spec.backend, spec.cache_columns)
+    # One compiled device update reads the image throughout, so it never releases it.
     update = (
         partial(run_update, arrays, spec=spec) if compiled is None else partial(compiled, arrays)
     )
     loss = partial(run_loss, arrays, spec=spec)
     if spec.split is not None:
         update, loss = _on_devices(update, loss, spec.split)
-    return CoupledObjective(update, loss, spec.backend, spec.cache_columns)
+    return CoupledObjective(
+        lambda p, volume: update(p, volume.get()), loss, spec.backend, spec.cache_columns
+    )

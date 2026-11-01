@@ -11,6 +11,10 @@ inside their Joseph pose steps, including the fixed-volume objective. Inputs,
 outputs, observers and checkpoints remain public `(z, y, x)` arrays; backend
 provenance identifies the CUDA objective and its analytic pose derivatives.
 Fixed-volume steps reuse an unchanged entry volume rather than duplicating it.
+A joint update staged on the host releases the private volume while its Krylov
+solve runs, when every view's pose columns are cached and neither TV nor a
+refinement ramp reads it; the volume's bytes wait on the host and return before
+the line search.
 
 Fresh axial CUDA backprojections write their first view chunk directly, without
 zero-filling the output first. Later chunks and supplied initial volumes retain

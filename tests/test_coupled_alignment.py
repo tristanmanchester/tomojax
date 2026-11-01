@@ -30,6 +30,10 @@ from tomojax.alignment._pose._pose_context import _pose_objective_context
 from tomojax.alignment._pose._pose_loop import _build_alignment_runtime_context
 
 
+def borrowed(x):
+    return _coupled_objective.VolumeHandle(x, owned=False)
+
+
 @pytest.fixture(params=[None, 2], ids=["one_batch", "batches_of_two"])
 def views_per_batch(request, monkeypatch):
     """The program's batch size, or two views a batch: three views then end in a shifted batch."""
@@ -99,7 +103,7 @@ def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, 
     assert objective.pose_columns_cached
     arrays, spec = captured[0]
     p = jnp.zeros((3, 6), jnp.float32).at[:, 3].set(jnp.array([0.03, -0.01, 0.02]))
-    compact = objective.update(p, 0.9 * x)
+    compact = objective.update(p, borrowed(0.9 * x))
     full = _coupled_objective.run_update(
         arrays, p, 0.9 * x, spec=replace(spec, active_columns=tuple(range(6)))
     )
@@ -146,7 +150,7 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
             geometry=geometry, det_grid_override=None, **common
         )
         ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
-        return _coupled_objective.build_coupled_objective(ctx).update(p, 0.9 * truth)
+        return _coupled_objective.build_coupled_objective(ctx).update(p, borrowed(0.9 * truth))
 
     with jax.enable_x64(False):
         expected = step()
@@ -248,7 +252,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
     objective = _coupled_objective.build_coupled_objective(ctx)
-    result = objective.update(jnp.asarray(p), jnp.asarray(x))
+    result = objective.update(jnp.asarray(p), borrowed(jnp.asarray(x)))
     assert result.finite
     assert objective.pose_columns_cached != stream
     weight = (1 / (1 + np.exp(-(np.asarray(ctx.loss_mask) - 0.5) / 0.5))).ravel()
@@ -469,7 +473,7 @@ def _joint_huber_constraints_and_resume(integrator, solver):
     np.testing.assert_allclose(resumed_info["loss"], info["loss"], atol=1e-6)
 
 
-def _small_coupled_context():
+def _small_coupled_context(**settings):
     from dataclasses import replace
 
     from tomojax.alignment import AlignConfig
@@ -486,7 +490,7 @@ def _small_coupled_context():
     projections = jnp.asarray(np.random.default_rng(3).uniform(0, 1, (3, 4, 5)), jnp.float32)
     cfg = AlignConfig(gn_coupling="joint", gather_dtype="fp32", backend="jax")
     # Compare placements after an accurate solve, rather than at the loose default CG stop.
-    cfg = replace(cfg, gn_damping=0.2, gn_volume_damping=0.2, gn_joint_rtol=1e-6)
+    cfg = replace(cfg, gn_damping=0.2, gn_volume_damping=0.2, gn_joint_rtol=1e-6, **settings)
     common = dict(
         detector=det,
         projections=projections,
@@ -515,7 +519,7 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     # A dozen-odd volumes, a few sinograms and the six cached columns.
     estimate = 13 * volume + 9 * sinogram
     p, x = jnp.zeros((3, 6), jnp.float32), jnp.ones((4, 4, 4), jnp.float32)
-    expected = coupled.build_coupled_objective(ctx).update(p, x)
+    expected = coupled.build_coupled_objective(ctx).update(p, borrowed(x))
     lowered = []
     lower = coupled.run_update.lower
 
@@ -530,7 +534,7 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
         monkeypatch.setattr(coupled, "_free_device_memory", lambda _array: nbytes)
 
     def assert_update_matches(objective):
-        result = objective.update(p, x)
+        result = objective.update(p, borrowed(x))
         for a, b in zip(result.increment, expected.increment, strict=True):
             # Within rounding of the whole increment: GPU atomics sum in no
             # fixed order and the joint solve amplifies it, so near-zero
@@ -562,7 +566,7 @@ def test_memory_check_compiles_the_update_unless_far_below_the_limit(monkeypatch
     # Reconstruction can consume memory after admission, before this update.
     monkeypatch.setattr(coupled, "_free_device_memory", lambda _array: 0)
     with pytest.raises(coupled.AlignmentMemoryError) as late_error:
-        objective.update(p, x)
+        objective.update(p, borrowed(x))
     assert late_error.value.available == 0 < late_error.value.needed
     assert len(lowered) == 1  # no recompilation, nor dispatch of the oversized update
 
@@ -605,6 +609,29 @@ def test_a_cached_update_that_does_not_fit_retries_without_columns(monkeypatch):
     monkeypatch.setattr(_coupled_objective, "_check_device_memory", check)
     objective = _coupled_objective.build_coupled_objective(_small_coupled_context())
     assert checks == [True, False] and not objective.pose_columns_cached
+
+
+def test_a_cached_host_update_parks_an_owned_image_and_restores_its_bytes(monkeypatch):
+    monkeypatch.setattr(
+        _coupled_objective,
+        "_check_device_memory",
+        lambda *_: (_ for _ in ()).throw(_coupled_objective.AlignmentMemoryError(2, 1)),
+    )
+    monkeypatch.setattr(_coupled_host, "device_free_memory_bytes", lambda **_: 2**30)
+    ctx = _small_coupled_context(tv_weight=0.0)
+    objective = _coupled_objective.build_coupled_objective(ctx)
+    p = jnp.zeros((3, 6), jnp.float32)
+    x = jnp.asarray(np.random.default_rng(4).uniform(-1, 1, (4, 4, 4)), jnp.float32)
+    expected = objective.update(p, borrowed(x))
+    image = _coupled_objective.VolumeHandle(x.copy(), owned=True)
+    result = objective.update(p, image)
+    assert image.array is None  # the fully cached solve ran without it
+    for a, b in zip(result.increment, expected.increment, strict=True):
+        # As in the admission test, GPU atomic rounding is amplified by the solve.
+        np.testing.assert_allclose(a, b, rtol=0, atol=1e-4 * float(np.abs(b).max()))
+    restored = image.get()
+    assert restored is image.get() and restored.sharding == x.sharding
+    np.testing.assert_array_equal(restored, x)
 
 
 @pytest.fixture(params=["device", "host", "shared"])
@@ -718,7 +745,7 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
         refinement=_matching_model.JointRefinement(native_width=2 * detector.nu),
     )
     assert objective.pose_columns_cached != stream
-    result = objective.update(jnp.asarray(poses), jnp.asarray(volume))
+    result = objective.update(jnp.asarray(poses), borrowed(jnp.asarray(volume)))
     design = np.column_stack(
         [
             filtered(project(v.reshape(volume.shape), poses)).ravel()
@@ -831,13 +858,13 @@ def test_staged_update_matches_device_model(monkeypatch, solver, smooth, integra
     )
     np.testing.assert_allclose(initial, derivative(probe), rtol=2e-6, atol=2e-8)
     p = jnp.zeros((3, 6), jnp.float32).at[:, 3].set(jnp.asarray([0.03, -0.01, 0.02]))
-    expected = objective.update(p, x)
+    expected = objective.update(p, borrowed(x))
     streamed = None
     for cached_views in (0, 2, 3):
         update, loss = _coupled_host.build_host_objective(
             arrays, replace(spec, cache_columns=cached_views > 0), cached_views=cached_views
         )
-        actual = update(p, x)
+        actual = update(p, borrowed(x))
         assert actual.finite and expected.finite
         if streamed is None:
             streamed = actual.increment

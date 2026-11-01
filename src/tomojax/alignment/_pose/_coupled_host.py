@@ -292,7 +292,8 @@ _regularisation_value = jax.jit(volume_regularisation, static_argnames=("spec",)
 class _HostSystem:
     """Own the resident image and tiny pose factorisation of one linear update."""
 
-    def __init__(self, arrays, spec, p, x, weighted, columns_key, cached_views) -> None:
+    def __init__(self, arrays, spec, p, volume, weighted, columns_key, cached_views) -> None:
+        x = volume.get()
         self.arrays, self.spec, self.p, self.x, self.weighted = arrays, spec, p, x, weighted
         self.columns_key = columns_key
         self.cached_views = cached_views
@@ -338,6 +339,11 @@ class _HostSystem:
         )
         bound, _, _, _ = self.run("bound")
         self.inverse = HOST.map_owned(bound, partial(volume_metric_inverse, spec=spec, array=np))
+        # With every view's columns cached, no TV and no refinement, Krylov passes never read x.
+        full = cached_views == p.shape[0]
+        if volume.owned and full and not spec.tv_weight and spec.refinement is None:
+            volume.release()
+            self.x = jnp.float32(0)
 
     def run(self, mode, dx=None, dp=None):
         # Explicit transfer avoids a staged identity and its second full-volume
@@ -485,11 +491,12 @@ def build_host_objective(
             weights=stack.enter_context(host_source(weights)) if weighted else arrays.weights,
         )
 
-    def update(p, x):
+    def update(p, volume):
         with ExitStack() as stack:
             shape = (cached_views, len(spec.active_columns), spec.detector.nv * spec.detector.nu)
             columns = stack.enter_context(host_buffer(shape)) if cached_views else None
-            return _HostSystem(inputs(stack), spec, p, x, weighted, columns, cached_views).solve()
+            system = _HostSystem(inputs(stack), spec, p, volume, weighted, columns, cached_views)
+            return system.solve()
 
     def loss(p, x):
         with ExitStack() as stack:
