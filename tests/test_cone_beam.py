@@ -27,6 +27,7 @@ from tomojax.recon import (
     fdk,
     fdk_host,
 )
+from tomojax.recon.cone_axis import _Slabs
 
 cuda = pytest.param("cuda", marks=pytest.mark.gpu)
 
@@ -782,3 +783,10 @@ def test_cuda_cone_entry_can_lower_and_differentiate_on_cpu(monkeypatch):
         ):
             assert a.devices() == b.devices() == {jax.devices("cpu")[0]}
             np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-6)
+
+
+def test_axis_slabs_keep_only_reused_full_resolution_bands(monkeypatch):
+    monkeypatch.setattr("tomojax.recon.cone_axis._prepare_slab", lambda *args: object())
+    slabs = _Slabs(None, None, None, None, None)
+    assert slabs.get(0.0, 2) is not slabs.get(0.0, 2)
+    assert slabs.get(0.0, 1) is slabs.get(0.0, 1)
