@@ -63,9 +63,9 @@
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
   "code_lines": {
-    "(modules)": 3326,
-    "_data": 2053,
-    "alignment": 16199,
+    "(modules)": 3325,
+    "_data": 2050,
+    "alignment": 16184,
     "backends": 615,
     "cli": 2572,
     "core": 13335,
@@ -107,7 +107,7 @@
   },
   "type_errors": {
     "reportArgumentType": 172,
-    "reportAssignmentType": 2,
+    "reportAssignmentType": 1,
     "reportAttributeAccessIssue": 77,
     "reportCallIssue": 9,
     "reportGeneralTypeIssues": 5,

@@ -114,7 +114,7 @@ def plan(args: argparse.Namespace) -> None:
     rng = np.random.default_rng(args.seed)
     theta = np.deg2rad(angles)
     rotation = np.deg2rad(args.rotation_deg)
-    params = np.zeros((args.views, 5))
+    params = np.zeros((args.views, 6))
     # Slow drift plus jitter in tilt; eccentric wobble plus jitter in position.
     params[:, 0] = rotation * (0.5 * np.sin(theta + 0.4) + rng.uniform(-0.5, 0.5, args.views))
     params[:, 1] = rotation * (0.5 * np.cos(2 * theta) + rng.uniform(-0.5, 0.5, args.views))

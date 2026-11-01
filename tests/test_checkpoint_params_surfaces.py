@@ -125,7 +125,7 @@ def test_checkpoint_validation_requires_exact_config_defaults() -> None:
 
 
 def test_alignment_params_schema_uses_current_identifier() -> None:
-    payload = alignment_params_payload(np.zeros((1, 5), dtype=np.float32), du=1.0, dv=1.0)
+    payload = alignment_params_payload(np.zeros((1, 6), dtype=np.float32), du=1.0, dv=1.0)
 
     assert payload["schema"] == "tomojax.alignment_params"
 

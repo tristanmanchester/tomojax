@@ -58,7 +58,7 @@ def test_geometry_wrappers_survive_pickling():
         "grid": Grid(4, 4, 4, 1.0, 1.0, 1.0).to_dict(),
         "angles": np.asarray([0.0, 90.0], np.float32),
         "geometry_type": "parallel",
-        "align_params": np.zeros((2, 5), np.float32),
+        "align_params": np.zeros((2, 6), np.float32),
         "detector_roll_deg": 0.5,
     }
     _, _, wrapped = build_geometry_from_dataset_metadata(meta, poses=True)

@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._config import AlignConfig, _active_dof_mask_for_cfg, _active_dofs_for_cfg
-from tomojax.alignment._geometry.parametrizations import pad_pose_params
 from tomojax.alignment._model.dofs import DOF_NAMES, POSE_WIDTH, bounds_vectors
 from tomojax.alignment._model.gauge import (
     active_gauge_dofs,
@@ -144,8 +143,6 @@ def _prepare_align_setup(
         init_pose_params = resume_state.pose_params
     if init_x is not None:
         validate_volume(init_x, grid, context="align init_x", name="init_x")
-    if init_pose_params is not None and np.shape(init_pose_params) == (n_views, 5):
-        init_pose_params = pad_pose_params(init_pose_params)
     validate_optional_same_shape(
         init_pose_params,
         (n_views, POSE_WIDTH),

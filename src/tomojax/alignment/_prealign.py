@@ -438,8 +438,7 @@ def translation_params_from_shifts(
     mask = np.asarray(active, bool)
     fixed = np.where(mask, 0.0, params[:, 3:5])
     residual = shifts - np.einsum("nij,nj->ni", mapping, fixed)
-    if params.shape[1] > 5:
-        residual = residual - translation_map[:, :, 1] * params[:, 5, None]
+    residual = residual - translation_map[:, :, 1] * params[:, 5, None]
     inverse = np.linalg.pinv(mapping * mask[None, None, :], rtol=1e-3)
     estimate = np.einsum("nij,nj->ni", inverse, residual)
     seeded = np.array(params, dtype=np.float32, copy=True)

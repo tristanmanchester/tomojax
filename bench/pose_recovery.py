@@ -51,7 +51,7 @@ PHANTOMS = {"two-gaussian": GAUSSIANS, "nine-gaussian": RICH_GAUSSIANS}
 def poses_jax(parameters: jax.Array, nominal: jax.Array, detector: Detector) -> jax.Array:
     """Right-compose rotations; translate in detector/world x,z coordinates."""
     scale = jnp.array([np.pi / 180] * 3 + [detector.du, detector.dv], jnp.float32)
-    delta = se3_from_pose_params(parameters * scale)
+    delta = se3_from_pose_params(jnp.concatenate([parameters * scale, jnp.zeros(1)]))
     result = jnp.matmul(nominal, delta, precision=jax.lax.Precision.HIGHEST)
     return result.at[:3, 3].set(nominal[:3, 3] + delta[:3, 3])
 

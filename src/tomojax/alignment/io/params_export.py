@@ -10,8 +10,6 @@ from typing import Any
 
 import numpy as np
 
-from tomojax.alignment._geometry.parametrizations import pad_pose_params
-
 ALIGNMENT_PARAMS_SCHEMA = "tomojax.alignment_params"
 PARAMETER_ORDER = ("alpha", "beta", "phi", "dx", "dz", "dy")
 CSV_FIELDNAMES = (
@@ -41,10 +39,10 @@ type AlignmentParamRecord = dict[str, int | float]
 
 
 def _normalize_pose_params(pose_params: np.ndarray) -> np.ndarray:
-    try:
-        return pad_pose_params(pose_params)
-    except ValueError as exc:
-        raise ValueError(f"pose_params must have shape (n_views, 5 or 6): {exc}") from None
+    params = np.asarray(pose_params, dtype=np.float32)
+    if params.ndim != 2 or params.shape[1] != 6:
+        raise ValueError(f"pose_params must have shape (n_views, 6), got {params.shape}")
+    return params
 
 
 def _validate_detector_spacing(*, du: float, dv: float) -> tuple[float, float]:
@@ -117,7 +115,7 @@ def alignment_params_payload(
     Parameters
     ----------
     pose_params : array-like
-        Per-view corrections with columns (alpha, beta, phi, dx, dz[, dy]); angles are
+        Per-view corrections with columns (alpha, beta, phi, dx, dz, dy); angles are
         radians and translations physical lengths.
     du : float
         Physical detector-u pixel spacing, used for pixel-unit exports.
@@ -177,7 +175,7 @@ def save_alignment_params_json(
     path : str or path-like
         Checkpoint or sidecar file path.
     pose_params : array-like
-        Per-view corrections with columns (alpha, beta, phi, dx, dz[, dy]); angles are
+        Per-view corrections with columns (alpha, beta, phi, dx, dz, dy); angles are
         radians and translations physical lengths.
     du : float
         Physical detector-u pixel spacing, used for pixel-unit exports.
@@ -222,7 +220,7 @@ def save_alignment_params_csv(
     path : str or path-like
         Checkpoint or sidecar file path.
     pose_params : array-like
-        Per-view corrections with columns (alpha, beta, phi, dx, dz[, dy]); angles are
+        Per-view corrections with columns (alpha, beta, phi, dx, dz, dy); angles are
         radians and translations physical lengths.
     du : float
         Physical detector-u pixel spacing, used for pixel-unit exports.

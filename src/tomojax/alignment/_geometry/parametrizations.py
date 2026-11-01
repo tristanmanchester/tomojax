@@ -24,14 +24,14 @@ def compose_R(alpha: jnp.ndarray, beta: jnp.ndarray, phi: jnp.ndarray) -> jnp.nd
 
 
 def se3_from_pose_params(pose_params: jnp.ndarray) -> jnp.ndarray:
-    """Build a 4x4 transform from ``[alpha, beta, phi, dx, dz]`` or with ``dy`` appended.
+    """Build a 4x4 transform from ``[alpha, beta, phi, dx, dz, dy]``.
 
-    Translations are (dx, dy, dz) in world/object units; five values mean dy = 0.
+    Translations are (dx, dy, dz) in world/object units.
 
     Parameters
     ----------
     pose_params : array-like
-        One pose vector (alpha, beta, phi, dx, dz[, dy]); angles in radians,
+        One pose vector (alpha, beta, phi, dx, dz, dy); angles in radians,
         translations physical lengths.
 
     Returns
@@ -40,14 +40,7 @@ def se3_from_pose_params(pose_params: jnp.ndarray) -> jnp.ndarray:
         Float32 rigid transform of shape (4, 4), with rotation Ry(beta) Rx(alpha)
         Rz(phi).
     """
-    alpha, beta, phi, dx, dz = (
-        pose_params[0],
-        pose_params[1],
-        pose_params[2],
-        pose_params[3],
-        pose_params[4],
-    )
-    dy = pose_params[5] if pose_params.shape[0] > 5 else jnp.zeros((), pose_params.dtype)
+    alpha, beta, phi, dx, dz, dy = pose_params
     R = compose_R(alpha, beta, phi)
     T = jnp.eye(4, dtype=jnp.float32)
     T = T.at[:3, :3].set(R)
@@ -99,7 +92,7 @@ def apply_pose_update(
     nominal : array-like
         Nominal object-to-world transform with shape (4, 4).
     pose_params : array-like
-        One correction vector (alpha, beta, phi, dx, dz[, dy]), in radians and physical
+        One correction vector (alpha, beta, phi, dx, dz, dy), in radians and physical
         lengths.
     translation_frame : {"object", "detector"}, optional
         Basis for physical translations; detector means lab x/y/z axes, not pixels.
@@ -137,7 +130,7 @@ def apply_pose_updates(
     nominal : array-like
         Nominal object-to-world transforms with shape (views, 4, 4).
     pose_params : array-like
-        Per-view corrections with columns (alpha, beta, phi, dx, dz[, dy]); angles are
+        Per-view corrections with columns (alpha, beta, phi, dx, dz, dy); angles are
         radians and translations physical lengths.
     translation_frame : {"object", "detector"}, optional
         Basis for physical translations; detector means lab x/y/z axes, not pixels.

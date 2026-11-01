@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Pose inputs and saved geometry use exactly six columns: `(alpha, beta, phi, dx, dz, dy)`.
+Set `dy=0` explicitly when beam-direction motion is frozen; five-column legacy tables
+and extra unnamed columns are no longer accepted by alignment, parameter export, or
+saved-geometry loading.
+
 `Rings` fits its responses on the means of about 512 contiguous angular bins
 of views (`views=512`, the new default) and corrects every view with them,
 several times faster than fitting every view; scans without a mirror axis fit

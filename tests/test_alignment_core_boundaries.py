@@ -74,7 +74,9 @@ def test_pose_parametrization_composes_rotation_and_translation() -> None:
         atol=1e-6,
     )
 
-    transform = se3_from_pose_params(jnp.asarray([0.0, 0.0, 0.0, 2.0, -3.0], dtype=jnp.float32))
+    transform = se3_from_pose_params(
+        jnp.asarray([0.0, 0.0, 0.0, 2.0, -3.0, 0.0], dtype=jnp.float32)
+    )
     np.testing.assert_allclose(np.asarray(transform[:3, 3]), [2.0, 0.0, -3.0])
     np.testing.assert_allclose(np.asarray(transform[3]), [0.0, 0.0, 0.0, 1.0])
 
