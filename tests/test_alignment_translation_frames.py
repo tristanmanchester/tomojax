@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 from dataclasses import replace
 import json
+from unittest.mock import Mock
 
 import jax
 import jax.numpy as jnp
@@ -35,6 +36,7 @@ from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
 
 # check-public-imports: allow-private
 from tomojax.alignment._prealign import estimate_view_shifts, translation_params_from_shifts
+from tomojax.alignment._stages import _stage_runners  # check-public-imports: allow-private
 from tomojax.alignment.api import (
     AlignmentSchedule,
     AlignmentStage,
@@ -619,9 +621,6 @@ def test_translation_seed_runs_once_at_the_first_level(monkeypatch, factors):
     # check-public-imports: allow-private
     from tomojax.alignment._pose import _pose_loop
 
-    # check-public-imports: allow-private
-    from tomojax.alignment._stages import _stage_runners
-
     geometry, grid, detector = _geometry(8, "parallel", np.linspace(0, 180, 6, endpoint=False))
     data = jnp.zeros((6, detector.nv, detector.nu), jnp.float32)
     calls = []
@@ -895,7 +894,12 @@ def _cone_proposal_config(backend, *, dof="dx"):
 @pytest.mark.numerical
 @pytest.mark.parametrize("perturbation", [("dx", 3, 1.0), ("phi", 2, 0.02)])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
-def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, backend, perturbation):
+@pytest.mark.parametrize("batch", [0, 2])
+def test_public_cone_proposal_stage_recovers_known_pose(
+    cone_proposal_case, backend, perturbation, batch, monkeypatch
+):
+    scored = Mock(wraps=_stage_runners.score_pose_stack_candidates)
+    monkeypatch.setattr(_stage_runners, "score_pose_stack_candidates", scored)
     _skip_cuda_without_gpu(backend)
     geometry, grid, detector, poses, frames, volume, _ = cone_proposal_case
     dof, column, step = perturbation
@@ -911,11 +915,13 @@ def test_public_cone_proposal_stage_recovers_known_pose(cone_proposal_case, back
         ray_integrator="joseph",
     )
     cfg = _cone_proposal_config(backend, dof=dof)
+    cfg.views_per_batch = batch
     result_volume, params, info = align_multires(
         geometry, grid, detector, targets, factors=(1,), config=cfg, resume_state=resume
     )
     # Only physical cone rays, not parallel-ray scoring, recover the pose exactly.
     stat = info["outer_stats"][0]
+    assert scored.call_args.kwargs["views_per_batch"] == (batch or min(64, len(poses)))
     assert stat["proposal_best_name"] == f"{dof}_plus" and stat["loss_after"] < 1e-7
     assert stat["proposal_backend_provenance"]["actual_backend"] == backend
     actual = apply_pose_updates(poses, params, translation_frame="detector")

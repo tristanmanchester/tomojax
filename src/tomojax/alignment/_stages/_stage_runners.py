@@ -20,7 +20,10 @@ from tomojax.alignment._model.schedules import ResolvedAlignmentStage
 from tomojax.alignment._model.state import AlignmentState, PoseState
 from tomojax.alignment._objectives.loss_adapters import build_loss_adapter
 from tomojax.alignment._observer import OuterStat, _normalize_observer_action
-from tomojax.alignment._pose._pose_loop import align
+from tomojax.alignment._pose._pose_loop import (
+    align,
+    with_resolved_views_per_batch,
+)
 from tomojax.alignment._prealign import seeded_translation_params
 from tomojax.alignment._profiles import profile_policy_from_config
 from tomojax.alignment.proposals import ProposalCandidate, score_pose_stack_candidates
@@ -121,7 +124,13 @@ def _run_proposal_stage(
             loss_adapter=build_loss_adapter(level.loss, level.projections),
             backend=level.cfg.backend,
             gather_dtype=level.cfg.gather_dtype,
-            views_per_batch=level.cfg.views_per_batch,
+            # The scorer interprets zero as all views, not the alignment auto policy.
+            views_per_batch=with_resolved_views_per_batch(
+                level.cfg,
+                n_views=int(level.projections.shape[0]),
+                grid=level.grid,
+                detector=level.detector,
+            ).views_per_batch,
             projector_unroll=1,
             checkpoint_projector=level.cfg.checkpoint_projector,
             ray_integrator=level.cfg.ray_integrator,

@@ -83,7 +83,7 @@ _AlignmentStepContexts = tuple[
 ]
 
 
-def _with_resolved_views_per_batch(
+def with_resolved_views_per_batch(
     cfg: AlignConfig, *, n_views: int, grid: Grid, detector: Detector
 ) -> AlignConfig:
     """Replace ``views_per_batch=0`` with a batch sized from free device memory.
@@ -137,7 +137,7 @@ def _prepare_align_setup(
         geometry=geometry,
         context="align projections",
     )
-    cfg = _with_resolved_views_per_batch(cfg, n_views=n_views, grid=grid, detector=detector)
+    cfg = with_resolved_views_per_batch(cfg, n_views=n_views, grid=grid, detector=detector)
     if resume_state is not None:
         validate_resume_config(resume_state, cfg)
         init_x = resume_state.x
