@@ -111,7 +111,7 @@ def test_checkpoint_validation_requires_exact_config_defaults() -> None:
     metadata = alignment_checkpoint_metadata(_run(), _state())
     checkpoint = AlignmentCheckpoint(
         x=np.zeros((4, 3, 2), dtype=np.float32),
-        pose_params=np.zeros((5, 5), dtype=np.float32),
+        pose_params=np.zeros((5, 6), dtype=np.float32),
         motion_coeffs=None,
         loss_history=[],
         outer_stats=[],
@@ -135,7 +135,7 @@ def test_checkpoints_from_an_older_schema_do_not_load_or_resume(schema, tmp_path
     metadata = alignment_checkpoint_metadata(_run(), _state())
     checkpoint = AlignmentCheckpoint(
         x=np.zeros((4, 3, 2), dtype=np.float32),
-        pose_params=np.zeros((5, 5), dtype=np.float32),
+        pose_params=np.zeros((5, 6), dtype=np.float32),
         motion_coeffs=None,
         loss_history=[],
         outer_stats=[],
@@ -167,7 +167,7 @@ def test_legacy_checkpoint_sampling_is_rejected_only_for_multires(multires):
         metadata.pop("multires_geometry_version")
     checkpoint = AlignmentCheckpoint(
         x=np.zeros((4, 3, 2), dtype=np.float32),
-        pose_params=np.zeros((5, 5), dtype=np.float32),
+        pose_params=np.zeros((5, 6), dtype=np.float32),
         motion_coeffs=None,
         loss_history=[],
         outer_stats=[],
@@ -241,3 +241,13 @@ def test_checkpoint_writes_bounded_windows_from_a_reused_source(tmp_path):
         assert saved.shape == Source.shape and reads == [0, 1, 2]
         for z in range(3):
             assert np.all(saved[z, :, :] == bits[z])
+
+
+def test_checkpoint_does_not_pad_legacy_pose_columns(tmp_path):
+    path = tmp_path / "legacy.npz"
+    run, state = _run(), _state(pose_params=np.zeros((5, 5), np.float32))
+    write_alignment_checkpoint(path, run, state)
+    checkpoint = load_alignment_checkpoint(path)
+    assert checkpoint.pose_params.shape == (5, 5)
+    with pytest.raises(CheckpointError, match="pose_params shape"):
+        validate_alignment_checkpoint(checkpoint, alignment_checkpoint_metadata(run, state))

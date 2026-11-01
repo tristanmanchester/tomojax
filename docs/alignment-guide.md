@@ -100,25 +100,9 @@ can worsen the reconstruction. Compare with the unaligned image and inspect
 individual pose estimates; FSC and held-out residuals are diagnostics, not proof
 of physical accuracy. The stopping tolerance is not a pose-error bound.
 
-With `ProjectionMatchingConfig`, per-view vertical standard deviations are in
-`result.info["vertical_uncertainty"]["standard_deviation"]`, in the detector's
-length units. These are local model-based scales treating the fitted profile
-template and noise covariance as exact, not calibrated confidence intervals.
-The record explicitly sets `global_coverage_calibrated=false` and
-`uncertainty_status=local_matching_only`. It excludes template/covariance
-estimation error, wrong matching modes and image-model bias; it is not a joint
-pose covariance. `vertical_gauge=mean_vertical_shift_zero` describes a coordinate
-convention, not a measurement of the absolute mean shift. Horizontal and
-full-procedure uncertainties are not reported.
-
 `result.info["initialization"]["losses"]` contains the final losses from the two
 starts. Similar losses can indicate an ambiguous horizontal fit; they are not
-pose-error bounds. `["horizontal_disagreement"]` gives the RMS, 95th percentile
-and maximum difference between the two starts' horizontal shifts, in length
-units, after removing a common object translation. A large value shows
-sensitivity to initialization, and when the losses are also close the selection
-is fragile; a small one does not mean the shifts are accurate, since both starts
-can share a bias.
+pose-error bounds. Pose uncertainties are not reported.
 
 ### Align large scans at reduced resolution
 

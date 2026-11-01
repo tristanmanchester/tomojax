@@ -18,7 +18,7 @@ def test_vertical_registration_retains_subpixel_texture():
     shifts = rng.uniform(-1, 1, count)
     data = np.stack([np.interp(v - s, v, profile)[:, None] * model for s in shifts])
     profiles = data.sum(axis=2)
-    vertical = likelihood.fit_profile_likelihood(profiles, matching._profile_seed(profiles)).shifts
+    vertical = likelihood.fit_profile_likelihood(profiles, matching._profile_seed(profiles))
     np.testing.assert_allclose(vertical, shifts - shifts.mean(), atol=0.025)
 
 
@@ -50,17 +50,6 @@ def test_public_matching_recovers_motion_without_resampling_input():
     ).astype(np.float32)
     scan = tj.Scan(moved, geometry)
     result = tj.align(scan, mode="pose", config=ProjectionMatchingConfig())
-    uncertainty = result.info["vertical_uncertainty"]
-    standard = np.asarray(uncertainty["standard_deviation"])
-    assert standard.shape == (n,) and np.all(np.isfinite(standard)) and np.all(standard > 0)
-    assert uncertainty["translation_frame"] == "detector"
-    assert uncertainty["units"] == "geometry_length"
-    assert uncertainty["global_coverage_calibrated"] is False
-    assert uncertainty["uncertainty_status"] == "local_matching_only"
-    assert uncertainty["vertical_gauge"] == "mean_vertical_shift_zero"
-    spread = result.info["initialization"]["horizontal_disagreement"]
-    assert 0 <= spread["p95"] <= spread["max"] and np.isfinite(spread["rms"])
-    assert spread["units"] == "geometry_length"
     assert abs(result.poses[:, 4].mean()) < 1e-6
     assert result.scan.projections is moved
     assert result.volume.shape == volume.shape
@@ -108,7 +97,7 @@ def test_large_motion_from_independent_gaussian_line_integrals():
 
 
 @pytest.mark.parametrize("motion", [False, True])
-def test_correlated_profile_likelihood_is_calibrated(motion):
+def test_correlated_profile_likelihood_recovers_motion(motion):
     rng = np.random.default_rng(72401)
     count, width, rho = 160, 192, 0.7
     axis = np.arange(width, dtype=float)
@@ -125,16 +114,5 @@ def test_correlated_profile_likelihood_is_calibrated(motion):
     amplitude = np.where(np.arange(count) < count // 2, 0.08, 0.24) if motion else 0.15
     data += np.asarray(amplitude).reshape(-1, 1) * np.sqrt(1 - rho**2) * noise
     result = likelihood.fit_profile_likelihood(data, truth + rng.normal(0, 0.25, count))
-    standardized = (result.shifts - truth) / result.standard_error
-    assert 0.7 < np.sqrt(np.mean(standardized**2)) < 1.3
-    assert 0.55 < np.mean(abs(standardized) <= 1) < 0.8
-    if motion:
-        first, second = np.array_split(result.relative_noise_variance, 2)
-        assert 6 < second.mean() / first.mean() < 12
-        for group in np.array_split(standardized, 2):
-            assert 0.5 < np.mean(abs(group) <= 1) < 0.85
-    projector = np.eye(count) - np.ones((count, count)) / count
-    expected = np.diag((projector * result.ungauged_variance) @ projector)
-    np.testing.assert_allclose(result.standard_error**2, expected)
-    assert abs(result.shifts.mean()) < 1e-12
-    assert np.linalg.eigvalsh(result.covariance).min() > 0
+    assert np.sqrt(np.mean((result - truth) ** 2)) < 0.2
+    assert abs(result.mean()) < 1e-12

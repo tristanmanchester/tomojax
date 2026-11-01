@@ -24,7 +24,6 @@ import numpy as np
 
 from tomojax._typed_arrays import jax_float32_array, object_mapping
 from tomojax._version import __version__
-from tomojax.alignment._geometry.parametrizations import pad_pose_params
 from tomojax.alignment._results import AlignMultiresResumeState, AlignResumeState
 from tomojax.alignment.io.checkpoint import (
     CHECKPOINT_KIND,
@@ -337,7 +336,7 @@ def resume_state_from_checkpoint(path: str | os.PathLike[str], run: AlignmentRun
         "pose_translation_frame": str(config.get("pose_translation_frame", "object")),
         "ray_integrator": str(config.get("ray_integrator", "sampled")),
         "x": jax_float32_array(checkpoint.x),
-        "pose_params": jax_float32_array(pad_pose_params(checkpoint.pose_params)),
+        "pose_params": jax_float32_array(checkpoint.pose_params),
         "motion_coeffs": (
             None
             if checkpoint.motion_coeffs is None

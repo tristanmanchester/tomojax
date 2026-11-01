@@ -1,27 +1,9 @@
-"""Noise-weighted registration and uncertainty for a shared axial mass profile."""
+"""Noise-weighted registration of a shared axial mass profile."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 from scipy import fft, interpolate, linalg, optimize
-
-
-@dataclass(frozen=True)
-class ProfileLikelihood:
-    """Translations and local model-based scales in the zero-mean gauge, in pixels.
-
-    ``covariance`` is profile-space noise covariance, not joint pose covariance.
-    Standard errors treat the fitted template and covariance as exact; their
-    coverage is not calibrated for native poses.
-    """
-
-    shifts: np.ndarray
-    standard_error: np.ndarray
-    covariance: np.ndarray
-    relative_noise_variance: np.ndarray
-    ungauged_variance: np.ndarray
 
 
 def _stationary_covariance(residual, jacobian, parameter_covariance):
@@ -93,8 +75,6 @@ def _profile_translations(observations, template, coordinates, shifts, nuisance,
         return white - basis @ (basis.T @ white)
 
     targets = whiten(observations.T).T
-    variance = np.empty(len(shifts))
-    scales = np.empty(len(shifts))
     for i, target in enumerate(targets):
 
         def objective(shift, target=target):
@@ -109,34 +89,18 @@ def _profile_translations(observations, template, coordinates, shifts, nuisance,
             options={"xatol": 1e-7},
         )
         shifts[i] = result.x
-        prediction = whiten(template(coordinates - shifts[i]))
-        derivative = whiten(-template(coordinates - shifts[i], 1))
-        gain = target @ prediction / (prediction @ prediction)
-        # Profile gain as well as background: uncertainty is not conditional on
-        # the fitted contrast. This is the scalar Schur complement of their Gram.
-        derivative = gain * (
-            derivative - prediction * (prediction @ derivative) / (prediction @ prediction)
-        )
-        # Views can have different noise amplitudes with the same correlation
-        # shape. Normalize relative residual energies across independent views,
-        # not by pixel count: shrinkage of the covariance changes the effective
-        # rank of a whitened residual, especially for smoothly correlated noise.
-        residual = target - gain * prediction
-        scales[i] = residual @ residual
-        variance[i] = scales[i] / (derivative @ derivative)
-    relative_noise = scales / scales.mean()
-    return shifts - shifts.mean(), variance / scales.mean(), relative_noise
+    return shifts - shifts.mean()
 
 
-def fit_profile_likelihood(profiles: np.ndarray, initial: np.ndarray) -> ProfileLikelihood:
+def fit_profile_likelihood(profiles: np.ndarray, initial: np.ndarray) -> np.ndarray:
     """Fit translated profiles with an estimated stationary detector covariance.
 
-    Each view has its own gain, affine background and noise amplitude.
-    Return shifts and conditional standard errors in the zero-mean gauge.
+    Each view has its own gain and affine background. Return shifts in pixels
+    in the zero-mean gauge.
     """
     profiles = np.asarray(profiles, np.float64)
     shifts = np.asarray(initial, np.float64).copy()
-    count, width = profiles.shape
+    _, width = profiles.shape
     shifts -= shifts.mean()
     axis = np.arange(width, dtype=float)
     margin = max(width // 8, int(np.ceil(abs(shifts).max())) + 2)
@@ -158,8 +122,5 @@ def fit_profile_likelihood(profiles: np.ndarray, initial: np.ndarray) -> Profile
             observations, template, coordinates, shifts, nuisance, lower
         )
         lower = linalg.cholesky(covariance, lower=True)
-        shifts, variance, relative_noise = _profile_translations(
-            observations, template, coordinates, shifts, nuisance, lower
-        )
-    gauged_variance = variance * (1 - 2 / count) + variance.sum() / count**2
-    return ProfileLikelihood(shifts, np.sqrt(gauged_variance), covariance, relative_noise, variance)
+        shifts = _profile_translations(observations, template, coordinates, shifts, nuisance, lower)
+    return shifts
