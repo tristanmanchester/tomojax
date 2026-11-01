@@ -166,9 +166,6 @@ class AlignConfig:
     gn_coupling : Literal['fixed_volume', 'joint'], optional
         Gauss-Newton update model: "fixed_volume" or "joint" volume and poses. Default
         is 'fixed_volume'.
-    gn_joint_solver : Literal['stacked', 'pose_eliminated'], optional
-        Joint linear-system formulation, "stacked" or "pose_eliminated". Default is
-        'stacked'.
     gn_joint_iterations : int, optional
         Positive limit on iterations of each joint linear solve. Default is 40.
     gn_joint_rtol : float, optional
@@ -259,7 +256,6 @@ class AlignConfig:
     # Central-difference displacement as a fraction of the smallest voxel pitch.
     gn_difference_step: float = field(default=1e-3, kw_only=True)
     gn_coupling: Literal["fixed_volume", "joint"] = field(default="fixed_volume", kw_only=True)
-    gn_joint_solver: Literal["stacked", "pose_eliminated"] = field(default="stacked", kw_only=True)
     gn_joint_iterations: int = field(default=40, kw_only=True)
     gn_joint_rtol: float = field(default=1e-4, kw_only=True)
     gn_volume_damping: float = field(default=1e-3, kw_only=True)
@@ -320,8 +316,6 @@ class AlignConfig:
             raise ValueError("gn_difference_step must be finite and > 0")
         if self.gn_coupling not in {"fixed_volume", "joint"}:
             raise ValueError("gn_coupling must be fixed_volume or joint")
-        if self.gn_joint_solver not in {"stacked", "pose_eliminated"}:
-            raise ValueError("gn_joint_solver must be stacked or pose_eliminated")
         if (
             self.gn_joint_iterations < 1
             or int(self.gn_joint_iterations) != self.gn_joint_iterations
@@ -382,7 +376,6 @@ def coupled_pose_defaults() -> dict[str, object]:
     """One set of defaults for the public coupled preset and product modes."""
     return {
         "gn_coupling": "joint",
-        "gn_joint_solver": "pose_eliminated",
         "pose_model": "per_view",
         "pose_translation_frame": "detector",
         "ray_integrator": "joseph",

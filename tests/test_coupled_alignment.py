@@ -67,8 +67,7 @@ def test_joint_coupling_selects_the_solver_for_every_pose_stage():
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
-def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, solver):
+def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch):
     from dataclasses import replace
 
     import tomojax as tj
@@ -79,7 +78,6 @@ def test_frozen_columns_use_no_cache_space_and_preserve_the_update(monkeypatch, 
     x = jnp.asarray(np.random.default_rng(9).uniform(0.2, 1.0, (5, 3, 4)), jnp.float32)
     cfg = AlignConfig(
         gn_coupling="joint",
-        gn_joint_solver=solver,
         ray_integrator="joseph",
         gather_dtype="fp32",
     )
@@ -128,7 +126,6 @@ def test_fp32_cone_joint_update_is_unchanged_with_x64_enabled(backend):
     p = jnp.zeros((3, 6), jnp.float32)
     cfg = AlignConfig(
         gn_coupling="joint",
-        gn_joint_solver="pose_eliminated",
         gn_joint_iterations=3,
         gn_damping=0.2,
         gn_volume_damping=0.2,
@@ -175,11 +172,10 @@ def _force_uncached_pose_columns(monkeypatch):
 @pytest.mark.usefixtures("views_per_batch")
 @pytest.mark.parametrize("scan_variant", [0, 1])
 @pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("integrator", ["exact", "joseph"])
 def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
-    monkeypatch, stream, backend, solver, scan_variant, integrator
+    monkeypatch, stream, backend, scan_variant, integrator
 ):
     from pathlib import Path
 
@@ -224,7 +220,6 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     active = np.array([1 - scan_variant, scan_variant, 1, 1, 0, 0], np.float32)
     cfg = AlignConfig(
         gn_coupling="joint",
-        gn_joint_solver=solver,
         gn_joint_iterations=100,
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
@@ -413,17 +408,16 @@ def test_coupled_solve_reports_actual_residual_at_budget_and_handles_zero_rhs(pl
 @pytest.mark.numerical
 @pytest.mark.usefixtures("views_per_batch")
 @pytest.mark.parametrize("integrator", ["sampled", "exact"])
-@pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
-def test_public_joint_huber_constraints_and_resume(integrator, solver):
+def test_public_joint_huber_constraints_and_resume(integrator):
     # Resuming must reproduce the uninterrupted run, which needs reproducible
     # arithmetic: on a GPU the sampled transpose adds with atomics in varying
     # order, and this tiny ill-conditioned solve amplifies that past any
     # tolerance by the second iteration. The bookkeeping is the same on any device.
     with jax.default_device(jax.devices("cpu")[0]):
-        _joint_huber_constraints_and_resume(integrator, solver)
+        _joint_huber_constraints_and_resume(integrator)
 
 
-def _joint_huber_constraints_and_resume(integrator, solver):
+def _joint_huber_constraints_and_resume(integrator):
     from tomojax.alignment import AlignConfig
     from tomojax.alignment.api import L2LossSpec, align
     from tomojax.core.projector import forward_project_view_T
@@ -438,7 +432,6 @@ def _joint_huber_constraints_and_resume(integrator, solver):
     )
     cfg = AlignConfig(
         gn_coupling="joint",
-        gn_joint_solver="pose_eliminated",
         gn_jacobian="central",
         gather_dtype="fp32",
         ray_integrator=integrator,
@@ -712,13 +705,12 @@ def _affine_residual_reference(ramp, rng, weighted):
     return weights, filtered
 
 
-@pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("weighted", [False, True])
 @pytest.mark.usefixtures("joint_placement")
 def test_affine_joint_increment_and_loss_match_dense_physical_model(
-    monkeypatch, solver, backend, stream, weighted
+    monkeypatch, backend, stream, weighted
 ):
     from dataclasses import replace
 
@@ -756,7 +748,6 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     cfg = AlignConfig(
         loss=L2LossSpec(),
         gn_coupling="joint",
-        gn_joint_solver=solver,
         gn_joint_iterations=100,
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
@@ -823,11 +814,10 @@ def test_affine_joint_increment_and_loss_match_dense_physical_model(
     assert result.finite and result.relative_residual < 2e-5
 
 
-@pytest.mark.parametrize("solver", ["stacked", "pose_eliminated"])
 @pytest.mark.parametrize("smooth", [0.0, 0.03])
 @pytest.mark.parametrize("integrator", ["joseph", "joseph_cubic"])
 @pytest.mark.parametrize("nonnegative", [False, True])
-def test_staged_update_matches_device_model(monkeypatch, solver, smooth, integrator, nonnegative):
+def test_staged_update_matches_device_model(monkeypatch, smooth, integrator, nonnegative):
     from dataclasses import replace
     from functools import partial
 
@@ -845,7 +835,6 @@ def test_staged_update_matches_device_model(monkeypatch, solver, smooth, integra
     cfg = AlignConfig(
         nonnegative=nonnegative,
         gn_coupling="joint",
-        gn_joint_solver=solver,
         ray_integrator=integrator,
         backend="cuda" if jax.default_backend() == "gpu" else "jax",
         gather_dtype="fp32",
@@ -1185,7 +1174,6 @@ def test_smooth_joint_bounds_preserve_trajectory_and_checkpoint(model):
     cfg = coupled_pose_config(
         backend="jax",
         pose_model=model,
-        gn_joint_solver="stacked" if model == "polynomial" else "pose_eliminated",
         degree=1,
         knot_spacing=3,
         optimise_dofs=("dx", "dz"),

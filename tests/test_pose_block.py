@@ -64,14 +64,6 @@ def test_candidate_smoothing_solves_the_curvature_prior(views):
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=2e-5)
 
 
-def test_joint_solver_configuration_rejects_unknown_selection():
-    from tomojax.alignment import AlignConfig
-
-    assert AlignConfig().gn_joint_solver == "stacked"
-    with pytest.raises(ValueError, match="gn_joint_solver"):
-        AlignConfig(gn_joint_solver="unrecognized")
-
-
 @pytest.mark.numerical
 def test_pose_smoothness_preserves_fp32_when_x64_is_enabled():
     with jax.enable_x64():

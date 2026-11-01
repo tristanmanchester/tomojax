@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Joint alignment now uses pose elimination only; remove the redundant `gn_joint_solver` selection.
+
 Automatic unposed laminography now fits a smooth detector-frame trajectory on a
 bounded coarse grid, preserving declared geometry, physical support and native
 projections. It no longer guesses the axis, infers support, selects per-view

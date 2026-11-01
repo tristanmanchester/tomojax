@@ -721,7 +721,6 @@ class tomojax.alignment.AlignConfig(
         gn_jacobian: "Literal['autodiff', 'central']" = 'autodiff',
         gn_difference_step: 'float' = 0.001,
         gn_coupling: "Literal['fixed_volume', 'joint']" = 'fixed_volume',
-        gn_joint_solver: "Literal['stacked', 'pose_eliminated']" = 'stacked',
         gn_joint_iterations: 'int' = 40,
         gn_joint_rtol: 'float' = 0.0001,
         gn_volume_damping: 'float' = 0.001,
