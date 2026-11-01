@@ -45,9 +45,8 @@
     "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 249,
     "src/tomojax/alignment/_pose/_pose_loop.py::_run_align_outer_iteration": 103,
     "src/tomojax/alignment/_pose/_pose_loop.py::align": 194,
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 160,
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 156,
     "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 126,
-    "src/tomojax/alignment/_stages/_stage_multires.py::_run_one_multires_level": 109,
     "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 121,
     "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
     "src/tomojax/cli/simulate.py::_build_parser": 106,
@@ -66,18 +65,18 @@
   "code_lines": {
     "(modules)": 3326,
     "_data": 2053,
-    "alignment": 16527,
+    "alignment": 16199,
     "backends": 615,
     "cli": 2572,
     "core": 13335,
-    "corrections": 2150,
+    "corrections": 2187,
     "datasets": 1125,
     "forward": 824,
     "geometry": 1101,
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14003
+    "recon": 14008
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,
@@ -104,10 +103,10 @@
   "single_use_helpers": {
     "tiny": 102,
     "forwarders": 9,
-    "chained": 41
+    "chained": 33
   },
   "type_errors": {
-    "reportArgumentType": 176,
+    "reportArgumentType": 172,
     "reportAssignmentType": 2,
     "reportAttributeAccessIssue": 77,
     "reportCallIssue": 9,
