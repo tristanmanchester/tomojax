@@ -63,12 +63,12 @@
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
   "code_lines": {
-    "(modules)": 3086,
-    "_data": 2053,
-    "alignment": 16318,
-    "backends": 615,
+    "(modules)": 3085,
+    "_data": 2050,
+    "alignment": 16238,
+    "backends": 617,
     "cli": 2572,
-    "core": 13335,
+    "core": 13412,
     "corrections": 2203,
     "datasets": 1125,
     "forward": 824,
@@ -76,7 +76,7 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14008
+    "recon": 14123
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,
@@ -107,7 +107,7 @@
   },
   "type_errors": {
     "reportArgumentType": 172,
-    "reportAssignmentType": 2,
+    "reportAssignmentType": 1,
     "reportAttributeAccessIssue": 77,
     "reportCallIssue": 9,
     "reportGeneralTypeIssues": 5,
