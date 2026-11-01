@@ -303,12 +303,16 @@ def reconstruct(
     ``warm_start`` uses FBP/FDK for least squares; ``grid`` overrides the scan's output grid.
 
     ``out`` is a writable float32 array or memmap of shape ``(grid.nz, grid.ny,
-    grid.nx)`` for ``fbp``, ``fourier``, and ``cgls``, ``sirt`` and ``mlem`` on
-    cone beams: the volume is made in host slabs straight into it and returned
+    grid.nx)`` for ``fbp``, ``fourier``, ``cgls`` with a supported host-slab
+    projector, and ``sirt`` and ``mlem`` on cone beams: the volume is made in
+    host slabs straight into it and returned
     as ``volume``. It must not overlap the scan, and a later failure can leave
     it partly written. Cone CGLS, SIRT and MLEM also use host slabs on their
     own when their volumes would not fit on the device; with a memmapped
     ``out``, CGLS keeps its three work volumes in temporary files beside it.
+    CUDA linear Joseph CGLS also supports parallel/laminography host slabs.
+    Large CGLS host state automatically uses temporary files (``TMPDIR``);
+    the returned array owns its file until released.
 
     ``config`` is from :mod:`tomojax.recon`; keywords replace its fields.
     Mismatched config classes or unknown keywords raise ``ValueError``.
@@ -333,7 +337,7 @@ def reconstruct(
         Output grid; None retains the scan's grid.
     out : numpy.ndarray or None, optional
         Writable float32 output or memmap for fbp/fourier, CUDA Joseph fista,
-        and cone cgls/sirt/mlem;
+        host-slab cgls, and cone sirt/mlem;
         must not overlap input.
     config : reconstruction config or None, optional
         Method-specific settings; explicit keywords replace its fields.

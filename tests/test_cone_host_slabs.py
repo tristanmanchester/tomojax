@@ -277,3 +277,57 @@ def test_row_reader_reads_each_row_once_per_sweep(host):
     # four sweeps read each of the four bands at most once, and one band ahead
     assert all(stop == min(first + 3, DETECTOR.nv) and first % 3 == 0 for first, stop in reads)
     assert len(reads) <= 4 * 4 + 1
+
+
+def test_cgls_lazy_rows_preserve_views_and_close_on_failure(monkeypatch, tmp_path):
+    host = import_module("tomojax.recon._cgls_host")
+    geometry = _geometry("cone")
+    data = _data(geometry)
+    cfg = CGLSConfig(iterations=2, backend="jax")
+    output = np.memmap(tmp_path / "out", np.float32, "w+", shape=(9, 4, 5))
+    original_gradient = host._HostCGLS.gradient
+
+    def gradient(solver):
+        zero = solver.zero
+        result = original_gradient(solver)
+        if zero:
+            assert not solver.X._reads  # zero-start source is never read
+        return result
+
+    monkeypatch.setattr(host._HostCGLS, "gradient", gradient)
+    expected, _ = cgls(geometry, GRID, DETECTOR, data, config=cfg, out=output)
+    expected = expected.copy()
+    rows = _cone_slabs.RowReader(lambda first, stop: data[:, first:stop], data.shape)
+    result, _ = cgls(geometry, GRID, DETECTOR, rows, config=cfg, out=output)
+    np.testing.assert_allclose(result, expected, atol=1e-6)
+    assert rows._worker is None
+    closed = []
+    original = _cone_slabs.HostVolume.close
+
+    def close(volume):
+        original(volume)
+        closed.append(volume._file)
+
+    monkeypatch.setattr(_cone_slabs.HostVolume, "close", close)
+    monkeypatch.setattr(host._HostCGLS, "gradient", lambda _: (_ for _ in ()).throw(RuntimeError()))
+    with pytest.raises(RuntimeError):
+        cgls(geometry, GRID, DETECTOR, rows, config=cfg, out=output)
+    assert closed == [None] * 4
+
+
+def test_unpenalized_cgls_sinks_do_not_read_unused_volumes(monkeypatch, host):
+    host(4)
+    module = import_module("tomojax.recon._cgls_host")
+
+    def run(solver):
+        solver.keep, solver.zero = False, False
+        solver.gradient()
+        solver.bounded()
+        assert not solver.X._held
+        monkeypatch.setattr(solver.D, "get", lambda *_: pytest.fail("unused direction read"))
+        solver.normal(None)
+        return {}
+
+    monkeypatch.setattr(module._HostCGLS, "run", run)
+    geometry = _geometry("cone")
+    cgls(geometry, GRID, DETECTOR, _data(geometry), config=CGLSConfig(iterations=1))

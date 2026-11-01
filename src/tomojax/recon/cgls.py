@@ -164,11 +164,13 @@ def cgls(
     solver. Both paths use the same stationarity and roundoff checks. This
     public solver returns host diagnostics and is not differentiable.
 
-    Cone-beam volumes whose working set exceeds the device, or given ``out``,
-    are solved with their volumes in host memory, streamed through the device
-    in z slabs; the result is then a C-ordered NumPy volume (``out``
-    itself if given). With a memory-mapped ``out``, the three work volumes
-    are temporary files in its directory.
+    Cone-beam volumes, and CUDA linear Joseph parallel/laminography volumes,
+    whose working set exceeds the device (or given ``out``) use host z slabs.
+    The result is a C-ordered NumPy volume, ``out`` itself if given. If the
+    four solver volumes exceed half of available host memory, automatically
+    allocated storage uses unlinked temporary files in the standard temporary
+    directory (controlled by ``TMPDIR``). The result owns its file until
+    released. A memory-mapped ``out`` places the three work files beside it.
 
     Parameters
     ----------
@@ -188,7 +190,7 @@ def cgls(
         Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
         None uses the canonical detector grid.
     out : numpy.ndarray or None, optional
-        Writable float32 ``(nz, ny, nx)`` host storage for a cone-beam result,
+        Writable float32 ``(nz, ny, nx)`` host storage for a supported host-slab result,
         including a memmap; it must not overlap the projections.
 
     Returns

@@ -1,4 +1,4 @@
-"""CGLS with its volumes in host memory, for cone scans larger than the device.
+"""CGLS with host volumes for scans larger than device memory.
 
 The solve is conjugate gradients on the normal equations, as for streamed
 projections: one sweep applies ``A^T A`` to the direction and also returns
@@ -14,6 +14,7 @@ rows only a few slab-sized arrays occupy the device at a time.
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -23,7 +24,7 @@ from tomojax.core.host_volume import fill, host_volume, scratch_directory
 
 from ._cgls_stopping import precision_stalled, termination
 from ._cone_slabs import Batch, RowReader, cone_problem, host_projections, host_volumes
-from ._host_arrays import validate_host_arrays
+from ._host_arrays import automatic_host_output
 from ._quadratic import gradient_normal
 
 if TYPE_CHECKING:
@@ -52,18 +53,27 @@ def solve_on_host(
     poses: jax.Array,
     shared: bool,
     out: np.ndarray | None,
+    det_grid: tuple[Any, Any] | None = None,
 ) -> tuple[np.ndarray, dict[str, object]] | None:
     """Solve with host volumes when the device can't hold the solver or ``out`` is given.
 
-    Returns None for the device solvers: other geometries, or views ``shared``
-    among several devices.
+    Returns None for unsupported projector models or views ``shared`` among
+    several devices. CUDA linear Joseph supports parallel and tilted scans.
     """
-    cone, rows = not shared and isinstance(model, ConeModel), isinstance(projections, RowReader)
-    if (out is not None or rows) and not cone:
-        raise ValueError("cgls: out and row readers need a cone-beam geometry on one device")
-    if not cone or (out is None and not rows and not host_volumes(grid, 6, backend)):
+    cone = isinstance(model, ConeModel)
+    parallel = (
+        model == "joseph"
+        and backend == "cuda"
+        and cfg.joseph_interpolation == "linear"
+        and det_grid is None
+    )
+    supported = not shared and (cone or parallel)
+    rows = isinstance(projections, RowReader)
+    if (out is not None or rows) and not supported:
+        raise ValueError("cgls: out and row readers need a supported Joseph geometry on one device")
+    if not supported or (out is None and not rows and not host_volumes(grid, 6, backend)):
         return None
-    start = None if initial is None else np.asarray(initial)
+    start = None if initial is None else np.asanyarray(initial)
     return solve(
         geometry, grid, detector, projections, start, cfg,
         model=model, backend=backend, poses=poses, out=out,
@@ -74,23 +84,35 @@ def solve(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections: np.ndarray,
+    projections: Any,
     initial: np.ndarray | None,
     cfg: CGLSConfig,
     *,
-    model: ConeModel,
+    model: ConeModel | str,
     backend: str,
     poses: jax.Array,
     out: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, object]]:
     """Run validated CGLS settings with host volumes, in ``out`` or a C-ordered volume."""
     projections = host_projections(projections, "cgls")
-    problem = cone_problem(
-        geometry, grid, detector, projections, model=model, backend=backend, poses=poses,
-        batch=cfg.views_per_batch, channels=1,
-    )  # fmt: skip
+    if isinstance(model, ConeModel):
+        problem = cone_problem(
+            geometry, grid, detector, projections, model=model, backend=backend, poses=poses,
+            batch=cfg.views_per_batch, channels=1,
+        )  # fmt: skip
+    else:
+        from ._parallel_slabs import parallel_problem
+
+        problem = parallel_problem(
+            geometry, grid, detector, projections, poses=poses, batch=cfg.views_per_batch
+        )
     solver = _HostCGLS(problem, cfg, initial, out)
-    info = solver.run()
+    with ExitStack() as resources:
+        if isinstance(projections, RowReader):
+            resources.callback(projections.close)
+        for volume in (solver.X, solver.G, solver.D, solver.W):
+            resources.callback(volume.close)
+        info = solver.run()
     volume = problem.result(solver.x)
     return volume, {**info, "projector_backend": backend, "projector_model": model}
 
@@ -105,14 +127,17 @@ class _HostCGLS:
         self.plan, self.sweep, self.xp = problem.plan, problem.sweep, problem.engine.xp
         grid = self.plan.grid
         shape = (grid.nz, grid.ny, grid.nx)
-        data = problem.data
+        data = np.empty(0, np.float32) if isinstance(problem.data, RowReader) else problem.data
         self.zero = initial is None
-        self.x = fill(validate_host_arrays(data, out, shape, "cgls", order="C"), initial)
-        work = [host_volume(shape, scratch_directory(out)) for _ in range(3)]
+        self.x = automatic_host_output(data, out, shape, 4, "cgls")
+        if out is not None or initial is not None:
+            fill(self.x, initial)
+        work = [host_volume(shape, scratch_directory(self.x)) for _ in range(3)]
         self.X, self.G, self.D, self.W = (problem.volume(a) for a in (self.x, *work))
-        self.views = np.arange(data.shape[0])
+        self.views = np.arange(problem.data.shape[0])
         self.damp2 = np.float32(cfg.damping) ** 2
         self.smooth2 = np.float32(cfg.gradient_damping) ** 2
+        self.penalized = bool(self.damp2 or self.smooth2)
         self.total = problem.engine.norm2
         self.keep = problem.keep
 
@@ -155,7 +180,9 @@ class _HostCGLS:
         plan, stats = self.plan, {"gamma": 0.0, "gap": 0.0}
 
         def source(k: int) -> tuple[Any, ...]:
-            return () if self.zero else (self.X.get(*plan.planes(k), retain=not self.keep),)
+            if self.zero:
+                return ()
+            return (self.X.get(*plan.planes(k), retain=not self.keep and self.penalized),)
 
         def finish(batch: Batch, first: int, stop: int, rows: tuple[Any, ...]) -> None:
             rows[0][...] = self.problem.measured(batch, first, stop) - rows[0]
@@ -163,7 +190,7 @@ class _HostCGLS:
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
             z0, z1 = plan.planes(k)
             value = accumulated[0][: z1 - z0, :, :]
-            if not self.zero:
+            if not self.zero and self.penalized:
                 sources = sources or (self.X.get(z0, z1),)
             if self.smooth2 and sources:
                 value -= self.smoothing(k, sources[0], self.iterate_plane)
@@ -179,7 +206,7 @@ class _HostCGLS:
 
         self.sweep.run(
             self.views, source=source, finish=finish, sink=sink,
-            prefetch=self._prefetch(self.X), keep=self.keep,
+            prefetch=None if self.zero else self._prefetch(self.X), keep=self.keep,
         )  # fmt: skip
         self.zero = False
         return stats["gamma"], stats["gap"]
@@ -194,7 +221,8 @@ class _HostCGLS:
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
             z0, z1 = plan.planes(k)
             cancellation = accumulated[0][: z1 - z0, :, :]
-            sources = sources or (self.X.get(z0, z1),)
+            if self.penalized:
+                sources = sources or (self.X.get(z0, z1),)
             if self.smooth2:
                 cancellation += self.smoothing(k, sources[0], self.iterate_plane, absolute=True)
             if self.damp2:
@@ -205,7 +233,7 @@ class _HostCGLS:
             within[0] &= not bool(xp.any(xp.abs(self.G.view(z0, z1)) > cancellation))
 
         def source(k: int) -> tuple[Any, ...]:
-            return (self.X.get(*plan.planes(k), retain=not self.keep),)
+            return (self.X.get(*plan.planes(k), retain=not self.keep and self.penalized),)
 
         self.sweep.run(
             self.views, source=source, finish=finish, sink=sink,
@@ -250,19 +278,22 @@ class _HostCGLS:
             stats["energy"] += self.total(rows[0])
 
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
-            value, direction = accumulated[0], (sources or (self.D.get(*plan.planes(k)),))[0]
-            if self.smooth2:
-                z0, z1 = plan.planes(k)
-                value[: z1 - z0, :, :] += self.smoothing(k, direction, halo)
-                self.edge_energy += self.edges(k, direction, halo)
-            if self.damp2:
-                direction *= self.damp2
-                value += direction
+            value = accumulated[0]
+            if self.penalized:
+                direction = (sources or (self.D.get(*plan.planes(k)),))[0]
+                if self.smooth2:
+                    z0, z1 = plan.planes(k)
+                    value[: z1 - z0, :, :] += self.smoothing(k, direction, halo)
+                    self.edge_energy += self.edges(k, direction, halo)
+                if self.damp2:
+                    direction *= self.damp2
+                    value += direction
             self.W.put(*plan.planes(k), value)
 
         self.sweep.run(
             self.views, source=source, finish=finish, sink=sink,
-            prefetch=self._prefetch(self.G, self.D), keep=self.keep,
+            prefetch=self._prefetch(self.G) if beta is None else self._prefetch(self.G, self.D),
+            keep=self.keep,
         )  # fmt: skip
         return stats["energy"], stats["direction"]
 
@@ -347,8 +378,6 @@ class _HostCGLS:
                 break
             beta = None if restart else gamma_new / gamma
             gamma, state["verified"] = gamma_new, verify
-        for volume in (self.X, self.G, self.D, self.W):
-            volume.close()
         return self.record(gamma, threshold, initial_norm, count, recomputations, state)
 
     def verify(

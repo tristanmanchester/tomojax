@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
+from tomojax.recon import CGLSConfig, cgls
 
 slabs = import_module("tomojax.recon._parallel_slabs")
 arrays = import_module("tomojax.recon._host_arrays")
@@ -48,6 +49,33 @@ def test_parallel_slab_sum_and_transpose_keep_global_weights(monkeypatch, tilt):
     lhs = np.vdot(projection.astype(np.float64), y)
     rhs = np.vdot(x.astype(np.float64), target.array)
     assert abs(lhs - rhs) < 2e-6 * np.linalg.norm(projection) * np.linalg.norm(y)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("initial", [False, True])
+def test_parallel_host_cgls_matches_resident_with_penalties(monkeypatch, initial):
+    grid = tj.Grid(9, 7, 11, 1.1, 0.8, 1.3)
+    detector = tj.Detector(17, 15, 1.2, 1.0)
+    geometry = tj.LaminographyGeometry(grid, detector, np.arange(0, 180, 23), 35)
+    rng = np.random.default_rng(914)
+    data = rng.normal(size=(8, 15, 17)).astype(np.float32)
+    start = rng.normal(size=(11, 7, 9)).astype(np.float32) if initial else None
+    cfg = CGLSConfig(
+        iterations=5,
+        rtol=0,
+        damping=0.2,
+        gradient_damping=0.1,
+        views_per_batch=3,
+        backend="cuda",
+        stream_projections=True,
+    )
+    expected, _ = cgls(geometry, grid, detector, data, init_x=start, config=cfg)
+    monkeypatch.setattr(slabs, "slab_depth", lambda *args: 4)
+    out = np.empty((11, 7, 9), np.float32)
+    result, info = cgls(geometry, grid, detector, data, init_x=start, config=cfg, out=out)
+    assert result is out and info["host_slabs"]
+    relative = np.linalg.norm(result - np.asarray(expected)) / np.linalg.norm(expected)
+    assert relative < 2e-5
 
 
 def test_automatic_disk_output_is_owned_and_explicit_output_is_preserved(monkeypatch, tmp_path):

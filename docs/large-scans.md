@@ -25,7 +25,7 @@ set the environment before the first JAX operation in a notebook.
 | FBP (parallel and laminography) | Streamed from host memory a batch of views at a time | Moves to host slabs automatically when it does not fit |
 | Fourier (axial parallel only) | Host arrays or memmaps, read by row slabs | Always returned in host slabs |
 | FDK (cone beam) | Read from host memory a slab's detector rows at a time when the volume is large | Moves to host z-slabs automatically when it does not fit |
-| CGLS | Streamed when they would take more than 40% of free GPU memory | On the GPU, with about five volume-sized work arrays |
+| CGLS | Streamed when resident data and solver state would exceed free GPU memory | Cone and CUDA linear Joseph parallel/laminography use host slabs automatically when the working state does not fit |
 | FISTA-TV | Streamed under the same rule; host-volume sweeps keep a detector-row ring | CUDA Joseph moves unmasked ordinary-TV state to host slabs when it does not fit |
 | SPDHG-TV | Streamed under the same rule, with its sinogram-sized dual and any weights also kept in host memory | On the GPU, with about eight volumes |
 
@@ -52,7 +52,7 @@ uses `tv_prox_iterations` planes on each side, so very large proximal iteration
 counts can still exhaust device workspace. Huber-TV, masks, ordered initialization
 and multi-device FISTA still require resident volume state.
 
-Resident CUDA cone/CGLS solvers keep their volumes in a private z-contiguous
+Resident CUDA solvers keep their volumes in a private z-contiguous
 order and convert once at entry and exit, which needs one volume-sized copy
 at those two points. `tj.project`,
 `tj.backproject` and `tj.Projector` make the same copy when one more volume fits
@@ -94,6 +94,20 @@ the free GPU memory. FDK accepts per-view cone geometry, including
 `ConeSegments`; noncircular trajectories retain FDK's approximation.
 
 ### Parallel beam and laminography
+
+CUDA linear Joseph `tj.reconstruct(scan, "cgls")` automatically uses host slabs
+when its working volumes exceed device memory. Slabs are summed before forming
+the data residual: this remains one global solve, including for tilted scans.
+The full projection stack must fit on the GPU alongside a few slabs. Ray and
+cubic projectors, explicit detector lattices, and multi-device solves retain
+the resident-volume requirement.
+
+If the four CGLS volumes exceed half of available host RAM, automatic storage
+uses unlinked temporary files. Choose a fast disk with enough free space using
+the standard `TMPDIR` environment variable. The returned NumPy memmap owns its
+file until released. With explicit `out=`, the supplied array is preserved and
+work files are placed beside it if it is a memmap.
+
 
 `tj.reconstruct(scan, "fbp")` and `tomojax recon --method fbp` switch to host
 slabs when the volume would take more than 40% of the free device memory.
