@@ -61,36 +61,43 @@ def _correlate(x: jax.Array, kernel: np.ndarray) -> jax.Array:
     return out
 
 
-def _weighted_quadratic(
-    values: jax.Array, weights: jax.Array, window: int, guard: int
-) -> jax.Array:
-    """Each column's weighted least-squares quadratic through its neighbours, at the column.
+def _weighted_quadratics(
+    values: jax.Array, weights: jax.Array, windows: tuple[int, ...], guard: int
+) -> list[jax.Array]:
+    """Each column's weighted least-squares quadratic through its neighbours, per window.
 
-    Offsets are scaled to [-1, 1] and neighbours taken relative to the column's own value, then
-    the 3x3 normal equations are solved by Cholesky, so float32 keeps the local variation's digits.
+    Neighbours are taken relative to the column's own value and their offsets scaled to
+    [-1, 1] at each window, then the 3x3 normal equations are solved by Cholesky, so float32
+    keeps the local variation's digits. The windows share their sums over common neighbours.
     """
-    values_shifted, weights_shifted = _shifts(values, window), _shifts(weights, window)
+    widest = max(windows)
+    values_shifted, weights_shifted = _shifts(values, widest), _shifts(weights, widest)
     s = [jnp.zeros_like(values) for _ in range(5)]
     t = [jnp.zeros_like(values) for _ in range(3)]
+    fits = {}
     # Pair the even/odd moments too: tiny asymmetric residuals otherwise steer
     # Tukey weights very differently in nearly flat, reflected neighbourhoods.
-    for j in range(guard + 1, window + 1):
-        u = j / window
-        left, right = weights_shifted[window - j], weights_shifted[window + j]
-        dl = left * (values_shifted[window - j] - values)
-        dr = right * (values_shifted[window + j] - values)
-        s = [s[k] + u**k * (right + left if k % 2 == 0 else right - left) for k in range(5)]
-        t = [t[k] + u**k * (dr + dl if k % 2 == 0 else dr - dl) for k in range(3)]
-    l00 = jnp.sqrt(s[0])
-    l10, l20 = s[1] / l00, s[2] / l00
-    l11 = jnp.sqrt(s[2] - l10 * l10)
-    l21 = (s[3] - l20 * l10) / l11
-    l22 = jnp.sqrt(s[4] - l20 * l20 - l21 * l21)
-    y0 = t[0] / l00
-    y1 = (t[1] - l10 * y0) / l11
-    c2 = (t[2] - l20 * y0 - l21 * y1) / (l22 * l22)
-    c1 = (y1 - l21 * c2) / l11
-    return values + (y0 - l10 * c1 - l20 * c2) / l00
+    for j in range(guard + 1, widest + 1):
+        left, right = weights_shifted[widest - j], weights_shifted[widest + j]
+        dl = left * (values_shifted[widest - j] - values)
+        dr = right * (values_shifted[widest + j] - values)
+        s = [s[k] + float(j**k) * (right + left if k % 2 == 0 else right - left) for k in range(5)]
+        t = [t[k] + float(j**k) * (dr + dl if k % 2 == 0 else dr - dl) for k in range(3)]
+        if j not in windows:
+            continue
+        sk = [m / float(j**k) for k, m in enumerate(s)]
+        tk = [m / float(j**k) for k, m in enumerate(t)]
+        l00 = jnp.sqrt(sk[0])
+        l10, l20 = sk[1] / l00, sk[2] / l00
+        l11 = jnp.sqrt(sk[2] - l10 * l10)
+        l21 = (sk[3] - l20 * l10) / l11
+        l22 = jnp.sqrt(sk[4] - l20 * l20 - l21 * l21)
+        y0 = tk[0] / l00
+        y1 = (tk[1] - l10 * y0) / l11
+        c2 = (tk[2] - l20 * y0 - l21 * y1) / (l22 * l22)
+        c1 = (y1 - l21 * c2) / l11
+        fits[j] = values + (y0 - l10 * c1 - l20 * c2) / l00
+    return [fits[w] for w in windows]
 
 
 def _reference(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> jax.Array:
@@ -107,7 +114,7 @@ def _reference(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> jax.Ar
     sigma = 1.4826 * jnp.median(jnp.abs(r), axis=1, keepdims=True)
     u = r / (4.685 * jnp.maximum(sigma, 1e-3 * jnp.median(sigma) + 1e-12))
     weights = 1e-3 + jnp.where(jnp.abs(u) < 1, (1 - u * u) ** 2, 0.0)
-    refs = [_weighted_quadratic(ranked, weights, w, 1) for w in WINDOWS]
+    refs = _weighted_quadratics(ranked, weights, WINDOWS, 1)
     # the noise: local scatter about the narrowest fit (median of every 8th column within
     # +-local), carried through each pair of references with the columns' correlation
     r = ranked - refs[-1]
@@ -551,7 +558,8 @@ def correct_rings(
     rows = (jnp.swapaxes(fitted, 0, 1), batch.min(0))
     if axis is not None:
         stripes, alpha, beta, corrected = jax.lax.map(
-            lambda row: _turn_response(row[0], row[1], axis, neighbours, weights), rows
+            lambda row: _turn_response(row[0], row[1], axis, neighbours, weights),
+            rows,
         )
         batch = batch - stripes[None]
     else:
