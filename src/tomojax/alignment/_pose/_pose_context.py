@@ -26,6 +26,8 @@ from tomojax.core.cone import ConeModel
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.cone import is_cone_beam
 
+from ._pose_block import feasible_pose_scale
+
 
 def with_beam_translation(
     active: tuple[bool, ...], geometry: object, cfg: AlignConfig
@@ -140,6 +142,27 @@ class PoseConstraintContext:
         stats_py["dz_mean_after"] = final_py["dz_mean_after"]
         return final_gauged, stats_py
 
+    def constrain_trajectory(self, candidate: jnp.ndarray) -> jnp.ndarray:
+        """Keep an in-basis path in-basis while imposing gauge and box bounds.
+
+        Constants lie in every supported trajectory model. Move from a feasible
+        constant path toward the requested one, rather than clipping its views.
+        Frozen columns retain their original, possibly nonconstant, values.
+        """
+        gauge_dofs = (
+            (*self.gauge_dofs, "dy")
+            if self.active_mask_bool[5] and "dy" not in self.gauge_dofs
+            else self.gauge_dofs
+        )
+        for name in gauge_dofs:
+            column = DOF_INDEX[name]
+            candidate = candidate.at[:, column].add(-jnp.mean(candidate[:, column]))
+        anchor = jnp.broadcast_to(jnp.mean(candidate, axis=0), candidate.shape)
+        anchor = self.apply_full_constraints(anchor)
+        direction = jnp.where(self.active_mask_bool, candidate - anchor, 0)
+        scale = feasible_pose_scale(anchor, direction, self.bounds_lower, self.bounds_upper)
+        return anchor + scale * direction
+
     def description(self) -> str:
         if self.gauge_fix == "none":
             return "none"
@@ -184,7 +207,7 @@ class PoseMotionContext:
         constrained_params = pose_params
         if use_smooth_pose_model:
             motion_coeffs = fit_motion_coefficients(motion_model, constrained_params)
-            constrained_params = constraint_ctx.apply_full_constraints(
+            constrained_params = constraint_ctx.constrain_trajectory(
                 expand_motion_coefficients(motion_model, motion_coeffs)
             )
             motion_coeffs = fit_motion_coefficients(motion_model, constrained_params)
@@ -196,7 +219,7 @@ class PoseMotionContext:
                         f"expected {tuple(motion_coeffs.shape)}, got {tuple(resume_coeffs.shape)}"
                     )
                 motion_coeffs = resume_coeffs
-                constrained_params = constraint_ctx.apply_full_constraints(
+                constrained_params = constraint_ctx.constrain_trajectory(
                     expand_motion_coefficients(motion_model, motion_coeffs)
                 )
 

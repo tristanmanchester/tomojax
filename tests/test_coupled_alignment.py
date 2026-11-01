@@ -224,7 +224,7 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     active = np.array([1 - scan_variant, scan_variant, 1, 1, 0, 0], np.float32)
     cfg = AlignConfig(
         gn_coupling="joint",
-        gn_joint_solver="pose_eliminated",
+        gn_joint_solver=solver,
         gn_joint_iterations=100,
         gn_joint_rtol=1e-6,
         gn_damping=0.2,
@@ -251,7 +251,10 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     )
     runtime = _build_alignment_runtime_context(geometry=geometry, det_grid_override=None, **common)
     ctx = _pose_objective_context(runtime=runtime, grid=grid, **common)
-    objective = _coupled_objective.build_coupled_objective(ctx)
+    basis = np.linalg.qr(np.column_stack((np.ones(3), angles)))[0] if scan_variant else None
+    objective = _coupled_objective.build_coupled_objective(
+        ctx, pose_basis=None if basis is None else jnp.asarray(basis, jnp.float32)
+    )
     result = objective.update(jnp.asarray(p), borrowed(jnp.asarray(x)))
     assert result.finite
     assert objective.pose_columns_cached != stream
@@ -293,7 +296,15 @@ def test_physical_coupled_step_matches_independent_dense_model(  # noqa: PLR0915
     hessian[x.size :, x.size :] += h_smooth
     gradient = design.T @ residual
     gradient[x.size :] += h_smooth @ p.ravel()
-    expected = np.linalg.solve(hessian, -gradient)
+    if basis is None:
+        expected = np.linalg.solve(hessian, -gradient)
+    else:
+        from scipy.linalg import block_diag
+
+        expansion = block_diag(np.eye(x.size), np.kron(basis, np.eye(6)))
+        expected = expansion @ np.linalg.solve(
+            expansion.T @ hessian @ expansion, -expansion.T @ gradient
+        )
     actual = np.concatenate([np.asarray(v).ravel() for v in result.increment])
     np.testing.assert_allclose(actual, expected, rtol=3e-3, atol=3e-5)
     np.testing.assert_array_equal(np.asarray(result.increment[1])[:, active == 0], 0)
@@ -862,7 +873,12 @@ def test_staged_update_matches_device_model(monkeypatch, solver, smooth, integra
     monkeypatch.setattr(
         _coupled_objective, "_check_device_memory", lambda a, s: captured.append((a, s))
     )
-    objective = _coupled_objective.build_coupled_objective(ctx)
+    basis = (
+        jnp.asarray(np.linalg.qr(np.column_stack((np.ones(3), np.arange(3))))[0], jnp.float32)
+        if smooth
+        else None
+    )
+    objective = _coupled_objective.build_coupled_objective(ctx, pose_basis=basis)
     arrays, spec = captured[0]
     gradient = jax.grad(partial(_coupled_program.volume_regularisation, spec=spec))
     expected_gradient, hessian = jax.linearize(gradient, x)
@@ -1154,3 +1170,57 @@ def test_private_volume_ramp_matches_public_physical_axes(placement):
         results.append((np.asarray(dx.transpose(2, 1, 0) if private else dx), np.asarray(dp)))
     for actual, expected in zip(results[1], results[0], strict=True):
         np.testing.assert_allclose(actual, expected, rtol=3e-6, atol=3e-7)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("model", ["polynomial", "spline"])
+def test_smooth_joint_bounds_preserve_trajectory_and_checkpoint(model):
+    import tomojax as tj
+    from tomojax.alignment.api import align, coupled_pose_config
+
+    grid, det = tj.Grid(3, 3, 3, 1, 1, 1), tj.Detector(4, 3, 1, 1)
+    geometry = tj.LaminographyGeometry(grid, det, [0, 60, 120], tilt_deg=25)
+    x = jnp.asarray(np.random.default_rng(24).uniform(0.1, 1, (3, 3, 3)), jnp.float32)
+    data = tj.project(geometry, x)
+    cfg = coupled_pose_config(
+        backend="jax",
+        pose_model=model,
+        gn_joint_solver="stacked" if model == "polynomial" else "pose_eliminated",
+        degree=1,
+        knot_spacing=3,
+        optimise_dofs=("dx", "dz"),
+        bounds=(("dx", -0.01, 0.01),),
+        outer_iterations=2,
+        iterations=1,
+        gn_joint_iterations=10,
+        seed_translations=False,
+        early_stop=False,
+    )
+    checkpoints = []
+    _, poses, _ = align(
+        geometry,
+        grid,
+        det,
+        data,
+        config=cfg,
+        init_x=x * 0.9,
+        checkpoint_callback=checkpoints.append,
+    )
+    assert np.max(np.abs(poses[:, 3])) <= 0.010001
+    np.testing.assert_allclose(np.diff(poses[:, 3:5], n=2, axis=0), 0, atol=1e-6)
+    cp = checkpoints[-1]
+    assert cp.motion_coeffs is not None
+    coordinate = np.array([-1, 0, 1])
+    basis = (
+        np.column_stack((np.ones(3), coordinate))
+        if model == "polynomial"
+        else np.column_stack(((1 - coordinate) / 2, (1 + coordinate) / 2))
+    )
+    np.testing.assert_allclose(basis @ cp.motion_coeffs, poses[:, 3:5], atol=1e-6)
+    resumed = align(geometry, grid, det, data, config=cfg, resume_state=cp)
+    np.testing.assert_allclose(resumed[1], poses, atol=1e-6)
+    cfg.outer_iterations = 0
+    initial = jnp.zeros((3, 6), jnp.float32).at[:, 3].set(jnp.array([-1, 0, 1]))
+    _, constrained, _ = align(geometry, grid, det, data, config=cfg, init_pose_params=initial)
+    assert np.max(np.abs(constrained[:, 3])) <= 0.010001
+    np.testing.assert_allclose(np.diff(constrained[:, 3], n=2), 0, atol=1e-6)

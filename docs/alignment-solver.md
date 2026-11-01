@@ -58,8 +58,7 @@ request full FP32 multiplication precision. This prevents reduced global JAX
 matrix-multiply settings from quantising small pose updates on CUDA.
 
 The `gn_coupling="joint"` option, which `tj.align` uses in `pose` and
-`cor-then-pose` modes, is for per-view
-least-squares alignment. It solves a damped linearised volume-and-pose
+`cor-then-pose` modes, is for least-squares alignment. It solves a damped linearised volume-and-pose
 problem after each reconstruction refresh, then accepts the updated pair only
 after scoring its constrained nonlinear objective. This addresses slow
 alternation when free voxels can compensate for pose errors. `AlignConfig()`
@@ -68,11 +67,10 @@ uses a `joint_volume_pose` stage when this option is enabled. Explicitly
 fixed-volume schedule stages continue to keep the volume fixed; a custom joint
 stage must declare `objective_kind="joint_volume_pose"` and `optimizer="gn"`.
 
-Joint GN requires `pose_model="per_view"` and
-`gather_dtype="fp32"`. It supports sampled and exact integration, active/frozen
+Joint GN requires `gather_dtype="fp32"`. It supports sampled and exact integration, active/frozen
 pose parameters, pose bounds, volume masks, nonnegative voxels, pose smoothness,
-and Huber-TV or zero volume regularisation. It does not support nonsmooth TV
-or polynomial/spline pose models. `gn_joint_iterations=40` bounds the inner
+and Huber-TV or zero volume regularisation. It does not support nonsmooth TV. Polynomial and spline trajectories are fitted
+directly in the joint linear system, not fitted to independent per-view updates. `gn_joint_iterations=40` bounds the inner
 matrix-free PCG solve; `gn_joint_rtol=1e-4` controls its residual stopping
 criterion. `gn_damping` and `gn_volume_damping` damp pose and voxel increments
 respectively; they are not priors on the recovered object. The returned
@@ -100,6 +98,10 @@ the same damped linear problem as the default `"stacked"` method, with the
 same joint residual threshold and nonlinear acceptance. Without pose smoothness,
 the factors are independent 5-by-5 blocks; with smoothness, a block-banded
 factorisation retains inter-view coupling with storage linear in view count.
+For polynomial/spline models, the pose block is reduced to the trajectory
+coefficients and factored densely; storage is quadratic in coefficient count,
+not view count. Box bounds shorten a smooth joint step rather than clipping
+individual views, so its trajectory stays in the chosen model.
 Damping and iteration budgets are unchanged. Independent dense, constrained
 workflow and CUDA checks pass. On the free-voxel pilot it recovers the same
 five of six cells as the stacked solve, faster on the tilted cells, and

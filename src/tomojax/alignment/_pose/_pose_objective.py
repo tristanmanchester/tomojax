@@ -215,6 +215,7 @@ def _build_pose_objective_bundle(
     runtime: AlignmentRuntimeContext,
     refinement: JointRefinement | None = None,
     private: bool = False,
+    pose_basis: jax.Array | None = None,
 ) -> PoseObjectiveBundle:
     ctx = _pose_objective_context(
         grid=grid,
@@ -251,7 +252,9 @@ def _build_pose_objective_bundle(
     return PoseObjectiveBundle(
         align_loss_jit=partial(align_loss, arrays, spec=spec),
         gn_update_all=partial(gn_update, arrays, spec=spec),
-        coupled=build_coupled_objective(ctx, refinement=refinement, private=private)
+        coupled=build_coupled_objective(
+            ctx, refinement=refinement, private=private, pose_basis=pose_basis
+        )
         if cfg.gn_coupling == "joint"
         else None,
         private=spec.jacobian.z_fast,

@@ -25,6 +25,49 @@ def _matmul(a: jax.Array, b: jax.Array) -> jax.Array:
     return jnp.matmul(a, b, precision=jax.lax.Precision.HIGHEST)
 
 
+def trajectory_projector(basis, across):
+    """Orthogonal projection onto a trajectory basis, summed over shared views."""
+    if basis is None:
+        return lambda value: value
+
+    def project(value):
+        return _matmul(basis, across(_matmul(basis.T, value)))
+
+    return project
+
+
+def trajectory_block_solver(diagonal, weights, basis):
+    """Solve a pose normal block restricted to a shared trajectory basis.
+
+    The basis is orthonormal in view space. Its coefficients remain coupled
+    across pose coordinates: fitting independently solved per-view updates
+    would minimize a different quadratic objective.
+    """
+    rank, width = basis.shape[1], diagonal.shape[1]
+    reduced = jnp.einsum(
+        "na,nij,nb->aibj", basis, diagonal, basis, precision=jax.lax.Precision.HIGHEST
+    )
+    curvature = basis[:-2] - 2 * basis[1:-1] + basis[2:]
+    reduced += jnp.einsum(
+        "na,nb,ij->aibj",
+        curvature,
+        curvature,
+        jnp.diag(2 * weights**2),
+        precision=jax.lax.Precision.HIGHEST,
+    )
+    reduced = reduced.reshape(rank * width, rank * width)
+    scale = jax.lax.rsqrt(jnp.diag(reduced))
+    factor = _cholesky(scale[:, None] * reduced * scale[None, :])
+
+    def solve(rhs):
+        value = _matmul(basis.T, rhs).reshape(-1) * scale
+        value = solve_triangular(factor, value, lower=True)
+        value = solve_triangular(factor.T, value, lower=False) * scale
+        return _matmul(basis, value.reshape(rank, width))
+
+    return solve
+
+
 def pose_block_solver(
     diagonal: jax.Array,
     smoothness_weights: jax.Array,
@@ -140,3 +183,14 @@ def smooth_pose_candidate(pose_params: jax.Array, weights: jax.Array) -> jax.Arr
         return pose_params
     identity = jnp.broadcast_to(jnp.eye(width, dtype=pose_params.dtype), (n, width, width))
     return pose_block_solver(identity, jnp.sqrt(weights), has_smoothness=True)(pose_params)
+
+
+def feasible_pose_scale(start, direction, lower, upper):
+    """Largest step in [0, 1] satisfying every pose box bound without clipping."""
+    denominator = jnp.where(direction != 0, direction, 1)
+    limit = jnp.where(
+        direction > 0,
+        (upper - start) / denominator,
+        jnp.where(direction < 0, (lower - start) / denominator, jnp.inf),
+    )
+    return jnp.clip(jnp.min(limit), 0, 1)

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Joint Gauss–Newton alignment now fits polynomial and spline pose trajectories
+directly, on resident and host-staged paths. Smooth steps respect pose bounds
+without per-view clipping; checkpoints retain their trajectory coefficients.
+
 `Rings` fits its responses on the means of about 512 contiguous angular bins
 of views (`views=512`, the new default) and corrects every view with them,
 several times faster than fitting every view; scans without a mirror axis fit

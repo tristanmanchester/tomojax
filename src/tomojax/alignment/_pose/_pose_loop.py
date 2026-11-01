@@ -20,6 +20,7 @@ from tomojax.alignment._model.gauge import (
     normalize_gauge_fix,
     validate_alignment_gauge_feasible,
 )
+from tomojax.alignment._model.motion_models import fit_motion_coefficients
 from tomojax.alignment._objectives.fixed_volume import (
     ObjectiveProvenance,
     alignment_projector_backend_provenance,
@@ -497,6 +498,8 @@ def _run_align_outer_iteration(
             pose_params_in=state.pose_params,
             vol=volume,
         )
+        if motion.use_smooth_pose_model:
+            state.motion_coeffs = fit_motion_coefficients(motion.motion_model, state.pose_params)
         del volume  # the entry image dies here, not beside the transpose back
     else:
         (
@@ -669,6 +672,11 @@ def align(
         active_mask=active_mask,
         runtime=runtime,
         refinement=joint_refinement,
+        pose_basis=None
+        if motion_model.basis is None
+        else jnp.asarray(
+            np.linalg.qr(np.asarray(motion_model.basis, dtype=np.float64))[0], dtype=jnp.float32
+        ),
         # Parallel Joseph pose cores on CUDA read a private z-fast copy of the volume.
         private=cfg.ray_integrator in {"joseph", "joseph_cubic"}
         and cfg.backend == "cuda"

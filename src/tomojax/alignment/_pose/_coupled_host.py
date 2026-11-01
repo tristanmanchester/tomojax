@@ -43,7 +43,7 @@ from ._coupled_program import (
     volume_regularisation,
 )
 from ._coupled_vectors import HOST, BlockVector
-from ._pose_block import pose_block_solver
+from ._pose_block import pose_block_solver, trajectory_block_solver, trajectory_projector
 
 
 def _view_batch(arrays, start, size, spec, weighted):
@@ -322,17 +322,29 @@ class _HostSystem:
         )
         np.multiply(gx, self.free, out=gx)
         np.negative(gx, out=gx)
+
         project_pose = constrained_pose_inverse(
-            lambda value: value, spec, arrays, lambda value: value
+            trajectory_projector(arrays.pose_basis, lambda value: value),
+            spec,
+            arrays,
+            lambda value: value,
         )
-        self.project_pose = jax.jit(project_pose) if spec.refinement is not None else project_pose
+        self.project_pose = (
+            jax.jit(project_pose)
+            if spec.refinement is not None or arrays.pose_basis is not None
+            else project_pose
+        )
         self.rhs = (gx, -np.asarray(self.project_pose((gp + np.asarray(sg)) * self.movable)))
         self.pose_diagonal = np.diagonal(gram, axis1=1, axis2=2)
         self.gram = jnp.asarray(gram) + spec.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype)
-        solve_pose = pose_block_solver(
-            self.gram,
-            arrays.smoothness * arrays.active,
-            has_smoothness=spec.has_smoothness,
+        solve_pose = (
+            pose_block_solver(
+                self.gram, arrays.smoothness * arrays.active, has_smoothness=spec.has_smoothness
+            )
+            if arrays.pose_basis is None
+            else trajectory_block_solver(
+                self.gram, arrays.smoothness * arrays.active, arrays.pose_basis
+            )
         )
         self.solve_pose = jax.jit(
             constrained_pose_inverse(solve_pose, spec, arrays, lambda value: value)
@@ -402,7 +414,11 @@ class _HostSystem:
 
     def schur(self, pair: BlockVector) -> BlockVector:
         dx = pair[0]
-        if self.spec.has_smoothness or self.spec.refinement is not None:
+        if (
+            self.spec.has_smoothness
+            or self.spec.refinement is not None
+            or self.arrays.pose_basis is not None
+        ):
             _, rows, _, _ = self.run("rows", dx)
             dp = -np.asarray(self.solve_pose(jnp.asarray(rows)))
             ax, _, _, _ = self.run("normal", dx, dp)

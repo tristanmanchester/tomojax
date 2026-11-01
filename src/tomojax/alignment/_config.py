@@ -197,8 +197,8 @@ class AlignConfig:
     gauge_priors : Mapping[str, object] | None, optional
         Named priors required by the selected gauge policy, or None.
     pose_model : PoseModel, optional
-        Per-view motion representation: "per_view", "polynomial" or "spline". Default is
-        'per_view'.
+        Motion representation: "per_view", "polynomial" or "spline". Both joint and
+        fixed-volume solvers support smooth models. Default is 'per_view'.
     pose_translation_frame : PoseTranslationFrame, optional
         Translation basis: "object" or lab-frame "detector". Translations are physical
         lengths, not pixels. Default is 'object'.
@@ -300,11 +300,8 @@ class AlignConfig:
         self._normalize_dof_options()
         self._normalize_gauge_options()
         self._normalize_pose_model_options()
-        if self.gn_coupling == "joint":
-            if self.pose_model != "per_view":
-                raise ValueError("joint GN requires pose_model='per_view'")
-            if self.tv_weight != 0 and self.regulariser != "huber_tv":
-                raise ValueError("joint GN supports Huber-TV or zero volume regularisation")
+        if self.gn_coupling == "joint" and self.tv_weight != 0 and self.regulariser != "huber_tv":
+            raise ValueError("joint GN supports Huber-TV or zero volume regularisation")
 
     def _normalize_reconstruction_options(self) -> None:
         if self.reconstruction not in {"fista", "spdhg"}:

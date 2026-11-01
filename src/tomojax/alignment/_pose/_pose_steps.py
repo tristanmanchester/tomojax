@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._config import AlignConfig
+from tomojax.alignment._model.dofs import DOF_INDEX
 from tomojax.alignment._model.motion_models import (
     expand_motion_coefficients,
     fit_motion_coefficients,
@@ -21,7 +22,7 @@ from tomojax.alignment._observer import OuterStat
 from tomojax.alignment._results import _set_float_stat
 
 from ._coupled_objective import CoupledObjective, VolumeHandle
-from ._pose_block import smooth_pose_candidate
+from ._pose_block import feasible_pose_scale, smooth_pose_candidate
 from ._pose_candidates import (
     GNCandidateContext,
     _evaluate_align_loss,
@@ -311,9 +312,26 @@ def _run_coupled_alignment_step(
     before = float(objective.loss(pose_params_in, vol.get()))
     result = objective.update(pose_params_in, vol)
     dx, dp = result.increment
+    maximum_scale = 1.0
+    if cfg.pose_model != "per_view":
+        dp = jnp.asarray(dp)
+        gauge_dofs = (
+            (*gauge.gauge_dofs, "dy")
+            if constraints.active_mask[5] and "dy" not in gauge.gauge_dofs
+            else gauge.gauge_dofs
+        )
+        for name in gauge_dofs:
+            column = DOF_INDEX[name]
+            dp = dp.at[:, column].add(-jnp.mean(dp[:, column]))
+        maximum_scale = float(
+            feasible_pose_scale(
+                pose_params_in, dp, constraints.bounds_lower, constraints.bounds_upper
+            )
+        )
     volume_out, params_out, after, scale = None, pose_params_in, before, 0.0
     if bool(result.finite) and math.isfinite(before):
-        for trial_scale in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625):
+        for fraction in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625):
+            trial_scale = fraction * maximum_scale
             trial_volume = _joint_trial_volume(
                 vol.get(), dx, trial_scale, nonnegative=cfg.nonnegative
             )

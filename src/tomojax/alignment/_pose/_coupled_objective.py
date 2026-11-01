@@ -163,6 +163,7 @@ def _shared(arrays: CoupledArrays, split: ViewSplit) -> CoupledArrays:
         det_grid=(split.everywhere(arrays.det_grid[0]), split.everywhere(arrays.det_grid[1])),
         frames=None if arrays.frames is None else split.place(arrays.frames, repeat=True),
         counts=split.place(split.counted().astype(jnp.float32)),
+        pose_basis=None if arrays.pose_basis is None else split.place(arrays.pose_basis),
     )
 
 
@@ -233,6 +234,7 @@ def build_coupled_objective(
     *,
     refinement: JointRefinement | None = None,
     private: bool = False,
+    pose_basis: jax.Array | None = None,
 ) -> CoupledObjective:
     """The coupled objective; ``private`` volumes are (x, y, z), z contiguous, on parallel beams."""
     cfg = ctx.cfg
@@ -275,6 +277,7 @@ def build_coupled_objective(
         smoothness=ctx.smoothness_weights,
         det_grid=ctx.det_grid,
         frames=ctx.frames,
+        pose_basis=pose_basis,
     )
     split = view_split(shared_devices(), ctx.n_views)
     if split is not None:

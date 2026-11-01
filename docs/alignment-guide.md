@@ -255,21 +255,26 @@ pilot it left rotation errors of 0.1–1° that the coupled solver removes.
 
 The default pose model is `per_view`, which optimises an independent pose for
 every projection. Use a smooth model when you expect the motion to change
-smoothly over the scan. Smooth models need the alternating solver; put both in
-a TOML file, here `spline.toml`:
+smoothly over the scan. The joint solver fits its trajectory coefficients
+together with the image. For example, put these settings in `spline.toml`:
 
 ```toml
-gn_coupling = "fixed_volume"
+gn_coupling = "joint"
 pose_model = "spline"
-knot_spacing = 8
+knot_spacing = 128
+pose_translation_frame = "detector"
 ```
 
 ```bash
 uv run --no-sync tomojax align corrected.nxs -o aligned.nxs --mode pose --config spline.toml
 ```
 
-Smooth models reduce degrees of freedom but can hide abrupt jumps or outlier
-views.
+The spacing is in acquired views; increase it for a lower-dimensional path,
+decrease it to follow faster changes. Polynomial models use `degree` instead.
+Detector-frame translations avoid the unobservable object-frame translation
+combinations that appear as the sample rotates. Smooth models reduce degrees
+of freedom but cannot represent abrupt jumps; inspect the recovered images
+and evaluate held-out projections rather than relying on training loss.
 
 ## Calibrate the detector centre
 

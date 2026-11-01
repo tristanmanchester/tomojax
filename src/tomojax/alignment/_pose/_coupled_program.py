@@ -37,7 +37,7 @@ from . import _matching_model
 from ._coupled_linear import CoupledLinearResult, solve_coupled_normal, solve_schur_normal
 from ._coupled_vectors import BlockVector
 from ._matching_model import JointRefinement
-from ._pose_block import pose_block_solver
+from ._pose_block import pose_block_solver, trajectory_block_solver, trajectory_projector
 from ._pose_jacobian import PoseJacobianOptions, pose_prediction_and_columns
 
 if TYPE_CHECKING:
@@ -107,6 +107,7 @@ class CoupledArrays(NamedTuple):
     frames: jax.Array | None = None
     # Which views count, with a split: its padding views do not.
     counts: jax.Array | None = None
+    pose_basis: jax.Array | None = None
 
 
 def volume_regularisation(x: jax.Array, *, spec: CoupledSpec) -> jax.Array:
@@ -138,6 +139,7 @@ def _view_specs(arrays: CoupledArrays) -> CoupledArrays:
         "det_grid": (whole, whole),
         "frames": None if arrays.frames is None else cut,
         "counts": cut,
+        "pose_basis": None if arrays.pose_basis is None else cut,
     }
     return CoupledArrays._make(specs[name] for name in CoupledArrays._fields)
 
@@ -176,9 +178,13 @@ class _Shares:
         return self.mine(value), lambda change: self.mine(derivative(self.whole(change)))
 
     def pose_solver(
-        self, gram: jax.Array, weights: jax.Array, *, has_smoothness: bool
+        self, gram: jax.Array, weights: jax.Array, *, has_smoothness: bool, basis=None
     ) -> Callable[[jax.Array], jax.Array]:
         """:func:`pose_block_solver` of the shares' ``gram``; smoothness couples all views."""
+        if basis is not None:
+            every = self.whole(gram.reshape(self.n, -1)).reshape(-1, *gram.shape[1:])
+            solve = trajectory_block_solver(every, weights, self.whole(basis))
+            return lambda rows: self.mine(solve(self.whole(rows)))
         if self.split is None or not has_smoothness:
             return pose_block_solver(gram, weights, has_smoothness=has_smoothness)
         every = self.whole(gram.reshape(self.n, -1)).reshape(-1, *gram.shape[1:])
@@ -477,7 +483,10 @@ def _build_program(
     counts = arrays.counts if arrays.counts is not None else jnp.ones(n_views, jnp.float32)
     movable = counts[:, None] * active  # pose rows that may change
     predict_columns = physical_columns(spec, arrays)
-    project_pose = constrained_pose_inverse(lambda value: value, spec, arrays, across)
+
+    project_pose = constrained_pose_inverse(
+        trajectory_projector(arrays.pose_basis, across), spec, arrays, across
+    )
     regularisation = partial(volume_regularisation, spec=spec)
     smoothness = partial(pose_smoothness, weights=arrays.smoothness)
 
@@ -583,6 +592,7 @@ def _build_program(
             gram + cfg.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype),
             arrays.smoothness * active,
             has_smoothness=spec.has_smoothness,
+            basis=arrays.pose_basis,
         )
 
         solve_pose = constrained_pose_inverse(solve_pose, spec, arrays, across)
