@@ -42,6 +42,13 @@ listed with how to check a result in the
   interpolation branches. A central finite difference across a boundary can
   disagree with that derivative, and finite gradients alone do not prove
   reliable pose recovery.
+- Automatic laminography refines on every native detector sample at the input
+  voxel pitch over the whole selected support, and that image must fit the
+  device. A broad unresolved support can extend well beyond the detector's
+  field of view and need several times the card's memory; the alignment then
+  stops at that allocation. Pass `grid=` to choose a smaller physical region,
+  which leaves any attenuation outside it unmodelled; see
+  [real laminography](real-laminography.md).
 
 ## Detector-ring correction
 
