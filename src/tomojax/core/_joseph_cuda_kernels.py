@@ -125,14 +125,19 @@ def gather_kernel(*, z_fast: bool = False) -> Any:
 
 _FORWARD_SOURCE = r"""
 __device__ float sample(const float* x, int a, int k, int b, int c,
-                       int nx, int ny, int nz, int nb, int nc) {
+                       int nx, int ny, int nz, int nb, int nc, int z0, int depth) {
     if (b<0 || b>=nb || c<0 || c>=nc) return 0.f;
-    if (UNIFORM) return 1.f;
     int ix=a==0?k:(a==1?c:b), iy=a==0?b:(a==1?k:c), iz=a==0?c:(a==1?b:k);
+    if (SLAB) {
+        iz -= z0;
+        if (iz < 0 || iz >= depth) return 0.f;
+        nz = depth;
+    }
+    if (UNIFORM) return 1.f;
     return x[VOXEL(INDEX, ix, iy, iz)];
 }
 extern "C" __global__ void forward(const float* coeff, const float* x, float* out,
-        int nx,int ny,int nz,int nu,int nv,int nviews) {
+        int nx,int ny,int nz,int nu,int nv,int nviews,int z0,int depth) {
     // TILE_V lanes follow v, contiguous in the volume's z when Z_FAST.
     int tiles_v=(nv+TILE_V-1)/TILE_V;
     int tile=blockIdx.x/nviews, view=blockIdx.x%nviews;
@@ -144,16 +149,18 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
     int na=a==0?nx:(a==1?ny:nz),nb=a==0?ny:(a==1?nz:nx),nc=a==0?nz:(a==1?nx:ny);
     float pb=c[1]*u+c[2]*v,pc=c[5]*u+c[6]*v;
     float total=0.f;
-    float low=0.f, high=na-1.f;
+    float low=SLAB && a==2?z0:0.f, high=SLAB && a==2?z0+depth-1.f:na-1.f;
     for (int d=0;d<2;d++) {
         float p=d?pc:pb, slope=d?c[7]:c[3], offset=d?c[8]:c[4];
         float size=d?nc:nb, start=p+offset;
+        bool z_axis=SLAB && ((d==0 && a==1) || (d==1 && a==0));
+        float lower=z_axis?z0:0.f, upper=z_axis?z0+depth:size;
         // Bound coordinate roundoff before computing a support interval.
         float margin=8*1.1920928955078125e-7f*(fabsf(p)+fabsf(offset)+fabsf(slope)*na+1.f);
         if (slope==0.f) {
-            if (start < -1.f-margin || start > size+margin) { low=na; high=-1.f; }
+            if (start < lower-1.f-margin || start > upper+margin) { low=na; high=-1.f; }
         } else {
-            float a=(-1.f-margin-start)/slope, b=(size+margin-start)/slope;
+            float a=(lower-1.f-margin-start)/slope, b=(upper+margin-start)/slope;
             low=fmaxf(low,fminf(a,b)); high=fminf(high,fmaxf(a,b));
         }
     }
@@ -174,14 +181,14 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
         if(!valid) continue;
         float qb=pb+(c[3]*k+c[4]),qc=pc+(c[7]*k+c[8]);
         float val;
-        if (UNIFORM && qb>=0.f && qb<(float)(nb-1) && qc>=0.f && qc<(float)(nc-1)) {
+        if (UNIFORM && !SLAB && qb>=0.f && qb<(float)(nb-1) && qc>=0.f && qc<(float)(nc-1)) {
             val=1.f;
         } else {
             int ib=(int)floorf(qb),ic=(int)floorf(qc);
             float wb=qb-ib,wc=qc-ic;
-            val=(sample(x,a,k,ib,ic,nx,ny,nz,nb,nc)*(1-wc)
-                  +sample(x,a,k,ib,ic+1,nx,ny,nz,nb,nc)*wc)*(1-wb)
-                 +(sample(x,a,k,ib+1,ic,nx,ny,nz,nb,nc)*(1-wc)+sample(x,a,k,ib+1,ic+1,nx,ny,nz,nb,nc)*wc)*wb;
+            val=(sample(x,a,k,ib,ic,nx,ny,nz,nb,nc,z0,depth)*(1-wc)
+                  +sample(x,a,k,ib,ic+1,nx,ny,nz,nb,nc,z0,depth)*wc)*(1-wb)
+                 +(sample(x,a,k,ib+1,ic,nx,ny,nz,nb,nc,z0,depth)*(1-wc)+sample(x,a,k,ib+1,ic+1,nx,ny,nz,nb,nc,z0,depth)*wc)*wb;
         }
         // Keep the original sequential additions, even for uniform support.
         total+=val*c[9];
@@ -192,11 +199,15 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
 
 
 @cache
-def forward_kernel(*, narrow: bool, uniform: bool = False, z_fast: bool = False) -> Any:
+def forward_kernel(
+    *, narrow: bool, uniform: bool = False, z_fast: bool = False, slab: bool = False
+) -> Any:
     import cupy as cp
 
-    source = _FORWARD_SOURCE.replace("INDEX", "int" if narrow else "long").replace(
-        "UNIFORM", str(int(uniform))
+    source = (
+        _FORWARD_SOURCE.replace("INDEX", "int" if narrow else "long")
+        .replace("UNIFORM", str(int(uniform)))
+        .replace("SLAB", str(int(slab)))
     )
     source = storage_source(z_fast=z_fast) + source.replace("TILE_V", "16" if z_fast else "1")
     return cp.RawModule(code=source, options=("--fmad=false",)).get_function("forward")

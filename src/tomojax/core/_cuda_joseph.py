@@ -245,7 +245,7 @@ def _launch_uniform(context: Any, out: Any, coeff: Any, *, grid: Grid, detector:
             kernel(
                 (tiles * (stop - start),), (THREADS,),
                 (geometry[start:stop], geometry, target[start:stop],
-                 *map(np.int32, (*shape, detector.nu, detector.nv, stop - start))),
+                 *map(np.int32, (*shape, detector.nu, detector.nv, stop - start, 0, grid.nz))),
             )  # fmt: skip
 
 
