@@ -805,13 +805,13 @@ def test_align_cli_settings_select_the_alternating_pose_solver(
     assert {stage["objective_kind"] for stage in stages} == {"fixed_volume"}
 
 
-def test_align_cli_rejects_settings_the_coupled_solver_cannot_use(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("model", ["spline", "polynomial"])
+def test_align_cli_selects_smooth_coupled_solver(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], model: str
 ) -> None:
-    with pytest.raises(SystemExit) as exc:
-        _ = _pose_plan(tmp_path, capsys, 'pose_model = "spline"\n')
-    assert exc.value.code == 2
-    assert "joint GN requires" in capsys.readouterr().err
+    plan = _pose_plan(tmp_path, capsys, f'pose_model = "{model}"\n')
+    assert plan["config"]["pose_model"] == model
+    assert plan["config"]["gn_coupling"] == "joint"
 
 
 @pytest.mark.parametrize("command", ["align", "recon"])

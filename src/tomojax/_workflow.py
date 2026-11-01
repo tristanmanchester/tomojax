@@ -268,12 +268,12 @@ def reconstruct(
     """Reconstruct ``scan`` with ``method``.
 
     ``auto`` (default) chooses Fourier inversion for unposed axial half-turn
-    scans, the guarded laminography workflow for oblique scans, matched CGLS
+    scans, coarse smooth-pose alignment for unposed oblique scans, matched CGLS
     for segmented cone geometry, and FBP/FDK otherwise.
-    An explicitly unrecorded axial centre may be inferred; oblique auto
-    may infer setup and support on a coarse grid before native refinement.
+    An explicitly unrecorded axial centre may be inferred. Oblique auto
+    preserves declared geometry and physical support on a bounded coarse grid.
     An explicit ``grid`` fixes the region and final voxel sampling instead;
-    automatic setup and motion still run.
+    automatic motion still runs.
     The scan and ``info["automatic"]``
     record those choices and limitations. Explicit methods bypass this policy.
 
@@ -748,7 +748,7 @@ def align(
     """Estimate ``scan``'s geometry corrections and reconstruct with them.
 
     ``mode="auto"`` selects centre estimation for axial parallel scans and
-    guarded setup/support/motion selection for unposed laminography. Its
+    coarse smooth-pose alignment for unposed laminography. Its
     conditional outcome and limitations are in ``info["automatic"]``.
     Centre estimation records its input/output physical detector coordinates;
     its success resolves only the reconstruction-only calibration limitation.
@@ -768,7 +768,7 @@ def align(
 
     ``grid`` overrides the scan's reconstruction grid, as :func:`reconstruct` does.
     In automatic laminography it fixes the region and final voxel sampling,
-    while setup and motion remain automatic; it is not inferred support.
+    while motion remains automatic; it is not inferred support.
 
     ``checkpoint`` is a file the alignment saves its progress to after each
     outer iteration. When that file holds a checkpoint of the same alignment

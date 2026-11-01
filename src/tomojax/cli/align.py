@@ -349,7 +349,7 @@ def _configuration(
             "mode": "auto",
             "status": "data_dependent",
             "reason": (
-                "Automatic calibration and region selection require the scan data; "
+                "Automatic alignment requires the scan data; "
                 "choose an explicit --mode for a static solver plan."
             ),
         }

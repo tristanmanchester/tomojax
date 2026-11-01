@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+Automatic unposed laminography now fits a smooth detector-frame trajectory on a
+bounded coarse grid, preserving declared geometry, physical support and native
+projections. It no longer guesses the axis, infers support, selects per-view
+motion candidates or forces native-grid refinement. Missing geometry needs an
+explicit setup or supplied geometry. Explicit `grid=` fixes output sampling.
+The coupled pose preset now uses detector-frame translations, matching the
+public pose mode; explicit object-frame trajectories remain available.
+
 Joint Gauss–Newton alignment now fits polynomial and spline pose trajectories
 directly, on resident and host-staged paths. Smooth steps respect pose bounds
 without per-view clipping; checkpoints retain their trajectory coefficients.

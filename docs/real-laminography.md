@@ -176,25 +176,23 @@ tj.save("aligned.nxs", result)
 tomojax align scan.nxs -o aligned.nxs
 ```
 
-Missing axis metadata triggers a data-driven signed-axis search, not an assumed
-tilt. Automatic unposed laminography uses a bounded working detector, excludes
-internal validation views from candidate setup and motion fitting, and selects a region
-before reconstructing all input views. Resolved regions compare the motion seed
-with joint refinement; broad regions compare it with zero motion. A candidate
-must improve both ordinary and high-pass held projection error to be retained.
-The selected image and poses then initialize joint refinement on all native
-detector samples at the input voxel pitch, retaining the selected physical support.
-The image itself must still fit the device; a broad unresolved support can exceed capacity.
-Pass an explicit `grid=` to `tj.align` or `tj.reconstruct` to choose the physical
-region and final sampling while retaining automatic setup and motion. The outcome
-labels this region as supplied, not inferred physical support.
+Automatic unposed laminography requires declared geometry. Missing axis metadata
+requires an explicit setup mode or caller-supplied geometry; no axis or support
+is guessed. The workflow fits a cubic spline directly in the joint image/pose
+solve, in detector dx/dz only. It uses a bounded coarse image (at most 16 million
+voxels), square detector binning toward 320 pixels across (without eliminating
+a thin detector axis), and four outer iterations.
+The physical support is preserved, including explicitly placed volume faces.
+The returned scan retains the original detector samples and fitted poses; the
+alignment image remains coarse. There is no forced native-grid refinement.
 
-Inspect the saved automatic outcome: an unresolved support or unsupported setup
-is reported as `limited`, with reasons. Held consistency does not establish
-physical pose or support truth. An unknown-axis estimate at a finite search
-boundary, or providing less than one working pixel of depth parallax across the
-detector field, is declined rather than used to infer a reconstruction region.
-Independent evaluation must reserve additional
-views before calling the workflow. Explicit `mode` and reconstruction `method`
-retain direct control; automatic reconstruction of a posed scan does not reset
-its corrections.
+Pass an explicit `grid=` to `tj.align` or `tj.reconstruct` to fix the physical
+region and output sampling. Explicit grids are not coarsened automatically, so
+choose a grid that fits the device. Use an explicit reconstruction method to
+reconstruct the corrected scan at your desired sampling.
+
+Inspect several slices and the recovered motion: smoothness and lower projection
+error do not establish physical pose truth. Reserve held-out views before calling
+the workflow for independent evaluation. Explicit alignment `mode` and reconstruction
+`method` retain direct control; automatic reconstruction of a posed scan preserves
+its grid and corrections.

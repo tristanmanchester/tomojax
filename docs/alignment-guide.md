@@ -47,8 +47,9 @@ command, `--no-poses` starts from the nominal geometry instead.
 `--checkpoint`). `--quality reference` runs slower, more conservative solver
 settings, and `--levels 4 2 1` sets the coarse-to-fine binning factors.
 `--dry-run` prints the resolved plan for an explicit mode as JSON without
-aligning. Automatic mode reports that calibration and region selection are
-data-dependent; it does not run them during a dry run.
+aligning. Automatic mode requires the scan data and does not run during a dry run.
+For declared laminography geometry it fits smooth detector motion on a bounded
+coarse image; it does not infer the axis or physical support.
 
 Expert settings are `tomojax.alignment.AlignConfig` fields: put them in a TOML
 file and pass it with `--config FILE` and an explicit `--mode`. Each replaces
@@ -146,7 +147,7 @@ samples finer than the grid, binning it also helps; see
 `grid=` aligns and reconstructs on another grid than the scan's, a region
 around the object or coarser voxels, as it does for `tj.reconstruct`. The
 returned volume is on that grid and `result.scan` carries it. Use an explicit
-mode with this override: automatic laminography selects its own grid and region.
+mode with this override: automatic laminography otherwise coarsens the supplied physical support.
 
 ```python
 region = tj.Grid(192, 192, 128, scan.grid.vx, scan.grid.vy, scan.grid.vz)

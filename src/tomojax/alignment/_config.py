@@ -384,6 +384,7 @@ def coupled_pose_defaults() -> dict[str, object]:
         "gn_coupling": "joint",
         "gn_joint_solver": "pose_eliminated",
         "pose_model": "per_view",
+        "pose_translation_frame": "detector",
         "ray_integrator": "joseph",
         "gather_dtype": "fp32",
         "loss": L2LossSpec(),
