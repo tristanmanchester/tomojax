@@ -20,6 +20,13 @@ Set `dy=0` explicitly when beam-direction motion is frozen; five-column legacy t
 and extra unnamed columns are no longer accepted by alignment, parameter export, or
 saved-geometry loading.
 
+CUDA Joseph FISTA can keep its three volume states in host memory or automatic
+temporary files when they exceed device memory. Ordinary TV uses exact
+finite-iteration halo tiles, retaining the resident solver's global norm,
+objective and momentum. Support masks, Huber-TV and ordered initialization
+remain resident-only. `reconstruct(..., "fista", out=...)` selects caller-owned
+host output, as does direct `fista_tv(out=...)`.
+
 `Rings` fits its responses on the means of about 512 contiguous angular bins
 of views (`views=512`, the new default) and corrects every view with them,
 several times faster than fitting every view; scans without a mirror axis fit

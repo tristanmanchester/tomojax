@@ -391,7 +391,7 @@ def _run_public_fista_reconstruction(
         grad_mode=grad_mode,
         devices=shared_devices() if cone else None,  # the run's, see tomojax.align
     )
-    return fista_tv(
+    volume, info = fista_tv(
         cast("Geometry", step.recon_geometry),
         step.grid,
         step.detector,
@@ -400,6 +400,8 @@ def _run_public_fista_reconstruction(
         config=fista_cfg,
         det_grid=None if cone else step.det_grid,
     )
+
+    return jnp.asarray(volume), info
 
 
 def _huber_fista_backend(

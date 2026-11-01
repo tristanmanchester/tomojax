@@ -194,3 +194,52 @@ def proximal(
         vmap_method="sequential",
     )
     return jax.lax.cond(lam > 0, lambda _: call(x, lam), lambda _: jnp.clip(x, lower, upper), None)
+
+
+def proximal_host(
+    source,
+    sink,
+    lam: float,
+    *,
+    iterations: int,
+    tau: float,
+    lower: float,
+    upper: float,
+) -> None:
+    """Apply the same finite-step proximal to host volumes, one haloed z slab at a time.
+
+    ``source`` is a HostVolume; ``sink(first, stop, values)`` consumes each
+    nonoverlapping output slab without overwriting source. The global finite-grid
+    ``tau`` is retained: recomputing it for each tile would change the solver.
+    No full-sized dual fields or device input/output volumes are allocated.
+    """
+    import cupy as cp
+
+    shape = source.array.shape
+    plane = math.prod(shape[1:])
+    free = cp.cuda.runtime.memGetInfo()[0] + cp.get_default_memory_pool().free_bytes()
+    halo = iterations if lam > 0 else 0
+    width = min(shape[0], max(2 * halo + 1, int(0.45 * free) // (5 * 4 * plane)))
+    core = width - 2 * halo if width < shape[0] else shape[0]
+    radius = cp.asarray(lam, cp.float32)
+    options = {
+        "kernels": _kernels(narrow=width * plane < 2**31, device=cp.cuda.Device().id),
+        "iterations": iterations,
+        "tau": np.float32(tau),
+        "lower": np.float32(lower),
+        "upper": np.float32(upper),
+    }
+    for first in range(0, shape[0], core):
+        last = min(shape[0], first + core)
+        start, stop = max(0, first - halo), min(shape[0], last + halo)
+        tile = source.view(start, stop)
+        if lam > 0 and iterations > 0:
+            arena = cp.zeros((4, tile.size), cp.float32)
+            _iterate(tile, tuple(arena[i] for i in range(3)), arena[3], arena[3], radius, **options)
+            result = arena[3].reshape(tile.shape)
+        else:
+            result = cp.clip(tile, lower, upper)
+        sink(first, last, result[first - start : last - start])
+        del tile, result
+        if lam > 0 and iterations > 0:
+            del arena

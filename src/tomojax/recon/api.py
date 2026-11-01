@@ -267,8 +267,8 @@ def reconstruct_arrays(
     warm_start : bool, optional
         Start iterative reconstruction from FBP or FDK. Default is False.
     out : numpy.ndarray or None, optional
-        Writable float32 ``(nz, ny, nx)`` host storage for FBP/FDK, Fourier, or
-        cone-beam CGLS, SIRT and MLEM. None lets the method select storage;
+        Writable float32 ``(nz, ny, nx)`` host storage for FBP/FDK, Fourier,
+        CUDA Joseph FISTA, or cone-beam CGLS, SIRT and MLEM. None selects storage;
         other methods do not accept out.
 
     Returns
@@ -301,9 +301,9 @@ def reconstruct_arrays(
             out=out,
         )
         return volume, {"config": cfg, "host_slabs": True, "backend": backend}
-    if out is not None and method not in {"fbp", "cgls", "sirt", "mlem"}:
+    if out is not None and method not in {"fbp", "fista", "cgls", "sirt", "mlem"}:
         raise ValueError(f"method {method!r} does not take out")
-    if out is not None and method != "fbp":
+    if out is not None and method not in {"fbp", "fista"}:
         from tomojax.core.geometry.cone import is_cone_beam
 
         if not is_cone_beam(geometry):

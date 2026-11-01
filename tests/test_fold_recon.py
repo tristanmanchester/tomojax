@@ -23,7 +23,14 @@ from tomojax.recon import FistaConfig
 
 
 @pytest.mark.numerical
-def test_train_fold_keeps_the_requested_ray_integrator():
+def test_train_fold_keeps_the_requested_ray_integrator(monkeypatch):
+    original = fold_recon.fista_tv
+
+    def host_result(*args, **kwargs):
+        volume, info = original(*args, **kwargs)
+        return np.asarray(volume), info
+
+    monkeypatch.setattr(fold_recon, "fista_tv", host_result)
     grid, detector = Grid(2, 1, 1, 0.8, 1.1, 1.3), Detector(4, 3, 0.7, 0.9)
     geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
     state = AlignmentState.zeros(n_views=3)
@@ -59,6 +66,7 @@ def test_train_fold_keeps_the_requested_ray_integrator():
             ray_integrator="exact",
         ),
     )
+    assert isinstance(result, jax.Array)
     np.testing.assert_allclose(np.asarray(result).ravel(), truth, rtol=2e-4, atol=2e-5)
 
 

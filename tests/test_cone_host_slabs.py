@@ -3,6 +3,7 @@
 from dataclasses import replace
 from importlib import import_module
 import os
+import weakref
 
 import numpy as np
 import pytest
@@ -242,6 +243,20 @@ def test_host_volume_transfers_leading_slabs_and_short_tail(tmp_path, layout):
     finally:
         volume.close()
     np.testing.assert_array_equal(output, values + 1)
+
+
+@pytest.mark.gpu
+def test_upload_keeps_source_until_copy_completion():
+    engine = _cone_slabs.CudaEngine(GRID, DETECTOR)
+    source = np.arange(8, dtype=np.float32)
+    reference = weakref.ref(source)
+    uploaded = engine.upload(source)
+    del source
+    assert reference() is not None
+    engine.xp.cuda.get_current_stream().synchronize()
+    engine.upload(np.zeros(1, np.float32))
+    assert reference() is None
+    np.testing.assert_array_equal(uploaded.get(), np.arange(8, dtype=np.float32))
 
 
 def test_row_reader_reads_each_row_once_per_sweep(host):

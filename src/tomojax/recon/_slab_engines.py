@@ -7,6 +7,7 @@ it receives place both (see :mod:`._cone_slabs`).
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field, replace
 from functools import cache, partial
 from typing import TYPE_CHECKING, Any, Protocol
@@ -71,6 +72,8 @@ class CudaEngine:
         self.xp = cp
         self._grids: dict[int, Grid] = {}
         self._detectors: dict[int, Detector] = {}
+        self._uploads: deque[tuple[Any, np.ndarray]] = deque()
+        self._upload_bytes = 0
 
     def _grid(self, nz: int) -> Grid:
         if nz not in self._grids:
@@ -83,8 +86,26 @@ class CudaEngine:
         return self._detectors[rows]
 
     def upload(self, array: np.ndarray) -> Any:
+        """Upload with at most 256 MiB of pending payload, or one larger slab.
+
+        Keep source storage until its copy completes. Small transfers retain
+        launch-ahead; a full-volume forward cannot queue unbounded pinned
+        staging behind its kernels. Source references and allocator caches
+        can occupy more host memory than the pending transfer payload.
+        """
         self.traffic["to_device"] += array.nbytes
-        return self.xp.asarray(array)
+        pending = self._uploads
+        while pending and pending[0][0].done:
+            self._upload_bytes -= pending.popleft()[1].nbytes
+        while pending and self._upload_bytes + array.nbytes > (256 << 20):
+            pending[0][0].synchronize()
+            self._upload_bytes -= pending.popleft()[1].nbytes
+        value = self.xp.asarray(array)
+        event = self.xp.cuda.Event(disable_timing=True)
+        self.xp.cuda.get_current_stream().record(event)
+        pending.append((event, array))
+        self._upload_bytes += array.nbytes
+        return value
 
     def download(self, array: Any, out: np.ndarray) -> None:
         self.traffic["to_host"] += out.nbytes

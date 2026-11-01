@@ -26,7 +26,7 @@ set the environment before the first JAX operation in a notebook.
 | Fourier (axial parallel only) | Host arrays or memmaps, read by row slabs | Always returned in host slabs |
 | FDK (cone beam) | Read from host memory a slab's detector rows at a time when the volume is large | Moves to host z-slabs automatically when it does not fit |
 | CGLS | Streamed when they would take more than 40% of free GPU memory | On the GPU, with about five volume-sized work arrays |
-| FISTA-TV | Streamed under the same rule | On the GPU, with about seven volumes |
+| FISTA-TV | Streamed under the same rule; host-volume sweeps keep a detector-row ring | CUDA Joseph moves unmasked ordinary-TV state to host slabs when it does not fit |
 | SPDHG-TV | Streamed under the same rule, with its sinogram-sized dual and any weights also kept in host memory | On the GPU, with about eight volumes |
 
 `stream_projections = true` or `false` in the method's configuration (a
@@ -37,10 +37,24 @@ Streamed CGLS solves the equivalent normal equations, which square the
 condition number of each step's recurrence. It recomputes the exact gradient
 periodically, as in-core CGLS recomputes its residual.
 
-The iterative solvers need the whole volume and their work arrays on the GPU;
-a volume larger than the GPU cannot be reconstructed iteratively. On CUDA they
-keep their volumes in a private z-contiguous order and convert once at entry and
-exit, which needs one volume-sized copy at those two points. `tj.project`,
+CUDA Joseph FISTA with ordinary TV, no support mask and no ordered-subset
+initializer switches to host slabs when its estimated resident state will not
+fit. It retains the same global objective, power estimate and finite-iteration
+TV proximal; the planes are not reconstructed independently. Three host volumes
+hold the iterate, extrapolate and gradient. If they would occupy more than half
+of available host RAM, they are anonymous temporary files in the standard
+`TMPDIR` directory. Use a fast local disk with room for the complete state;
+the returned NumPy memmap owns its unlinked file until its last reference is
+released. Passing `out=` to `tj.reconstruct(scan, "fista", out=volume)`
+forces this route and fills the supplied float32 array or memmap.
+`info["host_slabs"]` identifies this storage route. The exact TV halo
+uses `tv_prox_iterations` planes on each side, so very large proximal iteration
+counts can still exhaust device workspace. Huber-TV, masks, ordered initialization
+and multi-device FISTA still require resident volume state.
+
+Resident CUDA cone/CGLS solvers keep their volumes in a private z-contiguous
+order and convert once at entry and exit, which needs one volume-sized copy
+at those two points. `tj.project`,
 `tj.backproject` and `tj.Projector` make the same copy when one more volume fits
 in free GPU memory and otherwise read the `(z, y, x)` array in place; the result
 is the same to the bit. An axial parallel-beam projection never needs the copy:

@@ -332,7 +332,8 @@ def reconstruct(
     grid : Grid or None, optional
         Output grid; None retains the scan's grid.
     out : numpy.ndarray or None, optional
-        Writable float32 output or memmap for fbp/fourier and cone cgls/sirt/mlem;
+        Writable float32 output or memmap for fbp/fourier, CUDA Joseph fista,
+        and cone cgls/sirt/mlem;
         must not overlap input.
     config : reconstruction config or None, optional
         Method-specific settings; explicit keywords replace its fields.

@@ -199,6 +199,17 @@ noisy data. The default schedule is not an automatic image-quality criterion.
 Each new level shape can require compilation. A numerical breakdown at any
 level raises `FloatingPointError`.
 
+CUDA Joseph `fista_tv` uses host slabs automatically when resident state
+would exceed device memory; its `out=` argument explicitly selects host output.
+The host route supports ordinary TV and box constraints without a support mask
+or ordered-subset initialization. It uses the same global power estimate,
+clipped momentum, objective stopping and finite-step TV proximal, not independent
+slice solves. Three host volumes move to unlinked temporary files in `TMPDIR`
+when their aggregate exceeds half of available host RAM. The output owns its
+file until released. Projections and a haloed TV tile still need device space;
+the exact halo grows with `tv_prox_iterations`. Host execution is not a
+differentiable layer.
+
 CGLS, FISTA-TV and SPDHG-TV share one projector choice. The default
 `projector_model="auto"` uses bilinear voxel-centre plane integration (Joseph)
 with CUDA kernels on CUDA; its matched CUDA transpose gathers into voxels

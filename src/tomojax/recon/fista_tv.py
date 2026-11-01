@@ -95,7 +95,7 @@ class FistaRuntime:
     constraints: _FistaConstraints
     # None starts from zeros created inside the compiled solve, so the start
     # is not a separate argument buffer alongside the iterates.
-    x0: jnp.ndarray | None
+    x0: jnp.ndarray | np.ndarray | None
     poses: jnp.ndarray
     # None: estimated inside the compiled solve (batched operators), see _run_fista_scan.
     lipschitz: float | None
@@ -103,33 +103,12 @@ class FistaRuntime:
     detector_grid: tuple[jnp.ndarray, jnp.ndarray] | None
     # (model, backend, views per batch) for the batched operators, or None for
     # the ray-model reference path.
-    projector: tuple[str, str, int] | None = field(metadata={"static": True})
+    projector: tuple[str | ConeModel, str, int] | None = field(metadata={"static": True})
     # The data argument is then a host_source key, read one batch at a time.
     stream: bool = field(default=False, metadata={"static": True})
     # The views shared among devices, the data placed accordingly; None for one.
     split: ViewSplit | None = field(default=None, metadata={"static": True})
     initial_order: jax.Array | None = None
-
-
-@dataclass(frozen=True)
-class _FistaResult:
-    volume: jnp.ndarray
-    losses: jnp.ndarray
-    lipschitz: float
-    effective_iterations: int
-    early_stop: bool
-    regulariser: Regulariser = field(metadata={"static": True})
-    huber_delta: float = field(metadata={"static": True})
-
-    def info(self) -> dict[str, object]:
-        return {
-            "loss": np.asarray(self.losses).tolist(),
-            "lipschitz": self.lipschitz,
-            "effective_iterations": self.effective_iterations,
-            "early_stop": self.early_stop,
-            "regulariser": self.regulariser,
-            "huber_delta": self.huber_delta,
-        }
 
 
 @dataclass(kw_only=True)
@@ -499,7 +478,7 @@ def _prepare_fista_runtime(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections: jnp.ndarray,
+    projections: jnp.ndarray | np.ndarray,
     *,
     init_x: jnp.ndarray | None,
     config: FistaConfig | None,
@@ -515,11 +494,7 @@ def _prepare_fista_runtime(
         cfg.huber_delta,
         context="fista_tv config",
     )
-    constraints = _FistaConstraints(
-        nonnegative=nonnegative,
-        lower_bound=lower_bound,
-        upper_bound=upper_bound,
-    )
+    constraints = _FistaConstraints(nonnegative, lower_bound, upper_bound)
     validate_grid(grid, "fista_tv grid")
     n_views, _, _ = validate_projection_stack(
         projections,
@@ -537,7 +512,11 @@ def _prepare_fista_runtime(
     if init_x is not None:
         validate_volume(init_x, grid, context="fista_tv init_x", name="init_x")
 
-    x0 = None if init_x is None else jnp.asarray(init_x, dtype=jnp.float32)
+    x0 = (
+        None
+        if init_x is None
+        else (np if isinstance(init_x, np.ndarray) else jnp).asarray(init_x, dtype=np.float32)
+    )
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="fista_tv geometry")
     projector = _batched_projector(cfg, n_views, det_grid, geometry, detector)
@@ -710,7 +689,7 @@ def _initial_fista_state(grid: Grid, runtime: FistaRuntime) -> FistaScanState:
     x0 = runtime.x0
     if x0 is None:
         x0 = jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
-    x0 = _feasible_volume(x0, runtime)
+    x0 = _feasible_volume(jnp.asarray(x0, jnp.float32), runtime)
     return FistaScanState(
         x=x0,
         z=x0,
@@ -854,19 +833,6 @@ def _run_fista_scan(
     return carry_final, jnp.asarray(L, jnp.float32)
 
 
-def _emit_fista_callback(callback: LossCallback | None, result: _FistaResult) -> None:
-    if result.losses.size == 0:
-        return
-    final_step = max(result.effective_iterations - 1, 0)
-    emit_loss_callback_endpoints(
-        callback,
-        (
-            (0, float(result.losses[0])),
-            (final_step, float(result.losses[final_step])),
-        ),
-    )
-
-
 def fista_tv(
     geometry: Geometry,
     grid: Grid,
@@ -877,7 +843,8 @@ def fista_tv(
     config: FistaConfig | None = None,
     callback: LossCallback | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> tuple[jnp.ndarray, dict[str, object]]:
+    out: np.ndarray | None = None,
+) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Run FISTA with TV regularization using an explicit solver configuration.
 
     If ``callback`` is provided, it fires on the first recorded loss sample and on
@@ -906,9 +873,15 @@ def fista_tv(
         Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
         None uses the canonical detector grid.
 
+    out : numpy.ndarray or None, optional
+        Writable float32 host output. CUDA Joseph solves use host slabs when
+        supplied, or automatically when their resident state exceeds device memory.
+        The host route supports ordinary TV without support masks or ordered
+        initialization. Large host state uses temporary files in TMPDIR.
+
     Returns
     -------
-    volume : jax.Array
+    volume : jax.Array or numpy.ndarray
         Float32 reconstruction of shape ``(nz, ny, nx)``.
     info : dict
         Solver diagnostics and effective work; a small residual or iteration
@@ -947,30 +920,43 @@ def fista_tv(
         config=config,
         det_grid=det_grid,
     )
-    if runtime.stream:
-        with host_source(np.asarray(projections)) as key:
-            final, lipschitz = _run_fista_scan(grid, detector, key, runtime)
-            final.x.block_until_ready()
-    elif runtime.split is not None:  # each device's views on that device, once
-        data = runtime.split.place(projections)
-        final, lipschitz = _run_fista_scan(grid, detector, data, runtime.split.everywhere(runtime))
-        final = final._replace(x=runtime.split.gather(final.x))
+    from ._fista_host import solve_on_host
+
+    hosted = solve_on_host(geometry, grid, detector, projections, runtime, out=out)
+    if hosted is None:
+        if runtime.stream:
+            with host_source(np.asarray(projections)) as key:
+                final, lipschitz = _run_fista_scan(grid, detector, key, runtime)
+                final.x.block_until_ready()
+        elif runtime.split is not None:
+            data = runtime.split.place(projections)
+            final, lipschitz = _run_fista_scan(
+                grid, detector, data, runtime.split.everywhere(runtime)
+            )
+            final = final._replace(x=runtime.split.gather(final.x))
+        else:
+            # Store residuals rather than another volume when that is the smaller object.
+            run = (
+                run_owned_fista if use_owned_fista(grid, projections, runtime) else _run_fista_scan
+            )
+            final, lipschitz = run(grid, detector, projections, runtime)
+        volume = final.x
+        losses, count = np.asarray(final.loss).tolist(), int(final.iters_done)
+        info = {
+            "loss": losses,
+            "lipschitz": float(lipschitz),
+            "effective_iterations": count,
+            "early_stop": bool(final.done),
+            "regulariser": runtime.regulariser,
+            "huber_delta": runtime.huber_delta,
+        }
     else:
-        # Store residuals rather than another volume when that is the smaller object.
-        run = run_owned_fista if use_owned_fista(grid, projections, runtime) else _run_fista_scan
-        final, lipschitz = run(grid, detector, projections, runtime)
-    result = _FistaResult(
-        volume=final.x,
-        losses=final.loss,
-        lipschitz=float(lipschitz),
-        effective_iterations=int(final.iters_done),
-        early_stop=bool(final.done),
-        regulariser=runtime.regulariser,
-        huber_delta=runtime.huber_delta,
-    )
-    _emit_fista_callback(callback, result)
-    info = result.info()
+        volume, info = hosted
+        losses, count = info["loss"], info["effective_iterations"]
+    if losses:
+        final_step = max(count - 1, 0)
+        emit_loss_callback_endpoints(callback, ((0, losses[0]), (final_step, losses[final_step])))
     if runtime.config.initial_epochs:
         info["initial_epochs"] = runtime.config.initial_epochs
         info["initial_updates"] = runtime.config.initial_epochs * runtime.config.initial_subsets
-    return result.volume, info
+    return volume, info

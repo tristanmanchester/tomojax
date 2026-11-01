@@ -74,7 +74,7 @@ def reconstruct_train_fold_nograd(
                 gather_dtype="fp32",
             ),
         )
-        return x, _fold_metadata(valid_idx, cfg, info)
+        return jnp.asarray(x), _fold_metadata(valid_idx, cfg, info)
     det_grid = apply_setup_to_detector_grid(
         detector,
         state.setup,
@@ -96,7 +96,7 @@ def reconstruct_train_fold_nograd(
         ),
         det_grid=det_grid,
     )
-    return x, _fold_metadata(valid_idx, cfg, info)
+    return jnp.asarray(x), _fold_metadata(valid_idx, cfg, info)
 
 
 def _fold_metadata(valid_idx: np.ndarray, cfg: FistaConfig, info: object) -> dict[str, object]:
