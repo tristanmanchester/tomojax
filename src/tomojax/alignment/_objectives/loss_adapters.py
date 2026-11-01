@@ -69,16 +69,6 @@ class LossAdapter:
         return jnp.float32(0.5) * jnp.vdot(residual, residual).real, jnp.float32(1.0)
 
 
-def _otsu_thresholds(targets: jnp.ndarray) -> np.ndarray:
-    Ys = np.asarray(targets)
-    return np.array([_compute_otsu_threshold(Ys[i]) for i in range(Ys.shape[0])], dtype=np.float32)
-
-
-def _otsu_mask(targets: jnp.ndarray, temp: float) -> jnp.ndarray:
-    thr = _otsu_thresholds(targets)
-    return jax.device_put(jax.nn.sigmoid((targets - jnp.asarray(thr)[:, None, None]) / temp))
-
-
 def _per_view_loss(state: LossState) -> PerViewLossFn:
     f = {"l2_otsu": _loss_l2_otsu_soft, "huber": _loss_huber}.get(state.kind, _loss_l2)
 
@@ -124,7 +114,12 @@ def loss_mask(spec: AlignmentLossSpec, targets: jnp.ndarray) -> jnp.ndarray | No
     """The per-pixel mask a loss derives from its targets once, or None."""
     if not isinstance(spec, L2OtsuLossSpec):
         return None
-    return _otsu_mask(targets, _safe_epsilon(loss_spec_params(spec), "temp", 0.5))
+    temp = _safe_epsilon(loss_spec_params(spec), "temp", 0.5)
+    # Each view's own Otsu threshold, softened by temp.
+    thresholds = np.array(
+        [_compute_otsu_threshold(view) for view in np.asarray(targets)], np.float32
+    )
+    return jax.device_put(jax.nn.sigmoid((targets - jnp.asarray(thresholds)[:, None, None]) / temp))
 
 
 def loss_adapter(spec: AlignmentLossSpec, mask: jnp.ndarray | None) -> LossAdapter:

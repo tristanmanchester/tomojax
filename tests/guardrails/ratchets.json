@@ -68,7 +68,7 @@
   "code_lines": {
     "(modules)": 3326,
     "_data": 2053,
-    "alignment": 16522,
+    "alignment": 16513,
     "backends": 615,
     "cli": 2572,
     "core": 13335,
@@ -104,9 +104,9 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "single_use_helpers": {
-    "tiny": 105,
+    "tiny": 102,
     "forwarders": 9,
-    "chained": 43
+    "chained": 41
   },
   "type_errors": {
     "reportArgumentType": 180,
