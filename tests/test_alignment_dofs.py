@@ -89,11 +89,11 @@ def test_alignment_qualities_size_reconstruction_batches_automatically(
     cfg = AlignConfig(quality=quality)
     assert cfg.views_per_batch == 0
     grid, detector = Grid(8, 8, 8, 1.0, 1.0, 1.0), Detector(8, 8, 1.0, 1.0)
-    resolved = loop._with_resolved_views_per_batch(cfg, n_views=12, grid=grid, detector=detector)
+    resolved = loop.with_resolved_views_per_batch(cfg, n_views=12, grid=grid, detector=detector)
     assert 1 <= resolved.views_per_batch <= 12
     assert cfg.views_per_batch == 0
     cfg.views_per_batch = 3
-    kept = loop._with_resolved_views_per_batch(cfg, n_views=12, grid=grid, detector=detector)
+    kept = loop.with_resolved_views_per_batch(cfg, n_views=12, grid=grid, detector=detector)
     assert kept is cfg and kept.views_per_batch == 3
 
 
