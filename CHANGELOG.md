@@ -6,6 +6,7 @@ Alignment no longer accepts `tv_weight`, `regulariser` or `huber_delta`.
 Its volume updates are unregularised, retaining positivity and increment damping.
 Apply TV or Huber-TV in the final `tj.reconstruct` call instead; reconstruction
 regularisation is unchanged.
+- Joint alignment now uses pose elimination only; remove the redundant `gn_joint_solver` selection.
 
 Automatic unposed laminography now fits a smooth detector-frame trajectory on a
 bounded coarse grid, preserving declared geometry, physical support and native

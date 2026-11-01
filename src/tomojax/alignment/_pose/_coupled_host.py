@@ -26,7 +26,7 @@ from tomojax.backends.host_stream import (
     write_block,
 )
 
-from ._coupled_linear import CoupledLinearResult, solve_coupled_normal, solve_schur_normal
+from ._coupled_linear import CoupledLinearResult, solve_schur_normal
 from ._coupled_program import (
     CoupledArrays,
     CoupledSpec,
@@ -35,7 +35,6 @@ from ._coupled_program import (
     free_volume_support,
     physical_columns,
     physical_projectors,
-    pose_metric_inverse,
     pose_smoothness,
     positive_sensitivity,
     volume_metric_inverse,
@@ -272,7 +271,6 @@ class _HostSystem:
             else project_pose
         )
         self.rhs = (gx, -np.asarray(self.project_pose((gp + np.asarray(sg)) * self.movable)))
-        self.pose_diagonal = np.diagonal(gram, axis1=1, axis2=2)
         self.gram = jnp.asarray(gram) + spec.gn_damping * jnp.eye(p.shape[1], dtype=p.dtype)
         solve_pose = (
             pose_block_solver(
@@ -354,37 +352,22 @@ class _HostSystem:
 
     def solve(self):
         spec = self.spec
-        if spec.gn_joint_solver == "stacked":
-            pose_inverse = pose_metric_inverse(
-                self.pose_diagonal, np.asarray(self.arrays.smoothness), spec.gn_damping
-            )
-            result = solve_coupled_normal(
-                self.normal,
-                self.rhs,
-                (self.inverse, pose_inverse),
-                max_iters=spec.gn_joint_iterations,
-                placement=HOST,
-                rtol=spec.gn_joint_rtol,
-                volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
-                volume_z_fast=spec.jacobian.z_fast,
-            )
-        else:
-            result = solve_schur_normal(
-                self.normal,
-                self.schur,
-                self.rhs,
-                self.inverse,
-                lambda dp: self.run("cross", dp=dp)[0],
-                lambda dx: self.run("rows", dx)[1],
-                lambda dp: np.asarray(self.solve_pose(jnp.asarray(dp))),
-                free=self.free,
-                movable=self.movable,
-                placement=HOST,
-                max_iters=spec.gn_joint_iterations,
-                rtol=spec.gn_joint_rtol,
-                volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
-                volume_z_fast=spec.jacobian.z_fast,
-            )
+        result = solve_schur_normal(
+            self.normal,
+            self.schur,
+            self.rhs,
+            self.inverse,
+            lambda dp: self.run("cross", dp=dp)[0],
+            lambda dx: self.run("rows", dx)[1],
+            lambda dp: np.asarray(self.solve_pose(jnp.asarray(dp))),
+            free=self.free,
+            movable=self.movable,
+            placement=HOST,
+            max_iters=spec.gn_joint_iterations,
+            rtol=spec.gn_joint_rtol,
+            volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
+            volume_z_fast=spec.jacobian.z_fast,
+        )
         # Project before transfer, without allocating another host image.
         dx = np.asarray(result.increment[0])
         dx *= self.free

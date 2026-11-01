@@ -33,7 +33,7 @@ from tomojax.core.projector import forward_project_view_T, sum_backproject_views
 from tomojax.core.trilinear import exact_adjoint, exact_forward
 
 from . import _matching_model
-from ._coupled_linear import CoupledLinearResult, solve_coupled_normal, solve_schur_normal
+from ._coupled_linear import CoupledLinearResult, solve_schur_normal
 from ._coupled_vectors import BlockVector
 from ._matching_model import JointRefinement
 from ._pose_block import pose_block_solver, trajectory_block_solver, trajectory_projector
@@ -73,7 +73,6 @@ class CoupledSpec:
     nonnegative: bool
     gn_volume_damping: float
     gn_damping: float
-    gn_joint_solver: Literal["stacked", "pose_eliminated"]
     gn_joint_rtol: float
     gn_joint_iterations: int
     has_smoothness: bool
@@ -353,10 +352,6 @@ def free_volume_support(x, gradient, *, nonnegative):
 
 def volume_metric_inverse(bound, *, spec, array=jnp):
     return 1 / array.maximum(bound + spec.gn_volume_damping, spec.gn_volume_damping)
-
-
-def pose_metric_inverse(diagonal, smoothness, damping):
-    return 1 / (diagonal + 12 * smoothness**2 + damping)
 
 
 def data_residual_filter(spec, columns):
@@ -673,28 +668,7 @@ def _build_program(
         row_bound = across(over_batches(ones_body, volume_zeros))
         volume_inverse = volume_metric_inverse(row_bound, spec=spec)
         rhs = (-(free * gx), -gp)
-        if cfg.gn_joint_solver == "pose_eliminated":
-            return solve_pose_eliminated(ops, p, free, rhs, normal, volume_inverse)
-        pose_diagonal = (
-            jnp.sum(ops.cached**2, axis=2)
-            if ops.cached is not None
-            else jax.lax.map(
-                lambda i: jnp.sum(ops.view_columns(i) ** 2, axis=1), jnp.arange(n_views)
-            )
-        )
-        pose_diagonal = jnp.zeros_like(p).at[:, indices].set(pose_diagonal)
-        pose_inverse = pose_metric_inverse(pose_diagonal, arrays.smoothness, cfg.gn_damping)
-        step = solve_coupled_normal(
-            normal,
-            rhs,
-            (volume_inverse, pose_inverse),
-            max_iters=cfg.gn_joint_iterations,
-            rtol=cfg.gn_joint_rtol,
-            dot=block_dot,
-            volume_ramp=None if spec.refinement is None else spec.refinement.ramp_damping,
-            volume_z_fast=spec.jacobian.z_fast,
-        )
-        return step._replace(increment=(free * step.increment[0], project_pose(step.increment[1])))
+        return solve_pose_eliminated(ops, p, free, rhs, normal, volume_inverse)
 
     return update, loss
 

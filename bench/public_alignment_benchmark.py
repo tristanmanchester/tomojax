@@ -302,7 +302,6 @@ def one_run(
     ray_integrator: str = "sampled",
     gn_coupling: str = "fixed_volume",
     gn_jacobian: str = "central",
-    gn_joint_solver: str = "stacked",
     views_per_batch: int = 1,
     factors: tuple[int, ...] = (1,),
 ) -> dict[str, Any]:
@@ -340,7 +339,6 @@ def one_run(
     config = AlignConfig(
         ray_integrator=ray_integrator,
         gn_coupling=gn_coupling,
-        gn_joint_solver=gn_joint_solver,
         pose_translation_frame="detector",
         backend="cuda",
         gather_dtype="fp32",
@@ -408,7 +406,6 @@ def worker(args: argparse.Namespace) -> None:
                 args.ray_integrator,
                 args.gn_coupling,
                 args.gn_jacobian,
-                args.gn_joint_solver,
                 args.views_per_batch,
                 tuple(args.factors),
             )
@@ -442,9 +439,6 @@ def main() -> None:
     parser.add_argument("--ray-integrator", choices=("sampled", "exact"), default="sampled")
     parser.add_argument("--gn-coupling", choices=("fixed_volume", "joint"), default="fixed_volume")
     parser.add_argument("--gn-jacobian", choices=("central", "autodiff"), default="central")
-    parser.add_argument(
-        "--gn-joint-solver", choices=("stacked", "pose_eliminated"), default="stacked"
-    )
     parser.add_argument("--size", type=int, default=SIZE, help="Nominal grid size")
     parser.add_argument(
         "--phantom",
@@ -482,7 +476,6 @@ def main() -> None:
         "ray_integrator": args.ray_integrator,
         "gn_coupling": args.gn_coupling,
         "gn_jacobian": args.gn_jacobian,
-        "gn_joint_solver": args.gn_joint_solver,
         "views_per_batch": args.views_per_batch,
         "complete": False,
         "environment": environment(),
@@ -549,8 +542,6 @@ def main() -> None:
             args.gn_coupling,
             "--gn-jacobian",
             args.gn_jacobian,
-            "--gn-joint-solver",
-            args.gn_joint_solver,
             "--views-per-batch",
             str(args.views_per_batch),
             "--factors",

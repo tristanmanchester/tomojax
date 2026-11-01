@@ -300,7 +300,6 @@ def build_coupled_objective(
         nonnegative=bool(cfg.nonnegative),
         gn_volume_damping=float(cfg.gn_volume_damping),
         gn_damping=float(cfg.gn_damping),
-        gn_joint_solver=cfg.gn_joint_solver,
         gn_joint_rtol=float(cfg.gn_joint_rtol),
         gn_joint_iterations=int(cfg.gn_joint_iterations),
         has_smoothness=bool(cfg.w_rot or cfg.w_trans),

@@ -8,7 +8,7 @@ mode selection, and interpreting recovered parameters, start with the
 
 `tj.align` and `tomojax align` in `pose` and `cor-then-pose` modes start from
 `coupled_pose_config()`: the joint coupling with
-`gn_joint_solver="pose_eliminated"`, Joseph plane sampling
+pose elimination, Joseph plane sampling
 (`ray_integrator="joseph"`) and fp32 gathers. `cor` and `full` keep the
 fixed-volume coupling, also with Joseph sampling. `--dry-run` prints the full
 set for a mode. A bare `AlignConfig()` keeps the older alternating defaults,
@@ -93,22 +93,15 @@ requires compilation; this reuse is separate from the optional JAX persistent
 cache for different processes. On the six-cell free-voxel pilot, reuse made
 warm calls faster and left cold start-up and process GPU memory unchanged.
 
-The `gn_joint_solver="pose_eliminated"` method factors the pose block
-and runs PCG on the volume Schur system, then back-substitutes poses. It solves
-the same damped linear problem as the default `"stacked"` method, with the
-same joint residual threshold and nonlinear acceptance. Without pose smoothness,
-the factors are independent 5-by-5 blocks; with smoothness, a block-banded
-factorisation retains inter-view coupling with storage linear in view count.
-For polynomial/spline models, the pose block is reduced to the trajectory
-coefficients and factored densely; storage is quadratic in coefficient count,
-not view count. Box bounds shorten a smooth joint step rather than clipping
-individual views, so its trajectory stays in the chosen model.
-Damping and iteration budgets are unchanged. Independent dense, constrained
-workflow and CUDA checks pass. On the free-voxel pilot it recovers the same
-five of six cells as the stacked solve, faster on the tilted cells, and
-sampled GPU memory rises from 280 to 320 MiB. It is the default for `pose` and `cor-then-pose`
-alignment (`AlignConfig()` keeps `"stacked"`); it does not establish
-complete recovery.
+The joint method factors the pose block and runs PCG on the volume Schur
+system, then back-substitutes poses. The stopping criterion measures the full
+joint residual. Without pose smoothness, the factors are independent per-view
+blocks; with smoothness, a block-banded factorisation retains inter-view coupling
+with storage linear in view count. For polynomial/spline models, the pose block
+is reduced to the trajectory coefficients and factored densely; storage is
+quadratic in coefficient count, not view count. Box bounds shorten a smooth
+joint step rather than clipping individual views, so its trajectory stays in
+the chosen model.
 
 Joint steps report `objective_kind="joint_volume_pose"`, their actual
 projector backend, accepted line-search scale, and linear-solve diagnostics.
