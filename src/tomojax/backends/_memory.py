@@ -124,8 +124,15 @@ def _system_available_bytes() -> int | None:
         return None
 
 
-def _host_available_memory_bytes() -> int | None:
-    """Best-effort host capacity: the machine's available memory, within any cgroup limits."""
+def host_available_memory_bytes() -> int | None:
+    """Return available host bytes, bounded by any Linux cgroup memory limit.
+
+    Returns
+    -------
+    int or None
+        Available host memory, including reclaimable page cache, or None when
+        neither the operating system nor a cgroup reports capacity.
+    """
     known = [n for n in (_system_available_bytes(), _cgroup_room_bytes()) if n is not None]
     return min(known, default=None)
 
@@ -186,7 +193,7 @@ def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
             if device is None or isinstance(device, str):
                 device = next(iter(jax.devices(device or "gpu")), None)
         if device is None or device.platform == "cpu":
-            return _host_available_memory_bytes()
+            return host_available_memory_bytes()
         memory_info = getattr(jax, "device_get_memory_info", None)
         if callable(memory_info):
             free = _free_bytes_from_memory_info(memory_info(device))
@@ -202,7 +209,7 @@ def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
     # Host RAM is not a capacity estimate for a known accelerator.
     if device is not None and not isinstance(device, str) and device.platform != "cpu":
         return _cuda_free_memory_bytes(device) if device.platform == "gpu" else None
-    return _host_available_memory_bytes()
+    return host_available_memory_bytes()
 
 
 def estimate_views_per_batch(

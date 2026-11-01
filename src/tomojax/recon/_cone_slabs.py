@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import Detector, Geometry, Grid
 
+
 _BAND = 64  # rows are finished in bands of [k _BAND, (k + 1) _BAND)
 
 
@@ -257,8 +258,11 @@ class HostVolume:
 
     _PENDING = 2  # slabs written behind before the caller waits
 
-    def __init__(self, array: np.ndarray, engine: Engine, depth: int) -> None:
+    def __init__(
+        self, array: np.ndarray, engine: Engine, depth: int, *, retain: bool = True
+    ) -> None:
         self.array, self.engine, self.depth = array, engine, depth
+        self.retain = retain
         mapped = getattr(array, "_mmap", None) is not None
         self._worker = ThreadPoolExecutor(1) if mapped else None
         self._file = slab_file(array) if mapped else None
@@ -322,7 +326,7 @@ class HostVolume:
         With ``retain`` the host copy is held for the next read of these planes.
         """
         block = self._block(z0, z1)
-        if retain:
+        if retain and self.retain:
             self._held[z0, z1] = block
         return self.kernel(self.engine.upload(block))
 
@@ -605,6 +609,7 @@ class ConeProblem:
     data: np.ndarray
     on_device: bool = False
     keep: bool = True
+    retain: bool = True
 
     def iterate(
         self, initial: Any, out: np.ndarray | None, context: str, *, written: bool = False
@@ -664,7 +669,7 @@ class ConeProblem:
     def volume(self, array: Any) -> HostVolume:
         """Slab access to a host or device volume."""
         kind = HostVolume if isinstance(array, np.ndarray) else DeviceVolume
-        return kind(array, self.engine, self.plan.depth)
+        return kind(array, self.engine, self.plan.depth, retain=self.retain)
 
     def measured(self, batch: Batch, first: int, stop: int) -> Any:
         """Measured rows ``[first, stop)`` of a batch's views on the device."""

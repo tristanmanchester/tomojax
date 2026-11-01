@@ -42,13 +42,36 @@ def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> n
     return array
 
 
+def _owned_descriptor(array: np.ndarray) -> int | None:
+    """Find owned file storage through mapped and ordinary NumPy views."""
+    current: object = array
+    while isinstance(current, np.ndarray):
+        descriptor = _DESCRIPTORS.get(id(current))
+        if descriptor is not None:
+            return descriptor
+        current = current.base
+    return None
+
+
+def file_identity(array: np.memmap) -> tuple[int, int] | None:
+    """Device/inode identity of a named or privately owned unlinked mapped file."""
+    descriptor, name = _owned_descriptor(array), array.filename
+    if descriptor is not None:
+        status = os.fstat(descriptor)
+    elif name is not None:
+        status = Path(name).stat()
+    else:
+        return None
+    return status.st_dev, status.st_ino
+
+
 def slab_file(array: np.ndarray) -> tuple[int, int] | None:
     """A new descriptor for a C-ordered memmap's file, and the offset of its first byte.
 
     None for arrays that are not memory-mapped files. The caller closes the descriptor.
     """
     mapping = getattr(array, "_mmap", None)
-    kept, name = _DESCRIPTORS.get(id(array)), getattr(array, "filename", None)
+    kept, name = _owned_descriptor(array), getattr(array, "filename", None)
     if mapping is None or not array.flags.c_contiguous:
         return None
     if kept is not None:

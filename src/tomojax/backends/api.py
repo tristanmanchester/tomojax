@@ -6,6 +6,7 @@ from tomojax.backends._memory import (
     device_free_memory_bytes,
     estimate_views_per_batch,
     estimate_views_per_batch_info,
+    host_available_memory_bytes,
     is_oom_error,
 )
 from tomojax.backends._subprocesses import (
@@ -26,6 +27,7 @@ __all__ = [
     "device_free_memory_bytes",
     "estimate_views_per_batch",
     "estimate_views_per_batch_info",
+    "host_available_memory_bytes",
     "is_oom_error",
     "resolve_cuda_callable",
     "resolve_cuda_module",

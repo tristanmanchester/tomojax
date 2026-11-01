@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import math
 import mmap
 from pathlib import Path
+import tempfile
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -109,8 +110,10 @@ def validate_host_arrays(
         raise ValueError(f"{context}: input and output storage must not overlap")
     input_map, output_map = _mapped_storage(projections), _mapped_storage(out)
     if input_map is not None and output_map is not None:
-        source, target = input_map.filename, output_map.filename
-        if source is None or target is None or Path(source).samefile(target):
+        from tomojax.core.host_volume import file_identity
+
+        source, target = file_identity(input_map), file_identity(output_map)
+        if source is None or target is None or source == target:
             raise ValueError(f"{context}: memory-mapped input and output require separate files")
     return out
 
@@ -143,3 +146,34 @@ def validate_host_views(array: np.ndarray, *, weights: np.ndarray | None = None)
             finite = np.isfinite(np.asarray(chunk, dtype=np.float32)).all()
         if not finite:
             raise ValueError("streamed projections must be finite in FP32")
+
+
+def automatic_host_output(
+    data: np.ndarray,
+    out: np.ndarray | None,
+    shape: tuple[int, int, int],
+    volumes: int,
+    context: str,
+) -> np.ndarray:
+    """Allocate host state in RAM when it fits, otherwise in unlinked temporary files.
+
+    A solver allocates its work files beside the returned mapped output. The
+    standard temporary directory (and therefore TMPDIR) chooses the disk; the
+    result owns its file until its last reference is released. Caller-supplied
+    storage and small resident solves are unchanged.
+    """
+    from tomojax.backends.api import host_available_memory_bytes
+    from tomojax.core.host_volume import host_volume
+
+    if out is not None:
+        return validate_host_arrays(data, out, shape, context)
+    free = host_available_memory_bytes()
+    need = volumes * math.prod(shape) * np.dtype(np.float32).itemsize
+    directory = Path(tempfile.gettempdir()) if free is not None and need > 0.5 * free else None
+    return validate_host_arrays(
+        data,
+        out,
+        shape,
+        context,
+        allocate=lambda shape, _order: host_volume(shape, directory),
+    )

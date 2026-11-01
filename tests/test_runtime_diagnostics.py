@@ -48,7 +48,7 @@ def test_host_capacity_respects_visible_cgroups(monkeypatch, updates, expected):
 
     monkeypatch.setattr(_memory.Path, "read_text", read)
     monkeypatch.setattr(_memory.os, "sysconf", lambda name: 64)
-    assert _memory._host_available_memory_bytes() == expected
+    assert _memory.host_available_memory_bytes() == expected
 
 
 def test_device_memory_probe_logs_debug_before_host_fallback(
@@ -59,7 +59,7 @@ def test_device_memory_probe_logs_debug_before_host_fallback(
         raise RuntimeError("device probe unavailable")
 
     monkeypatch.setattr(jax, "devices", raise_devices)
-    monkeypatch.setattr(_memory, "_host_available_memory_bytes", lambda: None)
+    monkeypatch.setattr(_memory, "host_available_memory_bytes", lambda: None)
 
     with caplog.at_level(logging.DEBUG, logger="tomojax.backends._memory"):
         free_bytes = _memory.device_free_memory_bytes()
@@ -75,7 +75,7 @@ def test_device_memory_is_read_from_the_requested_device(monkeypatch: pytest.Mon
     gpu = SimpleNamespace(platform="gpu", memory_stats=lambda: {"free_bytes": 1234})
     assert _memory.device_free_memory_bytes(device=gpu) == 1234
 
-    monkeypatch.setattr(_memory, "_host_available_memory_bytes", lambda: 5678)
+    monkeypatch.setattr(_memory, "host_available_memory_bytes", lambda: 5678)
     assert _memory.device_free_memory_bytes(device=SimpleNamespace(platform="cpu")) == 5678
 
 
@@ -96,7 +96,7 @@ def test_cuda_memory_fallback_uses_requested_local_device(monkeypatch: pytest.Mo
 def test_unknown_accelerator_memory_does_not_use_host(monkeypatch, platform) -> None:
     monkeypatch.delattr(jax, "device_get_memory_info", raising=False)
     monkeypatch.setattr(_memory, "_cuda_free_memory_bytes", lambda device: None)
-    monkeypatch.setattr(_memory, "_host_available_memory_bytes", lambda: 5678)
+    monkeypatch.setattr(_memory, "host_available_memory_bytes", lambda: 5678)
     device = SimpleNamespace(platform=platform, memory_stats=lambda: None)
     assert _memory.device_free_memory_bytes(device=device) is None
 
@@ -176,7 +176,7 @@ def test_cuda_support_probe_logs_debug_before_jax_fallback(
 def test_host_capacity_includes_reclaimable_page_cache(monkeypatch, info, expected):
     monkeypatch.setattr(_memory.Path, "read_text", lambda _: info)
     monkeypatch.setattr(_memory.os, "sysconf", lambda _: 64)
-    assert _memory._host_available_memory_bytes() == expected
+    assert _memory.host_available_memory_bytes() == expected
 
 
 @pytest.mark.parametrize("free", [None, -1, 0, 1])

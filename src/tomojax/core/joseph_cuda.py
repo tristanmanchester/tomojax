@@ -64,6 +64,8 @@ class JosephCUDA:
                     out[first:stop],
                     *self.args,
                     np.int32(stop - first),
+                    np.int32(0),
+                    self.args[2],
                 ),
             )
         return out
@@ -83,3 +85,48 @@ class JosephCUDA:
                 (self.coeff[first:stop], uv, out, np.int32(stop - first), *self.args, np.int32(0)),
             )
         return out
+
+
+def slab_forward(volume: Any, coeff: Any, *, grid: Grid, detector: Detector, z0: int) -> Any:
+    """Project locally stored z planes using unchanged global-coordinate weights."""
+    import cupy as cp
+
+    n, nv, nu = len(coeff), detector.nv, detector.nu
+    depth = len(volume)
+    # As in the resident solver, nearby detector rows follow contiguous z taps.
+    volume = cp.ascontiguousarray(volume.transpose(2, 1, 0))
+    out = cp.empty((n, nv, nu), cp.float32)
+    kernel = forward_kernel(narrow=volume.size < 2**31, slab=True, z_fast=True)
+    tiles = -(-nu // 8) * -(-nv // 16)
+    kernel(
+        (tiles * n,),
+        (THREADS,),
+        (
+            coeff,
+            volume,
+            out,
+            *map(np.int32, (grid.nx, grid.ny, grid.nz, nu, nv, n, z0, depth)),
+        ),
+    )
+    return out
+
+
+def slab_adjoint_into(
+    images: Any, coeff: Any, *, out: Any, grid: Grid, detector: Detector, z0: int
+) -> None:
+    """Add the matched transpose to a local z slab of ``out``."""
+    import cupy as cp
+
+    depth = len(out)
+    runs = grid.nx * grid.ny * -(-depth // RUN)
+    uv = cp.ascontiguousarray(images.transpose(0, 2, 1))
+    gather_kernel()(
+        (-(-runs // THREADS),),
+        (THREADS,),
+        (
+            coeff,
+            uv,
+            out,
+            *map(np.int32, (len(coeff), grid.nx, grid.ny, depth, detector.nu, detector.nv, z0)),
+        ),
+    )
