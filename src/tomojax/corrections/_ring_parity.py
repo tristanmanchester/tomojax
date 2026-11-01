@@ -73,26 +73,26 @@ def regularize(profile: jax.Array, axis: float, keep_even: str) -> jax.Array:
         power = power.at[-1].multiply(0.5)
     edges, counts, filters, weights, log_degrees, log_critical = _plan(size)
     spectra = jnp.stack([power[a:b].mean() for a, b in pairwise(edges)])
-    estimate = jnp.zeros_like(even)
-    for raw_filter, raw_weights in zip(filters, weights, strict=True):
-        coefficient = jnp.fft.irfft(fe * jnp.asarray(raw_filter, profile.dtype), n=size)
-        terms = jnp.asarray(raw_weights, profile.dtype) * spectra[:, None]
-        variance = terms.sum(0)
-        scale: float | jax.Array = 1.0
-        if keep_even != "wiener":
-            # All frequencies in a band share one estimated PSD. Collapse its
-            # location-dependent weights before computing effective degrees.
-            fractions = terms / jnp.where(variance > 0, variance, 1)[None, :]
-            inverse_df = (fractions**2 / jnp.asarray(counts[:, None], profile.dtype)).sum(0)
-            degrees = jnp.clip(1 / jnp.where(inverse_df > 0, inverse_df, 1), 1, size // 2 + 1)
-            scale = jnp.exp(
-                jnp.interp(
-                    jnp.log(degrees),
-                    jnp.asarray(log_degrees, profile.dtype),
-                    jnp.asarray(log_critical, profile.dtype),
-                )
+    coefficients = jnp.fft.irfft(fe * jnp.asarray(filters, profile.dtype), n=size, axis=1)
+    terms = jnp.asarray(weights, profile.dtype) * spectra[None, :, None]
+    variance = terms.sum(1)
+    scale: float | jax.Array = 1.0
+    if keep_even != "wiener":
+        # All frequencies in a band share one estimated PSD. Collapse its
+        # location-dependent weights before computing effective degrees.
+        fractions = terms / jnp.where(variance > 0, variance, 1)[:, None, :]
+        inverse_df = (fractions**2 / jnp.asarray(counts[:, None], profile.dtype)).sum(1)
+        degrees = jnp.clip(1 / jnp.where(inverse_df > 0, inverse_df, 1), 1, size // 2 + 1)
+        scale = jnp.exp(
+            jnp.interp(
+                jnp.log(degrees),
+                jnp.asarray(log_degrees, profile.dtype),
+                jnp.asarray(log_critical, profile.dtype),
             )
-        squared = coefficient * coefficient
-        gain = jnp.minimum(scale * variance / jnp.where(squared > 0, squared, 1), 1)
-        estimate = estimate + gain * coefficient
+        )
+    squared = coefficients * coefficients
+    gain = jnp.minimum(scale * variance / jnp.where(squared > 0, squared, 1), 1)
+    # Preserve the scale accumulation order: tiny changes in the corrected
+    # profile can steer the next response fit's robust weights on dead edges.
+    estimate = sum(gain * coefficients)
     return profile.at[lo:hi].set(odd + estimate)

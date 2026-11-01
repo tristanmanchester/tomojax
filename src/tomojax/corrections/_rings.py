@@ -180,7 +180,7 @@ def _feasible_response(
 
 
 def _invert(q: jax.Array, alpha: jax.Array, beta: jax.Array) -> jax.Array:
-    """Invert an admissible response from monotone-branch Newton starting bounds."""
+    """Invert an admissible response by Halley updates from monotone-branch bounds."""
     v = q - alpha
     b = jnp.maximum(beta, jnp.finfo(q.dtype).tiny)
     # For b > 0, U = max(v-b, 0) + log1p(b) is an upper bound when v >= 0.
@@ -188,12 +188,14 @@ def _invert(q: jax.Array, alpha: jax.Array, beta: jax.Array) -> jax.Array:
     logarithmic = jnp.log(b) - jnp.log(jnp.maximum(b - v, 0) + jnp.log1p(b))
     positive = jnp.maximum(jnp.maximum(v / (1 + b), v - b), logarithmic)
     negative = jnp.maximum(v, -jnp.log1p(jnp.maximum(-v, 0) / b))
-    # Positive beta is concave: start below the root. Negative beta is convex:
-    # v-beta starts above the root and stays on the fitted derivative >= 1/2 branch.
+    # Positive beta is concave: start below the root. For convex negative beta,
+    # v-beta starts above the root on the fitted derivative >= 1/2 branch.
     p = jnp.where(beta < 0, v - beta, jnp.where(v >= 0, positive, negative))
-    for _ in range(6):
+    for _ in range(3):
         e = jnp.exp(-p)
-        p = p - (p - beta * (e - 1) - v) / (1 + beta * e)
+        residual = p - beta * (e - 1) - v
+        slope, curvature = 1 + beta * e, -beta * e
+        p = p - 2 * residual * slope / (2 * slope * slope - residual * curvature)
     return p
 
 
@@ -722,6 +724,7 @@ class Rings(Step):
         """
         return Correction("rings", {"mirror_axis": self.mirror_axis, "views": self.views})
 
+    @partial(jax.jit, static_argnums=0)
     def apply(self, batch: jax.Array) -> jax.Array:
         """Correct the rings of a batch of detector rows.
 

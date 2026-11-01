@@ -35,7 +35,10 @@ host output, as does direct `fista_tv(out=...)`.
 of views (`views=512`, the new default) and corrects every view with them,
 several times faster than fitting every view; scans without a mirror axis fit
 once, full turns keep all their stages. Corrected values change.
-`Rings(views=None)` fits every view, as before.
+`Rings(views=None)` fits every view, as before. Full-turn parity scales are
+evaluated together, retaining the same prior and scale accumulation order.
+Response inversion uses three Halley updates instead of six Newton updates.
+The complete step, including view ordering, is compiled as one call.
 
 Cone-axis calibration refines detector roll to a voxel-scaled numerical tolerance
 instead of stopping after a fixed two refits. It warns if twelve updates do not
