@@ -12,7 +12,8 @@ line integrals. Both paths materialise the final corrected host stack.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import nullcontext
 from functools import partial
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -664,21 +665,42 @@ def _correct_row_slabs(
         )
         return np.asarray(frames).astype(frames.dtype.newbyteorder("="), copy=False)
 
+    device = jax.config.jax_default_device
+    cpu = (device.platform if device is not None else jax.default_backend()) == "cpu"
+
+    def run(
+        start: int, stop: int, raw: np.ndarray
+    ) -> tuple[int, int, jax.Array, jax.Array, jax.Array]:
+        with jax.default_device(device):
+            done = first_pass(
+                jnp.asarray(raw), lo, hi, t, exposure_scale,
+                flats[:, start:stop], dark[start:stop],
+                usable[start:stop], line_steps=steps,
+                fill_gaps=not bool(fields.usable[start:stop].all()), **settings,
+            )  # fmt: skip
+            done[0].copy_to_host_async()
+            if cpu:
+                jax.block_until_ready(done)
+            return start, stop, *done
+
+    def now(function, *args: Any) -> Future[tuple[int, int, jax.Array, jax.Array, jax.Array]]:
+        done = Future()
+        done.set_result(function(*args))
+        return done
+
     pending = None
-    for start in range(0, rows - rows % factor, slab):
-        stop = min(start + slab, rows - rows % factor)
-        done = first_pass(
-            jnp.asarray(read(start, stop)), lo, hi, t, exposure_scale,
-            flats[:, start:stop], dark[start:stop],
-            usable[start:stop], line_steps=steps,
-            fill_gaps=not bool(fields.usable[start:stop].all()), **settings,
-        )  # fmt: skip
-        done[0].copy_to_host_async()
+    # CPU calls need workers; accelerators already overlap queued work and host copies.
+    with ThreadPoolExecutor(max_workers=2) if cpu else nullcontext() as pool:
+        submit = now if pool is None else pool.submit
+        for start in range(0, rows - rows % factor, slab):
+            stop = min(start + slab, rows - rows % factor)
+            # Lazy sources may share caches: read serially, with at most two bands live.
+            done = submit(run, start, stop, read(start, stop))
+            if pending is not None:
+                collect(*pending.result())
+            pending = done
         if pending is not None:
-            collect(*pending)
-        pending = (start, stop, *done)
-    if pending is not None:
-        collect(*pending)
+            collect(*pending.result())
     return out, tally
 
 
@@ -745,9 +767,24 @@ def apply_steps(
 
 
 def _whole_rows(out: np.ndarray, step: Step) -> None:
-    """Run a whole-row step over ``out`` in place, on slabs of rows (one back as the next runs)."""
+    """Correct row slabs with concurrent CPU calls or asynchronous accelerator transfers."""
     views, rows, cols = out.shape
     slab = max(1, min(rows, _BATCH_BYTES // (8 * views * cols)))  # two slabs are in flight
+    device = jax.config.jax_default_device
+
+    def run(r0: int) -> None:
+        # JAX's placement context is thread-local; it does not follow a worker task.
+        with jax.default_device(device):
+            out[:, r0 : r0 + slab] = np.asarray(
+                _apply((step,), jnp.asarray(out[:, r0 : r0 + slab]))
+            )
+
+    if (device.platform if device is not None else jax.default_backend()) == "cpu":
+        # Only integer offsets are queued. Each worker owns at most one slab's arrays.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(run, range(0, rows, slab)))
+        return
+    # Keep accelerator work asynchronous: workers add workspace, not useful parallelism.
     pending = None
     for r0 in range(0, rows, slab):
         done = _apply((step,), jnp.asarray(out[:, r0 : r0 + slab]))
