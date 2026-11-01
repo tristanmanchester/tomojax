@@ -19,7 +19,6 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import numpy as np
 
-from tomojax.alignment._geometry.parametrizations import pad_pose_params
 from tomojax.alignment._model.dofs import POSE_WIDTH
 from tomojax.io.api import normalize_json as _normalize_json
 
@@ -214,11 +213,7 @@ class AlignmentCheckpoint:
                 else:
                     assert self._archive is not None
                     raw = self._archive[name]
-                    value = (
-                        pad_pose_params(raw)
-                        if name == "pose_params"
-                        else np.asarray(raw, dtype=np.float32)
-                    )
+                    value = np.asarray(raw, dtype=np.float32)
                 self.__dict__[name] = value
                 required = {"x", "pose_params"}
                 if self.metadata.get("has_motion_coeffs", False):
@@ -329,7 +324,7 @@ def save_alignment_checkpoint(
     x : array-like
         Current reconstruction of shape (nz, ny, nx).
     pose_params : array-like
-        Per-view corrections with columns (alpha, beta, phi, dx, dz[, dy]); angles are
+        Per-view corrections with columns (alpha, beta, phi, dx, dz, dy); angles are
         radians and translations physical lengths.
     motion_coeffs : array-like or None, optional
         Polynomial or spline motion coefficients; None for per-view motion.
@@ -599,9 +594,7 @@ def validate_alignment_checkpoint(
             "corrupt checkpoint: metadata projection_shape must be a length-3 list"
         )
     expected_params_shape = (int(projection_shape[0]), POSE_WIDTH)
-    # Checkpoints written before dy existed hold five columns; loaders pad them.
-    legacy_shape = (int(projection_shape[0]), 5)
-    if tuple(checkpoint.pose_params.shape) not in {expected_params_shape, legacy_shape}:
+    if tuple(checkpoint.pose_params.shape) != expected_params_shape:
         actual_shape = list(checkpoint.pose_params.shape)
         expected_shape = list(expected_params_shape)
         raise CheckpointError(

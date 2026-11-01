@@ -13,6 +13,8 @@ public pose mode; explicit object-frame trajectories remain available.
 Joint Gauss–Newton alignment now fits polynomial and spline pose trajectories
 directly, on resident and host-staged paths. Smooth steps respect pose bounds
 without per-view clipping; checkpoints retain their trajectory coefficients.
+Alignment checkpoints require six-column pose tables; five-column legacy tables
+are no longer padded on load or accepted for resume.
 
 `Rings` fits its responses on the means of about 512 contiguous angular bins
 of views (`views=512`, the new default) and corrects every view with them,
@@ -29,8 +31,8 @@ level's pose corrections, the same reconstruction its folds use over every
 view. It previously ignored them, so in `mode="full"` the finer level's pose
 fit started from a volume blurred by the motion found at the coarser level.
 
-Projection matching reports how far its two starts' horizontal shifts disagree
-beyond a common object translation, in `info["initialization"]["horizontal_disagreement"]`.
+Projection matching no longer reports uncalibrated vertical uncertainty or
+horizontal disagreement diagnostics. The fitted translations are unchanged.
 
 Joseph and cone projection, transpose and pose-column calls use their JAX
 reference when executed on a CPU, even on a CUDA host. Explicit Projector

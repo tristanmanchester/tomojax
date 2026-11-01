@@ -44,12 +44,7 @@ class ProjectionMatchingConfig:
     refinement from native correlation and first-moment starts. The full scan is retained without
     resampling.
 
-    Read per-view vertical standard deviations from
-    ``info["vertical_uncertainty"]``, in detector length units. They are
-    local model-based scales: they take the fitted template and covariance
-    as exact, are not calibrated intervals, and do not cover horizontal
-    alignment or the joint pose covariance. Vertical shifts have zero mean
-    by convention, not by measurement.
+    Vertical shifts have zero mean by convention, not by measurement.
 
     Parameters
     ----------
@@ -259,24 +254,12 @@ def _horizontal_fit(
         fits.append((name, seed + np.asarray(increment), info))
         del volume, initial
     best = min(fits, key=lambda fit: fit[2]["loss"][-1])
-    # How far the two starts' horizontal results differ beyond a common object
-    # translation: a sensitivity of this fit, not an error bar. Both can share a bias.
-    difference = fits[0][1][:, 3].astype(np.float64) - fits[1][1][:, 3]
-    translation = np.linalg.lstsq(frame.astype(np.float64), difference, rcond=None)[0]
-    spread = np.abs(difference - frame @ translation)
     return (
         best[1],
         best[2],
         {
             "selected": best[0],
             "losses": {name: info["loss"][-1] for name, _, info in fits},
-            "horizontal_disagreement": {
-                "rms": float(np.sqrt(np.mean(spread**2))),
-                "p95": float(np.percentile(spread, 95)),
-                "max": float(spread.max()),
-                "units": "geometry_length",
-                "scope": "between the two starts; not a calibrated uncertainty",
-            },
         },
     )
 
@@ -319,8 +302,7 @@ def match_projections(
         raise ValueError("native projection matching needs at least 20 detector rows and columns")
     start = time.perf_counter()
     profiles = data.sum(axis=2, dtype=np.float64)
-    vertical_fit = fit_profile_likelihood(profiles, _profile_seed(profiles))
-    vertical = vertical_fit.shifts
+    vertical = fit_profile_likelihood(profiles, _profile_seed(profiles))
     sparse, samples, row_ids = _sample_rows(geometry, data, vertical)
     seeds = (_correlation_seed(sparse, samples), _moment_seed(geometry, data, vertical))
     poses, joint_info, initialization = _horizontal_fit(
@@ -337,17 +319,6 @@ def match_projections(
         "config": config,
         "estimation_seconds": time.perf_counter() - start,
         "sample_rows": row_ids.tolist(),
-        "vertical_uncertainty": {
-            "standard_deviation": (vertical_fit.standard_error * geometry.detector.dv).tolist(),
-            "relative_noise_variance": vertical_fit.relative_noise_variance.tolist(),
-            "translation_frame": "detector",
-            "units": "geometry_length",
-            "scope": "Local scales with template and covariance exact; not calibrated intervals "
-            "or joint pose covariance; horizontal uncertainty is not estimated.",
-            "global_coverage_calibrated": False,
-            "uncertainty_status": "local_matching_only",
-            "vertical_gauge": "mean_vertical_shift_zero",
-        },
         "joint": dict(joint_info),
         "initialization": initialization,
         "pose_translation_frame": "detector",
