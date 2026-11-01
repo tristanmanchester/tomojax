@@ -307,7 +307,7 @@ def _unsorted_response(
 
 
 def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 3.0) -> jax.Array:
-    """Vo et al. 2018, algorithms 4 and 5, with our response model as the correction.
+    """Vo et al. 2018, algorithms 4 and 5, with our response model as the correction offset.
 
     Each column's level (mean of its sorted values, 5% of the views cut at either end) less its
     median over +-window columns is sorted, a line fitted through the middle half, and the values
@@ -340,36 +340,37 @@ def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 
         jnp.stack([wide[8 + j : 8 + j + n] * (1 - abs(j) / 9) for j in range(-8, 9)]), axis=0
     )
     alpha, beta, xm = _fit(ranked, _correlate(ranked, _quadratic_taps(window, 1)))
-    response = regularize(weight * (alpha + beta * xm), axis, "significance")
-    return q - response[None, :]
+    return regularize(weight * (alpha + beta * xm), axis, "significance")
 
 
-def _row(
-    q: jax.Array,
-    axis: float,
-    neighbours: jax.Array,
-    weights: jax.Array,
-    *,
-    closing: bool,
-) -> jax.Array:
-    """Full-turn fits without sorting away the spatial smoothness at the axis."""
-    out = _large_stripes(q, axis)
+def _turn_response(
+    q: jax.Array, lowest: jax.Array, axis: float, neighbours: jax.Array, weights: jax.Array
+) -> tuple[jax.Array, ...]:
+    """A full-turn row's large-stripe offset, three responses and ``q`` corrected.
+
+    Each response is fitted after the ones before. The fine fits keep the spatial smoothness
+    at the axis that sorting would lose; the last, broad one fits the sorted views.
+    ``lowest`` is as for ``_unsorted_response``.
+    """
+    stripes = _large_stripes(q, axis)
+    q, lowest = q - stripes, lowest - stripes
+    responses = []
     for _ in range(2):
-        fitted = jnp.concatenate([0.5 * (out[:1] + out[-1:]), out[1:-1]]) if closing else out
-        ref = _reference(fitted)
+        ref = _reference(q)
         instrument = (ref[neighbours] * weights[:, :, None]).sum(1)
-        level, beta, xm, *_ = _fit_unsorted(fitted, ref, instrument)
+        level, beta, xm, *_ = _fit_unsorted(q, ref, instrument)
         level = regularize(level, axis, "significance")
         beta = regularize(beta, axis, "significance")
-        alpha, beta = _feasible_response(out, ref, level - beta * xm, beta)
-        out = _invert(out, alpha, beta)
-    ranked = jnp.sort(out, axis=0)
+        responses.append(_feasible_response(q, ref, level - beta * xm, beta, lowest))
+        q, lowest = (_invert(x, *responses[-1]) for x in (q, lowest))
+    ranked = jnp.sort(q, axis=0)
     ref = _correlate(ranked, _quadratic_taps(100, 1))
     alpha, beta, xm = _fit(ranked, ref)
     level = regularize(alpha + beta * xm, axis, "wiener")
     beta = regularize(beta, axis, "wiener")
-    alpha, beta = _feasible_response(out, ref, level - beta * xm, beta)
-    return _invert(out, alpha, beta)
+    responses.append(_feasible_response(q, ref, level - beta * xm, beta, lowest))
+    alphas, betas = zip(*responses, strict=True)
+    return stripes, jnp.stack(alphas), jnp.stack(betas), _invert(q, *responses[-1])
 
 
 @dataclass(frozen=True)
@@ -484,16 +485,21 @@ def _open_neighbours(size: int) -> tuple[np.ndarray, np.ndarray]:
     return lo, hi
 
 
-def _bins(groups: tuple[int, ...], views: int) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
+def _bins(
+    groups: tuple[int, ...], views: int, *, cyclic: bool = False
+) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
     """About ``views`` contiguous angular bins, shared among trajectories by length.
 
-    Returns each view's bin, each bin's two neighbouring bins and the bins per trajectory.
+    Returns each view's bin, each bin's two neighbouring bins (around the turn when
+    ``cyclic``) and the bins per trajectory.
     """
     total, offset, labels, neighbours, counts = sum(groups), 0, [], [], []
     for size in groups:
         k = min(size, max(2, round(views * size / total)))
         labels.append(offset + np.arange(size) * k // size)
-        neighbours.append(offset + np.stack(_open_neighbours(k), axis=1))
+        i = np.arange(k)
+        lo, hi = ((i - 1) % k, (i + 1) % k) if cyclic else _open_neighbours(k)
+        neighbours.append(offset + np.stack([lo, hi], axis=1))
         counts.append(k)
         offset += k
     return np.concatenate(labels), np.concatenate(neighbours), tuple(counts)
@@ -512,7 +518,7 @@ def correct_rings(
 ) -> jax.Array:
     """Correct every detector row of a ``(views, rows, columns)`` batch of line integrals.
 
-    ``views`` fits the half-turn responses on about that many angular bin means.
+    ``views`` fits the responses on about that many angular bin means.
     """
     if neighbours is None or weights is None:
         size = batch.shape[0]
@@ -523,34 +529,42 @@ def correct_rings(
         neighbours = jnp.asarray(np.stack([lo, hi], axis=1), jnp.int32)
         weights = jnp.full((size, 2), 0.5, batch.dtype)
         groups = (size,)
+    fitted, passes = batch, 2
+    if closing:
+        # A repeated closing phase is one observation for the fits.
+        fitted = jnp.concatenate([0.5 * (batch[:1] + batch[-1:]), batch[1:-1]])
+    if views is not None and views < sum(groups):
+        # Fit on angular bin means, which keep every view's photons; an additive column
+        # error commutes with the mean, and neighbouring bins share no views.
+        labels, bin_neighbours, groups = _bins(groups, views, cyclic=axis is not None)
+        sizes = np.bincount(labels)
+        starts = np.cumsum(sizes) - sizes
+        means = fitted[starts]
+        for j in range(1, sizes.max()):
+            means += fitted[starts + np.minimum(j, sizes - 1)] * (j < sizes)[:, None, None]
+        fitted = means / sizes[:, None, None].astype(batch.dtype)
+        neighbours = jnp.asarray(bin_neighbours, jnp.int32)
+        # equal weights: the instrument need only be independent of each bin's noise
+        weights = jnp.full(bin_neighbours.shape, 0.5, batch.dtype)
+        # bin means are quiet enough for one fit to remove what two do on every view
+        passes = 1
+    rows = (jnp.swapaxes(fitted, 0, 1), batch.min(0))
     if axis is not None:
-        rows = jax.lax.map(
-            lambda q: _row(q, axis, neighbours, weights, closing=closing), jnp.swapaxes(batch, 0, 1)
+        stripes, alpha, beta, corrected = jax.lax.map(
+            lambda row: _turn_response(row[0], row[1], axis, neighbours, weights), rows
         )
-        return jnp.swapaxes(rows, 0, 1)
-    rows = jnp.swapaxes(batch, 0, 1)
-    if views is None or views >= sum(groups):
-        _, _, corrected = jax.lax.map(
-            lambda q: _unsorted_response(q, neighbours, weights, groups, q.min(0), 2), rows
+        batch = batch - stripes[None]
+    else:
+        alpha, beta, corrected = jax.lax.map(
+            lambda row: _unsorted_response(row[0], neighbours, weights, groups, row[1], passes),
+            rows,
         )
+    if corrected.shape[1] == batch.shape[0]:
+        # every view was fitted on its own, so the fits have already corrected them
         return jnp.swapaxes(corrected, 0, 1)
-    # Fit once on angular bin means, which keep every view's photons; an additive
-    # column error commutes with the mean, and neighbouring bins share no views.
-    labels, bin_neighbours, groups = _bins(groups, views)
-    sizes = np.bincount(labels)
-    starts = np.cumsum(sizes) - sizes
-    means = batch[starts]
-    for j in range(1, sizes.max()):
-        means += batch[starts + np.minimum(j, sizes - 1)] * (j < sizes)[:, None, None]
-    means /= sizes[:, None, None].astype(batch.dtype)
-    neighbours = jnp.asarray(bin_neighbours, jnp.int32)
-    # equal weights: the instrument need only be independent of each bin's noise
-    weights = jnp.full(bin_neighbours.shape, 0.5, batch.dtype)
-    alpha, beta, _ = jax.lax.map(
-        lambda row: _unsorted_response(row[0], neighbours, weights, groups, row[1], 1),
-        (jnp.swapaxes(means, 0, 1), batch.min(0)),
-    )
-    return _invert(batch, alpha[None, :, 0], beta[None, :, 0])
+    for k in range(alpha.shape[1]):
+        batch = _invert(batch, alpha[None, :, k], beta[None, :, k])
+    return batch
 
 
 def mirror_axis(geometry: object) -> float | None:
@@ -593,10 +607,11 @@ class Rings(Step):
     side, narrowed toward 6 where the object changes faster. Independent
     neighbouring views provide the instrument for the response fit. Keeping
     these references unsorted preserves their spatial smoothness at the axis.
-    The fine fits use cyclic angular neighbours and average a repeated closing
-    phase. Large stripes are detected first using the sorted-column procedure
-    of Vo, Atwood and Drakopoulos (2018, Opt. Express 26, 28396, algorithms 4
-    and 5); a last sorted fit over 100 columns either side addresses broad rings.
+    The fine fits use cyclic angular neighbours (bins, when ``views`` bins them)
+    and average a repeated closing phase. Large stripes are detected first using
+    the sorted-column procedure of Vo, Atwood and Drakopoulos (2018, Opt. Express
+    26, 28396, algorithms 4 and 5); a last sorted fit over 100 columns either side
+    addresses broad rings.
 
     Opposed columns see the same lines over a full turn. Their fitted odd
     component therefore supplies a stationary detector-field spectrum; the
@@ -632,10 +647,11 @@ class Rings(Step):
         The scan's geometry, with the detector the data were recorded on.
         Default is None.
     views : int or None, optional
-        Fit the responses of scans without a mirror axis once, on the means of about
-        this many contiguous angular bins of views, neighbouring bins as instrument,
-        and correct every view. Default 512. None fits every view twice: several
-        times slower, for scans whose structure moves across columns within a bin.
+        Fit the responses on the means of about this many contiguous angular bins of
+        views, neighbouring bins as instrument, and correct every view. Default 512.
+        Scans without a mirror axis then fit once rather than twice. None fits every
+        view: several times slower, for scans whose structure moves across columns
+        within a bin.
 
     Raises
     ------

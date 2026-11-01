@@ -2,10 +2,11 @@
 
 ## Unreleased
 
-`Rings` fits scans without a mirror axis once, on the means of about 512
-contiguous angular bins of views (`views=512`, the new default), and corrects
-every view with that response, several times faster than fitting every view.
-Corrected values change. `Rings(views=None)` fits every view twice, as before.
+`Rings` fits its responses on the means of about 512 contiguous angular bins
+of views (`views=512`, the new default) and corrects every view with them,
+several times faster than fitting every view; scans without a mirror axis fit
+once, full turns keep all their stages. Corrected values change.
+`Rings(views=None)` fits every view, as before.
 
 Projection matching reports how far its two starts' horizontal shifts disagree
 beyond a common object translation, in `info["initialization"]["horizontal_disagreement"]`.
