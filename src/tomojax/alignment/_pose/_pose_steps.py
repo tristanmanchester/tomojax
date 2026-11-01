@@ -20,7 +20,7 @@ from tomojax.alignment._objectives.loss_specs import loss_is_within_relative_tol
 from tomojax.alignment._observer import OuterStat
 from tomojax.alignment._results import _set_float_stat
 
-from ._coupled_objective import CoupledObjective
+from ._coupled_objective import CoupledObjective, VolumeHandle
 from ._pose_block import smooth_pose_candidate
 from ._pose_candidates import (
     GNCandidateContext,
@@ -402,7 +402,7 @@ def _run_coupled_alignment_step(
     constraints: AlignmentStepConstraints,
     gauge: AlignmentStepGauge,
     pose_params_in: jnp.ndarray,
-    vol: jnp.ndarray,
+    vol: VolumeHandle,
 ) -> tuple:
     """Accept a constrained volume/pose pair against the true joint objective.
 
@@ -410,13 +410,15 @@ def _run_coupled_alignment_step(
     the reported objective adds a prior on the current volume or pose values.
     """
     start = time.perf_counter()
-    before = float(objective.loss(pose_params_in, vol))
+    before = float(objective.loss(pose_params_in, vol.get()))
     result = objective.update(pose_params_in, vol)
     dx, dp = result.increment
-    volume_out, params_out, after, scale = vol, pose_params_in, before, 0.0
+    volume_out, params_out, after, scale = None, pose_params_in, before, 0.0
     if bool(result.finite) and math.isfinite(before):
         for trial_scale in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625):
-            trial_volume = _joint_trial_volume(vol, dx, trial_scale, nonnegative=cfg.nonnegative)
+            trial_volume = _joint_trial_volume(
+                vol.get(), dx, trial_scale, nonnegative=cfg.nonnegative
+            )
             trial_params, _ = constraints.apply_full_constraints_with_stats(
                 pose_params_in + trial_scale * dp
             )
@@ -472,5 +474,6 @@ def _run_coupled_alignment_step(
     _record_gauge_stats(stat, gauge, gauge_stats)
     rel_impr = _alignment_relative_improvement(stat, loss_before=before, total_loss=after)
     stat["rel_impr"] = rel_impr
+    volume_out = jax.block_until_ready(vol.get()) if volume_out is None else volume_out
     stat["align_time"] = time.perf_counter() - start
     return volume_out, params_out, None, gauge_stats, after, rel_impr, stat

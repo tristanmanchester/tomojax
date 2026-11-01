@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import logging
 import math
 import time
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -53,6 +53,7 @@ from tomojax.core.validation import (
 )
 from tomojax.core.volume_layout import transpose_volume
 
+from ._coupled_objective import VolumeHandle
 from ._matching_model import JointRefinement
 from ._pose_context import (
     AlignmentRuntimeContext,
@@ -477,6 +478,9 @@ def _run_align_outer_iteration(
     if objective.private:  # the loop holds x in the pose cores' storage while they run
         state.x = transpose_volume(jax.block_until_ready(state.x))
     if objective.coupled is not None:
+        # Only the private copy is the loop's alone; the public image may be align's input.
+        # The handle then holds it alone, so a release leaves no stale reference.
+        volume, state.x = VolumeHandle(state.x, owned=objective.private), cast("jnp.ndarray", None)
         (
             state.x,
             state.pose_params,
@@ -491,8 +495,9 @@ def _run_align_outer_iteration(
             constraints=constraints,
             gauge=gauge,
             pose_params_in=state.pose_params,
-            vol=state.x,
+            vol=volume,
         )
+        del volume  # the entry image dies here, not beside the transpose back
     else:
         (
             state.pose_params,
