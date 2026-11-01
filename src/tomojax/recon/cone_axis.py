@@ -276,7 +276,11 @@ def _search(
 
 
 class _Slabs:
-    """Filtered slabs by (height, binning), prepared on first use."""
+    """Filtered slabs; full-resolution ones kept for the roll refits.
+
+    Coarse slabs are used once in each height's initial search. Keeping their
+    detector bands on the device can exhaust memory on native cone scans.
+    """
 
     def __init__(
         self,
@@ -288,10 +292,12 @@ class _Slabs:
     ) -> None:
         self.args = (geometry, grid, detector, projections)
         self.cfg = cfg
-        self.cache: dict[tuple[float, int], _Slab] = {}
+        self.cache: dict[float, _Slab] = {}
 
     def get(self, height: float, f: int) -> _Slab:
-        key = (float(height), int(f))
+        if f != 1:
+            return _prepare_slab(*self.args, height, f, self.cfg)
+        key = float(height)
         if key not in self.cache:
             self.cache[key] = _prepare_slab(*self.args, height, f, self.cfg)
         return self.cache[key]
