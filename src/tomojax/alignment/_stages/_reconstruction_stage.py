@@ -34,7 +34,8 @@ from tomojax.core.volume_layout import transpose_volume
 from tomojax.recon.fista_tv import fista_tv, huber_tv_lipschitz
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
-    fista_tv_core_arrays,
+    fista_tv_core_iterates,
+    initial_iterate,
 )
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 
@@ -384,9 +385,13 @@ def _retry_info_after_nonfinite_core(
     }
 
 
-@functools.partial(jax.jit, static_argnames=("grid", "detector", "cfg"))
+_initial_core_iterate = jax.jit(initial_iterate, static_argnames="cfg")
+
+
+@functools.partial(jax.jit, static_argnames=("grid", "detector", "cfg"), donate_argnums=(0, 1))
 def _run_huber_fista_core_dynamic_geometry(
-    x0: jnp.ndarray,
+    x: jnp.ndarray,
+    z: jnp.ndarray,
     T_all: jnp.ndarray,
     det_u: jnp.ndarray | None,
     det_v: jnp.ndarray | None,
@@ -396,10 +401,12 @@ def _run_huber_fista_core_dynamic_geometry(
     grid: Grid,
     detector: Detector,
     cfg: FistaCoreConfig,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     det_grid = None if det_u is None or det_v is None else (det_u, det_v)
-    result = fista_tv_core_arrays(
-        x0=x0,
+    # The two owned iterates' buffers are reused by the loop rather than copied.
+    result, z = fista_tv_core_iterates(
+        x,
+        z,
         T_all=T_all,
         det_grid=det_grid,
         projections=projections,
@@ -407,9 +414,12 @@ def _run_huber_fista_core_dynamic_geometry(
         detector=detector,
         cfg=cfg,
         L_override=L_value,
+        view_weights=None,
+        owned=True,
     )
     return (
         result.x,
+        z,
         result.loss,
         result.data_loss,
         result.regulariser_value,
@@ -662,9 +672,13 @@ def _run_huber_fista_core_reconstruction(
     )
     stream = should_stream(step.projections, reserve_bytes=6 * step.x.nbytes)
     core_cfg = replace(core_cfg, stream_projections=stream)
+    # Each owned iterate is complete before the next allocation, so their
+    # workspaces never overlap the solve's.
+    x = jax.block_until_ready(_initial_core_iterate(step.x, cfg=core_cfg))
     run = functools.partial(
         _run_huber_fista_core_dynamic_geometry,
-        step.x,
+        x,
+        jax.block_until_ready(jnp.array(x, copy=True)),
         backend_plan.T_all,
         None if det_grid_for_core is None else det_grid_for_core[0],
         None if det_grid_for_core is None else det_grid_for_core[1],
@@ -681,7 +695,9 @@ def _run_huber_fista_core_reconstruction(
         # Host sources cannot be unregistered while asynchronous reads remain.
         if stream:
             jax.block_until_ready(result)
-    x_core, loss, _data_loss, _regulariser_value, effective_iters = result
+    # The final momentum is dropped with the tuple, never deleted: it may alias x.
+    x_core, _momentum, loss, _data_loss, _regulariser_value, effective_iters = result
+    del x, run, result, _momentum
     if core_cfg.private_storage:
         # Restored once the compiled solve has finished and released its work arrays.
         x_core = transpose_volume(jax.block_until_ready(x_core))
