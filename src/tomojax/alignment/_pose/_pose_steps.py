@@ -179,39 +179,6 @@ def _record_gauge_stats(
         stat["dz_mean_after_gauge"] = float(gauge_stats["dz_mean_after"])
 
 
-def _alignment_total_loss(
-    objective: AlignmentStepObjective,
-    motion: AlignmentStepMotion,
-    *,
-    pose_params: jnp.ndarray,
-    vol: jnp.ndarray,
-    loss_before: float | None,
-    loss_after: float | None,
-    loss_hist: list[float],
-    stat: OuterStat,
-) -> float:
-    final_loss_fallback = loss_after
-    if final_loss_fallback is None:
-        final_loss_fallback = loss_before
-    if final_loss_fallback is None and loss_hist:
-        final_loss_fallback = loss_hist[-1]
-    can_reuse_validated_gn_loss = (
-        not motion.use_smooth_pose_model
-        and loss_after is not None
-        and math.isfinite(float(loss_after))
-    )
-    if can_reuse_validated_gn_loss:
-        stat["loss_after_reused"] = True
-        return float(loss_after)
-    total_loss_eval = _evaluate_align_loss(
-        lambda: objective.align_loss_jit(pose_params, vol),
-        fallback=final_loss_fallback,
-        context="Using fallback for final alignment loss bookkeeping",
-    )
-    stat["loss_after_reused"] = False
-    return float(total_loss_eval) if total_loss_eval is not None else math.nan
-
-
 def _alignment_relative_improvement(
     stat: OuterStat,
     *,
@@ -231,23 +198,6 @@ def _alignment_relative_improvement(
     if math.isfinite(loss_before) and math.isfinite(total_loss):
         return (loss_before - total_loss) / max(abs(loss_before), 1e-12)
     return None
-
-
-def _should_reject_post_constraint_loss(
-    *,
-    loss_before: float | None,
-    total_loss: float,
-    rel_tol: float,
-) -> bool:
-    if loss_before is None:
-        return False
-    before = float(loss_before)
-    after = float(total_loss)
-    if not (math.isfinite(before) and math.isfinite(after)):
-        return False
-    if after <= before:
-        return False
-    return not (loss_is_within_relative_tolerance(before, after, rel_tol))
 
 
 def _run_alignment_step(
@@ -300,20 +250,24 @@ def _run_alignment_step(
     _record_gauge_stats(stat, gauge, gauge_stats)
     jax.block_until_ready(pose_params_out)
     stat["align_time"] = time.perf_counter() - align_start
-    total_loss = _alignment_total_loss(
-        objective,
-        motion,
-        pose_params=pose_params_out,
-        vol=vol,
-        loss_before=loss_before,
-        loss_after=loss_after,
-        loss_hist=loss_hist,
-        stat=stat,
-    )
-    if _should_reject_post_constraint_loss(
-        loss_before=loss_before,
-        total_loss=total_loss,
-        rel_tol=0.0,
+    # A plain GN step has already scored its constrained candidate; a smooth pose
+    # model's refit is scored here.
+    if not motion.use_smooth_pose_model and loss_after is not None and math.isfinite(loss_after):
+        total_loss, stat["loss_after_reused"] = float(loss_after), True
+    else:
+        known = (loss_after, loss_before, loss_hist[-1] if loss_hist else None)
+        rescored = _evaluate_align_loss(
+            lambda: objective.align_loss_jit(pose_params_out, vol),
+            fallback=next((value for value in known if value is not None), None),
+            context="Using fallback for final alignment loss bookkeeping",
+        )
+        total_loss = math.nan if rescored is None else float(rescored)
+        stat["loss_after_reused"] = False
+    if (
+        loss_before is not None
+        and math.isfinite(loss_before)
+        and math.isfinite(total_loss)
+        and total_loss > loss_before
     ):
         pose_params_out = pose_params_in
         motion_coeffs_out = motion_coeffs_in

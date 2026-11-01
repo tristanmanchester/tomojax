@@ -68,7 +68,7 @@
   "code_lines": {
     "(modules)": 3326,
     "_data": 2053,
-    "alignment": 16522,
+    "alignment": 16476,
     "backends": 615,
     "cli": 2572,
     "core": 13335,
@@ -106,10 +106,10 @@
   "single_use_helpers": {
     "tiny": 105,
     "forwarders": 9,
-    "chained": 43
+    "chained": 41
   },
   "type_errors": {
-    "reportArgumentType": 180,
+    "reportArgumentType": 176,
     "reportAssignmentType": 2,
     "reportAttributeAccessIssue": 82,
     "reportCallIssue": 9,
