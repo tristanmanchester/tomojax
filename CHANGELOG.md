@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Projection matching reports how far its two starts' horizontal shifts disagree
+beyond a common object translation, in `info["initialization"]["horizontal_disagreement"]`.
+
 Joseph and cone projection, transpose and pose-column calls use their JAX
 reference when executed on a CPU, even on a CUDA host. Explicit Projector
 devices now place the input volume before compiling its forward operation.

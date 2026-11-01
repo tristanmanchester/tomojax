@@ -113,7 +113,12 @@ full-procedure uncertainties are not reported.
 
 `result.info["initialization"]["losses"]` contains the final losses from the two
 starts. Similar losses can indicate an ambiguous horizontal fit; they are not
-pose-error bounds.
+pose-error bounds. `["horizontal_disagreement"]` gives the RMS, 95th percentile
+and maximum difference between the two starts' horizontal shifts, in length
+units, after removing a common object translation. A large value shows
+sensitivity to initialization, and when the losses are also close the selection
+is fragile; a small one does not mean the shifts are accurate, since both starts
+can share a bias.
 
 ### Align large scans at reduced resolution
 

@@ -259,12 +259,24 @@ def _horizontal_fit(
         fits.append((name, seed + np.asarray(increment), info))
         del volume, initial
     best = min(fits, key=lambda fit: fit[2]["loss"][-1])
+    # How far the two starts' horizontal results differ beyond a common object
+    # translation: a sensitivity of this fit, not an error bar. Both can share a bias.
+    difference = fits[0][1][:, 3].astype(np.float64) - fits[1][1][:, 3]
+    translation = np.linalg.lstsq(frame.astype(np.float64), difference, rcond=None)[0]
+    spread = np.abs(difference - frame @ translation)
     return (
         best[1],
         best[2],
         {
             "selected": best[0],
             "losses": {name: info["loss"][-1] for name, _, info in fits},
+            "horizontal_disagreement": {
+                "rms": float(np.sqrt(np.mean(spread**2))),
+                "p95": float(np.percentile(spread, 95)),
+                "max": float(spread.max()),
+                "units": "geometry_length",
+                "scope": "between the two starts; not a calibrated uncertainty",
+            },
         },
     )
 
