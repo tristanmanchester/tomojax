@@ -5,16 +5,13 @@ from dataclasses import dataclass, replace
 import logging
 import math
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax.alignment._geometry.geometry_applier import (
     BaseGeometryArrays,
-    apply_setup_to_detector_grid,
-    materialize_setup_geometry,
-    setup_moved_detector,
 )
 from tomojax.alignment._geometry.initializers import (
     common_line_setup_seed,
@@ -40,7 +37,7 @@ from tomojax.alignment._profiles import (
 )
 from tomojax.alignment._reconstruction_config import fista_config
 from tomojax.alignment.optimizers import ValidationLmConfig, run_active_validation_lm
-from tomojax.recon.fista_tv import FistaConfig, fista_tv
+from tomojax.recon.fista_tv import FistaConfig
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -53,17 +50,6 @@ if TYPE_CHECKING:
     from tomojax.alignment._objectives.loss_specs import AlignmentLossSpec
     from tomojax.alignment._observer import OuterStat
     from tomojax.core.geometry.base import Detector, Geometry, Grid
-
-
-FoldEvaluation = tuple[int, FoldValidation, dict[str, object]]
-
-
-@dataclass(frozen=True)
-class SetupValidationObjectiveResult:
-    opt_result: Any
-    total_loss: float
-    residual_count: int
-    fold_cache: list[FoldEvaluation]
 
 
 @dataclass(frozen=True)
@@ -81,232 +67,119 @@ def _geometry_calibration_payload(
     return state.to_calibration_state(active_dofs=active_geometry_dofs).to_dict()
 
 
-def _run_setup_validation_objective(
+# What every validation-LM round records about its method.
+_VALIDATION_LM_RECORD: dict[str, object] = {
+    "geometry_block": "setup_validation_lm",
+    "geometry_objective": "bilevel_cv",
+    "geometry_optimizer": "validation_lm",
+    "geometry_max_step": 1.0,
+    "objective_kind": "bilevel_cv",
+    "optimizer_kind": "validation_lm",
+    "recon_sensitivity": "stopped",
+    "train_reconstruction_gradient": False,
+    "fold_eval_mode": "stopped_train_recon_validation_lm",
+    "recon_projection_chunked": True,
+    "validation_projection_chunked": True,
+    "active_gradient_mode": "validation_residual_jvp",
+}
+
+
+def _validation_lm_round(
     fit: _FitInputs,
     *,
-    setup_state: AlignmentState,
-    active_view: ActiveParameterView,
+    state: AlignmentState,
+    view: ActiveParameterView,
     folds: FoldArrays,
-    fold_recon_cfg: FistaConfig,
+    recon_cfg: FistaConfig,
     cfg: AlignConfig,
     factor: int,
-) -> SetupValidationObjectiveResult:
-    stage_start = time.monotonic()
-    z_current = active_view.pack(setup_state)
-    total_loss = jnp.asarray(0.0, dtype=jnp.float32)
-    total_grad = jnp.zeros_like(z_current)
-    total_hess = jnp.zeros((int(z_current.size), int(z_current.size)), dtype=jnp.float32)
-    residual_count = 0
-    fold_cache: list[FoldEvaluation] = []
+) -> tuple[AlignmentState, dict[str, object]]:
+    """One bilevel round: reconstruct each train fold, then step on its held-out views."""
+    start = time.monotonic()
+    z = view.pack(state)
+    loss, grad = jnp.float32(0), jnp.zeros_like(z)
+    hess = jnp.zeros((z.size, z.size), dtype=jnp.float32)
+    residuals, validations = 0, []
     for fold in range(folds.n_folds):
         logging.info(
             "Setup validation-LM fold %d/%d: reconstructing train fold for DOFs=%s",
             fold + 1,
             folds.n_folds,
-            ",".join(active_view.dofs),
+            ",".join(view.dofs),
         )
-        train_idx = folds.train_idx[fold]
-        train_mask = folds.train_mask[fold]
-        val_idx = folds.val_idx[fold]
-        val_mask = folds.val_mask[fold]
-        fold_volume, fold_recon_info = reconstruct_train_fold_nograd(
+        fold_volume, _ = reconstruct_train_fold_nograd(
             geometry=fit.geometry,
             grid=fit.grid,
             detector=fit.detector,
             projections=fit.projections,
-            state=setup_state,
-            train_idx=train_idx,
-            train_mask=train_mask,
+            state=state,
+            train_idx=folds.train_idx[fold],
+            train_mask=folds.train_mask[fold],
             init_x=fit.init_x,
             level_factor=int(factor),
-            cfg=fold_recon_cfg,
+            cfg=recon_cfg,
         )
         validation = FoldValidation(
-            frozen_state=setup_state,
-            active_view=active_view,
+            frozen_state=state,
+            active_view=view,
             base=fit.base,
             grid=fit.grid,
             detector=fit.detector,
             projections=fit.projections,
             loss_adapter=fit.loss_adapter,
             fold_volume=fold_volume,
-            val_idx=val_idx,
-            val_mask=val_mask,
+            val_idx=folds.val_idx[fold],
+            val_mask=folds.val_mask[fold],
             views_per_batch=max(1, int(cfg.views_per_batch)),
             projector_unroll=1,
             checkpoint_projector=bool(cfg.checkpoint_projector),
             gather_dtype=str(cfg.gather_dtype),
             ray_integrator=cfg.ray_integrator,
         )
-        normals = accumulate_validation_normals(validation, z_current)
-        total_loss = total_loss + normals.loss
-        total_grad = total_grad + normals.grad
-        total_hess = total_hess + normals.hess
-        residual_count += int(normals.residual_count)
-        fold_cache.append((fold, validation, fold_recon_info))
+        normals = accumulate_validation_normals(validation, z)
+        loss, grad, hess = loss + normals.loss, grad + normals.grad, hess + normals.hess
+        residuals += int(normals.residual_count)
+        validations.append(validation)
         logging.info(
             "Setup validation-LM fold %d/%d: residuals=%d cumulative_loss=%.6g elapsed=%.1fs",
             fold + 1,
             folds.n_folds,
-            residual_count,
-            float(total_loss),
-            time.monotonic() - stage_start,
+            residuals,
+            float(loss),
+            time.monotonic() - start,
         )
-
-    # Each frozen fold keeps its compiled loss for the candidate search.
-    scorers = tuple(validation_scorer(validation) for _, validation, _ in fold_cache)
-
-    def score_candidate(z_candidate: jnp.ndarray) -> float:
-        return float(sum(scorer(z_candidate) for scorer in scorers))
-
-    opt_result = run_active_validation_lm(
-        state=setup_state,
-        view=active_view,
-        loss=float(total_loss),
-        grad=total_grad,
-        hess=total_hess,
-        score_fn=score_candidate,
+    # Each frozen fold keeps its compiled loss for the candidate search; built
+    # once every fold is reconstructed, so no scorer is alive during one.
+    scorers = [validation_scorer(validation) for validation in validations]
+    result = run_active_validation_lm(
+        state=state,
+        view=view,
+        loss=float(loss),
+        grad=grad,
+        hess=hess,
+        score_fn=lambda candidate: float(sum(scorer(candidate) for scorer in scorers)),
         bounds=cfg.bounds,
         cfg=ValidationLmConfig(damping=max(float(cfg.gn_damping), 1e-6)),
     )
     logging.info(
         "Setup validation-LM candidates: loss %.6g -> %.6g accepted=%s elapsed=%.1fs",
-        float(total_loss),
-        float(opt_result.loss),
-        bool(opt_result.accepted),
-        time.monotonic() - stage_start,
+        float(loss),
+        float(result.loss),
+        bool(result.accepted),
+        time.monotonic() - start,
     )
-    return SetupValidationObjectiveResult(
-        opt_result=opt_result,
-        total_loss=float(total_loss),
-        residual_count=residual_count,
-        fold_cache=fold_cache,
-    )
-
-
-def _build_geometry_stage_stat(
-    *,
-    objective_result: SetupValidationObjectiveResult,
-    active_view: ActiveParameterView,
-    cfg: AlignConfig,
-    fold_recon_cfg: FistaConfig,
-    folds: FoldArrays,
-    loss_name: str,
-    schedule_name: str | None,
-    stage: ResolvedAlignmentStage,
-    outer_idx: int,
-    init_x: jnp.ndarray | None,
-    seed_diagnostics: dict[str, object] | None = None,
-) -> OuterStat:
-    opt_result = objective_result.opt_result
-    stat = dict(opt_result.stats)
-    gauge_decision = stage.gauge_decision
-    stat.update(
-        {
-            "geometry_block": "setup_validation_lm",
-            "geometry_active_dofs": ",".join(active_view.dofs),
-            "geometry_objective": "bilevel_cv",
-            "geometry_optimizer": "validation_lm",
-            "geometry_loss_kind": loss_name,
-            "geometry_loss_before": float(objective_result.total_loss),
-            "geometry_loss_after": float(opt_result.loss),
-            "geometry_accepted": bool(opt_result.accepted),
-            "geometry_step_norm": float(stat.get("step_norm_whitened", 0.0) or 0.0),
-            "geometry_gradient_norm": float(stat.get("grad_norm_whitened", 0.0) or 0.0),
-            "geometry_max_step": 1.0,
-            "geometry_status": "converged" if opt_result.accepted else "underconverged",
-            "geometry_outer_idx": int(outer_idx),
-            "quality_tier": str(getattr(cfg, "stage_quality_tier", "")),
-            "schedule_name": schedule_name,
-            "schedule_stage_index": int(stage.index),
-            "schedule_stage_name": stage.name,
-            "schedule_stage_active_dofs": ",".join(stage.active_dofs),
-            "gauge_policy": stage.gauge_policy,
-            "gauge_status": gauge_decision.status,
-            "gauge_decision": gauge_decision.to_dict(),
-            "objective_kind": "bilevel_cv",
-            "objective_provenance": {
-                "outer_loss_source": "AlignmentLossSpec",
-                "outer_loss_kind": str(loss_name),
-                "inner_data_term": "l2_projection",
-                "inner_regulariser": str(fold_recon_cfg.regulariser),
-                "validation_split": "interleaved_kfold",
-                "differentiation_mode": "none",
-                "initialization_policy": "current_level_volume" if init_x is not None else "zeros",
-            },
-            "optimizer_kind": "validation_lm",
-            "outer_loss_kind": str(loss_name),
-            "recon_sensitivity": "stopped",
-            "train_reconstruction_gradient": False,
-            "train_reconstruction_iterations": int(fold_recon_cfg.iterations),
-            "views_per_batch": max(1, int(cfg.views_per_batch)),
-            "n_folds": int(folds.n_folds),
-            "fold_eval_mode": "stopped_train_recon_validation_lm",
-            "folds_used": ",".join(str(item[0]) for item in objective_result.fold_cache),
-            "num_train_reconstructions": len(objective_result.fold_cache),
-            "validation_residual_count": int(objective_result.residual_count),
-            "recon_projection_chunked": True,
-            "validation_projection_chunked": True,
-            "active_gradient_mode": "validation_residual_jvp",
-        }
-    )
-    if seed_diagnostics is not None and outer_idx == 1:
-        stat.update(seed_diagnostics)
-    return stat
-
-
-def _refresh_setup_reconstruction(
-    *,
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
-    setup_state: AlignmentState,
-    init_x: jnp.ndarray | None,
-    factor: int,
-    cfg: AlignConfig,
-) -> jnp.ndarray:
-    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
-    moved = setup_moved_detector(detector, setup_state.setup, level_factor=int(factor))
-    if moved is not None:  # the batched (CUDA) operators, as in the folds
-        x_next, _ = fista_tv(
-            materialize_setup_geometry(geometry, grid, moved, setup_state.setup),
-            grid,
-            moved,
-            projections,
-            init_x=init_x,
-            config=fista_config(
-                cfg,
-                iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
-                backend="jax" if cfg.backend == "jax" else "auto",
-                views_per_batch=int(cfg.views_per_batch) or None,
-            ),
-        )
-        return x_next
-    geom = materialize_setup_geometry(geometry, grid, detector, setup_state.setup)
-    det_grid = apply_setup_to_detector_grid(
-        detector,
-        setup_state.setup,
-        level_factor=int(factor),
-    )
-    x_next, _ = fista_tv(
-        geom,
-        grid,
-        detector,
-        projections,
-        init_x=init_x,
-        config=fista_config(
-            cfg,
-            projector_model="ray",
-            backend="jax",
-            iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
-            views_per_batch=max(1, int(cfg.views_per_batch)),
-            checkpoint_projector=bool(cfg.checkpoint_projector),
-            gather_dtype=str(cfg.gather_dtype),
-        ),
-        det_grid=det_grid,
-    )
-    return x_next
+    stats = result.stats
+    return result.state, {
+        **stats,
+        **_VALIDATION_LM_RECORD,
+        "geometry_loss_before": float(loss),
+        "geometry_loss_after": float(result.loss),
+        "geometry_accepted": bool(result.accepted),
+        "geometry_step_norm": float(stats.get("step_norm_whitened", 0.0) or 0.0),
+        "geometry_gradient_norm": float(stats.get("grad_norm_whitened", 0.0) or 0.0),
+        "geometry_status": "converged" if result.accepted else "underconverged",
+        "validation_residual_count": residuals,
+    }
 
 
 def _build_setup_stage_result(
@@ -438,19 +311,22 @@ def _seeded(
 
 
 def _setup_seed_diagnostics(
-    *,
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    factor: int,
-    projections: jnp.ndarray,
+    whole: _FitInputs,
     setup_state: AlignmentState,
     active_view: ActiveParameterView,
-    schedule_name: str | None,
     stage: ResolvedAlignmentStage,
+    *,
+    schedule_name: str | None,
     cfg: AlignConfig,
+    factor: int,
 ) -> dict[str, object] | None:
     """Seed setup before pose fitting, retaining the axial/short-arc COR fallback."""
+    geometry, grid, detector, projections = (
+        whole.geometry,
+        whole.grid,
+        whole.detector,
+        whole.projections,
+    )
     if np.any(np.asarray(setup_state.pose.pose_params)):
         return None
     seed_info = common_line_setup_seed(
@@ -586,26 +462,24 @@ def _optimize_setup_geometry_bilevel_for_level(
             "'bilevel_cv' with 'validation_lm'"
         )
     base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=int(factor))
+    n_views = int(projections.shape[0])
     active_view = ActiveParameterView.from_dofs(stage.active_geometry_dofs)
     setup_state = state.replace(
         setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit),
         pose=PoseState(
-            jnp.zeros((int(projections.shape[0]), POSE_WIDTH), dtype=jnp.float32)
+            jnp.zeros((n_views, POSE_WIDTH), dtype=jnp.float32)
             if init_pose_params is None
             else jnp.asarray(init_pose_params, dtype=jnp.float32),
             translation_frame=cfg.pose_translation_frame,
         ),
         volume=init_x,
     )
-    n_views = int(projections.shape[0])
-    n_folds = min(2, n_views)
-    folds = FoldSpec(n_folds=n_folds).build(n_views)
+    folds = FoldSpec(n_folds=min(2, n_views)).build(n_views)
     loss_adapter = build_loss_adapter(loss_spec, projections)
     if not bool(loss_adapter.supports_setup_validation_lm):
-        stage_name = schedule_name or stage.name
         raise ValueError(
             "Setup validation-LM requires a setup-compatible weighted least-squares loss; "
-            f"level {int(factor)} stage {stage_name!r} resolved loss {loss_name!r}"
+            f"level {int(factor)} stage {schedule_name or stage.name!r} resolved loss {loss_name!r}"
         )
     quality_policy = reconstruction_quality_policy(str(getattr(cfg, "stage_quality_tier", "fast")))
     fold_recon_cfg = fista_config(
@@ -616,88 +490,78 @@ def _optimize_setup_geometry_bilevel_for_level(
         gather_dtype=str(cfg.gather_dtype),
         backend="jax" if cfg.backend == "jax" else "auto",
     )
+    whole = _FitInputs(geometry, grid, detector, projections, base, loss_adapter, init_x)
     seed_diagnostics = _setup_seed_diagnostics(
-        geometry=geometry,
-        grid=grid,
-        detector=detector,
-        factor=int(factor),
-        projections=projections,
-        setup_state=setup_state,
-        active_view=active_view,
-        schedule_name=schedule_name,
-        stage=stage,
-        cfg=cfg,
+        whole, setup_state, active_view, stage, schedule_name=schedule_name, cfg=cfg, factor=factor
     )
     setup_state = _seeded(setup_state, seed_diagnostics, view=active_view, cfg=cfg)
+    fit = _fit_inputs(whole, dofs=active_view.dofs, loss_spec=loss_spec, factor=int(factor))
+    validation_cfg = _validation_config(cfg, fit.grid, fit.detector)
+    gauge = stage.gauge_decision
+    stage_record = {
+        "geometry_active_dofs": ",".join(active_view.dofs),
+        "geometry_loss_kind": loss_name,
+        "quality_tier": str(getattr(cfg, "stage_quality_tier", "")),
+        "schedule_name": schedule_name,
+        "schedule_stage_index": int(stage.index),
+        "schedule_stage_name": stage.name,
+        "schedule_stage_active_dofs": ",".join(stage.active_dofs),
+        "gauge_policy": stage.gauge_policy,
+        "gauge_status": gauge.status,
+        "gauge_decision": gauge.to_dict(),
+        "objective_provenance": {
+            "outer_loss_source": "AlignmentLossSpec",
+            "outer_loss_kind": str(loss_name),
+            "inner_data_term": "l2_projection",
+            "inner_regulariser": str(fold_recon_cfg.regulariser),
+            "validation_split": "interleaved_kfold",
+            "differentiation_mode": "none",
+            "initialization_policy": "current_level_volume" if init_x is not None else "zeros",
+        },
+        "outer_loss_kind": str(loss_name),
+        "train_reconstruction_iterations": int(fold_recon_cfg.iterations),
+        "views_per_batch": max(1, int(validation_cfg.views_per_batch)),
+        "n_folds": int(folds.n_folds),
+        "folds_used": ",".join(str(fold) for fold in range(folds.n_folds)),
+        "num_train_reconstructions": int(folds.n_folds),
+    }
     setup_stats: list[OuterStat] = []
     outer_limit = max(1, int(stage.maxiter))
-    fit = _fit_inputs(
-        _FitInputs(geometry, grid, detector, projections, base, loss_adapter, init_x),
-        dofs=active_view.dofs,
-        loss_spec=loss_spec,
-        factor=int(factor),
-    )
-    validation_cfg = _validation_config(cfg, fit.grid, fit.detector)
     for outer_idx in range(1, outer_limit + 1):
         logging.info(
-            "Setup stage %s outer %d/%d level=%d DOFs=%s",
-            stage.name,
-            outer_idx,
-            outer_limit,
-            int(factor),
-            ",".join(active_view.dofs),
+            "Setup stage %s outer %d/%d level=%d", stage.name, outer_idx, outer_limit, factor
         )
-        objective_result = _run_setup_validation_objective(
+        setup_state, round_stat = _validation_lm_round(
             fit,
-            setup_state=setup_state,
-            active_view=active_view,
+            state=setup_state,
+            view=active_view,
             folds=folds,
-            fold_recon_cfg=fold_recon_cfg,
+            recon_cfg=fold_recon_cfg,
             cfg=validation_cfg,
             factor=factor,
         )
-        opt_result = objective_result.opt_result
-        setup_state = opt_result.state
-        last_loss = float(opt_result.loss)
-        stat = _build_geometry_stage_stat(
-            objective_result=objective_result,
-            active_view=active_view,
-            cfg=validation_cfg,
-            fold_recon_cfg=fold_recon_cfg,
-            folds=folds,
-            loss_name=loss_name,
-            schedule_name=schedule_name,
-            stage=stage,
-            outer_idx=outer_idx,
-            init_x=init_x,
-            seed_diagnostics=seed_diagnostics,
-        )
-        setup_stats.append(stat)
-        logging.info(
-            "Setup stage %s outer %d/%d: loss %.6g -> %.6g accepted=%s step_norm=%.3g",
-            stage.name,
-            outer_idx,
-            outer_limit,
-            float(stat.get("geometry_loss_before", math.nan)),
-            float(stat.get("geometry_loss_after", math.nan)),
-            bool(stat.get("geometry_accepted", False)),
-            float(stat.get("geometry_step_norm", 0.0) or 0.0),
-        )
-        if bool(cfg.early_stop):
-            # This round's own improvement: a seeded start may need no more.
-            before = float(stat.get("geometry_loss_before", math.inf))
-            impr = (before - last_loss) / max(abs(before), 1e-6)
-            if math.isfinite(before) and impr < float(cfg.early_stop_rel_impr):
-                break
+        stat = {**round_stat, **stage_record, "geometry_outer_idx": outer_idx}
+        if seed_diagnostics is not None and outer_idx == 1:
+            stat.update(seed_diagnostics)
+        setup_stats.append(cast("OuterStat", stat))
+        # This round's own improvement: a seeded start may need no more.
+        before, after = (cast("float", stat[f"geometry_loss_{k}"]) for k in ("before", "after"))
+        impr = (before - after) / max(abs(before), 1e-6)
+        if cfg.early_stop and math.isfinite(before) and impr < float(cfg.early_stop_rel_impr):
+            break
 
-    x_next = _refresh_setup_reconstruction(
+    # The level's volume: the same reconstruction over every view, poses included.
+    views = jnp.arange(n_views)
+    x_next, _ = reconstruct_train_fold_nograd(
         geometry=geometry,
         grid=grid,
         detector=detector,
         projections=projections,
-        setup_state=setup_state,
+        state=setup_state,
+        train_idx=views,
+        train_mask=jnp.ones_like(views),
         init_x=init_x,
-        factor=factor,
-        cfg=cfg,
+        level_factor=int(factor),
+        cfg=fold_recon_cfg,
     )
     return _build_setup_stage_result(x=x_next, state=setup_state, setup_stats=setup_stats)
