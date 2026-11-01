@@ -181,7 +181,7 @@ requires an explicit setup mode or caller-supplied geometry; no axis or support
 is guessed. The workflow fits a cubic spline directly in the joint image/pose
 solve, in detector dx/dz only. It uses a bounded coarse image (at most 16 million
 voxels), square detector binning toward 320 pixels across (without eliminating
-a thin detector axis), and four outer iterations.
+a thin detector axis), and up to eight outer iterations.
 The physical support is preserved, including explicitly placed volume faces.
 The returned scan retains the original detector samples and fitted poses; the
 alignment image remains coarse. There is no forced native-grid refinement.

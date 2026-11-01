@@ -28,7 +28,7 @@ def test_coarse_policy_preserves_support_native_data_and_poses(shape, explicit, 
         assert mode == "pose" and levels == (1,)
         assert config.pose_model == "spline" and config.gn_coupling == "joint"
         assert config.pose_translation_frame == "detector" and config.optimise_dofs == ("dx", "dz")
-        assert not config.seed_translations
+        assert config.outer_iterations == 8 and not config.seed_translations
         assert max(work.detector.nu, work.detector.nv) <= (320 if nv > 1 else nu)
         assert work.grid.nx * work.grid.ny * work.grid.nz <= automatic._ALIGNMENT_VOXELS
         for g in (expected, work.grid):

@@ -103,7 +103,7 @@ def reconstruct_laminography(
         pose_translation_frame="detector",
         optimise_dofs=("dx", "dz"),
         seed_translations=False,
-        outer_iterations=4,
+        outer_iterations=8,
         iterations=5,
         gn_joint_iterations=20,
     )
