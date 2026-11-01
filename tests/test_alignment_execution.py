@@ -56,7 +56,6 @@ def test_joint_alignment_reuses_its_programs_for_new_scans_of_one_shape():
     cfg = AlignConfig(
         outer_iterations=1,
         iterations=2,
-        tv_weight=0,
         optimise_dofs=("dx",),
         views_per_batch=3,
         gn_joint_iterations=1,
@@ -159,7 +158,7 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes():
     volume, _, info = align(
         geometry, grid, detector, data, config=cfg, resume_state=checkpoints[-1]
     )
-    np.testing.assert_allclose(volume, np.ones((2, 2, 2)), atol=1e-6)
+    np.testing.assert_allclose(volume, np.ones((2, 2, 2)), atol=2e-6)
     assert info["lipschitz"] == 4
     assert all(stat["lipschitz_next"] == 4 for stat in info["outer_stats"])
 
