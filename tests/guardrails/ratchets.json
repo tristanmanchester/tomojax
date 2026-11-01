@@ -68,8 +68,8 @@
   "code_lines": {
     "(modules)": 3326,
     "_data": 2053,
-    "alignment": 16816,
-    "backends": 570,
+    "alignment": 16522,
+    "backends": 615,
     "cli": 2572,
     "core": 13335,
     "corrections": 2105,
@@ -79,7 +79,7 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 13963
+    "recon": 14001
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,
@@ -106,7 +106,7 @@
   "single_use_helpers": {
     "tiny": 105,
     "forwarders": 9,
-    "chained": 46
+    "chained": 43
   },
   "type_errors": {
     "reportArgumentType": 180,
