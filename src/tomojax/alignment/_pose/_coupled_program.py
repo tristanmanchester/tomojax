@@ -31,7 +31,6 @@ from tomojax.core.joseph import (
 )
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.core.trilinear import exact_adjoint, exact_forward
-from tomojax.recon.fista_tv_core import FistaCoreConfig, regulariser_value_arrays
 
 from . import _matching_model
 from ._coupled_linear import CoupledLinearResult, solve_coupled_normal, solve_schur_normal
@@ -42,7 +41,6 @@ from ._pose_jacobian import PoseJacobianOptions, pose_prediction_and_columns
 
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Grid
-    from tomojax.recon.types import Regulariser
 
 
 # Views projected together in the update's data-space passes.
@@ -72,9 +70,6 @@ class CoupledSpec:
     jacobian: PoseJacobianOptions
     active_columns: tuple[int, ...]
     cache_columns: bool
-    regulariser: Regulariser
-    huber_delta: float
-    tv_weight: float
     nonnegative: bool
     gn_volume_damping: float
     gn_damping: float
@@ -108,13 +103,6 @@ class CoupledArrays(NamedTuple):
     # Which views count, with a split: its padding views do not.
     counts: jax.Array | None = None
     pose_basis: jax.Array | None = None
-
-
-def volume_regularisation(x: jax.Array, *, spec: CoupledSpec) -> jax.Array:
-    if spec.tv_weight == 0:
-        return jnp.float32(0)
-    config = FistaCoreConfig(regulariser=spec.regulariser, huber_delta=spec.huber_delta)
-    return spec.tv_weight * regulariser_value_arrays(x, config, z_fast=spec.jacobian.z_fast)
 
 
 def pose_smoothness(p: jax.Array, *, weights: jax.Array) -> jax.Array:
@@ -364,10 +352,7 @@ def free_volume_support(x, gradient, *, nonnegative):
 
 
 def volume_metric_inverse(bound, *, spec, array=jnp):
-    regularisation = 12 * spec.tv_weight / spec.huber_delta if spec.tv_weight else 0
-    return 1 / array.maximum(
-        bound + regularisation + spec.gn_volume_damping, spec.gn_volume_damping
-    )
+    return 1 / array.maximum(bound + spec.gn_volume_damping, spec.gn_volume_damping)
 
 
 def pose_metric_inverse(diagonal, smoothness, damping):
@@ -487,7 +472,6 @@ def _build_program(
     project_pose = constrained_pose_inverse(
         trajectory_projector(arrays.pose_basis, across), spec, arrays, across
     )
-    regularisation = partial(volume_regularisation, spec=spec)
     smoothness = partial(pose_smoothness, weights=arrays.smoothness)
 
     def poses(p):
@@ -536,7 +520,7 @@ def _build_program(
             return total + 0.5 * jnp.sum(valid * squares)
 
         data = across(over_batches(body, jnp.float32(0)))
-        return data + regularisation(x) + smoothness(shares.whole(p))
+        return data + smoothness(shares.whole(p))
 
     highest = jax.lax.Precision.HIGHEST
 
@@ -585,7 +569,7 @@ def _build_program(
 
     block_dot = shares.dot
 
-    def solve_pose_eliminated(ops, p, free, rhs, normal, reg_hessian, volume_inverse):
+    def solve_pose_eliminated(ops, p, free, rhs, normal, volume_inverse):
         """Eliminate the per-view pose blocks exactly and solve for the volume by CG."""
         gram = _pose_gram(ops, n_views, p.shape[1], indices)
         solve_pose = shares.pose_solver(
@@ -626,7 +610,7 @@ def _build_program(
 
             ax = across(over_batches(body, volume_zeros))
             return (
-                free * (ax + reg_hessian(dx) + cfg.gn_volume_damping * dx),
+                free * (ax + cfg.gn_volume_damping * dx),
                 increment[1],
             )
 
@@ -649,10 +633,6 @@ def _build_program(
 
     def update(p, x):
         ops = batch_ops(poses(p), p, x)
-        if cfg.tv_weight:
-            reg_grad, reg_hessian = jax.linearize(jax.grad(regularisation), x)
-        else:  # no regulariser: no zero volumes to carry
-            reg_grad, reg_hessian = jnp.float32(0), lambda _dx: jnp.float32(0)
         smooth_grad, smooth_hessian = shares.linearized(jax.grad(smoothness), p)
 
         def gradient_body(start, valid, carry):
@@ -667,7 +647,7 @@ def _build_program(
             )
 
         gx, gp = over_batches(gradient_body, (volume_zeros, jnp.zeros_like(p)))
-        gx = across(gx) + reg_grad
+        gx = across(gx)
         gp = project_pose((gp + smooth_grad) * movable)
         free = free_volume_support(x, gx, nonnegative=cfg.nonnegative)
 
@@ -682,7 +662,7 @@ def _build_program(
 
             ax, ap = over_batches(body, (volume_zeros, jnp.zeros_like(p)))
             return (
-                free * (across(ax) + reg_hessian(dx) + cfg.gn_volume_damping * dx),
+                free * (across(ax) + cfg.gn_volume_damping * dx),
                 project_pose(movable * (ap + smooth_hessian(dp) + cfg.gn_damping * dp)),
             )
 
@@ -694,7 +674,7 @@ def _build_program(
         volume_inverse = volume_metric_inverse(row_bound, spec=spec)
         rhs = (-(free * gx), -gp)
         if cfg.gn_joint_solver == "pose_eliminated":
-            return solve_pose_eliminated(ops, p, free, rhs, normal, reg_hessian, volume_inverse)
+            return solve_pose_eliminated(ops, p, free, rhs, normal, volume_inverse)
         pose_diagonal = (
             jnp.sum(ops.cached**2, axis=2)
             if ops.cached is not None

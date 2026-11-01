@@ -14,9 +14,8 @@ def fista_config(cfg: AlignConfig, *, iterations: int, **overrides: Any) -> Fist
     """Translate alignment reconstruction settings without choosing a backend."""
     settings: dict[str, Any] = {
         "iterations": iterations,
-        "tv_weight": float(cfg.tv_weight),
-        "regulariser": cfg.regulariser,
-        "huber_delta": float(cfg.huber_delta),
+        "tv_weight": 0.0,
+        "regulariser": "huber_tv",
         "lipschitz": cfg.lipschitz,
         "nonnegative": bool(cfg.nonnegative),
         "ray_integrator": getattr(cfg, "ray_integrator", "sampled"),

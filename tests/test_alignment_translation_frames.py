@@ -234,7 +234,6 @@ def test_public_alignment_and_checkpoint_keep_detector_frame_at_ninety_degrees(
         iterations=1,
         # This is a fixed-volume API/derivative regression, not joint-recovery evidence.
         lipschitz=1e12,
-        tv_weight=0,
         loss=L2LossSpec(),
         early_stop=False,
         gather_dtype="fp32",
@@ -805,7 +804,6 @@ def test_cor_then_pose_reports_the_constant_detector_shift_as_the_centre():
         outer_iterations=8,
         iterations=1,
         lipschitz=1e12,  # keeps the known volume fixed
-        tv_weight=0,
         loss=L2LossSpec(),
         early_stop=False,
         gather_dtype="fp32",
@@ -888,7 +886,6 @@ def _cone_proposal_config(backend, *, dof="dx"):
         backend=backend,
         pose_translation_frame="detector",
         seed_translations=False,
-        tv_weight=0,
         views_per_batch=2,
     )
 

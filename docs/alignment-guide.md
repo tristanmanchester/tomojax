@@ -495,7 +495,7 @@ scatter, and does not guarantee joint recovery. On data made with the same
 voxel basis, it recovers poses to numerical precision; that is an inverse
 crime, not evidence about real data.
 
-With exact integration, the Huber-FISTA alignment path can use CUDA forward and
+With exact integration, the FISTA alignment path can use CUDA forward and
 matched adjoint kernels with changing poses. Pose derivatives and acceptance
 scoring use the exact JAX reference on the selected JAX device. The raw exact
 CUDA calls do not provide automatic differentiation; differentiable

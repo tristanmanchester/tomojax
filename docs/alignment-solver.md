@@ -69,7 +69,8 @@ stage must declare `objective_kind="joint_volume_pose"` and `optimizer="gn"`.
 
 Joint GN requires `gather_dtype="fp32"`. It supports sampled and exact integration, active/frozen
 pose parameters, pose bounds, volume masks, nonnegative voxels, pose smoothness,
-and Huber-TV or zero volume regularisation. It does not support nonsmooth TV. Polynomial and spline trajectories are fitted
+and unregularised volume updates. TV is available in the final reconstruction, not in
+alignment. Polynomial and spline trajectories are fitted
 directly in the joint linear system, not fitted to independent per-view updates. `gn_joint_iterations=40` bounds the inner
 matrix-free PCG solve; `gn_joint_rtol=1e-4` controls its residual stopping
 criterion. `gn_damping` and `gn_volume_damping` damp pose and voxel increments
@@ -115,15 +116,12 @@ The shared central-difference stencil is unchanged. Recovery and performance
 claims require the complete [free-voxel pilot](measurements.md#free-voxel-pilot);
 passing the numerical tests alone does not establish them.
 
-Alignment's `info["lipschitz"]` and checkpoint `lipschitz` retain the effective
-FISTA step bound, including smooth-TV curvature. Reusing a bound does not add a
-safety factor on each outer iteration. If reconstruction falls back to public FISTA,
-the adapter removes the existing TV contribution before that solver adds it;
-the bound therefore stays consistent across both paths and resume. A fallback
-override too small to supply a positive data bound triggers operator-norm
-estimation. The public `FistaConfig.lipschitz` itself remains a data-term bound.
+Alignment's `info["lipschitz"]` and checkpoint `lipschitz` retain the data-term
+FISTA step bound. Reusing a bound does not add a safety factor on each outer
+iteration; the same bound passes to public FISTA and survives resume.
 
-Without an override, Huber-FISTA alignment initialises its data bound from
+The reference-quality JAX policy uses the public FISTA solver and its power-method
+bound. Without an override, the fast alignment core initialises its data bound from
 `max(A.T @ (A @ ones))`, with a 20% margin applied once. For the nonnegative
 trilinear ray model this row sum bounds the normal operator's largest
 eigenvalue. It costs one projection/adjoint pair and accounts for actual

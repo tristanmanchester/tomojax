@@ -105,7 +105,7 @@ def _fold_metadata(valid_idx: np.ndarray, cfg: FistaConfig, info: object) -> dic
         "train_indices": [int(v) for v in valid_idx],
         "recon_sensitivity": "stopped",
         "inner_recon_algo": "fista_tv",
-        "inner_regulariser": str(cfg.regulariser),
+        "inner_regulariser": "none",
         "inner_iterations": int(cfg.iterations),
         "views_per_batch": cfg.views_per_batch,
         "info": info,

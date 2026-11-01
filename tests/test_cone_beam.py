@@ -439,7 +439,6 @@ def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
         outer_iterations=4,
         iterations=1,
         lipschitz=1e12,  # keeps the known volume fixed
-        tv_weight=0,
         loss=L2LossSpec(),
         early_stop=False,
         gather_dtype="fp32",

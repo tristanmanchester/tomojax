@@ -87,7 +87,6 @@ def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):
         cfg = AlignConfig(
             outer_iterations=1,
             iterations=4,
-            tv_weight=0,
             backend="jax",
             gather_dtype="fp32",
             optimise_dofs=("dx",),
@@ -102,8 +101,8 @@ def test_alignment_automatic_step_bound_respects_physical_length_units(tilt):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("regulariser", ["huber_tv", "tv"])
-def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(regulariser):
+@pytest.mark.parametrize("quality", ["fast", "reference"])
+def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(quality):
     # The rays each sum two identical unknown voxels: A.T A has eigenvalue 2
     # on this constant mode. With L=4 every one-step update halves the error.
     # Repeatedly inflating L instead leaves a finite error even after 40 steps.
@@ -114,10 +113,8 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(reg
     cfg = AlignConfig(
         outer_iterations=40,
         iterations=1,
+        quality=quality,
         lipschitz=4,
-        tv_weight=0.01,
-        huber_delta=0.12,
-        regulariser=regulariser,
         backend="jax",
         gather_dtype="fp32",
         optimise_dofs=("dx",),
@@ -127,6 +124,7 @@ def test_repeated_alignment_reconstruction_keeps_updating_voxels_and_resumes(reg
     defaults = reconstruction_stage.fista_config(cfg, iterations=1)
     assert (defaults.tv_prox_iterations, defaults.projector_unroll) == (10, 1)
     assert defaults.recon_rel_tol is None and defaults.recon_patience == 0
+    assert defaults.tv_weight == 0
     checkpoints = []
     _, _, interrupted = align(
         geometry,
@@ -361,11 +359,11 @@ def test_pose_adjusted_cuda_fallback_keeps_folded_detector_grid_out_of_jax_core(
     )
     monkeypatch.setattr(
         reconstruction_stage,
-        "_run_huber_fista_core_dynamic_geometry",
+        "_run_fista_core_dynamic_geometry",
         run_dynamic,
     )
 
-    _x, info = reconstruction_stage._run_huber_fista_core_reconstruction(
+    _x, info = reconstruction_stage._run_fista_core_reconstruction(
         reconstruction_stage._ReconstructionStepInputs(
             recon_geometry=PoseAdjustedGeometry(
                 geometry=geometry,
@@ -476,7 +474,6 @@ def test_alignment_partial_view_batches_run_under_global_x64() -> None:
     config = AlignConfig(
         outer_iterations=1,
         iterations=1,
-        tv_weight=0,
         backend="jax",
         optimise_dofs=("dx",),
         early_stop=False,
@@ -536,7 +533,6 @@ def test_pose_steps_reduce_the_declared_objective():
         early_stop=False,
         optimise_dofs=("dx", "dz"),
         pose_translation_frame="detector",
-        tv_weight=0,
         w_trans=10.0,
     )
     checkpoints = []
@@ -572,8 +568,6 @@ def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
     geometry = PoseAdjustedGeometry(geometry=geometry, pose_params=jnp.full((3, 6), pose_delta))
     cfg = AlignConfig(
         iterations=3,
-        tv_weight=0.02,
-        huber_delta=0.2,
         views_per_batch=2,
         ray_integrator=integrator,
         backend="cuda" if jax.default_backend() == "gpu" else "jax",
@@ -592,9 +586,9 @@ def test_alignment_reconstruction_streams_host_data_without_changing_the_solve(
     policy = reconstruction_stage.reconstruction_quality_policy("verify")
     monkeypatch.setattr(reconstruction_stage, "reconstruction_quality_policy", lambda _: policy)
     monkeypatch.setattr(reconstruction_stage, "should_stream", lambda *a, **k: False)
-    expected, expected_info = reconstruction_stage._run_huber_fista_core_reconstruction(step)
+    expected, expected_info = reconstruction_stage._run_fista_core_reconstruction(step)
     monkeypatch.setattr(reconstruction_stage, "should_stream", lambda *a, **k: True)
-    actual, actual_info = reconstruction_stage._run_huber_fista_core_reconstruction(step)
+    actual, actual_info = reconstruction_stage._run_fista_core_reconstruction(step)
     np.testing.assert_allclose(actual, expected, rtol=3e-6, atol=2e-6)
     assert actual_info["effective_iterations"] == expected_info["effective_iterations"] == 6
     assert actual_info["actual_backend"] == expected_info["actual_backend"]
@@ -634,7 +628,6 @@ def test_private_pose_steps_restore_public_borrowers_and_observers(coupling, jac
         gn_joint_iterations=3,
         gn_damping=0.1,
         gn_volume_damping=0.1,
-        tv_weight=0.01,
         optimise_dofs=("dx",),
         early_stop=False,
         loss=L2LossSpec(),
@@ -717,7 +710,7 @@ def test_owned_stage_core_matches_the_pure_core_and_spares_its_input(
     x = jax.block_until_ready(stage._initial_core_iterate(initial, cfg=cfg))
     z = jax.block_until_ready(jnp.array(x, copy=True))
     assert len({a.unsafe_buffer_pointer() for a in (initial, x, z)}) == 3
-    output, _momentum, *fields = stage._run_huber_fista_core_dynamic_geometry(
+    output, _momentum, *fields = stage._run_fista_core_dynamic_geometry(
         x, z, poses, None, None, data, jnp.float32(300), grid=grid, detector=detector, cfg=cfg
     )
     expected = (pure.loss, pure.data_loss, pure.regulariser_value, pure.effective_iterations)

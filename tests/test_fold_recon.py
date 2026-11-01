@@ -82,9 +82,7 @@ def test_full_alignment_setup_volume_follows_the_coarse_motion(monkeypatch):
     angles = np.linspace(0, 180, 60, endpoint=False)
     theta, u = np.deg2rad(angles)[:, None], np.arange(48) - 23.5
     centres = np.random.default_rng(4).uniform(-14, 14, (8, 2))
-    config = AlignConfig(
-        outer_iterations=3, iterations=20, tv_weight=0, ray_integrator="joseph", backend="jax"
-    )
+    config = AlignConfig(outer_iterations=3, iterations=20, ray_integrator="joseph", backend="jax")
 
     def setup_volume(shifts):
         # Independent analytic line integrals of Gaussians, shifted across the detector.

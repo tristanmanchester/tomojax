@@ -785,9 +785,8 @@ def test_align_cli_pose_mode_defaults_to_the_coupled_solver(
     config = plan["config"]
     assert plan["pose_solver"] == "coupled"
     assert plan["loss"] == "L2LossSpec()"
-    assert (config["ray_integrator"], config["tv_weight"], config["gather_dtype"]) == (
+    assert (config["ray_integrator"], config["gather_dtype"]) == (
         "joseph",
-        0.0,
         "fp32",
     )
     assert config["outer_iterations"] == 30
