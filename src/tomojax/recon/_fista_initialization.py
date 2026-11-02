@@ -96,7 +96,7 @@ def validate_initialization(
         return
     if (
         not cfg.nonnegative
-        or cfg.tv_weight
+        or cfg.tv_weight != 0
         or cfg.support is not None
         or cfg.lower_bound not in (None, 0)
         or cfg.upper_bound is not None

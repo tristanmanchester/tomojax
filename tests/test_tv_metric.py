@@ -138,7 +138,8 @@ def test_metric_cone_segments_and_pose_wrappers_use_object_plane_area():
 
 
 @pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
-def test_public_fista_physical_metric_covaries_with_units_and_amplitude(regulariser):
+@pytest.mark.parametrize("weight", [0.001, None])
+def test_public_fista_physical_metric_covaries_with_units_and_amplitude(regulariser, weight):
     from tomojax.recon import FistaConfig, fista_tv
 
     grid, detector = Grid(4, 3, 2, 0.7, 0.8, 0.9), Detector(5, 4, 0.6, 0.7)
@@ -146,12 +147,21 @@ def test_public_fista_physical_metric_covaries_with_units_and_amplitude(regulari
     data = np.random.default_rng(4).normal(size=(7, 4, 5)).astype(np.float32)
     cfg = FistaConfig(
         iterations=5,
-        tv_weight=0.001,
+        tv_weight=weight,
         regulariser=regulariser,
         backend="jax",
         data_term="per_view_contrast",
     )
     expected, info = fista_tv(geometry, grid, detector, data, config=cfg)
+    if weight is None:
+        explicit, _ = fista_tv(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=replace(cfg, tv_weight=info["resolved_tv_weight"]),
+        )
+        np.testing.assert_allclose(explicit, expected, rtol=2e-5, atol=3e-7)
     length, amplitude = 1000, 3
     g = replace(grid, vx=grid.vx * length, vy=grid.vy * length, vz=grid.vz * length)
     d = replace(detector, du=detector.du * length, dv=detector.dv * length)
@@ -161,3 +171,45 @@ def test_public_fista_physical_metric_covaries_with_units_and_amplitude(regulari
     np.testing.assert_allclose(record["loss"], np.asarray(info["loss"]) * amplitude**2, rtol=2e-5)
     flat, _ = fista_tv(geometry, grid, detector, np.ones_like(data), config=cfg)
     assert np.isfinite(flat).all()
+
+
+def test_noise_weight_raises_all_metric_ratios_without_changing_geometry():
+    from tomojax.recon._tv_metric import (  # check-public-imports: allow-private
+        TVMetric,
+        raise_tv_weight,
+    )
+
+    metric = TVMetric((1.0, 2.0, 0.5), 2.0, 0.1, 4.0, 20.0, 3.0, 0.5, 8.0, 8.0)
+    raised = raise_tv_weight(metric, 3.0)
+    np.testing.assert_allclose(
+        (raised.weight, raised.weight_over_contrast, raised.weight_over_delta), (3.0, 6.0, 30.0)
+    )
+    assert raised.delta == metric.delta and raised.gradient_scale_xyz == metric.gradient_scale_xyz
+    assert float(raise_tv_weight(metric, 1.0).weight) == metric.weight
+    # The selected dimensionless strength is not differentiated through noise.
+    assert float(jax.grad(lambda noise: raise_tv_weight(metric, noise).weight)(3.0)) == 0
+
+
+@pytest.mark.parametrize("pixels", [1, 2])
+def test_explicit_fista_weight_bypasses_noise_and_single_pixel_auto_is_zero(monkeypatch, pixels):
+    import importlib
+
+    from tomojax.recon import FistaConfig, fista_tv
+
+    module = importlib.import_module("tomojax.recon.fista_tv")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("explicit weight must not estimate noise")
+
+    monkeypatch.setattr(module, "estimate_projection_noise", forbidden)
+    grid, detector = Grid(2, 2, 1, 1, 1, 1), Detector(pixels, 1, 1, 1)
+    geometry = ParallelGeometry(grid, detector, [0, 90])
+    for weight in [0.0, 0.001] + ([None] if pixels == 1 else []):
+        volume, info = fista_tv(
+            geometry,
+            grid,
+            detector,
+            np.ones((2, 1, pixels), np.float32),
+            config=FistaConfig(iterations=2, tv_weight=weight, backend="jax"),
+        )
+        assert np.isfinite(volume).all() and info["effective_tv_weight"] == 0

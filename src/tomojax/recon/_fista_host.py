@@ -11,16 +11,21 @@ import numpy as np
 from tomojax.core.host_volume import host_volume, scratch_directory
 
 from ._cuda_tv import proximal_host
+from ._noise_probe import gaussian_probe
+from ._tv_metric import raise_tv_weight
 from ._tv_ops import gradient_norm_squared
 
 
 class HostFista:
     """Three host volumes suffice for gradient, proximal and momentum updates."""
 
-    def __init__(self, problem: Any, config: Any, *, metric, initial=None, out=None) -> None:
+    def __init__(
+        self, problem: Any, config: Any, *, metric, noise_scale=None, initial=None, out=None
+    ) -> None:
         from ._host_arrays import automatic_host_output
 
         self.problem, self.cfg, self.metric = problem, config, metric
+        self.noise_scale = noise_scale
         self.plan, self.xp = problem.plan, problem.engine.xp
         grid = self.plan.grid
         shape = (grid.nz, grid.ny, grid.nx)
@@ -80,9 +85,38 @@ class HostFista:
         self.problem.sweep.run(self.views, source=read, finish=finish, sink=sink, keep=False)
         return 0.5 * value
 
+    def noise_gradient_rms(self):
+        """Use the existing row-window transpose without another host volume."""
+        import jax
+        import jax.numpy as jnp
+
+        detector = self.plan.detector
+        draw = jax.jit(gaussian_probe, static_argnames=("detector_shape",))
+        energy = 0.0
+
+        def finish(batch, first, stop, rows):
+            # Draw and center the FULL detector before selecting a row window.
+            # DLPack shares the one-batch buffer with the native transpose.
+            probe = draw(jnp.asarray(batch.views), (detector.nv, detector.nu))
+            native = self.xp.from_dlpack(probe)
+            rows[0][...] = native[:, first:stop]
+            # Finish the borrowed-buffer copy before JAX can reclaim the draw.
+            self.xp.cuda.get_current_stream().synchronize()
+
+        def sink(_k, accumulated, _sources):
+            nonlocal energy
+            energy += self.problem.engine.norm2(accumulated[0])
+
+        self.problem.sweep.run(
+            self.views, source=lambda _: (), finish=finish, sink=sink, keep=False
+        )
+        return math.sqrt(energy / math.prod(self.shape))
+
     def initialize(self):
         """The unchanged backprojected-data power start, then the feasible initial iterate."""
         xp = self.xp
+        if self.noise_scale is not None:
+            self.metric = raise_tv_weight(self.metric, self.noise_scale * self.noise_gradient_rms())
         value = self.apply(None, self.G, residual=True)
         limit = self.cfg.lipschitz
         if limit is None:
@@ -152,7 +186,7 @@ class HostFista:
 
     def regularizer(self):
         """Isotropic TV with each slab's outgoing z edge, counted once."""
-        if not self.cfg.tv_weight:
+        if self.metric is None:
             return 0.0
         assert self.metric is not None
         xp, value = self.xp, 0.0
@@ -215,7 +249,7 @@ class HostFista:
 
 def solve_on_host(
     geometry, grid, detector, projections, runtime, *, out=None
-) -> tuple[np.ndarray, dict[str, Any]] | None:
+) -> tuple[np.ndarray, dict[str, Any], Any] | None:
     """Select host state only when requested, or when the resident state cannot fit."""
     from tomojax.backends import device_free_memory_bytes
     from tomojax.core.cone import ConeModel
@@ -253,6 +287,13 @@ def solve_on_host(
         else parallel_problem(geometry, grid, detector, data, **options)
     )
     initial = None if runtime.x0 is None else np.asarray(runtime.x0)
-    solver = HostFista(problem, cfg, metric=runtime.metric, initial=initial, out=out)
+    solver = HostFista(
+        problem,
+        cfg,
+        metric=runtime.metric,
+        noise_scale=runtime.noise_scale,
+        initial=initial,
+        out=out,
+    )
     volume, info = solver.run()
-    return problem.result(volume), info
+    return problem.result(volume), info, solver.metric

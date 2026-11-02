@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 from typing import Any
 
@@ -118,4 +118,24 @@ def resolve_tv_metric(
         scale,
         total,
         count,
+    )
+
+
+def raise_tv_weight(metric: TVMetric, noise_gradient_rms) -> TVMetric:
+    """Raise the empirical TV minimum to the noise's contrast-gradient RMS.
+
+    The supplied RMS is sigma * RMS(A.T @ (w * C_w(epsilon))) for one iid
+    unit-variance probe. It uses per-view contrast even for absolute fitting,
+    as a regularization scale, not the absolute data gradient's covariance.
+    The selected dimensionless strength is held fixed under differentiation;
+    the physical metric's intensity/unit scaling retains its derivatives.
+    """
+    ratio = jax.lax.stop_gradient(
+        jnp.maximum(1, noise_gradient_rms / jnp.where(metric.weight > 0, metric.weight, 1))
+    )
+    return replace(
+        metric,
+        weight=metric.weight * ratio,
+        weight_over_contrast=metric.weight_over_contrast * ratio,
+        weight_over_delta=metric.weight_over_delta * ratio,
     )

@@ -43,6 +43,8 @@ from ._fista_initialization import (
     validate_initialization,
 )
 from ._fista_owned import FistaScanState, run_owned_fista, use_owned_fista
+from ._noise import estimate_projection_noise
+from ._noise_probe import probe_gradient_rms
 from ._projection import (
     ConeModel,
     ProjectorBackend,
@@ -51,8 +53,9 @@ from ._projection import (
     resolve_geometry_projector,
     resolve_projector,
 )
+from ._projection_batches import ViewBatches
 from ._solver_validation import validate_fista_config
-from ._tv_metric import TVMetric, resolve_tv_metric
+from ._tv_metric import TVMetric, raise_tv_weight, resolve_tv_metric
 from ._tv_ops import (
     gradient_norm_squared,
     huber_tv_grad,
@@ -94,6 +97,7 @@ class FistaRuntime:
     config: FistaConfig
     regulariser: Regulariser = field(metadata={"static": True})
     metric: TVMetric | None
+    noise_scale: jax.Array | float | None
     huber_delta: jax.Array | float
     constraints: _FistaConstraints
     # None starts from zeros created inside the compiled solve, so the start
@@ -136,8 +140,10 @@ class FistaConfig:
     TV uses physical voxel differences and a global data-contrast scale. Thus
     ``tv_weight`` does not change when switching length units or multiplying all
     line integrals by a constant. It weights an integral, not a mean over the ROI;
-    padding the volume does not dilute the prior. The effective dimensional
-    weight and normalization scales are returned in ``info``.
+    padding the volume does not dilute this fixed minimum. Automatic noise
+    scaling uses RMS over all volume voxels and can change with volume padding.
+    Effective dimensional and selected dimensionless weights are returned in
+    ``info`` as ``effective_tv_weight`` and ``resolved_tv_weight``.
 
     ``initial_epochs`` optionally initializes nonnegative least squares with
     accelerated, interleaved ordered subsets before the full-data iterations.
@@ -169,9 +175,15 @@ class FistaConfig:
         material lies outside the field of view: it profiles an unknown constant
         per view, so absolute background density is not recoverable. This costs
         accuracy on contained objects; do not select it for contained scans.
-    tv_weight : float, optional
-        Dimensionless physical-TV weight. Default is 0.00005. Increase it for
-        very noisy data; this default is not an automatic noise estimator.
+    tv_weight : float | None, optional
+        Dimensionless physical-TV weight; zero disables TV. Default None raises
+        an empirical minimum of 0.00005 using a projection-only Haar-MAD noise
+        estimate and one centered Gaussian gradient probe (seed 0). The minimum
+        was selected on plate validation and image-checked on K11 and the corpus;
+        it is not derived. Noise only raises it. Positive explicit values bypass
+        estimation. Correlated detector noise and object texture are not separated
+        by this iid noise scale. The selected strength is fixed for differentiation;
+        physical intensity/unit normalization retains its derivatives.
     regulariser : Regulariser, optional
         Regularization model: "tv" or "huber_tv". Default is 'tv'.
     huber_delta : float, optional
@@ -234,7 +246,7 @@ class FistaConfig:
     initial_epochs: int = 0
     initial_subsets: int = 16
     data_term: DataTerm = "absolute"
-    tv_weight: float = 5e-5
+    tv_weight: float | None = None
     regulariser: Regulariser = "tv"
     huber_delta: float = 1e-2
     lipschitz: float | None = None
@@ -560,10 +572,10 @@ def _prepare_fista_runtime(
             grid,
             detector,
             projections,
-            tv_weight=cfg.tv_weight,
+            tv_weight=5e-5 if cfg.tv_weight is None else cfg.tv_weight,
             huber_delta=cfg.huber_delta if regulariser == "huber_tv" else 1.0,
         )
-        if cfg.tv_weight
+        if cfg.tv_weight != 0
         else None
     )
     lipschitz = cfg.lipschitz
@@ -593,13 +605,15 @@ def _prepare_fista_runtime(
             det_grid=det_grid,
             ray_integrator=cfg.ray_integrator,
         )
-    if lipschitz is not None:
-        lipschitz = _with_huber(lipschitz, metric, regulariser, grid)
-
     return FistaRuntime(
         config=cfg,
         regulariser=regulariser,
         metric=metric,
+        noise_scale=(
+            estimate_projection_noise(projections) if detector.nv * detector.nu > 1 else 0.0
+        )
+        if cfg.tv_weight is None
+        else None,
         huber_delta=1.0 if metric is None else jnp.where(metric.delta > 0, metric.delta, 1),
         constraints=constraints,
         x0=x0,
@@ -717,6 +731,51 @@ def _data_term(
     return val_and_grad_fn
 
 
+def _automatic_metric(grid: Grid, detector: Detector, runtime: FistaRuntime) -> TVMetric:
+    """Resolve automatic strength through the same configured data transpose."""
+    cfg = runtime.config
+    assert runtime.metric is not None
+    assert runtime.noise_scale is not None
+    if detector.nv * detector.nu == 1:
+        return runtime.metric
+    if runtime.projector is not None:
+        model, backend, batch = runtime.projector
+        ops = ViewBatches(
+            runtime.poses,
+            grid,
+            detector,
+            None,
+            backend,
+            batch,
+            model,
+            "linear",
+            absolute_weights=False,
+        )
+        backproject = ops.backproject
+    else:
+        batch = chunk_size(len(runtime.poses), cfg.views_per_batch, default=1)
+
+        def backproject(
+            images: jax.Array, start: jax.Array, batch: jax.Array, output: jax.Array
+        ) -> jax.Array:
+            del start
+            return output + sum_backproject_views_T(
+                batch,
+                grid,
+                detector,
+                images,
+                unroll=cfg.projector_unroll,
+                gather_dtype=cfg.gather_dtype,
+                det_grid=runtime.detector_grid,
+                ray_integrator=cfg.ray_integrator,
+            )
+
+    rms = probe_gradient_rms(
+        runtime.poses, grid, detector, backproject, batch_size=batch, support=runtime.volume_mask
+    )
+    return raise_tv_weight(runtime.metric, runtime.noise_scale * rms)
+
+
 def _initial_fista_state(grid: Grid, runtime: FistaRuntime) -> FistaScanState:
     """Build the feasible start and empty diagnostics inside the compiled solve."""
     x0 = runtime.x0
@@ -772,11 +831,17 @@ def _run_fista_scan(
     detector: Detector,
     projections: jnp.ndarray,
     runtime: FistaRuntime,
-) -> tuple[FistaScanState, jax.Array]:
-    """Run the iterations; returns the final state and the Lipschitz constant used."""
+) -> tuple[FistaScanState, jax.Array, TVMetric | None]:
+    """Return the final state, Lipschitz constant and resolved regularization metric."""
     cfg = runtime.config
     regulariser = runtime.regulariser
     huber_delta = runtime.huber_delta
+    runtime = replace(
+        runtime,
+        metric=_automatic_metric(grid, detector, runtime)
+        if cfg.tv_weight is None
+        else runtime.metric,
+    )
     L, first_value, first_gradient = runtime.lipschitz, None, None
     if cfg.initial_epochs:
         initial, bound = ordered_start(grid, detector, projections, runtime)
@@ -786,7 +851,7 @@ def _run_fista_scan(
         L, first_value, first_gradient = estimate_first_gradient(
             grid, detector, projections, runtime
         )
-        L = _with_huber(L, runtime.metric, regulariser, grid)
+    L = _with_huber(L, runtime.metric, regulariser, grid)
 
     val_and_grad_fn = _data_term(grid, detector, projections, runtime)
     val_and_grad = jax.jit(val_and_grad_fn)
@@ -868,9 +933,9 @@ def _run_fista_scan(
 
     init_carry = _initial_fista_state(grid, runtime)
     if cfg.iterations == 0:
-        return init_carry, jnp.asarray(L, jnp.float32)
+        return init_carry, jnp.asarray(L, jnp.float32), runtime.metric
     carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(int(cfg.iterations)))
-    return carry_final, jnp.asarray(L, jnp.float32)
+    return carry_final, jnp.asarray(L, jnp.float32), runtime.metric
 
 
 def fista_tv(
@@ -966,11 +1031,11 @@ def fista_tv(
     if hosted is None:
         if runtime.stream:
             with host_source(np.asarray(projections)) as key:
-                final, lipschitz = _run_fista_scan(grid, detector, key, runtime)
+                final, lipschitz, metric = _run_fista_scan(grid, detector, key, runtime)
                 final.x.block_until_ready()
         elif runtime.split is not None:
             data = runtime.split.place(projections)
-            final, lipschitz = _run_fista_scan(
+            final, lipschitz, metric = _run_fista_scan(
                 grid, detector, data, runtime.split.everywhere(runtime)
             )
             final = final._replace(x=runtime.split.gather(final.x))
@@ -979,7 +1044,7 @@ def fista_tv(
             run = (
                 run_owned_fista if use_owned_fista(grid, projections, runtime) else _run_fista_scan
             )
-            final, lipschitz = run(grid, detector, projections, runtime)
+            final, lipschitz, metric = run(grid, detector, projections, runtime)
         volume = final.x
         losses, count = np.asarray(final.loss).tolist(), int(final.iters_done)
         info = {
@@ -991,14 +1056,24 @@ def fista_tv(
             "huber_delta": runtime.huber_delta,
         }
     else:
-        volume, info = hosted
+        volume, info, metric = hosted
         losses, count = info["loss"], info["effective_iterations"]
+    resolved_weight = runtime.config.tv_weight
+    if resolved_weight is None:
+        assert metric is not None
+        assert runtime.metric is not None
+        resolved_weight = (
+            5e-5
+            * float(metric.weight_over_contrast)
+            / (float(runtime.metric.weight_over_contrast) or 1)
+        )
     info.update(
         {
             "data_term": runtime.config.data_term,
             "background_profiled": runtime.config.data_term == "per_view_contrast",
             "tv_weight": runtime.config.tv_weight,
-            "effective_tv_weight": 0.0 if runtime.metric is None else float(runtime.metric.weight),
+            "effective_tv_weight": 0.0 if metric is None else float(metric.weight),
+            "resolved_tv_weight": resolved_weight,
             "huber_delta": (
                 float(runtime.metric.delta)
                 if runtime.metric is not None and runtime.regulariser == "huber_tv"

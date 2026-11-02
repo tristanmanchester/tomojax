@@ -144,7 +144,7 @@ def use_owned_fista(grid: Grid, projections, runtime: FistaRuntime) -> bool:
         cfg.iterations > 0
         and runtime.x0 is None
         and cfg.nonnegative
-        and not cfg.tv_weight
+        and cfg.tv_weight == 0
         and runtime.volume_mask is None
         and constraints.lower_bound in (None, 0)
         and constraints.upper_bound is None
@@ -281,4 +281,5 @@ def run_owned_fista(grid, detector, projections, runtime):
         first_value = None
     else:
         x, first_value, limit = _zero_start(grid, detector, data, runtime)
-    return _refine(grid, detector, data, replace(runtime, x0=None), x, limit, first_value)
+    state, limit = _refine(grid, detector, data, replace(runtime, x0=None), x, limit, first_value)
+    return state, limit, runtime.metric

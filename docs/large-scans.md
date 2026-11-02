@@ -55,7 +55,11 @@ and multi-device FISTA still require resident volume state. With
 sweep to one mean per detector view, then performs the gradient sweep. Means
 include all measured pixels, including rows outside the volume footprint;
 centering individual slab windows would solve a different problem. This adds a
-forward sweep without storing a full sinogram.
+forward sweep without storing a full sinogram. Automatic TV strength samples
+at most 65536 detector Haar cells and transposes one Gaussian probe in batches;
+it does not allocate another full measurement stack. Host slabs center complete
+probe views before cropping their row windows and reduce the gradient norm
+without allocating another host volume.
 
 Resident CUDA solvers keep their volumes in a private z-contiguous
 order and convert once at entry and exit, which needs one volume-sized copy

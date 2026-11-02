@@ -48,9 +48,10 @@ def test_host_tv_halos_keep_global_step_and_constraints(monkeypatch, iterations)
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("data_term", ["absolute", "per_view_contrast"])
+@pytest.mark.parametrize("weight", [0.1, None])
 @pytest.mark.parametrize(("warm", "limit", "tolerance"), [(False, None, None), (True, 200.0, 1.0)])
 def test_host_fista_matches_resident_with_mapped_state(
-    tmp_path, monkeypatch, warm, limit, tolerance, data_term
+    tmp_path, monkeypatch, warm, limit, tolerance, data_term, weight
 ):
     from tomojax.geometry import LaminographyGeometry
     from tomojax.recon import (  # check-public-imports: allow-private
@@ -66,7 +67,7 @@ def test_host_fista_matches_resident_with_mapped_state(
     initial = rng.uniform(0, 0.2, (5, 7, 9)).astype(np.float32) if warm else None
     cfg = FistaConfig(
         iterations=5,
-        tv_weight=0.1,
+        tv_weight=weight,
         data_term=data_term,
         tv_prox_iterations=3,
         nonnegative=True,
@@ -91,6 +92,9 @@ def test_host_fista_matches_resident_with_mapped_state(
     np.testing.assert_allclose(record["loss"], reference["loss"], rtol=3e-5)
     np.testing.assert_allclose(record["lipschitz"], reference["lipschitz"], rtol=3e-5)
     assert record["effective_iterations"] == reference["effective_iterations"]
+    np.testing.assert_allclose(
+        record["resolved_tv_weight"], reference["resolved_tv_weight"], rtol=3e-5
+    )
 
 
 def test_host_output_rejected_on_unsupported_backend():

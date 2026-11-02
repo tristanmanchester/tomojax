@@ -43,7 +43,8 @@ def validate_fista_config(cfg: FistaConfig) -> tuple[bool, float | None, float |
         _count(getattr(cfg, name), name, minimum=1, context=context)
     if cfg.views_per_batch is not None:
         _count(cfg.views_per_batch, "views_per_batch", minimum=1, context=context)
-    _weight(cfg.tv_weight, "tv_weight", context=context)
+    if cfg.tv_weight is not None:
+        _weight(cfg.tv_weight, "tv_weight", context=context)
     if cfg.lipschitz is not None:
         _weight(cfg.lipschitz, "lipschitz", positive=True, context=context)
     if cfg.recon_rel_tol is not None:
