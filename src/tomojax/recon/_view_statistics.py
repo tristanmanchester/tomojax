@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._cone_slabs import Batch, ConeProblem
+from . import _cone_slabs
 
 
 class ViewStatistics:
@@ -15,7 +15,7 @@ class ViewStatistics:
     Neither operation retains a sinogram or a second volume.
     """
 
-    def __init__(self, problem: ConeProblem, views: np.ndarray) -> None:
+    def __init__(self, problem: _cone_slabs.ConeProblem, views: np.ndarray) -> None:
         self.problem, self.views = problem, views
         xp = problem.engine.xp
         count, nv, nu = problem.data.shape
@@ -25,13 +25,13 @@ class ViewStatistics:
         for first, stop in problem.plan.windows:
             covered[first:stop] = True
         self.outside_pixels = int(np.count_nonzero(~covered)) * nu
-        for first in range(0, nv, 64):
-            stop = min(first + 64, nv)
+        for first in range(0, nv, _cone_slabs.ROW_BAND):
+            stop = min(first + _cone_slabs.ROW_BAND, nv)
             outside = xp.asarray(~covered[first:stop])[None, :, None]
             for start in range(0, len(views), problem.sweep.batch):
                 chosen = views[start : start + problem.sweep.batch]
                 index = xp.asarray(chosen)
-                data = problem.measured(Batch(chosen, index), first, stop)
+                data = problem.measured(_cone_slabs.Batch(chosen, index), first, stop)
                 square = data.astype(xp.float64) ** 2
                 sums[0, index] += data.sum((1, 2), dtype=xp.float64)
                 sums[1, index] += xp.abs(data).sum((1, 2), dtype=xp.float64)

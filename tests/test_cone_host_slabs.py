@@ -54,7 +54,7 @@ def host(monkeypatch):
 
     def force(depth):
         monkeypatch.setattr(_cone_slabs, "slab_depth", lambda *_, **__: depth)
-        monkeypatch.setattr(_cone_slabs, "_BAND", 3)  # rows finished in bands of three
+        monkeypatch.setattr(_cone_slabs, "ROW_BAND", 3)  # rows finished in bands of three
         for name in ("tomojax.recon._cgls_host", "tomojax.recon.sirt"):
             monkeypatch.setattr(import_module(name), "host_volumes", lambda *_: True)
 
@@ -334,7 +334,8 @@ def test_unpenalized_cgls_sinks_do_not_read_unused_volumes(monkeypatch, host):
 
 
 @pytest.mark.parametrize("depth", [2, 9])
-def test_whole_view_statistics_include_zero_ray_rows(host, depth):
+@pytest.mark.parametrize("reader", [False, True])
+def test_whole_view_statistics_include_zero_ray_rows(host, depth, reader):
     from tomojax.recon._view_statistics import ViewStatistics  # check-public-imports: allow-private
 
     host(depth)
@@ -344,8 +345,9 @@ def test_whole_view_statistics_include_zero_ray_rows(host, depth):
     poses = stack_view_poses(geometry, len(ANGLES))
     rng = np.random.default_rng(81)
     data = rng.normal(size=(len(ANGLES), detector.nv, detector.nu)).astype(np.float32)
+    source_data = _cone_slabs.RowReader(lambda a, b: data[:, a:b], data.shape) if reader else data
     problem = _cone_slabs.cone_problem(
-        geometry, GRID, detector, data, model=model, backend=backend, poses=poses,
+        geometry, GRID, detector, source_data, model=model, backend=backend, poses=poses,
         batch=3, channels=1,
     )  # fmt: skip
     xp = problem.engine.xp
@@ -384,6 +386,42 @@ def test_whole_view_statistics_include_zero_ray_rows(host, depth):
     residual -= residual.mean((1, 2), keepdims=True)
     expected = cone_backproject(residual, coefficients, GRID, detector, backend=backend)
     assert _relative(applied, expected) < 2e-6
+    assert np.vdot(value.astype(float), applied) == pytest.approx(
+        np.vdot(projected.astype(float), residual), rel=2e-6
+    )
     assert sum(energies) + float(stats.outside_energy(-mean)) == pytest.approx(
         np.sum(residual.astype(float) ** 2), rel=2e-6
     )
+
+    if reader:
+        source_data.close()
+
+
+@pytest.mark.parametrize("depth", [3, 4])
+def test_host_contrast_cgls_matches_dense_optimum_and_true_stopping(host, depth):
+    import jax
+    import jax.numpy as jnp
+
+    detector = replace(DETECTOR, nv=31)
+    geometry = replace(_geometry("cone"), detector=detector)
+    data = _data(geometry) + np.linspace(-0.2, 0.3, len(ANGLES))[:, None, None]
+    cfg = CGLSConfig(iterations=100, rtol=1e-5, damping=0.3, data_term="per_view_contrast")
+    matrix = np.asarray(
+        jax.jacfwd(lambda x: tj.project(geometry, x.reshape(9, 4, 5)))(jnp.zeros(180)),
+        dtype=np.float64,
+    )
+    matrix = (matrix - matrix.mean((1, 2), keepdims=True)).reshape(-1, 180)
+    target = (data - data.mean((1, 2), keepdims=True)).ravel()
+    reference = np.linalg.solve(
+        matrix.T @ matrix + cfg.damping**2 * np.eye(180), matrix.T @ target
+    ).reshape(9, 4, 5)
+    host(depth)
+    actual, info = cgls(geometry, GRID, detector, data, config=cfg)
+    # Compare the converged objective, not two different finite FP32 CG sequences.
+    assert _relative(actual, reference) < 2e-4
+    residual = np.asarray(tj.project(geometry, actual)) - data
+    residual -= residual.mean((1, 2), keepdims=True)
+    gradient = np.asarray(tj.backproject(geometry, residual)) + cfg.damping**2 * actual
+    assert info["converged"] and info["normal_residual_is_recomputed"]
+    assert np.linalg.norm(gradient) <= 1.01 * info["normal_residual_tolerance"]
+    assert info["data_term"] == "per_view_contrast" and info["background_unresolved"]
