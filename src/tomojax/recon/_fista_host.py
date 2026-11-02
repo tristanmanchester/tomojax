@@ -36,8 +36,18 @@ class HostFista:
         self.views = np.arange(problem.data.shape[0])
         from ._view_statistics import ViewStatistics
 
+        covered = np.zeros(self.plan.detector.nv, bool)
+        for first, stop in self.plan.windows:
+            covered[first:stop] = True
         self.statistics = (
-            ViewStatistics(problem, self.views) if config.data_term == "per_view_contrast" else None
+            ViewStatistics(problem, self.views)
+            if config.data_term == "per_view_contrast" or not covered.all()
+            else None
+        )
+        self.absolute_outside = (
+            float(self.statistics.outside_energy(0))
+            if config.data_term == "absolute" and self.statistics is not None
+            else 0.0
         )
         self.lower = max(
             0.0 if config.nonnegative else -math.inf,
@@ -54,17 +64,29 @@ class HostFista:
 
     def apply(self, source, target, *, residual=False, step=None):
         """Write a normal application or data gradient, returning the residual's energy."""
-        value = 0.0
+        value = self.absolute_outside if residual else 0.0
 
         def read(k):
             return () if source is None else (source.get(*self.plan.planes(k)),)
 
         mean = None
-        if residual and self.statistics is not None:
-            mean = -self.statistics.mean
+        prepare = None
+        if residual and self.cfg.data_term == "per_view_contrast":
+            statistics = self.statistics
+            assert statistics is not None
+            mean = -statistics.mean
             if source is not None:
-                mean = mean + self.statistics.project(read)
-            value = float(self.statistics.outside_energy(-mean))
+                if self.plan.ring == self.plan.detector.nv:
+
+                    def prepare_rows(rows):
+                        nonlocal mean, value
+                        mean = statistics.projection_mean(rows[0]) - statistics.mean
+                        value = float(statistics.outside_energy(-mean))
+
+                    prepare = prepare_rows
+                else:
+                    mean = mean + statistics.project(read)
+            value = float(statistics.outside_energy(-mean))
 
         def finish(batch, first, stop, rows):
             nonlocal value
@@ -82,7 +104,9 @@ class HostFista:
                 value = source.view(z0, z1) - np.float32(step) * value
             target.put(z0, z1, value)
 
-        self.problem.sweep.run(self.views, source=read, finish=finish, sink=sink, keep=False)
+        self.problem.sweep.run(
+            self.views, source=read, finish=finish, sink=sink, keep=False, prepare=prepare
+        )
         return 0.5 * value
 
     def noise_gradient_rms(self):

@@ -49,21 +49,24 @@ def test_host_tv_halos_keep_global_step_and_constraints(monkeypatch, iterations)
 @pytest.mark.gpu
 @pytest.mark.parametrize("data_term", ["absolute", "per_view_contrast"])
 @pytest.mark.parametrize("weight", [0.1, None])
+@pytest.mark.parametrize("cone", [False, True])
 @pytest.mark.parametrize(("warm", "limit", "tolerance"), [(False, None, None), (True, 200.0, 1.0)])
 def test_host_fista_matches_resident_with_mapped_state(
-    tmp_path, monkeypatch, warm, limit, tolerance, data_term, weight
+    tmp_path, monkeypatch, warm, limit, tolerance, data_term, weight, cone
 ):
-    from tomojax.geometry import LaminographyGeometry
+    from tomojax.geometry import ConeBeam, ConeGeometry, LaminographyGeometry
     from tomojax.recon import (  # check-public-imports: allow-private
         FistaConfig,
         _parallel_slabs,
         fista_tv,
     )
 
-    grid, det = Grid(9, 7, 5, 0.8, 1.1, 1.3), Detector(11, 9, 0.9, 1.2)
+    grid, det = Grid(9, 7, 5, 0.8, 1.1, 1.3), Detector(11, 31 if cone else 9, 0.9, 1.2)
     geometry = LaminographyGeometry(grid, det, np.linspace(0, 270, 17), tilt_deg=53)
+    if cone:
+        geometry = ConeGeometry(grid, det, geometry.angles, ConeBeam(15, 20))
     rng = np.random.default_rng(20261101)
-    data = rng.uniform(0, 1, (17, 9, 11)).astype(np.float32)
+    data = rng.uniform(0, 1, (17, det.nv, 11)).astype(np.float32)
     initial = rng.uniform(0, 0.2, (5, 7, 9)).astype(np.float32) if warm else None
     cfg = FistaConfig(
         iterations=5,
@@ -78,6 +81,11 @@ def test_host_fista_matches_resident_with_mapped_state(
         views_per_batch=6,
     )
     expected, reference = fista_tv(geometry, grid, det, data, init_x=initial, config=cfg)
+    if not cone and data_term == "per_view_contrast":
+        # check-public-imports: allow-private
+        from tomojax.recon._view_statistics import ViewStatistics
+
+        monkeypatch.setattr(ViewStatistics, "project", lambda *_: pytest.fail("extra FP"))
     mapped = np.memmap(tmp_path / "volume", np.float32, "w+", shape=(5, 7, 9))
     if warm:
         mapped[...] = initial

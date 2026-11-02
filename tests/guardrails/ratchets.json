@@ -77,7 +77,7 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14810
+    "recon": 14834
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,
@@ -96,6 +96,7 @@
     "src/tomojax/datasets/_impl/artefacts.py::C901::apply_simulation_artefacts",
     "src/tomojax/datasets/_impl/artefacts.py::PLR0915::apply_simulation_artefacts",
     "src/tomojax/recon/_cgls_host.py::C901::normal",
+    "src/tomojax/recon/_fista_host.py::C901::apply",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
@@ -126,5 +127,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 161
+  "test_private_imports": 162
 }
