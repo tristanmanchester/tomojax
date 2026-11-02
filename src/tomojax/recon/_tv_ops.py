@@ -148,7 +148,13 @@ def huber_tv_value(
     gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
     z_fast: bool = False,
 ) -> jnp.ndarray:
-    """Return isotropic Huber-TV with a quadratic basin of radius ``delta``."""
+    """Return isotropic Huber-TV with a quadratic basin of radius ``delta``.
+
+    The threshold has the same units as the physically scaled gradient.
+    The quadratic branch gives flat regions finite curvature. Differentiate this
+    scalar for gradients or Hessian-vector products; reconstruction uses the
+    Huber conjugate proximal, not a separate explicit gradient implementation.
+    """
     delta_arr = jnp.asarray(delta, dtype=u.dtype)
     sq = _gradient_norm_sq(u, z_fast=z_fast, gradient_scale_xyz=gradient_scale_xyz)
     tiny = jnp.asarray(jnp.finfo(u.dtype).tiny, dtype=u.dtype)
@@ -156,75 +162,6 @@ def huber_tv_value(
     quadratic = 0.5 * sq / delta_arr
     linear = norm - 0.5 * delta_arr
     return jnp.sum(jnp.where(norm <= delta_arr, quadratic, linear))
-
-
-def _huber_tv_grad(
-    u: jnp.ndarray,
-    delta: float | jax.Array,
-    *,
-    gradient_scale_xyz: tuple[float, float, float],
-    z_fast: bool,
-) -> jnp.ndarray:
-    """Return the gradient of isotropic Huber-TV under ``grad3``/``div3``."""
-    delta_arr = jnp.asarray(delta, dtype=u.dtype)
-    gx, gy, gz = grad3(u, z_fast=z_fast, gradient_scale_xyz=gradient_scale_xyz)
-    norm = _norm_with_zero_subgradient(gx * gx + gy * gy + gz * gz)
-    denom = jnp.maximum(norm, delta_arr)
-    qx = gx / denom
-    qy = gy / denom
-    qz = gz / denom
-    return -div3(qx, qy, qz, z_fast=z_fast, gradient_scale_xyz=gradient_scale_xyz)
-
-
-_HUBER_TILE_BYTES = 64 << 20
-
-
-def huber_tv_grad(
-    u: jnp.ndarray,
-    delta: float | jax.Array,
-    *,
-    gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
-    z_fast: bool = False,
-    base: jnp.ndarray | None = None,
-    scale: float | jnp.ndarray = 1.0,
-) -> jnp.ndarray:
-    """``scale`` times the Huber gradient, added to ``base`` when given.
-
-    Scratch is bounded and derivatives exact: each output uses one neighbour along
-    each axis, and haloed slabs preserve the Neumann boundary and mixed components
-    without storing full gradient fields. A slab's terms are added into ``base`` as
-    it goes, so a solver's data gradient takes the regulariser with no second volume.
-    """
-    scale = jnp.asarray(scale, u.dtype)
-    if 5 * u.size * u.dtype.itemsize <= _HUBER_TILE_BYTES:
-        scaled = scale * _huber_tv_grad(
-            u, delta, z_fast=z_fast, gradient_scale_xyz=gradient_scale_xyz
-        )
-        return scaled if base is None else base + scaled
-    axis = max(range(3), key=u.shape.__getitem__)
-    length = u.shape[axis]
-    plane_bytes = u.dtype.itemsize * u.size // length
-    core = min(length, max(1, _HUBER_TILE_BYTES // (8 * plane_bytes)))
-    width = min(length, core + 2)
-    shape = [1, 1, 1]
-    shape[axis] = core
-    offsets = jnp.arange(core).reshape(shape)
-
-    def body(i, out):
-        first = jnp.minimum(i * core, length - core)
-        start = jnp.clip(first - 1, 0, length - width)
-        tile = jax.lax.dynamic_slice_in_dim(u, start, width, axis=axis)
-        gradient = _huber_tv_grad(tile, delta, z_fast=z_fast, gradient_scale_xyz=gradient_scale_xyz)
-        local = scale * jax.lax.dynamic_slice_in_dim(gradient, first - start, core, axis=axis)
-        if base is not None:
-            # The final short slab overlaps its predecessor: add only the new planes.
-            old = jax.lax.dynamic_slice_in_dim(out, first, core, axis=axis)
-            local = jnp.where(first + offsets >= i * core, old + local, old)
-        # Without a base, the overlap is overwritten with the same exact values.
-        return jax.lax.dynamic_update_slice_in_dim(out, local, first, axis=axis)
-
-    initial = jnp.zeros_like(u) if base is None else base
-    return jax.lax.fori_loop(0, (length + core - 1) // core, body, initial)
 
 
 def project_tv_duals(

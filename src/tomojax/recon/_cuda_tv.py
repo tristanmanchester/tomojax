@@ -276,7 +276,6 @@ def proximal_host(
     lower: float,
     upper: float,
     gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
-    huber_delta: float | None = None,
 ) -> None:
     """Apply the same finite-step proximal to host volumes, one haloed z slab at a time.
 
@@ -299,13 +298,11 @@ def proximal_host(
             narrow=width * plane < 2**31,
             device=cp.cuda.Device().id,
             gradient_scale_xyz=gradient_scale_xyz,
-            huber=huber_delta is not None,
         ),
         "iterations": iterations,
         "tau": np.float32(tau),
         "lower": np.float32(lower),
         "upper": np.float32(upper),
-        "huber_delta": None if huber_delta is None else cp.asarray(huber_delta, cp.float32),
     }
     for first in range(0, shape[0], core):
         last = min(shape[0], first + core)

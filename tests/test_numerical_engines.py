@@ -11,7 +11,6 @@ from tomojax.recon import SPDHGConfig, spdhg_tv
 from tomojax.recon._tv_ops import (
     div3,
     grad3,
-    huber_tv_grad,
     isotropic_tv_value,
     prox_huber_tv_conj,
 )
@@ -48,10 +47,6 @@ def test_tv_operators_preserve_adjoint_and_prox_invariants() -> None:
 
     np.testing.assert_allclose(float(grad_inner + div_inner), 0.0, atol=1e-6)
     assert float(isotropic_tv_value(jnp.ones((3, 3, 3), dtype=jnp.float32))) == 0.0
-    np.testing.assert_allclose(
-        np.asarray(huber_tv_grad(jnp.ones((3, 3, 3), dtype=jnp.float32), delta=0.1)),
-        np.zeros((3, 3, 3), dtype=np.float32),
-    )
 
     qx, qy, qz = prox_huber_tv_conj(
         px * 4.0,
