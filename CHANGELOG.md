@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+CUDA ring correction materializes adaptive polynomial fits before regression to
+avoid oversized fused kernels; all correction stages and CPU execution are unchanged.
+
 Alignment no longer accepts `tv_weight`, `regulariser` or `huber_delta`.
 Its volume updates are unregularised, retaining positivity and increment damping.
 Apply TV or Huber-TV in the final `tj.reconstruct` call instead; reconstruction

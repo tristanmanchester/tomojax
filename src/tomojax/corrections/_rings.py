@@ -97,7 +97,14 @@ def _weighted_quadratics(
         c2 = (tk[2] - l20 * y0 - l21 * y1) / (l22 * l22)
         c1 = (y1 - l21 * c2) / l11
         fits[j] = values + (y0 - l10 * c1 - l20 * c2) / l00
-    return [fits[w] for w in windows]
+    # On CUDA, materialize the five fits before adaptive weighting. Otherwise
+    # fusion expands them into dozens of full-sized intermediates and repeats
+    # their algebra in the following regression reductions. CPU keeps its fusion.
+    return jax.lax.platform_dependent(
+        [fits[w] for w in windows],
+        cuda=jax.lax.optimization_barrier,
+        default=lambda values: values,
+    )
 
 
 def _reference(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> jax.Array:

@@ -9,6 +9,7 @@ from tomojax.corrections._ring_parity import _plan, regularize
 from tomojax.corrections._rings import (  # check-public-imports: allow-private
     _feasible_response,
     _invert,
+    _weighted_quadratics,
 )
 
 
@@ -111,3 +112,10 @@ def test_parity_scales_match_scalar_reference():
         expected,
         atol=4 * np.finfo(np.float32).eps * np.max(np.abs(profile)),
     )
+
+
+def test_weighted_quadratics_reproduce_quadratic() -> None:
+    x = jnp.arange(81, dtype=jnp.float32) / 40
+    values = (1 + x + x * x)[None]
+    for fit in _weighted_quadratics(values, jnp.ones_like(values), (30, 20, 14, 9, 6), 1):
+        np.testing.assert_allclose(fit[:, 30:-30], values[:, 30:-30], rtol=1e-6)
