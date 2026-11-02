@@ -9,9 +9,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-# check-public-imports: allow-private
-# check-public-imports: allow-private
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import FistaConfig, fista_tv
 
@@ -201,21 +198,21 @@ def test_box_constrained_tv_proximal_is_the_joint_minimizer():
 @pytest.mark.numerical
 @pytest.mark.skipif(jax.default_backend() != "gpu", reason="CUDA workspace")
 @pytest.mark.parametrize("scales", [(1.0, 1.0, 1.0), (0.5, 1.2, 2.0)])
-def test_cuda_tv_slabs_preserve_boundaries_and_input_ownership(monkeypatch, scales):
+@pytest.mark.parametrize("huber_delta", [None, 0.15])
+def test_cuda_tv_slabs_preserve_boundaries_and_input_ownership(monkeypatch, scales, huber_delta):
     pytest.importorskip("cupy")
     monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
     monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
     rng = np.random.default_rng(80231)
+    options = dict(gradient_scale_xyz=scales, huber_delta=huber_delta)
     for shape in [(1, 1, 1), (1, 2, 31), (37, 3, 5), (5, 41, 3), (3, 5, 43)]:
         host = rng.normal(size=shape).astype(np.float32)
         for bounds in [dict(nonnegative=True), dict(lower_bound=-0.2, upper_bound=0.6)]:
-            reference = jax.jit(
-                partial(_tv_proximal_jax, iterations=3, gradient_scale_xyz=scales, **bounds)
-            )
+            reference = jax.jit(partial(_tv_proximal_jax, iterations=3, **options, **bounds))
             expected = reference(host, 0.071)
             for donate in [False, True]:
                 run = jax.jit(
-                    partial(tv_proximal, iterations=3, gradient_scale_xyz=scales, **bounds),
+                    partial(tv_proximal, iterations=3, **options, **bounds),
                     donate_argnums=(0,) if donate else (),
                 )
                 supplied = jnp.array(host, copy=True)
@@ -389,3 +386,50 @@ def test_scaled_tv_proximal_matches_independent_box_minimum():
         jnp.asarray(x), lam, iterations=1000, nonnegative=True, gradient_scale_xyz=scales
     )
     np.testing.assert_allclose(np.ravel(actual), reference, atol=2e-4)
+
+
+@pytest.mark.parametrize("delta", [0.0, 0.02, 0.7])
+@pytest.mark.parametrize("cx", [0.5, 1.8])
+def test_huber_proximal_matches_two_voxel_minimum(delta, cx):
+    x, lam = jnp.array([[[0.2, 0.5]]]), 0.07
+    # Independent scalar minimization in mean/difference coordinates.
+    difference = max(0.0, 0.3 - 2 * lam * cx)
+    if delta > 0 and cx * 0.3 <= delta + 2 * lam * cx**2:
+        difference = 0.3 / (1 + 2 * lam * cx**2 / delta)
+    expected = [[[0.35 - difference / 2, 0.35 + difference / 2]]]
+    actual = tv_proximal(x, lam, 100, huber_delta=delta, gradient_scale_xyz=(cx, 1, 1))
+    np.testing.assert_allclose(actual, expected, atol=1e-7, rtol=1e-6)
+    if delta == 0:
+        np.testing.assert_array_equal(
+            actual, tv_proximal(x, lam, 100, gradient_scale_xyz=(cx, 1, 1))
+        )
+
+
+@pytest.mark.parametrize("delta", [0.0, 0.4])
+def test_huber_proximal_dispatch_preserves_threshold_derivative(monkeypatch, delta):
+    monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
+    monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
+    rng = np.random.default_rng(24)
+    x = jnp.asarray(rng.normal(size=(7, 5, 3)).astype(np.float32))
+    args = (x, jnp.float32(0.13), jnp.float32(delta))
+    directions = (jnp.ones_like(x) * 0.17, jnp.float32(0.07), jnp.float32(0.11))
+    options = dict(iterations=3, gradient_scale_xyz=(0.5, 1.2, 2.0), nonnegative=True)
+
+    def actual(a, b, d):
+        return tv_proximal(a, b, huber_delta=d, **options)
+
+    reference = partial(_tv_proximal_jax, **options)
+    value, tangent = jax.jit(lambda *a: jax.jvp(actual, a, directions))(*args)
+    expected, expected_tangent = jax.jvp(reference, args, directions)
+    np.testing.assert_allclose(value, expected, rtol=3e-6, atol=3e-7)
+    np.testing.assert_allclose(tangent, expected_tangent, rtol=3e-6, atol=3e-7)
+    gradients = jax.jit(jax.grad(lambda *a: jnp.sum(actual(*a)), (0, 1, 2)))(*args)
+    np.testing.assert_allclose(
+        sum(jnp.sum(g * d) for g, d in zip(gradients, directions, strict=True)),
+        jnp.sum(tangent),
+        rtol=2e-6,
+    )
+    eps = 1e-3
+    plus = actual(*(a + eps * d for a, d in zip(args, directions, strict=True)))
+    minus = actual(*(a - eps * d for a, d in zip(args, directions, strict=True)))
+    np.testing.assert_allclose(tangent, (plus - minus) / (2 * eps), atol=8e-5, rtol=3e-3)

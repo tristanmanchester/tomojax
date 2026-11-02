@@ -289,6 +289,7 @@ def tv_proximal(
     lower_bound: float | None = None,
     upper_bound: float | None = None,
     gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    huber_delta: float | jax.Array | None = None,
 ) -> jnp.ndarray:
     """Approximate the isotropic TV proximal by projected gradient on its dual.
 
@@ -301,10 +302,14 @@ def tv_proximal(
     valid. Use the exact finite-grid norm, not its asymptotic 3D bound of 12.
     Only three dual components persist between iterations. Large float32 CUDA
     volumes use stream-owned tiles with the same finite-iteration derivatives.
+    ``huber_delta=None`` selects TV; a nonnegative physical threshold selects
+    Huber TV (zero is its TV limit). Its conjugate quadratic is handled by a
+    proximal dual shrink, so the gradient step does not depend on the threshold.
     """
     return _tv_execution(
         x,
         jnp.asarray(lam_over_L, dtype=x.dtype),
+        None if huber_delta is None else jnp.asarray(huber_delta, dtype=x.dtype),
         int(iterations),
         nonnegative,
         lower_bound,
@@ -316,8 +321,10 @@ def tv_proximal(
 _MIN_CUDA_BYTES = 64 << 20
 
 
-@functools.partial(jax.custom_jvp, nondiff_argnums=(2, 3, 4, 5, 6))
-def _tv_execution(x, lam, iterations, nonnegative, lower_bound, upper_bound, gradient_scale_xyz):
+@functools.partial(jax.custom_jvp, nondiff_argnums=(3, 4, 5, 6, 7))
+def _tv_execution(
+    x, lam, huber_delta, iterations, nonnegative, lower_bound, upper_bound, gradient_scale_xyz
+):
     reference = functools.partial(
         _tv_proximal_jax,
         iterations=iterations,
@@ -327,12 +334,12 @@ def _tv_execution(x, lam, iterations, nonnegative, lower_bound, upper_bound, gra
         gradient_scale_xyz=gradient_scale_xyz,
     )
     if iterations <= 0 or x.dtype != jnp.float32 or x.size * x.dtype.itemsize < _MIN_CUDA_BYTES:
-        return reference(x, lam)
+        return reference(x, lam, huber_delta)
     import importlib.util
     import os
 
     if os.environ.get("TOMOJAX_CUDA_KERNELS") == "0" or importlib.util.find_spec("cupy") is None:
-        return reference(x, lam)
+        return reference(x, lam, huber_delta)
     from ._cuda_tv import proximal
 
     lower = max(
@@ -347,7 +354,7 @@ def _tv_execution(x, lam, iterations, nonnegative, lower_bound, upper_bound, gra
         upper=upper,
         gradient_scale_xyz=gradient_scale_xyz,
     )
-    return jax.lax.platform_dependent(x, lam, cuda=cuda, default=reference)
+    return jax.lax.platform_dependent(x, lam, huber_delta, cuda=cuda, default=reference)
 
 
 @_tv_execution.defjvp
@@ -371,6 +378,7 @@ def _tv_execution_jvp(
 def _tv_proximal_jax(
     x: jnp.ndarray,
     lam_over_L: float | jax.Array,
+    huber_delta: float | jax.Array | None = None,
     iterations: int = 20,
     *,
     nonnegative: bool = False,
@@ -401,7 +409,9 @@ def _tv_proximal_jax(
                 gradient_scale_xyz=gradient_scale_xyz,
             )
             q1, q2, q3 = p[0] + tau * gx, p[1] + tau * gy, p[2] + tau * gz
-            return project_tv_duals(q1, q2, q3, radius=lam_val), None
+            if huber_delta is None:
+                return project_tv_duals(q1, q2, q3, radius=lam_val), None
+            return prox_huber_tv_conj(q1, q2, q3, sigma=tau, lam=lam_val, delta=huber_delta), None
 
         zeros = jnp.zeros_like(x)
         p, _ = jax.lax.scan(body, (zeros, zeros, zeros), None, length=int(iterations))

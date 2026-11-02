@@ -18,7 +18,10 @@ from tomojax.recon._tv_ops import (  # check-public-imports: allow-private
 @pytest.mark.gpu
 @pytest.mark.parametrize("iterations", [0, 1, 3, 10])
 @pytest.mark.parametrize("scales", [(1.0, 1.0, 1.0), (0.5, 1.2, 2.0)])
-def test_host_tv_halos_keep_global_step_and_constraints(monkeypatch, iterations, scales):
+@pytest.mark.parametrize("huber_delta", [None, 0.15])
+def test_host_tv_halos_keep_global_step_and_constraints(
+    monkeypatch, iterations, scales, huber_delta
+):
     import cupy as cp
 
     data = np.random.default_rng(20261101).normal(size=(35, 9, 7)).astype(np.float32)
@@ -33,6 +36,7 @@ def test_host_tv_halos_keep_global_step_and_constraints(monkeypatch, iterations,
             lower_bound=-0.1,
             upper_bound=0.7,
             gradient_scale_xyz=scales,
+            huber_delta=huber_delta,
         )
     )
     cp.get_default_memory_pool().free_all_blocks()
@@ -44,6 +48,7 @@ def test_host_tv_halos_keep_global_step_and_constraints(monkeypatch, iterations,
         iterations=iterations,
         tau=1 / gradient_norm_squared(data.shape, gradient_scale_xyz=scales),
         gradient_scale_xyz=scales,
+        huber_delta=huber_delta,
         lower=-0.1,
         upper=0.7,
     )

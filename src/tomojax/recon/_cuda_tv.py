@@ -1,4 +1,4 @@
-"""Stream-owned CUDA storage for the unchanged finite-iteration TV proximal.
+"""Stream-owned CUDA storage for the finite-iteration TV/Huber-TV proximal.
 
 A primal update depends on input within coordinate radius one per dual step.
 Overlapping slabs therefore need only ``iterations`` input halo samples. A saved
@@ -38,7 +38,11 @@ extern "C" __global__ void primal(
 }
 extern "C" __global__ void dual(
     const float* u, float* px, float* py, float* pz,
-    int nx, int ny, int nz, float tau, const float* lam)
+    int nx, int ny, int nz, float tau, const float* lam
+#if HUBER
+    , const float* delta
+#endif
+)
 {
     INDEX t=(INDEX)blockIdx.x*blockDim.x+threadIdx.x;
     INDEX n=(INDEX)nx*ny*nz;
@@ -50,6 +54,10 @@ extern "C" __global__ void dual(
     float gz=iz+1<nz?u[t+(INDEX)ny*nx]-v:0.f;
     float x=px[t]+tau*(CX*gx), y=py[t]+tau*(CY*gy), z=pz[t]+tau*(CZ*gz);
     float radius=fmaxf(lam[0],0.f);
+#if HUBER
+    float shrink=radius>0.f?radius/(radius+tau*delta[0]):0.f;
+    x*=shrink;y*=shrink;z*=shrink;
+#endif
     float scale=fmaxf(fmaxf(fmaxf(fabsf(x),fabsf(y)),fabsf(z)),radius);
     if(scale==0.f)scale=1.f;
     float qx=x/scale, qy=y/scale, qz=z/scale;
@@ -63,7 +71,11 @@ extern "C" __global__ void dual(
 
 @cache
 def _kernels(
-    *, narrow: bool, device: int, gradient_scale_xyz: tuple[float, float, float]
+    *,
+    narrow: bool,
+    device: int,
+    gradient_scale_xyz: tuple[float, float, float],
+    huber: bool = False,
 ) -> tuple[Any, Any]:
     import cupy as cp
 
@@ -73,7 +85,10 @@ def _kernels(
             for axis, value in zip("XYZ", gradient_scale_xyz, strict=True)
         )
         module = cp.RawModule(
-            code=constants + "\n" + _SOURCE.replace("INDEX", "int" if narrow else "long")
+            code=f"#define HUBER {int(huber)}\n"
+            + constants
+            + "\n"
+            + _SOURCE.replace("INDEX", "int" if narrow else "long")
         )
         return module.get_function("primal"), module.get_function("dual")
 
@@ -98,14 +113,26 @@ def _window(array, axis: int, start: int, stop: int):
 
 
 def _iterate(
-    x, duals, primal, out, lam, *, kernels, iterations: int, tau: float, lower: float, upper: float
+    x,
+    duals,
+    primal,
+    out,
+    lam,
+    *,
+    kernels,
+    iterations: int,
+    tau: float,
+    lower: float,
+    upper: float,
+    huber_delta=None,
 ) -> None:
     primal_kernel, dual_kernel = kernels
     dims = tuple(np.int32(size) for size in reversed(x.shape))
     blocks = (-(-x.size // 256),)
+    dual_args = (tau, lam) if huber_delta is None else (tau, lam, huber_delta)
     for _ in range(iterations):
         primal_kernel(blocks, (256,), (x, *duals, primal, *dims, lower, upper))
-        dual_kernel(blocks, (256,), (primal, *duals, *dims, tau, lam))
+        dual_kernel(blocks, (256,), (primal, *duals, *dims, *dual_args))
     primal_kernel(blocks, (256,), (x, *duals, out, *dims, lower, upper))
 
 
@@ -122,6 +149,7 @@ def _tiles(
     tau: float,
     lower: float,
     upper: float,
+    huber_delta=None,
 ) -> None:
     import cupy as cp
 
@@ -161,6 +189,7 @@ def _tiles(
             tau=tau,
             lower=lower,
             upper=upper,
+            huber_delta=huber_delta,
         )
         _window(target, axis, first, last)[...] = _window(
             primal.reshape(local), axis, first - start, last - start
@@ -172,6 +201,7 @@ def _launch(
     out,
     x,
     lam,
+    huber_delta=None,
     *,
     iterations: int,
     tau: float,
@@ -190,11 +220,13 @@ def _launch(
                 narrow=count < 2**31,
                 device=cp.cuda.Device().id,
                 gradient_scale_xyz=gradient_scale_xyz,
+                huber=huber_delta is not None,
             ),
             "iterations": iterations,
             "tau": np.float32(tau),
             "lower": np.float32(lower),
             "upper": np.float32(upper),
+            "huber_delta": None if huber_delta is None else cp.asarray(huber_delta),
         }
         if core == source.shape[axis]:
             # No overlap exists: preserve x until the final point-local primal write.
@@ -207,6 +239,7 @@ def _launch(
 def proximal(
     x: jax.Array,
     lam: jax.Array,
+    huber_delta: jax.Array | None = None,
     *,
     iterations: int,
     tau: float,
@@ -228,7 +261,9 @@ def proximal(
         input_output_aliases={0: 0},
         vmap_method="sequential",
     )
-    return jax.lax.cond(lam > 0, lambda _: call(x, lam), lambda _: jnp.clip(x, lower, upper), None)
+    return jax.lax.cond(
+        lam > 0, lambda _: call(x, lam, huber_delta), lambda _: jnp.clip(x, lower, upper), None
+    )
 
 
 def proximal_host(
@@ -241,6 +276,7 @@ def proximal_host(
     lower: float,
     upper: float,
     gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    huber_delta: float | None = None,
 ) -> None:
     """Apply the same finite-step proximal to host volumes, one haloed z slab at a time.
 
@@ -263,11 +299,13 @@ def proximal_host(
             narrow=width * plane < 2**31,
             device=cp.cuda.Device().id,
             gradient_scale_xyz=gradient_scale_xyz,
+            huber=huber_delta is not None,
         ),
         "iterations": iterations,
         "tau": np.float32(tau),
         "lower": np.float32(lower),
         "upper": np.float32(upper),
+        "huber_delta": None if huber_delta is None else cp.asarray(huber_delta, cp.float32),
     }
     for first in range(0, shape[0], core):
         last = min(shape[0], first + core)

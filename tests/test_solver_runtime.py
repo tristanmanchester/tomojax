@@ -930,6 +930,8 @@ def test_spdhg_finite_iterates_covary_with_units_signal_and_weight(regulariser, 
 @pytest.mark.numerical
 def test_spdhg_signed_custom_grid_schur_bound_uses_absolute_interpolation():
     from tomojax.core.projector import get_detector_grid_device, project_views
+
+    # check-public-imports: allow-private
     from tomojax.recon._spdhg_steps import _block_row_column_bounds
 
     grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
