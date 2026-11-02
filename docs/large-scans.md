@@ -32,7 +32,15 @@ set the environment before the first JAX operation in a notebook.
 `stream_projections = true` or `false` in the method's configuration (a
 `--config` key) overrides the 40% rule. Streaming needs the batched projection
 operators: CGLS streams only with the canonical detector grid, and FISTA-TV and
-SPDHG-TV not with an explicit detector grid or the exact ray integrator.
+SPDHG-TV not with an explicit detector grid or the exact ray integrator. SPDHG's
+600 default iterations are sampled view-block updates, not full data sweeps.
+Its probability-aware row/column-sum steps retain scalar preconditioners; TV
+strength and gradients are normalized in physical voxel coordinates. The default
+TV strength is estimated once from projection noise, with a 0.00005 minimum; an
+explicit positive weight fixes the strength, and zero disables TV. Choose
+`data_term="per_view_contrast"` explicitly for material outside the field of view;
+this discards the absolute density level.
+
 Streamed CGLS solves the equivalent normal equations, which square the
 condition number of each step's recurrence. It recomputes the exact gradient
 periodically, as in-core CGLS recomputes its residual.

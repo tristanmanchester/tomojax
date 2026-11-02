@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import contextlib
 from dataclasses import dataclass, field, fields, replace
 import functools
@@ -24,8 +23,6 @@ from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import (
     get_detector_grid_device,
-    project_views,
-    sum_backproject_views_T,
 )
 from tomojax.core.validation import (
     validate_grid,
@@ -39,16 +36,19 @@ from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
     ProjectorModel,
-    chunk_operators,
     resolve_geometry_projector,
     resolve_projector,
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._data_prox import weighted_l2_conjugate
+from ._data_term import project_residual
 from ._host_arrays import validate_host_views
+from ._noise import estimate_projection_noise
+from ._noise_probe import probe_gradient_rms
 from ._solver_validation import validate_spdhg_config, validate_spdhg_weights
-from ._spdhg_steps import SPDHGStepSizes, resolve_spdhg_step_sizes
+from ._spdhg_steps import SPDHGStepSizes, make_spdhg_chunk_operators, resolve_spdhg_step_sizes
+from ._tv_metric import TVMetric, raise_tv_weight, resolve_tv_metric
 from ._tv_ops import (
     div3,
     grad3,
@@ -62,10 +62,7 @@ from ._tv_ops import (
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
-    from .types import Regulariser
-
-_SPDHGProjectChunk = Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
-_SPDHGBackprojectChunk = Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    from .types import DataTerm, Regulariser
 
 
 # --------- config ----------
@@ -90,25 +87,40 @@ class SPDHGConfig:
     ``tau``, ``sigma_data`` and ``sigma_tv`` independently override the primal,
     data-dual and TV-dual step sizes. ``None`` estimates only that missing size;
     explicit sizes must be finite and positive. Automatic sizes bound every
-    block's squared norm divided by its selection probability. Batched
-    positive-kernel operators use three upper-bound passes per block;
-    reference rays use a one-pass row-sum bound per block. ``info["A_norm"]``
+    block's squared norm divided by its selection probability. One forward
+    and adjoint pass per block compute row/column-sum Schur bounds; signed
+    interpolation uses absolute weights only for those bounds. ``info["A_norm"]``
     is the square root of this probability-scaled bound, also bounding the
     full-scan operator norm.
     Supplying overrides makes the caller responsible for the combined step
     sizes' stability.
 
+    The iteration budget counts sampled blocks, not full data passes. Increasing
+    the number of views or reducing the block size can therefore require more
+    iterations; 600 updates are not a convergence guarantee. In particular, many
+    narrow-angle blocks can leave detail blurred even when the objective falls.
+    Check the image as well as the residual, or use FISTA for full-data updates.
+
     Parameters
     ----------
     iterations : int, optional
-        Maximum number of solver updates. For SIRT and MLEM, an update is a complete
-        subset sweep. Default is 400.
-    tv_weight : float, optional
-        Nonnegative regularization weight. Default is 0.005.
+        Number of sampled data-block updates, each with a TV update (not full
+        sweeps through the data). Default is 600.
+    tv_weight : float | None, optional
+        Dimensionless physical-TV strength. None (default) estimates the noise
+        from measured projections and raises a fixed 0.00005 minimum using one
+        contrast-noise gradient probe. Explicit positive values bypass this
+        estimate; zero disables TV.
+    data_term : {"absolute", "per_view_contrast"}, optional
+        Absolute least squares by default. Use per_view_contrast when material
+        lies outside the field of view (ROI scans, most laminography, K11).
+        It discards each view's baseline and gives up the absolute density level.
+        Keep absolute fitting for contained objects: removing their view means
+        discards measured information and can worsen the reconstruction.
     regulariser : Regulariser, optional
         Regularization model: "tv" or "huber_tv". Default is 'tv'.
     huber_delta : float, optional
-        Positive Huber transition scale when regulariser is "huber_tv". Default is
+        Positive dimensionless Huber transition scale when regulariser is "huber_tv". Default is
         0.01.
     theta : float, optional
         Extrapolation factor for the dual gradient. Default is 1.0.
@@ -151,15 +163,16 @@ class SPDHGConfig:
         available device memory; False keeps them resident.
     """
 
-    iterations: int = 400
-    tv_weight: float = 5e-3
+    iterations: int = 600
+    tv_weight: float | None = None
+    data_term: DataTerm = "absolute"
     regulariser: Regulariser = "tv"
     huber_delta: float = 1e-2
     theta: float = 1.0  # extrapolation of the dual gradient
     views_per_batch: int = 16  # size of a stochastic block
     seed: int = 0
 
-    # step sizes (set to None => auto from operator norms)
+    # Step sizes (None resolves the probability-aware physical Schur sizes).
     tau: float | None = None
     sigma_data: float | None = None
     sigma_tv: float | None = None
@@ -214,7 +227,7 @@ class _SPDHGSchedule:
 class _SPDHGRuntime:
     config: SPDHGConfig
     regulariser: Regulariser = field(metadata={"static": True})
-    huber_delta: float = field(metadata={"static": True})
+    huber_delta: float
     # None when streaming: data, weights and duals then live in host memory.
     y_meas: jnp.ndarray | None
     # None means unit weights; no sinogram of ones is stored.
@@ -222,7 +235,8 @@ class _SPDHGRuntime:
     poses: jnp.ndarray
     detector_grid: tuple[jnp.ndarray, jnp.ndarray]
     support: jnp.ndarray | None
-    tv_weight: jnp.ndarray
+    metric: TVMetric
+    resolved_tv_weight: float
     step_sizes: SPDHGStepSizes
     schedule: _SPDHGSchedule
     # None starts from zeros created inside the compiled solve.
@@ -242,8 +256,10 @@ class _SPDHGResult:
     step_sizes: SPDHGStepSizes
     schedule: _SPDHGSchedule
     regulariser: Regulariser = field(metadata={"static": True})
-    huber_delta: float = field(metadata={"static": True})
-    tv_weight: float
+    huber_delta: float
+    tv_weight: float | None
+    resolved_tv_weight: float
+    effective_tv_weight: float
 
     def info(self) -> dict[str, object]:
         step_sizes = self.step_sizes
@@ -251,10 +267,11 @@ class _SPDHGResult:
         return {
             "loss": np.asarray(self.losses).tolist(),
             "tau": float(step_sizes.tau),
-            "sigma_data": float(step_sizes.sigma_data_eff),
-            "sigma_data_base": float(step_sizes.sigma_data_base),
+            "sigma_data": float(step_sizes.sigma_data),
             "sigma_tv": float(step_sizes.sigma_tv),
-            "tv_weight": float(self.tv_weight),
+            "tv_weight": self.tv_weight,
+            "resolved_tv_weight": self.resolved_tv_weight,
+            "effective_tv_weight": self.effective_tv_weight,
             "views_per_batch": int(schedule.views_per_batch),
             "num_blocks": int(schedule.num_blocks),
             "A_norm": (float(step_sizes.data_norm) if step_sizes.data_norm is not None else None),
@@ -286,6 +303,7 @@ def _prox_fstar_l2(
     sigma: float | jnp.ndarray,
     y_meas: jnp.ndarray,
     w: jnp.ndarray | None,
+    data_term: DataTerm = "absolute",
 ) -> jnp.ndarray:
     """Apply the weighted L2 dual proximal.
 
@@ -295,7 +313,14 @@ def _prox_fstar_l2(
     sigma = jnp.asarray(sigma, dtype=u.dtype)
     w = jnp.ones_like(u) if w is None else jnp.asarray(w, dtype=u.dtype)
     y_meas = jnp.where(w > 0, y_meas, 0.0)
-    return weighted_l2_conjugate(u, sigma, y_meas, w).astype(u.dtype)
+    dual = weighted_l2_conjugate(u, sigma, y_meas, w)
+    if data_term == "per_view_contrast":
+        # The profiled conjugate is restricted to sum(dual)=0 per view.
+        # Its metric is sigma*w/(sigma+w), not the observation weights.
+        gain = jnp.where(w > 0, sigma * (w / (sigma + w)), 0)
+        total = jnp.sum(gain, axis=(-2, -1), keepdims=True)
+        dual -= gain * jnp.sum(dual, axis=(-2, -1), keepdims=True) / jnp.where(total > 0, total, 1)
+    return dual.astype(u.dtype)
 
 
 def _batched_projector(
@@ -352,7 +377,7 @@ def _initial_spdhg_state(
     if x0 is None:
         x0 = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
     x0 = _proj_pos_support(x0, runtime.support, nonnegative=cfg.nonnegative)
-    tv_zero = jnp.zeros_like(x0) if cfg.tv_weight > 0 else jnp.zeros((0,), jnp.float32)
+    tv_zero = jnp.zeros_like(x0) if cfg.tv_weight != 0 else jnp.zeros((0,), jnp.float32)
     return _SPDHGScanState(
         x=x0,
         # Streaming keeps the duals on the host; a placeholder stands in here.
@@ -369,11 +394,56 @@ def _initial_spdhg_state(
     )
 
 
+@functools.partial(
+    jax.jit,
+    static_argnames=("grid", "detector", "projector", "views_per_batch", "ray_settings"),
+)
+def _spdhg_noise_rms(
+    grid: Grid,
+    detector: Detector,
+    poses: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    weights: jnp.ndarray | None,
+    weights_key: jax.Array | None,
+    support: jnp.ndarray | None,
+    *,
+    projector: tuple[str | ConeModel, str] | None,
+    views_per_batch: int,
+    ray_settings: tuple[bool, int, str, str],
+) -> jnp.ndarray:
+    """A bounded noise transpose through the same weighted data operator."""
+    _, backproject = make_spdhg_chunk_operators(
+        grid,
+        detector,
+        poses,
+        det_grid,
+        projector=projector,
+        views_per_batch=views_per_batch,
+        ray_settings=ray_settings,
+    )
+
+    def read_weight_block(start: jax.Array, size: int) -> jax.Array:
+        if weights_key is not None:
+            return read_views(weights_key, start, (size, detector.nv, detector.nu))
+        assert weights is not None
+        return jax.lax.dynamic_slice_in_dim(weights, start, size)
+
+    return probe_gradient_rms(
+        poses,
+        grid,
+        detector,
+        backproject,
+        batch_size=views_per_batch,
+        support=support,
+        read_weights=read_weight_block if weights_key is not None or weights is not None else None,
+    )
+
+
 def _prepare_spdhg_runtime(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections: jnp.ndarray,
+    projections: jnp.ndarray | np.ndarray,
     *,
     weights: jnp.ndarray | None,
     init_x: jnp.ndarray | None,
@@ -428,15 +498,56 @@ def _prepare_spdhg_runtime(
         raise ValueError("spdhg_tv: stream_projections requires the batched projection operators")
     y_meas = None if stream else jnp.asarray(projections, dtype=jnp.float32)
     weights_arr = None if weights is None or stream else jnp.asarray(weights, dtype=jnp.float32)
-    step_sizes = resolve_spdhg_step_sizes(
+    metric = resolve_tv_metric(
         geometry,
         grid,
         detector,
-        expected_proj_shape,
+        projections,
+        weights=weights,
+        tv_weight=5e-5 if cfg.tv_weight is None else cfg.tv_weight,
+        huber_delta=cfg.huber_delta,
+    )
+    support = None if cfg.support is None else jnp.asarray(cfg.support, dtype=jnp.float32)
+    resolved_tv_weight = 5e-5 if cfg.tv_weight is None else cfg.tv_weight
+    if cfg.tv_weight is None:
+        initial_factor = float(metric.weight_over_contrast)
+        if nv * nu > 1:
+            noise = estimate_projection_noise(projections, weights=weights)
+            source = (
+                host_source(np.asarray(weights))
+                if stream and weights is not None
+                else contextlib.nullcontext(None)
+            )
+            with source as key:
+                rms = _spdhg_noise_rms(
+                    grid,
+                    detector,
+                    poses,
+                    resolved_det_grid,
+                    weights_arr,
+                    key,
+                    support,
+                    projector=projector,
+                    views_per_batch=cfg.views_per_batch,
+                    ray_settings=(
+                        cfg.checkpoint_projector,
+                        cfg.projector_unroll,
+                        cfg.gather_dtype,
+                        cfg.ray_integrator,
+                    ),
+                ).block_until_ready()
+            metric = raise_tv_weight(metric, noise * rms)
+        resolved_tv_weight = 5e-5 * float(metric.weight_over_contrast) / (initial_factor or 1)
+    # A zero TV weight is identically zero, including a flat input's zero delta.
+    huber_delta = float(metric.delta) if float(metric.weight) > 0 else 1.0
+    step_sizes = resolve_spdhg_step_sizes(
+        grid,
+        detector,
         poses,
         cfg,
         resolved_det_grid,
         projector,
+        metric=metric,
     )
 
     return _SPDHGRuntime(
@@ -447,8 +558,9 @@ def _prepare_spdhg_runtime(
         weights=weights_arr,
         poses=poses,
         detector_grid=resolved_det_grid,
-        support=None if cfg.support is None else jnp.asarray(cfg.support, dtype=jnp.float32),
-        tv_weight=jnp.asarray(cfg.tv_weight, dtype=jnp.float32),
+        support=support,
+        metric=metric,
+        resolved_tv_weight=float(resolved_tv_weight),
         step_sizes=step_sizes,
         schedule=_build_spdhg_schedule(n_views, cfg),
         init_x=None if init_x is None else jnp.asarray(init_x, dtype=jnp.float32),
@@ -485,58 +597,17 @@ def _emit_spdhg_callback(
 # --------- main algorithm ----------
 
 
-def _make_spdhg_chunk_operators(
-    grid: Grid,
-    detector: Detector,
-    runtime: _SPDHGRuntime,
-) -> tuple[_SPDHGProjectChunk, _SPDHGBackprojectChunk]:
-    """Slice full-scan coefficients along with poses, retaining each arrangement."""
-    cfg = runtime.config
-    if runtime.projector is not None:
-        model, backend = runtime.projector
-        return chunk_operators(
-            runtime.poses, grid, detector, backend, runtime.schedule.views_per_batch, model
-        )
-
-    def project_chunk(vol: jnp.ndarray, _start: jnp.ndarray, T_chunk: jnp.ndarray) -> jnp.ndarray:
-        return project_views(
-            T_chunk,
-            grid,
-            detector,
-            vol,
-            use_checkpoint=cfg.checkpoint_projector,
-            unroll=int(cfg.projector_unroll),
-            gather_dtype=cfg.gather_dtype,
-            det_grid=runtime.detector_grid,
-            ray_integrator=cfg.ray_integrator,
-        )
-
-    def backproject_chunk(
-        images: jnp.ndarray, _start: jnp.ndarray, T_chunk: jnp.ndarray, total: jnp.ndarray
-    ) -> jnp.ndarray:
-        return total + sum_backproject_views_T(
-            T_chunk,
-            grid,
-            detector,
-            images,
-            unroll=int(cfg.projector_unroll),
-            gather_dtype=cfg.gather_dtype,
-            det_grid=runtime.detector_grid,
-            ray_integrator=cfg.ray_integrator,
-        )
-
-    return project_chunk, backproject_chunk
-
-
 def _spdhg_data_residual(
     pred: jnp.ndarray,
     measured: jnp.ndarray,
     weights: jnp.ndarray | None,
     active: jnp.ndarray,
+    data_term: DataTerm,
 ) -> jnp.ndarray:
     if weights is not None:
         active = active & (weights > 0)
     residual = jnp.where(active, pred, 0.0) - jnp.where(active, measured, 0.0)
+    residual = project_residual(residual, data_term, weights=weights)
     return residual if weights is None else residual * jnp.sqrt(weights)
 
 
@@ -544,7 +615,7 @@ def _update_spdhg_tv_duals(
     state: _SPDHGScanState, x: jnp.ndarray, runtime: _SPDHGRuntime
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     step_sizes = runtime.step_sizes
-    gx, gy, gz = grad3(x)
+    gx, gy, gz = grad3(x, gradient_scale_xyz=runtime.metric.gradient_scale_xyz)
     p1_u = state.p1 + step_sizes.sigma_tv * gx
     p2_u = state.p2 + step_sizes.sigma_tv * gy
     p3_u = state.p3 + step_sizes.sigma_tv * gz
@@ -554,11 +625,11 @@ def _update_spdhg_tv_duals(
             p2_u,
             p3_u,
             sigma=step_sizes.sigma_tv,
-            lam=runtime.tv_weight,
+            lam=runtime.metric.weight,
             delta=runtime.huber_delta,
         )
     else:
-        p1_new, p2_new, p3_new = project_tv_duals(p1_u, p2_u, p3_u, radius=runtime.tv_weight)
+        p1_new, p2_new, p3_new = project_tv_duals(p1_u, p2_u, p3_u, radius=runtime.metric.weight)
     return p1_new, p2_new, p3_new
 
 
@@ -576,9 +647,12 @@ def _extrapolate_spdhg_gradient(
     if cfg.tv_weight == 0:
         return state.p1, state.p2, state.p3, gradient_bar
     p1, p2, p3 = _update_spdhg_tv_duals(state, x, runtime)
-    tv_adjoint = -div3(p1, p2, p3)
+    scales = runtime.metric.gradient_scale_xyz
+    tv_adjoint = -div3(p1, p2, p3, gradient_scale_xyz=scales)
     # TV is selected on every iteration, so its probability is one.
-    gradient_bar += tv_adjoint + cfg.theta * (tv_adjoint + div3(state.p1, state.p2, state.p3))
+    gradient_bar += tv_adjoint + cfg.theta * (
+        tv_adjoint + div3(state.p1, state.p2, state.p3, gradient_scale_xyz=scales)
+    )
     return p1, p2, p3, gradient_bar
 
 
@@ -609,7 +683,20 @@ def _run_spdhg_scan(  # noqa: PLR0915
     n_views, nv, nu = runtime.data_shape
     block_shape = (schedule.views_per_batch, nv, nu)
     keys = runtime.host_keys
-    project_chunk, backproject_chunk = _make_spdhg_chunk_operators(grid, detector, runtime)
+    project_chunk, backproject_chunk = make_spdhg_chunk_operators(
+        grid,
+        detector,
+        runtime.poses,
+        runtime.detector_grid,
+        projector=runtime.projector,
+        views_per_batch=schedule.views_per_batch,
+        ray_settings=(
+            cfg.checkpoint_projector,
+            cfg.projector_unroll,
+            cfg.gather_dtype,
+            cfg.ray_integrator,
+        ),
+    )
 
     def load(state: _SPDHGScanState, start: jnp.ndarray) -> tuple:
         # Measured views, weights and duals of one block, from host or device.
@@ -657,10 +744,10 @@ def _run_spdhg_scan(  # noqa: PLR0915
         # The state holds the primal for this projection. Its successor is formed
         # after the duals update, so the extrapolated gradient and the primal
         # proximal share one pointwise program and no volume-sized buffer is carried.
-        sigma_eff = jnp.asarray(step_sizes.sigma_data_eff, dtype=state.x.dtype)
+        sigma_eff = jnp.asarray(step_sizes.sigma_data, dtype=state.x.dtype)
         pred = project_chunk(state.x, start_shifted, T_chunk)
         u = y_dual_old + sigma_eff * pred
-        y_dual_new = _prox_fstar_l2(u, sigma_eff, y_chunk, w_chunk)
+        y_dual_new = _prox_fstar_l2(u, sigma_eff, y_chunk, w_chunk, cfg.data_term)
         y_dual_new = row_mask * y_dual_new + (1.0 - row_mask) * y_dual_old
         delta_y = (y_dual_new - y_dual_old) * row_mask
 
@@ -675,17 +762,23 @@ def _run_spdhg_scan(  # noqa: PLR0915
         do_log = (cfg.log_every > 0) & ((t + 1) % cfg.log_every == 0)
 
         def log_step() -> jnp.ndarray:
-            resid = _spdhg_data_residual(pred, y_chunk, w_chunk, row_mask != 0)
+            resid = _spdhg_data_residual(pred, y_chunk, w_chunk, row_mask != 0, cfg.data_term)
             # Blocks are selected uniformly, not in proportion to their view
             # counts. The final partial block has the same selection weight.
             data_est = 0.5 * jnp.vdot(resid, resid).real / schedule.selection_prob
             objective = data_est
             if cfg.tv_weight != 0:
                 if runtime.regulariser == "huber_tv":
-                    reg_value = huber_tv_value(state.x, runtime.huber_delta)
+                    reg_value = huber_tv_value(
+                        state.x,
+                        runtime.huber_delta,
+                        gradient_scale_xyz=runtime.metric.gradient_scale_xyz,
+                    )
                 else:
-                    reg_value = isotropic_tv_value(state.x)
-                objective = objective + runtime.tv_weight * reg_value
+                    reg_value = isotropic_tv_value(
+                        state.x, gradient_scale_xyz=runtime.metric.gradient_scale_xyz
+                    )
+                objective = objective + runtime.metric.weight * reg_value
             obj = objective.astype(jnp.float32)
             return state.losses.at[t].set(obj)
 
@@ -826,7 +919,9 @@ def spdhg_tv(
         schedule=runtime.schedule,
         regulariser=runtime.regulariser,
         huber_delta=runtime.huber_delta,
-        tv_weight=float(runtime.config.tv_weight),
+        tv_weight=None if config is None else config.tv_weight,
+        resolved_tv_weight=runtime.resolved_tv_weight,
+        effective_tv_weight=float(runtime.metric.weight),
     )
     _emit_spdhg_callback(callback, result, runtime.config)
     return result.volume, result.info()

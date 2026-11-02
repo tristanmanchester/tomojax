@@ -143,7 +143,7 @@ def isotropic_tv_value(
 
 def huber_tv_value(
     u: jnp.ndarray,
-    delta: float,
+    delta: float | jax.Array,
     *,
     gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
     z_fast: bool = False,
@@ -159,7 +159,11 @@ def huber_tv_value(
 
 
 def _huber_tv_grad(
-    u: jnp.ndarray, delta: float, *, gradient_scale_xyz: tuple[float, float, float], z_fast: bool
+    u: jnp.ndarray,
+    delta: float | jax.Array,
+    *,
+    gradient_scale_xyz: tuple[float, float, float],
+    z_fast: bool,
 ) -> jnp.ndarray:
     """Return the gradient of isotropic Huber-TV under ``grad3``/``div3``."""
     delta_arr = jnp.asarray(delta, dtype=u.dtype)
@@ -177,7 +181,7 @@ _HUBER_TILE_BYTES = 64 << 20
 
 def huber_tv_grad(
     u: jnp.ndarray,
-    delta: float,
+    delta: float | jax.Array,
     *,
     gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
     z_fast: bool = False,

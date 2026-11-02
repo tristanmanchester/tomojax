@@ -12,7 +12,7 @@
     "MLEMConfig": 6,
     "ProjectionMatchingConfig": 1,
     "SIRTConfig": 10,
-    "SPDHGConfig": 20,
+    "SPDHGConfig": 21,
     "SimConfig": 31
   },
   "exported_names": {
@@ -59,7 +59,8 @@
     "src/tomojax/recon/fista_tv.py::grad_data_term": 146,
     "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 131,
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_iterates": 132,
-    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
+    "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 129,
+    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
   "code_lines": {
     "(modules)": 3085,
@@ -75,7 +76,7 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14526
+    "recon": 14613
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,
@@ -99,12 +100,12 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "single_use_helpers": {
-    "tiny": 98,
+    "tiny": 97,
     "forwarders": 9,
     "chained": 32
   },
   "type_errors": {
-    "reportArgumentType": 169,
+    "reportArgumentType": 168,
     "reportAssignmentType": 1,
     "reportAttributeAccessIssue": 64,
     "reportCallIssue": 9,
