@@ -132,7 +132,7 @@ def parse_loss_spec(
     Parameters
     ----------
     kind : str
-        Registered loss name, such as "l2", "l2_otsu" or "huber".
+        Registered loss name, such as "l2" or "l2_otsu".
     params : mapping or None, optional
         Scalar parameters for the named loss; None uses its defaults.
 
@@ -189,8 +189,8 @@ def parse_loss_schedule(
     """Parse a pyramid-level loss schedule.
 
     String values use ``LEVEL:LOSS`` comma-separated entries, for example
-    ``"4:huber,2:l2,1:l2_otsu"``. Mapping values are intended for TOML
-    config files, for example ``{"4": "huber", "2": "l2"}``.
+    ``"4:l2,1:l2_otsu"``. Mapping values are intended for TOML
+    config files, for example ``{"4": "l2", "1": "l2_otsu"}``.
 
     Parameters
     ----------
