@@ -553,9 +553,7 @@ def adjoint_into(
         wide = axis != 2 and grid.nz >= 128
         tile_c = 64 if wide else 32
         kernel = module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")
-        if wide:
-            # Four resident blocks of its 20.7 KiB static tiles need the largest carveout.
-            kernel.preferred_shared_memory_carveout = 100
+        kernel.preferred_shared_memory_carveout = 100 if wide else -1  # four 20.7 KiB wide blocks
         kernel(
             (
                 (-(-extent[axis] // 2), -(-nb // 15), -(-nc // tile_c))

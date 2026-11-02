@@ -51,7 +51,7 @@ def test_watch_truth_uses_physical_xyz_origin(monkeypatch):
         observed.update(shape=shape, origin=origin)
         return np.zeros(shape)
 
-    monkeypatch.setattr(_watch, "MU", {"test": 1.0})
+    monkeypatch.setattr(_watch, "present", lambda _: {"test": 1.0})
     monkeypatch.setattr(mesh_voxels, "read_stl", lambda _: None)
     monkeypatch.setattr(mesh_voxels, "occupancy", occupy)
     actual = _watch.truth(Path("."), (2, 3, 5), 0.5, (1.0, 2.0, 3.0))

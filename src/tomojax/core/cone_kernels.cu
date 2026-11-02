@@ -1193,9 +1193,6 @@ __device__ __forceinline__ float footprint_peak(const unsigned* peak, int view, 
 #ifndef WIDE_BLOCKS
 #define WIDE_BLOCKS 4
 #endif
-#ifndef PAIR_BLOCKS
-#define PAIR_BLOCKS 3
-#endif
 template <int PC, int RHS = 1, int PLANES = 1>
 __device__ __forceinline__ void plane_tile(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
@@ -1785,7 +1782,7 @@ extern "C" __global__ void __launch_bounds__(256, 4) sep_adjoint_cached_thin(
 
 // Two independent right-hand sides share ray coordinates. Their two-word tiles allow
 // four blocks per SM.
-extern "C" __global__ void __launch_bounds__(PLANE_THREADS, PAIR_BLOCKS) pair_plane_adjoint(
+extern "C" __global__ void __launch_bounds__(PLANE_THREADS, 3) pair_plane_adjoint(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, const float* __restrict__ img1,
     float* __restrict__ vol, float* __restrict__ vol1,
