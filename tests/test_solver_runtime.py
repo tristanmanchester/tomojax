@@ -447,7 +447,7 @@ def test_batched_normal_norm_matches_dense_scaled_spectrum():
 
     actual = jax.jit(
         lambda start: normal_operator_norm(
-            forward, adjoint, (1, 1, 2), iterations=30, mask=support, start=start
+            lambda x: adjoint(forward(x)), (1, 1, 2), iterations=30, mask=support, start=start
         )
     )(jnp.full((1, 1, 2), start_scale))
     expected = np.linalg.norm(np.asarray(matrix, np.float64) * np.asarray(support).ravel(), 2) ** 2

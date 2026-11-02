@@ -436,8 +436,7 @@ def least_squares_operators(
 
 
 def normal_operator_norm(
-    forward: Callable[[jax.Array], jax.Array],
-    adjoint: Callable[[jax.Array], jax.Array],
+    apply_normal: Callable[[jax.Array], jax.Array],
     shape: tuple[int, int, int],
     *,
     iterations: int,
@@ -452,7 +451,7 @@ def normal_operator_norm(
 
     def normal(x: jax.Array) -> jax.Array:
         x = x if mask is None else x * mask
-        y = adjoint(forward(x))
+        y = apply_normal(x)
         return y if mask is None else y * mask
 
     def step(_: jax.Array, carry: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
