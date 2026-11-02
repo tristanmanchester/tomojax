@@ -75,7 +75,7 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14418
+    "recon": 14269
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,
@@ -99,7 +99,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "single_use_helpers": {
-    "tiny": 98,
+    "tiny": 96,
     "forwarders": 9,
     "chained": 32
   },
