@@ -30,6 +30,10 @@ The weights are normalized; transmission is averaged over energies before
 pixel averaging. This models an ideal photon counter with a spatially uniform
 flat field, no scatter, blur or inverse-square illumination variation. Energy
 values and material provenance belong in the caller's corpus metadata.
+``save_energy_transmission=True`` additionally stores ``energy_transmission``
+``(energy, view, v, u)`` as float32 pixel means. Their weighted sum recovers
+``transmission`` to float32 roundoff, permitting new spectra without tracing
+meshes again. No subray or path-length arrays are retained.
 """
 
 from __future__ import annotations
@@ -72,6 +76,11 @@ def render(plan: dict[str, np.ndarray]) -> dict[str, np.ndarray | str]:
         raise ValueError("raster_refinement must be a positive odd integer")
     poses = np.asarray(plan["poses"], np.float64)
     out = np.empty((len(poses), nv, nu), np.float32)
+    energy_out = (
+        np.empty((mu.shape[1], *out.shape), np.float32)
+        if bool(plan.get("save_energy_transmission", False))
+        else None
+    )
     gvxr.createNewContext("EGL")
     try:
         cone = "source_to_axis_mm" in plan
@@ -98,7 +107,8 @@ def render(plan: dict[str, np.ndarray]) -> dict[str, np.ndarray | str]:
             gvxr.setSourcePosition(*(r.T @ (source - t)), "mm")
             gvxr.setDetectorPosition(*(r.T @ (screen - t)), "mm")
             gvxr.setDetectorUpVector(*(r.T @ [0.0, 0.0, 1.0]))
-            gvxr.setDetectorRightVector(*(r.T @ [1.0, 0.0, 0.0]))
+            if cone:
+                gvxr.setDetectorRightVector(*(r.T @ [1.0, 0.0, 0.0]))
             absorption = np.zeros((nv * s, nu * s, mu.shape[1]))
             for name, coefficient in zip(names, mu, strict=True):
                 length_mm = (
@@ -108,8 +118,10 @@ def render(plan: dict[str, np.ndarray]) -> dict[str, np.ndarray | str]:
                     ]
                 )
                 absorption += length_mm[..., None] * coefficient
-            transmission = np.exp(-absorption) @ fractions
-            out[i] = transmission.reshape(nv, s, nu, s).mean(axis=(1, 3))
+            transmission = np.exp(-absorption).reshape(nv, s, nu, s, -1).mean(axis=(1, 3))
+            out[i] = transmission @ fractions
+            if energy_out is not None:
+                energy_out[:, i] = np.moveaxis(transmission, -1, 0)
         version = gvxr.getVersionOfCoreGVXR()
     finally:
         gvxr.destroy()
@@ -117,6 +129,7 @@ def render(plan: dict[str, np.ndarray]) -> dict[str, np.ndarray | str]:
         "transmission": out,
         "gvxr": version,
         "renderer_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        **({"energy_transmission": energy_out} if energy_out is not None else {}),
     }
 
 

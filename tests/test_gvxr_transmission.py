@@ -53,6 +53,7 @@ def test_render_integrates_energy_then_pixels_and_sets_fixed_detector_frame(
         centre_mm=[0.17, -0.23],
         supersample=2,
         raster_refinement=refinement,
+        save_energy_transmission=cone,
         poses=[pose],
     )
     if cone:
@@ -60,10 +61,21 @@ def test_render_integrates_energy_then_pixels_and_sets_fixed_detector_frame(
     result = renderer.render(plan)
     expected = (np.exp(-10 * length_cm[..., None] * [0.2, 0.8]) @ [0.25, 0.75]).mean()
     np.testing.assert_allclose(result["transmission"], [[[expected]]], rtol=1e-7)
-    np.testing.assert_allclose(api.setDetectorRightVector.call_args.args, [1, 0, 0])
     np.testing.assert_allclose(api.setDetectorUpVector.call_args.args, [0, 0, 1])
     source = [0, -20, 0] if cone else [0.17, -100, -0.23]
     np.testing.assert_allclose(api.setSourcePosition.call_args.args[:3], source - pose[:3, 3])
     (api.usePointSource if cone else api.useParallelBeam).assert_called_once()
     api.setDetectorNumberOfPixels.assert_called_once_with(2 * refinement, 2 * refinement)
     api.destroy.assert_called_once()
+    if cone:
+        np.testing.assert_allclose(api.setDetectorRightVector.call_args.args, [1, 0, 0])
+        spectral = result["energy_transmission"]
+        assert spectral.shape == (2, 1, 1, 1)
+        expected = np.exp(-10 * length_cm[..., None] * [0.2, 0.8]).mean(axis=(0, 1))
+        np.testing.assert_allclose(spectral[:, 0, 0, 0], expected, rtol=1e-7)
+        np.testing.assert_allclose(
+            np.einsum("e,evij->vij", [0.25, 0.75], spectral), result["transmission"], rtol=1e-7
+        )
+    else:
+        assert "energy_transmission" not in result
+        api.setDetectorRightVector.assert_not_called()
