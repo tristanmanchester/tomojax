@@ -79,6 +79,7 @@ def test_prepare_and_pack_preserve_truth_geometry_and_noise(tmp_path, kind):
     np.testing.assert_allclose(np.load(out / "truth.npy"), 0.2)
     plan = np.load(out / "clean-plan.npz")
     np.testing.assert_array_equal(plan["shape"], [2, 3])
+    assert not plan["save_energy_transmission"]
     np.testing.assert_allclose(plan["centre_mm"], [0.2, -0.3])
     assert json.loads((out / "config.json").read_text())["held_out_indices"] == [2]
     for name in ("clean", "clean-motion", "exterior", "motion", "exterior-only", "moving-exterior"):

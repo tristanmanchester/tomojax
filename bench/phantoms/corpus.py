@@ -134,6 +134,7 @@ def prepare(config: dict, out: Path) -> None:
             centre_mm=detector.center,
             supersample=config.get("supersample", 2),
             raster_refinement=config.get("raster_refinement", 1),
+            save_energy_transmission=config.get("save_energy_transmission", False),
             poses=poses,
             **beam,
             **({"photon_fractions": config["photon_fractions"]} if spectral else {}),

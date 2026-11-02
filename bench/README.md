@@ -879,6 +879,8 @@ Configurations explicitly supply `geometry` (`kind`, `grid`, `detector`,
 `exterior_meshes`, `materials` (name and reference `mu_mm`),
 `reference_energy_keV`, and `seed`. Spectral configurations also supply
 `energies_keV`, `photon_fractions`, and each material's `mu_spectrum`.
+Optional `save_energy_transmission` retains per-energy pixel transmissions for
+CPU spectral recombination without repeating GPU path-length rendering.
 Geometry dictionaries follow `Grid.to_dict()` and `Detector.to_dict()`.
 Lengths are mm, volumes ZYX, projections view-v-u. The renderer supports square
 pixels and a centred, untilted cone camera; sample laminography tilt is allowed.
