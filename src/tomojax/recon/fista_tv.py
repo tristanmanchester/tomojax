@@ -143,6 +143,11 @@ class FistaConfig:
     Effective dimensional and selected dimensionless weights are returned in
     ``info`` as ``effective_tv_weight`` and ``resolved_tv_weight``.
 
+    At full resolution on high-count phase-contrast data, FBP can retain finer
+    edges and fringes than FISTA-TV, which can give a cleaner background with
+    broader edges.
+    Compare both at the same display scale rather than assuming TV is sharper.
+
     ``initial_epochs`` optionally initializes nonnegative least squares with
     accelerated, interleaved ordered subsets before the full-data iterations.
     Each epoch interleaves nominal angle order into ``initial_subsets`` groups; more groups save
