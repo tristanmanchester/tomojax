@@ -8,7 +8,7 @@ layers =
     tomojax.cli
     tomojax.torch
     tomojax._workflow
-    tomojax._laminography
+    tomojax._smooth_alignment
     tomojax._region
     tomojax._loading
     tomojax._loading_geometry
@@ -33,7 +33,7 @@ type = forbidden
 allow_indirect_imports = True
 source_modules =
     tomojax.cli
-    tomojax._laminography
+    tomojax._smooth_alignment
     tomojax._region
     tomojax._workflow
     tomojax._loading
@@ -55,7 +55,7 @@ type = forbidden
 allow_indirect_imports = True
 source_modules =
     tomojax.cli
-    tomojax._laminography
+    tomojax._smooth_alignment
     tomojax._region
     tomojax._workflow
     tomojax._loading

@@ -36,7 +36,7 @@ from tomojax._scan import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Mapping, Sequence
+    from collections.abc import Iterable, Iterator, Sequence
     from os import PathLike
 
     import jax
@@ -432,9 +432,9 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
                 "automatic geometry reconstruction does not take expert overrides; "
                 "choose method='fista' (or another explicit method) to supply them"
             )
-        from tomojax._laminography import reconstruct_laminography
+        from tomojax._smooth_alignment import reconstruct_with_motion
 
-        return reconstruct_laminography(scan, align=align, reconstruct=reconstruct, grid=grid)
+        return reconstruct_with_motion(scan, align=align, reconstruct=reconstruct, grid=grid)
     reasons = []
     method: Method = "fbp"
     if isinstance(base, ConeSegments):
@@ -752,11 +752,11 @@ def align(
 ) -> Alignment:
     """Estimate ``scan``'s geometry corrections and reconstruct with them.
 
-    ``mode="auto"`` selects centre estimation for axial parallel scans and
-    coarse smooth-pose alignment for unposed laminography. Its
-    conditional outcome and limitations are in ``info["automatic"]``.
-    Centre estimation records its input/output physical detector coordinates;
-    its success resolves only the reconstruction-only calibration limitation.
+    ``mode="auto"`` fits smooth detector-frame translations for unposed axial
+    parallel and laminography scans on a bounded coarse image. Rotations remain
+    fixed; use an explicit pose mode to fit them. Cone scans use joint pose fitting.
+    The chosen workflow and limitations are in ``info["automatic"]``.
+    Detector-centre estimation remains available separately as ``estimate_center``.
     Explicit ``mode`` is ``pose`` (per-view motion), ``cor`` (detector
     centre, or a cone beam's axis offset and detector roll), ``cor-then-pose``
     or ``full`` (setup geometry, then motion, coarse to fine); see
@@ -772,7 +772,7 @@ def align(
     A ``spectral_setup`` initializer does not reconstruct; reconstruct its returned scan.
 
     ``grid`` overrides the scan's reconstruction grid, as :func:`reconstruct` does.
-    In automatic laminography it fixes the region and final voxel sampling,
+    In automatic parallel alignment it fixes the region and final voxel sampling,
     while motion remains automatic; it is not inferred support.
 
     ``checkpoint`` is a file the alignment saves its progress to after each
@@ -859,7 +859,7 @@ def align(
             with sharing(devices):
                 return _align_automatically(scan, grid=grid, devices=devices)
         if explicit and describe(scan.geometry)[0] != "cone":
-            from tomojax._laminography import uses_laminography_workflow
+            from tomojax._smooth_alignment import uses_laminography_workflow
 
             if uses_laminography_workflow(scan):
                 raise ValueError(
@@ -962,61 +962,23 @@ def _align_automatically(
     scan: Scan, *, grid: Grid | None = None, devices: Device | Sequence[Device] | None = None
 ) -> Alignment:
     """Geometry-aware policy; every numerical operation below has an explicit mode."""
-    from tomojax._laminography import reconstruct_laminography, uses_laminography_workflow
+    from tomojax._smooth_alignment import reconstruct_with_motion
 
     if grid is not None:
         scan = with_grid(scan, grid)
     if scan.poses is not None:
         return align(scan, mode="pose", devices=devices)
-    if uses_laminography_workflow(scan):
-        result = reconstruct_laminography(
-            scan,
-            align=partial(align, devices=devices),
-            reconstruct=partial(reconstruct, devices=devices),
-            grid=grid,
-        )
-        poses = result.scan.poses
-        if poses is None:
-            poses = np.zeros((len(result.scan.angles), 6), np.float32)
-        return Alignment(result.volume, result.scan, np.asarray(poses), result.info)
-    automatic: dict[str, object] = {"status": "ok", "method": "center", "reasons": []}
-    center: dict[str, object] = {
-        "input": list(scan.detector.center),
-        "unit": "geometry_length",
-    }
-    try:
-        scan, calibration = _estimate_center(scan)
-        center.update(calibration)
-        diagnostics = cast("dict[str, Any]", calibration["diagnostics"])
-        automatic.update(status="limited", reasons=[diagnostics["uncertainty_reason"]])
-        probability = diagnostics["consistency_pvalue"]
-        if probability is not None and probability < 0.01:
-            cast("list[str]", automatic["reasons"]).append(
-                "Pair centres differ beyond conditional matching errors; inspect diagnostics "
-                "for motion or model mismatch. Local intervals do not cover those effects."
-            )
-    except ValueError as exc:
-        center.update(status="failed", reason=str(exc))
-        automatic.update(status="limited", reasons=[str(exc)])
-    automatic["center_estimation"] = center
-    result = reconstruct(scan, devices=devices)
-    reconstruction = dict(cast("Mapping[str, Any]", result.info.get("automatic", {})))
-    automatic["reconstruction"] = reconstruction
-    reasons = list(reconstruction.get("reasons", []))
-    if center["status"] == "estimated":
-        # Resolve only the named calibration issue in the composed workflow;
-        # nested reconstruction context still describes that operation alone.
-        resolved = reconstruction.get("center_calibration_reason")
-        reasons = [reason for reason in reasons if reason != resolved]
-    if reconstruction.get("status") == "limited" and (reasons or not reconstruction.get("reasons")):
-        automatic["status"] = "limited"
-    automatic["reasons"] = list(dict.fromkeys([*cast("list[str]", automatic["reasons"]), *reasons]))
-    return Alignment(
-        result.volume,
-        result.scan,
-        np.zeros((len(scan.angles), 6), np.float32),
-        {**result.info, "automatic": automatic},
+    if describe(scan.geometry)[0] not in {"parallel", "lamino"}:
+        return align(scan, mode="pose", devices=devices)
+    result = reconstruct_with_motion(
+        scan,
+        align=partial(align, devices=devices),
+        reconstruct=partial(reconstruct, devices=devices),
+        grid=grid,
     )
+    poses = result.scan.poses
+    assert poses is not None
+    return Alignment(result.volume, result.scan, np.asarray(poses), result.info)
 
 
 def _run_alignment(

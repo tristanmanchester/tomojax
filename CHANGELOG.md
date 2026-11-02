@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Automatic axial parallel alignment now fits the same bounded smooth detector-frame
+translations as laminography, rather than stopping at detector-centre estimation.
+The declared detector and rotation axis are preserved. Automatic reconstruction
+without alignment is unchanged; rotations still require an explicit pose mode.
+
 Alignment no longer accepts `tv_weight`, `regulariser` or `huber_delta`.
 Its volume updates are unregularised, retaining positivity and increment damping.
 Apply TV or Huber-TV in the final `tj.reconstruct` call instead; reconstruction
