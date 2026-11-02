@@ -22,6 +22,25 @@ keywords such as `iterations=` replace the fields of the same name. The same
 fields are the keys of a `tomojax recon --config` TOML file
 (`tomojax recon --config-keys` lists them).
 
+CGLS, FISTA and SPDHG default to `data_term="absolute"`, fitting measured
+line integrals. Use `data_term="per_view_contrast"` when material lies outside
+the field of view. This profiles one constant per complete detector view in the
+residual, not just in the input data; the projector and its exact transpose are
+unchanged. Absolute background density is then not recoverable. This option is
+explicit: no geometry or reconstruction method silently selects it. Profiling
+can lose genuine broad density even for a contained object.
+
+FISTA's `tv_weight` is dimensionless (default `5e-5`). Its effective weight for
+the summed data loss is `alpha * s * W * dV / (L * h)`: `s` is the global
+per-view-centered RMS of measured data, `W` the number of detector samples,
+`dV` the voxel volume, `h = dV**(1/3)`, and `L` the geometric mean detector
+width in the object plane. Differences use `h / voxel_pitch` along each axis.
+This is physical TV integrated over the ROI, so changing length units, signal
+amplitude, or empty padding does not change the intended prior. Huber's
+`huber_delta` is likewise dimensionless. `info` reports the effective weight and
+scales. The default weight is not an automatic noise estimate; very noisy data
+can need a larger weight. An iteration budget does not establish convergence.
+
 SIRT uses the exact matched projector pair with row/column normalization:
 `SIRTConfig(iterations=50, subsets=1, lower_bound=0, upper_bound=None, support=None)`.
 More subsets select interleaved OS-SART, with one full sweep per iteration;

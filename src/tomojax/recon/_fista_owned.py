@@ -17,6 +17,7 @@ import jax.numpy as jnp
 
 from tomojax.core.operator_norm import unit
 
+from ._data_term import project_residual
 from ._fista_initialization import ordered_data, power_start, subset_order
 from ._projection import least_squares_operators, positive_normal_bound, projection_operators
 
@@ -86,7 +87,7 @@ def _operators(grid: Grid, detector: Detector, runtime: FistaRuntime, k: jax.Arr
 def _residual(grid, detector, data, z, runtime, k):
     forward, _, indices, valid = _operators(grid, detector, runtime, k)
     images = data if indices is None else data[indices]
-    residual = forward(z) - images
+    residual = project_residual(forward(z) - images, runtime.config.data_term)
     return residual if valid is None else residual * valid
 
 
@@ -158,7 +159,15 @@ def use_owned_fista(grid: Grid, projections, runtime: FistaRuntime) -> bool:
 def _zero_gradient(grid: Grid, detector: Detector, data, runtime: FistaRuntime):
     assert runtime.projector is not None
     model, backend, batch = runtime.projector
-    return least_squares_operators(runtime.poses, grid, detector, backend, batch, model)(None, data)
+    return least_squares_operators(
+        runtime.poses,
+        grid,
+        detector,
+        backend,
+        batch,
+        model,
+        data_term=runtime.config.data_term,
+    )(None, data)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"))

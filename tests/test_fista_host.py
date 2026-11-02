@@ -47,9 +47,10 @@ def test_host_tv_halos_keep_global_step_and_constraints(monkeypatch, iterations)
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("data_term", ["absolute", "per_view_contrast"])
 @pytest.mark.parametrize(("warm", "limit", "tolerance"), [(False, None, None), (True, 200.0, 1.0)])
 def test_host_fista_matches_resident_with_mapped_state(
-    tmp_path, monkeypatch, warm, limit, tolerance
+    tmp_path, monkeypatch, warm, limit, tolerance, data_term
 ):
     from tomojax.geometry import LaminographyGeometry
     from tomojax.recon import (  # check-public-imports: allow-private
@@ -66,6 +67,7 @@ def test_host_fista_matches_resident_with_mapped_state(
     cfg = FistaConfig(
         iterations=5,
         tv_weight=0.1,
+        data_term=data_term,
         tv_prox_iterations=3,
         nonnegative=True,
         upper_bound=0.7,

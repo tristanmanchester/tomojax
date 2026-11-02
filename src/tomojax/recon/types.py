@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     import jax
     import numpy as np
 
+DataTerm = Literal["absolute", "per_view_contrast"]
 Regulariser = Literal["tv", "huber_tv"]
 
 
@@ -41,4 +42,4 @@ class ReconstructionSlab[T]:
     info: dict[str, object] = field(default_factory=dict)
 
 
-__all__ = ["ReconstructionSlab", "Regulariser"]
+__all__ = ["DataTerm", "ReconstructionSlab", "Regulariser"]

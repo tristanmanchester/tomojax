@@ -35,6 +35,8 @@ def _weight(value: float, name: str, *, positive: bool = False, context: str) ->
 def validate_fista_config(cfg: FistaConfig) -> tuple[bool, float | None, float | None]:
     """Check scalar settings and return normalized feasibility constraints."""
     context = "fista_tv config"
+    if cfg.data_term not in {"absolute", "per_view_contrast"}:
+        raise ValueError(f"{context}: data_term must be absolute or per_view_contrast")
     for name in ("iterations", "recon_patience", "initial_epochs"):
         _count(getattr(cfg, name), name, minimum=0, context=context)
     for name in ("projector_unroll", "tv_prox_iterations", "power_iterations", "initial_subsets"):

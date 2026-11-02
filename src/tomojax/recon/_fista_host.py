@@ -17,10 +17,10 @@ from ._tv_ops import gradient_norm_squared
 class HostFista:
     """Three host volumes suffice for gradient, proximal and momentum updates."""
 
-    def __init__(self, problem: Any, config: Any, *, initial=None, out=None) -> None:
+    def __init__(self, problem: Any, config: Any, *, metric, initial=None, out=None) -> None:
         from ._host_arrays import automatic_host_output
 
-        self.problem, self.cfg = problem, config
+        self.problem, self.cfg, self.metric = problem, config, metric
         self.plan, self.xp = problem.plan, problem.engine.xp
         grid = self.plan.grid
         shape = (grid.nz, grid.ny, grid.nx)
@@ -29,6 +29,11 @@ class HostFista:
         arrays = [x, host_volume(shape, directory), host_volume(shape, directory)]
         self.X, self.Z, self.G = [problem.volume(array) for array in arrays]
         self.views = np.arange(problem.data.shape[0])
+        from ._view_statistics import ViewStatistics
+
+        self.statistics = (
+            ViewStatistics(problem, self.views) if config.data_term == "per_view_contrast" else None
+        )
         self.lower = max(
             0.0 if config.nonnegative else -math.inf,
             config.lower_bound if config.lower_bound is not None else -math.inf,
@@ -49,16 +54,26 @@ class HostFista:
         def read(k):
             return () if source is None else (source.get(*self.plan.planes(k)),)
 
+        mean = None
+        if residual and self.statistics is not None:
+            mean = -self.statistics.mean
+            if source is not None:
+                mean = mean + self.statistics.project(read)
+            value = float(self.statistics.outside_energy(-mean))
+
         def finish(batch, first, stop, rows):
             nonlocal value
             if residual:
                 rows[0][...] -= self.problem.measured(batch, first, stop)
+                if mean is not None:
+                    rows[0][...] -= mean[batch.index, None, None]
                 value += self.problem.engine.norm2(rows[0])
 
         def sink(k, accumulated, _sources):
             z0, z1 = self.plan.planes(k)
             value = accumulated[0]
             if step is not None:
+                assert source is not None
                 value = source.view(z0, z1) - np.float32(step) * value
             target.put(z0, z1, value)
 
@@ -110,6 +125,8 @@ class HostFista:
     def update(self, limit, momentum, *, gradient=False):
         """Gradient step, global finite-step TV proximal, and the resident clipped momentum."""
         cfg, xp = self.cfg, self.xp
+        metric = self.metric
+        scales = (1.0, 1.0, 1.0) if metric is None else metric.gradient_scale_xyz
         if gradient:
             for k in range(self.plan.count):
                 z0, z1 = self.plan.planes(k)
@@ -125,9 +142,10 @@ class HostFista:
         proximal_host(
             self.G,
             momentum_sink,
-            cfg.tv_weight / limit,
+            (0.0 if metric is None else float(metric.weight)) / limit,
+            gradient_scale_xyz=scales,
             iterations=cfg.tv_prox_iterations,
-            tau=1 / (gradient_norm_squared(self.shape) or 1),
+            tau=1 / (gradient_norm_squared(self.shape, gradient_scale_xyz=scales) or 1),
             lower=self.lower,
             upper=self.upper,
         )
@@ -136,15 +154,16 @@ class HostFista:
         """Isotropic TV with each slab's outgoing z edge, counted once."""
         if not self.cfg.tv_weight:
             return 0.0
+        assert self.metric is not None
         xp, value = self.xp, 0.0
         for k in range(self.plan.count):
             z0, z1 = self.plan.planes(k)
             part = self.Z.view(z0, min(self.shape[0], z1 + 1))
             squares = xp.zeros_like(part)
-            for axis in (2, 1, 0):
+            for axis, scale in zip((2, 1, 0), self.metric.gradient_scale_xyz, strict=True):
                 slices = [slice(None)] * 3
                 slices[axis] = slice(0, -1)
-                squares[tuple(slices)] += xp.diff(part, axis=axis) ** 2
+                squares[tuple(slices)] += (scale * xp.diff(part, axis=axis)) ** 2
             value += float(xp.sum(xp.sqrt(squares[: z1 - z0]), dtype=xp.float64))
             del part, squares
         return value
@@ -159,7 +178,9 @@ class HostFista:
             losses, t, streak, done = [], np.float32(1), 0, False
             zero = self.initial is None and self.lower <= 0 <= self.upper
             for step in range(cfg.iterations):
-                loss = cfg.tv_weight * self.regularizer()
+                loss = (
+                    0.0 if self.metric is None else float(self.metric.weight) * self.regularizer()
+                )
                 gradient = step == 0 and zero
                 loss += (
                     at_zero
@@ -232,6 +253,6 @@ def solve_on_host(
         else parallel_problem(geometry, grid, detector, data, **options)
     )
     initial = None if runtime.x0 is None else np.asarray(runtime.x0)
-    solver = HostFista(problem, cfg, initial=initial, out=out)
+    solver = HostFista(problem, cfg, metric=runtime.metric, initial=initial, out=out)
     volume, info = solver.run()
     return problem.result(volume), info

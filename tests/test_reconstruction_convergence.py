@@ -39,6 +39,13 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
     # and reconstruction checks live in the benchmark and FBP accuracy tests.
     data = project(truth)
     if solver == "fista":
+        # Keep this optimizer test's weak dimensional prior while the public
+        # parameter is dimensionless; physical axis differences remain active.
+        centered = data - jnp.mean(data, axis=(-2, -1), keepdims=True)
+        s = float(jnp.sqrt(jnp.mean(centered**2)))
+        h = (grid.vx * grid.vy * grid.vz) ** (1 / 3)
+        length = (detector.nu * detector.du * detector.nv * detector.dv) ** 0.5
+        alpha = 0.001 * length / (s * data.size * h**2)
         volume, _ = fista_tv(
             geometry,
             grid,
@@ -46,7 +53,7 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
             data,
             config=FistaConfig(
                 iterations=30,
-                tv_weight=0.001,
+                tv_weight=alpha,
                 nonnegative=True,
                 power_iterations=5,
                 views_per_batch=4,
@@ -116,8 +123,16 @@ def test_tv_reconstruction_small_signal_scales_match_dense_solution(stream, regu
             stream_projections=stream,
             regulariser=regulariser,
         )
-    for scale in [1.0, 1e-8, 1e-14]:
-        config.tv_weight, config.huber_delta = lam * scale, delta * scale
+    measured = data.reshape(3, 3, 4)
+    contrast = np.sqrt(np.mean((measured - measured.mean((-2, -1), keepdims=True)) ** 2))
+    h = (grid.vx * grid.vy * grid.vz) ** (1 / 3)
+    length = (detector.nu * detector.du * detector.nv * detector.dv) ** 0.5
+    for scale in [0.01, 1.0, 100.0]:
+        if solver == "fista":
+            config.tv_weight = lam * length * grid.vx / (contrast * data.size * h**3)
+            config.huber_delta = delta * length**2 / (contrast * grid.vx)
+        else:
+            config.tv_weight, config.huber_delta = lam * scale, delta * scale
         actual, _ = (fista_tv if solver == "fista" else spdhg_tv)(
             geometry,
             grid,
