@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import functools
+import importlib.util
 import math
+import os
 from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 if TYPE_CHECKING:
     from .types import Regulariser
@@ -256,6 +259,21 @@ def tv_proximal(
 _MIN_CUDA_BYTES = 64 << 20
 
 
+def cuda_tv_workspace_bytes(shape: tuple[int, ...], dtype: np.dtype, iterations: int) -> int | None:
+    """CUDA-eligible TV scratch bytes, or None when CUDA dispatch is unavailable."""
+    if (
+        iterations <= 0
+        or dtype != jnp.float32
+        or math.prod(shape) * dtype.itemsize < _MIN_CUDA_BYTES
+    ):
+        return None
+    if os.environ.get("TOMOJAX_CUDA_KERNELS") == "0" or importlib.util.find_spec("cupy") is None:
+        return None
+    from ._cuda_tv import workspace_bytes
+
+    return workspace_bytes(shape, iterations)
+
+
 @functools.partial(jax.custom_jvp, nondiff_argnums=(2, 3, 4, 5))
 def _tv_execution(x, lam, iterations, nonnegative, lower_bound, upper_bound):
     reference = functools.partial(
@@ -265,12 +283,7 @@ def _tv_execution(x, lam, iterations, nonnegative, lower_bound, upper_bound):
         lower_bound=lower_bound,
         upper_bound=upper_bound,
     )
-    if iterations <= 0 or x.dtype != jnp.float32 or x.size * x.dtype.itemsize < _MIN_CUDA_BYTES:
-        return reference(x, lam)
-    import importlib.util
-    import os
-
-    if os.environ.get("TOMOJAX_CUDA_KERNELS") == "0" or importlib.util.find_spec("cupy") is None:
+    if cuda_tv_workspace_bytes(x.shape, x.dtype, iterations) is None:
         return reference(x, lam)
     from ._cuda_tv import proximal
 

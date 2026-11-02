@@ -216,6 +216,21 @@ def solve_on_host(
     free = device_free_memory_bytes()
     need = volumes * 4 * grid.nx * grid.ny * grid.nz
     need += (0 if runtime.stream else 2) * projections.size * 4
+    # Batch-sized measured, projected, residual and masked-residual storage.
+    need += 4 * 4 * min(batch, projections.shape[0]) * detector.nv * detector.nu
+    if cfg.iterations > 0 and cfg.tv_weight != 0 and cfg.tv_prox_iterations > 0:
+        from ._tv_ops import cuda_tv_workspace_bytes
+
+        scratch = cuda_tv_workspace_bytes(
+            (grid.nz, grid.ny, grid.nx), np.dtype(np.float32), cfg.tv_prox_iterations
+        )
+        # TV and Huber TV use the same primal/dual proximal workspace.
+        # The normalized float mask is already allocated before the free-memory
+        # query; the proximal additionally keeps a boolean at its broadcast shape.
+        if cfg.support is not None:
+            need += math.prod(np.shape(cfg.support))
+        # The reference proximal keeps three dual fields plus primal workspace.
+        need += 4 * 4 * grid.nx * grid.ny * grid.nz if scratch is None else scratch
     if out is None and (free is None or need <= 0.85 * free):
         return None
     if cfg.support is not None or cfg.regulariser != "tv" or cfg.initial_epochs:

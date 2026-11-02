@@ -76,7 +76,7 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14436
+    "recon": 14472
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,
@@ -125,5 +125,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 155
+  "test_private_imports": 156
 }

@@ -1,15 +1,22 @@
 """Host FISTA's local finite-step TV work agrees across slab boundaries."""
 
+from types import SimpleNamespace
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import tomojax as tj
 from tomojax.geometry import Detector, Grid
+from tomojax.recon import FistaConfig
 from tomojax.recon._cone_slabs import HostVolume  # check-public-imports: allow-private
-from tomojax.recon._cuda_tv import proximal_host  # check-public-imports: allow-private
+from tomojax.recon._cuda_tv import (
+    proximal_host,
+    workspace_bytes,
+)  # check-public-imports: allow-private
 from tomojax.recon._slab_engines import CudaEngine  # check-public-imports: allow-private
 from tomojax.recon._tv_ops import (  # check-public-imports: allow-private
+    cuda_tv_workspace_bytes,
     gradient_norm_squared,
     tv_proximal,
 )
@@ -106,3 +113,37 @@ def test_host_output_rejected_on_unsupported_backend():
             config=FistaConfig(backend="jax"),
             out=np.zeros((1, 2, 2), np.float32),
         )
+
+
+def test_cuda_tv_workspace_budget_matches_both_allocation_branches(monkeypatch):
+    assert workspace_bytes((560, 640, 640), 10) == 444416000
+    assert workspace_bytes((300, 300, 300), 100) == 16 * 300**3
+    assert cuda_tv_workspace_bytes((32, 32, 32), np.dtype(np.float32), 10) is None
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "0")
+    assert cuda_tv_workspace_bytes((560, 640, 640), np.dtype(np.float32), 10) is None
+
+
+@pytest.mark.parametrize("weight", [None, 0.0, 0.005])
+@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
+@pytest.mark.parametrize("shape", [(), (8, 1, 1), (8, 8, 8)])
+def test_fista_host_selection_counts_proximal_workspace(monkeypatch, weight, regulariser, shape):
+    from tomojax.recon._fista_host import solve_on_host  # check-public-imports: allow-private
+
+    grid, detector = Grid(8, 8, 8, 1, 1, 1), Detector(1, 1, 1, 1)
+    runtime = SimpleNamespace(
+        projector=("joseph", "cuda", 1),
+        x0=None,
+        split=None,
+        stream=True,
+        constraints=None,
+        config=FistaConfig(tv_weight=weight, regulariser=regulariser, support=np.ones(shape)),
+    )
+    data = np.zeros((1, 1, 1), np.float32)
+    # Four outer volumes, four reference-TV fields and four one-pixel batches.
+    boundary = ((4 + 4 * (weight != 0)) * 4 * 8**3 + 16 + (weight != 0) * np.prod(shape)) / 0.85
+    monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda: boundary + 1)
+    assert solve_on_host(None, grid, detector, data, runtime) is None
+    monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda: boundary - 1)
+    # A support mask is resident-only: selecting host must fail before any allocation.
+    with pytest.raises(ValueError, match="host volumes require"):
+        solve_on_host(None, grid, detector, data, runtime)

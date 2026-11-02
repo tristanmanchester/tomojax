@@ -124,7 +124,8 @@ class FistaConfig:
     ``stream_projections`` reads NumPy or memmap projections from host memory
     one view batch at a time, so they never occupy the device whole. ``None``
     streams when they would take more than 40% of free device memory; ``True``
-    always streams host arrays. Streaming needs the batched operators.
+    always streams host arrays. Streaming needs the batched operators and can
+    reduce device memory at the cost of slower execution than host-volume slabs.
 
     ``lipschitz`` is the data term's Lipschitz constant; ``None`` estimates it
     with ``power_iterations`` power iterations, started from the backprojected data.
