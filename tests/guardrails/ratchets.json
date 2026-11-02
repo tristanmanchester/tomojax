@@ -39,7 +39,7 @@
   },
   "long_files": {
     "src/tomojax/core/cone.py": 832,
-    "src/tomojax/recon/fista_tv.py": 856
+    "src/tomojax/recon/fista_tv.py": 860
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 139,
@@ -77,7 +77,7 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14806
+    "recon": 14810
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,

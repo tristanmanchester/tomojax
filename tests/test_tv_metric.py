@@ -137,8 +137,11 @@ def test_metric_cone_segments_and_pose_wrappers_use_object_plane_area():
 
 
 @pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
-@pytest.mark.parametrize("weight", [0.001, None])
-def test_public_fista_physical_metric_covaries_with_units_and_amplitude(regulariser, weight):
+@pytest.mark.parametrize("weight", [0, 0.001, None])
+@pytest.mark.parametrize("support", [None, np.asarray([0.5, 0, 0.7, 1], np.float32)])
+def test_public_fista_physical_metric_covaries_with_units_and_amplitude(
+    regulariser, weight, support
+):
     from tomojax.recon import FistaConfig, fista_tv
 
     grid, detector = Grid(4, 3, 2, 0.7, 0.8, 0.9), Detector(5, 4, 0.6, 0.7)
@@ -148,10 +151,18 @@ def test_public_fista_physical_metric_covaries_with_units_and_amplitude(regulari
         iterations=5,
         tv_weight=weight,
         regulariser=regulariser,
+        support=support,
         backend="jax",
         data_term="per_view_contrast",
     )
     expected, info = fista_tv(geometry, grid, detector, data, config=cfg)
+    if support is not None:
+        np.testing.assert_array_equal(np.asarray(expected)[..., support == 0], 0)
+        zero_cfg = replace(cfg, iterations=0, support=support.tolist(), lower_bound=2)
+        start, _ = fista_tv(geometry, grid, detector, data, config=zero_cfg)
+        np.testing.assert_array_equal(
+            start, np.broadcast_to(np.where(support != 0, 2, 0), start.shape)
+        )
     if weight is None:
         explicit, _ = fista_tv(
             geometry,

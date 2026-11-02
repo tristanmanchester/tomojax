@@ -217,7 +217,12 @@ class FistaConfig:
         Number of power iterations used to estimate the data-gradient Lipschitz
         constant. Default is 3.
     support : array-like | None, optional
-        Volume support mask. Excluded voxels remain zero; None uses the entire grid.
+        Volume support weights, broadcastable to the grid. Zero entries fix the
+        reconstructed voxel to zero, including at initialization and in every
+        proximal update. Bounds apply only at nonzero entries; zero support wins
+        over a positive lower bound. Nonzero fractional weights multiply the
+        forward model, not the reconstructed iterates. TV differences across
+        the support boundary remain active. None uses the entire grid.
     nonnegative : bool, optional
         Constrain the reconstruction to nonnegative values. Default is False.
     lower_bound : float | None, optional
@@ -516,7 +521,7 @@ def _prepare_fista_runtime(
     nonnegative, lower_bound, upper_bound = validate_fista_config(cfg)
     if cfg.ray_integrator not in RAY_INTEGRATORS:
         raise ValueError("ray_integrator must be sampled or exact")
-    volume_mask = cfg.support
+    volume_mask = None if cfg.support is None else jnp.asarray(cfg.support, jnp.float32)
     regulariser = validate_regulariser(
         cfg.regulariser,
         cfg.huber_delta,
@@ -770,12 +775,18 @@ def _initial_fista_state(grid: Grid, runtime: FistaRuntime) -> FistaScanState:
 
 
 def _feasible_volume(x: jax.Array, runtime: FistaRuntime) -> jax.Array:
+    """Project starts and momentum onto the same constraints as the primal prox.
+
+    Support is a zero constraint, not an amplitude taper on the iterate.
+    Excluded voxels stay zero even when the interior has a positive lower bound.
+    """
     constraints = runtime.constraints
     return project_box(
         x,
         nonnegative=constraints.nonnegative,
         lower_bound=constraints.lower_bound,
         upper_bound=constraints.upper_bound,
+        support=runtime.volume_mask,
     )
 
 
@@ -791,6 +802,9 @@ def _fista_proximal(
         tv_proximal,
         lam_over_L=runtime.metric.weight / lipschitz,
         huber_delta=runtime.huber_delta if runtime.regulariser == "huber_tv" else None,
+        # Support must constrain every inner primal update, not only the output:
+        # projecting an unconstrained TV minimizer does not solve the joint prox.
+        support=runtime.volume_mask,
         gradient_scale_xyz=runtime.metric.gradient_scale_xyz,
         iterations=int(cfg.tv_prox_iterations),
         nonnegative=constraints.nonnegative,
