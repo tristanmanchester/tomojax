@@ -37,7 +37,10 @@ per-view-centered RMS of measured data, `W` the number of detector samples,
 width in the object plane. Differences use `h / voxel_pitch` along each axis.
 This is physical TV integrated over the ROI, so changing length units, signal
 amplitude, or empty padding does not change this fixed-strength prior. Huber's
-`huber_delta` is likewise dimensionless.
+`huber_delta` is likewise dimensionless. Both priors are solved in the proximal
+step, controlled by `tv_prox_iterations`; the outer step uses only the data
+operator's Lipschitz scale. Huber smoothing does not add a large global curvature
+penalty to that outer step.
 
 The default `tv_weight=None` automatically raises an empirical minimum of
 `5e-5` using a bounded, projection-only Haar-MAD noise estimate and one centered

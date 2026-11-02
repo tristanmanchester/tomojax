@@ -23,7 +23,6 @@ class TVMetric:
     weight: Any
     delta: Any
     weight_over_contrast: Any
-    weight_over_delta: Any
     length_scale: float = field(metadata={"static": True})
     contrast_scale: Any
     weight_sum: Any
@@ -113,7 +112,6 @@ def resolve_tv_metric(
         factor * scale,
         huber_delta * scale * h / length**2,
         factor,
-        factor * length**2 / (huber_delta * h),
         length,
         scale,
         total,
@@ -137,5 +135,4 @@ def raise_tv_weight(metric: TVMetric, noise_gradient_rms) -> TVMetric:
         metric,
         weight=metric.weight * ratio,
         weight_over_contrast=metric.weight_over_contrast * ratio,
-        weight_over_delta=metric.weight_over_delta * ratio,
     )

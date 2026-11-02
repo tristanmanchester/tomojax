@@ -34,7 +34,6 @@ def test_metric_global_masked_statistics_units_and_derivatives():
         resolve(integer, None).weight, resolve(jnp.asarray(integer), None).weight, rtol=1e-6
     )
     assert host.observed_count == np.count_nonzero(w)
-    np.testing.assert_allclose(host.weight_over_delta, host.weight / host.delta)
     for length, amplitude in [(1000.0, 1.0), (1.0, 3.0), (0.001, 2.0)]:
         g = replace(grid, vx=grid.vx * length, vy=grid.vy * length, vz=grid.vz * length)
         d = replace(detector, du=detector.du * length, dv=detector.dv * length)
@@ -134,7 +133,7 @@ def test_metric_cone_segments_and_pose_wrappers_use_object_plane_area():
             )
             assert metric.length_scale**2 == pytest.approx(area * factor)
             assert metric.weight == 0
-            assert np.isfinite(metric.weight_over_delta) and metric.weight_over_contrast > 0
+            assert metric.weight_over_contrast > 0
 
 
 @pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
@@ -179,11 +178,9 @@ def test_noise_weight_raises_all_metric_ratios_without_changing_geometry():
         raise_tv_weight,
     )
 
-    metric = TVMetric((1.0, 2.0, 0.5), 2.0, 0.1, 4.0, 20.0, 3.0, 0.5, 8.0, 8.0)
+    metric = TVMetric((1.0, 2.0, 0.5), 2.0, 0.1, 4.0, 3.0, 0.5, 8.0, 8.0)
     raised = raise_tv_weight(metric, 3.0)
-    np.testing.assert_allclose(
-        (raised.weight, raised.weight_over_contrast, raised.weight_over_delta), (3.0, 6.0, 30.0)
-    )
+    np.testing.assert_allclose((raised.weight, raised.weight_over_contrast), (3.0, 6.0))
     assert raised.delta == metric.delta and raised.gradient_scale_xyz == metric.gradient_scale_xyz
     assert float(raise_tv_weight(metric, 1.0).weight) == metric.weight
     # The selected dimensionless strength is not differentiated through noise.

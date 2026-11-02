@@ -57,8 +57,6 @@ from ._projection_batches import ViewBatches
 from ._solver_validation import validate_fista_config
 from ._tv_metric import TVMetric, raise_tv_weight, resolve_tv_metric
 from ._tv_ops import (
-    gradient_norm_squared,
-    huber_tv_grad,
     huber_tv_value,
     isotropic_tv_value,
     project_box,
@@ -135,7 +133,7 @@ class FistaConfig:
 
     ``lipschitz`` is the data term's Lipschitz constant; ``None`` estimates it
     with ``power_iterations`` power iterations, started from the backprojected data.
-    Huber-TV's finite-grid gradient bound is added automatically.
+    TV and Huber-TV use the proximal step without changing this data-only bound.
 
     TV uses physical voxel differences and a global data-contrast scale. Thus
     ``tv_weight`` does not change when switching length units or multiplying all
@@ -185,7 +183,8 @@ class FistaConfig:
         by this iid noise scale. The selected strength is fixed for differentiation;
         physical intensity/unit normalization retains its derivatives.
     regulariser : Regulariser, optional
-        Regularization model: "tv" or "huber_tv". Default is 'tv'.
+        Regularization model: "tv" or "huber_tv". Both use a constrained proximal
+        solve after each data-gradient step. Default is 'tv'.
     huber_delta : float, optional
         Positive dimensionless Huber transition scale when regulariser is
         "huber_tv". Default is 0.01.
@@ -207,7 +206,7 @@ class FistaConfig:
         Reference gradient evaluation: "auto", "batched" or "stream". Default is
         'auto'.
     tv_prox_iterations : int, optional
-        Iterations of the TV proximal solve per FISTA update. Default is 10.
+        Iterations of the TV or Huber-TV proximal solve per FISTA update. Default is 10.
     recon_rel_tol : float | None, optional
         Relative objective-change tolerance for stopping reconstruction early; None disables
         it.
@@ -663,28 +662,11 @@ def _batched_projector(
     return model, backend, max(1, min(requested, n_views))
 
 
-def _with_huber(
-    lipschitz: jax.Array | float, metric: TVMetric | None, regulariser: str, grid: Grid
-) -> jax.Array | float:
-    """``lipschitz`` plus the Huber-TV gradient's own Lipschitz constant, if it has one."""
-    if regulariser == "huber_tv" and metric is not None:
-        lipschitz = lipschitz + metric.weight_over_delta * gradient_norm_squared(
-            (grid.nz, grid.ny, grid.nx), gradient_scale_xyz=metric.gradient_scale_xyz
-        )
-    # A zero data operator (e.g. empty support) needs no step-size restriction.
-    # Keep the update defined rather than dividing a zero gradient by zero.
-    if isinstance(lipschitz, jax.Array):
-        return jnp.where(lipschitz == 0, 1e-6, lipschitz)
-    return 1e-6 if lipschitz == 0 else lipschitz
-
-
 def _data_term(
     grid: Grid, detector: Detector, projections: jnp.ndarray, runtime: FistaRuntime
 ) -> Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]:
     """Return the data term's value-and-gradient function."""
     cfg = runtime.config
-    regulariser = runtime.regulariser
-    huber_delta = runtime.huber_delta
     mask = None if runtime.volume_mask is None else jnp.asarray(runtime.volume_mask, jnp.float32)
     if runtime.projector is not None:
         model, backend, batch = runtime.projector
@@ -697,35 +679,26 @@ def _data_term(
             v, g = least_squares(z if mask is None else z * mask, projections)
             return v, g if mask is None else g * mask
 
+        return batched_value_and_grad
+
     def val_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        if runtime.projector is not None:
-            v, g = batched_value_and_grad(z)
-        else:
-            g, v = grad_data_term(
-                None,
-                grid,
-                detector,
-                projections,
-                z,
-                views_per_batch=cfg.views_per_batch,
-                projector_unroll=cfg.projector_unroll,
-                checkpoint_projector=cfg.checkpoint_projector,
-                gather_dtype=cfg.gather_dtype,
-                grad_mode=cfg.grad_mode,
-                T_all=runtime.poses,
-                vol_mask=runtime.volume_mask,
-                det_grid=runtime.detector_grid,
-                ray_integrator=cfg.ray_integrator,
-                data_term=cfg.data_term,
-            )
-        if regulariser == "huber_tv" and runtime.metric is not None:
-            g = huber_tv_grad(
-                z,
-                huber_delta,
-                base=g,
-                scale=runtime.metric.weight,
-                gradient_scale_xyz=runtime.metric.gradient_scale_xyz,
-            )
+        g, v = grad_data_term(
+            None,
+            grid,
+            detector,
+            projections,
+            z,
+            views_per_batch=cfg.views_per_batch,
+            projector_unroll=cfg.projector_unroll,
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
+            grad_mode=cfg.grad_mode,
+            T_all=runtime.poses,
+            vol_mask=runtime.volume_mask,
+            det_grid=runtime.detector_grid,
+            ray_integrator=cfg.ray_integrator,
+            data_term=cfg.data_term,
+        )
         return v, g
 
     return val_and_grad_fn
@@ -811,12 +784,13 @@ def _fista_proximal(
 ) -> Callable[[jax.Array], jax.Array]:
     """The joint regularizer/feasibility prox for the selected FISTA objective."""
     cfg, constraints = runtime.config, runtime.constraints
-    if runtime.regulariser == "huber_tv" or cfg.tv_weight == 0.0:
+    if cfg.tv_weight == 0.0:
         return functools.partial(_feasible_volume, runtime=runtime)
     assert runtime.metric is not None
     return functools.partial(
         tv_proximal,
         lam_over_L=runtime.metric.weight / lipschitz,
+        huber_delta=runtime.huber_delta if runtime.regulariser == "huber_tv" else None,
         gradient_scale_xyz=runtime.metric.gradient_scale_xyz,
         iterations=int(cfg.tv_prox_iterations),
         nonnegative=constraints.nonnegative,
@@ -851,7 +825,8 @@ def _run_fista_scan(
         L, first_value, first_gradient = estimate_first_gradient(
             grid, detector, projections, runtime
         )
-    L = _with_huber(L, runtime.metric, regulariser, grid)
+    # A zero data operator imposes no step-size restriction.
+    L = jnp.where(L == 0, 1e-6, L)
 
     val_and_grad_fn = _data_term(grid, detector, projections, runtime)
     val_and_grad = jax.jit(val_and_grad_fn)
