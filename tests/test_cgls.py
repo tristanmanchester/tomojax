@@ -407,6 +407,11 @@ def test_streamed_cgls_rejects_nonfinite_views():
     data[3, 2, 2] = np.nan
     with pytest.raises(Exception, match="finite"):
         cgls(geometry, grid, detector, data, config=CGLSConfig(stream_projections=True))
+    # Replace the failed callback token before JAX's process-exit barrier.
+    data[3, 2, 2] = 1
+    result, _ = cgls(geometry, grid, detector, data, config=CGLSConfig(stream_projections=True))
+    np.testing.assert_array_equal(np.isfinite(result), True)
+    jax.effects_barrier()
 
 
 # Its child process needs CUDA, which the suite's own JAX would otherwise hold.
