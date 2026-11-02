@@ -148,14 +148,19 @@ def prepare(config: dict, out: Path) -> None:
     (out / "config.json").write_text(json.dumps(config, indent=2) + "\n")
 
 
-def pack(work: Path, photons: list[float]) -> None:
+def pack(
+    work: Path,
+    photons: list[float],
+    *,
+    scenarios: tuple[str, ...] = ("clean", "clean-motion", "exterior", "motion"),
+) -> None:
     """Package rendered scenarios at frozen count levels; zero-count correction is 0.5."""
     config = json.loads((work / "config.json").read_text())
     geometry = config["geometry"]
     truth = np.load(work / "truth.npy")
     pose_data = np.load(work / "poses.npz")
     nominal, moved = pose_data["nominal_poses"], pose_data["poses"]
-    for scenario in ("clean", "clean-motion", "exterior", "motion"):
+    for scenario in scenarios:
         with np.load(work / f"{scenario}-render.npz") as data:
             transmission = data["transmission"]
             simulator = str(data["gvxr"])
@@ -208,11 +213,17 @@ def main() -> None:
     command = commands.add_parser("pack")
     command.add_argument("work", type=Path)
     command.add_argument("--photons", type=float, nargs="+", default=[1e8, 1e5, 1e4, 1e3])
+    command.add_argument(
+        "--scenarios",
+        nargs="+",
+        choices=("clean", "clean-motion", "exterior", "motion"),
+        default=("clean", "clean-motion", "exterior", "motion"),
+    )
     args = parser.parse_args()
     if args.stage == "prepare":
         prepare(json.loads(args.config.read_text()), args.out)
     else:
-        pack(args.work, args.photons)
+        pack(args.work, args.photons, scenarios=tuple(args.scenarios))
 
 
 if __name__ == "__main__":

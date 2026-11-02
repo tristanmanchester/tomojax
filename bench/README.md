@@ -895,3 +895,6 @@ pixel-averaged or polychromatic logs does not recover an exterior line integral.
 Known motion combines a fixed axis error, detector offset, smooth drift and
 jumps; pose comparisons must first match rigid gauges. These are benchmark
 builders, not a claim that arbitrary synthetic cases reproduce a real scan.
+
+For bounded native-size output batches, `corpus.py pack CASE_DIR --scenarios clean`
+packages only the selected scenario; omitting the option packages all four.

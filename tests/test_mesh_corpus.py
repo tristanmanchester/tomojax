@@ -93,7 +93,11 @@ def test_prepare_and_pack_preserve_truth_geometry_and_noise(tmp_path, kind):
         np.testing.assert_allclose(data["projections"][:, 0, 0], -np.log(0.5 / 100))
         assert not data["exterior_projection"].any()
         first = data["projections"].copy()
-    pack(out, [100])
+    (out / "clean-100.npz").unlink()
+    (out / "motion-100.npz").rename(out / "saved-motion.npz")
+    pack(out, [100], scenarios=("clean",))
+    assert not (out / "motion-100.npz").exists()
+    (out / "saved-motion.npz").rename(out / "motion-100.npz")
     np.testing.assert_array_equal(first, np.load(out / "clean-100.npz")["projections"])
     with np.load(out / "motion-100.npz") as data:
         np.testing.assert_allclose(data["exterior_projection"], -np.log(0.8))
