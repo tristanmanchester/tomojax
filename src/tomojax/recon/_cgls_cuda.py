@@ -15,7 +15,8 @@ from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.joseph_cuda import JosephCUDA
 from tomojax.core.validation import validate_grid, validate_pose_stack, validate_projection_stack
 
-from ._cgls_stopping import precision_stalled, termination
+from ._cgls_stopping import cancellation_magnitude, precision_stalled, termination
+from ._data_term import project_residual
 from .cgls import CGLSConfig, resident_bytes
 
 
@@ -121,9 +122,10 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
 
 def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     residual = data.copy() if zero_start else data - ops.forward(x)
+    residual = project_residual(residual, cfg.data_term, xp=cp)
     damp2 = np.float32(cfg.damping) ** 2
     # Explicit dense scalar ufuncs avoid importing CuPy sparse-operand dispatch.
-    gradient = ops.adjoint(residual) - cp.multiply(damp2, x)
+    gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp)) - cp.multiply(damp2, x)
     gamma = cp.sum(gradient * gradient)
     initial_norm = float(cp.sqrt(gamma))
     tolerance = np.float32(cfg.atol + cfg.rtol * initial_norm)
@@ -135,7 +137,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     eps = np.finfo(np.float32).eps
     while count < cfg.iterations and norm2 > tolerance**2 and not failed and not roundoff:
         previous = norm2, verified
-        projected = ops.forward(direction)
+        projected = project_residual(ops.forward(direction), cfg.data_term, xp=cp)
         direction_norm2 = cp.sum(direction * direction)
         denominator = cp.sum(projected * projected) + cp.multiply(damp2, direction_norm2)
         value = float(denominator)
@@ -145,7 +147,9 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         alpha = gamma / denominator
         x += alpha * direction
         residual -= alpha * projected
-        gradient = ops.adjoint(residual) - cp.multiply(damp2, x)
+        gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp)) - cp.multiply(
+            damp2, x
+        )
         gamma_new = cp.sum(gradient * gradient)
         count += 1
         roundoff = cp.all(
@@ -170,6 +174,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
                 gradient,
                 gamma_new,
                 damp2,
+                data_term=cfg.data_term,
                 candidate=candidate,
                 roundoff=roundoff,
                 previous=previous,
@@ -197,18 +202,35 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         "joseph_interpolation": "linear",
         "views_per_batch": ops.batch,
         "formulation": "cgls",
+        "data_term": cfg.data_term,
+        "background_unresolved": cfg.data_term == "per_view_contrast",
         "damping": float(cfg.damping),
         "gradient_damping": 0.0,
     }
     return x, info
 
 
-def _verify(cp, ops, data, x, gradient, gamma, damp2, *, candidate: bool, roundoff: bool, previous):
+def _verify(
+    cp,
+    ops,
+    data,
+    x,
+    gradient,
+    gamma,
+    damp2,
+    *,
+    data_term,
+    candidate: bool,
+    roundoff: bool,
+    previous,
+):
     """Replace the recurrence with the measured residual before accepting a stop."""
     prediction = ops.forward(x)
-    cancellation = ops.adjoint(cp.abs(data) + cp.abs(prediction)) + cp.multiply(damp2, cp.abs(x))
-    residual = data - prediction
-    exact = ops.adjoint(residual) - cp.multiply(damp2, x)
+    cancellation = ops.adjoint(cancellation_magnitude(data, prediction, data_term)) + cp.multiply(
+        damp2, cp.abs(x)
+    )
+    residual = project_residual(data - prediction, data_term, xp=cp)
+    exact = ops.adjoint(project_residual(residual, data_term, xp=cp)) - cp.multiply(damp2, x)
     exact_gamma = cp.sum(exact * exact)
     at_precision = cp.all(cp.abs(exact) <= cp.multiply(8 * np.finfo(np.float32).eps, cancellation))
     gap = cp.sum((exact - gradient) ** 2)

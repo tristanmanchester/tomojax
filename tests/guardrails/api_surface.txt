@@ -379,6 +379,7 @@ class tomojax.evaluation.Split(
 # tomojax.recon
 class tomojax.recon.CGLSConfig(
         *,
+        data_term: 'DataTerm' = 'absolute',
         iterations: 'int' = 50,
         rtol: 'float' = 1e-06,
         atol: 'float' = 0.0,

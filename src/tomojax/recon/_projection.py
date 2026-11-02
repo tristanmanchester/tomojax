@@ -19,6 +19,8 @@ from tomojax.core.cone import ConeModel, cone_model, use_cuda_cone
 from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.operator_norm import unit
+from tomojax.recon._cgls_stopping import cancellation_magnitude
+from tomojax.recon._data_term import project_residual
 from tomojax.recon._projection_batches import ViewBatches
 from tomojax.recon._volume_storage import Model, is_joseph
 
@@ -26,6 +28,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tomojax.geometry import Detector, Grid
+
+    from .types import DataTerm
 
 type ProjectorModel = Literal["auto", "joseph", "ray"]
 type ProjectorBackend = Literal["auto", "jax", "cuda"]
@@ -501,6 +505,8 @@ def normal_equation_operators(
     batch_size: int,
     model: Model = "ray",
     joseph_interpolation: str = "linear",
+    *,
+    data_term: DataTerm = "absolute",
 ) -> tuple[
     Callable[[jax.Array], tuple[jax.Array, jax.Array]],
     Callable[[jax.Array | None, jax.Array], tuple[jax.Array, jax.Array]],
@@ -512,6 +518,8 @@ def normal_equation_operators(
     the cancellation scale ``|A|^T (|y| + |A x|)``, reading each batch of ``y``
     from the host. Only volume-sized arrays and one batch are ever on the device.
     ``gradient(None, key)`` skips the forward projection of a known-zero volume.
+    Contrast inserts the whole-view centering operator C on each residual and
+    projected direction, with the nonnegative cancellation envelope I + P.
     """
     ops = ViewBatches(
         poses,
@@ -549,9 +557,13 @@ def normal_equation_operators(
         ) -> tuple[jax.Array, jax.Array]:
             energy, total = carry
             start, batch, valid = ops.select(chunk)
-            projected = jnp.where(valid[:, None, None], project(start, batch), 0.0)
+            projected = project_residual(
+                jnp.where(valid[:, None, None], project(start, batch), 0.0), data_term
+            )
             energy = energy + jnp.vdot(projected, projected).real
-            return energy, ops.backproject(projected, start, batch, total)
+            return energy, ops.backproject(
+                project_residual(projected, data_term), start, batch, total
+            )
 
         return jax.lax.fori_loop(0, ops.count, body, (jnp.float32(0), ops.zeros_volume()))
 
@@ -566,8 +578,8 @@ def normal_equation_operators(
             measured = read_views(key, start, shape)
             predicted = 0.0 if project is None else project(start, batch)
             mask = valid[:, None, None]
-            residual = jnp.where(mask, measured - predicted, 0.0)
-            size = jnp.where(mask, jnp.abs(measured) + jnp.abs(predicted), 0.0)
+            residual = project_residual(jnp.where(mask, measured - predicted, 0.0), data_term)
+            size = jnp.where(mask, cancellation_magnitude(measured, predicted, data_term), 0.0)
             return (
                 ops.backproject(residual, start, batch, total),
                 magnitude.backproject(size, start, batch, scale),
