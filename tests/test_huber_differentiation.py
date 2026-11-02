@@ -194,7 +194,10 @@ def test_box_constrained_tv_proximal_is_the_joint_minimizer():
 @pytest.mark.skipif(jax.default_backend() != "gpu", reason="CUDA workspace")
 @pytest.mark.parametrize("scales", [(1.0, 1.0, 1.0), (0.5, 1.2, 2.0)])
 @pytest.mark.parametrize("huber_delta", [None, 0.15])
-def test_cuda_tv_slabs_preserve_boundaries_and_input_ownership(monkeypatch, scales, huber_delta):
+@pytest.mark.parametrize("mask_kind", ["none", "scalar", "row", "plane", "full"])
+def test_cuda_tv_slabs_preserve_boundaries_and_input_ownership(
+    monkeypatch, scales, huber_delta, mask_kind
+):
     pytest.importorskip("cupy")
     monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
     monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
@@ -202,6 +205,15 @@ def test_cuda_tv_slabs_preserve_boundaries_and_input_ownership(monkeypatch, scal
     options = dict(gradient_scale_xyz=scales, huber_delta=huber_delta)
     for shape in [(1, 1, 1), (1, 2, 31), (37, 3, 5), (5, 41, 3), (3, 5, 43)]:
         host = rng.normal(size=shape).astype(np.float32)
+        mask_shape = {"scalar": (), "row": shape[-1:], "plane": shape[-2:], "full": shape}.get(
+            mask_kind
+        )
+        support = (
+            None
+            if mask_shape is None
+            else rng.choice([0.0, 0.5], size=mask_shape).astype(np.float32)
+        )
+        options["support"] = support
         for bounds in [dict(nonnegative=True), dict(lower_bound=-0.2, upper_bound=0.6)]:
             reference = jax.jit(partial(_tv_proximal_jax, iterations=3, **options, **bounds))
             expected = reference(host, 0.071)
@@ -216,8 +228,13 @@ def test_cuda_tv_slabs_preserve_boundaries_and_input_ownership(monkeypatch, scal
                 if not donate:
                     np.testing.assert_array_equal(supplied, host)
     for radius in [0.0, -0.1]:
-        actual = jax.jit(partial(tv_proximal, lower_bound=-0.2, upper_bound=0.6))(host, radius)
-        np.testing.assert_array_equal(actual, np.clip(host, -0.2, 0.6))
+        actual = jax.jit(partial(tv_proximal, lower_bound=-0.2, upper_bound=0.6, support=support))(
+            host, radius
+        )
+        clipped = np.clip(host, -0.2, 0.6)
+        np.testing.assert_array_equal(
+            actual, clipped if support is None else np.where(support != 0, clipped, 0)
+        )
 
 
 @pytest.mark.numerical
@@ -287,33 +304,52 @@ def test_scaled_gradient_layout_adjoint_and_value(shape, z_fast):
 
 
 @pytest.mark.numerical
-def test_scaled_tv_proximal_matches_independent_box_minimum():
+@pytest.mark.parametrize("delta", [None, 0.3])
+@pytest.mark.parametrize("lam", [0.0, 0.2])
+@pytest.mark.parametrize("masked", [False, True])
+def test_scaled_tv_proximal_matches_independent_box_minimum(monkeypatch, delta, lam, masked):
     from scipy.optimize import minimize
 
     x = np.asarray([-2.0, 2.0, 0.5, 1.0], np.float32).reshape(2, 1, 2)
-    scales, lam = (0.5, 1.2, 2.0), 0.2
+    scales = (0.5, 1.2, 2.0)
+    support = jnp.array([[[0, 0.5]], [[1, 0]]]) if masked else None
+    active = np.ones_like(x, dtype=bool) if support is None else np.asarray(support) != 0
+    lower = 0.2 if masked else 0
+    monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
+    monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
 
     def objective(flat):
         u = flat.reshape(x.shape)
         differences = [
             c * np.diff(u, axis=a, append=u.take([-1], axis=a)) for a, c in enumerate(scales[::-1])
         ]
-        return (
-            0.5 * np.sum((flat - x.ravel()) ** 2)
-            + lam * np.sqrt(sum(d * d for d in differences)).sum()
+        norm = np.sqrt(sum(d * d for d in differences))
+        penalty = (
+            norm
+            if delta is None
+            else np.where(norm <= delta, 0.5 * norm**2 / delta, norm - 0.5 * delta)
         )
+        return 0.5 * np.sum((flat - x.ravel()) ** 2) + lam * penalty.sum()
 
     reference = minimize(
         objective,
-        np.maximum(x.ravel(), 0),
-        bounds=[(0, None)] * 4,
+        np.where(active, np.maximum(x, lower), 0).ravel(),
+        bounds=[(lower, None) if a else (0, 0) for a in active.ravel()],
         method="Nelder-Mead",
         options={"xatol": 1e-9, "fatol": 1e-14, "maxiter": 20000},
     ).x
     actual = tv_proximal(
-        jnp.asarray(x), lam, iterations=1000, nonnegative=True, gradient_scale_xyz=scales
+        jnp.asarray(x),
+        lam,
+        iterations=1000,
+        nonnegative=True,
+        gradient_scale_xyz=scales,
+        huber_delta=delta,
+        support=support,
+        lower_bound=lower,
     )
     np.testing.assert_allclose(np.ravel(actual), reference, atol=2e-4)
+    np.testing.assert_array_equal(np.asarray(actual)[~active], 0)
 
 
 @pytest.mark.parametrize("delta", [0.0, 0.02, 0.7])
@@ -334,14 +370,20 @@ def test_huber_proximal_matches_two_voxel_minimum(delta, cx):
 
 
 @pytest.mark.parametrize("delta", [0.0, 0.4])
-def test_huber_proximal_dispatch_preserves_threshold_derivative(monkeypatch, delta):
+@pytest.mark.parametrize("masked", [False, True])
+def test_huber_proximal_dispatch_preserves_threshold_derivative(monkeypatch, delta, masked):
     monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
     monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
     rng = np.random.default_rng(24)
     x = jnp.asarray(rng.normal(size=(7, 5, 3)).astype(np.float32))
     args = (x, jnp.float32(0.13), jnp.float32(delta))
     directions = (jnp.ones_like(x) * 0.17, jnp.float32(0.07), jnp.float32(0.11))
-    options = dict(iterations=3, gradient_scale_xyz=(0.5, 1.2, 2.0), nonnegative=True)
+    options = dict(
+        iterations=3,
+        gradient_scale_xyz=(0.5, 1.2, 2.0),
+        nonnegative=True,
+        support=(jnp.indices(x.shape)[0] % 2 == 0) if masked else None,
+    )
 
     def actual(a, b, d):
         return tv_proximal(a, b, huber_delta=d, **options)
@@ -352,11 +394,14 @@ def test_huber_proximal_dispatch_preserves_threshold_derivative(monkeypatch, del
     np.testing.assert_allclose(value, expected, rtol=3e-6, atol=3e-7)
     np.testing.assert_allclose(tangent, expected_tangent, rtol=3e-6, atol=3e-7)
     gradients = jax.jit(jax.grad(lambda *a: jnp.sum(actual(*a)), (0, 1, 2)))(*args)
-    np.testing.assert_allclose(
-        sum(jnp.sum(g * d) for g, d in zip(gradients, directions, strict=True)),
-        jnp.sum(tangent),
-        rtol=2e-6,
+    products = [np.asarray(g) * np.asarray(d) for g, d in zip(gradients, directions, strict=True)]
+    # Normalize the adjoint dot check before cancellation, not by its signed sum.
+    scale = sum(np.sum(np.abs(p)) for p in products) + np.sum(np.abs(np.asarray(tangent)))
+    error = abs(
+        sum(np.sum(p, dtype=np.float64) for p in products)
+        - np.sum(np.asarray(tangent), dtype=np.float64)
     )
+    assert error <= 2e-6 * scale
     eps = 1e-3
     plus = actual(*(a + eps * d for a, d in zip(args, directions, strict=True)))
     minus = actual(*(a - eps * d for a, d in zip(args, directions, strict=True)))

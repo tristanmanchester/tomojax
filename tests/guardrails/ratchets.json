@@ -76,10 +76,10 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14594
+    "recon": 14638
   },
   "cuda_kernels": 46,
-  "cuda_switches": 33,
+  "cuda_switches": 35,
   "environment_reads": 30,
   "suppressions": {
     "noqa": 5,

@@ -155,7 +155,7 @@ class SPDHGConfig:
     nonnegative : bool, optional
         Constrain the reconstruction to nonnegative values. Default is False.
     support : array-like | None, optional
-        Volume support mask. Excluded voxels remain zero; None uses the entire grid.
+        Binary (0/1) volume support mask. Excluded voxels remain zero; None uses the entire grid.
     log_every : int, optional
         Number of iterations between logged objective samples. Default is 10.
     stream_projections : bool | None, optional

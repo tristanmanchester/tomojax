@@ -24,7 +24,11 @@ __device__ __forceinline__ float clipped(float x, float lo, float hi) {
 }
 extern "C" __global__ void primal(
     const float* x, const float* px, const float* py, const float* pz,
-    float* u, int nx, int ny, int nz, float lo, float hi)
+    float* u, int nx, int ny, int nz, float lo, float hi
+#if SUPPORT
+    , const bool* support, long sx, long sy, long sz, int ox, int oy, int oz
+#endif
+)
 {
     INDEX t=(INDEX)blockIdx.x*blockDim.x+threadIdx.x;
     INDEX n=(INDEX)nx*ny*nz;
@@ -35,6 +39,9 @@ extern "C" __global__ void primal(
     if(ny>1) dy=iy==0?py[t]:(iy==ny-1?-py[t-nx]:py[t]-py[t-nx]);
     if(nz>1) dz=iz==0?pz[t]:(iz==nz-1?-pz[t-(INDEX)ny*nx]:pz[t]-pz[t-(INDEX)ny*nx]);
     u[t]=clipped(x[t]+((CX*dx+CY*dy)+CZ*dz),lo,hi);
+#if SUPPORT
+    if(!support[(ix+ox)*sx+(iy+oy)*sy+(iz+oz)*sz])u[t]=0.f;
+#endif
 }
 extern "C" __global__ void dual(
     const float* u, float* px, float* py, float* pz,
@@ -76,6 +83,7 @@ def _kernels(
     device: int,
     gradient_scale_xyz: tuple[float, float, float],
     huber: bool = False,
+    support: bool = False,
 ) -> tuple[Any, Any]:
     import cupy as cp
 
@@ -85,7 +93,7 @@ def _kernels(
             for axis, value in zip("XYZ", gradient_scale_xyz, strict=True)
         )
         module = cp.RawModule(
-            code=f"#define HUBER {int(huber)}\n"
+            code=f"#define HUBER {int(huber)}\n#define SUPPORT {int(support)}\n"
             + constants
             + "\n"
             + _SOURCE.replace("INDEX", "int" if narrow else "long")
@@ -125,15 +133,31 @@ def _iterate(
     lower: float,
     upper: float,
     huber_delta=None,
+    support=None,
+    support_offset=(0, 0, 0),
 ) -> None:
     primal_kernel, dual_kernel = kernels
     dims = tuple(np.int32(size) for size in reversed(x.shape))
     blocks = (-(-x.size // 256),)
     dual_args = (tau, lam) if huber_delta is None else (tau, lam, huber_delta)
+    primal_args = (lower, upper)
+    if support is not None:
+        # Keep the original broadcast shape: no full-volume or per-tile mask copy.
+        shape = (1,) * (3 - support.ndim) + support.shape
+        strides = (0,) * (3 - support.ndim) + support.strides
+        strides = tuple(
+            np.int64(0 if n == 1 else s // support.itemsize)
+            for n, s in zip(shape, strides, strict=True)
+        )
+        primal_args += (
+            support,
+            *reversed(strides),
+            *(np.int32(i) for i in reversed(support_offset)),
+        )
     for _ in range(iterations):
-        primal_kernel(blocks, (256,), (x, *duals, primal, *dims, lower, upper))
+        primal_kernel(blocks, (256,), (x, *duals, primal, *dims, *primal_args))
         dual_kernel(blocks, (256,), (primal, *duals, *dims, *dual_args))
-    primal_kernel(blocks, (256,), (x, *duals, out, *dims, lower, upper))
+    primal_kernel(blocks, (256,), (x, *duals, out, *dims, *primal_args))
 
 
 def _tiles(
@@ -150,6 +174,7 @@ def _tiles(
     lower: float,
     upper: float,
     huber_delta=None,
+    support=None,
 ) -> None:
     import cupy as cp
 
@@ -190,6 +215,8 @@ def _tiles(
             lower=lower,
             upper=upper,
             huber_delta=huber_delta,
+            support=support,
+            support_offset=tuple(start if d == axis else 0 for d in range(3)),
         )
         _window(target, axis, first, last)[...] = _window(
             primal.reshape(local), axis, first - start, last - start
@@ -202,6 +229,7 @@ def _launch(
     x,
     lam,
     huber_delta=None,
+    support=None,
     *,
     iterations: int,
     tau: float,
@@ -221,12 +249,14 @@ def _launch(
                 device=cp.cuda.Device().id,
                 gradient_scale_xyz=gradient_scale_xyz,
                 huber=huber_delta is not None,
+                support=support is not None,
             ),
             "iterations": iterations,
             "tau": np.float32(tau),
             "lower": np.float32(lower),
             "upper": np.float32(upper),
             "huber_delta": None if huber_delta is None else cp.asarray(huber_delta),
+            "support": None if support is None else cp.asarray(support),
         }
         if core == source.shape[axis]:
             # No overlap exists: preserve x until the final point-local primal write.
@@ -240,6 +270,7 @@ def proximal(
     x: jax.Array,
     lam: jax.Array,
     huber_delta: jax.Array | None = None,
+    support: jax.Array | None = None,
     *,
     iterations: int,
     tau: float,
@@ -262,7 +293,12 @@ def proximal(
         vmap_method="sequential",
     )
     return jax.lax.cond(
-        lam > 0, lambda _: call(x, lam, huber_delta), lambda _: jnp.clip(x, lower, upper), None
+        lam > 0,
+        lambda _: call(x, lam, huber_delta, support),
+        lambda _: jnp.clip(x, lower, upper)
+        if support is None
+        else jnp.where(support, jnp.clip(x, lower, upper), 0),
+        None,
     )
 
 

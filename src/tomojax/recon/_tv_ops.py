@@ -114,19 +114,6 @@ def _gradient_norm_sq(
     return gx * gx + gy * gy + gz * gz
 
 
-def _norm_with_zero_subgradient(squared: jnp.ndarray) -> jnp.ndarray:
-    """Evaluate a norm safely inside the smooth regions of Huber formulas.
-
-    The enclosing gradient/prox is differentiable at zero even though the
-    Euclidean norm alone is not. Mask before sqrt: masking only its result
-    leaves an infinite derivative that can produce NaNs in JVPs and VJPs.
-    Nonzero norms and nonfinite inputs retain their ordinary values.
-    """
-    zero = squared == 0
-    safe = jnp.where(zero, jnp.ones_like(squared), squared)
-    return jnp.where(zero, jnp.zeros_like(squared), jnp.sqrt(safe))
-
-
 def isotropic_tv_value(
     u: jnp.ndarray,
     eps: float = 0.0,
@@ -182,8 +169,9 @@ def project_tv_duals(
     scale = jnp.maximum(peak, radius)
     scale = jnp.where(scale == 0, jnp.ones_like(scale), scale)
     q1, q2, q3 = p1 / scale, p2 / scale, p3 / scale
-    norm = _norm_with_zero_subgradient(q1 * q1 + q2 * q2 + q3 * q3)
-    norm = jnp.where(norm == 0, jnp.ones_like(norm), norm)
+    squared = q1 * q1 + q2 * q2 + q3 * q3
+    # The denominator is one at zero. Mask before sqrt so its derivative is finite.
+    norm = jnp.sqrt(jnp.where(squared == 0, jnp.ones_like(squared), squared))
     inside = norm <= radius / scale
     length = radius / norm
     return (
@@ -227,6 +215,7 @@ def tv_proximal(
     upper_bound: float | None = None,
     gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
     huber_delta: float | jax.Array | None = None,
+    support: jax.Array | None = None,
 ) -> jnp.ndarray:
     """Approximate the isotropic TV proximal by projected gradient on its dual.
 
@@ -242,11 +231,15 @@ def tv_proximal(
     ``huber_delta=None`` selects TV; a nonnegative physical threshold selects
     Huber TV (zero is its TV limit). Its conjugate quadratic is handled by a
     proximal dual shrink, so the gradient step does not depend on the threshold.
+    Zero entries in broadcastable ``support`` pin the primal to zero after every
+    box projection. Bounds apply only inside support; TV edges across its boundary
+    remain in the objective. Nonzero support values do not rescale the primal.
     """
     return _tv_execution(
         x,
         jnp.asarray(lam_over_L, dtype=x.dtype),
         None if huber_delta is None else jnp.asarray(huber_delta, dtype=x.dtype),
+        None if support is None else jnp.asarray(support) != 0,
         int(iterations),
         nonnegative,
         lower_bound,
@@ -258,9 +251,17 @@ def tv_proximal(
 _MIN_CUDA_BYTES = 64 << 20
 
 
-@functools.partial(jax.custom_jvp, nondiff_argnums=(3, 4, 5, 6, 7))
+@functools.partial(jax.custom_jvp, nondiff_argnums=(4, 5, 6, 7, 8))
 def _tv_execution(
-    x, lam, huber_delta, iterations, nonnegative, lower_bound, upper_bound, gradient_scale_xyz
+    x,
+    lam,
+    huber_delta,
+    support,
+    iterations,
+    nonnegative,
+    lower_bound,
+    upper_bound,
+    gradient_scale_xyz,
 ):
     reference = functools.partial(
         _tv_proximal_jax,
@@ -271,12 +272,12 @@ def _tv_execution(
         gradient_scale_xyz=gradient_scale_xyz,
     )
     if iterations <= 0 or x.dtype != jnp.float32 or x.size * x.dtype.itemsize < _MIN_CUDA_BYTES:
-        return reference(x, lam, huber_delta)
+        return reference(x, lam, huber_delta, support)
     import importlib.util
     import os
 
     if os.environ.get("TOMOJAX_CUDA_KERNELS") == "0" or importlib.util.find_spec("cupy") is None:
-        return reference(x, lam, huber_delta)
+        return reference(x, lam, huber_delta, support)
     from ._cuda_tv import proximal
 
     lower = max(
@@ -291,7 +292,7 @@ def _tv_execution(
         upper=upper,
         gradient_scale_xyz=gradient_scale_xyz,
     )
-    return jax.lax.platform_dependent(x, lam, huber_delta, cuda=cuda, default=reference)
+    return jax.lax.platform_dependent(x, lam, huber_delta, support, cuda=cuda, default=reference)
 
 
 @_tv_execution.defjvp
@@ -316,6 +317,7 @@ def _tv_proximal_jax(
     x: jnp.ndarray,
     lam_over_L: float | jax.Array,
     huber_delta: float | jax.Array | None = None,
+    support: jax.Array | None = None,
     iterations: int = 20,
     *,
     nonnegative: bool = False,
@@ -332,6 +334,7 @@ def _tv_proximal_jax(
 
     project = functools.partial(
         project_box,
+        support=support,
         nonnegative=nonnegative,
         lower_bound=lower_bound,
         upper_bound=upper_bound,
@@ -363,6 +366,7 @@ def project_box(
     nonnegative: bool,
     lower_bound: float | None,
     upper_bound: float | None,
+    support: jax.Array | None = None,
 ) -> jnp.ndarray:
     """Project onto optional elementwise physical constraints."""
     if lower_bound is not None:
@@ -371,4 +375,4 @@ def project_box(
         x = jnp.maximum(x, jnp.asarray(0.0, dtype=x.dtype))
     if upper_bound is not None:
         x = jnp.minimum(x, jnp.asarray(upper_bound, dtype=x.dtype))
-    return x
+    return x if support is None else jnp.where(jnp.asarray(support) != 0, x, 0)
