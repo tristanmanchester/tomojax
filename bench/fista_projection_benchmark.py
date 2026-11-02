@@ -724,7 +724,6 @@ def run_loss_grad_variant(
     forward, back = variant.split("_", maxsplit=1)
     cfg = FistaCoreConfig(
         iterations=1,
-        tv_weight=0.0,
         checkpoint_projector=False,
         projector_unroll=1,
         gather_dtype="fp32",
@@ -804,9 +803,9 @@ def run_fista_macro(
     iters_override: int = 0,
     l_override: float = 0.0,
 ) -> tuple[dict[str, Any], jnp.ndarray]:
+    """Benchmark the unregularized array core used by alignment."""
     cfg = FistaCoreConfig(
         iterations=int(iters_override) if int(iters_override) > 0 else data.spec.fista_iters,
-        tv_weight=0.002,
         lipschitz=float(l_override) if float(l_override) > 0.0 else 250.0,
         nonnegative=True,
         checkpoint_projector=False,
@@ -880,7 +879,6 @@ def run_fista_macro(
 def directional_derivative_error(data: CaseData, grad: jnp.ndarray) -> float:
     cfg = FistaCoreConfig(
         iterations=1,
-        tv_weight=0.0,
         checkpoint_projector=False,
         projector_unroll=1,
         gather_dtype="fp32",

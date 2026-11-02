@@ -58,13 +58,13 @@
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 108,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 146,
     "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 131,
-    "src/tomojax/recon/fista_tv_core.py::fista_tv_core_iterates": 132,
+    "src/tomojax/recon/fista_tv_core.py::fista_tv_core_iterates": 121,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
   "code_lines": {
     "(modules)": 3085,
     "_data": 2050,
-    "alignment": 15078,
+    "alignment": 15077,
     "backends": 617,
     "cli": 2571,
     "core": 13414,
@@ -75,7 +75,7 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14269
+    "recon": 14257
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,
