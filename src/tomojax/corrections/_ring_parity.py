@@ -52,6 +52,24 @@ def _plan(size: int) -> tuple[np.ndarray, ...]:
     )
 
 
+def _uniform_interp(x: jax.Array, knots: jax.Array, values: jax.Array) -> jax.Array:
+    """Interpolate a zero-origin uniform table using its actual rounded knots.
+
+    Arithmetic locates the interval without a binary search per coefficient.
+    Checking adjacent knots preserves the interval at floating-point boundaries.
+    """
+    last = len(knots) - 1
+    index = jnp.clip(jnp.floor(x * (last / knots[-1])).astype(jnp.int32) + 1, 1, last)
+    index = jnp.clip(
+        index - (x < knots[index - 1]).astype(jnp.int32) + (x >= knots[index]).astype(jnp.int32),
+        1,
+        last,
+    )
+    fraction = (x - knots[index - 1]) / (knots[index] - knots[index - 1])
+    interpolated = values[index - 1] + fraction * (values[index] - values[index - 1])
+    return jnp.where(x < knots[0], values[0], jnp.where(x > knots[-1], values[-1], interpolated))
+
+
 def regularize(profile: jax.Array, axis: float, keep_even: str) -> jax.Array:
     """Retain odd detector response and locally supported even response.
 
@@ -84,7 +102,7 @@ def regularize(profile: jax.Array, axis: float, keep_even: str) -> jax.Array:
         inverse_df = (fractions**2 / jnp.asarray(counts[:, None], profile.dtype)).sum(1)
         degrees = jnp.clip(1 / jnp.where(inverse_df > 0, inverse_df, 1), 1, size // 2 + 1)
         scale = jnp.exp(
-            jnp.interp(
+            _uniform_interp(
                 jnp.log(degrees),
                 jnp.asarray(log_degrees, profile.dtype),
                 jnp.asarray(log_critical, profile.dtype),
