@@ -331,3 +331,59 @@ def test_unpenalized_cgls_sinks_do_not_read_unused_volumes(monkeypatch, host):
     monkeypatch.setattr(module._HostCGLS, "run", run)
     geometry = _geometry("cone")
     cgls(geometry, GRID, DETECTOR, _data(geometry), config=CGLSConfig(iterations=1))
+
+
+@pytest.mark.parametrize("depth", [2, 9])
+def test_whole_view_statistics_include_zero_ray_rows(host, depth):
+    from tomojax.recon._view_statistics import ViewStatistics  # check-public-imports: allow-private
+
+    host(depth)
+    detector = replace(DETECTOR, nv=31)
+    geometry = ConeGeometry(GRID, detector, ANGLES, ConeBeam(12, 26))
+    model, backend = cone_model(geometry), "cuda" if use_cuda_cone() else "jax"
+    poses = stack_view_poses(geometry, len(ANGLES))
+    rng = np.random.default_rng(81)
+    data = rng.normal(size=(len(ANGLES), detector.nv, detector.nu)).astype(np.float32)
+    problem = _cone_slabs.cone_problem(
+        geometry, GRID, detector, data, model=model, backend=backend, poses=poses,
+        batch=3, channels=1,
+    )  # fmt: skip
+    xp = problem.engine.xp
+    value = rng.normal(size=(9, 4, 5)).astype(np.float32)
+    volume = problem.volume(value)
+    stats = ViewStatistics(problem, np.arange(len(ANGLES)))
+
+    def read(k):
+        return (volume.get(*problem.plan.planes(k)),)
+
+    means, magnitudes = stats.project(read), stats.project(read, absolute=True)
+    coefficients = model.coefficients(poses, GRID)
+    projected = np.asarray(cone_project(value, coefficients, GRID, detector, backend=backend))
+
+    def download(a):
+        return np.asarray(a) if xp is np else xp.asnumpy(a)
+
+    np.testing.assert_allclose(download(means), projected.mean((1, 2)), atol=2e-7)
+    np.testing.assert_allclose(download(magnitudes), abs(projected).mean((1, 2)), atol=2e-7)
+    np.testing.assert_allclose(download(stats.mean), data.mean((1, 2)), atol=2e-7)
+    np.testing.assert_allclose(download(stats.absolute_mean), abs(data).mean((1, 2)), rtol=1e-6)
+    assert stats.outside_pixels > 0
+    mean = means - stats.mean
+    applied = np.zeros_like(value)
+    target, energies = problem.volume(applied), []
+
+    def finish(batch, first, stop, rows):
+        rows[0][...] -= problem.measured(batch, first, stop) + mean[batch.index, None, None]
+        energies.append(problem.engine.norm2(rows[0]))
+
+    problem.sweep.run(
+        np.arange(len(ANGLES)), source=read, finish=finish,
+        sink=lambda k, a, _: target.put(*problem.plan.planes(k), a[0]), keep=False,
+    )  # fmt: skip
+    residual = projected - data
+    residual -= residual.mean((1, 2), keepdims=True)
+    expected = cone_backproject(residual, coefficients, GRID, detector, backend=backend)
+    assert _relative(applied, expected) < 2e-6
+    assert sum(energies) + float(stats.outside_energy(-mean)) == pytest.approx(
+        np.sum(residual.astype(float) ** 2), rel=2e-6
+    )
