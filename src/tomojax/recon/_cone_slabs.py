@@ -421,6 +421,7 @@ class Sweep:
         ones: bool = False,
         keep: bool = True,
         prefetch: Callable[[int], None] | None = None,
+        prepare: Callable[[tuple[Any, ...]], None] | None = None,
     ) -> None:
         """Project ``source(k)``, finish each row once, transpose and ``sink`` every slab.
 
@@ -434,8 +435,19 @@ class Sweep:
         then the volumes ``source(k)`` returned, kept on the device until then
         (with ``keep``; otherwise an empty tuple). ``prefetch(k)`` is called
         just before the slab projected ahead of ``k``, to start reading it.
+
+        With a full-detector ring and ``keep=False``, ``prepare`` receives the
+        complete projected channels in ``views`` order before any rows finish.
+        All slabs are projected first; source callbacks must not retain their
+        input volumes until the sink. The existing ring is reused, not copied.
         """
+        if prepare is not None:
+            assert not keep
+            assert self.plan.ring == self.plan.detector.nv
         ring = _Ring(self, views, channels, keep=keep)
+        if prepare is not None:
+            ring.project_through(self.plan.detector.nv, source, prefetch)
+            prepare(tuple(ring.rows))
         count = channels if transposed is None else transposed
         for k in self.plan.order:
             ring.project_through(self.plan.windows[k][1], source, prefetch)

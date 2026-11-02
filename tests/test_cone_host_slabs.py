@@ -63,7 +63,8 @@ def host(monkeypatch):
 
 @pytest.mark.parametrize("kind", ["cone", "segments"])
 @pytest.mark.parametrize("depth", [1, 4])
-def test_slab_sweep_is_the_matched_normal_operator(kind, depth, host):
+@pytest.mark.parametrize("prepare", [False, True])
+def test_slab_sweep_is_the_matched_normal_operator(kind, depth, host, prepare):
     host(depth)
     geometry = _geometry(kind)
     model, backend = cone_model(geometry), "cuda" if use_cuda_cone() else "jax"
@@ -75,9 +76,16 @@ def test_slab_sweep_is_the_matched_normal_operator(kind, depth, host):
     direction = np.random.default_rng(2).random((9, 4, 5), np.float32)
     source = problem.volume(np.ascontiguousarray(direction))
     applied = np.zeros_like(direction, order="C")
-    target, energy = problem.volume(applied), []
+    target, energy, prepared = problem.volume(applied), [], []
+    if prepare:
+        problem.sweep.plan = replace(problem.plan, ring=DETECTOR.nv)
+
+    def prepare_rows(rows):
+        prepared.append(problem.engine.norm2(rows[0]))
+        rows[0][...] *= 0.5
 
     def finish(batch, first, stop, rows):
+        assert not prepare or prepared
         energy.append(float(np.sum(np.square(rows[0], dtype=np.float64))))
 
     problem.sweep.run(
@@ -85,14 +93,20 @@ def test_slab_sweep_is_the_matched_normal_operator(kind, depth, host):
         source=lambda k: (source.get(*problem.plan.planes(k)),),
         finish=finish,
         sink=lambda k, accumulated, _: target.put(*problem.plan.planes(k), accumulated[0]),
+        keep=not prepare,
+        prepare=prepare_rows if prepare else None,
     )
     coefficients = model.coefficients(poses, GRID)
     projected = cone_project(direction, coefficients, GRID, DETECTOR, backend=backend)
+    if prepare:
+        projected *= 0.5
     expected = cone_backproject(projected, coefficients, GRID, DETECTOR, backend=backend)
     assert sum(energy) == pytest.approx(
         float(np.sum(np.square(projected, dtype=np.float64))), rel=1e-6
     )
     assert _relative(applied, expected) < 1e-6
+    if prepare:
+        assert prepared == pytest.approx([4 * sum(energy)], rel=1e-6)
 
 
 @pytest.mark.parametrize("depth", [3, 4])
@@ -367,6 +381,14 @@ def test_whole_view_statistics_include_zero_ray_rows(host, depth, reader):
 
     np.testing.assert_allclose(download(means), projected.mean((1, 2)), atol=2e-7)
     np.testing.assert_allclose(download(magnitudes), abs(projected).mean((1, 2)), atol=2e-7)
+    np.testing.assert_allclose(
+        download(stats.projection_mean(xp.asarray(projected))), download(means), atol=2e-7
+    )
+    np.testing.assert_allclose(
+        download(stats.projection_mean(xp.asarray(projected), absolute=True)),
+        download(magnitudes),
+        atol=2e-7,
+    )
     np.testing.assert_allclose(download(stats.mean), data.mean((1, 2)), atol=2e-7)
     np.testing.assert_allclose(download(stats.absolute_mean), abs(data).mean((1, 2)), rtol=1e-6)
     assert stats.outside_pixels > 0

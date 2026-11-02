@@ -60,6 +60,24 @@ class ViewStatistics:
         )  # fmt: skip
         return (total / self.pixels).astype(xp.float32)
 
+    def projection_mean(self, rows, *, absolute: bool = False):
+        """Reduce an already resident full-detector projection in ``views`` order.
+
+        Bounded row/view chunks match :meth:`project` without an extra forward
+        sweep or a full-size magnitude/FP64 temporary.
+        """
+        problem, xp = self.problem, self.problem.engine.xp
+        total = xp.zeros(problem.data.shape[0], xp.float64)
+        for first in range(0, problem.data.shape[1], _cone_slabs.ROW_BAND):
+            stop = first + _cone_slabs.ROW_BAND
+            for start in range(0, len(self.views), problem.sweep.batch):
+                end = min(start + problem.sweep.batch, len(self.views))
+                values = rows[start:end, first:stop]
+                if absolute:
+                    values = xp.abs(values)
+                total[xp.asarray(self.views[start:end])] += values.sum((1, 2), dtype=xp.float64)
+        return (total / self.pixels).astype(xp.float32)
+
     def outside_energy(self, offset):
         """Squared norm of ``data-offset`` on rows omitted from every slab window."""
         offset = self.problem.engine.xp.asarray(offset, dtype=self.problem.engine.xp.float64)
