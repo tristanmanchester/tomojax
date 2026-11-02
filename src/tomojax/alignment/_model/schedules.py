@@ -19,9 +19,7 @@ from .dofs import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-ObjectiveKind = Literal[
-    "joint_volume_pose", "bilevel_cv", "all_data_bilevel", "projection_consistency"
-]
+ObjectiveKind = Literal["joint_volume_pose", "bilevel_cv", "projection_consistency"]
 OptimizerKind = Literal["gn", "validation_lm", "spectral"]
 GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"]
 ScheduleSource = Literal["preset", "direct", "default", "expert"]
@@ -61,7 +59,7 @@ class AlignmentStage:
         Public parameter names optimized by this stage.
     objective_kind : ObjectiveKind
         Objective model: "joint_volume_pose", "bilevel_cv",
-        "all_data_bilevel" or "projection_consistency".
+        or "projection_consistency".
     optimizer : OptimizerKind
         Optimizer for the chosen objective: "gn", "validation_lm" or "spectral".
         The schedule validates supported combinations.
@@ -146,7 +144,6 @@ class AlignmentSchedule:
             if stage.objective_kind not in {
                 "joint_volume_pose",
                 "bilevel_cv",
-                "all_data_bilevel",
                 "projection_consistency",
             }:
                 raise ValueError(f"Unknown alignment objective: {stage.objective_kind!r}")
@@ -167,10 +164,7 @@ class AlignmentSchedule:
                 stage.optimizer != "gn" or any(d in GEOMETRY_DOF_NAMES for d in stage.active_dofs)
             ):
                 raise ValueError("joint_volume_pose stages require GN and only per-view pose DOFs")
-            if (
-                stage.objective_kind in {"bilevel_cv", "all_data_bilevel"}
-                and stage.optimizer != "validation_lm"
-            ):
+            if stage.objective_kind == "bilevel_cv" and stage.optimizer != "validation_lm":
                 raise ValueError(
                     f"{stage.objective_kind} stage {stage.name!r} uses unsupported optimizer "
                     f"{stage.optimizer!r}; setup/bilevel stages currently support only "
