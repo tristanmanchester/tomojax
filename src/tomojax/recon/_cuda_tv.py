@@ -34,7 +34,7 @@ extern "C" __global__ void primal(
     if(nx>1) dx=ix==0?px[t]:(ix==nx-1?-px[t-1]:px[t]-px[t-1]);
     if(ny>1) dy=iy==0?py[t]:(iy==ny-1?-py[t-nx]:py[t]-py[t-nx]);
     if(nz>1) dz=iz==0?pz[t]:(iz==nz-1?-pz[t-(INDEX)ny*nx]:pz[t]-pz[t-(INDEX)ny*nx]);
-    u[t]=clipped(x[t]+((dx+dy)+dz),lo,hi);
+    u[t]=clipped(x[t]+((CX*dx+CY*dy)+CZ*dz),lo,hi);
 }
 extern "C" __global__ void dual(
     const float* u, float* px, float* py, float* pz,
@@ -48,7 +48,7 @@ extern "C" __global__ void dual(
     float gx=ix+1<nx?u[t+1]-v:0.f;
     float gy=iy+1<ny?u[t+nx]-v:0.f;
     float gz=iz+1<nz?u[t+(INDEX)ny*nx]-v:0.f;
-    float x=px[t]+tau*gx, y=py[t]+tau*gy, z=pz[t]+tau*gz;
+    float x=px[t]+tau*(CX*gx), y=py[t]+tau*(CY*gy), z=pz[t]+tau*(CZ*gz);
     float radius=fmaxf(lam[0],0.f);
     float scale=fmaxf(fmaxf(fmaxf(fabsf(x),fabsf(y)),fabsf(z)),radius);
     if(scale==0.f)scale=1.f;
@@ -62,11 +62,19 @@ extern "C" __global__ void dual(
 
 
 @cache
-def _kernels(*, narrow: bool, device: int) -> tuple[Any, Any]:
+def _kernels(
+    *, narrow: bool, device: int, gradient_scale_xyz: tuple[float, float, float]
+) -> tuple[Any, Any]:
     import cupy as cp
 
     with cp.cuda.Device(device):
-        module = cp.RawModule(code=_SOURCE.replace("INDEX", "int" if narrow else "long"))
+        constants = "\n".join(
+            f"#define C{axis} ({float(value)!r}f)"
+            for axis, value in zip("XYZ", gradient_scale_xyz, strict=True)
+        )
+        module = cp.RawModule(
+            code=constants + "\n" + _SOURCE.replace("INDEX", "int" if narrow else "long")
+        )
         return module.get_function("primal"), module.get_function("dual")
 
 
@@ -160,7 +168,16 @@ def _tiles(
 
 
 def _launch(
-    context, out, x, lam, *, iterations: int, tau: float, lower: float, upper: float
+    context,
+    out,
+    x,
+    lam,
+    *,
+    iterations: int,
+    tau: float,
+    lower: float,
+    upper: float,
+    gradient_scale_xyz: tuple[float, float, float],
 ) -> None:
     import cupy as cp
 
@@ -169,7 +186,11 @@ def _launch(
         axis, core, width = _plan(source.shape, iterations)
         count = width * math.prod(source.shape) // source.shape[axis]
         options = {
-            "kernels": _kernels(narrow=count < 2**31, device=cp.cuda.Device().id),
+            "kernels": _kernels(
+                narrow=count < 2**31,
+                device=cp.cuda.Device().id,
+                gradient_scale_xyz=gradient_scale_xyz,
+            ),
             "iterations": iterations,
             "tau": np.float32(tau),
             "lower": np.float32(lower),
@@ -184,11 +205,25 @@ def _launch(
 
 
 def proximal(
-    x: jax.Array, lam: jax.Array, *, iterations: int, tau: float, lower: float, upper: float
+    x: jax.Array,
+    lam: jax.Array,
+    *,
+    iterations: int,
+    tau: float,
+    lower: float,
+    upper: float,
+    gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ) -> jax.Array:
     """Apply the finite-iteration TV update, borrowing or owning ``x`` as XLA permits."""
     call = buffer_callback(
-        partial(_launch, iterations=iterations, tau=tau, lower=lower, upper=upper),
+        partial(
+            _launch,
+            iterations=iterations,
+            tau=tau,
+            lower=lower,
+            upper=upper,
+            gradient_scale_xyz=gradient_scale_xyz,
+        ),
         jax.ShapeDtypeStruct(x.shape, x.dtype),
         input_output_aliases={0: 0},
         vmap_method="sequential",
@@ -205,6 +240,7 @@ def proximal_host(
     tau: float,
     lower: float,
     upper: float,
+    gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ) -> None:
     """Apply the same finite-step proximal to host volumes, one haloed z slab at a time.
 
@@ -223,7 +259,11 @@ def proximal_host(
     core = width - 2 * halo if width < shape[0] else shape[0]
     radius = cp.asarray(lam, cp.float32)
     options = {
-        "kernels": _kernels(narrow=width * plane < 2**31, device=cp.cuda.Device().id),
+        "kernels": _kernels(
+            narrow=width * plane < 2**31,
+            device=cp.cuda.Device().id,
+            gradient_scale_xyz=gradient_scale_xyz,
+        ),
         "iterations": iterations,
         "tau": np.float32(tau),
         "lower": np.float32(lower),
