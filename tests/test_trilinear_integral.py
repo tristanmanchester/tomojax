@@ -125,7 +125,6 @@ def test_exact_fista_matches_dense_projected_steps(problem, backend):
     bound = float(np.linalg.norm(weighted_matrix, 2) ** 2) * 1.2
     config = FistaCoreConfig(
         iterations=3,
-        tv_weight=0,
         lipschitz=bound,
         nonnegative=True,
         views_per_batch=2,

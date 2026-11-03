@@ -53,7 +53,8 @@ def test_parallel_slab_sum_and_transpose_keep_global_weights(monkeypatch, tilt):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("initial", [False, True])
-def test_parallel_host_cgls_matches_resident_with_penalties(monkeypatch, initial):
+@pytest.mark.parametrize("data_term", ["absolute", "per_view_contrast"])
+def test_parallel_host_cgls_matches_resident_with_penalties(monkeypatch, initial, data_term):
     grid = tj.Grid(9, 7, 11, 1.1, 0.8, 1.3)
     detector = tj.Detector(17, 15, 1.2, 1.0)
     geometry = tj.LaminographyGeometry(grid, detector, np.arange(0, 180, 23), 35)
@@ -61,6 +62,7 @@ def test_parallel_host_cgls_matches_resident_with_penalties(monkeypatch, initial
     data = rng.normal(size=(8, 15, 17)).astype(np.float32)
     start = rng.normal(size=(11, 7, 9)).astype(np.float32) if initial else None
     cfg = CGLSConfig(
+        data_term=data_term,
         iterations=5,
         rtol=0,
         damping=0.2,

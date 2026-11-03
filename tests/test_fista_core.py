@@ -14,7 +14,6 @@ from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     fista_tv_core_arrays,
     projection_loss_arrays,
-    regulariser_value_arrays,
 )
 
 
@@ -29,7 +28,6 @@ def test_core_one_voxel_reconstruction_preserves_physical_length_units(override)
     lipschitz = scale**2
     cfg = FistaCoreConfig(
         iterations=1,
-        tv_weight=0,
         lipschitz=1.0 if override else lipschitz,
         ray_integrator="joseph",
     )
@@ -60,7 +58,6 @@ def _diagnostic_problem(iterations, *, final_data, iteration_loss):
     data = jnp.asarray([0.7, 1.0, 0.4]).reshape(1, 1, 3)
     cfg = FistaCoreConfig(
         iterations=iterations,
-        tv_weight=0.3,
         huber_delta=0.25,
         lipschitz=10,
         ray_integrator="joseph",
@@ -111,7 +108,7 @@ def test_core_data_diagnostic_never_contains_regularization(iterations, final_da
     computed = final_data or iteration_loss
     np.testing.assert_allclose(actual["data_loss"], expected_data if computed else 0, rtol=3e-6)
     if iteration_loss:
-        np.testing.assert_allclose(actual["loss"][0], expected_data + 0.3 * expected_tv, rtol=3e-6)
+        np.testing.assert_allclose(actual["loss"][0], expected_data, rtol=3e-6)
     if not iterations:
         np.testing.assert_array_equal(actual["x"], initial)
         assert actual["loss"].shape == (0,) and int(actual["effective_iterations"]) == 0
@@ -124,30 +121,11 @@ def test_core_rejects_invalid_lipschitz_config(lipschitz):
         replace(FistaCoreConfig(), lipschitz=lipschitz)
 
 
-def test_core_rejects_nonsmooth_tv_instead_of_solving_an_unregularized_problem():
-    # For A=I, y=(0,1), lam=.2, exact TV has the unique optimum (.2,.8).
-    # Gradient-only FISTA previously returned (0,1) and claimed status='ok'.
-    cfg = FistaCoreConfig(iterations=1, tv_weight=0.2, regulariser="tv", ray_integrator="joseph")
-    # Objective-only evaluations still need exact TV, including coupled alignment.
-    tv = regulariser_value_arrays(jnp.asarray([0.0, 1.0]).reshape(1, 1, 2), cfg)
-    np.testing.assert_allclose(tv, 1.0, rtol=1e-6)
-    with pytest.raises(ValueError, match="huber_tv or tv_weight=0"):
-        fista_tv_core_arrays(
-            x0=jnp.zeros((1, 1, 2)),
-            T_all=jnp.eye(4)[None],
-            det_grid=None,
-            projections=jnp.asarray([[[0.0, 1.0]]]),
-            grid=Grid(2, 1, 1, 1.0, 1.0, 1.0),
-            detector=Detector(2, 1, 1.0, 1.0),
-            cfg=cfg,
-        )
-
-
 @pytest.mark.numerical
-def test_zero_weight_tv_iteration_loss_has_only_the_data_gradient_at_a_flat_volume():
+def test_core_iteration_loss_has_only_the_data_gradient_at_a_flat_volume():
     grid, detector = Grid(2, 2, 2, 1.0, 1.0, 1.0), Detector(2, 2, 1.0, 1.0)
     poses = jnp.eye(4, dtype=jnp.float32)[None]
-    cfg = FistaCoreConfig(iterations=1, tv_weight=0, regulariser="tv", ray_integrator="joseph")
+    cfg = FistaCoreConfig(iterations=1, regulariser="tv", ray_integrator="joseph")
     data = jnp.ones((1, 2, 2))
 
     def iteration_loss(initial):
@@ -193,7 +171,7 @@ def test_public_fista_partial_view_batches_run_under_global_x64(grad_mode):
 def test_zero_view_weight_has_finite_smooth_parameter_derivatives():
     grid, detector = Grid(1, 1, 1, 1.0, 1.0, 1.0), Detector(1, 1, 1.0, 1.0)
     poses = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (2, 4, 4))
-    cfg = FistaCoreConfig(tv_weight=0, ray_integrator="joseph")
+    cfg = FistaCoreConfig(ray_integrator="joseph")
 
     def objective(parameter):
         return projection_loss_arrays(
@@ -219,7 +197,9 @@ def test_zero_view_weight_has_finite_smooth_parameter_derivatives():
 @pytest.mark.parametrize("integrator", ["joseph", "joseph_cubic"])
 @pytest.mark.parametrize("backends", [("cuda", "cuda"), ("cuda", "jax"), ("jax", "cuda")])
 @pytest.mark.parametrize("iterations", [0, 3])
-def test_core_private_storage_preserves_supported_tv_trajectory(integrator, backends, iterations):
+def test_core_private_storage_preserves_trajectory_and_diagnostics(
+    integrator, backends, iterations
+):
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid, detector = Grid(4, 3, 2, 0.7, 1.1, 1.3), Detector(5, 3, 0.8, 1.2)
@@ -227,7 +207,6 @@ def test_core_private_storage_preserves_supported_tv_trajectory(integrator, back
     initial = jnp.linspace(-0.2, 0.8, 24).reshape(2, 3, 4)
     cfg = FistaCoreConfig(
         iterations=iterations,
-        tv_weight=0.3,
         huber_delta=0.2,
         lipschitz=20,
         ray_integrator=integrator,

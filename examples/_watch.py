@@ -43,7 +43,18 @@ MU = {  # mm^-1 at 120 keV; composition (mass fractions) and density in g/cm^3
     "gold": 4.0475,  # Au 0.75, Ag 0.125, Cu 0.125 (18 carat), 15.6
     "nivarox": 0.2297,  # Fe 0.53, Ni 0.38, Cr 0.08, Be 0.01, 8.15
     "nivaflex": 0.3450,  # Co 0.45, Ni 0.21, Cr 0.18, Fe 0.10, W 0.04, Mo 0.02, 8.9
+    # The case of watch_case_blender.py:
+    "steel316": 0.2236,  # Fe 0.68, Cr 0.17, Ni 0.12, Mo 0.025, Mn 0.005, 8.0
+    "sapphire": 0.0597,  # Al2O3, 3.98
+    "dial": 0.3323,  # brass, kept apart from the movement's for rendering
+    "lume": 0.1140,  # SrAl2O4, 3.6
+    "rubber": 0.0156,  # nitrile, about C10H13N, 1.0
 }
+
+
+def present(mesh_dir: Path) -> dict[str, float]:
+    """``MU`` restricted to the materials ``mesh_dir`` has an STL for."""
+    return {name: mu for name, mu in MU.items() if (mesh_dir / f"{name}.stl").exists()}
 
 
 def meshes(blender: Path = BLENDER) -> Path:
@@ -72,8 +83,8 @@ def transmission(
     """Pixel-averaged transmission ``(views, nv, nu)`` for TomoJAX ``poses``."""
     plan = {
         "meshes": str(mesh_dir),
-        "names": np.array(list(MU)),
-        "mu_mm": np.array(list(MU.values())),
+        "names": np.array(list(present(mesh_dir))),
+        "mu_mm": np.array(list(present(mesh_dir).values())),
         "shape": np.array(shape),
         "pixel_mm": pixel,
         "centre_mm": np.array(centre, np.float64),
@@ -114,7 +125,7 @@ def truth(
 
     origin = tuple(c - (n / 2 - 0.5) * voxel for c, n in zip(centre, shape[::-1], strict=True))
     volume = np.zeros(shape, np.float32)
-    for name, mu in MU.items():
+    for name, mu in present(mesh_dir).items():
         triangles = read_stl(mesh_dir / f"{name}.stl")
         volume += mu * occupancy(
             triangles, shape, (voxel,) * 3, origin, supersample=supersample

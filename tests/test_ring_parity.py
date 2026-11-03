@@ -1,14 +1,16 @@
 from itertools import pairwise
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.corrections._ring_parity import _plan, regularize
+from tomojax.corrections._ring_parity import _plan, _uniform_interp, regularize
 from tomojax.corrections._rings import (  # check-public-imports: allow-private
     _feasible_response,
     _invert,
+    _weighted_quadratics,
 )
 
 
@@ -110,4 +112,27 @@ def test_parity_scales_match_scalar_reference():
         regularize(jnp.asarray(profile), 63.5, "significance"),
         expected,
         atol=4 * np.finfo(np.float32).eps * np.max(np.abs(profile)),
+    )
+
+
+def test_weighted_quadratics_reproduce_quadratic() -> None:
+    x = jnp.arange(81, dtype=jnp.float32) / 40
+    values = (1 + x + x * x)[None]
+    for fit in _weighted_quadratics(values, jnp.ones_like(values), (30, 20, 14, 9, 6), 1):
+        np.testing.assert_allclose(fit[:, 30:-30], values[:, 30:-30], rtol=1e-6)
+
+
+@pytest.mark.parametrize("size", [16, 511, 2560, 4096])
+def test_uniform_interpolation_preserves_rounded_knot_intervals(size: int) -> None:
+    knots, values = [jnp.asarray(a, jnp.float32) for a in _plan(size)[-2:]]
+    x = jnp.concatenate(
+        [
+            jnp.linspace(-1, float(knots[-1]) + 1, 10001),
+            knots,
+            jnp.nextafter(knots, -jnp.inf),
+            jnp.nextafter(knots, jnp.inf),
+        ]
+    )
+    np.testing.assert_array_equal(
+        jax.jit(_uniform_interp)(x, knots, values), jax.jit(jnp.interp)(x, knots, values)
     )

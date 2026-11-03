@@ -22,7 +22,8 @@ from tomojax.core.validation import (
     validate_volume,
 )
 from tomojax.recon._cgls_host import solve_on_host
-from tomojax.recon._cgls_stopping import precision_stalled, termination
+from tomojax.recon._cgls_stopping import cancellation_magnitude, precision_stalled, termination
+from tomojax.recon._data_term import project_residual
 from tomojax.recon._projection import (
     ConeModel,
     normal_equation_operators,
@@ -42,6 +43,8 @@ from tomojax.recon.cgls import CGLSConfig, resident_bytes, validate_model
 
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
+
+    from .types import DataTerm
 
 
 class _State(NamedTuple):
@@ -92,6 +95,7 @@ def _checked_inputs(
         "model",
         "joseph_interpolation",
         "split",
+        "data_term",
     ),
 )
 def _solve(
@@ -113,6 +117,7 @@ def _solve(
     joseph_interpolation: str = "linear",
     gradient_damping: jax.Array | None = None,
     split: ViewSplit | None = None,
+    data_term: DataTerm = "absolute",
 ) -> tuple[_State, jax.Array, jax.Array, jax.Array]:
     # Iteration budgets and changing data/poses are dynamic: budget sweeps and
     # repeated scans reuse the same compiled executable.
@@ -137,7 +142,7 @@ def _solve(
             split=split,
         )
     initial, inputs_finite = _checked_inputs(poses, data, initial, grid, model)
-    residual = data if zero_start else data - forward(initial)
+    residual = project_residual(data if zero_start else data - forward(initial), data_term)
     damp2 = damping * damping
     spacing = voxel_spacing(model, grid)
 
@@ -148,7 +153,9 @@ def _solve(
         gradient_damping=gradient_damping,
     )
 
-    gradient = adjoint(residual) - penalty_gradient(initial)
+    gradient = adjoint(residual, lambda r: project_residual(r, data_term)) - penalty_gradient(
+        initial
+    )
     gamma = jnp.sum(gradient * gradient)
     threshold = atol + rtol * jnp.sqrt(gamma)
     state = _State(
@@ -166,7 +173,7 @@ def _solve(
     condition = partial(_running, max_iters=max_iters, threshold=threshold)
 
     def step(state: _State) -> _State:
-        projected = forward(state.direction)
+        projected = project_residual(forward(state.direction), data_term)
         direction_norm2 = jnp.sum(state.direction**2)
         denominator = jnp.sum(projected * projected) + damp2 * direction_norm2
         if gradient_damping is not None:
@@ -180,7 +187,7 @@ def _solve(
         stepped = valid
         x = jnp.where(valid, state.x + alpha * state.direction, state.x)
         residual = state.residual - alpha * projected
-        gradient = adjoint(residual) - penalty_gradient(x)
+        gradient = adjoint(residual, lambda r: project_residual(r, data_term)) - penalty_gradient(x)
         gamma_new = jnp.sum(gradient * gradient)
         valid &= jnp.isfinite(gamma_new)
         # A requested normal-residual tolerance can lie below attainable FP32
@@ -210,18 +217,19 @@ def _solve(
         ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
             # Replace the recurrence without retaining a second sinogram.
             prediction = forward(x)
-            # A componentwise cancellation estimate keeps a bright, already
-            # solved region from setting another region's precision limit.
-            # It is an FP32 stagnation diagnostic, never a relaxed tolerance.
+
+            # Keep the nonnegative bound separate from the centered operator.
             cancellation = magnitude_adjoint(
-                (data, prediction), lambda d, p: jnp.abs(d) + jnp.abs(p)
+                (data, prediction), partial(cancellation_magnitude, data_term=data_term)
             ) + damp2 * jnp.abs(x)
             if gradient_damping is not None:
                 cancellation = cancellation + gradient_damping**2 * gradient_normal(
                     jnp.abs(x), spacing, absolute_weights=True
                 )
-            exact_residual = data - prediction
-            exact_gradient = adjoint(exact_residual) - penalty_gradient(x)
+            exact_residual = project_residual(data - prediction, data_term)
+            exact_gradient = adjoint(
+                exact_residual, lambda r: project_residual(r, data_term)
+            ) - penalty_gradient(x)
             exact_gamma = jnp.sum(exact_gradient * exact_gradient)
             bounded = jnp.all(
                 jnp.abs(exact_gradient) <= 8 * jnp.finfo(jnp.float32).eps * cancellation
@@ -263,7 +271,15 @@ def _solve(
 
 @partial(
     jax.jit,
-    static_argnames=("grid", "detector", "backend", "batch_size", "model", "joseph_interpolation"),
+    static_argnames=(
+        "grid",
+        "detector",
+        "backend",
+        "batch_size",
+        "model",
+        "joseph_interpolation",
+        "data_term",
+    ),
 )
 def _solve_streamed(
     poses: jax.Array,
@@ -281,6 +297,7 @@ def _solve_streamed(
     model: str,
     joseph_interpolation: str,
     gradient_damping: jax.Array | None = None,
+    data_term: DataTerm = "absolute",
 ) -> tuple[_State, jax.Array, jax.Array, jax.Array]:
     """CG on the normal equations with data streamed from a host source.
 
@@ -291,7 +308,14 @@ def _solve_streamed(
     Only volume-sized arrays and one view batch occupy the device.
     """
     normal, exact = normal_equation_operators(
-        poses, grid, detector, backend, batch_size, model, joseph_interpolation
+        poses,
+        grid,
+        detector,
+        backend,
+        batch_size,
+        model,
+        joseph_interpolation,
+        data_term=data_term,
     )
     initial, x0 = initialize_volume(initial, model, grid)
     damp2 = damping * damping
@@ -500,6 +524,7 @@ def cgls(
         "model": model,
         "joseph_interpolation": cfg.joseph_interpolation,
         "gradient_damping": jnp.float32(cfg.gradient_damping) if cfg.gradient_damping else None,
+        "data_term": cfg.data_term,
     }
     if stream:
         with host_source(np.asarray(projections)) as key:
@@ -547,6 +572,8 @@ def cgls(
         "joseph_interpolation": cfg.joseph_interpolation if is_joseph(model) else None,
         "views_per_batch": min(batch, n),
         "formulation": "streamed_normal_equations" if stream else "cgls",
+        "data_term": cfg.data_term,
+        "background_unresolved": cfg.data_term == "per_view_contrast",
         "damping": float(cfg.damping),
         "gradient_damping": float(cfg.gradient_damping),
     }

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax import _laminography as automatic
+from tomojax import _smooth_alignment as automatic
 from tomojax.geometry import grid_volume_origin
 
 
@@ -41,7 +41,7 @@ def test_coarse_policy_preserves_support_native_data_and_poses(shape, explicit, 
                 np.testing.assert_allclose((lower, upper), bounds)
         return SimpleNamespace(volume=None, scan=work.with_poses(poses), info={})
 
-    result = automatic.reconstruct_laminography(scan, align=align, reconstruct=None, grid=supplied)
+    result = automatic.reconstruct_with_motion(scan, align=align, reconstruct=None, grid=supplied)
     assert result.scan.projections is scan.projections and result.scan.detector == scan.detector
     np.testing.assert_array_equal(result.scan.poses, poses)
     np.testing.assert_allclose(result.scan.geometry.axis_unit_lab, scan.geometry.axis_unit_lab)
@@ -61,12 +61,17 @@ def test_missing_axis_is_not_silently_inferred():
             operation(scan)
 
 
-@pytest.mark.parametrize("operation", [tj.align, tj.reconstruct])
-def test_automatic_facades_and_saved_pose_reuse(operation, tmp_path):
+@pytest.mark.parametrize(
+    ("kind", "operation"),
+    [("lamino", tj.align), ("lamino", tj.reconstruct), ("parallel", tj.align)],
+)
+def test_automatic_facades_and_saved_pose_reuse(kind, operation, tmp_path):
     grid = tj.Grid(8, 8, 8, 1, 1, 1)
     geometry = tj.LaminographyGeometry(
         grid, tj.Detector(12, 12, 1, 1), np.arange(0, 360, 12), tilt_deg=30
     )
+    if kind == "parallel":
+        geometry = tj.ParallelGeometry(grid, geometry.detector, geometry.angles)
     xyz = np.indices((8, 8, 8)).astype(float)
     volume = np.exp(-np.sum((xyz - 3.5) ** 2, axis=0) / 3).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
@@ -83,5 +88,5 @@ def test_automatic_facades_and_saved_pose_reuse(operation, tmp_path):
         np.testing.assert_array_equal(s.poses, expected)
         return tj.Reconstruction(None, s, method, {})
 
-    again = automatic.reconstruct_laminography(reused, align=None, reconstruct=reconstruct)
+    again = automatic.reconstruct_with_motion(reused, align=None, reconstruct=reconstruct)
     assert again.info["automatic"]["geometry"] == "preserved_pose_corrections"

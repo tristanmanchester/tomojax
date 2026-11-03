@@ -407,16 +407,22 @@ def test_streamed_cgls_rejects_nonfinite_views():
     data[3, 2, 2] = np.nan
     with pytest.raises(Exception, match="finite"):
         cgls(geometry, grid, detector, data, config=CGLSConfig(stream_projections=True))
+    # Replace the failed callback token before JAX's process-exit barrier.
+    data[3, 2, 2] = 1
+    result, _ = cgls(geometry, grid, detector, data, config=CGLSConfig(stream_projections=True))
+    np.testing.assert_array_equal(np.isfinite(result), True)
+    jax.effects_barrier()
 
 
 # Its child process needs CUDA, which the suite's own JAX would otherwise hold.
 @pytest.mark.gpu
 @pytest.mark.fresh_gpu
-def test_host_cuda_cgls_does_not_import_jax():
+@pytest.mark.parametrize("data_term", ["absolute", "per_view_contrast"])
+def test_host_cuda_cgls_does_not_import_jax(data_term):
     import subprocess
     import sys
 
-    code = """
+    code = f"""
 import sys, json, numpy as np
 import tomojax as tj
 from tomojax.geometry import Grid, Detector, LaminographyGeometry
@@ -425,7 +431,7 @@ g, d = Grid(4, 4, 3, 1, 1, 1), Detector(9, 7, 1, 1)
 geometry = LaminographyGeometry(g, d, np.linspace(0, 180, 7, endpoint=False), tilt_deg=23)
 x, info = cgls(geometry, g, d, np.zeros((7, 7, 9), np.float32),
     init_x=np.ones((3, 4, 4), np.float32),
-    config=CGLSConfig(iterations=2, backend='cuda', views_per_batch=3))
+    config=CGLSConfig(iterations=2, backend='cuda', views_per_batch=3, data_term='{data_term}'))
 json.dumps(info, allow_nan=False)
 assert 'jax' not in sys.modules and info['execution_backend'] == 'cupy'
 assert isinstance(x, np.ndarray) and np.isfinite(x).all() and np.linalg.norm(x) < 7

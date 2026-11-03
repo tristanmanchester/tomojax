@@ -8,8 +8,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ._data_term import project_residual
 from ._projection import (
     least_squares_operators,
+    normal_equation_operators,
     normal_operator_norm,
     positive_normal_bound,
     projection_operators,
@@ -48,13 +50,31 @@ def first_gradient(
     mask = None if runtime.volume_mask is None else jnp.asarray(runtime.volume_mask, jnp.float32)
     split = runtime.split
     value, gradient = least_squares_operators(
-        runtime.poses, grid, detector, backend, batch, model, stream=runtime.stream, split=split
+        runtime.poses,
+        grid,
+        detector,
+        backend,
+        batch,
+        model,
+        stream=runtime.stream,
+        split=split,
+        data_term=cfg.data_term,
     )(None, projections)
-    forward, adjoint = projection_operators(
-        runtime.poses, grid, detector, None, backend, batch, model, split=split
-    )
+    if split is None:
+        normal, _ = normal_equation_operators(runtime.poses, grid, detector, backend, batch, model)
+
+        def apply_normal(x):
+            return normal(x)[1]
+    else:
+        forward, adjoint = projection_operators(
+            runtime.poses, grid, detector, None, backend, batch, model, split=split
+        )
+
+        def apply_normal(x):
+            return adjoint(forward(x))
+
     lipschitz = normal_operator_norm(
-        forward, adjoint, (grid.nz, grid.ny, grid.nx), iterations=int(cfg.power_iterations),
+        apply_normal, (grid.nz, grid.ny, grid.nx), iterations=int(cfg.power_iterations),
         mask=mask, start=power_start(gradient),
     )  # fmt: skip
     c = runtime.constraints
@@ -87,7 +107,7 @@ def validate_initialization(
         return
     if (
         not cfg.nonnegative
-        or cfg.tv_weight
+        or cfg.tv_weight != 0
         or cfg.support is not None
         or cfg.lower_bound not in (None, 0)
         or cfg.upper_bound is not None
@@ -160,10 +180,10 @@ def ordered_start(
         i = order[k % subsets]
         if n % subsets:
             forward, adjoint = operators(poses[i], valid[i])
-            gradient = adjoint(forward(z) - images[i])
+            gradient = adjoint(project_residual(forward(z) - images[i], cfg.data_term))
         else:
             _, gradient = least_squares_operators(
-                poses[i], grid, detector, backend, count, "joseph"
+                poses[i], grid, detector, backend, count, "joseph", data_term=cfg.data_term
             )(z, images[i])
         new = jnp.maximum(z - gradient / jnp.where(limits[i] > 0, limits[i], 1), 0)
         tn = (1 + jnp.sqrt(1 + 4 * t * t)) / 2

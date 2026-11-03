@@ -1,4 +1,4 @@
-"""Scalar stopping policy shared by resident, streamed and native CGLS."""
+"""Stopping policy shared by resident, streamed and native CGLS."""
 
 from __future__ import annotations
 
@@ -34,3 +34,16 @@ def termination(*, failed: bool, converged: bool, roundoff: bool) -> str:
     if converged:
         return "converged"
     return "roundoff_limit" if roundoff else "iteration_limit"
+
+
+def cancellation_magnitude(data, prediction, data_term):
+    """Nonnegative projection envelope for the FP32 cancellation bound.
+
+    Contrast uses C = I - P, with P the whole-view mean. Since |C| <= I + P,
+    applying |A|ᵀ to this envelope bounds cancellation in Aᵀ C (data - prediction).
+    Centering the envelope itself would invalidate the bound.
+    """
+    size = abs(data) + abs(prediction)
+    if data_term == "per_view_contrast":
+        size = size + size.mean(axis=(-2, -1), keepdims=True)
+    return size

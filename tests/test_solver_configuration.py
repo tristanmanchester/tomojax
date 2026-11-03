@@ -287,6 +287,6 @@ def test_fista_auto_step_is_finite_for_zero_operator(model, warm_start):
             backend="jax",
         ),
     )
-    np.testing.assert_array_equal(volume, initial if warm_start else np.zeros((2, 3, 2)))
+    np.testing.assert_array_equal(volume, np.zeros_like(initial))
     np.testing.assert_allclose(info["loss"], np.full(3, 0.5 * np.sum(data**2)), rtol=2e-6)
     assert np.isfinite(info["lipschitz"]) and info["lipschitz"] > 0

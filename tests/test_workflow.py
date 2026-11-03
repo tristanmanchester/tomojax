@@ -136,10 +136,11 @@ def test_reconstruct_takes_the_methods_configuration_under_its_keywords() -> Non
     # A keyword replaces its field; the config's others stay.
     recon = tj.reconstruct(scan, "fista", config=config, iterations=6, nonnegative=True)
     expected = replace(config, iterations=6, nonnegative=True)
-    assert recon.info["config"] == expected and recon.info["huber_delta"] == 0.05
-    direct, _ = fista_tv(
+    assert recon.info["config"] == expected
+    direct, direct_info = fista_tv(
         geometry, geometry.grid, geometry.detector, scan.projections, config=expected
     )
+    assert recon.info["huber_delta"] == direct_info["huber_delta"]
     np.testing.assert_allclose(np.asarray(recon.volume), np.asarray(direct), rtol=1e-6, atol=1e-6)
     with pytest.raises(ValueError, match="method 'fista' takes a FistaConfig, not a CGLSConfig"):
         tj.reconstruct(scan, "fista", config=CGLSConfig())

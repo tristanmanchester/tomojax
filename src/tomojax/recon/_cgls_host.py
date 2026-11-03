@@ -10,6 +10,10 @@ resident solvers; a verification takes two sweeps, the recomputed residual
 and its FP32 cancellation estimate, so each holds one channel of rows.
 Sources and sinks work in place on uploaded slabs, so besides the ring of
 rows only a few slab-sized arrays occupy the device at a time.
+
+Per-view contrast uses a forward-only sweep before each centered gradient or
+normal application. Its means cover the full detector, not individual row tiles;
+no projection-sized vector is retained. Absolute mode needs no additional sweep.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from ._cgls_stopping import precision_stalled, termination
 from ._cone_slabs import Batch, RowReader, cone_problem, host_projections, host_volumes
 from ._host_arrays import automatic_host_output
 from ._quadratic import gradient_normal
+from ._view_statistics import ViewStatistics
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -140,6 +145,9 @@ class _HostCGLS:
         self.penalized = bool(self.damp2 or self.smooth2)
         self.total = problem.engine.norm2
         self.keep = problem.keep
+        self.statistics = (
+            ViewStatistics(problem, self.views) if cfg.data_term == "per_view_contrast" else None
+        )
 
     def _block(self, k: int, centre: Any, halo: Callable[[int], Any], *, below: bool) -> Any:
         """Slab ``k`` with the next plane above (and, with ``below``, the one below)."""
@@ -184,8 +192,19 @@ class _HostCGLS:
                 return ()
             return (self.X.get(*plan.planes(k), retain=not self.keep and self.penalized),)
 
+        mean = None
+        if self.statistics is not None:
+            predicted = (
+                0.0
+                if self.zero
+                else self.statistics.project(lambda k: (self.X.get(*plan.planes(k)),))
+            )
+            mean = self.statistics.mean - predicted
+
         def finish(batch: Batch, first: int, stop: int, rows: tuple[Any, ...]) -> None:
             rows[0][...] = self.problem.measured(batch, first, stop) - rows[0]
+            if mean is not None:
+                rows[0][...] -= mean[batch.index, None, None]
 
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
             z0, z1 = plan.planes(k)
@@ -217,6 +236,8 @@ class _HostCGLS:
 
         def finish(batch: Batch, first: int, stop: int, rows: tuple[Any, ...]) -> None:
             rows[0][...] = xp.abs(self.problem.measured(batch, first, stop)) + xp.abs(rows[0])
+            if mean is not None:
+                rows[0][...] += mean[batch.index, None, None]
 
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
             z0, z1 = plan.planes(k)
@@ -234,6 +255,13 @@ class _HostCGLS:
 
         def source(k: int) -> tuple[Any, ...]:
             return (self.X.get(*plan.planes(k), retain=not self.keep and self.penalized),)
+
+        mean = None
+        if self.statistics is not None:
+            # |C| <= I + P: centering this positive bound would invalidate it.
+            mean = self.statistics.absolute_mean + self.statistics.project(
+                lambda k: (self.X.get(*plan.planes(k)),), absolute=True
+            )
 
         self.sweep.run(
             self.views, source=source, finish=finish, sink=sink,
@@ -274,7 +302,9 @@ class _HostCGLS:
             stats["direction"] += self.total(direction)
             return (self.D.kernel(direction),)
 
-        def finish(_batch: Batch, _first: int, _stop: int, rows: tuple[Any, ...]) -> None:
+        def finish(batch: Batch, _first: int, _stop: int, rows: tuple[Any, ...]) -> None:
+            if mean is not None:
+                rows[0][...] -= mean[batch.index, None, None]
             stats["energy"] += self.total(rows[0])
 
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
@@ -290,10 +320,21 @@ class _HostCGLS:
                     value += direction
             self.W.put(*plan.planes(k), value)
 
+        mean = None
+        read = source
+        ahead = self._prefetch(self.G) if beta is None else self._prefetch(self.G, self.D)
+        if self.statistics is not None:
+            # Update D exactly once, then reread it for the centered normal pass.
+            mean = self.statistics.project(source, prefetch=ahead)
+            stats["energy"] = self.statistics.outside_pixels * self.total(mean)
+            ahead = self._prefetch(self.D)
+
+            def read(k):
+                return (self.D.get(*plan.planes(k)),)
+
         self.sweep.run(
-            self.views, source=source, finish=finish, sink=sink,
-            prefetch=self._prefetch(self.G) if beta is None else self._prefetch(self.G, self.D),
-            keep=self.keep,
+            self.views, source=read, finish=finish, sink=sink,
+            prefetch=ahead, keep=self.keep,
         )  # fmt: skip
         return stats["energy"], stats["direction"]
 
@@ -417,6 +458,8 @@ class _HostCGLS:
             "joseph_interpolation": "linear",
             "views_per_batch": self.sweep.batch,
             "formulation": "host_normal_equations",
+            "data_term": self.cfg.data_term,
+            "background_unresolved": self.cfg.data_term == "per_view_contrast",
             "damping": float(self.cfg.damping),
             "gradient_damping": float(self.cfg.gradient_damping),
             "host_slabs": True,

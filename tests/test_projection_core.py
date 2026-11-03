@@ -242,7 +242,6 @@ def test_sampled_objective_uses_the_requested_step_when_geometry_is_traced(geome
     data = jnp.full((3, 3, 5), 0.1)
     weights = jnp.asarray([0.4, 0.0, 1.3])
     cfg = FistaCoreConfig(
-        tv_weight=0,
         forward_projector="cuda",
         backprojector="cuda",
         cuda_step_size_scale=scale,

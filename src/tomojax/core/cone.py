@@ -552,7 +552,9 @@ def adjoint_into(
         nb, nc = (extent[i] for i in range(3) if i != axis)
         wide = axis != 2 and grid.nz >= 128
         tile_c = 64 if wide else 32
-        module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")(
+        kernel = module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")
+        kernel.preferred_shared_memory_carveout = 100 if wide else -1  # four 20.7 KiB wide blocks
+        kernel(
             (
                 (-(-extent[axis] // 2), -(-nb // 15), -(-nc // tile_c))
                 if z_fast or axis == 0

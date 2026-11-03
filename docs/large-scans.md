@@ -32,7 +32,15 @@ set the environment before the first JAX operation in a notebook.
 `stream_projections = true` or `false` in the method's configuration (a
 `--config` key) overrides the 40% rule. Streaming needs the batched projection
 operators: CGLS streams only with the canonical detector grid, and FISTA-TV and
-SPDHG-TV not with an explicit detector grid or the exact ray integrator.
+SPDHG-TV not with an explicit detector grid or the exact ray integrator. SPDHG's
+600 default iterations are sampled view-block updates, not full data sweeps.
+Its probability-aware row/column-sum steps retain scalar preconditioners; TV
+strength and gradients are normalized in physical voxel coordinates. The default
+TV strength is estimated once from projection noise, with a 0.00005 minimum; an
+explicit positive weight fixes the strength, and zero disables TV. Choose
+`data_term="per_view_contrast"` explicitly for material outside the field of view;
+this discards the absolute density level.
+
 Streamed CGLS solves the equivalent normal equations, which square the
 condition number of each step's recurrence. It recomputes the exact gradient
 periodically, as in-core CGLS recomputes its residual.
@@ -50,7 +58,17 @@ forces this route and fills the supplied float32 array or memmap.
 `info["host_slabs"]` identifies this storage route. The exact TV halo
 uses `tv_prox_iterations` planes on each side, so very large proximal iteration
 counts can still exhaust device workspace. Huber-TV, masks, ordered initialization
-and multi-device FISTA still require resident volume state.
+and multi-device FISTA still require resident volume state. With
+`data_term="per_view_contrast"`, host FISTA reduces one mean per complete detector view
+before forming the gradient. If the row ring holds the entire detector, this
+reuses the projected ring; otherwise it needs a separate forward sweep. Means
+include all measured pixels, including rows outside the volume footprint;
+centering individual slab windows would solve a different problem. Losses also
+include measured energy outside that footprint for either data term. Automatic TV strength samples
+at most 65536 detector Haar cells and transposes one Gaussian probe in batches;
+it does not allocate another full measurement stack. Host slabs center complete
+probe views before cropping their row windows and reduce the gradient norm
+without allocating another host volume.
 
 Resident CUDA solvers keep their volumes in a private z-contiguous
 order and convert once at entry and exit, which needs one volume-sized copy

@@ -16,14 +16,17 @@ if TYPE_CHECKING:
     from tomojax._typed_arrays import Device
     from tomojax.geometry import Detector, Geometry, Grid
 
+    from .types import DataTerm
+
 
 @dataclass(frozen=True, kw_only=True)
 class CGLSConfig:
     """Control an unconstrained least-squares solve.
 
-    Minimize ``||A x - y||² + damping² ||x||² + gradient_damping² ||D x||²``
-    using the discrete matched
-    adjoint. Stop when the normal-residual norm falls below
+    Minimize ``||C (A x - y)||² + damping² ||x||² + gradient_damping² ||D x||²``
+    using the discrete matched adjoint. ``C`` is the identity for absolute data
+    and subtracts each full detector view's mean for per-view contrast.
+    Stop when the normal-residual norm falls below
     ``atol + rtol * initial_normal_residual_norm`` or after ``iterations`` updates.
     ``roundoff_limit`` indicates voxelwise update stagnation or a normal gradient
     stagnating within an FP32 cancellation estimate, without claiming the requested tolerance.
@@ -71,6 +74,10 @@ class CGLSConfig:
 
     Parameters
     ----------
+    data_term : {"absolute", "per_view_contrast"}, optional
+        Absolute least squares by default. Contrast profiles one unknown constant
+        per detector view. Use it when material lies outside the field of view;
+        absolute background density is lost and contained-object accuracy can worsen.
     iterations : int, optional
         Maximum number of solver updates. For SIRT and MLEM, an update is a complete
         subset sweep. Default is 50.
@@ -105,6 +112,7 @@ class CGLSConfig:
         devices divide the views and each hold the full volume.
     """
 
+    data_term: DataTerm = "absolute"
     iterations: int = 50
     rtol: float = 1e-6
     atol: float = 0.0
@@ -139,6 +147,8 @@ def resident_bytes(grid: Grid, projection_shape: Sequence[int]) -> int:
 
 def validate_model(cfg: CGLSConfig) -> None:
     """Validate interpolation independently of the chosen execution runtime."""
+    if cfg.data_term not in {"absolute", "per_view_contrast"}:
+        raise ValueError("cgls: data_term must be absolute or per_view_contrast")
     if cfg.joseph_interpolation not in {"linear", "cubic"}:
         raise ValueError("cgls: joseph_interpolation must be 'linear' or 'cubic'")
     if cfg.joseph_interpolation != "linear" and cfg.projector_model == "ray":

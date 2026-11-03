@@ -1,4 +1,4 @@
-"""Array-level differentiable FISTA reconstruction core."""
+"""Array-level differentiable least-squares FISTA core for alignment."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from tomojax.core.projector import (
 )
 from tomojax.core.view_chunks import chunk_schedule, chunk_size
 from tomojax.core.volume_layout import transpose_volume
-from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
+from tomojax.recon._tv_ops import huber_tv_value, isotropic_tv_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,12 +33,15 @@ if TYPE_CHECKING:
 class FistaCoreConfig:
     """Configuration for the array-level FISTA core.
 
+    Regulariser settings select only the reported image diagnostic; the
+    reconstruction minimizes the weighted data term with box/support constraints.
+    Use public ``fista_tv`` for TV-regularized reconstruction.
+
     A CUDA sampling step is preserved if dynamic poses or detector coordinates
     require a JAX fallback.
     """
 
     iterations: int = 10
-    tv_weight: float = 0.005
     regulariser: Regulariser = "huber_tv"
     huber_delta: float = 1e-2
     lipschitz: float = 100.0
@@ -117,13 +120,13 @@ def fista_tv_core_arrays(
     L_override: jnp.ndarray | float | None = None,
     view_weights: jnp.ndarray | None = None,
 ) -> FistaCoreResult[jnp.ndarray]:
-    """Array-level unrolled FISTA/HUBER-TV core.
+    """Array-level unrolled least-squares FISTA core.
 
     This is intentionally stricter than the public `fista_tv` API: arrays in,
     arrays out, no Python `Geometry` object construction, and a static iteration
     count suitable for differentiating tiny bilevel reference problems.
-    ``L_override`` must be positive and bound the full objective gradient.
-    Nonzero regularization requires Huber-TV; nonsmooth TV belongs to ``fista_tv``.
+    ``L_override`` must be positive and bound the data gradient.
+    ``regulariser_value`` is an image diagnostic, not part of the solve objective.
     With ``cfg.stream_projections``, ``projections`` is a registered host-source
     key. Its lifetime must include completion of all returned device arrays;
     the reconstruction remains differentiable in the volume, not the host data.
@@ -180,10 +183,7 @@ def fista_tv_core_iterates(
     than copying its carries. Drop the returned momentum, never delete it, since
     a solve of fewer than two steps can return it as ``x`` too.
     """
-    if cfg.tv_weight != 0.0 and cfg.regulariser != "huber_tv":
-        raise ValueError("fista_tv_core_arrays requires huber_tv or tv_weight=0")
     L = jnp.asarray(cfg.lipschitz if L_override is None else L_override, dtype=jnp.float32)
-    lam = jnp.asarray(cfg.tv_weight, dtype=jnp.float32)
     weights = _view_weights(int(T_all.shape[0]), view_weights)
     data_forward_projector, data_backprojector = _resolve_fista_core_data_projectors(
         cfg,
@@ -255,11 +255,6 @@ def fista_tv_core_iterates(
     ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
         x_prev, z_prev, t_prev, loss_arr, _last_data_loss = carry
         data_loss, grad = data_loss_and_grad_fn(z_prev)
-        if cfg.regulariser == "huber_tv" and float(cfg.tv_weight) != 0.0:
-            grad = huber_tv_grad(z_prev, cfg.huber_delta, z_fast=z_fast, base=grad, scale=lam)
-        # The differentiable reference path intentionally uses gradient FISTA for
-        # smoothed regularisers. Exact TV belongs to the public reconstruction
-        # adapter or a future nonsmooth implicit path, not the bilevel hot path.
         x_next = _project_constraints(z_prev - grad / L, cfg)
         if owned:  # materialised once, so two steps swap the two carry buffers
             x_next = jax.lax.optimization_barrier(x_next)
@@ -269,10 +264,7 @@ def fista_tv_core_iterates(
         z_next = x_next + ((t_prev - jnp.float32(1.0)) / t_next) * (x_next - x_prev)
         z_next = _project_constraints(z_next, cfg)
         if cfg.compute_iteration_loss and cfg.iterations > 0:
-            objective = data_loss
-            if cfg.tv_weight != 0.0:
-                objective = objective + lam * regulariser_value_arrays(z_prev, cfg, z_fast=z_fast)
-            loss_arr = loss_arr.at[k].set(objective.astype(jnp.float32))
+            loss_arr = loss_arr.at[k].set(data_loss.astype(jnp.float32))
         return (x_next, z_next, t_next, loss_arr, data_loss.astype(jnp.float32)), None
 
     n_iters = int(cfg.iterations)
@@ -340,7 +332,7 @@ def projection_loss_arrays(
 def regulariser_value_arrays(
     volume: jnp.ndarray, cfg: FistaCoreConfig, *, z_fast: bool = False
 ) -> jnp.ndarray:
-    """Return the reconstruction regulariser value selected by ``cfg``."""
+    """Return the diagnostic regulariser value selected by ``cfg``."""
     if cfg.regulariser == "huber_tv":
         return huber_tv_value(volume, float(cfg.huber_delta), z_fast=z_fast)
     return isotropic_tv_value(volume, z_fast=z_fast)

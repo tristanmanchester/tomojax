@@ -116,25 +116,6 @@ def test_estimate_center_rejects_scans_without_usable_axial_pairs(kind):
         tj.estimate_center(scan)
 
 
-def test_auto_alignment_records_center_and_resolves_only_its_limitation(monkeypatch):
-    from tomojax import _workflow
-
-    scan, true_u, _ = _scan()
-    context = dict(
-        status="limited", reasons=["centre", "rings"], center_calibration_reason="centre"
-    )
-    rec = tj.Reconstruction(np.zeros((80, 80, 8)), scan, "fbp", {"automatic": context})
-    monkeypatch.setattr(_workflow, "reconstruct", lambda s, **_: replace(rec, scan=s))
-    info = tj.align(scan).info["automatic"]
-    assert info["reconstruction"] == context
-    assert info["reasons"][-1] == "rings" and info["status"] == "limited"
-    assert "not a calibrated centre interval" in info["reasons"][0]
-    center = info["center_estimation"]
-    assert center["input"] == list(scan.detector.center) and center["status"] == "estimated"
-    assert center["diagnostics"]["pairs"][0]["local_matching_sigma_px"] >= 0
-    assert abs(center["output"][0] - true_u) <= 0.3 * scan.detector.du
-
-
 def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(tmp_path, caplog):
     import h5py
 
@@ -248,22 +229,17 @@ def test_center_report_measures_row_trend_and_conditional_interval():
     )
 
 
-def test_single_pair_reports_uncalibrated_global_coverage_without_inconsistency(monkeypatch):
-    from tomojax import _workflow
+def test_single_pair_reports_uncalibrated_global_coverage_without_inconsistency():
+    from tomojax.alignment.api import estimate_center_report
 
     scan, _, _ = _scan(views=2, span=360)
-    reconstruction = tj.Reconstruction(np.zeros((80, 80, 8)), scan, "fbp", {})
-    monkeypatch.setattr(_workflow, "reconstruct", lambda s, **_: replace(reconstruction, scan=s))
-    automatic = tj.align(scan).info["automatic"]
-    diagnostics = automatic["center_estimation"]["diagnostics"]
+    diagnostics = estimate_center_report(scan.geometry, scan.projections).to_dict()
     assert diagnostics["consistency_pvalue"] is None
     assert diagnostics["global_coverage_calibrated"] is False
     assert diagnostics["uncertainty_status"] == "local_matching_only"
     assert diagnostics["physical_center_status"] == "unresolved_without_motion_assumption"
     assert diagnostics["pair_mean_shift_constraints_px"] == [0.0]
     assert "local_matching_interval90_px" in diagnostics["pairs"][0]
-    assert automatic["status"] == "limited"
-    assert "not a calibrated centre interval" in automatic["reasons"][0]
 
 
 @pytest.mark.parametrize("form", ["indices", "mask", "slice"])

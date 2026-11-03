@@ -1,4 +1,4 @@
-"""One bounded smooth-pose workflow for declared laminography geometry."""
+"""Bounded smooth detector-motion fitting for declared parallel geometries."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def uses_laminography_workflow(scan: Scan) -> bool:
     )
 
 
-def reconstruct_laminography(
+def reconstruct_with_motion(
     scan: Scan, *, align: Callable, reconstruct: Callable, grid: Grid | None = None
 ):
     """Fit smooth detector motion on a bounded image, keeping declared geometry.

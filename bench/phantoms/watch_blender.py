@@ -547,10 +547,11 @@ def along(axis: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------- Blender layer
 
 _scratch: Any = None
-_parts: dict[str, list[Obj]] = {m: [] for m in MATERIALS}
+PARTS: dict[str, list[Obj]] = {m: [] for m in MATERIALS}
 
 
-def _object(name: str, solid: Solid) -> Obj:
+def as_object(name: str, solid: Solid) -> Obj:
+    """``solid`` as a new Blender object called ``name``."""
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(solid.v.tolist(), [], [list(f) for f in solid.f])
     mesh.validate()
@@ -562,9 +563,9 @@ def _object(name: str, solid: Solid) -> Obj:
 
 def part(name: str, material: str, solid: Solid | Obj) -> Obj:
     """Register ``solid`` (made into an object if need be) as a part of ``material``."""
-    obj = solid if not isinstance(solid, Solid) else _object(name, solid)
+    obj = solid if not isinstance(solid, Solid) else as_object(name, solid)
     obj.name = name
-    _parts[material].append(obj)
+    PARTS[material].append(obj)
     return obj
 
 
@@ -574,7 +575,7 @@ def _boolean(target: Obj, operands: list[Solid | Obj], operation: str) -> Obj:
     collection = bpy.data.collections.new(f"ops_{target.name}")
     bpy.context.scene.collection.children.link(collection)
     for k, o in enumerate(operands):
-        obj = _object(f"{target.name}_op{k}", o) if isinstance(o, Solid) else o
+        obj = as_object(f"{target.name}_op{k}", o) if isinstance(o, Solid) else o
         for c in list(obj.users_collection):
             c.objects.unlink(obj)
         collection.objects.link(obj)
@@ -606,7 +607,7 @@ def cut(target: Obj, *cutters: Solid | Obj) -> Obj:
 def fuse(name: str, solids: list[Solid | Obj]) -> Obj:
     """The union of ``solids``, made in the first (or a new object called ``name``)."""
     first = solids[0]
-    target = _object(name, first) if isinstance(first, Solid) else first
+    target = as_object(name, first) if isinstance(first, Solid) else first
     return _boolean(target, solids[1:], "UNION")
 
 
@@ -621,7 +622,7 @@ def extrude_field(name: str, field: Field, value: np.ndarray, z0: float, z1: flo
             prism(loops[k], z0, z1) if depth[k] % 2 == 0 else prism(loops[k], z0 - 0.1, z1 + 0.1)
         )
         if obj is None:
-            obj = _object(name, solid)
+            obj = as_object(name, solid)
         elif depth[k] % 2 == 0:
             obj = _boolean(obj, [solid], "UNION")
         else:
@@ -1073,7 +1074,7 @@ def barrel() -> None:
         ).moved(b),
     )
     teeth = at(prism(watch_teeth(84, 0.12), 3.05, 3.50), b, mesh_angle(b, CENTRE))
-    fuse("barrel drum", [drum, cut(_object("barrel teeth", teeth), cylinder(4.60, 2.9, 3.6, b))])
+    fuse("barrel drum", [drum, cut(as_object("barrel teeth", teeth), cylinder(4.60, 2.9, 3.6, b))])
     part("barrel lid", "brass", tube(0.70, 4.55, 3.20, 3.42, b))
     # Coils packed on the arbor and against the wall, spread between: part wound.
     turns = np.linspace(0, 16, 16 * 200)
@@ -1263,8 +1264,8 @@ def balance() -> None:
         cylinder(0.085, 1.9, 2.2, pin_at),
     )
     part("impulse pin", "ruby", cylinder(0.085, 1.72, 2.10, pin_at))
-    rim = _object("balance rim", tube(4.10, 4.50, 2.60, 3.15, bal))
-    arms = _object("balance arms", cylinder(4.12, 2.60, 2.80, bal))
+    rim = as_object("balance rim", tube(4.10, 4.50, 2.60, 3.15, bal))
+    arms = as_object("balance arms", cylinder(4.12, 2.60, 2.80, bal))
     openings = crossings(3, 0.85, 4.10, 0.55, 0.30, curve=0.25)
     cut(arms, *[at(prism(h, 2.5, 2.9), bal, 0.35) for h in openings], cylinder(0.30, 2.5, 2.9, bal))
     wheel = part("balance wheel", "glucydur", fuse("balance wheel", [rim, arms]))
@@ -1386,7 +1387,7 @@ def export(out: Path, description: dict[str, Any]) -> None:
     """Fuse each material's parts and write ``MATERIAL.stl`` and ``watch.json`` to ``out``."""
     out.mkdir(parents=True, exist_ok=True)
     description["materials"] = {}
-    for material, objs in _parts.items():
+    for material, objs in PARTS.items():
         alive = [o for o in objs if o.name in bpy.data.objects]
         if not alive:
             continue

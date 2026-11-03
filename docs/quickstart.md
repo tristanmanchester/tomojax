@@ -347,6 +347,17 @@ with `from tomojax.recon import FistaConfig`.
 The keywords, like the command's options, replace the config's fields of the
 same names: `iterations=100` wins over the config's `iterations`.
 
+CGLS, FISTA and SPDHG fit absolute line integrals by default. When material
+lies outside the field of view, explicitly select
+`data_term="per_view_contrast"`, for example
+`tj.reconstruct(scan, "fista", data_term="per_view_contrast")`.
+This fits detector contrast while profiling one unknown constant per view;
+absolute background density is not recoverable. There is no automatic switch
+by geometry. FISTA's default `tv_weight=None` uses a projection-only noise
+estimate to raise an empirical dimensionless minimum of `5e-5`. Set a positive
+weight explicitly to bypass estimation, or `0` to disable TV. Weights are
+physically normalized; do not change them when switching length units.
+
 `tomojax align --mode cor` estimates the detector centre (the centre of
 rotation). To compare trial centres by eye instead, shift the detector in
 Python; the centre is in the geometry's length unit, so pixels times `du`:

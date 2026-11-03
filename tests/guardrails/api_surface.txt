@@ -379,6 +379,7 @@ class tomojax.evaluation.Split(
 # tomojax.recon
 class tomojax.recon.CGLSConfig(
         *,
+        data_term: 'DataTerm' = 'absolute',
         iterations: 'int' = 50,
         rtol: 'float' = 1e-06,
         atol: 'float' = 0.0,
@@ -436,7 +437,8 @@ class tomojax.recon.FistaConfig(
         iterations: 'int' = 50,
         initial_epochs: 'int' = 0,
         initial_subsets: 'int' = 16,
-        tv_weight: 'float' = 0.005,
+        data_term: 'DataTerm' = 'absolute',
+        tv_weight: 'float | None' = None,
         regulariser: 'Regulariser' = 'tv',
         huber_delta: 'float' = 0.01,
         lipschitz: 'float | None' = None,
@@ -495,8 +497,9 @@ class tomojax.recon.SIRTConfig(
     ) -> None
 class tomojax.recon.SPDHGConfig(
         *,
-        iterations: 'int' = 400,
-        tv_weight: 'float' = 0.005,
+        iterations: 'int' = 600,
+        tv_weight: 'float | None' = None,
+        data_term: 'DataTerm' = 'absolute',
         regulariser: 'Regulariser' = 'tv',
         huber_delta: 'float' = 0.01,
         theta: 'float' = 1.0,
