@@ -6,12 +6,12 @@ detector-centre/COR alignment, and mixed setup and pose correction.
 
 ## Reconstruction detail and regularization
 
-At full resolution on high-count phase-contrast data, FBP can retain finer
-edges and fringes than FISTA-TV, which can give a cleaner background with
-broader edges.
-More FISTA iterations do not necessarily restore those fringes. Compare both
-methods at the same display scale when fine boundaries matter; a cleaner image
-or lower projection residual does not establish better spatial resolution.
+On synthetic data scored against truth, FISTA-TV is more accurate than FBP.
+On phase-contrast data, FISTA-TV renders propagation fringes as smooth bands
+where FBP keeps the bright and dark fringe pair; more iterations do not bring
+the pair back. Apply the alignment poses (`Scan.with_poses`) before comparing
+methods on a real scan: residual motion blurs edges in every method and can
+be mistaken for regularization.
 
 The automatic TV minimum is normalized in physical coordinates, so changing
 voxel pitch does not require an additional power-of-pitch weight correction.
