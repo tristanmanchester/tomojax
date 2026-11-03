@@ -898,3 +898,26 @@ builders, not a claim that arbitrary synthetic cases reproduce a real scan.
 
 For bounded native-size output batches, `corpus.py pack CASE_DIR --scenarios clean`
 packages only the selected scenario; omitting the option packages all four.
+
+### Closed sandstone meshes for independent projection
+
+`phantoms/rock_mesh.py` samples the sandstone's mineral labels and writes one
+closed STL per material, plus `rock.json` with compounds, densities, 30 keV
+attenuations and mesh provenance. Install the optional mesh dependency in a
+separate environment:
+
+```bash
+uv venv .artifacts/rock-env
+uv pip install --python .artifacts/rock-env/bin/python numpy scipy trimesh
+.artifacts/rock-env/bin/python bench/phantoms/rock_mesh.py \
+  .artifacts/rock-meshes --n 192 --seed 0
+```
+
+Every cube uses the same six-tetrahedron partition for all materials. Its
+linearly interpolated one-hot fields are contoured just above half occupancy,
+so material interiors cannot overlap. Unlike the procedural voxel phantom,
+this mesh object is discretised at the chosen build resolution and omits the
+separately applied subvoxel cracks. Keep the meshes fixed across reconstruction
+resolutions; obtain truth from `mesh_voxels.occupancy`, not by sampling the
+original procedural object again. The meshes can be rendered with
+`gvxr_transmission.py` using the coefficients in `rock.json`.
