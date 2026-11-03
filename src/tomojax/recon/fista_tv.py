@@ -129,7 +129,8 @@ class FistaConfig:
     ``stream_projections`` reads NumPy or memmap projections from host memory
     one view batch at a time, so they never occupy the device whole. ``None``
     streams when they would take more than 40% of free device memory; ``True``
-    always streams host arrays. Streaming needs the batched operators.
+    always streams host arrays. Streaming needs the batched operators and can
+    reduce device memory at the cost of slower execution than host-volume slabs.
 
     ``lipschitz`` is the data term's Lipschitz constant; ``None`` estimates it
     with ``power_iterations`` power iterations, started from the backprojected data.
@@ -868,16 +869,17 @@ def _run_fista_scan(
     patience = jnp.int32(int(cfg.recon_patience) if use_early_stop else 0)
     early_flag = jnp.bool_(use_early_stop)
 
-    def step(state: FistaScanState, k: jnp.ndarray) -> tuple[FistaScanState, None]:
+    def step(
+        state: FistaScanState,
+        k: jnp.ndarray,
+        initial_data: tuple[jax.Array, jax.Array] | None = None,
+    ) -> tuple[FistaScanState, None]:
         def run_active(active_state: FistaScanState) -> FistaScanState:
             # The objective is tracked at z, where the gradient's residual already
             # gives the data term: evaluating it at x would cost a projection.
-            if first_gradient is None:
-                data_loss_val, g = val_and_grad(active_state.z)
-            else:  # the start, zero: first_gradient already has it
-                data_loss_val, g = jax.lax.cond(
-                    k == 0, lambda _: (first_value, first_gradient), val_and_grad, active_state.z
-                )
+            data_loss_val, g = (
+                val_and_grad(active_state.z) if initial_data is None else initial_data
+            )
             reg_value = 0.0 if cfg.tv_weight == 0 else regulariser_value_fn(active_state.z)
             y = active_state.z - (1.0 / L) * g
             x_new = proximal(y)
@@ -928,7 +930,14 @@ def _run_fista_scan(
     init_carry = _initial_fista_state(grid, runtime)
     if cfg.iterations == 0:
         return init_carry, jnp.asarray(L, jnp.float32), runtime.metric
-    carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(int(cfg.iterations)))
+    first = 0
+    if first_gradient is not None:
+        assert first_value is not None
+        # Consume the cached gradient once: capturing it in the scan keeps a
+        # full volume live throughout every later iteration.
+        init_carry, _ = step(init_carry, jnp.int32(0), (first_value, first_gradient))
+        first = 1
+    carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(first, int(cfg.iterations)))
     return carry_final, jnp.asarray(L, jnp.float32), runtime.metric
 
 

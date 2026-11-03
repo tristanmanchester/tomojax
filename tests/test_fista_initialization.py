@@ -194,3 +194,26 @@ def test_owned_zero_start_does_not_change_other_objectives(changes):
         det_grid=None,
     )
     assert not module.use_owned_fista(grid, data, runtime)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize(("iterations", "tolerance"), [(0, 0), (1, 0), (4, 0), (10, 0.99)])
+def test_cached_first_step_matches_uncached_recurrence(iterations, tolerance):
+    grid, detector = Grid(4, 3, 2, 0.8, 1.1, 1.2), Detector(5, 3, 0.7, 1.1)
+    geometry = LaminographyGeometry(grid, detector, np.linspace(0, 180, 7), tilt_deg=23)
+    data = np.random.default_rng(8).random((7, 3, 5), dtype=np.float32)
+    cfg = FistaConfig(
+        iterations=iterations,
+        tv_weight=0.005,
+        views_per_batch=3,
+        recon_rel_tol=tolerance,
+        recon_patience=1,
+        projector_model="joseph",
+    )
+    cached, info = fista_tv(geometry, grid, detector, data, config=cfg)
+    uncached, reference = fista_tv(
+        geometry, grid, detector, data, config=replace(cfg, lipschitz=info["lipschitz"])
+    )
+    np.testing.assert_allclose(cached, uncached, rtol=3e-6, atol=3e-7)
+    np.testing.assert_allclose(info["loss"], reference["loss"], rtol=3e-6, atol=3e-7)
+    assert info["effective_iterations"] == reference["effective_iterations"]

@@ -26,6 +26,18 @@ shift against a detector-centre offset, detector-v shifts and abrupt jumps, is
 listed with how to check a result in the
 [alignment guide](alignment-guide.md#check-the-result).
 
+- Without existing pose corrections, automatic axial parallel and laminography
+  alignment fits smooth detector-frame translations, not rotations.
+  Use an explicit `mode="pose"` when rotational
+  motion is expected. Finite detector pixels average transmitted intensity before
+  the logarithm, whereas the linear projector models line integrals. At sharp,
+  strongly attenuating edges this mismatch can be fitted as false rotations;
+  a smaller projection residual does not establish more accurate poses. Inspect
+  clean controls and the reconstruction before accepting rotational corrections.
+- Coupled Gauss–Newton damping is dimensional: changing the length units can
+  change finite-iteration alignment even when the physical scan is unchanged.
+  Use the same length units when comparing fits. A single scalar pose damping does
+  not normalize mixed rotation and translation coordinates automatically.
 - Ptychography's joint projection matching estimates translations on axial
   parallel scans, not rotations or laminographic motion. Sub-0.1-pixel recovery
   and unbiased motion estimates are not established. Independent known-zero
@@ -56,12 +68,10 @@ listed with how to check a result in the
   interpolation branches. A central finite difference across a boundary can
   disagree with that derivative, and finite gradients alone do not prove
   reliable pose recovery.
-- Automatic laminography refines on every native detector sample at the input
-  voxel pitch over the whole selected support, and that image must fit the
-  device. A broad unresolved support can extend well beyond the detector's
-  field of view and need several times the card's memory; the alignment then
-  stops at that allocation. Pass `grid=` to choose a smaller physical region,
-  which leaves any attenuation outside it unmodelled; see
+- Automatic parallel alignment uses a bounded coarse image while preserving the
+  declared physical support and native projection data. Explicit `grid=` overrides
+  this sampling policy and can exceed device memory. Cropping the physical region
+  leaves attenuation outside it unmodelled; see
   [real laminography](real-laminography.md).
 
 ## Detector-ring correction
@@ -97,13 +107,13 @@ measurements require independent calibration evidence and repair before `Rings`.
   describe a selected rigid matching mode, not ambiguous peaks or sample motion;
   opposing shifts determine sums, not individual per-view motion. Row-centre
   slope is an apparent detector trend, not a calibrated three-dimensional axis
-  tilt. Use the pair diagnostics when automatic alignment reports disagreement.
+  tilt. Inspect the pair diagnostics when estimating a detector centre.
   In five low-contrast gVXR mesh cases, wrong-mode errors reached a 3.91 px
   p95 and the conditional 90% intervals covered only one truth; check competing
   modes against an independent calibration rather than treating a narrow local
   interval as a global accuracy certificate. Runtime reports mark global
   coverage uncalibrated for every estimate, including a single pair without
-  a disagreement test; automatic alignment remains limited and loading warns.
+  a disagreement test; loading warns about this calibration limitation.
 - `tomojax inspect` checks storage and missing calibration in recognized raw
   acquisitions. It does not run data-driven centre inference; a centre pending
   inference can still fail during loading. A valid report does not certify

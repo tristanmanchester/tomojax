@@ -11,6 +11,7 @@ import numpy as np
 from ._data_term import project_residual
 from ._projection import (
     least_squares_operators,
+    normal_equation_operators,
     normal_operator_norm,
     positive_normal_bound,
     projection_operators,
@@ -59,11 +60,21 @@ def first_gradient(
         split=split,
         data_term=cfg.data_term,
     )(None, projections)
-    forward, adjoint = projection_operators(
-        runtime.poses, grid, detector, None, backend, batch, model, split=split
-    )
+    if split is None:
+        normal, _ = normal_equation_operators(runtime.poses, grid, detector, backend, batch, model)
+
+        def apply_normal(x):
+            return normal(x)[1]
+    else:
+        forward, adjoint = projection_operators(
+            runtime.poses, grid, detector, None, backend, batch, model, split=split
+        )
+
+        def apply_normal(x):
+            return adjoint(forward(x))
+
     lipschitz = normal_operator_norm(
-        forward, adjoint, (grid.nz, grid.ny, grid.nx), iterations=int(cfg.power_iterations),
+        apply_normal, (grid.nz, grid.ny, grid.nx), iterations=int(cfg.power_iterations),
         mask=mask, start=power_start(gradient),
     )  # fmt: skip
     c = runtime.constraints

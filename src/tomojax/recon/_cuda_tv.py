@@ -114,6 +114,16 @@ def _plan(shape: tuple[int, ...], iterations: int) -> tuple[int, int, int]:
     return axis, core, min(size, core + 2 * iterations)
 
 
+def workspace_bytes(shape: tuple[int, ...], iterations: int) -> int:
+    """External float32 arena allocated by the full-volume or tiled CUDA path."""
+    axis, core, width = _plan(shape, iterations)
+    volume = math.prod(shape)
+    if core == shape[axis]:
+        return 4 * 4 * volume
+    plane = volume // shape[axis]
+    return 4 * plane * (5 * width + min(iterations, shape[axis]))
+
+
 def _window(array, axis: int, start: int, stop: int):
     selected = [slice(None)] * 3
     selected[axis] = slice(start, stop)
