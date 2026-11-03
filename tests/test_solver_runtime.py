@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import partial
 import itertools
 
 import jax
@@ -28,6 +29,20 @@ from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
 
 # check-public-imports: allow-private
 from tomojax.recon._projection import normal_operator_norm, projection_operators
+
+
+def _physical_tv_parameters(grid, detector, data, weights, config):
+    """Independent FP64 physical objective used by the dense recurrences."""
+    y = np.asarray(data, np.float64)
+    w = np.ones_like(y) if weights is None else np.asarray(weights, np.float64)
+    totals = w.sum(axis=(-2, -1), keepdims=True)
+    mean = (w * y).sum(axis=(-2, -1), keepdims=True) / np.where(totals > 0, totals, 1)
+    scale = np.sqrt(np.sum(w * (y - mean) ** 2) / w.sum())
+    h = (grid.vx * grid.vy * grid.vz) ** (1 / 3)
+    length = np.sqrt(detector.nu * detector.du * detector.nv * detector.dv)
+    lam = config.tv_weight * scale * w.sum() * h**2 / length
+    delta = config.huber_delta * scale * h / length**2
+    return lam, delta, h / np.asarray([grid.vz, grid.vy, grid.vx])
 
 
 @pytest.mark.numerical
@@ -311,7 +326,8 @@ def test_fista_streams_host_projections_like_device_projections(tmp_path, batch)
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("weighted", [False, True])
-def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted):
+@pytest.mark.parametrize("data_term", ["absolute", "per_view_contrast"])
+def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted, data_term):
     grid = Grid(5, 4, 3, 0.8, 1.1, 1.3)
     detector = Detector(6, 4, 0.9, 1.2, (0.17, -0.2))
     geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 9, endpoint=False), 30)
@@ -324,6 +340,7 @@ def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted):
     for stream, projections in [(False, jnp.asarray(data)), (True, stored)]:
         config = SPDHGConfig(
             iterations=20,
+            data_term=data_term,
             tv_weight=0.01,
             views_per_batch=4,
             projector_model="joseph",
@@ -375,7 +392,6 @@ def test_spdhg_partial_steps_match_dense_first_update_and_preserve_each_override
         )
         for name, value in overrides.items():
             assert info[name] == pytest.approx(value if name in given else automatic[name])
-        assert info["sigma_data_base"] == info["sigma_data"]
         tau, sigma = info["tau"], info["sigma_data"]
         dual = sigma * data * weights / (sigma + weights)
         expected = 2 * tau * (matrix.T @ dual.ravel())
@@ -416,6 +432,8 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
         projector_model=model,
         backend="jax",
     )
+    lam, delta, scales = _physical_tv_parameters(grid, detector, data, None, config)
+    edges *= scales[:, None, None]
     for given in [{"sigma_tv": 0.19}, {"tau": 0.07, "sigma_data": 0.13, "sigma_tv": 0.19}]:
         volume, info = spdhg_tv(
             geometry, grid, detector, data, init_x=initial, config=replace(config, **given)
@@ -423,8 +441,8 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
         assert info["sigma_tv"] == pytest.approx(given["sigma_tv"])
         tv_dual = info["sigma_tv"] * (edges @ initial.ravel())
         if regulariser == "huber_tv":
-            tv_dual *= config.tv_weight / (config.tv_weight + info["sigma_tv"] * config.huber_delta)
-        tv_dual /= np.maximum(1.0, np.linalg.norm(tv_dual, axis=0) / config.tv_weight)
+            tv_dual *= lam / (lam + info["sigma_tv"] * delta)
+        tv_dual /= np.maximum(1.0, np.linalg.norm(tv_dual, axis=0) / lam)
         sigma = info["sigma_data"]
         data_dual = sigma * (matrix @ initial.ravel() - data.ravel()) / (sigma + 1)
         tv_gradient = sum(edge.T @ dual for edge, dual in zip(edges, tv_dual, strict=True))
@@ -746,6 +764,10 @@ def test_spdhg_tv_trajectory_matches_dense_primal_dual_reference(regulariser):
         nonnegative=True,
         log_every=1,
     )
+    lam, delta, scales = _physical_tv_parameters(
+        grid, detector, data.reshape(5, 3, 4), weights.reshape(5, 3, 4), cfg
+    )
+    edges *= scales[:, None, None]
     # Independent dense recurrence: primal first, then the sampled block dual and
     # the deterministic TV dual, each extrapolated by its inverse selection probability.
     x = np.maximum(initial, 0).astype(np.float64)
@@ -760,19 +782,19 @@ def test_spdhg_tv_trajectory_matches_dense_primal_dual_reference(regulariser):
         differences = edges @ x
         tv_dual += cfg.sigma_tv * differences
         if regulariser == "huber_tv":
-            tv_dual *= cfg.tv_weight / (cfg.tv_weight + cfg.sigma_tv * cfg.huber_delta)
-        tv_dual /= np.maximum(1, np.linalg.norm(tv_dual, axis=0) / cfg.tv_weight)
+            tv_dual *= lam / (lam + cfg.sigma_tv * delta)
+        tv_dual /= np.maximum(1, np.linalg.norm(tv_dual, axis=0) / lam)
         gradient_bar = matrix.T @ dual + sum(e.T @ p for e, p in zip(edges, tv_dual, strict=True))
         gradient_bar += 3 * (a.T @ (dual[rows] - old_dual))
         gradient_bar += sum(e.T @ dp for e, dp in zip(edges, tv_dual - old_tv, strict=True))
         lengths = np.linalg.norm(differences, axis=0)
         if regulariser == "huber_tv":
             lengths = np.where(
-                lengths <= cfg.huber_delta,
-                lengths**2 / (2 * cfg.huber_delta),
-                lengths - 0.5 * cfg.huber_delta,
+                lengths <= delta,
+                lengths**2 / (2 * delta),
+                lengths - 0.5 * delta,
             )
-        losses.append(1.5 * np.sum(w * (a @ x - y) ** 2) + cfg.tv_weight * lengths.sum())
+        losses.append(1.5 * np.sum(w * (a @ x - y) ** 2) + lam * lengths.sum())
     actual, info = spdhg_tv(
         geometry,
         grid,
@@ -817,8 +839,13 @@ def test_spdhg_runs_with_global_x64_and_returns_fp32():
     data = np.broadcast_to(grid.vy * density, (5, 1, 2)).astype(np.float32).copy()
     weights = np.linspace(0.3, 1.7, 10).astype(np.float32).reshape(data.shape)
     lam = 0.1
+    weight, _, scales = _physical_tv_parameters(
+        grid, detector, data, weights, SPDHGConfig(tv_weight=lam)
+    )
     # Both free voxels are beyond the TV corner: stationarity gives the exact minimizer.
-    expected = density + np.asarray([lam, -lam]) / (grid.vy**2 * weights.sum(axis=(0, 1)))
+    expected = density + np.asarray([weight, -weight]) * scales[2] / (
+        grid.vy**2 * weights.sum(axis=(0, 1))
+    )
     with jax.enable_x64():
         actual, _ = spdhg_tv(
             geometry,
@@ -856,3 +883,178 @@ def test_fista_joseph_integrator_uses_the_matched_batched_operators():
     reference = replace(config, projector_model="ray", backend="jax")
     expected, _ = fista_tv(geometry, grid, detector, data, config=reference)
     np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
+@pytest.mark.parametrize("data_term", ["absolute", "per_view_contrast"])
+def test_spdhg_finite_iterates_covary_with_units_signal_and_weight(regulariser, data_term):
+    rng = np.random.default_rng(813)
+    data = rng.normal(size=(5, 3, 4)).astype(np.float32)
+    weights = rng.uniform(0.3, 1.7, data.shape).astype(np.float32)
+    weights[:, 1, 2] = 0
+    weights[3] = 0
+    data[weights == 0] = np.nan
+    cfg = SPDHGConfig(
+        iterations=25,
+        views_per_batch=2,
+        log_every=1,
+        backend="jax",
+        regulariser=regulariser,
+        data_term=data_term,
+    )
+    results = []
+    for length, amplitude, weight in [(1, 1, 1), (7, 1, 1), (1, 3, 5)]:
+        grid = Grid(3, 2, 2, 0.8 * length, 1.1 * length, 1.3 * length)
+        detector = Detector(4, 3, 0.9 * length, 1.2 * length)
+        geometry = LaminographyGeometry(grid, detector, [13, 71, 127, 193, 241], 25)
+        volume, info = spdhg_tv(
+            geometry,
+            grid,
+            detector,
+            amplitude * data,
+            weights=weight * weights,
+            config=cfg,
+        )
+        results.append(
+            (
+                np.asarray(volume) * length / amplitude,
+                np.asarray(info["loss"]) / (weight * amplitude**2),
+            )
+        )
+    for volume, losses in results[1:]:
+        np.testing.assert_allclose(volume, results[0][0], rtol=2e-5, atol=2e-6)
+        np.testing.assert_allclose(losses, results[0][1], rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.numerical
+def test_spdhg_signed_custom_grid_schur_bound_uses_absolute_interpolation():
+    from tomojax.core.projector import get_detector_grid_device, project_views
+
+    # check-public-imports: allow-private
+    from tomojax.recon._spdhg_steps import _block_row_column_bounds
+
+    grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
+    detector = Detector(4, 3, 0.9, 1.2)
+    geometry = LaminographyGeometry(grid, detector, [13, 71, 127, 193, 241], 25)
+    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    u, v = get_detector_grid_device(detector)
+    coordinates = (u + 0.31, v - 0.27)
+    matrix = np.stack(
+        [
+            np.asarray(
+                project_views(
+                    poses,
+                    grid,
+                    detector,
+                    jnp.asarray(basis.reshape(2, 2, 3)),
+                    det_grid=coordinates,
+                    ray_integrator="joseph_cubic",
+                )
+            ).ravel()
+            for basis in np.eye(12, dtype=np.float32)
+        ],
+        axis=1,
+    )
+    assert matrix.min() < -0.01
+    row, column = _block_row_column_bounds(
+        poses,
+        coordinates,
+        grid=grid,
+        detector=detector,
+        projector=None,
+        views_per_batch=2,
+        ray_settings=(True, 1, "fp32", "joseph_cubic"),
+    )
+    assert float(row) >= np.abs(matrix).sum(axis=1).max() * (1 - 2e-6)
+    columns = [np.abs(matrix[first : first + 24]).sum(axis=0).max() for first in (0, 24, 48)]
+    assert float(column) >= max(columns) * (1 - 2e-6)
+    # Automatic regularization must use signed A.T, not the bound's |A|.T.
+    from tomojax.recon.spdhg_tv import _spdhg_noise_rms
+
+    weights = jnp.asarray(np.random.default_rng(717).uniform(0.2, 1.7, (5, 3, 4)), jnp.float32)
+    weights = weights.at[:, 1, 2].set(0)
+    keys = jax.vmap(lambda i: jax.random.fold_in(jax.random.key(0), i))(jnp.arange(5))
+    noise = jax.vmap(lambda key: jax.random.normal(key, (3, 4), dtype=jnp.float32))(keys)
+    mean = jnp.sum(weights * noise, axis=(-2, -1), keepdims=True) / jnp.sum(
+        weights, axis=(-2, -1), keepdims=True
+    )
+    support = jnp.ones((2, 2, 3), jnp.float32).at[0, 0, 0].set(0)
+    gradient = (matrix.T @ np.asarray(weights * (noise - mean)).ravel()) * np.asarray(
+        support
+    ).ravel()
+    expected = np.sqrt(np.mean(gradient**2))
+    actual = _spdhg_noise_rms(
+        grid,
+        detector,
+        poses,
+        coordinates,
+        weights,
+        None,
+        support,
+        projector=None,
+        views_per_batch=2,
+        ray_settings=(True, 1, "fp32", "joseph_cubic"),
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-5)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("data_term", ["absolute", "per_view_contrast"])
+def test_spdhg_automatic_weight_replays_weighted_masked_streaming(stream, data_term):
+    grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
+    detector = Detector(6, 4, 0.9, 1.2)
+    geometry = LaminographyGeometry(grid, detector, [13, 71, 127, 193, 241], 25)
+    rng = np.random.default_rng(312)
+    data = rng.normal(size=(5, 4, 6)).astype(np.float32)
+    weights = rng.uniform(0.3, 1.7, data.shape).astype(np.float32)
+    weights[:, 0, 0] = 0
+    data[weights == 0] = np.nan
+    cfg = SPDHGConfig(
+        iterations=12,
+        views_per_batch=2,
+        log_every=1,
+        tv_weight=None,
+        data_term=data_term,
+        stream_projections=stream,
+    )
+    volume, info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
+    assert cfg.tv_weight is None and info["tv_weight"] is None
+    from tomojax.recon.spdhg_tv import _prepare_spdhg_runtime
+
+    prepare = partial(
+        _prepare_spdhg_runtime, weights=weights, init_x=None, config=cfg, det_grid=None
+    )
+    first = prepare(geometry, grid, detector, data)
+    second = prepare(geometry, grid, detector, data * 2)
+    # Physical delta and selected alpha are data, not compilation-cache keys.
+    assert jax.tree.structure(first) == jax.tree.structure(second)
+    assert info["resolved_tv_weight"] > 5e-5
+    fixed = replace(cfg, tv_weight=info["resolved_tv_weight"], stream_projections=False)
+    replay, replay_info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=fixed)
+    np.testing.assert_allclose(volume, replay, rtol=2e-5, atol=2e-6)
+    np.testing.assert_allclose(info["loss"], replay_info["loss"], rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("weight", [0.0, 5e-5])
+def test_spdhg_explicit_weight_skips_noise_estimation(monkeypatch, weight):
+    import importlib
+
+    module = importlib.import_module("tomojax.recon.spdhg_tv")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("explicit weights must not estimate noise")
+
+    monkeypatch.setattr(module, "estimate_projection_noise", forbidden)
+    grid = Grid(2, 2, 1, 1, 1, 1)
+    detector = Detector(2, 2, 1, 1)
+    geometry = ParallelGeometry(grid, detector, [0, 90])
+    spdhg_tv(
+        geometry,
+        grid,
+        detector,
+        np.ones((2, 2, 2), np.float32),
+        config=SPDHGConfig(iterations=1, tv_weight=weight),
+    )

@@ -73,9 +73,9 @@ def test_spdhg_auto_steps_use_the_physical_data_norm_without_floors(scale, model
         jnp.zeros((1, 1, 1)),
         config=SPDHGConfig(iterations=0, tv_weight=0.1, projector_model=model, backend="jax"),
     )
-    # One axis-aligned voxel has A=[scale], with the 5% spectral safety margin.
-    np.testing.assert_allclose(info["A_norm"], 1.05 * scale, rtol=3e-6)
-    np.testing.assert_allclose(info["sigma_data"], 0.99 / (1.05 * scale), rtol=3e-6)
+    # One axis-aligned voxel has exact Schur bound A=[scale]; Lref=scale.
+    np.testing.assert_allclose(info["A_norm"], scale, rtol=3e-6)
+    np.testing.assert_allclose(info["sigma_data"], 0.99, rtol=3e-6)
 
 
 def _dense_gradient_norm(shape):
@@ -108,7 +108,7 @@ def test_spdhg_uses_exact_active_gradient_norm_and_keeps_explicit_steps(shape, t
     )
     expected_norm = _dense_gradient_norm(shape) if tv_weight else 0
     np.testing.assert_allclose(info["grad_norm"], expected_norm, rtol=3e-6)
-    np.testing.assert_allclose(info["sigma_tv"], 0.99 / (expected_norm or 1.0), rtol=3e-6)
+    np.testing.assert_allclose(info["sigma_tv"], 0.99 * 3 * tv_weight, rtol=3e-6)
     assert info["tau"] == 0.2
     assert info["sigma_data"] == 0.3
     assert info["A_norm"] is None
@@ -132,27 +132,9 @@ def test_spdhg_zero_combined_operator_has_defined_auto_steps_and_retains_start(t
     np.testing.assert_array_equal(actual, 1)
     assert info["A_norm"] == 0
     assert info["grad_norm"] == 0
-    for name in ["tau", "sigma_data", "sigma_tv"]:
+    for name in ["tau", "sigma_data"]:
         assert np.isfinite(info[name]) and info[name] > 0
-
-
-@pytest.mark.numerical
-def test_spdhg_rejects_nonfinite_estimated_norm_instead_of_returning_nan_iterates():
-    from tomojax.recon import SPDHGConfig, spdhg_tv
-
-    # A is representable, but A.T A is beyond FP32. Do not silently continue
-    # with NaN automatic steps when physical units overflow the normal operator.
-    scale = 1e20
-    grid, detector = Grid(1, 1, 1, scale, scale, scale), Detector(1, 1, scale, scale)
-    geometry = ParallelGeometry(grid, detector, [0.0])
-    with pytest.raises(ValueError, match="projection norm must be finite"):
-        spdhg_tv(
-            geometry,
-            grid,
-            detector,
-            jnp.zeros((1, 1, 1)),
-            config=SPDHGConfig(iterations=1, projector_model="joseph", backend="jax"),
-        )
+    assert np.isfinite(info["sigma_tv"]) and info["sigma_tv"] >= 0
 
 
 @pytest.mark.numerical

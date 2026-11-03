@@ -157,3 +157,25 @@ def test_weighted_data_masked_outliers_keep_dense_reconstruction_and_truth_error
     actual = np.asarray(volume).ravel()
     assert np.linalg.norm(actual - expected) / np.linalg.norm(expected) < 5e-5
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.01
+
+
+@pytest.mark.numerical
+def test_profiled_weighted_dual_prox_satisfies_zero_sum_and_kkt():
+    rng = np.random.default_rng(82)
+    u, y = (
+        rng.normal(size=(2, 3, 4)).astype(np.float32),
+        rng.normal(size=(2, 3, 4)).astype(np.float32),
+    )
+    w = rng.uniform(0.2, 2, u.shape).astype(np.float32)
+    w[:, 1, 2] = 0
+    w[1] = 0
+    y[w == 0] = np.nan
+    sigma = 0.7
+    q = np.asarray(
+        _prox_fstar_l2(jnp.asarray(u), sigma, jnp.asarray(y), jnp.asarray(w), "per_view_contrast")
+    )
+    np.testing.assert_allclose(q.sum(axis=(-2, -1)), 0, atol=4e-7)
+    np.testing.assert_array_equal(q[w == 0], 0)
+    active = w[0] > 0
+    kkt = (q[0] - u[0])[active] / sigma + q[0][active] / w[0][active] + y[0][active]
+    np.testing.assert_allclose(kkt, kkt.mean(), atol=5e-7)

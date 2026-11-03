@@ -17,7 +17,8 @@ from tomojax.recon._tv_ops import (  # check-public-imports: allow-private
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("iterations", [0, 1, 3, 10])
-def test_host_tv_halos_keep_global_step_and_constraints(monkeypatch, iterations):
+@pytest.mark.parametrize("scales", [(1.0, 1.0, 1.0), (0.5, 1.2, 2.0)])
+def test_host_tv_halos_keep_global_step_and_constraints(monkeypatch, iterations, scales):
     import cupy as cp
 
     data = np.random.default_rng(20261101).normal(size=(35, 9, 7)).astype(np.float32)
@@ -25,7 +26,14 @@ def test_host_tv_halos_keep_global_step_and_constraints(monkeypatch, iterations)
     engine = CudaEngine(Grid(7, 9, 35, 1, 1, 1), Detector(7, 9, 1, 1))
     source, target = HostVolume(data, engine, 3), HostVolume(output, engine, 3)
     expected = np.asarray(
-        tv_proximal(jnp.asarray(data), 0.2, iterations, lower_bound=-0.1, upper_bound=0.7)
+        tv_proximal(
+            jnp.asarray(data),
+            0.2,
+            iterations,
+            lower_bound=-0.1,
+            upper_bound=0.7,
+            gradient_scale_xyz=scales,
+        )
     )
     cp.get_default_memory_pool().free_all_blocks()
     monkeypatch.setattr(cp.cuda.runtime, "memGetInfo", lambda: (1000, 1000))
@@ -34,7 +42,8 @@ def test_host_tv_halos_keep_global_step_and_constraints(monkeypatch, iterations)
         target.put,
         0.2,
         iterations=iterations,
-        tau=1 / gradient_norm_squared(data.shape),
+        tau=1 / gradient_norm_squared(data.shape, gradient_scale_xyz=scales),
+        gradient_scale_xyz=scales,
         lower=-0.1,
         upper=0.7,
     )

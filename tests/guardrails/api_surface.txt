@@ -495,8 +495,9 @@ class tomojax.recon.SIRTConfig(
     ) -> None
 class tomojax.recon.SPDHGConfig(
         *,
-        iterations: 'int' = 400,
-        tv_weight: 'float' = 0.005,
+        iterations: 'int' = 600,
+        tv_weight: 'float | None' = None,
+        data_term: 'DataTerm' = 'absolute',
         regulariser: 'Regulariser' = 'tv',
         huber_delta: 'float' = 0.01,
         theta: 'float' = 1.0,

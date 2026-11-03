@@ -73,12 +73,15 @@ def _fista_constraints(cfg: FistaConfig) -> tuple[bool, float | None, float | No
 def validate_spdhg_config(cfg: SPDHGConfig) -> None:
     """Check scalar settings, including independently optional step sizes."""
     context = "spdhg_tv config"
+    if cfg.data_term not in {"absolute", "per_view_contrast"}:
+        raise ValueError(f"{context}: data_term must be absolute or per_view_contrast")
     for name in ("iterations", "log_every"):
         _count(getattr(cfg, name), name, minimum=0, context=context)
     for name in ("views_per_batch", "projector_unroll"):
         _count(getattr(cfg, name), name, minimum=1, context=context)
-    for name in ("tv_weight", "theta"):
-        _weight(getattr(cfg, name), name, context=context)
+    if cfg.tv_weight is not None:
+        _weight(cfg.tv_weight, "tv_weight", context=context)
+    _weight(cfg.theta, "theta", context=context)
     for name in ("tau", "sigma_data", "sigma_tv"):
         value = getattr(cfg, name)
         if value is not None:

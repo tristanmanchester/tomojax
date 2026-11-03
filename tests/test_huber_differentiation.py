@@ -9,24 +9,23 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-# check-public-imports: allow-private
-# check-public-imports: allow-private
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import FistaConfig, fista_tv
 
 # check-public-imports: allow-private
 from tomojax.recon._tv_ops import (
     _tv_proximal_jax,
+    div3,
+    grad3,
     gradient_norm_squared,
-    huber_tv_grad,
     huber_tv_value,
+    isotropic_tv_value,
     prox_huber_tv_conj,
 )
 from tomojax.recon.fista_tv import tv_proximal
 
 
-def _edges(shape):
+def _edges(shape, gradient_scale_xyz=(1.0, 1.0, 1.0)):
     rows = []
     for index in np.ndindex(shape):
         for axis in range(3):
@@ -34,8 +33,8 @@ def _edges(shape):
             neighbor[axis] += 1
             if neighbor[axis] < shape[axis]:
                 row = np.zeros(shape)
-                row[index] = -1
-                row[tuple(neighbor)] = 1
+                row[index] = -gradient_scale_xyz[2 - axis]
+                row[tuple(neighbor)] = gradient_scale_xyz[2 - axis]
                 rows.append(row.ravel())
     return np.asarray(rows).reshape((-1, np.prod(shape)))
 
@@ -51,7 +50,7 @@ def test_flat_huber_hessian_matches_independent_edge_matrix(shape, level):
     expected = (edges.T @ edges @ np.asarray(direction).ravel() / delta).reshape(shape)
 
     def gradient(z):
-        return huber_tv_grad(z, delta)
+        return jax.grad(lambda u: huber_tv_value(u, delta))(z)
 
     jvp = jax.jit(lambda z, v: jax.jvp(gradient, (z,), (v,))[1])(x, direction)
     vjp = jax.jit(lambda z, v: jax.vjp(gradient, z)[1](v)[0])(x, direction)
@@ -61,24 +60,20 @@ def test_flat_huber_hessian_matches_independent_edge_matrix(shape, level):
 
 
 @pytest.mark.numerical
-def test_piecewise_constant_huber_hessian_matches_value_and_finite_differences():
+def test_piecewise_constant_huber_hessian_matches_finite_differences():
     volume = np.zeros((4, 3, 2), np.float32)
     volume[2:] = 0.7
     x = jnp.asarray(volume)
     direction = jnp.asarray(np.random.default_rng(52).normal(size=x.shape), dtype=x.dtype)
     delta = 0.2
 
-    def explicit(z):
-        return huber_tv_grad(z, delta)
-
     automatic = jax.grad(lambda z: huber_tv_value(z, delta))
-    actual = jax.jvp(explicit, (x,), (direction,))[1]
-    expected = jax.jvp(automatic, (x,), (direction,))[1]
+    actual = jax.jvp(automatic, (x,), (direction,))[1]
     epsilon = 1e-3
-    finite = (explicit(x + epsilon * direction) - explicit(x - epsilon * direction)) / (2 * epsilon)
-    np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
+    finite = (automatic(x + epsilon * direction) - automatic(x - epsilon * direction)) / (
+        2 * epsilon
+    )
     np.testing.assert_allclose(actual, finite, rtol=2e-4, atol=2e-4)
-    np.testing.assert_allclose(explicit(x), automatic(x), rtol=2e-6, atol=2e-6)
 
 
 @pytest.mark.numerical
@@ -147,10 +142,13 @@ def test_huber_dual_projection_handles_independently_scaled_input_and_radius(inp
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("shape", [(1, 1, 1), (2, 1, 1), (4, 3, 1), (5, 3, 2)])
-def test_gradient_norm_squared_matches_dense_singular_value(shape):
-    edges = _edges(shape)
+@pytest.mark.parametrize("scales", [(1.0, 1.0, 1.0), (0.5, 1.2, 2.0)])
+def test_gradient_norm_squared_matches_dense_singular_value(shape, scales):
+    edges = _edges(shape, scales)
     expected = np.linalg.norm(edges, 2) ** 2 if edges.size else 0
-    np.testing.assert_allclose(gradient_norm_squared(shape), expected, rtol=1e-12)
+    np.testing.assert_allclose(
+        gradient_norm_squared(shape, gradient_scale_xyz=scales), expected, rtol=1e-12
+    )
 
 
 @pytest.mark.numerical
@@ -194,19 +192,34 @@ def test_box_constrained_tv_proximal_is_the_joint_minimizer():
 
 @pytest.mark.numerical
 @pytest.mark.skipif(jax.default_backend() != "gpu", reason="CUDA workspace")
-def test_cuda_tv_slabs_preserve_boundaries_and_input_ownership(monkeypatch):
+@pytest.mark.parametrize("scales", [(1.0, 1.0, 1.0), (0.5, 1.2, 2.0)])
+@pytest.mark.parametrize("huber_delta", [None, 0.15])
+@pytest.mark.parametrize("mask_kind", ["none", "scalar", "row", "plane", "full"])
+def test_cuda_tv_slabs_preserve_boundaries_and_input_ownership(
+    monkeypatch, scales, huber_delta, mask_kind
+):
     pytest.importorskip("cupy")
     monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
     monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
     rng = np.random.default_rng(80231)
+    options = dict(gradient_scale_xyz=scales, huber_delta=huber_delta)
     for shape in [(1, 1, 1), (1, 2, 31), (37, 3, 5), (5, 41, 3), (3, 5, 43)]:
         host = rng.normal(size=shape).astype(np.float32)
+        mask_shape = {"scalar": (), "row": shape[-1:], "plane": shape[-2:], "full": shape}.get(
+            mask_kind
+        )
+        support = (
+            None
+            if mask_shape is None
+            else rng.choice([0.0, 0.5], size=mask_shape).astype(np.float32)
+        )
+        options["support"] = support
         for bounds in [dict(nonnegative=True), dict(lower_bound=-0.2, upper_bound=0.6)]:
-            reference = jax.jit(partial(_tv_proximal_jax, iterations=3, **bounds))
+            reference = jax.jit(partial(_tv_proximal_jax, iterations=3, **options, **bounds))
             expected = reference(host, 0.071)
             for donate in [False, True]:
                 run = jax.jit(
-                    partial(tv_proximal, iterations=3, **bounds),
+                    partial(tv_proximal, iterations=3, **options, **bounds),
                     donate_argnums=(0,) if donate else (),
                 )
                 supplied = jnp.array(host, copy=True)
@@ -215,12 +228,18 @@ def test_cuda_tv_slabs_preserve_boundaries_and_input_ownership(monkeypatch):
                 if not donate:
                     np.testing.assert_array_equal(supplied, host)
     for radius in [0.0, -0.1]:
-        actual = jax.jit(partial(tv_proximal, lower_bound=-0.2, upper_bound=0.6))(host, radius)
-        np.testing.assert_array_equal(actual, np.clip(host, -0.2, 0.6))
+        actual = jax.jit(partial(tv_proximal, lower_bound=-0.2, upper_bound=0.6, support=support))(
+            host, radius
+        )
+        clipped = np.clip(host, -0.2, 0.6)
+        np.testing.assert_array_equal(
+            actual, clipped if support is None else np.where(support != 0, clipped, 0)
+        )
 
 
 @pytest.mark.numerical
-def test_tv_platform_dispatch_preserves_input_and_radius_derivatives(monkeypatch):
+@pytest.mark.parametrize("scales", [(1.0, 1.0, 1.0), (0.5, 1.2, 2.0)])
+def test_tv_platform_dispatch_preserves_input_and_radius_derivatives(monkeypatch, scales):
     monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
     monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
     rng = np.random.default_rng(472)
@@ -229,8 +248,8 @@ def test_tv_platform_dispatch_preserves_input_and_radius_derivatives(monkeypatch
     direction = jnp.asarray(rng.normal(size=x.shape), jnp.float32)
     radius, dradius = jnp.float32(0.007), jnp.float32(0.13)
     for bounds in [dict(nonnegative=True), dict(lower_bound=-0.2, upper_bound=0.6)]:
-        actual = partial(tv_proximal, iterations=3, **bounds)
-        reference = partial(_tv_proximal_jax, iterations=3, **bounds)
+        actual = partial(tv_proximal, iterations=3, gradient_scale_xyz=scales, **bounds)
+        reference = partial(_tv_proximal_jax, iterations=3, gradient_scale_xyz=scales, **bounds)
         value, tangent = jax.jit(lambda a, b, fn=actual: jax.jvp(fn, (a, b), (direction, dradius)))(
             x, radius
         )
@@ -252,66 +271,138 @@ def test_tv_platform_dispatch_preserves_input_and_radius_derivatives(monkeypatch
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("shape", [(7, 3, 2), (2, 7, 3), (2, 3, 7), (1, 7, 1)])
-def test_tiled_huber_gradient_and_derivatives_match_value_oracle(monkeypatch, shape):
-    monkeypatch.setattr("tomojax.recon._tv_ops._HUBER_TILE_BYTES", 384)
-    rng = np.random.default_rng(97)
-    x = jnp.asarray(rng.normal(size=shape), jnp.float32)
-    v = jnp.asarray(rng.normal(size=shape), jnp.float32)
-    reference = jax.grad(lambda u: huber_tv_value(u, 0.7))
-
-    def tiled(u):
-        return huber_tv_grad(u, 0.7)
-
-    np.testing.assert_allclose(jax.jit(tiled)(x), reference(x), rtol=2e-6, atol=2e-6)
-    jvp = jax.jit(lambda u, d: jax.jvp(tiled, (u,), (d,))[1])(x, v)
-    vjp = jax.jit(lambda u, d: jax.vjp(tiled, u)[1](d)[0])(x, v)
-    expected = jax.jvp(reference, (x,), (v,))[1]
-    np.testing.assert_allclose(jvp, expected, rtol=2e-6, atol=2e-6)
-    np.testing.assert_allclose(vjp, expected, rtol=2e-6, atol=2e-6)
-
-
-@pytest.mark.parametrize("tile_bytes", [48, 384, 64 << 20])
-@pytest.mark.parametrize("shape", [(7, 3, 2), (2, 7, 3), (2, 3, 7), (1, 7, 1), (5, 5, 3)])
-@pytest.mark.parametrize(
-    ("z_fast", "flat"), [(False, False), (True, False), (False, True), (True, True)]
-)
-def test_huber_gradient_adds_into_a_base_once_with_the_same_bits(
-    monkeypatch, shape, tile_bytes, z_fast, flat
-):
-    # Seven planes in slabs of two: the last slab overlaps its predecessor by one.
-    monkeypatch.setattr("tomojax.recon._tv_ops._HUBER_TILE_BYTES", tile_bytes)
-    rng = np.random.default_rng(98)
-    x, base = (jnp.asarray(rng.normal(size=shape), jnp.float32) for _ in range(2))
-    x = jnp.zeros_like(x) if flat else x
-    scale = jnp.float32(0.3)
-
-    def added(u, b, s):
-        return huber_tv_grad(u, 0.7, z_fast=z_fast, base=b, scale=s)
-
-    def legacy(u, b, s):
-        return b + s * huber_tv_grad(u, 0.7, z_fast=z_fast)
-
-    def reference(u, b, s):
-        return b + s * jax.grad(lambda v: huber_tv_value(v, 0.7, z_fast=z_fast))(u)
-
-    with jax.enable_x64(True):
-        for initial in (None, base):
-            result = jax.jit(added)(x, initial, jnp.float64(0.3))
-            assert result.dtype == x.dtype
-    args = (x, base, scale)
-    actual, expected = (jax.jit(fn)(*args) for fn in (added, legacy))
-    np.testing.assert_array_equal(
-        np.asarray(actual).view(np.uint32), np.asarray(expected).view(np.uint32)
-    )
-    directions = (base, jnp.ones_like(base) * 0.2, jnp.float32(0.13))
-    left, right = (
-        jax.jit(lambda *a, fn=fn: jax.jvp(fn, a, directions)[1])(*args) for fn in (added, reference)
-    )
-    reverse = [
-        jax.jit(lambda *a, fn=fn: jax.vjp(fn, *a)[1](base))(*args) for fn in (added, reference)
+@pytest.mark.parametrize("z_fast", [False, True])
+@pytest.mark.parametrize("shape", [(4, 3, 2), (1, 3, 1)])
+def test_scaled_gradient_layout_adjoint_and_value(shape, z_fast):
+    rng = np.random.default_rng(20261102)
+    u = rng.normal(size=shape).astype(np.float32)
+    fields = rng.normal(size=(3, *shape)).astype(np.float32)
+    scales = (0.5, 1.2, 2.0)
+    axes = (0, 1, 2) if z_fast else (2, 1, 0)
+    expected = [
+        c * np.diff(u, axis=a, append=u.take([-1], axis=a))
+        for c, a in zip(scales, axes, strict=True)
     ]
-    for a, b in [(actual, reference(*args)), (left, right), *zip(*reverse, strict=True)]:
-        assert np.isfinite(np.asarray(a)).all()
-        assert np.isfinite(np.asarray(b)).all()
-        np.testing.assert_allclose(a, b, rtol=3e-6, atol=3e-6)
+    options = dict(gradient_scale_xyz=scales, z_fast=z_fast)
+    gradients = grad3(jnp.asarray(u), **options)
+    np.testing.assert_allclose(gradients, expected, atol=1e-6)
+    np.testing.assert_allclose(
+        sum(np.vdot(a, b) for a, b in zip(gradients, fields, strict=True)),
+        -np.vdot(u, div3(*jnp.asarray(fields), **options)),
+        atol=3e-6,
+    )
+    np.testing.assert_allclose(
+        isotropic_tv_value(jnp.asarray(u), **options),
+        np.sqrt(sum(a * a for a in expected)).sum(),
+        rtol=2e-6,
+    )
+    layout = shape[::-1] if z_fast else shape
+    edges = _edges(layout, scales)
+    np.testing.assert_allclose(
+        gradient_norm_squared(shape, **options), np.linalg.norm(edges, 2) ** 2, rtol=1e-12
+    )
+
+
+@pytest.mark.numerical
+@pytest.mark.parametrize("delta", [None, 0.3])
+@pytest.mark.parametrize("lam", [0.0, 0.2])
+@pytest.mark.parametrize("masked", [False, True])
+def test_scaled_tv_proximal_matches_independent_box_minimum(monkeypatch, delta, lam, masked):
+    from scipy.optimize import minimize
+
+    x = np.asarray([-2.0, 2.0, 0.5, 1.0], np.float32).reshape(2, 1, 2)
+    scales = (0.5, 1.2, 2.0)
+    support = jnp.array([[[0, 0.5]], [[1, 0]]]) if masked else None
+    active = np.ones_like(x, dtype=bool) if support is None else np.asarray(support) != 0
+    lower = 0.2 if masked else 0
+    monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
+    monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
+
+    def objective(flat):
+        u = flat.reshape(x.shape)
+        differences = [
+            c * np.diff(u, axis=a, append=u.take([-1], axis=a)) for a, c in enumerate(scales[::-1])
+        ]
+        norm = np.sqrt(sum(d * d for d in differences))
+        penalty = (
+            norm
+            if delta is None
+            else np.where(norm <= delta, 0.5 * norm**2 / delta, norm - 0.5 * delta)
+        )
+        return 0.5 * np.sum((flat - x.ravel()) ** 2) + lam * penalty.sum()
+
+    reference = minimize(
+        objective,
+        np.where(active, np.maximum(x, lower), 0).ravel(),
+        bounds=[(lower, None) if a else (0, 0) for a in active.ravel()],
+        method="Nelder-Mead",
+        options={"xatol": 1e-9, "fatol": 1e-14, "maxiter": 20000},
+    ).x
+    actual = tv_proximal(
+        jnp.asarray(x),
+        lam,
+        iterations=1000,
+        nonnegative=True,
+        gradient_scale_xyz=scales,
+        huber_delta=delta,
+        support=support,
+        lower_bound=lower,
+    )
+    np.testing.assert_allclose(np.ravel(actual), reference, atol=2e-4)
+    np.testing.assert_array_equal(np.asarray(actual)[~active], 0)
+
+
+@pytest.mark.parametrize("delta", [0.0, 0.02, 0.7])
+@pytest.mark.parametrize("cx", [0.5, 1.8])
+def test_huber_proximal_matches_two_voxel_minimum(delta, cx):
+    x, lam = jnp.array([[[0.2, 0.5]]]), 0.07
+    # Independent scalar minimization in mean/difference coordinates.
+    difference = max(0.0, 0.3 - 2 * lam * cx)
+    if delta > 0 and cx * 0.3 <= delta + 2 * lam * cx**2:
+        difference = 0.3 / (1 + 2 * lam * cx**2 / delta)
+    expected = [[[0.35 - difference / 2, 0.35 + difference / 2]]]
+    actual = tv_proximal(x, lam, 100, huber_delta=delta, gradient_scale_xyz=(cx, 1, 1))
+    np.testing.assert_allclose(actual, expected, atol=1e-7, rtol=1e-6)
+    if delta == 0:
+        np.testing.assert_array_equal(
+            actual, tv_proximal(x, lam, 100, gradient_scale_xyz=(cx, 1, 1))
+        )
+
+
+@pytest.mark.parametrize("delta", [0.0, 0.4])
+@pytest.mark.parametrize("masked", [False, True])
+def test_huber_proximal_dispatch_preserves_threshold_derivative(monkeypatch, delta, masked):
+    monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
+    monkeypatch.delenv("TOMOJAX_CUDA_KERNELS", raising=False)
+    rng = np.random.default_rng(24)
+    x = jnp.asarray(rng.normal(size=(7, 5, 3)).astype(np.float32))
+    args = (x, jnp.float32(0.13), jnp.float32(delta))
+    directions = (jnp.ones_like(x) * 0.17, jnp.float32(0.07), jnp.float32(0.11))
+    options = dict(
+        iterations=3,
+        gradient_scale_xyz=(0.5, 1.2, 2.0),
+        nonnegative=True,
+        support=(jnp.indices(x.shape)[0] % 2 == 0) if masked else None,
+    )
+
+    def actual(a, b, d):
+        return tv_proximal(a, b, huber_delta=d, **options)
+
+    reference = partial(_tv_proximal_jax, **options)
+    value, tangent = jax.jit(lambda *a: jax.jvp(actual, a, directions))(*args)
+    expected, expected_tangent = jax.jvp(reference, args, directions)
+    np.testing.assert_allclose(value, expected, rtol=3e-6, atol=3e-7)
+    np.testing.assert_allclose(tangent, expected_tangent, rtol=3e-6, atol=3e-7)
+    gradients = jax.jit(jax.grad(lambda *a: jnp.sum(actual(*a)), (0, 1, 2)))(*args)
+    products = [np.asarray(g) * np.asarray(d) for g, d in zip(gradients, directions, strict=True)]
+    # Normalize the adjoint dot check before cancellation, not by its signed sum.
+    scale = sum(np.sum(np.abs(p)) for p in products) + np.sum(np.abs(np.asarray(tangent)))
+    error = abs(
+        sum(np.sum(p, dtype=np.float64) for p in products)
+        - np.sum(np.asarray(tangent), dtype=np.float64)
+    )
+    assert error <= 2e-6 * scale
+    eps = 1e-3
+    plus = actual(*(a + eps * d for a, d in zip(args, directions, strict=True)))
+    minus = actual(*(a - eps * d for a, d in zip(args, directions, strict=True)))
+    np.testing.assert_allclose(tangent, (plus - minus) / (2 * eps), atol=8e-5, rtol=3e-3)

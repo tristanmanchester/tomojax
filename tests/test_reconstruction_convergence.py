@@ -38,6 +38,11 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
     # These data isolate optimizer convergence. Independent analytic projection
     # and reconstruction checks live in the benchmark and FBP accuracy tests.
     data = project(truth)
+    # Preserve the weak dimensional prior while the public weight is unit-free.
+    contrast = float(jnp.sqrt(jnp.mean((data - jnp.mean(data, axis=(-2, -1), keepdims=True)) ** 2)))
+    h = (grid.vx * grid.vy * grid.vz) ** (1 / 3)
+    length = (detector.nu * detector.du * detector.nv * detector.dv) ** 0.5
+    alpha = 0.001 * length / (contrast * data.size * h**2)
     if solver == "fista":
         volume, _ = fista_tv(
             geometry,
@@ -46,7 +51,7 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
             data,
             config=FistaConfig(
                 iterations=30,
-                tv_weight=0.001,
+                tv_weight=alpha,
                 nonnegative=True,
                 power_iterations=5,
                 views_per_batch=4,
@@ -63,7 +68,7 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
             data,
             config=SPDHGConfig(
                 iterations=100,
-                tv_weight=0.001,
+                tv_weight=alpha,
                 nonnegative=True,
                 views_per_batch=4,
                 seed=18,
@@ -81,7 +86,7 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
-def test_tv_reconstruction_small_signal_scales_match_dense_solution(stream, regulariser, solver):
+def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regulariser, solver):
     shape = (1, 1, 2)
     grid = Grid(*shape[::-1], 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
@@ -116,8 +121,15 @@ def test_tv_reconstruction_small_signal_scales_match_dense_solution(stream, regu
             stream_projections=stream,
             regulariser=regulariser,
         )
-    for scale in [1.0, 1e-8, 1e-14]:
-        config.tv_weight, config.huber_delta = lam * scale, delta * scale
+    measured = data.reshape(3, 3, 4)
+    contrast = np.sqrt(np.mean((measured - measured.mean((-2, -1), keepdims=True)) ** 2))
+    h = (grid.vx * grid.vy * grid.vz) ** (1 / 3)
+    length = (detector.nu * detector.du * detector.nv * detector.dv) ** 0.5
+    # D_x = h/vx times the two-voxel difference: undo that factor as well as
+    # physical lambda/delta normalization to retain the independent dense target.
+    config.tv_weight = lam * length * grid.vx / (contrast * data.size * h**3)
+    config.huber_delta = delta * length**2 / (contrast * grid.vx)
+    for scale in [0.01, 1.0, 100.0]:
         actual, _ = (fista_tv if solver == "fista" else spdhg_tv)(
             geometry,
             grid,
