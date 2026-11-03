@@ -861,3 +861,40 @@ values. Fourteen saved fixtures, including anisotropic and tilted scans, both
 phantoms and both initialization modes, match bit for bit after this change.
 Independent numerical line quadrature checks cover batch boundaries. Fixture
 generation remains outside the timed reconstruction/recovery interval.
+
+### Independent mesh corpus
+
+`phantoms/corpus.py` separates CPU preparation/packaging from gVXR rendering.
+`prepare CONFIG.json CASE_DIR` voxelises closed material meshes on the stated
+physical grid and writes six renderer plans: contained, contained motion, exterior, known motion,
+and the exterior alone at nominal and moving poses. `pack CASE_DIR` applies
+Poisson counts at four incident photon levels and writes self-contained NPZs
+with voxel truth, true/nominal world-from-object matrices, geometry, a frozen
+held-out split, material/source hashes and noise metadata. Photon-counting
+spectra average transmission over energies and detector sub-rays before noise;
+reference attenuation truth remains defined at `reference_energy_keV`.
+
+Configurations explicitly supply `geometry` (`kind`, `grid`, `detector`,
+`angles_deg`, and tilt or cone distances), `meshes`, `interior_meshes`,
+`exterior_meshes`, `materials` (name and reference `mu_mm`),
+`reference_energy_keV`, and `seed`. Spectral configurations also supply
+`energies_keV`, `photon_fractions`, and each material's `mu_spectrum`.
+Optional `save_energy_transmission` retains per-energy pixel transmissions for
+CPU spectral recombination without repeating GPU path-length rendering.
+Geometry dictionaries follow `Grid.to_dict()` and `Detector.to_dict()`.
+Lengths are mm, volumes ZYX, projections view-v-u. The renderer supports square
+pixels and a centred, untilted cone camera; sample laminography tilt is allowed.
+Run preparation with `JAX_PLATFORMS=cpu`; run the separate renderer in the gVXR
+installation, then package on CPU. The module docstring lists the commands.
+
+`phantoms/partition_meshes_blender.py` partitions a closed mesh directory at
+an explicit physical box into closed interior/exterior STLs. Its docstring
+gives the Blender command. The partition box must equal the reconstruction
+grid's cell boundaries. Exterior-only logs are stored separately: subtracting
+pixel-averaged or polychromatic logs does not recover an exterior line integral.
+Known motion combines a fixed axis error, detector offset, smooth drift and
+jumps; pose comparisons must first match rigid gauges. These are benchmark
+builders, not a claim that arbitrary synthetic cases reproduce a real scan.
+
+For bounded native-size output batches, `corpus.py pack CASE_DIR --scenarios clean`
+packages only the selected scenario; omitting the option packages all four.
