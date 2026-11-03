@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
 
 
-_BAND = 64  # rows are finished in bands of [k _BAND, (k + 1) _BAND)
+ROW_BAND = 64  # rows are finished in bands of [k ROW_BAND, (k + 1) ROW_BAND)
 
 
 def slab_windows(
@@ -126,14 +126,14 @@ class RowReader:
         self._worker: ThreadPoolExecutor | None = None
 
     def _read(self, k: int) -> np.ndarray:
-        value = self.read(k * _BAND, min(self.shape[1], (k + 1) * _BAND))
+        value = self.read(k * ROW_BAND, min(self.shape[1], (k + 1) * ROW_BAND))
         rows = np.asarray(getattr(value, "projections", value), np.float32)
         check_rows(rows, "projections")
         return rows
 
     def band(self, first: int, stop: int) -> tuple[np.ndarray, int, int]:
         """The band holding rows ``[first, stop)``, all in one band, and their offsets in it."""
-        k = first // _BAND
+        k = first // ROW_BAND
         if self._band is None or self._band[0] != k:
             self._band = None
             worker = self._worker = self._worker or ThreadPoolExecutor(1)
@@ -144,9 +144,9 @@ class RowReader:
                 ahead = (k, worker.submit(self._read, k))
             self._band = (k, ahead[1].result())
             self._first = k if self._first is None else self._first
-            following = k + 1 if (k + 1) * _BAND < self.shape[1] else self._first
+            following = k + 1 if (k + 1) * ROW_BAND < self.shape[1] else self._first
             self._ahead = (following, worker.submit(self._read, following))
-        return self._band[1], first - k * _BAND, stop - k * _BAND
+        return self._band[1], first - k * ROW_BAND, stop - k * ROW_BAND
 
     def close(self) -> None:
         """Drop the held bands and stop the worker, after any read in progress."""
@@ -421,6 +421,7 @@ class Sweep:
         ones: bool = False,
         keep: bool = True,
         prefetch: Callable[[int], None] | None = None,
+        prepare: Callable[[tuple[Any, ...]], None] | None = None,
     ) -> None:
         """Project ``source(k)``, finish each row once, transpose and ``sink`` every slab.
 
@@ -434,8 +435,19 @@ class Sweep:
         then the volumes ``source(k)`` returned, kept on the device until then
         (with ``keep``; otherwise an empty tuple). ``prefetch(k)`` is called
         just before the slab projected ahead of ``k``, to start reading it.
+
+        With a full-detector ring and ``keep=False``, ``prepare`` receives the
+        complete projected channels in ``views`` order before any rows finish.
+        All slabs are projected first; source callbacks must not retain their
+        input volumes until the sink. The existing ring is reused, not copied.
         """
+        if prepare is not None:
+            assert not keep
+            assert self.plan.ring == self.plan.detector.nv
         ring = _Ring(self, views, channels, keep=keep)
+        if prepare is not None:
+            ring.project_through(self.plan.detector.nv, source, prefetch)
+            prepare(tuple(ring.rows))
         count = channels if transposed is None else transposed
         for k in self.plan.order:
             ring.project_through(self.plan.windows[k][1], source, prefetch)
@@ -505,7 +517,7 @@ class _Ring:
         first, stop = window
         for row, slot, length in self.spans(max(self.finished, first), stop):
             # a band at a time: a RowReader holds one band
-            bounds = range(row // _BAND * _BAND + _BAND, row + length, _BAND)
+            bounds = range(row // ROW_BAND * ROW_BAND + ROW_BAND, row + length, ROW_BAND)
             for start, end in zip((row, *bounds), (*bounds, row + length), strict=True):
                 part = self.rows[:, :, slot + start - row : slot + end - row]
                 for b0, b1, batch in self.batches:
