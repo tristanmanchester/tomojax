@@ -7,7 +7,7 @@
     "FBPHostConfig": 5,
     "FDKConfig": 4,
     "FDKHostConfig": 2,
-    "FistaConfig": 25,
+    "FistaConfig": 26,
     "FourierConfig": 2,
     "MLEMConfig": 6,
     "ProjectionMatchingConfig": 1,
@@ -38,7 +38,8 @@
     "simulate": 19
   },
   "long_files": {
-    "src/tomojax/core/cone.py": 832
+    "src/tomojax/core/cone.py": 832,
+    "src/tomojax/recon/fista_tv.py": 860
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 139,
@@ -55,12 +56,13 @@
     "src/tomojax/recon/_cgls_jax.py::_solve": 165,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 112,
     "src/tomojax/recon/_cgls_jax.py::cgls": 110,
-    "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 108,
-    "src/tomojax/recon/fista_tv.py::grad_data_term": 146,
+    "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 123,
+    "src/tomojax/recon/fista_tv.py::grad_data_term": 147,
     "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 131,
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_iterates": 121,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125,
-    "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 129
+    "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 129,
+    "src/tomojax/recon/fista_tv.py::_run_fista_scan": 110
   },
   "code_lines": {
     "(modules)": 3085,
@@ -76,7 +78,7 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14542
+    "recon": 14934
   },
   "cuda_kernels": 46,
   "cuda_switches": 35,
@@ -97,10 +99,11 @@
     "src/tomojax/recon/_cgls_host.py::C901::normal",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
-    "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
+    "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan",
+    "src/tomojax/recon/_fista_host.py::C901::apply"
   ],
   "single_use_helpers": {
-    "tiny": 95,
+    "tiny": 94,
     "forwarders": 9,
     "chained": 32
   },
@@ -125,5 +128,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 153
+  "test_private_imports": 160
 }

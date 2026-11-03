@@ -11,16 +11,21 @@ import numpy as np
 from tomojax.core.host_volume import host_volume, scratch_directory
 
 from ._cuda_tv import proximal_host
+from ._noise_probe import gaussian_probe
+from ._tv_metric import raise_tv_weight
 from ._tv_ops import gradient_norm_squared
 
 
 class HostFista:
     """Three host volumes suffice for gradient, proximal and momentum updates."""
 
-    def __init__(self, problem: Any, config: Any, *, initial=None, out=None) -> None:
+    def __init__(
+        self, problem: Any, config: Any, *, metric, noise_scale=None, initial=None, out=None
+    ) -> None:
         from ._host_arrays import automatic_host_output
 
-        self.problem, self.cfg = problem, config
+        self.problem, self.cfg, self.metric = problem, config, metric
+        self.noise_scale = noise_scale
         self.plan, self.xp = problem.plan, problem.engine.xp
         grid = self.plan.grid
         shape = (grid.nz, grid.ny, grid.nx)
@@ -29,6 +34,21 @@ class HostFista:
         arrays = [x, host_volume(shape, directory), host_volume(shape, directory)]
         self.X, self.Z, self.G = [problem.volume(array) for array in arrays]
         self.views = np.arange(problem.data.shape[0])
+        from ._view_statistics import ViewStatistics
+
+        covered = np.zeros(self.plan.detector.nv, bool)
+        for first, stop in self.plan.windows:
+            covered[first:stop] = True
+        self.statistics = (
+            ViewStatistics(problem, self.views)
+            if config.data_term == "per_view_contrast" or not covered.all()
+            else None
+        )
+        self.absolute_outside = (
+            float(self.statistics.outside_energy(0))
+            if config.data_term == "absolute" and self.statistics is not None
+            else 0.0
+        )
         self.lower = max(
             0.0 if config.nonnegative else -math.inf,
             config.lower_bound if config.lower_bound is not None else -math.inf,
@@ -44,30 +64,83 @@ class HostFista:
 
     def apply(self, source, target, *, residual=False, step=None):
         """Write a normal application or data gradient, returning the residual's energy."""
-        value = 0.0
+        value = self.absolute_outside if residual else 0.0
 
         def read(k):
             return () if source is None else (source.get(*self.plan.planes(k)),)
+
+        mean = None
+        prepare = None
+        if residual and self.cfg.data_term == "per_view_contrast":
+            statistics = self.statistics
+            assert statistics is not None
+            mean = -statistics.mean
+            if source is not None:
+                if self.plan.ring == self.plan.detector.nv:
+
+                    def prepare_rows(rows):
+                        nonlocal mean, value
+                        mean = statistics.projection_mean(rows[0]) - statistics.mean
+                        value = float(statistics.outside_energy(-mean))
+
+                    prepare = prepare_rows
+                else:
+                    mean = mean + statistics.project(read)
+            value = float(statistics.outside_energy(-mean))
 
         def finish(batch, first, stop, rows):
             nonlocal value
             if residual:
                 rows[0][...] -= self.problem.measured(batch, first, stop)
+                if mean is not None:
+                    rows[0][...] -= mean[batch.index, None, None]
                 value += self.problem.engine.norm2(rows[0])
 
         def sink(k, accumulated, _sources):
             z0, z1 = self.plan.planes(k)
             value = accumulated[0]
             if step is not None:
+                assert source is not None
                 value = source.view(z0, z1) - np.float32(step) * value
             target.put(z0, z1, value)
 
-        self.problem.sweep.run(self.views, source=read, finish=finish, sink=sink, keep=False)
+        self.problem.sweep.run(
+            self.views, source=read, finish=finish, sink=sink, keep=False, prepare=prepare
+        )
         return 0.5 * value
+
+    def noise_gradient_rms(self):
+        """Use the existing row-window transpose without another host volume."""
+        import jax
+        import jax.numpy as jnp
+
+        detector = self.plan.detector
+        draw = jax.jit(gaussian_probe, static_argnames=("detector_shape",))
+        energy = 0.0
+
+        def finish(batch, first, stop, rows):
+            # Draw and center the FULL detector before selecting a row window.
+            # DLPack shares the one-batch buffer with the native transpose.
+            probe = draw(jnp.asarray(batch.views), (detector.nv, detector.nu))
+            native = self.xp.from_dlpack(probe)
+            rows[0][...] = native[:, first:stop]
+            # Finish the borrowed-buffer copy before JAX can reclaim the draw.
+            self.xp.cuda.get_current_stream().synchronize()
+
+        def sink(_k, accumulated, _sources):
+            nonlocal energy
+            energy += self.problem.engine.norm2(accumulated[0])
+
+        self.problem.sweep.run(
+            self.views, source=lambda _: (), finish=finish, sink=sink, keep=False
+        )
+        return math.sqrt(energy / math.prod(self.shape))
 
     def initialize(self):
         """The unchanged backprojected-data power start, then the feasible initial iterate."""
         xp = self.xp
+        if self.noise_scale is not None:
+            self.metric = raise_tv_weight(self.metric, self.noise_scale * self.noise_gradient_rms())
         value = self.apply(None, self.G, residual=True)
         limit = self.cfg.lipschitz
         if limit is None:
@@ -110,6 +183,8 @@ class HostFista:
     def update(self, limit, momentum, *, gradient=False):
         """Gradient step, global finite-step TV proximal, and the resident clipped momentum."""
         cfg, xp = self.cfg, self.xp
+        metric = self.metric
+        scales = (1.0, 1.0, 1.0) if metric is None else metric.gradient_scale_xyz
         if gradient:
             for k in range(self.plan.count):
                 z0, z1 = self.plan.planes(k)
@@ -125,26 +200,28 @@ class HostFista:
         proximal_host(
             self.G,
             momentum_sink,
-            cfg.tv_weight / limit,
+            (0.0 if metric is None else float(metric.weight)) / limit,
+            gradient_scale_xyz=scales,
             iterations=cfg.tv_prox_iterations,
-            tau=1 / (gradient_norm_squared(self.shape) or 1),
+            tau=1 / (gradient_norm_squared(self.shape, gradient_scale_xyz=scales) or 1),
             lower=self.lower,
             upper=self.upper,
         )
 
     def regularizer(self):
         """Isotropic TV with each slab's outgoing z edge, counted once."""
-        if not self.cfg.tv_weight:
+        if self.metric is None:
             return 0.0
+        assert self.metric is not None
         xp, value = self.xp, 0.0
         for k in range(self.plan.count):
             z0, z1 = self.plan.planes(k)
             part = self.Z.view(z0, min(self.shape[0], z1 + 1))
             squares = xp.zeros_like(part)
-            for axis in (2, 1, 0):
+            for axis, scale in zip((2, 1, 0), self.metric.gradient_scale_xyz, strict=True):
                 slices = [slice(None)] * 3
                 slices[axis] = slice(0, -1)
-                squares[tuple(slices)] += xp.diff(part, axis=axis) ** 2
+                squares[tuple(slices)] += (scale * xp.diff(part, axis=axis)) ** 2
             value += float(xp.sum(xp.sqrt(squares[: z1 - z0]), dtype=xp.float64))
             del part, squares
         return value
@@ -159,7 +236,9 @@ class HostFista:
             losses, t, streak, done = [], np.float32(1), 0, False
             zero = self.initial is None and self.lower <= 0 <= self.upper
             for step in range(cfg.iterations):
-                loss = cfg.tv_weight * self.regularizer()
+                loss = (
+                    0.0 if self.metric is None else float(self.metric.weight) * self.regularizer()
+                )
                 gradient = step == 0 and zero
                 loss += (
                     at_zero
@@ -194,7 +273,7 @@ class HostFista:
 
 def solve_on_host(
     geometry, grid, detector, projections, runtime, *, out=None
-) -> tuple[np.ndarray, dict[str, Any]] | None:
+) -> tuple[np.ndarray, dict[str, Any], Any] | None:
     """Select host state only when requested, or when the resident state cannot fit."""
     from tomojax.backends import device_free_memory_bytes
     from tomojax.core.cone import ConeModel
@@ -232,6 +311,13 @@ def solve_on_host(
         else parallel_problem(geometry, grid, detector, data, **options)
     )
     initial = None if runtime.x0 is None else np.asarray(runtime.x0)
-    solver = HostFista(problem, cfg, initial=initial, out=out)
+    solver = HostFista(
+        problem,
+        cfg,
+        metric=runtime.metric,
+        noise_scale=runtime.noise_scale,
+        initial=initial,
+        out=out,
+    )
     volume, info = solver.run()
-    return problem.result(volume), info
+    return problem.result(volume), info, solver.metric

@@ -130,13 +130,15 @@ def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regularise
     config.tv_weight = lam * length * grid.vx / (contrast * data.size * h**3)
     config.huber_delta = delta * length**2 / (contrast * grid.vx)
     for scale in [0.01, 1.0, 100.0]:
-        actual, _ = (fista_tv if solver == "fista" else spdhg_tv)(
+        actual, info = (fista_tv if solver == "fista" else spdhg_tv)(
             geometry,
             grid,
             detector,
             (data * scale).reshape((3, 3, 4)).astype(np.float32),
             config=config,
         )
+        if solver == "fista":
+            assert info["lipschitz"] == pytest.approx(config.lipschitz)
         # Check the reconstruction, not just a smaller objective or residual.
         np.testing.assert_allclose(
             np.asarray(actual).ravel() / scale, expected, rtol=3e-5, atol=3e-6

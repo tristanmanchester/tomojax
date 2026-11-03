@@ -58,7 +58,17 @@ forces this route and fills the supplied float32 array or memmap.
 `info["host_slabs"]` identifies this storage route. The exact TV halo
 uses `tv_prox_iterations` planes on each side, so very large proximal iteration
 counts can still exhaust device workspace. Huber-TV, masks, ordered initialization
-and multi-device FISTA still require resident volume state.
+and multi-device FISTA still require resident volume state. With
+`data_term="per_view_contrast"`, host FISTA reduces one mean per complete detector view
+before forming the gradient. If the row ring holds the entire detector, this
+reuses the projected ring; otherwise it needs a separate forward sweep. Means
+include all measured pixels, including rows outside the volume footprint;
+centering individual slab windows would solve a different problem. Losses also
+include measured energy outside that footprint for either data term. Automatic TV strength samples
+at most 65536 detector Haar cells and transposes one Gaussian probe in batches;
+it does not allocate another full measurement stack. Host slabs center complete
+probe views before cropping their row windows and reduce the gradient norm
+without allocating another host volume.
 
 Resident CUDA solvers keep their volumes in a private z-contiguous
 order and convert once at entry and exit, which needs one volume-sized copy

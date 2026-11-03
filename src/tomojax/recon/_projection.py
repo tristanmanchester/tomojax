@@ -19,8 +19,10 @@ from tomojax.core.cone import ConeModel, cone_model, use_cuda_cone
 from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.operator_norm import unit
+from tomojax.recon._data_term import project_residual
 from tomojax.recon._projection_batches import ViewBatches
 from tomojax.recon._volume_storage import Model, is_joseph
+from tomojax.recon.types import DataTerm
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -370,7 +372,12 @@ def _measured(ops: ViewBatches, data: jax.Array, start: jax.Array, *, stream: bo
 
 
 def _residual_views(
-    ops: ViewBatches, volume: jax.Array | None, data: jax.Array, *, stream: bool
+    ops: ViewBatches,
+    volume: jax.Array | None,
+    data: jax.Array,
+    *,
+    stream: bool,
+    data_term: DataTerm,
 ) -> tuple[jax.Array, jax.Array]:
     """``0.5 ||A x - y||^2`` and ``A^T (A x - y)``, batch by batch; ``x = 0`` for None."""
     project = None if volume is None else ops.projector(volume)
@@ -380,7 +387,7 @@ def _residual_views(
         start, batch, valid = ops.select(chunk)
         measured = _measured(ops, data, start, stream=stream)
         projected = 0.0 if project is None else project(start, batch)
-        residual = projected - measured
+        residual = project_residual(projected - measured, data_term)
         residual = jnp.where(valid[:, None, None], residual, 0.0)
         value = value + 0.5 * jnp.vdot(residual, residual).real
         return value, ops.backproject(residual, start, batch, gradient)
@@ -397,6 +404,7 @@ def least_squares_operators(
     model: Model = "ray",
     joseph_interpolation: str = "linear",
     *,
+    data_term: DataTerm = "absolute",
     stream: bool = False,
     split: ViewSplit | None = None,
 ) -> Callable[[jax.Array | None, jax.Array], tuple[jax.Array, jax.Array]]:
@@ -424,7 +432,9 @@ def least_squares_operators(
 
     def at(share: ViewBatches, *arrays: jax.Array) -> tuple[jax.Array, jax.Array]:
         *volume, data = arrays
-        return _residual_views(share, volume[0] if volume else None, data, stream=stream)
+        return _residual_views(
+            share, volume[0] if volume else None, data, stream=stream, data_term=data_term
+        )
 
     def value_and_gradient(
         volume: jax.Array | None, data: jax.Array

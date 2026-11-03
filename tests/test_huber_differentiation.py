@@ -175,13 +175,18 @@ def test_box_constrained_tv_proximal_is_the_joint_minimizer():
     np.testing.assert_allclose(np.ravel(joint), reference, atol=2e-4)
     # One FISTA step from zero with A=I and L=1 applies the same proximal map to the data.
     grid, detector = Grid(2, 1, 2, 1.0, 1.0, 1.0), Detector(2, 2, 1.0, 1.0)
+    # Physical lambda = alpha * std(data) * W / length = alpha * std(x) * 2.
     stepped, _ = fista_tv(
         ParallelGeometry(grid, detector, [0.0]),
         grid,
         detector,
         x[:, 0, :][None].copy(),
         config=FistaConfig(
-            iterations=1, lipschitz=1, tv_weight=lam, tv_prox_iterations=500, nonnegative=True
+            iterations=1,
+            lipschitz=1,
+            tv_weight=lam / (2 * np.std(x)),
+            tv_prox_iterations=500,
+            nonnegative=True,
         ),
     )
     np.testing.assert_allclose(stepped, joint, atol=2e-6)

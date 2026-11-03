@@ -290,13 +290,15 @@ def reconstruct(
     ``cgls``
         Least squares by conjugate gradients, ``iterations`` (default 50).
     ``fista``
-        Least squares with total-variation weight ``tv_weight`` (default
-        0.005), ``iterations`` (default 50), optionally ``nonnegative``.
+        Least squares with physical total variation, ``iterations`` (default
+        50), optionally ``nonnegative``. Default ``tv_weight=None`` raises an
+        empirical minimum of 5e-5 using a projection-only noise estimate. An
+        explicit positive weight bypasses estimation; zero disables TV.
     ``sirt``
         SIRT, OS-SART, bounds and support via :class:`~tomojax.recon.SIRTConfig`.
     ``spdhg``
         The same objective as ``fista`` by stochastic primal-dual updates:
-        ``iterations`` (default 400) each update one block of views, in an
+        ``iterations`` (default 600) each update one block of views, in an
         order drawn with ``seed``.
 
     ``mlem`` is linear Poisson MLEM/OSEM, not transmission counts (``MLEMConfig``).

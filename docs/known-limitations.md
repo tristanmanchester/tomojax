@@ -4,6 +4,20 @@ The shipped package covers the workflows listed in
 [`support-matrix.md`](support-matrix.md), including 5-DOF pose alignment,
 detector-centre/COR alignment, and mixed setup and pose correction.
 
+## Reconstruction detail and regularization
+
+At full resolution on high-count phase-contrast data, FBP can retain finer
+edges and fringes than FISTA-TV, which can give a cleaner background with
+broader edges.
+More FISTA iterations do not necessarily restore those fringes. Compare both
+methods at the same display scale when fine boundaries matter; a cleaner image
+or lower projection residual does not establish better spatial resolution.
+
+The automatic TV minimum is normalized in physical coordinates, so changing
+voxel pitch does not require an additional power-of-pitch weight correction.
+This normalization does not guarantee a fixed edge width: the object, forward
+model and discrete TV penalty also affect smoothing.
+
 ## Alignment limitations
 
 Alignment is experimental and needs scan-specific review. What it cannot tell

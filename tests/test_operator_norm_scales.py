@@ -136,33 +136,3 @@ def test_spdhg_zero_combined_operator_has_defined_auto_steps_and_retains_start(t
         assert np.isfinite(info[name]) and info[name] > 0
     assert np.isfinite(info["sigma_tv"]) and info["sigma_tv"] >= 0
 
-
-@pytest.mark.numerical
-@pytest.mark.parametrize("voxels", [1, 2])
-def test_huber_fista_step_uses_exact_finite_grid_gradient_norm(voxels):
-    grid, detector = Grid(voxels, 1, 1, 1.0, 1.0, 1.0), Detector(voxels, 1, 1.0, 1.0)
-    initial = np.asarray([0.2, 0.8][:voxels], np.float32)
-    data = np.asarray([0.5, 1.5][:voxels], np.float32)
-    # A=I, and every edge lies in Huber's quadratic basin: D.T D has norm 2 for
-    # two voxels and 0 for one, so the Lipschitz constant is 1 + 0.2 * norm / 2.
-    lipschitz = 1 + 0.1 * (2 if voxels == 2 else 0)
-    gradient = initial - data
-    if voxels == 2:
-        gradient = gradient + 0.1 * np.asarray([initial[0] - initial[1], initial[1] - initial[0]])
-    actual, info = fista_tv(
-        ParallelGeometry(grid, detector, [0.0]),
-        grid,
-        detector,
-        data.reshape(1, 1, voxels),
-        init_x=jnp.asarray(initial.reshape(1, 1, voxels)),
-        config=FistaConfig(
-            iterations=1,
-            tv_weight=0.2,
-            regulariser="huber_tv",
-            huber_delta=2,
-            projector_model="joseph",
-            backend="jax",
-        ),
-    )
-    np.testing.assert_allclose(info["lipschitz"], lipschitz, rtol=3e-6)
-    np.testing.assert_allclose(actual.ravel(), initial - gradient / lipschitz, rtol=3e-6)

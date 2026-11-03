@@ -119,7 +119,7 @@ def test_volume_larger_than_data_preserves_owned_start_and_final_state(early):
     runtime = module._prepare_fista_runtime(
         geometry, grid, detector, data, init_x=initial, config=config, det_grid=None
     )
-    expected, limit = module._run_fista_scan(grid, detector, data, runtime)
+    expected, limit, _ = module._run_fista_scan(grid, detector, data, runtime)
     callbacks = []
     actual, info = fista_tv(
         geometry,
@@ -163,7 +163,7 @@ def test_owned_zero_start_preserves_norm_first_step_and_stopping(steps, early):
     )
     assert module.use_owned_fista(grid, data, runtime)
     assert not module.use_owned_fista(grid, data, replace(runtime, x0=jnp.zeros((8, 16, 16))))
-    expected, limit = module._run_fista_scan(grid, detector, data, runtime)
+    expected, limit, _ = module._run_fista_scan(grid, detector, data, runtime)
     actual, info = fista_tv(geometry, grid, detector, data, config=config)
     np.testing.assert_allclose(actual, expected.x, rtol=3e-5, atol=2e-7)
     np.testing.assert_allclose(info["loss"], expected.loss, rtol=3e-6)
