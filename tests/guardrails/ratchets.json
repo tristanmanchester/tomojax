@@ -1,4 +1,43 @@
 {
+  "cli_flags": {
+    "align": 16,
+    "export": 6,
+    "import": 12,
+    "inspect": 4,
+    "preprocess": 20,
+    "recon": 18,
+    "simulate": 19
+  },
+  "code_lines": {
+    "(modules)": 3047,
+    "_data": 2050,
+    "alignment": 15077,
+    "backends": 617,
+    "cli": 2571,
+    "core": 13414,
+    "corrections": 2226,
+    "datasets": 1125,
+    "forward": 824,
+    "geometry": 1101,
+    "io": 3637,
+    "motion": 143,
+    "nuisance": 232,
+    "recon": 15173
+  },
+  "complex_functions": [
+    "src/tomojax/alignment/_model/state.py::C901::alignment_state_from_checkpoint",
+    "src/tomojax/alignment/_pose/_coupled_program.py::C901::_build_program",
+    "src/tomojax/alignment/_pose/_coupled_program.py::PLR0915::_build_program",
+    "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0911::_rigid_detector_grid_transform",
+    "src/tomojax/core/_logging.py::PLR0911::format_duration",
+    "src/tomojax/datasets/_impl/artefacts.py::C901::apply_simulation_artefacts",
+    "src/tomojax/datasets/_impl/artefacts.py::PLR0915::apply_simulation_artefacts",
+    "src/tomojax/recon/_cgls_host.py::C901::normal",
+    "src/tomojax/recon/_fista_host.py::C901::apply",
+    "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
+    "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
+    "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
+  ],
   "config_fields": {
     "AlignConfig": 36,
     "CGLSConfig": 12,
@@ -15,31 +54,27 @@
     "SPDHGConfig": 21,
     "SimConfig": 31
   },
+  "cuda_kernels": 46,
+  "cuda_switches": 35,
+  "environment_reads": 30,
   "exported_names": {
     "tomojax": 24,
-    "tomojax.geometry": 18,
-    "tomojax.evaluation": 2,
-    "tomojax.recon": 27,
-    "tomojax.io": 7,
     "tomojax.alignment": 6,
+    "tomojax.alignment.api": 33,
     "tomojax.datasets": 15,
+    "tomojax.evaluation": 2,
+    "tomojax.geometry": 18,
     "tomojax.geometry.api": 12,
-    "tomojax.recon.api": 7,
+    "tomojax.io": 7,
     "tomojax.io.api": 21,
-    "tomojax.alignment.api": 33
+    "tomojax.recon": 27,
+    "tomojax.recon.api": 7
   },
-  "cli_flags": {
-    "inspect": 4,
-    "import": 12,
-    "preprocess": 20,
-    "recon": 18,
-    "align": 16,
-    "export": 6,
-    "simulate": 19
-  },
+  "first_device_probes": 0,
+  "jaxlib_private_imports": 0,
   "long_files": {
     "src/tomojax/core/cone.py": 832,
-    "src/tomojax/recon/fista_tv.py": 860
+    "src/tomojax/recon/fista_tv.py": 868
   },
   "long_functions": {
     "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 139,
@@ -57,56 +92,27 @@
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 120,
     "src/tomojax/recon/_cgls_jax.py::cgls": 113,
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 123,
+    "src/tomojax/recon/fista_tv.py::_run_fista_scan": 118,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 147,
     "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 131,
     "src/tomojax/recon/fista_tv_core.py::fista_tv_core_iterates": 121,
-    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125,
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 129,
-    "src/tomojax/recon/fista_tv.py::_run_fista_scan": 106
+    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
-  "code_lines": {
-    "(modules)": 3047,
-    "_data": 2050,
-    "alignment": 15077,
-    "backends": 617,
-    "cli": 2571,
-    "core": 13414,
-    "corrections": 2226,
-    "datasets": 1125,
-    "forward": 824,
-    "geometry": 1101,
-    "io": 3637,
-    "motion": 143,
-    "nuisance": 232,
-    "recon": 15175
+  "params5_mentions": 0,
+  "positional_options": [],
+  "single_use_helpers": {
+    "chained": 32,
+    "forwarders": 9,
+    "tiny": 94
   },
-  "cuda_kernels": 46,
-  "cuda_switches": 35,
-  "environment_reads": 30,
+  "string_normalisers": 0,
   "suppressions": {
     "noqa": 5,
-    "type: ignore": 25,
-    "pyright: ignore": 12
+    "pyright: ignore": 12,
+    "type: ignore": 25
   },
-  "complex_functions": [
-    "src/tomojax/alignment/_model/state.py::C901::alignment_state_from_checkpoint",
-    "src/tomojax/alignment/_pose/_coupled_program.py::C901::_build_program",
-    "src/tomojax/alignment/_pose/_coupled_program.py::PLR0915::_build_program",
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0911::_rigid_detector_grid_transform",
-    "src/tomojax/core/_logging.py::PLR0911::format_duration",
-    "src/tomojax/datasets/_impl/artefacts.py::C901::apply_simulation_artefacts",
-    "src/tomojax/datasets/_impl/artefacts.py::PLR0915::apply_simulation_artefacts",
-    "src/tomojax/recon/_cgls_host.py::C901::normal",
-    "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
-    "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
-    "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan",
-    "src/tomojax/recon/_fista_host.py::C901::apply"
-  ],
-  "single_use_helpers": {
-    "tiny": 94,
-    "forwarders": 9,
-    "chained": 32
-  },
+  "test_private_imports": 165,
   "type_errors": {
     "reportArgumentType": 165,
     "reportAssignmentType": 1,
@@ -122,11 +128,5 @@
     "reportRedeclaration": 1,
     "reportReturnType": 16,
     "reportTypedDictNotRequiredAccess": 5
-  },
-  "positional_options": [],
-  "params5_mentions": 0,
-  "string_normalisers": 0,
-  "first_device_probes": 0,
-  "jaxlib_private_imports": 0,
-  "test_private_imports": 165
+  }
 }

@@ -135,4 +135,3 @@ def test_spdhg_zero_combined_operator_has_defined_auto_steps_and_retains_start(t
     for name in ["tau", "sigma_data"]:
         assert np.isfinite(info[name]) and info[name] > 0
     assert np.isfinite(info["sigma_tv"]) and info["sigma_tv"] >= 0
-

@@ -23,7 +23,6 @@ from tomojax.recon._cgls_stopping import cancellation_magnitude
 from tomojax.recon._data_term import project_residual
 from tomojax.recon._projection_batches import ViewBatches
 from tomojax.recon._volume_storage import Model, is_joseph
-from tomojax.recon.types import DataTerm
 
 if TYPE_CHECKING:
     from collections.abc import Callable
