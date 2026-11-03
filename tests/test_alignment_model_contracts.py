@@ -42,6 +42,22 @@ def test_joint_stages_reject_unsupported_optimizers(optimizer: str) -> None:
         schedule.validate()
 
 
+def test_unimplemented_all_data_bilevel_is_not_an_alignment_objective() -> None:
+    schedule = AlignmentSchedule(
+        name="unsupported",
+        stages=(
+            AlignmentStage(
+                name="unsupported",
+                active_dofs=("det_u_px",),
+                objective_kind="all_data_bilevel",
+                optimizer="validation_lm",  # type: ignore[arg-type]
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="Unknown alignment objective"):
+        schedule.validate()
+
+
 def test_axis_unit_lab_matches_projection_axis_unit_with_tilt() -> None:
     setup = SetupGeometryState.from_degrees(tilt_deg=5.0)
 

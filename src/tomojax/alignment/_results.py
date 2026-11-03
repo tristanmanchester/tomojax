@@ -384,13 +384,6 @@ def _record_stat_conversion_error(
         errors.append({"key": key, "error": f"{type(exc).__name__}: {exc}"})
 
 
-def _set_float_stat(stat: OuterStat, key: str, value: object) -> None:
-    try:
-        stat[key] = float(value)  # type: ignore[typeddict-unknown-key]
-    except (TypeError, ValueError, OverflowError) as exc:
-        _record_stat_conversion_error(stat, key, exc)
-
-
 def record_reconstruction_info(
     stat: OuterStat,
     *,

@@ -7,9 +7,6 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.alignment._geometry.geometry_blocks import normalize_geometry_dofs
-
-# check-public-imports: allow-private
 from tomojax.alignment._model.diagnostics import GaugePolicyError
 
 # check-public-imports: allow-private
@@ -32,16 +29,11 @@ def test_setup_dofs_use_canonical_axis_names() -> None:
         "axis_rot_x_deg",
         "axis_rot_y_deg",
     )
-    assert normalize_geometry_dofs(("det_u_px", "axis_rot_x_deg")) == (
-        "det_u_px",
-        "axis_rot_x_deg",
-    )
 
 
 def test_tilt_deg_is_not_a_supported_dof() -> None:
     for call in (
         lambda: normalize_alignment_dofs("tilt_deg"),
-        lambda: normalize_geometry_dofs(("tilt_deg",)),
         lambda: normalize_bounds("tilt_deg=-1:1"),
         lambda: dof_spec("tilt_deg"),
     ):

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+SPDHG uses the direct weighted quadratic dual proximal and ordinary autodiff.
+The exponent-balanced arithmetic for near-overflow/underflow inputs is removed;
+zero-weight observations remain masked. Use sensible physical units.
+
+Alignment schedules no longer advertise the unimplemented `all_data_bilevel`
+objective; setup refinement uses held-out `bilevel_cv`. Removed the unused
+legacy geometry-calibration state; runtime setup state and checkpoint exports
+are unchanged.
+
 Alignment no longer accepts `tv_weight`, `regulariser` or `huber_delta`.
 Its volume updates are unregularised, retaining positivity and increment damping.
 Apply TV or Huber-TV in the final `tj.reconstruct` call instead; reconstruction

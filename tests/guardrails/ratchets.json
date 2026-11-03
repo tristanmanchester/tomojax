@@ -58,13 +58,13 @@
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 108,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 146,
     "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 131,
-    "src/tomojax/recon/fista_tv_core.py::fista_tv_core_iterates": 132,
+    "src/tomojax/recon/fista_tv_core.py::fista_tv_core_iterates": 121,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 106
   },
   "code_lines": {
     "(modules)": 3085,
     "_data": 2050,
-    "alignment": 15245,
+    "alignment": 15077,
     "backends": 617,
     "cli": 2571,
     "core": 13414,
@@ -75,14 +75,14 @@
     "io": 3637,
     "motion": 143,
     "nuisance": 232,
-    "recon": 14418
+    "recon": 14257
   },
   "cuda_kernels": 46,
   "cuda_switches": 31,
   "environment_reads": 30,
   "suppressions": {
     "noqa": 5,
-    "type: ignore": 26,
+    "type: ignore": 25,
     "pyright: ignore": 12
   },
   "complex_functions": [
@@ -99,14 +99,14 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "single_use_helpers": {
-    "tiny": 98,
+    "tiny": 96,
     "forwarders": 9,
     "chained": 32
   },
   "type_errors": {
-    "reportArgumentType": 169,
+    "reportArgumentType": 166,
     "reportAssignmentType": 1,
-    "reportAttributeAccessIssue": 64,
+    "reportAttributeAccessIssue": 58,
     "reportCallIssue": 9,
     "reportGeneralTypeIssues": 5,
     "reportIndexIssue": 6,
@@ -116,7 +116,7 @@
     "reportOptionalSubscript": 1,
     "reportPrivateUsage": 65,
     "reportRedeclaration": 1,
-    "reportReturnType": 17,
+    "reportReturnType": 16,
     "reportTypedDictNotRequiredAccess": 5
   },
   "positional_options": [],
@@ -124,5 +124,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 155
+  "test_private_imports": 154
 }

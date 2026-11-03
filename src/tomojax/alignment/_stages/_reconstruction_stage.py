@@ -444,7 +444,6 @@ def _fista_core_config(
     cfg = step.cfg
     return FistaCoreConfig(
         iterations=scaled_reconstruction_iterations(cfg.iterations, quality_policy),
-        tv_weight=0.0,
         regulariser="huber_tv",
         lipschitz=1.0,
         nonnegative=bool(cfg.nonnegative),

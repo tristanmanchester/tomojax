@@ -45,7 +45,6 @@ from tomojax.recon._projection import (
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
-from ._data_prox import weighted_l2_conjugate
 from ._host_arrays import validate_host_views
 from ._solver_validation import validate_spdhg_config, validate_spdhg_weights
 from ._spdhg_steps import SPDHGStepSizes, resolve_spdhg_step_sizes
@@ -295,7 +294,7 @@ def _prox_fstar_l2(
     sigma = jnp.asarray(sigma, dtype=u.dtype)
     w = jnp.ones_like(u) if w is None else jnp.asarray(w, dtype=u.dtype)
     y_meas = jnp.where(w > 0, y_meas, 0.0)
-    return weighted_l2_conjugate(u, sigma, y_meas, w).astype(u.dtype)
+    return jnp.where(w > 0, (u - sigma * y_meas) * (w / (sigma + w)), 0.0)
 
 
 def _batched_projector(
