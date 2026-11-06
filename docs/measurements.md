@@ -1264,6 +1264,40 @@ data were reconstructed with the recovered poses (2026-10-05, commit
 constrained FISTA reaches 0.12 after 100 iterations and 0.091 after 300
 (109 s), against 0.059 for the volume of the full-resolution alignment.
 
+### Automatic translation alignment
+
+`tj.align(scan)` on unposed parallel and laminography scans fits per-view
+detector translations with the joint image/translation fit described in
+[real laminography](real-laminography.md). Measured on 2026-11-06 on `279bd686`
+with that change (branch `curvature-alignment`), one process per scan, the
+default allocator; GPU memory is JAX's peak in use, not the sampled process peak.
+
+| Scan | Pose error, new / previous | FISTA-TV image, new / previous / true poses | Time cold / warm, new (previous) | GPU, new (previous) |
+|---|---:|---:|---:|---:|
+| Watch laminography −35°, 384³, 720 views, gVXR, 1e4 photons; xyz drift and five slips | 0.010 / 0.506 px | 0.4934 / 0.4990 / 0.4934 | 51 / 46 s (41 s) | 1.35 (0.82) GiB |
+| Watch laminography −35°, 384³, 720 views; drift, jumps and 0.37° RMS rotations | 0.622 / 0.638 px | 0.4975 / 0.4980 / 0.4959 | 50 / 47 s (45.5 s) | 1.43 (0.82) GiB |
+| K11 54013, 1441 views of 640 × 540, 640 × 640 × 560 at 2.16 µm | no truth | | 156 / 154 s (171 s) | 4.44 GiB |
+
+Pose error is the RMS detector-pixel error of 27 landmarks over the central
+±30% of the grid after one common rigid gauge; images are default FISTA-TV
+relative errors against the voxelised truth. The second scan's best possible
+translation-only result (nominal rotations, per-view shifts matching the true
+landmarks) is 0.6219 px, so both methods stop at the rotation they do not model.
+On K11 the fitted trajectory predicts held-out views better than the previous
+one in every quarter of the scan (FBP from half the views, mean absolute error
+of the other half after a per-view offset: 0.05757 against 0.05808), and about
+20 views keep 0.5–1.2 px one-view excursions; see
+[known limitations](known-limitations.md).
+
+On a 74-case matrix (rock and watch phantoms; parallel 180°/360° and 15°/35°
+laminography; 1e3 to 1e8 photons; clean, drift, jumps, jitter, wobble and
+detector faults) every case is within +max(0.01 px, 5%) pose and +0.0005 image
+error of the reference implementation the method was developed and qualified
+with; the largest pose increase is +0.009 px on a low-dose jittered watch scan.
+Against the previous route, that reference improved pose on every moving case
+among the 51 it was not developed on, with image regressions of at most +0.0002
+there; two large-drift development cases regressed by +0.0009 and +0.0012.
+
 ### Detector centre
 
 The projection-only estimator uses a one-pixel derivative bandwidth and a

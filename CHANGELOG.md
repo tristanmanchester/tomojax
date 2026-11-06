@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+Automatic parallel and laminography alignment uses a new joint fit of the image
+and per-view detector translations. Its motion prior leaves a cubic spline with
+knots every ten views free and penalises view-to-view jumps of the remainder
+with a Huber prior, so slips are tracked instead of being smoothed over; the
+previous route fitted twelve spline knots in all. The data term is robust
+(quadratic core, logarithmic tail), the image prior is anisotropic physical
+Huber TV, poses are eliminated exactly over all views, and a final fixed-image
+stage refines translations on edge-filtered residuals. The working scale is
+bounded as before (16 M voxels, 320 detector pixels) but keeps every cell face,
+so unequal pitches are allowed; an explicit `grid=` is still used as given. On
+an independently rendered watch laminography scan with drift and five slips the
+pose error falls from 0.506 to 0.010 detector pixels and the image matches the
+true-pose image; see [measurements](docs/measurements.md). Rotations still need
+an explicit pose mode. `plane_weighted_diagonal` in `tomojax.core.joseph` adds
+the Jacobi diagonal of the linear plane projector (CPU scatter, CUDA gather).
+
 SPDHG uses the direct weighted quadratic dual proximal and ordinary autodiff.
 The exponent-balanced arithmetic for near-overflow/underflow inputs is removed;
 zero-weight observations remain masked. Use sensible physical units.

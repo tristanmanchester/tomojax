@@ -178,13 +178,22 @@ tomojax align scan.nxs -o aligned.nxs
 
 Automatic unposed laminography requires declared geometry. Missing axis metadata
 requires an explicit setup mode or caller-supplied geometry; no axis or support
-is guessed. The workflow fits a cubic spline directly in the joint image/pose
-solve, in detector dx/dz only. It uses a bounded coarse image (at most 16 million
-voxels), square detector binning toward 320 pixels across (without eliminating
-a thin detector axis), and up to eight outer iterations.
+is guessed. The workflow fits per-view detector translations (dx, dz) jointly
+with the image: a robust data term (quadratic out to 2.5 noise SDs or half the
+contrast, logarithmic beyond), anisotropic physical Huber TV on the image, and a
+motion prior that leaves a cubic spline with knots every ten views free and
+charges view-to-view jumps of the remainder under a Huber penalty, so sudden
+slips are followed rather than smoothed over. Poses are eliminated exactly in a
+global solve over all views. It uses a bounded image (at most 16 million
+voxels, keeping every face of the volume's cells), square detector binning
+toward 320 pixels across (without eliminating a thin detector axis), and two
+levels at twice and then once that scale. A short final stage refines the
+translations against the fixed image on edge-filtered residuals, which a smooth
+photometric change in one view cannot move much.
 The physical support is preserved, including explicitly placed volume faces.
 The returned scan retains the original detector samples and fitted poses; the
-alignment image remains coarse. There is no forced native-grid refinement.
+alignment image remains at the working scale. There is no forced native-grid
+refinement.
 
 Pass an explicit `grid=` to `tj.align` or `tj.reconstruct` to fix the physical
 region and output sampling. Explicit grids are not coarsened automatically, so

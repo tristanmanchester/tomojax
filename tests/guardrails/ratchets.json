@@ -9,12 +9,12 @@
     "simulate": 19
   },
   "code_lines": {
-    "(modules)": 3047,
+    "(modules)": 3014,
     "_data": 2050,
-    "alignment": 15077,
+    "alignment": 16186,
     "backends": 617,
     "cli": 2571,
-    "core": 13414,
+    "core": 13582,
     "corrections": 2226,
     "datasets": 1125,
     "forward": 824,
@@ -54,7 +54,7 @@
     "SPDHGConfig": 21,
     "SimConfig": 31
   },
-  "cuda_kernels": 46,
+  "cuda_kernels": 47,
   "cuda_switches": 35,
   "environment_reads": 30,
   "exported_names": {
@@ -112,7 +112,7 @@
     "pyright: ignore": 12,
     "type: ignore": 25
   },
-  "test_private_imports": 165,
+  "test_private_imports": 167,
   "type_errors": {
     "reportArgumentType": 165,
     "reportAssignmentType": 1,

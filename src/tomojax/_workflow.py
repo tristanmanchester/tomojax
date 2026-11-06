@@ -436,7 +436,7 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
             )
         from tomojax._smooth_alignment import reconstruct_with_motion
 
-        return reconstruct_with_motion(scan, align=align, reconstruct=reconstruct, grid=grid)
+        return reconstruct_with_motion(scan, reconstruct=reconstruct, grid=grid)
     reasons = []
     method: Method = "fbp"
     if isinstance(base, ConeSegments):
@@ -973,10 +973,7 @@ def _align_automatically(
     if describe(scan.geometry)[0] not in {"parallel", "lamino"}:
         return align(scan, mode="pose", devices=devices)
     result = reconstruct_with_motion(
-        scan,
-        align=partial(align, devices=devices),
-        reconstruct=partial(reconstruct, devices=devices),
-        grid=grid,
+        scan, reconstruct=partial(reconstruct, devices=devices), grid=grid
     )
     poses = result.scan.poses
     assert poses is not None

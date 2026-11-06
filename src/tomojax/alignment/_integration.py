@@ -13,12 +13,14 @@ from tomojax.alignment._objectives.loss_specs import (
     parse_loss_schedule,
     parse_loss_spec,
 )
+from tomojax.alignment._translations import fit_translations
 from tomojax.alignment.io.resume import AlignmentRun, alignment_checkpointing
 
 __all__ = [
     "AlignmentRun",
     "alignment_checkpointing",
     "cone_setup",
+    "fit_translations",
     "loss_spec_name",
     "parse_loss_schedule",
     "parse_loss_spec",

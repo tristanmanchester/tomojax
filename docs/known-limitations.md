@@ -68,6 +68,15 @@ listed with how to check a result in the
   interpolation branches. A central finite difference across a boundary can
   disagree with that derivative, and finite gradients alone do not prove
   reliable pose recovery.
+- Automatic alignment fits translations only; per-view rotations are left as an
+  error floor (0.62 px on a 384³ scan with 0.37° RMS rotation). Use an explicit
+  pose mode to fit them.
+- A single crystal that diffracts at particular angles (the ruby sphere of K11
+  scan 54013) darkens in patches at a few views. No pose explains those views,
+  and automatic alignment leaves 0.5–1.2 px one-view excursions at about 20 of
+  1441 views; held-out projections are predicted better from the neighbours'
+  poses there. FBP of such data shows faint streaks along those views whatever
+  the poses.
 - Automatic parallel alignment uses a bounded coarse image while preserving the
   declared physical support and native projection data. Explicit `grid=` overrides
   this sampling policy and can exceed device memory. Cropping the physical region

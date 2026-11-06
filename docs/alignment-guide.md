@@ -48,9 +48,10 @@ command, `--no-poses` starts from the nominal geometry instead.
 settings, and `--levels 4 2 1` sets the coarse-to-fine binning factors.
 `--dry-run` prints the resolved plan for an explicit mode as JSON without
 aligning. Automatic mode requires the scan data and does not run during a dry run.
-For declared axial parallel and laminography geometry it fits smooth detector-frame
-translations on a bounded coarse image; it does not fit rotations or infer the axis
-or physical support. Use an explicit pose mode to fit rotational motion.
+For declared axial parallel and laminography geometry it fits per-view
+detector-frame translations, smooth drift and sudden slips alike, jointly with a
+bounded image; it does not fit rotations or infer the axis or physical support.
+Use an explicit pose mode to fit rotational motion.
 
 Expert settings are `tomojax.alignment.AlignConfig` fields: put them in a TOML
 file and pass it with `--config FILE` and an explicit `--mode`. Each replaces
