@@ -46,13 +46,17 @@ def test_weighted_diagonal_is_the_explicit_matrix_diagonal():
 
 @pytest.mark.gpu
 @pytest.mark.cuda
-def test_weighted_diagonal_gather_matches_the_scatter():
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+def test_weighted_diagonal_gather_matches_the_scatter(dtype):
     grid, detector, geometry, angles = _laminography(nx=19, ny=17, nz=13, nu=23, nv=21, views=7)
     cf = plane_coefficients(jnp.asarray(stack_view_poses(geometry, len(angles))), grid, detector)
     sw = jnp.asarray(np.random.default_rng(4).uniform(0, 1, (len(angles), 21, 23)), jnp.float32)
     start = jnp.full((grid.nz, grid.ny, grid.nx), 0.25, jnp.float32)
-    cuda = plane_weighted_diagonal(cf, sw, start, grid, detector, backend="cuda")
-    scatter = plane_weighted_diagonal(cf, sw, start, grid, detector, backend="jax")
+    with jax.enable_x64():
+        sw, start = sw.astype(dtype), start.astype(dtype)
+        cuda = plane_weighted_diagonal(cf, sw, start, grid, detector, backend="cuda")
+        scatter = plane_weighted_diagonal(cf, sw, start, grid, detector, backend="jax")
+    assert cuda.dtype == jnp.float32
     np.testing.assert_allclose(cuda, scatter, rtol=1e-4, atol=1e-6)
 
 

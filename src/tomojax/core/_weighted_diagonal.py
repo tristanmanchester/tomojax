@@ -154,15 +154,22 @@ def weighted_diagonal(
     ``coeff`` holds ``plane_coefficients`` rows and ``sqrtweights`` the square
     roots of the pixel weights, shape (views, nv, nu). ``backend`` is ``"cuda"``
     for the voxel-owned GPU gather or ``"jax"`` for the plane scatter.
+    CUDA uses float32 for all buffers and the result, like the projector;
+    the JAX scatter retains the accumulator dtype.
     """
     if backend == "jax":
         return _scatter(coeff, sqrtweights, accumulator, grid=grid, detector=detector)
     if backend != "cuda":
         raise ValueError("weighted diagonal backend must be 'jax' or 'cuda'")
+    # Every pointer in the CUDA ABI is float32, including the aliased output.
+    # Do not reinterpret promoted float64 weights as pairs of float32 values.
+    coeff = coeff.astype(jnp.float32)
+    sqrtweights = sqrtweights.astype(jnp.float32)
+    accumulator = accumulator.astype(jnp.float32)
     call = buffer_callback(
         partial(_launch, grid=grid, detector=detector),
         jax.ShapeDtypeStruct(accumulator.shape, jnp.float32),
         input_output_aliases={2: 0},
         vmap_method="sequential",
     )
-    return call(coeff.astype(jnp.float32), sqrtweights, accumulator)
+    return call(coeff, sqrtweights, accumulator)
