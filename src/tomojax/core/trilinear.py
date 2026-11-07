@@ -39,7 +39,7 @@ def _validate_backend(backend: str, detector: Detector, det_grid: object) -> Non
     if backend not in {"jax", "cuda"}:
         raise ValueError("exact trilinear integration: backend must be 'jax' or 'cuda'")
     if backend == "cuda":
-        if not cuda_backend():
+        if not cuda_backend(jax.default_backend()):
             raise ValueError("exact trilinear integration: CUDA requires an NVIDIA CUDA device")
         from tomojax.core.cuda_projector._config import _ensure_canonical_detector_grid
 
