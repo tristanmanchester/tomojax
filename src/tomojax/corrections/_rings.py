@@ -522,7 +522,7 @@ def _bins(
     return np.concatenate(labels), np.concatenate(neighbours), tuple(counts)
 
 
-@partial(jax.jit, static_argnames=("axis", "groups", "closing", "views"))
+@partial(jax.jit, static_argnames=("axis", "groups", "closing", "views", "order"))
 def correct_rings(
     batch: jax.Array,
     axis: float | None = None,
@@ -532,6 +532,7 @@ def correct_rings(
     *,
     closing: bool = False,
     views: int | None = None,
+    order: tuple[int, ...] | None = None,
 ) -> jax.Array:
     """Correct every detector row of a ``(views, rows, columns)`` batch of line integrals.
 
@@ -546,10 +547,13 @@ def correct_rings(
         neighbours = jnp.asarray(np.stack([lo, hi], axis=1), jnp.int32)
         weights = jnp.full((size, 2), 0.5, batch.dtype)
         groups = (size,)
-    fitted, passes = batch, 2
+    # Only the fitting samples need angular order. Apply the column responses
+    # to the original batch rather than materializing and undoing a full-view gather.
+    fitted = batch if order is None else batch[jnp.asarray(order, jnp.int32)]
+    passes = 2
     if closing:
         # A repeated closing phase is one observation for the fits.
-        fitted = jnp.concatenate([0.5 * (batch[:1] + batch[-1:]), batch[1:-1]])
+        fitted = jnp.concatenate([0.5 * (fitted[:1] + fitted[-1:]), fitted[1:-1]])
     if views is not None and views < sum(groups):
         # Fit on angular bin means, which keep every view's photons; an additive column
         # error commutes with the mean, and neighbouring bins share no views.
@@ -579,7 +583,8 @@ def correct_rings(
         )
     if corrected.shape[1] == batch.shape[0]:
         # every view was fitted on its own, so the fits have already corrected them
-        return jnp.swapaxes(corrected, 0, 1)
+        out = jnp.swapaxes(corrected, 0, 1)
+        return out if order is None else out[jnp.asarray(np.argsort(order), jnp.int32)]
     for k in range(alpha.shape[1]):
         batch = _invert(batch, alpha[None, :, k], beta[None, :, k])
     return batch
@@ -763,9 +768,9 @@ class Rings(Step):
             raise ValueError(
                 f"Rings geometry has {len(plan.order)} views, the data {batch.shape[0]}"
             )
-        order = jnp.asarray(plan.order, jnp.int32)
-        out = correct_rings(
-            batch[order],
+        return correct_rings(
+            batch,
+            order=plan.order,
             axis=self._axis,
             neighbours=jnp.asarray(plan.neighbours, jnp.int32),
             weights=jnp.asarray(plan.weights, batch.dtype),
@@ -773,4 +778,3 @@ class Rings(Step):
             closing=plan.closing,
             views=self.views,
         )
-        return out[jnp.asarray(np.argsort(plan.order), jnp.int32)]

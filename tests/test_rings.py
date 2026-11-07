@@ -168,8 +168,10 @@ def test_irregular_view_order_and_separate_trajectories(segmented: bool) -> None
     if segmented:
         q = np.concatenate([q, 0.7 * q])
         order = np.concatenate([order, order + len(angles)])
-    fixed = np.asarray(Rings(geometry(angles)).apply(jnp.asarray(q[:, None])))
-    shuffled = Rings(geometry(angles[order[: len(angles)]])).apply(jnp.asarray(q[order, None]))
+    fixed = np.asarray(Rings(geometry(angles), views=32).apply(jnp.asarray(q[:, None])))
+    shuffled = Rings(geometry(angles[order[: len(angles)]]), views=32).apply(
+        jnp.asarray(q[order, None])
+    )
     np.testing.assert_array_equal(fixed, np.asarray(shuffled)[np.argsort(order)])
 
 
@@ -183,7 +185,10 @@ def test_unsorted_geometry_view_count_is_checked() -> None:
 
 
 @pytest.mark.parametrize("closing", [False, True])
-def test_full_turn_fit_preserves_view_order_including_closing_phase(closing: bool) -> None:
+@pytest.mark.parametrize("views", [None, 32])
+def test_full_turn_fit_preserves_view_order_including_closing_phase(
+    closing: bool, views: int | None
+) -> None:
     q = _errors(_sinogram(360, 180)).astype(np.float32)
     if closing:
         q = np.concatenate([q, q[:1]])
@@ -192,8 +197,8 @@ def test_full_turn_fit_preserves_view_order_including_closing_phase(closing: boo
     order = np.random.default_rng(481).permutation(len(q))
     geometry = tj.ParallelGeometry(base.grid, base.detector, angles)
     permuted = tj.ParallelGeometry(base.grid, base.detector, angles[order])
-    fixed = np.asarray(Rings(geometry).apply(jnp.asarray(q[:, None])))
-    shuffled = np.asarray(Rings(permuted).apply(jnp.asarray(q[order, None])))
+    fixed = np.asarray(Rings(geometry, views=views).apply(jnp.asarray(q[:, None])))
+    shuffled = np.asarray(Rings(permuted, views=views).apply(jnp.asarray(q[order, None])))
     np.testing.assert_array_equal(shuffled[np.argsort(order)], fixed)
 
 
