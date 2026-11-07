@@ -151,14 +151,11 @@ class AlignmentSchedule:
             if stage.objective_kind == "projection_consistency" and (
                 stage.optimizer != "spectral"
                 or stage.stage_role != "setup"
-                or not (
-                    set(stage.active_dofs) <= {"det_u_px", "axis_rot_x_deg", "axis_rot_y_deg"}
-                    or set(stage.active_dofs) <= {"dx", "dz"}
-                )
+                or not set(stage.active_dofs) <= {"det_u_px", "axis_rot_x_deg", "axis_rot_y_deg"}
             ):
                 raise ValueError(
                     "projection_consistency requires a spectral setup stage with only "
-                    "det_u_px/axis rotations, or a separate detector dx/dz stage"
+                    "det_u_px/axis rotations"
                 )
             if stage.objective_kind == "joint_volume_pose" and (
                 stage.optimizer != "gn" or any(d in GEOMETRY_DOF_NAMES for d in stage.active_dofs)

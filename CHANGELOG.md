@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+The legacy projection-only `spectral_motion` alignment stage and its bounded
+Fourier-line motion refinement are removed. Per-view motion uses the joint
+image/pose fit instead; `projection_consistency` schedules accept setup geometry
+parameters only.
+
 Automatic parallel and laminography alignment uses a new joint fit of the image
 and per-view detector translations. Its motion prior leaves a cubic spline with
 knots every ten views free and penalises view-to-view jumps of the remainder

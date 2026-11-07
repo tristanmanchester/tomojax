@@ -33,7 +33,6 @@ from ._setup_stage import (
     _optimize_setup_geometry_bilevel_for_level,
     initialize_setup_geometry_for_level,
 )
-from ._spectral_motion_stage import run_spectral_motion_stage
 from ._stage_types import _PROPOSAL_STEP_BY_DOF, LevelContext, LevelState
 
 
@@ -173,9 +172,6 @@ def _run_pose_alignment_stage(
     level: LevelContext, stage: ResolvedAlignmentStage, state: LevelState
 ) -> None:
     runtime = level.runtime
-    if stage.objective_kind == "projection_consistency":
-        run_spectral_motion_stage(level, stage, state)
-        return
     stage_global_start = runtime.global_before_level + len(runtime.level_stats)
     cfg_stage = replace(
         level.cfg,
@@ -240,13 +236,11 @@ def _run_pose_alignment_stage(
     state.final_gauge_fix_stats = dict(info.get("gauge_fix_final", {}) or {})
 
 
-def _seed_stage_translations(
-    level: LevelContext, stage: ResolvedAlignmentStage, state: LevelState
-) -> None:
+def _seed_stage_translations(level: LevelContext, state: LevelState) -> None:
     """Seed the first pose stage against the geometry calibrated before it."""
     runtime = level.runtime
     geometry, detector = level.geometry, level.detector
-    if not level.cfg.seed_translations or stage.objective_kind == "projection_consistency":
+    if not level.cfg.seed_translations:
         return
     start = time.perf_counter()
     if level.active_geometry_dofs:
@@ -314,7 +308,7 @@ def _run_multires_level_stages(
         if int(stage.index) < level.start_stage:
             continue
         if seed_translations and stage.active_pose_dofs:
-            _seed_stage_translations(level, stage, state)
+            _seed_stage_translations(level, state)
             seed_translations = False
         # Seed before reserving a fresh reconstruction volume. A preceding
         # setup stage still gets its volume first, preserving stage order.
