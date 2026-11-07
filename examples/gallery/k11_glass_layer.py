@@ -5,6 +5,7 @@
 The default workflow aligns 1441 views with 4x4 detector binning: 2.16 micrometre
 pixels become 8.64 micrometre voxels. The figure shows the sphere layer in-plane
 and two cross-sections through the plates.
+The rotation axis leans towards the beam by +35 degrees in TomoJAX's convention.
 """
 
 from __future__ import annotations
@@ -30,9 +31,19 @@ PITCH_UM = 2.16
 
 
 def sampling_grid(binning: int) -> tj.Grid:
-    """Initial voxel sampling; the automatic workflow chooses the physical region."""
+    """Initial sampling; automatic alignment bounds resolution, preserving the region."""
     pitch = PITCH_UM * binning
     return tj.Grid(640 // binning, 640 // binning, 540 // binning, pitch, pitch, pitch)
+
+
+def scan_geometry(angles: np.ndarray, binning: int) -> tj.LaminographyGeometry:
+    """Declared K11 54286 geometry, retaining the native detector sampling."""
+    return tj.LaminographyGeometry(
+        sampling_grid(binning),
+        tj.Detector(640, 540, PITCH_UM, PITCH_UM),
+        angles,
+        tilt_deg=35.0,
+    )
 
 
 def slice_figure(volume: np.ndarray | Array, grid: tj.Grid, output: Path) -> None:
@@ -102,12 +113,7 @@ def main() -> None:
     with h5py.File(args.input) as source:
         sample = np.asarray(source["entry/instrument/EtherCAT/image_key"]) == 0
         angles = np.asarray(source["entry/imaging_sum/smaract_zrot"], np.float32)[sample]
-    geometry = tj.LaminographyGeometry(
-        sampling_grid(args.binning),
-        tj.Detector(640, 540, PITCH_UM, PITCH_UM),
-        angles,
-        tilt_deg=-35.0,
-    )
+    geometry = scan_geometry(angles, args.binning)
     start = time.perf_counter()
     scan = tj.load_frames(args.input, geometry=geometry).corrected(binning=args.binning)
     result = tj.align(scan)
