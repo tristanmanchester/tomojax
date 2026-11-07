@@ -26,6 +26,7 @@ from tomojax.geometry import (
 
 from ._records import Correction
 from ._ring_parity import regularize
+from ._ring_reference_cuda import reference as cuda_reference
 from ._steps import Domain, Step, bitonic_median
 
 WINDOWS = (30, 20, 14, 9, 6)
@@ -108,6 +109,18 @@ def _weighted_quadratics(
 
 
 def _reference(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> jax.Array:
+    """Adaptive spatial reference, with a tiled float32 CUDA implementation."""
+    if ranked.dtype != jnp.float32:
+        return _reference_jax(ranked, gamma, local)
+    taps = tuple(tuple(_quadratic_taps(w, 1)) for w in WINDOWS)
+    return jax.lax.platform_dependent(
+        ranked,
+        cuda=lambda values: cuda_reference(values, taps, gamma, local),
+        default=lambda values: _reference_jax(values, gamma, local),
+    )
+
+
+def _reference_jax(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> jax.Array:
     """The adaptive spatial reference for rows of line integrals.
 
     It starts from the local quadratic through +-30 columns and moves toward the +-20, 14, 9 and 6

@@ -15,7 +15,7 @@
     "backends": 617,
     "cli": 2571,
     "core": 13593,
-    "corrections": 2238,
+    "corrections": 2600,
     "datasets": 1125,
     "forward": 824,
     "geometry": 1101,
@@ -54,8 +54,8 @@
     "SPDHGConfig": 21,
     "SimConfig": 31
   },
-  "cuda_kernels": 47,
-  "cuda_switches": 35,
+  "cuda_kernels": 52,
+  "cuda_switches": 36,
   "environment_reads": 30,
   "exported_names": {
     "tomojax": 24,
@@ -102,7 +102,7 @@
   "params5_mentions": 0,
   "positional_options": [],
   "single_use_helpers": {
-    "chained": 32,
+    "chained": 31,
     "forwarders": 9,
     "tiny": 94
   },
@@ -112,7 +112,7 @@
     "pyright: ignore": 12,
     "type: ignore": 25
   },
-  "test_private_imports": 167,
+  "test_private_imports": 168,
   "type_errors": {
     "reportArgumentType": 165,
     "reportAssignmentType": 1,

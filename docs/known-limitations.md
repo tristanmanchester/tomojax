@@ -302,3 +302,13 @@ Nikon vendor reconstruction regions (including `OffsetX/Y/Z`) remain source
 metadata and are not applied: their coordinate mapping is not established.
 TomoJAX uses its own acquisition field-of-view grid unless `grid=` is supplied.
 Missing detector offsets or axis calibration require explicit geometry.
+
+## Ring-correction differentiation
+
+Full-turn ring correction uses tiled CUDA kernels for its adaptive spatial
+reference in float32. The kernels retain the weighted quadratic fits, robust
+scatter, correlations and noise blending, but do not provide automatic
+differentiation through that reference. CPU and float64 retain the JAX
+implementation. CUDA fits use a weighted polynomial basis and retain its full
+Gram matrix; they are mathematically equivalent, not bit-identical, to the
+JAX normal-equation solves.

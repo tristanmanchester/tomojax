@@ -738,7 +738,7 @@ def bitonic_median(window: list[jax.Array]) -> jax.Array:
     symbolic, not image arrays. Every real input reaches the median expression,
     so NaNs propagate even after redundant infinity comparisons are removed.
     """
-    operations, output = _median_network(len(window))
+    operations, output = median_network(len(window))
     values = dict(enumerate(window))
     for dest, minimum, a, b in operations:
         compare = jnp.minimum if minimum else jnp.maximum
@@ -747,7 +747,7 @@ def bitonic_median(window: list[jax.Array]) -> jax.Array:
 
 
 @lru_cache(maxsize=64)
-def _median_network(n: int) -> tuple[tuple[tuple[int, bool, int, int], ...], int]:
+def median_network(n: int) -> tuple[tuple[tuple[int, bool, int, int], ...], int]:
     """Static median-only instructions; wire -1 represents positive infinity."""
     width = 1 << (n - 1).bit_length()
     wires = list(range(n)) + [-1] * (width - n)
