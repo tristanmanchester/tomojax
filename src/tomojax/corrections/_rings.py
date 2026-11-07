@@ -323,6 +323,15 @@ def _unsorted_response(
     return jnp.stack(alphas), jnp.stack(betas), q
 
 
+def _sorted_values(x: jax.Array) -> jax.Array:
+    """Sort the first axis, omitting unused tie bookkeeping on CUDA."""
+    return jax.lax.platform_dependent(
+        x,
+        cuda=lambda x: jnp.sort(x, axis=0, stable=False),
+        default=lambda x: jnp.sort(x, axis=0),
+    )
+
+
 def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 3.0) -> jax.Array:
     """Vo et al. 2018, algorithms 4 and 5, with our response model as the correction offset.
 
@@ -335,13 +344,13 @@ def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 
     contrast alone is not evidence of a detector calibration error.
     """
     views, n = q.shape
-    ranked = jnp.sort(q, axis=0)
+    ranked = _sorted_values(q)
     cut = int(0.05 * views)
     level = ranked[cut : views - cut].mean(0)
     padded = jnp.pad(level, window, mode="edge")
     stack = jnp.stack([padded[k : k + n] for k in range(2 * window + 1)])
-    dev = level - jnp.sort(stack, axis=0)[window]
-    s = jnp.sort(dev)
+    dev = level - _sorted_values(stack)[window]
+    s = _sorted_values(dev)
     i = np.arange(n, dtype=np.float64)[n // 4 : n - n // 4]
     y = s[n // 4 : n - n // 4]
     slope = ((i - i.mean()) * (y - y.mean())).sum() / float(((i - i.mean()) ** 2).sum())
@@ -380,7 +389,7 @@ def _turn_response(
         beta = regularize(beta, axis, "significance")
         responses.append(_feasible_response(q, ref, level - beta * xm, beta, lowest))
         q, lowest = (_invert(x, *responses[-1]) for x in (q, lowest))
-    ranked = jnp.sort(q, axis=0)
+    ranked = _sorted_values(q)
     ref = _correlate(ranked, _quadratic_taps(100, 1))
     alpha, beta, xm = _fit(ranked, ref)
     level = regularize(alpha + beta * xm, axis, "wiener")

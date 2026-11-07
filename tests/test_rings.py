@@ -92,9 +92,10 @@ def test_fit_on_angular_bins_still_removes_column_errors(turn: float) -> None:
 
 
 @pytest.mark.parametrize("turn", [180.0, 360.0])
-def test_response_map_preserves_equal_column_observations(turn: float) -> None:
+@pytest.mark.parametrize("level", [(0.3,), (0.0, -0.0)])
+def test_response_map_preserves_equal_column_observations(turn: float, level) -> None:
     measured = _sinogram(turn, 32).astype(np.float32)
-    measured[:, N // 2] = 0.3
+    measured[:, N // 2] = np.resize(level, 32)
     fixed = np.asarray(Rings(_geometry(turn, 32)).apply(jnp.asarray(measured[:, None])))
     np.testing.assert_array_equal(fixed[:, 0, N // 2], fixed[0, 0, N // 2])
 
