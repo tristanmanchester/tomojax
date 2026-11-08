@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tomojax._detector_sampling import block_mean_record, sampling_factors
 from tomojax.core.array_ops import mean_detector_pixels
 from tomojax.core.validation import view_indices
 from tomojax.geometry import (
@@ -345,7 +346,8 @@ class Scan:
         For scans that differ in their source and detector arrangement (a
         multi-orbit scan, a tall sample scanned in stacked sections): each
         becomes a :class:`~tomojax.geometry.ConeSegments` segment. They share
-        ``scans[0]``'s grid and need equal detector pixel counts.
+        ``scans[0]``'s grid and need equal detector pixel counts and the same
+        recorded line-integral averaging factors.
 
         Parameters
         ----------
@@ -368,6 +370,9 @@ class Scan:
 
         if not scans:
             raise ValueError("Scan.combine needs at least one scan")
+        sampling = [sampling_factors(scan.source) for scan in scans]
+        if any(factors != sampling[0] for factors in sampling[1:]):
+            raise ValueError("Scan.combine needs identical detector_sampling factors")
         grid = scans[0].grid
         parts = []
         trajectories = []
@@ -384,7 +389,10 @@ class Scan:
             )
         projections = np.concatenate([np.asarray(s.projections) for s in scans])
         geometry = ConeSegments(tuple(parts), trajectory_lengths=tuple(trajectories))
-        return cls(projections, geometry, name=name or scans[0].name)
+        combined = cls(projections, geometry, name=name or scans[0].name)
+        if sampling[0] != (1, 1):
+            combined = replace(combined, source=block_mean_record(record_of(combined), sampling[0]))
+        return combined
 
     def binned(self, factor: int) -> Scan:
         """The scan with ``factor x factor`` detector pixels averaged into one.
@@ -393,7 +401,8 @@ class Scan:
         pixel's footprint at the rotation axis smaller than a voxel): projection
         cost falls by ``factor**2`` for little change in the volume. Pixels that
         do not fill a block at the detector's edges are dropped, and the
-        detector centre moves to match.
+        detector centre moves to match. The recorded averaging factors compose
+        across repeated calls and are retained when saving the scan.
 
         Parameters
         ----------
@@ -414,8 +423,10 @@ class Scan:
             raise ValueError(f"binned needs a factor of at least 1, not {factor}")
         if factor == 1:
             return self
+        sampling_factors(self.source)
         binned = mean_detector_pixels(np.asarray(self.projections, np.float32), factor)
-        return replace(self, projections=binned, geometry=binned_geometry(self.geometry, factor))
+        scan = replace(self, projections=binned, geometry=binned_geometry(self.geometry, factor))
+        return replace(scan, source=block_mean_record(record_of(scan), (factor, factor)))
 
     def to_astra(self) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
         """Export projections and cone-beam geometry for ASTRA.

@@ -5,17 +5,18 @@ The 29 mm movement of ``_watch.py`` is scanned in a 120 keV parallel beam,
 The rotation axis projects 5.3 pixels off the detector centre, and every view
 has its own pose: a slow wobble of the sample plus jitter, up to 0.25° in each
 rotation and 2.4 pixels across and 1.5 pixels along the axis. gVXR traces the
-projections through the movement's meshes at those poses. ``tj.align`` with
-``mode="cor-then-pose"`` finds the centre, then each view's pose with the
-volume; the nominal and the aligned scans are reconstructed with the same
-FISTA-TV settings.
+projections through the movement's meshes at those poses. ``tj.align`` fits
+``("centre", "translations", "rotations")`` jointly with the volume; nominal
+and aligned scans are reconstructed with the same FISTA-TV settings.
 
-Rigidly moving the whole movement, with every pose moved back, predicts the
-same data, and so does trading the detector centre against a constant shift of
-every view; ``tj.align`` reports the estimate with the least per-view motion.
-The truth and its poses are moved to that same estimate before they are
-compared. Writes the README's ``images/alignment-example.png`` and a JSON
-record beside it.
+A shared rigid movement of the object and its poses cannot be distinguished by
+projection data. After fitting, an independent SciPy registration compares 27
+physical landmarks on the detector, including the detector centre. This one
+rigid transform puts the truth volume and poses in the fitted object's frame;
+truth never enters the alignment. The centre and constant per-view translation
+are interchangeable when both are free, so the detector score is the accuracy
+measure for their combined effect. Writes ``images/alignment-example.png`` and
+a JSON record beside it.
 
     uv run --no-sync python examples/align_watch.py
 """
@@ -29,14 +30,14 @@ import json
 from pathlib import Path
 import time
 
-import jax.numpy as jnp
 import numpy as np
+from scipy.ndimage import affine_transform
+from scipy.optimize import least_squares
+from scipy.spatial.transform import Rotation
 
-from _figure import ACCENT, MUTED, TEXT, Card
 import _watch
 import tomojax as tj
-from tomojax.alignment.api import apply_pose_updates, least_motion_estimate
-from tomojax.geometry import stack_view_poses
+from tomojax.geometry import grid_volume_origin, stack_view_poses
 
 SIZE, LAYERS, FIELD, MIDDLE = 384, 82, 29.6, 3.0  # voxels, z layers, field (mm), centre z
 VIEWS, PHOTONS = 400, 2e4
@@ -60,6 +61,54 @@ def motion(angles: np.ndarray, voxel: float) -> np.ndarray:
     return params
 
 
+def comparison(
+    estimated: np.ndarray,
+    true_poses: np.ndarray,
+    detector: tj.Detector,
+    true_detector: tj.Detector,
+    grid: tj.Grid,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Register one rigid object gauge, scoring actual detector coordinates in pixels."""
+    pitch = np.array([grid.vx, grid.vy, grid.vz])
+    extent = pitch * [grid.nx, grid.ny, grid.nz]
+    centre = np.asarray(grid_volume_origin(grid)) + (extent - pitch) / 2
+    marks = np.stack(np.meshgrid(*[np.linspace(-0.3, 0.3, 3)] * 3, indexing="ij"), -1)
+    marks = marks.reshape(-1, 3) * extent + centre
+
+    def pixels(poses: np.ndarray, points: np.ndarray, current: tj.Detector) -> np.ndarray:
+        lab = np.einsum("nij,kj->nki", poses[:, :3, :3], points) + poses[:, None, :3, 3]
+        return (lab[..., [0, 2]] - current.center) / [current.du, current.dv]
+
+    target = pixels(true_poses, marks, true_detector)
+
+    def residual(parameters: np.ndarray) -> np.ndarray:
+        moved = marks @ Rotation.from_rotvec(parameters[:3]).as_matrix().T + parameters[3:]
+        return (pixels(estimated, moved, detector) - target).ravel()
+
+    parameters = least_squares(residual, np.zeros(6), xtol=1e-11, ftol=1e-11, gtol=1e-11).x
+    gauge = np.eye(4)
+    gauge[:3, :3] = Rotation.from_rotvec(parameters[:3]).as_matrix()
+    gauge[:3, 3] = parameters[3:]
+    adjusted = true_poses @ np.linalg.inv(gauge)
+    # Express truth with the fitted detector centre, retaining the corresponding
+    # constant translation. This leaves every detector ray prediction unchanged.
+    adjusted[:, [0, 2], 3] += np.asarray(detector.center) - true_detector.center
+    rms = float(np.sqrt(np.mean(residual(parameters).reshape(-1, 2) ** 2) * 2))
+    return adjusted, gauge, rms
+
+
+def moved_truth(truth: np.ndarray, grid: tj.Grid, gauge: np.ndarray) -> np.ndarray:
+    """Sample the truth in the registered frame on the same physical voxel grid."""
+    pitch = np.array([grid.vx, grid.vy, grid.vz])
+    origin = np.asarray(grid_volume_origin(grid))
+    inverse = gauge[:3, :3].T
+    matrix = inverse * pitch[None, :] / pitch[:, None]
+    offset = (inverse @ (origin - gauge[:3, 3]) - origin) / pitch
+    return affine_transform(
+        truth, matrix[::-1, ::-1], offset=offset[::-1], order=1, prefilter=False
+    )
+
+
 def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     """Simulate the scan, align it and compare everything with the truth."""
     meshes = _watch.meshes(args.blender)
@@ -70,9 +119,11 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
     geometry = tj.ParallelGeometry(grid, detector, angles)
     nominal = np.asarray(stack_view_poses(geometry, VIEWS))
     params = motion(angles, voxel)
-    poses = apply_pose_updates(
-        jnp.asarray(nominal), jnp.asarray(params, jnp.float32), translation_frame="detector"
+    poses = nominal.astype(np.float64).copy()
+    poses[:, :3, :3] = (
+        poses[:, :3, :3] @ Rotation.from_euler("YXZ", params[:, [1, 0, 2]]).as_matrix()
     )
+    poses[:, :3, 3] += params[:, [3, 5, 4]]
     centre = CENTRE_PX * voxel
     light = _watch.transmission(
         meshes,
@@ -86,35 +137,33 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
     truth = _watch.truth(meshes, (LAYERS, SIZE, SIZE), voxel, (0.0, 0.0, MIDDLE))
 
     start = time.perf_counter()
-    result = tj.align(scan, mode="cor-then-pose")
+    fit = ("centre", "translations", "rotations")
+    result = tj.align(scan, fit=fit)
     align_seconds = time.perf_counter() - start
     before = np.asarray(tj.reconstruct(scan, "fista", **RECONSTRUCTION).volume)
     after = np.asarray(tj.reconstruct(result.scan, "fista", **RECONSTRUCTION).volume)
 
-    # The truth as the least-motion estimate: a centre offset c predicts the
-    # same data as every view shifted by -c, which the gauge moves back.
-    true_table = params.copy()
-    true_table[:, 3] -= centre
-    moved, true_poses, gauge = least_motion_estimate(
-        truth,
-        true_table,
-        nominal=nominal,
-        grid=grid,
-        translation_frame="detector",
-        active=("alpha", "beta", "phi", "dx", "dz"),
-        cone_beam=False,
-        detector_offset=True,
+    estimated = np.asarray(stack_view_poses(result.scan.geometry, VIEWS), np.float64)
+    true_detector = dataclasses.replace(detector, center=(centre, MIDDLE))
+    adjusted, gauge, detector_error = comparison(
+        estimated, poses, result.scan.detector, true_detector, grid
     )
-    found = np.asarray(result.poses)[:, :5]
-    difference = found - true_poses[:, :5]
-    true_centre = gauge.detector_offset if gauge is not None else -float(np.mean(true_table[:, 3]))
-    found_centre = float(result.scan.geometry.detector.center[0])
-    # The same reconstruction from the true poses bounds what any alignment can reach.
-    true_detector = dataclasses.replace(detector, center=(true_centre, MIDDLE))
-    true_scan = tj.Scan(scan.projections, dataclasses.replace(geometry, detector=true_detector))
-    ideal = tj.reconstruct(
-        true_scan.with_poses(np.asarray(true_poses)[:, :6]), "fista", **RECONSTRUCTION
-    )
+    moved = moved_truth(truth, grid, gauge)
+    true_table = np.zeros_like(params)
+    true_table[:, :3] = Rotation.from_matrix(
+        np.swapaxes(nominal[:, :3, :3], 1, 2) @ adjusted[:, :3, :3]
+    ).as_euler("YXZ")[:, [1, 0, 2]]
+    true_table[:, 3:] = (adjusted[:, :3, 3] - nominal[:, :3, 3])[:, [0, 2, 1]]
+    found = np.asarray(result.poses)
+    rotation_difference = Rotation.from_matrix(
+        np.swapaxes(adjusted[:, :3, :3], 1, 2) @ estimated[:, :3, :3]
+    ).as_rotvec()
+    shift_difference = (estimated[:, :3, 3] - adjusted[:, :3, 3])[:, [0, 2]]
+    # The true ray geometry in the same registered frame bounds reconstruction quality.
+    true_scan = tj.Scan(
+        scan.projections, dataclasses.replace(geometry, detector=result.scan.detector)
+    ).with_poses(true_table)
+    ideal = tj.reconstruct(true_scan, "fista", **RECONSTRUCTION)
 
     def error(volume: np.ndarray, reference: np.ndarray) -> float:
         return float(np.linalg.norm(volume - reference) / np.linalg.norm(reference))
@@ -125,9 +174,9 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
         "after": after[k, :, :],
         "truth": moved[k, :, :],
         "angles": angles,
-        "true_dx": true_poses[:, 3] / voxel,
+        "true_dx": true_table[:, 3] / voxel,
         "found_dx": found[:, 3] / voxel,
-        "true_dz": true_poses[:, 4] / voxel,
+        "true_dz": true_table[:, 4] / voxel,
         "found_dz": found[:, 4] / voxel,
     }
     metrics = {
@@ -141,16 +190,17 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
         "slice_z_mm": _watch.levels(meshes)["balance"],
         "true_axis_offset_px": CENTRE_PX,
         "motion": "wobble and jitter, up to 0.25 deg per rotation, 2.4 px dx, 1.5 px dz",
-        "mode": "cor-then-pose",
+        "fit": list(fit),
         "align_seconds": align_seconds,
         "reconstruction": {"method": "fista", **RECONSTRUCTION, "warm_start": "fbp"},
         "relative_l2_nominal": error(before, truth),
         "relative_l2_aligned": error(after, moved),
         "relative_l2_true_poses": error(np.asarray(ideal.volume), moved),
-        "least_motion_gauge": gauge.to_dict() if gauge is not None else None,
-        "centre_px": {"found": found_centre / voxel, "true": true_centre / voxel},
-        "rotation_rmse_deg": np.rad2deg(np.sqrt(np.mean(difference[:, :3] ** 2, 0))).tolist(),
-        "shift_rmse_px": (np.sqrt(np.mean(difference[:, 3:] ** 2, 0)) / voxel).tolist(),
+        "comparison_rigid_transform": gauge.tolist(),
+        "detector_landmark_rmse_px": detector_error,
+        "fitted_centre_px": result.scan.detector.center[0] / voxel,
+        "rotation_rmse_deg": np.rad2deg(np.sqrt(np.mean(rotation_difference**2, 0))).tolist(),
+        "shift_rmse_px": (np.sqrt(np.mean(shift_difference**2, 0)) / voxel).tolist(),
         "device": str(__import__("jax").devices()[0]),
         "versions": {name: version(name) for name in ("tomojax", "jax", "numpy", "matplotlib")},
     }
@@ -159,6 +209,8 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
 
 def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) -> None:
     """Nominal, aligned and true slices, close-ups, and the recovered motion."""
+    from _figure import ACCENT, MUTED, TEXT, Card
+
     panel, gap, margin, top = 560, 30, 30, 158
     strip = 250
     card = Card(3 * panel + 2 * gap + 2 * margin, top + 2 * panel + strip + 202)
@@ -175,7 +227,7 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
         f"{metrics['views']} views over 180°  ·  axis "
         f"{metrics['true_axis_offset_px']:g} px off centre  ·  every view tilted up to "
         f"{ROTATION_DEG:g}° and shifted up to 2.4 px  ·  "
-        'tj.align(scan, mode="cor-then-pose")',
+        "joint centre, translations and rotations",
         21,
         MUTED,
     )
@@ -222,26 +274,25 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
         ax.plot(slices["angles"], slices[f"found_{name}"], "o", color=ACCENT, ms=1.9, mew=0)
         ax.set_xlim(-2, 182)
         ax.set_xticks([0, 45, 90, 135, 180], ["0°", "45°", "90°", "135°", "180°"])
-        ax.set_ylim(-3, 3)
-        ax.set_yticks([-2, 0, 2])
+        ax.margins(y=0.1)
         card.text(x, y - 14, f"Shift {label} per view (px)", 22, TEXT)
         card.text(x + width, y - 14, f"recovered to {rmse[k]:.2f} px RMS", 22, MUTED, ha="right")
     rotations = metrics["rotation_rmse_deg"]
-    found, true = metrics["centre_px"]["found"], metrics["centre_px"]["true"]
+    detector_error = float(metrics["detector_landmark_rmse_px"])
     card.text(
         margin + 60,
         y + strip + 16,
         f"Grey: true, amber: recovered, against rotation angle.  Rotations recovered to "
-        f"{max(rotations):.2f}° RMS or better, the detector centre to "
-        f"{abs(found - true):.2f} px.",
+        f"{max(rotations):.2f}° RMS or better; detector landmark error "
+        f"{detector_error:.2f} px.",
         21,
         MUTED,
     )
     card.text(
         margin + 60,
         y + strip + 50,
-        "Poses, centre and truth are compared in the least-motion frame tj.align reports "
-        f"(centre {found:.2f} px found, {true:.2f} px true in that frame).",
+        "One shared rigid registration puts the truth in the fitted frame; "
+        "the detector score includes the fitted centre.",
         21,
         MUTED,
     )

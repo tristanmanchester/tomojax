@@ -6,7 +6,6 @@ from dataclasses import asdict, replace
 from pathlib import Path
 import subprocess
 import sys
-from typing import TYPE_CHECKING
 
 import h5py
 import jax
@@ -16,9 +15,6 @@ import pytest
 import tomojax as tj
 from tomojax.corrections import Rings
 from tomojax.geometry.api import view_frames
-
-if TYPE_CHECKING:
-    from tomojax.alignment import AlignConfig
 
 
 def test_trajectory_groups_survive_combine_select_crop_and_file(tmp_path: Path) -> None:
@@ -211,214 +207,6 @@ def test_selected_loaded_scans_save_only_their_own_view_labels(tmp_path: Path, s
     assert loaded.projections.shape == selected.projections.shape
 
 
-def test_alignment_modes_plan_their_schedules() -> None:
-    from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import alignment_plan
-
-    grid = tj.Grid(128, 128, 128, 1.0, 1.0, 1.0)
-    pose = alignment_plan("pose", grid)
-    assert pose.levels == (4, 2, 1)
-    assert pose.config.gn_joint_iterations == 40
-    geometry = _geometries(16)
-    cone = tj.geometry.ConeSegments((geometry["cone"], geometry["cone"]))
-    for beam in (cone, geometry["cone"]):
-        fast = alignment_plan("pose", grid, geometry=beam).config
-        assert fast.gn_joint_iterations == 10 and fast.iterations == 10
-    for kind in ("parallel", "lamino"):
-        assert (
-            alignment_plan("pose", grid, geometry=geometry[kind]).config.gn_joint_iterations == 40
-        )
-    reference = alignment_plan("pose", grid, geometry=cone, quality="reference")
-    assert reference.config.gn_joint_iterations == 40
-    expert = AlignConfig(gn_joint_iterations=23)
-    assert (
-        alignment_plan("pose", grid, geometry=cone, config=expert).config.gn_joint_iterations == 23
-    )
-    # Coarse levels keep at least 32 voxels on the shortest axis.
-    assert alignment_plan("pose", tj.Grid(32, 32, 32, 1.0, 1.0, 1.0)).levels == (1,)
-    assert alignment_plan("pose", tj.Grid(64, 64, 64, 1.0, 1.0, 1.0)).levels == (2, 1)
-    assert alignment_plan("pose", tj.Grid(256, 256, 128, 1.0, 1.0, 1.0)).levels == (4, 2, 1)
-    assert (
-        pose.config.schedule == "lightning_pose"
-        and pose.config.pose_translation_frame == "detector"
-    )
-    assert alignment_plan("cor", grid).config.schedule == "cor"
-    assert alignment_plan("cor-then-pose", grid).config.schedule == "cor_then_pose"
-    with pytest.raises(ValueError, match="must be one of"):
-        alignment_plan("cor_then_pose", grid)  # one spelling, the CLI's
-    full = alignment_plan("full", grid, quality="reference", freeze=("dy",))
-    assert full.config.schedule == "setup_safe" and full.levels == (4, 2, 1)
-    assert full.config.quality == "reference" and full.config.freeze == ("dy",)
-    with pytest.raises(ValueError, match="alignment mode must be one of"):
-        alignment_plan("auto", grid)
-
-
-@pytest.mark.gpu
-def test_align_calibrates_the_axis_and_returns_a_corrected_scan(tmp_path: Path) -> None:
-    if jax.default_backend() != "gpu":
-        pytest.skip("requires CUDA")
-    n = 32
-    nominal = _geometries(n)["cone"]
-    truth = tj.ConeGeometry(
-        nominal.grid, nominal.detector, nominal.angles, tj.ConeBeam(96, 144, axis_offset=1.7)
-    )
-    scan = tj.Scan(np.asarray(tj.project(truth, _phantom(n))), nominal)
-    result = tj.align(scan, mode="cor")
-    assert abs(result.scan.geometry.beam.axis_offset - 1.7) < 0.1  # pyright: ignore[reportAttributeAccessIssue]
-    assert result.poses.shape == (60, 6) and not result.poses.any()
-    tj.save(tmp_path / "aligned.nxs", result)
-    reloaded = tj.load(tmp_path / "aligned.nxs")
-    assert reloaded.geometry.beam == result.scan.geometry.beam  # pyright: ignore[reportAttributeAccessIssue]
-
-
-def test_aligning_a_loaded_scan_keeps_its_corrections(tmp_path: Path) -> None:
-    n = 16
-    grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
-    geometry = tj.ParallelGeometry(grid, tj.Detector(n, n, 1.0, 1.0), np.linspace(0, 180, 20))
-    data = np.array(tj.project(geometry, _phantom(n)))
-    data[::2] = np.roll(data[::2], 1, axis=2)  # every other view one pixel across
-    tj.save(tmp_path / "scan.nxs", tj.Scan(data, geometry))
-
-    result = tj.align(tj.load(tmp_path / "scan.nxs"), levels=(1,))
-
-    assert result.scan.poses is not None and np.abs(result.poses).max() > 0.5
-    np.testing.assert_allclose(result.scan.poses, result.poses, atol=1e-6)
-    tj.save(tmp_path / "aligned.nxs", result.scan)
-    np.testing.assert_allclose(tj.load(tmp_path / "aligned.nxs").poses, result.poses, atol=1e-6)
-    assert tj.load(tmp_path / "aligned.nxs", poses=False).poses is None
-    from tomojax.io.api import inspect_dataset
-
-    alignment = inspect_dataset(tmp_path / "aligned.nxs")["alignment"]
-    assert alignment["params_found"] and alignment["params_shape"] == [20, 6]
-
-
-def _shifted_scan(n: int = 12) -> tj.Scan:
-    """A parallel scan whose every other view moved one pixel across."""
-    grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
-    geometry = tj.ParallelGeometry(grid, tj.Detector(n, n, 1.0, 1.0), np.linspace(0, 180, 16))
-    data = np.array(tj.project(geometry, _phantom(n)))
-    data[::2] = np.roll(data[::2], 1, axis=2)
-    return tj.Scan(data, geometry)
-
-
-def _few_iterations(scan: tj.Scan) -> AlignConfig:
-    """The default pose alignment's settings, stopped after four outer iterations."""
-    from tomojax.alignment.api import alignment_plan
-
-    plan = alignment_plan("pose", scan.grid)
-    return replace(plan.config, outer_iterations=4, early_stop=False)
-
-
-def test_align_on_another_grid() -> None:
-    scan = _shifted_scan()
-    region = tj.Grid(10, 10, 8, 1.0, 1.0, 1.0)
-
-    result = tj.align(scan, grid=region, levels=(1,), config=_few_iterations(scan))
-
-    assert np.asarray(result.volume).shape == (8, 10, 10)
-    assert result.scan.grid == region
-    assert tj.reconstruct(result.scan).grid == region
-
-
-def test_an_interrupted_alignment_resumes_from_its_checkpoint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    scan = _shifted_scan()
-    options = {"levels": (1,), "config": _few_iterations(scan)}
-    uninterrupted = tj.align(scan, **options)  # pyright: ignore[reportArgumentType]
-
-    class Interrupted(Exception):
-        pass
-
-    # check-public-imports: allow-private
-    from tomojax.alignment.io.checkpoint import load_alignment_checkpoint, save_alignment_checkpoint
-
-    def save_then_stop(*args: object, **kwargs: object) -> None:
-        save_alignment_checkpoint(*args, **kwargs)  # pyright: ignore[reportArgumentType]
-        raise Interrupted
-
-    path = tmp_path / "align.ckpt"
-    with monkeypatch.context() as patch:
-        patch.setattr("tomojax.alignment.io.resume.save_alignment_checkpoint", save_then_stop)
-        with pytest.raises(Interrupted):
-            tj.align(scan, checkpoint=path, **options)  # pyright: ignore[reportArgumentType]
-    # Stopped at the first checkpoint: the proposal stage and one solver iteration.
-    progress = load_alignment_checkpoint(path).metadata
-    assert progress["global_outer_iterations_completed"] == 2 and not progress["level_complete"]
-
-    resumed = tj.align(scan, checkpoint=path, **options)  # pyright: ignore[reportArgumentType]
-
-    np.testing.assert_allclose(resumed.poses, uninterrupted.poses, atol=1e-5)
-    np.testing.assert_allclose(resumed.volume, uninterrupted.volume, atol=1e-5)
-    np.testing.assert_allclose(resumed.info["loss"], uninterrupted.info["loss"], rtol=1e-5)
-    assert load_alignment_checkpoint(path).metadata["run_complete"]
-    finished = tj.align(scan, checkpoint=path, **options)  # pyright: ignore[reportArgumentType]
-    np.testing.assert_allclose(finished.poses, uninterrupted.poses, atol=1e-5)
-
-
-@pytest.mark.parametrize("boundary", ["stage", "level"])
-def test_alignment_resumes_after_a_completed_stage_or_coarse_level(boundary):
-    from tomojax.alignment import align_multires
-
-    scan = _shifted_scan(6)
-    config = replace(_few_iterations(scan), outer_iterations=2)
-
-    def solve(**kwargs):
-        return align_multires(
-            scan.geometry,
-            scan.grid,
-            scan.detector,
-            scan.projections,
-            factors=(2, 1),
-            config=config,
-            **kwargs,
-        )
-
-    expected = solve()
-    saved = []
-
-    def interrupt(state):
-        completed = state.level_complete if boundary == "level" else state.stage_completed
-        if completed:
-            saved.append(state)
-            raise RuntimeError("checkpoint boundary")
-
-    with pytest.raises(RuntimeError, match="checkpoint boundary"):
-        solve(checkpoint_callback=interrupt)
-    assert saved[0].level_factor == 2 and not saved[0].run_complete
-    actual = solve(resume_state=saved[0])
-    np.testing.assert_allclose(actual[0], expected[0], atol=1e-5)
-    np.testing.assert_allclose(actual[1], expected[1], atol=1e-5)
-    np.testing.assert_allclose(actual[2]["loss"], expected[2]["loss"], rtol=1e-5)
-    for key in ("level_factor", "schedule_stage_index", "global_outer_idx"):
-        assert [s[key] for s in actual[2]["outer_stats"]] == [
-            s[key] for s in expected[2]["outer_stats"]
-        ]
-
-
-def test_alignment_refuses_the_checkpoint_of_another_alignment(tmp_path: Path) -> None:
-    scan = _shifted_scan()
-    config = _few_iterations(scan)
-    path = tmp_path / "align.ckpt"
-    tj.align(scan, levels=(1,), config=config, checkpoint=path)
-    saved = path.read_bytes()
-
-    with pytest.raises(ValueError, match=r"config differs in freeze .*choose another checkpoint"):
-        tj.align(scan, levels=(1,), config=replace(config, freeze=("dx",)), checkpoint=path)
-    other = replace(scan, projections=np.asarray(scan.projections)[:, :, ::-1])
-    with pytest.raises(ValueError, match="fingerprint of the projections and geometry"):
-        tj.align(other, levels=(1,), config=config, checkpoint=path)
-    with pytest.raises(ValueError, match="reconstruction grid"):
-        tj.align(
-            scan,
-            levels=(1,),
-            config=config,
-            grid=tj.Grid(10, 10, 8, 1.0, 1.0, 1.0),
-            checkpoint=path,
-        )
-    assert path.read_bytes() == saved
-
-
 def test_the_least_magnified_segment_decides_the_binning_suggestion() -> None:
     grid = tj.Grid(16, 16, 16, 1.0, 1.0, 1.0)
     fine = tj.Detector(40, 40, 0.4, 0.4)
@@ -429,14 +217,6 @@ def test_the_least_magnified_segment_decides_the_binning_suggestion() -> None:
         scan = tj.Scan(np.zeros((12, 40, 40), np.float32), tj.geometry.ConeSegments(segments))
         with pytest.warns(UserWarning, match=r"3\.8 times more finely"):
             tj.reconstruct(scan, "cgls", iterations=1)
-
-
-def test_setup_alignment_refuses_scans_that_carry_poses() -> None:
-    geometry = _geometries(12)["parallel"]
-    posed = tj.align(tj.Scan(np.asarray(tj.project(geometry, _phantom(12))), geometry), levels=(1,))
-    for mode in ("cor", "full"):
-        with pytest.raises(ValueError, match="mode='pose'"):
-            tj.align(posed.scan, mode=mode)
 
 
 def test_binning_averages_pixels_and_keeps_the_detector_in_place():
@@ -496,17 +276,6 @@ def test_iterative_reconstruction_suggests_binning_a_detector_finer_than_the_gri
         )
 
 
-def test_parallel_center_alignment_stays_axial_after_save(tmp_path):
-    scan = _shifted_scan(8)
-    result = tj.align(scan, mode="cor", levels=(1,))
-    tj.save(tmp_path / "aligned.nxs", result)
-    for aligned in (result.scan, tj.load(tmp_path / "aligned.nxs")):
-        nominal = tj.ParallelGeometry(aligned.grid, aligned.detector, aligned.angles)
-        expected = tj.project(nominal, _phantom(8))
-        np.testing.assert_allclose(tj.project(aligned.geometry, _phantom(8)), expected, atol=1e-5)
-        assert tj.reconstruct(aligned).method == "fbp"
-
-
 @pytest.mark.parametrize("method", ["fbp", "fourier"])
 def test_reconstruction_fills_non_cubic_zyx_output_without_replacing_it(tmp_path, method):
     grid, detector = tj.Grid(7, 5, 3, 1, 1, 1), tj.Detector(9, 3, 1, 1)
@@ -540,43 +309,3 @@ def test_single_slice_operator_output_feeds_scan_and_reconstruction():
     actual = tj.reconstruct(scan, "cgls", iterations=20).volume
     assert actual.shape == (1, 7, 9)
     assert np.linalg.norm(np.asarray(actual)[0] - truth) / np.linalg.norm(truth) < 0.06
-
-
-@pytest.mark.parametrize(
-    ("schedule", "dofs", "frozen", "wanted"),
-    [
-        ("cor_then_pose", None, (), (True, True)),
-        ("cor", None, ("detector_roll_deg",), (True, False)),
-        ("cor_then_pose", None, ("det_u_px", "detector_roll_deg"), None),
-        ("setup_safe", None, ("det_u_px", "detector_roll_deg"), None),
-        (None, ("detector_roll_deg",), ("det_u_px",), (False, True)),
-        (None, ("det_u_px",), (), (True, False)),
-    ],
-)
-def test_cone_setup_respects_active_parameters(monkeypatch, schedule, dofs, frozen, wanted):
-    from tomojax.alignment import AlignConfig
-    from tomojax.alignment._modes import (  # check-public-imports: allow-private
-        cone_setup,
-        resolved_schedule_for_config,
-    )
-    from tomojax.recon import ConeAxisCalibration
-
-    geometry = _geometries(8)["cone"]
-    calls = []
-
-    def calibrate(*args, config):
-        calls.append((config.estimate_offset, config.estimate_roll))
-        return ConeAxisCalibration(0.0, 0.0, (), ())
-
-    monkeypatch.setattr("tomojax.recon.calibrate_cone_axis", calibrate)
-    config = AlignConfig(
-        schedule=schedule,
-        optimise_dofs=dofs,
-        freeze=frozen,
-        pose_translation_frame="detector",
-    )
-    setup = cone_setup(geometry, geometry.grid, geometry.detector, np.zeros((1, 8, 8)), config)
-    assert setup is not None
-    if setup.config is not None:
-        assert not resolved_schedule_for_config(setup.config).active_geometry_dofs
-    assert calls == ([] if wanted is None else [wanted])

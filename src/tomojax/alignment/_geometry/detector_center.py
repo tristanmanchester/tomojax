@@ -14,7 +14,6 @@ from tomojax.core.validation import validate_projection_stack, view_indices
 from tomojax.geometry import ParallelGeometry
 
 from .center_statistics import PairStatistics, refine_pair
-from .initializers import DetectorCenterSeed
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -504,7 +503,6 @@ def estimate_center(
 __all__ = [
     "CenterEstimate",
     "CenterPair",
-    "DetectorCenterSeed",
     "estimate_center",
     "estimate_center_report",
 ]

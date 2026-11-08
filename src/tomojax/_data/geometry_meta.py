@@ -124,9 +124,8 @@ class _WrappedGeometry:
 class AugmentedGeometry(_WrappedGeometry):
     """Geometry wrapper that applies saved per-view pose corrections.
 
-    ``translation_frame`` follows `tomojax.alignment.api.apply_pose_update`: object
-    translations compose after the nominal pose; detector translations add to
-    its lab translation.
+    Object-frame translations compose after the nominal pose; detector-frame
+    translations add to its lab translation. Rotations compose on the right.
     """
 
     align_params: np.ndarray
@@ -144,9 +143,34 @@ class AugmentedGeometry(_WrappedGeometry):
 
 @dataclass
 class DetectorRollGeometry(_WrappedGeometry):
-    """Geometry wrapper that preserves calibrated detector roll metadata."""
+    """Geometry wrapper that preserves calibrated parallel detector roll."""
 
     detector_roll_deg: float
+
+    def rays_for_view(self, i: int) -> RayPair:
+        """Inspect the rolled parallel lattice; cone frames remain owned by their beam."""
+        from tomojax.core.geometry.cone import is_cone_beam
+
+        origin, direction = self.base.rays_for_view(i)
+        if is_cone_beam(self.base):
+            return origin, direction
+        detector = self.detector
+        y = float(origin(0, 0)[1])
+        angle = np.deg2rad(self.detector_roll_deg)
+        c, s = np.cos(angle), np.sin(angle)
+
+        def rolled_origin(u: int, v: int) -> tuple[float, float, float]:
+            # Rebuild the lattice so an outer wrapper replaces an inner roll,
+            # matching detector_grid_from_geometry_inputs and saved metadata.
+            x = (u - (detector.nu - 1) / 2) * detector.du
+            z = (v - (detector.nv - 1) / 2) * detector.dv
+            return (
+                float(detector.center[0] + c * x - s * z),
+                y,
+                float(detector.center[1] + s * x + c * z),
+            )
+
+        return rolled_origin, direction
 
 
 def _se3_from_pose_params_np(pose_params: np.ndarray) -> np.ndarray:

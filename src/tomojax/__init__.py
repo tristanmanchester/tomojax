@@ -8,7 +8,7 @@ returns results that carry their geometry::
     scan = tj.load("scan.nxs")  # or a Nikon .xtekct
     recon = tj.reconstruct(scan)  # Geometry-aware automatic reconstruction
     recon = tj.reconstruct(scan, method="cgls", iterations=50)
-    result = tj.align(scan, mode="cor-then-pose")  # result.scan carries the corrections
+    result = tj.align(scan)  # result.scan carries the corrections
     tj.save("recon.nxs", tj.reconstruct(result.scan))
 
 Build a scan from arrays with ``tj.Scan(projections, geometry)`` and the

@@ -44,15 +44,15 @@ def test_psi_recipe_preserves_input_metadata_and_reports_estimation_time(
     )
     seen = {}
 
-    def align(scan, *, mode, grid, config):
-        assert mode == "pose" and config.iterations == 20
+    def align(scan, *, fit, grid):
+        assert fit == "translations"
         assert grid.vx == binning
         assert (grid.nx, grid.nz) == (7 // binning, 6 // binning)
         seen["scan"] = scan
         return SimpleNamespace(
             scan=scan,
             poses=np.zeros((3, 6)),
-            info={"estimation_seconds": 0.04},
+            info={"seconds": 0.04},
         )
 
     def reconstruct(scan, method):

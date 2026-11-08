@@ -7,7 +7,7 @@ and the full command list are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 ## Select a focused check
 
 - `surface` marks explicit public API, CLI, IO/preprocessing, simulation, angle
-  sidecar, and checkpoint-contract modules. It is not applied to the whole suite.
+  sidecar, and alignment-fit contract modules. It is not applied to the whole suite.
   `just surface-check` runs this set excluding numerical and GPU-marked cases.
 - `numerical` identifies reconstruction/alignment checks that may compile JAX
   kernels. These remain part of the full CPU gate.
@@ -23,7 +23,7 @@ ordering, physical metadata, and deterministic simulation.
 
 Numerical tests check independent analytic or dense references, forward/adjoint
 consistency, physical geometry, interpolation boundaries, gradients, iterative
-convergence, alignment constraints, and checkpoint resume. GPU tests compare
+convergence, active alignment parameters, bordered solves, and geometry replay. GPU tests compare
 real CUDA implementations with their references. Benchmarks and their retained
 failures are described separately in [bench/README.md](../bench/README.md).
 

@@ -110,33 +110,12 @@ _RETIRED_KEYS = {
     "spdhg_seed": "seed",
     "tv_prox_iters": "tv_prox_iterations",
     "L": "lipschitz",
-    "align_profile": "quality",
-    "outer_iters": "outer_iterations",
-    "recon_iters": "iterations",
-    "recon_algo": "reconstruction",
-    "recon_positivity": "nonnegative",
-    "recon_L": "lipschitz",
-    "freeze_dofs": "freeze",
-    "translation_frame": "pose_translation_frame",
-    "early_stop_rel": "early_stop_rel_impr",
     "save_manifest": "manifest",
-    "print_plan_json": "dry_run",
     "apply_saved_alignment": "poses",
     "spdhg_tau": "tau",
     "spdhg_sigma_data": "sigma_data",
     "spdhg_sigma_tv": "sigma_tv",
 }
-
-
-# Config keys whose setting was removed, and why.
-_REMOVED_KEYS: dict[str, str] = dict.fromkeys(
-    (
-        "lbfgs_maxiter", "lbfgs_ftol", "lbfgs_gtol", "lbfgs_maxls", "lbfgs_memory_size",
-        "opt_method", "lr_rot", "lr_trans",
-    ),
-    "gradient-descent and L-BFGS pose optimization were removed; "
-    "Gauss-Newton is the pose solver",
-)  # fmt: skip
 
 
 def _validate_config_keys(
@@ -149,8 +128,6 @@ def _validate_config_keys(
         new = _RETIRED_KEYS.get(str(key))
         if new is not None and new in valid_keys:
             parser.error(f"config key '{key}' in {path} was renamed '{new}'")
-        if str(key) in _REMOVED_KEYS:
-            parser.error(f"config key '{key}' in {path} was removed: {_REMOVED_KEYS[str(key)]}")
     unknown = sorted(str(key) for key in values if str(key) not in valid_keys)
     if unknown:
         parser.error(

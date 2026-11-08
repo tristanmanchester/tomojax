@@ -10,7 +10,7 @@ Every command has the shape `tomojax <command> INPUT -o OUTPUT [options]`
 - An existing output is refused unless `--force` is given.
 - `tomojax <command> --help` lists the command's options. Expert settings are
   not on the help page: put them in a TOML file and pass it with
-  `--config FILE` (`preprocess`, `recon`, `align` and `simulate`).
+  `--config FILE` (`preprocess`, `recon` and `simulate`).
   `tomojax <command> --config-keys` lists the keys a file may set, with their
   defaults; explicit command-line options override the file.
 - Exit status is 0 on success, 1 on failure (for `inspect`, also when the
@@ -19,15 +19,12 @@ Every command has the shape `tomojax <command> INPUT -o OUTPUT [options]`
 
 The options match the Python API's keywords: `tomojax recon --method cgls
 --iterations 50` is `tj.reconstruct(scan, "cgls", iterations=50)`, and
-`tomojax align --mode cor --freeze dy` is
-`tj.align(scan, mode="cor", freeze=["dy"])`.
+`tomojax align --fit translations roll` is
+`tj.align(scan, fit=("translations", "roll"))`.
 
-With no `--mode` or `--method`, `align` and `recon` use the same automatic
-policy as Python. Explicit modes and methods retain their own settings;
-expert TOML solver settings require one. Limitations are printed and retained
-in result records/manifests. Automatic `align --dry-run` reports that its plan
-is data-dependent rather than running calibration. Explicit dry-run plans use
-the input beam geometry, matching the Python workflow's solver budget.
+With no `--fit`, alignment estimates per-view translations. `--fit` names the parameter blocks
+released in the same joint solver; it takes one or more of `centre`, `translations`, `tilt`,
+`roll` and `rotations`. Reconstruction without `--method` selects its method from the geometry.
 
 ## Commands
 
@@ -45,14 +42,10 @@ the input beam geometry, matching the Python workflow's solver budget.
   `SPDHGConfig`), each replacing that field of the class's defaults, as
   `tj.reconstruct(config=...)` takes them; `--roi cyl` zeroes the volume
   outside the cylinder every view sees.
-- `align`: estimate the rotation axis and per-view poses (`--mode auto`, `pose`,
-  `cor`, `cor-then-pose` or `full`) with `tj.align`, on top of the poses saved
-  in the input unless `--no-poses`. Its expert settings are
-  `tomojax.alignment.AlignConfig` fields, each replacing that field of the
-  configuration the mode gives (`--dry-run` prints it); `--checkpoint PATH`
-  saves progress after each outer iteration and resumes from it. Mixed setup
-  and pose stages in `full` carry their own gauge policies; an expert direct
-  parameter set mixing them needs an explicit `gauge_policy`.
+- `align`: jointly estimate the image and the named geometry corrections with `tj.align`, on
+  top of the poses saved in the input unless `--no-poses`. `--fit centre` fits one shared centre
+  (two for cone data); `--fit translations tilt roll` adds shared setup angles to per-view shifts.
+  `--fit translations rotations` adds per-view sample rotations. `--grid` sets image sampling.
 - `export`: write a reconstruction as TIFF slices, or as one raw file when
   OUTPUT ends in `.raw`.
 - `simulate`: write a synthetic scan of a phantom.
@@ -62,12 +55,12 @@ the input beam geometry, matching the Python workflow's solver budget.
 ```bash
 tomojax import scan/scan.xtekct -o scan.nxs
 tomojax inspect scan.nxs
-tomojax align scan.nxs -o aligned.nxs --mode cor
+tomojax align scan.nxs -o aligned.nxs --fit centre roll
 tomojax recon aligned.nxs -o recon.nxs
 tomojax inspect recon.nxs --preview previews
 tomojax export recon.nxs -o slices/
 ```
 
-`align --mode cor` estimates the cone beam's axis offset and detector roll,
+`align --fit centre roll` estimates the cone detector's centre and roll,
 and `recon` uses them. `previews/` then holds `projection.png`, `slice_z.png`,
 `slice_y.png` and `slice_x.png`. See the [lab cone-beam CT guide](../../../docs/lab-ct.md).

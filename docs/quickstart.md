@@ -358,7 +358,7 @@ estimate to raise an empirical dimensionless minimum of `5e-5`. Set a positive
 weight explicitly to bypass estimation, or `0` to disable TV. Weights are
 physically normalized; do not change them when switching length units.
 
-`tomojax align --mode cor` estimates the detector centre (the centre of
+`tomojax align --fit centre` estimates the detector centre (the centre of
 rotation). To compare trial centres by eye instead, shift the detector in
 Python; the centre is in the geometry's length unit, so pixels times `du`:
 
@@ -380,6 +380,6 @@ If the projections or the volume are larger than GPU memory, see
 
 For tilted or irregular-angle data, start with the iterative workflow in the
 [real scan guide](real-laminography.md#reconstruct-with-the-recorded-geometry).
-If motion remains plausible, use the [alignment guide](alignment-guide.md) after
+If motion remains plausible, use the [alignment guide](align-a-scan.md) after
 checking geometry and preprocessing. A visually sharper aligned image does not
 by itself establish accurate recovered poses.

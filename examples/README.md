@@ -65,17 +65,18 @@ from it. Over the whole slab the relative L2 error is 0.357 for FBP and
 400 views over a half turn and 2 × 10⁴ photons per pixel. The rotation axis
 projects 5.3 px off the detector centre, and every view has its own pose: a
 slow wobble plus jitter of up to 0.25° in each rotation, 2.4 px across the axis
-and 1.5 px along it. `tj.align(scan, mode="cor-then-pose")` takes 300 s. It
-recovers the rotations to 0.06° RMS or better and the shifts to 0.07 px
+and 1.5 px along it. The earlier implementation used for the published figure took 300 s. It
+recovered the rotations to 0.06° RMS or better and the shifts to 0.07 px
 (across) and 0.04 px (along) RMS, and the error of a FISTA-TV reconstruction
 falls from 0.928 with the nominal geometry to 0.235. The script takes about
-6 minutes.
+6 minutes. Those measurements need requalification with the consolidated
+`fit=("translations", "rotations")` solver.
 
 Moving the whole movement rigidly, with every pose moved back, predicts the
 same data, as does trading the detector centre against a shift of every view,
 so `tj.align` reports the estimate with the least per-view motion. The truth,
 its poses and its centre are moved to that estimate before they are compared
-(see [where the aligned volume sits](../docs/alignment-guide.md#where-the-aligned-volume-sits));
+(see [where the aligned volume sits](../docs/align-a-scan.md#check-the-result));
 there the centre is found at 3.26 px against 3.31 px.
 
 ### Volume-render a reconstruction
@@ -106,16 +107,16 @@ simulation, keep all angles but bin the **unwrapped phase**, not complex pixels:
 
 ```bash
 JAX_PLATFORMS=cpu uv run --no-sync python examples/align_ptychography.py \
-  /path/to/example_data.mat --binning 4 --iterations 5 -o phase-slices.npz
+  /path/to/example_data.mat --binning 4 -o phase-slices.npz
 ```
 
-The five-iteration run is a preview, not a convergence or accuracy guarantee.
+The binned run is a preview; inspect its fitted motion and physical slices.
 The same workflow in Python, from the checkout root, is:
 
 ```python
 from examples.align_ptychography import run_example
 
-volume, poses, report = run_example("example_data.mat", binning=4, iterations=5)
+volume, poses, report = run_example("example_data.mat", binning=4)
 print(volume.shape, report["value_unit"])
 ```
 
@@ -123,12 +124,11 @@ Its core steps are public APIs:
 
 ```python
 import tomojax as tj
-from tomojax.alignment import ProjectionMatchingConfig
 from tomojax.corrections import remove_phase_ramp, unwrap_phase
 
 phase = -remove_phase_ramp(unwrap_phase(objects), air_mask=air * abs(objects)**2)
 scan = tj.Scan(phase, geometry)  # (view, v, u), geometry in pixel units
-aligned = tj.align(scan, mode="pose", config=ProjectionMatchingConfig(iterations=20))
+aligned = tj.align(scan)
 reconstruction = tj.reconstruct(aligned.scan, "fourier")
 ```
 
@@ -159,14 +159,13 @@ prepare phase in Python (do not apply an absorption logarithm):
 ```python
 import numpy as np
 import tomojax as tj
-from tomojax.alignment import ProjectionMatchingConfig
 from examples.align_ptychography import read_psi_objects, prepare_phase, make_scan
 
 objects, angles, _, _ = read_psi_objects("example_data.mat")
 air = np.zeros(objects.shape[-2:], dtype=np.float32)
 air[:, :50] = air[:, -50:] = 1  # known air in this supplied example
 scan = make_scan(prepare_phase(objects, air), angles, binning=4)
-aligned = tj.align(scan, mode="pose", config=ProjectionMatchingConfig(iterations=5))
+aligned = tj.align(scan)
 tj.save("aligned-phase.nxs", aligned.scan)
 ```
 
@@ -176,8 +175,7 @@ uv run --no-sync tomojax inspect phase-recon.nxs --preview phase-previews
 ```
 
 These datasets retain original-pixel geometry: reconstructed values remain
-`rad/pixel`. The joint translation configuration is a Python API; `tomojax align`
-uses the general rigid-pose configuration, not this specialized estimator.
+`rad/pixel`. Python and `tomojax align` use the same joint translation fit.
 
 
 ## Preview a real cone-beam orbit on a CPU
@@ -201,9 +199,11 @@ uv run --no-sync python examples/align_walnut_orbits.py ~/data/walnuts/Walnut1 -
 projections and the scanner's uncorrected geometry with `tj.Scan.from_astra`,
 bins the detector 2 x 2, aligns every 4th view (900 in all) with `tj.align`, prints each
 orbit's height relative to orbit 1 and reconstructs with 20 iterations of
-non-negative least squares. On Walnut 1 it finds -0.38 and -0.76 mm for orbits
+non-negative least squares. With the retired alignment route, Walnut 1 gave
+-0.38 and -0.76 mm for orbits
 2 and 3, where the authors' corrected geometry has -0.40 and -0.79 mm, in about
-six minutes on an 8 GB laptop GPU. The data fix the orbits' heights relative to
+six minutes on an 8 GB laptop GPU. These measurements need repeating with the
+joint solver. The data fix the orbits' heights relative to
 one another but can't pin down the walnut's absolute height: moving the whole
 object, and every view with it, predicts the same projections, so the volume
 can sit a fraction of a millimetre from where the scanner's record would put

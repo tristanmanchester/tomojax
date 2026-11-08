@@ -32,52 +32,19 @@ PUBLIC_MODULES = (
 # Immutable values and typing aliases cannot own docstrings. Their reference
 # entries live here so every export is covered by either numpydoc or this prose.
 PUBLIC_DATA = {
-    "tomojax.forward.api.PROJECTION_OPERATOR": (
-        "Reference projection operator name, core_trilinear_ray."
-    ),
-    "tomojax.forward.api.ProjectionOperatorName": (
-        "Literal name of the reference projection operator."
-    ),
-    "tomojax.forward.api.ResidualFilterKind": (
-        "Residual filter: raw, lowpass_gaussian or bandpass_difference_of_gaussians."
-    ),
+    "tomojax.forward.api.PROJECTION_OPERATOR": "Reference projection operator name, "
+    "core_trilinear_ray.",
+    "tomojax.forward.api.ProjectionOperatorName": "Literal name of the reference projection "
+    "operator.",
+    "tomojax.forward.api.ResidualFilterKind": "Residual filter: raw, lowpass_gaussian or "
+    "bandpass_difference_of_gaussians.",
     "tomojax.forward.api.ResidualLossMode": "Residual loss: l2 or pseudo_huber.",
     "tomojax.__version__": "Installed TomoJAX release version.",
-    "tomojax.alignment.MODES": (
-        "Explicit workflow alignment modes: pose, cor, cor-then-pose and full."
-    ),
-    "tomojax.recon.api.MethodConfig": (
-        "A method's configuration: FBPConfig, FourierConfig, CGLSConfig, FistaConfig, "
-        "SPDHGConfig, SIRTConfig or MLEMConfig."
-    ),
-    "tomojax.io.api.JsonValue": (
-        "Recursive JSON value: null, boolean, number, string, list or mapping."
-    ),
-    "tomojax.alignment.api.MODES": "Explicit alignment modes, also exported by tomojax.alignment.",
-    "tomojax.alignment.api.POSE_WIDTH": "Six pose columns: alpha, beta, phi, dx, dz and dy.",
-    "tomojax.alignment.api.PUBLIC_SCHEDULE_PRESETS": (
-        "Names accepted as public alignment schedules."
-    ),
-    "tomojax.alignment.api.AlignmentLossConfig": (
-        "One alignment loss specification or a loss schedule."
-    ),
-    "tomojax.alignment.api.AlignmentLossSpec": (
-        "Typed specification of a projection-domain alignment loss."
-    ),
-    "tomojax.alignment.api.AlignmentMode": (
-        "Literal pose, cor, cor-then-pose or full workflow mode."
-    ),
-    "tomojax.alignment.api.DofBounds": (
-        "Tuple of (parameter name, lower bound, upper bound) triples."
-    ),
-    "tomojax.alignment.api.GaugePolicy": (
-        "Gauge policy: reject, anchor_mean, prior_required or diagnose_only."
-    ),
-    "tomojax.alignment.api.OuterStat": (
-        "Mapping of outer-iteration diagnostic names to recorded values."
-    ),
-    "tomojax.alignment.api.PoseTranslationFrame": "Translation frame: object or detector.",
-    "tomojax.alignment.api.QualityTier": "Alignment quality profile: fast or reference.",
+    "tomojax.recon.api.MethodConfig": "A method's configuration: FBPConfig, FourierConfig, "
+    "CGLSConfig, FistaConfig, SPDHGConfig, SIRTConfig or "
+    "MLEMConfig.",
+    "tomojax.io.api.JsonValue": "Recursive JSON value: null, boolean, number, string, list or "
+    "mapping.",
 }
 
 

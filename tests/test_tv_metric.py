@@ -111,9 +111,7 @@ def test_fista_contrast_matches_profiled_gradient_and_offset_invariance(model, b
 
 
 def test_metric_cone_segments_and_pose_wrappers_use_object_plane_area():
-    from tomojax.alignment._objectives.recon_layer import (  # check-public-imports: allow-private
-        PoseAdjustedGeometry,
-    )
+    from tomojax import Scan
     from tomojax.geometry import ConeBeam, ConeGeometry, ConeSegments
 
     grid, detector = Grid(4, 3, 2, 0.7, 0.8, 0.9), Detector(5, 4, 0.6, 0.7)
@@ -127,7 +125,7 @@ def test_metric_cone_segments_and_pose_wrappers_use_object_plane_area():
     data = np.ones((19, 4, 5), np.float32)
     area = detector.nu * detector.du * detector.nv * detector.dv
     for geometry, factor in [(cone, 1 / 4), (segments, (7 / 4 + 12 / 9) / 19)]:
-        for wrapped in [geometry, PoseAdjustedGeometry(geometry, jnp.zeros((19, 6)))]:
+        for wrapped in [geometry, Scan(data, geometry).with_poses(np.zeros((19, 6))).geometry]:
             metric = resolve_tv_metric(
                 wrapped, grid, detector, data, tv_weight=5e-5, huber_delta=0.01
             )

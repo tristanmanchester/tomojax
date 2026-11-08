@@ -28,7 +28,6 @@ from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 
 SUITE = "public-free-voxel-v1"
 SIZE, VIEWS, SEED = 32, 61, 461
-OUTERS, INNER_ITERS = 64, 20
 IMAGE_GATES = {"parallel": 0.10, "anisotropic": 0.10, "lamino": 0.20}
 
 
@@ -297,88 +296,32 @@ def load_fixture(path: Path) -> dict[str, Any]:
     return result
 
 
-def one_run(
-    path: Path,
-    ray_integrator: str = "sampled",
-    gn_jacobian: str = "central",
-    views_per_batch: int = 1,
-    factors: tuple[int, ...] = (1,),
-) -> dict[str, Any]:
-    """Time a public free-voxel solve including all setup and quality checks."""
+def one_run(path: Path, *, fit: tuple[str, ...] = ("translations", "rotations")) -> dict[str, Any]:
+    """Time the public joint solve and independently verify its returned image and poses."""
     start = time.perf_counter()
     import jax
-    import jax.numpy as jnp
 
-    from tomojax.alignment import AlignConfig, align_multires
-    from tomojax.alignment.api import L2LossSpec, align
+    import tomojax as tj
     from tomojax.geometry import LaminographyGeometry, ParallelGeometry
 
     fixture = load_fixture(path)
-    g, d = fixture["grid"], fixture["detector"]
+    grid, detector = fixture["grid"], fixture["detector"]
     geometry = (
-        LaminographyGeometry(g, d, fixture["angles"], tilt_deg=30)
+        LaminographyGeometry(grid, detector, fixture["angles"], tilt_deg=30)
         if fixture["kind"] == "lamino"
-        else ParallelGeometry(g, d, fixture["angles"])
+        else ParallelGeometry(grid, detector, fixture["angles"])
     )
-    history = []
-
-    def observer(x: Any, parameters: Any, stat: dict[str, Any]) -> str:
-        x, parameters = jax.device_get((x, parameters))
-        quality = verify(x, parameters, fixture)
-        history.append(
-            {
-                "outer": len(history) + 1,
-                "elapsed_verified_ms": (time.perf_counter() - start) * 1000,
-                "quality": quality,
-                "solver_stat": stat,
-            }
-        )
-        return "stop_run" if quality["accepted"] else "continue"
-
-    config = AlignConfig(
-        ray_integrator=ray_integrator,
-        pose_translation_frame="detector",
-        backend="cuda",
-        gather_dtype="fp32",
-        gn_jacobian=gn_jacobian,
-        outer_iterations=OUTERS,
-        iterations=INNER_ITERS,
-        loss=L2LossSpec(),
-        early_stop=False,
-        views_per_batch=views_per_batch,
-    )
-    if factors == (1,):
-        volume, parameters, info = align(
-            geometry,
-            g,
-            d,
-            jnp.asarray(fixture["data"]),
-            config=config,
-            init_x=jnp.zeros(fixture["truth"].shape, dtype=jnp.float32),
-            observer=observer,
-        )
-    else:
-        # Coarser levels have a different grid; acceptance is checked on the final one.
-        volume, parameters, info = align_multires(
-            geometry,
-            g,
-            d,
-            jnp.asarray(fixture["data"]),
-            factors=factors,
-            config=config,
-        )
-    volume, parameters = jax.device_get((volume, parameters))
+    result = tj.align(tj.Scan(fixture["data"], geometry), fit=fit, grid=grid)
+    volume, parameters = jax.device_get((result.volume, result.poses))
     quality = verify(volume, parameters, fixture)
     return {
         "verified_ms": (time.perf_counter() - start) * 1000,
         "quality": quality,
-        "outer_iterations": len(history),
-        "history": history,
-        "config": asdict(config),
+        "fit": list(fit),
         "volume_degrees_of_freedom": int(volume.size),
-        "pose_degrees_of_freedom": int(parameters.size),
-        "execution_profile": info.get("execution_profile"),
-        "solver": "public tomojax.alignment.align",
+        "pose_degrees_of_freedom": len(parameters)
+        * (3 * ("rotations" in fit) + 2 * ("translations" in fit)),
+        "solver": "tomojax.align",
     }
 
 
@@ -399,13 +342,7 @@ def worker(args: argparse.Namespace) -> None:
     write_result(args.output, payload)
     try:
         for repeat in range(args.repeats + 1):
-            row = one_run(
-                args.fixture,
-                args.ray_integrator,
-                args.gn_jacobian,
-                args.views_per_batch,
-                tuple(args.factors),
-            )
+            row = one_run(args.fixture, fit=tuple(args.fit))
             if repeat == 0:
                 row["fresh_process_verified_ms"] = (time.perf_counter() - args.process_start) * 1000
             payload["runs"].append(row)
@@ -433,8 +370,6 @@ def main() -> None:
     parser.add_argument("--fixture", type=Path)
     parser.add_argument("--process-start", type=float)
     parser.add_argument("--repeats", type=int, default=7)
-    parser.add_argument("--ray-integrator", choices=("sampled", "exact"), default="sampled")
-    parser.add_argument("--gn-jacobian", choices=("central", "autodiff"), default="central")
     parser.add_argument("--size", type=int, default=SIZE, help="Nominal grid size")
     parser.add_argument(
         "--phantom",
@@ -443,19 +378,16 @@ def main() -> None:
         help="voxel: frozen pilot (exact voxel-basis data); analytic: continuous Gaussian blobs",
     )
     parser.add_argument(
-        "--factors", type=int, nargs="+", default=[1], help="Coarse-to-fine factors, e.g. 4 2 1"
+        "--fit",
+        nargs="+",
+        choices=("translations", "rotations"),
+        default=["translations", "rotations"],
     )
     parser.add_argument("--views", type=int, default=VIEWS)
     parser.add_argument("--rotation-deg", type=float, default=0.25, help="Uniform motion bound")
     parser.add_argument("--shift-px", type=float, default=0.5, help="Uniform motion bound")
     parser.add_argument("--noise", type=float, default=0.001, help="Noise std / data RMS")
     parser.add_argument("--cells", nargs="+", help="Subset such as lamino-noisy; default all six")
-    parser.add_argument(
-        "--views-per-batch",
-        type=int,
-        default=1,
-        help="Reconstruction views per batch; 0 uses the library's automatic size",
-    )
     args = parser.parse_args()
     if args.repeats < 1:
         parser.error("at least one repeated complete call is required")
@@ -469,9 +401,7 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=False)
     payload = {
         "suite": SUITE,
-        "ray_integrator": args.ray_integrator,
-        "gn_jacobian": args.gn_jacobian,
-        "views_per_batch": args.views_per_batch,
+        "fit": args.fit,
         "complete": False,
         "environment": environment(),
         "records": [],
@@ -495,7 +425,7 @@ def main() -> None:
             "motion_translation_bound_px": args.shift_px,
             "phantom": args.phantom,
         },
-        "limits": {"outer_iters": OUTERS, "recon_iters": INNER_ITERS, "worker_timeout_s": 1800},
+        "limits": {"worker_timeout_s": 1800},
         "initialization": "zero free voxels and nominal poses",
         "gauge": "one shared rigid object transform, applied to both poses and volume",
         "identifiability": (
@@ -531,14 +461,8 @@ def main() -> None:
             str(result),
             "--repeats",
             str(args.repeats),
-            "--ray-integrator",
-            args.ray_integrator,
-            "--gn-jacobian",
-            args.gn_jacobian,
-            "--views-per-batch",
-            str(args.views_per_batch),
-            "--factors",
-            *map(str, args.factors),
+            "--fit",
+            *args.fit,
             "--process-start",
             str(time.perf_counter()),
         ]

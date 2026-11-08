@@ -1,47 +1,6 @@
 {
-  "cli_flags": {
-    "align": 16,
-    "export": 6,
-    "import": 12,
-    "inspect": 4,
-    "preprocess": 20,
-    "recon": 18,
-    "simulate": 19
-  },
-  "code_lines": {
-    "(modules)": 3014,
-    "_data": 2050,
-    "alignment": 15860,
-    "backends": 617,
-    "cli": 2571,
-    "core": 13593,
-    "corrections": 2612,
-    "datasets": 1125,
-    "forward": 824,
-    "geometry": 1101,
-    "io": 3637,
-    "motion": 143,
-    "nuisance": 232,
-    "recon": 15173
-  },
-  "complex_functions": [
-    "src/tomojax/alignment/_model/state.py::C901::alignment_state_from_checkpoint",
-    "src/tomojax/alignment/_pose/_coupled_program.py::C901::_build_program",
-    "src/tomojax/alignment/_pose/_coupled_program.py::PLR0915::_build_program",
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py::PLR0911::_rigid_detector_grid_transform",
-    "src/tomojax/core/_logging.py::PLR0911::format_duration",
-    "src/tomojax/datasets/_impl/artefacts.py::C901::apply_simulation_artefacts",
-    "src/tomojax/datasets/_impl/artefacts.py::PLR0915::apply_simulation_artefacts",
-    "src/tomojax/recon/_cgls_host.py::C901::normal",
-    "src/tomojax/recon/_fista_host.py::C901::apply",
-    "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
-    "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
-    "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
-  ],
   "config_fields": {
-    "AlignConfig": 36,
     "CGLSConfig": 12,
-    "ConeAxisConfig": 6,
     "FBPConfig": 5,
     "FBPHostConfig": 5,
     "FDKConfig": 4,
@@ -49,41 +8,39 @@
     "FistaConfig": 26,
     "FourierConfig": 2,
     "MLEMConfig": 6,
-    "ProjectionMatchingConfig": 1,
     "SIRTConfig": 10,
     "SPDHGConfig": 21,
     "SimConfig": 31
   },
-  "cuda_kernels": 52,
-  "cuda_switches": 36,
-  "environment_reads": 30,
   "exported_names": {
     "tomojax": 24,
-    "tomojax.alignment": 6,
-    "tomojax.alignment.api": 33,
-    "tomojax.datasets": 15,
-    "tomojax.evaluation": 2,
     "tomojax.geometry": 18,
-    "tomojax.geometry.api": 12,
+    "tomojax.evaluation": 2,
+    "tomojax.recon": 24,
     "tomojax.io": 7,
+    "tomojax.alignment": 0,
+    "tomojax.datasets": 15,
+    "tomojax.geometry.api": 12,
+    "tomojax.recon.api": 7,
     "tomojax.io.api": 21,
-    "tomojax.recon": 27,
-    "tomojax.recon.api": 7
+    "tomojax.alignment.api": 4
   },
-  "first_device_probes": 0,
-  "jaxlib_private_imports": 0,
+  "cli_flags": {
+    "inspect": 4,
+    "import": 12,
+    "preprocess": 20,
+    "recon": 18,
+    "align": 9,
+    "export": 6,
+    "simulate": 19
+  },
   "long_files": {
     "src/tomojax/core/cone.py": 832,
     "src/tomojax/recon/fista_tv.py": 868
   },
   "long_functions": {
-    "src/tomojax/alignment/_model/schedules.py::resolve_alignment_schedule": 139,
-    "src/tomojax/alignment/_pose/_coupled_program.py::_build_program": 227,
-    "src/tomojax/alignment/_pose/_pose_loop.py::align": 199,
-    "src/tomojax/alignment/_stages/_reconstruction_stage.py::_run_reconstruction_step": 128,
-    "src/tomojax/alignment/_stages/_setup_stage.py::_optimize_setup_geometry_bilevel_for_level": 126,
-    "src/tomojax/alignment/_stages/_stage_runners.py::_run_multires_level_stages": 121,
-    "src/tomojax/alignment/optimizers.py::run_active_validation_lm": 106,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 144,
+    "src/tomojax/alignment/_joint/_solver.py::solve": 101,
     "src/tomojax/cli/simulate.py::_build_parser": 106,
     "src/tomojax/core/cuda_projector/_loss.py::forward_project_residual_sse_T_cuda": 119,
     "src/tomojax/core/cuda_projector/_stack_bind.py::forward_project_views_T_cuda": 101,
@@ -99,34 +56,61 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 129,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
-  "params5_mentions": 0,
-  "positional_options": [],
-  "single_use_helpers": {
-    "chained": 31,
-    "forwarders": 9,
-    "tiny": 94
+  "code_lines": {
+    "(modules)": 2857,
+    "_data": 2074,
+    "alignment": 2734,
+    "backends": 617,
+    "cli": 2322,
+    "core": 13797,
+    "corrections": 2612,
+    "datasets": 1125,
+    "forward": 824,
+    "geometry": 1101,
+    "io": 3637,
+    "motion": 143,
+    "nuisance": 232,
+    "recon": 14845
   },
-  "string_normalisers": 0,
+  "cuda_kernels": 53,
+  "cuda_switches": 36,
+  "environment_reads": 29,
   "suppressions": {
-    "noqa": 5,
-    "pyright: ignore": 12,
-    "type: ignore": 25
+    "noqa": 4,
+    "type: ignore": 15,
+    "pyright: ignore": 12
   },
-  "test_private_imports": 168,
+  "complex_functions": [
+    "src/tomojax/core/_logging.py::PLR0911::format_duration",
+    "src/tomojax/datasets/_impl/artefacts.py::C901::apply_simulation_artefacts",
+    "src/tomojax/datasets/_impl/artefacts.py::PLR0915::apply_simulation_artefacts",
+    "src/tomojax/recon/_cgls_host.py::C901::normal",
+    "src/tomojax/recon/_fista_host.py::C901::apply",
+    "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
+    "src/tomojax/recon/fourier.py::C901::_run_host_pipeline",
+    "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
+  ],
+  "single_use_helpers": {
+    "tiny": 77,
+    "forwarders": 8,
+    "chained": 4
+  },
   "type_errors": {
-    "reportArgumentType": 165,
-    "reportAssignmentType": 1,
-    "reportAttributeAccessIssue": 58,
-    "reportCallIssue": 9,
-    "reportGeneralTypeIssues": 5,
+    "reportArgumentType": 99,
+    "reportAttributeAccessIssue": 17,
+    "reportCallIssue": 2,
+    "reportGeneralTypeIssues": 2,
     "reportIndexIssue": 6,
     "reportInvalidTypeForm": 1,
-    "reportOptionalCall": 2,
-    "reportOptionalMemberAccess": 7,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 65,
-    "reportRedeclaration": 1,
-    "reportReturnType": 16,
-    "reportTypedDictNotRequiredAccess": 5
-  }
+    "reportPrivateUsage": 37,
+    "reportReturnType": 9,
+    "reportTypedDictNotRequiredAccess": 3
+  },
+  "positional_options": [],
+  "params5_mentions": 0,
+  "string_normalisers": 0,
+  "first_device_probes": 0,
+  "jaxlib_private_imports": 0,
+  "test_private_imports": 124
 }

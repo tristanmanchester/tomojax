@@ -18,10 +18,43 @@ Methods that miss the fixed quality gate retain seven warm attempts at their
 last tested budget. These report attempted latency and quality; their time to
 an accepted result remains undefined and they cannot count as speed wins.
 
-`public_alignment_benchmark.py` exercises the alignment API on the six-cell
-free-voxel pilot, with independently integrated voxel-basis data from
-`voxel_truth.py`; see the
-[measurements](../docs/measurements.md#free-voxel-pilot).
+## Alignment fit settings
+
+`fit_alignment.py` checks the public `fit=` settings against independent continuous Gaussian
+line integrals. Each command runs one alignment, with 60 views, a 48 × 48 detector and a 24³
+working grid by default. Truth is used only to render observations and score the completed fit;
+it is never supplied to the solver. Use a timeout for a bounded CPU check:
+
+```bash
+PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s \
+  .venv/bin/python bench/fit_alignment.py --case centre
+PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s \
+  .venv/bin/python bench/fit_alignment.py --case translations --geometry lamino
+PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s \
+  .venv/bin/python bench/fit_alignment.py --case roll
+PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s \
+  .venv/bin/python bench/fit_alignment.py --case tilt --geometry lamino
+PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s \
+  .venv/bin/python bench/fit_alignment.py --case rotations --geometry lamino
+```
+
+`--case setup` fits translations, tilt and roll together. `--case centre --geometry cone`
+checks both cone detector-centre coordinates. `--fit translations` on a roll or tilt case gives a
+comparison with a model that cannot represent the injected angle. `--case clean` checks false
+motion. `--size 64 --views 90 --grid-size 32` is a somewhat finer small check; the working grid
+can be set independently of detector sampling. `--output bench/results/NAME.json` retains the
+record and refuses an existing path.
+
+The record reports the cold public-call time, detector-space RMS and worst-view landmark error
+after one common rigid gauge, fitted calibration, and image relative error against the analytic
+phantom. The detector-space score includes centre offsets and roll; subtracting pose tables alone
+would miss them. Image comparison evaluates the continuous density in the fitted rigid gauge,
+without rescaling its amplitude. The analytic object is smooth, so this is a focused model check,
+not qualification on sharp objects, Poisson data, periodic structure or truncated real scans.
+
+The watch cases, spark-plug figures, K11 and PSI, equal-accuracy default runtime, and full CPU/GPU
+suites remain separate qualification gates. Do not infer those outcomes from a small analytic fit
+or from forward/transpose component timing.
 
 ## Joseph first-order differentiation
 
@@ -580,11 +613,12 @@ drift and partial coherence are not modelled. The laminography missing cone
 removes structure such as the thin ground plane parallel to the plate, so even
 an inverse-crime reconstruction stays about 0.5 relative L2 from the truth;
 score alignment against a reconstruction of the same data with the true
-geometry instead. On the moving realistic scan, `tomojax align --mode
-cor-then-pose` recovers the offset to 3.18 px (3.178 px is identifiable from
+geometry instead. On the moving realistic scan, the earlier centre-then-pose route
+recovered the offset to 3.18 px (3.178 px is identifiable from
 the motion), rotations to 0.073° and shifts to 0.087 px RMS in 127 s; its
 volume differs from the true-geometry reconstruction by 0.048 relative L2,
-against 0.82 without alignment.
+against 0.82 without alignment. These are measurements of the retired engine,
+not qualification of the consolidated `fit=` solver.
 
 On the exact line integrals of the same moving scan, pose alignment recovers
 rotations to 0.015° and shifts to 0.010 px (volume error 0.0084) in 143 s.

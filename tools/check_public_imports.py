@@ -17,13 +17,7 @@ DEFAULT_SCAN_PATHS = [Path("src/tomojax"), Path("tests"), Path("examples")]
 ALIGNMENT_FACADE_REASON = "nested alignment namespace must be reached through tomojax.alignment.api"
 BLOCKED_ALIGNMENT_NAMESPACES = (
     "tomojax.alignment._geometry",
-    "tomojax.alignment._model",
-    "tomojax.alignment._objectives",
-    "tomojax.alignment.geometry",
-    "tomojax.alignment.io",
-    "tomojax.alignment.model",
-    "tomojax.alignment.objectives",
-    "tomojax.alignment.pipeline",
+    "tomojax.alignment._joint",
 )
 PRODUCT_BOUNDARY_IMPORT_RULES = (
     (
@@ -41,8 +35,7 @@ PRODUCT_BOUNDARY_IMPORT_RULES = (
 )
 ALLOWED_PRODUCT_SURFACE_IMPORTS = {
     ("tomojax._smooth_alignment", "tomojax.alignment._integration"),
-    ("tomojax._workflow", "tomojax.alignment._integration"),
-    ("tomojax.cli.align", "tomojax.alignment._integration"),
+    ("tomojax._smooth_alignment", "tomojax.alignment._calibration"),
 }
 
 

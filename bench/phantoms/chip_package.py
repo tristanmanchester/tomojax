@@ -86,9 +86,8 @@ def _defaults(parser: argparse.ArgumentParser) -> None:
 
 def plan(args: argparse.Namespace) -> None:
     """Write the grid, nominal and true detector, poses and motion to ``plan.npz``."""
-    import jax.numpy as jnp
+    from scipy.spatial.transform import Rotation
 
-    from tomojax.alignment.api import apply_pose_updates
     from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
 
     v = args.voxel_mm
@@ -125,12 +124,10 @@ def plan(args: argparse.Namespace) -> None:
     params[:, 4] = (
         v * args.shift_px * (0.4 * np.sin(2 * theta) + rng.uniform(-0.2, 0.2, args.views))
     )
-    true_poses = np.asarray(
-        apply_pose_updates(
-            nominal_poses, jnp.asarray(params, jnp.float32), translation_frame="detector"
-        ),
-        np.float64,
-    )
+    true_poses = np.array(nominal_poses, np.float64, copy=True)
+    rotation = Rotation.from_euler("YXZ", params[:, [1, 0, 2]]).as_matrix()
+    true_poses[:, :3, :3] = true_poses[:, :3, :3] @ rotation
+    true_poses[:, :3, 3] += params[:, [3, 5, 4]]
     args.out.mkdir(parents=True, exist_ok=True)
     np.savez(
         args.out / "plan.npz",

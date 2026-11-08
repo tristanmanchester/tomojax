@@ -6,15 +6,10 @@ import sys
 from types import SimpleNamespace
 
 import jax
-import jax.numpy as jnp
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.alignment._objectives import fixed_volume
-
-# check-public-imports: allow-private
 from tomojax.backends import _memory, estimate_views_per_batch_info
-from tomojax.geometry import Detector, Grid
 
 
 @pytest.mark.parametrize(
@@ -137,39 +132,6 @@ def test_gpu_compute_capability_probe_logs_subprocess_failure(
     assert capability is None
     assert "CUDA compute capability probe failed" in caplog.text
     assert "nvidia-smi missing" in caplog.text
-
-
-def test_cuda_support_probe_logs_debug_before_jax_fallback(
-    caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def raise_support(*_args: object, **_kwargs: object) -> str | None:
-        raise RuntimeError("support probe failed")
-
-    monkeypatch.setattr(
-        fixed_volume,
-        "resolve_cuda_callable",
-        lambda *_args, **_kwargs: (raise_support, None),
-    )
-
-    with caplog.at_level(
-        logging.DEBUG,
-        logger="tomojax.alignment._objectives.fixed_volume",
-    ):
-        reason = fixed_volume.cuda_sinogram_fallback_reason(
-            pose_stack=jnp.eye(4, dtype=jnp.float32)[None, :, :],
-            grid=Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
-            detector=Detector(nu=2, nv=2, du=1.0, dv=1.0),
-            volume=jnp.ones((2, 2, 2), dtype=jnp.float32),
-            det_grid=(
-                jnp.zeros((4,), dtype=jnp.float32),
-                jnp.zeros((4,), dtype=jnp.float32),
-            ),
-            gather_dtype="fp32",
-        )
-
-    assert reason == "RuntimeError: support probe failed"
-    assert "CUDA sinogram support probe failed" in caplog.text
 
 
 @pytest.mark.parametrize(("info", "expected"), [("MemAvailable: 512 kB", 524288), ("", 4096)])

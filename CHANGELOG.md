@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Alignment consolidation
+
+`tj.align(scan, fit="translations", grid=None)` uses one joint Gauss–Newton/Schur
+solver for parallel, laminography and cone data. `fit` selects centre, tilt,
+roll, per-view translations and per-view rotations. Shared global columns are
+fitted in the same linear system as the image and per-view corrections.
+Unselected parameters are held; per-view rotations have a prior on their size
+in physical angular units. The result carries calibrated geometry and reports
+final globals under the same names in `info["calibration"]`.
+
+The CLI uses `--fit`. Alignment modes, quality presets, levels, frozen parameter
+lists, expert configuration, checkpoints and device selection are removed,
+along with the coupled engine, translation-only engine, projection-matching
+configuration, cone-axis search and orbit-height initializer. `estimate_center`
+remains a projection-only preview. See [align a scan](docs/align-a-scan.md).
+
+The entries below record earlier development. Their retired alignment APIs and
+measurements are superseded by this interface; full qualification of the new
+solver is pending.
+
+### Earlier development
+
 The legacy projection-only `spectral_motion` alignment stage and its bounded
 Fourier-line motion refinement are removed. Per-view motion uses the joint
 image/pose fit instead; `projection_consistency` schedules accept setup geometry

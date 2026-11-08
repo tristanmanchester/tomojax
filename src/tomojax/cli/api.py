@@ -18,7 +18,7 @@ PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand("import", "Make a dataset from a Nikon scan, TIFF stack or .npz."),
     CliCommand("preprocess", "Correct raw detector frames into line integrals."),
     CliCommand("recon", "Reconstruct a volume."),
-    CliCommand("align", "Estimate the rotation axis and per-view poses."),
+    CliCommand("align", "Fit a scan's geometry and per-view motion."),
     CliCommand("export", "Write a reconstruction as TIFF slices or a raw file."),
     CliCommand("simulate", "Write a synthetic scan of a phantom."),
 )

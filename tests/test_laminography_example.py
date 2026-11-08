@@ -9,7 +9,7 @@ import tomojax as tj
 from tomojax import _smooth_alignment as automatic
 
 # check-public-imports: allow-private
-from tomojax.alignment._translations import working_scale
+from tomojax.alignment._joint import working_scale
 from tomojax.geometry import grid_volume_origin
 
 
@@ -44,7 +44,7 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         assert g == (supplied or grid) and nominal.shape == (25, 4, 4)
         return np.zeros((g.nz, g.ny, g.nx), np.float32), g, shifts, {"detector_binning": 1}
 
-    monkeypatch.setattr(automatic, "fit_translations", fit)
+    monkeypatch.setattr(automatic, "fit_poses", fit)
     result = automatic.reconstruct_with_motion(scan, reconstruct=None, grid=supplied)
     assert result.scan.projections is scan.projections and result.scan.detector == detector
     np.testing.assert_allclose(result.scan.poses[:, 3], 1.5 * shifts[:, 0])

@@ -129,26 +129,22 @@ keep the explicit grid for a small preview. Inspect all three slice planes and
 increase view sampling, resolution and iterations for a final reconstruction.
 A finite volume or lower residual alone does not establish its accuracy.
 
-## Calibrate the rotation axis
+## Calibrate the detector centre and setup angles
 
-Scanners record the source and detector distances well but rarely the exact
-position of the rotation axis. An axis offset from the central ray doubles
-and blurs every slice; a rolled detector makes that offset change with height.
+Scanners record the source and detector distances, but their detector centre and orientation may
+still need correction. A wrong centre doubles or blurs features; roll leaves a height-dependent
+error. Fit both shared corrections with:
 
 ```bash
-uv run --no-sync tomojax align scan.nxs -o calibrated.nxs --mode cor
+uv run --no-sync tomojax align scan.nxs -o calibrated.nxs --fit centre roll
 ```
 
-On cone data `--mode cor` estimates the axis offset (`ConeBeam.axis_offset`,
-the lab-CT centre of rotation) and the detector roll. It reconstructs thin
-FDK slabs near the centre, top and bottom of the volume for trial offsets,
-coarse to fine on binned data, and keeps the sharpest; the slabs' offsets
-change linearly with height in proportion to the roll. The output records the
-calibrated beam, so later commands on `calibrated.nxs` use it. On simulated
-scans it recovers offsets to 0.08 voxels and rolls to 0.04°
-([measurements](measurements.md#cone-beam-scans)). It needs some in-plane structure at the slab heights and a
-scan of at least 180° plus the fan angle. Detector pitch and yaw, the axis
-direction and the source distances are not estimated.
+For a cone beam, `"centre"` fits detector-u and detector-v offsets in the detector frame.
+These are not object translations or a replacement for the recorded `ConeBeam.axis_offset`.
+`"roll"` fits one detector angle; add `"tilt"` if the nominal rotation-axis direction is wrong.
+The returned scan carries the calibrated geometry. Source distances, detector pitch and yaw
+remain as declared. Inspect multiple heights and compare with an unaligned reconstruction;
+a low residual alone does not establish physical calibration.
 
 ## Reconstruct
 
@@ -206,24 +202,19 @@ export reads one slice at a time.
 
 ## Correct per-view motion
 
-Sample drift, stage wobble and thermal motion move the sample a little in
-every view. Cone-beam alignment estimates all six pose parameters per view,
-including `dy` along the beam, which changes the magnification:
+Sample drift, stage wobble and thermal motion move the sample a little in every view.
+The default fits three lab-frame translations for cone data, including along-beam motion that
+changes magnification. Add per-view rotations when the data require them:
 
 ```bash
-uv run --no-sync tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose
+uv run --no-sync tomojax align scan.nxs -o aligned.nxs --fit translations rotations
 uv run --no-sync tomojax recon aligned.nxs -o recon.nxs --method cgls
 ```
 
-`cor-then-pose` calibrates the axis as `--mode cor` does, then aligns the
-poses; `--mode pose` aligns the poses alone, and also takes scans that already
-carry poses (an ASTRA import, say, or an earlier alignment), which it corrects
-on top of, and multi-orbit scans, whose orbits it brings into register (see
-[multi-orbit scans](#multi-orbit-scans)). `tomojax recon` applies the
-poses saved in `aligned.nxs`; with either command, `--no-poses` starts from the
-nominal geometry instead. See
-[cone-beam alignment](alignment-guide.md#align-cone-beam-scans-in-six-degrees-of-freedom)
-for its accuracy and gauges.
+The corrections are fitted on top of any input poses, including imported and multi-orbit scans.
+`tomojax recon` applies the calibrated geometry and poses saved in `aligned.nxs`; `--no-poses`
+removes per-view corrections when loading. See [align a scan](align-a-scan.md) for parameter
+selection and gauges.
 
 ## Speed
 
@@ -239,8 +230,8 @@ give the protocol, errors and the 1024³ FDK.
 import tomojax as tj
 
 scan = tj.load_frames("scan/part.xtekct", darks=0).corrected()
-calibrated = tj.align(scan, mode="cor").scan      # axis offset and detector roll
-recon = tj.reconstruct(calibrated)                # FDK
+calibrated = tj.align(scan, fit=("centre", "roll")).scan
+recon = tj.reconstruct(calibrated, "cgls")
 tj.save("part-recon.nxs", recon)
 ```
 
@@ -329,28 +320,10 @@ iterative method from the view-count-weighted mean of each segment's FDK,
 which needs every segment to cover an arc FDK accepts.
 
 Recorded orbit heights are often slightly wrong, which doubles and blurs
-edges. `tj.align(scan)` selects `pose` alignment for segments as one scan and
-brings the orbits into register; the other modes refuse segmented scans. Only
-the orbits' heights relative to one another are observable, so the result is
-the least-motion estimate, and the whole object can sit away from where the
-record puts it (0.38 mm, almost four voxels, on the FIPS walnut).
-
-For a quick check without reconstructing, `orbit_heights` estimates each
-orbit's height above the first from the consistency of the views' data. It is
-good to about half a pixel at the axis, so treat it as a check or a starting
-point, not a replacement for alignment:
-
-```python
-import numpy as np
-
-from tomojax.alignment.api import orbit_heights
-
-found = orbit_heights(scan.geometry, np.asarray(scan.projections))
-print(found.heights)   # in the scan's length unit; the first orbit is 0
-print(found.contrast)  # near 0: the data cannot decide that orbit's height
-```
-
-It returns `None` for a single orbit.
+edges. `tj.align(scan)` fits their translations jointly as one scan. Only the orbits'
+heights relative to one another are observable, so the whole object can sit away from where
+the record puts it. The earlier FIPS walnut comparison found a 0.38 mm displacement;
+that is a historical gauge observation, not a qualification of the new solver.
 
 [`examples/align_walnut_orbits.py`](../examples/align_walnut_orbits.py) runs
 the whole workflow on a FIPS walnut, three orbits recorded with the

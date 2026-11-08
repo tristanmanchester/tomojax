@@ -1216,8 +1216,8 @@ reach the reference to an error of 0.155 with TomoJAX's geometry, against
 
 ![Each orbit's height relative to orbit 1, recovered by tj.align, against the authors' correction](images/walnut_alignment_heights.png)
 
-`tomojax.alignment.api.orbit_heights`, which compares the orbits' data without
-reconstructing, finds +0.37 and +0.74 mm in 23 s on the same walnut
+The retired projection-only orbit-height estimator found +0.37 and +0.74 mm
+in 23 s on the same walnut
 (2026-10-10, commit `944b2e0`). Pose alignment there finds +0.38 and +0.76 in
 about 250 s, and held-out views favour about +0.39 and +0.76.
 
@@ -1227,6 +1227,10 @@ heights is under a fifth of a voxel; the
 the table.
 
 ## Alignment
+
+The measurements in this section describe their recorded, earlier implementations. The
+consolidated `fit=` solver replaces those routes; the numbers below are historical evidence,
+not its qualification or current runtime. See [align a scan](align-a-scan.md) for the current API.
 
 Unless stated, these are fresh `tomojax align` processes on analytic
 projections of continuous objects, which are independent of TomoJAX's voxel
@@ -1242,7 +1246,7 @@ translations on 2026-10-06, commit `9d4c4d1`.
 | 128³ parallel / laminography | ±0.25°, ±0.5 px | 50 / 43 s | 0.0085 / 0.0026° |
 | 128³ parallel / laminography / anisotropic | ±0.5°, ±8 px | 33 / 46 / 34 s | 0.0090 / 0.0029 / 0.022° |
 | 256³ laminography, full resolution | ±0.25°, ±0.5 px | 202 s | 0.0030° |
-| 256³ laminography, stopped at half resolution (`--levels 4 2`) | ±0.25°, ±0.5 px | 55 s | 0.0052° |
+| 256³ laminography, stopped at half resolution (earlier coarse schedule) | ±0.25°, ±0.5 px | 55 s | 0.0052° |
 | 64³ parallel / laminography | ±0.5°, ±15 px (23% of the detector) | 19 / 27 s | 0.031 / 0.013° |
 
 At 128³ the translations are recovered to 0.002 pixels, and the 256³ run fits
@@ -1266,9 +1270,8 @@ constrained FISTA reaches 0.12 after 100 iterations and 0.091 after 300
 
 ### Automatic translation alignment
 
-`tj.align(scan)` on unposed parallel and laminography scans fits per-view
-detector translations with the joint image/translation fit described in
-[real laminography](real-laminography.md). Measured on 2026-11-06 on `279bd686`
+The earlier automatic route on unposed parallel and laminography scans fitted per-view
+detector translations with its image/translation solve. Measured on 2026-11-06 on `279bd686`
 with that change (branch `curvature-alignment`), one process per scan, the
 default allocator; GPU memory is JAX's peak in use, not the sampled process peak.
 
@@ -1322,12 +1325,12 @@ conditional 90% matching intervals, other correlation peaks and apparent
 row-centre slope. The uncertainty uses eight detector-column blocks, an observed
 cross-Hessian and leverage correction; it does not claim a physical-centre
 interval under arbitrary motion. Pair disagreement is reported separately.
-The automatic workflow saves these diagnostics and reports conditional
-inconsistency without replacing it by independent per-view poses.
+The projection-only preview retains these diagnostics and reports conditional
+inconsistency; it does not estimate independent per-view poses.
 Runtime fields label the intervals `local_matching_interval90_px`, with
 `global_coverage_calibrated=false` and `uncertainty_status=local_matching_only`.
 These are local matching diagnostics, not calibrated global centre intervals;
-automatic alignment reports this limitation even without pair disagreement.
+the centre report retains this limitation even without pair disagreement.
 
 On 2026-10-27 (`a04e5ee7`), 64 real rows gave centre-change p95 errors
 0.00422 px on Elettra 00024 and 0.00284 px on I13 159815. The report took
@@ -1393,9 +1396,9 @@ global coverage remains uncalibrated.
 
 | Mode and scan | Result |
 |---|---|
-| `cor`, +3.7 px offset, 128³ parallel / laminography (2026-10-05, `74923c1`) | 3.693 / 3.677 px in 41 / 84 s; with ±0.5°/±8 px motion as well, 2.2 / 3.3 px |
-| `cor-then-pose`, +3.7 px offset with ±0.5°/±8 px motion, 128³ parallel / laminography | rotations to 0.005 / 0.006°, volume error 0.0007 against a true-geometry reconstruction; reports −3.573 px, where the identifiable value is −3.569 px (the random shifts have a mean of 0.131 px) |
-| `cor-then-pose`, gVXR chip phantom (DIAD-like 25 keV laminography with phase contrast, blur and noise; 3.2 px offset, about 2 px shifts, 0.1° tilts) | 3.18 px (identifiable 3.178 px), rotations to 0.073°, shifts to 0.087 px RMS, in 127 s |
+| Earlier centre route, +3.7 px offset, 128³ parallel / laminography (2026-10-05, `74923c1`) | 3.693 / 3.677 px in 41 / 84 s; with ±0.5°/±8 px motion as well, 2.2 / 3.3 px |
+| Earlier centre-then-pose route, +3.7 px offset with ±0.5°/±8 px motion, 128³ parallel / laminography | rotations to 0.005 / 0.006°, volume error 0.0007 against a true-geometry reconstruction; reports −3.573 px, where the identifiable value is −3.569 px (the random shifts have a mean of 0.131 px) |
+| Earlier centre-then-pose route, gVXR chip phantom (DIAD-like 25 keV laminography with phase contrast, blur and noise; 3.2 px offset, about 2 px shifts, 0.1° tilts) | 3.18 px (identifiable 3.178 px), rotations to 0.073°, shifts to 0.087 px RMS, in 127 s |
 
 The earlier sequence, a centre-of-rotation search followed by a pose polish,
 left rotation errors of 0.23–0.26° on the analytic scans. With object-frame
@@ -1414,7 +1417,7 @@ laminography example falls from 0.099, with only a rigid shift removed, to
 
 ### Cone-beam scans
 
-`--mode cor` on 128³ and 256³ blob scans (360 views, 1% to 5% noise) with axis
+The earlier cone setup route on 128³ and 256³ blob scans (360 views, 1% to 5% noise) with axis
 offsets of 3.7 to 11.2 voxels and detector rolls up to 1.2° recovers the offset
 to 0.08 voxels and the roll to 0.04°, in about 4 s at 256³. At 64³ the roll is
 good to about 0.15° (2026-10-06, commit `0547ee7`).
@@ -1436,7 +1439,7 @@ geometry, each clean and noisy, with ±0.25°/±0.5 px motion. Its gates are
 projections integrate the voxel basis exactly. With the default Joseph
 integrator, a different discretisation from the data, every cell misses the
 0.01° gate at 0.10–0.26°, while volume errors stay at 0.009–0.085. With
-`ray_integrator = "exact"`, the model the data were made with, five of six
+the earlier exact voxel-basis integrator, the model the data were made with, five of six
 cells pass in 8–20 s. That partly reflects an inverse crime. The noisy
 anisotropic cell misses at about 0.016°; a local noise analysis predicts about
 0.017° from the measurement noise alone. The exact integrator is 10–30 times
@@ -1606,6 +1609,8 @@ show qualitative use on real data; their raw scan and configuration are not
 bundled, so they cannot be reproduced.
 
 ### Host-staged pose-column reuse
+
+This comparison belongs to the retired coupled engine; it is not a benchmark of `_joint`.
 
 On 2026-10-27, `b7e67359` was measured on I13 159815: sample views
 `0:3000:16`, detector rows `1048:1112`, columns `441:1869`, binned 4×4 to

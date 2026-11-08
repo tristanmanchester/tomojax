@@ -17,17 +17,14 @@ from tomojax.geometry import ConeBeam, ConeGeometry, Detector, Grid, grid_volume
 from tomojax.io import build_geometry_from_dataset_metadata, load_dataset, save_dataset
 from tomojax.recon import (
     CGLSConfig,
-    ConeAxisConfig,
     FDKConfig,
     FDKHostConfig,
-    calibrate_cone_axis,
     cgls,
     fbp,
     fbp_host,
     fdk,
     fdk_host,
 )
-from tomojax.recon.cone_axis import _Slabs
 
 cuda = pytest.param("cuda", marks=pytest.mark.gpu)
 
@@ -411,152 +408,6 @@ def test_cone_projection_is_continuous_as_a_view_turns_through_45_degrees():
     assert across < 2 * elsewhere
 
 
-@pytest.mark.parametrize("dof", ["alpha", "beta", "phi", "dx", "dz", "dy"])
-def test_cone_pose_alignment_recovers_each_degree_of_freedom(dof):
-    from tomojax.alignment import AlignConfig
-    from tomojax.alignment.api import L2LossSpec, align, apply_pose_updates, least_motion_estimate
-
-    n, views = 16, 12
-    grid = Grid(n, n, n, 1.0, 1.0, 1.0)
-    detector = Detector(26, 26, 1.0, 1.0)
-    angles = np.linspace(0, 360, views, endpoint=False)
-    geometry = ConeGeometry(grid, detector, angles, ConeBeam(48, 72))
-    volume = jnp.asarray(_voxelise(grid, _ellipsoids(float(n)), supersample=2))
-    k = ("alpha", "beta", "phi", "dx", "dz", "dy").index(dof)
-    truth = np.zeros((views, 6), np.float32)
-    rng = np.random.default_rng(k)
-    truth[:, k] = rng.uniform(-1, 1, views) * (np.deg2rad(0.3) if k < 3 else 0.6)
-    truth[:, k] -= truth[:, k].mean() if dof == "dy" else 0.0  # a common dy is the scale gauge
-    poses = apply_pose_updates(
-        jnp.asarray(geometry.poses(), jnp.float32), jnp.asarray(truth), translation_frame="detector"
-    )
-    data = cone_project(
-        volume, cone_coefficients(poses, grid, detector, geometry.beam), grid, detector
-    )
-    config = AlignConfig(
-        pose_translation_frame="detector",
-        optimise_dofs=(dof,),
-        outer_iterations=4,
-        iterations=1,
-        lipschitz=1e12,  # keeps the known volume fixed
-        loss=L2LossSpec(),
-        early_stop=False,
-        gather_dtype="fp32",
-        gn_jacobian="central",
-        ray_integrator="joseph",
-        backend="jax",
-    )
-    _, params, _ = align(geometry, grid, detector, data, config=config, init_x=volume)
-    # Alignment reports the least-motion estimate: a common phi or dz is the
-    # object's rotation or position, not motion.
-    expected = least_motion_estimate(
-        np.asarray(volume),
-        truth,
-        nominal=np.asarray(geometry.poses()),
-        grid=grid,
-        translation_frame="detector",
-        active=(dof,),
-        cone_beam=True,
-    )[1]
-    scale = np.rad2deg(1) if k < 3 else 1.0
-    np.testing.assert_allclose(np.asarray(params)[:, k] * scale, expected[:, k] * scale, atol=2e-3)
-
-
-def test_parallel_geometry_keeps_dy_inactive_and_cone_geometry_adds_it():
-    from tomojax.alignment import AlignConfig
-
-    # check-public-imports: allow-private
-    from tomojax.alignment._pose._pose_context import with_beam_translation
-    from tomojax.geometry import ParallelGeometry
-
-    grid, detector = Grid(4, 4, 4, 1.0, 1.0, 1.0), Detector(6, 6, 1.0, 1.0)
-    cone = ConeGeometry(grid, detector, [0.0, 90.0], ConeBeam(20, 30))
-    parallel = ParallelGeometry(grid, detector, [0.0, 90.0])
-    five = (True, True, True, True, True, False)
-    assert with_beam_translation(five, parallel, AlignConfig()) == five
-    assert with_beam_translation(five, cone, AlignConfig())[-1]
-    frozen = AlignConfig(freeze=("dy",))
-    assert not with_beam_translation(five, cone, frozen)[-1]
-
-
-def _blob_scan(n: int, views: int, beam: ConeBeam) -> tuple[ConeGeometry, np.ndarray]:
-    """A blob phantom's projections under ``beam``, and the nominal (centred) geometry."""
-    grid = Grid(n, n, n, 1.0, 1.0, 1.0)
-    detector = Detector(int(1.6 * n), int(1.6 * n), 1.0, 1.0)
-    rng = np.random.default_rng(0)
-    axes = np.meshgrid(*(np.arange(n) - (n - 1) / 2,) * 3, indexing="ij")[::-1]
-    volume = np.zeros((n, n, n), np.float32)
-    for _ in range(40):
-        centre, radius = rng.uniform(-0.35 * n, 0.35 * n, 3), rng.uniform(1.5, 0.06 * n)
-        if np.hypot(centre[0], centre[1]) < 0.4 * n:
-            r2 = sum((a - c) ** 2 for a, c in zip(axes, centre, strict=True))
-            volume += rng.uniform(0.3, 1.0) * np.exp(-r2 / (2 * radius**2)).astype(np.float32)
-    angles = np.linspace(0.0, 360.0, views, endpoint=False)
-    truth = ConeGeometry(grid, detector, angles, beam)
-    coeff = cone_coefficients(jnp.asarray(truth.poses(), jnp.float32), grid, detector, beam)
-    data = np.array(cone_project(jnp.asarray(volume), coeff, grid, detector))
-    data += rng.normal(0, 0.01 * data.std(), data.shape).astype(np.float32)
-    nominal = ConeBeam(beam.source_to_axis, beam.source_to_detector)
-    return ConeGeometry(grid, detector, angles, nominal), data
-
-
-@pytest.mark.gpu
-def test_calibrate_cone_axis_recovers_the_axis_offset_and_detector_roll():
-    if jax.default_backend() != "gpu":
-        pytest.skip("requires CUDA")
-    n = 96
-    geometry, data = _blob_scan(n, 240, ConeBeam(3 * n, 4.5 * n, 0.7, axis_offset=-4.3))
-    calibration = calibrate_cone_axis(geometry, geometry.grid, geometry.detector, data)
-    assert abs(calibration.axis_offset + 4.3) < 0.1
-    assert abs(calibration.detector_roll_deg - 0.7) < 0.1
-    slope = np.polyfit(calibration.heights, calibration.slab_offsets, 1)[0]
-    assert abs(slope) * np.ptp(calibration.heights) <= 0.005 * geometry.grid.vx
-    calibrated = calibration.apply(geometry)
-    assert calibrated.beam.axis_offset == calibration.axis_offset
-    np.testing.assert_allclose(calibrated.poses()[:, 0, 3], calibration.axis_offset)
-
-
-def test_calibrate_cone_axis_finds_the_offset_with_the_jax_backend():
-    n = 32
-    geometry, data = _blob_scan(n, 60, ConeBeam(3 * n, 4.5 * n, axis_offset=2.4))
-    config = ConeAxisConfig(
-        estimate_roll=False,
-        slices=4,
-        fdk=FDKConfig(filter="hann", backend="jax", views_per_batch=60),
-    )
-    calibration = calibrate_cone_axis(
-        geometry, geometry.grid, geometry.detector, data, config=config
-    )
-    assert abs(calibration.axis_offset - 2.4) < 0.2
-    assert calibration.detector_roll_deg == 0.0 and len(calibration.heights) == 1
-
-
-@pytest.mark.gpu
-def test_align_cor_mode_writes_the_calibrated_cone_beam(tmp_path: Path):
-    if jax.default_backend() != "gpu":
-        pytest.skip("requires CUDA")
-    from tomojax.cli.main import main
-    from tomojax.io import ProjectionDataset
-
-    n = 64
-    geometry, data = _blob_scan(n, 180, ConeBeam(3 * n, 4.5 * n, -0.5, axis_offset=3.1))
-    dataset = ProjectionDataset(
-        projections=data,
-        angles=np.asarray(geometry.angles, np.float32),
-        detector=geometry.detector,
-        grid=geometry.grid,
-        geometry_type="cone",
-        geometry_metadata=geometry.geometry_metadata(),
-    )
-    save_dataset(tmp_path / "scan.nxs", dataset)
-    out = tmp_path / "aligned.nxs"
-    assert main(["align", str(tmp_path / "scan.nxs"), "-o", str(out), "--mode", "cor"]) == 0
-    _, _, calibrated = build_geometry_from_dataset_metadata(load_dataset(out).geometry_inputs())
-    assert isinstance(calibrated, ConeGeometry)
-    assert abs(calibrated.beam.axis_offset - 3.1) < 0.15
-    assert abs(calibrated.beam.detector_roll_deg + 0.5) < 0.15
-
-
 def test_preprocess_reads_a_nikon_xtekct_scan(tmp_path: Path):
     import imageio.v3 as iio
 
@@ -605,22 +456,18 @@ def test_preprocess_reads_a_nikon_xtekct_scan(tmp_path: Path):
 
 
 def test_pose_wrappers_stack_their_own_poses():
-    # check-public-imports: allow-private
-    from tomojax._data.geometry_meta import AugmentedGeometry
-
-    # check-public-imports: allow-private
-    from tomojax.alignment._objectives.recon_layer import PoseAdjustedGeometry
+    from tomojax import Scan
     from tomojax.geometry import stack_view_poses
 
     geometry, _, _, _ = _scan("turntable", n=8, views=7)
     params = np.random.default_rng(3).normal(0, 0.05, (7, 6)).astype(np.float32)
-    adjusted = PoseAdjustedGeometry(geometry, jnp.asarray(params), "detector")
+    adjusted = (
+        Scan(np.zeros((7, geometry.detector.nv, geometry.detector.nu)), geometry)
+        .with_poses(params)
+        .geometry
+    )
     per_view = np.stack([np.asarray(adjusted.pose_for_view(i), np.float32) for i in range(7)])
     np.testing.assert_allclose(stack_view_poses(adjusted, 7), per_view, atol=1e-6)
-    # A wrapper forwarding attributes to its base must not take the base's stacking.
-    saved = AugmentedGeometry(geometry, params, "detector")
-    per_view = np.stack([np.asarray(saved.pose_for_view(i), np.float32) for i in range(7)])
-    np.testing.assert_allclose(stack_view_poses(saved, 7), per_view, atol=1e-6)
 
 
 def test_fbp_reconstructs_volumes_larger_than_the_device_on_the_host(monkeypatch):
@@ -710,21 +557,6 @@ def test_export_and_previews_decide_an_untagged_volume_as_the_loader_does(
             _hdf5_images(path)
 
 
-def test_calibrate_cone_axis_stays_within_its_search_range():
-    n = 32
-    geometry, data = _blob_scan(n, 60, ConeBeam(3 * n, 4.5 * n, axis_offset=2.4))
-    config = ConeAxisConfig(
-        search_range=2.0,
-        estimate_roll=False,
-        slices=4,
-        fdk=FDKConfig(filter="hann", backend="jax", views_per_batch=60),
-    )
-    calibration = calibrate_cone_axis(
-        geometry, geometry.grid, geometry.detector, data, config=config
-    )
-    assert abs(calibration.axis_offset) <= 2.0
-
-
 @pytest.mark.gpu
 @pytest.mark.parametrize(
     ("n", "nz", "tilt"), [(8, 8, 0.0), (8, 40, 0.0), (12, 12, 5.0), (8, 40, 5.0)]
@@ -747,17 +579,6 @@ def test_cuda_cone_transpose_handles_volumes_smaller_than_a_tile(n, nz, tilt):
     expected = cone_backproject(y, coeff, grid, detector, backend="jax")
     actual = cone_backproject(y, coeff, grid, detector, backend="cuda")
     assert float(jnp.abs(actual - expected).max() / jnp.abs(expected).max()) < 1e-5
-
-
-def test_axis_offset_fit_constrains_the_intercept_not_only_the_output():
-    from tomojax.recon.cone_axis import _fit_axis_offsets  # check-public-imports: allow-private
-
-    heights, offsets = (1.0, 2.0, 3.0), (0.031, 0.032, 0.033)
-    np.testing.assert_allclose(_fit_axis_offsets(heights, offsets, None), (0.001, 0.03))
-    np.testing.assert_allclose(_fit_axis_offsets(heights, offsets, 0.02), (37 / 7000, 0.02))
-    np.testing.assert_allclose(_fit_axis_offsets((2.0,), (0.03,), 0.02), (0.005, 0.02))
-    with pytest.raises(ValueError, match="zero height"):
-        _fit_axis_offsets((0.0,), (0.03,), 0.02)
 
 
 def test_cuda_cone_entry_can_lower_and_differentiate_on_cpu(monkeypatch):
@@ -784,17 +605,3 @@ def test_cuda_cone_entry_can_lower_and_differentiate_on_cpu(monkeypatch):
         ):
             assert a.devices() == b.devices() == {jax.devices("cpu")[0]}
             np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-6)
-
-
-def test_axis_slabs_keep_only_reused_full_resolution_bands(monkeypatch):
-    monkeypatch.setattr("tomojax.recon.cone_axis._prepare_slab", lambda *args: object())
-    slabs = _Slabs(None, None, None, None, None)
-    assert slabs.get(0.0, 2) is not slabs.get(0.0, 2)
-    assert slabs.get(0.0, 1) is slabs.get(0.0, 1)
-
-
-def test_axis_refinement_warns_at_its_cap(monkeypatch, caplog):
-    geometry, data = _blob_scan(32, 12, ConeBeam(96, 144))
-    monkeypatch.setattr("tomojax.recon.cone_axis._fit_axis_offsets", lambda *args: (0.01, 0.0))
-    calibrate_cone_axis(geometry, geometry.grid, geometry.detector, data)
-    assert "did not converge after 12 updates" in caplog.text

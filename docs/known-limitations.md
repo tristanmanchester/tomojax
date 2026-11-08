@@ -1,8 +1,8 @@
 # Known limitations
 
 The shipped package covers the workflows listed in
-[`support-matrix.md`](support-matrix.md), including 5-DOF pose alignment,
-detector-centre/COR alignment, and mixed setup and pose correction.
+[`support-matrix.md`](support-matrix.md), including one joint alignment solver for selected
+translations, rotations and global geometry corrections.
 
 ## Reconstruction detail and regularization
 
@@ -20,68 +20,33 @@ model and discrete TV penalty also affect smoothing.
 
 ## Alignment limitations
 
-Alignment is experimental and needs scan-specific review. What it cannot tell
-apart or recover, such as setup error absorbed by the poses, a nonzero-mean
-shift against a detector-centre offset, detector-v shifts and abrupt jumps, is
-listed with how to check a result in the
-[alignment guide](alignment-guide.md#check-the-result).
+Alignment is experimental and needs scan-specific review. Use the
+[alignment guide](align-a-scan.md#check-the-result) to choose parameters and check the result.
 
-- Without existing pose corrections, automatic axial parallel and laminography
-  alignment fits smooth detector-frame translations, not rotations.
-  Use an explicit `mode="pose"` when rotational
-  motion is expected. Finite detector pixels average transmitted intensity before
-  the logarithm, whereas the linear projector models line integrals. At sharp,
-  strongly attenuating edges this mismatch can be fitted as false rotations;
-  a smaller projection residual does not establish more accurate poses. Inspect
-  clean controls and the reconstruction before accepting rotational corrections.
-- Coupled Gauss–Newton damping is dimensional: changing the length units can
-  change finite-iteration alignment even when the physical scan is unchanged.
-  Use the same length units when comparing fits. A single scalar pose damping does
-  not normalize mixed rotation and translation coordinates automatically.
-- Ptychography's joint projection matching estimates translations on axial
-  parallel scans, not rotations or laminographic motion. Sub-0.1-pixel recovery
-  and unbiased motion estimates are not established. Independent known-zero
-  tests confirm false motion that grows with noise and persists without it,
-  but do not establish that all pose differences on the measured PSI scan are
-  bias. The estimator does not reject changes on already aligned input. See the
-  [ptychography recipe](alignment-guide.md#complex-ptychography-projections).
-- On the six-cell free-voxel pilot at 32³, every cell misses the 0.01°
-  rotation gate with the default Joseph integrator, and the noisy anisotropic
-  cell misses it even with the exact one; see the
-  [measurements](measurements.md#free-voxel-pilot).
-- `AlignConfig`'s default five-parameter pose update uses object-frame
-  translations, `(dx, 0, dz)` in physical units. Near a 90-degree view their
-  projections onto the detector become nearly parallel, including for tilted
-  geometry, so this representation cannot recover arbitrary detector-plane
-  motion, or a constant detector shift such as a centre-of-rotation offset, at
-  those views; optimiser damping or kernel speed cannot restore the missing
-  degree of freedom. `tomojax align` and `tj.align` default to detector-frame
-  translations instead; see
-  [translation frames](alignment-guide.md#choose-the-translation-frame).
-- The default autodiff Gauss–Newton Jacobian is one-sided at interpolation-cell
-  boundaries. Sharp objects can become trapped after a wrong shift update.
-  The explicit `gn_jacobian="central"` option uses symmetric numerical columns
-  at extra projection cost; see
-  [the solver reference](alignment-solver.md#gaussnewton-updates-at-interpolation-boundaries).
-- Gradients through regularised reconstruction are finite after the Huber-TV
-  correction, but sampled-ray pose derivatives remain local to sampling and
-  interpolation branches. A central finite difference across a boundary can
-  disagree with that derivative, and finite gradients alone do not prove
-  reliable pose recovery.
-- Automatic alignment fits translations only; per-view rotations are left as an
-  error floor (0.62 px on a 384³ scan with 0.37° RMS rotation). Use an explicit
-  pose mode to fit them.
-- A single crystal that diffracts at particular angles (the ruby sphere of K11
-  scan 54013) darkens in patches at a few views. No pose explains those views,
-  and automatic alignment leaves 0.5–1.2 px one-view excursions at about 20 of
-  1441 views; held-out projections are predicted better from the neighbours'
-  poses there. FBP of such data shows faint streaks along those views whatever
-  the poses.
-- Automatic parallel alignment uses a bounded coarse image while preserving the
-  declared physical support and native projection data. Explicit `grid=` overrides
-  this sampling policy and can exceed device memory. Cropping the physical region
-  leaves attenuation outside it unmodelled; see
-  [real laminography](real-laminography.md).
+- `fit="translations"` is the default for every geometry. It cannot correct a missing global
+  tilt or roll, or per-view rotation. Add the corresponding parameter only when it explains a
+  remaining artefact. A roll can leave the central slice almost unchanged while blurring slices
+  above and below it.
+- The image and geometry are jointly estimated. Common rigid object motion is a gauge, and a
+  constant parallel-ray translation shares a gauge with the detector centre. Reported parameter
+  values depend on the stated gauge; they are not independent instrument measurements.
+- Per-view rotations carry a physical angular size prior. This limits unsupported motion but
+  does not resolve repeated-pattern ambiguities. A TEM grid can match at a wrong orientation.
+  Finite detector pixels also average transmitted intensity before the logarithm, whereas the
+  linear projector fits line integrals. At sharp, strongly attenuating edges, that mismatch can
+  look like motion. A smaller residual alone does not establish more accurate poses.
+- The derivatives are local to interpolation cells and dominant ray axes. Sharp, poorly sampled
+  objects can give biased or weakly constrained geometry updates. Exact transpose semantics
+  establish a consistent discrete solve, not a complete physical forward model.
+- A diffracting crystal, detector fault, changing contrast or material outside the field of view
+  can create views that no pose explains. Robust residual weighting and the same-image-step
+  line-search comparison reduce those views' influence but cannot recover their missing physics.
+- The alignment image uses a bounded working scale while retaining the physical support and
+  original scan data. An explicit `grid=` fixes sampling and can exceed device memory. Cropping
+  support leaves attenuation outside it unmodelled.
+- The full watch, spark-plug, K11 and PSI qualification of the consolidated solver is separate
+  from its focused numerical tests. Earlier measurements in this repository describe their
+  recorded implementations; they do not certify this solver's accuracy or default runtime.
 
 ## Detector-ring correction
 
@@ -184,8 +149,8 @@ measurements require independent calibration evidence and repair before `Rings`.
 - The explicit CUDA Joseph projection API supports first-order derivatives
   for linear and cubic interpolation. Cubic has negative lobes, can overshoot,
   and uses a larger stencil; it does not remove physical support truncation or
-  poor pose observability. Alignment samples with linear Joseph interpolation
-  by default (`ray_integrator = "joseph"`; `"joseph_cubic"` selects cubic).
+  poor pose observability. The alignment default uses linear interpolation;
+  requesting any angular parameter uses cubic interpolation for parallel rays.
   Use the JAX reference for higher derivatives, and parameterise poses as rigid
   transforms. Derivatives are local to the selected dominant axis and
   interpolation cell. The fused loss is unweighted half squared error; other
@@ -205,11 +170,9 @@ measurements require independent calibration evidence and repair before `Rings`.
   projection supports first-order pose and volume derivatives;
   Gauss–Newton evaluates analytic pose columns in one ray traversal. Derivatives
   hold the dominant ray axis and bilinear cell fixed; use the JAX reference for
-  higher derivatives. Cone-beam setup calibration estimates the axis offset and detector
-  roll (`calibrate_cone_axis`, also `tomojax align --mode cor`) from slab
-  sharpness, which needs in-plane structure at the slab heights and a scan of
-  at least 180 degrees plus the fan angle; it does not estimate detector pitch
-  or yaw, the axis direction, or the source distances. The
+  higher derivatives. Joint alignment can fit detector centre, roll and a shared axis-tilt
+  correction. It does not fit detector pitch or yaw, the source distances or arbitrary detector
+  deformation. The
   [cone-setup alias measurements](measurements.md#cone-setup-aliases-and-a-conditional-calibration-test)
   show exact redundancies under unrestricted per-view poses; they do not
   provide uncertainty or identify a calibrated setup. A fixed-pose Walnut
@@ -246,11 +209,9 @@ measurements require independent calibration evidence and repair before `Rings`.
   on one GPU, the `tomojax` commands always use one, and the GPUs must belong
   to one process. [Large scans and several GPUs](large-scans.md) says which
   solvers stream projections from host memory and what each GPU holds.
-- Alignment fixes an object's position only up to what the data can see. In
-  a cone beam, moving the object sideways needs the along-beam `dy` in some
-  views, which the default pose parameters leave out, so the solve may place
-  it a voxel or so from another estimate of the same scan (four of the 42
-  FIPS walnuts, by 1 to 1.25 voxels); the images are as sharp either way.
+- Alignment fixes an object's position only up to what the data can see. Cone translations
+  include along-beam motion, but the common rigid gauge remains unobservable. Compare geometry
+  after one rigid gauge and include detector-centre changes in detector-space scores.
 - CUDA projectors compile C kernels with NVRTC. Install `tomojax[cuda12]` and
   a working NVIDIA driver; see [installation](installation.md).
 - `just accelerator-smoke` verifies the portable reference mode on
@@ -271,7 +232,7 @@ measurements require independent calibration evidence and repair before `Rings`.
 
 ## Next steps
 
-See [`alignment-guide.md`](alignment-guide.md) to choose an alignment mode.
+See [align a scan](align-a-scan.md) to choose the alignment parameters.
 
 ESRF raw Bliss and SPEC EDF metadata do not establish a calibrated detector
 centre: it must be estimated from data or supplied. SPEC scan range alone also

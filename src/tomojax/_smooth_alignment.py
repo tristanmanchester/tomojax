@@ -1,14 +1,15 @@
-"""Automatic detector-motion fitting for declared parallel and laminography geometries."""
+"""One joint alignment workflow for declared acquisition geometries."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, replace
-from typing import TYPE_CHECKING
+from dataclasses import replace
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
+from tomojax._detector_sampling import sampling_factors
 from tomojax._scan import Reconstruction, describe, record_of, with_grid
-from tomojax.alignment._integration import fit_translations
+from tomojax.alignment._integration import cone_frames, fit_poses
 from tomojax.geometry import stack_view_poses
 from tomojax.recon import FistaConfig
 
@@ -19,85 +20,79 @@ if TYPE_CHECKING:
     from tomojax.geometry import Grid
 
 
-def uses_laminography_workflow(scan: Scan) -> bool:
-    acquisition = (
-        {} if scan.source is None else scan.source.geometry_metadata.get("acquisition", {})
+def align_poses(
+    scan: Scan, *, fit: str | tuple[str, ...] = "translations", grid: Grid | None = None
+) -> Reconstruction:
+    """Jointly fit one image and the selected global and per-view parameters."""
+    from tomojax.alignment._calibration import publish_calibration
+
+    _require_declared_geometry(scan)
+    if grid is not None:
+        scan = with_grid(scan, grid)
+    views = len(scan.angles)
+    current = np.asarray(stack_view_poses(scan.geometry, views), np.float64)
+    ray_binning = sampling_factors(scan.source)
+    native = (scan.detector.du / ray_binning[0], scan.detector.dv / ray_binning[1])
+    _, metadata, _, _ = describe(scan.geometry)
+    volume, working, fitted, record = fit_poses(
+        scan.projections,
+        current,
+        scan.grid,
+        scan.detector,
+        fit=fit,
+        keep_grid=grid is not None,
+        native_pixel_size=native,
+        ray_binning=ray_binning,
+        frames=cone_frames(scan.geometry),
+        detector_roll_deg=float(cast("float", metadata.get("detector_roll_deg", 0.0))),
     )
-    kind = describe(scan.geometry)[0]
-    return kind == "lamino" or (
-        kind == "parallel" and acquisition.get("geometry_status") == "not_recorded"
+    corrected, calibration = publish_calibration(
+        scan, fitted, record["corrections"], native_pixel_size=native
     )
+    corrected = with_grid(corrected, working)
+    info = {**record, "method": "joint_volume_pose", "calibration": calibration}
+    source = record_of(corrected)
+    source.geometry_metadata["alignment_info"] = info
+    corrected = replace(corrected, source=source)
+    return Reconstruction(volume, corrected, "joint_volume_pose", info)
 
 
-def reconstruct_with_motion(scan: Scan, *, reconstruct: Callable, grid: Grid | None = None):
-    """Fit per-view detector translations jointly with a bounded-scale image.
-
-    The declared geometry is kept and the physical support is never inferred
-    or cropped. Motion is smooth with free steps: a spline with knots every ten
-    views plus view-to-view jumps under a Huber prior, in native detector
-    pixels. The returned scan keeps native projections and detector
-    coordinates; its image is the fit's working-scale volume. An explicit grid
-    is the working grid itself, never coarsened. Missing axis metadata
-    requires explicit setup or caller-supplied geometry.
-    """
+def _require_declared_geometry(scan: Scan) -> None:
     acquisition = (
         {} if scan.source is None else scan.source.geometry_metadata.get("acquisition", {})
     )
     if acquisition.get("geometry_status") == "not_recorded":
-        raise ValueError(
-            "automatic alignment requires declared geometry; "
-            "supply geometry or use an explicit setup mode"
-        )
+        raise ValueError("alignment requires declared acquisition geometry")
+
+
+def reconstruct_with_motion(scan: Scan, *, reconstruct: Callable, grid: Grid | None = None):
+    """Reconstruct a parallel or laminography scan, fitting its poses unless it has them.
+
+    A scan with saved poses is reconstructed with them by FISTA at its grid; an
+    unposed scan is aligned with :func:`align_poses`.
+    """
+    _require_declared_geometry(scan)
+    if scan.poses is None:
+        return align_poses(scan, grid=grid)
     if grid is not None:
         scan = with_grid(scan, grid)
-    if scan.poses is not None:
-        result = reconstruct(
-            scan,
-            "fista",
-            config=FistaConfig(
-                initial_epochs=10
-                if scan.grid.vx > 1.5 * max(scan.detector.du, scan.detector.dv)
-                else 8,
-                initial_subsets=16,
-                tv_weight=0,
-                iterations=1,
-                stream_projections=False,
-            ),
-        )
-        return replace(
-            result,
-            info={
-                **result.info,
-                "automatic": {
-                    "method": "fista",
-                    "geometry": "preserved_pose_corrections",
-                    "status": "ok",
-                    "reasons": [],
-                },
-            },
-        )
-    views = len(scan.angles)
-    nominal = np.asarray(stack_view_poses(scan.geometry, views), np.float64)
-    volume, working, shifts, record = fit_translations(
-        scan.projections, nominal, scan.grid, scan.detector, keep_grid=grid is not None
+    result = reconstruct(
+        scan,
+        "fista",
+        config=FistaConfig(
+            initial_epochs=10
+            if scan.grid.vx > 1.5 * max(scan.detector.du, scan.detector.dv)
+            else 8,
+            initial_subsets=16,
+            tv_weight=0,
+            iterations=1,
+            stream_projections=False,
+        ),
     )
-    poses = np.zeros((views, 6))
-    poses[:, 3] = scan.detector.du * shifts[:, 0]
-    poses[:, 4] = scan.detector.dv * shifts[:, 1]
-    corrected = with_grid(scan, working).with_poses(poses)
     automatic = {
-        "method": "joint_volume_pose",
+        "method": "fista",
+        "geometry": "preserved_pose_corrections",
         "status": "ok",
         "reasons": [],
-        "geometry": "declared",
-        "grid": asdict(working),
-        "detector_binning": record["detector_binning"],
-        "pose_model": "spline_with_jumps",
-        "pose_translation_frame": "detector",
-        "fit": record,
-        "warning": "Fitted motion is not physical truth; inspect images and held-out projections.",
     }
-    source = record_of(corrected)
-    source.geometry_metadata["alignment_info"] = {"automatic": automatic}
-    corrected = replace(corrected, source=source)
-    return Reconstruction(volume, corrected, "joint_volume_pose", {"automatic": automatic})
+    return replace(result, info={**result.info, "automatic": automatic})

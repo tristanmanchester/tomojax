@@ -49,7 +49,7 @@ length units. `import` does not apply flat/dark correction or a logarithm.
 It records the supplied detector and no grid. The grid is chosen at reconstruction, with
 voxels of the detector pitch by default. `tomojax recon --grid 256 256 128`
 resamples the selected field of view to 256 × 256 × 128 voxels; their spacing
-changes to preserve that physical extent. `tomojax align --mode cor` estimates a
+changes to preserve that physical extent. `tomojax align --fit centre` estimates a
 centre-of-rotation offset. Detector and voxel pitch share a physical length
 unit; Python's `Detector.center` also uses physical lengths, so an offset
 of 2 pixels at pitch 0.65 is a `center` of 1.3.
@@ -154,7 +154,7 @@ how to share a scan among GPUs.
 ## Evaluate alignment after reconstruction
 
 If a geometry-checked, corrected scan still shows motion artefacts, follow the
-[alignment guide](alignment-guide.md). Save an unaligned reconstruction for
+[alignment guide](align-a-scan.md). Save an unaligned reconstruction for
 comparison. Check residuals, multiple slice planes, and recovered parameters;
 image sharpness alone cannot establish physical calibration. Recovery remains
 data-dependent, especially for truncated or periodic objects; a lower training residual alone does not establish correct alignment.
@@ -168,7 +168,7 @@ workflow as Python and the CLI:
 ```python
 scan = tj.load_frames("scan.nxs").corrected()
 result = tj.align(scan)
-print(result.info["automatic"])
+print(result.info["calibration"])
 tj.save("aligned.nxs", result)
 ```
 
@@ -176,24 +176,14 @@ tj.save("aligned.nxs", result)
 tomojax align scan.nxs -o aligned.nxs
 ```
 
-Automatic unposed laminography requires declared geometry. Missing axis metadata
-requires an explicit setup mode or caller-supplied geometry; no axis or support
-is guessed. The workflow fits per-view detector translations (dx, dz) jointly
-with the image: a robust data term (quadratic out to 2.5 noise SDs or half the
-contrast, logarithmic beyond), anisotropic physical Huber TV on the image, and a
-motion prior that leaves a cubic spline with knots every ten views free and
-charges view-to-view jumps of the remainder under a Huber penalty, so sudden
-slips are followed rather than smoothed over. Poses are eliminated exactly in a
-global solve over all views. It uses a bounded image (at most 16 million
-voxels, keeping every face of the volume's cells), square detector binning
-toward 320 pixels across (without eliminating a thin detector axis), and two
-levels at twice and then once that scale. A short final stage refines the
-translations against the fixed image on edge-filtered residuals, which a smooth
-photometric change in one view cannot move much.
-The physical support is preserved, including explicitly placed volume faces.
-The returned scan retains the original detector samples and fitted poses; the
-alignment image remains at the working scale. There is no forced native-grid
-refinement.
+Alignment requires declared geometry; supply missing axis metadata before fitting. The default
+fits per-view lab-frame translations jointly with the image, using a smooth-drift and robust-jump
+prior. Add `fit=("translations", "tilt", "roll")` for shared setup angles or
+`fit=("translations", "rotations")` for sample wobble. All settings use the same solver.
+
+The physical support is preserved, including explicitly placed volume faces. The returned scan
+retains the original detector samples and fitted corrections; the alignment image remains at the
+working scale. There is no forced native-grid refinement.
 
 Pass an explicit `grid=` to `tj.align` or `tj.reconstruct` to fix the physical
 region and output sampling. Explicit grids are not coarsened automatically, so
@@ -202,6 +192,6 @@ reconstruct the corrected scan at your desired sampling.
 
 Inspect several slices and the recovered motion: smoothness and lower projection
 error do not establish physical pose truth. Reserve held-out views before calling
-the workflow for independent evaluation. Explicit alignment `mode` and reconstruction
-`method` retain direct control; automatic reconstruction of a posed scan preserves
-its grid and corrections.
+the workflow for independent evaluation. `fit=` names the geometry parameters being estimated;
+reconstruction `method` chooses the image solver. Automatic reconstruction of a posed scan
+preserves its grid and corrections.

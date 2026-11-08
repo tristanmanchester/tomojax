@@ -8,7 +8,7 @@ results can be reconstructed, aligned again or saved without restating it::
 
     scan = tj.load("scan.nxs")
     recon = tj.reconstruct(scan)  # Geometry-aware automatic reconstruction
-    result = tj.align(scan, mode="cor-then-pose")
+    result = tj.align(scan)
     tj.save("recon.nxs", tj.reconstruct(result.scan, method="cgls"))
 """
 
@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from contextlib import closing, contextmanager
 from dataclasses import is_dataclass, replace
-from functools import partial
 import json
 from typing import TYPE_CHECKING, Any, Literal, cast
 import warnings
@@ -25,31 +24,21 @@ import numpy as np
 
 from tomojax._loading import load
 from tomojax._scan import (
-    GEOMETRY_KEYS,
     Alignment,
     Reconstruction,
     Scan,
-    describe,
     record_of,
-    scan_from_record,
     with_grid,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Sequence
+    from collections.abc import Iterator, Sequence
     from os import PathLike
 
     import jax
 
     from tomojax._loading import Frames
     from tomojax._typed_arrays import Device
-    from tomojax.alignment import AlignConfig, ProjectionMatchingConfig
-    from tomojax.alignment.api import (
-        AlignmentMode,
-        AlignmentPlan,
-        PoseTranslationFrame,
-        QualityTier,
-    )
     from tomojax.corrections import Step
     from tomojax.geometry import Detector, Geometry, Grid, ScanGeometry
     from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig
@@ -743,313 +732,62 @@ def _estimate_center(
 def align(
     scan: Scan,
     *,
-    mode: AlignmentMode | Literal["auto"] = "auto",
-    quality: QualityTier = "fast",
-    levels: Iterable[int] | None = None,
-    freeze: Iterable[str] = (),
+    fit: str | tuple[str, ...] = "translations",
     grid: Grid | None = None,
-    checkpoint: str | PathLike[str] | None = None,
-    config: AlignConfig | ProjectionMatchingConfig | None = None,
-    devices: Device | Sequence[Device] | None = None,
 ) -> Alignment:
-    """Estimate ``scan``'s geometry corrections and reconstruct with them.
+    """Fit selected geometry parameters jointly with a reconstruction.
 
-    ``mode="auto"`` fits smooth detector-frame translations for unposed axial
-    parallel and laminography scans on a bounded coarse image. Rotations remain
-    fixed; use an explicit pose mode to fit them. Cone scans use joint pose fitting.
-    The chosen workflow and limitations are in ``info["automatic"]``.
-    Detector-centre estimation remains available separately as ``estimate_center``.
-    Explicit ``mode`` is ``pose`` (per-view motion), ``cor`` (detector
-    centre, or a cone beam's axis offset and detector roll), ``cor-then-pose``
-    or ``full`` (setup geometry, then motion, coarse to fine); see
-    :mod:`tomojax.alignment`. ``quality`` is ``fast`` or ``reference`` (slower,
-    more conservative). ``freeze`` keeps named parameters fixed (for example
-    ``("dy",)``); ``levels`` sets the coarse-to-fine binning factors.
-    ``config`` (a :class:`tomojax.alignment.AlignConfig`) holds expert solver
-    settings and replaces the quality profile's defaults.
-    ``ProjectionMatchingConfig`` instead selects native-texture, translation-only
-    joint refinement for unposed axial scans, without resampling the input.
-    It may fit noise or model mismatch as motion; inspect poses and image quality.
-    Its image uses Fourier. Checkpoints and level/quality overrides are unsupported.
-    A ``spectral_setup`` initializer does not reconstruct; reconstruct its returned scan.
+    ``fit`` is one name or a tuple of names: ``centre``, ``tilt``, ``roll``,
+    ``translations`` and ``rotations``. Centre, tilt and roll are shared by all
+    views. Translations and rotations are per view; every unselected parameter
+    is held at its declared value. Translations have two components for parallel
+    rays and three for cone beams; rotations have three. The default fits drift
+    and slips. Per-view rotations have a prior on their physical size.
 
-    ``grid`` overrides the scan's reconstruction grid, as :func:`reconstruct` does.
-    In automatic parallel alignment it fixes the region and final voxel sampling,
-    while motion remains automatic; it is not inferred support.
-
-    ``checkpoint`` is a file the alignment saves its progress to after each
-    outer iteration. When that file holds a checkpoint of the same alignment
-    (the same projections and geometry, mode, levels, grid and settings, from
-    the same TomoJAX version), the alignment resumes from it, and a finished
-    one returns its result at once. Any other file there raises
-    :class:`ValueError` saying how it differs, and is left as it is. A cone
-    beam's ``cor`` mode runs no outer iterations and writes none.
-
-    ``devices`` (one or several, ``jax.devices()`` for all) shares the views
-    among them, as :func:`reconstruct` does, in the joint pose and volume
-    update of ``pose`` alignment and in cone-beam reconstruction steps; the
-    rest runs on the first. The devices change only the order of sums, so a
-    checkpoint made on some resumes on others.
-
-    A scan that already carries poses (an ASTRA import's, say, or an earlier
-    alignment's) is corrected on top of them, and multi-orbit
-    :class:`~tomojax.geometry.ConeSegments` scans are aligned as one, so their
-    orbits come into register; only ``pose`` alignment takes either.
-
-    The returned :attr:`Alignment.scan` carries the corrections, and the grid,
-    so ``tomojax.reconstruct(result.scan)`` reconstructs with them;
-    :attr:`Alignment.poses` are the scan's poses, its own included.
-    :attr:`Alignment.info` holds the mode, levels and resolved ``config`` with
-    the solver's record (losses, gauge, any calibrated setup geometry).
+    The same solver handles parallel, laminography and cone-beam scans. Existing
+    poses are preserved and the fitted correction is composed with them. The
+    returned scan carries both calibrated global geometry and local poses, so
+    reconstructing or saving it preserves the fitted ray geometry.
 
     Parameters
     ----------
     scan : Scan
-        Measured line integrals with their acquisition geometry.
-    mode : str, optional
-        Alignment mode: auto, pose, cor, cor-then-pose or full.
-    quality : {'fast', 'reference'}
-        Quality profile; reference is slower and more conservative.
-    levels : iterable of int or None, optional
-        Coarse-to-fine binning factors; None uses the mode's defaults.
-    freeze : iterable of str, optional
-        Names of parameters to keep fixed, such as ("dy",).
+        Measured line integrals with their declared acquisition geometry.
+    fit : str or tuple of str, optional
+        Parameters to fit. Defaults to ``"translations"``.
     grid : Grid or None, optional
-        Alignment and reconstruction grid; None keeps the scan's grid.
-    checkpoint : str, path-like or None, optional
-        Progress file; compatible existing checkpoints resume automatically.
-    config : AlignConfig or None, optional
-        Expert solver settings, replacing the quality profile's defaults.
-    devices : jax.Device or sequence of jax.Device or None, optional
-        Devices sharing supported pose and reconstruction updates.
+        Reconstruction region and sampling. None uses a bounded working grid
+        with the scan's physical field of view; an explicit grid is kept.
 
     Returns
     -------
     Alignment
-        Reconstruction, corrected scan, full pose table and solver records.
+        Volume, corrected scan, composed per-view poses and solver record.
+        Fitted globals appear under their names in ``info["calibration"]``:
+        centre in geometry length units (u, or u/v for cone beams), and angles
+        in degrees. Tilt is the signed inclination ``atan2(axis_y, axis_z)``;
+        positive roll turns detector u towards v. Cone segments with different
+        calibrated values report them in segment order.
 
     Raises
     ------
     ValueError
-        If options, geometry or an existing checkpoint are incompatible.
+        If the fit selection is empty, repeated or unknown, or the geometry
+        has not been declared.
 
     Examples
     --------
     >>> import tomojax as tj
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
-    >>> result = tj.align(scan, mode="cor-then-pose")  # doctest: +SKIP
+    >>> result = tj.align(scan, fit=("translations", "roll"))  # doctest: +SKIP
     >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP
     """
-    if config is not None:
-        from tomojax.alignment import ProjectionMatchingConfig
+    from tomojax._smooth_alignment import align_poses
 
-        if isinstance(config, ProjectionMatchingConfig):
-            if mode not in {"auto", "pose"} or levels is not None or tuple(freeze):
-                raise ValueError("projection matching takes mode='pose', without levels or freeze")
-            if checkpoint is not None or quality != "fast":
-                raise ValueError(
-                    "projection matching does not take checkpoint or quality overrides"
-                )
-            return _align_projection_matching(scan, config=config, grid=grid, devices=devices)
-    if mode == "auto":
-        freeze = tuple(freeze)
-        explicit = config is not None or levels is not None or bool(freeze)
-        explicit = explicit or checkpoint is not None or quality != "fast"
-        if not explicit and describe(scan.geometry)[0] != "cone":
-            from tomojax.core.devices import sharing
-
-            with sharing(devices):
-                return _align_automatically(scan, grid=grid, devices=devices)
-        if explicit and describe(scan.geometry)[0] != "cone":
-            from tomojax._smooth_alignment import uses_laminography_workflow
-
-            if uses_laminography_workflow(scan):
-                raise ValueError(
-                    "automatic laminography needs an explicit mode for expert overrides"
-                )
-        mode = "pose"
-    return _align_explicit(
-        scan,
-        mode=mode,
-        quality=quality,
-        levels=levels,
-        freeze=freeze,
-        grid=grid,
-        checkpoint=checkpoint,
-        config=config,
-        devices=devices,
-    )
-
-
-def _align_projection_matching(
-    scan: Scan,
-    *,
-    config: ProjectionMatchingConfig,
-    grid: Grid | None,
-    devices: Device | Sequence[Device] | None,
-) -> Alignment:
-    from tomojax.alignment.api import match_projections
-    from tomojax.core.devices import sharing
-
-    if grid is not None:
-        scan = with_grid(scan, grid)
-    with sharing(devices):
-        poses, info = match_projections(scan.geometry, scan.projections, config=config)
-        corrected = scan.with_poses(poses)
-        volume = np.asarray(reconstruct(corrected, "fourier").volume)
-    return Alignment(volume, corrected, poses, {**info, "reconstruction": "fourier"})
-
-
-def _align_explicit(
-    scan: Scan,
-    *,
-    mode: AlignmentMode,
-    quality: QualityTier,
-    levels: Iterable[int] | None,
-    freeze: Iterable[str],
-    grid: Grid | None,
-    checkpoint: str | PathLike[str] | None,
-    config: AlignConfig | None,
-    devices: Device | Sequence[Device] | None,
-) -> Alignment:
-    from tomojax.alignment.api import alignment_plan
-    from tomojax.geometry import ConeSegments
-
-    if grid is not None:
-        scan = with_grid(scan, grid)
-    plan = alignment_plan(
-        mode,
-        scan.grid,
-        quality=quality,
-        geometry=scan.geometry,
-        levels=levels,
-        freeze=freeze,
-        config=config,
-    )
-    segmented = isinstance(scan.geometry, ConeSegments)
-    if plan.mode != "pose" and (scan.poses is not None or segmented):
-        raise ValueError(
-            f"align: mode {plan.mode!r} calibrates one arrangement without pose corrections; "
-            "align posed or segmented scans with mode='pose'"
-        )
-    _suggest_binning(scan, "alignment")
-    from tomojax.core.devices import sharing
-
-    with sharing(devices):
-        geometry, volume, poses, frame, info = _run_alignment(scan, plan, checkpoint)
-    corrected = record_of(replace(scan, geometry=cast("ScanGeometry", geometry)))
-    calibration = info.get("geometry_calibration_state")
-    if isinstance(calibration, dict):
-        from tomojax.geometry.api import build_calibrated_geometry_metadata_patch
-
-        patch = build_calibrated_geometry_metadata_patch(
-            calibration_state=cast("dict[str, object]", calibration),
-            detector=scan.detector.to_dict(),
-            geometry_meta=corrected.geometry_metadata,
-        )
-        corrected.detector = _detector(patch["detector"])
-        corrected.geometry_metadata = {
-            **corrected.geometry_metadata,
-            **{k: v for k, v in dict(patch["geometry_meta"]).items() if k in GEOMETRY_KEYS},
-        }
-    corrected.align_params = poses
-    corrected.align_gauge = {"pose_translation_frame": frame}
-    aligned = scan_from_record(corrected, poses=True)
-    return Alignment(
-        volume=volume, scan=replace(aligned, source=scan.source), poses=poses, info=info
-    )
-
-
-def _align_automatically(
-    scan: Scan, *, grid: Grid | None = None, devices: Device | Sequence[Device] | None = None
-) -> Alignment:
-    """Geometry-aware policy; every numerical operation below has an explicit mode."""
-    from tomojax._smooth_alignment import reconstruct_with_motion
-
-    if grid is not None:
-        scan = with_grid(scan, grid)
-    if scan.poses is not None:
-        return align(scan, mode="pose", devices=devices)
-    if describe(scan.geometry)[0] not in {"parallel", "lamino"}:
-        return align(scan, mode="pose", devices=devices)
-    result = reconstruct_with_motion(
-        scan, reconstruct=partial(reconstruct, devices=devices), grid=grid
-    )
+    result = align_poses(scan, fit=fit, grid=grid)
     poses = result.scan.poses
     assert poses is not None
     return Alignment(result.volume, result.scan, np.asarray(poses), result.info)
-
-
-def _run_alignment(
-    scan: Scan, plan: AlignmentPlan, checkpoint: str | PathLike[str] | None
-) -> tuple[Geometry, np.ndarray | jax.Array, np.ndarray, str, dict[str, object]]:
-    """Calibrated geometry, volume, ``(views, 6)`` poses, their frame and record of ``plan``."""
-    from tomojax.alignment._integration import (
-        AlignmentRun,
-        alignment_checkpointing,
-        cone_setup,
-    )
-    from tomojax.alignment.api import AlignMultiresResumeState, align_multires
-
-    geometry, grid, detector = scan.geometry, scan.grid, scan.detector
-    # Keep host scans there through the resolution pyramid; each solver owns
-    # its placement and may stream a native stack larger than device memory.
-    projections = cast("Any", scan.projections)
-    cfg: AlignConfig | None = plan.config
-    record: dict[str, object] = {"mode": plan.mode, "levels": list(plan.levels)}
-    record["config"] = plan.config
-    setup = cone_setup(geometry, grid, detector, projections, plan.config)
-    if setup is not None:
-        geometry, cfg = setup.geometry, setup.config
-        record["cone_axis_calibration"] = setup.to_dict()
-    if cfg is None:
-        # Only the cone axis was asked for: reconstruct with it.
-        volume = reconstruct(replace(scan, geometry=cast("ScanGeometry", geometry))).volume
-        return geometry, volume, np.zeros((len(scan.angles), 6), np.float32), "detector", record
-    run = AlignmentRun(
-        projections=projections,
-        geometry=scan.geometry,
-        config=plan.config,
-        mode=plan.mode,
-        levels=plan.levels,
-    )
-    resume, write = alignment_checkpointing(checkpoint, run)
-    volume, params, info = align_multires(
-        geometry,
-        grid,
-        detector,
-        projections,
-        factors=plan.levels,
-        config=cfg,
-        resume_state=cast("AlignMultiresResumeState | None", resume),
-        checkpoint_callback=write,
-    )
-    poses = np.asarray(params, np.float32)
-    frame = cfg.pose_translation_frame
-    if plan.mode == "pose" and describe(geometry)[0] != "cone":
-        record["implied_detector_u_px"] = _implied_detector_u_px(geometry, detector, poses, frame)
-    if scan.poses is not None:
-        from tomojax._data.geometry_meta import composed_poses
-
-        poses, frame = composed_poses(scan.geometry, poses, frame), "detector"
-    return geometry, volume, poses, frame, {**dict(info), **record}
-
-
-def _implied_detector_u_px(
-    geometry: Geometry, detector: Detector, poses: np.ndarray, frame: PoseTranslationFrame
-) -> float | None:
-    """The detector-u (centre-of-rotation) offset ``poses`` hold, in detector pixels."""
-    import jax.numpy as jnp
-
-    from tomojax.alignment.api import apply_pose_updates, implied_detector_offset
-    from tomojax.geometry import stack_view_poses
-
-    if not np.any(poses[:, 3]):
-        return None
-    nominal = stack_view_poses(geometry, len(poses))
-    aligned = apply_pose_updates(nominal, jnp.asarray(poses), translation_frame=frame)
-    offset, _ = implied_detector_offset(np.asarray(nominal), np.asarray(aligned))
-    return offset / float(detector.du)
 
 
 def _oversampling(scan: Scan) -> float:

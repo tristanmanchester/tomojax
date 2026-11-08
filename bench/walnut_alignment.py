@@ -180,34 +180,12 @@ def _central(volume: np.ndarray) -> dict[str, np.ndarray]:
 
 
 def _timed_alignment(
-    original: tj.Scan, levels: tuple[int, ...], devices: Any, args: argparse.Namespace
+    original: tj.Scan, fit: tuple[str, ...]
 ) -> tuple[tj.Alignment, dict[str, Any]]:
-    """``tj.align``'s result, and its time: the first attempt's if this one resumed."""
-    resumed = args.checkpoint is not None and args.checkpoint.exists()
-    earlier = _earlier_record(args.output)
+    """Time one complete public alignment call."""
     start = time.perf_counter()
-    result = tj.align(original, levels=levels, devices=devices, checkpoint=args.checkpoint)
-    seconds = time.perf_counter() - start
-    if not resumed:
-        return result, {"resumed_from_checkpoint": False, "align_seconds": seconds}
-    # Only part of the alignment ran now: keep what the first attempt measured.
-    return result, {
-        "resumed_from_checkpoint": True,
-        "align_seconds": earlier.get("align_seconds"),
-        "resumed_seconds": seconds,
-    }
-
-
-def _earlier_record(path: Path | None) -> dict[str, Any]:
-    """An earlier attempt's record at ``path``, moved aside as ``<name>.attempt-N.json``."""
-    if path is None or not path.exists():
-        return {}
-    earlier = json.loads(path.read_text())
-    attempt = 1
-    while path.with_suffix(f".attempt-{attempt}.json").exists():
-        attempt += 1
-    path.replace(path.with_suffix(f".attempt-{attempt}.json"))
-    return earlier
+    result = tj.align(original, fit=fit)
+    return result, {"align_seconds": time.perf_counter() - start}
 
 
 def main() -> None:
@@ -216,15 +194,17 @@ def main() -> None:
     parser.add_argument("walnut", type=Path, help="A WalnutN directory from the data collection")
     parser.add_argument("--every", type=int, default=4, help="Use every Nth view")
     parser.add_argument("--bin", type=int, default=2, help="Average N x N detector pixels")
-    parser.add_argument("--levels", default="4,2", help="Alignment resolution levels")
+    parser.add_argument(
+        "--fit",
+        nargs="+",
+        choices=("centre", "tilt", "roll", "translations", "rotations"),
+        default=["translations"],
+    )
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--figures", type=Path, help="Write PNG figures to this directory")
     parser.add_argument("--gpus", type=int, default=1, help="GPUs to share the views among")
     parser.add_argument("--slices", type=Path, help="Save central slices and poses (.npz)")
     parser.add_argument("--output", type=Path, help="Write the record here after each stage")
-    parser.add_argument(
-        "--checkpoint", type=Path, help="Save the alignment's progress here; resume from it"
-    )
     parser.add_argument("--cache", type=Path, help="Keep the decoded projections here (.npz)")
     args = parser.parse_args()
     logging.getLogger("tifffile").setLevel(logging.ERROR)
@@ -236,13 +216,10 @@ def main() -> None:
 
     # One GPU takes the ordinary one-device path, as a user would run it.
     devices = jax.devices()[: args.gpus] if args.gpus > 1 else None
-    levels = tuple(int(f) for f in args.levels.split(","))
-    result, timing = _timed_alignment(original, levels, devices, args)
+    result, timing = _timed_alignment(original, tuple(args.fit))
     summary: dict[str, Any] = {"gpus": args.gpus, **timing}
     info = result.info
-    summary["alignment"] = {
-        k: info.get(k) for k in ("mode", "levels", "factors", "factors_skipped", "loss", "gauge")
-    }
+    summary["alignment"] = {k: info.get(k) for k in ("fit", "calibration", "gauge")}
     aligned = _orbit_one_fixed(result.scan, original)
 
     per = len(original.angles) // 3

@@ -1,19 +1,20 @@
-"""Prepare, align and reconstruct PSI ptychography with joint projection matching.
+"""Prepare, align and reconstruct PSI ptychography with the joint translation fit.
 
 Usage: python examples/align_ptychography.py example_data.mat --binning 4
 Also accepts porous_glass_dataset.mat (physical refractive-index output).
 The measured porous-glass stack is already aligned; the simulation has motion.
-Projection matching can fit noise or model mismatch as motion. Inspect poses and
+Alignment can fit noise or model mismatch as motion. Inspect poses and
 reconstructed image quality; convergence does not imply physical accuracy.
 """
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import h5py
 import numpy as np
@@ -21,9 +22,6 @@ from scipy.io import loadmat
 
 import tomojax as tj
 from tomojax.corrections import remove_phase_ramp, unwrap_phase
-
-if TYPE_CHECKING:
-    from tomojax.alignment import ProjectionMatchingConfig
 
 # Measured-data detector ROI and known air strips, not fitted poses.
 PSI_ROWS = slice(212, 628)
@@ -92,18 +90,11 @@ def make_scan(phase: np.ndarray, angles: np.ndarray, *, binning: int = 1) -> tj.
         detector.dv,
         vol_center=(0, 0, detector.center[1]),
     )
-    return tj.Scan(scan.projections, tj.ParallelGeometry(grid, detector, angles.tolist()))
-
-
-def alignment_config(*, iterations: int = 20) -> ProjectionMatchingConfig:
-    """The fixed sparse-joint translation estimator."""
-    from tomojax.alignment import ProjectionMatchingConfig
-
-    return ProjectionMatchingConfig(iterations=iterations)
+    return replace(scan, geometry=tj.ParallelGeometry(grid, detector, angles.tolist()))
 
 
 def run_example(
-    path: str | Path, *, binning: int = 1, iterations: int = 20
+    path: str | Path, *, binning: int = 1
 ) -> tuple[np.ndarray, np.ndarray, dict[str, float | str]]:
     """Return a volume, detector-frame poses and timings with explicit units.
 
@@ -125,9 +116,9 @@ def run_example(
     grid = scan.grid
 
     before = time.perf_counter()
-    aligned = tj.align(scan, mode="pose", grid=grid, config=alignment_config(iterations=iterations))
+    aligned = tj.align(scan, fit="translations", grid=grid)
     timings["alignment_seconds"] = time.perf_counter() - before
-    timings["estimation_seconds"] = float(cast("float", aligned.info["estimation_seconds"]))
+    timings["estimation_seconds"] = float(cast("float", aligned.info["seconds"]))
     corrected_scan, poses = aligned.scan, np.asarray(aligned.poses).copy()
     del aligned  # Release alignment's image before the final full-grid inverse.
     before = time.perf_counter()
@@ -154,13 +145,10 @@ def main() -> None:
     parser.add_argument(
         "--binning", type=int, default=1, help="Detector phase binning (4 for a CPU preview)"
     )
-    parser.add_argument("--iterations", type=int, default=20, help="Joint alignment iterations")
     args = parser.parse_args()
     if args.output is not None and args.output.exists():
         raise FileExistsError(args.output)
-    volume, poses, timings = run_example(
-        args.path, binning=args.binning, iterations=args.iterations
-    )
+    volume, poses, timings = run_example(args.path, binning=args.binning)
     print(json.dumps(timings, indent=2))
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
