@@ -16,6 +16,16 @@ __device__ __forceinline__ long volume_index(int x,int y,int z,int nx,int ny,int
 #define SEL(i, x0, x1, x2) ((i) == 0 ? (x0) : ((i) == 1 ? (x1) : (x2)))
 __device__ __forceinline__ float trif(float f, float j) { return fmaxf(1.f - fabsf(f - j), 0.f); }
 __device__ __forceinline__ bool separable(const float* c) { return c[12] > 0.5f; }
+// floor(x) as an int and as a float, on the FP32 pipe: below 2^22 in magnitude, adding
+// 1.5 * 2^23 rounded down leaves floor(x) in the low mantissa bits. Larger values are
+// clamped to +-2^21 first; every caller only tests them against a tile and rejects them.
+__device__ __forceinline__ int floor_split(float x, float& whole)
+{
+    const float magic = 12582912.f;  // 1.5 * 2^23
+    float t = __fadd_rd(fminf(fmaxf(x, -2097152.f), 2097152.f), magic);
+    whole = __fsub_rn(t, magic);
+    return __float_as_int(t) - 0x4B400000;
+}
 // A projected interval has no finite corner bound when its denominator crosses zero.
 __device__ __forceinline__ bool crosses_zero(float lo, float hi) {
     return (lo <= 0.f && hi >= 0.f) || (hi <= 0.f && lo >= 0.f);
@@ -1325,7 +1335,7 @@ __device__ __forceinline__ void plane_tile(
             }
             int q = p - first[w];
             int u = ulo + q / runs, v0 = vlo + RUN * (q % runs), v1 = min(v0 + RUN, vlo + wv);
-            float fu = (float)u;
+            float fu = (float)u, fv0 = (float)v0;
             // Keep the detector-column position, not position minus source: ray_of
             // adds the v displacement first, then subtracts the source.
             float ra = __fmaf_rn(fu, c[6], c[3]);
@@ -1345,7 +1355,7 @@ __device__ __forceinline__ void plane_tile(
             float fbs[PLANES][RUN], fcs[PLANES][RUN];
             #pragma unroll
             for (int i = 0; i < RUN; ++i) {
-                float fv = (float)(v0 + i);
+                float fv = __fadd_rn(fv0, (float)i);  // exact: integers below 2^24
                 float r_a = __fsub_rn(__fmaf_rn(fv, DVa, ra), Sa);
                 float r_b = __fsub_rn(__fmaf_rn(fv, DVb, rb), Sb);
                 float r_c = __fsub_rn(__fmaf_rn(fv, DVc, rc), Sc);
@@ -1370,8 +1380,10 @@ __device__ __forceinline__ void plane_tile(
                 #pragma unroll
                 for (int i = 0; i < RUN; ++i) {
                     float fb = fbs[plane][i], fc = fcs[plane][i];
-                    float fb0 = floorf(fb), fc0 = floorf(fc);
-                    int jb = (int)fb0 - b0, jc = (int)fc0 - c0;
+                    // The conversion unit, not the arithmetic, bounds this loop: floor
+                    // on the FP32 pipe instead, with the same result.
+                    float fb0, fc0;
+                    int jb = floor_split(fb, fb0) - b0, jc = floor_split(fc, fc0) - c0;
                     if (jb < -1 || jb >= ROWS || jc < -1 || jc >= PC) continue;
                     float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
                     if (jb != cb || jc != ccj) {
