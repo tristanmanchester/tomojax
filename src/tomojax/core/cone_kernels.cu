@@ -16,16 +16,31 @@ __device__ __forceinline__ long volume_index(int x,int y,int z,int nx,int ny,int
 #define SEL(i, x0, x1, x2) ((i) == 0 ? (x0) : ((i) == 1 ? (x1) : (x2)))
 __device__ __forceinline__ float trif(float f, float j) { return fmaxf(1.f - fabsf(f - j), 0.f); }
 __device__ __forceinline__ bool separable(const float* c) { return c[12] > 0.5f; }
-// floor(x) as an int and as a float, on the FP32 pipe: below 2^22 in magnitude, adding
-// 1.5 * 2^23 rounded down leaves floor(x) in the low mantissa bits. Any other x, infinite
-// or NaN included, gives an int of magnitude at least 2^22; every caller only tests it
-// against a tile, and rejects it.
+// floor(x) as an int and a float on the FP32 pipe: below 2^22, x + 1.5 * 2^23 rounded down
+// holds floor(x) in its low bits. Other x (inf, NaN) give |int| >= 2^22, which callers reject.
 __device__ __forceinline__ int floor_split(float x, float& whole)
 {
     const float magic = 12582912.f;  // 1.5 * 2^23
     float t = __fadd_rd(x, magic);
     whole = __fsub_rn(t, magic);
     return __float_as_int(t) - 0x4B400000;
+}
+// Joseph's bilinear sample of the taps at p, p + sc, p + sb, p + sb + sc (zero outside nb x nc),
+// rounded in the one order every forward path uses; inside, the taps load without tests.
+__device__ __forceinline__ float bilinear(const float* p, long sb, long sc, int b0, int c0, int nb,
+                                          int nc, float wb0, float wb1, float wc0, float wc1)
+{
+    float v00, v01, v10, v11;
+    if ((unsigned)b0 < (unsigned)(nb - 1) && (unsigned)c0 < (unsigned)(nc - 1)) {
+        v00 = __ldg(p); v01 = __ldg(p + sc); v10 = __ldg(p + sb); v11 = __ldg(p + sb + sc);
+    } else {
+        bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
+        bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
+        v00 = b0in && c0in ? __ldg(p) : 0.f; v01 = b0in && c1in ? __ldg(p + sc) : 0.f;
+        v10 = b1in && c0in ? __ldg(p + sb) : 0.f; v11 = b1in && c1in ? __ldg(p + sb + sc) : 0.f;
+    }
+    return __fmaf_rn(wb1, __fmaf_rn(v11, wc1, __fmul_rn(v10, wc0)),
+                     __fmul_rn(wb0, __fmaf_rn(v01, wc1, __fmul_rn(v00, wc0))));
 }
 // A projected interval has no finite corner bound when its denominator crosses zero.
 __device__ __forceinline__ bool crosses_zero(float lo, float hi) {
@@ -168,20 +183,8 @@ __device__ __forceinline__ float plane_sum(
         int b0 = (int)fb0, c0 = (int)fc0;
         // The same weights as plane_adjoint's.
         float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
-        const float* p = plane + (long)b0 * sb + (long)c0 * sc;
-        // Every forward path rounds the bilinear sum in this one order. Inside the
-        // volume, which nearly every sample is, all four taps load without tests.
-        float v00, v01, v10, v11;
-        if ((unsigned)b0 < (unsigned)(nb - 1) && (unsigned)c0 < (unsigned)(nc - 1)) {
-            v00 = __ldg(p); v01 = __ldg(p + sc); v10 = __ldg(p + sb); v11 = __ldg(p + sb + sc);
-        } else {
-            bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
-            bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
-            v00 = b0in && c0in ? __ldg(p) : 0.f; v01 = b0in && c1in ? __ldg(p + sc) : 0.f;
-            v10 = b1in && c0in ? __ldg(p + sb) : 0.f; v11 = b1in && c1in ? __ldg(p + sb + sc) : 0.f;
-        }
-        float s0 = __fmaf_rn(v01, wc1, __fmul_rn(v00, wc0)), s1 = __fmaf_rn(v11, wc1, __fmul_rn(v10, wc0));
-        sum = __fadd_rn(sum, __fmaf_rn(wb1, s1, __fmul_rn(wb0, s0)));
+        sum = __fadd_rn(sum, bilinear(plane + (long)b0 * sb + (long)c0 * sc, sb, sc, b0, c0, nb,
+                                      nc, wb0, wb1, wc0, wc1));
     }
     return sum;
 }
@@ -274,26 +277,8 @@ __device__ __forceinline__ float plane_sum(
         int b0 = (int)fb0, c0 = (int)fc0;
         // The same weights as plane_adjoint's.
         float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
-        Offset p = plane + (Offset)b0 * (Offset)sb + (Offset)c0 * (Offset)sc;
-        float s0 = 0.f, s1 = 0.f;
-        if ((unsigned)b0 < (unsigned)(nb - 1) && (unsigned)c0 < (unsigned)(nc - 1)) {
-            // All four taps inside: one base address, no per-tap tests.
-            const float* q = vol + p;
-            s0 = __fmaf_rn(__ldg(q + sc), wc1, __fmul_rn(__ldg(q), wc0));
-            s1 = __fmaf_rn(__ldg(q + sb + sc), wc1, __fmul_rn(__ldg(q + sb), wc0));
-        } else {
-            bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
-            bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
-            // Missing taps contribute an exact zero to the same rounded expression.
-            float v00 = b0in && c0in ? __ldg(vol + p) : 0.f;
-            float v01 = b0in && c1in ? __ldg(vol + (Offset)(p + (Offset)sc)) : 0.f;
-            float v10 = b1in && c0in ? __ldg(vol + (Offset)(p + (Offset)sb)) : 0.f;
-            float v11 = b1in && c1in ? __ldg(vol + (Offset)(p + (Offset)sb + (Offset)sc)) : 0.f;
-            s0 = __fmaf_rn(v01, wc1, __fmul_rn(v00, wc0));
-            s1 = __fmaf_rn(v11, wc1, __fmul_rn(v10, wc0));
-        }
-        // One rounding order in every compilation context.
-        sum = __fadd_rn(sum, __fmaf_rn(wb1, s1, __fmul_rn(wb0, s0)));
+        const float* p = vol + ((long)plane + (long)b0 * sb + (long)c0 * sc);
+        sum = __fadd_rn(sum, bilinear(p, sb, sc, b0, c0, nb, nc, wb0, wb1, wc0, wc1));
     }
     return sum;
 }
@@ -384,25 +369,8 @@ __device__ float register_ray_sum(const float* __restrict__ vol,const float* c,f
                 float fb0=floorf(fb),fc0=floorf(fc);
                 int b0=(int)fb0,c0=(int)fc0;
                 float wb1=fb-fb0,wc1=fc-fc0,wb0=1.f-wb1,wc0=1.f-wc1;
-                Offset point=((Offset)c0*(Offset)ny+(Offset)b0)*(Offset)nx+(Offset)k;
-                float s0=0.f,s1=0.f;
-                if((unsigned)b0<(unsigned)(ny-1) && (unsigned)c0<(unsigned)(nz-1)){
-                    // All four taps inside: one base address, no per-tap tests.
-                    const float* q=vol+point;
-                    long plane_stride=(long)nx*ny;
-                    s0=__fmaf_rn(__ldg(q+plane_stride),wc1,__fmul_rn(__ldg(q),wc0));
-                    s1=__fmaf_rn(__ldg(q+nx+plane_stride),wc1,__fmul_rn(__ldg(q+nx),wc0));
-                }else{
-                    bool b0in=(unsigned)b0<(unsigned)ny,b1in=(unsigned)(b0+1)<(unsigned)ny;
-                    bool c0in=(unsigned)c0<(unsigned)nz,c1in=(unsigned)(c0+1)<(unsigned)nz;
-                    float v00=b0in && c0in?__ldg(vol+point):0.f;
-                    float v01=b0in && c1in?__ldg(vol+(Offset)(point+(Offset)nx*(Offset)ny)):0.f;
-                    float v10=b1in && c0in?__ldg(vol+(Offset)(point+(Offset)nx)):0.f;
-                    float v11=b1in && c1in?__ldg(vol+(Offset)(point+(Offset)nx+(Offset)nx*(Offset)ny)):0.f;
-                    s0=__fmaf_rn(v01,wc1,__fmul_rn(v00,wc0));
-                    s1=__fmaf_rn(v11,wc1,__fmul_rn(v10,wc0));
-                }
-                value=__fmaf_rn(wb1,s1,__fmul_rn(wb0,s0));
+                const float* point=vol+(((long)c0*ny+b0)*nx+k);
+                value=bilinear(point,nx,(long)nx*ny,b0,c0,ny,nz,wb0,wb1,wc0,wc1);
             }
             values[p]=value;
         }
@@ -532,16 +500,8 @@ __device__ __forceinline__ float plane_sum(
         int b0 = (int)fb0, c0 = (int)fc0;
         // The same weights as plane_adjoint's.
         float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
-        bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
-        bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
-        Offset p = plane + (Offset)b0 * (Offset)sb + (Offset)c0 * (Offset)sc;
-        // Every forward path rounds the bilinear sum in this one order.
-        float v00 = b0in && c0in ? __ldg(vol + p) : 0.f;
-        float v01 = b0in && c1in ? __ldg(vol + (Offset)(p + (Offset)sc)) : 0.f;
-        float v10 = b1in && c0in ? __ldg(vol + (Offset)(p + (Offset)sb)) : 0.f;
-        float v11 = b1in && c1in ? __ldg(vol + (Offset)(p + (Offset)sb + (Offset)sc)) : 0.f;
-        float s0 = __fmaf_rn(v01, wc1, __fmul_rn(v00, wc0)), s1 = __fmaf_rn(v11, wc1, __fmul_rn(v10, wc0));
-        sum = __fadd_rn(sum, __fmaf_rn(wb1, s1, __fmul_rn(wb0, s0)));
+        const float* p = vol + ((long)plane + (long)b0 * sb + (long)c0 * sc);
+        sum = __fadd_rn(sum, bilinear(p, sb, sc, b0, c0, nb, nc, wb0, wb1, wc0, wc1));
     }
     return sum;
 }
@@ -625,16 +585,8 @@ __device__ float register_ray_sum(const float* __restrict__ vol,const float* c,f
                 float fb0=floorf(fb),fc0=floorf(fc);
                 int b0=(int)fb0,c0=(int)fc0;
                 float wb1=fb-fb0,wc1=fc-fc0,wb0=1.f-wb1,wc0=1.f-wc1;
-                bool b0in=(unsigned)b0<(unsigned)ny,b1in=(unsigned)(b0+1)<(unsigned)ny;
-                bool c0in=(unsigned)c0<(unsigned)nz,c1in=(unsigned)(c0+1)<(unsigned)nz;
-                Offset point=((Offset)c0*(Offset)ny+(Offset)b0)*(Offset)nx+(Offset)k;
-                // Every forward path rounds the bilinear sum in this one order.
-                float v00=b0in && c0in?__ldg(vol+point):0.f;
-                float v01=b0in && c1in?__ldg(vol+(Offset)(point+(Offset)nx*(Offset)ny)):0.f;
-                float v10=b1in && c0in?__ldg(vol+(Offset)(point+(Offset)nx)):0.f;
-                float v11=b1in && c1in?__ldg(vol+(Offset)(point+(Offset)nx+(Offset)nx*(Offset)ny)):0.f;
-                float s0=__fmaf_rn(v01,wc1,__fmul_rn(v00,wc0)),s1=__fmaf_rn(v11,wc1,__fmul_rn(v10,wc0));
-                value=__fmaf_rn(wb1,s1,__fmul_rn(wb0,s0));
+                const float* point=vol+(((long)c0*ny+b0)*nx+k);
+                value=bilinear(point,nx,(long)nx*ny,b0,c0,ny,nz,wb0,wb1,wc0,wc1);
             }
             values[p]=value;
         }
@@ -1115,20 +1067,6 @@ __device__ __forceinline__ void add4_if(int* p0, float x0, int* p1, float x1, in
 {
     if (left) { add_fixed(p0, words, x0, scale, fine); add_fixed(p2, words, x2, scale, fine); }
     if (right) { add_fixed(p1, words, x1, scale, fine); add_fixed(p3, words, x3, scale, fine); }
-}
-
-// Adds x0..x3 to four padded shared cells. Pair the two rows of each column:
-// moving one column retains both right-hand cells, so their flush is all zero.
-__device__ __forceinline__ void add4(int* p0, float x0, int* p1, float x1, int* p2,
-                                     float x2, int* p3, float x3, int words, float scale,
-                                     float fine)
-{
-    if (x0 != 0.f || x2 != 0.f) {
-        add_fixed(p0, words, x0, scale, fine); add_fixed(p2, words, x2, scale, fine);
-    }
-    if (x1 != 0.f || x3 != 0.f) {
-        add_fixed(p1, words, x1, scale, fine); add_fixed(p3, words, x3, scale, fine);
-    }
 }
 
 // A two-word fixed-point cell's value, rounded once.
