@@ -157,61 +157,6 @@ def test_exact_fista_matches_dense_projected_steps(problem, backend):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("multires", [False, True])
-def test_public_exact_alignment_scores_its_actual_operator_and_resumes(problem, multires):
-    from dataclasses import replace
-
-    from tomojax.alignment import AlignConfig, align_multires
-    from tomojax.alignment.api import L2LossSpec, align, apply_pose_updates
-    from tomojax.geometry import ParallelGeometry, stack_view_poses
-
-    grid, detector, _, volume, _, oracle = problem
-    geometry = ParallelGeometry(grid, detector, [3.7, 51.1, 93.2])
-    poses = stack_view_poses(geometry, 3)
-    target = jnp.asarray(oracle(volume, poses, grid, detector), jnp.float32)
-    cfg = AlignConfig(
-        backend="jax",
-        gather_dtype="fp32",
-        ray_integrator="exact",
-        outer_iterations=2,
-        iterations=3,
-        lipschitz=100.0,
-        pose_translation_frame="detector",
-        loss=L2LossSpec(),
-        early_stop=False,
-        gn_jacobian="central",
-    )
-    checkpoints = []
-    run = align_multires if multires else align
-    extra = {"factors": [1]} if multires else {"init_x": 0.8 * volume}
-    x, params, info = run(
-        geometry,
-        grid,
-        detector,
-        target,
-        config=cfg,
-        checkpoint_callback=checkpoints.append,
-        **extra,
-    )
-    actual_poses = apply_pose_updates(poses, params, translation_frame="detector")
-    residual = oracle(x, actual_poses, grid, detector) - np.asarray(target)
-    np.testing.assert_allclose(info["loss"][-1], 0.5 * np.sum(residual**2), rtol=2e-4, atol=2e-6)
-    assert info["ray_integrator"] == "exact"
-    assert info["objective_kind"] == "joint_volume_pose"
-    assert checkpoints and all(c.ray_integrator == "exact" for c in checkpoints)
-    with pytest.raises(ValueError, match="ray_integrator differs"):
-        run(
-            geometry,
-            grid,
-            detector,
-            target,
-            config=replace(cfg, ray_integrator="sampled"),
-            resume_state=checkpoints[-1],
-            **extra,
-        )
-
-
-@pytest.mark.numerical
 @pytest.mark.parametrize("axis", [0, 2])
 def test_cardinal_right_cell_derivative(axis):
     g = Grid(3, 3, 3, 0.5, 1.0, 2.0)

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 def source(name: str, **constants: int | str) -> str:
     """Specialize a kernel's layout, retaining runtime volume/detector dimensions."""
     text = Path(__file__).with_name(name + ".cu").read_text()
-    for header_name in ("joseph_sampling.cuh", "joseph_gather.cuh"):
+    for header_name in ("joseph_sampling.cuh", "joseph_gather.cuh", "joseph_tile.cuh"):
         if f'#include "{header_name}"' in text:
             header = Path(__file__).parents[1].joinpath(header_name).read_text()
             text = text.replace(f'#include "{header_name}"', header)
@@ -114,29 +114,56 @@ def adjoint(
     """Gather the exact plane weights at each voxel and add an initial volume.
 
     The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
+    Detector v is contiguous inside the gather, matching adjacent threads' z runs.
+    Cubic sampling shares weights over 4x4 transverse tiles. Three ordered axis
+    passes retain each axis's view order; only cross-axis addition is reordered.
     """
     shape = (grid.nx, grid.ny, grid.nz)
     run = min(4, grid.nz)
-    text = source(
-        "adjoint_unit",
-        RUN=run,
-        CUBIC=int(interpolation == "cubic"),
-        ABSOLUTE=int(absolute_weights),
-        Z_FAST=int(z_fast),
-    )
     runs = grid.nx * grid.ny * ((grid.nz + run - 1) // run)
     views = coeff.shape[0]
+    launch_plans: list[tuple[str, str, int]] = []
+    for axis in range(3) if interpolation == "cubic" else (None,):
+        if axis is None:
+            text = source(
+                "adjoint_unit",
+                RUN=run,
+                CUBIC=0,
+                ABSOLUTE=int(absolute_weights),
+                Z_FAST=int(z_fast),
+            )
+            launch_plans.append((text, "joseph_gather", runs))
+        else:
+            na, nb, nc = (shape[(axis + i) % 3] for i in range(3))
+            count = na * ((nb + 3) // 4) * ((nc + 3) // 4)
+            text = source(
+                "adjoint_tile",
+                AXIS=axis,
+                CUBIC=1,
+                ABSOLUTE=int(absolute_weights),
+                Z_FAST=int(z_fast),
+            )
+            launch_plans.append((text, "joseph_gather_tile", count))
+    plans = tuple(launch_plans)
 
     def launch(context: Any, out: Any, cf: Any, y: Any, x: Any) -> None:
-        launch_kernel(
-            text,
-            "joseph_gather",
-            options=("--fmad=false",),
-            stream=context.stream,
-            grid=((runs + 127) // 128,),
-            block=(128,),
-            arguments=(cf, y, out, x, *map(np.int32, (views, *shape, detector.nu, detector.nv))),
-        )
+        for kernel_text, kernel, count in plans:
+            launch_kernel(
+                kernel_text,
+                kernel,
+                options=("--fmad=false",),
+                stream=context.stream,
+                grid=((count + 127) // 128,),
+                block=(128,),
+                arguments=(
+                    cf,
+                    y,
+                    out,
+                    x,
+                    *map(np.int32, (views, *shape, detector.nu, detector.nv)),
+                ),
+            )
+            x = out
 
     return buffer_callback(
         launch,
@@ -144,7 +171,7 @@ def adjoint(
         input_output_aliases={2: 0},
         command_buffer_compatible=True,
         vmap_method="sequential",
-    )(coeff, images, initial)
+    )(coeff, swap_detector_axes(images), initial)
 
 
 def swap_detector_axes(images: jax.Array) -> jax.Array:

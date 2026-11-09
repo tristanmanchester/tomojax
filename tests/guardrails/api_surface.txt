@@ -137,14 +137,8 @@ tomojax.__version__: str
 def tomojax.align(
         scan: 'Scan',
         *,
-        mode: "AlignmentMode | Literal['auto']" = 'auto',
-        quality: 'QualityTier' = 'fast',
-        levels: 'Iterable[int] | None' = None,
-        freeze: 'Iterable[str]' = (),
+        fit: 'str | tuple[str, ...]' = 'translations',
         grid: 'Grid | None' = None,
-        checkpoint: 'str | PathLike[str] | None' = None,
-        config: 'AlignConfig | ProjectionMatchingConfig | None' = None,
-        devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'Alignment'
 def tomojax.backproject(
         geometry: 'ScanGeometry',
@@ -392,22 +386,6 @@ class tomojax.recon.CGLSConfig(
         stream_projections: 'bool | None' = None,
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> None
-class tomojax.recon.ConeAxisCalibration(
-        axis_offset: 'float',
-        detector_roll_deg: 'float',
-        heights: 'tuple[float, ...]',
-        slab_offsets: 'tuple[float, ...]',
-    ) -> None
-    .apply(self, geometry: 'ConeGeometry') -> 'ConeGeometry'
-class tomojax.recon.ConeAxisConfig(
-        *,
-        search_range: 'float | None' = None,
-        estimate_roll: 'bool' = True,
-        estimate_offset: 'bool' = True,
-        slices: 'int' = 32,
-        max_roll_deg: 'float' = 3.0,
-        fdk: 'FDKConfig' = <factory>,
-    ) -> None
 class tomojax.recon.FBPConfig(
         *,
         filter: 'str' = 'ramp',
@@ -526,14 +504,6 @@ def tomojax.recon.backproject(
         grid: 'Grid | None' = None,
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'jax.Array'
-def tomojax.recon.calibrate_cone_axis(
-        geometry: 'ConeGeometry',
-        grid: 'Grid',
-        detector: 'Detector',
-        projections: 'np.ndarray | jax.Array',
-        *,
-        config: 'ConeAxisConfig | None' = None,
-    ) -> 'ConeAxisCalibration'
 def tomojax.recon.cgls(
         geometry: 'Geometry',
         grid: 'Grid',
@@ -705,73 +675,6 @@ def tomojax.io.save_dataset(path: 'PathLike', dataset: 'ProjectionDataset') -> '
 def tomojax.io.validate_dataset(path: 'PathLike') -> 'ValidationReport'
 
 # tomojax.alignment
-class tomojax.alignment.AlignConfig(
-        *,
-        quality: 'QualityTier' = 'fast',
-        outer_iterations: 'int' = 5,
-        iterations: 'int' = 10,
-        reconstruction: 'Reconstruction' = 'fista',
-        nonnegative: 'bool' = True,
-        seed: 'int' = 0,
-        views_per_batch: 'int' = 0,
-        checkpoint_projector: 'bool' = True,
-        gather_dtype: 'str' = 'fp32',
-        backend: 'ProjectorBackendInput' = 'cuda',
-        ray_integrator: "Literal['sampled', 'exact', 'joseph', 'joseph_cubic']" = 'sampled',
-        gn_damping: 'float' = 0.001,
-        gn_jacobian: "Literal['autodiff', 'central']" = 'autodiff',
-        gn_difference_step: 'float' = 0.001,
-        gn_joint_iterations: 'int' = 40,
-        gn_joint_rtol: 'float' = 0.0001,
-        gn_volume_damping: 'float' = 0.001,
-        w_rot: 'float' = 0.0,
-        w_trans: 'float' = 0.0,
-        schedule: 'str | AlignmentSchedule | None' = None,
-        optimise_dofs: 'tuple[str, ...] | None' = None,
-        freeze: 'tuple[str, ...]' = <factory>,
-        bounds: 'DofBounds | str | Mapping[str, object]' = <factory>,
-        gauge_policy: 'GaugePolicy' = 'reject',
-        gauge_priors: 'Mapping[str, object] | None' = None,
-        pose_model: 'PoseModel' = 'per_view',
-        pose_translation_frame: 'PoseTranslationFrame' = 'object',
-        knot_spacing: 'int' = 8,
-        degree: 'int' = 3,
-        seed_translations: 'bool' = False,
-        lipschitz: 'float | None' = None,
-        early_stop: 'bool' = True,
-        early_stop_rel_impr: 'float' = 0.001,
-        early_stop_patience: 'int' = 2,
-        loss: 'AlignmentLossConfig' = <factory>,
-    ) -> None
-class tomojax.alignment.AlignmentPlan(
-        mode: 'AlignmentMode',
-        config: 'AlignConfig',
-        levels: 'tuple[int, ...]',
-    ) -> None
-tomojax.alignment.MODES: tuple
-class tomojax.alignment.ProjectionMatchingConfig(*, iterations: 'int' = 20) -> None
-def tomojax.alignment.align_multires(
-        geometry: 'Geometry',
-        grid: 'Grid',
-        detector: 'Detector',
-        projections: 'jnp.ndarray',
-        *,
-        factors: 'Iterable[int]' = (2, 1),
-        config: 'AlignConfig | None' = None,
-        observer: 'ObserverCallback | None' = None,
-        resume_state: 'AlignMultiresResumeState | None' = None,
-        checkpoint_callback: 'AlignMultiresCheckpointCallback | None' = None,
-    ) -> 'tuple[jnp.ndarray, jnp.ndarray, AlignMultiresInfo]'
-def tomojax.alignment.alignment_plan(
-        mode: 'str',
-        grid: 'Grid',
-        *,
-        quality: 'str' = 'fast',
-        geometry: 'Geometry | None' = None,
-        levels: 'Iterable[int] | None' = None,
-        freeze: 'Iterable[str]' = (),
-        config: 'AlignConfig | None' = None,
-    ) -> 'AlignmentPlan'
 
 # tomojax.datasets
 class tomojax.datasets.DetectorModel(

@@ -116,17 +116,12 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--progress": "terminal display",
     },
     "align": {
-        "--mode": ("align", "mode"),
-        "--quality": ("align", "quality"),
-        "--levels": ("align", "levels"),
-        "--freeze": ("align", "freeze"),
+        "--fit": ("align", "fit"),
         "--grid": ("align", "grid"),
-        "--checkpoint": ("align", "checkpoint"),
         "--poses": ("load", "poses"),
         "--roi": "crops the grid to the field of view; Python passes the grid",
         "--manifest": "file output",
-        "--dry-run": "prints the plan; Python calls alignment_plan",
-        "--progress": "terminal display",
+        "--dry-run": "prints the selected parameters and grid without fitting",
     },
     "preprocess": {
         "--flats": ("load_frames", "flats"),
@@ -184,7 +179,6 @@ def test_cli_options_use_the_python_names(command: str) -> None:
 def _configuration_fields(command: str) -> set[str]:
     from dataclasses import fields
 
-    from tomojax.alignment import AlignConfig
     from tomojax.recon import (
         CGLSConfig,
         FBPConfig,
@@ -196,7 +190,7 @@ def _configuration_fields(command: str) -> set[str]:
     )
 
     if command == "align":
-        return {item.name for item in fields(AlignConfig) if item.init}
+        return set()
     configs = (
         FBPConfig,
         FourierConfig,

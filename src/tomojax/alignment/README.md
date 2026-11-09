@@ -1,27 +1,24 @@
 # tomojax.alignment
 
-`tomojax.alignment` provides the building blocks behind `tj.align` and
-`tomojax align`.
+Use `tj.align(scan, fit=..., grid=...)`. The [alignment guide](../../../docs/align-a-scan.md)
+explains how to choose the parameters and check the result. The default fits per-view
+translations; `"centre"`, `"tilt"`, `"roll"` and `"rotations"` name the additional parameter
+blocks. All geometries use one private joint solver in `_joint`.
 
-- `AlignConfig`: every solver setting. Its fields are also the keys of a
-  `tomojax align --config` TOML file.
-- `alignment_plan(mode, grid, quality=..., levels=..., freeze=...)`: the
-  configuration and coarse-to-fine levels `tj.align` runs for a mode. Change a
-  field with `dataclasses.replace(plan.config, ...)` and pass the result as
-  `tj.align(scan, mode=..., config=...)`.
-- `align_multires`: the array-level solver.
+The solver estimates the image and the requested geometry corrections together. Per-view
+translation blocks are coupled by a smooth-drift and robust-jump prior. Shared centre and angle
+columns border that system. Exact Schur elimination gives the image update; the backprojector
+is the exact transpose of the selected forward operator, including detector sampling and
+missing-ray masks. The returned scan carries the calibrated geometry and fitted per-view poses.
 
-`tj.align(scan, checkpoint="align.ckpt")` saves progress after each outer
-iteration and resumes an interrupted run from it. Without expert overrides,
-`tj.align` chooses centre estimation for axial parallel scans and guarded
-setup, support and motion selection for unposed laminography; its result records
-conditional outcomes and limitations. Explicit `mode="pose"` selects per-view
-corrections (six parameters; beam-direction translation is frozen when unobservable). Smooth pose models, setup
-stages and mixed schedules remain available explicitly. See the
-[alignment guide](../../../docs/alignment-guide.md).
+The line search compares a pose trial with the image-only trial at the **same image step**.
+An image improvement cannot pay for a harmful pose move. Per-view rotations pay a size
+prior in radians, including their smooth components, so smooth rotations are not free.
 
-Joint alignment retries without its derivative cache before skipping a level
-that does not fit GPU memory. The result records `factors_skipped` and
-`factors_skipped_reason`; a completed checkpoint retains that reason on resume.
+A level stops after two consecutive small geometry proposals, following at least four outer
+steps. Both proposals must use damping at or below its initial value. The size is measured before
+line-search scaling: rejecting a pose move, or suppressing it with heavy damping, does not
+establish convergence. Further image improvement can continue in a subsequent reconstruction.
 
-Import from `tomojax.alignment` or `tomojax.alignment.api`.
+`tomojax.alignment.api` retains the projection-only centre preview and its diagnostic report.
+They do not select a different alignment engine behind `tj.align`.

@@ -6,7 +6,7 @@ and a mould cap, as STL meshes) is rendered by gVXR as a DIAD-like scan at
 25 keV with a 30° tilt: materials from xraylib, propagation phase contrast, a
 detector blur, Poisson noise and flat fields. The detector is 3.2 pixels off
 the rotation axis and the sample wobbles and jitters by about two pixels and
-0.1° from view to view. ``tj.align`` with ``mode="cor-then-pose"`` finds the
+0.1° from view to view. ``tj.align`` with ``fit=("centre", "translations", "rotations")`` finds the
 centre, then each view's pose with the volume.
 
     uv run python bench/phantoms/chip_package.py build DATA
@@ -51,7 +51,7 @@ def main() -> None:
     with np.load(args.data / "truth.npz") as data:
         truth, true_params, cor_mm = data["volume"], data["true_params"], float(data["cor_mm"])
     start = time.perf_counter()
-    result = tj.align(scan, mode="cor-then-pose")
+    result = tj.align(scan, fit=("centre", "translations", "rotations"))
     seconds = time.perf_counter() - start
     nominal = np.asarray(tj.reconstruct(scan, "fista", **RECONSTRUCTION).volume)
     aligned = np.asarray(tj.reconstruct(result.scan, "fista", **RECONSTRUCTION).volume)

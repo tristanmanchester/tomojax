@@ -65,7 +65,7 @@ def use_cuda_gather(grid: Grid, *, axial: bool = False) -> bool:
 @cache
 def cuda_gather_available() -> bool:
     """Return whether the CuPy gather can run on JAX's default CUDA device."""
-    if not cuda_backend():
+    if not cuda_backend(jax.default_backend()):
         return False
     return importlib.util.find_spec("cupy") is not None
 

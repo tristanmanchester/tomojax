@@ -216,15 +216,15 @@ pixel pitch, divided by the magnification in a cone beam, is smaller than a
 voxel), the projectors do work the volume cannot use. `scan.binned(factor)`
 averages `factor × factor` pixels, which cuts projection cost by `factor²`.
 Pixels that do not fill a block at the edges are dropped, and the detector
-centre moves to match. Iterative `tj.reconstruct` and `tj.align` warn, with the
+centre moves to match. Iterative `tj.reconstruct` warns, with the
 factor to use, when the detector is at least twice as fine as the grid.
 Binning is a Python step; the commands have no binning option. On the FIPS
 walnut, binning 2 × 2 made least squares
 [3.5 times faster for no loss of accuracy](measurements.md#fips-walnuts-real-lab-cone-beam-ct).
 
-For alignment, stopping the coarse-to-fine schedule early has a similar
-effect. See
-[align large scans at reduced resolution](alignment-guide.md#align-large-scans-at-reduced-resolution).
+For an alignment preview, bin the scan and use an explicit coarse `grid=` while retaining the
+physical field of view. Alignment retains the declared block-mean sampling in its ray model.
+See [align a scan](align-a-scan.md).
 
 ## Use several GPUs
 
@@ -238,7 +238,6 @@ import tomojax as tj
 
 scan = tj.load("scan.nxs")
 recon = tj.reconstruct(scan, "fista", nonnegative=True, devices=jax.devices())
-result = tj.align(scan, devices=jax.devices())
 ```
 
 Each GPU projects its own views and holds the whole volume. Their
@@ -254,10 +253,7 @@ slabs, each GPU reconstructs its own z-slabs (`FDKConfig(devices=...)` in
   one block of views, and `fbp_host` also runs on one.
 - Shared projections are held in GPU memory, divided among the GPUs, and are
   never streamed from the host; asking for both raises `ValueError`.
-- In `tj.align`, only `pose` mode's joint pose-and-volume update and cone-beam
-  reconstruction steps are shared. Parallel-beam reconstruction steps, the
-  setup calibration run on the first
-  GPU. A checkpoint written on some GPUs resumes on others.
+- `tj.align` runs on one device; its host staging bounds projection and mask storage.
 - The GPUs must belong to one process; runs across several machines are not
   supported.
 

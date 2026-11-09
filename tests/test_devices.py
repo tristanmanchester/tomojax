@@ -157,48 +157,6 @@ def test_fdk_slabs_shared_among_devices_match_one_device():
     np.testing.assert_array_equal(shared, one)  # the same slabs, each on one device
 
 
-@pytest.mark.parametrize(
-    ("kind", "smoothness"), [("cone", 0.0), ("parallel", 1e-2), ("orbits", 0.0)]
-)
-def test_pose_alignment_shared_among_devices_matches_one_device(kind, smoothness):
-    from dataclasses import replace
-
-    # check-public-imports: allow-private
-    from tomojax._data.geometry_meta import AugmentedGeometry
-    from tomojax.alignment.api import alignment_plan
-
-    geometry = _geometry(kind)
-    rng = np.random.default_rng(3)
-    motion = np.zeros((VIEWS, 6), np.float32)
-    motion[:, 3], motion[:, 5] = rng.normal(0, 0.4, (2, VIEWS))
-    scan = tj.Scan(
-        np.asarray(tj.project(AugmentedGeometry(geometry, motion, "detector"), _phantom())),
-        geometry,
-    )
-    # A few conjugate-gradient steps: unconverged float32 CG magnifies the
-    # rounding of any change in the order of its sums, devices or not.
-    config = replace(
-        alignment_plan("pose", geometry.grid).config,
-        outer_iterations=2,
-        gn_joint_iterations=3,
-        w_trans=smoothness,
-    )
-
-    one = tj.align(scan, levels=(1,), config=config)
-    shared = tj.align(scan, levels=(1,), config=config, devices=jax.devices())
-
-    assert shared.volume.devices() == {jax.devices()[0]}
-    if jax.default_backend() == "cpu":
-        np.testing.assert_allclose(shared.poses, one.poses, atol=1e-4)
-        assert _relative(shared.volume, one.volume) < 1e-5
-    else:
-        # One update matches to ~5e-6 on GPUs too, but CUDA kernels sum in no fixed
-        # order, and over the outer iterations this small scan's rounding moves
-        # along a rotation of the whole object its data barely fix.
-        assert abs(shared.info["loss"][-1] / one.info["loss"][-1] - 1) < 1e-2
-        np.testing.assert_allclose(shared.poses, one.poses, atol=2e-2)
-
-
 def test_bad_devices_are_refused():
     scan = tj.Scan(np.zeros((VIEWS, 20, 24), np.float32), _geometry("parallel"))
     with pytest.raises(ValueError, match="does not take devices"):

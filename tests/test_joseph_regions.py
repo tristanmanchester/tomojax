@@ -98,4 +98,5 @@ def test_partial_blocks_outside_detector_field(interpolation):
             coefficients, images, accumulate=jnp.zeros(shape[::-1], jnp.float32)
         )
         index = tuple(slice(o, o + n) for o, n in zip(origin, shape, strict=True))[::-1]
-        np.testing.assert_allclose(actual, full[index], rtol=3e-6, atol=2e-6)
+        # Full and region transposes group FP32 view sums differently.
+        np.testing.assert_allclose(actual, full[index], rtol=3e-6, atol=1e-5)

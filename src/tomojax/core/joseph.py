@@ -426,6 +426,26 @@ def plane_pose_columns(
     return jnp.concatenate((value[:, None], columns), axis=1)
 
 
+def plane_weighted_diagonal(
+    coefficients: jax.Array,
+    sqrtweights: jax.Array,
+    accumulate: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    *,
+    backend: str,
+) -> jax.Array:
+    """Add diag(A.T W A) of the linear plane projector to ``accumulate`` (nz, ny, nx).
+
+    ``sqrtweights`` holds the square roots of the pixel weights, shaped
+    ``(views, nv, nu)``. A Jacobi preconditioner input; the matched transpose
+    is :func:`sum_backproject_planes`.
+    """
+    from ._weighted_diagonal import weighted_diagonal
+
+    return weighted_diagonal(coefficients, sqrtweights, accumulate, grid, detector, backend=backend)
+
+
 def plane_l2_value_and_grad(
     coefficients: jax.Array,
     volume: jax.Array,

@@ -1,25 +1,8 @@
-"""Alignment: estimate a scan's geometry corrections.
+"""Geometry fitting for scans.
 
-Most code calls :func:`tomojax.align` on a :class:`tomojax.Scan`. This package
-holds what that uses: :class:`AlignConfig` (expert solver settings),
-:func:`alignment_plan` (the configuration and levels a mode runs) and
-:func:`align_multires`, which aligns arrays against a geometry. Schedules,
-losses, geometry helpers and the single-resolution solver are in
-``tomojax.alignment.api``.
+Use :func:`tomojax.align` with ``fit`` to select global calibration, per-view
+translations and per-view rotations. The implementation uses one joint solver.
+The projection-domain centre preview is available as :func:`tomojax.estimate_center`.
 """
 
-from __future__ import annotations
-
-from tomojax.alignment._projection_matching import ProjectionMatchingConfig
-
-from ._modes import MODES, AlignmentPlan, alignment_plan
-from .pipeline import AlignConfig, align_multires
-
-__all__ = [
-    "MODES",
-    "AlignConfig",
-    "AlignmentPlan",
-    "ProjectionMatchingConfig",
-    "align_multires",
-    "alignment_plan",
-]
+__all__ = []

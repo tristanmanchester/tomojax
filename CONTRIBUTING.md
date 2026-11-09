@@ -53,9 +53,9 @@ import passing is not enough to establish that the wheel works.
 
 - Import application code through public module roots or `.api` facades. Keep
   CLI orchestration separate from numerical implementation and honor the
-  [import contracts](.importlinter). The scan workflow and alignment CLI share
-  private checkpoint/configuration plumbing through `alignment._integration`;
-  it is not an expert API. White-box unit tests may import definition modules
+  [import contracts](.importlinter). The scan workflow keeps alignment orchestration
+  separate from the private joint solver; its internal plumbing is not an expert API.
+  White-box unit tests may import definition modules
   with an explicit `check-public-imports: allow-private` marker. Do not export
   implementation details just to make them available to tests.
 - Keep geometry explicit: Python volumes are `(z, y, x)`, projections are
@@ -66,7 +66,7 @@ import passing is not enough to establish that the wheel works.
   tilted, odd-sized, and boundary cases when applicable.
 - Validate user inputs before expensive work. Do not silently discard malformed
   projection metadata or convert a failed solve into a success status.
-- Keep solver defaults and checkpoint semantics stable unless a change is
+- Keep solver defaults and result semantics stable unless a change is
   justified, tested, and recorded in the [changelog](CHANGELOG.md).
 - Add regression tests for behavior and correctness bugs. Avoid tests that only
   repeat implementation details or timing thresholds that depend on the host.
@@ -77,8 +77,8 @@ TomoJAX should feel like one small, consistent tool. Before adding to its
 surface, check the change against these rules.
 
 - **One vocabulary.** A concept has one name in Python, on the command line and
-  in the docs: `method`, `iterations`, `tv_weight`, `nonnegative`, `mode`,
-  `quality`, `freeze`, `poses`. CLI options are the Python keywords with
+  in the docs: `method`, `iterations`, `tv_weight`, `nonnegative`, `fit`, `poses`.
+  CLI options are the Python keywords with
   hyphens. Internal names (profiles, schedules, solver stages) stay internal.
 - **One way to do a thing.** No aliases, no second spelling of an option, no
   mode that duplicates another with different defaults.
@@ -107,7 +107,7 @@ surface, check the change against these rules.
   same function, harder to read.
 - **The CLI shape is fixed:** `tomojax <command> INPUT -o OUTPUT`, existing
   outputs refused without `--force`, exit status 0/1/2. `--help` shows what
-  most runs need; expert settings are `--config` keys.
+  most runs need; reconstruction and preprocessing expert settings are `--config` keys.
 
 `tests/test_architecture.py` enforces what can be checked mechanically:
 

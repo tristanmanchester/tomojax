@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -10,7 +11,11 @@ import pytest
 from tomojax.cli._runtime import transfer_guard_context
 
 # check-public-imports: allow-private
-from tomojax.core.backend_policy import backend_provenance, normalize_projector_backend
+from tomojax.core.backend_policy import (
+    backend_provenance,
+    cuda_backend,
+    normalize_projector_backend,
+)
 
 # check-public-imports: allow-private
 from tomojax.core.validation import (
@@ -47,6 +52,14 @@ def test_backend_policy_normalizes_aliases_and_reports_fallback_status() -> None
 
     with pytest.raises(ValueError, match="backend must be one of"):
         normalize_projector_backend("pallas")
+
+
+@pytest.mark.parametrize("device", ["cpu", jax.devices("cpu")[0]])
+def test_backend_policy_respects_selected_cpu_without_changing_capability(device):
+    capability = cuda_backend(jax.default_backend())
+    with jax.default_device(device):
+        assert not cuda_backend()
+        assert cuda_backend(jax.default_backend()) == capability
 
 
 def test_core_validation_errors_include_context_expected_shape_and_fix() -> None:

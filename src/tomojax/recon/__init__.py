@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from tomojax.recon._operators import Projector, backproject, project
     from tomojax.recon.cgls import CGLSConfig, cgls
     from tomojax.recon.cgls_multires import cgls_multires
-    from tomojax.recon.cone_axis import ConeAxisCalibration, ConeAxisConfig, calibrate_cone_axis
     from tomojax.recon.fbp import (
         FBPConfig,
         fbp,
@@ -33,8 +32,6 @@ _SOURCES = {
     "backproject": "_operators",
     "project": "_operators",
     "CGLSConfig": "cgls",
-    "ConeAxisCalibration": "cone_axis",
-    "ConeAxisConfig": "cone_axis",
     "FBPConfig": "fbp",
     "FBPHostConfig": "fbp_host",
     "FDKConfig": "fdk",
@@ -46,7 +43,6 @@ _SOURCES = {
     "SPDHGConfig": "spdhg_tv",
     "SIRTConfig": "sirt",
     "sirt": "sirt",
-    "calibrate_cone_axis": "cone_axis",
     "cgls": "cgls",
     "cgls_multires": "cgls_multires",
     "fbp": "fbp",
@@ -60,8 +56,6 @@ _SOURCES = {
 
 __all__ = [
     "CGLSConfig",
-    "ConeAxisCalibration",
-    "ConeAxisConfig",
     "FBPConfig",
     "FBPHostConfig",
     "FDKConfig",
@@ -73,7 +67,6 @@ __all__ = [
     "SIRTConfig",
     "SPDHGConfig",
     "backproject",
-    "calibrate_cone_axis",
     "cgls",
     "cgls_multires",
     "fbp",

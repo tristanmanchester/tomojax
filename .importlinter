@@ -41,13 +41,7 @@ source_modules =
     tomojax._astra
 forbidden_modules =
     tomojax.alignment._geometry
-    tomojax.alignment._model
-    tomojax.alignment._objectives
-    tomojax.alignment.geometry
-    tomojax.alignment.io
-    tomojax.alignment.model
-    tomojax.alignment.objectives
-    tomojax.alignment.pipeline
+    tomojax.alignment._joint
 
 [importlinter:contract:cli-no-core-geometry]
 name = CLI uses geometry facade instead of core geometry internals

@@ -92,9 +92,10 @@ def test_fit_on_angular_bins_still_removes_column_errors(turn: float) -> None:
 
 
 @pytest.mark.parametrize("turn", [180.0, 360.0])
-def test_response_map_preserves_equal_column_observations(turn: float) -> None:
+@pytest.mark.parametrize("level", [(0.3,), (0.0, -0.0)])
+def test_response_map_preserves_equal_column_observations(turn: float, level) -> None:
     measured = _sinogram(turn, 32).astype(np.float32)
-    measured[:, N // 2] = 0.3
+    measured[:, N // 2] = np.resize(level, 32)
     fixed = np.asarray(Rings(_geometry(turn, 32)).apply(jnp.asarray(measured[:, None])))
     np.testing.assert_array_equal(fixed[:, 0, N // 2], fixed[0, 0, N // 2])
 
@@ -168,8 +169,10 @@ def test_irregular_view_order_and_separate_trajectories(segmented: bool) -> None
     if segmented:
         q = np.concatenate([q, 0.7 * q])
         order = np.concatenate([order, order + len(angles)])
-    fixed = np.asarray(Rings(geometry(angles)).apply(jnp.asarray(q[:, None])))
-    shuffled = Rings(geometry(angles[order[: len(angles)]])).apply(jnp.asarray(q[order, None]))
+    fixed = np.asarray(Rings(geometry(angles), views=32).apply(jnp.asarray(q[:, None])))
+    shuffled = Rings(geometry(angles[order[: len(angles)]]), views=32).apply(
+        jnp.asarray(q[order, None])
+    )
     np.testing.assert_array_equal(fixed, np.asarray(shuffled)[np.argsort(order)])
 
 
@@ -183,7 +186,10 @@ def test_unsorted_geometry_view_count_is_checked() -> None:
 
 
 @pytest.mark.parametrize("closing", [False, True])
-def test_full_turn_fit_preserves_view_order_including_closing_phase(closing: bool) -> None:
+@pytest.mark.parametrize("views", [None, 32])
+def test_full_turn_fit_preserves_view_order_including_closing_phase(
+    closing: bool, views: int | None
+) -> None:
     q = _errors(_sinogram(360, 180)).astype(np.float32)
     if closing:
         q = np.concatenate([q, q[:1]])
@@ -192,8 +198,8 @@ def test_full_turn_fit_preserves_view_order_including_closing_phase(closing: boo
     order = np.random.default_rng(481).permutation(len(q))
     geometry = tj.ParallelGeometry(base.grid, base.detector, angles)
     permuted = tj.ParallelGeometry(base.grid, base.detector, angles[order])
-    fixed = np.asarray(Rings(geometry).apply(jnp.asarray(q[:, None])))
-    shuffled = np.asarray(Rings(permuted).apply(jnp.asarray(q[order, None])))
+    fixed = np.asarray(Rings(geometry, views=views).apply(jnp.asarray(q[:, None])))
+    shuffled = np.asarray(Rings(permuted, views=views).apply(jnp.asarray(q[order, None])))
     np.testing.assert_array_equal(shuffled[np.argsort(order)], fixed)
 
 

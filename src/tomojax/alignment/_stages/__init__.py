@@ -1,1 +1,0 @@
-"""Multiresolution stage orchestration internals."""

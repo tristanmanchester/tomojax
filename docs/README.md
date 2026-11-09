@@ -15,7 +15,7 @@ pages before planning a workflow.
 | Supply measured geometry for parallel or laminography scans, including TIFF stacks | [Real scan guide](real-laminography.md) |
 | Import, calibrate and reconstruct a lab cone-beam CT scan | [Lab cone-beam CT](lab-ct.md) |
 | Differentiate through projection in PyTorch | [PyTorch bridge](pytorch.md) |
-| Correct per-view motion or the centre of rotation | [Alignment guide](alignment-guide.md) |
+| Correct per-view motion or the centre of rotation | [Alignment guide](align-a-scan.md) |
 | Reconstruct scans larger than the GPU, or use several GPUs | [Large scans and several GPUs](large-scans.md) |
 | Check geometry, units, algorithms, and GPU scope | [Support matrix](support-matrix.md), [known limitations](known-limitations.md) |
 | See the measured speed, accuracy and memory behind the guides | [Measurements](measurements.md) |
@@ -38,10 +38,7 @@ Import through public module roots or their `api` facades. Files beginning with
   counts to line integrals, and on line integrals.
 - [IO](../src/tomojax/io/README.md): datasets, acquisition metadata and TIFF
   angle files.
-- [Alignment](../src/tomojax/alignment/README.md): configurations, plans and
-  checkpoints behind `tj.align`.
-- [Alignment solver](alignment-solver.md): `AlignConfig` settings, Jacobians,
-  coupling and linear-solve diagnostics.
+- [Alignment](../src/tomojax/alignment/README.md): the joint solver and its numerical contracts.
 - [Benchmarks](../bench/README.md): how to rerun the comparisons with ASTRA and
   TIGRE.
 - [Contributing](../CONTRIBUTING.md): tests, packaging, and repository conventions.

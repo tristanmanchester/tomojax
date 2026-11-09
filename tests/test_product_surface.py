@@ -148,15 +148,15 @@ def test_cli_lists_expert_settings_as_config_keys(capsys: pytest.CaptureFixture[
     from tomojax.cli.main import main
 
     with pytest.raises(SystemExit) as exc_info:
-        main(["align", "--help"])
+        main(["recon", "--help"])
     assert exc_info.value.code == 0
-    assert "--outer-iterations" not in capsys.readouterr().out
+    assert "--views-per-batch" not in capsys.readouterr().out
     with pytest.raises(SystemExit) as exc_info:
-        main(["align", "--config-keys"])
+        main(["recon", "--config-keys"])
     assert exc_info.value.code == 0
     keys = capsys.readouterr().out
-    assert "outer_iterations = " in keys
-    assert "mode = " in keys
+    assert "views_per_batch = " in keys
+    assert "method = " in keys
 
 
 def test_root_docs_do_not_advertise_removed_package_surfaces() -> None:
@@ -219,16 +219,16 @@ def test_private_import_guard_passes_on_product_tree() -> None:
 
 
 def test_config_files_set_on_off_flags_and_expert_settings(tmp_path: Path) -> None:
-    from tomojax.cli.align import build_parser
     from tomojax.cli.config import parse_args_with_config
+    from tomojax.cli.recon import build_parser
 
-    config = tmp_path / "align.toml"
-    _ = config.write_text("poses = false\nseed_translations = false\n", encoding="utf-8")
+    config = tmp_path / "recon.toml"
+    _ = config.write_text("poses = false\nviews_per_batch = 7\n", encoding="utf-8")
     args, metadata = parse_args_with_config(
         build_parser(), ["scan.nxs", "-o", "out.nxs", "--config", str(config)]
     )
     assert args.poses is False
-    assert metadata["settings"] == {"seed_translations": False}
+    assert metadata["settings"] == {"views_per_batch": 7}
 
 
 def test_config_files_name_the_valid_keys_for_an_unknown_one(
@@ -236,14 +236,14 @@ def test_config_files_name_the_valid_keys_for_an_unknown_one(
 ) -> None:
     from tomojax.cli.main import main
 
-    config = tmp_path / "align.toml"
-    _ = config.write_text("outer_iteration = 3\n", encoding="utf-8")
+    config = tmp_path / "recon.toml"
+    _ = config.write_text("iteration = 3\n", encoding="utf-8")
     with pytest.raises(SystemExit) as exc:
-        _ = main(["align", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
+        _ = main(["recon", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "unknown config key(s)" in err
-    assert "outer_iterations" in err
+    assert "iterations" in err
 
 
 def test_config_files_name_the_new_key_for_a_retired_one(
@@ -258,42 +258,6 @@ def test_config_files_name_the_new_key_for_a_retired_one(
     assert exc.value.code == 2
     assert "config key 'lambda_tv'" in (err := capsys.readouterr().err)
     assert err.rstrip().endswith("was renamed 'tv_weight'")
-
-
-@pytest.mark.parametrize(
-    ("old", "new"),
-    [
-        ("outer_iters", "outer_iterations"),
-        ("recon_algo", "reconstruction"),
-        ("freeze_dofs", "freeze"),
-    ],
-)
-def test_align_config_files_name_the_new_key_for_a_retired_one(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], old: str, new: str
-) -> None:
-    from tomojax.cli.main import main
-
-    config = tmp_path / "align.toml"
-    _ = config.write_text(f"{old} = 1\n", encoding="utf-8")
-    with pytest.raises(SystemExit) as exc:
-        _ = main(["align", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
-    assert exc.value.code == 2
-    assert capsys.readouterr().err.rstrip().endswith(f"was renamed '{new}'")
-
-
-@pytest.mark.parametrize("key", ["lbfgs_maxiter", "opt_method", "lr_rot"])
-def test_align_config_files_reject_removed_pose_optimizer_settings(
-    key: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from tomojax.cli.main import main
-
-    config = tmp_path / "align.toml"
-    _ = config.write_text(f"{key} = 5\n", encoding="utf-8")
-    with pytest.raises(SystemExit) as exc:
-        _ = main(["align", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
-    assert exc.value.code == 2
-    assert f"'{key}'" in (err := capsys.readouterr().err)
-    assert "Gauss-Newton is the pose solver" in err
 
 
 def test_recon_parser_defers_loading_expert_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -336,8 +300,9 @@ def test_recon_help_does_not_import_jax() -> None:
 @pytest.mark.parametrize(
     ("caller", "allowed"),
     [
-        ("src/tomojax/_workflow.py", True),
-        ("src/tomojax/cli/align.py", True),
+        ("src/tomojax/_smooth_alignment.py", True),
+        ("src/tomojax/_workflow.py", False),
+        ("src/tomojax/cli/align.py", False),
         ("src/tomojax/cli/recon.py", False),
         ("examples/custom_alignment.py", False),
     ],
@@ -347,5 +312,5 @@ def test_alignment_integration_is_not_a_public_facade(tmp_path, caller, allowed)
 
     source = tmp_path / caller
     source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text("from tomojax.alignment._integration import AlignmentRun\n")
+    source.write_text("from tomojax.alignment._integration import fit_poses\n")
     assert (not find_violations([source], root=tmp_path)) == allowed

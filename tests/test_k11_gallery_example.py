@@ -39,6 +39,11 @@ def test_layer_gallery_uses_world_slice_coordinate_and_enlarges_cross_sections(
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "examples" / "gallery"))
     import k11_glass_layer as gallery
 
+    geometry = gallery.scan_geometry(np.array([0.0, 90.0]), 4)
+    np.testing.assert_allclose(
+        np.asarray(geometry.pose_for_view(0))[:3, 2], (0.0, 0.5735764364, 0.8191520443)
+    )
+    assert geometry.detector.du == 2.16 and geometry.grid.vx == 8.64
     grid = gallery.tj.Grid(384, 384, 64, 8.64, 8.64, 8.64, vol_center=(0, 0, 17.28))
     volume = np.broadcast_to(np.arange(grid.nz)[:, None, None], (grid.nz, grid.ny, grid.nx))
     figures = []

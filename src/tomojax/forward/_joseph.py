@@ -39,7 +39,7 @@ def _inputs(volume, poses, grid, detector, backend):
     validate_pose_stack(poses, poses.shape[0], context=context)
     if backend not in {"jax", "cuda"}:
         raise ValueError(f"{context}: backend must be 'jax' or 'cuda'")
-    if backend == "cuda" and not cuda_backend():
+    if backend == "cuda" and not cuda_backend(jax.default_backend()):
         raise ValueError(f"{context}: backend='cuda' requires an NVIDIA CUDA device")
     return volume.astype(jnp.float32), poses.astype(jnp.float32)
 

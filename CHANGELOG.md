@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Alignment consolidation
+
+`tj.align(scan, fit="translations", grid=None)` uses one joint Gauss–Newton/Schur
+solver for parallel, laminography and cone data. `fit` selects centre, tilt,
+roll, per-view translations and per-view rotations. Shared global columns are
+fitted in the same linear system as the image and per-view corrections.
+Unselected parameters are held; per-view rotations have a prior on their size
+in physical angular units. The result carries calibrated geometry and reports
+final globals under the same names in `info["calibration"]`.
+
+The CLI uses `--fit`. Alignment modes, quality presets, levels, frozen parameter
+lists, expert configuration, checkpoints and device selection are removed,
+along with the coupled engine, translation-only engine, projection-matching
+configuration, cone-axis search and orbit-height initializer. `estimate_center`
+remains a projection-only preview. See [align a scan](docs/align-a-scan.md).
+
+The entries below record earlier development. Their retired alignment APIs and
+measurements are superseded by this interface; full qualification of the new
+solver is pending.
+
+### Earlier development
+
+The legacy projection-only `spectral_motion` alignment stage and its bounded
+Fourier-line motion refinement are removed. Per-view motion uses the joint
+image/pose fit instead; `projection_consistency` schedules accept setup geometry
+parameters only.
+
+Automatic parallel and laminography alignment uses a new joint fit of the image
+and per-view detector translations. Its motion prior leaves a cubic spline with
+knots every ten views free and penalises view-to-view jumps of the remainder
+with a Huber prior, so slips are tracked instead of being smoothed over; the
+previous route fitted twelve spline knots in all. The data term is robust
+(quadratic core, logarithmic tail), the image prior is anisotropic physical
+Huber TV, poses are eliminated exactly over all views, and a final fixed-image
+stage refines translations on edge-filtered residuals. The working scale is
+bounded as before (16 M voxels, 320 detector pixels) but keeps every cell face,
+so unequal pitches are allowed; an explicit `grid=` is still used as given. On
+an independently rendered watch laminography scan with drift and five slips the
+pose error falls from 0.506 to 0.010 detector pixels and the image matches the
+true-pose image; see [measurements](docs/measurements.md). Rotations still need
+an explicit pose mode. `plane_weighted_diagonal` in `tomojax.core.joseph` adds
+the Jacobi diagonal of the linear plane projector (CPU scatter, CUDA gather).
+
 SPDHG uses the direct weighted quadratic dual proximal and ordinary autodiff.
 The exponent-balanced arithmetic for near-overflow/underflow inputs is removed;
 zero-weight observations remain masked. Use sensible physical units.

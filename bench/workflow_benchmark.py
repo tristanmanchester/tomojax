@@ -24,8 +24,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.alignment import AlignConfig
-from tomojax.alignment.api import L2LossSpec, align
+import tomojax as tj
 from tomojax.geometry import LaminographyGeometry, ParallelGeometry
 from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
 
@@ -62,26 +61,17 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
         def call() -> tuple:
             return spdhg_tv(geometry, grid, detector, data, config=config)
     else:
-        config = AlignConfig(
-            outer_iterations=args.outer_iters,
-            iterations=args.inner_iters,
-            lipschitz=lipschitz,
-            backend="jax",
-            gather_dtype="fp32",
-            views_per_batch=args.batch,
-            loss=L2LossSpec(),
-            early_stop=False,
-            gauge_policy="anchor_mean",
-        )
+        config = None
         phase = np.linspace(0.0, 2 * np.pi, n_views, endpoint=False)
-        initial = np.zeros((n_views, 5), dtype=np.float32)
+        initial = np.zeros((n_views, 6), dtype=np.float32)
         initial[:, 2] = 0.003 * np.sin(phase)
         initial[:, 3] = 0.2 * detector.du * np.sin(phase)
         initial[:, 4] = 0.2 * detector.dv * np.cos(phase)
-        initial = jnp.asarray(initial)
+        scan = tj.Scan(data, geometry).with_poses(initial)
 
         def call() -> tuple:
-            return align(geometry, grid, detector, data, config=config, init_pose_params=initial)
+            result = tj.align(scan, fit=("translations", "rotations"), grid=grid)
+            return result.volume, result.poses, result.info
 
     runs = []
     for repeat in range(args.repeats + 1):
@@ -117,7 +107,9 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
         "method": method,
         "grid": grid.to_dict(),
         "detector": detector.to_dict(),
-        "config": asdict(config),
+        "settings": asdict(config)
+        if config is not None
+        else {"fit": ["translations", "rotations"]},
         "input": "analytic_gaussian_line_integrals",
         "timing_scope": "public_API_with_resident_input_and_Python_diagnostics",
         "cold_ms": runs[0]["wall_ms"],
@@ -147,8 +139,6 @@ def main() -> int:
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--recon-iters", type=int, default=10)
     parser.add_argument("--spdhg-iters", type=int, default=20)
-    parser.add_argument("--inner-iters", type=int, default=4)
-    parser.add_argument("--outer-iters", type=int, default=3)
     parser.add_argument("--auto-norm", action="store_true")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--max-nrmse", type=float, default=0.6)
@@ -162,8 +152,6 @@ def main() -> int:
             args.repeats,
             args.recon_iters,
             args.spdhg_iters,
-            args.inner_iters,
-            args.outer_iters,
         )
         <= 0
     ):

@@ -78,8 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--axis-offset",
         type=float,
         default=0.0,
-        help="Cone beam: rotation axis offset from the central ray (tomojax align --mode cor "
-        "estimates it)",
+        help="Cone beam: declared rotation axis offset from the central ray",
     )
     _ = parser.add_argument("--name", help="Sample name to record")
     return parser

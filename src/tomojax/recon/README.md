@@ -12,7 +12,6 @@
 - `spdhg_tv`
 - `sirt` (SIRT, OS-SART and SART)
 - `mlem`, with ordered subsets in `MLEMConfig`
-- `calibrate_cone_axis`, the cone-beam axis-offset and roll calibration
 
 Each method's settings are a configuration class: `FBPConfig` (FBP and FDK),
 `FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig`, `SIRTConfig` and

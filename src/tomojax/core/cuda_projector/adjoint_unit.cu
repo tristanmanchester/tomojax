@@ -23,7 +23,7 @@ extern "C" __global__ void joseph_gather(
         int count = min(VB, nviews - first);
         for (int view = 0; view < count; ++view) {
             const float* c = cf + view * 14;
-            const float* image = images + (long)(first + view) * nu * nv;
+            DetectorColumns image{images + (long)(first + view) * nu * nv, nv};
             bool unit=((c[2]==0.f && c[5]==0.f && fabsf(c[6])==1.f)
                 ||(c[1]==0.f && c[6]==0.f && fabsf(c[2])==1.f));
             if(unit) {

@@ -199,6 +199,118 @@ def test_plane_operators_match_independent_physical_ray_matrix(
             )
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    ("interpolation", "absolute"), [("linear", False), ("cubic", False), ("cubic", True)]
+)
+@pytest.mark.parametrize("z_fast", [False, True])
+def test_generic_gather_detector_columns_match_physical_matrix(interpolation, absolute, z_fast):
+    # Exercise the generic UV layout directly, including unit rows, mixed
+    # major axes, sequential vmap, both volume layouts and accumulation.
+    from tomojax.core.cuda_projector import (
+        _joseph_generic as generic,  # check-public-imports: allow-private
+    )
+
+    grid, detector, poses = problem()
+    rng = np.random.default_rng(57)
+    images = jnp.asarray(rng.normal(size=(2, 6, 7, 9)), jnp.float32)
+    initial = rng.normal(size=(2, 4, 3, 5)).astype(np.float32)
+    coefficients = plane_coefficients(jnp.asarray(poses), grid, detector)
+    physical = matrix(poses, grid, detector, interpolation)
+    if absolute:
+        physical = np.abs(physical)
+    expected = np.stack([(physical.T @ np.asarray(y).ravel()).reshape(4, 3, 5) for y in images])
+    expected += initial
+    if z_fast:
+        initial = initial.transpose(0, 3, 2, 1)
+        expected = expected.transpose(0, 3, 2, 1)
+    execute = jax.jit(
+        jax.vmap(
+            lambda y, x: generic.adjoint(
+                coefficients,
+                y,
+                x,
+                grid,
+                detector,
+                interpolation=interpolation,
+                absolute_weights=absolute,
+                z_fast=z_fast,
+            )
+        )
+    )
+    actual = execute(images, jnp.asarray(initial))
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=5e-6)
+    np.testing.assert_array_equal(execute(images, jnp.asarray(initial)), actual)
+
+
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
+@pytest.mark.parametrize("z_fast", [False, True])
+def test_generic_gather_prepares_launches_before_runtime_callback(
+    monkeypatch, interpolation, z_fast
+):
+    from types import SimpleNamespace
+
+    from tomojax.core.cuda_projector import (
+        _joseph_generic as generic,  # check-public-imports: allow-private
+    )
+
+    grid, detector = Grid(18, 11, 7, 1, 1, 1), Detector(9, 5, 1, 1)
+    shape = (18, 11, 7) if z_fast else (7, 11, 18)
+    initial = np.full(shape, 3, np.float32)
+    images = np.arange(2 * 5 * 9, dtype=np.float32).reshape(2, 5, 9)
+    compiling, sources, launches = True, [], []
+
+    def source(name, **constants):
+        assert compiling, "source preparation belongs outside the runtime callback"
+        sources.append((name, constants))
+        return len(sources)
+
+    def callback(launch, result, **options):
+        assert options["input_output_aliases"] == {2: 0}
+
+        def execute(cf, y, x):
+            nonlocal compiling
+            compiling = False
+            np.testing.assert_array_equal(y, images.swapaxes(-1, -2))
+            out = np.empty(result.shape, np.float32)
+            launch(SimpleNamespace(stream=None), out, cf, y, x)
+            return out
+
+        return execute
+
+    def kernel(text, name, **kwargs):
+        launches.append((text, name, kwargs["grid"]))
+        _, _, out, x, *_ = kwargs["arguments"]
+        out[:] = x + text
+
+    monkeypatch.setattr(generic, "source", source)
+    monkeypatch.setattr(generic, "buffer_callback", callback)
+    monkeypatch.setattr(generic, "launch_kernel", kernel)
+    monkeypatch.setattr(generic, "swap_detector_axes", lambda y: y.swapaxes(-1, -2).copy())
+    actual = generic.adjoint(
+        np.zeros((2, 14), np.float32),
+        images,
+        initial,
+        grid,
+        detector,
+        interpolation=interpolation,
+        absolute_weights=True,
+        z_fast=z_fast,
+    )
+    assert len(sources) == (3 if interpolation == "cubic" else 1)
+    np.testing.assert_array_equal(actual, initial + sum(range(1, len(sources) + 1)))
+    for index, (_, constants) in enumerate(sources):
+        assert constants["Z_FAST"] == int(z_fast) and constants["ABSOLUTE"] == 1
+        if interpolation == "cubic":
+            assert constants["AXIS"] == index
+            sizes = (18, 11, 7)
+            a, b, c = (sizes[(index + i) % 3] for i in range(3))
+            count = a * ((b + 3) // 4) * ((c + 3) // 4)
+        else:
+            count = 18 * 11 * 2
+        assert launches[index][2] == ((count + 127) // 128,)
+
+
 @pytest.mark.parametrize("warm_start", [False, True])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])

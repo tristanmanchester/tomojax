@@ -7,10 +7,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-from tomojax.alignment._geometry.parametrizations import apply_pose_update
 from tomojax.core.joseph import forward_project_planes, plane_coefficients, plane_pose_columns
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
+
+from ._pose_reference import pose_update
 
 
 @pytest.mark.gpu
@@ -31,7 +31,7 @@ def test_parallel_pose_columns_match_reference(integrator, indices, private):
     interpolation = "cubic" if integrator == "joseph_cubic" else "linear"
 
     def coefficients(p):
-        pose = apply_pose_update(nominal, p, translation_frame="detector")
+        pose = pose_update(nominal, p, translation_frame="detector")
         return plane_coefficients(pose[None], grid, detector)[0]
 
     coeff = coefficients(params)

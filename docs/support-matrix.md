@@ -16,26 +16,26 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fbp\|cgls\|fista\|spdhg` |
 | Fourier-slice inverse of supported parallel scans | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fourier`; matching available CUDA or NumPy, with explicit backend configuration |
 | Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax import ./tiffs --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv --config calibration.toml -o scan.nxs`, then `tomojax recon` (automatic FDK for one arrangement; `--method fbp` selects it explicitly) |
-| Per-projection 5-DOF pose alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --mode pose` |
-| Cone-beam 6-DOF pose alignment (adds `dy` along the beam) | Experimental | `tomojax align cone_scan.nxs -o aligned.nxs --mode pose` |
+| Per-view translations and optional rotations | Experimental | `tomojax align corrected.nxs -o aligned.nxs --fit translations rotations` |
+| Cone-beam motion (includes along-beam translation) | Experimental | `tomojax align cone_scan.nxs -o aligned.nxs --fit translations rotations` |
 | Ring (stripe), zinger, outlier-view and beam-hardening corrections; Paganin phase retrieval | Supported | `tomojax preprocess raw.nxs -o scan.nxs --stripes 9 --zingers --reject-views` (and the expert `--paganin`); beam hardening uses explicit `tomojax.corrections.BeamHardening` curves |
 | Volume export as TIFF slices or raw (`uint16` or `float32`) | Supported | `tomojax export recon.nxs -o slices/`; `tomojax export recon.nxs -o recon.raw --dtype uint16` |
 | Nikon (X-Tek) scan import, including its calibrated rotation axis | Supported | `tj.load_frames("scan/part.xtekct", darks=0).corrected()`, or `tomojax preprocess scan/part.xtekct --darks 0 -o scan.nxs` |
 | Zeiss Xradia projection acquisitions | Supported | `tj.load_frames("scan.txrm", darks=0).corrected(...)`; separate reference images use `flats="reference_Front.xrm"`; [CPU preview](lab-ct.md#zeiss-xradia-preview) |
-| Multi-orbit cone-beam scans (`ConeSegments`): iterative reconstruction and pose alignment | Supported; alignment experimental | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then `tj.reconstruct(scan, "cgls")` and `tj.align(scan)`; `orbit_heights` in `tomojax.alignment.api` |
-| Cone-beam axis-offset (centre of rotation) and detector-roll calibration | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --mode cor`; `calibrate_cone_axis` in Python |
-| Detector-centre/COR alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --mode cor` |
-| Detector-centre offset with per-view motion | Experimental | `tomojax align corrected.nxs -o aligned.nxs --mode cor-then-pose` |
-| Mixed setup and pose alignment | Experimental; each stage fixes its gauge policy | `tomojax align corrected.nxs -o aligned.nxs --mode full` |
+| Multi-orbit cone-beam scans (`ConeSegments`): iterative reconstruction and pose alignment | Supported; alignment experimental | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then `tj.reconstruct(scan, "cgls")` and `tj.align(scan)` |
+| Shared detector centre and roll, including cone data | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --fit centre roll` |
+| Detector-centre/COR alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --fit centre` |
+| Detector-centre offset with per-view motion | Experimental; shared offset uses an explicit gauge | `tomojax align corrected.nxs -o aligned.nxs --fit centre translations` |
+| Shared setup angles with per-view motion | Experimental; one joint solve | `tomojax align corrected.nxs -o aligned.nxs --fit translations tilt roll` |
 | Deterministic synthetic dataset generation | Supported | `tomojax simulate -o synthetic_scan.nxs --size 64 --geometry parallel\|lamino\|cone` |
 | Python API reconstruction | Supported | `tj.reconstruct(scan, method, config=...)`, `tj.project`, `tj.backproject`; building blocks in `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` |
-| Python API alignment, with resumable checkpoints | Experimental | `tj.align(scan, mode=..., grid=..., checkpoint=..., config=...)` |
+| Python API alignment | Experimental | `tj.align(scan, fit=..., grid=...)` |
 | Volumes larger than the GPU | Supported | FBP and FDK switch to host slabs automatically; `fbp_host` and `fdk_host` in Python ([large scans](large-scans.md)) |
-| Several GPUs in one process | Supported (Python only) | `devices=` on `tj.project`, `tj.backproject`, `tj.reconstruct` (`fbp`, `cgls`, `fista`) and `tj.align` ([large scans](large-scans.md#use-several-gpus)) |
+| Several GPUs in one process | Supported (Python only) | `devices=` on `tj.project`, `tj.backproject`, `tj.reconstruct` (`fbp`, `cgls`, `fista`) ([large scans](large-scans.md#use-several-gpus)) |
 
-No-flag `tomojax align` and `tomojax recon` use the Python automatic policies.
-Their recorded outcome is conditional: reported limitations are not accuracy
-certificates. Choose an explicit mode/method when supplying expert solver settings.
+No-flag `tomojax align` fits translations with the same joint solver used by every `fit` setting.
+`tomojax recon` selects its image method from the geometry. Reported limitations are not accuracy
+certificates; check recovered geometry and reconstructed images.
 
 ## Scope
 
@@ -135,7 +135,7 @@ an explicit `angles=` schedule must be in TomoJAX's object-angle frame.
 | Fused Joseph least squares (Python API) | `joseph_l2_value_and_grad`: raw half squared error plus volume/matrix-pose gradients; CUDA retains residuals and tile reductions without a ray-by-plane tape; not called by the alignment pipeline |
 | Joseph pose normal equations (Python API) | `joseph_pose_normal_equations`: per-view raw loss, directional gradient, Gauss-Newton matrix and residual; 1–16 caller-supplied pose directions; CUDA avoids a full projection Jacobian; caller chooses damping, priors and gauges |
 | Coarse-to-fine CGLS (Python API) | Optional `cgls_multires` with explicit budgets and a final full-data solve; tested on odd/shifted grids and sharp/noisy phantoms, with known performance regressions |
-| Internal differentiable FISTA core | JAX and explicit CUDA forward/adjoint variants, used by alignment workflows |
+| Internal differentiable FISTA core | JAX and explicit CUDA forward/adjoint variants for reconstruction |
 | Cone-beam geometry | `ConeGeometry`: point source and flat detector with offsets, roll, pitch and yaw, a laterally offset (`axis_offset`), tilted or arbitrary axis, any per-view poses; Joseph sampling of diverging rays with a matched transpose; JAX reference (differentiable in volume and poses) and CUDA kernels (CuPy); CGLS, FISTA-TV, SPDHG-TV and FDK (full turns, offset-detector full turns, Parker-weighted short scans); `tomojax simulate`, `tomojax import` and saved datasets. Fan beam is a one-row cone detector |
 | Real GPU validation | CUDA on RTX 4070 Laptop (Ada); CPU reference mode is tested separately |
 
@@ -146,5 +146,5 @@ units; its backprojection normalisation differs from the Euclidean transpose
 used by iterative solvers. See [accuracy and performance evidence](measurements.md) for
 the measured cases, backend choices, and limitations.
 
-For choosing an alignment mode and checking its result, see the
-[alignment guide](alignment-guide.md).
+For choosing alignment parameters and checking its result, see the
+[alignment guide](align-a-scan.md).

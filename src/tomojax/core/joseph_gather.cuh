@@ -2,6 +2,12 @@
 __device__ __forceinline__ float joseph_pixel(const float* image,int nu,int u,int v) {
     return image[(long)v*nu+u];
 }
+// Adjacent gather threads follow z, hence neighbouring detector rows. Keep
+// v contiguous inside these kernels; public and region sinograms remain VU.
+struct DetectorColumns { const float* data; int nv; };
+__device__ __forceinline__ float joseph_pixel(DetectorColumns image,int,int u,int v) {
+    return image.data[(long)u*image.nv+v];
+}
 #define RADIUS (CUBIC ? 2.f : 1.f)
 __device__ __forceinline__ float plane_weight(float q) {
 #if CUBIC
@@ -10,6 +16,52 @@ __device__ __forceinline__ float plane_weight(float q) {
 #else
     return fmaxf(1.f-fabsf(q),0.f);
 #endif
+}
+
+// The interval estimate only seeds a search. Correct it with the very same
+// rounded affine coordinate as the forward sampler, so a near-edge ray is
+// never removed by inverse-coordinate roundoff or an approximate reciprocal.
+template<bool Inclusive>
+__device__ __forceinline__ int coordinate_crossing(
+    float base,float slope,float inverse,float offset,float target,int first,int stop) {
+    float estimate=((target-offset)-base)*inverse;
+    estimate=Inclusive?ceilf(estimate):floorf(estimate)+1.f;
+    int at=(int)fminf(fmaxf(estimate,(float)first),(float)stop);
+    while(at>first) {
+        float q=__fadd_rn(__fadd_rn(base,__fmul_rn(slope,(float)(at-1))),offset);
+        bool crossed=slope>0.f ? (Inclusive?q>=target:q>target)
+                              : (Inclusive?q<=target:q<target);
+        if(!crossed) break;
+        --at;
+    }
+    while(at<stop) {
+        float q=__fadd_rn(__fadd_rn(base,__fmul_rn(slope,(float)at)),offset);
+        bool crossed=slope>0.f ? (Inclusive?q>=target:q>target)
+                              : (Inclusive?q<=target:q<target);
+        if(crossed) break;
+        ++at;
+    }
+    return at;
+}
+
+__device__ __forceinline__ void clip_coordinate(
+    float base,float slope,float inverse,float offset_lo,float offset_hi,
+    float lower,float upper,int& first,int& stop) {
+    if(first>=stop) return;
+    if(slope==0.f) {
+        if(__fadd_rn(base,offset_hi)<=lower || __fadd_rn(base,offset_lo)>=upper) stop=first;
+        return;
+    }
+    float start_offset=slope>0.f?offset_hi:offset_lo;
+    float end_offset=slope>0.f?offset_lo:offset_hi;
+    float start_target=slope>0.f?lower:upper, end_target=slope>0.f?upper:lower;
+    float q=__fadd_rn(__fadd_rn(base,__fmul_rn(slope,(float)first)),start_offset);
+    if(slope>0.f?q<=start_target:q>=start_target)
+        first=coordinate_crossing<false>(base,slope,inverse,start_offset,start_target,first,stop);
+    if(first>=stop) return;
+    q=__fadd_rn(__fadd_rn(base,__fmul_rn(slope,(float)(stop-1))),end_offset);
+    if(slope>0.f?q>=end_target:q<=end_target)
+        stop=coordinate_crossing<true>(base,slope,inverse,end_offset,end_target,first,stop);
 }
 
 template<int R, typename Image>
@@ -84,18 +136,48 @@ __device__ __forceinline__ void gather_view(
     int u_stop = min((int)ceilf(hi_u + ru + mu), nu);
     int v_start = max((int)floorf(lo_v - rv - mv) + 1, 0);
     int v_stop = min((int)ceilf(hi_v + rv + mv), nv);
+    float inv_vb = vb == 0.f ? 0.f : 1.f / vb, inv_vc = vc == 0.f ? 0.f : 1.f / vc;
     for (int u = u_start; u < u_stop; ++u) {
-        for (int v = v_start; v < v_stop; ++v) {
-            float value = joseph_pixel(image,nu,u,v);
+        float bu = __fmul_rn(ub, (float)u), cu = __fmul_rn(uc, (float)u);
+        int first = v_start, stop = v_stop;
+        clip_coordinate(bu,vb,inv_vb,fminf(hb[0],hb[R-1]),fmaxf(hb[0],hb[R-1]),
+                        tb[0]-RADIUS,tb[R-1]+RADIUS,first,stop);
+        clip_coordinate(cu,vc,inv_vc,fminf(hc[0],hc[R-1]),fmaxf(hc[0],hc[R-1]),
+                        tc[0]-RADIUS,tc[R-1]+RADIUS,first,stop);
+        for (int v = first; v < stop; ++v) {
             // Round each product as the forward projection does; weights
             // must match it exactly to keep the transpose matched.
-            float pb = __fadd_rn(__fmul_rn(ub, (float)u), __fmul_rn(vb, (float)v));
-            float pc = __fadd_rn(__fmul_rn(uc, (float)u), __fmul_rn(vc, (float)v));
+            float pb = __fadd_rn(bu, __fmul_rn(vb, (float)v));
+            float pc = __fadd_rn(cu, __fmul_rn(vc, (float)v));
+            float weights[R];
+            bool active = false;
+            if (a != 2) {
+                // k and one transverse coordinate are constant along a z run.
+                // Reuse that cubic weight, without changing forward rounding.
+                float qb = __fadd_rn(pb, hb[0]), qc = __fadd_rn(pc, hc[0]);
+                float fixed = plane_weight(a == 0 ? qb - tb[0] : qc - tc[0]);
+                if (fixed == 0.f) continue;
+                #pragma unroll
+                for (int j = 0; j < R; ++j) {
+                    float moving = plane_weight(a == 0 ? qc - tc[j] : qb - tb[j]);
+                    weights[j] = fixed * moving * weight;
+                    active |= weights[j] != 0.f;
+                }
+            } else {
+                #pragma unroll
+                for (int j = 0; j < R; ++j) {
+                    float qb = __fadd_rn(pb, hb[j]), qc = __fadd_rn(pc, hc[j]);
+                    weights[j] = plane_weight(qb - tb[j]) * plane_weight(qc - tc[j]) * weight;
+                    active |= weights[j] != 0.f;
+                }
+            }
+            // The union bounding box includes rays outside every voxel support.
+            // Do not fetch those pixels, or fetch a shared pixel once per voxel.
+            if (!active) continue;
+            float value = joseph_pixel(image,nu,u,v);
             #pragma unroll
             for (int j = 0; j < R; ++j) {
-                float qb = __fadd_rn(pb, hb[j]), qc = __fadd_rn(pc, hc[j]);
-                total[j] += value * (plane_weight(qb - tb[j])
-                                     * plane_weight(qc - tc[j]) * weight);
+                total[j] += value * weights[j];
             }
         }
     }

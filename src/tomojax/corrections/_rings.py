@@ -26,6 +26,7 @@ from tomojax.geometry import (
 
 from ._records import Correction
 from ._ring_parity import regularize
+from ._ring_reference_cuda import reference as cuda_reference
 from ._steps import Domain, Step, bitonic_median
 
 WINDOWS = (30, 20, 14, 9, 6)
@@ -108,6 +109,18 @@ def _weighted_quadratics(
 
 
 def _reference(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> jax.Array:
+    """Adaptive spatial reference, with a tiled float32 CUDA implementation."""
+    if ranked.dtype != jnp.float32:
+        return _reference_jax(ranked, gamma, local)
+    taps = tuple(tuple(_quadratic_taps(w, 1)) for w in WINDOWS)
+    return jax.lax.platform_dependent(
+        ranked,
+        cuda=lambda values: cuda_reference(values, taps, gamma, local),
+        default=lambda values: _reference_jax(values, gamma, local),
+    )
+
+
+def _reference_jax(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> jax.Array:
     """The adaptive spatial reference for rows of line integrals.
 
     It starts from the local quadratic through +-30 columns and moves toward the +-20, 14, 9 and 6
@@ -323,6 +336,15 @@ def _unsorted_response(
     return jnp.stack(alphas), jnp.stack(betas), q
 
 
+def _sorted_values(x: jax.Array) -> jax.Array:
+    """Sort the first axis, omitting unused tie bookkeeping on CUDA."""
+    return jax.lax.platform_dependent(
+        x,
+        cuda=lambda x: jnp.sort(x, axis=0, stable=False),
+        default=lambda x: jnp.sort(x, axis=0),
+    )
+
+
 def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 3.0) -> jax.Array:
     """Vo et al. 2018, algorithms 4 and 5, with our response model as the correction offset.
 
@@ -335,13 +357,13 @@ def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 
     contrast alone is not evidence of a detector calibration error.
     """
     views, n = q.shape
-    ranked = jnp.sort(q, axis=0)
+    ranked = _sorted_values(q)
     cut = int(0.05 * views)
     level = ranked[cut : views - cut].mean(0)
     padded = jnp.pad(level, window, mode="edge")
     stack = jnp.stack([padded[k : k + n] for k in range(2 * window + 1)])
-    dev = level - jnp.sort(stack, axis=0)[window]
-    s = jnp.sort(dev)
+    dev = level - _sorted_values(stack)[window]
+    s = _sorted_values(dev)
     i = np.arange(n, dtype=np.float64)[n // 4 : n - n // 4]
     y = s[n // 4 : n - n // 4]
     slope = ((i - i.mean()) * (y - y.mean())).sum() / float(((i - i.mean()) ** 2).sum())
@@ -380,7 +402,7 @@ def _turn_response(
         beta = regularize(beta, axis, "significance")
         responses.append(_feasible_response(q, ref, level - beta * xm, beta, lowest))
         q, lowest = (_invert(x, *responses[-1]) for x in (q, lowest))
-    ranked = jnp.sort(q, axis=0)
+    ranked = _sorted_values(q)
     ref = _correlate(ranked, _quadratic_taps(100, 1))
     alpha, beta, xm = _fit(ranked, ref)
     level = regularize(alpha + beta * xm, axis, "wiener")
@@ -522,7 +544,7 @@ def _bins(
     return np.concatenate(labels), np.concatenate(neighbours), tuple(counts)
 
 
-@partial(jax.jit, static_argnames=("axis", "groups", "closing", "views"))
+@partial(jax.jit, static_argnames=("axis", "groups", "closing", "views", "order"))
 def correct_rings(
     batch: jax.Array,
     axis: float | None = None,
@@ -532,6 +554,7 @@ def correct_rings(
     *,
     closing: bool = False,
     views: int | None = None,
+    order: tuple[int, ...] | None = None,
 ) -> jax.Array:
     """Correct every detector row of a ``(views, rows, columns)`` batch of line integrals.
 
@@ -546,10 +569,13 @@ def correct_rings(
         neighbours = jnp.asarray(np.stack([lo, hi], axis=1), jnp.int32)
         weights = jnp.full((size, 2), 0.5, batch.dtype)
         groups = (size,)
-    fitted, passes = batch, 2
+    # Only the fitting samples need angular order. Apply the column responses
+    # to the original batch rather than materializing and undoing a full-view gather.
+    fitted = batch if order is None else batch[jnp.asarray(order, jnp.int32)]
+    passes = 2
     if closing:
         # A repeated closing phase is one observation for the fits.
-        fitted = jnp.concatenate([0.5 * (batch[:1] + batch[-1:]), batch[1:-1]])
+        fitted = jnp.concatenate([0.5 * (fitted[:1] + fitted[-1:]), fitted[1:-1]])
     if views is not None and views < sum(groups):
         # Fit on angular bin means, which keep every view's photons; an additive column
         # error commutes with the mean, and neighbouring bins share no views.
@@ -579,7 +605,8 @@ def correct_rings(
         )
     if corrected.shape[1] == batch.shape[0]:
         # every view was fitted on its own, so the fits have already corrected them
-        return jnp.swapaxes(corrected, 0, 1)
+        out = jnp.swapaxes(corrected, 0, 1)
+        return out if order is None else out[jnp.asarray(np.argsort(order), jnp.int32)]
     for k in range(alpha.shape[1]):
         batch = _invert(batch, alpha[None, :, k], beta[None, :, k])
     return batch
@@ -763,9 +790,9 @@ class Rings(Step):
             raise ValueError(
                 f"Rings geometry has {len(plan.order)} views, the data {batch.shape[0]}"
             )
-        order = jnp.asarray(plan.order, jnp.int32)
-        out = correct_rings(
-            batch[order],
+        return correct_rings(
+            batch,
+            order=plan.order,
             axis=self._axis,
             neighbours=jnp.asarray(plan.neighbours, jnp.int32),
             weights=jnp.asarray(plan.weights, batch.dtype),
@@ -773,4 +800,3 @@ class Rings(Step):
             closing=plan.closing,
             views=self.views,
         )
-        return out[jnp.asarray(np.argsort(plan.order), jnp.int32)]

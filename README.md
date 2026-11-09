@@ -32,14 +32,11 @@ average of the meshes, and FISTA-TV 0.125, in 15 s.
 
 ![Nominal-geometry, aligned and true slices of the watch movement, close-ups of the balance, and recovered against true shifts for every view.](https://github.com/tristanmanchester/tomojax/raw/main/images/alignment-example.png)
 
-`tomojax align` and `tj.align` solve the volume and each view's pose together.
-On a 400-view scan of the movement with its axis 5.3 px off centre and every
-view tilted by up to 0.25° and shifted by up to 2.4 px, `mode="cor-then-pose"`
-recovers the rotations to 0.06° RMS or better and the shifts to 0.07 px
-RMS in 300 s, and the reconstruction error falls from 0.928 to 0.235. The same
-reconstruction from the true poses reaches 0.224.
-Poses and volume are compared with the truth after removing the rigid motion
-the data cannot determine. [Reproduce it](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#align-a-scan-with-per-view-motion).
+`tomojax align` and `tj.align` solve the image and the requested geometry corrections together.
+The default fits per-view translations; add `"tilt"` and `"roll"` for shared setup angles,
+or `"rotations"` for per-view wobble. The figure above was made with an earlier alignment
+implementation and is awaiting requalification with the consolidated solver. See
+[align a scan](https://tomojax.dev/align-a-scan/) for parameter selection and result checks.
 
 ## First reconstruction
 
@@ -82,7 +79,7 @@ For CUDA installation, wheel installation, and device checks, see
 | Supply measured geometry for parallel or laminography data, including TIFF stacks | [Real scan guide](https://tomojax.dev/real-laminography/) |
 | Import, calibrate and reconstruct a lab cone-beam CT scan, including multi-orbit scans | [Lab cone-beam CT](https://tomojax.dev/lab-ct/) |
 | Simulate data or use the Python API | [Synthetic workflow](https://tomojax.dev/synthetic-tomography/), [runnable examples](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md) |
-| Correct per-view motion or the centre of rotation | [Alignment guide](https://tomojax.dev/alignment-guide/) (experimental; check the recovered geometry) |
+| Correct per-view motion or the centre of rotation | [Alignment guide](https://tomojax.dev/align-a-scan/) (experimental; check the recovered geometry) |
 | Reconstruct scans larger than the GPU, or use several GPUs | [Large scans and several GPUs](https://tomojax.dev/large-scans/) |
 | Check supported models and limitations | [Support matrix](https://tomojax.dev/support-matrix/), [known limitations](https://tomojax.dev/known-limitations/) |
 
@@ -97,19 +94,18 @@ import tomojax as tj
 scan = tj.load("scan.nxs")                        # or a Nikon .xtekct
 recon = tj.reconstruct(scan)                      # choose from the geometry
 recon = tj.reconstruct(scan, "cgls", iterations=50)
-result = tj.align(scan, mode="cor-then-pose")     # result.scan carries the corrections
+result = tj.align(scan, fit=("translations", "rotations"))     # result.scan carries the corrections
 tj.save("recon.nxs", tj.reconstruct(result.scan))
 ```
 
 The command-line options use the same names: the CGLS line is
 `tomojax recon scan.nxs -o recon.nxs --method cgls --iterations 50`, and the
-alignment `tomojax align scan.nxs -o aligned.nxs --mode cor-then-pose`.
+alignment `tomojax align scan.nxs -o aligned.nxs --fit translations rotations`.
 Expert settings are a configuration of the method's own class from
 `tomojax.recon`,
 `tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`,
-or the same fields in a TOML file given to `--config`. A long alignment can
-save its progress and resume after an interruption:
-`tj.align(scan, checkpoint="align.ckpt")`, or `--checkpoint align.ckpt`.
+or the same fields in a TOML file given to `--config`. Alignment has one model
+argument, `fit=`, plus an optional `grid=`.
 
 `tj.Scan(projections, geometry)` builds a scan from arrays, and
 `tj.project(geometry, volume)` simulates one for any geometry. Volumes use

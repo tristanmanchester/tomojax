@@ -26,7 +26,6 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from tomojax.alignment.api import se3_from_pose_params
 from tomojax.forward import joseph_pose_normal_equations, project_joseph
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
@@ -51,9 +50,23 @@ PHANTOMS = {"two-gaussian": GAUSSIANS, "nine-gaussian": RICH_GAUSSIANS}
 def poses_jax(parameters: jax.Array, nominal: jax.Array, detector: Detector) -> jax.Array:
     """Right-compose rotations; translate in detector/world x,z coordinates."""
     scale = jnp.array([np.pi / 180] * 3 + [detector.du, detector.dv], jnp.float32)
-    delta = se3_from_pose_params(jnp.concatenate([parameters * scale, jnp.zeros(1)]))
-    result = jnp.matmul(nominal, delta, precision=jax.lax.Precision.HIGHEST)
-    return result.at[:3, 3].set(nominal[:3, 3] + delta[:3, 3])
+    alpha, beta, phi, dx, dz = parameters * scale
+    ca, sa, cb, sb, cf, sf = (
+        jnp.cos(alpha),
+        jnp.sin(alpha),
+        jnp.cos(beta),
+        jnp.sin(beta),
+        jnp.cos(phi),
+        jnp.sin(phi),
+    )
+    rx = jnp.array([[1, 0, 0], [0, ca, -sa], [0, sa, ca]])
+    ry = jnp.array([[cb, 0, sb], [0, 1, 0], [-sb, 0, cb]])
+    rz = jnp.array([[cf, -sf, 0], [sf, cf, 0], [0, 0, 1]])
+    rotation = jnp.linalg.multi_dot(
+        [nominal[:3, :3], ry, rx, rz], precision=jax.lax.Precision.HIGHEST
+    )
+    result = nominal.at[:3, :3].set(rotation)
+    return result.at[:3, 3].add(jnp.array([dx, 0, dz]))
 
 
 def poses_numpy(parameters: np.ndarray, nominal: np.ndarray, detector: Detector) -> np.ndarray:
