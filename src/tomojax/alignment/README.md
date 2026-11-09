@@ -8,8 +8,10 @@ blocks. All geometries use one private joint solver in `_joint`.
 The solver estimates the image and the requested geometry corrections together. Per-view
 translation blocks are coupled by a smooth-drift and robust-jump prior. Shared centre and angle
 columns border that system. Exact Schur elimination gives the image update; the backprojector
-is the exact transpose of the selected forward operator, including detector sampling and
-missing-ray masks. The returned scan carries the calibrated geometry and fitted per-view poses.
+is the exact transpose of the selected forward operator. Each working pixel is one ray through
+its centre, and the detector is never binned coarser than a voxel. Each view's gain and
+background (a constant and a ramp down the rows) are refitted to the prediction at every step.
+The returned scan carries the calibrated geometry and fitted per-view poses.
 
 The line search compares a pose trial with the image-only trial at the **same image step**.
 An image improvement cannot pay for a harmful pose move. Per-view rotations pay a size
