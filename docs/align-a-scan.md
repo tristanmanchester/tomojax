@@ -16,7 +16,7 @@ without alignment so that you have an image to compare with.
 | Point-like features drawn as rings or arcs, the same in every slice | The rotation centre | `fit="centre"` |
 | Doubled or smeared edges that vary from feature to feature | Drift or sudden slips of the sample between views | `fit="translations"` (the default) |
 | Sharp slices at the detector's centre row, with haloes and doubled edges that grow towards the top and bottom of the volume | The rotation axis or the detector rolled about the beam | `fit=("translations", "roll")` |
-| Doubling that remains after translations and roll, worst far from the rotation axis | The laminography or axis tilt | `fit=("translations", "tilt")` |
+| In laminography, doubling that remains after translations, worst far from the rotation axis | The laminography tilt | `fit=("translations", "tilt")` |
 | Blur that remains after translations and the setup angles | The sample rotating or wobbling between views | `fit=("translations", "rotations")` |
 
 ```python
@@ -113,15 +113,27 @@ enough to blur the top and bottom of a tall sample.
 
 ### Tilt
 
-A tilt of the axis towards or away from the beam, including a wrong laminography angle, moves
-features mostly along the beam, where the rays cannot see the movement. Its effect on the image is
-small: in the watch example a 0.5° laminography tilt error leaves no visible artefact, and the error
-has to reach about 2° before features double.
+If the rotation axis leans towards or away from the beam, every point rises and falls once per
+turn, by the tilt times its depth along the beam. For a compact sample most of that is the whole
+sample bobbing up and down, which per-view translations describe exactly, so `fit="translations"`
+removes most of a tilt. What remains is a smaller error that grows with distance from the sample's
+own centre.
 
-![The dial indices near the rim with a 2° laminography tilt error: each index is drawn as a pair of sharp stripes, and fit="translations" leaves it unchanged. After fit=("translations", "tilt") the indices match the true geometry.](images/alignment-ladder-tilt.png)
+![A vertical section of the spark plug, mounted 9 mm off the rotation axis, with the axis tilted 3° towards the beam. With the error, horizontal edges are smeared vertically, most at the threads and the ground electrode far from the axis. After fit="translations" only faint smearing remains.](images/alignment-ladder-tilt.png)
 
-Fit `"tilt"` only if doubling remains after translations and roll. In this example it recovers the
-2° error to 0.017 px in 84 s, against 28 s for translations alone.
+Here the plug is mounted 9 mm off the axis so that its features sweep wide circles; a sample
+centred on the axis and symmetric about it is barely affected by a tilt at all. A 3° tilt, larger
+than a typical setup error, leaves the section 5.1% from the true-geometry image, and translations
+bring it to 1.8%. At 1° the figures are 2.8% and 1.1%. In parallel-beam tomography the roll matters
+far more than the tilt.
+
+In laminography a wrong tilt changes the projections much more, and the fit can separate it from
+translations: `fit=("translations", "tilt")` recovers a 2° laminography tilt error in the watch
+example to 0.017 px in 84 s, against 28 s for translations alone. Small laminography tilt errors
+still do little to the image: 0.5° leaves no visible artefact there, and the error has to reach
+about 2° before features double. In parallel-beam tomography the data tell a tilt from translations
+only through the small remainder, so a tilt fit there converges slowly and can stop well short of
+the true angle; rely on translations instead.
 
 `"tilt"` and `"roll"` are shared parameters in the same solve as the image and the per-view
 corrections, not an outer search over repeated alignments. They still need structure and angular
