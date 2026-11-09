@@ -84,8 +84,14 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
     remaining = iter(proposals)
 
     class Level:
-        def __init__(self, *_args, **_kwargs):
-            pass
+        def __init__(self, ops, *_args, **_kwargs):
+            self.ops, self.y, self.gain = ops, np.zeros((60, 1, 1)), np.ones(60)
+
+        def linearize(self, _state, _image):
+            return self.ops.linearize()
+
+        def refit(self, state, image, _sums):
+            return False, self.linearize(state, image)
 
         def image_penalty(self, _image):
             return 0.0
@@ -120,13 +126,17 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
             jnp.ones((60, 1, 1)),
             100.0,
             (60, 0),
+            # Normal equations whose solution is gain one and no background.
+            np.concatenate(
+                [np.tile(np.eye(3), (60, 1, 1)), np.tile([[1.0], [0], [0]], (60, 1, 1))], -1
+            ),
         ),
     )
     prior = SimpleNamespace(size=60, value=lambda *_: 0.0)
     monkeypatch.setattr(_solver, "_Level", Level)
     with jax.enable_x64(True):
-        _, fitted, record = _solver.solve(
-            np.zeros(1),
+        _, fitted, _, record = _solver.solve(
+            np.zeros((60, 1, 1)),
             None,
             prior,
             0.0,

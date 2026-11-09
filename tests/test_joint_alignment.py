@@ -192,7 +192,7 @@ def test_pose_normal_blocks_use_the_same_columns_as_the_schur_operator():
         measured = ops.pad_images(rng.normal(size=(len(angles), detector.nv, detector.nu)))
         precision = rng.uniform(0.1, 1.0, measured.shape).astype(np.float32)
         precision[ops.n :] = 0
-        _, _, sw, cached, score, blocks, _, _ = ops.linearize(
+        _, _, sw, cached, score, blocks, _, _, _ = ops.linearize(
             q, volume, measured, jnp.asarray(precision), 100.0
         )
         prediction = ops.project(ops.coefficients(ops.nominal, q, ops.valid), volume)

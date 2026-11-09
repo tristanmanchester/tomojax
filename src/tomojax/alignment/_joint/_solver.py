@@ -37,6 +37,45 @@ _POSE_TOL_PX = 0.003
 _MIN_OUTER = 4
 
 
+def _photometric(sums):
+    """Each view's gain and affine background fitting its projections to the prediction.
+
+    Least squares, per view, of the observations on the prediction, a constant
+    and a ramp down the detector rows: returns gains (views,) and backgrounds
+    (views, 2) for the constant and the ramp. Their means are removed (gain:
+    divided by): what all views share belongs to the image. A view without a
+    well-conditioned fit keeps gain one and no background.
+    """
+    sums = np.asarray(sums, np.float64)
+    gram, rhs = sums[..., :3], sums[..., 3]
+    scale = np.sqrt(np.maximum(np.einsum("nkk->nk", gram), 1e-300))
+    normal = gram / scale[:, :, None] / scale[:, None, :]
+    ok = np.linalg.cond(normal) < 1e8
+    eye = np.eye(3)[None]
+    solution = np.linalg.solve(np.where(ok[:, None, None], normal, eye), (rhs / scale)[..., None])
+    coefficients = np.where(ok[:, None], solution[..., 0] / scale, [1.0, 0.0, 0.0])
+    gain = np.clip(coefficients[:, 0] / np.mean(coefficients[ok, 0]) if ok.any() else 1.0, 0.5, 2.0)
+    background = coefficients[:, 1:] - (coefficients[ok, 1:].mean(0) if ok.any() else 0)
+    return gain, background
+
+
+def _rescaled(ops, y, sums):
+    """The step's gains and the observations with the refitted gain and background removed.
+
+    Returns (None, y) when the fit leaves every view unchanged.
+    """
+    gain, background = _photometric(sums)
+    if not (np.any(gain != 1) or np.any(background != 0)):
+        return None, y
+    rows = jnp.linspace(-1, 1, y.shape[-2], dtype=jnp.float32)[None, :, None]
+    b = jnp.asarray(background, jnp.float32)
+    n = ops.n
+    rescaled = (y[:n] - b[:, :1, None] - b[:, 1:, None] * rows) / jnp.asarray(gain, jnp.float32)[
+        :, None, None
+    ]
+    return gain, ops.pad_images(rescaled)
+
+
 def _gain_ratio(actual, predicted):
     """A non-descending model gives no evidence for decreasing LM damping."""
     return actual / predicted if predicted > 0 else 0.0
@@ -86,6 +125,7 @@ class _Level:
     ) -> None:
         self.ops, self.prior = ops, prior
         self.y, self.precision, self.lam, self.delta = y, precision, lam, delta
+        self.gain = np.ones(ops.n)
         self.tv_value = jax.jit(lambda x: tv.energy(x, eps, scales))
         self.conduct = jax.jit(lambda x: tv.conductance(x, eps, scales))
         self.diffuse = jax.jit(lambda x, d: tv.diffusion(x, d, scales))
@@ -140,6 +180,24 @@ class _Level:
             return jax.lax.fori_loop(0, iterations, fista, (x, x, jnp.asarray(1.0, jnp.float64)))[0]
 
         return run(jnp.zeros(self.ops.shape, jnp.float32), ops.prepare(q), y, precision, lipschitz)
+
+    def refit(self, c, x, sums):
+        """Refit each view's gain and background, then linearize at (c, x).
+
+        Views can differ by a gain and a background the line integrals do not
+        describe (flux, phase retrieval). Removing the fit to the current
+        prediction from the observations keeps them from looking like motion;
+        the next linearization and line search use the result. Returns the
+        whether any view changed, and the linearization.
+        """
+        gain, self.y = _rescaled(self.ops, self.y, sums)
+        if gain is not None:
+            self.gain = self.gain * gain
+        return gain is not None, self.linearize(c, x)
+
+    def linearize(self, c, x):
+        """The robust linearization at compact poses ``c`` and volume ``x``."""
+        return self.ops.linearize(self.ops.pad_poses(c), x, self.y, self.precision, self.delta)
 
     def trial(self, x, c, dx, dc, pose_weight, a, beta):
         """Objective after volume step a and pose step a * beta, with the new state."""
@@ -262,9 +320,7 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
     # expose or populate them; this is not a permanent active-set constraint.
     x = jnp.where(observed, x, 0)
     del observed
-    gx0, dd, sw, j, gr, gram, data, obstats = ops.linearize(
-        ops.pad_poses(c), x, y, precision, delta
-    )
+    gx0, dd, sw, j, gr, gram, data, obstats, sums = level.linearize(c, x)
     fisher = jnp.trace(gram, axis1=1, axis2=2)
     pose_weight = float(pose_sigma * jnp.sqrt(jnp.median(fisher)) * np.sqrt(2 * np.log(n)))
     f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
@@ -275,9 +331,10 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
             # Release the previous weights and columns first: two stack-sized sets
             # would not fit beside each other on a small device.
             del gx0, dd, sw, j, gr, gram
-            gx0, dd, sw, j, gr, gram, data, obstats = ops.linearize(
-                ops.pad_poses(c), x, y, precision, delta
-            )
+            changed, linear = level.refit(c, x, sums)
+            gx0, dd, sw, j, gr, gram, data, obstats, sums = linear
+            if changed:
+                f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
         result = level.step(x, c, (gx0, dd, sw, j, gr, gram), lm, pose_weight, f)
         if result is None:
             status = "line_search_stalled"
@@ -330,5 +387,6 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
         "final_pose_prior": final_prior,
         "final_image_prior": final_image_prior,
         "budget": asdict(budget),
+        "gain_range": [float(np.min(level.gain)), float(np.max(level.gain))],
     }
-    return x, c, record
+    return x, c, level.y[:n], record

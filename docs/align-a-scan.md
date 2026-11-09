@@ -61,7 +61,7 @@ everywhere in the slice, because every view is displaced by the same amount.
 ![The balance wheel with a 6-pixel centre error: each screw is drawn as a ring. After fit="centre" the screws are points again, matching the true geometry.](images/alignment-ladder-centre.png)
 
 `fit="centre"` estimates one number for parallel and laminography data and is the fastest fit:
-15 s here. Fit the centre first on a new instrument or after any change to the detector or stage.
+13 s here. Fit the centre first on a new instrument or after any change to the detector or stage.
 
 For cone data, `"centre"` also estimates the detector-v centre. The data determine it only weakly:
 a vertical detector offset looks almost the same as moving the image vertically, so the fit may
@@ -80,7 +80,7 @@ of the sample together.
 ![The balance wheel with drift and five slips between views: the screws are doubled. After fit="translations" the image matches the true geometry.](images/alignment-ladder-drift.png)
 
 The default, `fit="translations"`, removes the drift and slips in this example to 0.008 px in
-22 s. It also absorbs a centre error in parallel and laminography scans, so you do not need to fit
+21 s. It also absorbs a centre error in parallel and laminography scans, so you do not need to fit
 the centre separately first. If you request `"centre"` and `"translations"` together, the
 translations are given zero mean: a common translation and a centre offset describe the same
 parallel-ray geometry, and the data cannot tell them apart.
@@ -106,7 +106,7 @@ Slices at four heights show what the error does to the features themselves:
 
 Adding `"roll"` estimates one angle for the whole scan. In this example it recovers the 0.75° roll
 as 0.71°, and every slice then matches the true-geometry image to within 1.3% of its grey range.
-It takes 204 s, against 46 s for translations alone. The roll matters most where it is easiest to
+It takes 234 s, against 47 s for translations alone. The roll matters most where it is easiest to
 miss: away from the centre row it blurs away small defects, such as the bubble in the glass seal.
 On a parallel-beam instrument, roll is the setup error to look for first: a fraction of a degree is
 enough to blur the top and bottom of a tall sample.
@@ -121,7 +121,7 @@ has to reach about 2° before features double.
 ![The dial indices near the rim with a 2° laminography tilt error: each index is drawn as a pair of sharp stripes, and fit="translations" leaves it unchanged. After fit=("translations", "tilt") the indices match the true geometry.](images/alignment-ladder-tilt.png)
 
 Fit `"tilt"` only if doubling remains after translations and roll. In this example it recovers the
-2° error to 0.017 px in 97 s, against 30 s for translations alone.
+2° error to 0.017 px in 84 s, against 28 s for translations alone.
 
 `"tilt"` and `"roll"` are shared parameters in the same solve as the image and the per-view
 corrections, not an outer search over repeated alignments. They still need structure and angular
@@ -137,7 +137,7 @@ every view.
 ![The balance wheel with random rotations of 0.37° RMS between views: the screws are smeared. fit="translations" removes most of the blur and leaves a faint ring at the screws; fit=("translations", "rotations") matches the true geometry.](images/alignment-ladder-rotations.png)
 
 Fit rotations only when the residual is visible. On data without rotation they cost accuracy: on the
-drift example at 96 × 96 detector pixels they leave 0.080 px instead of 0.021 px. Their size prior is in angular units, so
+drift example at 96 × 96 detector pixels they leave 0.080 px instead of 0.022 px. Their size prior is in angular units, so
 changing the voxel size or binning does not make a rotation cheaper; the data must justify each
 one. On repetitive structures, such as a TEM grid, per-view rotations can lock onto a wrong
 orientation that matches the pattern. Check the fitted angles, and compare the image with the
@@ -169,7 +169,10 @@ The fit works on a bounded grid of at most 16 million voxels and a detector of a
 side, binned so that each working pixel is no wider than a voxel at the object. Supplying `grid=`
 keeps that grid and limits the binning instead. The fitted image extends a little above and below
 the grid, so material that moving views bring into the outer rows has somewhere to be; the
-returned volume is cropped back to the grid. Reconstruct `result.scan` at the resolution you need:
+returned volume is cropped back to the grid. Each view also gets its own gain and a background
+that is constant plus a ramp down the detector rows, refitted at every step: flux changes or
+phase-retrieval offsets between views would otherwise look like vertical motion. Only the
+differences between views are fitted; what all views share stays in the image. Reconstruct `result.scan` at the resolution you need:
 the alignment volume is not a final-resolution reconstruction.
 
 ## How the figures were made

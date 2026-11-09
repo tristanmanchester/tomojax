@@ -356,7 +356,7 @@ def fit_poses(
                 x = jax.image.resize(x, ops.shape, method="linear", antialias=False).astype(
                     jnp.float32
                 )
-            x, p, record = solve(
+            x, p, y, record = solve(
                 y,
                 precision,
                 prior,

@@ -63,6 +63,19 @@ def robust_batch(residual, columns, precision, delta):
     return (sw * r).astype(jnp.float32), sw, (columns * sw[:, None]).astype(jnp.float32)
 
 
+def photometric_sums(prediction, observed, precision):
+    """Per-view normal equations of the observations on [prediction, 1, v], FP64.
+
+    Returns (views, 3, 4): the weighted Gram matrix of the three basis images
+    beside their products with the observations; v runs from -1 to 1 down the rows.
+    """
+    w, p, y = (a.astype(jnp.float64) for a in (precision, prediction, observed))
+    v = jnp.broadcast_to(jnp.linspace(-1, 1, p.shape[-2])[:, None], p.shape[-2:])
+    basis = jnp.stack([p, jnp.ones_like(p), jnp.broadcast_to(v, p.shape)], 1)
+    gram = jnp.einsum("nkvu,nlvu,nvu->nkl", basis, basis, w)
+    return jnp.concatenate([gram, jnp.einsum("nkvu,nvu,nvu->nk", basis, y, w)[..., None]], -1)
+
+
 def column_score(columns, images):
     """Per-view J^T r, FP64."""
     return jnp.sum(columns.astype(jnp.float64) * images[:, None].astype(jnp.float64), axis=(-2, -1))
@@ -359,11 +372,11 @@ class Operators:
             # Quantizing J after these reductions makes the Schur model inconsistent.
             score, gram = column_score(j, res), column_gram(j)
             out = (sw, j, score, gram, robust_value(r, wb, delta))
-            return (gx, dd), (*out, valid_px, down)
+            return (gx, dd), (*out, valid_px, down, photometric_sums(raw[:, 0], yb, wb))
 
         batches = (*self.views(q), self.batches(y), self.batches(precision))
         state, out = jax.lax.scan(step, (self._zeros(), self._zeros()), batches)
-        sw, j, g, gram, e, valid, down = out
+        sw, j, g, gram, e, valid, down, sums = out
         n, d, k = self.n, self.detector, self.dofs
         return (
             *state,
@@ -373,6 +386,7 @@ class Operators:
             gram.reshape(self.padded_n, k, k)[:n],
             jnp.sum(e),
             jnp.stack([jnp.sum(valid), jnp.sum(down)]),
+            sums.reshape(self.padded_n, 3, 4)[:n],
         )
 
     def _objective(self, q, x, y, precision, delta):

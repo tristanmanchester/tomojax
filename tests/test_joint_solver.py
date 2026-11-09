@@ -8,7 +8,10 @@ import pytest
 import tomojax as tj
 from tomojax.alignment._joint import _solver, _tv  # check-public-imports: allow-private
 from tomojax.alignment._joint._fit import _gauge  # check-public-imports: allow-private
-from tomojax.alignment._joint._operators import Operators  # check-public-imports: allow-private
+from tomojax.alignment._joint._operators import (  # check-public-imports: allow-private
+    Operators,
+    photometric_sums,
+)
 from tomojax.alignment._joint._pose import MotionPrior  # check-public-imports: allow-private
 from tomojax.alignment._joint._solver import (
     Budget,
@@ -54,7 +57,7 @@ def test_initial_support_and_optional_tv_work(monkeypatch, weight, interpolation
         image = jnp.asarray(np.random.default_rng(54).uniform(0.1, 0.3, (3, 3, 4)), jnp.float32)
         q = ops.pad_poses(jnp.zeros((8, 5)))
         observations = np.asarray(ops.project(ops.coefficients(ops.nominal, q, ops.valid), image))
-        fitted, _, record = solve(
+        fitted, _, _, record = solve(
             observations,
             None,
             prior,
@@ -127,3 +130,24 @@ def test_initializer_does_not_capture_observations(monkeypatch):
 @pytest.mark.parametrize(("predicted", "expected"), [(2.0, 0.5), (0.0, 0.0), (-2.0, 0.0)])
 def test_non_descending_model_cannot_justify_less_damping(predicted, expected):
     assert _solver._gain_ratio(1.0, predicted) == expected
+
+
+def test_per_view_gain_and_background_are_recovered_up_to_their_means():
+    rng = np.random.default_rng(311)
+    prediction = rng.uniform(0, 1, (6, 9, 7))
+    gain = np.array([1.0, 1.1, 0.9, 1.05, 0.95, 1.0])
+    background = rng.normal(0, 0.1, (6, 2))
+    rows = np.linspace(-1, 1, 9)[None, :, None]
+    observed = (
+        gain[:, None, None] * prediction + background[:, :1, None] + background[:, 1:, None] * rows
+    )
+    precision = np.ones_like(prediction)
+    precision[2, 3:5] = 0  # missing rows do not bias the fit
+    observed[2, 3:5] = 1e3
+    with jax.enable_x64(True):
+        sums = photometric_sums(
+            jnp.asarray(prediction), jnp.asarray(observed), jnp.asarray(precision)
+        )
+    fitted_gain, fitted_background = _solver._photometric(sums)
+    np.testing.assert_allclose(fitted_gain, gain / gain.mean(), rtol=1e-9)
+    np.testing.assert_allclose(fitted_background, background - background.mean(0), atol=1e-9)
