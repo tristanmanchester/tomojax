@@ -10,7 +10,6 @@ from tomojax.alignment._joint import _solver, _tv  # check-public-imports: allow
 from tomojax.alignment._joint._fit import _gauge  # check-public-imports: allow-private
 from tomojax.alignment._joint._operators import Operators  # check-public-imports: allow-private
 from tomojax.alignment._joint._pose import MotionPrior  # check-public-imports: allow-private
-from tomojax.alignment._joint._projection import PackedMask  # check-public-imports: allow-private
 from tomojax.alignment._joint._solver import (
     Budget,
     _Level,
@@ -77,11 +76,9 @@ def test_initial_support_and_optional_tv_work(monkeypatch, weight, interpolation
     assert set(calls) == (set(names) if weight else set())
 
 
-def test_initializer_does_not_capture_native_membership_or_observations(monkeypatch):
+def test_initializer_does_not_capture_observations(monkeypatch):
     grid, detector = tj.Grid(2, 2, 2, 1, 1, 1), tj.Detector(2, 2, 1, 1)
     geometry = tj.LaminographyGeometry(grid, detector, np.arange(8) * 45.0, tilt_deg=-30)
-    mask = np.ones((8, 16, 16), bool)
-    mask[3, 4, 5] = False
     with jax.enable_x64(True):
         nominal = np.asarray(stack_view_poses(geometry, 8))
         ops = Operators(
@@ -90,8 +87,6 @@ def test_initializer_does_not_capture_native_membership_or_observations(monkeypa
             nominal,
             lever=2,
             native=(1, 1),
-            ray_binning=(8, 8),
-            pixel_mask=PackedMask(jnp.packbits(mask, axis=-1, bitorder="little"), (16, 16)),
         )
         q = ops.pad_poses(np.zeros((8, 5)))
         prior = MotionPrior(
@@ -126,7 +121,6 @@ def test_initializer_does_not_capture_native_membership_or_observations(monkeypa
         level.initial_volume(q, 1.0, 1)
         monkeypatch.setattr(jax, "jit", original_jit)
         constants = captured["initializer"]
-        assert all(a.dtype != jnp.uint8 for a in constants)
         assert all(a is not y and a is not precision for a in constants)
 
 

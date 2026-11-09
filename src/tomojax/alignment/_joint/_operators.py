@@ -15,7 +15,6 @@ reused within each Schur matvec. Scores, Gram blocks and matvecs use those same
 columns. The data loss is a quadratic core with a log tail.
 """
 
-from functools import partial
 import math
 from typing import NamedTuple
 
@@ -25,7 +24,6 @@ import jax.numpy as jnp
 from ._parameters import Parameters
 from ._projection import (
     Coefficients,
-    PackedMask,
     Projection,
     cone_parameter_scales,
     posed as _posed,
@@ -105,8 +103,6 @@ class Operators:
         frames=None,
         scales=None,
         interpolation="linear",
-        ray_binning=(1, 1),
-        pixel_mask=None,
         parameters=None,
         detector_roll_deg=0.0,
         detector_pivot=None,
@@ -124,13 +120,11 @@ class Operators:
             detector,
             cone=frames is not None,
             interpolation=interpolation,
-            ray_binning=ray_binning,
         )
         self.backend, self.dofs = self.projection.backend, self.parameters.k
-        rays = self.projection.ray_detector
-        # Bound the temporary native-ray value/pose columns to about 32 MiB
-        # when more than one view fits. Only reduced observed columns persist.
-        column_bytes = rays.nv * rays.nu * (1 + self.dofs) * 4
+        # Bound the temporary value/pose columns to about 32 MiB when more
+        # than one view fits.
+        column_bytes = detector.nv * detector.nu * (1 + self.dofs) * 4
         self.batch = min(batch_size, self.n, max(1, 32 * 2**20 // column_bytes))
         self.nb = math.ceil(self.n / self.batch)
         self.padded_n = self.nb * self.batch
@@ -155,13 +149,6 @@ class Operators:
         if frames is not None:
             frames = jnp.broadcast_to(jnp.asarray(frames, jnp.float32), (self.n, 4, 3))
             self.frames = jnp.concatenate([frames, jnp.repeat(frames[:1], extra, axis=0)])
-        self.pixel_mask = None
-        if pixel_mask is not None:
-            bits = jnp.asarray(pixel_mask.bits, jnp.uint8)
-            self.pixel_mask = PackedMask(
-                jnp.pad(bits, ((0, extra), (0, 0), (0, 0))) if extra else bits,
-                pixel_mask.shape,
-            )
         self.valid = jnp.arange(self.padded_n) < self.n
         self.affine = None
         if frames is None and not {"tilt", "roll", "rotations"}.intersection(self.parameters.fit):
@@ -169,12 +156,11 @@ class Operators:
             # its exact affine map once; no pose-matrix AD or inverse belongs in
             # later image/pose iterations. The projector and transpose are shared.
             self.affine = jax.jit(self._affine_geometry)(self.nominal, self.scales)
-        # Keep masks dynamic; image-only compiled loops receive them in frozen packets.
         self._geometry = jax.jit(self._geometry)
-        self.sensitivity = partial(jax.jit(self._sensitivity), self.pixel_mask)
+        self.sensitivity = jax.jit(self._sensitivity)
         self._initial_gradient = jax.jit(self._initial_gradient)
-        self.linearize = partial(jax.jit(self._linearize), self.pixel_mask)
-        self.objective = partial(jax.jit(self._objective), self.pixel_mask)
+        self.linearize = jax.jit(self._linearize)
+        self.objective = jax.jit(self._objective)
         self._weighted_forward = jax.jit(self._weighted_forward)
         self._weighted_back = jax.jit(self._weighted_back)
         self._pose_back = jax.jit(self._pose_back)
@@ -207,34 +193,34 @@ class Operators:
         return jax.tree.map(lambda x: x.reshape((self.nb, self.batch, *x.shape[1:])), a)
 
     def prepare(self, q):
-        """Freeze geometry while sharing the immutable packed input membership."""
+        """Freeze geometry for the image-only loops."""
         if isinstance(q, Coefficients):
             return q
-        return self._geometry(q)._replace(pixel_mask=self.pixel_mask)
+        return self._geometry(q)
 
     def _geometry(self, q):
         """Freeze the small coefficient packet for one linearized image solve."""
-        packets = jax.lax.map(lambda z: self.coefficients(*z), self.views(q, None))
+        packets = jax.lax.map(lambda z: self.coefficients(*z), self.views(q))
         return jax.tree.map(lambda a: a.reshape((self.padded_n, *a.shape[2:])), packets)
 
     def _affine_geometry(self, nominal, scales):
         q = jnp.zeros((self.padded_n, self.dofs), jnp.float32)
-        cf = self.coefficients(nominal, q, self.valid, scales, pixel_mask=self.pixel_mask).rays
+        cf = self.coefficients(nominal, q, self.valid, scales).rays
         tangent = jnp.zeros((self.padded_n, self.dofs, 14), jnp.float32)
         angle = jnp.deg2rad(jnp.float32(self.detector_roll_deg))
         c, s = jnp.cos(angle), jnp.sin(angle)
-        rays = self.projection.ray_detector
+        d = self.detector
         # A lab translation projected onto the fixed detector u/v basis moves
-        # the coefficient offsets by minus that many native ray-grid samples.
+        # the coefficient offsets by minus that many detector samples.
         for column, coordinate in enumerate(self.parameters.local):
             physical = scales[:, coordinate]
-            u = physical * (c if coordinate == 3 else s) / rays.du
-            v = physical * (-s if coordinate == 3 else c) / rays.dv
+            u = physical * (c if coordinate == 3 else s) / d.du
+            v = physical * (-s if coordinate == 3 else c) / d.dv
             tangent = tangent.at[:, column, 4].set(-cf[:, 1] * u - cf[:, 2] * v)
             tangent = tangent.at[:, column, 8].set(-cf[:, 5] * u - cf[:, 6] * v)
         if self.parameters.nglobal:
             # Parallel centre u is a positive lab-x detector displacement.
-            u, v = c * self.native[0] / rays.du, -s * self.native[0] / rays.dv
+            u, v = c * self.native[0] / d.du, -s * self.native[0] / d.dv
             tangent = tangent.at[:, -1, 4].set(cf[:, 1] * u + cf[:, 2] * v)
             tangent = tangent.at[:, -1, 8].set(cf[:, 5] * u + cf[:, 6] * v)
         return AffineGeometry(cf, tangent)
@@ -255,7 +241,7 @@ class Operators:
         """Apply the image/pose cross block to pose increments."""
         return self._pose_back(self.prepare(q), sw, j, p)
 
-    def coefficients(self, nominal, q, valid, scales=None, frames=None, pixel_mask=None):
+    def coefficients(self, nominal, q, valid, scales=None, frames=None):
         """One batch's physical coefficients and explicit padded-view mask."""
         if isinstance(nominal, AffineGeometry):
             offsets = jnp.einsum(
@@ -265,7 +251,7 @@ class Operators:
                 precision=jax.lax.Precision.HIGHEST,
             )
             rays = nominal.rays.at[:, 4].add(offsets[:, 0]).at[:, 8].add(offsets[:, 1])
-            return Coefficients(rays, valid, pixel_mask)
+            return Coefficients(rays, valid)
         scales = self.default_scales if scales is None else scales
         poses, frames = self.parameters.geometry(
             nominal,
@@ -277,7 +263,7 @@ class Operators:
             detector_roll_deg=self.detector_roll_deg,
             detector_pivot=self.detector_pivot,
         )
-        return self.projection.coefficients(poses, valid, frames, pixel_mask)
+        return self.projection.coefficients(poses, valid, frames)
 
     def _tangent(self, nominal, q, valid, scales=None, frames=None):
         del valid  # the coefficient packet masks predictions and columns together
@@ -309,9 +295,9 @@ class Operators:
         """Projections of one coefficient batch."""
         return self.projection.project(cf, x)
 
-    def columns(self, nominal, q, valid, x, *, scales=None, frames=None, pixel_mask=None):
+    def columns(self, nominal, q, valid, x, *, scales=None, frames=None):
         """Projections and pose derivatives, (view, 1 + dofs, v, u)."""
-        cf = self.coefficients(nominal, q, valid, scales, frames, pixel_mask)
+        cf = self.coefficients(nominal, q, valid, scales, frames)
         tangent = self._tangent(nominal, q, valid, scales, frames)
         return self.projection.columns(cf, x, tangent)
 
@@ -322,7 +308,7 @@ class Operators:
     def _zeros(self):
         return jnp.zeros(self.shape, jnp.float32)
 
-    def views(self, q, pixel_mask):
+    def views(self, q):
         """Batched geometry inputs, sharing the fixed affine map when angles are held."""
         return (
             self.batches(self.nominal if self.affine is None else self.affine),
@@ -330,17 +316,16 @@ class Operators:
             self.batches(self.valid),
             self.batches(self.scales),
             None if self.frames is None else self.batches(self.frames),
-            self.batches(pixel_mask),
         )
 
-    def _sensitivity(self, pixel_mask, q):
+    def _sensitivity(self, q):
         weights = jnp.ones((self.batch, self.detector.nv, self.detector.nu), jnp.float32)
 
         def step(a, z):
             cf = self.coefficients(*z)
             return self.projection.majorizer(cf, weights, a), None
 
-        raw = jax.lax.scan(step, self._zeros(), self.views(q, pixel_mask))[0]
+        raw = jax.lax.scan(step, self._zeros(), self.views(q))[0]
         top = jnp.maximum(raw.max(), jnp.float32(1e-8))
         return top, raw > 0
 
@@ -356,12 +341,12 @@ class Operators:
         batches = (self.batches(q), self.batches(y), self.batches(precision))
         return jax.lax.scan(step, self._zeros(), batches)[0]
 
-    def _linearize(self, pixel_mask, q, x, y, precision, delta):
+    def _linearize(self, q, x, y, precision, delta):
         def step(state, z):
             gx, dd = state
-            nominal, qb, valid, scales, frames, mask, yb, wb = z
+            nominal, qb, valid, scales, frames, yb, wb = z
             wb = self.batch_precision(wb, valid)
-            cf = self.coefficients(nominal, qb, valid, scales, frames, mask)
+            cf = self.coefficients(nominal, qb, valid, scales, frames)
             tangent = self._tangent(nominal, qb, valid, scales, frames)
             raw = self.projection.columns(cf, x, tangent)
             r = raw[:, 0] - yb
@@ -376,7 +361,7 @@ class Operators:
             out = (sw, j, score, gram, robust_value(r, wb, delta))
             return (gx, dd), (*out, valid_px, down)
 
-        batches = (*self.views(q, pixel_mask), self.batches(y), self.batches(precision))
+        batches = (*self.views(q), self.batches(y), self.batches(precision))
         state, out = jax.lax.scan(step, (self._zeros(), self._zeros()), batches)
         sw, j, g, gram, e, valid, down = out
         n, d, k = self.n, self.detector, self.dofs
@@ -390,14 +375,14 @@ class Operators:
             jnp.stack([jnp.sum(valid), jnp.sum(down)]),
         )
 
-    def _objective(self, pixel_mask, q, x, y, precision, delta):
+    def _objective(self, q, x, y, precision, delta):
         def step(total, z):
-            nominal, qb, valid, scales, frames, mask, yb, wb = z
+            nominal, qb, valid, scales, frames, yb, wb = z
             wb = self.batch_precision(wb, valid)
-            cf = self.coefficients(nominal, qb, valid, scales, frames, mask)
+            cf = self.coefficients(nominal, qb, valid, scales, frames)
             return total + robust_value(self.project(cf, x) - yb, wb, delta), None
 
-        batches = (*self.views(q, pixel_mask), self.batches(y), self.batches(precision))
+        batches = (*self.views(q), self.batches(y), self.batches(precision))
         return jax.lax.scan(step, jnp.asarray(0.0, jnp.float64), batches)[0]
 
     def _weighted_forward(self, q, x, sw, j):

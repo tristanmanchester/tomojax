@@ -209,7 +209,7 @@ def evaluate(n: int, fetched: dict[str, Any], args: argparse.Namespace) -> dict[
 
     original, corrected = scan("original"), scan("corrected")
     start = time.perf_counter()
-    result = tj.align(original, levels=args.levels)
+    result = tj.align(original)
     summary: dict[str, Any] = {"walnut": n, "align_seconds": time.perf_counter() - start}
     aligned = _orbit_one_fixed(result.scan, original)
     per = len(original.angles) // 3
@@ -332,7 +332,6 @@ def main() -> None:
     parser.add_argument("--walnuts", default="1-42", help="Walnut numbers, e.g. 1-10,17")
     parser.add_argument("--every", type=int, default=4, help="Use every Nth view")
     parser.add_argument("--bin", type=int, default=2, help="Average N x N detector pixels")
-    parser.add_argument("--levels", default="4,2", help="Alignment resolution levels")
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument(
         "--no-reference",
@@ -342,7 +341,6 @@ def main() -> None:
     )
     parser.add_argument("--previews", action="store_true", help="Write a slice PNG per walnut")
     args = parser.parse_args()
-    args.levels = tuple(int(f) for f in args.levels.split(","))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     # The scanner's TIFFs carry a malformed colour-map tag, which tifffile skips.
     logging.getLogger("tifffile").setLevel(logging.CRITICAL)

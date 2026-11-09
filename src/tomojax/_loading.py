@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from tomojax._data import calibration_issues
-from tomojax._detector_sampling import block_mean_record, sampling_factors
 from tomojax._loading_geometry import frame_geometry, frame_output_grid
 from tomojax._scan import (
     Scan,
@@ -27,7 +26,6 @@ from tomojax._scan import (
     check_shape,
     detector_window,
     rebuild,
-    record_of,
     scan_from_record,
     views_of,
 )
@@ -258,8 +256,6 @@ class Frames:
         """
         from tomojax.corrections import correct_frames
 
-        if binning > 1:
-            sampling_factors(self.source)
         done = correct_frames(
             self.counts,
             flats=self.flats,
@@ -279,12 +275,7 @@ class Frames:
         )
         geometry = binned_geometry(geometry, binning) if binning > 1 else geometry
         geometry = frame_output_grid(geometry, self.source, binning=binning)
-        scan = Scan(done.projections, geometry, self.name, done.records, self.source)
-        return (
-            replace(scan, source=block_mean_record(record_of(scan), (binning, binning)))
-            if binning > 1
-            else scan
-        )
+        return Scan(done.projections, geometry, self.name, done.records, self.source)
 
     def cropped(self, rows: slice, cols: slice) -> Frames:
         """These frames' block of detector ``rows`` and ``cols``, the detector moved to match.

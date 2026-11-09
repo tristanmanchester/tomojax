@@ -39,7 +39,7 @@
     "src/tomojax/recon/fista_tv.py": 868
   },
   "long_functions": {
-    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 144,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 139,
     "src/tomojax/alignment/_joint/_solver.py::solve": 101,
     "src/tomojax/cli/simulate.py::_build_parser": 106,
     "src/tomojax/core/cuda_projector/_loss.py::forward_project_residual_sse_T_cuda": 119,
@@ -57,9 +57,9 @@
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
   "code_lines": {
-    "(modules)": 2857,
+    "(modules)": 2791,
     "_data": 2074,
-    "alignment": 2734,
+    "alignment": 2634,
     "backends": 617,
     "cli": 2322,
     "core": 13797,
@@ -112,5 +112,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 124
+  "test_private_imports": 118
 }

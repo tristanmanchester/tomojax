@@ -36,13 +36,9 @@ def main() -> None:
     scan = load_scan(args.walnut, orbits=(1, 2, 3), every=args.every, binning=2, size=501)
     print(f"{len(scan.angles)} views of {scan.detector.nv} x {scan.detector.nu} pixels")
 
-    # Per-view pose alignment of all three orbits together; levels 4 and 2 are
-    # coarse-to-fine binnings of the grid and detector. The full-resolution
-    # level needs more memory than an 8 GB GPU has (tj.align would stop before
-    # it on its own), and these two already register the orbits: on a 48 GB
-    # GPU, adding it moved no orbit's height by more than a micrometre, left
-    # the reconstruction's error unchanged and made alignment five times slower.
-    result = tj.align(scan, levels=(4, 2))
+    # Per-view translations of all three orbits together, fitted jointly with
+    # one image on a bounded working grid.
+    result = tj.align(scan)
 
     # Each view's vertical correction (the dz pose column), averaged per orbit.
     shift = (result.scan.poses - scan.poses)[:, 4].reshape(3, -1).mean(axis=1)

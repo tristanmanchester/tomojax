@@ -10,6 +10,7 @@ from tomojax import _smooth_alignment as automatic
 
 # check-public-imports: allow-private
 from tomojax.alignment._joint import working_scale
+from tomojax.alignment._joint._fit import _finest  # check-public-imports: allow-private
 from tomojax.geometry import grid_volume_origin
 
 
@@ -22,6 +23,8 @@ def test_working_scale_is_bounded_and_keeps_the_support(shape, detector_shape):
     assert work.nx * work.ny * work.nz <= 16_000_000
     assert max(nu, nv) // dbin <= 320 or dbin == min(nu, nv)
     assert all(min(nu, nv) // (dbin * b) >= 1 for b in bins)
+    # Every working ray's footprint is at most one working voxel.
+    assert dbin <= _finest(work) * (1 + 1e-9)
     bounds = []
     for g in (grid, work):
         pitch = np.array((g.vx, g.vy, g.vz))
@@ -39,19 +42,23 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
     supplied = tj.Grid(7, 9, 5, 0.7, 1.1, 0.9) if explicit else None
     shifts = np.stack([np.sin(scan.angles), np.cos(scan.angles)], 1)
 
-    def fit(projections, nominal, g, d, *, keep_grid):
+    table = np.zeros((25, 6))
+    table[:, 3:5] = shifts
+
+    def fit(projections, nominal, g, d, *, fit, keep_grid, frames, detector_roll_deg):
         assert projections is scan.projections and d == detector and keep_grid == explicit
         assert g == (supplied or grid) and nominal.shape == (25, 4, 4)
-        return np.zeros((g.nz, g.ny, g.nx), np.float32), g, shifts, {"detector_binning": 1}
+        assert fit == "translations" and frames is None and detector_roll_deg == 0
+        volume = np.zeros((g.nz, g.ny, g.nx), np.float32)
+        return volume, g, table, {"fit": ["translations"], "corrections": {}}
 
     monkeypatch.setattr(automatic, "fit_poses", fit)
     result = automatic.reconstruct_with_motion(scan, reconstruct=None, grid=supplied)
     assert result.scan.projections is scan.projections and result.scan.detector == detector
-    np.testing.assert_allclose(result.scan.poses[:, 3], 1.5 * shifts[:, 0])
-    np.testing.assert_allclose(result.scan.poses[:, 4], 0.5 * shifts[:, 1])
+    np.testing.assert_allclose(result.scan.poses[:, 3:5], shifts)
     np.testing.assert_array_equal(result.scan.poses[:, [0, 1, 2, 5]], 0)
     np.testing.assert_allclose(result.scan.geometry.axis_unit_lab, scan.geometry.axis_unit_lab)
-    assert result.info["automatic"]["geometry"] == "declared"
+    assert result.info["method"] == "joint_volume_pose" and result.info["calibration"] == {}
     assert result.scan.grid == (supplied or grid)
     assert scan.source is None
 
@@ -62,7 +69,7 @@ def test_missing_axis_is_not_silently_inferred():
     scan = replace(scan, source=automatic.record_of(scan))
     scan.source.geometry_metadata["acquisition"] = {"geometry_status": "not_recorded"}
     for operation in (tj.align, tj.reconstruct):
-        with pytest.raises(ValueError, match="declared geometry"):
+        with pytest.raises(ValueError, match="declared acquisition geometry"):
             operation(scan)
 
 
@@ -83,7 +90,7 @@ def test_automatic_facades_and_saved_pose_reuse(kind, operation, tmp_path):
     result = operation(scan)
     assert np.isfinite(result.volume).all()
     assert result.scan.projections is scan.projections
-    assert result.info["automatic"]["pose_model"] == "spline_with_jumps"
+    assert result.info["fit"] == ["translations"]
     tj.save(tmp_path / "alignment.nxs", result)
     reused = tj.load(tmp_path / "alignment.nxs")
     expected = result.scan.poses
@@ -95,3 +102,16 @@ def test_automatic_facades_and_saved_pose_reuse(kind, operation, tmp_path):
 
     again = automatic.reconstruct_with_motion(reused, reconstruct=reconstruct)
     assert again.info["automatic"]["geometry"] == "preserved_pose_corrections"
+
+
+@pytest.mark.parametrize("keep_grid", [False, True])
+def test_working_rays_sample_every_voxel(keep_grid):
+    # A 656-pixel detector bins by 3; a grid at the detector pitch must follow it,
+    # and a kept grid at that pitch must stop the binning instead.
+    grid = tj.Grid(656, 656, 104, 4, 4, 4)
+    detector = tj.Detector(656, 104, 4, 4)
+    work, dbin, _ = working_scale(grid, detector, keep_grid=keep_grid)
+    assert dbin * detector.du <= work.vz * (1 + 1e-9)
+    assert (work == grid) if keep_grid else dbin == 3
+    _, cone_bin, _ = working_scale(grid, detector, keep_grid=True, magnification=2)
+    assert cone_bin == 2

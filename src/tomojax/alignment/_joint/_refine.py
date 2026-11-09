@@ -11,8 +11,6 @@ where a view's non-geometric residual energy is ordinary for its neighbours,
 and lets an inconsistent view move.
 """
 
-from functools import partial
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -100,40 +98,39 @@ class _EdgeObjective:
     def __init__(self, ops) -> None:
         self.ops = ops
         self.filter = EdgeFilter(ops.ratios)
-        self.stats = partial(jax.jit(self._stats), ops.pixel_mask)
-        self.value = partial(jax.jit(self._value), ops.pixel_mask)
-        self.consistency = partial(jax.jit(self._consistency), ops.pixel_mask)
-        self.scale = partial(jax.jit(self._scale), ops.pixel_mask)
+        self.stats = jax.jit(self._stats)
+        self.value = jax.jit(self._value)
+        self.consistency = jax.jit(self._consistency)
+        self.scale = jax.jit(self._scale)
 
-    def _batches(self, q, y, precision, pixel_mask):
+    def _batches(self, q, y, precision):
         o = self.ops
         return (
-            *o.views(q, pixel_mask),
+            *o.views(q),
             o.batches(y),
             o.batches(precision),
         )
 
     def _residual(self, z, x):
-        nominal, qb, valid, scales, frames, mask, yy, w = z
+        nominal, qb, valid, scales, frames, yy, w = z
         w = self.ops.batch_precision(w, valid)
         return self.filter.forward(
-            self.ops.project(self.ops.coefficients(nominal, qb, valid, scales, frames, mask), x)
-            - yy,
+            self.ops.project(self.ops.coefficients(nominal, qb, valid, scales, frames), x) - yy,
             w,
         )
 
-    def _stats(self, pixel_mask, q, x, y, precision, delta):
+    def _stats(self, q, x, y, precision, delta):
         o, h = self.ops, self.filter
 
         def step(z):
-            nominal, qb, valid, scales, frames, mask, yy, w = z
+            nominal, qb, valid, scales, frames, yy, w = z
             w = o.batch_precision(w, valid)
-            raw = o.columns(nominal, qb, valid, x, scales=scales, frames=frames, pixel_mask=mask)
+            raw = o.columns(nominal, qb, valid, x, scales=scales, frames=frames)
             r = h.forward(raw[:, 0] - yy, w)
             res, _, jw = robust_batch(r, h.forward(raw[:, 1:], w[:, None]), w, delta)
             return column_score(jw, res), column_gram(jw), robust_value(r, w, delta)
 
-        g, gram, energy = jax.lax.map(step, self._batches(q, y, precision, pixel_mask))
+        g, gram, energy = jax.lax.map(step, self._batches(q, y, precision))
         n, k = o.n, g.shape[-1]
         return (
             o.parameters.reduce_score(g.reshape(o.padded_n, k)[:n]),
@@ -141,23 +138,21 @@ class _EdgeObjective:
             jnp.sum(energy),
         )
 
-    def _value(self, pixel_mask, q, x, y, precision, delta):
+    def _value(self, q, x, y, precision, delta):
         def step(total, z):
             w = self.ops.batch_precision(z[-1], z[2])
             return total + robust_value(self._residual(z, x), w, delta), None
 
-        return jax.lax.scan(
-            step, jnp.asarray(0.0, jnp.float64), self._batches(q, y, precision, pixel_mask)
-        )[0]
+        return jax.lax.scan(step, jnp.asarray(0.0, jnp.float64), self._batches(q, y, precision))[0]
 
-    def _consistency(self, pixel_mask, q, x, y, precision):
+    def _consistency(self, q, x, y, precision):
         """Per-view mean energy of the smooth residual left after the best pose step."""
         o, h = self.ops, self.filter
 
         def step(z):
-            nominal, qb, valid, scales, frames, mask, yy, w = z
+            nominal, qb, valid, scales, frames, yy, w = z
             w = o.batch_precision(w, valid)
-            raw = o.columns(nominal, qb, valid, x, scales=scales, frames=frames, pixel_mask=mask)
+            raw = o.columns(nominal, qb, valid, x, scales=scales, frames=frames)
             r, j = raw[:, 0] - yy, raw[:, 1:]
             gram = jnp.einsum("bcvu,bdvu,bvu->bcd", j, j, w, precision=jax.lax.Precision.HIGHEST)
             score = jnp.einsum("bcvu,bvu,bvu->bc", j, r, w, precision=jax.lax.Precision.HIGHEST)
@@ -169,9 +164,9 @@ class _EdgeObjective:
             mass = jnp.maximum(jnp.sum(w, axis=(-1, -2)), 1.0)
             return jnp.sum(w * photometric**2, axis=(-1, -2)) / mass
 
-        return jax.lax.map(step, self._batches(q, y, precision, pixel_mask)).reshape(-1)[: o.n]
+        return jax.lax.map(step, self._batches(q, y, precision)).reshape(-1)[: o.n]
 
-    def _scale(self, pixel_mask, q, x, y, precision):
+    def _scale(self, q, x, y, precision):
         """Median over views of each view's MAD of the filtered residual."""
 
         def step(z):
@@ -181,7 +176,7 @@ class _EdgeObjective:
             return 1.482602218505602 * jnp.nanmedian(jnp.abs(r - med), axis=(-1, -2))
 
         return jnp.nanmedian(
-            jax.lax.map(step, self._batches(q, y, precision, pixel_mask)).reshape(-1)[: self.ops.n]
+            jax.lax.map(step, self._batches(q, y, precision)).reshape(-1)[: self.ops.n]
         )
 
 

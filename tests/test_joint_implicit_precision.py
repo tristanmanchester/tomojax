@@ -30,7 +30,6 @@ def test_implicit_precision_matches_explicit_ones_in_joint_and_edge_objectives(c
             batch_size=2,
             frames=frames if cone else None,
             interpolation="linear" if cone else "cubic",
-            ray_binning=(2, 2),
         )
         assert ops.pad_precision(None) is None
         explicit = ops.pad_precision(np.ones((3, detector.nv, detector.nu), np.float32))

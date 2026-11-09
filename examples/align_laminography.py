@@ -21,7 +21,7 @@ def main() -> None:
     scan = tj.load_frames(args.input).corrected()
     result = tj.align(scan)
     print(result.scan)
-    print("Automatic outcome:", result.info.get("automatic"))
+    print("Final level:", result.info["levels"][-1]["status"])
     if args.output is not None:
         tj.save(args.output, result)
         print(f"wrote {args.output}")

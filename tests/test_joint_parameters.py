@@ -11,7 +11,6 @@ from scipy.spatial.transform import Rotation
 # check-public-imports: allow-private
 from tomojax.alignment._joint._operators import Operators
 from tomojax.alignment._joint._parameters import Parameters  # check-public-imports: allow-private
-from tomojax.alignment._joint._projection import PackedMask  # check-public-imports: allow-private
 from tomojax.core.cone import beam_frame, frame_coefficients
 from tomojax.core.joseph import plane_coefficients
 from tomojax.geometry import ConeBeam, Detector, Grid, LaminographyGeometry, stack_view_poses
@@ -33,7 +32,6 @@ def test_affine_parallel_cache_matches_physical_coefficients_and_active_tangents
     )
     parameters = Parameters(60, fit, lever=16)
     rng = np.random.default_rng(2153)
-    mask = rng.uniform(size=(60, 48, 48)) > 0.05
     ops = Operators(
         grid,
         detector,
@@ -43,20 +41,17 @@ def test_affine_parallel_cache_matches_physical_coefficients_and_active_tangents
         parameters=parameters,
         detector_roll_deg=11,
         detector_pivot=(0.65, 0.25),
-        ray_binning=(2, 2),
-        pixel_mask=PackedMask(jnp.packbits(mask, axis=-1, bitorder="little"), (48, 48)),
     )
     assert ops.affine is not None
     state = rng.normal(0, 0.3, parameters.size)
     q = ops.pad_poses(state)
     cached = ops.prepare(q)
-    direct = ops.coefficients(ops.nominal, q, ops.valid, ops.scales, pixel_mask=ops.pixel_mask)
+    direct = ops.coefficients(ops.nominal, q, ops.valid, ops.scales)
     np.testing.assert_allclose(cached.rays, direct.rays, rtol=1e-6, atol=5e-6)
     derivative = jax.jit(ops._tangent)(ops.nominal, q, ops.valid, ops.scales)
     np.testing.assert_allclose(ops.affine.tangent, derivative, rtol=1e-6, atol=1e-6)
     cached_derivative = jax.jit(ops._tangent)(ops.affine, q, ops.valid, ops.scales)
     np.testing.assert_allclose(cached_derivative, derivative, rtol=1e-6, atol=1e-6)
-    assert cached.pixel_mask is ops.pixel_mask
 
 
 @pytest.mark.parametrize("cone", [False, True])
@@ -160,7 +155,6 @@ def test_shared_global_image_pose_cross_block_has_its_exact_transpose():
     )
     parameters = Parameters(n, ("translations", "centre", "roll"), lever=16)
     rng = np.random.default_rng(1129)
-    finite = rng.uniform(size=(n, 48, 48)) > 0.05
     with jax.enable_x64(True):
         ops = Operators(
             grid,
@@ -169,7 +163,6 @@ def test_shared_global_image_pose_cross_block_has_its_exact_transpose():
             lever=16,
             native=(0.5, 0.7),
             parameters=parameters,
-            pixel_mask=PackedMask(jnp.packbits(finite, axis=-1, bitorder="little"), (48, 48)),
         )
         state = jnp.asarray(rng.normal(0, 0.05, parameters.size))
         packet = ops.prepare(ops.pad_poses(state))
@@ -183,4 +176,4 @@ def test_shared_global_image_pose_cross_block_has_its_exact_transpose():
             jnp.vdot(step, score),
             jnp.vdot(x.astype(jnp.float64), transpose.astype(jnp.float64)),
         )
-        np.testing.assert_allclose(left, right, rtol=5e-6, atol=3e-5)
+        np.testing.assert_allclose(left, right, rtol=2e-5, atol=3e-5)

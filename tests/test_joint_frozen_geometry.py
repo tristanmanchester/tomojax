@@ -7,25 +7,20 @@ import pytest
 
 # check-public-imports: allow-private
 from tomojax.alignment._joint._operators import Operators
-from tomojax.alignment._joint._projection import PackedMask  # check-public-imports: allow-private
 from tomojax.core.cone import beam_frame
 from tomojax.geometry import ConeBeam, Detector, Grid, LaminographyGeometry, stack_view_poses
 
 
 @pytest.mark.parametrize("cone", [False, True])
-@pytest.mark.parametrize("masked", [False, True])
 @pytest.mark.parametrize("batch_size", [2, 3])
-def test_frozen_geometry_preserves_batched_normal_and_cross_actions(cone, masked, batch_size):
+def test_frozen_geometry_preserves_batched_normal_and_cross_actions(cone, batch_size):
     grid = Grid(5, 4, 3, 0.7, 0.9, 1.1, vol_center=(0.2, -0.1, 0.3))
     detector = Detector(6, 5, 0.8, 0.9, center=(0.12, -0.17))
     geometry = LaminographyGeometry(grid, detector, [13, 79, 211], tilt_deg=-31)
     nominal = np.asarray(stack_view_poses(geometry, 3))
     frames = np.broadcast_to(beam_frame(ConeBeam(31, 47), detector), (3, 4, 3))
-    mask = np.ones((3, 10, 12), bool)
-    mask[1, 2:5, 3:6] = False
     rng = np.random.default_rng(850)
     with jax.enable_x64(True):
-        membership = PackedMask(jnp.packbits(mask, axis=-1, bitorder="little"), mask.shape[-2:])
         ops = Operators(
             grid,
             detector,
@@ -35,17 +30,10 @@ def test_frozen_geometry_preserves_batched_normal_and_cross_actions(cone, masked
             batch_size=batch_size,
             frames=frames if cone else None,
             interpolation="linear" if cone else "cubic",
-            ray_binning=(2, 2),
-            pixel_mask=membership if masked else None,
         )
         q = ops.pad_poses(rng.normal(0, 0.05, (3, ops.dofs)))
         frozen = ops.prepare(q)
-        if masked:
-            assert frozen.pixel_mask is ops.pixel_mask
-            assert frozen.pixel_mask.bits.shape == (ops.padded_n, 10, 2)
-            if ops.padded_n == ops.n:
-                assert ops.pixel_mask.bits is membership.bits
-        direct = ops.coefficients(ops.nominal, q, ops.valid, ops.scales, ops.frames, ops.pixel_mask)
+        direct = ops.coefficients(ops.nominal, q, ops.valid, ops.scales, ops.frames)
         for left, right in zip(jax.tree.leaves(frozen), jax.tree.leaves(direct), strict=True):
             # Eager and fused coefficient arithmetic can differ by a few FP32
             # ulps; the image actions below compare the two compiled paths.

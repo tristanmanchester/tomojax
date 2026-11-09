@@ -7,7 +7,6 @@ for a cone beam, lab y translation. ``scales`` converts each numerical parameter
 to radians or physical lengths; it may vary by view.
 """
 
-from dataclasses import dataclass, field
 from typing import NamedTuple
 
 import jax
@@ -21,7 +20,6 @@ from tomojax.core.cone import (
     cone_project,
     frame_coefficients,
 )
-from tomojax.core.geometry.base import Detector
 from tomojax.core.joseph import (
     forward_project_planes,
     plane_coefficients,
@@ -31,44 +29,11 @@ from tomojax.core.joseph import (
 )
 
 
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class PackedMask:
-    """Finite input-pixel membership, packed little-endian along detector u.
-
-    The original detector shape is static PyTree metadata: batching and freezing
-    coefficients transform only the bytes, never unpack a whole scan.
-    """
-
-    bits: jax.Array
-    shape: tuple[int, int] = field(metadata={"static": True})
-
-
 class Coefficients(NamedTuple):
-    """Ray coefficients, padded-view mask and optional finite-input-pixel mask.
-
-    ``pixel_mask`` retains which input pixels entered a coarsened observation.
-    It may be coarser than the native ray lattice when each input pixel was
-    already a known block mean. Its entries are never inferred from precision.
-    """
+    """Ray coefficients and the padded-view mask."""
 
     rays: jax.Array
     valid: jax.Array
-    pixel_mask: PackedMask | None = None
-
-
-def ray_counts(binning):
-    """Validate explicitly known block-mean ray counts, in (u, v) order."""
-    counts = np.asarray(binning)
-    if (
-        counts.shape != (2,)
-        or counts.dtype.kind not in "iuf"
-        or not np.isfinite(counts).all()
-        or np.any(counts < 1)
-        or np.any(counts != np.floor(counts))
-    ):
-        raise ValueError("ray_binning must contain two positive integer counts (u, v)")
-    return tuple(map(int, counts))
 
 
 def posed(nominal, q, scales):
@@ -195,11 +160,9 @@ class Projection:
     them. A cone's sixth parameter changes magnification by moving the object
     along lab y; discarding it would silently fit only five of its rigid DOFs.
 
-    ``ray_binning=(bu, bv)`` declares that each observed pixel is the mean of
-    that many original point rays. It describes a known digital operation on
-    line integrals, not a sensor PSF or an inferred physical pixel aperture.
-    The full ray lattice is evaluated in one kernel, then reduced. Its exact
-    transpose distributes each residual with the same normalized weights.
+    Each detector pixel is one ray through its centre, at every working scale.
+    A binned pixel is the mean of its finer rays; modelling it by the central
+    ray costs little accuracy and keeps every level as cheap as its pixel count.
     """
 
     def __init__(
@@ -210,22 +173,12 @@ class Projection:
         cone=False,
         backend=None,
         interpolation="linear",
-        ray_binning=(1, 1),
     ) -> None:
         if interpolation not in {"linear", "cubic"}:
             raise ValueError("joint plane interpolation must be 'linear' or 'cubic'")
         if cone and interpolation != "linear":
             raise ValueError("the cone projector uses linear interpolation")
         self.grid, self.detector = grid, detector
-        self.ray_binning = ray_counts(ray_binning)
-        bu, bv = self.ray_binning
-        self.ray_detector = Detector(
-            detector.nu * bu,
-            detector.nv * bv,
-            detector.du / bu,
-            detector.dv / bv,
-            center=detector.center,
-        )
         self.cone = bool(cone)
         self.interpolation = interpolation
         self.dofs = 6 if self.cone else 5
@@ -233,8 +186,6 @@ class Projection:
         self.diagonal_kind = (
             "normal_row_sum"
             if self.cone
-            else "mean_linear_ray_diagonal_proxy"
-            if self.ray_binning != (1, 1)
             else "linear_basis_diagonal_proxy"
             if interpolation == "cubic"
             else "normal_diagonal"
@@ -243,27 +194,12 @@ class Projection:
     def raw_coefficients(self, poses, frames=None):
         """Unmasked core coefficients; their pose derivative excludes the mask."""
         if self.cone:
-            return frame_coefficients(poses, frames, self.grid, self.ray_detector)
-        return plane_coefficients(poses, self.grid, self.ray_detector)
+            return frame_coefficients(poses, frames, self.grid, self.detector)
+        return plane_coefficients(poses, self.grid, self.detector)
 
-    def coefficients(self, poses, valid, frames=None, pixel_mask=None):
+    def coefficients(self, poses, valid, frames=None):
         """Keep padding as an explicit mask; cone ray coordinates stay physical."""
-        if pixel_mask is not None:
-            nv, nu = pixel_mask.shape
-            if (
-                pixel_mask.bits.shape != (len(poses), nv, (nu + 7) // 8)
-                or min(nv, nu) < 1
-                or nv % self.detector.nv
-                or nu % self.detector.nu
-                or self.ray_detector.nv % nv
-                or self.ray_detector.nu % nu
-            ):
-                raise ValueError(
-                    "pixel_mask must describe complete input blocks on the ray lattice"
-                )
-        return Coefficients(
-            self.raw_coefficients(poses, frames), jnp.asarray(valid, jnp.bool_), pixel_mask
-        )
+        return Coefficients(self.raw_coefficients(poses, frames), jnp.asarray(valid, jnp.bool_))
 
     def tangent(self, nominal, q, scales, frames=None):
         """Exact coefficient derivatives, (views, dofs, coefficients), at ``q``."""
@@ -277,67 +213,31 @@ class Projection:
         )(nominal, q, scales, frames)
         return jnp.swapaxes(columns, 1, 2)
 
-    def _ray_weights(self, cf):
-        """Per-ray coefficients of the block mean, summing to one if observed."""
-        bu, bv = self.ray_binning
-        if cf.pixel_mask is None:
-            return jnp.float32(1 / (bu * bv))
-        n = cf.pixel_mask.bits.shape[0]
-        nv, nu = cf.pixel_mask.shape
-        mv, mu = nv // self.detector.nv, nu // self.detector.nu
-        mask = jnp.unpackbits(cf.pixel_mask.bits, axis=-1, count=nu, bitorder="little").astype(
-            jnp.float32
-        )
-        blocks = mask.reshape(n, self.detector.nv, mv, self.detector.nu, mu)
-        count = jnp.sum(blocks, axis=(2, 4), keepdims=True)
-        # A finite input pixel is itself the mean of bu/mu by bv/mv native
-        # rays. All those rays get the same weight; a missing input gets zero.
-        normalized = blocks / jnp.maximum(count * ((bu // mu) * (bv // mv)), 1)
-        normalized = normalized.reshape(mask.shape)
-        return jnp.repeat(jnp.repeat(normalized, bv // mv, axis=-2), bu // mu, axis=-1)
-
-    def _reduce(self, image, cf):
-        """Average the last two detector axes, allowing a pose-column axis."""
-        weights = self._ray_weights(cf)
-        if jnp.ndim(weights) and image.ndim == 4:
-            weights = weights[:, None]
-        weighted = image * weights
-        bu, bv = self.ray_binning
-        shape = (*image.shape[:-2], self.detector.nv, bv, self.detector.nu, bu)
-        return jnp.sum(weighted.reshape(shape), axis=(-3, -1))
-
-    def _expand(self, image, cf, *, diagonal_proxy=False):
-        """Transpose of the mean, or sqrt weights for the positive diagonal proxy."""
-        bu, bv = self.ray_binning
-        expanded = jnp.repeat(jnp.repeat(image, bv, axis=-2), bu, axis=-1)
-        weights = self._ray_weights(cf)
-        return expanded * (jnp.sqrt(weights) if diagonal_proxy else weights)
-
     def project(self, cf, x, *, absolute=False):
-        """Apply B A, or B |A| for bounds, with the recorded block-mean weights."""
+        """Apply A, or |A| for bounds, to the valid views."""
         if self.cone:
-            image = cone_project(x, cf.rays, self.grid, self.ray_detector, backend=self.backend)
+            image = cone_project(x, cf.rays, self.grid, self.detector, backend=self.backend)
         else:
             image = forward_project_planes(
                 cf.rays,
                 x,
                 self.grid,
-                self.ray_detector,
+                self.detector,
                 backend=self.backend,
                 interpolation=self.interpolation,
                 absolute_weights=absolute,
             )
-        return self._reduce(image, cf) * cf.valid[:, None, None]
+        return image * cf.valid[:, None, None]
 
     def back(self, accumulator, cf, y, *, absolute=False):
-        """Accumulate A.T B.T (or |A|.T B.T), matching every mean and mask."""
-        y = self._expand(y * cf.valid[:, None, None], cf)
+        """Accumulate A.T y (or |A|.T y) over the valid views."""
+        y = y * cf.valid[:, None, None]
         if self.cone:
             return cone_backproject(
                 y,
                 cf.rays,
                 self.grid,
-                self.ray_detector,
+                self.detector,
                 backend=self.backend,
                 accumulate=accumulator,
             )
@@ -345,7 +245,7 @@ class Projection:
             cf.rays,
             y,
             self.grid,
-            self.ray_detector,
+            self.detector,
             backend=self.backend,
             interpolation=self.interpolation,
             absolute_weights=absolute,
@@ -360,33 +260,31 @@ class Projection:
                 x,
                 tangent,
                 self.grid,
-                self.ray_detector,
+                self.detector,
                 backend=self.backend,
                 interpolation=self.interpolation,
             )
         elif self.backend == "cuda":
             images = cone_pose_columns(
-                x, cf.rays, tangent=tangent[..., :12], grid=self.grid, detector=self.ray_detector
+                x, cf.rays, tangent=tangent[..., :12], grid=self.grid, detector=self.detector
             )
         else:
 
             def predict(coeff):
-                return cone_project(x, coeff, self.grid, self.ray_detector, backend="jax")
+                return cone_project(x, coeff, self.grid, self.detector, backend="jax")
 
             columns = jax.vmap(
                 lambda dc: jax.jvp(predict, (cf.rays,), (dc,))[1], in_axes=1, out_axes=1
             )(tangent)
             images = jnp.concatenate([predict(cf.rays)[:, None], columns], axis=1)
-        return self._reduce(images, cf) * cf.valid[:, None, None, None]
+        return images * cf.valid[:, None, None, None]
 
     def diagonal(self, cf, sqrtweights, accumulator):
         """Accumulate a positive image preconditioner, preserving the image operator.
 
         Linear parallel rays use exact ``diag(A.T W A)``. Cubic rays use the
         corresponding linear-basis diagonal as a positive preconditioner proxy.
-        Binned rays use the normalized mean of those linear-ray diagonals;
-        this omits cross-ray terms and is only a preconditioner, never a bound
-        or the exact normal diagonal. Cone rays use a conservative row-sum
+        Cone rays use a conservative row-sum
         majorizer. Normal matvecs keep all cross terms through the matched
         forward and transpose. ``diagonal_kind`` records the choice.
         """
@@ -394,21 +292,20 @@ class Projection:
         if not self.cone:
             return plane_weighted_diagonal(
                 cf.rays,
-                self._expand(weights, cf, diagonal_proxy=True),
+                weights,
                 accumulator,
                 self.grid,
-                self.ray_detector,
+                self.detector,
                 backend=self.backend,
             )
         return self.majorizer(cf, weights, accumulator)
 
     def majorizer(self, cf, sqrtweights, accumulator):
-        """Accumulate C.T W C 1 for C = B |A|, bounding (B A).T W B A.
+        """Accumulate |A|.T W |A| 1, bounding A.T W A.
 
         Cubic interpolation has signed lobes. Using A.T W A 1 instead would
-        allow cancellation and would not bound the initialization step. The
-        positive block-mean map B preserves the bound, including correlations
-        between rays in a block. Cone and linear-plane kernels are nonnegative.
+        allow cancellation and would not bound the initialization step. Cone
+        and linear-plane kernels are nonnegative.
         """
         ones = jnp.ones((self.grid.nz, self.grid.ny, self.grid.nx), jnp.float32)
         images = sqrtweights**2 * self.project(cf, ones, absolute=True)

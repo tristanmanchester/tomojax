@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
-from tomojax._detector_sampling import sampling_factors
 from tomojax._scan import Reconstruction, describe, record_of, with_grid
 from tomojax.alignment._integration import cone_frames, fit_poses
 from tomojax.geometry import stack_view_poses
@@ -31,8 +30,7 @@ def align_poses(
         scan = with_grid(scan, grid)
     views = len(scan.angles)
     current = np.asarray(stack_view_poses(scan.geometry, views), np.float64)
-    ray_binning = sampling_factors(scan.source)
-    native = (scan.detector.du / ray_binning[0], scan.detector.dv / ray_binning[1])
+    native = (scan.detector.du, scan.detector.dv)
     _, metadata, _, _ = describe(scan.geometry)
     volume, working, fitted, record = fit_poses(
         scan.projections,
@@ -41,8 +39,6 @@ def align_poses(
         scan.detector,
         fit=fit,
         keep_grid=grid is not None,
-        native_pixel_size=native,
-        ray_binning=ray_binning,
         frames=cone_frames(scan.geometry),
         detector_roll_deg=float(cast("float", metadata.get("detector_roll_deg", 0.0))),
     )

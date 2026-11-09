@@ -316,8 +316,6 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         *,
         fit,
         keep_grid,
-        native_pixel_size,
-        ray_binning,
         frames,
         detector_roll_deg,
     ):
@@ -325,7 +323,6 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         assert frames is None and detector_roll_deg == 0.3
         assert projections is scan.projections
         assert working == grid and current_detector == detector and keep_grid is False
-        assert native_pixel_size == (detector.du, detector.dv) and ray_binning == (1, 1)
         np.testing.assert_allclose(nominal, before, atol=5e-7)
         return np.zeros((grid.nz, grid.ny, grid.nx), np.float32), grid, increment, record
 

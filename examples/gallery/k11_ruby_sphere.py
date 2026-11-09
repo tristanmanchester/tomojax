@@ -98,8 +98,7 @@ def main() -> None:
     scan = tj.load_frames(args.input, geometry=geometry).corrected(binning=args.binning)
     result = tj.align(scan)
     print(f"load/correct/align: {time.perf_counter() - start:.1f} s")
-    automatic = result.info["automatic"]
-    print("Automatic outcome:", automatic["status"], automatic["reasons"])
+    print("Final level:", result.info["levels"][-1]["status"])
     print("Reconstruction grid:", result.scan.grid)
     slice_figure(result.volume, result.scan.grid, args.output)
 
