@@ -83,16 +83,10 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
         "Align",
         [
             (
-                "docs/alignment-guide.md",
-                "alignment-guide",
+                "docs/align-a-scan.md",
+                "align-a-scan",
                 None,
-                "Correct per-view motion or the centre of rotation.",
-            ),
-            (
-                "docs/alignment-solver.md",
-                "alignment-solver",
-                None,
-                "AlignConfig settings, Jacobians, coupling and linear-solve diagnostics.",
+                "Choose what to fit: the centre, drift, the setup angles or sample rotation.",
             ),
             (
                 "docs/held-out-evaluation.md",
@@ -144,7 +138,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "src/tomojax/alignment/README.md",
                 "alignment-configuration",
                 "Alignment configuration",
-                "Configurations, plans and checkpoints behind tj.align.",
+                "The joint solver behind tj.align and its numerical contracts.",
             ),
         ],
     ),
