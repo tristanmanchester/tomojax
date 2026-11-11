@@ -207,10 +207,13 @@ def _grid_from_meta(
             ny = int(detector.nu)
             nz = int(detector.nv)
         # A cone beam magnifies the axis plane: one voxel per detector pixel there.
-        beam = meta.get("cone_beam")
+        # Segmented scans sample at their most magnified arrangement.
+        segments = cast("list[dict[str, Any]]", meta.get("cone_segments") or [])
+        beams = [e.get("cone_beam") for e in segments] or [meta.get("cone_beam")]
+        beams = [b for b in beams if isinstance(b, dict)]
         scale = 1.0
-        if normalize_geometry_type(meta.get("geometry_type")) == "cone" and isinstance(beam, dict):
-            scale = float(beam["source_to_axis"]) / float(beam["source_to_detector"])
+        if normalize_geometry_type(meta.get("geometry_type")) == "cone" and beams:
+            scale = min(float(b["source_to_axis"]) / float(b["source_to_detector"]) for b in beams)
         return Grid(
             nx=nx,
             ny=ny,
