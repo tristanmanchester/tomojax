@@ -4,15 +4,18 @@
 Usage: ``python bench/compare_tv.py SIZE tomojax|tigre``. A structured parallel
 phantom (analytic line integrals, 180 views) gets 3% Gaussian noise. Each
 library runs 50 iterations over a grid of its own regularisation weights; the
-two weight conventions differ, so compare each library's best result. TomoJAX
-timings start from device-resident data (warm); TIGRE's API includes host
-transfers. Override TIGRE's grids with TIGRE_LAMBDAS / TIGRE_ALPHAS.
+two weight conventions differ, so compare each library's best result. Every
+timed solve is warm (each library first runs once untimed) and host to host:
+TomoJAX uploads the data and downloads the volume inside the timer, as TIGRE's
+API does. Override TIGRE's grids with TIGRE_LAMBDAS / TIGRE_ALPHAS.
 """
 
+from collections.abc import Callable
 import os
 from pathlib import Path
 import sys
 import time
+from typing import Any
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -43,22 +46,25 @@ if which == "tomojax":
     from tomojax.recon import CGLSConfig, FistaConfig, cgls, fista_tv
 
     geo = ParallelGeometry(case.grid, case.detector, case.angles)
-    p = jnp.asarray(data)
-    for lam in [0.3, 1, 3, 10, 30]:
+
+    def solve(method: Callable[..., Any], cfg: object) -> np.ndarray:
+        """One solve from host data to a host volume."""
+        x, _ = method(geo, case.grid, case.detector, jnp.asarray(data), config=cfg)
+        return np.asarray(x)
+
+    # tv_weight is dimensionless (relative to the data contrast); None is automatic.
+    for lam in [None, 1e-5, 3e-5, 1e-4, 3e-4]:
         cfg = FistaConfig(iterations=iters, tv_weight=lam, nonnegative=True)
-        x, _ = fista_tv(geo, case.grid, case.detector, p, config=cfg)
-        x.block_until_ready()
+        solve(fista_tv, cfg)
         t = time.perf_counter()
-        x, _ = fista_tv(geo, case.grid, case.detector, p, config=cfg)
-        x.block_until_ready()
+        x = solve(fista_tv, cfg)
         dt = time.perf_counter() - t
         results.append(("tomojax fista_tv", lam, err(x), dt))
     for it in [5, 10, 20]:
-        x, _ = cgls(geo, case.grid, case.detector, p, config=CGLSConfig(iterations=it, rtol=0))
-        x.block_until_ready()
+        cfg = CGLSConfig(iterations=it, rtol=0)
+        solve(cgls, cfg)
         t = time.perf_counter()
-        x, _ = cgls(geo, case.grid, case.detector, p, config=CGLSConfig(iterations=it, rtol=0))
-        x.block_until_ready()
+        x = solve(cgls, cfg)
         dt = time.perf_counter() - t
         results.append(("tomojax cgls (no TV)", it, err(x), dt))
 else:
@@ -74,6 +80,9 @@ else:
     geo.sDetector = geo.nDetector * geo.dDetector
     geo.accuracy = 1.0
     angles = np.deg2rad(-90.0 - case.angles).astype(np.float32)
+    # Warm TIGRE's CUDA runtime and kernels, as TomoJAX's untimed first solves do.
+    fista(data.copy(), geo, angles, 2, tviter=2, tvlambda=0.01, verbose=False)
+    asd_pocs(data.copy(), geo, angles, 2, alpha=0.002, verbose=False)
     for lam in [
         float(v) for v in os.environ.get("TIGRE_LAMBDAS", "0.003,0.01,0.03,0.1,0.3").split(",")
     ]:
@@ -87,4 +96,4 @@ else:
         dt = time.perf_counter() - t
         results.append(("tigre asd_pocs", alpha, err(np.ascontiguousarray(x)), dt))
 for name, param, e, dt in results:
-    print(f"{size} {name:22s} param {param:<6} relL2 {e:.4f}  {dt:.2f}s", flush=True)
+    print(f"{size} {name:22s} param {param!s:<6} relL2 {e:.4f}  {dt:.2f}s", flush=True)
