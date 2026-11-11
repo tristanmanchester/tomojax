@@ -478,7 +478,7 @@ def test_fbp_reconstructs_volumes_larger_than_the_device_on_the_host(monkeypatch
     data = np.random.default_rng(4).random((24, detector.nv, detector.nu)).astype(np.float32)
     on_device, info = reconstruct_arrays("fbp", geometry, grid, detector, data)
     assert "host_slabs" not in info
-    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda device=None: 4096)
     volume, info = reconstruct_arrays("fbp", geometry, grid, detector, data)
     assert isinstance(volume, np.ndarray) and info["host_slabs"]
     # On CUDA, slabs' shifted detector windows round the texture unit's 1/256
