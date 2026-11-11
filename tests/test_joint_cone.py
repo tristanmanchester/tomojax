@@ -262,3 +262,18 @@ def test_cone_similarity_gauge_preserves_continuous_gaussian_line_integrals():
             scales,
         )
     np.testing.assert_allclose(actual_poses, changed, rtol=0, atol=1e-12)
+
+
+def test_working_pixels_are_bounded_by_the_least_magnified_segment():
+    # check-public-imports: allow-private
+    from tomojax.alignment._joint._fit import _magnification
+
+    # Two cone arrangements, magnification 1.25 and 10: the mean (5.6) would let a
+    # working pixel span 3.2 voxels in the first.
+    poses = np.broadcast_to(np.eye(4), (2, 4, 4))
+    frames = np.zeros((2, 4, 3))
+    # Rows: detector centre, u, v, source; the object sits at the origin.
+    frames[:, 1], frames[:, 2] = (1, 0, 0), (0, 0, 1)
+    frames[0, 0], frames[0, 3] = (0, 800, 0), (0, -3200, 0)
+    frames[1, 0], frames[1, 3] = (0, 3600, 0), (0, -400, 0)
+    assert abs(_magnification(poses, frames) - 1.25) < 1e-12

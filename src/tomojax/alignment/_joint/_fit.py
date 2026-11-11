@@ -64,13 +64,17 @@ def _resized(grid, shape_xyz):
 
 
 def _magnification(poses, frames):
-    """Mean detector over object distance along the detector normal; 1 for parallel rays."""
+    """Least detector over object distance along the detector normal; 1 for parallel rays.
+
+    The least magnification gives the widest pixel footprint at the object, so
+    a working pixel bounded by it is bounded in every view and segment.
+    """
     if frames is None:
         return 1.0
     normal = np.cross(frames[:, 1], frames[:, 2])
     distance = np.einsum("ni,ni->n", frames[:, 0] - frames[:, 3], normal)
     depth = np.einsum("ni,ni->n", poses[:, :3, 3] - frames[:, 3], normal)
-    return float(np.mean(distance / depth))
+    return float(np.min(distance / depth))
 
 
 def _padded(grid, bins):
