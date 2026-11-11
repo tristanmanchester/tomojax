@@ -198,10 +198,6 @@ XLA_PYTHON_CLIENT_PREALLOCATE=false compute-sanitizer \
   tests/test_cuda_numerics.py tests/test_projector_adjoint.py tests/test_fbp_accuracy.py
 ```
 
-The existing `fista_projection_benchmark.py` exercises weighted loss/gradient and
-FISTA integration variants. It is a separate stochastic diagnostic; its summary
-must be inspected for failures and fallback paths.
-
 The batched adjoint memory and timing experiment is also reproducible without
 checking out an older implementation. It compares the current shared accumulator
 with `vmap` of the single-view adjoint followed by reduction:

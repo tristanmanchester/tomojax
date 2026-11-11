@@ -51,8 +51,6 @@
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 123,
     "src/tomojax/recon/fista_tv.py::_run_fista_scan": 118,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 147,
-    "src/tomojax/recon/fista_tv_core.py::_projection_loss_and_explicit_grad": 131,
-    "src/tomojax/recon/fista_tv_core.py::fista_tv_core_iterates": 121,
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 127,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
@@ -70,7 +68,7 @@
     "io": 3651,
     "motion": 148,
     "nuisance": 232,
-    "recon": 14640
+    "recon": 13871
   },
   "cuda_kernels": 53,
   "cuda_switches": 36,
@@ -96,7 +94,7 @@
     "chained": 4
   },
   "type_errors": {
-    "reportArgumentType": 98,
+    "reportArgumentType": 96,
     "reportAttributeAccessIssue": 17,
     "reportCallIssue": 2,
     "reportGeneralTypeIssues": 2,
@@ -112,5 +110,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 127
+  "test_private_imports": 125
 }

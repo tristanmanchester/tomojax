@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from tomojax.forward import project_joseph
-from tomojax.geometry import Detector, Grid, LaminographyGeometry
+from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.recon import FistaConfig, fista_tv
 
 
@@ -217,3 +217,25 @@ def test_cached_first_step_matches_uncached_recurrence(iterations, tolerance):
     np.testing.assert_allclose(cached, uncached, rtol=3e-6, atol=3e-7)
     np.testing.assert_allclose(info["loss"], reference["loss"], rtol=3e-6, atol=3e-7)
     assert info["effective_iterations"] == reference["effective_iterations"]
+
+
+@pytest.mark.parametrize("grad_mode", ["batched", "stream"])
+def test_public_fista_partial_view_batches_run_under_global_x64(grad_mode):
+    grid, detector = Grid(1, 1, 1, 1.0, 1.0, 1.0), Detector(1, 1, 1.0, 1.0)
+    geometry = ParallelGeometry(grid, detector, np.zeros(5, np.float32))
+    data = np.full((5, 1, 1), 3.0, np.float32)  # five unit rays through one voxel
+    config = FistaConfig(
+        iterations=1,
+        tv_weight=0,
+        projector_model="ray",
+        backend="jax",
+        ray_integrator="sampled",
+        views_per_batch=2,
+        power_iterations=3,
+        grad_mode=grad_mode,
+    )
+    with jax.enable_x64():
+        actual, info = fista_tv(geometry, grid, detector, data, config=config)
+    assert actual.dtype == np.float32
+    np.testing.assert_allclose(actual, 3.0, rtol=3e-6)
+    np.testing.assert_allclose(info["lipschitz"], 5.0, rtol=3e-6)

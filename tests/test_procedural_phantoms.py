@@ -83,17 +83,3 @@ def test_mesh_occupancy_uses_non_cubic_zyx_shape():
     assert volume.shape == (3, 5, 7) and volume.flags.c_contiguous
     assert volume[1, 2, 3] == 1 and not volume[:, :, 0].any()
     np.testing.assert_allclose(volume[:, 2, 3], [0.3, 1.0, 0.3])
-
-
-def test_projection_benchmark_phantom_support_and_slice_are_zyx(monkeypatch):
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "bench"))
-    import fista_projection_benchmark as benchmark
-
-    shape = (7, 9, 13)
-    rng = np.random.default_rng(81)
-    assert benchmark.random_phantom(shape, rng).shape == shape
-    support = benchmark.random_support(shape, rng)
-    assert support.shape == shape and support[3, 4, 6] == 1
-    volume = np.zeros(shape, np.float32)
-    volume[2] = 1
-    assert benchmark.most_informative_z_slice(volume) == 2

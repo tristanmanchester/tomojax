@@ -107,44 +107,40 @@ def test_exact_integrator_rejects_complex_data_and_invalid_backend(problem):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
-def test_exact_fista_matches_dense_projected_steps(problem, backend):
-    if backend == "cuda" and jax.default_backend() != "gpu":
-        pytest.skip("CUDA required")
-    from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
+def test_exact_fista_matches_dense_projected_steps(problem):
+    # Public FISTA integrates exactly on the JAX reference; CUDA exact rays are
+    # checked against the same matrix by the projector tests above.
+    # check-public-imports: allow-private
+    from tomojax._data.geometry_meta import AugmentedGeometry
+    from tomojax.geometry import ParallelGeometry
+    from tomojax.recon import FistaConfig, fista_tv
 
     grid, detector, poses, volume, matrix, _ = problem
-    target = jnp.asarray((matrix @ volume.ravel()).reshape(3, detector.nv, detector.nu))
-    weights = jnp.array([0.7, 1.2, 0.3])
-    support = jnp.linspace(0.2, 1, volume.size).reshape(volume.shape)
-    weighted_matrix = matrix * np.asarray(support).ravel()
-    weighted_matrix *= np.repeat(np.sqrt(weights), detector.nv * detector.nu)[:, None]
-    weighted_target = np.asarray(target).ravel() * np.repeat(
-        np.sqrt(weights), detector.nv * detector.nu
-    )
+    target = (matrix @ volume.ravel()).reshape(3, detector.nv, detector.nu)
+    support = np.linspace(0.2, 1, volume.size).reshape(volume.shape)
+    weighted_matrix = matrix * support.ravel()
+    weighted_target = target.ravel()
     bound = float(np.linalg.norm(weighted_matrix, 2) ** 2) * 1.2
-    config = FistaCoreConfig(
+    config = FistaConfig(
         iterations=3,
         lipschitz=bound,
+        tv_weight=0,
         nonnegative=True,
         views_per_batch=2,
         support=support,
         ray_integrator="exact",
-        forward_projector=backend,
-        backprojector=backend,
+        projector_model="ray",
+        backend="jax",
     )
-    result = jax.jit(
-        lambda t, y: fista_tv_core_arrays(
-            x0=jnp.zeros_like(volume),
-            T_all=t,
-            det_grid=None,
-            projections=y,
-            grid=grid,
-            detector=detector,
-            cfg=config,
-            view_weights=weights,
-        ).x
-    )(poses, target)
+    # The fixture's poses as corrections of a zero-angle scan: (alpha, beta, phi, dx, dz, dy).
+    pose = np.asarray(poses, np.float64)
+    beta, alpha, phi = Rotation.from_matrix(pose[:, :3, :3]).as_euler("YXZ").T
+    params = np.column_stack([alpha, beta, phi, pose[:, 0, 3], pose[:, 2, 3], pose[:, 1, 3]])
+    base = ParallelGeometry(grid, detector, np.zeros(3))
+    geometry = AugmentedGeometry(base, params.astype(np.float32))
+    np.testing.assert_allclose([geometry.pose_for_view(i) for i in range(3)], pose, atol=1e-6)
+    result, _ = fista_tv(geometry, grid, detector, target.astype(np.float32), config=config)
+    result = np.asarray(result)
     x, z, momentum = np.zeros(volume.size), np.zeros(volume.size), 1.0
     for _ in range(3):
         updated = np.maximum(
