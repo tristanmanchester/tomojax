@@ -57,20 +57,20 @@
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
   "code_lines": {
-    "(modules)": 2858,
+    "(modules)": 2846,
     "_data": 2118,
-    "alignment": 2691,
+    "alignment": 2680,
     "backends": 619,
     "cli": 2396,
-    "core": 13853,
+    "core": 13791,
     "corrections": 2640,
     "datasets": 1125,
     "forward": 824,
-    "geometry": 911,
+    "geometry": 907,
     "io": 3651,
     "motion": 148,
     "nuisance": 232,
-    "recon": 14709
+    "recon": 14640
   },
   "cuda_kernels": 53,
   "cuda_switches": 36,
