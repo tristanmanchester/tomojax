@@ -54,7 +54,10 @@ def main() -> None:
     result = tj.align(scan, fit=("centre", "translations", "rotations"))
     seconds = time.perf_counter() - start
     nominal = np.asarray(tj.reconstruct(scan, "fista", **RECONSTRUCTION).volume)
-    aligned = np.asarray(tj.reconstruct(result.scan, "fista", **RECONSTRUCTION).volume)
+    # The fit runs on a coarser working grid; show every panel on the input grid.
+    aligned = np.asarray(
+        tj.reconstruct(result.scan, "fista", grid=scan.grid, **RECONSTRUCTION).volume
+    )
 
     style()
     pixel = scan.geometry.detector.du

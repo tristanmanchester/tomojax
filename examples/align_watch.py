@@ -141,7 +141,8 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
     result = tj.align(scan, fit=fit)
     align_seconds = time.perf_counter() - start
     before = np.asarray(tj.reconstruct(scan, "fista", **RECONSTRUCTION).volume)
-    after = np.asarray(tj.reconstruct(result.scan, "fista", **RECONSTRUCTION).volume)
+    # The fit runs on a coarser working grid; compare on the input grid.
+    after = np.asarray(tj.reconstruct(result.scan, "fista", grid=grid, **RECONSTRUCTION).volume)
 
     estimated = np.asarray(stack_view_poses(result.scan.geometry, VIEWS), np.float64)
     true_detector = dataclasses.replace(detector, center=(centre, MIDDLE))
