@@ -37,6 +37,9 @@ def host_source(array: np.ndarray) -> Iterator[jax.Array]:
     try:
         yield jnp.int32(key)
     finally:
+        # Ordered reads and writes may still be queued after the block's last
+        # array is ready; they must find the source before it is released.
+        jax.effects_barrier()
         _SOURCES.pop(key, None)
 
 
