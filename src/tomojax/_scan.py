@@ -675,8 +675,11 @@ def rebuild(
     *,
     grid: Grid | None = None,
     detector: Callable[[Detector], Detector] | None = None,
+    _rolled: bool = False,
 ) -> ScanGeometry:
     """``geometry`` with a new grid and/or each detector mapped by ``detector``, wrappers kept."""
+    from tomojax._data.geometry_meta import DetectorRollGeometry
+    from tomojax.core.geometry.cone import is_cone_beam
     from tomojax.geometry import ConeSegments
 
     if isinstance(geometry, ConeSegments):
@@ -686,7 +689,14 @@ def rebuild(
         raise TypeError(f"cannot rebuild a {type(geometry).__name__} geometry")
     inner = getattr(geometry, "base", None)
     if inner is not None:
-        return replace(geometry, base=rebuild(inner, grid=grid, detector=detector))
+        # The outermost parallel roll owns the detector lattice (an inner roll is
+        # replaced), so a window moves the centre along its rolled pixel axes.
+        if isinstance(geometry, DetectorRollGeometry) and detector is not None and not _rolled:
+            _rolled = True
+            if not is_cone_beam(inner):
+                detector = _rolled_window(detector, geometry.detector_roll_deg)
+        rebuilt = rebuild(inner, grid=grid, detector=detector, _rolled=_rolled)
+        return replace(geometry, base=rebuilt)
     changes: dict[str, object] = {}
     if grid is not None:
         changes["grid"] = grid
@@ -697,6 +707,23 @@ def rebuild(
             changes["beam"] = beam
         changes["detector"] = mapped
     return replace(geometry, **changes)
+
+
+def _rolled_window(
+    detector: Callable[[Detector], Detector], roll_deg: float
+) -> Callable[[Detector], Detector]:
+    """Map ``detector``, then rotate its centre shift from rolled pixel axes into x/z."""
+    angle = np.deg2rad(roll_deg)
+    c, s = np.cos(angle), np.sin(angle)
+
+    def mapped(original: Detector) -> Detector:
+        window = detector(original)
+        du = window.center[0] - original.center[0]
+        dv = window.center[1] - original.center[1]
+        centre = (original.center[0] + c * du - s * dv, original.center[1] + s * du + c * dv)
+        return replace(window, center=(float(centre[0]), float(centre[1])))
+
+    return mapped
 
 
 def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[Detector, ConeBeam]:
