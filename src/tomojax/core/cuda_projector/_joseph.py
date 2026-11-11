@@ -100,7 +100,7 @@ def adjoint_cuda(
         c, y, x = args
         if interpolation == "linear" and not absolute_weights and use_cuda_gather(grid):
             y = generic.swap_detector_axes(y)
-            return gather_transpose_cuda(c, y, grid, detector, x, z_fast=z_fast)
+            return gather_transpose_cuda(c, y, grid, detector, x, z_fast=z_fast, active=active)
         return generic.adjoint(
             c,
             y,

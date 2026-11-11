@@ -354,11 +354,15 @@ def active_voxels(
 ) -> tuple[jax.Array, ...] | None:
     """Work lists for ``sum_backproject_planes(active=...)`` from a voxel mask, or None.
 
-    Only the CUDA cubic gather uses them, skipping 4x4 tiles with no nonzero
-    ``mask`` voxel. Build them once for many transposes.
+    The CUDA gathers use them to skip cubic 4x4 tiles, or linear z runs, with
+    no nonzero ``mask`` voxel. Build them once for many transposes.
     """
-    if backend != "cuda" or interpolation != "cubic":
+    if backend != "cuda":
         return None
+    if interpolation == "linear":
+        from ._cuda_joseph import active_runs
+
+        return active_runs(mask, z_fast=z_fast)
     from .cuda_projector._joseph_generic import active_tiles
 
     return active_tiles(mask, z_fast=z_fast)

@@ -245,11 +245,15 @@ def test_generic_gather_detector_columns_match_physical_matrix(interpolation, ab
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 @pytest.mark.parametrize("z_fast", [False, True])
-def test_cubic_gather_limited_to_active_tiles_matches_physical_matrix(monkeypatch, z_fast):
-    # Each view adds its transpose to exactly the voxels whose 4x4 tile, in
-    # that view's major-axis plane, holds a masked voxel; others keep initial.
-    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "0")  # the generic gather, every view
+def test_gather_limited_to_active_work_matches_physical_matrix(monkeypatch, interpolation, z_fast):
+    # Cubic: each view adds its transpose to exactly the voxels whose 4x4 tile,
+    # in that view's major-axis plane, holds a masked voxel. Linear: the voxels
+    # whose 4-voxel z run holds one. The others keep initial.
+    linear = interpolation == "linear"
+    # The CuPy run gather, or the generic tile gather; mixed views are not axial.
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1" if linear else "0")
     grid = Grid(9, 6, 7, 0.8, 1.1, 1.3, vol_origin=(-3.7, -2.9, -3.1))
     detector = Detector(13, 11, 0.9, 1.2, (0.17, -0.23))
     _, _, poses = problem()
@@ -258,7 +262,7 @@ def test_cubic_gather_limited_to_active_tiles_matches_physical_matrix(monkeypatc
     mask[[0, 3, 6, 6], [5, 2, 0, 4], [8, 4, 1, 1]] = True
     images = rng.normal(size=(6, 11, 13)).astype(np.float32)
     initial = rng.normal(size=(7, 6, 9)).astype(np.float32)
-    physical = matrix(poses, grid, detector, "cubic").reshape(6, -1, 7 * 6 * 9)
+    physical = matrix(poses, grid, detector, interpolation).reshape(6, -1, 7 * 6 * 9)
     voxel = np.array([grid.vx, grid.vy, grid.vz])
     xyz = mask.transpose(2, 1, 0)
     expected = initial.copy()
@@ -271,11 +275,15 @@ def test_cubic_gather_limited_to_active_tiles_matches_physical_matrix(monkeypatc
         i, j, k = np.nonzero(abc)
         tiles[i, j // 4, k // 4] = True
         keep = np.moveaxis(tiles[a, b // 4, c // 4], (0, 1, 2), order).transpose(2, 1, 0)
+        if linear:
+            runs = np.zeros((2, 6, 9), bool)
+            runs[np.nonzero(mask)[0] // 4, *np.nonzero(mask)[1:]] = True
+            keep = runs[np.arange(7)[:, None, None] // 4, np.arange(6)[:, None], np.arange(9)]
         full = (physical[view].T @ images[view].ravel()).reshape(7, 6, 9)
         expected += np.where(keep, full, 0).astype(np.float32)
     assert 0 < np.mean(expected != initial) < 1
     volume = jnp.asarray(mask.transpose(2, 1, 0) if z_fast else mask)
-    active = active_voxels(volume, backend="cuda", interpolation="cubic", z_fast=z_fast)
+    active = active_voxels(volume, backend="cuda", interpolation=interpolation, z_fast=z_fast)
     start = initial.transpose(2, 1, 0) if z_fast else initial
     actual = sum_backproject_planes(
         plane_coefficients(jnp.asarray(poses), grid, detector),
@@ -283,7 +291,7 @@ def test_cubic_gather_limited_to_active_tiles_matches_physical_matrix(monkeypatc
         grid,
         detector,
         backend="cuda",
-        interpolation="cubic",
+        interpolation=interpolation,
         accumulate=jnp.asarray(start),
         z_fast=z_fast,
         active=active,

@@ -63,16 +63,13 @@ __device__ __forceinline__ void gather_view(
     }
 }
 
-extern "C" __global__ void joseph_gather(
-    const float* __restrict__ coeff, const float* __restrict__ images,
+__device__ __forceinline__ void gather_run(
+    long run, bool valid, const float* __restrict__ coeff, const float* __restrict__ images,
     float* __restrict__ out, int nviews, int nx, int ny, int nz, int nu, int nv, int z0)
 {
     // Volume planes z0 to z0 + nz: geometry at global z, storage local.
     const int R = RUN, VB = VIEWS;
     __shared__ float cf[VB * 14];
-    long run = (long)blockIdx.x * blockDim.x + threadIdx.x;
-    int runs_z = (nz + R - 1) / R;
-    bool valid = run < (long)nx * ny * runs_z;
     int ix = 0, iy = 0, iz0 = 0;
     if (valid) FIRST_VOXEL(run, R, ix, iy, iz0);
     float total[R];
@@ -101,6 +98,20 @@ extern "C" __global__ void joseph_gather(
             if (iz0 + j < nz) out[base + j * Z_STRIDE] += total[j];
     }
 }
+// A listed launch covers only the listed runs; whole blocks past the list
+// return before any barrier. Unlisted launches never read the list pointers.
+extern "C" __global__ void joseph_gather(
+    const float* __restrict__ coeff, const float* __restrict__ images,
+    float* __restrict__ out, const int* __restrict__ runs, const int* __restrict__ listed_count,
+    int listed, int nviews, int nx, int ny, int nz, int nu, int nv, int z0)
+{
+    long slot = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    long count = listed ? *listed_count : (long)nx * ny * ((nz + RUN - 1) / RUN);
+    if ((long)blockIdx.x * blockDim.x >= count) return;
+    bool valid = slot < count;
+    long run = listed && valid ? runs[slot] : slot;
+    gather_run(run, valid, coeff, images, out, nviews, nx, ny, nz, nu, nv, z0);
+}
 """
 
 
@@ -118,6 +129,7 @@ def gather_source(*, z_fast: bool) -> str:
 
 @cache
 def gather_kernel(*, z_fast: bool = False) -> Any:
+    """``joseph_gather``; pass (runs, count, 1) after the output, or (any, any, 0)."""
     import cupy as cp
 
     return cp.RawModule(code=gather_source(z_fast=z_fast)).get_function("joseph_gather")

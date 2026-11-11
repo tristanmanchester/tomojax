@@ -82,7 +82,15 @@ class JosephCUDA:
             self.gather_kernel(
                 (-(-runs // THREADS),),
                 (THREADS,),
-                (self.coeff[first:stop], uv, out, np.int32(stop - first), *self.args, np.int32(0)),
+                (
+                    self.coeff[first:stop],
+                    uv,
+                    out,
+                    *(self.coeff, self.coeff, np.int32(0)),  # no run list
+                    np.int32(stop - first),
+                    *self.args,
+                    np.int32(0),
+                ),
             )
         return out
 
@@ -127,6 +135,7 @@ def slab_adjoint_into(
             coeff,
             uv,
             out,
+            *(coeff, coeff, np.int32(0)),  # no run list
             *map(np.int32, (len(coeff), grid.nx, grid.ny, depth, detector.nu, detector.nv, z0)),
         ),
     )
