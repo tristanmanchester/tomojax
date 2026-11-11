@@ -81,10 +81,11 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
         raise ValueError(f"{path} holds no reconstructed volume")
     meta = record.geometry_metadata
     info = meta.get("reconstruction_info", meta.get("alignment_info"))
+    aligned = "reconstruction_method" not in meta and "alignment_info" in meta
     return Reconstruction(
         volume=np.asarray(record.volume),
         scan=scan,
-        method=str(meta.get("reconstruction_method", "unknown")),
+        method="align" if aligned else str(meta.get("reconstruction_method", "unknown")),
         info=dict(info) if isinstance(info, dict) else {},
     )
 
@@ -137,6 +138,10 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
     elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
         record = record_of(item.scan)
         record.volume = item.volume
+        # The alignment made this volume: an earlier reconstruction's method
+        # and settings no longer describe it.
+        record.geometry_metadata.pop("reconstruction_method", None)
+        record.geometry_metadata.pop("reconstruction_info", None)
         record.geometry_metadata["alignment_info"] = json.loads(
             json.dumps(dict(item.info), default=_json_value)
         )

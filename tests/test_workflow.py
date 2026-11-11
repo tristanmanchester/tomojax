@@ -309,3 +309,18 @@ def test_single_slice_operator_output_feeds_scan_and_reconstruction():
     actual = tj.reconstruct(scan, "cgls", iterations=20).volume
     assert actual.shape == (1, 7, 9)
     assert np.linalg.norm(np.asarray(actual)[0] - truth) / np.linalg.norm(truth) < 0.06
+
+
+def test_a_saved_alignment_is_not_labelled_with_an_earlier_reconstruction(tmp_path: Path) -> None:
+    geometry = _geometries(8)["parallel"]
+    scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(8))), geometry)
+    tj.save(tmp_path / "cgls.nxs", tj.reconstruct(scan, "cgls", iterations=2))
+    loaded = tj.load(tmp_path / "cgls.nxs")
+    poses = np.zeros((len(loaded.angles), 6), np.float32)
+    aligned = tj.Alignment(
+        volume=np.ones((8, 8, 8), np.float32), scan=loaded, poses=poses, info={"levels": []}
+    )
+    tj.save(tmp_path / "aligned.nxs", aligned)
+    back = tj.load_reconstruction(tmp_path / "aligned.nxs")
+    assert back.method == "align" and back.info == {"levels": []}
+    np.testing.assert_array_equal(back.volume, 1.0)
