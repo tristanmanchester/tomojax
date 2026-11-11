@@ -12,8 +12,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 
-CALIBRATION_MANIFEST_SCHEMA_VERSION = 1
-
 type JsonObject = dict[str, JsonValue]
 
 

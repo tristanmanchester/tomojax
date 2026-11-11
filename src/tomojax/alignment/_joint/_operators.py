@@ -29,8 +29,6 @@ from ._projection import (
     posed as _posed,
 )
 
-DOFS = 5
-
 
 class AffineGeometry(NamedTuple):
     """Fixed parallel-ray coefficients and exact centre/translation tangents."""

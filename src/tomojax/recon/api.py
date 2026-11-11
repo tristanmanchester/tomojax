@@ -434,7 +434,6 @@ def _iterative_incore(
         "fista": "fista_tv",
         "spdhg": "spdhg_tv",
         "sirt": "sirt",
-        "mlem": "mlem",
     }[method]
     solve = getattr(recon, name) if solver is None else solver
     storage = {} if out is None else {"out": out}

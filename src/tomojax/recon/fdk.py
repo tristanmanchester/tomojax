@@ -495,53 +495,6 @@ def _device_views(
     return upload_host(np.asarray(part, np.float32), device)
 
 
-_filter_jit = jax.jit(_filter, static_argnames=("pad_lo", "pad_hi"))
-
-
-@partial(jax.jit, static_argnames=("grid", "detector", "scale", "cuda"), donate_argnames=("out",))
-def _backproject_batch(
-    filtered: jax.Array,
-    coeff: jax.Array,
-    out: jax.Array,
-    *,
-    grid: Grid,
-    detector: Detector,
-    scale: float,
-    cuda: bool,
-) -> jax.Array:
-    backproject = backproject_cuda if cuda else _backproject_jax
-    return backproject(filtered, coeff, grid, detector, scale, out)
-
-
-def _filter_views(prep: _Prepared, projections: jax.Array | np.ndarray, n_views: int) -> jax.Array:
-    """Weighted, ramp-filtered ``(views, nv, nu)`` projections on the device."""
-    parts = []
-    for start in range(0, n_views, prep.batch):
-        stop = min(start + prep.batch, n_views)
-        views = _device_views(projections, start, stop, next(iter(prep.weights.devices())))
-        weights = prep.weights[start:stop]
-        cosine = _batch_cosines(prep.cosine, start, stop - start, prep.detector)
-        parts.append(_filter_jit(views, cosine, weights, prep.kernel, prep.pad_lo, prep.pad_hi))
-    return jnp.concatenate(parts, axis=0)
-
-
-def _backproject_filtered(
-    geometry: Geometry, grid: Grid, detector: Detector, filtered: jax.Array, prep: _Prepared
-) -> jax.Array:
-    """Backproject filtered projections from :func:`_filter_views` into ``grid``."""
-    n_views = int(filtered.shape[0])
-    coeff = prep.coefficients(geometry, grid, detector, stack_view_poses(geometry, n_views))
-    detector = prep.virtual(detector)
-    out = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
-    for start in range(0, n_views, prep.batch):
-        stop = min(start + prep.batch, n_views)
-        out = _backproject_batch(
-            filtered[start:stop], coeff[start:stop], out,
-            grid=grid, detector=detector, scale=prep.scale, cuda=prep.cuda,
-        )  # fmt: skip
-    return out
-
-
 def fdk(
     geometry: Geometry,
     grid: Grid,
@@ -701,35 +654,6 @@ def _slab_rows(
 def _windowable(beam: ConeBeam) -> bool:
     """Whether a band of detector rows is itself a detector of ``beam`` (no pitch or yaw)."""
     return float(beam.detector_pitch_deg) == 0.0 and float(beam.detector_yaw_deg) == 0.0
-
-
-def _detector_window(
-    beam: ConeBeam,
-    detector: Detector,
-    r0: int,
-    r1: int,
-    c1: int | None = None,
-    f: int = 1,
-) -> Detector:
-    """Rows ``[r0, r1)`` and columns ``[0, c1)`` of ``detector``, binned ``f x f``.
-
-    The window keeps its place on the rolled detector: its centre moves along
-    the detector's own u and v. Needs :func:`_windowable` beams, whose detector
-    axes stay in the plane of ``detector.center``.
-    """
-    rows, cols = (r1 - r0) // f, (detector.nu if c1 is None else c1) // f
-    su = ((f * cols - 1) / 2 - (detector.nu - 1) / 2) * detector.du
-    sv = (r0 + (f * rows - 1) / 2 - (detector.nv - 1) / 2) * detector.dv
-    _, u_dir, v_dir = beam.detector_frame(detector)
-    shift = su * u_dir + sv * v_dir
-    return replace(
-        detector,
-        nu=cols,
-        nv=rows,
-        du=detector.du * f,
-        dv=detector.dv * f,
-        center=(detector.center[0] + shift[0], detector.center[1] + shift[2]),
-    )
 
 
 def _slab_grid(grid: Grid, z0: int, z1: int) -> Grid:
