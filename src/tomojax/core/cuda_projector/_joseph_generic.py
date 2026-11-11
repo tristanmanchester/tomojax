@@ -111,6 +111,7 @@ def adjoint(
     absolute_weights: bool,
     z_fast: bool = False,
     active: tuple[jax.Array, ...] | None = None,
+    squared: bool = False,
 ) -> jax.Array:
     """Gather the exact plane weights at each voxel and add an initial volume.
 
@@ -119,9 +120,11 @@ def adjoint(
     Cubic sampling shares weights over 4x4 transverse tiles. Three ordered axis
     passes retain each axis's view order; only cross-axis addition is reordered.
     Cubic ``active`` tiles (see ``active_tiles``) limit the gather to them; the
-    other tiles keep ``initial``.
+    other tiles keep ``initial``. ``squared`` gathers squared weights instead,
+    so ``images`` of squared pixel weights give the diagonal of A.T W A.
     """
     active = active if interpolation == "cubic" else None
+    weights = 2 if squared else int(absolute_weights)
     shape = (grid.nx, grid.ny, grid.nz)
     run = min(4, grid.nz)
     runs = grid.nx * grid.ny * ((grid.nz + run - 1) // run)
@@ -133,7 +136,7 @@ def adjoint(
                 "adjoint_unit",
                 RUN=run,
                 CUBIC=0,
-                ABSOLUTE=int(absolute_weights),
+                ABSOLUTE=weights,
                 Z_FAST=int(z_fast),
             )
             launch_plans.append((text, "joseph_gather", runs))
@@ -144,7 +147,7 @@ def adjoint(
                 "adjoint_tile",
                 AXIS=axis,
                 CUBIC=1,
-                ABSOLUTE=int(absolute_weights),
+                ABSOLUTE=weights,
                 Z_FAST=int(z_fast),
             )
             launch_plans.append((text, "joseph_gather_tile", count))

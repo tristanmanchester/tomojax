@@ -3,101 +3,21 @@
 Each voxel's entry is the sum over views and detector pixels of its squared
 bilinear plane weight times the pixel's weight squared. This is a Jacobi
 preconditioner input, not a transpose: the matched forward and transpose stay
-the projector's own. CPU scatters one plane at a time; CUDA gathers with one
-owner per voxel and no atomics.
+the projector's own. CPU scatters one plane at a time; CUDA runs the linear
+transpose gather with squared weights on the squared pixel weights.
 """
 
 from __future__ import annotations
 
-from functools import cache, partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import jax
-from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
-import numpy as np
 
 from .joseph import select_axis
 
 if TYPE_CHECKING:
     from .geometry import Detector, Grid
-
-_SOURCE = r"""
-extern "C" __global__ void weighted_diagonal(
-    const float* cf, const float* sw, float* out,
-    int views, int nx, int ny, int nz, int nu, int nv) {
-    long long index = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    long long size = (long long)nx * ny * nz;
-    if (index >= size) return;
-    int x = index % nx;
-    int y = (index / nx) % ny;
-    int z = index / ((long long)nx * ny);
-    float total = 0.0f;
-    for (int i = 0; i < views; ++i) {
-        const float* c = cf + 14 * i;
-        int axis = (int)c[0];
-        float a = (float)(axis == 0 ? x : (axis == 1 ? y : z));
-        float b = (float)(axis == 0 ? y : (axis == 1 ? z : x));
-        float d = (float)(axis == 0 ? z : (axis == 1 ? x : y));
-        float b0 = b - (c[3] * a + c[4]);
-        float d0 = d - (c[7] * a + c[8]);
-        float u0 = c[10] * b0 + c[11] * d0;
-        float v0 = c[12] * b0 + c[13] * d0;
-        float ru = fabsf(c[10]) + fabsf(c[11]);
-        float rv = fabsf(c[12]) + fabsf(c[13]);
-        // A conservative pixel box from the inverse map; the forward
-        // coordinate arithmetic below decides actual support.
-        int ulo = max(0, (int)floorf(u0 - ru) - 2);
-        int uhi = min(nu - 1, (int)ceilf(u0 + ru) + 2);
-        int vlo = max(0, (int)floorf(v0 - rv) - 2);
-        int vhi = min(nv - 1, (int)ceilf(v0 + rv) + 2);
-        for (int v = vlo; v <= vhi; ++v) for (int u = ulo; u <= uhi; ++u) {
-            float qb = (c[1] * (float)u + c[2] * (float)v) + (c[3] * a + c[4]);
-            float qc = (c[5] * (float)u + c[6] * (float)v) + (c[7] * a + c[8]);
-            float wb = 1.0f - fabsf(qb - b);
-            float wc = 1.0f - fabsf(qc - d);
-            if (wb <= 0.0f || wc <= 0.0f) continue;
-            float w = sw[((long long)i * nv + v) * nu + u] * c[9] * wb * wc;
-            total += w * w;
-        }
-    }
-    out[index] += total;
-}
-"""
-
-
-@cache
-def _kernel() -> Any:
-    import cupy as cp
-
-    return cp.RawModule(code=_SOURCE, options=("--fmad=false",)).get_function("weighted_diagonal")
-
-
-def _launch(context, out, coeff, sqrtweights, initial, *, grid, detector):
-    import cupy as cp
-
-    from ._cuda_joseph import xla_stream
-
-    with xla_stream(context, out):
-        target, old = cp.asarray(out), cp.asarray(initial)
-        if target.data.ptr != old.data.ptr:
-            target[...] = old
-        size = grid.nx * grid.ny * grid.nz
-        _kernel()(
-            ((size + 127) // 128,),
-            (128,),
-            (
-                cp.asarray(coeff),
-                cp.asarray(sqrtweights),
-                target,
-                np.int32(coeff.shape[0]),
-                np.int32(grid.nx),
-                np.int32(grid.ny),
-                np.int32(grid.nz),
-                np.int32(detector.nu),
-                np.int32(detector.nv),
-            ),
-        )
 
 
 def _scatter(coeff, sqrtweights, accumulator, *, grid, detector):
@@ -161,15 +81,16 @@ def weighted_diagonal(
         return _scatter(coeff, sqrtweights, accumulator, grid=grid, detector=detector)
     if backend != "cuda":
         raise ValueError("weighted diagonal backend must be 'jax' or 'cuda'")
-    # Every pointer in the CUDA ABI is float32, including the aliased output.
-    # Do not reinterpret promoted float64 weights as pairs of float32 values.
-    coeff = coeff.astype(jnp.float32)
-    sqrtweights = sqrtweights.astype(jnp.float32)
-    accumulator = accumulator.astype(jnp.float32)
-    call = buffer_callback(
-        partial(_launch, grid=grid, detector=detector),
-        jax.ShapeDtypeStruct(accumulator.shape, jnp.float32),
-        input_output_aliases={2: 0},
-        vmap_method="sequential",
+    from .cuda_projector import _joseph_generic as generic
+
+    weights = jnp.square(sqrtweights.astype(jnp.float32))
+    return generic.adjoint(
+        coeff.astype(jnp.float32),
+        weights,
+        accumulator.astype(jnp.float32),
+        grid,
+        detector,
+        interpolation="linear",
+        absolute_weights=False,
+        squared=True,
     )
-    return call(coeff, sqrtweights, accumulator)

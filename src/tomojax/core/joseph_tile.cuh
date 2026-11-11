@@ -43,7 +43,7 @@ __device__ __forceinline__ void gather_tile(
             #pragma unroll
             for(int i=0;i<B;++i) {
                 #pragma unroll
-                for(int j=0;j<C;++j) total[i*C+j]+=value*(wb[i]*wc[j]*c[9]);
+                for(int j=0;j<C;++j) total[i*C+j]+=value*(wb[i]*wc[j]*PATH_WEIGHT(c));
             }
         }
     }

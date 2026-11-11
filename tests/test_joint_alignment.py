@@ -31,7 +31,8 @@ def _laminography(*, nx=5, ny=4, nz=3, nu=7, nv=6, views=4, tilt=-30.0):
 
 
 @pytest.mark.numerical
-def test_weighted_diagonal_is_the_explicit_matrix_diagonal():
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_weighted_diagonal_is_the_explicit_matrix_diagonal(backend):
     grid, detector, geometry, angles = _laminography()
     poses = jnp.asarray(stack_view_poses(geometry, len(angles)))
     cf = plane_coefficients(poses, grid, detector)
@@ -47,7 +48,7 @@ def test_weighted_diagonal_is_the_explicit_matrix_diagonal():
         grid.nz, grid.ny, grid.nx
     )
     zeros = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
-    got = plane_weighted_diagonal(cf, sw, zeros, grid, detector, backend="jax")
+    got = plane_weighted_diagonal(cf, sw, zeros, grid, detector, backend=backend)
     np.testing.assert_allclose(got, expected, rtol=2e-5, atol=1e-6)
 
 
