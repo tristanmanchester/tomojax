@@ -543,18 +543,19 @@ outweigh solves of 30–180 ms.
 
 ## TV-regularised reconstruction against TIGRE
 
-Measured 2026-10-05 on commit `7dbf427` with
+Measured 2026-11-11 on commit `d545a8d` with
 [`bench/compare_tv.py`](../bench/compare_tv.py). A 128³ structured parallel
 phantom is scanned with 180 views and 3% noise. Each library runs 50
 iterations over its own grid of regularisation weights, and the best relative
-L2 error is reported with its warm time. TIGRE's times include its host
-transfers.
+L2 error is reported with its warm time. Both libraries are warmed by an
+untimed run, and every time includes moving the data and volume between host
+and device.
 
 | Method | Best relative L2 error | Warm time |
 |---|---:|---:|
-| TomoJAX FISTA-TV | 0.076 | 1.13 s |
-| TIGRE FISTA | 0.101 | 9.7 s |
-| TIGRE ASD-POCS | 0.146 | 5.7 s |
+| TomoJAX FISTA-TV | 0.075 (automatic weight: 0.077) | 0.35 s |
+| TIGRE FISTA | 0.101 | 9.1 s |
+| TIGRE ASD-POCS | 0.146 | 5.4 s |
 
 Larger TIGRE FISTA weights diverge. Unregularised CGLS reaches 0.138 at best
 (10 iterations). This is one phantom at one noise level, not a general ranking.
