@@ -43,6 +43,37 @@ __device__ __forceinline__ void joseph_cubic_weights(float t, float* w, float* d
     d[3] = t * (1.5f*t - 1);
 }
 
+// The 4x4 cubic taps around (ib, ic) on plane k, zero outside the volume.
+template<typename Volume>
+__device__ __forceinline__ void joseph_cubic_taps(
+    Volume x, int a, int k, int ib, int ic,
+    int nx, int ny, int nz, int nb, int nc, float (&f)[4][4]) {
+    #pragma unroll
+    for (int b=0;b<4;b++)
+        #pragma unroll
+        for (int c=0;c<4;c++) f[b][c] = joseph_sample(x,a,k,ib+b-1,ic+c-1,nx,ny,nz,nb,nc);
+}
+// Inside the volume, which nearly every sample is, all 16 taps load from one
+// base address without per-tap tests.
+__device__ __forceinline__ void joseph_cubic_taps(
+    const float* x, int a, int k, int ib, int ic,
+    int nx, int ny, int nz, int nb, int nc, float (&f)[4][4]) {
+    if (nb > 3 && nc > 3 && (unsigned)(ib-1) < (unsigned)(nb-3)
+        && (unsigned)(ic-1) < (unsigned)(nc-3)) {
+        long sx = VOXEL(long, 1, 0, 0), sy = VOXEL(long, 0, 1, 0), sz = VOXEL(long, 0, 0, 1);
+        long sb = a == 0 ? sy : (a == 1 ? sz : sx), sc = a == 0 ? sz : (a == 1 ? sx : sy);
+        int b0 = ib - 1, c0 = ic - 1;
+        const float* p = x + VOXEL(long, a == 0 ? k : (a == 1 ? c0 : b0),
+                                   a == 0 ? b0 : (a == 1 ? k : c0), a == 0 ? c0 : (a == 1 ? b0 : k));
+        #pragma unroll
+        for (int b=0;b<4;b++)
+            #pragma unroll
+            for (int c=0;c<4;c++) f[b][c] = p[b * sb + c * sc];
+        return;
+    }
+    joseph_cubic_taps<const float*>(x,a,k,ib,ic,nx,ny,nz,nb,nc,f);
+}
+
 template<bool Cubic, bool Absolute = false, typename Volume>
 __device__ __forceinline__ void joseph_value_derivatives(
     Volume x, int a, int k, float qb, float qc,
@@ -70,13 +101,15 @@ __device__ __forceinline__ void joseph_value_derivatives(
                 wb[i] = fabsf(wb[i]); wc[i] = fabsf(wc[i]);
             }
         }
+        float taps[4][4];
+        joseph_cubic_taps(x,a,k,ib,ic,nx,ny,nz,nb,nc,taps);
         value = db = dc = 0.f;
         #pragma unroll
         for (int b=0;b<4;b++) {
             float row=0.f, grad=0.f;
             #pragma unroll
             for (int c=0;c<4;c++) {
-                float f=joseph_sample(x,a,k,ib+b-1,ic+c-1,nx,ny,nz,nb,nc);
+                float f=taps[b][c];
                 row += f*wc[c]; grad += f*gc[c];
             }
             value += row*wb[b]; db += row*gb[b]; dc += grad*wb[b];
