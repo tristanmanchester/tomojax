@@ -298,17 +298,6 @@ class tomojax.geometry.ScanGeometry(*args, **kwargs)
     .grid
     .rays_for_view(self, i: 'int') -> 'RayPair'
 def tomojax.geometry.beam_of(geometry: 'object') -> 'ConeBeam | None'
-def tomojax.geometry.compute_roi(
-        grid: 'Grid',
-        detector: 'Detector',
-        *,
-        crop_y_to_u: 'bool' = True,
-        match_parity: 'bool' = False,
-    ) -> 'RoiInfo'
-def tomojax.geometry.cylindrical_mask_xy(grid: 'Grid', detector: 'Detector') -> 'np.ndarray'
-def tomojax.geometry.grid_from_detector_fov(grid: 'Grid', detector: 'Detector', *, crop_y_to_u: 'bool' = True) -> 'Grid'
-def tomojax.geometry.grid_from_detector_fov_cube(grid: 'Grid', detector: 'Detector', *, crop_y_to_u: 'bool' = True) -> 'Grid'
-def tomojax.geometry.grid_from_detector_fov_slices(grid: 'Grid', detector: 'Detector', *, crop_y_to_u: 'bool' = True) -> 'Grid'
 def tomojax.geometry.grid_volume_origin(grid: 'Grid') -> 'Vec3'
 def tomojax.geometry.stack_view_poses(
         geometry: 'Geometry',
@@ -651,6 +640,7 @@ class tomojax.io.ProjectionDataset(
         source_path: 'PathLike | None' = None,
     ) -> 'ProjectionDataset'
     .geometry_inputs(self) -> 'dict[str, Any]'
+    .image_key
     .prepare_center_seed(self) -> 'ProjectionDataset'
     .to_nxtomo_metadata(self) -> 'NXTomoMetadata'
 class tomojax.io.ValidationReport
