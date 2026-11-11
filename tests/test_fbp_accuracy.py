@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import tomojax as tj
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.recon import FBPConfig, FBPHostConfig, fbp, fbp_host
 
@@ -445,3 +446,49 @@ def test_cuda_fbp_partial_blocks_and_accumulation(mode, run, nz, first_row):
         np.testing.assert_allclose(
             actual, expected + (0 if initial is None else offset), rtol=5e-5, atol=3e-5
         )
+
+
+@pytest.mark.parametrize("arc", ["half", "irregular"])
+def test_fbp_of_a_rolled_detector_matches_its_unrolled_equivalent(arc: str) -> None:
+    # check-public-imports: allow-private
+    from tomojax._data.geometry_meta import DetectorRollGeometry
+
+    grid = Grid(32, 32, 8, 1.0, 1.0, 0.8)
+    detector = Detector(56, 28, 1.0, 0.7, center=(-0.6, 0.3))
+    angles = (
+        np.arange(0, 180, 2.0)
+        if arc == "half"
+        else np.sort(np.random.default_rng(3).uniform(0, 150, 80))
+    )
+    theta = np.deg2rad(angles)
+    sigma = 3.1
+    volumes = []
+    for roll_deg in (0.0, 4.0):
+        roll = np.deg2rad(roll_deg)
+        xr = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
+        zr = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
+        u = detector.center[0] + np.cos(roll) * xr[None, :] - np.sin(roll) * zr[:, None]
+        v = detector.center[1] + np.sin(roll) * xr[None, :] + np.cos(roll) * zr[:, None]
+        centre_u = 1.2 * np.cos(theta) + 2.0 * np.sin(theta)
+        data = (
+            np.sqrt(2 * np.pi)
+            * sigma
+            * np.exp(-0.5 * ((u - centre_u[:, None, None]) ** 2 + (v - 0.7) ** 2) / sigma**2)
+        )
+        geometry = ParallelGeometry(grid, detector, angles)
+        if roll_deg:
+            geometry = DetectorRollGeometry(geometry, roll_deg)
+        scan = tj.Scan(data.astype(np.float32), geometry)
+        volumes.append(np.asarray(tj.reconstruct(scan, "fbp").volume))
+    scale = np.linalg.norm(volumes[0])
+    assert np.linalg.norm(volumes[1] - volumes[0]) < 5e-3 * scale
+
+
+def test_fbp_rejects_a_detector_grid_that_is_not_a_moved_lattice() -> None:
+    grid = Grid(4, 4, 2, 1.0, 1.0, 1.0)
+    detector = Detector(6, 2, 1.0, 1.0)
+    geometry = ParallelGeometry(grid, detector, [0.0, 60.0, 120.0])
+    u = (np.arange(6) - 2.5) * 1.3  # stretched pitch: not a rigid motion
+    det_grid = (jnp.asarray(np.tile(u, 2)), jnp.asarray(np.repeat([-0.5, 0.5], 6)))
+    with pytest.raises(ValueError, match="rotated and shifted"):
+        fbp(geometry, grid, detector, jnp.zeros((3, 2, 6)), det_grid=det_grid)

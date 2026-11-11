@@ -184,9 +184,10 @@ measurements require independent calibration evidence and repair before `Rings`.
   part of the cone only through a bounded volume or a prior.
 - FBP retains filtered tails across the full volume, assuming zero raw
   attenuation outside the measured detector. This does not recover missing
-  measurements of a truncated object. With explicit detector coordinates
-  (`det_grid`), FBP uses the ray-model adjoint, uniform `pi / n` weights and the
-  supplied detector support.
+  measurements of a truncated object. Explicit detector coordinates
+  (`det_grid`) must be the detector lattice rotated and shifted in its plane,
+  such as a fitted detector roll; FBP moves the poses to match and weights them
+  as any other scan.
 - CUDA projector paths are optional accelerator backends. Parallel FBP selects
   CUDA C kernels automatically on CUDA; `FBPConfig(backend="jax")` selects JAX.
   Reference/JAX paths and independent analytic data both validate correctness.

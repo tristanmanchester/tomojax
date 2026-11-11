@@ -622,6 +622,53 @@ def _can_use_direct_parallel_fbp(
     return type(geometry) is ParallelGeometry and det_grid is None
 
 
+def _lattice_motion(
+    detector: Detector, det_grid: tuple[jnp.ndarray, jnp.ndarray]
+) -> np.ndarray | None:
+    """The pose motion taking ``det_grid``'s rays to the canonical lattice's, None if equal.
+
+    Parallel rays run along lab y through detector-plane points (x, z). A
+    lattice ``o + R q`` (q the centred pixel offsets, R a rotation) sees the
+    object the canonical lattice ``c + q`` sees after moving it by
+    ``p -> c + R.T (p - o)`` in that plane.
+    """
+    nu, nv = detector.nu, detector.nv
+    x, z = (np.asarray(a, np.float64).reshape(nv, nu) for a in det_grid)
+    origin = np.array([x.mean(), z.mean()])
+    qu = (np.arange(nu) - (nu - 1) / 2) * detector.du
+    qv = (np.arange(nv) - (nv - 1) / 2) * detector.dv
+    # Lattice axes from the extreme pixels; a single row or column is completed
+    # by the rotation's right-handed perpendicular.
+    span_u = np.array([1.0, 0.0])
+    if nu > 1:
+        span_u = np.array([x[0, -1] - x[0, 0], z[0, -1] - z[0, 0]]) / (qu[-1] - qu[0])
+    if nv > 1:
+        span_v = np.array([x[-1, 0] - x[0, 0], z[-1, 0] - z[0, 0]]) / (qv[-1] - qv[0])
+        if nu == 1:
+            span_u = np.array([span_v[1], -span_v[0]])
+    else:
+        span_v = np.array([-span_u[1], span_u[0]])
+    rotation = np.column_stack([span_u, span_v])
+    fitted_x = origin[0] + rotation[0, 0] * qu[None, :] + rotation[0, 1] * qv[:, None]
+    fitted_z = origin[1] + rotation[1, 0] * qu[None, :] + rotation[1, 1] * qv[:, None]
+    extent = float(np.max(np.abs(np.r_[x.ravel(), z.ravel()]))) + max(detector.du, detector.dv)
+    residual = max(np.max(np.abs(x - fitted_x)), np.max(np.abs(z - fitted_z)))
+    rigid = np.allclose(rotation.T @ rotation, np.eye(2), atol=1e-5) and np.linalg.det(rotation) > 0
+    if residual > 1e-5 * extent or not rigid:
+        raise ValueError(
+            "fbp: det_grid must be the detector lattice rotated and shifted in its plane"
+        )
+    centre = np.asarray(detector.center, np.float64)
+    if np.allclose(rotation, np.eye(2), atol=1e-7) and np.allclose(
+        origin, centre, atol=1e-6 * extent
+    ):
+        return None
+    motion = np.eye(4)
+    motion[np.ix_([0, 2], [0, 2])] = rotation.T
+    motion[[0, 2], 3] = centre - rotation.T @ origin
+    return motion.astype(np.float32)
+
+
 def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
     """Keep the zero-extended ramp convolution at every reconstructed voxel.
 
@@ -753,11 +800,15 @@ def _plan(
     cfg: FBPConfig,
     *,
     cuda: bool,
+    moved: bool = False,
 ) -> _Plan:
-    """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan."""
+    """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan.
+
+    ``moved`` poses carry a detector-plane motion, so the z axis is not the axis.
+    """
     n_views = int(poses.shape[0])
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
-    parallel = _can_use_direct_parallel_fbp(geometry, None)
+    parallel = _can_use_direct_parallel_fbp(geometry, None) and not moved
     if parallel:
         filter_detector = _parallel_filter_detector(grid, detector)
     else:
@@ -808,8 +859,9 @@ def fbp(
     Backprojection is voxel-driven with bilinear detector interpolation and
     retains filtered tails through the full output volume, assuming zero raw
     attenuation beyond the measured detector. This is not a correction for
-    truncated objects. An explicit ``det_grid`` instead uses the ray-model
-    adjoint with uniform weights.
+    truncated objects. An explicit ``det_grid`` must be the detector lattice
+    rotated and shifted in its plane (a detector roll); its rays are the
+    canonical lattice's under a detector-plane motion of the poses.
 
     Parameters
     ----------
@@ -877,24 +929,22 @@ def fbp(
     )
     validate_detector_grid(det_grid, detector, context="fbp det_grid")
     # Host arrays (including memmaps) stream through the device batch by batch.
-    on_host = not isinstance(projections, jax.Array) and det_grid is None
+    on_host = not isinstance(projections, jax.Array)
     proj = projections if on_host else jnp.asarray(projections, dtype=jnp.float32)
     # Precompute poses once
     T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="fbp geometry")
-    if det_grid is not None:
-        if cfg.devices is not None:
-            raise ValueError("fbp: an explicit det_grid cannot be shared among devices")
-        from ._fbp_detector_grid import fbp_on_detector_grid
-
-        return fbp_on_detector_grid(T_all, proj, grid, detector, cfg, det_grid)
+    motion = None if det_grid is None else _lattice_motion(detector, det_grid)
+    if motion is not None:
+        # The same rays through the canonical lattice: one geometry-aware method.
+        T_all = jnp.matmul(jnp.asarray(motion), T_all, precision=jax.lax.Precision.HIGHEST)
     cuda = all(
         device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
         for device in (T_all.devices() if on_host else proj.devices())
     )
     if cfg.backend == "cuda" and not cuda:
         raise ValueError("CUDA FBP requires CUDA arrays")
-    plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda)
+    plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda, moved=motion is not None)
     split = view_split(cfg.devices, n_views)
     whole = range(n_views)
     acc = plan.backprojected(None, whole) if split is None else split.summed(plan.backprojected)
