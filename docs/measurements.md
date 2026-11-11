@@ -557,29 +557,29 @@ Larger TIGRE FISTA weights diverge. Unregularised CGLS reaches 0.138 at best
 
 ## Cone-beam projection and FDK
 
-Measured 2026-10-07 on commit `5ea7c22` with
+Measured 2026-11-11 on commit `e84b296` with
 [`bench/compare_cone.py`](../bench/compare_cone.py): five voxelised ellipsoids
 (256³, 2×2×2 sub-samples) on a circular 360-view scan with a 384² detector at
 1.5× magnification. Forward projections are compared with exact analytic line
 integrals and FDK volumes with the phantom. Times are the best of three warm
-calls; ASTRA and TIGRE take host arrays.
+calls. Every library takes and returns host arrays, so each time includes
+moving a 64 MiB volume and 202.5 MiB of projections.
 
 | Operation | TomoJAX | ASTRA 2.5 | TIGRE |
 |---|---:|---:|---:|
-| Forward projection | 0.093 s (error 0.0060) | 0.170 s (0.0060) | 0.477 s interpolated (0.0062), 1.24 s Siddon (0.0068) |
-| Backprojection | 0.178 s, exact transpose | 0.075 s, approximate transpose | 0.103 s, "matched" |
-| FDK | 0.048 s (error 0.0581) | 0.293 s (0.0581) | 0.513 s (0.0581) |
-| Forward, axis tilted 0.5° | 0.092 s | 0.171 s | |
-| Backprojection, axis tilted 0.5° | 0.232 s, exact transpose | 0.075 s, approximate transpose | |
+| Forward projection | 0.132 s (error 0.0060) | 0.168 s (0.0060) | 0.471 s interpolated (0.0062), 1.23 s Siddon (0.0068) |
+| Backprojection | 0.121 s, exact transpose | 0.073 s, approximate transpose | 0.087 s, "matched" |
+| FDK | 0.092 s (error 0.0581) | 0.257 s (0.0581) | 0.499 s (0.0581) |
+| Forward, axis tilted 0.5° | 0.132 s | 0.168 s | |
+| Backprojection, axis tilted 0.5° | 0.104 s, exact transpose | 0.073 s, approximate transpose | |
+
+Iterative solvers keep their arrays on the device. There TomoJAX's forward
+projection takes 0.096 s, its exact transpose 0.082 s and FDK 0.048 s; ASTRA's
+and TIGRE's device-resident times are not measured here.
 
 TomoJAX's backprojection is the exact transpose of its forward projector,
 which the iterative solvers and gradients rely on. ASTRA's voxel-driven
-backprojector is cheaper but only approximately its transpose, so a CGLS
-iteration (one of each) costs about 0.27 s in TomoJAX against ASTRA's 0.25 s.
-The transpose has a faster path for views whose detector columns are parallel
-to the rotation axis. A tilted axis, a rolled or pitched detector, or the
-per-view poses of alignment rule that path out, and an iteration then costs
-about 0.32 s at this size. ASTRA's times do not depend on the geometry.
+backprojector is cheaper but only approximately its transpose.
 
 On the same scan (2026-10-06, commit `dc411a2`, before the forward projector
 was made faster), CGLS with the matched transpose took 3.4, 6.6 and 13.2 s for

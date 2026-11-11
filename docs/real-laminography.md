@@ -161,25 +161,26 @@ data-dependent, especially for truncated or periodic objects; a lower training r
 
 ## Automatic NeXus laminography
 
-Recognised Diamond/GDA NeXus layouts need no dataset paths. The
-[laminography example](../examples/align_laminography.py) uses the same default
-workflow as Python and the CLI:
+Recognised Diamond/GDA NeXus layouts need no dataset paths, but raw frames do not
+record the laminography tilt and often not the detector pitch. Alignment requires
+declared geometry, so declare it before fitting, as the
+[laminography example](../examples/align_laminography.py) does:
 
 ```python
-scan = tj.load_frames("scan.nxs").corrected()
-result = tj.align(scan)
-print(result.info["calibration"])
+geometry = tj.LaminographyGeometry(grid, tj.Detector(nu, nv, pitch, pitch), angles, tilt_deg=35)
+scan = tj.load_frames("scan.nxs", geometry=geometry).corrected()
+result = tj.align(scan, fit=("translations", "tilt", "roll"))
 tj.save("aligned.nxs", result)
 ```
 
 ```bash
-tomojax align scan.nxs -o aligned.nxs
+uv run --no-sync python examples/align_laminography.py scan.nxs --tilt 35 --pixel 0.00216 -o aligned.nxs
 ```
 
-Alignment requires declared geometry; supply missing axis metadata before fitting. The default
-fits per-view lab-frame translations jointly with the image, using a smooth-drift and robust-jump
-prior. Add `fit=("translations", "tilt", "roll")` for shared setup angles or
-`fit=("translations", "rotations")` for sample wobble. All settings use the same solver.
+`tj.align`'s default fits per-view lab-frame translations jointly with the image,
+using a smooth-drift and robust-jump prior. Add `"tilt"` and `"roll"` for shared
+setup angles, as above, or `"rotations"` for sample wobble. All settings use the
+same solver.
 
 The physical support is preserved, including explicitly placed volume faces. The returned scan
 retains the original detector samples and fitted corrections; the alignment image remains at the
