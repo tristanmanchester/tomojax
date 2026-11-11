@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 
-def _reliability(ray: np.ndarray, parameters: np.ndarray) -> np.ndarray:
+def reliability(ray: np.ndarray, parameters: np.ndarray) -> np.ndarray:
     """Smooth edge reliability odds, recovering Wang's sin-squared partition."""
     lo, hi, pixel = parameters[..., 0], parameters[..., 1], parameters[..., 2]
     width = np.maximum(np.minimum(-lo, hi), pixel)
@@ -50,11 +50,11 @@ def _stationary_weights(
     for count in counts:
         ray = fans[first]
         denominator = np.mean(
-            _reliability(ray[None, :], common[:, None, :])
-            + _reliability(-ray[None, :], common[:, None, :]),
+            reliability(ray[None, :], common[:, None, :])
+            + reliability(-ray[None, :], common[:, None, :]),
             axis=0,
         )
-        weights[first : first + count] = _reliability(ray, parameters[first]) / denominator
+        weights[first : first + count] = reliability(ray, parameters[first]) / denominator
         first += count
     return weights
 
@@ -70,7 +70,7 @@ def _mean_reliability(
     total = np.zeros(np.broadcast_shapes(groups.shape, rays.shape))
     for repeat in range(members.shape[1]):
         index = members[groups, repeat]
-        total += np.where(index >= 0, _reliability(rays, parameters[index]), 0)
+        total += np.where(index >= 0, reliability(rays, parameters[index]), 0)
     return total / repeats[groups]
 
 
@@ -102,7 +102,7 @@ def full_turn_weights(
     if common is not None:
         weights = _stationary_weights(fans, parameters, common, counts)
     else:
-        own = _reliability(fans, parameters[:, None, :])
+        own = reliability(fans, parameters[:, None, :])
         current = _mean_reliability(groups[:, None], fans, parameters, members, repeats)
         conjugate = np.remainder(angles[groups, None] + np.pi + 2 * fans, 2 * np.pi)
         right = np.searchsorted(nodes, conjugate, side="right") % len(nodes)

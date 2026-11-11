@@ -636,3 +636,23 @@ def test_nikon_flat_and_dark_tiffs_take_the_projection_panel_orientation(tmp_pat
     )
     scan = frames.corrected()
     np.testing.assert_allclose(np.asarray(scan.projections), data, atol=1e-5)
+
+
+@pytest.mark.parametrize("backend", ["jax", cuda])
+@pytest.mark.parametrize("offset", [4.0, 6.0])
+def test_fdk_short_scan_on_an_offset_detector_matches_a_centred_one(backend, offset):
+    # The phantom lies within the short side's field, so every line is measured;
+    # rays whose conjugates fall off the panel must keep their whole weight.
+    n = 32
+    grid = Grid(n, n, n, 1.0, 1.0, 1.0)
+    shapes = _ellipsoids(20.0)
+    truth = _voxelise(grid, shapes)
+    angles = np.linspace(0.0, 230.0, 115, endpoint=False)
+    errors = []
+    centred = Detector(48, 48, 1.0, 1.0)
+    for detector in (centred, Detector(48 - 2 * int(offset), 48, 1.0, 1.0, (offset, 0.0))):
+        geometry = ConeGeometry(grid, detector, angles, ConeBeam(96, 144))
+        config = FDKConfig(backend=backend)
+        volume = fdk(geometry, grid, detector, _analytic(shapes, geometry), config=config)
+        errors.append(np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth))
+    assert errors[1] < 1.03 * errors[0] < 0.1

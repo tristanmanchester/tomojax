@@ -159,9 +159,9 @@ measurements require independent calibration evidence and repair before `Rings`.
 - Cone-beam scans: FDK assumes a circular source orbit (it is exact only in
   the orbit plane, with cone artefacts growing away from it) and supports full
   turns, including offset-detector (half-fan) turns weighted by actual
-  conjugate-panel coverage, and
-  Parker-weighted short scans on a centred detector (an offset detector in a
-  short scan logs a warning). The iterative solvers model any per-view poses exactly. Cone-beam
+  conjugate-panel coverage, and Parker-weighted short scans, whose weights an
+  offset detector shares only between rays that were both measured. The
+  iterative solvers model any per-view poses exactly. Cone-beam
   projection needs the canonical detector grid (no `detector_roll_deg`
   replay grid; detector roll is part of `ConeBeam`). The CUDA kernels need
   CuPy; without it the JAX reference runs, about ten times slower. On CUDA
