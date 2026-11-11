@@ -17,7 +17,7 @@ from ._state import CudaProjectorUnsupported, _unsupported
 _SUPPORTED_NUM_WARPS = frozenset({1, 2, 4, 8})
 _SUPPORTED_KERNEL_VARIANTS = frozenset({"auto", "generic", "z_integer4"})
 _SUPPORTED_LAYOUT_VARIANTS = frozenset({"detector_uv", "detector_vu"})
-_SUPPORTED_STATE_MODES = frozenset({"cached", "inline", "precompute_inclusive"})
+_SUPPORTED_STATE_MODES = frozenset({"cached", "inline"})
 
 _KERNEL_VARIANT_IDS = {"generic": 0, "z_integer4": 1}
 _LAYOUT_VARIANT_IDS = {"detector_vu": 0, "detector_uv": 1}
