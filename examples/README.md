@@ -236,7 +236,7 @@ Install a CUDA-enabled PyTorch separately, then run
 counts with flat and dark frames, Zenodo 3339629):
 
 ```bash
-python examples/train_denoiser.py full_rows1048-1111.nxs --center -138
+python examples/train_denoiser.py full_rows1048-1111.nxs --center-px -138
 ```
 
 The small residual CNN learns from two disjoint, angle-interleaved view sets:
@@ -246,9 +246,10 @@ The CUDA PyTorch projector backpropagates with its exact transpose. A third view
 only for final projection-error reporting, never for training or input FBP.
 The default bins 8×8, uses all views and takes 500 training steps.
 Do not undersample each split: missing angular detail can teach the CNN to
-blur structures even while its held-out projection error improves. Binning preserves physical
-units, so the calibrated detector centre stays −138, not −138/8. Omit
-`--center` to estimate it from the scan before splitting.
+blur structures even while its held-out projection error improves. `--center-px`
+is the calibrated centre in native detector pixels (−138 for this scan), converted
+with the native pitch whatever the binning. Omit it to estimate the centre from the
+scan before splitting.
 
 No clean image is needed for training. This is a single-scan demonstration;
 projection residual is not image accuracy, and shared calibration errors,

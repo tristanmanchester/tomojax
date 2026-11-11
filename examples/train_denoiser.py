@@ -2,7 +2,7 @@
 
 Example (Diamond I12, Zenodo 3339629, full-resolution 64-row NXtomo cut)::
 
-    python examples/train_denoiser.py full_rows1048-1111.nxs --center -138
+    python examples/train_denoiser.py full_rows1048-1111.nxs --center-px -138
 
 Requires a CUDA-enabled PyTorch installation alongside TomoJAX. Two disjoint
 interleaved view sets supply input and target reconstructions plus projection targets;
@@ -102,15 +102,17 @@ def split_views(scan: tj.Scan) -> tuple[tj.Scan, tj.Scan, tj.Scan]:
     return tuple(scan.selected(np.sort(order[k::3])) for k in range(3))
 
 
-def prepare(path: Path, *, binning: int, every: int, center: float | None) -> tj.Scan:
+def prepare(path: Path, *, binning: int, every: int, center_px: float | None) -> tj.Scan:
     frames = tj.load_frames(path).selected(slice(None, None, every))
     scan = frames.corrected(binning=binning)
     if not isinstance(scan.geometry, tj.ParallelGeometry):
         raise ValueError("This slice-wise example requires an axial parallel-beam scan")
-    if center is None:
+    if center_px is None:
         # Geometry calibration only; denoiser optimization never sees test views.
         scan = tj.estimate_center(scan)
     else:
+        # A native-pixel offset; binned pixels are ``binning`` native ones wide.
+        center = center_px * scan.detector.du / binning
         detector = replace(scan.detector, center=(center, scan.detector.center[1]))
         scan = replace(scan, geometry=replace(scan.geometry, detector=detector))
     det = scan.detector
@@ -224,7 +226,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("input", type=Path)
     parser.add_argument(
-        "--center", type=float, help="calibrated detector-u centre, in input length units"
+        "--center-px", type=float, help="calibrated detector-u centre, in native detector pixels"
     )
     parser.add_argument("--binning", type=int, default=8)
     parser.add_argument("--every", type=int, default=1, help="use every Nth view")
@@ -238,7 +240,7 @@ def main() -> None:
         parser.error(f"Output already exists: {args.output}")
     torch.manual_seed(0)
     started = time.perf_counter()
-    scan = prepare(args.input, binning=args.binning, every=args.every, center=args.center)
+    scan = prepare(args.input, binning=args.binning, every=args.every, center_px=args.center_px)
     baseline, denoised, _, metrics = train(scan, steps=args.steps, learning_rate=args.learning_rate)
     metrics["load_to_result_seconds"] = time.perf_counter() - started
     print(json.dumps(metrics, indent=2))
