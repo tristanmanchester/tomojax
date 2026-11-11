@@ -385,7 +385,7 @@ class Scan:
             )
         projections = np.concatenate([np.asarray(s.projections) for s in scans])
         geometry = ConeSegments(tuple(parts), trajectory_lengths=tuple(trajectories))
-        return cls(projections, geometry, name=name or scans[0].name)
+        return cls(projections, geometry, name=name or scans[0].name, corrections=_combined(scans))
 
     def binned(self, factor: int) -> Scan:
         """The scan with ``factor x factor`` detector pixels averaged into one.
@@ -710,6 +710,22 @@ def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[D
         ),
         replace(beam, source_to_detector=float(beam.source_to_detector + shift[1])),
     )
+
+
+def _combined(scans: Sequence[Scan]) -> tuple[Correction, ...]:
+    """The corrections every scan shares; differing histories kept per input in order."""
+    first = scans[0].corrections
+    if all(s.corrections == first for s in scans):
+        return first
+    from tomojax.corrections import Correction  # imports JAX: only when needed
+
+    shared = tuple(c for c in first if all(c in s.corrections for s in scans))
+    record = Correction(
+        "combine",
+        {"views": [int(s.projections.shape[0]) for s in scans]},
+        {"inputs": [[c.to_dict() for c in s.corrections] for s in scans]},
+    )
+    return (*shared, record)
 
 
 def binned_geometry(geometry: ScanGeometry, factor: int) -> ScanGeometry:

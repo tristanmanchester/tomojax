@@ -324,3 +324,21 @@ def test_a_saved_alignment_is_not_labelled_with_an_earlier_reconstruction(tmp_pa
     back = tj.load_reconstruction(tmp_path / "aligned.nxs")
     assert back.method == "align" and back.info == {"levels": []}
     np.testing.assert_array_equal(back.volume, 1.0)
+
+
+def test_combined_scans_keep_their_correction_history() -> None:
+    from tomojax.corrections import Correction
+
+    geometry = tj.ConeGeometry(
+        tj.Grid(4, 4, 4, 1, 1, 1), tj.Detector(6, 4, 1, 1), [0.0, 90.0], tj.ConeBeam(20, 30)
+    )
+    log = Correction("log", {"epsilon": 1e-6})
+    first = tj.Scan(np.zeros((2, 4, 6), np.float32), geometry, corrections=(log,))
+    same = tj.Scan.combine([first, first])
+    assert same.corrections == (log,)
+    rings = Correction("rings", {"views": 512})
+    second = replace(first, corrections=(log, rings))
+    mixed = tj.Scan.combine([first, second])
+    assert mixed.corrections[0] == log and mixed.corrections[1].name == "combine"
+    assert mixed.corrections[1].found["inputs"][1][1] == rings.to_dict()
+    assert mixed.corrections[1].settings["views"] == [2, 2]
