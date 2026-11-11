@@ -890,14 +890,15 @@ def fdk_host(
     )
     ordered_arc(grouped_angles(geometry, n_views)[0])
     result = validate_host_arrays(projections, out, (nz, ny, nx), "fdk_host", order="C")
+    devices = as_devices(cfg.fdk.devices) or (None,)
     if depth is None:
-        free = device_free_memory_bytes() or 2 * 1024**3
+        # Every worker runs slabs of one depth: size them for the smallest device.
+        free = min(device_free_memory_bytes(device=d) or 2 * 1024**3 for d in devices)
         depth = max(1, int(free // (3 * max(1, 4 * grid.nx * grid.ny))))
     depth = min(int(depth), grid.nz)
     slabs = [(z0, min(z0 + depth, grid.nz)) for z0 in range(0, grid.nz, depth)]
     poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
     work = _Slabs(geometry, grid, detector, projections, poses, result)
-    devices = as_devices(cfg.fdk.devices) or (None,)
     # Each device's slabs in turn, copied into ``result`` (slow for memmaps)
     # while the next one runs.
     with ThreadPoolExecutor(len(devices)) as writer, ThreadPoolExecutor(len(devices)) as pool:
