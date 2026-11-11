@@ -108,14 +108,20 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
             f"{file} is not a TomoJAX dataset and holds no flat frames: load its frames with "
             "tomojax.load_frames(path, flats=..., angles=...)"
         ) from exc
+    if located is not None and located.image_key is not None:
+        key = located.image_key
+    else:
+        key = _saved_image_key(record)
+    if np.isin(key, (1, 2)).any():  # an NPZ of detector counts with its flats/darks
+        return _corrected_on_load(_record_frames(file, record, poses=poses), file)
     if np.issubdtype(np.asarray(record.projections).dtype, np.integer):
         raise ValueError(
             f"{file} holds integer detector counts and no flat frames (image_key 1): "
             "load them with tomojax.load_frames(path, flats=...)"
         )
     scan = scan_from_record(record, poses=poses)
-    if located is not None and located.image_key is not None and np.any(located.image_key != 0):
-        scan = scan.selected(located.image_key == 0)
+    if np.any(key != 0):
+        scan = scan.selected(key == 0)
     return scan
 
 
@@ -483,13 +489,7 @@ def load_frames(
     else:
         from tomojax.io import load_dataset
 
-        record, resolved = frame_geometry(load_dataset(file), **overrides)
-        frames = Frames(
-            record.projections,
-            resolved,
-            name=record.sample_name or "sample",
-            source=record,
-        )
+        frames = _record_frames(file, load_dataset(file), poses=True, **overrides)
     return _estimate_missing_center(
         _require_calibration(
             _with_fields(
@@ -715,6 +715,61 @@ def _hdf5_frames(
         flat_positions=None
         if flats is None or located.flats is not None
         else np.cumsum(sample)[key == 1],
+        name=record.sample_name or "sample",
+        source=record,
+    )
+
+
+def _saved_image_key(record: ProjectionDataset) -> np.ndarray:
+    """The record's saved frame labels; every frame is a sample view without any."""
+    key = record.image_key
+    return np.zeros(len(record.angles), np.int32) if key is None else np.asarray(key)
+
+
+def _record_frames(
+    file: Path,
+    record: ProjectionDataset,
+    *,
+    poses: bool,
+    angles: Sequence[float] | np.ndarray | None = None,
+    detector: Detector | None = None,
+    grid: Grid | None = None,
+    geometry: ScanGeometry | None = None,
+) -> Frames:
+    """A TomoJAX record's sample frames, flats and darks, split by its saved ``image_key``."""
+    key = _saved_image_key(record)
+    sample = key == 0
+    if not sample.any():
+        raise ValueError(f"{file} holds no sample frames (image_key 0)")
+    stack = record.projections
+    if not sample.all():
+        frames = len(key)
+
+        def views(values: np.ndarray | None) -> np.ndarray | None:
+            if values is None or np.ndim(values) == 0 or len(values) != frames:
+                return values
+            return values[sample]
+
+        metadata = record.copy_metadata()
+        metadata.image_key = None
+        record = replace(
+            record,
+            projections=stack[sample],
+            angles=views(record.angles),
+            angle_offset_deg=views(record.angle_offset_deg),
+            align_params=views(record.align_params),
+            _metadata=metadata,
+        )
+    record, resolved = frame_geometry(
+        record, angles=angles, detector=detector, grid=grid, geometry=geometry, poses=poses
+    )
+    flats = stack[key == 1] if (key == 1).any() else None
+    return Frames(
+        record.projections,
+        resolved,
+        flats=flats,
+        darks=stack[key == 2] if (key == 2).any() else None,
+        flat_positions=None if flats is None else np.cumsum(sample)[key == 1],
         name=record.sample_name or "sample",
         source=record,
     )

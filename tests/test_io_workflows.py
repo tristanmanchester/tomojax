@@ -467,3 +467,37 @@ def test_npz_volume_round_trips_and_an_untagged_one_is_refused(tmp_path: Path):
     np.savez_compressed(tmp_path / "old.npz", **fields)
     with pytest.raises(ValueError, match="axes tag"):
         load_dataset(tmp_path / "old.npz")
+
+
+def _labelled_dataset(values, key):
+    from tomojax.io.api import LoadedNXTomo, NXTomoMetadata
+
+    frames = len(key)
+    metadata = NXTomoMetadata(
+        angles=np.arange(frames, dtype=np.float32) * 45.0,
+        image_key=np.asarray(key, np.int32),
+        grid=tj.Grid(4, 4, 2, 1.0, 1.0, 1.0),
+        detector=tj.Detector(4, 2, 1.0, 1.0),
+    )
+    projections = np.broadcast_to(np.asarray(values, np.float32)[:, None, None], (frames, 2, 4))
+    return ProjectionDataset.from_nxtomo(LoadedNXTomo(np.array(projections), metadata))
+
+
+@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
+def test_saved_image_keys_split_raw_frames_in_every_container(tmp_path: Path, suffix: str) -> None:
+    path = tmp_path / f"raw{suffix}"
+    save_dataset(path, _labelled_dataset([5, 11, 9, 1], [0, 1, 0, 2]))
+    scan = tj.load(path)
+    np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
+    np.testing.assert_allclose(scan.geometry.angles, [0.0, 90.0])
+    frames = tj.load_frames(path)
+    assert frames.views == 2 and frames.flats is not None and frames.darks is not None
+
+
+@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
+def test_saved_image_keys_drop_invalid_processed_frames(tmp_path: Path, suffix: str) -> None:
+    path = tmp_path / f"processed{suffix}"
+    save_dataset(path, _labelled_dataset([0.5, 7.0, 0.25], [0, 3, 0]))
+    scan = tj.load(path)
+    np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], [0.5, 0.25])
+    np.testing.assert_allclose(scan.geometry.angles, [0.0, 90.0])

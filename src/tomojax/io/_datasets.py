@@ -243,6 +243,17 @@ class ProjectionDataset:
             _metadata=metadata,
         )
 
+    @property
+    def image_key(self) -> np.ndarray | None:
+        """Saved frame labels (0 sample, 1 flat, 2 dark, 3 invalid), when recorded.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            One label per stored frame, or None when the record has none.
+        """
+        return None if self._metadata is None else self._metadata.image_key
+
     def to_nxtomo_metadata(self) -> NXTomoMetadata:
         """Return NXtomo metadata for saving this public dataset.
 
