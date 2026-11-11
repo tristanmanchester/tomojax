@@ -103,3 +103,11 @@ def test_invalid_splits_do_not_silently_use_training_observations_for_scoring():
             test=np.ones((2, 1, 1), bool),
             specification="{}",
         )
+
+
+@pytest.mark.parametrize("offset", [0, 1, 3])
+def test_interleaved_split_holds_out_exactly_the_offset_views(offset):
+    split = Split.interleaved((24, 2, 31), stride=4, offset=offset)
+    held = np.flatnonzero(np.broadcast_to(split.test, (24, 2, 31))[:, 0, 0])
+    np.testing.assert_array_equal(held, np.arange(offset, 24, 4))
+    assert not np.broadcast_to(split.train, (24, 2, 31))[held].any()

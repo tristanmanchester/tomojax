@@ -58,9 +58,18 @@ def test_geometry_wrappers_survive_pickling():
         "grid": Grid(4, 4, 4, 1.0, 1.0, 1.0).to_dict(),
         "angles": np.asarray([0.0, 90.0], np.float32),
         "geometry_type": "parallel",
-        "align_params": np.zeros((2, 6), np.float32),
+        "align_params": np.asarray(
+            [[0.01, -0.02, 0.03, 0.4, -0.3, 0.2], [-0.02, 0.01, 0.05, -0.1, 0.25, 0.0]],
+            np.float32,
+        ),
         "detector_roll_deg": 0.5,
     }
     _, _, wrapped = build_geometry_from_dataset_metadata(meta, poses=True)
     again = pickle.loads(pickle.dumps(wrapped))  # as for a worker process
     assert type(again) is type(wrapped) and list(np.asarray(again.angles)) == [0.0, 90.0]
+    # The corrected poses and the rolled detector lattice survive, not just the wrapper.
+    for view in range(2):
+        np.testing.assert_array_equal(again.pose_for_view(view), wrapped.pose_for_view(view))
+        before, after = wrapped.rays_for_view(view)[0], again.rays_for_view(view)[0]
+        assert after(3, 1) == before(3, 1) and after(0, 2) == before(0, 2)
+    assert not np.allclose(wrapped.pose_for_view(1), np.eye(4))
