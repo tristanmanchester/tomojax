@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, is_dataclass, replace
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
@@ -527,3 +527,35 @@ def detector_poses(geometry: ScanGeometry) -> np.ndarray | None:
     ):
         return params
     return composed_poses(geometry, np.zeros_like(params), "detector")
+
+
+def views_of(geometry: ScanGeometry, kept: np.ndarray) -> ScanGeometry:
+    """``geometry`` of the views ``kept`` (increasing indices), wrappers and segments kept."""
+    from tomojax.geometry import ConeSegments
+
+    if isinstance(geometry, ConeSegments):
+        parts, start = [], 0
+        for segment in geometry.segments:
+            n = len(segment.angles)
+            mine = kept[(kept >= start) & (kept < start + n)] - start
+            if len(mine):
+                parts.append(views_of(segment, mine))
+            start += n
+        stops = np.searchsorted(kept, np.cumsum(geometry.trajectory_lengths))
+        counts = np.diff(np.r_[0, stops])
+        trajectories = tuple(int(n) for n in counts if n)
+        if len(parts) == 1 and len(trajectories) == 1:
+            return parts[0]
+        return ConeSegments(tuple(parts), trajectory_lengths=trajectories)
+    if isinstance(geometry, AugmentedGeometry):
+        return replace(
+            geometry,
+            base=views_of(geometry.base, kept),
+            align_params=np.asarray(geometry.align_params)[kept],
+        )
+    if not is_dataclass(geometry) or isinstance(geometry, type):
+        raise TypeError(f"cannot select views of a {type(geometry).__name__} geometry")
+    fields: dict[str, Any] = vars(geometry)  # a wrapper's base, or a geometry's own angles
+    if "base" in fields:
+        return replace(geometry, base=views_of(fields["base"], kept))
+    return replace(geometry, angles=np.asarray(fields["angles"])[kept])

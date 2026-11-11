@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from tomojax._data import calibration_issues
+from tomojax._data import calibration_issues, views_of
 from tomojax._loading_geometry import frame_geometry, frame_output_grid
 from tomojax._scan import (
     Scan,
@@ -27,7 +27,6 @@ from tomojax._scan import (
     detector_window,
     rebuild,
     scan_from_record,
-    views_of,
 )
 from tomojax.core.validation import view_indices
 

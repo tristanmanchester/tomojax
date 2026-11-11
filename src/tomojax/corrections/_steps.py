@@ -63,6 +63,21 @@ class Step:
         """
         raise NotImplementedError
 
+    def retained(self, kept: np.ndarray) -> Step:  # noqa: ARG002
+        """The step for the views ``kept`` after an earlier step selected them.
+
+        Parameters
+        ----------
+        kept : numpy.ndarray
+            Increasing indices, into this step's views, of those that remain.
+
+        Returns
+        -------
+        Step
+            Unchanged; a step planned from the scan's geometry replans itself.
+        """
+        return self
+
     def workspace_pixels(self, rows: int, cols: int) -> int:
         """Estimate device pixels per view needed in addition to the input.
 

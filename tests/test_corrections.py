@@ -938,3 +938,18 @@ def test_reject_views_keeps_a_smooth_trend_and_rejects_failed_end_views(failed) 
     if failed is not None:
         expected[failed] = False
     np.testing.assert_array_equal(keep, expected)
+
+
+def test_rings_after_rejected_views_is_planned_for_the_views_that_remain() -> None:
+    from tomojax.corrections import Rings
+
+    grid, detector = tj.Grid(8, 8, 4, 1, 1, 1), tj.Detector(8, 4, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 360, 180, endpoint=False))
+    data = np.full((180, 4, 8), 0.7, np.float32)
+    data[90] = 3.0  # the shutter failed on one view
+    scan = tj.Scan(data, geometry)
+    expected = scan.selected(np.delete(np.arange(180), 90))
+    corrected = scan.corrected(RejectViews(), Rings(geometry))
+    assert corrected.projections.shape[0] == 179
+    reference = expected.corrected(Rings(expected.geometry))
+    np.testing.assert_allclose(np.asarray(corrected.projections), np.asarray(reference.projections))

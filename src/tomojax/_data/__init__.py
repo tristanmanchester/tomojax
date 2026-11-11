@@ -17,7 +17,7 @@ from tomojax._data._io_nxtomo import (
     validate_nxtomo,
 )
 from tomojax._data._io_types import LoadedNXTomo, NXTomoMetadata
-from tomojax._data.geometry_meta import LoadedGeometryMeta, build_geometry_from_meta
+from tomojax._data.geometry_meta import LoadedGeometryMeta, build_geometry_from_meta, views_of
 
 __all__ = [
     "ROTATION_ANGLE_PATHS",
@@ -37,4 +37,5 @@ __all__ = [
     "save_nxtomo",
     "saved_volume_axes",
     "validate_nxtomo",
+    "views_of",
 ]

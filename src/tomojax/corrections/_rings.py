@@ -7,7 +7,7 @@ other scans use angular covariance and a spatial scene-power prior.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache, partial
 from itertools import pairwise
 from typing import ClassVar
@@ -16,6 +16,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax._data import views_of
 from tomojax.geometry import (
     ConeGeometry,
     ConeSegments,
@@ -735,6 +736,24 @@ class Rings(Step):
         if axis is not None and isinstance(self.geometry, ParallelGeometry):
             object.__setattr__(self, "_columns", int(self.geometry.detector.nu))
         object.__setattr__(self, "_plan", _view_plan(self.geometry, cyclic=axis is not None))
+
+    def retained(self, kept: np.ndarray) -> Rings:
+        """These rings for the views ``kept``, replanned from their geometry.
+
+        Parameters
+        ----------
+        kept : numpy.ndarray
+            Increasing indices of the views that remain.
+
+        Returns
+        -------
+        Rings
+            The same settings, with the angular plan (and full-turn mirror
+            eligibility) of the retained views.
+        """
+        if self.geometry is None:
+            return self
+        return replace(self, geometry=views_of(self.geometry, kept))
 
     @property
     def mirror_axis(self) -> float | None:

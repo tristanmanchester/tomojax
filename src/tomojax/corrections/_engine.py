@@ -763,6 +763,9 @@ def apply_steps(
                 raise ValueError(f"{type(step).__name__} would reject every view")
             if not keep.all():
                 out, kept = out[keep], kept[keep]
+                # Later steps planned from the geometry see only the retained views.
+                retained = np.flatnonzero(keep)
+                steps = (*steps[: i + 1], *(s.retained(retained) for s in steps[i + 1 :]))
             records.append(Correction(step.record().name, step.record().settings, found))
             i += 1
         else:

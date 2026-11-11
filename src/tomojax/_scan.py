@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tomojax._data import views_of
 from tomojax.core.array_ops import mean_detector_pixels
 from tomojax.core.validation import view_indices
 from tomojax.geometry import (
@@ -484,39 +485,6 @@ def _calibration_parts(geometry: ScanGeometry) -> tuple[ScanGeometry, ...]:
         wrapped.append(replace(geometry, **fields))
         start = stop
     return tuple(wrapped)
-
-
-def views_of(geometry: ScanGeometry, kept: np.ndarray) -> ScanGeometry:
-    """``geometry`` of the views ``kept`` (increasing indices), wrappers and segments kept."""
-    from tomojax._data.geometry_meta import AugmentedGeometry
-    from tomojax.geometry import ConeSegments
-
-    if isinstance(geometry, ConeSegments):
-        parts, start = [], 0
-        for segment in geometry.segments:
-            n = _view_count(segment)
-            mine = kept[(kept >= start) & (kept < start + n)] - start
-            if len(mine):
-                parts.append(views_of(segment, mine))
-            start += n
-        stops = np.searchsorted(kept, np.cumsum(geometry.trajectory_lengths))
-        counts = np.diff(np.r_[0, stops])
-        trajectories = tuple(int(n) for n in counts if n)
-        if len(parts) == 1 and len(trajectories) == 1:
-            return parts[0]
-        return ConeSegments(tuple(parts), trajectory_lengths=trajectories)
-    if isinstance(geometry, AugmentedGeometry):
-        return replace(
-            geometry,
-            base=views_of(geometry.base, kept),
-            align_params=np.asarray(geometry.align_params)[kept],
-        )
-    if not is_dataclass(geometry) or isinstance(geometry, type):
-        raise TypeError(f"cannot select views of a {type(geometry).__name__} geometry")
-    fields: dict[str, Any] = vars(geometry)  # a wrapper's base, or a geometry's own angles
-    if "base" in fields:
-        return replace(geometry, base=views_of(fields["base"], kept))
-    return replace(geometry, angles=np.asarray(fields["angles"])[kept])
 
 
 def _view_count(geometry: ScanGeometry) -> int:
