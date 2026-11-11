@@ -349,6 +349,21 @@ def forward_project_planes(
     return jax.lax.platform_dependent(coefficients, volume, cuda=on_cuda, default=on_jax)
 
 
+def active_voxels(
+    mask: jax.Array, *, backend: str, interpolation: str, z_fast: bool = False
+) -> tuple[jax.Array, ...] | None:
+    """Work lists for ``sum_backproject_planes(active=...)`` from a voxel mask, or None.
+
+    Only the CUDA cubic gather uses them, skipping 4x4 tiles with no nonzero
+    ``mask`` voxel. Build them once for many transposes.
+    """
+    if backend != "cuda" or interpolation != "cubic":
+        return None
+    from .cuda_projector._joseph_generic import active_tiles
+
+    return active_tiles(mask, z_fast=z_fast)
+
+
 def sum_backproject_planes(
     coefficients: jax.Array,
     images: jax.Array,
@@ -360,10 +375,13 @@ def sum_backproject_planes(
     absolute_weights: bool = False,
     accumulate: jax.Array | None = None,
     z_fast: bool = False,
+    active: tuple[jax.Array, ...] | None = None,
 ) -> jax.Array:
     """Apply the matched transpose, or abs(A).T when estimating cancellation.
 
     A given ``accumulate`` volume is added to the result; CUDA adds in place.
+    ``active`` (``active_voxels``) marks the voxels whose result is needed; the
+    others may or may not receive their transpose.
     The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
     The CUDA backend runs the CUDA kernels where the program runs on a GPU,
     and the JAX model elsewhere.
@@ -387,7 +405,9 @@ def sum_backproject_planes(
         options = {"interpolation": interpolation, "absolute_weights": absolute_weights}
         c, y = _fp32(c, y)
         accumulate = _fp32(initial[0])[0] if initial else None
-        return adjoint_cuda(c, y, grid, detector, **options, accumulate=accumulate, z_fast=z_fast)
+        return adjoint_cuda(
+            c, y, grid, detector, **options, accumulate=accumulate, z_fast=z_fast, active=active
+        )
 
     return jax.lax.platform_dependent(coefficients, images, *initial, cuda=on_cuda, default=on_jax)
 

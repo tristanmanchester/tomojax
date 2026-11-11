@@ -18,6 +18,7 @@ from tomojax.core.cuda_projector._joseph import adjoint_cuda, forward_cuda
 
 # check-public-imports: allow-private
 from tomojax.core.joseph import (
+    active_voxels,
     adjoint_jax,
     forward_jax,
     forward_project_planes,
@@ -241,6 +242,54 @@ def test_generic_gather_detector_columns_match_physical_matrix(interpolation, ab
     actual = execute(images, jnp.asarray(initial))
     np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=5e-6)
     np.testing.assert_array_equal(execute(images, jnp.asarray(initial)), actual)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("z_fast", [False, True])
+def test_cubic_gather_limited_to_active_tiles_matches_physical_matrix(monkeypatch, z_fast):
+    # Each view adds its transpose to exactly the voxels whose 4x4 tile, in
+    # that view's major-axis plane, holds a masked voxel; others keep initial.
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "0")  # the generic gather, every view
+    grid = Grid(9, 6, 7, 0.8, 1.1, 1.3, vol_origin=(-3.7, -2.9, -3.1))
+    detector = Detector(13, 11, 0.9, 1.2, (0.17, -0.23))
+    _, _, poses = problem()
+    rng = np.random.default_rng(58)
+    mask = np.zeros((7, 6, 9), bool)  # (z, y, x)
+    mask[[0, 3, 6, 6], [5, 2, 0, 4], [8, 4, 1, 1]] = True
+    images = rng.normal(size=(6, 11, 13)).astype(np.float32)
+    initial = rng.normal(size=(7, 6, 9)).astype(np.float32)
+    physical = matrix(poses, grid, detector, "cubic").reshape(6, -1, 7 * 6 * 9)
+    voxel = np.array([grid.vx, grid.vy, grid.vz])
+    xyz = mask.transpose(2, 1, 0)
+    expected = initial.copy()
+    for view, pose in enumerate(poses.astype(np.float64)):
+        axis = int(np.argmax(np.abs(pose[1, :3] / voxel)))
+        order = (axis, (axis + 1) % 3, (axis + 2) % 3)
+        abc = np.moveaxis(xyz, order, (0, 1, 2))
+        a, b, c = np.indices(abc.shape)
+        tiles = np.zeros((abc.shape[0], -(-abc.shape[1] // 4), -(-abc.shape[2] // 4)), bool)
+        i, j, k = np.nonzero(abc)
+        tiles[i, j // 4, k // 4] = True
+        keep = np.moveaxis(tiles[a, b // 4, c // 4], (0, 1, 2), order).transpose(2, 1, 0)
+        full = (physical[view].T @ images[view].ravel()).reshape(7, 6, 9)
+        expected += np.where(keep, full, 0).astype(np.float32)
+    assert 0 < np.mean(expected != initial) < 1
+    volume = jnp.asarray(mask.transpose(2, 1, 0) if z_fast else mask)
+    active = active_voxels(volume, backend="cuda", interpolation="cubic", z_fast=z_fast)
+    start = initial.transpose(2, 1, 0) if z_fast else initial
+    actual = sum_backproject_planes(
+        plane_coefficients(jnp.asarray(poses), grid, detector),
+        jnp.asarray(images),
+        grid,
+        detector,
+        backend="cuda",
+        interpolation="cubic",
+        accumulate=jnp.asarray(start),
+        z_fast=z_fast,
+        active=active,
+    )
+    actual = np.asarray(actual).transpose(2, 1, 0) if z_fast else np.asarray(actual)
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=5e-6)
 
 
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])

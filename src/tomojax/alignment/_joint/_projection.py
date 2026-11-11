@@ -21,6 +21,7 @@ from tomojax.core.cone import (
     frame_coefficients,
 )
 from tomojax.core.joseph import (
+    active_voxels,
     forward_project_planes,
     plane_coefficients,
     plane_pose_columns,
@@ -229,8 +230,17 @@ class Projection:
             )
         return image * cf.valid[:, None, None]
 
-    def back(self, accumulator, cf, y, *, absolute=False):
-        """Accumulate A.T y (or |A|.T y) over the valid views."""
+    def active(self, mask):
+        """Work lists for ``back`` when only the nonzero ``mask`` voxels are needed."""
+        if self.cone:
+            return None
+        return active_voxels(mask, backend=self.backend, interpolation=self.interpolation)
+
+    def back(self, accumulator, cf, y, *, absolute=False, active=None):
+        """Accumulate A.T y (or |A|.T y) over the valid views.
+
+        With ``active`` lists, voxels outside their mask may lack the transpose.
+        """
         y = y * cf.valid[:, None, None]
         if self.cone:
             return cone_backproject(
@@ -250,6 +260,7 @@ class Projection:
             interpolation=self.interpolation,
             absolute_weights=absolute,
             accumulate=accumulator,
+            active=active,
         )
 
     def columns(self, cf, x, tangent):

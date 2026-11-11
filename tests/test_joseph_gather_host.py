@@ -99,9 +99,9 @@ extern "C" void volume(int tiled,int nviews,int nx,int ny,int nz,int nu,int nv,
         for(int tile=0;tile<count+3;++tile) {
             blockIdx.x=tile;
             const float* start=a==0?initial:out;
-            if(a==0) joseph_gather_tile_0(coeff,images,out,start,nviews,nx,ny,nz,nu,nv);
-            if(a==1) joseph_gather_tile_1(coeff,images,out,start,nviews,nx,ny,nz,nu,nv);
-            if(a==2) joseph_gather_tile_2(coeff,images,out,start,nviews,nx,ny,nz,nu,nv);
+            if(a==0) joseph_gather_tile_0(coeff,images,out,start,nullptr,nullptr,0,nviews,nx,ny,nz,nu,nv);
+            if(a==1) joseph_gather_tile_1(coeff,images,out,start,nullptr,nullptr,0,nviews,nx,ny,nz,nu,nv);
+            if(a==2) joseph_gather_tile_2(coeff,images,out,start,nullptr,nullptr,0,nviews,nx,ny,nz,nu,nv);
         }
     }
 }

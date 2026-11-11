@@ -238,9 +238,12 @@ class Operators:
         """Weighted image projections and their pose-column contractions."""
         return self._weighted_forward(self.prepare(q), x, sw, j)
 
-    def weighted_back(self, q, r, sw, j, p):
-        """Backproject weighted residuals minus the pose-column correction."""
-        return self._weighted_back(self.prepare(q), r, sw, j, p)
+    def weighted_back(self, q, r, sw, j, p, active=None):
+        """Backproject weighted residuals minus the pose-column correction.
+
+        ``active`` (``projection.active``) may skip voxels the caller discards.
+        """
+        return self._weighted_back(self.prepare(q), r, sw, j, p, active)
 
     def pose_back(self, q, sw, j, p):
         """Apply the image/pose cross block to pose increments."""
@@ -403,10 +406,11 @@ class Operators:
             p.reshape(self.padded_n, self.dofs)[: self.n]
         )
 
-    def _weighted_back(self, q, r, sw, j, p):
+    def _weighted_back(self, q, r, sw, j, p, active=None):
         def step(a, z):
             cf, rb, s, jb, pb = z
-            return self.back(a, cf, (rb - _apply_columns(jb, pb)) * s), None
+            image = (rb - _apply_columns(jb, pb)) * s
+            return self.projection.back(a, cf, image, active=active), None
 
         batches = (self.batches(q), *map(self.batches, (r, sw, j, self.pad_poses(p))))
         return jax.lax.scan(step, self._zeros(), batches)[0]

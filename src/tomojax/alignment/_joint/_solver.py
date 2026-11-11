@@ -169,10 +169,13 @@ class _Level:
 
         @jax.jit
         def schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag):
+            # Fixed voxels' transpose is discarded: the gather may skip them.
+            active = ops.projection.active(free)
+
             def matvec(v):
                 v = v * free
                 r, jr = ops.weighted_forward(q, v, sw, j)
-                out = ops.weighted_back(q, r, sw, j, prior.solve(factor, jr))
+                out = ops.weighted_back(q, r, sw, j, prior.solve(factor, jr), active)
                 if lam:
                     out = out + jnp.float32(lam) * tv.diffusion(v, d, scales)
                 out = out + (jnp.float32(lm) * damp) * v
