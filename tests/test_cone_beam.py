@@ -605,3 +605,34 @@ def test_cuda_cone_entry_can_lower_and_differentiate_on_cpu(monkeypatch):
         ):
             assert a.devices() == b.devices() == {jax.devices("cpu")[0]}
             np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-6)
+
+
+def test_nikon_flat_and_dark_tiffs_take_the_projection_panel_orientation(tmp_path: Path):
+    import imageio.v3 as iio
+
+    import tomojax as tj
+
+    views, nv, nu = 4, 6, 8
+    rows, cols = np.mgrid[0:nv, 0:nu]
+    flat = 50000.0 * (1 + 0.4 * cols / nu + 0.3 * rows / nv)
+    dark = 100.0 + 20.0 * cols + 5.0 * rows
+    data = np.linspace(0.1, 0.9, views * nv * nu).reshape(views, nv, nu)
+    counts = np.exp(-data) * (flat - dark) + dark
+    # Nikon TIFFs, sample and calibration alike, use a top-right panel origin.
+    for i, image in enumerate(counts):
+        iio.imwrite(tmp_path / f"part_{i + 1:04d}.tif", image[::-1, ::-1].astype(np.float32))
+    iio.imwrite(tmp_path / "flat.tif", flat[::-1, ::-1].astype(np.float32))
+    iio.imwrite(tmp_path / "dark.tif", dark[::-1, ::-1].astype(np.float32))
+    (tmp_path / "part.xtekct").write_text(
+        "[XTekCT]\nName=part\nInputSeparator=_\nSrcToObject=12.0\nSrcToDetector=18.0\n"
+        f"DetectorPixelsX={nu}\nDetectorPixelsY={nv}\nDetectorPixelSizeX=0.075\n"
+        "DetectorPixelSizeY=0.075\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "CentreOfRotationTop=0\nCentreOfRotationBottom=0\n"
+        "VoxelsX=8\nVoxelsY=8\nVoxelsZ=6\nVoxelSizeX=0.05\nVoxelSizeY=0.05\nVoxelSizeZ=0.05\n"
+        f"Projections={views}\nInitialAngle=0\nAngularStep=90\n"
+    )
+    frames = tj.load_frames(
+        tmp_path / "part.xtekct", flats=tmp_path / "flat.tif", darks=tmp_path / "dark.tif"
+    )
+    scan = frames.corrected()
+    np.testing.assert_allclose(np.asarray(scan.projections), data, atol=1e-5)

@@ -410,6 +410,7 @@ def load_frames(
         HDF5, NPZ, Nikon, SkyScan, Zeiss or ESRF acquisition, or generic TIFF stack.
     flats : array-like, float, str, path-like or None, optional
         Replacement flat frames, calibration stack path or constant open-beam level.
+        A TIFF path is read in the same panel orientation as TIFF projections.
     darks : array-like, float, str, path-like or None, optional
         Replacement dark frames, calibration stack path or constant dark level.
     angles : array-like or None, optional
@@ -585,7 +586,7 @@ def _with_fields(
     if isinstance(flats, numbers.Real):  # one level for every pixel: a white level
         changes |= {"flats": None, "flat_positions": None, "white_level": float(flats)}
     elif flats is not None:
-        flat_frames = _frames_of(flats, "flats")
+        flat_frames = _frames_of(flats, "flats", frames.counts)
         changes |= {
             "flats": flat_frames,
             "flat_positions": None,
@@ -595,7 +596,7 @@ def _with_fields(
     if isinstance(darks, numbers.Real):
         changes["darks"] = np.full((1, *shape), float(darks), np.float32)
     elif darks is not None:
-        changes["darks"] = _frames_of(darks, "darks")
+        changes["darks"] = _frames_of(darks, "darks", frames.counts)
     if exposure_times is not None:
         changes["exposure_times"] = exposure_times
     if flat_exposure_times is not None:
@@ -607,11 +608,18 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}{'s' * (n != 1)}"
 
 
-def _frames_of(value: np.ndarray | float | str | PathLike[str], name: str) -> Any:
+def _frames_of(value: np.ndarray | float | str | PathLike[str], name: str, counts: Any) -> Any:
     if isinstance(value, str | os.PathLike):
+        from tomojax.io._tiff import TiffFrames
         from tomojax.io.api import read_calibration_frames
 
-        return read_calibration_frames(Path(value))
+        calibration = read_calibration_frames(Path(value))
+        if isinstance(calibration, TiffFrames) and isinstance(counts, TiffFrames):
+            # A vendor's TIFF panel origin (Nikon, SkyScan) applies to its flats too.
+            calibration = replace(
+                calibration, flip_rows=counts.flip_rows, flip_cols=counts.flip_cols
+            )
+        return calibration
     frames = np.asarray(value)
     if frames.ndim == 2:
         frames = frames[None]
