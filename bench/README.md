@@ -64,7 +64,8 @@ parallel, laminography and cone beam at two sizes (60 views of 48² on 24³, 180
 48³), the two run-17 watch laminography cases (scored in native pixels), and the gVXR spark plug
 with roll, tilt and a 2-pixel centre offset. Each record holds the nominal error, the fitted error,
 the pose error after every outer step (local-only fits outside cone beam), cold seconds, peak GPU
-memory, level statuses and the fitted calibration. Truth only renders and scores: the true
+memory, level statuses, the largest CG relative residual per level, the first proposed pose step
+and the fitted calibration. Truth only renders and scores: the true
 geometry reaches the solver only as the second run's starting point.
 
 ```bash

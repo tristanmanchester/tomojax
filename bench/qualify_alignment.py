@@ -207,6 +207,7 @@ def run(name: str, start: str) -> dict[str, Any]:
     seconds = time.perf_counter() - t
     fitted, worst = score(analytic.scan_rays(result.scan), row.truth, row.points, row.pixel)
     stats = jax.devices()[0].memory_stats() or {}
+    levels = result.info.get("levels", [])
     return {
         "row": name,
         "start": start,
@@ -217,7 +218,15 @@ def run(name: str, start: str) -> dict[str, Any]:
         "per_step_px": steps if per_step else None,
         "seconds": round(seconds, 1),
         "peak_gib": round(stats.get("peak_bytes_in_use", 0) / 2**30, 3),
-        "levels": [(lv["status"], len(lv["steps"])) for lv in result.info.get("levels", [])],
+        "levels": [(lv["status"], len(lv["steps"])) for lv in levels],
+        # A linear solve that stops working shows here first.
+        "max_cg_residual": [
+            round(max((st["cg_relative_residual"] for st in lv["steps"]), default=0.0), 3)
+            for lv in levels
+        ],
+        "first_proposal": round(levels[0]["steps"][0]["proposed_pose_step_rms"], 4)
+        if levels and levels[0]["steps"]
+        else None,
         "calibration": result.info.get("calibration", {}),
     }
 

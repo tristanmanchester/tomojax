@@ -174,10 +174,10 @@ def test_cubic_majorizer_bounds_the_signed_normal_matrix_and_initial_step():
     assert np.linalg.eigvalsh(np.diag(diagonal) - normal).min() >= -3e-6
     bound = float(jnp.max(jax.jit(model.majorizer)(cf, jnp.ones_like(sqrtw), zero)))
     assert bound >= np.linalg.eigvalsh(dense.T @ dense).max() - 3e-6
-    proxy = model.diagonal(cf, jnp.asarray(sqrtw), zero)
-    linear = Projection(grid, detector, interpolation="linear", backend="jax")
-    np.testing.assert_array_equal(proxy, linear.diagonal(cf, jnp.asarray(sqrtw), zero))
-    assert model.diagonal_kind == "linear_basis_diagonal_proxy"
+    # The preconditioner is the cubic operator's own diagonal, positive wherever it reaches.
+    jacobi = np.asarray(model.diagonal(cf, jnp.asarray(sqrtw), zero)).ravel()
+    np.testing.assert_allclose(jacobi, np.diag(normal), rtol=3e-6, atol=3e-7)
+    assert model.diagonal_kind == "normal_diagonal"
 
 
 def test_cone_parameter_units_include_magnification_and_depth():

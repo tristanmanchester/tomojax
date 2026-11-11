@@ -32,8 +32,12 @@ def _laminography(*, nx=5, ny=4, nz=3, nu=7, nv=6, views=4, tilt=-30.0):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
-def test_weighted_diagonal_is_the_explicit_matrix_diagonal(backend):
-    grid, detector, geometry, angles = _laminography()
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
+@pytest.mark.parametrize("tilt", [-30.0, 0.0])
+def test_weighted_diagonal_is_the_explicit_matrix_diagonal(backend, interpolation, tilt):
+    # Axial parallel beam (tilt 0) has whole planes the cubic footprint reaches and a
+    # linear one does not; a linear diagonal for cubic rays is zero there.
+    grid, detector, geometry, angles = _laminography(tilt=tilt)
     poses = jnp.asarray(stack_view_poses(geometry, len(angles)))
     cf = plane_coefficients(poses, grid, detector)
     rng = np.random.default_rng(3)
@@ -42,14 +46,22 @@ def test_weighted_diagonal_is_the_explicit_matrix_diagonal(backend):
     for k in range(grid.nx * grid.ny * grid.nz):
         unit = jnp.zeros(grid.nx * grid.ny * grid.nz, jnp.float32).at[k].set(1.0)
         volume = unit.reshape(grid.nz, grid.ny, grid.nx)
-        columns.append(forward_project_planes(cf, volume, grid, detector, backend="jax"))
+        columns.append(
+            forward_project_planes(
+                cf, volume, grid, detector, backend="jax", interpolation=interpolation
+            )
+        )
     matrix = jnp.stack(columns, -1)
     expected = jnp.sum((sw[..., None] * matrix) ** 2, axis=(0, 1, 2)).reshape(
         grid.nz, grid.ny, grid.nx
     )
     zeros = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
-    got = plane_weighted_diagonal(cf, sw, zeros, grid, detector, backend=backend)
+    got = plane_weighted_diagonal(
+        cf, sw, zeros, grid, detector, backend=backend, interpolation=interpolation
+    )
     np.testing.assert_allclose(got, expected, rtol=2e-5, atol=1e-6)
+    # Every voxel the operator reaches has a positive preconditioner entry.
+    assert np.all((np.asarray(got) > 0) == (np.asarray(expected) > 0))
 
 
 @pytest.mark.gpu

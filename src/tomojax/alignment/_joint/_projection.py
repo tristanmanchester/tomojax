@@ -184,13 +184,7 @@ class Projection:
         self.interpolation = interpolation
         self.dofs = 6 if self.cone else 5
         self.backend = backend or ("cuda" if cuda_backend() else "jax")
-        self.diagonal_kind = (
-            "normal_row_sum"
-            if self.cone
-            else "linear_basis_diagonal_proxy"
-            if interpolation == "cubic"
-            else "normal_diagonal"
-        )
+        self.diagonal_kind = "normal_row_sum" if self.cone else "normal_diagonal"
 
     def raw_coefficients(self, poses, frames=None):
         """Unmasked core coefficients; their pose derivative excludes the mask."""
@@ -293,11 +287,11 @@ class Projection:
     def diagonal(self, cf, sqrtweights, accumulator):
         """Accumulate a positive image preconditioner, preserving the image operator.
 
-        Linear parallel rays use exact ``diag(A.T W A)``. Cubic rays use the
-        corresponding linear-basis diagonal as a positive preconditioner proxy.
-        Cone rays use a conservative row-sum
-        majorizer. Normal matvecs keep all cross terms through the matched
-        forward and transpose. ``diagonal_kind`` records the choice.
+        Parallel rays use the exact ``diag(A.T W A)`` of their own linear or
+        cubic weights, positive on every voxel the operator reaches. Cone rays
+        use a conservative row-sum majorizer. Normal matvecs keep all cross
+        terms through the matched forward and transpose. ``diagonal_kind``
+        records the choice.
         """
         weights = sqrtweights * cf.valid[:, None, None]
         if not self.cone:
@@ -308,6 +302,7 @@ class Projection:
                 self.grid,
                 self.detector,
                 backend=self.backend,
+                interpolation=self.interpolation,
             )
         return self.majorizer(cf, weights, accumulator)
 

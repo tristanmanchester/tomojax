@@ -468,8 +468,9 @@ def plane_weighted_diagonal(
     detector: Detector,
     *,
     backend: str,
+    interpolation: str = "linear",
 ) -> jax.Array:
-    """Add diag(A.T W A) of the linear plane projector to ``accumulate`` (nz, ny, nx).
+    """Add diag(A.T W A) of the plane projector to ``accumulate`` (nz, ny, nx).
 
     ``sqrtweights`` holds the square roots of the pixel weights, shaped
     ``(views, nv, nu)``. A Jacobi preconditioner input; the matched transpose
@@ -477,7 +478,15 @@ def plane_weighted_diagonal(
     """
     from ._weighted_diagonal import weighted_diagonal
 
-    return weighted_diagonal(coefficients, sqrtweights, accumulate, grid, detector, backend=backend)
+    return weighted_diagonal(
+        coefficients,
+        sqrtweights,
+        accumulate,
+        grid,
+        detector,
+        backend=backend,
+        interpolation=interpolation,
+    )
 
 
 def plane_l2_value_and_grad(
