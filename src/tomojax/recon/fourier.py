@@ -13,7 +13,7 @@ from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
 from ._fourier_backend import FourierPlan, fourier_slab_depth, is_cuda_oom, resolve_fourier_backend
-from ._fourier_grid import sample_projection_rows, sorted_half_turn
+from ._fourier_grid import sample_projection_rows, sample_rolled_rows, sorted_half_turn
 from ._fourier_rows import ProjectionRows, prepare_projection_rows
 from ._host_arrays import empty_host_array, validate_host_arrays
 
@@ -80,7 +80,9 @@ def fourier_reconstruct(
     with uniform or nonuniform spacing. Redundant half-turn directions are
     averaged in physical Fourier coordinates after detector phase/orientation.
     Per-view translations are honored in either detector or object coordinates.
-    Rotational pose corrections and tilted axes are not supported.
+    A detector roll (DetectorRollGeometry) is resampled bilinearly onto the
+    unrolled detector lattice. Rotational pose corrections and tilted axes are
+    not supported.
     Detector offsets, anisotropic voxels, shifted/cropped grids and fractional
     detector-v rows retain their physical coordinates.
 
@@ -159,8 +161,13 @@ def fourier_reconstruct(
     )
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
 
+    roll = float(getattr(geometry, "detector_roll_deg", 0.0) or 0.0)
+
     def prepare(start: int) -> np.ndarray | ProjectionRows:
         rows = positions[start : start + depth]
+        if roll:
+            data = sample_rolled_rows(projections, order, rows, roll, detector.dv / detector.du)
+            return np.pad(data, ((0, depth - len(rows)), (0, 0), (0, 0)))
         return _prepare_slab(projections, order, rows, depth, backend)
 
     def write(start: int, volume: np.ndarray) -> None:

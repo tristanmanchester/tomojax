@@ -135,6 +135,60 @@ def sample_projection_rows(
     return result
 
 
+def sample_rolled_rows(
+    projections: np.ndarray,
+    order: np.ndarray,
+    positions: np.ndarray,
+    roll_deg: float,
+    pitch_ratio: float,
+) -> np.ndarray:
+    """Bilinearly resample a rolled detector onto unrolled rows, with zero extension.
+
+    ``positions`` are unrolled detector-v indices, shape (rows,) or (rows, views);
+    ``pitch_ratio`` is dv / du. A rolled pixel (u', v') lies at the physical
+    detector-plane offset R(roll) @ (x', z') from the detector centre, so the
+    unrolled point (x, z) reads the measurement at R(-roll) @ (x, z).
+    """
+    _, nv, nu = projections.shape
+    angle = np.deg2rad(roll_deg)
+    c, s = np.cos(angle), np.sin(angle)
+    centre_u, centre_v = (nu - 1) / 2, (nv - 1) / 2
+    x = np.arange(nu, dtype=np.float64) - centre_u
+    z = np.asarray(positions, dtype=np.float64) - centre_v
+    z = z[:, :, None] if z.ndim == 2 else z[:, None, None]
+    result = np.zeros((len(positions), len(order), nu), dtype=np.float32)
+    # Read the band of measured rows the slab touches once, for all views.
+    reach = np.abs(s) * centre_u / pitch_ratio + 1
+    lowest = np.floor(np.nanmin(c * z) + centre_v - reach)
+    highest = np.ceil(np.nanmax(c * z) + centre_v + reach)
+    first, last = int(max(0, lowest)), int(min(nv - 1, highest))
+    if not np.isfinite(z).all() or last < first:
+        return result
+    band = np.asarray(projections[order[:, None], np.arange(first, last + 1)[None, :]], np.float32)
+    if not np.isfinite(band).all():
+        raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
+    views = np.arange(len(order))[:, None]
+    for row, height in enumerate(z):
+        source_u, source_v = np.broadcast_arrays(
+            centre_u + c * x + s * height * pitch_ratio,
+            centre_v - s * x / pitch_ratio + c * height,
+        )
+        lower_u, lower_v = np.floor(source_u), np.floor(source_v)
+        frac_u = (source_u - lower_u).astype(np.float32)
+        frac_v = (source_v - lower_v).astype(np.float32)
+        out = result[row]
+        for row_shift, row_weight in ((0, 1 - frac_v), (1, frac_v)):
+            rows = lower_v + row_shift
+            for column_shift, column_weight in ((0, 1 - frac_u), (1, frac_u)):
+                columns = lower_u + column_shift
+                valid = (rows >= first) & (rows <= last) & (columns >= 0) & (columns < nu)
+                band_rows = np.where(valid, rows - first, 0).astype(np.int64)
+                band_columns = np.where(valid, columns, 0).astype(np.int64)
+                values = band[views, band_rows, band_columns]
+                out += np.where(valid, values * (row_weight * column_weight), np.float32(0))
+    return result
+
+
 def gather_per_view_rows(projections, order, positions):
     """Copy at most two contributing rows per slice/view, with zero extension."""
     nv = projections.shape[1]
