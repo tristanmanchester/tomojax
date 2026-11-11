@@ -48,6 +48,14 @@ class Engine(Protocol):
 
     def norm2(self, value: Any) -> float: ...
 
+    def moves(self, step: Any, current: Any) -> bool:
+        """Whether any ``|step|`` exceeds FP32 roundoff of ``current``, without temporaries."""
+        ...
+
+
+_EPS = float(np.finfo(np.float32).eps)
+_TINY = float(np.finfo(np.float32).tiny)
+
 
 @cache
 def _squares() -> Any:
@@ -55,6 +63,21 @@ def _squares() -> Any:
 
     return cp.ReductionKernel(
         "T x", "float64 y", "(double)x * (double)x", "a + b", "y = a", "0", "tomojax_squares"
+    )
+
+
+@cache
+def _moves() -> Any:
+    import cupy as cp
+
+    return cp.ReductionKernel(
+        "float32 s, float32 c",
+        "bool y",
+        f"fabsf(s) > {_EPS!r}f * fmaxf(fabsf(c), {_TINY!r}f)",
+        "a || b",
+        "y = a",
+        "false",
+        "tomojax_moves",
     )
 
 
@@ -151,6 +174,10 @@ class CudaEngine:
         """The FP64 sum of squares, without a squared temporary."""
         return float(_squares()(value))
 
+    def moves(self, step: Any, current: Any) -> bool:
+        """Whether any ``|step|`` exceeds FP32 roundoff of ``current``, in one fused pass."""
+        return bool(_moves()(step, current))
+
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend"))
 def _project(volume, coeff, *, grid, detector, backend):
@@ -230,6 +257,11 @@ class JaxEngine:
     def norm2(self, value: np.ndarray) -> float:
         """The FP64 sum of squares."""
         return float(np.sum(np.square(value, dtype=np.float64)))
+
+    def moves(self, step: np.ndarray, current: np.ndarray) -> bool:
+        """Whether any ``|step|`` exceeds FP32 roundoff of ``current``."""
+        bound = np.maximum(np.abs(current), _TINY) * np.float32(_EPS)
+        return bool(np.any(np.abs(step) > bound))
 
 
 def engine_for(grid: Grid, detector: Detector, backend: str) -> CudaEngine | JaxEngine:

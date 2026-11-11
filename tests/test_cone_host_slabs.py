@@ -447,3 +447,23 @@ def test_host_contrast_cgls_matches_dense_optimum_and_true_stopping(host, depth)
     assert info["converged"] and info["normal_residual_is_recomputed"]
     assert np.linalg.norm(gradient) <= 1.01 * info["normal_residual_tolerance"]
     assert info["data_term"] == "per_view_contrast" and info["background_unresolved"]
+
+
+@pytest.mark.gpu
+def test_cuda_roundoff_test_matches_the_host_one_without_slab_temporaries():
+    import cupy as cp
+
+    # check-public-imports: allow-private
+    from tomojax.recon._slab_engines import CudaEngine, JaxEngine
+
+    grid, detector = tj.Grid(4, 4, 4, 1.0, 1.0, 1.0), tj.Detector(4, 4, 1.0, 1.0)
+    current = np.array([1.0, -2.0, 0.0, 3e-38, 1e4], np.float32)
+    eps = np.finfo(np.float32).eps
+    for step, expected in (
+        (current * eps * 0.5, False),  # below the roundoff of each value
+        (np.array([0, 0, 0, 0, 1e4 * eps * 2], np.float32), True),
+        (np.array([0, 0, 1e-30, 0, 0], np.float32), True),  # any normal step at zero
+    ):
+        host = JaxEngine(grid, detector, "jax").moves(step, current)
+        device = CudaEngine(grid, detector).moves(cp.asarray(step), cp.asarray(current))
+        assert host is device is expected
