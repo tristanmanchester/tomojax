@@ -451,11 +451,7 @@ def _prepare_spdhg_runtime(
 ) -> _SPDHGRuntime:
     cfg = SPDHGConfig() if config is None else config
     validate_spdhg_config(cfg)
-    regulariser = validate_regulariser(
-        cfg.regulariser,
-        cfg.huber_delta,
-        context="spdhg_tv config",
-    )
+    regulariser = validate_regulariser(cfg.regulariser, cfg.huber_delta, context="spdhg_tv config")
     huber_delta = float(cfg.huber_delta)
 
     validate_grid(grid, "spdhg_tv grid")
@@ -488,16 +484,12 @@ def _prepare_spdhg_runtime(
     validate_pose_stack(poses, n_views, context="spdhg_tv geometry")
     resolved_det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
     projector = _batched_projector(cfg, det_grid, geometry, detector)
-    # Resident: measurements, the data dual and any weights, beside the iterate,
-    # three TV duals, the summed data transpose and about three volumes of scratch.
+    # Data, its dual and any weights; ~8 volumes of iterate, TV duals and scratch.
+    reserve, copies = 32 * grid.nx * grid.ny * grid.nz, 2 + (weights is not None)
     stream = not isinstance(projections, jax.Array) and (
         bool(cfg.stream_projections)
         if cfg.stream_projections is not None
-        else should_stream(
-            projections,
-            reserve_bytes=8 * 4 * grid.nx * grid.ny * grid.nz,
-            copies=2 + (weights is not None),
-        )
+        else should_stream(projections, reserve_bytes=reserve, copies=copies)
     )
     if stream and projector is None:
         raise ValueError("spdhg_tv: stream_projections requires the batched projection operators")

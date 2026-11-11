@@ -302,16 +302,9 @@ def _plane_samples(
                 (jb_i >= 0) & (jb_i < frame["nb"]) & (jc_i >= 0) & (jc_i < frame["nc"])
                 & (k < frame["na"])
             )  # fmt: skip
-            k_i = k.astype(jnp.int32)
-            index = tuple(
-                jnp.where(
-                    valid,
-                    jnp.where(frame["a"] == m, k_i, jnp.where(frame["b"] == m, jb_i, jc_i)),
-                    0,
-                )
-                for m in (2, 1, 0)
-            )
-            indices.append(index)
+            k_i, a, b = k.astype(jnp.int32), frame["a"], frame["b"]
+            coords = (jnp.where(a == m, k_i, jnp.where(b == m, jb_i, jc_i)) for m in (2, 1, 0))
+            indices.append(tuple(jnp.where(valid, i, 0) for i in coords))
             weights.append(jnp.where(valid, w, 0.0))
     return indices, weights
 

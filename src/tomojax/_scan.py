@@ -679,8 +679,8 @@ def rebuild(
 ) -> ScanGeometry:
     """``geometry`` with a new grid and/or each detector mapped by ``detector``, wrappers kept."""
     from tomojax._data.geometry_meta import DetectorRollGeometry
-    from tomojax.core.geometry.cone import is_cone_beam
     from tomojax.geometry import ConeSegments
+    from tomojax.geometry.api import is_cone_beam
 
     if isinstance(geometry, ConeSegments):
         segments = (rebuild(s, grid=grid, detector=detector) for s in geometry.segments)

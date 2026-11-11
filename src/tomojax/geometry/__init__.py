@@ -27,20 +27,8 @@ from tomojax.core.geometry import (
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.views import stack_view_poses
-    from tomojax.geometry._fov import (
-        compute_roi,
-        cylindrical_mask_xy,
-        grid_from_detector_fov,
-        grid_from_detector_fov_cube,
-        grid_from_detector_fov_slices,
-    )
 
 _LAZY = {
-    "compute_roi": "tomojax.geometry._fov",
-    "cylindrical_mask_xy": "tomojax.geometry._fov",
-    "grid_from_detector_fov": "tomojax.geometry._fov",
-    "grid_from_detector_fov_cube": "tomojax.geometry._fov",
-    "grid_from_detector_fov_slices": "tomojax.geometry._fov",
     "stack_view_poses": "tomojax.core.geometry.views",
 }
 
@@ -70,11 +58,6 @@ __all__ = [
     "RotationAxisGeometry",
     "ScanGeometry",
     "beam_of",
-    "compute_roi",
-    "cylindrical_mask_xy",
-    "grid_from_detector_fov",
-    "grid_from_detector_fov_cube",
-    "grid_from_detector_fov_slices",
     "grid_volume_origin",
     "stack_view_poses",
 ]

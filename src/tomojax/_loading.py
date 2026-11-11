@@ -108,10 +108,15 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
             f"{file} is not a TomoJAX dataset and holds no flat frames: load its frames with "
             "tomojax.load_frames(path, flats=..., angles=...)"
         ) from exc
-    if located is not None and located.image_key is not None:
-        key = located.image_key
-    else:
-        key = _saved_image_key(record)
+    discovered_key = None if located is None else located.image_key
+    return _record_scan(file, record, discovered_key, poses=poses)
+
+
+def _record_scan(
+    file: Path, record: ProjectionDataset, key: np.ndarray | None, *, poses: bool
+) -> Scan:
+    """A TomoJAX record's sample views, corrected first if its labels mark flats or darks."""
+    key = _saved_image_key(record) if key is None else key
     if np.isin(key, (1, 2)).any():  # an NPZ of detector counts with its flats/darks
         return _corrected_on_load(_record_frames(file, record, poses=poses), file)
     if np.issubdtype(np.asarray(record.projections).dtype, np.integer):
@@ -120,9 +125,7 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
             "load them with tomojax.load_frames(path, flats=...)"
         )
     scan = scan_from_record(record, poses=poses)
-    if np.any(key != 0):
-        scan = scan.selected(key == 0)
-    return scan
+    return scan.selected(key == 0) if np.any(key != 0) else scan
 
 
 def _corrected_on_load(frames: Frames, file: Path) -> Scan:
@@ -610,16 +613,10 @@ def _count(n: int, noun: str) -> str:
 
 def _frames_of(value: np.ndarray | float | str | PathLike[str], name: str, counts: Any) -> Any:
     if isinstance(value, str | os.PathLike):
-        from tomojax.io._tiff import TiffFrames
         from tomojax.io.api import read_calibration_frames
 
-        calibration = read_calibration_frames(Path(value))
-        if isinstance(calibration, TiffFrames) and isinstance(counts, TiffFrames):
-            # A vendor's TIFF panel origin (Nikon, SkyScan) applies to its flats too.
-            calibration = replace(
-                calibration, flip_rows=counts.flip_rows, flip_cols=counts.flip_cols
-            )
-        return calibration
+        # A vendor's TIFF panel origin (Nikon, SkyScan) applies to its flats too.
+        return read_calibration_frames(Path(value), like=counts)
     frames = np.asarray(value)
     if frames.ndim == 2:
         frames = frames[None]

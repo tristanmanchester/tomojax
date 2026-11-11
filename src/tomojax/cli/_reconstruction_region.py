@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from tomojax.core.geometry.cone import is_cone_beam, view_frames
 from tomojax.geometry import Grid, grid_volume_origin
+from tomojax.geometry.api import is_cone_beam, view_frames
 
 if TYPE_CHECKING:
     import jax
@@ -29,10 +29,8 @@ _VIEWS = 180
 
 @dataclass(frozen=True)
 class Cylinder:
-    """A z-aligned cylinder in object coordinates: the xy centre and radius."""
+    """A cylinder about the rotation axis (object x = y = 0): its radius."""
 
-    x: float
-    y: float
     radius: float
 
 
@@ -47,13 +45,23 @@ def region_grid(
     voxel counts, preserving its physical extent.
     """
     chosen, support = scan.grid, None
-    if roi != "off":
-        try:
-            chosen, support = _roi_grid(scan, roi)
-        except ValueError as exc:
-            if roi != "auto":
-                raise ValueError(f"Failed to apply requested --roi={roi!r}") from exc
-            logging.warning("--roi=auto could not be applied; continuing without ROI crop: %s", exc)
+    try:
+        first, last, cylinder = _seen_voxels(scan) if roi != "off" else (None, None, None)
+    except ValueError as exc:
+        if roi != "auto":
+            raise ValueError(f"Failed to apply requested --roi={roi!r}") from exc
+        logging.warning("--roi=auto could not be applied; continuing without ROI crop: %s", exc)
+        first = last = None
+    if first is not None and last is not None:
+        if roi in {"cube", "cyl"}:
+            axes = (0, 1, 2) if roi == "cube" else (0, 1)
+            side = int(min(last[a] - first[a] + 1 for a in axes))
+            for a in axes:
+                # Centre the shared side in the seen interval, keeping whole voxels.
+                first[a] += (last[a] - first[a] + 1 - side) // 2
+                last[a] = first[a] + side - 1
+        chosen = _window(scan.grid, first, last)
+        support = cylinder if roi == "cyl" else None
     if grid is not None:
         chosen = chosen.resampled(grid)
     return chosen, support
@@ -62,8 +70,8 @@ def region_grid(
 def cylinder_support(grid: Grid, cylinder: Cylinder) -> np.ndarray:
     """``(nz, ny, nx)``: 1 inside ``cylinder``, 0 outside."""
     origin = grid_volume_origin(grid)
-    x = origin[0] + np.arange(grid.nx) * grid.vx - cylinder.x
-    y = origin[1] + np.arange(grid.ny) * grid.vy - cylinder.y
+    x = origin[0] + np.arange(grid.nx) * grid.vx
+    y = origin[1] + np.arange(grid.ny) * grid.vy
     tolerance = 8 * np.finfo(np.float64).eps * cylinder.radius
     # hypot avoids squaring physical lengths, which can underflow or overflow.
     inside = np.hypot(x[None, :], y[:, None]) <= cylinder.radius + tolerance
@@ -75,20 +83,6 @@ def zero_outside_cylinder(
 ) -> np.ndarray:
     """``volume`` with the voxels outside ``cylinder`` set to zero."""
     return np.asarray(volume) * cylinder_support(grid, cylinder)
-
-
-def _roi_grid(scan: Scan, roi: str) -> tuple[Grid, Cylinder | None]:
-    """The grid ``roi`` asks for; ``auto`` crops only when the detector sees less."""
-    grid = scan.grid
-    first, last, cylinder = _seen_voxels(scan)
-    if roi in {"cube", "cyl"}:
-        axes = (0, 1, 2) if roi == "cube" else (0, 1)
-        side = int(min(last[a] - first[a] + 1 for a in axes))
-        for a in axes:
-            # Centre the shared side in the seen interval, keeping whole voxels.
-            first[a] += (last[a] - first[a] + 1 - side) // 2
-            last[a] = first[a] + side - 1
-    return _window(grid, first, last), cylinder if roi == "cyl" else None
 
 
 def _window(grid: Grid, first: np.ndarray, last: np.ndarray) -> Grid:
@@ -135,14 +129,14 @@ def _seen_voxels(scan: Scan) -> tuple[np.ndarray, np.ndarray, Cylinder]:
         lo, hi = hits[0], hits[-1]
         first[a] = 0 if lo == 0 else indices[a][lo - 1] + 1
         last[a] = counts[a] - 1 if hi == len(indices[a]) - 1 else indices[a][hi + 1] - 1
-    seen_points = points.reshape(*seen.shape, 3)[seen]
-    centre = (seen_points[:, :2].min(axis=0) + seen_points[:, :2].max(axis=0)) / 2
-    # The widest layer's disc: cone-beam caps narrow it, and it must mask none of them.
-    distance = np.hypot(*(points[:, :2] - centre).T).reshape(seen.shape)
+    # About the rotation axis (x = y = 0), the widest layer's disc: cone-beam
+    # caps narrow lower layers, and the disc must mask none of their voxels.
+    # It stops just short of the nearest unseen sample, exact at full sampling.
+    distance = np.hypot(points[:, 0], points[:, 1]).reshape(seen.shape)
     nearest_unseen = np.where(seen, np.inf, distance).min(axis=(0, 1))
-    radius = nearest_unseen[seen.any(axis=(0, 1))].max()
+    radius = nearest_unseen[seen.any(axis=(0, 1))].max() * (1 - 1e-9)
     radius = distance.max() if np.isinf(radius) else radius
-    return first, last, Cylinder(float(centre[0]), float(centre[1]), float(radius))
+    return first, last, Cylinder(float(radius))
 
 
 def _pixel_coordinates(scan: Scan, views: np.ndarray, points: np.ndarray):

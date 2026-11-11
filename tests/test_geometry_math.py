@@ -12,8 +12,6 @@ from tomojax.geometry import (
     Detector,
     Grid,
     RotationAxisGeometry,
-    cylindrical_mask_xy,
-    grid_from_detector_fov_slices,
 )
 
 # check-public-imports: allow-private
@@ -106,30 +104,6 @@ def test_axis_pose_stack_accepts_array_like_inputs(as_array):
     angles, axis = as_array([0.0, 17.0, 90.0]), as_array([0.0, 0.0, 1.0])
     expected = Rotation.from_euler("z", np.asarray(angles)[:, None], degrees=True).as_matrix()
     np.testing.assert_allclose(axis_pose_stack(angles, axis)[:, :3, :3], expected, atol=2e-7)
-
-
-def test_grid_from_detector_fov_slices_preserves_grid_when_no_crop_needed() -> None:
-    grid = Grid(nx=32, ny=32, nz=16, vx=1.0, vy=1.0, vz=1.0, vol_origin=(10.0, 20.0, 30.0))
-    detector = Detector(nu=128, nv=128, du=1.0, dv=1.0)
-
-    cropped = grid_from_detector_fov_slices(grid, detector)
-
-    assert cropped is grid
-
-
-def test_cylindrical_mask_xy_uses_grid_world_coordinates() -> None:
-    grid = Grid(nx=11, ny=11, nz=3, vx=1.0, vy=1.0, vz=1.0, vol_center=(5.0, 0.0, 0.0))
-    detector = Detector(nu=7, nv=11, du=1.0, dv=1.0)
-
-    shifted_mask = cylindrical_mask_xy(grid, detector)
-    centered_mask = cylindrical_mask_xy(
-        Grid(nx=11, ny=11, nz=3, vx=1.0, vy=1.0, vz=1.0),
-        detector,
-    )
-
-    assert not np.array_equal(shifted_mask, centered_mask)
-    assert shifted_mask[5, 0]
-    assert not shifted_mask[5, 5]
 
 
 @pytest.mark.parametrize(
