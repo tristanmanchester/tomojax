@@ -20,6 +20,7 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 import tomojax as tj
+from tomojax._data.geometry_meta import DetectorRollGeometry  # check-public-imports: allow-private
 from tomojax.geometry import grid_volume_origin
 from tomojax.geometry.api import is_cone_beam, view_frames
 
@@ -192,8 +193,33 @@ def make_case(
         "rotations": ("translations", "rotations"),
         "setup": ("translations", "tilt", "roll"),
     }[case]
-    metadata = {"centre_physical": centre, "tilt_correction_deg": extra_tilt, "roll_deg": roll}
-    return tj.Scan(truth.render(size), declared, name=f"analytic {case}"), truth, fit, metadata
+    projections = truth.render(size)
+    # The same observations declared with the true geometry, the true detector centre and
+    # roll on the detector and every pose difference as per-view corrections: a fit
+    # started there must stay.
+    if geometry == "cone":
+        beam = tj.ConeBeam(192, 288, detector_roll_deg=-roll)
+        exact = tj.ConeGeometry(grid, true_detector, angles, beam)
+    else:
+        base = (
+            tj.LaminographyGeometry(grid, true_detector, angles, tilt_deg=tilt)
+            if geometry == "lamino"
+            else tj.ParallelGeometry(grid, true_detector, angles)
+        )
+        exact = DetectorRollGeometry(base, roll) if roll else base
+    true_scan = tj.Scan(projections, exact, name=f"analytic {case}, true geometry")
+    start = np.asarray([true_scan.geometry.pose_for_view(i) for i in range(views)])
+    local = np.einsum("nji,njk->nik", start[:, :3, :3], poses[:, :3, :3])
+    table = np.zeros((views, 6))
+    table[:, [1, 0, 2]] = Rotation.from_matrix(local).as_euler("YXZ")
+    table[:, [3, 5, 4]] = poses[:, :3, 3] - start[:, :3, 3]
+    metadata = {
+        "centre_physical": centre,
+        "tilt_correction_deg": extra_tilt,
+        "roll_deg": roll,
+        "true_scan": true_scan.with_poses(table),
+    }
+    return tj.Scan(projections, declared, name=f"analytic {case}"), truth, fit, metadata
 
 
 def score(estimated: Rays, truth: Rays) -> tuple[float, float, np.ndarray]:
@@ -253,7 +279,7 @@ def run_case(
             np.linalg.norm(volume - reference) / np.linalg.norm(reference)
         ),
         "calibration": result.info.get("calibration", {}),
-        "truth": metadata,
+        "truth": {key: value for key, value in metadata.items() if key != "true_scan"},
     }
 
 

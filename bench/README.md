@@ -56,6 +56,26 @@ The watch cases, spark-plug figures, K11 and PSI, equal-accuracy default runtime
 suites remain separate qualification gates. Do not infer those outcomes from a small analytic fit
 or from forward/transpose component timing.
 
+### Qualification matrix
+
+`qualify_alignment.py` runs every row twice, each in a fresh process: from the declared geometry,
+and from the true geometry, which must be a fixed point. Rows are the seven analytic cases in
+parallel, laminography and cone beam at two sizes (60 views of 48² on 24³, 180 views of 96² on
+48³), the two run-17 watch laminography cases (scored in native pixels), and the gVXR spark plug
+with roll, tilt and a 2-pixel centre offset. Each record holds the nominal error, the fitted error,
+the pose error after every outer step (local-only fits outside cone beam), cold seconds, peak GPU
+memory, level statuses and the fitted calibration. Truth only renders and scores: the true
+geometry reaches the solver only as the second run's starting point.
+
+```bash
+.venv/bin/python bench/qualify_alignment.py --list
+.venv/bin/python bench/qualify_alignment.py --rows 'analytic/*/small' --output /tmp/qualify.jsonl
+.venv/bin/python bench/qualify_alignment.py --row watch/rotations --start truth
+```
+
+The watch and plug rows read their data from the lab board (`PACK` at the top of the script).
+Keep the JSON lines out of the repository.
+
 ## Joseph first-order differentiation
 
 ```bash
