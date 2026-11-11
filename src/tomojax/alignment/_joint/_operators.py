@@ -26,7 +26,6 @@ from ._projection import (
     Coefficients,
     Projection,
     cone_parameter_scales,
-    posed as _posed,
 )
 
 
@@ -35,11 +34,6 @@ class AffineGeometry(NamedTuple):
 
     rays: jax.Array
     tangent: jax.Array
-
-
-def posed(nominal, q, lever, native):
-    """World-from-object poses (views, 4, 4) after the pose parameters ``q``."""
-    return _posed(nominal, q, jnp.asarray([1 / lever] * 3 + list(native), q.dtype))
 
 
 def robust_value(residual, precision, delta):

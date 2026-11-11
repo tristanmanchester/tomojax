@@ -7,12 +7,12 @@ import pytest
 
 import tomojax as tj
 from tomojax.alignment._joint import _solver, _tv  # check-public-imports: allow-private
-from tomojax.alignment._joint._fit import _gauge  # check-public-imports: allow-private
 from tomojax.alignment._joint._operators import (  # check-public-imports: allow-private
     Operators,
     photometric_sums,
 )
 from tomojax.alignment._joint._pose import MotionPrior  # check-public-imports: allow-private
+from tomojax.alignment._joint._projection import rigid_gauge  # check-public-imports: allow-private
 from tomojax.alignment._joint._solver import (
     Budget,
     _Level,
@@ -52,7 +52,7 @@ def test_initial_support_and_optional_tv_work(monkeypatch, weight, interpolation
             return linearize(q, x, *args)
 
         monkeypatch.setattr(ops, "linearize", checked_initial)
-        gauge = _gauge(nominal, lever=2, native=(0.7, 0.9))
+        gauge = rigid_gauge(nominal, [0.5] * 3 + [0.7, 0.9])
         prior = MotionPrior(8, gauge, knot_spacing=(4,) * 5, delta=0.02)
         image = jnp.asarray(np.random.default_rng(54).uniform(0.1, 0.3, (3, 3, 4)), jnp.float32)
         q = ops.pad_poses(jnp.zeros((8, 5)))
@@ -93,7 +93,7 @@ def test_initializer_does_not_capture_observations(monkeypatch):
         )
         q = ops.pad_poses(np.zeros((8, 5)))
         prior = MotionPrior(
-            8, _gauge(nominal, lever=2, native=(1, 1)), knot_spacing=(4,) * 5, delta=0.02
+            8, rigid_gauge(nominal, [0.5] * 3 + [1, 1]), knot_spacing=(4,) * 5, delta=0.02
         )
         y = ops.pad_images(np.random.default_rng(58).normal(size=(8, 2, 2)))
         precision = jnp.ones_like(y)

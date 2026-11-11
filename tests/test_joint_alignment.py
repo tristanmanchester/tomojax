@@ -13,10 +13,10 @@ from tomojax.alignment._joint import (  # check-public-imports: allow-private
     MotionPrior,
     fit_poses,
 )
-from tomojax.alignment._joint._fit import _gauge  # check-public-imports: allow-private
-from tomojax.alignment._joint._operators import (  # check-public-imports: allow-private
-    Operators,
+from tomojax.alignment._joint._operators import Operators  # check-public-imports: allow-private
+from tomojax.alignment._joint._projection import (  # check-public-imports: allow-private
     posed,
+    rigid_gauge,
 )
 from tomojax.core.joseph import forward_project_planes, plane_coefficients, plane_weighted_diagonal
 from tomojax.geometry import stack_view_poses
@@ -219,7 +219,8 @@ def test_rigid_gauge_reproduces_one_shared_object_transform():
     lever, native = 11.0, (0.6, 1.1)
     epsilon = 1e-5
     with jax.enable_x64(True):
-        columns = _gauge(nominal, lever=lever, native=native).reshape(7, 5, 6)
+        scales = jnp.asarray([1 / lever] * 3 + list(native))
+        columns = rigid_gauge(nominal, [1 / lever] * 3 + list(native)).reshape(7, 5, 6)
         for axis in range(6):
             generator = np.zeros((4, 4))
             if axis < 3:
@@ -236,8 +237,8 @@ def test_rigid_gauge_reproduces_one_shared_object_transform():
             reference = (
                 nominal @ expm(-epsilon * generator) - nominal @ expm(epsilon * generator)
             ) / (2 * epsilon)
-            positive = posed(jnp.asarray(nominal), epsilon * columns[:, :, axis], lever, native)
-            negative = posed(jnp.asarray(nominal), -epsilon * columns[:, :, axis], lever, native)
+            positive = posed(jnp.asarray(nominal), epsilon * columns[:, :, axis], scales)
+            negative = posed(jnp.asarray(nominal), -epsilon * columns[:, :, axis], scales)
             actual = np.asarray((positive - negative) / (2 * epsilon))
             np.testing.assert_allclose(actual[:, :3, :3], reference[:, :3, :3], atol=1e-8)
             np.testing.assert_allclose(actual[:, [0, 2], 3], reference[:, [0, 2], 3], atol=1e-8)
@@ -252,7 +253,9 @@ def test_pose_composition_preserves_geometry_with_reduced_default_matmul_precisi
     nominal[:, :3, :3] = Rotation.random(11, random_state=rng).as_matrix()
     nominal[:, :3, 3] = rng.normal(size=(11, 3))
     lever, native = 64.0, (0.7, 0.9)
-    calculate = jax.jit(lambda n, q: posed(n, q, lever, native))
+    calculate = jax.jit(
+        lambda n, q: posed(n, q, jnp.asarray([1 / lever] * 3 + list(native), q.dtype))
+    )
     with jax.default_matmul_precision("bfloat16"):
         zero = np.asarray(calculate(jnp.asarray(nominal), jnp.zeros((11, 5), jnp.float32)))
         np.testing.assert_array_equal(zero, nominal)

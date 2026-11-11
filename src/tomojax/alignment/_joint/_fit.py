@@ -203,17 +203,6 @@ def _level(
     return y, precision, g, ops, calibration
 
 
-def _gauge(poses, *, lever, native):
-    """(5 views, 6): each view's parameter change under the six rigid motions of the object.
-
-    Moving the object by G and every pose by G^-1 predicts the same data. To
-    first order the poses change by -M G-hat; each view's parameters reproduce
-    that in the nine rotation entries and the two translations a parallel beam
-    sees (the one along the beam is invisible).
-    """
-    return rigid_gauge(poses, [1 / lever] * 3 + list(native))
-
-
 def _finest(grid):
     """The finest voxel pitch along axes with more than one cell."""
     pitches = ((grid.nx, grid.vx), (grid.ny, grid.vy), (grid.nz, grid.vz))
