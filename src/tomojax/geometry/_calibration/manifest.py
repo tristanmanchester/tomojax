@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from tomojax._json import JsonValue, normalize_json
 from tomojax.core.geometry.base import DetectorDict
@@ -91,7 +91,17 @@ def build_calibrated_geometry_metadata_patch(
 
     roll = variables.get("detector_roll_deg")
     if roll is not None:
-        geometry_meta_patch["detector_roll_deg"] = _real(roll.value, field="detector_roll_deg")
+        value = _real(roll.value, field="detector_roll_deg")
+        segments = cast("list[dict[str, Any]]", geometry_meta_patch.get("cone_segments") or [])
+        beams = [geometry_meta_patch.get("cone_beam")] + [e.get("cone_beam") for e in segments]
+        beams = [beam for beam in beams if isinstance(beam, dict)]
+        if beams:
+            # A cone detector rolls in its beam: ConeBeam turns u towards -z
+            # where the parallel replay roll turns it towards +z.
+            for beam in beams:
+                beam["detector_roll_deg"] = -value
+        else:
+            geometry_meta_patch["detector_roll_deg"] = value
 
     axis_unit = variables.get("axis_unit_lab")
     if axis_unit is not None and isinstance(axis_unit.value, list):
