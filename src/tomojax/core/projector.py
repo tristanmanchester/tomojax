@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import functools
-import logging
 import math
 import operator
 from typing import TYPE_CHECKING, Any, cast
@@ -42,7 +41,6 @@ from .validation import (
 # - We compute object_from_world = inv(T_world_from_obj) and sample the volume in the
 #   object frame directly. This makes reconstructed volumes live in the object (sample) frame.
 
-LOG = logging.getLogger(__name__)
 
 _JOSEPH_INTEGRATORS = {"joseph": "linear", "joseph_cubic": "cubic"}
 RAY_INTEGRATORS = ("sampled", "exact", *_JOSEPH_INTEGRATORS)
@@ -347,9 +345,8 @@ def cuda_unsupported_exception_type(
 
 
 def _cone_backend(backend: object) -> str:
-    from tomojax.core.cone import use_cuda_cone
-
-    return "cuda" if backend == "cuda" and use_cuda_cone() else "jax"
+    """An explicit CUDA request stays one: cone_project refuses it when CUDA is absent."""
+    return normalize_projector_backend(cast("ProjectorBackendInput", backend))
 
 
 def cone_views(
@@ -440,12 +437,10 @@ def forward_project_view_T(
     if ray_integrator != "sampled":
         raise ValueError(f"ray_integrator must be one of {RAY_INTEGRATORS}")
     if backend == "cuda":
-        projected = _sampled_view_cuda(
+        return _sampled_view_cuda(
             T, grid, detector, volume, step_size=step_size, n_steps=n_steps, unroll=unroll,
             gather_dtype=gather_dtype, det_grid=det_grid,
         )  # fmt: skip
-        if projected is not None:
-            return projected
     nx, ny, nz = validate_volume(volume, grid, context="forward_project_view_T", name="volume")
     validate_detector(detector, "forward_project_view_T")
     validate_detector_grid(det_grid, detector, context="forward_project_view_T")
@@ -493,8 +488,14 @@ def _sampled_view_cuda(
     unroll: int | None,
     gather_dtype: str,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-) -> jnp.ndarray | None:
-    """One view by the CUDA sampled projector, or None when it is absent or declines."""
+) -> jnp.ndarray:
+    """One view by the CUDA sampled projector, which an explicit request requires.
+
+    Raises
+    ------
+    ValueError
+        If the CUDA projector is absent or declines this geometry, with the reason.
+    """
     cuda_project, reason = resolve_cuda_callable(
         "forward_project_view_T_cuda",
         missing_reason="cuda_single_view_callable_missing",
@@ -521,9 +522,8 @@ def _sampled_view_cuda(
         except Exception as exc:
             if unsupported_exc is None or not isinstance(exc, unsupported_exc):
                 raise
-            reason = f"{type(exc).__name__}: {exc}"
-    LOG.debug("Falling back to JAX single-view projector after CUDA rejection: %s", reason)
-    return None
+            raise ValueError(f"backend='cuda' cannot project this view: {exc}") from exc
+    raise ValueError(f"backend='cuda' is unavailable: {reason}")
 
 
 def _backproject_view_accum_T(

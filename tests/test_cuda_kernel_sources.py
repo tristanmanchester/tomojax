@@ -257,7 +257,7 @@ def test_cuda_residual_sse_interpret_matches_jax_reference_loss() -> None:
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
 
 
-def test_single_view_cuda_unsupported_falls_back_to_jax(
+def test_single_view_cuda_unsupported_is_reported_not_run_on_jax(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class UnsupportedCuda(ValueError):
@@ -276,15 +276,15 @@ def test_single_view_cuda_unsupported_falls_back_to_jax(
 
     monkeypatch.setattr(projector, "resolve_cuda_callable", resolve)
 
-    result = projector.forward_project_view_T(
-        jnp.eye(4, dtype=jnp.float32),
-        Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
-        Detector(nu=2, nv=2, du=1.0, dv=1.0),
-        jnp.ones((2, 2, 2), dtype=jnp.float32),
-        backend="cuda",
-    )
-
-    assert result.shape == (2, 2)
+    # An explicit CUDA request is never silently answered by the JAX reference.
+    with pytest.raises(ValueError, match="detector tile unsupported"):
+        projector.forward_project_view_T(
+            jnp.eye(4, dtype=jnp.float32),
+            Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0),
+            Detector(nu=2, nv=2, du=1.0, dv=1.0),
+            jnp.ones((2, 2, 2), dtype=jnp.float32),
+            backend="cuda",
+        )
 
 
 def test_single_view_cuda_unexpected_errors_propagate(

@@ -8,6 +8,8 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
+import tomojax as tj
+
 # check-public-imports: allow-private
 from tomojax.core.projector import backproject_view_T, forward_project_view_T
 from tomojax.geometry import Detector, Grid
@@ -199,3 +201,28 @@ def test_integer_z_kernel_is_chosen_only_where_snapping_changes_nothing(offset, 
     detector = Detector(1, 3, 1.0, 1.0, center=(0.0, offset))
     poses = np.eye(4, dtype=np.float32)[None]
     assert _supports_z_integer4_for_stack(poses, grid, detector, None) is integral
+
+
+def test_explicit_cuda_view_projection_never_silently_runs_jax(monkeypatch):
+    from tomojax.core import cone
+    from tomojax.core.projector import forward_project_view_T
+
+    grid, detector = Grid(4, 4, 4, 1.0, 1.0, 1.0), Detector(6, 6, 1.0, 1.0)
+    volume, pose = jnp.ones((4, 4, 4), jnp.float32), jnp.eye(4, dtype=jnp.float32)
+    # A rolled detector lattice is beyond the CUDA sampled projector.
+    angle = np.deg2rad(5.0)
+    u = (np.arange(6) - 2.5)[None, :] * np.ones((6, 1))
+    v = (np.arange(6) - 2.5)[:, None] * np.ones((1, 6))
+    rolled = (
+        jnp.asarray((np.cos(angle) * u - np.sin(angle) * v).ravel(), jnp.float32),
+        jnp.asarray((np.sin(angle) * u + np.cos(angle) * v).ravel(), jnp.float32),
+    )
+    with pytest.raises(ValueError, match="backend='cuda'"):
+        forward_project_view_T(pose, grid, detector, volume, det_grid=rolled, backend="cuda")
+    # Without the CUDA cone kernels, an explicit request fails instead of running JAX.
+    monkeypatch.setattr(cone, "use_cuda_cone", lambda: False)
+    frames = cone.cone_model(
+        tj.ConeGeometry(grid, detector, [0.0], tj.ConeBeam(20.0, 30.0))
+    ).frames(1)
+    with pytest.raises(ValueError):
+        forward_project_view_T(pose, grid, detector, volume, frames=frames[0], backend="cuda")

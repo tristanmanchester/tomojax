@@ -22,7 +22,7 @@ def resolve_cuda_module() -> CudaModuleCapability:
     """Resolve the optional CUDA projector module without import-time failure."""
     try:
         module = importlib.import_module("tomojax.core.cuda_projector.api")
-    except Exception as exc:
+    except ImportError as exc:  # an absent optional dependency, not a broken module
         return CudaModuleCapability(None, f"cuda_module_unavailable: {exc}")
     return CudaModuleCapability(module, None)
 
