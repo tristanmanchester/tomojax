@@ -926,3 +926,15 @@ def test_nikon_rays_match_cil_frame_with_tilt_and_offset_panel(tmp_path):
         ]
     )  # bases already account for reversing both raw TIFF axes
     np.testing.assert_allclose(view_frames(frames.geometry), expected, rtol=2e-7, atol=2e-6)
+
+
+@pytest.mark.parametrize("failed", [None, 0, 8])
+def test_reject_views_keeps_a_smooth_trend_and_rejects_failed_end_views(failed) -> None:
+    medians = np.linspace(0.5, 1.5, 9)
+    if failed is not None:
+        medians[failed] = 3.0  # a shutter failure at the start or end of the scan
+    keep, found = RejectViews().select(medians, np.arange(9))
+    expected = np.ones(9, bool)
+    if failed is not None:
+        expected[failed] = False
+    np.testing.assert_array_equal(keep, expected)

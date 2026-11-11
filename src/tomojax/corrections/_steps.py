@@ -241,8 +241,11 @@ class RejectViews(Step):
     A view taken with the beam off, a shutter closed or the sample out of the
     beam differs as a whole from the views either side of it, while the
     object's own change with angle is smooth. Each view's median is compared
-    with the median of the ``neighbours`` views around it (in the order
-    recorded); a view is rejected when that difference is more than ``z``
+    with a robust line (Siegel's repeated median) through the
+    ``2 * (neighbours - 1)`` views nearest it in the order recorded, so a smooth
+    trend predicts every view, the first and last included; a second pass
+    leaves out views the first rejected. A view is rejected when that
+    difference is more than ``z``
     robust standard deviations (1.4826 times the median absolute deviation)
     of all views' differences and more than ``min_jump`` of the views' typical
     median (so the small, smooth changes of a noise-free scan never count).
@@ -328,20 +331,39 @@ class RejectViews(Step):
         scale = 0.0
         if finite.any():
             medians = medians[finite]
-            half = self.neighbours // 2
-            # Reflect, so an end view is compared with its neighbours, not itself.
-            padded = np.pad(medians, half, mode="reflect")
-            around = np.median(
-                np.lib.stride_tricks.sliding_window_view(padded, self.neighbours), axis=1
-            )
-            jumps = medians - around
-            scale = 1.4826 * float(np.median(np.abs(jumps - np.median(jumps))))
-            floor = self.min_jump * float(np.median(np.abs(medians)))
-            keep[finite] = (np.abs(jumps) <= self.z * scale) | (np.abs(jumps) <= floor)
+            # A second pass leaves out the views the first rejected.
+            usable = np.ones(len(medians), bool)
+            for _ in range(2):
+                jumps = medians - _local_trend(medians, usable, 2 * (self.neighbours - 1))
+                scale = 1.4826 * float(np.median(np.abs(jumps - np.median(jumps))))
+                floor = self.min_jump * float(np.median(np.abs(medians)))
+                usable = (np.abs(jumps) <= self.z * scale) | (np.abs(jumps) <= floor)
+            keep[finite] = usable
         found: dict[str, Json] = {"rejected": [int(v) for v in views[~keep]], "robust_scale": scale}
         if not finite.all():
             found["nonfinite"] = [int(v) for v in views[~finite]]
         return keep, found
+
+
+def _local_trend(values: np.ndarray, usable: np.ndarray, count: int) -> np.ndarray:
+    """Each value predicted by a line through its ``count`` nearest usable others.
+
+    The line is Siegel's repeated median, robust to nearly half its points failing.
+    """
+    index = np.flatnonzero(usable)
+    trend = np.array(values, np.float64)
+    for i in range(len(values)):
+        others = index[index != i]
+        others = others[np.argsort(np.abs(others - i), kind="stable")[:count]]
+        if len(others) < 2:
+            continue
+        x, y = others.astype(np.float64), values[others]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            slopes = (y[None, :] - y[:, None]) / (x[None, :] - x[:, None])
+        np.fill_diagonal(slopes, np.nan)
+        slope = np.median(np.nanmedian(slopes, axis=1))
+        trend[i] = np.median(y - slope * x) + slope * i
+    return trend
 
 
 @dataclass(frozen=True)
