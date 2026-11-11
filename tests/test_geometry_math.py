@@ -79,7 +79,7 @@ def test_exact_axis_alignment_has_finite_forward_and_reverse_derivatives(sign):
         assert np.isfinite(jax.jit(derivative(poses))(axis)).all()
 
 
-@pytest.mark.parametrize("tilt", [30, 90, 171.9, 179.9])
+@pytest.mark.parametrize("tilt", [0, 30, 90, 171.9, 179.9])
 def test_axis_pose_derivative_matches_the_physical_rotation(tilt):
     azimuth = np.deg2rad(30)
     direction = np.asarray([-np.sin(azimuth), np.cos(azimuth), 0])
@@ -95,8 +95,9 @@ def test_axis_pose_derivative_matches_the_physical_rotation(tilt):
         Rotation.from_rotvec((theta + step) * direction).as_matrix()
         - Rotation.from_rotvec((theta - step) * direction).as_matrix()
     ) / (2 * step)
-    actual = jax.jit(jax.jacfwd(poses))(theta)
-    np.testing.assert_allclose(actual, expected, atol=3e-4, rtol=3e-4)
+    for derivative in (jax.jacfwd, jax.jacrev):  # including exactly at +z (tilt 0)
+        actual = jax.jit(derivative(poses))(theta)
+        np.testing.assert_allclose(actual, expected, atol=3e-4, rtol=3e-4)
 
 
 @pytest.mark.parametrize("as_array", [list, jnp.asarray])

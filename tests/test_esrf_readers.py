@@ -115,6 +115,9 @@ def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path, capsys,
     ["measurement/calc_hrsrot", "measurement/hrsrot", "instrument/hrsrot/value"],
 )
 def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys, rotation_path):
+    # Each projection pixel encodes its acquisition view, row and column.
+    rows, cols = np.mgrid[:3, :5]
+    pixels = np.stack([20 + 20 * view + 4 * rows + cols for view in range(4)]).astype(np.float32)
     path = tmp_path / "renamed.bin"
     with h5py.File(path, "w") as file:
         file.attrs["default"] = "1.1"
@@ -135,14 +138,15 @@ def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys, rota
         for i, key, value in ((2, 2, 10), (3, 1, 110), (4, 0, 60), (5, 1, 110), (6, 0, 60)):
             entry = file.create_group(f"{i}.1")
             entry["technique/image_key"] = key
-            entry["measurement/camera"] = np.full((2, 3, 5), value, np.uint16)
+            camera = pixels[2:] if i == 6 else np.full((2, 3, 5), value)
+            entry["measurement/camera"] = camera.astype(np.uint16)
             entry[rotation_path] = np.array([0, np.pi / 4]) + (np.pi / 2 if i == 6 else 0)
             entry[rotation_path].attrs["units"] = "radian"
             entry["instrument/positioners/hrsrot"] = 12345
             entry["instrument/positioners/hrsrot"].attrs["units"] = "degree"
         file["broken_link"] = h5py.ExternalLink("absent.h5", "/entry")
     with h5py.File(tmp_path / "pixels.h5", "w") as file:
-        file["data"] = np.full((2, 3, 5), 60, np.float32)
+        file["data"] = pixels[:2]  # the first projection block, external and virtual
     with h5py.File(path, "a") as file:
         del file["4.1/measurement/camera"]
         layout = h5py.VirtualLayout((2, 3, 5), np.float32)
@@ -155,11 +159,12 @@ def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys, rota
     np.testing.assert_array_equal(frames.flat_positions, [0, 0, 2, 2])
     np.testing.assert_array_equal(
         frames.counts.frames_at(np.array([3, 0, 2])).window(slice(1, 3), slice(2, 4))[:],
-        np.full((3, 2, 2), 60),
+        pixels[[3, 0, 2], 1:3, 2:4],
     )
     _check_inspection(path, frames, tmp_path / "previews", capsys)
     scan = frames.corrected()
-    np.testing.assert_allclose(scan.projections, np.log(2), atol=1e-7)
+    # Dark 10, flat 110: each view's own pixels, in acquisition order.
+    np.testing.assert_allclose(scan.projections, -np.log((pixels - 10) / 100), rtol=1e-6)
     np.testing.assert_array_equal(scan.angles, [0, -45, -90, -135])
     meta = frames.source.geometry_metadata["acquisition"]
     assert meta["sample_detector_distance"] == 130

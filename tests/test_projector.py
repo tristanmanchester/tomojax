@@ -1,6 +1,7 @@
 """The reusable projector is the matched functional pair, with stable geometry."""
 
 from dataclasses import replace
+import importlib.util
 import math
 
 import jax
@@ -145,9 +146,11 @@ def test_private_storage_calls_give_the_public_bits(kind, monkeypatch):
     rng = np.random.default_rng(3)
     x = jnp.asarray(rng.normal(size=(4, 5, 7)), dtype=jnp.float32)
     y = jnp.asarray(rng.normal(size=(4, 4, 9)), dtype=jnp.float32)
+    # The prerequisites, checked apart from the feature: then the builder must exist.
+    if jax.default_backend() != "gpu" or importlib.util.find_spec("cupy") is None:
+        pytest.skip("requires CUDA and CuPy")
     operator = tj.Projector(geometry)
-    if operator._build_private is None:
-        pytest.skip("requires the CUDA Joseph projector")
+    assert operator._build_private is not None
     results = [operator(x), operator.adjoint(y)]
     traced = jax.jit(lambda v, w: (tj.project(geometry, v), tj.backproject(geometry, w)))(x, y)
     monkeypatch.setattr("tomojax.recon._operators.device_free_memory_bytes", lambda: 0)

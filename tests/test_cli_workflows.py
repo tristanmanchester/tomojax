@@ -395,6 +395,13 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
     assert resolved["reconstruction"]["warm_start"] == warm_start
     assert resolved["reconstruction"]["config"]["iterations"] == 6
     assert 1 <= resolved["reconstruction"]["effective_iterations"] <= 6
+    # The saved image is the Python solver's on the same scan, grid and start.
+    import tomojax as tj
+
+    source = tj.load(scan)
+    grid = source.grid.resampled((4, 4, 2))
+    expected = tj.reconstruct(source, "cgls", grid=grid, iterations=6, warm_start=warm_start)
+    np.testing.assert_allclose(loaded.volume, np.asarray(expected.volume), rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("scale", [1e-6, 1.0, 1e6])
