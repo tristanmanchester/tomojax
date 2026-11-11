@@ -232,6 +232,18 @@ def tigre_geometry(case: dict[str, Any]) -> tuple[Any, np.ndarray]:
     return geo, angles.astype(np.float32)
 
 
+def tilted_scan(case: dict[str, Any]) -> Any:
+    """The benchmark scan with its rotation axis tilted by ``tilt_deg``, without data."""
+    import tomojax as tj
+
+    n = case["size"]
+    grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
+    det = tj.Detector(case["nu"], case["nv"], 1.0, 1.0)
+    beam = tj.ConeBeam(case["sod"], case["sdd"])
+    geometry = tj.ConeGeometry(grid, det, case["angles"], beam, tilt_deg=case["tilt_deg"])
+    return tj.Scan(np.zeros((case["views"], case["nv"], case["nu"]), np.float32), geometry)
+
+
 def run_astra(
     case: dict[str, Any], volume: np.ndarray, data: np.ndarray, repeats: int
 ) -> list[dict]:
@@ -257,15 +269,9 @@ def run_astra(
             astra.projector3d.delete(projector)
         return t_fp, t_bp
 
-    # Same scan with the rotation axis tilted about x (timings only).
-    tau = np.deg2rad(case["tilt_deg"])
-    tilt_x = np.array(
-        [[1.0, 0.0, 0.0], [0.0, np.cos(tau), np.sin(tau)], [0.0, -np.sin(tau), np.cos(tau)]]
-    )
-    tilted = vectors.copy()
-    for j in range(4):
-        tilted[:, 3 * j : 3 * j + 3] = vectors[:, 3 * j : 3 * j + 3] @ tilt_x.T
-    t_fp_t, t_bp_t = time_pair(astra.create_proj_geom("cone_vec", case["nv"], case["nu"], tilted))
+    # Same scan with the rotation axis tilted about x (timings only), with the rays
+    # of TomoJAX's tilted geometry from its own ASTRA export.
+    t_fp_t, t_bp_t = time_pair(tilted_scan(case).to_astra()[1])
     t_fp, t_bp = time_pair(proj_geom)
 
     def fdk_call() -> np.ndarray:
