@@ -253,12 +253,7 @@ def _ray_frame(ray: jax.Array, grid: Grid) -> dict[str, jax.Array]:
     b = jnp.where(a == 0, 1, 0)
     c = jnp.where(a == 2, 1, 2)
     sizes = jnp.asarray([grid.nx, grid.ny, grid.nz], jnp.int32)
-    strides = jnp.asarray([1, grid.nx, grid.nx * grid.ny], jnp.int32)
-    return {
-        "a": a, "b": b, "c": c,
-        "na": sizes[a], "nb": sizes[b], "nc": sizes[c],
-        "sa": strides[a], "sb": strides[b], "sc": strides[c],
-    }  # fmt: skip
+    return {"a": a, "b": b, "c": c, "na": sizes[a], "nb": sizes[b], "nc": sizes[c]}
 
 
 def _rays(row: jax.Array, detector: Detector) -> jax.Array:
@@ -282,7 +277,10 @@ def _path_weight(ray: jax.Array, frame: dict[str, jax.Array], grid: Grid) -> jax
 def _plane_samples(
     row: jax.Array, frame: dict[str, jax.Array], ray: jax.Array, k: jax.Array
 ) -> tuple[list[jax.Array], list[jax.Array]]:
-    """Flat indices and weights of the four bilinear taps of every ray on its plane k."""
+    """(z, y, x) indices and weights of the four bilinear taps of every ray on its plane k.
+
+    Per-axis indices, not a flat offset, so volumes above 2**31 voxels address correctly.
+    """
     S = jnp.broadcast_to(row[0:3], ray.shape)
     ra = _component(ray, frame["a"])
     ra = jnp.where(jnp.abs(ra) < 1e-12, 1e-12, ra)
@@ -304,8 +302,16 @@ def _plane_samples(
                 (jb_i >= 0) & (jb_i < frame["nb"]) & (jc_i >= 0) & (jc_i < frame["nc"])
                 & (k < frame["na"])
             )  # fmt: skip
-            index = k.astype(jnp.int32) * frame["sa"] + jb_i * frame["sb"] + jc_i * frame["sc"]
-            indices.append(jnp.where(valid, index, 0))
+            k_i = k.astype(jnp.int32)
+            index = tuple(
+                jnp.where(
+                    valid,
+                    jnp.where(frame["a"] == m, k_i, jnp.where(frame["b"] == m, jb_i, jc_i)),
+                    0,
+                )
+                for m in (2, 1, 0)
+            )
+            indices.append(index)
             weights.append(jnp.where(valid, w, 0.0))
     return indices, weights
 
@@ -315,13 +321,12 @@ def _forward_view_jax(
 ) -> jax.Array:
     ray = _rays(row, detector)
     frame = _ray_frame(jax.lax.stop_gradient(ray), grid)
-    flat = volume.reshape(-1)
     planes = max(grid.nx, grid.ny, grid.nz)
 
     def step(total: jax.Array, k: jax.Array) -> tuple[jax.Array, None]:
         indices, weights = _plane_samples(row, frame, ray, k)
         for index, weight in zip(indices, weights, strict=True):
-            total = total + flat[index] * weight
+            total = total + volume[index] * weight
         return total, None
 
     total, _ = jax.lax.scan(
@@ -350,19 +355,18 @@ def _adjoint_jax(
     rays = jax.vmap(lambda row: _rays(row, detector))(coeff)
     frames = _ray_frame(rays, grid)
     values = images * _path_weight(rays, frames, grid)
-    flat = accumulate.reshape(-1)
 
     def step(total: jax.Array, k: jax.Array) -> tuple[jax.Array, None]:
         indices, weights = jax.vmap(lambda row, frame, ray: _plane_samples(row, frame, ray, k))(
             coeff, frames, rays
         )
         for index, weight in zip(indices, weights, strict=True):
-            total = total.at[index.reshape(-1)].add((values * weight).reshape(-1))
+            at = tuple(i.reshape(-1) for i in index)
+            total = total.at[at].add((values * weight).reshape(-1))
         return total, None
 
     planes = max(grid.nx, grid.ny, grid.nz)
-    total, _ = jax.lax.scan(step, flat, jnp.arange(planes, dtype=jnp.float32))
-    volume = total.reshape(grid.nz, grid.ny, grid.nx)
+    volume, _ = jax.lax.scan(step, accumulate, jnp.arange(planes, dtype=jnp.float32))
     return swap_private_axes(volume, z_fast=z_fast)
 
 

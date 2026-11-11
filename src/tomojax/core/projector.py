@@ -261,13 +261,11 @@ def _projector_traversal_state(
     return ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps_val, n_rays
 
 
-@jax.jit
-def _flat_index(ix, iy, iz, nx, ny, _nz):
-    return iz * (ny * nx) + iy * nx + ix
-
-
-@jax.jit
+# Grid sizes are static: per-axis (z, y, x) indices address volumes above 2**31
+# voxels, where a flat int32 offset would wrap.
+@functools.partial(jax.jit, static_argnums=(4, 5, 6))
 def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
+    volume = recon_flat.reshape(nz, ny, nx)
     fx = jnp.floor(ix_f).astype(jnp.int32)
     fy = jnp.floor(iy_f).astype(jnp.int32)
     fz = jnp.floor(iz_f).astype(jnp.int32)
@@ -284,8 +282,7 @@ def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
         inb = ((ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)).astype(
             jnp.float32
         )
-        idx = _flat_index(ix, iy, iz, nx, ny, nz)
-        val = jnp.take(recon_flat, idx, mode="clip")
+        val = volume[jnp.clip(iz, 0, nz - 1), jnp.clip(iy, 0, ny - 1), jnp.clip(ix, 0, nx - 1)]
         return inb * val
 
     c000 = gather(fx, fy, fz) * (wx0 * wy0 * wz0)
@@ -300,7 +297,7 @@ def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
     return c000 + c001 + c010 + c011 + c100 + c101 + c110 + c111
 
 
-@jax.jit
+@functools.partial(jax.jit, static_argnums=(5, 6, 7))
 def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
     if acc_flat.dtype == jnp.float32:
         # Scatter into the existing accumulator. Transposing gather first builds
@@ -320,8 +317,9 @@ def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
             * jnp.where(oz == 0, 1.0 - wz, wz)
         )
         inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
-        idx = jnp.where(inb, iz * (ny * nx) + iy * nx + ix, acc_flat.size)
-        return acc_flat.at[idx.ravel()].add((weight * ray_vals).ravel(), mode="drop")
+        at = tuple(jnp.where(inb, i, n).ravel() for i, n in ((iz, nz), (iy, ny), (ix, nx)))
+        acc = acc_flat.reshape(nz, ny, nx).at[at].add((weight * ray_vals).ravel(), mode="drop")
+        return acc.reshape(-1)
     # Keep the transpose's per-corner casts for the mixed-precision contract.
     scatter = jax.linear_transpose(
         lambda recon: _trilinear_gather(recon, ix_f, iy_f, iz_f, nx, ny, nz),
