@@ -85,8 +85,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     data, out = Path(cast("str", args.data)), Path(cast("str", args.out))
-    check_paths(parser, inputs=[data], outputs=[out], force=cast("bool", args.force))
     fmt = "raw" if out.suffix.lower() == ".raw" else "tiff"
+    # A raw volume writes a JSON sidecar beside it; refuse to replace either.
+    outputs = [out, out.with_suffix(".json")] if fmt == "raw" else [out]
+    check_paths(parser, inputs=[data], outputs=outputs, force=cast("bool", args.force))
     dtype, prefix = cast("str", args.dtype), cast("str", args.prefix)
     with h5py.File(data, "r") as handle:
         dataset = handle.get(_VOLUME_PATH)

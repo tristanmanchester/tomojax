@@ -662,3 +662,33 @@ def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
     assert grid_volume_origin(result.grid)[2] == (-2.5 if roi == "off" else 1.5)
     if roi == "cyl":
         assert not np.asarray(result.volume)[:, 0, 0].any()
+
+
+@pytest.mark.parametrize("auxiliary", ["--preview", "--manifest"])
+def test_recon_refuses_to_replace_an_existing_auxiliary_output(tmp_path: Path, auxiliary):
+    scan = tmp_path / "scan.nxs"
+    write_projection_dataset(scan)
+    existing = tmp_path / ("preview.png" if auxiliary == "--preview" else "run.json")
+    existing.write_text("keep")
+    command = ["recon", str(scan), "-o", str(tmp_path / "recon.nxs"), auxiliary, str(existing)]
+    with pytest.raises(SystemExit) as exit_info:
+        main(command)
+    assert exit_info.value.code == 2 and existing.read_text() == "keep"
+
+
+def test_raw_export_refuses_to_replace_an_existing_sidecar(tmp_path: Path):
+    from tomojax.geometry import Detector, Grid
+    from tomojax.io import ProjectionDataset
+
+    dataset = ProjectionDataset(
+        projections=np.zeros((2, 4, 6), np.float32),
+        angles=np.asarray([0.0, 90.0], np.float32),
+        volume=np.ones((4, 5, 6), np.float32),
+        detector=Detector(6, 4, 1.0, 1.0),
+        grid=Grid(6, 5, 4, 0.5, 0.5, 0.25),
+    )
+    save_dataset(tmp_path / "recon.nxs", dataset)
+    (tmp_path / "volume.json").write_text("keep")
+    with pytest.raises(SystemExit) as exit_info:
+        main(["export", str(tmp_path / "recon.nxs"), "-o", str(tmp_path / "volume.raw")])
+    assert exit_info.value.code == 2 and (tmp_path / "volume.json").read_text() == "keep"

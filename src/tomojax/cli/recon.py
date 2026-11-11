@@ -305,7 +305,8 @@ def main() -> None:
     parser = build_parser()
     args, metadata = parse_args_with_config(parser)
     run = _Run.of(args)
-    check_paths(parser, inputs=[run.data], outputs=[run.out], force=cast("bool", args.force))
+    outputs = [run.out, run.preview, run.manifest]
+    check_paths(parser, inputs=[run.data], outputs=outputs, force=cast("bool", args.force))
     try:
         config = run.config(cast("dict[str, object]", metadata["settings"]))
     except (TypeError, ValueError) as exc:
