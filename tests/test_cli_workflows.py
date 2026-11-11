@@ -325,7 +325,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     manifest = tmp_path / "recon-manifest.json"
     config = tmp_path / "recon.toml"
     write_projection_dataset(scan)
-    _ = config.write_text("views_per_batch = 1\nscale = 0.5\n", encoding="utf-8")
+    _ = config.write_text("scale = 0.5\n", encoding="utf-8")
 
     args = [
         "recon",
@@ -356,9 +356,9 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
 
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
     assert resolved["method"] == "fbp"
-    assert resolved["settings"] == {"views_per_batch": 1, "scale": 0.5}
+    assert resolved["settings"] == {"scale": 0.5}
     settings = resolved["reconstruction"]["config"]
-    assert (settings["filter"], settings["views_per_batch"], settings["scale"]) == ("ramp", 1, 0.5)
+    assert (settings["filter"], settings["scale"]) == ("ramp", 0.5)
     assert resolved["reconstruction_grid"]["nx"] == 4
     assert resolved["roi"] == {
         "requested": "off",
@@ -495,7 +495,7 @@ def test_recon_cli_refuses_settings_the_method_does_not_take(
     err = capsys.readouterr().err
     assert message in err
     if toml:
-        assert "has " in err and "views_per_batch" in err  # the valid ones
+        assert "has " in err and "backend" in err  # the valid ones
 
 
 def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path) -> None:
