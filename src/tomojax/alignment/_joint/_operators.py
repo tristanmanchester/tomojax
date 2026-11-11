@@ -253,9 +253,9 @@ class Operators:
         """
         return self._weighted_back(self.prepare(q), r, sw, j, p, active)
 
-    def pose_back(self, q, sw, j, p):
-        """Apply the image/pose cross block to pose increments."""
-        return self._pose_back(self.prepare(q), sw, j, p)
+    def pose_back(self, q, sw, j, p, active=None):
+        """Apply the image/pose cross block to pose increments (``active`` as weighted_back)."""
+        return self._pose_back(self.prepare(q), sw, j, p, active)
 
     def coefficients(self, nominal, q, valid, scales=None, frames=None):
         """One batch's physical coefficients and explicit padded-view mask."""
@@ -426,10 +426,10 @@ class Operators:
         batches = (self.batches(q), *map(self.batches, (r, sw, j, self.pad_poses(p))))
         return jax.lax.scan(step, self._zeros(), batches)[0]
 
-    def _pose_back(self, q, sw, j, p):
+    def _pose_back(self, q, sw, j, p, active=None):
         def step(a, z):
             cf, s, jb, pb = z
-            return self.back(a, cf, _apply_columns(jb, pb) * s), None
+            return self.projection.back(a, cf, _apply_columns(jb, pb) * s, active=active), None
 
         batches = (self.batches(q), *map(self.batches, (sw, j, self.pad_poses(p))))
         return jax.lax.scan(step, self._zeros(), batches)[0]

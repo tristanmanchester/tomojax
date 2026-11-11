@@ -413,6 +413,18 @@ def test_pose_fit_recovers_a_slip_and_keeps_a_clean_scan_still():
 
 @pytest.mark.numerical
 @pytest.mark.slow
+def test_pose_fit_is_exactly_covariant_with_the_data_scale():
+    # The FP16 step storage must not see the data's units: 2**-17 brings the
+    # largest projection to 1.3e-4, where FP16 values would be subnormal.
+    projections, nominal, grid, detector, _ = _moving_scan(slip=1.5)
+    volume, _, table, _ = fit_poses(projections, nominal, grid, detector)
+    small, _, scaled, _ = fit_poses(projections * np.float32(2.0**-17), nominal, grid, detector)
+    np.testing.assert_array_equal(scaled, table)
+    np.testing.assert_array_equal(np.asarray(small) * np.float32(2.0**17), np.asarray(volume))
+
+
+@pytest.mark.numerical
+@pytest.mark.slow
 def test_pose_fit_recovers_per_view_rotations():
     projections, nominal, grid, detector, truth = _moving_scan(wobble_deg=1.0)
     geometry = tj.LaminographyGeometry(

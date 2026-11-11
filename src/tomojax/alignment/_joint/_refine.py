@@ -24,6 +24,7 @@ _ITERATIONS = 5
 # its decrease is below what the FP32 objective resolves, so backtracking on it
 # only spends objective evaluations.
 _POSE_TOL_PX = 1e-4
+_LM_INITIAL = 0.01
 _NEIGHBOURS = 5
 
 
@@ -235,7 +236,8 @@ class _Refinement:
                 raise FloatingPointError("non-finite pose refinement slope")
             if slope >= 0:
                 return "stationary"
-            if not attempt and _rms(prior.expand(dc)) < _POSE_TOL_PX:
+            # Raised damping shrinks a proposal without evidence of convergence.
+            if not attempt and lm <= _LM_INITIAL and _rms(prior.expand(dc)) < _POSE_TOL_PX:
                 return "converged"
             for ls in range(8):
                 alpha = 0.5**ls
@@ -259,7 +261,7 @@ def refine(x, p, y, precision, prior, *, ops, sigma):
     precision = ops.pad_precision(precision)
     problem = _Refinement(x, y, precision, prior, ops, sigma, c)
     stats = problem.first
-    f, lm, status, steps = float(stats[2] + problem.penalty(c)), 0.01, "budget_exhausted", []
+    f, lm, status, steps = float(stats[2] + problem.penalty(c)), _LM_INITIAL, "budget_exhausted", []
     for it in range(_ITERATIONS):
         if it:
             stats = problem.objective.stats(ops.pad_poses(c), x, y, precision, problem.delta)

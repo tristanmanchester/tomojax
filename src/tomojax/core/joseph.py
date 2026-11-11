@@ -357,7 +357,7 @@ def active_voxels(
     The CUDA gathers use them to skip cubic 4x4 tiles, or linear z runs, with
     no nonzero ``mask`` voxel. Build them once for many transposes.
     """
-    if backend != "cuda":
+    if backend != "cuda" or mask.size >= 2**31:  # the lists hold int32 ids
         return None
     if interpolation == "linear":
         from ._cuda_joseph import active_runs

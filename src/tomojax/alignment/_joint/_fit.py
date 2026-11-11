@@ -160,9 +160,19 @@ def _level(
     detector_roll_deg=0.0,
     interpolation="linear",
 ):
-    """Observations, grid, operators and calibration at one binning."""
+    """Observations, grid, operators and calibration at one binning.
+
+    The observations are multiplied by a power of two bringing them near one,
+    the same at every level: the fit is scale covariant and this is exact, and
+    it keeps the step's FP16 storage clear of its subnormals. Fitted volumes
+    are in these units until divided by ``calibration["scale"]``.
+    """
     nv, nu = measured.shape[1:]
+    sample = np.asarray(measured[:: max(1, len(measured) // 16)], np.float32)
+    peak = np.max(np.abs(sample[np.isfinite(sample)]), initial=0.0)
+    scale = 2.0 ** -np.round(np.log2(peak)) if peak > 0 else 1.0
     y, precision = _coarsened(measured, total_bin)
+    y *= np.float32(scale)
     g = _resized(base, tuple(math.ceil(n / b) for n in (base.nx, base.ny, base.nz)))
     d = Detector(
         nu // total_bin,
@@ -178,7 +188,7 @@ def _level(
     # Estimate on the supplied finest samples, before coarsening turns smooth
     # texture into apparent noise. With precision=count/b**2, sigma/b gives
     # the same independent-pixel noise model for partially observed blocks.
-    sigma = estimate_noise(measured, dtype=np.float32) / total_bin
+    sigma = estimate_noise(measured, dtype=np.float32) * scale / total_bin
     ops = Operators(
         g,
         d,
@@ -198,6 +208,7 @@ def _level(
         "eps": max(1e-8, _TV_HUBER * contrast * h / float(metric.length_scale) ** 2),
         "delta": max(_LOSS_SIGMA * sigma, _LOSS_CONTRAST * contrast, 1e-8),
         "sigma": sigma,
+        "scale": scale,
         "scales": (1.0, 1.0, 1.0) if g.vx == g.vy == g.vz else (h / g.vz, h / g.vy, h / g.vx),
     }
     return y, precision, g, ops, calibration
@@ -373,7 +384,7 @@ def fit_poses(
         assert x is not None  # every schedule has at least one level
         p, refinement = refine(x, p, y, precision, prior, ops=ops, sigma=cal["sigma"])
         table, corrections = parameters.physical(np.asarray(p, np.float64), pose_scales)
-        x = x[margin : margin + base.nz]
+        x = x[margin : margin + base.nz] / np.float32(cal["scale"])
     record = {
         "fit": list(parameters.fit),
         "corrections": corrections,

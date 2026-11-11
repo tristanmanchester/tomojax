@@ -158,7 +158,13 @@ class _Level:
                 delta,
             )
         )
-        self.rhs = jax.jit(lambda q, sw, j, sp, gx, free: (ops.pose_back(q, sw, j, sp) - gx) * free)
+
+        @jax.jit
+        def rhs(q, sw, j, sp, gx, free):
+            # Fixed voxels are discarded, so the gather may skip them.
+            return (ops.pose_back(q, sw, j, sp, ops.projection.active(free)) - gx) * free
+
+        self.rhs = rhs
         self.norm = jax.jit(tv.dot)
         # Batch by batch: a whole-sinogram FP64 product would be a stack-sized temporary.
         self.energy = jax.jit(
