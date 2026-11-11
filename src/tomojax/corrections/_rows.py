@@ -23,6 +23,7 @@ from ._engine import (
     log_batches,
     ordered_steps,
     positive_finite,
+    reject_nonfinite,
 )
 from ._records import Correction
 from ._steps import Step
@@ -45,13 +46,9 @@ class CorrectedRows:
     @property
     def records(self) -> tuple[Correction, ...]:
         """Correction records for these measured rows, including any sampling halo."""
+        reject_nonfinite(int(self.counts[1]), 0, len(self.projections))
         log = Correction(
-            "log",
-            {"epsilon": self.epsilon},
-            {
-                "nonpositive_transmission": int(self.counts[0]),
-                "nonfinite_set_to_zero": int(self.counts[1]),
-            },
+            "log", {"epsilon": self.epsilon}, {"nonpositive_transmission": int(self.counts[0])}
         )
         before = [step.record() for step in self.steps if step.domain == "transmission"]
         after = [step.record() for step in self.steps if step.domain == "line integrals"]
@@ -269,12 +266,5 @@ def _correct_host_rows(
         flat_record.settings,
         {"pixels_without_light": int(np.count_nonzero(~selected.usable))},
     )
-    log = Correction(
-        "log",
-        {"epsilon": epsilon},
-        {
-            "nonpositive_transmission": int(tally[0]),
-            "nonfinite_set_to_zero": int(tally[1]),
-        },
-    )
+    log = Correction("log", {"epsilon": epsilon}, {"nonpositive_transmission": int(tally[0])})
     return Corrected(output, (flat, *(s.record() for s in transmission), log, *rest), kept)

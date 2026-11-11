@@ -180,10 +180,7 @@ def correct_frames(
         out, kept, tail_records = apply_steps(out, tail, batch_views)
         if (tail or transmission_tail) and binning > 1:
             out = _binned(out, binning, batch_views)
-    found: dict[str, Json] = {
-        "nonpositive_transmission": int(tally[0]),
-        "nonfinite_set_to_zero": int(tally[1]),
-    }
+    found: dict[str, Json] = {"nonpositive_transmission": int(tally[0])}
     log = Correction("log", {"epsilon": float(epsilon)}, found)
     records = tuple(
         [s.record() for s in counts_steps] + list(field_record)
@@ -524,14 +521,17 @@ def _log_transmission(
     line_steps: tuple[Step, ...] = (),
     factor: int = 1,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Floor and log transmission, then run the phase prefix and bin its result."""
+    """Floor and log transmission, then run the phase prefix and bin its result.
+
+    Non-finite results are counted, not replaced: an unknown measurement is not
+    zero absorption, and the batch loops reject them.
+    """
     nonpositive = jnp.sum(transmission <= 0)
     p = -jnp.log(jnp.maximum(transmission, epsilon))
     for step in line_steps:
         p = step.apply(p)
-    bad = ~jnp.isfinite(p)
-    p = jnp.where(bad, 0.0, p)
-    return (mean_detector_pixels(p, factor) if factor > 1 else p), nonpositive, jnp.sum(bad)
+    bad = jnp.sum(~jnp.isfinite(p))
+    return (mean_detector_pixels(p, factor) if factor > 1 else p), nonpositive, bad
 
 
 def _interpolate_unmeasured(transmission: jax.Array, usable: jax.Array) -> jax.Array:
@@ -573,6 +573,7 @@ def correct_view_batches(
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
         out[start:stop] = np.asarray(result)
         tally[:] += [int(b) for b in bad]
+        reject_nonfinite(int(bad[1]) if bad else 0, start, stop)
 
     pending = None
     for start, stop, raw in _batches(counts, counts.shape[0], batch):
@@ -604,7 +605,17 @@ def log_batches(
         )
         out[first : first + batch] = np.asarray(done)
         tally += (int(nonpositive), int(bad))
+        reject_nonfinite(int(bad), first, min(first + batch, views))
     return out, tally
+
+
+def reject_nonfinite(count: int, start: int, stop: int) -> None:
+    """Raise for NaN or infinite line integrals: they are not measurements of zero absorption."""
+    if count:
+        raise ValueError(
+            f"{count} corrected line integrals in views {start}-{stop - 1} are not finite; "
+            "check the raw counts, flats and darks, and any correction step for NaN or Inf"
+        )
 
 
 def _row_slab(
@@ -656,6 +667,7 @@ def _correct_row_slabs(
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
         out[:, start // factor : stop // factor] = np.asarray(result)
         tally[:] += [int(b) for b in bad]
+        reject_nonfinite(int(bad[1]), 0, views)
 
     def read(start: int, stop: int) -> np.ndarray:
         frames = (
