@@ -432,7 +432,7 @@ def box_forward_into(
 
     module = cuda_module(z_fast=True) if z_fast else cuda_module()
     module.get_function("cone_box_forward")(
-        (int(coeff.shape[0]), -(-(det.nu * det.nv) // 128)),
+        (int(coeff.shape[0]), min(-(-(det.nu * det.nv) // 128), 65535)),
         (128,),
         (
             cp.asarray(coeff), cp.asarray(out),

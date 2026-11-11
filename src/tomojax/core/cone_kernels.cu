@@ -760,16 +760,17 @@ __device__ float box_sum(const float* c, float fu, float fv, int nx, int ny, int
     for (int k=last+1;k<=k1;++k)sum+=box_boundary(k, Sa, Sb, Sc, inv, rb, rc, nb, nc);
     return sum;
 }
+// Pixels stride over grid y, which CUDA caps at 65535 blocks.
 extern "C" __global__ void cone_box_forward(const float* coeff, float* out, int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz) {
-    int j=blockIdx.y*blockDim.x+threadIdx.x;
-    if (j>=nu*nv)return;
-    int u=j%nu, v=j/nu;
     const float* c=coeff+(long)blockIdx.x*NC;
-    float sum=box_sum(c, (float)u, (float)v, nx, ny, nz);
-    float r0, r1, r2;
-    ray_of(c, (float)u, (float)v, r0, r1, r2);
-    float ra=SEL(ray_axis(r0, r1, r2), r0, r1, r2);
-    out[(long)blockIdx.x*nu*nv+j]=sum*path_w(r0, r1, r2, ra, sx, sy, sz);
+    for (int j=blockIdx.y*blockDim.x+threadIdx.x; j<nu*nv; j+=gridDim.y*blockDim.x) {
+        int u=j%nu, v=j/nu;
+        float sum=box_sum(c, (float)u, (float)v, nx, ny, nz);
+        float r0, r1, r2;
+        ray_of(c, (float)u, (float)v, r0, r1, r2);
+        float ra=SEL(ray_axis(r0, r1, r2), r0, r1, r2);
+        out[(long)blockIdx.x*nu*nv+j]=sum*path_w(r0, r1, r2, ra, sx, sy, sz);
+    }
 }
 
 // Weight and transpose (view, v, u) images in coalesced 32x32 tiles,
