@@ -120,12 +120,18 @@ class HostFista:
 
         def finish(batch, first, stop, rows):
             # Draw and center the FULL detector before selecting a row window.
-            # DLPack shares the one-batch buffer with the native transpose.
-            probe = draw(jnp.asarray(batch.views), (detector.nv, detector.nu))
-            native = self.xp.from_dlpack(probe)
-            rows[0][...] = native[:, first:stop]
-            # Finish the borrowed-buffer copy before JAX can reclaim the draw.
-            self.xp.cuda.get_current_stream().synchronize()
+            # Each view's draw is seeded by its index, so drawing views in chunks
+            # no larger than the planned row window bounds the full-view probe.
+            views = np.asarray(batch.views)
+            chunk = max(1, rows[0].nbytes // (4 * detector.nv * detector.nu))
+            for start in range(0, len(views), chunk):
+                probe = draw(jnp.asarray(views[start : start + chunk]), (detector.nv, detector.nu))
+                # DLPack shares the draw with the native transpose's buffer.
+                native = self.xp.from_dlpack(probe)
+                rows[0][start : start + chunk] = native[:, first:stop]
+                # Finish the borrowed-buffer copy before JAX can reclaim the draw.
+                self.xp.cuda.get_current_stream().synchronize()
+                del probe, native
 
         def sink(_k, accumulated, _sources):
             nonlocal energy
