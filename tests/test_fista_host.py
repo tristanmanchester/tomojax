@@ -73,6 +73,7 @@ def test_host_fista_matches_resident_with_mapped_state(
     from tomojax.geometry import ConeBeam, ConeGeometry, LaminographyGeometry
     from tomojax.recon import (  # check-public-imports: allow-private
         FistaConfig,
+        _cone_slabs,
         _parallel_slabs,
         fista_tv,
     )
@@ -105,7 +106,9 @@ def test_host_fista_matches_resident_with_mapped_state(
     mapped = np.memmap(tmp_path / "volume", np.float32, "w+", shape=(5, 7, 9))
     if warm:
         mapped[...] = initial
+    # Two-plane slabs on either route, so the five planes span several slabs.
     monkeypatch.setattr(_parallel_slabs, "slab_depth", lambda *args: 2)
+    monkeypatch.setattr(_cone_slabs, "slab_depth", lambda *args, **kwargs: 2)
     if warm:
         actual, record = fista_tv(geometry, grid, det, data, init_x=mapped, config=cfg, out=mapped)
     else:

@@ -20,10 +20,13 @@ def _metadata(columns: int, frame: str, segmented: bool) -> dict:
         tj.ConeBeam(22.0, 35.0, detector_pitch_deg=-5.0, axis_offset=-0.2),
     ]
     angles = np.asarray([0.0, 55.0, 130.0, 185.0, 250.0, 310.0], np.float32)
+    # Distinct rows in the posed first orbit, so a swapped view shows; the
+    # second orbit stays unposed.
+    rows = np.arange(3, dtype=np.float32)[:, None]
     table = np.zeros((6, columns), np.float32)
-    table[:3, :5] = [0.01, -0.02, 0.03, 0.35, -0.25]
+    table[:3, :5] = (1 + 0.3 * rows) * np.asarray([0.01, -0.02, 0.03, 0.35, -0.25], np.float32)
     if columns >= 6:
-        table[:3, 5] = 0.15
+        table[:3, 5] = 0.15 - 0.04 * rows[:, 0]
     meta = {
         "grid": grid.to_dict(),
         "detector": detector.to_dict(),

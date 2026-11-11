@@ -400,9 +400,10 @@ def _landmark_error(estimated, truth, grid):
 def test_pose_fit_recovers_a_slip_and_keeps_a_clean_scan_still():
     projections, nominal, grid, detector, _ = _moving_scan(slip=1.5)
     _, _, table, record = fit_poses(projections, nominal, grid, detector)
-    jumps = np.abs(np.diff(table[:, 3]))
+    # The signed step: a fit with the slip's direction reversed must fail.
+    jumps = np.diff(table[:, 3])
     assert abs(jumps[44] - 1.5) < 0.15, record["levels"][-1]["status"]
-    assert np.median(np.delete(jumps, 44)) < 0.05
+    assert np.median(np.abs(np.delete(jumps, 44))) < 0.05
     projections, nominal, grid, detector, _ = _moving_scan()
     _, _, table, record = fit_poses(projections, nominal, grid, detector)
     lever = record["lever_px_per_radian"]

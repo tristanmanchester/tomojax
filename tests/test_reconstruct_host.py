@@ -70,9 +70,10 @@ def test_volume_larger_than_the_device_is_reconstructed_in_host_slabs(
     if device_input:
         scan = replace(scan, projections=jax.device_put(scan.projections))
     expected = np.asarray(tj.reconstruct(scan, "fbp", filter="hann").volume)
-    # Import before patching the facade budget: the host module binds its own query.
-    importlib.import_module("tomojax.recon.fbp_host")
+    # The dispatch and the host module's own slab budget both see a tiny device.
+    host = importlib.import_module("tomojax.recon.fbp_host")
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda **kwargs: 4096)
     actual = tj.reconstruct(scan, "fbp", filter="hann")
     assert isinstance(actual.volume, np.ndarray) and actual.info["host_slabs"]
     np.testing.assert_allclose(actual.volume, expected, atol=3e-6, rtol=5e-5)

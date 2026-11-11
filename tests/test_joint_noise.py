@@ -35,7 +35,9 @@ def test_masked_stencils_use_available_observations(missing_columns):
     precision[:, ::3] = 0
     if missing_columns:
         precision[:, :, ::3] = 0
-    noise[precision == 0] = np.nan
+    # Unmeasured pixels hold large finite values: only the precision mask, not
+    # finite filtering, can keep them out.
+    noise[precision == 0] = 50.0
     estimated = estimate_noise(noise, precision=precision)
     assert abs(estimated / sigma - 1) < 0.06
 
