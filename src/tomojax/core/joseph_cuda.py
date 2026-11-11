@@ -35,7 +35,7 @@ class JosephCUDA:
         self.shape = (grid.nx, grid.ny, grid.nz) if z_fast else (grid.nz, grid.ny, grid.nx)
         self.image_shape = (len(poses), detector.nv, detector.nu)
         self.batch = min(int(views_per_batch), len(poses))
-        self.coeff = cp.asarray(coefficients(poses, grid, detector, xp=np))
+        self.coeff = cp.asarray(coefficients(poses, grid, detector, xp=np), dtype=cp.float32)
         dims = (grid.nx, grid.ny, grid.nz, detector.nu, detector.nv)
         self.args = tuple(np.int32(n) for n in dims)
         narrow = grid.nx * grid.ny * grid.nz < 2**31

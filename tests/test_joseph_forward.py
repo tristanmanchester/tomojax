@@ -161,3 +161,23 @@ def test_cgls_rejects_invalid_or_inapplicable_interpolation(interpolation):
             np.zeros((len(poses), d.nv, d.nu)),
             config=CGLSConfig(projector_model="ray", joseph_interpolation=interpolation),
         )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("dtype", [jnp.float16, jnp.bfloat16])
+def test_cuda_joseph_reads_non_fp32_volumes_by_value(dtype):
+    from tomojax.core.projector import forward_project_view_T
+
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    g, d, poses = problem()
+    rng = np.random.default_rng(11)
+    x = jnp.asarray(rng.normal(size=(g.nz, g.ny, g.nx)), dtype)
+    pose = jnp.asarray(poses[1])
+
+    def forward(v):
+        return forward_project_view_T(pose, g, d, v, ray_integrator="joseph", backend="cuda")
+
+    np.testing.assert_allclose(
+        np.asarray(forward(x)), np.asarray(forward(x.astype(jnp.float32))), rtol=1e-6, atol=1e-6
+    )

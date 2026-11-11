@@ -227,6 +227,11 @@ def transpose_bands(
     return "gather" if use_cuda_gather(grid) and not any(axial) else None
 
 
+def _fp32(*arrays: jax.Array) -> tuple[jax.Array, ...]:
+    """The CUDA kernels read FP32 storage; any other dtype would be reinterpreted."""
+    return tuple(jnp.asarray(a, jnp.float32) for a in arrays)
+
+
 def forward_bands(
     coefficients: jax.Array,
     volume: jax.Array,
@@ -245,6 +250,7 @@ def forward_bands(
     from ._cuda_axial import forward_bands_cuda
 
     def on_cuda(c: jax.Array, x: jax.Array) -> jax.Array:
+        c, x = _fp32(c, x)
         return forward_bands_cuda(c, x, grid, detector, depth=depth, axial=axial)
 
     def on_jax(c: jax.Array, x: jax.Array) -> jax.Array:
@@ -272,6 +278,7 @@ def backproject_bands(
     from ._cuda_joseph import gather_bands_cuda
 
     def on_cuda(c: jax.Array, y: jax.Array) -> jax.Array:
+        c, y = _fp32(c, y)
         if axial:
             return transpose_axial_vu_cuda(
                 c, y, None, grid=grid, interpolation="linear", batch=batch
@@ -327,6 +334,7 @@ def forward_project_planes(
         raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
 
     def on_cuda(c: jax.Array, v: jax.Array) -> jax.Array:
+        c, v = _fp32(c, v)
         if absolute_weights:
             from .cuda_projector._joseph import forward_cuda
 
@@ -377,7 +385,8 @@ def sum_backproject_planes(
         from .cuda_projector._joseph import adjoint_cuda
 
         options = {"interpolation": interpolation, "absolute_weights": absolute_weights}
-        accumulate = initial[0] if initial else None
+        c, y = _fp32(c, y)
+        accumulate = _fp32(initial[0])[0] if initial else None
         return adjoint_cuda(c, y, grid, detector, **options, accumulate=accumulate, z_fast=z_fast)
 
     return jax.lax.platform_dependent(coefficients, images, *initial, cuda=on_cuda, default=on_jax)
@@ -404,6 +413,7 @@ def plane_pose_columns(
         from ._cuda_joseph_columns import pose_columns_cuda
 
         if cuda_gather_available():
+            coefficients, volume, tangent = _fp32(coefficients, volume, tangent)
             return pose_columns_cuda(
                 coefficients,
                 volume,
