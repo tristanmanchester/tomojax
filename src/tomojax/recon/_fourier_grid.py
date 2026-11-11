@@ -197,6 +197,8 @@ def gather_per_view_rows(projections, order, positions):
     fraction = np.asarray(positions - lower, dtype=np.float32)
     rows = np.concatenate((lower, lower + 1))
     valid = (rows >= 0) & (rows < nv)
+    # A neighbour whose FP32 weight is zero does not contribute and is not read.
+    valid[: len(lower)] &= fraction != 1
     valid[len(lower) :] &= fraction != 0
     samples = np.asarray(projections[order[None, :], np.clip(rows, 0, nv - 1), :], np.float32)
     np.copyto(samples, 0, where=~valid[..., None])
