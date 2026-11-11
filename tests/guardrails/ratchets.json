@@ -57,18 +57,18 @@
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
   "code_lines": {
-    "(modules)": 2837,
-    "_data": 2109,
-    "alignment": 2683,
+    "(modules)": 2858,
+    "_data": 2118,
+    "alignment": 2691,
     "backends": 619,
     "cli": 2396,
-    "core": 13860,
+    "core": 13853,
     "corrections": 2640,
     "datasets": 1125,
     "forward": 824,
     "geometry": 911,
     "io": 3651,
-    "motion": 143,
+    "motion": 148,
     "nuisance": 232,
     "recon": 14709
   },

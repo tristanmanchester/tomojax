@@ -94,7 +94,7 @@ def save_nxtomo(
         entry = _ensure_group(f, "entry", "NXentry")
         # NXtomo names its application definition in a field; the attribute
         # remains for readers of earlier TomoJAX files.
-        entry.create_dataset("definition", data="NXtomo", dtype=h5py.string_dtype("utf-8"))
+        entry.create_dataset("definition", data=np.bytes_(b"NXtomo"))
         _write_string_attr(entry, "definition", "NXtomo")
         inst = _ensure_group(entry, "instrument", "NXinstrument")
 
@@ -523,7 +523,8 @@ def validate_nxtomo(path: str) -> ValidationReport:
 def _required_entry_issues(f: h5py.File, e: h5py.Group) -> tuple[list[str], str | None, int | None]:
     """Missing or misshapen required NXtomo members, the angle path and the view count."""
     issues = []
-    stored = e["definition"][()] if isinstance(e.get("definition"), h5py.Dataset) else None
+    field = e.get("definition")
+    stored = np.asarray(field).tolist() if isinstance(field, h5py.Dataset) else None
     stored = stored.decode() if isinstance(stored, bytes) else stored
     if "NXtomo" not in (stored, _attr_to_str(e.attrs.get("definition"))):
         issues.append("entry/definition must be 'NXtomo'")
