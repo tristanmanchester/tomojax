@@ -518,3 +518,33 @@ def test_saved_scans_name_nxtomo_and_never_label_pitches_as_pixels(tmp_path: Pat
         # A pitch of unrecorded unit carries no unit, not "pixel".
         assert "units" not in f["entry/instrument/detector/x_pixel_size"].attrs
     assert not validate_nxtomo(str(tmp_path / "scan.nxs"))["issues"]
+
+
+def test_tiled_writes_read_the_source_one_bounded_tile_at_a_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # check-public-imports: allow-private
+    from tomojax._data import _io_nxtomo
+
+    monkeypatch.setattr(_io_nxtomo, "_TILE_BYTES", 4000)
+    volume = np.random.default_rng(6).normal(size=(30, 20, 40)).astype(np.float32)
+
+    class Source:
+        shape, dtype = volume.shape, volume.dtype
+        reads: list[int] = []
+
+        def __getitem__(self, region):
+            block = volume[region]
+            self.reads.append(block.size)
+            return block
+
+        def __array__(self, *args, **kwargs):
+            raise AssertionError("the whole volume must not be converted at once")
+
+    source = Source()
+    with h5py.File(tmp_path / "tiles.h5", "w") as f:
+        target = f.create_dataset("v", shape=volume.shape, dtype=np.float32, chunks=(5, 5, 10))
+        _io_nxtomo._write_in_tiles(target, source)  # pyright: ignore[reportArgumentType]
+        np.testing.assert_array_equal(target[()], volume)
+    assert len(source.reads) > 1 and max(source.reads) * 4 <= 4000
+    assert sum(source.reads) == volume.size

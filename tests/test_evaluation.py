@@ -36,6 +36,14 @@ def test_frozen_masks_and_streamed_scores_match_independent_sums(split):
     assert score.squared_error == pytest.approx(np.sum(w * residual**2), rel=1e-14)
     assert score.target_energy == pytest.approx(np.sum(w * target[test].astype(float) ** 2))
     assert score.count == test.sum()
+    # The ratios against explicit weighted sums, and unchanged by rescaled weights.
+    assert score.weight_sum == pytest.approx(np.sum(w), rel=1e-12)
+    assert score.mse == pytest.approx(np.sum(w * residual**2) / np.sum(w), rel=1e-12)
+    expected_l2 = np.sqrt(np.sum(w * residual**2) / np.sum(w * target[test].astype(float) ** 2))
+    assert score.relative_l2 == pytest.approx(expected_l2, rel=1e-12)
+    rescaled = split.score(prediction, target, weights=7.5 * weights)
+    assert rescaled.mse == pytest.approx(score.mse, rel=1e-12)
+    assert rescaled.relative_l2 == pytest.approx(score.relative_l2, rel=1e-12)
     total = Score(0, 0, 0, 0)
     for start in range(0, split.shape[0], 5):
         v = slice(start, start + 5)

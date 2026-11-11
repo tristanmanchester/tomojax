@@ -75,3 +75,25 @@ def test_resolved_jumps_have_decreasing_force_and_coordinate_invariant_cost():
         np.testing.assert_allclose(
             prior.weights(pose.ravel(), 0.5), prior.weights(changed, 0.5), rtol=2e-12
         )
+
+
+def test_a_cubic_drift_is_free_and_a_step_is_not():
+    # A cubic in the view index, defined without the prior's spline basis, lies in
+    # its cubic drift space: zero innovation cost and zero force. A step does not.
+    views, dofs, delta, strength = 31, 5, 0.02, 0.6
+    t = np.linspace(-1, 1, views)
+    rng = np.random.default_rng(74)
+    coefficients = rng.normal(scale=0.5, size=(4, dofs))
+    drift = np.stack([t**k for k in range(4)], axis=1) @ coefficients
+    with jax.enable_x64(True):
+        prior = MotionPrior(
+            views, np.zeros((views * dofs, 0)), knot_spacing=(6,) * dofs, delta=delta
+        )
+        smooth = jnp.asarray(drift.reshape(-1))
+        assert abs(float(prior.value(smooth, strength))) < 1e-18
+        np.testing.assert_allclose(
+            jax.grad(lambda p: prior.value(p, strength))(smooth), 0, atol=1e-12
+        )
+        step = drift.copy()
+        step[views // 2 :, 0] += 0.3
+        assert float(prior.value(jnp.asarray(step.reshape(-1)), strength)) > 1e-3
