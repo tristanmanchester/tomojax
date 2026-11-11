@@ -47,12 +47,12 @@ class FBPConfig:
     ``scale=None`` weights each view exactly for the scanned arc (see
     :func:`fbp`). A number instead weights every view by that constant and
     filters along u only, the convention before exact weights; ``pi / n`` gives
-    the uniform half-turn result. ``views_per_batch`` bounds the views held at
-    once by the host and explicit ``det_grid`` paths.
+    the uniform half-turn result. Cone beams take FDK's exact weights and
+    refuse a constant ``scale``.
 
     ``devices`` (one or several JAX devices) shares the views among them: each
     filters and backprojects its own, weighted for the whole scan, and the
-    volumes are summed on the first. Not with an explicit ``det_grid``.
+    volumes are summed on the first.
 
     Parameters
     ----------
@@ -60,8 +60,6 @@ class FBPConfig:
         Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
     scale : float | None, optional
         Constant angular weight per view, or None for geometry-derived weights.
-    views_per_batch : int, optional
-        Number of views processed together to bound temporary storage. Default is 1.
     backend : Literal['auto', 'jax', 'cuda'], optional
         Backprojection backend: "auto", "jax" or "cuda". Auto uses CUDA
         acceleration when available. Default is 'auto'.
@@ -72,7 +70,6 @@ class FBPConfig:
 
     filter: str = "ramp"
     scale: float | None = None
-    views_per_batch: int = 1
     backend: Literal["auto", "jax", "cuda"] = "auto"
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
@@ -910,16 +907,10 @@ def fbp(
         # Cone beams: FDK, with the same filter and the CUDA kernel for "cuda".
         if det_grid is not None:
             raise ValueError("fbp: cone-beam geometry needs the canonical detector grid")
-        from tomojax.recon.fdk import FDKConfig, fdk
+        from tomojax.recon._fbp_storage import fdk_config
+        from tomojax.recon.fdk import fdk
 
-        backend = cfg.backend
-        return fdk(
-            geometry,
-            grid,
-            detector,
-            projections,
-            config=FDKConfig(filter=cfg.filter, backend=backend, devices=cfg.devices),
-        )
+        return fdk(geometry, grid, detector, projections, config=fdk_config(cfg))
 
     validate_fbp_geometry(geometry, grid, detector, cfg.scale, "fbp")
     n_views, _, _ = validate_projection_stack(

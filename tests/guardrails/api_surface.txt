@@ -379,7 +379,6 @@ class tomojax.recon.FBPConfig(
         *,
         filter: 'str' = 'ramp',
         scale: 'float | None' = None,
-        views_per_batch: 'int' = 1,
         backend: "Literal['auto', 'jax', 'cuda']" = 'auto',
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> None

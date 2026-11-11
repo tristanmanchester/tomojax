@@ -65,9 +65,14 @@ def too_large_for_the_device(grid: Grid, cfg: FBPConfig) -> bool:
 
 
 def fdk_config(cfg: FBPConfig) -> FDKConfig:
-    """Use the same filter and CUDA backend for public FBP on cone beams."""
+    """FBP's filter, backend and devices for FDK on cone beams.
+
+    FDK weights cone views exactly, so a constant ``scale`` is refused.
+    """
     from .fdk import FDKConfig
 
+    if cfg.scale is not None:
+        raise ValueError("fbp: cone beams use FDK's exact view weights; leave scale as None")
     return FDKConfig(filter=cfg.filter, backend=cfg.backend, devices=cfg.devices)
 
 

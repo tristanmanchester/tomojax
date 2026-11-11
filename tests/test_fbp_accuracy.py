@@ -191,7 +191,7 @@ def test_fbp_is_invariant_to_change_of_length_units(use_explicit_detector_grid: 
                 grid,
                 detector,
                 jnp.asarray(projections * scale),
-                config=FBPConfig(views_per_batch=2),
+                config=FBPConfig(),
                 det_grid=det_grid,
             )
         )
@@ -510,3 +510,14 @@ def test_oblique_fbp_window_follows_the_ramp_direction(filter_name) -> None:
     )
     expected = jnp.swapaxes(fft_filter_rows(jnp.swapaxes(rows, 1, 2), spectrum), 1, 2)
     np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-3)
+
+
+def test_cone_fbp_refuses_a_constant_scale_it_would_ignore() -> None:
+    from tomojax.geometry import ConeBeam, ConeGeometry
+
+    grid, detector = Grid(4, 4, 4, 1.0, 1.0, 1.0), Detector(6, 6, 1.0, 1.0)
+    geometry = ConeGeometry(
+        grid, detector, np.linspace(0, 360, 8, endpoint=False), ConeBeam(20, 30)
+    )
+    with pytest.raises(ValueError, match="exact view weights"):
+        fbp(geometry, grid, detector, jnp.zeros((8, 6, 6)), config=FBPConfig(scale=0.3))

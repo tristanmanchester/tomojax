@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from functools import lru_cache, partial
 from itertools import pairwise
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import jax
 import jax.numpy as jnp
@@ -29,6 +29,9 @@ from ._records import Correction
 from ._ring_parity import regularize
 from ._ring_reference_cuda import reference as cuda_reference
 from ._steps import Domain, Step, bitonic_median
+
+if TYPE_CHECKING:
+    from tomojax.geometry import ScanGeometry
 
 WINDOWS = (30, 20, 14, 9, 6)
 
@@ -753,7 +756,7 @@ class Rings(Step):
         """
         if self.geometry is None:
             return self
-        return replace(self, geometry=views_of(self.geometry, kept))
+        return replace(self, geometry=views_of(cast("ScanGeometry", self.geometry), kept))
 
     @property
     def mirror_axis(self) -> float | None:

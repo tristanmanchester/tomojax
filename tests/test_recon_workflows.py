@@ -60,7 +60,7 @@ def test_fbp_ramp_filter_smoke_is_finite() -> None:
         grid,
         detector,
         projections,
-        config=FBPConfig(filter="ramp", views_per_batch=1),
+        config=FBPConfig(filter="ramp"),
     )
 
     assert volume.shape == (4, 4, 4)

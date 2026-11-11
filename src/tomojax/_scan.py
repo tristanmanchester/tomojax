@@ -487,13 +487,9 @@ def _calibration_parts(geometry: ScanGeometry) -> tuple[ScanGeometry, ...]:
     return tuple(wrapped)
 
 
-def _view_count(geometry: ScanGeometry) -> int:
-    return len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
-
-
 def check_shape(what: str, shape: tuple[int, ...], geometry: ScanGeometry) -> None:
     detector = geometry.detector
-    views = _view_count(geometry)
+    views = len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
     if tuple(int(s) for s in shape) != (views, detector.nv, detector.nu):
         raise ValueError(
             f"{what} are {tuple(shape)} but the geometry has {views} views of "

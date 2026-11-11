@@ -63,7 +63,7 @@ class Step:
         """
         raise NotImplementedError
 
-    def retained(self, kept: np.ndarray) -> Step:  # noqa: ARG002
+    def retained(self, kept: np.ndarray) -> Step:
         """The step for the views ``kept`` after an earlier step selected them.
 
         Parameters
@@ -76,6 +76,7 @@ class Step:
         Step
             Unchanged; a step planned from the scan's geometry replans itself.
         """
+        del kept  # nothing here depends on the views
         return self
 
     def workspace_pixels(self, rows: int, cols: int) -> int:
