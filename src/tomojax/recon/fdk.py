@@ -99,23 +99,25 @@ def _fan_angles(beam: ConeBeam, detector: Detector) -> np.ndarray:
 
 
 def _virtual_columns(beam: ConeBeam, detector: Detector) -> tuple[int, int]:
-    """Columns to add below and above an offset detector, mirroring it about the axis.
+    """Columns to add below and above an offset detector, to its conjugate rays' reach.
 
     An offset detector reconstructs the whole field its long side covers, in a
     full turn or a short scan; voxels on the short side then project past the
     detector, where the filtered rows (zero data, nonzero ramp tail) must still
-    be read.
+    be read. A column's conjugate has the opposite fan angle (see
+    :func:`_fan_angles`), which a laterally offset axis maps nonlinearly to u.
     """
     if not _windowable(beam):
         return 0, 0
-    axis = (float(beam.axis_offset) * beam.magnification - float(detector.center[0])) / float(
-        detector.du
-    ) + (detector.nu - 1) / 2
-    below, above = axis, detector.nu - 1 - axis
-    if abs(above - below) <= 1.0:
-        return 0, 0
-    pad = min(math.ceil(abs(above - below)), detector.nu)
-    return (pad, 0) if above > below else (0, pad)
+    sdd, du = float(beam.source_to_detector), float(detector.du)
+    gamma = _fan_angles(beam, detector)
+    tilt = np.arctan(float(beam.axis_offset) / float(beam.source_to_axis))
+    # Column of fan angle g: u = SDD tan(g + tilt), clipped short of the 90-degree pole.
+    reach = sdd * np.tan(np.clip(-gamma[[-1, 0]] + tilt, -1.5, 1.5))
+    # Fractional column indices of the conjugates of the last and first columns.
+    low, high = (reach - float(detector.center[0])) / du + (detector.nu - 1) / 2
+    pad = (max(0, math.ceil(-low - 1e-6)), max(0, math.ceil(high - (detector.nu - 1) - 1e-6)))
+    return (0, 0) if max(pad) <= 1 else pad
 
 
 def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.ndarray:

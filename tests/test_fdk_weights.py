@@ -128,3 +128,15 @@ def test_changing_and_repeated_panels_share_actual_conjugate_rays():
             if a == (angle + 190) % 360 and offset <= 1
         )
         np.testing.assert_allclose(total, 1, atol=2e-12)
+
+
+def test_virtual_columns_reach_the_conjugate_fan_angle_of_an_offset_axis():
+    # check-public-imports: allow-private
+    from tomojax.recon.fdk import _virtual_columns
+
+    # Axis offset 50 at SOD 100: the u=0 column's conjugate lies at
+    # u = 200 tan(2 atan(1/2)) = 266.7, 33.3 pitches beyond the last column (u=200).
+    beam = ConeBeam(100, 200, axis_offset=50)
+    detector = Detector(101, 8, 2.0, 1.0, center=(100.0, 0.0))
+    assert _virtual_columns(beam, detector) == (0, 34)
+    assert _virtual_columns(ConeBeam(96, 144), Detector(48, 48, 1.0, 1.0)) == (0, 0)
