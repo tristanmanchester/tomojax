@@ -431,10 +431,12 @@ def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path
     # The CLI's grid for --roi cyl, and the cylinder as FISTA's support.
     grid = tj.load_reconstruction(recon_path).grid
     # check-public-imports: allow-private
-    from tomojax.cli._reconstruction_region import cylinder_support
+    from tomojax.cli._reconstruction_region import cylinder_support, region_grid
 
     # The support constrains FISTA's updates, and the saved volume is zero outside.
-    support = cylinder_support(grid, scan.detector)
+    _, cylinder = region_grid(scan, roi="cyl", grid=None)
+    assert cylinder is not None
+    support = cylinder_support(grid, cylinder)
     config = FistaConfig(support=support)
     expected = tj.reconstruct(scan, "fista", grid=grid, config=config, iterations=4).volume
     actual = tj.load_reconstruction(recon_path).volume
@@ -646,9 +648,10 @@ def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
     import tomojax as tj
     from tomojax.geometry import grid_volume_origin
 
-    grid, detector = tj.Grid(12, 12, 10, 1, 1, 1), tj.Detector(12, 10, 1, 1)
+    # The field (radius 6.5) reaches a voxel centre in each of the 12 columns.
+    grid, detector = tj.Grid(12, 12, 10, 1, 1, 1), tj.Detector(14, 10, 1, 1)
     scan = tj.Scan(
-        np.ones((20, 10, 12), np.float32),
+        np.ones((20, 10, 14), np.float32),
         tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 20, endpoint=False)),
     ).cropped(slice(6, 8), slice(None))
     src, out = tmp_path / "scan.nxs", tmp_path / "recon.nxs"

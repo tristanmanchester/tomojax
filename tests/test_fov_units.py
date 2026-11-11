@@ -128,20 +128,56 @@ def test_axial_roi_follows_off_centre_detector_rows(crop):
     assert grid_volume_origin(result)[2] == 1.5
 
 
+def _scan(grid, detector, geometry=None):
+    import tomojax as tj
+
+    if geometry is None:
+        geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 60, endpoint=False))
+    views = len(geometry.angles)
+    return tj.Scan(np.zeros((views, detector.nv, detector.nu), np.float32), geometry)
+
+
 @pytest.mark.parametrize("shape", [(9, 7, 3), (5, 4, 3), (7, 9, 3)])
 def test_automatic_roi_keeps_a_rectangular_grid_the_detector_covers(shape):
     # check-public-imports: allow-private
-    from tomojax.cli._reconstruction_region import _roi_grid
+    from tomojax.cli._reconstruction_region import region_grid
 
     grid = Grid(*shape, 0.7, 1.1, 1.9, vol_origin=(2, 3, 4))
-    assert _roi_grid(grid, Detector(101, 101, 1, 1), is_parallel=True, roi_mode="auto") == grid
+    assert region_grid(_scan(grid, Detector(101, 101, 1, 1)), roi="auto", grid=None)[0] == grid
 
 
 def test_automatic_roi_still_crops_what_the_detector_cannot_see():
     # check-public-imports: allow-private
-    from tomojax.cli._reconstruction_region import _roi_grid
+    from tomojax.cli._reconstruction_region import region_grid
 
-    cropped = _roi_grid(
-        Grid(11, 11, 5, 1, 1, 1), Detector(9, 3, 1, 1), is_parallel=True, roi_mode="auto"
+    cropped, _ = region_grid(
+        _scan(Grid(11, 11, 5, 1, 1, 1), Detector(9, 3, 1, 1)), roi="auto", grid=None
     )
     assert (cropped.nx, cropped.ny, cropped.nz) == (9, 9, 3)
+
+
+def test_cone_roi_measures_the_field_in_object_lengths():
+    # check-public-imports: allow-private
+    from tomojax.cli._reconstruction_region import region_grid
+    from tomojax.geometry import ConeBeam, ConeGeometry
+
+    grid, detector = Grid(41, 41, 31, 1, 1, 1), Detector(40, 20, 1, 1)
+    # Magnification 2 halves the detector's reach in the object: about 9.5 x 4.5.
+    angles = np.linspace(0, 360, 90, endpoint=False)
+    scan = _scan(grid, detector, ConeGeometry(grid, detector, angles, ConeBeam(100, 200)))
+    cropped, _ = region_grid(scan, roi="bbox", grid=None)
+    assert 17 <= cropped.nx <= 21 and 17 <= cropped.ny <= 21 and 7 <= cropped.nz <= 10
+
+
+def test_laminography_roi_keeps_voxels_the_tilted_rays_measure():
+    # check-public-imports: allow-private
+    from tomojax.cli._reconstruction_region import region_grid
+    from tomojax.geometry import LaminographyGeometry, grid_volume_origin
+
+    grid, detector = Grid(9, 9, 21, 1, 1, 1), Detector(30, 10, 1, 1)
+    angles = np.linspace(0, 360, 90, endpoint=False)
+    scan = _scan(grid, detector, LaminographyGeometry(grid, detector, angles, tilt_deg=60))
+    cropped, _ = region_grid(scan, roi="bbox", grid=None)
+    # The axis point at height 8 projects to detector v = 4, inside the 10 rows.
+    top = grid_volume_origin(cropped)[2] + (cropped.nz - 1) * cropped.vz
+    assert top >= 8

@@ -133,10 +133,10 @@ def main() -> None:
         force=args.force,
     )
     scan = tj.load(args.data, poses=args.poses)
-    grid, masked = (None, False)
+    grid, cylinder = (None, None)
     if args.grid is not None or args.roi != "auto":
         shape = None if args.grid is None else (args.grid[0], args.grid[1], args.grid[2])
-        grid, masked = region_grid(scan, roi=args.roi, grid=shape)
+        grid, cylinder = region_grid(scan, roi=args.roi, grid=shape)
     fit = tuple(args.fit)
     if args.dry_run:
         print(
@@ -156,14 +156,14 @@ def main() -> None:
     setup_logging()
     log_jax_env()
     result = tj.align(scan, fit=fit, grid=grid)
-    if masked:
+    if cylinder is not None:
         result = replace(
-            result, volume=zero_outside_cylinder(result.volume, result.scan.grid, scan.detector)
+            result, volume=zero_outside_cylinder(result.volume, result.scan.grid, cylinder)
         )
     tj.save(args.out, result)
     logging.info("Saved alignment results to %s", args.out)
     if args.manifest is not None:
-        _write_manifest(args, scan, result, masked=masked)
+        _write_manifest(args, scan, result, masked=cylinder is not None)
 
 
 __all__ = ["build_parser", "main"]

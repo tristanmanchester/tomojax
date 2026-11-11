@@ -316,13 +316,13 @@ def main() -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
     scan = tj.load(run.data, poses=run.poses)
-    grid, masked = (None, False)
+    grid, cylinder = (None, None)
     if run.method != "auto" or run.grid is not None or run.roi != "auto":
-        grid, masked = region_grid(scan, roi=run.roi, grid=run.grid)
-    if masked and config is not None and hasattr(config, "support"):
+        grid, cylinder = region_grid(scan, roi=run.roi, grid=run.grid)
+    if cylinder is not None and config is not None and hasattr(config, "support"):
         assert grid is not None
         # The solvers that take a support constrain the solve to the cylinder.
-        config = replace(config, support=cylinder_support(grid, scan.detector))
+        config = replace(config, support=cylinder_support(grid, cylinder))
     result = tj.reconstruct(
         scan,
         run.method,
@@ -335,10 +335,8 @@ def main() -> None:
         warm_start=run.warm_start,
         seed=run.seed,
     )
-    if masked:
-        result = replace(
-            result, volume=zero_outside_cylinder(result.volume, result.grid, scan.detector)
-        )
+    if cylinder is not None:
+        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
     report_automatic(result.info)
     tj.save(run.out, result)
     logging.info("Saved reconstruction to %s", run.out)
@@ -348,7 +346,7 @@ def main() -> None:
         _ = save_quicklook_png(run.preview, result.volume)
         logging.info("Saved reconstruction preview to %s", run.preview)
     if run.manifest is not None:
-        _write_manifest(args, metadata, scan, result, masked=masked)
+        _write_manifest(args, metadata, scan, result, masked=cylinder is not None)
 
 
 __all__ = ["build_parser", "main"]
