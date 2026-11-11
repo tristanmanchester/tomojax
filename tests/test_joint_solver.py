@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.alignment._joint import _solver, _tv  # check-public-imports: allow-private
+from tomojax.alignment._joint import _refine, _solver, _tv  # check-public-imports: allow-private
 from tomojax.alignment._joint._operators import (  # check-public-imports: allow-private
     Operators,
     photometric_sums,
@@ -223,3 +223,29 @@ def test_held_pose_trial_equals_the_projected_objective(masked):
             held, projected = trial(a, 0.0), trial(a, 1.0)
             np.testing.assert_allclose(held[0], projected[0], rtol=1e-6)
             np.testing.assert_array_equal(held[1], projected[1])
+
+
+@pytest.mark.parametrize(("shift", "moves"), [(1e-5, False), (0.3, True)])
+def test_refinement_stops_on_a_proposal_below_the_pose_tolerance(monkeypatch, shift, moves):
+    # Alternating view shifts lie outside the motion prior's smooth space.
+    grid, detector = tj.Grid(8, 8, 3, 0.7, 0.7, 0.9), tj.Detector(12, 3, 0.7, 0.9)
+    geometry = tj.ParallelGeometry(grid, detector, [15.0 * i for i in range(12)])
+    with jax.enable_x64(True):
+        nominal = np.asarray(stack_view_poses(geometry, 12))
+        ops = Operators(grid, detector, nominal, lever=4, native=(0.7, 0.9), batch_size=4)
+        prior = MotionPrior(
+            12, rigid_gauge(nominal, [0.25] * 3 + [0.7, 0.9]), knot_spacing=(6,) * 5, delta=0.02
+        )
+        x = jnp.asarray(np.random.default_rng(8).uniform(0.1, 0.5, (3, 8, 8)), jnp.float32)
+        q = np.zeros((ops.padded_n, 5))
+        q[: ops.n, 3] = shift * (-1.0) ** np.arange(ops.n)
+        y = ops.project(ops.coefficients(ops.nominal, jnp.asarray(q), ops.valid), x)[: ops.n]
+        evaluated = []
+        value = _refine._Refinement.value
+        monkeypatch.setattr(
+            _refine._Refinement, "value", lambda self, c: evaluated.append(c) or value(self, c)
+        )
+        _, record = _refine.refine(x, np.zeros(prior.size), y, None, prior, ops=ops, sigma=1e-3)
+    assert bool(record["steps"]) == bool(evaluated) == moves
+    if not moves:
+        assert record["status"] == "converged"

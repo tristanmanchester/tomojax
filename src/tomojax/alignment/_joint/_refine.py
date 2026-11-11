@@ -20,6 +20,10 @@ from ._operators import column_gram, column_score, robust_batch, robust_value
 _SMOOTH_NATIVE_PX = 8.0
 _WIDTH_SIGMA = 2.5
 _ITERATIONS = 5
+# A smaller proposed step is converged: it cannot change the pose error, and
+# its decrease is below what the FP32 objective resolves, so backtracking on it
+# only spends objective evaluations.
+_POSE_TOL_PX = 1e-4
 _NEIGHBOURS = 5
 
 
@@ -223,7 +227,7 @@ class _Refinement:
         gp = g + prior.apply(c, wpose) + change
         pd = jnp.diagonal(gram, axis1=1, axis2=2)
         pd = jnp.maximum(pd, jnp.maximum(jnp.max(gram), 1e-8) * 0.01)
-        for _ in range(4):
+        for attempt in range(4):
             damped = gram + anchor + jax.vmap(jnp.diag)(lm * pd + 1e-10)
             dc = -prior.innovation_solve(damped, wpose, gp)
             slope = float(jnp.vdot(gp, dc))
@@ -231,6 +235,8 @@ class _Refinement:
                 raise FloatingPointError("non-finite pose refinement slope")
             if slope >= 0:
                 return "stationary"
+            if not attempt and _rms(prior.expand(dc)) < _POSE_TOL_PX:
+                return "converged"
             for ls in range(8):
                 alpha = 0.5**ls
                 fn = self.value(c + alpha * dc)
@@ -238,6 +244,10 @@ class _Refinement:
                     return c + alpha * dc, fn, alpha, dc, lm
             lm *= 10
         return "line_search_stalled"
+
+
+def _rms(steps):
+    return float(jnp.sqrt(jnp.mean(jnp.sum(steps**2, axis=1))))
 
 
 def refine(x, p, y, precision, prior, *, ops, sigma):
@@ -258,10 +268,7 @@ def refine(x, p, y, precision, prior, *, ops, sigma):
             status = result
             break
         c, f, alpha, dc, lm = result
-        step = float(jnp.sqrt(jnp.mean(jnp.sum((alpha * prior.expand(dc)) ** 2, axis=1))))
+        step = _rms(alpha * prior.expand(dc))
         steps.append({"objective": f, "pose_step_rms": step, "line_step": alpha, "lm": lm})
         lm = max(1e-5, lm * 0.5)
-        if step < 1e-5:
-            status = "converged"
-            break
     return c, {"status": status, "steps": steps, "delta": problem.delta}
