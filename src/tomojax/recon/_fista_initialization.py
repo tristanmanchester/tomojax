@@ -8,11 +8,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.operator_norm import normal_upper_bound
+
 from ._data_term import project_residual
 from ._projection import (
     least_squares_operators,
     normal_equation_operators,
-    normal_operator_norm,
     positive_normal_bound,
     projection_operators,
 )
@@ -73,9 +74,14 @@ def first_gradient(
         def apply_normal(x):
             return adjoint(forward(x))
 
-    lipschitz = normal_operator_norm(
-        apply_normal, (grid.nz, grid.ny, grid.nx), iterations=int(cfg.power_iterations),
-        mask=mask, start=power_start(gradient),
+    def masked_normal(x):
+        y = apply_normal(x if mask is None else x * mask)
+        return y if mask is None else y * mask
+
+    start = power_start(gradient)
+    lipschitz = normal_upper_bound(
+        masked_normal, start if mask is None else start * mask,
+        iterations=int(cfg.power_iterations),
     )  # fmt: skip
     c = runtime.constraints
     zero_start = runtime.x0 is None and (c.lower_bound is None or c.lower_bound <= 0.0)

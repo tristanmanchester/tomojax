@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from tomojax.core.host_volume import host_volume, scratch_directory
+from tomojax.core.operator_norm import bounds_settled
 
 from ._cuda_tv import proximal_host
 from ._noise_probe import gaussian_probe
@@ -161,19 +162,24 @@ class HostFista:
                 self.X.put(z0, z1, start)
             del start
             power, normal = self.X, self.Z
-            for _ in range(max(1, self.cfg.power_iterations)):
+            engine, iterations = self.problem.engine, max(1, self.cfg.power_iterations)
+            steps, upper = 0, math.inf
+            # The step-safe Collatz bound, once it meets the power estimate (see
+            # tomojax.core.operator_norm.normal_upper_bound).
+            while not bounds_settled(steps, iterations, math.sqrt(norm), upper):
                 for k in range(self.plan.count):
                     z0, z1 = self.plan.planes(k)
                     power.put(z0, z1, power.view(z0, z1) / np.float32(math.sqrt(norm) or 1))
                 self.apply(power, normal)
-                norm = 0.0
+                norm = upper = 0.0
                 for k in range(self.plan.count):
                     z0, z1 = self.plan.planes(k)
                     part = normal.view(z0, z1)
-                    norm += self.problem.engine.norm2(part)
+                    norm += engine.norm2(part)
+                    upper = max(upper, engine.max_ratio(part, power.view(z0, z1)))
                 del part
-                power, normal = normal, power
-            limit = math.sqrt(norm) or 1e-6
+                power, normal, steps = normal, power, steps + 1
+            limit = upper * (1 + 8 * float(np.finfo(np.float32).eps)) or 1e-6
         for k in range(self.plan.count):
             z0, z1 = self.plan.planes(k)
             part = (

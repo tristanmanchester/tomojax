@@ -447,36 +447,6 @@ def least_squares_operators(
     return value_and_gradient
 
 
-def normal_operator_norm(
-    apply_normal: Callable[[jax.Array], jax.Array],
-    shape: tuple[int, int, int],
-    *,
-    iterations: int,
-    mask: jax.Array | None = None,
-    start: jax.Array | None = None,
-) -> jax.Array:
-    """Estimate ``||M A^T A M||`` by power iteration from ``start`` (default constant).
-
-    Power iteration approaches the largest eigenvalue from below; callers
-    needing a safe step size should add a margin.
-    """
-
-    def normal(x: jax.Array) -> jax.Array:
-        x = x if mask is None else x * mask
-        y = apply_normal(x)
-        return y if mask is None else y * mask
-
-    def step(_: jax.Array, carry: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
-        x, _ = carry
-        return unit(normal(x))
-
-    x0 = jnp.ones(shape, jnp.float32) if start is None else start
-    x0 = x0 if mask is None else x0 * mask
-    x0, _ = unit(x0)
-    _, norm = jax.lax.fori_loop(0, max(1, iterations), step, (x0, jnp.float32(0)))
-    return norm
-
-
 def positive_normal_bound(
     forward: Callable[[jax.Array], jax.Array],
     adjoint: Callable[[jax.Array], jax.Array],

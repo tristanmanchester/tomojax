@@ -14,8 +14,9 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from tomojax.core.operator_norm import unit
+from tomojax.core.operator_norm import bounds_settled, collatz_ratio, unit
 
 from ._data_term import project_residual
 from ._fista_initialization import ordered_data, power_start, subset_order
@@ -192,6 +193,7 @@ def _norm_start(gradient):
 
 
 _normalize = jax.jit(unit, donate_argnums=(0,))
+_collatz = jax.jit(collatz_ratio)
 
 
 @partial(jax.jit, donate_argnums=(0,))
@@ -205,20 +207,25 @@ def _zero_start(grid, detector, data, runtime):
     jax.block_until_ready((value, gradient))
     limit = runtime.lipschitz
     if limit is None:
-        limit = jnp.float32(0)
         vector = _norm_start(gradient)
         vector.block_until_ready()
-        for _ in range(max(1, runtime.config.power_iterations)):
+        iterations, k, power, upper = max(1, runtime.config.power_iterations), 0, 0.0, np.inf
+        # The step-safe Collatz bound, once it meets the power estimate (see
+        # tomojax.core.operator_norm.normal_upper_bound).
+        while not bounds_settled(k, iterations, power, upper):
             projected = _norm_forward(grid, detector, vector, runtime)
             projected.block_until_ready()
+            # Hold the iterate on the host while the transpose needs the device.
+            held = np.asarray(vector)
             vector.delete()
             back = _norm_adjoint(grid, detector, projected, runtime)
             back.block_until_ready()
             projected.delete()
-            vector, limit = _normalize(back)
-            jax.block_until_ready((vector, limit))
+            upper = float(_collatz(back, jnp.asarray(held)))
+            vector, norm = _normalize(back)
+            power, k = float(norm), k + 1
         vector.delete()
-        limit = jnp.where(limit == 0, 1e-6, limit)
+        limit = jnp.float32(upper * (1 + 8 * np.finfo(np.float32).eps) or 1e-6)
     x = _first_step(gradient, limit)
     x.block_until_ready()
     return x, value, limit
