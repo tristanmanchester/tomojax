@@ -181,3 +181,16 @@ def test_cuda_joseph_reads_non_fp32_volumes_by_value(dtype):
     np.testing.assert_allclose(
         np.asarray(forward(x)), np.asarray(forward(x.astype(jnp.float32))), rtol=1e-6, atol=1e-6
     )
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_fixed_vertical_detector_calibration_still_moves_the_rays(active):
+    from tomojax.forward.api import core_projection_geometry_from_state
+    from tomojax.geometry.api import GeometryState
+
+    state = GeometryState.zeros(1)
+    offset = replace(state.setup.det_v_px, value=1.0, active=active)
+    state = replace(state, setup=replace(state.setup, det_v_px=offset))
+    geometry = core_projection_geometry_from_state((4, 4, 4), state)
+    # Fitting a value (active) must not change what a fixed one projects.
+    assert float(geometry.t_all[0, 2, 3]) == -1.0

@@ -190,8 +190,8 @@ def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> ja
         raise ValueError("volume must be 3D")
     theta = jnp.asarray(geometry.theta_total_rad(), dtype=jnp.float32)
     dx = jnp.asarray(geometry.setup.det_u_px.value + geometry.pose.dx_px, dtype=jnp.float32)
-    dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
-    dz = jnp.asarray(dz_setup + geometry.pose.dz_px, dtype=jnp.float32)
+    # ``active`` marks a value for fitting; a fixed calibration still applies.
+    dz = jnp.asarray(geometry.setup.det_v_px.value + geometry.pose.dz_px, dtype=jnp.float32)
     alpha = jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32)
     beta = jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32)
     detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
@@ -317,8 +317,8 @@ def core_projection_geometry_from_state(
     alpha = jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32)
     beta = jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32)
     dx = jnp.asarray(geometry.setup.det_u_px.value + geometry.pose.dx_px, dtype=jnp.float32)
-    dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
-    dz = jnp.asarray(dz_setup + geometry.pose.dz_px, dtype=jnp.float32)
+    # ``active`` marks a value for fitting; a fixed calibration still applies.
+    dz = jnp.asarray(geometry.setup.det_v_px.value + geometry.pose.dz_px, dtype=jnp.float32)
     detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
     axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
     axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
