@@ -289,7 +289,7 @@ class ProjectionDataset:
         metadata.grid = self.grid
         metadata.detector = self.detector
         metadata.geometry_type = self.geometry_type
-        metadata.geometry_meta = dict(self.geometry_metadata)
+        metadata.geometry_meta = _copied(self.geometry_metadata)
         metadata.angle_offset_deg = (
             None
             if self.angle_offset_deg is None
@@ -298,8 +298,8 @@ class ProjectionDataset:
         metadata.align_params = (
             None if self.align_params is None else np.array(self.align_params, copy=True)
         )
-        metadata.align_gauge = None if self.align_gauge is None else dict(self.align_gauge)
-        metadata.misalign_spec = None if self.misalign_spec is None else dict(self.misalign_spec)
+        metadata.align_gauge = _copied(self.align_gauge)
+        metadata.misalign_spec = _copied(self.misalign_spec)
         metadata.sample_name = self.sample_name or metadata.sample_name or "sample"
         return metadata
 

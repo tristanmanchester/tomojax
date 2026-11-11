@@ -116,3 +116,16 @@ def test_resaved_reconstruction_uses_edited_volume_and_keeps_known_image(tmp_pat
     np.testing.assert_allclose(tj.project(saved.scan.geometry, truth), data, rtol=1e-5, atol=1e-5)
     again = np.asarray(tj.reconstruct(saved.scan, "cgls", config=config).volume)
     assert np.linalg.norm(again - truth) / np.linalg.norm(truth) < 2e-4
+
+
+@pytest.mark.parametrize("method", ["copy_metadata", "to_nxtomo_metadata"])
+def test_metadata_copies_own_their_nested_dictionaries(method):
+    dataset, _ = _stored_dataset()
+    dataset.geometry_metadata = {"acquisition": {"axis_status": "recorded", "paths": ["a"]}}
+    dataset.align_gauge = {"pose_translation_frame": "object", "fixed": {"views": [0]}}
+    copied = getattr(dataset, method)()
+    copied.geometry_meta["acquisition"]["axis_status"] = "changed"
+    copied.geometry_meta["acquisition"]["paths"].append("b")
+    copied.align_gauge["fixed"]["views"].append(1)
+    assert dataset.geometry_metadata == {"acquisition": {"axis_status": "recorded", "paths": ["a"]}}
+    assert dataset.align_gauge["fixed"] == {"views": [0]}
