@@ -43,8 +43,9 @@ def _photometric(sums):
     Least squares, per view, of the observations on the prediction, a constant
     and a ramp down the detector rows: returns gains (views,) and backgrounds
     (views, 2) for the constant and the ramp. Their means are removed (gain:
-    divided by): what all views share belongs to the image. A view without a
-    well-conditioned fit keeps gain one and no background.
+    divided by): what all views share belongs to the image. A view whose gain
+    is not identifiable (a near-uniform prediction) keeps gain one and fits its
+    background alone; one with neither identifiable keeps identity.
     """
     sums = np.asarray(sums, np.float64)
     gram, rhs = sums[..., :3], sums[..., 3]
@@ -54,11 +55,19 @@ def _photometric(sums):
     eye = np.eye(3)[None]
     solution = np.linalg.solve(np.where(ok[:, None, None], normal, eye), (rhs / scale)[..., None])
     coefficients = np.where(ok[:, None], solution[..., 0] / scale, [1.0, 0.0, 0.0])
+    # Gain fixed at one: observations minus prediction on the constant and ramp.
+    sub, sub_rhs, sub_scale = normal[:, 1:, 1:], rhs[:, 1:] - gram[:, 1:, 0], scale[:, 1:]
+    alone = ~ok & (np.linalg.cond(sub) < 1e8)
+    fit = np.linalg.solve(
+        np.where(alone[:, None, None], sub, np.eye(2)[None]), (sub_rhs / sub_scale)[..., None]
+    )
+    coefficients[:, 1:] = np.where(alone[:, None], fit[..., 0] / sub_scale, coefficients[:, 1:])
+    fitted = ok | alone
     gain = np.clip(coefficients[:, 0] / np.mean(coefficients[ok, 0]) if ok.any() else 1.0, 0.5, 2.0)
-    background = coefficients[:, 1:] - (coefficients[ok, 1:].mean(0) if ok.any() else 0)
+    background = coefficients[:, 1:] - (coefficients[fitted, 1:].mean(0) if fitted.any() else 0)
     # Normalising the fitted views must not move the views without a fit.
     gain = np.where(ok, gain, 1.0)
-    background = np.where(ok[:, None], background, 0.0)
+    background = np.where(fitted[:, None], background, 0.0)
     return gain, background
 
 

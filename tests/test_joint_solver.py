@@ -153,20 +153,38 @@ def test_per_view_gain_and_background_are_recovered_up_to_their_means():
     np.testing.assert_allclose(fitted_background, background - background.mean(0), atol=1e-9)
 
 
-@pytest.mark.parametrize("all_singular", [False, True])
-def test_views_without_a_photometric_fit_keep_identity(all_singular):
+@pytest.mark.parametrize("all_masked", [False, True])
+def test_views_without_a_photometric_fit_keep_identity(all_masked):
     rng = np.random.default_rng(5)
     prediction = rng.uniform(0, 1, (3, 9, 7))
     rows = np.linspace(-1, 1, 9)[None, :, None]
     observed = 2.0 * prediction + 3.0 + 4.0 * rows  # gain 2, constant 3, ramp 4
-    prediction[1] = 0.0  # no image to fit a gain against
-    if all_singular:
-        prediction[:] = 0.0
+    precision = np.ones_like(prediction)
+    precision[1] = 0.0  # nothing measured: neither gain nor background is identifiable
+    if all_masked:
+        precision[:] = 0.0
+    with jax.enable_x64(True):
+        sums = photometric_sums(
+            jnp.asarray(prediction), jnp.asarray(observed), jnp.asarray(precision)
+        )
+    gain, background = _solver._photometric(sums)
+    assert gain[1] == 1.0 and np.all(background[1] == 0.0)
+    if all_masked:
+        assert np.all(gain == 1.0) and np.all(background == 0.0)
+
+
+def test_a_uniform_prediction_still_fits_its_background():
+    # A flat prediction leaves the gain unidentifiable but the background observable.
+    rng = np.random.default_rng(6)
+    prediction = rng.uniform(0, 1, (3, 9, 7))
+    prediction[1] = 0.0
+    rows = np.linspace(-1, 1, 9)[None, :, None]
+    offsets = np.array([[3.0, 4.0], [5.0, 6.0], [3.0, 4.0]])
+    observed = prediction + offsets[:, :1, None] + offsets[:, 1:, None] * rows
     with jax.enable_x64(True):
         sums = photometric_sums(
             jnp.asarray(prediction), jnp.asarray(observed), jnp.asarray(np.ones_like(prediction))
         )
     gain, background = _solver._photometric(sums)
-    assert gain[1] == 1.0 and np.all(background[1] == 0.0)
-    if all_singular:
-        assert np.all(gain == 1.0) and np.all(background == 0.0)
+    assert gain[1] == 1.0
+    np.testing.assert_allclose(background[1] - background[0], [2.0, 2.0], atol=1e-9)
