@@ -37,6 +37,7 @@ def test_coarsening_reads_one_view_batch_at_a_time():
 
     class Source:
         shape = values.shape
+
         def __init__(self):
             self.reads: list[int] = []
 

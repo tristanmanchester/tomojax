@@ -531,6 +531,7 @@ def test_tiled_writes_read_the_source_one_bounded_tile_at_a_time(
 
     class Source:
         shape, dtype = volume.shape, volume.dtype
+
         def __init__(self):
             self.reads: list[int] = []
 
