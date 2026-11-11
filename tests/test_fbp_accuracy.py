@@ -492,3 +492,21 @@ def test_fbp_rejects_a_detector_grid_that_is_not_a_moved_lattice() -> None:
     det_grid = (jnp.asarray(np.tile(u, 2)), jnp.asarray(np.repeat([-0.5, 0.5], 6)))
     with pytest.raises(ValueError, match="rotated and shifted"):
         fbp(geometry, grid, detector, jnp.zeros((3, 2, 6)), det_grid=det_grid)
+
+
+@pytest.mark.parametrize("filter_name", ["hann", "shepp-logan"])
+def test_oblique_fbp_window_follows_the_ramp_direction(filter_name) -> None:
+    # check-public-imports: allow-private
+    from tomojax.recon.fbp import _filter_views
+
+    # A ramp purely along v (rotation about lab x) must filter columns exactly as
+    # the separable path filters rows: window included, not just the ramp.
+    detector = Detector(40, 40, 1.0, 1.0)
+    spectrum = rfft_filter_array(filter_name, detector.nu, detector.du, jnp.float32)
+    rows = jnp.asarray(np.random.default_rng(3).normal(size=(1, 40, 40)), jnp.float32)
+    params = jnp.asarray([[[0.0], [1.0], [1.0], [0.0], [0.0], [1.0]]], jnp.float32)[..., 0]
+    actual = _filter_views(
+        rows, jnp.ones(1), params, spectrum, jnp.float32(0.0), detector=detector, separable=False
+    )
+    expected = jnp.swapaxes(fft_filter_rows(jnp.swapaxes(rows, 1, 2), spectrum), 1, 2)
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-3)

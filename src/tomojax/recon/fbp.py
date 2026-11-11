@@ -200,9 +200,10 @@ def _filter_views(
     row_ramp = jnp.abs(t_v) <= 1e-6 * jnp.abs(t_u)
     window = spectrum / jnp.maximum(jnp.abs(fu[0, 0]), spectrum[0])
     # A rolled detector needs the ramp along a u-v diagonal; keep the finite-kernel DC term.
-    oblique = jnp.where(
-        (fu == 0) & (fv == 0), jnp.hypot(t_u, t_v) * spectrum[0], jnp.abs(along) * window
-    )
+    # Its window (Hann, Shepp-Logan) follows the frequency along that ramp, not along u.
+    length = jnp.hypot(t_u, t_v)
+    along_window = jnp.interp(jnp.abs(along) / jnp.maximum(length, 1e-30), fu[0, 0], window)
+    oblique = jnp.where((fu == 0) & (fv == 0), length * spectrum[0], jnp.abs(along) * along_window)
     ramp = jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique)
     filtered = jnp.fft.irfft2(transformed * (ramp * weight / count), s=(n_v, n_u))
     return filtered[:, : detector.nv, : detector.nu]
