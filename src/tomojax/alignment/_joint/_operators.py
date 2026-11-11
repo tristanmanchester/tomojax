@@ -15,6 +15,7 @@ reused within each Schur matvec. Scores, Gram blocks and matvecs use those same
 columns. The data loss is a quadratic core with a log tail.
 """
 
+from functools import partial
 import math
 from typing import NamedTuple
 
@@ -45,14 +46,21 @@ def robust_value(residual, precision, delta):
     return jnp.sum(precision.astype(jnp.float64) * loss, dtype=jnp.float64)
 
 
-def robust_batch(residual, columns, precision, delta):
-    """IRLS square-root weights, and weighted residuals and columns (view, k, v, u)."""
+def robust_batch(residual, columns, precision, delta, *, half=False):
+    """IRLS square-root weights, and weighted residuals and columns (view, k, v, u).
+
+    ``half`` rounds the weights and weighted columns to FP16 values (5e-4
+    relative) for storage; the weighted residual uses the rounded weights.
+    """
     r = jnp.where(precision > 0, residual, 0)
     a = jnp.abs(r.astype(jnp.float64))
     d = jnp.asarray(delta, jnp.float64)
     sw = jnp.sqrt(precision.astype(jnp.float64) * jnp.minimum(1.0, d / jnp.maximum(a, d)) ** 2)
-    sw = sw.astype(jnp.float32)
-    return (sw * r).astype(jnp.float32), sw, (columns * sw[:, None]).astype(jnp.float32)
+    # reduce_precision rounds even where XLA would keep excess precision.
+    rounded = partial(jax.lax.reduce_precision, exponent_bits=5, mantissa_bits=10)
+    sw = rounded(sw.astype(jnp.float32)) if half else sw.astype(jnp.float32)
+    j = (columns * sw[:, None]).astype(jnp.float32)
+    return (sw * r).astype(jnp.float32), sw, rounded(j) if half else j
 
 
 def photometric_sums(prediction, observed, precision):
@@ -358,7 +366,9 @@ class Operators:
             tangent = self._tangent(nominal, qb, valid, scales, frames)
             raw = self.projection.columns(cf, x, tangent)
             r = raw[:, 0] - yb
-            res, sw, j = robust_batch(r, raw[:, 1:], wb, delta)
+            # The step stores the weights and columns in FP16; the score and
+            # Gram matrix below use the same rounded values.
+            res, sw, j = robust_batch(r, raw[:, 1:], wb, delta, half=True)
             gx = self.back(gx, cf, sw * res)
             dd = self.projection.diagonal(cf, sw, dd)
             valid_px = jnp.sum(wb > 0, dtype=jnp.int64)
@@ -366,7 +376,8 @@ class Operators:
             # The score, Gram matrix and cross term must describe the SAME J.
             # Quantizing J after these reductions makes the Schur model inconsistent.
             score, gram = column_score(j, res), column_gram(j)
-            out = (sw, j, score, gram, robust_value(r, wb, delta), jnp.where(wb > 0, r, 0))
+            out = (sw.astype(jnp.float16), j.astype(jnp.float16), score, gram)
+            out = (*out, robust_value(r, wb, delta), jnp.where(wb > 0, r, 0))
             return (gx, dd), (*out, valid_px, down, photometric_sums(raw[:, 0], yb, wb))
 
         batches = (*self.views(q), self.batches(y), self.batches(precision))
