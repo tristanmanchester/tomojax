@@ -33,6 +33,7 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 import tomojax as tj
+from tomojax._data.geometry_meta import DetectorRollGeometry  # check-public-imports: allow-private
 from tomojax.alignment._joint import _solver  # check-public-imports: allow-private
 from tomojax.geometry import grid_volume_origin
 
@@ -42,6 +43,8 @@ if TYPE_CHECKING:
 PACK = Path("/home/tristan/Projects/lab-board/pro-align")
 WATCH = PACK / "pack7/data/watch-{}-bin2-fit.npz"
 PLUG = PACK / "frames/phantoms/{}.npz"
+WALNUTS = Path.home() / "data/walnuts"
+WALNUT_CACHE = Path.home() / "Projects/lab-board/walnut-cache"
 WATCH_NATIVE_PX = 0.13541666666666666
 
 
@@ -56,6 +59,9 @@ class Row:
     points: np.ndarray  # landmarks in object coordinates
     pixel: float  # scoring unit in detector u pitches
     grid: tj.Grid | None  # an explicit working grid, or None for tj.align's own
+    # The start scan rebuilt from one reported calibration under its documented
+    # convention; it must score like the fit (a round trip of the reported value).
+    rebuild: Callable[[dict[str, Any]], tj.Scan] | None = None
 
 
 def landmarks(grid: tj.Grid, extent: float = 0.3) -> np.ndarray:
@@ -67,10 +73,21 @@ def landmarks(grid: tj.Grid, extent: float = 0.3) -> np.ndarray:
     return unit.reshape(-1, 3) * shape * pitch + centre
 
 
+BANDS = ((0, 3), (4, 40), (41, None))  # harmonics of the view index
+
+
 def score(
     estimated: analytic.Rays, truth: analytic.Rays, points: np.ndarray, pixel: float
 ) -> tuple[float, float]:
     """Return the RMS landmark error after one rigid gauge, and the worst view's."""
+    total, worst, _ = score_bands(estimated, truth, points, pixel)
+    return total, worst
+
+
+def score_bands(
+    estimated: analytic.Rays, truth: analytic.Rays, points: np.ndarray, pixel: float
+) -> tuple[float, float, list[float]]:
+    """Also split the RMS error by harmonic of the view index: smooth modes against scatter."""
     target = truth.pixels(points)
 
     def residual(gauge: np.ndarray) -> np.ndarray:
@@ -80,7 +97,13 @@ def score(
     gauge = least_squares(residual, np.zeros(6), xtol=1e-11, ftol=1e-11, gtol=1e-11).x
     errors = residual(gauge).reshape(-1, len(points), 2) * pixel
     per_view = np.sqrt((errors * errors).sum(-1).mean(1))
-    return float(np.sqrt((per_view * per_view).mean())), float(per_view.max())
+    total = float(np.sqrt((per_view * per_view).mean()))
+    power = (np.abs(np.fft.rfft(errors, axis=0)) ** 2).sum((1, 2))
+    power[1:] *= 2  # one-sided spectrum
+    if len(errors) % 2 == 0:
+        power[-1] /= 2
+    share = [power[lo : None if hi is None else hi + 1].sum() / power.sum() for lo, hi in BANDS]
+    return total, float(per_view.max()), [total * float(np.sqrt(s)) for s in share]
 
 
 def _table(nominal: np.ndarray, true: np.ndarray) -> np.ndarray:
@@ -100,13 +123,51 @@ def _compose(start: np.ndarray, table: np.ndarray) -> np.ndarray:
     return est
 
 
+def _rebuilt(scan: tj.Scan, kind: str, tilt: float = 0.0) -> Callable[[dict[str, Any]], tj.Scan]:
+    """Rebuild a scan from one reported calibration under tj.align's documented conventions.
+
+    Centre is the detector centre in length units, tilt the axis inclination in degrees,
+    and positive roll turns detector u towards v.
+    """
+
+    def rebuild(calibration: dict[str, Any]) -> tj.Scan:
+        ((name, value),) = calibration.items()
+        grid, det, angles = scan.grid, scan.detector, np.asarray(scan.angles)
+        if name == "centre":
+            centre = tuple(value) if isinstance(value, list) else (value, det.center[1])
+            det = tj.Detector(det.nu, det.nv, det.du, det.dv, centre)
+        beam = tj.ConeBeam(192, 288, detector_roll_deg=value if name == "roll" else 0.0)
+        if kind == "cone":
+            geometry = tj.ConeGeometry(grid, det, angles, beam)
+        elif name == "tilt" or tilt:
+            geometry = tj.LaminographyGeometry(
+                grid, det, angles, tilt_deg=value if name == "tilt" else tilt
+            )
+        else:
+            geometry = tj.ParallelGeometry(grid, det, angles)
+        if name == "roll" and kind != "cone":
+            geometry = DetectorRollGeometry(geometry, value)
+        return tj.Scan(scan.projections, geometry)
+
+    return rebuild
+
+
 def analytic_row(case: str, geometry: str, size: str) -> Row:
     """Build one continuous Gaussian-phantom case from fit_alignment."""
     detector, grid_size, views = {"small": (48, 24, 60), "large": (96, 48, 180)}[size]
     scan, truth, fit, metadata = analytic.make_case(
         case, geometry=geometry, size=detector, views=views, grid_size=grid_size
     )
-    return Row(scan, metadata["true_scan"], truth, fit, landmarks(scan.grid), 1.0, scan.grid)
+    rebuild = (
+        _rebuilt(scan, geometry, 25.0 if geometry == "lamino" else 0.0)
+        if len(fit) == 1
+        and fit[0] in {"centre", "tilt", "roll"}
+        and not (geometry == "cone" and fit[0] == "tilt")
+        else None
+    )
+    return Row(
+        scan, metadata["true_scan"], truth, fit, landmarks(scan.grid), 1.0, scan.grid, rebuild
+    )
 
 
 def watch_row(case: str) -> Row:
@@ -156,8 +217,35 @@ def plug_row(name: str, fit: tuple[str, ...], centre_px: float = 0.0) -> Row:
     true = np.asarray(data["poses"], np.float64)
     truth = analytic.physical_rays(true, true_detector)
     return Row(
-        scan, exact.with_poses(_table(nominal, true)), truth, fit, landmarks(grid), 1.0, None
+        scan,
+        exact.with_poses(_table(nominal, true)),
+        truth,
+        fit,
+        landmarks(grid),
+        1.0,
+        None,
+        _rebuilt(scan, "parallel"),
     )
+
+
+def walnut_row(number: int) -> Row:
+    """Build a FIPS walnut, three cone-beam orbits (every 4th view, 2x binned).
+
+    The start is the scanner's original record and the reference truth is the
+    authors' corrected geometry, which moves orbits 2 and 3 by about 0.4 and
+    0.8 mm. Only the orbits' relative positions are observable, so the score's
+    rigid gauge absorbs the common placement.
+    """
+    from walnut import load_orbits
+    from walnut_alignment import _scan
+
+    walnut = WALNUTS / f"Walnut{number}"
+    WALNUT_CACHE.mkdir(parents=True, exist_ok=True)
+    data, _ = load_orbits(walnut, [1, 2, 3], 4, cache=WALNUT_CACHE / f"walnut{number}-every4.npz")
+    original = _scan(walnut, data, "scan_geom_original.geom", 4, 2)
+    corrected = _scan(walnut, data, "scan_geom_corrected.geom", 4, 2)
+    truth = analytic.scan_rays(corrected)
+    return Row(original, corrected, truth, ("translations",), landmarks(original.grid), 1.0, None)
 
 
 ROWS: dict[str, tuple[Callable[..., Row], tuple[Any, ...]]] = {
@@ -172,6 +260,7 @@ ROWS: dict[str, tuple[Callable[..., Row], tuple[Any, ...]]] = {
     "plug/roll": (plug_row, ("plug2-roll0.75", ("roll",))),
     "plug/tilt": (plug_row, ("plug2-tilt1.5", ("tilt",))),
     "plug/centre": (plug_row, ("plug2-roll0", ("centre",), 2.0)),
+    "walnut/1": (walnut_row, (1,)),
 }
 
 
@@ -205,15 +294,25 @@ def run(name: str, start: str) -> dict[str, Any]:
     result = tj.align(scan, fit=row.fit, grid=row.grid)
     np.asarray(result.volume)
     seconds = time.perf_counter() - t
-    fitted, worst = score(analytic.scan_rays(result.scan), row.truth, row.points, row.pixel)
+    fitted, worst, bands = score_bands(
+        analytic.scan_rays(result.scan), row.truth, row.points, row.pixel
+    )
     stats = jax.devices()[0].memory_stats() or {}
     levels = result.info.get("levels", [])
+    calibration = result.info.get("calibration", {})
+    round_trip = (
+        score(analytic.scan_rays(row.rebuild(calibration)), row.truth, row.points, row.pixel)[0]
+        if row.rebuild and start == "nominal" and len(calibration) == 1
+        else None
+    )
     return {
         "row": name,
         "start": start,
         "fit": list(row.fit),
         "nominal_px": round(nominal_error, 5),
         "fitted_px": round(fitted, 5),
+        # Harmonics 0-3 (smooth, near-gauge modes), 4-40 and 41+ (view-to-view scatter).
+        "fitted_bands_px": [round(b, 5) for b in bands],
         "worst_view_px": round(worst, 5),
         "per_step_px": steps if per_step else None,
         "seconds": round(seconds, 1),
@@ -227,7 +326,9 @@ def run(name: str, start: str) -> dict[str, Any]:
         "first_proposal": round(levels[0]["steps"][0]["proposed_pose_step_rms"], 4)
         if levels and levels[0]["steps"]
         else None,
-        "calibration": result.info.get("calibration", {}),
+        "calibration": calibration,
+        # A geometry rebuilt from the reported value must score like the fit.
+        "round_trip_px": None if round_trip is None else round(round_trip, 5),
     }
 
 
