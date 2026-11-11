@@ -249,7 +249,7 @@ An explicit file-owned reconstruction grid survives detector cropping. The
 ESRF `scan_3_.par` fixture specifies 2048×2048×1200 voxels: one float32 volume
 alone needs 20,132,659,200 bytes, above the 18 GB input-audit memory limit.
 The 2026-10-27 audit on `2626e6e5` loaded it but stopped before reconstruction
-(`TOMO_SOURCE_COMMIT=2626e6e5 JAX_PLATFORMS=cpu uv run --no-sync python
+(lab harness outside the repository: `TOMO_SOURCE_COMMIT=2626e6e5 JAX_PLATFORMS=cpu uv run --no-sync python
 shared/agent06-audit/run_default.py 510`, with `LAB_ARTIFACTS` set to an output
 directory).
 Supply a smaller `grid=` to `tj.load_frames` when the file grid exceeds available

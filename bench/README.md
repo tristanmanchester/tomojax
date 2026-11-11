@@ -98,7 +98,7 @@ accuracy is established by the comparison above and the numerical tests.
 Use Python 3.12 on Linux with a CUDA-capable NVIDIA GPU:
 
 ```bash
-uv sync --locked --extra cuda12 --dev --group benchmark
+uv sync --locked --extra cuda12 --dev --group benchmark --group examples
 uv run --no-sync python bench/compare_projectors.py \
   --sizes 32,64,128,256 --views 60 --repeats 7 \
   --geometries parallel,lamino,anisotropic --libraries tomojax,astra
@@ -245,7 +245,8 @@ the `gaussian-v1` suite and its acceptance thresholds are defined in
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py \
   --sizes 64 128 256 --views 180 --repeats 7 \
-  --methods tomojax_fista tomojax_cgls_jax tomojax_cgls_cuda astra_cgls astra_sirt tigre_cgls
+  --methods tomojax_fista tomojax_cgls_jax tomojax_cgls_cuda astra_cgls astra_sirt tigre_cgls \
+  --output bench/results/gaussian-quality.json
 ```
 
 Each method/case runs in an isolated process using identical host inputs. Data
@@ -292,10 +293,12 @@ datasets to check its limitations without changing the policy:
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py \
   --suite structured-v1 --sizes 64 128 256 --batch 180 --repeats 7 \
-  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls
+  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls \
+  --output bench/results/structured-quality.json
 uv run --no-sync python bench/compare_reconstructions.py \
   --suite structured-noisy-v1 --sizes 64 128 256 --batch 180 --repeats 7 \
-  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls
+  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls \
+  --output bench/results/structured-noisy-quality.json
 ```
 
 These suites use analytic chord lengths through five fixed ellipsoids. The noisy
@@ -340,7 +343,8 @@ accuracy and complete reconstruction quality, not just kernel throughput:
 uv run --no-sync python bench/operator_models.py --sizes 64 128 256 --repeats 9
 uv run --no-sync python bench/compare_reconstructions.py --sizes 64 128 \
   --batch 180 --repeats 7 --suite structured-v1 \
-  --methods tomojax_joseph_cgls_cuda tomojax_multires_joseph_cgls_cuda astra_cgls
+  --methods tomojax_joseph_cgls_cuda tomojax_multires_joseph_cgls_cuda astra_cgls \
+  --output bench/results/joseph-structured-quality.json
 ```
 
 The resident operator comparison uses dynamic poses and includes coefficient
@@ -714,7 +718,8 @@ The same fixed-quality runner also supports single-pass methods:
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py --sizes 64 128 \
   --batch 180 --repeats 7 --suite structured-v1 \
-  --methods tomojax_fbp_cuda astra_fbp3d_cupy astra_fbp2d tigre_fbp
+  --methods tomojax_fbp_cuda astra_fbp3d_cupy astra_fbp2d tigre_fbp \
+  --output bench/results/direct-structured-quality.json
 ```
 
 `astra_fbp3d_cupy` combines a CuPy/cuFFT discrete Ram-Lak filter with ASTRA's

@@ -22,7 +22,11 @@ miss short peaks, and it includes runtime and allocator overhead.
 
 Commands, adapters and physical conventions are in the
 [benchmark guide](../bench/README.md). Raw records are kept out of the
-repository; each result names the command, commit and date to rerun it.
+repository; each result names the command, commit and date. Commands under
+`bench/` and `examples/` run from a checkout. Commands under `shared/`,
+`../../shared/` or `artifacts/`, and `run_default.py`, are lab harness scripts
+kept outside the repository with the run evidence: they record the protocol but
+cannot be rerun from a checkout.
 
 ## Raw NXtomo loading and held-out split integrity
 
