@@ -173,9 +173,10 @@ def _score_supports(scan: Scan, evidence: _Evidence) -> list[_Score]:
     count = min(64, len(scan.angles) // 2)
     indices = np.linspace(0, len(scan.angles) - 1, 2 * count).astype(int)
     fit, validation = scan.selected(indices[::2]).binned(2), scan.selected(indices[1::2]).binned(2)
-    pitch = evidence.grid.vz
-    span = evidence.grid.nz * pitch
-    grid = _ray_grid(scan, 0, span, pitch)
+    # The preview's grid is already budgeted; widening it to its padded depth
+    # would rebuild a larger one outside that budget.
+    grid = evidence.grid
+    pitch, span = grid.vz, grid.nz * grid.vz
     z = (np.arange(grid.nz) - (grid.nz - 1) / 2) * pitch
     center = pitch * round(evidence.height / pitch)
     data, target = jnp.asarray(fit.projections), np.asarray(validation.projections)

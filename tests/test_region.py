@@ -153,3 +153,28 @@ def test_shallow_region_coarsens_a_fixed_physical_survey(monkeypatch) -> None:
     assert grid.nx * grid.ny * grid.nz <= 0.6 * 2**20 / 32
     assert estimate.info["status"] == "broad_uncertain"
     assert np.isfinite(estimate.info["focus"]).all()
+
+
+@pytest.mark.numerical
+def test_support_scoring_stays_on_the_budgeted_preview_grid(monkeypatch) -> None:
+    import tomojax._region as region
+
+    # A 35-degree scan whose budgeted preview is 16 x 16 x 8 voxels of 16: widening
+    # it to its padded depth (8 x 16) used to rebuild a 24 x 24 x 8 scoring grid.
+    angles = np.linspace(0, 360, 16, endpoint=False)
+    geometry = tj.LaminographyGeometry(
+        tj.Grid(32, 32, 32, 1, 1, 1), tj.Detector(32, 32, 1, 1), angles, tilt_deg=35
+    )
+    scan = tj.Scan(np.zeros((16, 32, 32), np.float32), geometry)
+    preview = tj.Grid(16, 16, 8, 16, 16, 16)
+    z = (np.arange(8) - 3.5) * 16
+    evidence = region._Evidence(preview, z, np.ones(8), 0.0, True, 32.0, 0.0)
+    project, sizes = region.project, []
+
+    def recorded(geometry, volume, *, grid):
+        sizes.append(grid.nx * grid.ny * grid.nz)
+        return project(geometry, volume, grid=grid)
+
+    monkeypatch.setattr(region, "project", recorded)
+    region._score_supports(scan, evidence)
+    assert sizes and max(sizes) <= 16 * 16 * 8
