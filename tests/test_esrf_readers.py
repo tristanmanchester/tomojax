@@ -110,15 +110,13 @@ def test_edf_acquisition_metadata_calibration_and_lazy_windows(tmp_path, capsys,
         tj.load_frames(tmp_path)
 
 
-@pytest.mark.parametrize(
-    "rotation_path",
-    ["measurement/calc_hrsrot", "measurement/hrsrot", "instrument/hrsrot/value"],
-)
-def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys, rotation_path):
-    # Each projection pixel encodes its acquisition view, row and column.
+def _write_bliss_sequence(path, rotation_path):
+    """A Bliss dark/flat/projection sequence, its first projection block virtual.
+
+    Returns the projection pixels, which encode each view, row and column.
+    """
     rows, cols = np.mgrid[:3, :5]
     pixels = np.stack([20 + 20 * view + 4 * rows + cols for view in range(4)]).astype(np.float32)
-    path = tmp_path / "renamed.bin"
     with h5py.File(path, "w") as file:
         file.attrs["default"] = "1.1"
         root = file.create_group("1.1")
@@ -145,13 +143,23 @@ def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys, rota
             entry["instrument/positioners/hrsrot"] = 12345
             entry["instrument/positioners/hrsrot"].attrs["units"] = "degree"
         file["broken_link"] = h5py.ExternalLink("absent.h5", "/entry")
-    with h5py.File(tmp_path / "pixels.h5", "w") as file:
+    with h5py.File(path.parent / "pixels.h5", "w") as file:
         file["data"] = pixels[:2]  # the first projection block, external and virtual
     with h5py.File(path, "a") as file:
         del file["4.1/measurement/camera"]
         layout = h5py.VirtualLayout((2, 3, 5), np.float32)
         layout[:] = h5py.VirtualSource("pixels.h5", "data", shape=(2, 3, 5))
         file.create_virtual_dataset("4.1/measurement/camera", layout)
+    return pixels
+
+
+@pytest.mark.parametrize(
+    "rotation_path",
+    ["measurement/calc_hrsrot", "measurement/hrsrot", "instrument/hrsrot/value"],
+)
+def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys, rotation_path):
+    path = tmp_path / "renamed.bin"
+    pixels = _write_bliss_sequence(path, rotation_path)
     detector = tj.Detector(5, 3, 0.01, 0.02)
     with pytest.raises(ValueError, match="detector="):
         tj.load_frames(path)
