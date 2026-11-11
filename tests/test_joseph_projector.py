@@ -913,3 +913,18 @@ def test_eager_coefficient_device_roundoff_is_bounded():
     difference = outputs[1] - outputs[0]
     assert np.max(np.abs(difference)) / max(1.0, np.max(np.abs(outputs[0]))) <= 1.48445e-6
     assert np.linalg.norm(difference) / np.linalg.norm(outputs[0]) <= 4.40001e-7
+
+
+def test_explicit_detector_grid_gives_the_canonical_lattice_on_a_wide_detector():
+    from tomojax.core._plane_coefficients import (  # check-public-imports: allow-private
+        coefficients,
+    )
+    from tomojax.core.projector import get_detector_grid_device
+
+    # FP32 neighbours 0.7 apart differ by 0.69995: 0.2 lengths of drift over 4097 columns.
+    grid, detector = Grid(8, 8, 8, 1.0, 1.0, 1.0), Detector(4097, 3, 0.7, 0.7)
+    poses = np.eye(4, dtype=np.float32)[None]
+    grid_values = tuple(np.asarray(a) for a in get_detector_grid_device(detector))
+    explicit = coefficients(poses, grid, detector, grid_values, xp=np)
+    canonical = coefficients(poses, grid, detector, xp=np)
+    np.testing.assert_allclose(explicit, canonical, rtol=2e-6, atol=2e-6)

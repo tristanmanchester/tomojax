@@ -16,16 +16,27 @@ def coefficients(poses, grid: Grid, detector: Detector, det_grid=None, *, xp: An
         u, v = rotation[:, 0, :] * detector.du / voxel, rotation[:, 2, :] * detector.dv / voxel
     else:
         xs, zs = (xp.asarray(a, xp.float32).ravel() for a in det_grid)
-        nu = detector.nu
+        nu, nv = detector.nu, detector.nv
         first = xp.stack([xs[0], xp.float32(0), zs[0]])
-        step_u = (xs[1] - xs[0], zs[1] - zs[0]) if nu > 1 else (detector.du, 0.0)
-        step_v = (xs[nu] - xs[0], zs[nu] - zs[0]) if detector.nv > 1 else (0.0, detector.dv)
+        # Steps across the whole lattice, not between adjacent FP32 pixels whose
+        # rounded difference would drift the far edge on a wide detector.
+        last_u, last_v = nu - 1, (nv - 1) * nu
+        step_u = (
+            ((xs[last_u] - xs[0]) / (nu - 1), (zs[last_u] - zs[0]) / (nu - 1))
+            if nu > 1
+            else (detector.du, 0.0)
+        )
+        step_v = (
+            ((xs[last_v] - xs[0]) / (nv - 1), (zs[last_v] - zs[0]) / (nv - 1))
+            if nv > 1
+            else (0.0, detector.dv)
+        )
         # A singleton dimension has no measured step; complete the lattice
         # perpendicular to the other axis so gather coordinates stay invertible.
-        if nu == 1 and detector.nv > 1:
+        if nu == 1 and nv > 1:
             ratio = detector.du / detector.dv
             step_u = (step_v[1] * ratio, -step_v[0] * ratio)
-        elif detector.nv == 1 and nu > 1:
+        elif nv == 1 and nu > 1:
             ratio = detector.dv / detector.du
             step_v = (-step_u[1] * ratio, step_u[0] * ratio)
         u = (step_u[0] * rotation[:, 0, :] + step_u[1] * rotation[:, 2, :]) / voxel
