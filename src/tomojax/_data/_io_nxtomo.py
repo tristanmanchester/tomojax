@@ -92,6 +92,9 @@ def save_nxtomo(
 
     with h5py.File(path, mode) as f:
         entry = _ensure_group(f, "entry", "NXentry")
+        # NXtomo names its application definition in a field; the attribute
+        # remains for readers of earlier TomoJAX files.
+        entry.create_dataset("definition", data="NXtomo", dtype=h5py.string_dtype("utf-8"))
         _write_string_attr(entry, "definition", "NXtomo")
         inst = _ensure_group(entry, "instrument", "NXinstrument")
 
@@ -159,10 +162,13 @@ def _write_detector_section(
     if meta.detector is not None:
         det_dict = meta.detector if isinstance(meta.detector, dict) else meta.detector.to_dict()
         det.attrs["detector_meta_json"] = json.dumps(det_dict)
-        det.create_dataset("x_pixel_size", data=np.asarray(det_dict["du"]))
-        det["x_pixel_size"].attrs["units"] = "pixel"
-        det.create_dataset("y_pixel_size", data=np.asarray(det_dict["dv"]))
-        det["y_pixel_size"].attrs["units"] = "pixel"
+        # Pitches are in the geometry's length unit; label it only when recorded.
+        acquisition = (meta.geometry_meta or {}).get("acquisition")
+        unit = acquisition.get("length_unit") if isinstance(acquisition, dict) else None
+        for name, key in (("x_pixel_size", "du"), ("y_pixel_size", "dv")):
+            det.create_dataset(name, data=np.asarray(det_dict[key]))
+            if isinstance(unit, str):
+                det[name].attrs["units"] = unit
     return det
 
 
@@ -517,7 +523,9 @@ def validate_nxtomo(path: str) -> ValidationReport:
 def _required_entry_issues(f: h5py.File, e: h5py.Group) -> tuple[list[str], str | None, int | None]:
     """Missing or misshapen required NXtomo members, the angle path and the view count."""
     issues = []
-    if _attr_to_str(e.attrs.get("definition")) != "NXtomo":
+    stored = e["definition"][()] if isinstance(e.get("definition"), h5py.Dataset) else None
+    stored = stored.decode() if isinstance(stored, bytes) else stored
+    if "NXtomo" not in (stored, _attr_to_str(e.attrs.get("definition"))):
         issues.append("entry/definition must be 'NXtomo'")
     if "instrument/detector/data" not in e:
         issues.append("Missing instrument/detector/data")

@@ -488,7 +488,9 @@ def test_saved_image_keys_split_raw_frames_in_every_container(tmp_path: Path, su
     path = tmp_path / f"raw{suffix}"
     save_dataset(path, _labelled_dataset([5, 11, 9, 1], [0, 1, 0, 2]))
     scan = tj.load(path)
-    np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(scan.projections)[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6
+    )
     np.testing.assert_allclose(scan.geometry.angles, [0.0, 90.0])
     frames = tj.load_frames(path)
     assert frames.views == 2 and frames.flats is not None and frames.darks is not None
@@ -501,3 +503,18 @@ def test_saved_image_keys_drop_invalid_processed_frames(tmp_path: Path, suffix: 
     scan = tj.load(path)
     np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], [0.5, 0.25])
     np.testing.assert_allclose(scan.geometry.angles, [0.0, 90.0])
+
+
+def test_saved_scans_name_nxtomo_and_never_label_pitches_as_pixels(tmp_path: Path) -> None:
+    from tomojax.io.api import validate_nxtomo
+
+    grid, detector = Grid(4, 4, 2, 1.0, 1.0, 1.0), Detector(4, 2, 0.0065, 0.0065)
+    scan = tj.Scan(
+        np.ones((3, 2, 4), np.float32), tj.ParallelGeometry(grid, detector, [0, 60, 120])
+    )
+    tj.save(tmp_path / "scan.nxs", scan)
+    with h5py.File(tmp_path / "scan.nxs") as f:
+        assert f["entry/definition"][()].decode() == "NXtomo"
+        # A pitch of unrecorded unit carries no unit, not "pixel".
+        assert "units" not in f["entry/instrument/detector/x_pixel_size"].attrs
+    assert not validate_nxtomo(str(tmp_path / "scan.nxs"))["issues"]
