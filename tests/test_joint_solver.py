@@ -1,5 +1,7 @@
 """The fixed joint fit avoids absent-prior work without changing its objective."""
 
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -188,3 +190,36 @@ def test_a_uniform_prediction_still_fits_its_background():
     gain, background = _solver._photometric(sums)
     assert gain[1] == 1.0
     np.testing.assert_allclose(background[1] - background[0], [2.0, 2.0], atol=1e-9)
+
+
+@pytest.mark.parametrize("masked", [False, True])
+def test_held_pose_trial_equals_the_projected_objective(masked):
+    # With no pose step, beta = 1 projects at the same poses that beta = 0 holds.
+    # Large residuals put pixels in the robust tail, where sw differs from sqrt(precision).
+    grid, detector = tj.Grid(5, 5, 3, 0.7, 0.8, 0.9), tj.Detector(7, 3, 0.7, 0.9)
+    geometry = tj.ParallelGeometry(grid, detector, [30.0 * i for i in range(6)])
+    rng = np.random.default_rng(31)
+    with jax.enable_x64(True):
+        nominal = np.asarray(stack_view_poses(geometry, 6))
+        ops = Operators(
+            grid, detector, nominal, lever=2, native=(0.7, 0.9), interpolation="cubic", batch_size=4
+        )
+        gauge = rigid_gauge(nominal, [0.5] * 3 + [0.7, 0.9])
+        prior = MotionPrior(6, gauge, knot_spacing=(4,) * 5, delta=0.02)
+        y = ops.pad_images(jnp.asarray(rng.normal(scale=0.5, size=(6, 3, 7)), jnp.float32))
+        precision = None
+        if masked:
+            weights = rng.uniform(0, 2, (6, 3, 7)) * (rng.uniform(size=(6, 3, 7)) > 0.3)
+            precision = ops.pad_precision(jnp.asarray(weights, jnp.float32))
+        level = _Level(ops, prior, y, precision, lam=0.0, eps=0.0, scales=None, delta=0.05, inner=1)
+        c = prior.project_gauge(jnp.asarray(rng.normal(scale=0.2, size=prior.size)))
+        x = jnp.asarray(rng.uniform(0.1, 0.3, (3, 5, 5)), jnp.float32)
+        dx = jnp.asarray(rng.normal(size=(3, 5, 5)), jnp.float32)
+        _, _, sw, j, *_, residual = level.linearize(c, x)
+        assert float(jnp.mean(sw**2 < 0.99 * (1 if precision is None else precision))) > 0.2
+        step, _ = ops.weighted_forward(ops.prepare(ops.pad_poses(c)), dx, sw, j)
+        for a in (1.0, 0.25):
+            trial = partial(level.trial, x, c, dx, jnp.zeros_like(c), 1.0, (residual, step, sw))
+            held, projected = trial(a, 0.0), trial(a, 1.0)
+            np.testing.assert_allclose(held[0], projected[0], rtol=1e-6)
+            np.testing.assert_array_equal(held[1], projected[1])

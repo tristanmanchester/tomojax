@@ -39,7 +39,7 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     )
     level.norm = jnp.vdot
     level.energy = lambda value: jnp.vdot(value, value)
-    level.trial = lambda x, c, dx, dc, _, step, fraction: (
+    level.trial = lambda x, c, dx, dc, _, _held, step, fraction: (
         99.0,
         x + step * dx,
         c + step * fraction * dc,
@@ -53,6 +53,7 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
         None,
         jnp.tile(jnp.array([3.0, 4.0]), n),
         jnp.broadcast_to(jnp.eye(2), (n, 2, 2)),
+        None,
     )
     result = level.step(image, state, linear, 0.001, 0.0, 100.0)
     assert result is not None
@@ -130,6 +131,7 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
             np.concatenate(
                 [np.tile(np.eye(3), (60, 1, 1)), np.tile([[1.0], [0], [0]], (60, 1, 1))], -1
             ),
+            None,
         ),
     )
     prior = SimpleNamespace(size=60, value=lambda *_: 0.0)

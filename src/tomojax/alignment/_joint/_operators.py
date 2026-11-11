@@ -363,12 +363,12 @@ class Operators:
             # The score, Gram matrix and cross term must describe the SAME J.
             # Quantizing J after these reductions makes the Schur model inconsistent.
             score, gram = column_score(j, res), column_gram(j)
-            out = (sw, j, score, gram, robust_value(r, wb, delta))
+            out = (sw, j, score, gram, robust_value(r, wb, delta), jnp.where(wb > 0, r, 0))
             return (gx, dd), (*out, valid_px, down, photometric_sums(raw[:, 0], yb, wb))
 
         batches = (*self.views(q), self.batches(y), self.batches(precision))
         state, out = jax.lax.scan(step, (self._zeros(), self._zeros()), batches)
-        sw, j, g, gram, e, valid, down, sums = out
+        sw, j, g, gram, e, residual, valid, down, sums = out
         n, d, k = self.n, self.detector, self.dofs
         return (
             *state,
@@ -379,6 +379,7 @@ class Operators:
             jnp.sum(e),
             jnp.stack([jnp.sum(valid), jnp.sum(down)]),
             sums.reshape(self.padded_n, 3, 4)[:n],
+            residual.reshape(self.image_shape),
         )
 
     def _objective(self, q, x, y, precision, delta):

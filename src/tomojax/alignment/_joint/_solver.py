@@ -19,6 +19,7 @@ import numpy as np
 
 from . import _tv as tv
 from ._krylov import solve as krylov_solve
+from ._operators import robust_value
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,16 @@ class _Level:
             if lam
             else 1 / jnp.maximum(dd + jnp.float32(lm) * damp, jnp.float32(1e-8))
         )
+        # At unchanged poses the prediction is linear in the image: the residual
+        # plus a times the step's projection (returned scaled by sw, zero only
+        # where unobserved) gives the data term exactly, without projecting.
+        self.held = jax.jit(
+            lambda residual, step, sw, w, a: robust_value(
+                residual + a * jnp.where(sw > 0, step / jnp.where(sw > 0, sw, 1), 0),
+                ops.batch_precision(w, ops.valid),
+                delta,
+            )
+        )
         self.rhs = jax.jit(lambda q, sw, j, sp, gx, free: (ops.pose_back(q, sw, j, sp) - gx) * free)
         self.norm = jax.jit(tv.dot)
         # Batch by batch: a whole-sinogram FP64 product would be a stack-sized temporary.
@@ -211,14 +222,19 @@ class _Level:
         """The robust linearization at compact poses ``c`` and volume ``x``."""
         return self.ops.linearize(self.ops.pad_poses(c), x, self.y, self.precision, self.delta)
 
-    def trial(self, x, c, dx, dc, pose_weight, a, beta):
-        """Objective after volume step a and pose step a * beta, with the new state."""
+    def trial(self, x, c, dx, dc, pose_weight, held, a, beta):
+        """Objective after volume step a and pose step a * beta, with the new state.
+
+        ``held`` (residual, weighted projection of dx, weights) gives beta = 0.
+        """
         xt = x + jnp.float32(a) * dx
         cc = c + a * beta * dc
-        total = float(
-            self.ops.objective(self.ops.pad_poses(cc), xt, self.y, self.precision, self.delta)
-        )
-        total += self.image_penalty(xt)
+        if beta == 0:
+            data = self.held(*held, self.precision, jnp.float32(a))
+        else:
+            q = self.ops.pad_poses(cc)
+            data = self.ops.objective(q, xt, self.y, self.precision, self.delta)
+        total = float(data) + self.image_penalty(xt)
         return total + float(self.prior.value(cc, pose_weight)), xt, cc
 
     def step(self, x, c, linear, lm, pose_weight, f):
@@ -229,7 +245,7 @@ class _Level:
         """
         ops, prior = self.ops, self.prior
         q = ops.prepare(ops.pad_poses(c))
-        gx0, dd, sw, j, gr, gram = linear
+        gx0, dd, sw, j, gr, gram, residual = linear
         damp = jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4)
         d = self.conduct(x) if self.lam else None
         gx = self.gradient(gx0, x, d) if self.lam else gx0
@@ -257,9 +273,8 @@ class _Level:
             gx_dx, gp_dc = float(self.norm(gx, dx)), float(jnp.vdot(gp, dc))
             accepted = None
             if gx_dx + gp_dc < 0:
-                accepted = _line_search(
-                    partial(self.trial, x, c, dx, dc, pose_weight), f, gx_dx, gp_dc
-                )
+                trial = partial(self.trial, x, c, dx, dc, pose_weight, (residual, r, sw))
+                accepted = _line_search(trial, f, gx_dx, gp_dc)
             if accepted:
                 a, beta, new = accepted
                 dp = prior.expand(dc)
@@ -332,7 +347,7 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
     # expose or populate them; this is not a permanent active-set constraint.
     x = jnp.where(observed, x, 0)
     del observed
-    gx0, dd, sw, j, gr, gram, data, obstats, sums = level.linearize(c, x)
+    gx0, dd, sw, j, gr, gram, data, obstats, sums, residual = level.linearize(c, x)
     fisher = jnp.trace(gram, axis1=1, axis2=2)
     pose_weight = float(pose_sigma * jnp.sqrt(jnp.median(fisher)) * np.sqrt(2 * np.log(n)))
     f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
@@ -342,12 +357,12 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
         if it:
             # Release the previous weights and columns first: two stack-sized sets
             # would not fit beside each other on a small device.
-            del gx0, dd, sw, j, gr, gram
+            del gx0, dd, sw, j, gr, gram, residual
             changed, linear = level.refit(c, x, sums)
-            gx0, dd, sw, j, gr, gram, data, obstats, sums = linear
+            gx0, dd, sw, j, gr, gram, data, obstats, sums, residual = linear
             if changed:
                 f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
-        result = level.step(x, c, (gx0, dd, sw, j, gr, gram), lm, pose_weight, f)
+        result = level.step(x, c, (gx0, dd, sw, j, gr, gram, residual), lm, pose_weight, f)
         if result is None:
             status = "line_search_stalled"
             break
