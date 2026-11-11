@@ -56,6 +56,9 @@ def _photometric(sums):
     coefficients = np.where(ok[:, None], solution[..., 0] / scale, [1.0, 0.0, 0.0])
     gain = np.clip(coefficients[:, 0] / np.mean(coefficients[ok, 0]) if ok.any() else 1.0, 0.5, 2.0)
     background = coefficients[:, 1:] - (coefficients[ok, 1:].mean(0) if ok.any() else 0)
+    # Normalising the fitted views must not move the views without a fit.
+    gain = np.where(ok, gain, 1.0)
+    background = np.where(ok[:, None], background, 0.0)
     return gain, background
 
 
