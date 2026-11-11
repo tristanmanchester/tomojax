@@ -21,6 +21,8 @@ def test_measurement_placement_reserves_solver_workspace(monkeypatch):
     assert should_stream(data, reserve_bytes=512)
     assert should_stream(data, reserve_bytes=2048)
     assert not should_stream(jax.device_put(data), reserve_bytes=2048)
+    # Weights and a data dual beside the measurements triple their footprint.
+    assert should_stream(data, copies=2)
 
 
 def test_host_block_read_stays_a_snapshot_after_a_later_write():

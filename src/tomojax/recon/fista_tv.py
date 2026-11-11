@@ -568,7 +568,9 @@ def _prepare_fista_runtime(
         and (
             bool(cfg.stream_projections)
             if cfg.stream_projections is not None
-            else should_stream(projections)
+            # Beside the iterate: momentum, previous iterate, gradient, the TV
+            # proximal duals and their scratch, about eight volumes in all.
+            else should_stream(projections, reserve_bytes=8 * 4 * grid.nx * grid.ny * grid.nz)
         )
     )
     if stream and projector is None:
