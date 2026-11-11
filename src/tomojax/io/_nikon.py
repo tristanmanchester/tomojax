@@ -225,7 +225,13 @@ def _nikon_record(
         int(_number(params, "DetectorPixelsX", nu)),
     )
     if expected != (nv, nu):
-        LOG.warning("projections are %s pixels; the .xtekct file lists %s", (nv, nu), expected)
+        # Pitch, offsets and the axis are calibrated for the listed panel; a
+        # resize changes the scale and a crop the placement, and neither is recorded.
+        raise ValueError(
+            f"{file}: projections are {(nv, nu)} pixels, but the .xtekct file lists "
+            f"{expected}; cropped or resized images need updated DetectorPixels, "
+            "DetectorPixelSize and DetectorOffset entries"
+        )
     angles = _angles(params, views)
     detector_keys = (
         "DetectorPixelSizeX",

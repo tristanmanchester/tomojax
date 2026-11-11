@@ -656,3 +656,22 @@ def test_fdk_short_scan_on_an_offset_detector_matches_a_centred_one(backend, off
         volume = fdk(geometry, grid, detector, _analytic(shapes, geometry), config=config)
         errors.append(np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth))
     assert errors[1] < 1.03 * errors[0] < 0.1
+
+
+def test_nikon_images_resized_from_the_listed_panel_are_rejected(tmp_path: Path):
+    import imageio.v3 as iio
+
+    import tomojax as tj
+
+    for i in range(2):
+        iio.imwrite(tmp_path / f"part_{i + 1:04d}.tif", np.full((3, 4), 100, np.uint16))
+    (tmp_path / "part.xtekct").write_text(
+        "[XTekCT]\nName=part\nInputSeparator=_\nSrcToObject=12.0\nSrcToDetector=18.0\n"
+        "DetectorPixelsX=8\nDetectorPixelsY=6\nDetectorPixelSizeX=0.075\n"
+        "DetectorPixelSizeY=0.075\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "CentreOfRotationTop=0\nCentreOfRotationBottom=0\nWhiteLevel=1000\n"
+        "VoxelsX=8\nVoxelsY=8\nVoxelsZ=6\nVoxelSizeX=0.05\nVoxelSizeY=0.05\nVoxelSizeZ=0.05\n"
+        "Projections=2\nInitialAngle=0\nAngularStep=90\n"
+    )
+    with pytest.raises(ValueError, match="cropped or resized"):
+        tj.load_frames(tmp_path / "part.xtekct", darks=0)
