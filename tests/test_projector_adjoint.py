@@ -186,3 +186,16 @@ def test_cuda_shared_adjoint_matches_independent_transpose(views, layout):
     )(images)
     np.testing.assert_allclose(actual, expected, rtol=1e-4, atol=1e-5)
     assert float(jnp.linalg.norm(actual - expected) / jnp.linalg.norm(expected)) < 3e-6
+
+
+@pytest.mark.parametrize(("offset", "integral"), [(0.0, True), (2.0**-17, False), (0.5, False)])
+def test_integer_z_kernel_is_chosen_only_where_snapping_changes_nothing(offset, integral):
+    # check-public-imports: allow-private
+    from tomojax.core.cuda_projector._geometry_support import _supports_z_integer4_for_stack
+
+    # The integer-z forward snaps rows; its transpose interpolates. A row 2**-17
+    # off an integer would give the pair different operators.
+    grid = Grid(1, 1, 3, 1.0, 1.0, 1.0)
+    detector = Detector(1, 3, 1.0, 1.0, center=(0.0, offset))
+    poses = np.eye(4, dtype=np.float32)[None]
+    assert _supports_z_integer4_for_stack(poses, grid, detector, None) is integral
