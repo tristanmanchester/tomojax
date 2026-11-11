@@ -100,7 +100,7 @@ In Python, `tj.load("raw.nxs")` makes the same correction, and records it in
 import tomojax as tj
 from tomojax.corrections import RejectViews, Stripes
 
-frames = tj.load_frames("raw.nxs")  # or a Nikon .xtekct, or TIFFs with angles=
+frames = tj.load_frames("raw.nxs")  # or TIFFs with angles=, or a Nikon .xtekct with darks=
 scan = frames.cropped(slice(100, 900), slice(None)).corrected(RejectViews(), Stripes(9))
 print(scan)  # Scan('sample': ..., corrections: flat_dark(...), log(...), reject_views(...), ...)
 tj.save("corrected.nxs", scan)
@@ -349,8 +349,8 @@ same names: `iterations=100` wins over the config's `iterations`.
 
 CGLS, FISTA and SPDHG fit absolute line integrals by default. When material
 lies outside the field of view, explicitly select
-`data_term="per_view_contrast"`, for example
-`tj.reconstruct(scan, "fista", data_term="per_view_contrast")`.
+`data_term="per_view_contrast"` in the method's configuration, for example
+`tj.reconstruct(scan, "fista", config=FistaConfig(data_term="per_view_contrast"))`.
 This fits detector contrast while profiling one unknown constant per view;
 absolute background density is not recoverable. There is no automatic switch
 by geometry. FISTA's default `tv_weight=None` uses a projection-only noise

@@ -12,7 +12,7 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Dataset container conversion (`.npz`, `.nxs`, `.h5`) | Supported | `tomojax import scan.npz -o scan.nxs` |
 | HDF5 flat/dark correction (NXtomo `image_key`, or APS Data Exchange `data_white`/`data_dark`; flat sets before and after interpolated) | Supported | `tomojax preprocess raw.nxs -o corrected.nxs`, or `tj.load("raw.nxs")` |
 | Frame corrections in Python (crop, select views, correction steps) | Supported | `tj.load_frames(path).cropped(...).selected(...).corrected(*steps)`; `Scan.corrected(*steps)` for line-integral steps |
-| TIFF flat/dark preprocessing | Supported | `tomojax preprocess ./projections -o corrected.nxs --flats ./flats --darks ./darks --angles angles.csv` |
+| TIFF flat/dark preprocessing | Supported | `tomojax preprocess ./projections -o corrected.nxs --flats ./flats --darks ./darks --angles angles.csv --config calibration.toml`, whose `[detector]` table gives `nu`, `nv`, `du`, `dv` and `det_center` |
 | FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fbp\|cgls\|fista\|spdhg` |
 | Fourier-slice inverse of supported parallel scans | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fourier`; matching available CUDA or NumPy, with explicit backend configuration |
 | Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax import ./tiffs --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv --config calibration.toml -o scan.nxs`, then `tomojax recon` (automatic FDK for one arrangement; `--method fbp` selects it explicitly) |
