@@ -344,13 +344,14 @@ def _iterative_result(
         ):
             support = algebraic.support
             if support is not None:
-                import jax.numpy as jnp
+                import numpy as np
 
                 if method == "sirt":
                     from tomojax.core.validation import validate_volume
 
                     validate_volume(support, grid, context="sirt", name="support")
-                support = jnp.broadcast_to(jnp.asarray(support, bool), (grid.nz, grid.ny, grid.nx))
+                # A host broadcast view: each slab uploads only its own rows.
+                support = np.broadcast_to(np.asarray(support, bool), (grid.nz, grid.ny, grid.nx))
 
             solver = None
             if method == "sirt":

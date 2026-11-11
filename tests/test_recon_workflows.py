@@ -329,7 +329,17 @@ def test_iterative_axial_slabs_bound_the_warm_initializer(monkeypatch, method):
         return initialize(geometry, grid, *args, **kwargs)
 
     monkeypatch.setattr(warm, "fbp_start", bounded_initializer)
+    incore, supports = api._iterative_incore, []
+
+    def recorded(method, geometry, grid, detector, data, config, *args, **kwargs):
+        supports.append(config.support)
+        return incore(method, geometry, grid, detector, data, config, *args, **kwargs)
+
+    monkeypatch.setattr(api, "_iterative_incore", recorded)
     actual = tj.reconstruct(scan, method, config=cfg, warm_start=True)
     assert seen == [2, 2, 1]
+    # The mask stays on the host; each slab receives only its own rows.
+    assert [s.shape[0] for s in supports] == [2, 2, 1]
+    assert all(isinstance(s, np.ndarray) for s in supports)
     assert isinstance(actual.volume, np.ndarray)
     np.testing.assert_allclose(actual.volume, expected, rtol=2e-5, atol=2e-6)
