@@ -41,7 +41,7 @@ Steps, each a frozen dataclass of its settings:
 | `Paganin(delta_beta, distance, energy_kev, pixel_size)` | transmission | single-material phase retrieval; distance and pixel size at the sample in metres, energy in keV | `--paganin DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL` (expert) |
 | `Stripes(width=9, varying=False)` | line integrals | constant pixel offsets, or selected intensity-dependent responses with `varying=True` | `--stripes WIDTH` (constant offsets) |
 | `Rings(geometry=None)` | line integrals | each column's offset and transmission-dependent response, separated from object structure statistically or by full-turn parallel geometry | `--rings` |
-| `RejectViews(z=6.0, neighbours=5, min_jump=0.05)` | line integrals | drops views whose median jumps from their neighbours', and their geometry | `--reject-views [Z]` |
+| `RejectViews(z=6.0)` | line integrals | drops the views between an abrupt step in the mean line integral and the step back (a beam loss, a missed frame), and their geometry; smooth changes of the object are kept | `--reject-views [Z]` |
 | `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearisation, see below | Python only |
 
 Also exported:

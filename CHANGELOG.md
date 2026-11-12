@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### RejectViews finds events by their steps
+
+`RejectViews` judged each view's median against a local trend, with a floor
+of 5% of the typical median. On a scan whose detector is mostly empty or a
+container, the median sat in that region: a container turning edge-on raised
+it fast enough to reject 99 good views of I13 159815 (two blocks, half a turn
+apart), while a 30-view beam loss was rejected only at its edges. It now
+follows the mean line integral and rejects the views of an abrupt event: a step,
+a step back, and a constant shift between. A smooth change of the object is
+kept however fast, a level change that never returns keeps its views, and a
+failed first or last view is still rejected. Every threshold comes from the
+scan's own spread. `neighbours` and `min_jump` are gone; the record's
+`robust_scale` is now `step_limit`.
+
 ### Scans keep when each view was taken
 
 `Scan` carries `view_positions`, as `Frames` already did: each view's place in

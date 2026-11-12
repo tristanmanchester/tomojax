@@ -252,66 +252,55 @@ class Stripes(Step):
 
 @dataclass(frozen=True)
 class RejectViews(Step):
-    """Drop views whose median line integral jumps from their neighbours'.
+    """Drop views taken during a beam or detector event: a level that starts and stops abruptly.
 
-    A view taken with the beam off, a shutter closed or the sample out of the
-    beam differs as a whole from the views either side of it, while the
-    object's own change with angle is smooth. Each view's median is compared
-    with a robust line (Siegel's repeated median) through the
-    ``2 * (neighbours - 1)`` views nearest it in the order recorded, so a smooth
-    trend predicts every view, the first and last included; a second pass
-    leaves out views the first rejected. A view is rejected when that
-    difference is more than ``z``
-    robust standard deviations (1.4826 times the median absolute deviation)
-    of all views' differences and more than ``min_jump`` of the views' typical
-    median (so the small, smooth changes of a noise-free scan never count).
-    Views with a nonfinite median are also rejected and do not participate
-    in the neighbours or robust baseline. Rejected views are removed from the
-    scan and its geometry; the scan's ``view_positions`` keep when each
-    remaining view was taken, so alignment charges the gap as the views it
-    hides. The record lists them by their index before the step, nonfinite
-    ones included.
+    A beam loss, a closed shutter or a missed frame changes every pixel of the
+    views it touches at once, so the views' mean line integral steps there
+    and steps back afterwards, shifting the views between by a constant. The
+    object's own change with angle is smooth, however fast: a container
+    turning edge-on raises the mean over many views without a step. Each
+    view-to-view change of the mean is predicted by the median of its eight
+    nearest changes that are not steps, and is a step when it departs from that
+    by more than ``z`` robust standard deviations, of those neighbours and of
+    the whole scan (each taken from its quietest quarter, so events may be
+    most of them), and by more than a tenth of the robust spread of the means
+    themselves (for noise-free scans). The views between a step and a step
+    back are rejected, however many, when they form a block: the two steps of
+    opposite sign within a factor of two, the inside drifting by less than half
+    the smaller step and standing out from four views on each side. A first or
+    last view that steps away from the rest is rejected too. A step that never
+    returns is a level change, and its views are kept. The mean is the total
+    attenuation per pixel, so an empty or uniform part of the detector neither
+    dominates nor flips it.
+
+    Views with a nonfinite mean are also rejected and take no part. Rejected
+    views are removed from the scan and its geometry; the scan's
+    ``view_positions`` keep when each remaining view was taken, so alignment
+    charges the gap as the views it hides. The record lists them by their
+    index before the step, nonfinite ones included.
 
     Parameters
     ----------
     z : float, optional
-        Positive robust-standard-deviation threshold. Default is 6.
-    neighbours : int, optional
-        Odd neighbourhood length of at least 3 views. Default is 5.
-    min_jump : float, optional
-        Nonnegative minimum jump as a fraction of the typical view median.
-        Default is 0.05.
+        Positive robust-standard-deviation threshold for a step. Default is 6.
 
     Raises
     ------
     ValueError
-        If thresholds are nonfinite or outside their ranges, or the
-        neighbourhood length is not odd and at least 3.
+        If the threshold is nonfinite or not positive.
     """
 
     domain: ClassVar[Domain] = "line integrals"
     selects_views: ClassVar[bool] = True
     z: float = 6.0
-    neighbours: int = 5
-    min_jump: float = 0.05
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.z) or not self.z > 0:
             raise ValueError(f"RejectViews z must be finite and positive, not {self.z}")
-        if not np.isfinite(self.min_jump) or not self.min_jump >= 0:
-            raise ValueError(f"RejectViews min_jump must be finite and >= 0, not {self.min_jump}")
-        object.__setattr__(self, "min_jump", float(self.min_jump))
-        if (
-            int(self.neighbours) != self.neighbours
-            or self.neighbours < 3
-            or self.neighbours % 2 == 0
-        ):
-            raise ValueError(f"RejectViews neighbours must be odd and >= 3, not {self.neighbours}")
         object.__setattr__(self, "z", float(self.z))
-        object.__setattr__(self, "neighbours", int(self.neighbours))
 
     def statistic(self, batch: jax.Array) -> jax.Array:
-        """Compute the median line integral of every view.
+        """Compute the mean line integral of every view.
 
         Parameters
         ----------
@@ -321,68 +310,127 @@ class RejectViews(Step):
         Returns
         -------
         jax.Array
-            Median of each detector image, with shape ``(views,)``.
+            Mean of each detector image, with shape ``(views,)``.
         """
-        return jnp.median(batch.reshape(batch.shape[0], -1), axis=1)
+        return jnp.mean(batch.reshape(batch.shape[0], -1), axis=1)
 
     def select(
         self, statistics: np.ndarray, views: np.ndarray
     ) -> tuple[np.ndarray, dict[str, Json]]:
-        """Select views with medians consistent with their neighbours.
+        """Select the views outside every abrupt event in their means.
 
         Parameters
         ----------
         statistics : numpy.ndarray
-            Median line integral of every input view, with shape ``(views,)``.
+            Mean line integral of every input view, with shape ``(views,)``.
         views : numpy.ndarray
-            Original scan indices corresponding to these medians.
+            Original scan indices corresponding to these means.
 
         Returns
         -------
         keep : numpy.ndarray
-            Boolean mask of retained views; nonfinite medians are rejected.
+            Boolean mask of retained views; nonfinite means are rejected.
         found : dict
-            Rejected original indices, robust scale and any nonfinite-view indices.
+            Rejected original indices, the step threshold and any nonfinite-view indices.
         """
-        medians = np.asarray(statistics, np.float64)
-        finite = np.isfinite(medians)
+        means = np.asarray(statistics, np.float64)
+        finite = np.isfinite(means)
         keep = np.zeros(len(views), bool)
-        scale = 0.0
+        limit = 0.0
         if finite.any():
-            medians = medians[finite]
-            # A second pass leaves out the views the first rejected.
-            usable = np.ones(len(medians), bool)
-            for _ in range(2):
-                jumps = medians - _local_trend(medians, usable, 2 * (self.neighbours - 1))
-                scale = 1.4826 * float(np.median(np.abs(jumps - np.median(jumps))))
-                floor = self.min_jump * float(np.median(np.abs(medians)))
-                usable = (np.abs(jumps) <= self.z * scale) | (np.abs(jumps) <= floor)
-            keep[finite] = usable
-        found: dict[str, Json] = {"rejected": [int(v) for v in views[~keep]], "robust_scale": scale}
+            inside, limit = _events(means[finite], self.z)
+            keep[finite] = ~inside
+        found: dict[str, Json] = {"rejected": [int(v) for v in views[~keep]], "step_limit": limit}
         if not finite.all():
             found["nonfinite"] = [int(v) for v in views[~finite]]
         return keep, found
 
 
-def _local_trend(values: np.ndarray, usable: np.ndarray, count: int) -> np.ndarray:
-    """Each value predicted by a line through its ``count`` nearest usable others.
+def _robust_sd(values: np.ndarray) -> float:
+    """A standard deviation from the quietest quarter of ``values``.
 
-    The line is Siegel's repeated median, robust to nearly half its points failing.
+    A quarter of normal deviations fall below 0.3186 of it, so up to three
+    quarters of the values may be events without inflating it.
     """
-    index = np.flatnonzero(usable)
-    trend = np.array(values, np.float64)
-    for i in range(len(values)):
-        others = index[index != i]
-        others = others[np.argsort(np.abs(others - i), kind="stable")[:count]]
-        if len(others) < 2:
-            continue
-        x, y = others.astype(np.float64), values[others]
-        with np.errstate(divide="ignore", invalid="ignore"):
-            slopes = (y[None, :] - y[:, None]) / (x[None, :] - x[:, None])
-        np.fill_diagonal(slopes, np.nan)
-        slope = np.median(np.nanmedian(slopes, axis=1))
-        trend[i] = np.median(y - slope * x) + slope * i
-    return trend
+    return float(np.quantile(np.abs(values - np.median(values)), 0.25)) / 0.3186
+
+
+# Views either side of a candidate event that it must stand out from.
+_EVENT_SIDE = 4
+# Changes around a change that predict it, and set its local scale.
+_NEAREST_CHANGES = 8
+
+
+def _steps(means: np.ndarray, z: float) -> tuple[np.ndarray, np.ndarray, float]:
+    """Each change's departure from its neighbourhood, which departures are steps, the floor."""
+    change = np.diff(means)
+    index = np.arange(len(change))
+    # float32 statistics resolve about 1e-6 of the largest mean, whatever the spreads.
+    floor = max(
+        z * _robust_sd(change), 0.1 * _robust_sd(means), 1e-5 * float(np.max(np.abs(means)))
+    )
+    step = np.zeros(len(change), bool)
+    residual, limit = change, np.full(len(change), floor)
+    for _ in range(2):  # the second pass predicts from changes that are not steps
+        predicted = np.zeros(len(change))
+        for i in index:
+            others = index[(index != i) & ~step]
+            nearest = others[np.argsort(np.abs(others - i), kind="stable")[:_NEAREST_CHANGES]]
+            if len(nearest):
+                predicted[i] = np.median(change[nearest])
+                limit[i] = max(floor, z * _robust_sd(change[nearest]))
+        residual = change - predicted
+        step = np.abs(residual) > limit
+    return residual, step, floor
+
+
+def _events(means: np.ndarray, z: float) -> tuple[np.ndarray, float]:
+    """Views inside an abrupt event of ``means``, and the step floor used.
+
+    An event is a block shifted by a constant: a step, a step back of the
+    opposite sign within a factor of two, an inside that drifts by less than
+    half the smaller step, and an inside level beyond both sides' by more than
+    the step floor. A first or last view that steps away from the rest is one
+    too (it has no step back to see). Candidates are taken shortest first, each
+    step in one event; a step that never returns is a level change, not an event.
+    """
+    n = len(means)
+    inside = np.zeros(n, bool)
+    if n < 3:
+        return inside, 0.0
+    residual, step, floor = _steps(means, z)
+    steps = [(int(b), float(residual[b])) for b in np.flatnonzero(step)]
+
+    def stands_out(first: int, last: int, sign: float) -> bool:
+        level = np.median(means[first : last + 1])
+        sides = [
+            means[max(first - _EVENT_SIDE, 0) : first],
+            means[last + 1 : last + 1 + _EVENT_SIDE],
+        ]
+        sides = [side for side in sides if len(side)]
+        return bool(sides) and all(sign * (level - np.median(side)) > floor for side in sides)
+
+    candidates = []
+    for a, (b, size) in enumerate(steps):
+        if b == 0:
+            candidates.append((1, 0, 0, {a}))
+        if b == n - 2:
+            candidates.append((1, n - 1, n - 1, {a}))
+        for c in range(a + 1, len(steps)):
+            back, returned = steps[c]
+            if (
+                np.sign(returned) != np.sign(size)
+                and 0.5 <= abs(returned / size) <= 2
+                and abs(means[back] - means[b + 1]) < 0.5 * min(abs(size), abs(returned))
+                and stands_out(b + 1, back, float(np.sign(size)))
+            ):
+                candidates.append((back - b, b + 1, back, {a, c}))
+    used: set[int] = set()
+    for _, first, last, members in sorted(candidates, key=lambda item: item[:3]):
+        if used.isdisjoint(members) and not inside[first : last + 1].any():
+            inside[first : last + 1] = True
+            used |= members
+    return inside, floor
 
 
 @dataclass(frozen=True)

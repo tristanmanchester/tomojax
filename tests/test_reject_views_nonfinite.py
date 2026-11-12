@@ -49,7 +49,7 @@ def test_nonfinite_statistic_is_rejected_without_poisoning_good_views(value, bad
     found = actual.corrections[-1].found
     assert found["rejected"] == sorted([3, bad_view])
     assert found["nonfinite"] == [bad_view]
-    assert found["robust_scale"] == expected.corrections[-1].found["robust_scale"] == 0.0
+    assert found["step_limit"] == expected.corrections[-1].found["step_limit"]
 
 
 def test_consecutive_missing_views_keep_original_indices_and_saved_record(tmp_path: Path) -> None:
@@ -66,7 +66,7 @@ def test_consecutive_missing_views_keep_original_indices_and_saved_record(tmp_pa
     np.testing.assert_array_equal(actual.projections, expected.projections)
     assert actual.corrections[-1].found == {
         "rejected": [0, 1, 4, 5, 8, 12],
-        "robust_scale": 0.0,
+        "step_limit": expected.corrections[-1].found["step_limit"],
         "nonfinite": invalid,
     }
     tj.save(tmp_path / "cleaned.nxs", actual)
@@ -75,7 +75,7 @@ def test_consecutive_missing_views_keep_original_indices_and_saved_record(tmp_pa
     np.testing.assert_array_equal(restored.projections, actual.projections)
 
 
-def test_one_finite_view_is_retained_without_nonfinite_robust_scale() -> None:
+def test_one_finite_view_is_retained_without_a_nonfinite_step_limit() -> None:
     projections = np.full((9, 3, 7), np.nan, np.float32)
     projections[4] = 0.7
     with warnings.catch_warnings(record=True) as emitted:
@@ -86,7 +86,7 @@ def test_one_finite_view_is_retained_without_nonfinite_robust_scale() -> None:
     invalid = [0, 1, 2, 3, 5, 6, 7, 8]
     assert actual.corrections[-1].found == {
         "rejected": invalid,
-        "robust_scale": 0.0,
+        "step_limit": 0.0,
         "nonfinite": invalid,
     }
 

@@ -87,7 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="?",
         const=6.0,
         metavar="Z",
-        help="Drop views whose median is more than Z robust deviations from the views' (6)",
+        help="Drop views inside an abrupt step of the mean, Z robust deviations (6)",
     )
     _ = parser.add_argument(
         "--zingers",
