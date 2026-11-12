@@ -273,6 +273,12 @@ class RejectViews(Step):
     attenuation per pixel, so an empty or uniform part of the detector neither
     dominates nor flips it.
 
+    Known behaviour: a flat, real flux change that steps back (a 0.5% step held
+    for 50 views, say) is an event, and its views are rejected although an
+    alignment's per-view offset would absorb it. A beam loss that starts at the
+    second view reads as a failed first view; the first view is rejected and
+    the loss kept.
+
     Views with a nonfinite mean are also rejected and take no part. Rejected
     views are removed from the scan and its geometry; the scan's
     ``view_positions`` keep when each remaining view was taken, so alignment
