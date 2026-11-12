@@ -31,7 +31,10 @@ class Parameters:
     """One compact state and its per-view projector coordinates.
 
     Local columns retain the full pose table's order: alpha, beta, phi, x, z,
-    and y for a cone. Global columns are centre u/v, tilt and roll, restricted
+    and y for a cone. Rotations are the axis's two wobble components, alpha and
+    beta: each view's angle about the rotation axis (phi) is taken as recorded,
+    since stage encoders give it and errors in it are rare. Global columns are
+    centre u/v, tilt and roll, restricted
     to ``fit``. Centre coordinates are native pixels. Global angles use
     ``lever`` pixels per radian, independently of the working resolution.
     """
@@ -39,7 +42,7 @@ class Parameters:
     def __init__(self, views, fit, *, cone=False, lever=1.0) -> None:
         self.n, self.fit, self.cone, self.lever = views, parse_fit(fit), bool(cone), float(lever)
         self.full_dofs = 6 if cone else 5
-        self.local = (tuple(range(3)) if "rotations" in self.fit else ()) + (
+        self.local = ((0, 1) if "rotations" in self.fit else ()) + (
             tuple(range(3, self.full_dofs)) if "translations" in self.fit else ()
         )
         self.globals = (

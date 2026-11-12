@@ -61,8 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=["translations"],
         metavar="NAME",
         help=(
-            "Parameters to fit: centre, tilt, roll, translations, rotations "
-            "(default translations). All other parameters stay fixed."
+            "Parameters to fit: centre, tilt, roll, translations, rotations (the axis's wobble; "
+            "view angles as recorded) (default translations). All other parameters stay fixed."
         ),
     )
     _ = parser.add_argument("--roi", choices=ROI_CHOICES, default="auto", help=ROI_HELP)

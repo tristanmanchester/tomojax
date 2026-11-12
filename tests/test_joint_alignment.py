@@ -145,10 +145,10 @@ def test_parallel_pose_columns_match_finite_differences_at_nonzero_poses(interpo
             batch_size=3,
             interpolation=interpolation,
         )
-        q = jnp.asarray(rng.uniform(-0.2, 0.2, (len(angles), 5)), jnp.float32)
+        q = jnp.asarray(rng.uniform(-0.2, 0.2, (len(angles), ops.dofs)), jnp.float32)
         raw = ops.columns(ops.nominal, q, ops.valid, volume)
-        for k in range(5):
-            direction = np.zeros((len(angles), 5), np.float32)
+        for k in range(ops.dofs):
+            direction = np.zeros((len(angles), ops.dofs), np.float32)
             direction[:, k] = 0.001
             plus = ops.project(ops.coefficients(ops.nominal, q + direction, ops.valid), volume)
             minus = ops.project(ops.coefficients(ops.nominal, q - direction, ops.valid), volume)
@@ -175,16 +175,16 @@ def test_parallel_image_pose_cross_blocks_use_the_matched_transpose(column_dtype
             batch_size=3,
             interpolation=interpolation,
         )
-        q = ops.pad_poses(rng.normal(0, 0.1, (len(angles), 5)))
+        q = ops.pad_poses(rng.normal(0, 0.1, (len(angles), ops.dofs)))
         volume = jnp.asarray(rng.normal(size=ops.shape), jnp.float32)
         weights = rng.uniform(0, 1, (len(angles), detector.nv, detector.nu))
         weights[weights < 0.2] = 0
         sw = ops.pad_images(weights)
         # Compressed and full-precision columns must have the same transpose semantics.
         columns = jnp.asarray(
-            rng.normal(size=(ops.padded_n, 5, detector.nv, detector.nu)), column_dtype
+            rng.normal(size=(ops.padded_n, ops.dofs, detector.nv, detector.nu)), column_dtype
         )
-        p = jnp.asarray(rng.normal(size=len(angles) * 5), jnp.float64)
+        p = jnp.asarray(rng.normal(size=len(angles) * ops.dofs), jnp.float64)
         _, cross = ops.weighted_forward(q, volume, sw, columns)
         back = ops.pose_back(q, sw, columns, p)
         left = float(jnp.vdot(p, cross))
@@ -200,7 +200,7 @@ def test_pose_normal_blocks_use_the_same_columns_as_the_schur_operator():
     rng = np.random.default_rng(122)
     with jax.enable_x64(True):
         ops = Operators(grid, detector, nominal, lever=4.0, native=(0.7, 0.9), batch_size=3)
-        q = ops.pad_poses(rng.normal(0, 0.1, (len(angles), 5)))
+        q = ops.pad_poses(rng.normal(0, 0.1, (len(angles), ops.dofs)))
         volume = jnp.asarray(rng.uniform(0.1, 1.0, ops.shape), jnp.float32)
         measured = ops.pad_images(rng.normal(size=(len(angles), detector.nv, detector.nu)))
         precision = rng.uniform(0.1, 1.0, measured.shape).astype(np.float32)

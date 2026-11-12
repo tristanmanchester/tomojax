@@ -24,11 +24,11 @@ _ISOLATED_MIN_WORKING_PX = 0.1
 # A rotation axis within this angle of perpendicular to the beam is axial.
 _AXIAL_TILT_DEG = 5.0
 _NAMES = ("alpha", "beta", "phi", "dx", "dz", "dy")
-# Held-out evidence (lab-board/v1-held-out.md, 2026-11-12), stated where it applies.
+# Corpus rows with view angles held (lab-board/v1-e12-hold.jsonl), stated where it applies.
 _AXIAL_ROTATIONS = (
-    "per-view rotations were fitted with the rotation axis perpendicular to the beam; on "
-    "held-out data such fits were accurate only to 0.14-0.77 px, with one rotation several "
-    "times its true size. Prefer fit='translations' unless an artefact remains."
+    "per-view rotations were fitted with the rotation axis perpendicular to the beam; on 12 "
+    "such simulated scans they beat fit='translations' on 8 and were up to 36% worse on 3. "
+    "Compare with fit='translations' before relying on them."
 )
 
 

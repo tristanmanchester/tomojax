@@ -33,7 +33,7 @@ def test_held_parameters_have_no_state_and_are_exactly_zero_in_the_output(fit, c
     scales = np.array([0.01, 0.02, 0.03, 0.7, 1.1, 0.9])[: parameters.full_dofs]
     table, calibration = parameters.physical(state, scales)
     selected = (fit,) if isinstance(fit, str) else fit
-    expected_local = (3 if "rotations" in selected else 0) + (
+    expected_local = (2 if "rotations" in selected else 0) + (
         (3 if cone else 2) if "translations" in selected else 0
     )
     expected_shared = ((2 if cone else 1) if "centre" in selected else 0) + sum(
@@ -43,6 +43,7 @@ def test_held_parameters_have_no_state_and_are_exactly_zero_in_the_output(fit, c
     assert set(calibration) == set(selected) - {"translations", "rotations"}
     if "rotations" not in selected:
         np.testing.assert_array_equal(table[:, :3], 0)
+    np.testing.assert_array_equal(table[:, 2], 0)  # each view's angle is taken as recorded
     if "translations" not in selected:
         np.testing.assert_array_equal(table[:, 3:], 0)
     if not cone:
@@ -134,7 +135,7 @@ def test_centre_and_translation_share_one_identifiable_parallel_offset():
 
 
 def test_rotations_pay_the_same_physical_size_prior_at_different_numeric_scales():
-    physical = np.tile(np.deg2rad([0.3, -0.2, 0.1]), (60, 1))
+    physical = np.tile(np.deg2rad([0.3, -0.2]), (60, 1))  # the axis's two wobble components
     noise_sigma = 0.04
     expected = 0.5 * noise_sigma**2 * np.sum((physical / np.deg2rad(0.5)) ** 2)
     with jax.enable_x64(True):

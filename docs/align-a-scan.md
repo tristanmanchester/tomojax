@@ -20,7 +20,7 @@ Reconstruct once without alignment so that you have an image to compare with.
 | Doubled or smeared edges that vary from feature to feature | Drift or sudden slips of the sample between views | `fit="translations"` (the default) |
 | Sharp slices at the detector's centre row, with haloes and doubled edges that grow towards the top and bottom of the volume | The rotation axis or the detector rolled about the beam | `fit=("translations", "roll")` |
 | In laminography, doubling that remains after translations, worst far from the rotation axis | The laminography tilt | `fit=("translations", "tilt")` |
-| Blur that remains after translations and the setup angles | The sample rotating or wobbling between views | `fit=("translations", "rotations")` |
+| Blur that remains after translations and the setup angles | The rotation axis wobbling between views | `fit=("translations", "rotations")` |
 
 ```python
 import tomojax as tj
@@ -49,7 +49,7 @@ selected parameters, for parallel, laminography and cone data.
 | `tilt` | One axis or laminography tilt correction shared by every view | Degrees; positive tilt leans the rotation axis towards the beam |
 | `roll` | One detector roll correction shared by every view | Degrees, right-handed about the detector normal: positive turns u towards v, so a point above the centre projects towards +u |
 | `translations` | Two translations per view; three for cone data | Physical lab-frame lengths: across the beam and vertically, plus along the beam for cone |
-| `rotations` | Three rotations per view | Sample-frame rotations in radians |
+| `rotations` | Two wobble components of the rotation axis per view; each view's angle about the axis is taken as recorded | Sample-frame rotations in radians, about object x and y |
 
 The figures below show each error on simulated scans, before and after the matching fit: a watch
 movement in laminography, and a spark plug in parallel-beam tomography. The lower row of each
@@ -145,9 +145,14 @@ calibration.
 
 ## Sample rotation
 
-If the sample itself tips or turns slightly between views, translations remove most of the blur
-but leave a residual at the finest features. Fitting rotations estimates three more parameters for
-every view.
+If the rotation axis wobbles between views, tipping the sample slightly, translations remove most
+of the blur but leave a residual at the finest features. Fitting rotations estimates the two
+wobble components of the axis for every view. Each view's angle about the axis is taken as
+recorded: stage encoders give it, and errors in it are rare. A real laminography scan whose file
+records set-point angles rather than encoder readings, checked against a tracked sphere, turned at
+constant speed right to its ends. Angle errors are not small when present:
+on the simulated watch movement, 0.07° RMS of error in the recorded angles moves its features by
+0.13 detector pixels RMS, and no fit here corrects it.
 
 ![The balance wheel with random rotations of 0.37° RMS between views: the screws are smeared. fit="translations" removes most of the blur and leaves a faint ring at the screws; fit=("translations", "rotations") matches the true geometry.](images/alignment-ladder-rotations.png)
 
@@ -191,8 +196,8 @@ translation fit.
    with `RejectViews()` and align again. The report is
    advisory: a view below its thresholds can still be wrong. `info["report"]["advisories"]` also
    states measured limits that apply to the fit, such as per-view rotations fitted with the
-   rotation axis perpendicular to the beam, which held-out tests found accurate only to
-   0.14-0.77 px.
+   rotation axis perpendicular to the beam, which beat translations alone on 8 of 12 simulated
+   scans and were up to 36% worse on 3.
 6. To test whether the alignment helped, hold out every sixth view, fit the others, and predict
    the held-out views from a reconstruction of the fitted ones, with poses interpolated in view
    order. Compare the prediction error with the fitted and with the nominal poses, after removing

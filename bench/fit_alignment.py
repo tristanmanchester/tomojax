@@ -237,9 +237,12 @@ def make_case(
         shifts[:, 1] *= geometry == "cone"
         poses[:, :3, 3] = (shifts - shifts.mean(0)) * 48 / size
     if case == "rotations":
+        # The axis wobbles about object x and y; each view's angle about the axis is the
+        # encoder's, as a real stage gives it.
         rng = np.random.default_rng(618 if seed is None else seed + 1)
         perturbations = rng.normal(0, 0.37, (views, 3))
         perturbations -= perturbations.mean(0)
+        perturbations[:, 2] = 0.0
         poses[:, :3, :3] = (
             poses[:, :3, :3]
             @ Rotation.from_euler("YXZ", perturbations[:, [1, 0, 2]], degrees=True).as_matrix()

@@ -56,9 +56,16 @@ def test_initial_support_and_optional_tv_work(monkeypatch, weight, interpolation
 
         monkeypatch.setattr(ops, "linearize", checked_initial)
         gauge = rigid_gauge(nominal, [0.5] * 3 + [0.7, 0.9])
-        prior = MotionPrior(8, gauge, knot_spacing=(4,) * 5, delta=0.02)
+        prior = MotionPrior(
+            8,
+            gauge,
+            knot_spacing=(4,) * 5,
+            delta=0.02,
+            parameters=ops.parameters,
+            rotation_scales=np.ones(5),
+        )
         image = jnp.asarray(np.random.default_rng(54).uniform(0.1, 0.3, (3, 3, 4)), jnp.float32)
-        q = ops.pad_poses(jnp.zeros((8, 5)))
+        q = ops.pad_poses(jnp.zeros((8, ops.dofs)))
         observations = np.asarray(ops.project(ops.coefficients(ops.nominal, q, ops.valid), image))
         fitted, _, _, record = solve(
             observations,
@@ -89,10 +96,15 @@ def test_offsets_and_ramps_are_eliminated_without_touching_the_observations():
         nominal = np.asarray(stack_view_poses(geometry, 12))
         ops = Operators(grid, detector, nominal, lever=2, native=(0.7, 0.7))
         prior = MotionPrior(
-            12, rigid_gauge(nominal, [0.5] * 3 + [0.7, 0.7]), knot_spacing=(4,) * 5, delta=0.02
+            12,
+            rigid_gauge(nominal, [0.5] * 3 + [0.7, 0.7]),
+            knot_spacing=(4,) * 5,
+            delta=0.02,
+            parameters=ops.parameters,
+            rotation_scales=np.ones(5),
         )
         image = jnp.asarray(np.random.default_rng(9).uniform(0.1, 0.3, (4, 6, 6)), jnp.float32)
-        q = ops.pad_poses(jnp.zeros((12, 5)))
+        q = ops.pad_poses(jnp.zeros((12, ops.dofs)))
         clean = np.asarray(ops.project(ops.coefficients(ops.nominal, q, ops.valid), image))[:12]
         offsets = np.random.default_rng(10).normal(0, 0.05, (12, 2))
         rows = np.linspace(-1, 1, 5)[None, :, None]
@@ -210,9 +222,14 @@ def test_initializer_does_not_capture_observations(monkeypatch):
             lever=2,
             native=(1, 1),
         )
-        q = ops.pad_poses(np.zeros((8, 5)))
+        q = ops.pad_poses(np.zeros((8, ops.dofs)))
         prior = MotionPrior(
-            8, rigid_gauge(nominal, [0.5] * 3 + [1, 1]), knot_spacing=(4,) * 5, delta=0.02
+            8,
+            rigid_gauge(nominal, [0.5] * 3 + [1, 1]),
+            knot_spacing=(4,) * 5,
+            delta=0.02,
+            parameters=ops.parameters,
+            rotation_scales=np.ones(5),
         )
         y = ops.pad_images(np.random.default_rng(58).normal(size=(8, 2, 2)))
         precision = jnp.ones_like(y)
@@ -313,7 +330,14 @@ def test_held_pose_trial_equals_the_projected_objective(masked):
             grid, detector, nominal, lever=2, native=(0.7, 0.9), interpolation="cubic", batch_size=4
         )
         gauge = rigid_gauge(nominal, [0.5] * 3 + [0.7, 0.9])
-        prior = MotionPrior(6, gauge, knot_spacing=(4,) * 5, delta=0.02)
+        prior = MotionPrior(
+            6,
+            gauge,
+            knot_spacing=(4,) * 5,
+            delta=0.02,
+            parameters=ops.parameters,
+            rotation_scales=np.ones(5),
+        )
         y = ops.pad_images(jnp.asarray(rng.normal(scale=0.5, size=(6, 3, 7)), jnp.float32))
         precision = None
         if masked:
@@ -342,11 +366,16 @@ def test_refinement_stops_on_a_proposal_below_the_pose_tolerance(monkeypatch, sh
         nominal = np.asarray(stack_view_poses(geometry, 12))
         ops = Operators(grid, detector, nominal, lever=4, native=(0.7, 0.9), batch_size=4)
         prior = MotionPrior(
-            12, rigid_gauge(nominal, [0.25] * 3 + [0.7, 0.9]), knot_spacing=(6,) * 5, delta=0.02
+            12,
+            rigid_gauge(nominal, [0.25] * 3 + [0.7, 0.9]),
+            knot_spacing=(6,) * 5,
+            delta=0.02,
+            parameters=ops.parameters,
+            rotation_scales=np.ones(5),
         )
         x = jnp.asarray(np.random.default_rng(8).uniform(0.1, 0.5, (3, 8, 8)), jnp.float32)
-        q = np.zeros((ops.padded_n, 5))
-        q[: ops.n, 3] = shift * (-1.0) ** np.arange(ops.n)
+        q = np.zeros((ops.padded_n, ops.dofs))
+        q[: ops.n, ops.parameters.local.index(3)] = shift * (-1.0) ** np.arange(ops.n)
         y = ops.project(ops.coefficients(ops.nominal, jnp.asarray(q), ops.valid), x)[: ops.n]
         evaluated = []
         value = _refine._Refinement.value

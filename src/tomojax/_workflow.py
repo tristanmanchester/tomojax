@@ -751,8 +751,11 @@ def align(
     ``translations`` and ``rotations``. Centre, tilt and roll are shared by all
     views. Translations and rotations are per view; every unselected parameter
     is held at its declared value. Translations have two components for parallel
-    rays and three for cone beams; rotations have three. The default fits drift
-    and slips. Per-view rotations have a prior on their physical size.
+    rays and three for cone beams. Rotations are the per-view wobble of the
+    rotation axis, two components; each view's angle about the axis is taken as
+    recorded, since stage encoders give it and errors in it are rare. The
+    default fits drift and slips. Per-view rotations have a prior on their
+    physical size.
 
     The same solver handles parallel, laminography and cone-beam scans. Existing
     poses are preserved and the fitted correction is composed with them. The

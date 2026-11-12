@@ -30,7 +30,11 @@ Alignment is experimental and needs scan-specific review. Use the
 - The image and geometry are jointly estimated. Common rigid object motion is a gauge, and a
   constant parallel-ray translation shares a gauge with the detector centre. Reported parameter
   values depend on the stated gauge; they are not independent instrument measurements.
-- Per-view rotations carry a physical angular size prior. This limits unsupported motion but
+- Per-view rotations are the two wobble components of the rotation axis; each view's angle
+  about the axis is taken as recorded, so an error in a view's recorded angle is not corrected.
+  Such errors are rare on real stages but not small when present: 0.07° RMS moves the features
+  of a simulated watch movement by 0.13 detector pixels RMS.
+  They carry a physical angular size prior. This limits unsupported motion but
   does not resolve repeated-pattern ambiguities. A TEM grid can match at a wrong orientation.
   Finite detector pixels also average transmitted intensity before the logarithm, whereas the
   linear projector fits line integrals. At sharp, strongly attenuating edges, that mismatch can
