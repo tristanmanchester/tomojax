@@ -134,7 +134,7 @@ def _rebuilt(scan: tj.Scan, kind: str, tilt: float = 0.0) -> Callable[[dict[str,
         ((name, value),) = calibration.items()
         grid, det, angles = scan.grid, scan.detector, np.asarray(scan.angles)
         if name == "centre":
-            centre = tuple(value) if isinstance(value, list) else (value, det.center[1])
+            centre = tuple(value) if isinstance(value, list | tuple) else (value, det.center[1])
             det = tj.Detector(det.nu, det.nv, det.du, det.dv, centre)
         beam = tj.ConeBeam(192, 288, detector_roll_deg=value if name == "roll" else 0.0)
         if kind == "cone":
