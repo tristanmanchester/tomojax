@@ -83,9 +83,9 @@ def cone_gauge(nominal, scales, frames):
 
     With an unknown image and free beam-depth poses, scaling the image support
     by a and its density by 1/a, and setting t' = a*t + (1-a)*source preserves
-    every line integral. The seventh column fixes this similarity gauge to
-    the declared nominal magnification convention; it does not estimate a
-    physical object size from the data.
+    every line integral. The seventh column is that dilation's tangent; the
+    data cannot estimate a physical object size, and :func:`cone_gauge_constraint`
+    chooses the representative.
     """
     nominal = np.asarray(nominal, np.float64)
     frames = np.broadcast_to(np.asarray(frames, np.float64), (len(nominal), 4, 3))
@@ -93,6 +93,26 @@ def cone_gauge(nominal, scales, frames):
     dilation = np.zeros((len(nominal), 6))
     dilation[:, 3:] = (nominal[:, [0, 2, 1], 3] - frames[:, 3, [0, 2, 1]]) / scales[:, 3:]
     return np.column_stack([rigid_gauge(nominal, scales), dilation.reshape(-1)])
+
+
+def cone_gauge_constraint(nominal, scales, frames):
+    """Rows fixing :func:`cone_gauge`: the rigid tangents and the mean beam depth.
+
+    The scale is fixed by keeping the views' mean object displacement along
+    their beam normals at its nominal value, so the declared magnification
+    stands. Constraining the dilation tangent itself would instead pick the
+    representative nearest zero in scaled units, where a common height
+    correction of orbits at different source heights resembles a dilation:
+    it shrank Walnut 1's recorded 0.40 and 0.79 mm orbit offsets by 5%.
+    """
+    nominal = np.asarray(nominal, np.float64)
+    frames = np.broadcast_to(np.asarray(frames, np.float64), (len(nominal), 4, 3))
+    scales = np.broadcast_to(np.asarray(scales, np.float64), (len(nominal), 6))
+    normal = np.cross(frames[:, 1], frames[:, 2])
+    normal /= np.linalg.norm(normal, axis=1, keepdims=True)
+    depth = np.zeros((len(nominal), 6))
+    depth[:, 3:] = normal[:, [0, 2, 1]] * scales[:, 3:]
+    return np.column_stack([rigid_gauge(nominal, scales), depth.reshape(-1)])
 
 
 def cone_parameter_scales(nominal, frames, grid, native):

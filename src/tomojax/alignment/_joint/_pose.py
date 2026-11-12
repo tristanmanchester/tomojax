@@ -118,6 +118,10 @@ class MotionPrior:
     rigid gauge constraints. A small Schur border then couples all views to the
     single copy of each global parameter. No view-wise global approximation is
     made. ``innovation_solve`` holds that border exactly fixed for refinement.
+
+    ``gauge`` holds the tangents of the unobservable common coordinate changes
+    and ``constraint`` the rows that fix them (``constraint.T @ p == 0``),
+    by default the tangents themselves.
     """
 
     def __init__(
@@ -125,6 +129,7 @@ class MotionPrior:
         views: int,
         gauge: np.ndarray,
         *,
+        constraint: np.ndarray | None = None,
         knot_spacing: tuple[int, ...],
         delta: float,
         parameters=None,
@@ -157,9 +162,14 @@ class MotionPrior:
             else np.zeros((self.local_size, 0))
         )
         gauge = np.asarray(gauge, np.float64)
+        oblique = constraint is not None
+        constraint = np.asarray(constraint, np.float64) if oblique else gauge
         if parameters is not None:
-            gauge = gauge.reshape(views, parameters.full_dofs, -1)[:, local, :].reshape(
-                self.local_size, gauge.shape[-1]
+            gauge, constraint = (
+                m.reshape(views, parameters.full_dofs, -1)[:, local, :].reshape(
+                    self.local_size, m.shape[-1]
+                )
+                for m in (gauge, constraint)
             )
             # A constant parallel lab-x shift is indistinguishable from a global
             # detector-u centre shift. Fix its local mean and let centre own it.
@@ -169,7 +179,22 @@ class MotionPrior:
                 constant = np.zeros((views, self.nlocal))
                 constant[:, local.index(3)] = 1
                 gauge = np.column_stack([gauge, constant.reshape(-1)])
-        g = _orthonormal_columns(gauge)
+                constraint = np.column_stack([constraint, constant.reshape(-1)])
+        g = _orthonormal_columns(constraint)
+        tangents = _orthonormal_columns(gauge) if oblique else g
+        # Gauge projection moves along the tangents until the constraints hold;
+        # that needs constraints transversal to the tangents, one for each.
+        cross = g.T @ tangents
+        if not oblique or not cross.size:
+            self.gauge_step = jnp.asarray(tangents)  # fixed by themselves: orthogonal
+        elif cross.shape[0] != cross.shape[1] or np.linalg.cond(cross) > 1e8:
+            condition = np.linalg.cond(cross) if cross.shape[0] == cross.shape[1] else np.inf
+            raise ValueError(
+                f"gauge constraints ({g.shape[1]} independent) do not fix the "
+                f"{tangents.shape[1]} gauge tangents of this geometry (condition {condition:.3g})"
+            )
+        else:
+            self.gauge_step = jnp.asarray(tangents @ np.linalg.inv(cross))
         self.U, self.G = jnp.asarray(u), jnp.asarray(g)
         outside = _orthonormal_columns(g - u @ (u.T @ g))
         self.C = jnp.asarray(np.column_stack([u, outside]))
@@ -206,7 +231,7 @@ class MotionPrior:
 
     def _project_gauge(self, state):
         local = state[: self.local_size]
-        local = local - self.G @ (self.G.T @ local)
+        local = local - self.gauge_step @ (self.G.T @ local)
         return jnp.concatenate([local, state[self.local_size :]])
 
     def _residual(self, p):

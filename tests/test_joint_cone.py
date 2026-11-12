@@ -7,9 +7,11 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 # check-public-imports: allow-private
+from tomojax.alignment._joint._pose import MotionPrior
 from tomojax.alignment._joint._projection import (
     Projection,
     cone_gauge,
+    cone_gauge_constraint,
     cone_parameter_scales,
     cropped_frames,
     posed,
@@ -277,3 +279,49 @@ def test_working_pixels_are_bounded_by_the_least_magnified_segment():
     frames[0, 0], frames[0, 3] = (0, 800, 0), (0, -3200, 0)
     frames[1, 0], frames[1, 3] = (0, 3600, 0), (0, -400, 0)
     assert abs(_magnification(poses, frames) - 1.25) < 1e-12
+
+
+def test_cone_gauge_keeps_the_recorded_magnification_for_orbits_at_different_heights():
+    # Two circular orbits whose sources sit 0.3 source distances above and below
+    # the object, as in a multi-orbit cone scan; orbit 2 was recorded 0.4 too high.
+    grid = Grid(16, 16, 16, 1.0, 1.0, 1.0)
+    per, distance, height = 12, 60.0, 18.0
+    angles = np.deg2rad(np.arange(2 * per) * 360 / per)
+    nominal = np.repeat(np.eye(4)[None], 2 * per, axis=0)
+    nominal[:, :3, :3] = Rotation.from_euler("z", angles[:, None]).as_matrix()
+    level = np.repeat([height, -height], per)
+    frames = np.zeros((2 * per, 4, 3))
+    frames[:, 0] = np.column_stack([0 * level, np.full(2 * per, distance), level])
+    frames[:, 1], frames[:, 2] = (1, 0, 0), (0, 0, 1)
+    frames[:, 3] = np.column_stack([0 * level, np.full(2 * per, -distance), level])
+    scales = cone_parameter_scales(nominal, frames, grid, (1.0, 1.0))
+    gauge = cone_gauge(nominal, scales, frames)
+    with jax.enable_x64(True):
+        prior = MotionPrior(
+            2 * per,
+            gauge,
+            constraint=cone_gauge_constraint(nominal, scales, frames),
+            knot_spacing=(4,) * 6,
+            delta=0.02,
+        )
+        correction = np.zeros((2 * per, 6))
+        correction[per:, 4] = -0.4 / scales[per:, 4]  # table column 4 is lab z
+        projected = np.asarray(prior.project_gauge(jnp.asarray(correction.ravel())))
+        # Equivalent states, here moved along every gauge tangent, share one representative.
+        moved = correction.ravel() + gauge @ np.random.default_rng(5).normal(size=7)
+        np.testing.assert_allclose(prior.project_gauge(jnp.asarray(moved)), projected, atol=1e-10)
+        # A gauge fix, not a model change: any state moves only along the
+        # tangents, onto the constraint rows.
+        state = np.random.default_rng(6).normal(size=gauge.shape[0])
+        fixed = np.asarray(prior.project_gauge(jnp.asarray(state)))
+    along = np.linalg.lstsq(gauge, state - fixed, rcond=None)[0]
+    np.testing.assert_allclose(gauge @ along, state - fixed, atol=1e-10)
+    np.testing.assert_allclose(
+        cone_gauge_constraint(nominal, scales, frames).T @ fixed, 0, atol=1e-10
+    )
+    physical = projected.reshape(2 * per, 6)[:, 3:] * scales[:, 3:]
+    heights = physical[:, 1].reshape(2, per).mean(axis=1)
+    # Only common rigid motion is removed: the orbits' relative height is the
+    # recorded one, and the mean depth along the beam (lab y) is unchanged.
+    assert heights[1] - heights[0] == pytest.approx(-0.4, abs=1e-10)
+    assert np.mean(physical[:, 2]) == pytest.approx(0.0, abs=1e-10)

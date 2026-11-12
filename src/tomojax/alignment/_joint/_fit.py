@@ -30,7 +30,13 @@ from ._noise import estimate_noise
 from ._operators import Operators
 from ._parameters import Parameters
 from ._pose import MotionPrior
-from ._projection import cone_gauge, cone_parameter_scales, cropped_frames, rigid_gauge
+from ._projection import (
+    cone_gauge,
+    cone_gauge_constraint,
+    cone_parameter_scales,
+    cropped_frames,
+    rigid_gauge,
+)
 from ._refine import refine
 from ._solver import Budget, solve
 
@@ -311,11 +317,11 @@ def fit_poses(
         )
         if frames is not None:
             frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
-        gauge = (
-            rigid_gauge(poses, pose_scales)
-            if frames is None
-            else cone_gauge(poses, pose_scales, frames)
-        )
+        if frames is None:
+            gauge, constraint = rigid_gauge(poses, pose_scales), None
+        else:
+            gauge = cone_gauge(poses, pose_scales, frames)
+            constraint = cone_gauge_constraint(poses, pose_scales, frames)
         # Angular columns need smooth interpolation as sample points rotate
         # through voxel cells. Centre/translation fits retain the cheaper linear
         # basis.
@@ -349,6 +355,7 @@ def fit_poses(
                 prior = MotionPrior(
                     len(y0),
                     gauge,
+                    constraint=constraint,
                     knot_spacing=(_KNOT_SPACING,) * pose_scales.shape[-1],
                     delta=_POSE_HUBER_PX,
                     parameters=parameters,
