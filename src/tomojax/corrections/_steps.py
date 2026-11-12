@@ -266,8 +266,9 @@ class RejectViews(Step):
     of all views' differences and more than ``min_jump`` of the views' typical
     median (so the small, smooth changes of a noise-free scan never count).
     Views with a nonfinite median are also rejected and do not participate
-    in the neighbours or robust baseline. The scan's geometry keeps the same
-    views; the record lists those rejected, including the nonfinite subset.
+    in the neighbours or robust baseline. Rejected views are removed from the
+    scan and its geometry, so the views either side become neighbours; the
+    record lists them by their index before the step, nonfinite ones included.
 
     Parameters
     ----------
