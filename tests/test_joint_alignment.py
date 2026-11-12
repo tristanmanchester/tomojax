@@ -209,7 +209,15 @@ def test_pose_normal_blocks_use_the_same_columns_as_the_schur_operator():
             q, volume, measured, jnp.asarray(precision), 100.0
         )
         prediction = ops.project(ops.coefficients(ops.nominal, q, ops.valid), volume)
-        residual = np.asarray(sw * (prediction - measured), np.float64)[: ops.n]
+        # Each view's precision-weighted offset and row ramp are eliminated (no
+        # pixel reaches the robust tail at this delta): an independent lstsq.
+        error = np.asarray(prediction - measured, np.float64)[: ops.n]
+        rows = np.repeat(np.linspace(-1, 1, detector.nv), detector.nu)
+        design = np.stack([np.ones_like(rows), rows], 1)
+        for view, w in enumerate(np.sqrt(precision[: ops.n])):
+            fit = np.linalg.lstsq(design * w.ravel()[:, None], error[view].ravel() * w.ravel())[0]
+            error[view] -= (design @ fit).reshape(error.shape[1:])
+        residual = np.asarray(sw, np.float64)[: ops.n] * error
         columns = np.asarray(cached, np.float64)[: ops.n]
         expected_score = np.einsum("nkvu,nvu->nk", columns, residual).ravel()
         expected_blocks = np.einsum("nkvu,nlvu->nkl", columns, columns)

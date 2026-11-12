@@ -19,7 +19,7 @@ import numpy as np
 
 from . import _tv as tv
 from ._krylov import solve as krylov_solve
-from ._operators import robust_value
+from ._operators import profiled_residual, robust_value
 
 
 @dataclass(frozen=True)
@@ -36,57 +36,6 @@ _CG_RTOL = 0.03
 _LM_MIN = 1e-8
 _POSE_TOL_PX = 0.01
 _MIN_OUTER = 4
-
-
-def _photometric(sums):
-    """Each view's gain and affine background fitting its projections to the prediction.
-
-    Least squares, per view, of the observations on the prediction, a constant
-    and a ramp down the detector rows: returns gains (views,) and backgrounds
-    (views, 2) for the constant and the ramp. Their means are removed (gain:
-    divided by): what all views share belongs to the image. A view whose gain
-    is not identifiable (a near-uniform prediction) keeps gain one and fits its
-    background alone; one with neither identifiable keeps identity.
-    """
-    sums = np.asarray(sums, np.float64)
-    gram, rhs = sums[..., :3], sums[..., 3]
-    scale = np.sqrt(np.maximum(np.einsum("nkk->nk", gram), 1e-300))
-    normal = gram / scale[:, :, None] / scale[:, None, :]
-    ok = np.linalg.cond(normal) < 1e8
-    eye = np.eye(3)[None]
-    solution = np.linalg.solve(np.where(ok[:, None, None], normal, eye), (rhs / scale)[..., None])
-    coefficients = np.where(ok[:, None], solution[..., 0] / scale, [1.0, 0.0, 0.0])
-    # Gain fixed at one: observations minus prediction on the constant and ramp.
-    sub, sub_rhs, sub_scale = normal[:, 1:, 1:], rhs[:, 1:] - gram[:, 1:, 0], scale[:, 1:]
-    alone = ~ok & (np.linalg.cond(sub) < 1e8)
-    fit = np.linalg.solve(
-        np.where(alone[:, None, None], sub, np.eye(2)[None]), (sub_rhs / sub_scale)[..., None]
-    )
-    coefficients[:, 1:] = np.where(alone[:, None], fit[..., 0] / sub_scale, coefficients[:, 1:])
-    fitted = ok | alone
-    gain = np.clip(coefficients[:, 0] / np.mean(coefficients[ok, 0]) if ok.any() else 1.0, 0.5, 2.0)
-    background = coefficients[:, 1:] - (coefficients[fitted, 1:].mean(0) if fitted.any() else 0)
-    # Normalising the fitted views must not move the views without a fit.
-    gain = np.where(ok, gain, 1.0)
-    background = np.where(fitted[:, None], background, 0.0)
-    return gain, background
-
-
-def _rescaled(ops, y, sums):
-    """The step's gains and the observations with the refitted gain and background removed.
-
-    Returns (None, y) when the fit leaves every view unchanged.
-    """
-    gain, background = _photometric(sums)
-    if not (np.any(gain != 1) or np.any(background != 0)):
-        return None, y
-    rows = jnp.linspace(-1, 1, y.shape[-2], dtype=jnp.float32)[None, :, None]
-    b = jnp.asarray(background, jnp.float32)
-    n = ops.n
-    rescaled = (y[:n] - b[:, :1, None] - b[:, 1:, None] * rows) / jnp.asarray(gain, jnp.float32)[
-        :, None, None
-    ]
-    return gain, ops.pad_images(rescaled)
 
 
 def _gain_ratio(actual, predicted):
@@ -138,7 +87,6 @@ class _Level:
     ) -> None:
         self.ops, self.prior = ops, prior
         self.y, self.precision, self.lam, self.delta = y, precision, lam, delta
-        self.gain = np.ones(ops.n)
         self.tv_value = jax.jit(lambda x: tv.energy(x, eps, scales))
         self.conduct = jax.jit(lambda x: tv.conductance(x, eps, scales))
         self.diffuse = jax.jit(lambda x, d: tv.diffusion(x, d, scales))
@@ -148,21 +96,22 @@ class _Level:
             if lam
             else 1 / jnp.maximum(dd + jnp.float32(lm) * damp, jnp.float32(1e-8))
         )
+
         # At unchanged poses the prediction is linear in the image: the residual
         # plus a times the step's projection (returned scaled by sw, zero only
         # where unobserved) gives the data term exactly, without projecting.
-        self.held = jax.jit(
-            lambda residual, step, sw, w, a: robust_value(
-                residual + a * jnp.where(sw > 0, step / jnp.where(sw > 0, sw, 1), 0),
-                ops.batch_precision(w, ops.valid),
-                delta,
-            )
-        )
+        def held(residual, step, sw, w, a):
+            w = ops.batch_precision(w, ops.valid)
+            moved = residual + a * jnp.where(sw > 0, step / jnp.where(sw > 0, sw, 1), 0)
+            return robust_value(profiled_residual(moved, w), w, delta)
+
+        self.held = jax.jit(held)
 
         @jax.jit
-        def rhs(q, sw, j, sp, gx, free):
+        def rhs(q, sw, j, sp, gx, free, precision):
             # Fixed voxels are discarded, so the gather may skip them.
-            return (ops.pose_back(q, sw, j, sp, ops.projection.active(free)) - gx) * free
+            active = ops.projection.active(free)
+            return (ops.pose_back(q, sw, j, sp, active, precision) - gx) * free
 
         self.rhs = rhs
         self.norm = jax.jit(tv.dot)
@@ -174,14 +123,14 @@ class _Level:
         )
 
         @jax.jit
-        def schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag):
+        def schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag, precision):
             # Fixed voxels' transpose is discarded: the gather may skip them.
             active = ops.projection.active(free)
 
             def matvec(v):
                 v = v * free
-                r, jr = ops.weighted_forward(q, v, sw, j)
-                out = ops.weighted_back(q, r, sw, j, prior.solve(factor, jr), active)
+                r, jr = ops.weighted_forward(q, v, sw, j, precision)
+                out = ops.weighted_back(q, r, sw, j, prior.solve(factor, jr), active, precision)
                 if lam:
                     out = out + jnp.float32(lam) * tv.diffusion(v, d, scales)
                 out = out + (jnp.float32(lm) * damp) * v
@@ -212,20 +161,6 @@ class _Level:
             return jax.lax.fori_loop(0, iterations, fista, (x, x, jnp.asarray(1.0, jnp.float64)))[0]
 
         return run(jnp.zeros(self.ops.shape, jnp.float32), ops.prepare(q), y, precision, lipschitz)
-
-    def refit(self, c, x, sums):
-        """Refit each view's gain and background, then linearize at (c, x).
-
-        Views can differ by a gain and a background the line integrals do not
-        describe (flux, phase retrieval). Removing the fit to the current
-        prediction from the observations keeps them from looking like motion;
-        the next linearization and line search use the result. Returns the
-        whether any view changed, and the linearization.
-        """
-        gain, self.y = _rescaled(self.ops, self.y, sums)
-        if gain is not None:
-            self.gain = self.gain * gain
-        return gain is not None, self.linearize(c, x)
 
     def linearize(self, c, x):
         """The robust linearization at compact poses ``c`` and volume ``x``."""
@@ -265,9 +200,11 @@ class _Level:
         pd = jnp.maximum(pd, jnp.maximum(pd.max(), 1e-8) * 0.01)
         for _ in range(5):
             factor = prior.factor(gram + jax.vmap(jnp.diag)(lm * pd + 1e-10), wpose)
-            rhs = self.rhs(q, sw, j, prior.solve(factor, gp), gx, free)
+            rhs = self.rhs(q, sw, j, prior.solve(factor, gp), gx, free, self.precision)
             invdiag = self.inverse(d, damp, dd, lm)
-            linear_step = self.schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag)
+            linear_step = self.schur(
+                q, sw, j, factor, free, d, damp, lm, rhs, invdiag, self.precision
+            )
             dx, cg_steps, cg_residual = (
                 linear_step.solution,
                 linear_step.iterations,
@@ -277,7 +214,7 @@ class _Level:
                 lm *= 10
                 continue
             dx = jnp.maximum(jnp.where(free, x + dx, x), 0) - x
-            r, jadx = ops.weighted_forward(q, dx, sw, j)
+            r, jadx = ops.weighted_forward(q, dx, sw, j, self.precision)
             dc = -prior.solve(factor, gp + jadx)
             gx_dx, gp_dc = float(self.norm(gx, dx)), float(jnp.vdot(gp, dc))
             accepted = None
@@ -356,7 +293,7 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
     # expose or populate them; this is not a permanent active-set constraint.
     x = jnp.where(observed, x, 0)
     del observed
-    gx0, dd, sw, j, gr, gram, data, obstats, sums, residual = level.linearize(c, x)
+    gx0, dd, sw, j, gr, gram, data, obstats, residual = level.linearize(c, x)
     fisher = jnp.trace(gram, axis1=1, axis2=2)
     pose_weight = float(pose_sigma * jnp.sqrt(jnp.median(fisher)) * np.sqrt(2 * np.log(n)))
     f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
@@ -367,10 +304,7 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
             # Release the previous weights and columns first: two stack-sized sets
             # would not fit beside each other on a small device.
             del gx0, dd, sw, j, gr, gram, residual
-            changed, linear = level.refit(c, x, sums)
-            gx0, dd, sw, j, gr, gram, data, obstats, sums, residual = linear
-            if changed:
-                f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
+            gx0, dd, sw, j, gr, gram, data, obstats, residual = level.linearize(c, x)
         result = level.step(x, c, (gx0, dd, sw, j, gr, gram, residual), lm, pose_weight, f)
         if result is None:
             status = "line_search_stalled"
@@ -423,6 +357,5 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
         "final_pose_prior": final_prior,
         "final_image_prior": final_image_prior,
         "budget": asdict(budget),
-        "gain_range": [float(np.min(level.gain)), float(np.max(level.gain))],
     }
     return x, c, level.y[:n], record

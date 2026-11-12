@@ -181,11 +181,12 @@ The fit works on a bounded grid of at most 16 million voxels and a detector of a
 side, binned so that each working pixel is no wider than a voxel at the object. Supplying `grid=`
 keeps that grid and limits the binning instead. The fitted image extends a little above and below
 the grid, so material that moving views bring into the outer rows has somewhere to be; the
-returned volume is cropped back to the grid. Each view also gets its own gain and a background
-that is constant plus a ramp down the detector rows, refitted at every step: flux changes or
-phase-retrieval offsets between views would otherwise look like vertical motion. Only the
-differences between views are fitted; what all views share stays in the image. Reconstruct `result.scan` at the resolution you need:
-the alignment volume is not a final-resolution reconstruction.
+returned volume is cropped back to the grid. Each view also has its own offset and ramp down the
+detector rows, which the line integrals do not describe: flux changes or phase-retrieval offsets
+between views would otherwise look like vertical motion. They are eliminated inside every step,
+so the poses see only what an offset and ramp cannot explain, and the data are never modified;
+`info["offsets"]` reports each view's fitted pair. Reconstruct `result.scan` at the resolution you
+need: the alignment volume is not a final-resolution reconstruction.
 
 ## How the figures were made
 

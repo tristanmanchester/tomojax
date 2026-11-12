@@ -11,7 +11,8 @@ import tomojax as tj
 from tomojax.alignment._joint import _refine, _solver, _tv  # check-public-imports: allow-private
 from tomojax.alignment._joint._operators import (  # check-public-imports: allow-private
     Operators,
-    photometric_sums,
+    profile,
+    profiled_residual,
 )
 from tomojax.alignment._joint._pose import MotionPrior  # check-public-imports: allow-private
 from tomojax.alignment._joint._projection import rigid_gauge  # check-public-imports: allow-private
@@ -81,6 +82,85 @@ def test_initial_support_and_optional_tv_work(monkeypatch, weight, interpolation
     assert set(calls) == (set(names) if weight else set())
 
 
+def test_offsets_and_ramps_are_eliminated_without_touching_the_observations():
+    grid, detector = tj.Grid(6, 6, 4, 0.7, 0.7, 0.7), tj.Detector(8, 5, 0.7, 0.7)
+    geometry = tj.ParallelGeometry(grid, detector, np.arange(12) * 15.0)
+    with jax.enable_x64(True):
+        nominal = np.asarray(stack_view_poses(geometry, 12))
+        ops = Operators(grid, detector, nominal, lever=2, native=(0.7, 0.7))
+        prior = MotionPrior(
+            12, rigid_gauge(nominal, [0.5] * 3 + [0.7, 0.7]), knot_spacing=(4,) * 5, delta=0.02
+        )
+        image = jnp.asarray(np.random.default_rng(9).uniform(0.1, 0.3, (4, 6, 6)), jnp.float32)
+        q = ops.pad_poses(jnp.zeros((12, 5)))
+        clean = np.asarray(ops.project(ops.coefficients(ops.nominal, q, ops.valid), image))[:12]
+        offsets = np.random.default_rng(10).normal(0, 0.05, (12, 2))
+        rows = np.linspace(-1, 1, 5)[None, :, None]
+        observations = (clean + offsets[:, :1, None] + offsets[:, 1:, None] * rows).astype(
+            np.float32
+        )
+        given = observations.copy()
+        fitted, c, y, _ = solve(
+            observations,
+            None,
+            prior,
+            0.0,
+            0.01,
+            ops=ops,
+            budget=Budget(outer=2, inner=3),
+            x0=image,
+            p0=None,
+            pose_sigma=0.001,
+            delta=1.0,
+            scales=(1.0, 1.0, 1.0),
+        )
+        reported = np.asarray(
+            ops.offsets(ops.pad_poses(c), fitted, ops.pad_images(y), ops.pad_precision(None))
+        )
+    # The nuisance is eliminated inside each solve: the data are never rescaled.
+    np.testing.assert_array_equal(np.asarray(y), given)
+    np.testing.assert_array_equal(observations, given)
+    assert np.isfinite(fitted).all() and np.min(fitted) >= 0
+    np.testing.assert_allclose(reported, offsets, atol=0.01)
+
+
+def test_linearization_is_the_gradient_of_the_profiled_robust_objective():
+    # Non-uniform precision makes the profile oblique; outliers put pixels in the
+    # loss tail, where the robust weights differ from the precision.
+    grid, detector = tj.Grid(6, 6, 4, 0.7, 0.7, 0.7), tj.Detector(8, 6, 0.7, 0.7)
+    geometry = tj.LaminographyGeometry(grid, detector, np.arange(10) * 36.0, tilt_deg=20)
+    rng = np.random.default_rng(12)
+    # The JAX operators: this checks the objective's calculus, not CUDA column precision.
+    with jax.enable_x64(True), jax.default_device(jax.devices("cpu")[0]):
+        nominal = np.asarray(stack_view_poses(geometry, 10))
+        # Cubic sampling: linear interpolation's pose derivative has kinks at
+        # voxel boundaries that a finite difference straddles.
+        ops = Operators(grid, detector, nominal, lever=2, native=(0.7, 0.7), interpolation="cubic")
+        x = jnp.asarray(rng.uniform(0.1, 0.3, ops.shape), jnp.float32)
+        c = jnp.asarray(rng.normal(0, 0.05, 10 * 5))
+        q = ops.pad_poses(c)
+        y = np.asarray(ops.project(ops.coefficients(ops.nominal, q, ops.valid), x))[:10]
+        y = y + rng.normal(0, 0.01, y.shape) + 0.3 * (rng.uniform(size=y.shape) < 0.1)
+        precision = ops.pad_precision(jnp.asarray(rng.uniform(0.5, 1.5, y.shape), jnp.float32))
+        y, delta = ops.pad_images(y), 0.05
+        gx, _, sw, _, score, _, _, _, residual = ops.linearize(q, x, y, precision, delta)
+        tail = np.mean(np.abs(np.asarray(residual)[:10]) > delta)
+        assert tail > 0.05
+
+        def objective(dx, dc):
+            return float(ops.objective(ops.pad_poses(c + dc), x + dx, y, precision, delta))
+
+        dx = jnp.asarray(rng.normal(size=ops.shape), jnp.float32)
+        dc = jnp.asarray(rng.normal(size=c.shape))
+        for direction, analytic, h in (
+            ((dx, 0 * dc), float(jnp.vdot(gx.astype(jnp.float64), dx)), 1e-3),
+            ((0 * dx, dc), float(jnp.vdot(score, dc)), 1e-3),
+        ):
+            plus = objective(*(h * d for d in direction))
+            minus = objective(*(-h * d for d in direction))
+            assert (plus - minus) / (2 * h) == pytest.approx(analytic, rel=1e-3)
+
+
 def test_initializer_does_not_capture_observations(monkeypatch):
     grid, detector = tj.Grid(2, 2, 2, 1, 1, 1), tj.Detector(2, 2, 1, 1)
     geometry = tj.LaminographyGeometry(grid, detector, np.arange(8) * 45.0, tilt_deg=-30)
@@ -134,62 +214,53 @@ def test_non_descending_model_cannot_justify_less_damping(predicted, expected):
     assert _solver._gain_ratio(1.0, predicted) == expected
 
 
-def test_per_view_gain_and_background_are_recovered_up_to_their_means():
+def _detrended(images, weights):
+    """Per view and column: weighted least-squares residual on [1, v] (independent oracle)."""
+    rows = np.linspace(-1, 1, images.shape[-2])
+    out = np.array(images, np.float64)
+    for view in np.ndindex(images.shape[:-2]):
+        w = np.sqrt(weights[view[0]]).ravel()
+        design = np.stack([np.ones_like(rows), rows], 1).repeat(images.shape[-1], 0)
+        if not w.any():
+            continue
+        fit = np.linalg.lstsq(design * w[:, None], images[view].ravel() * w, rcond=None)[0]
+        out[view] -= (design @ fit).reshape(images.shape[-2:])
+    return out
+
+
+def test_profiled_residual_removes_each_views_weighted_offset_and_ramp():
     rng = np.random.default_rng(311)
-    prediction = rng.uniform(0, 1, (6, 9, 7))
-    gain = np.array([1.0, 1.1, 0.9, 1.05, 0.95, 1.0])
-    background = rng.normal(0, 0.1, (6, 2))
-    rows = np.linspace(-1, 1, 9)[None, :, None]
-    observed = (
-        gain[:, None, None] * prediction + background[:, :1, None] + background[:, 1:, None] * rows
-    )
-    precision = np.ones_like(prediction)
-    precision[2, 3:5] = 0  # missing rows do not bias the fit
-    observed[2, 3:5] = 1e3
+    residual = rng.normal(size=(4, 9, 7))
+    precision = rng.uniform(0.5, 2.0, residual.shape)
+    precision[2, 3:5] = 0  # missing rows neither bias the fit nor receive it
+    residual[2, 3:5] = 1e3
+    precision[3] = 0  # a view without weight is left alone
     with jax.enable_x64(True):
-        sums = photometric_sums(
-            jnp.asarray(prediction), jnp.asarray(observed), jnp.asarray(precision)
-        )
-    fitted_gain, fitted_background = _solver._photometric(sums)
-    np.testing.assert_allclose(fitted_gain, gain / gain.mean(), rtol=1e-9)
-    np.testing.assert_allclose(fitted_background, background - background.mean(0), atol=1e-9)
-
-
-@pytest.mark.parametrize("all_masked", [False, True])
-def test_views_without_a_photometric_fit_keep_identity(all_masked):
-    rng = np.random.default_rng(5)
-    prediction = rng.uniform(0, 1, (3, 9, 7))
+        actual = np.asarray(profiled_residual(jnp.asarray(residual), jnp.asarray(precision)))
+    expected = np.where(precision > 0, _detrended(residual, precision), 0)
+    np.testing.assert_allclose(actual, expected, atol=1e-10)
+    # An offset and a ramp added to a view leave its profiled residual unchanged.
     rows = np.linspace(-1, 1, 9)[None, :, None]
-    observed = 2.0 * prediction + 3.0 + 4.0 * rows  # gain 2, constant 3, ramp 4
-    precision = np.ones_like(prediction)
-    precision[1] = 0.0  # nothing measured: neither gain nor background is identifiable
-    if all_masked:
-        precision[:] = 0.0
+    shifted = residual + rng.normal(size=(4, 1, 1)) + rng.normal(size=(4, 1, 1)) * rows
     with jax.enable_x64(True):
-        sums = photometric_sums(
-            jnp.asarray(prediction), jnp.asarray(observed), jnp.asarray(precision)
-        )
-    gain, background = _solver._photometric(sums)
-    assert gain[1] == 1.0 and np.all(background[1] == 0.0)
-    if all_masked:
-        assert np.all(gain == 1.0) and np.all(background == 0.0)
+        again = np.asarray(profiled_residual(jnp.asarray(shifted), jnp.asarray(precision)))
+    np.testing.assert_allclose(again[:3], actual[:3], atol=1e-9)
 
 
-def test_a_uniform_prediction_still_fits_its_background():
-    # A flat prediction leaves the gain unidentifiable but the background observable.
-    rng = np.random.default_rng(6)
-    prediction = rng.uniform(0, 1, (3, 9, 7))
-    prediction[1] = 0.0
-    rows = np.linspace(-1, 1, 9)[None, :, None]
-    offsets = np.array([[3.0, 4.0], [5.0, 6.0], [3.0, 4.0]])
-    observed = prediction + offsets[:, :1, None] + offsets[:, 1:, None] * rows
+def test_profile_projects_whitened_columns_view_by_view():
+    rng = np.random.default_rng(7)
+    s = rng.uniform(0.2, 1.5, (3, 8, 5))
+    s[1, :, :] = 0.0
+    columns = rng.normal(size=(3, 2, 8, 5))
     with jax.enable_x64(True):
-        sums = photometric_sums(
-            jnp.asarray(prediction), jnp.asarray(observed), jnp.asarray(np.ones_like(prediction))
-        )
-    gain, background = _solver._photometric(sums)
-    assert gain[1] == 1.0
-    np.testing.assert_allclose(background[1] - background[0], [2.0, 2.0], atol=1e-9)
+        actual = np.asarray(profile(jnp.asarray(columns), jnp.asarray(s)))
+        twice = np.asarray(profile(jnp.asarray(actual), jnp.asarray(s)))
+    # Whitened columns s*c project to s * (c less its s**2-weighted fit).
+    plain = np.where(s[:, None] > 0, columns / np.where(s[:, None] > 0, s[:, None], 1), 0)
+    expected = s[:, None] * _detrended(plain, s**2)
+    expected[1] = columns[1]
+    np.testing.assert_allclose(actual, expected, atol=1e-10)
+    np.testing.assert_allclose(twice, actual, atol=1e-10)  # a projection
 
 
 @pytest.mark.parametrize("masked", [False, True])

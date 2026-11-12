@@ -15,7 +15,7 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     n = 60
     image, state = jnp.ones(1), jnp.zeros(2 * n)
     level = object.__new__(_solver._Level)
-    level.lam = 0
+    level.lam, level.precision = 0, None
     level.ops = SimpleNamespace(
         prepare=lambda value: value,
         pad_poses=lambda value: value,
@@ -86,13 +86,10 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
 
     class Level:
         def __init__(self, ops, *_args, **_kwargs):
-            self.ops, self.y, self.gain = ops, np.zeros((60, 1, 1)), np.ones(60)
+            self.ops, self.y = ops, np.zeros((60, 1, 1))
 
         def linearize(self, _state, _image):
             return self.ops.linearize()
-
-        def refit(self, state, image, _sums):
-            return False, self.linearize(state, image)
 
         def image_penalty(self, _image):
             return 0.0
@@ -127,10 +124,6 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
             jnp.ones((60, 1, 1)),
             100.0,
             (60, 0),
-            # Normal equations whose solution is gain one and no background.
-            np.concatenate(
-                [np.tile(np.eye(3), (60, 1, 1)), np.tile([[1.0], [0], [0]], (60, 1, 1))], -1
-            ),
             None,
         ),
     )

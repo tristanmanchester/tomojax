@@ -63,17 +63,44 @@ def robust_batch(residual, columns, precision, delta, *, half=False):
     return (sw * r).astype(jnp.float32), sw, rounded(j) if half else j
 
 
-def photometric_sums(prediction, observed, precision):
-    """Per-view normal equations of the observations on [prediction, 1, v], FP64.
+def _offset_and_ramp(images, s):
+    """Per view (and leading column): the s-whitened fit coefficients of [s, s * v] to images."""
+    v = jnp.linspace(-1, 1, s.shape[-2], dtype=jnp.float64)[:, None]
+    s = s.astype(jnp.float64)
+    extra = (slice(None),) + (None,) * (images.ndim - s.ndim)
+    w = s * s
+    g00, g01, g11 = (jnp.sum(w * v**k, axis=(-2, -1)) for k in (0, 1, 2))
+    det = g00 * g11 - g01 * g01
+    det = jnp.where(det > 1e-12 * jnp.maximum(g00 * g11, 1e-300), det, jnp.inf)
+    ss, sv = s[extra], (s * v)[extra]
+    b0 = jnp.sum(ss * images, axis=(-2, -1))
+    b1 = jnp.sum(sv * images, axis=(-2, -1))
+    c0 = (g11[extra] * b0 - g01[extra] * b1) / det[extra]
+    c1 = (g00[extra] * b1 - g01[extra] * b0) / det[extra]
+    return c0, c1, ss, sv
 
-    Returns (views, 3, 4): the weighted Gram matrix of the three basis images
-    beside their products with the observations; v runs from -1 to 1 down the rows.
+
+def profile(images, s):
+    """Whitened images less each view's weighted fit by a constant and a ramp down the rows.
+
+    ``images`` are (view, ..., v, u) and already whitened by ``s`` (view, v, u):
+    this projects out the span of ``s`` and ``s * v`` per view, v running from
+    -1 to 1 down the rows. An additive offset (flux) and vertical ramp (phase
+    retrieval, flat drift) are nuisance the line integrals do not describe;
+    eliminating them inside each solve leaves the poses only what they cannot
+    explain. Views without weight are returned unchanged.
     """
-    w, p, y = (a.astype(jnp.float64) for a in (precision, prediction, observed))
-    v = jnp.broadcast_to(jnp.linspace(-1, 1, p.shape[-2])[:, None], p.shape[-2:])
-    basis = jnp.stack([p, jnp.ones_like(p), jnp.broadcast_to(v, p.shape)], 1)
-    gram = jnp.einsum("nkvu,nlvu,nvu->nkl", basis, basis, w)
-    return jnp.concatenate([gram, jnp.einsum("nkvu,nvu,nvu->nk", basis, y, w)[..., None]], -1)
+    c0, c1, ss, sv = _offset_and_ramp(images, s)
+    return (images - ss * c0[..., None, None] - sv * c1[..., None, None]).astype(images.dtype)
+
+
+def profiled_residual(residual, precision):
+    """Residuals less each view's precision-weighted constant and row ramp."""
+    root = jnp.sqrt(precision.astype(jnp.float64))
+    whitened = profile(root * residual, root)
+    return jnp.where(precision > 0, whitened / jnp.where(precision > 0, root, 1), 0).astype(
+        residual.dtype
+    )
 
 
 def column_score(columns, images):
@@ -175,6 +202,7 @@ class Operators:
         self.linearize = jax.jit(self._linearize)
         self.objective = jax.jit(self._objective)
         self._weighted_forward = jax.jit(self._weighted_forward)
+        self.offsets = jax.jit(self.offsets)
         self._weighted_back = jax.jit(self._weighted_back)
         self._pose_back = jax.jit(self._pose_back)
 
@@ -242,20 +270,24 @@ class Operators:
         """Huber initialization gradient, with fresh or frozen geometry."""
         return self._initial_gradient(self.prepare(q), x, y, precision, delta)
 
-    def weighted_forward(self, q, x, sw, j):
-        """Weighted image projections and their pose-column contractions."""
-        return self._weighted_forward(self.prepare(q), x, sw, j)
+    def weighted_forward(self, q, x, sw, j, precision=None):
+        """Weighted, profiled image projections and their pose-column contractions.
 
-    def weighted_back(self, q, r, sw, j, p, active=None):
-        """Backproject weighted residuals minus the pose-column correction.
+        ``sw`` are the IRLS square-root weights of the linearization and
+        ``precision`` the data precision it used (None: uniform).
+        """
+        return self._weighted_forward(self.prepare(q), x, sw, j, precision)
+
+    def weighted_back(self, q, r, sw, j, p, active=None, precision=None):
+        """Transpose of :meth:`weighted_forward` applied to residuals less the pose columns.
 
         ``active`` (``projection.active``) may skip voxels the caller discards.
         """
-        return self._weighted_back(self.prepare(q), r, sw, j, p, active)
+        return self._weighted_back(self.prepare(q), r, sw, j, p, active, precision)
 
-    def pose_back(self, q, sw, j, p, active=None):
+    def pose_back(self, q, sw, j, p, active=None, precision=None):
         """Apply the image/pose cross block to pose increments (``active`` as weighted_back)."""
-        return self._pose_back(self.prepare(q), sw, j, p, active)
+        return self._pose_back(self.prepare(q), sw, j, p, active, precision)
 
     def coefficients(self, nominal, q, valid, scales=None, frames=None):
         """One batch's physical coefficients and explicit padded-view mask."""
@@ -349,10 +381,13 @@ class Operators:
         def step(a, z):
             cf, yb, wb = z
             wb = self.batch_precision(wb, cf.valid)
-            r = self.project(cf, x) - yb
-            # Huber, not redescending: the initialization never discards data.
-            q64 = wb.astype(jnp.float64) * jnp.clip(r.astype(jnp.float64), -delta, delta)
-            return self.back(a, cf, q64.astype(jnp.float32)), None
+            # The start fits the objective the solver then uses: each view's
+            # offset and row ramp profiled out. Huber, not redescending: the
+            # initialization never discards data.
+            e = profiled_residual(self.project(cf, x) - yb, wb)
+            s0 = jnp.sqrt(wb.astype(jnp.float32))
+            clipped = jnp.clip(e, -delta, delta)
+            return self.back(a, cf, s0 * profile(s0 * clipped, s0)), None
 
         batches = (self.batches(q), self.batches(y), self.batches(precision))
         return jax.lax.scan(step, self._zeros(), batches)[0]
@@ -365,11 +400,18 @@ class Operators:
             cf = self.coefficients(nominal, qb, valid, scales, frames)
             tangent = self._tangent(nominal, qb, valid, scales, frames)
             raw = self.projection.columns(cf, x, tangent)
-            r = raw[:, 0] - yb
+            r = profiled_residual(raw[:, 0] - yb, wb)
             # The step stores the weights and columns in FP16; the score and
             # Gram matrix below use the same rounded values.
-            res, sw, j = robust_batch(r, raw[:, 1:], wb, delta, half=True)
-            gx = self.back(gx, cf, sw * res)
+            res, sw, _ = robust_batch(r, raw[:, 1:], wb, delta, half=True)
+            # Only what a view's offset and ramp cannot explain informs the step.
+            # The objective's projector (under the precision) applies to the
+            # columns, then the robust factor: by the chain rule the score, Gram
+            # matrix and image gradient are exactly the profiled objective's.
+            s0, rho = self._split(sw, wb, valid)
+            rounded = partial(jax.lax.reduce_precision, exponent_bits=5, mantissa_bits=10)
+            j = rounded(rho[:, None] * profile(raw[:, 1:] * s0[:, None], s0))
+            gx = self.back(gx, cf, self._transpose(res, s0, rho))
             dd = self.projection.diagonal(cf, sw, dd)
             valid_px = jnp.sum(wb > 0, dtype=jnp.int64)
             down = jnp.sum((wb > 0) & (sw.astype(jnp.float64) ** 2 < 0.99 * wb), dtype=jnp.int64)
@@ -377,12 +419,12 @@ class Operators:
             # Quantizing J after these reductions makes the Schur model inconsistent.
             score, gram = column_score(j, res), column_gram(j)
             out = (sw.astype(jnp.float16), j.astype(jnp.float16), score, gram)
-            out = (*out, robust_value(r, wb, delta), jnp.where(wb > 0, r, 0))
-            return (gx, dd), (*out, valid_px, down, photometric_sums(raw[:, 0], yb, wb))
+            out = (*out, robust_value(r, wb, delta), jnp.where(wb > 0, raw[:, 0] - yb, 0))
+            return (gx, dd), (*out, valid_px, down)
 
         batches = (*self.views(q), self.batches(y), self.batches(precision))
         state, out = jax.lax.scan(step, (self._zeros(), self._zeros()), batches)
-        sw, j, g, gram, e, residual, valid, down, sums = out
+        sw, j, g, gram, e, residual, valid, down = out
         n, d, k = self.n, self.detector, self.dofs
         return (
             *state,
@@ -392,7 +434,6 @@ class Operators:
             gram.reshape(self.padded_n, k, k)[:n],
             jnp.sum(e),
             jnp.stack([jnp.sum(valid), jnp.sum(down)]),
-            sums.reshape(self.padded_n, 3, 4)[:n],
             residual.reshape(self.image_shape),
         )
 
@@ -401,35 +442,68 @@ class Operators:
             nominal, qb, valid, scales, frames, yb, wb = z
             wb = self.batch_precision(wb, valid)
             cf = self.coefficients(nominal, qb, valid, scales, frames)
-            return total + robust_value(self.project(cf, x) - yb, wb, delta), None
+            residual = profiled_residual(self.project(cf, x) - yb, wb)
+            return total + robust_value(residual, wb, delta), None
 
         batches = (*self.views(q), self.batches(y), self.batches(precision))
         return jax.lax.scan(step, jnp.asarray(0.0, jnp.float64), batches)[0]
 
-    def _weighted_forward(self, q, x, sw, j):
+    def offsets(self, q, x, y, precision):
+        """Each view's offset and row ramp: the fit of the observations less the prediction."""
+
         def step(z):
-            cf, s, jb = z
-            out = self.project(cf, x) * s
+            nominal, qb, valid, scales, frames, yb, wb = z
+            wb = self.batch_precision(wb, valid)
+            cf = self.coefficients(nominal, qb, valid, scales, frames)
+            root = jnp.sqrt(wb.astype(jnp.float64))
+            c0, c1, _, _ = _offset_and_ramp(root * (yb - self.project(cf, x)), root)
+            return jnp.stack([c0, c1], -1)
+
+        batches = (*self.views(q), self.batches(y), self.batches(precision))
+        return jax.lax.map(step, batches).reshape(self.padded_n, 2)[: self.n]
+
+    def _split(self, sw, precision, valid):
+        """Precision square roots s0 and robust factors rho = sw / s0 of one batch.
+
+        The objective profiles each view under the precision, then applies the
+        robust loss: the step's columns are rho * profile(s0 * column, s0) and
+        their transpose s0 * profile(rho * image, s0), one projector throughout.
+        """
+        s0 = jnp.sqrt(self.batch_precision(precision, valid).astype(jnp.float32))
+        return s0, jnp.where(s0 > 0, sw / jnp.where(s0 > 0, s0, 1), 0).astype(jnp.float32)
+
+    def _transpose(self, image, s0, rho):
+        return s0 * profile(rho * image, s0)
+
+    def _weighted_forward(self, q, x, sw, j, precision):
+        def step(z):
+            cf, s, jb, wb = z
+            s0, rho = self._split(s, wb, cf.valid)
+            out = rho * profile(self.project(cf, x) * s0, s0)
             return out, column_score(jb, out)
 
-        out, p = jax.lax.map(step, (self.batches(q), self.batches(sw), self.batches(j)))
+        batches = (self.batches(q), *map(self.batches, (sw, j, precision)))
+        out, p = jax.lax.map(step, batches)
         return out.reshape(self.image_shape), self.parameters.reduce_score(
             p.reshape(self.padded_n, self.dofs)[: self.n]
         )
 
-    def _weighted_back(self, q, r, sw, j, p, active=None):
+    def _weighted_back(self, q, r, sw, j, p, active, precision):
         def step(a, z):
-            cf, rb, s, jb, pb = z
-            image = (rb - _apply_columns(jb, pb)) * s
+            cf, rb, s, jb, pb, wb = z
+            s0, rho = self._split(s, wb, cf.valid)
+            image = self._transpose(rb - _apply_columns(jb, pb), s0, rho)
             return self.projection.back(a, cf, image, active=active), None
 
-        batches = (self.batches(q), *map(self.batches, (r, sw, j, self.pad_poses(p))))
+        batches = (self.batches(q), *map(self.batches, (r, sw, j, self.pad_poses(p), precision)))
         return jax.lax.scan(step, self._zeros(), batches)[0]
 
-    def _pose_back(self, q, sw, j, p, active=None):
+    def _pose_back(self, q, sw, j, p, active, precision):
         def step(a, z):
-            cf, s, jb, pb = z
-            return self.projection.back(a, cf, _apply_columns(jb, pb) * s, active=active), None
+            cf, s, jb, pb, wb = z
+            s0, rho = self._split(s, wb, cf.valid)
+            image = self._transpose(_apply_columns(jb, pb), s0, rho)
+            return self.projection.back(a, cf, image, active=active), None
 
-        batches = (self.batches(q), *map(self.batches, (sw, j, self.pad_poses(p))))
+        batches = (self.batches(q), *map(self.batches, (sw, j, self.pad_poses(p), precision)))
         return jax.lax.scan(step, self._zeros(), batches)[0]

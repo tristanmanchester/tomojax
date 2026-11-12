@@ -62,6 +62,8 @@ class Row:
     # The start scan rebuilt from one reported calibration under its documented
     # convention; it must score like the fit (a round trip of the reported value).
     rebuild: Callable[[dict[str, Any]], tj.Scan] | None = None
+    # Injected per-view (offset, row ramp), which tj.align reports as info["offsets"].
+    offsets: np.ndarray | None = None
 
 
 def landmarks(grid: tj.Grid, extent: float = 0.3) -> np.ndarray:
@@ -165,8 +167,17 @@ def analytic_row(case: str, geometry: str, size: str) -> Row:
         and not (geometry == "cone" and fit[0] == "tilt")
         else None
     )
+    offsets = metadata["background"] if case == "background" else None
     return Row(
-        scan, metadata["true_scan"], truth, fit, landmarks(scan.grid), 1.0, scan.grid, rebuild
+        scan,
+        metadata["true_scan"],
+        truth,
+        fit,
+        landmarks(scan.grid),
+        1.0,
+        scan.grid,
+        rebuild,
+        offsets,
     )
 
 
@@ -329,6 +340,13 @@ def run(name: str, start: str) -> dict[str, Any]:
         "calibration": calibration,
         # A geometry rebuilt from the reported value must score like the fit.
         "round_trip_px": None if round_trip is None else round(round_trip, 5),
+        # RMS error of the reported offsets and ramps, relative to the injected RMS.
+        "offset_error": None
+        if row.offsets is None
+        else [
+            round(float(np.sqrt(np.mean((fit - true) ** 2) / np.mean(true**2))), 4)
+            for fit, true in zip(np.asarray(result.info["offsets"]).T, row.offsets.T, strict=True)
+        ],
     }
 
 

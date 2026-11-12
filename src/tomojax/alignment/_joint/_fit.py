@@ -42,6 +42,9 @@ from ._solver import Budget, solve
 
 _MAX_VOXELS = 16_000_000
 _MAX_DETECTOR = 320
+# Image CG iterations per step, for every fit: the profiled system needs them to
+# resolve the smooth image content an offset and ramp cannot explain.
+_CG_ITERATIONS = 16
 # (binning, maximum Gauss-Newton steps). The active model is the same at both
 # scales; held coordinates have neither unknowns nor derivative columns.
 _LEVELS = ((2, 12), (1, 8))
@@ -327,7 +330,6 @@ def fit_poses(
         # basis.
         angular = any(name in parameters.fit for name in ("tilt", "roll", "rotations"))
         interpolation = "cubic" if angular and frames is None else "linear"
-        inner = 8 if angular else 4
         x = p = None
         prior = None
         levels = []
@@ -374,7 +376,7 @@ def fit_poses(
                 cal["tv_weight"],
                 cal["eps"],
                 ops=ops,
-                budget=Budget(outer, inner),
+                budget=Budget(outer, _CG_ITERATIONS),
                 x0=x,
                 p0=p,
                 pose_sigma=cal["sigma"],
@@ -391,6 +393,9 @@ def fit_poses(
         assert x is not None  # every schedule has at least one level
         p, refinement = refine(x, p, y, precision, prior, ops=ops, sigma=cal["sigma"])
         table, corrections = parameters.physical(np.asarray(p, np.float64), pose_scales)
+        offsets = np.asarray(
+            ops.offsets(ops.pad_poses(p), x, ops.pad_images(y), ops.pad_precision(precision))
+        )
         x = x[margin : margin + base.nz] / np.float32(cal["scale"])
     record = {
         "fit": list(parameters.fit),
@@ -409,6 +414,9 @@ def fit_poses(
         "trimmed_pixels": {"bottom": drop_v, "right": drop_u},
         "levels": levels,
         "refinement": refinement,
+        # Fitted for information: each view's offset and ramp from the top row (-1)
+        # to the bottom (+1) of the working detector, in the projections' units.
+        "offsets": (offsets / cal["scale"]).tolist(),
         "seconds": time.perf_counter() - started,
     }
     return x, base, table, record

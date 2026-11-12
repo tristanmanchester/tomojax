@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-CASES = ("clean", "centre", "translations", "tilt", "roll", "rotations", "setup")
+CASES = ("clean", "centre", "translations", "background", "tilt", "roll", "rotations", "setup")
 
 
 def phantom() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -163,7 +163,7 @@ def make_case(
     roll = 0.75 if case in {"roll", "setup"} else 0.0
     centre = (2 * pitch, -pitch if geometry == "cone" else 0) if case == "centre" else (0, 0)
     true_detector = tj.Detector(size, size, pitch, pitch, centre)
-    if case in {"translations", "setup"}:
+    if case in {"translations", "background", "setup"}:
         t = np.linspace(0, 1, views)
         shifts = np.stack(
             [
@@ -188,12 +188,21 @@ def make_case(
         "clean": ("translations",),
         "centre": ("centre",),
         "translations": ("translations",),
+        "background": ("translations",),
         "tilt": ("tilt",),
         "roll": ("roll",),
         "rotations": ("translations", "rotations"),
         "setup": ("translations", "tilt", "roll"),
     }[case]
     projections = truth.render(size)
+    background = np.zeros((views, 2))
+    if case == "background":
+        # A per-view offset and row ramp (flux, flat drift) the line integrals do not
+        # describe, independent from view to view.
+        rng = np.random.default_rng(1729)
+        background = rng.normal(0, 1, (views, 2)) * [0.15, 0.1] * projections.std()
+        rows = np.linspace(-1, 1, size)[None, :, None]
+        projections = projections + background[:, :1, None] + background[:, 1:, None] * rows
     # The same observations declared with the true geometry, the true detector centre and
     # roll on the detector and every pose difference as per-view corrections: a fit
     # started there must stay.
@@ -218,6 +227,7 @@ def make_case(
         "tilt_correction_deg": extra_tilt,
         "roll_deg": roll,
         "true_scan": true_scan.with_poses(table),
+        "background": background,
     }
     return tj.Scan(projections, declared, name=f"analytic {case}"), truth, fit, metadata
 
