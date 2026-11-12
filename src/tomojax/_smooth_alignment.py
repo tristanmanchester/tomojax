@@ -10,6 +10,7 @@ import numpy as np
 
 from tomojax._scan import Reconstruction, describe, record_of, with_grid
 from tomojax.alignment._integration import cone_frames, fit_poses
+from tomojax.backends.api import is_oom_error
 from tomojax.geometry import stack_view_poses
 from tomojax.recon import FistaConfig
 
@@ -33,17 +34,26 @@ def align_poses(
     current = np.asarray(stack_view_poses(scan.geometry, views), np.float64)
     native = (scan.detector.du, scan.detector.dv)
     _, metadata, _, _ = describe(scan.geometry)
-    volume, working, fitted, record = fit_poses(
-        scan.projections,
-        current,
-        scan.grid,
-        scan.detector,
-        fit=fit,
-        keep_grid=grid is not None,
-        frames=cone_frames(scan.geometry),
-        detector_roll_deg=float(cast("float", metadata.get("detector_roll_deg", 0.0))),
-        view_positions=scan.view_positions,
-    )
+    try:
+        volume, working, fitted, record = fit_poses(
+            scan.projections,
+            current,
+            scan.grid,
+            scan.detector,
+            fit=fit,
+            keep_grid=grid is not None,
+            frames=cone_frames(scan.geometry),
+            detector_roll_deg=float(cast("float", metadata.get("detector_roll_deg", 0.0))),
+            view_positions=scan.view_positions,
+        )
+    except Exception as exc:
+        if grid is None or not is_oom_error(exc):
+            raise
+        raise MemoryError(
+            f"tj.align ran out of device memory on the {grid.nx} x {grid.ny} x {grid.nz} grid it "
+            "was given: an explicit grid= is used as given, at its full resolution. Omit grid= "
+            "to let the fit bound its own working scale."
+        ) from exc
     corrected, calibration = publish_calibration(
         scan, fitted, record["corrections"], native_pixel_size=native
     )
