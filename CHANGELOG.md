@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Scans keep when each view was taken
+
+`Scan` carries `view_positions`, as `Frames` already did: each view's place in
+acquisition time, by default view i at i + 1/2. Selecting views, `RejectViews`,
+binning, combining and saving keep them. `tj.align`'s motion prior and its
+report's neighbour tests follow them: a gap left by dropped views is charged
+as the steps it hides (exactly the full chain with those views integrated
+out), and positions that restart, as in `Scan.combine`, begin a new
+acquisition with no link to the one before. Before, a dropped view silently
+made its neighbours adjacent. A scan with consecutive or regularly selected
+views aligns exactly as before. The positions are the time order, not the
+angle order, so an interlaced scan's follow when each view was taken.
+
 ### Cone detector roll sign
 
 `ConeBeam.detector_roll_deg` now follows the documented convention: positive

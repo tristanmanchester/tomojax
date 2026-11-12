@@ -639,7 +639,12 @@ def reconstruct_slabs(
                         detector=detector_window(slab.rows, slice(None), frames.geometry.detector),
                     )
                     scan = Scan(
-                        slab.projections, geometry, frames.name, slab.context.records, frames.source
+                        slab.projections,
+                        geometry,
+                        frames.name,
+                        slab.context.records,
+                        frames.source,
+                        view_positions=frames.view_positions,
                     )
                     info = {
                         "config": cfg,

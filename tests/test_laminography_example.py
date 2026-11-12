@@ -45,8 +45,11 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
     table = np.zeros((25, 6))
     table[:, 3:5] = shifts
 
-    def fit(projections, nominal, g, d, *, fit, keep_grid, frames, detector_roll_deg):
+    def fit(
+        projections, nominal, g, d, *, fit, keep_grid, frames, detector_roll_deg, view_positions
+    ):
         assert projections is scan.projections and d == detector and keep_grid == explicit
+        assert view_positions is None
         assert g == (supplied or grid) and nominal.shape == (25, 4, 4)
         assert fit == "translations" and frames is None and detector_roll_deg == 0
         volume = np.zeros((g.nz, g.ny, g.nx), np.float32)

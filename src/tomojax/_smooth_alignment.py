@@ -42,6 +42,7 @@ def align_poses(
         keep_grid=grid is not None,
         frames=cone_frames(scan.geometry),
         detector_roll_deg=float(cast("float", metadata.get("detector_roll_deg", 0.0))),
+        view_positions=scan.view_positions,
     )
     corrected, calibration = publish_calibration(
         scan, fitted, record["corrections"], native_pixel_size=native

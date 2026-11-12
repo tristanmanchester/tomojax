@@ -83,15 +83,73 @@ def _tridiagonal(blocks, w, mask=None):
     return _pcr_factor(blocks + diagonal, -jnp.pad(w, (0, 1))[:, None] * mask)
 
 
-def _spline_design(views, spacing):
-    """Cubic B-spline design matrix (views, knots) with a knot every ``spacing`` views."""
-    t = np.linspace(-1, 1, views)
-    knots = list(range(0, views, spacing))
-    if knots[-1] != views - 1:
-        knots.append(views - 1)
+def _spline_design(steps, spacing):
+    """Cubic B-spline design matrix (views, knots) with a knot every ``spacing`` steps.
+
+    ``steps`` are the views' distances from the first, in units of the regular
+    gap between views; consecutive views are one apart.
+    """
+    steps = np.asarray(steps, np.float64)
+    end = float(steps[-1])
+    # Integer steps land exactly on linspace's points, as consecutive views always have.
+    sites = np.linspace(-1, 1, math.ceil(end) + 1)
+    t = np.interp(steps, np.arange(len(sites)), sites)
+    knots = list(spacing * np.arange(math.floor(end / spacing) + 1))
+    if knots[-1] != end:
+        knots.append(end)
     k = min(3, len(knots) - 1)
-    spline = make_interp_spline(t[knots], np.zeros(len(knots)), k=k)
+    at = np.interp(np.asarray(knots, np.float64), np.arange(len(sites)), sites)
+    spline = make_interp_spline(at, np.zeros(len(knots)), k=k)
     return BSpline.design_matrix(t, spline.t, k).toarray()
+
+
+class ViewOrder:
+    """When each view was taken, as the motion prior and the report use it.
+
+    ``positions`` place the views in acquisition time (a scan's
+    ``view_positions``); None means consecutive. A view links to the next when
+    its position increases; a decrease starts a new acquisition (a combined
+    scan) with its own drift and no link across. Gaps are measured in units of
+    the median gap, so a regular selection has unit steps.
+    """
+
+    def __init__(self, views, positions=None) -> None:
+        self.n = int(views)
+        if positions is None:
+            gaps = np.ones(max(self.n - 1, 0))
+        else:
+            positions = np.asarray(positions, np.float64)
+            if positions.shape != (self.n,) or not np.isfinite(positions).all():
+                raise ValueError(f"view positions need one finite value for each of {self.n} views")
+            gaps = np.diff(positions)
+        self.linked = gaps > 0
+        regular = np.median(gaps[self.linked]) if self.linked.any() else 1.0
+        self.steps = np.where(self.linked, gaps / regular, 0.0)
+        starts = np.r_[0, np.flatnonzero(~self.linked) + 1]
+        self.segments = list(zip(starts, np.r_[starts[1:], self.n], strict=True))
+
+    def spline_design(self, spacing):
+        """Block-diagonal drift design: one spline per acquisition segment."""
+        blocks = []
+        for start, stop in self.segments:
+            steps = np.r_[0.0, np.cumsum(self.steps[start : stop - 1])]
+            blocks.append(_spline_design(steps, spacing))
+        design = np.zeros((self.n, sum(b.shape[1] for b in blocks)))
+        row = column = 0
+        for block in blocks:
+            design[row : row + len(block), column : column + block.shape[1]] = block
+            row, column = row + len(block), column + block.shape[1]
+        return design
+
+    @property
+    def jump_scale(self):
+        """Per link: 1/sqrt(steps), so a jump over n steps counts as n steps would; 0 unlinked."""
+        return np.where(self.linked, 1 / np.sqrt(np.where(self.linked, self.steps, 1.0)), 0.0)
+
+    @property
+    def edge_scale(self):
+        """Per link: 1/steps, the precision of an n-step difference; 0 unlinked."""
+        return np.where(self.linked, 1 / np.where(self.linked, self.steps, 1.0), 0.0)
 
 
 def _orthonormal_columns(matrix):
@@ -136,9 +194,10 @@ class MotionPrior:
         rotation_scales=None,
         noise_sigma=0.0,
         rotation_sigma_deg=0.5,
+        order=None,
     ) -> None:
-        self.parameters = parameters
-        self.n = views
+        self.parameters, self.n = parameters, views
+        self.order = order = ViewOrder(views) if order is None else order
         self.nlocal = len(knot_spacing) if parameters is None else parameters.nlocal
         self.nglobal = 0 if parameters is None else parameters.nglobal
         self.k, self.size = self.nlocal + self.nglobal, views * self.nlocal + self.nglobal
@@ -152,7 +211,7 @@ class MotionPrior:
         )
         self.translation_mask = jnp.asarray(translated, jnp.float64)
         columns = [
-            np.kron(_spline_design(views, step), np.eye(self.nlocal)[:, [i]])
+            np.kron(order.spline_design(step), np.eye(self.nlocal)[:, [i]])
             for i, step in enumerate(spacing)
             if translated[i]
         ]
@@ -209,7 +268,10 @@ class MotionPrior:
         self.rotation_precision = jnp.asarray(rotation_precision.reshape(-1), jnp.float64)
         self.value = jax.jit(self._value)
         self.weights = jax.jit(
-            lambda p, weight: weight * self.delta / (self.delta**2 + self._squared_jumps(p))
+            lambda p, weight: weight
+            * self.delta
+            / (self.delta**2 + self._squared_jumps(p))
+            * self.order.edge_scale
         )
         self.apply = jax.jit(self._apply)
         self.factor = jax.jit(self._factor)
@@ -239,7 +301,7 @@ class MotionPrior:
 
     def _squared_jumps(self, p):
         residual = self._residual(p[: self.local_size]).reshape(self.n, self.nlocal)
-        jumps = jnp.diff(residual, axis=0) * self.translation_mask
+        jumps = jnp.diff(residual, axis=0) * self.translation_mask * self.order.jump_scale[:, None]
         return jnp.sum(jumps**2, axis=1)
 
     def _value(self, p, weight):

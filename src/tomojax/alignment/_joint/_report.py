@@ -12,7 +12,7 @@ badly (a broken frame, diffraction), which need not move its pose at all.
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from ._pose import _spline_design
+from ._pose import ViewOrder
 
 # An isolated view leaves both neighbours by this many robust standard deviations
 # of the scan's view-to-view change.
@@ -49,46 +49,62 @@ def _robust_sd(values, axis=0):
     return 1.4826 * np.median(np.abs(values - median), axis=axis)
 
 
-def isolated_views(steps):
+def isolated_views(steps, order=None):
     """Views whose (views, k) value leaves both neighbours' in the same direction.
 
     The departure from each neighbour must exceed both ``_OUTLIER_SIGMAS``
     robust standard deviations of the view-to-view change and
-    ``_ISOLATED_MIN_WORKING_PX``, in any one column.
+    ``_ISOLATED_MIN_WORKING_PX``, in any one column. Neighbours are the
+    adjacent views in acquisition order (``order``); a view at the edge of a
+    gap is compared over it, with the limit widened as for that many steps,
+    and a view next to a break between acquisitions is not judged.
     """
     steps = np.asarray(steps, np.float64)
+    order = ViewOrder(len(steps)) if order is None else order
     if len(steps) < 3:
         return []
-    limit = np.maximum(
-        _OUTLIER_SIGMAS * _robust_sd(np.diff(steps, axis=0)), _ISOLATED_MIN_WORKING_PX
-    )
+    scale = order.jump_scale[:, None]
+    change = np.diff(steps, axis=0) * scale
+    sd = _robust_sd(change[order.linked]) if order.linked.any() else np.zeros(steps.shape[1])
+    limit = np.maximum(_OUTLIER_SIGMAS * sd, _ISOLATED_MIN_WORKING_PX)
     before, after = steps[1:-1] - steps[:-2], steps[1:-1] - steps[2:]
+    widen = np.sqrt(np.maximum(order.steps, 1.0))[:, None]
     same = np.sign(before) == np.sign(after)
-    apart = np.minimum(np.abs(before), np.abs(after)) > limit
-    return (np.flatnonzero(np.any(same & apart, axis=1)) + 1).tolist()
+    apart = (np.abs(before) > limit * widen[:-1]) & (np.abs(after) > limit * widen[1:])
+    judged = (order.linked[:-1] & order.linked[1:])[:, None]
+    return (np.flatnonzero(np.any(same & apart & judged, axis=1)) + 1).tolist()
 
 
-def unusual_views(energy):
+def unusual_views(energy, order=None):
     """Views whose residual RMS is ``_UNUSUAL_RMS_FACTOR`` times their neighbours'.
 
     A view's residual varies smoothly with angle, as the object presents more or
     less structure, so each view is compared with the median energy of the two
-    views on either side. On clean data the ratio stays below about two in RMS;
-    broken frames and diffraction exceed it several times over.
+    views on either side within its acquisition (``order``; none across a break).
+    On clean data the ratio stays below about two in RMS; broken frames and
+    diffraction exceed it several times over.
     """
     energy = np.maximum(np.asarray(energy, np.float64), 1e-300)
     n = len(energy)
+    order = ViewOrder(n) if order is None else order
     if n < 3:
         return []
+    segment = np.zeros(n, int)
+    for label, (start, stop) in enumerate(order.segments):
+        segment[start:stop] = label
     padded = np.pad(energy, 2, constant_values=np.nan)
-    around = np.stack([padded[k : k + n] for k in (0, 1, 3, 4)])
+    labels = np.pad(segment, 2, constant_values=-1)
+    around = np.stack([
+        np.where(labels[k : k + n] == segment, padded[k : k + n], np.nan) for k in (0, 1, 3, 4)
+    ])  # fmt: skip
     ratio = energy / np.nanmedian(around, axis=0)
     return np.flatnonzero(ratio >= _UNUSUAL_RMS_FACTOR**2).tolist()
 
 
-def _split(columns, spacing):
+def _split(columns, spacing, order=None):
     """The part of each column the prior's drift spline explains, and the rest."""
-    design = _spline_design(len(columns), spacing)
+    order = ViewOrder(len(columns)) if order is None else order
+    design = order.spline_design(spacing)
     smooth = design @ np.linalg.lstsq(design, columns, rcond=None)[0]
     return smooth, columns - smooth
 
@@ -107,6 +123,7 @@ def build(
     offsets,
     energy,
     spacing,
+    order=None,
 ):
     """The report: per-level endings, correction sizes, offsets and flagged views.
 
@@ -119,7 +136,7 @@ def build(
     per_view = {}
     if local:
         values = np.asarray(table, np.float64)[:, list(local)] * scale[list(local)]
-        smooth, rough = _split(values, spacing)
+        smooth, rough = _split(values, spacing, order)
         for k, column in enumerate(local):
             per_view[_NAMES[column]] = {
                 "unit": "deg" if column < 3 else "native px",
@@ -129,7 +146,7 @@ def build(
                 "view_to_view_rms": float(np.sqrt(np.mean(rough[:, k] ** 2))),
             }
     detector = [k for k, column in enumerate(local) if column in (3, 4)]
-    isolated = isolated_views(values[:, detector] / binning) if local and detector else []
+    isolated = isolated_views(values[:, detector] / binning, order) if local and detector else []
     offsets = np.asarray(offsets, np.float64)
     return {
         "levels": [{"steps": len(lv["steps"]), "ended": lv["status"]} for lv in levels],
@@ -140,6 +157,6 @@ def build(
             "ramp_range": [float(offsets[:, 1].min()), float(offsets[:, 1].max())],
         },
         "isolated_views": isolated,
-        "unusual_views": unusual_views(energy),
+        "unusual_views": unusual_views(energy, order),
         "advisories": [_AXIAL_ROTATIONS] if axial and "rotations" in fit else [],
     }

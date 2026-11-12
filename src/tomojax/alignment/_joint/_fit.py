@@ -29,7 +29,7 @@ from tomojax.recon.fista_tv import resolve_tv_metric
 from ._noise import estimate_noise
 from ._operators import Operators
 from ._parameters import Parameters
-from ._pose import MotionPrior
+from ._pose import MotionPrior, ViewOrder
 from ._projection import (
     cone_gauge,
     cone_gauge_constraint,
@@ -268,6 +268,7 @@ def fit_poses(
     keep_grid=False,
     frames=None,
     detector_roll_deg=0.0,
+    view_positions=None,
 ):
     """Fit a volume and the selected geometry parameters to line-integral projections.
 
@@ -281,7 +282,9 @@ def fit_poses(
     also accepted. ``fit`` selects shared centre/tilt/roll and local translation/
     rotation blocks. ``detector_roll_deg`` supplies an existing parallel detector
     roll, which is absent from the object pose matrices. Cone frames already
-    contain any existing roll.
+    contain any existing roll. ``view_positions`` place the views in acquisition
+    time (see :class:`ViewOrder`); the motion prior and the report's neighbour
+    tests follow them, and None means consecutive.
     Returns the working-scale volume (nz, ny, nx), its grid, the (views, 6)
     pose table (alpha, beta, phi in radians; dx, dz, dy along lab x, z, y,
     in the grid's length unit; dy is zero only for parallel rays) and a
@@ -335,6 +338,7 @@ def fit_poses(
         angular = any(name in parameters.fit for name in ("tilt", "roll", "rotations"))
         interpolation = "cubic" if angular and frames is None else "linear"
         x = p = None
+        order = ViewOrder(len(y0), view_positions)
         prior = None
         levels = []
         for b, (_, outer) in zip(bins, _LEVELS, strict=True):
@@ -368,6 +372,7 @@ def fit_poses(
                     rotation_scales=pose_scales,
                     rotation_sigma_deg=_ROTATION_SIGMA_DEG,
                     noise_sigma=cal["sigma"],
+                    order=order,
                 )
             if x is not None and x.shape != ops.shape:
                 x = jax.image.resize(x, ops.shape, method="linear", antialias=False).astype(
@@ -439,6 +444,7 @@ def fit_poses(
             offsets=offsets / cal["scale"],
             energy=energy,
             spacing=_KNOT_SPACING,
+            order=order,
         ),
         "seconds": time.perf_counter() - started,
     }

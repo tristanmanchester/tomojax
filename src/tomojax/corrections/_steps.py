@@ -267,8 +267,10 @@ class RejectViews(Step):
     median (so the small, smooth changes of a noise-free scan never count).
     Views with a nonfinite median are also rejected and do not participate
     in the neighbours or robust baseline. Rejected views are removed from the
-    scan and its geometry, so the views either side become neighbours; the
-    record lists them by their index before the step, nonfinite ones included.
+    scan and its geometry; the scan's ``view_positions`` keep when each
+    remaining view was taken, so alignment charges the gap as the views it
+    hides. The record lists them by their index before the step, nonfinite
+    ones included.
 
     Parameters
     ----------

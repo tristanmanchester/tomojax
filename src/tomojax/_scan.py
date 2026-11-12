@@ -58,7 +58,13 @@ class Scan:
     returned by :func:`align` may carry per-view pose corrections, which every
     operation applies (see :attr:`poses`). ``corrections`` records how its
     projections were made from detector frames (see :mod:`tomojax.corrections`),
-    and is saved with it.
+    and is saved with it. ``view_positions`` place the views in acquisition
+    time, as :attr:`Frames.view_positions` does (by default view ``i`` at
+    ``i + 1/2``); selecting or rejecting views keeps them, so the alignment's
+    motion prior knows where views are missing. They are the time order, not
+    the angle order: an interlaced scan's positions follow when each view was
+    taken. Positions that decrease start a new acquisition (as in
+    :meth:`combine`), which the prior does not link to the one before.
 
     Parameters
     ----------
@@ -73,11 +79,14 @@ class Scan:
         Record of corrections already applied to the projections.
     source : ProjectionDataset or None, optional
         Source metadata retained for saving and provenance.
+    view_positions : numpy.ndarray or None, optional
+        Each view's place in acquisition time, in sample views; None is i + 1/2.
 
     Raises
     ------
     ValueError
-        If projection dimensions disagree with the detector or view count.
+        If projection dimensions disagree with the detector or view count, or
+        view_positions has the wrong length or nonfinite values.
 
     Examples
     --------
@@ -94,6 +103,7 @@ class Scan:
     name: str = "sample"
     corrections: tuple[Correction, ...] = ()
     source: ProjectionDataset | None = field(default=None, repr=False, compare=False)
+    view_positions: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         views, rows, cols = self.projections.shape
@@ -130,16 +140,13 @@ class Scan:
         from tomojax.corrections import correct_projections
 
         done = correct_projections(self.projections, steps, batch_views=batch_views)
-        geometry = (
-            self.geometry
-            if len(done.kept) == self.projections.shape[0]
-            else views_of(self.geometry, done.kept)
-        )
+        everything = len(done.kept) == self.projections.shape[0]
         return replace(
             self,
             projections=done.projections,
-            geometry=geometry,
+            geometry=self.geometry if everything else views_of(self.geometry, done.kept),
             corrections=(*self.corrections, *done.records),
+            view_positions=self.view_positions if everything else self.positions()[done.kept],
         )
 
     def cropped(self, rows: slice, cols: slice) -> Scan:
@@ -192,12 +199,30 @@ class Scan:
             self,
             projections=np.asarray(self.projections)[kept],
             geometry=views_of(self.geometry, kept),
+            view_positions=self.positions()[kept],
         )
+
+    def positions(self) -> np.ndarray:
+        """Each view's place in acquisition time: :attr:`view_positions`, or i + 1/2.
+
+        Returns
+        -------
+        numpy.ndarray
+            One float64 position per view.
+        """
+        if self.view_positions is None:
+            return np.arange(self.projections.shape[0]) + 0.5
+        return self.view_positions
 
     def __post_init__(self) -> None:
         if self.projections.ndim == 2:
             object.__setattr__(self, "projections", self.projections[:, None, :])
         check_shape("Scan: projections", self.projections.shape, self.geometry)
+        if self.view_positions is not None:
+            positions = np.asarray(self.view_positions, np.float64)
+            if positions.shape != (self.projections.shape[0],) or not np.isfinite(positions).all():
+                raise ValueError("view_positions needs one finite position for each view")
+            object.__setattr__(self, "view_positions", positions)
 
     @property
     def grid(self) -> Grid:
@@ -385,7 +410,15 @@ class Scan:
             )
         projections = np.concatenate([np.asarray(s.projections) for s in scans])
         geometry = ConeSegments(tuple(parts), trajectory_lengths=tuple(trajectories))
-        return cls(projections, geometry, name=name or scans[0].name, corrections=_combined(scans))
+        # Each scan keeps its own acquisition times; a restart marks the break.
+        positions = np.concatenate([s.positions() for s in scans])
+        return cls(
+            projections,
+            geometry,
+            name=name or scans[0].name,
+            corrections=_combined(scans),
+            view_positions=positions,
+        )
 
     def binned(self, factor: int) -> Scan:
         """The scan with ``factor x factor`` detector pixels averaged into one.
@@ -580,7 +613,7 @@ def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
         else {
             k: v
             for k, v in source.geometry_metadata.items()
-            if k not in GEOMETRY_KEYS and k != "corrections"
+            if k not in GEOMETRY_KEYS and k not in ("corrections", "view_positions")
         }
     )
     fields: dict[str, Any] = {
@@ -599,6 +632,8 @@ def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
     }
     if scan.corrections:
         fields["geometry_metadata"]["corrections"] = [c.to_dict() for c in scan.corrections]
+    if scan.view_positions is not None:
+        fields["geometry_metadata"]["view_positions"] = scan.view_positions.tolist()
     if source is None:
         return ProjectionDataset(**fields)
     # A Scan holds only sample-view line integrals, not the acquisition's raw
@@ -613,12 +648,14 @@ def scan_from_record(record: ProjectionDataset, *, poses: bool) -> Scan:
     from tomojax.corrections import Correction
 
     saved = record.geometry_metadata.get("corrections") or ()
+    positions = record.geometry_metadata.get("view_positions")
     return Scan(
         projections=record.projections,
         geometry=geometry_of(record, poses=poses),
         name=record.sample_name or "sample",
         corrections=tuple(Correction.from_dict(c) for c in saved),
         source=record,
+        view_positions=None if positions is None else np.asarray(positions, np.float64),
     )
 
 

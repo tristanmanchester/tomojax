@@ -120,6 +120,7 @@ class tomojax.Scan(
         name: 'str' = 'sample',
         corrections: 'tuple[Correction, ...]' = (),
         source: 'ProjectionDataset | None' = None,
+        view_positions: 'np.ndarray | None' = None,
     ) -> None
     .angles
     .binned(self, factor: 'int') -> 'Scan'
@@ -137,6 +138,7 @@ class tomojax.Scan(
     ) -> 'Scan'
     .grid
     .poses
+    .positions(self) -> 'np.ndarray'
     .selected(self, views: 'slice | Sequence[int] | np.ndarray') -> 'Scan'
     .to_astra(self) -> 'tuple[np.ndarray, dict[str, Any], dict[str, Any]]'
     .with_poses(self, poses: 'np.ndarray | None') -> 'Scan'

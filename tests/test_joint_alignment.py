@@ -341,9 +341,10 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         keep_grid,
         frames,
         detector_roll_deg,
+        view_positions,
     ):
         assert fit == ("translations", "rotations")
-        assert frames is None and detector_roll_deg == 0.3
+        assert frames is None and detector_roll_deg == 0.3 and view_positions is None
         assert projections is scan.projections
         assert working == grid and current_detector == detector and keep_grid is False
         np.testing.assert_allclose(nominal, before, atol=5e-7)

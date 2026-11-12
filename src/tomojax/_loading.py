@@ -278,12 +278,20 @@ class Frames:
             batch_views=batch_views,
             binning=binning,
         )
-        geometry = (
-            self.geometry if len(done.kept) == self.views else views_of(self.geometry, done.kept)
-        )
+        everything = len(done.kept) == self.views
+        geometry = self.geometry if everything else views_of(self.geometry, done.kept)
         geometry = binned_geometry(geometry, binning) if binning > 1 else geometry
         geometry = frame_output_grid(geometry, self.source, binning=binning)
-        return Scan(done.projections, geometry, self.name, done.records, self.source)
+        at = np.arange(self.views) + 0.5 if self.view_positions is None else self.view_positions
+        positions = self.view_positions if everything else np.asarray(at, np.float64)[done.kept]
+        return Scan(
+            done.projections,
+            geometry,
+            self.name,
+            done.records,
+            self.source,
+            view_positions=positions,
+        )
 
     def cropped(self, rows: slice, cols: slice) -> Frames:
         """These frames' block of detector ``rows`` and ``cols``, the detector moved to match.
