@@ -168,6 +168,46 @@ translation fit.
    poses.
 4. Compare poses only after removing one common rigid motion of the object. Moving the whole
    object and moving every pose back predicts the same data.
+5. Read `result.info["report"]`. It states how each level ended ("pose_steps_below_tolerance"
+   or "step_budget_reached"), the size of the corrections in detector pixels or degrees, split
+   into a smooth part and a view-to-view part, and the range of the per-view offsets. It also
+   lists two kinds of view, and `tj.align` warns when either is present:
+   - `isolated_views`: a correction that jumps away from both neighbours in the same direction.
+     A slip, where the object moves and stays, is not one.
+   - `unusual_views`: views whose residual is at least three times their neighbours', such as a
+     broken frame or a crystal diffracting. These need not have moved, so look at the frames.
+   Look at those views before trusting their corrections, and drop broken frames. The report is
+   advisory: a view below its thresholds can still be wrong. `info["report"]["advisories"]` also
+   states measured limits that apply to the fit, such as per-view rotations fitted with the
+   rotation axis perpendicular to the beam, which held-out tests found accurate only to
+   0.14-0.77 px.
+6. To test whether the alignment helped, hold out every sixth view, fit the others, and predict
+   the held-out views from a reconstruction of the fitted ones, with poses interpolated in view
+   order. Compare the prediction error with the fitted and with the nominal poses, after removing
+   each view's offset and row ramp, which the fit does not predict. This tests only the smooth
+   part of the correction: a single view's error cannot be interpolated into it.
+
+   ```python
+   import numpy as np
+
+   index = np.arange(len(scan.angles))
+   train, test = index % 6 != 5, index % 6 == 5
+   fitted = tj.align(scan.selected(train)).poses
+   poses = np.stack([np.interp(index, index[train], fitted[:, j]) for j in range(6)], 1)
+
+   def held_out_error(table):
+       candidate = scan.with_poses(table)
+       volume = tj.reconstruct(candidate.selected(train), "fbp").volume
+       error = np.asarray(tj.project(candidate.selected(test).geometry, volume))
+       error = error - np.asarray(scan.projections)[test]
+       rows = np.linspace(-1, 1, error.shape[1]).repeat(error.shape[2])
+       basis = np.stack([np.ones_like(rows), rows], 1)
+       flat = error.reshape(len(error), -1).T
+       flat = flat - basis @ np.linalg.lstsq(basis, flat, rcond=None)[0]
+       return float(np.sqrt(np.mean(flat**2)))
+
+   print(held_out_error(np.zeros((len(index), 6))), held_out_error(poses))
+   ```
 
 `calibration` reports final global values: `centre` is a scalar for parallel data and a `(u, v)`
 pair for cone data; `tilt` is the signed lab inclination `atan2(axis_y, axis_z)` in degrees; `roll`

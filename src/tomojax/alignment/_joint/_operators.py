@@ -202,7 +202,7 @@ class Operators:
         self.linearize = jax.jit(self._linearize)
         self.objective = jax.jit(self._objective)
         self._weighted_forward = jax.jit(self._weighted_forward)
-        self.offsets = jax.jit(self.offsets)
+        self.view_summary = jax.jit(self.view_summary)
         self._weighted_back = jax.jit(self._weighted_back)
         self._pose_back = jax.jit(self._pose_back)
 
@@ -448,19 +448,29 @@ class Operators:
         batches = (*self.views(q), self.batches(y), self.batches(precision))
         return jax.lax.scan(step, jnp.asarray(0.0, jnp.float64), batches)[0]
 
-    def offsets(self, q, x, y, precision):
-        """Each view's offset and row ramp: the fit of the observations less the prediction."""
+    def view_summary(self, q, x, y, precision):
+        """Each view's offset and row ramp, and its mean squared profiled residual.
+
+        The offset and ramp are the fit of the observations less the prediction;
+        the residual is what remains, weighted by the precision and averaged over
+        the view's measured pixels.
+        """
 
         def step(z):
             nominal, qb, valid, scales, frames, yb, wb = z
             wb = self.batch_precision(wb, valid)
             cf = self.coefficients(nominal, qb, valid, scales, frames)
             root = jnp.sqrt(wb.astype(jnp.float64))
-            c0, c1, _, _ = _offset_and_ramp(root * (yb - self.project(cf, x)), root)
-            return jnp.stack([c0, c1], -1)
+            c0, c1, ss, sv = _offset_and_ramp(root * (yb - self.project(cf, x)), root)
+            whitened = root * (yb - self.project(cf, x)) - ss * c0[:, None, None]
+            whitened = whitened - sv * c1[:, None, None]
+            mass = jnp.maximum(jnp.sum(wb, axis=(-2, -1), dtype=jnp.float64), 1e-300)
+            energy = jnp.sum(whitened**2, axis=(-2, -1)) / mass
+            return jnp.concatenate([jnp.stack([c0, c1], -1), energy[:, None]], -1)
 
         batches = (*self.views(q), self.batches(y), self.batches(precision))
-        return jax.lax.map(step, batches).reshape(self.padded_n, 2)[: self.n]
+        out = jax.lax.map(step, batches).reshape(self.padded_n, 3)[: self.n]
+        return out[:, :2], out[:, 2]
 
     def _split(self, sw, precision, valid):
         """Precision square roots s0 and robust factors rho = sw / s0 of one batch.

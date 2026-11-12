@@ -328,8 +328,9 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         "fit": ["translations", "rotations"],
         "corrections": {},
         "detector_binning": 1,
-        "levels": [{"status": "budget_exhausted"}],
-        "refinement": {"status": "converged"},
+        "levels": [{"status": "step_budget_reached"}],
+        "refinement": {"status": "pose_steps_below_tolerance"},
+        "report": {"isolated_views": [], "unusual_views": [], "advisories": []},
     }
 
     def fit(

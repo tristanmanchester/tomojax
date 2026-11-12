@@ -115,7 +115,9 @@ def test_offsets_and_ramps_are_eliminated_without_touching_the_observations():
             scales=(1.0, 1.0, 1.0),
         )
         reported = np.asarray(
-            ops.offsets(ops.pad_poses(c), fitted, ops.pad_images(y), ops.pad_precision(None))
+            ops.view_summary(ops.pad_poses(c), fitted, ops.pad_images(y), ops.pad_precision(None))[
+                0
+            ]
         )
     # The nuisance is eliminated inside each solve: the data are never rescaled.
     np.testing.assert_array_equal(np.asarray(y), given)
@@ -319,4 +321,4 @@ def test_refinement_stops_on_a_proposal_below_the_pose_tolerance(monkeypatch, sh
         _, record = _refine.refine(x, np.zeros(prior.size), y, None, prior, ops=ops, sigma=1e-3)
     assert bool(record["steps"]) == bool(evaluated) == moves
     if not moves:
-        assert record["status"] == "converged"
+        assert record["status"] == "pose_steps_below_tolerance"

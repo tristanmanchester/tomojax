@@ -298,7 +298,7 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
     pose_weight = float(pose_sigma * jnp.sqrt(jnp.median(fisher)) * np.sqrt(2 * np.log(n)))
     f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
     initial_objective = f
-    history, lm, stable, status = [], budget.lm_initial, 0, "budget_exhausted"
+    history, lm, stable, status = [], budget.lm_initial, 0, "step_budget_reached"
     for it in range(budget.outer):
         if it:
             # Release the previous weights and columns first: two stack-sized sets
@@ -340,7 +340,7 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
         small = proposed_change < _POSE_TOL_PX and history[-1]["lm"] <= budget.lm_initial
         stable = stable + 1 if small else 0
         if stable >= 2 and it + 1 >= _MIN_OUTER:
-            status = "converged"
+            status = "pose_steps_below_tolerance"
             break
     final_prior = float(prior.value(c, pose_weight))
     final_image_prior = level.image_penalty(x)

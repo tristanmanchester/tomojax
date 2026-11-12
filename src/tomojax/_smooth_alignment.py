@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
+import warnings
 
 import numpy as np
 
@@ -47,10 +48,33 @@ def align_poses(
     )
     corrected = with_grid(corrected, working)
     info = {**record, "method": "joint_volume_pose", "calibration": calibration}
+    _warn_about_views(record["report"])
     source = record_of(corrected)
     source.geometry_metadata["alignment_info"] = info
     corrected = replace(corrected, source=source)
     return Reconstruction(volume, corrected, "joint_volume_pose", info)
+
+
+def _warn_about_views(report: dict) -> None:
+    """Name the views a user should look at before trusting the corrections."""
+    isolated, unusual = report["isolated_views"], report["unusual_views"]
+    parts = list(report["advisories"])
+    if isolated:
+        parts.append(f"{len(isolated)} views jump away from both neighbours ({_first(isolated)})")
+    if unusual:
+        parts.append(f"{len(unusual)} views fit unusually badly ({_first(unusual)})")
+    if not parts:
+        return
+    warnings.warn(
+        f"tj.align: {'; '.join(parts)}. The report is advisory: see info['report'] and "
+        "'Check the result' in docs/align-a-scan.md.",
+        stacklevel=3,
+    )
+
+
+def _first(views: list[int], count: int = 5) -> str:
+    shown = ", ".join(map(str, views[:count]))
+    return f"views {shown}, ..." if len(views) > count else f"views {shown}"
 
 
 def _require_declared_geometry(scan: Scan) -> None:

@@ -38,6 +38,7 @@ from ._projection import (
     rigid_gauge,
 )
 from ._refine import refine
+from ._report import axial as axial_geometry, build as build_report
 from ._solver import Budget, solve
 
 _MAX_VOXELS = 16_000_000
@@ -393,8 +394,11 @@ def fit_poses(
         assert x is not None  # every schedule has at least one level
         p, refinement = refine(x, p, y, precision, prior, ops=ops, sigma=cal["sigma"])
         table, corrections = parameters.physical(np.asarray(p, np.float64), pose_scales)
-        offsets = np.asarray(
-            ops.offsets(ops.pad_poses(p), x, ops.pad_images(y), ops.pad_precision(precision))
+        offsets, energy = (
+            np.asarray(a)
+            for a in ops.view_summary(
+                ops.pad_poses(p), x, ops.pad_images(y), ops.pad_precision(precision)
+            )
         )
         x = x[margin : margin + base.nz] / np.float32(cal["scale"])
     record = {
@@ -417,6 +421,22 @@ def fit_poses(
         # Fitted for information: each view's offset and ramp from the top row (-1)
         # to the bottom (+1) of the working detector, in the projections' units.
         "offsets": (offsets / cal["scale"]).tolist(),
+        "report": build_report(
+            table=table,
+            local=parameters.local,
+            fit=parameters.fit,
+            axial=axial_geometry(
+                poses, (0.0, 1.0, 0.0) if frames is None else frames[0, 0] - frames[0, 3]
+            ),
+            corrections=corrections,
+            native=native,
+            binning=dbin,
+            levels=levels,
+            refinement=refinement,
+            offsets=offsets / cal["scale"],
+            energy=energy,
+            spacing=_KNOT_SPACING,
+        ),
         "seconds": time.perf_counter() - started,
     }
     return x, base, table, record

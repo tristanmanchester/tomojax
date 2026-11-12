@@ -35,7 +35,12 @@ def _fitter(monkeypatch, *, corrections=None, poses=None):
         names = options["fit"]
         names = (names,) if isinstance(names, str) else names
         table = np.zeros((len(nominal), 6)) if poses is None else poses
-        record = {"fit": list(names), "corrections": corrections or {}, "seconds": 0.0}
+        record = {
+            "fit": list(names),
+            "corrections": corrections or {},
+            "report": {"isolated_views": [], "unusual_views": [], "advisories": []},
+            "seconds": 0.0,
+        }
         return np.zeros((grid.nz, grid.ny, grid.nx), np.float32), grid, table, record
 
     monkeypatch.setattr(_smooth_alignment, "fit_poses", fit)

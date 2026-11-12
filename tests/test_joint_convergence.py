@@ -64,16 +64,16 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
 @pytest.mark.parametrize(
     ("proposals", "expected_steps", "status", "forced_damping"),
     [
-        ([1.0] * 8, 8, "budget_exhausted", None),
-        ([0.01] * 8, 8, "budget_exhausted", None),
-        ([0.001] * 8, 4, "converged", None),
-        ([1.0, 1.0, 1.0, 0.001, 0.001, 1.0], 5, "converged", None),
-        ([0.001, 0.001, 1.0, 0.001, 1.0, 0.001, 0.001, 1.0], 7, "converged", None),
-        ([0.001] * 2, 2, "budget_exhausted", None),
+        ([1.0] * 8, 8, "step_budget_reached", None),
+        ([0.01] * 8, 8, "step_budget_reached", None),
+        ([0.001] * 8, 4, "pose_steps_below_tolerance", None),
+        ([1.0, 1.0, 1.0, 0.001, 0.001, 1.0], 5, "pose_steps_below_tolerance", None),
+        ([0.001, 0.001, 1.0, 0.001, 1.0, 0.001, 0.001, 1.0], 7, "pose_steps_below_tolerance", None),
+        ([0.001] * 2, 2, "step_budget_reached", None),
         pytest.param(
             [0.001] * 8,
             8,
-            "budget_exhausted",
+            "step_budget_reached",
             1.0,
             id="heavy_damping_does_not_converge",
         ),

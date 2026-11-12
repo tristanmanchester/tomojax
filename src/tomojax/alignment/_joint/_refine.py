@@ -238,7 +238,7 @@ class _Refinement:
                 return "stationary"
             # Raised damping shrinks a proposal without evidence of convergence.
             if not attempt and lm <= _LM_INITIAL and _rms(prior.expand(dc)) < _POSE_TOL_PX:
-                return "converged"
+                return "pose_steps_below_tolerance"
             for ls in range(8):
                 alpha = 0.5**ls
                 fn = self.value(c + alpha * dc)
@@ -261,7 +261,12 @@ def refine(x, p, y, precision, prior, *, ops, sigma):
     precision = ops.pad_precision(precision)
     problem = _Refinement(x, y, precision, prior, ops, sigma, c)
     stats = problem.first
-    f, lm, status, steps = float(stats[2] + problem.penalty(c)), _LM_INITIAL, "budget_exhausted", []
+    f, lm, status, steps = (
+        float(stats[2] + problem.penalty(c)),
+        _LM_INITIAL,
+        "step_budget_reached",
+        [],
+    )
     for it in range(_ITERATIONS):
         if it:
             stats = problem.objective.stats(ops.pad_poses(c), x, y, precision, problem.delta)
