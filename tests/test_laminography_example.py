@@ -50,7 +50,8 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         assert g == (supplied or grid) and nominal.shape == (25, 4, 4)
         assert fit == "translations" and frames is None and detector_roll_deg == 0
         volume = np.zeros((g.nz, g.ny, g.nx), np.float32)
-        return volume, g, table, {"fit": ["translations"], "corrections": {}}
+        report = {"isolated_views": [], "unusual_views": [], "advisories": []}
+        return volume, g, table, {"fit": ["translations"], "corrections": {}, "report": report}
 
     monkeypatch.setattr(automatic, "fit_poses", fit)
     result = automatic.reconstruct_with_motion(scan, reconstruct=None, grid=supplied)
