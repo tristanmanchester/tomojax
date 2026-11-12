@@ -105,7 +105,8 @@ vertical optical-axis line, but not a calibrated horizontal centre. Supply
 
 Zeiss reads `ImageInfo/Angles`, object-plane `pixelsize`, `XrayGeometry`,
 cone distances, both `alignment/*-shifts` and `AutoRecon/CenterShift`;
-missing calibration requires `geometry=` rather than zero image shifts.
+without `CenterShift`, `detector=` supplies the centre the shifts are measured
+from; other missing calibration requires `geometry=` rather than zero image shifts.
 The embedded reference uses `ReferenceData/DataType`; separate XRM flat/dark
 files use their own `ImageInfo/DataType`. Both are read lazily.
 `MultiReferenceData/ImageN` references use their recorded exposure durations and

@@ -28,6 +28,15 @@ acquisition with no link to the one before. Before, a dropped view silently
 made its neighbours adjacent. A scan with consecutive or regularly selected
 views aligns exactly as before. The positions are the time order, not the
 angle order, so an interlaced scan's follow when each view was taken.
+### Zeiss raw scans keep their recorded shifts
+
+A Zeiss acquisition without `AutoRecon/CenterShift` (a raw scan that no Zeiss
+reconstruction has set up) was refused unless `geometry=` was passed, and that
+silently dropped the file's per-view image shifts. `detector=` now supplies the
+missing centre and the shifts are added to it, giving the same geometry as a
+file that records the centre; a `detector=` passed for a file that does record it
+also keeps the shifts. `geometry=` is still used as given, with a warning naming
+how many views carried shifts.
 
 ### Cone detector roll sign
 

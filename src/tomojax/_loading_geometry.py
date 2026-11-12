@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from typing import TYPE_CHECKING
+import warnings
 
 import numpy as np
 
 from tomojax._scan import geometry_of, rebuild
 from tomojax.geometry import Detector, Grid, ParallelGeometry
+from tomojax.io.api import dropped_offsets_message, with_view_offsets
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -58,8 +60,12 @@ def frame_geometry(
     """Resolve caller metadata before constructing any geometry from a file.
 
     Readers may return incomplete records. An explicit geometry must not first
-    require constructing (and guessing) the missing source geometry.
+    require constructing (and guessing) the missing source geometry. Recorded
+    per-view detector offsets move from the file's detector to a caller's
+    ``detector``; an explicit ``geometry`` replaces them, with a warning.
     """
+    if geometry is not None and (message := dropped_offsets_message(record)):
+        warnings.warn(message, stacklevel=4)
     meta = dict(record.geometry_metadata)
     if geometry is not None or detector is not None:
         meta["detector_center_status"] = "provided"
@@ -78,6 +84,8 @@ def frame_geometry(
         grid=geometry.grid if geometry is not None else grid or record.grid,
         geometry_metadata=meta,
     )
+    if geometry is None and detector is not None:
+        record = with_view_offsets(record, detector)
     record = record.prepare_center_seed() if geometry is None else record
     resolved = geometry if geometry is not None else geometry_of(record, poses=poses)
     return record, frame_output_grid(resolved, record)

@@ -1,5 +1,6 @@
 """Content recognition, physical metadata and lazy calibration of synthetic Zeiss OLE."""
 
+from contextlib import nullcontext
 from pathlib import Path
 import struct
 
@@ -158,7 +159,10 @@ def _check_missing_zeiss_inputs(path, streams, frames, counts):
         write_ole(path, partial)
         with pytest.raises(ValueError, match="detector=|geometry="):
             tj.load_frames(path, darks=0)
-        explicit = tj.load_frames(path, geometry=frames.geometry, darks=0)
+        # geometry= replaces whatever shifts the file still records, and says so.
+        dropped = key != "alignment/y-shifts"
+        with pytest.warns(UserWarning, match="geometry= replaces") if dropped else nullcontext():
+            explicit = tj.load_frames(path, geometry=frames.geometry, darks=0)
         np.testing.assert_array_equal(explicit.counts[:], counts)
     write_ole(path, {k: v for k, v in streams.items() if k != "ReferenceData/DataType"})
     with pytest.raises(ValueError, match="flats="):
@@ -220,7 +224,13 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     write_ole(path, streams)
     parallel = tj.load_frames(path, darks=0).corrected()
     transforms = np.asarray(stack_view_poses(parallel.geometry, 3))
-    np.testing.assert_allclose(transforms[:, 0, 3], [-0.00125, -0.00375, 0.00375], atol=1e-8)
+    # The recorded centre stays on the detector and each view's shift is a pose:
+    # together they move the image by -(x-shift - CenterShift) pixels, as for cone.
+    assert parallel.detector.center[0] == pytest.approx(-0.00125)
+    np.testing.assert_allclose(transforms[:, 0, 3], [-0.0025, -0.005, 0.0025], atol=1e-8)
+    np.testing.assert_allclose(
+        transforms[:, 0, 3] - parallel.detector.center[0], [-0.00125, -0.00375, 0.00375], atol=1e-8
+    )
     np.testing.assert_allclose(transforms[:, 2, 3], 0.005, atol=1e-8)
     streams["ImageInfo/AcquisitionMode"] = np.array([1], "<u4").tobytes()
     write_ole(path, streams)
@@ -394,3 +404,49 @@ def test_multireferences_use_recorded_times_and_exposures(tmp_path):
     write_ole(path, streams)
     with pytest.raises(ValueError, match="2 exposure values for 3 stored images"):
         tj.load_frames(path, geometry=geometry, darks=0)
+
+
+@pytest.mark.parametrize("cone", [True, False])
+def test_a_supplied_centre_keeps_the_recorded_shifts_as_a_written_one_does(tmp_path, cone):
+    # A raw scan has per-view shifts but no CenterShift (only a reconstruction setup
+    # writes it). detector= supplies the centre the shifts are measured from:
+    # -pitch x CenterShift for the file that records it.
+    counts = (500 + np.arange(4 * 8 * 12)).astype("<u2").reshape(4, 8, 12)
+    fields = {
+        "ImageInfo/NoOfImages": ("<u4", [4]),
+        "ImageInfo/ImageWidth": ("<u4", [12]),
+        "ImageInfo/ImageHeight": ("<u4", [8]),
+        "ImageInfo/DataType": ("<u4", [5]),
+        "ImageInfo/AcquisitionMode": ("<u4", [0]),
+        "ImageInfo/XrayGeometry": ("<u4", [int(cone)]),
+        "ImageInfo/pixelsize": ("<f4", [10]),
+        "ImageInfo/Angles": ("<f4", [0, 45, 90, 135]),
+        "ImageInfo/StoRADistance": ("<f4", [-40] * 4),
+        "ImageInfo/DtoRADistance": ("<f4", [20] * 4),
+        "alignment/x-shifts": ("<f4", [0.25, 0.5, -0.75, 1.5]),
+        "alignment/y-shifts": ("<f4", [-0.5, 0.25, 0.0, 1.0]),
+        "AutoRecon/CenterShift": ("<f4", [1.25]),
+        "ReferenceData/DataType": ("<u4", [10]),
+    }
+    streams = {key: np.asarray(values, dtype).tobytes() for key, (dtype, values) in fields.items()}
+    streams.update({f"ImageData1/Image{i + 1}": value.tobytes() for i, value in enumerate(counts)})
+    streams["ReferenceData/Image"] = np.full((8, 12), 2500, "<f4").tobytes()
+    written, raw = tmp_path / "written.txrm", tmp_path / "raw.txrm"
+    write_ole(written, streams)
+    write_ole(raw, {k: v for k, v in streams.items() if k != "AutoRecon/CenterShift"})
+    pitch = 0.015 if cone else 0.01
+    recorded = tj.load_frames(written, darks=0).corrected()
+    supplied = tj.load_frames(
+        raw, detector=tj.Detector(12, 8, pitch, pitch, (-pitch * 1.25, 0.0)), darks=0
+    ).corrected()
+    assert type(supplied.geometry) is type(recorded.geometry)
+    assert supplied.grid == recorded.grid
+    g = recorded.grid
+    volume = np.random.default_rng(5).uniform(0, 1, (g.nz, g.ny, g.nx)).astype(np.float32)
+    images = [np.asarray(tj.project(s.geometry, volume)) for s in (recorded, supplied)]
+    assert np.abs(images[0]).max() > 0
+    np.testing.assert_allclose(images[1], images[0], rtol=1e-6, atol=1e-6)
+
+    # An explicit geometry is used as given; the shifts it replaces are named.
+    with pytest.warns(UserWarning, match=r"4 of 4 views carry recorded detector shifts.*detector="):
+        tj.load_frames(raw, geometry=recorded.geometry, darks=0)

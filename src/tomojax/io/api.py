@@ -24,6 +24,7 @@ from tomojax.io._inspection import inspect_dataset, projection_stats
 from tomojax.io._inspection_format import format_inspection_report
 from tomojax.io._quicklook import save_projection_quicklook
 from tomojax.io._tiff import read_tiff_frames
+from tomojax.io._view_offsets import dropped_offsets_message, with_view_offsets
 
 __all__ = [
     "JsonValue",
@@ -31,6 +32,7 @@ __all__ = [
     "LocatedFrames",
     "NXTomoMetadata",
     "convert_dataset",
+    "dropped_offsets_message",
     "format_inspection_report",
     "inspect_dataset",
     "load_angles",
@@ -47,4 +49,5 @@ __all__ = [
     "save_projection_quicklook",
     "saved_volume_axes",
     "validate_nxtomo",
+    "with_view_offsets",
 ]

@@ -22,7 +22,7 @@
     "tomojax.datasets": 15,
     "tomojax.geometry.api": 12,
     "tomojax.recon.api": 7,
-    "tomojax.io.api": 21,
+    "tomojax.io.api": 23,
     "tomojax.alignment.api": 4
   },
   "cli_flags": {
@@ -54,7 +54,7 @@
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
   "code_lines": {
-    "(modules)": 2884,
+    "(modules)": 2890,
     "_data": 2066,
     "alignment": 2998,
     "backends": 619,
@@ -64,7 +64,7 @@
     "datasets": 1125,
     "forward": 824,
     "geometry": 908,
-    "io": 3651,
+    "io": 3700,
     "motion": 148,
     "nuisance": 232,
     "recon": 13871
