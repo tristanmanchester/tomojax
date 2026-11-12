@@ -44,7 +44,7 @@ selected parameters, for parallel, laminography and cone data.
 | --- | --- | --- |
 | `centre` | One detector-u centre, plus detector-v for cone data | Physical detector-centre lengths, in the same units as `Detector.center` |
 | `tilt` | One axis or laminography tilt correction shared by every view | Degrees; positive tilt leans the rotation axis towards the beam |
-| `roll` | One detector roll correction shared by every view | Degrees about the beam |
+| `roll` | One detector roll correction shared by every view | Degrees, right-handed about the detector normal: positive turns u towards v, so a point above the centre projects towards +u |
 | `translations` | Two translations per view; three for cone data | Physical lab-frame lengths: across the beam and vertically, plus along the beam for cone |
 | `rotations` | Three rotations per view | Sample-frame rotations in radians |
 

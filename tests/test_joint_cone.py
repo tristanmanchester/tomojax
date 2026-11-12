@@ -8,6 +8,8 @@ from scipy.spatial.transform import Rotation
 
 # check-public-imports: allow-private
 from tomojax.alignment._joint._pose import MotionPrior
+
+# check-public-imports: allow-private
 from tomojax.alignment._joint._projection import (
     Projection,
     cone_gauge,
@@ -27,7 +29,8 @@ pytestmark = pytest.mark.numerical
 def _geometry():
     grid = Grid(7, 6, 5, 0.7, 0.9, 1.1, vol_center=(0.13, -0.19, 0.23))
     detector = Detector(9, 7, 1.2, 0.8, center=(0.17, -0.11))
-    beam = ConeBeam(20, 33, detector_roll_deg=4, detector_pitch_deg=2, axis_offset=0.1)
+    # The frame these contracts were written against (roll turns u towards v).
+    beam = ConeBeam(20, 33, detector_roll_deg=-4, detector_pitch_deg=2, axis_offset=0.1)
     geometry = ConeGeometry(grid, detector, [13.7, 71.3, 119.1], beam, tilt_deg=27)
     nominal = np.asarray(stack_view_poses(geometry, 3))
     frames = np.repeat(beam_frame(beam, detector)[None], 3, axis=0)

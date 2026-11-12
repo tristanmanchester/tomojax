@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from tomojax._json import JsonValue, normalize_json
 from tomojax.core.geometry.base import DetectorDict
+from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
 from tomojax.geometry._calibration.state import CalibrationState
 
 if TYPE_CHECKING:
@@ -94,10 +95,10 @@ def build_calibrated_geometry_metadata_patch(
         beams = [geometry_meta_patch.get("cone_beam")] + [e.get("cone_beam") for e in segments]
         beams = [beam for beam in beams if isinstance(beam, dict)]
         if beams:
-            # A cone detector rolls in its beam: ConeBeam turns u towards -z
-            # where the parallel replay roll turns it towards +z.
+            # A cone detector rolls in its beam, in the parallel roll's sense.
             for beam in beams:
-                beam["detector_roll_deg"] = -value
+                beam["detector_roll_deg"] = value
+                beam[ROLL_CONVENTION_KEY] = 1.0
         else:
             geometry_meta_patch["detector_roll_deg"] = value
 

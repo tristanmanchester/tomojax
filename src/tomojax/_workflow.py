@@ -771,7 +771,9 @@ def align(
         Fitted globals appear under their names in ``info["calibration"]``:
         centre in geometry length units (u, or u/v for cone beams), and angles
         in degrees. Tilt is the signed inclination ``atan2(axis_y, axis_z)``;
-        positive roll turns detector u towards v. Cone segments with different
+        positive roll turns detector u towards v (right-handed about the detector
+        normal, which points back towards the source), so a point above the
+        detector centre projects towards +u. Cone segments with different
         calibrated values report them in segment order.
 
     Raises

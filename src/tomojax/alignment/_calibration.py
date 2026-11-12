@@ -40,7 +40,7 @@ def _calibrated_geometry(geometry, corrections, native):
             beam=replace(
                 geometry.beam,
                 detector_roll_deg=geometry.beam.detector_roll_deg
-                - float(corrections.get("roll", 0.0)),
+                + float(corrections.get("roll", 0.0)),
             ),
         )
     else:
@@ -87,7 +87,7 @@ def _calibration_values(geometry, names):
         if cone
         else float(geometry.detector.center[0]),
         "tilt": float(np.rad2deg(np.arctan2(axis[1], axis[2]))),
-        "roll": -float(geometry.beam.detector_roll_deg) if cone else roll,
+        "roll": float(geometry.beam.detector_roll_deg) if cone else roll,
     }
     return {name: values[name] for name in names}
 

@@ -16,6 +16,7 @@ class tomojax.ConeBeam(
         source_height: 'float' = 0.0,
     ) -> None
     .detector_frame(self, detector: 'Detector') -> 'tuple[np.ndarray, np.ndarray, np.ndarray]'
+    .from_dict(cls, saved: 'Mapping[str, float]') -> 'ConeBeam'
     .magnification
     .source(self) -> 'np.ndarray'
     .to_dict(self) -> 'dict[str, float]'
@@ -219,6 +220,7 @@ class tomojax.geometry.ConeBeam(
         source_height: 'float' = 0.0,
     ) -> None
     .detector_frame(self, detector: 'Detector') -> 'tuple[np.ndarray, np.ndarray, np.ndarray]'
+    .from_dict(cls, saved: 'Mapping[str, float]') -> 'ConeBeam'
     .magnification
     .source(self) -> 'np.ndarray'
     .to_dict(self) -> 'dict[str, float]'

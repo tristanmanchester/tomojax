@@ -143,7 +143,13 @@ class AugmentedGeometry(_WrappedGeometry):
 
 @dataclass
 class DetectorRollGeometry(_WrappedGeometry):
-    """Geometry wrapper that preserves calibrated parallel detector roll."""
+    """Geometry wrapper that preserves calibrated parallel detector roll.
+
+    The roll is right-handed about the detector normal n = u x v, which points
+    back towards the source: positive roll turns u towards v, so a point above
+    the detector centre projects towards +u. ``ConeBeam.detector_roll_deg`` and
+    the roll ``tj.align`` reports are the same angle.
+    """
 
     detector_roll_deg: float
 
@@ -302,7 +308,7 @@ def _base_geometry(
             grid=grid,
             detector=detector,
             angles=angles,
-            beam=ConeBeam(**{str(k): float(v) for k, v in beam_meta.items()}),
+            beam=ConeBeam.from_dict(beam_meta),
             tilt_deg=float(meta.get("tilt_deg", 0.0)),
             tilt_about=str(meta.get("tilt_about", "x")),
             axis_unit=None if axis is None else tuple(float(x) for x in axis),  # type: ignore[arg-type]

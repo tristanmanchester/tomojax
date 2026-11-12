@@ -321,11 +321,14 @@ def fit_poses(
         )
         if frames is not None:
             frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
-        if frames is None:
-            gauge, constraint = rigid_gauge(poses, pose_scales), None
-        else:
-            gauge = cone_gauge(poses, pose_scales, frames)
-            constraint = cone_gauge_constraint(poses, pose_scales, frames)
+        gauge, constraint = (
+            (rigid_gauge(poses, pose_scales), None)
+            if frames is None
+            else (
+                cone_gauge(poses, pose_scales, frames),
+                cone_gauge_constraint(poses, pose_scales, frames),
+            )
+        )
         # Angular columns need smooth interpolation as sample points rotate
         # through voxel cells. Centre/translation fits retain the cheaper linear
         # basis.

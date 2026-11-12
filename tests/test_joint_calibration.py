@@ -86,7 +86,7 @@ def test_calibration_and_local_poses_replay_the_fitted_physical_geometry(kind):
         ):
             np.testing.assert_array_equal(old_beam.source(), new_beam.source())
             assert old_beam.source_to_detector == new_beam.source_to_detector
-            assert new_beam.detector_roll_deg == old_beam.detector_roll_deg - 0.75
+            assert new_beam.detector_roll_deg == old_beam.detector_roll_deg + 0.75
     else:
         assert describe(corrected.geometry)[1]["detector_roll_deg"] == 3.95
         assert calibration["centre"] == pytest.approx(expected_centre[0])

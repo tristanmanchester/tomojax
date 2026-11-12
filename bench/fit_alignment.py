@@ -269,7 +269,7 @@ def make_case(
     # roll on the detector and every pose difference as per-view corrections: a fit
     # started there must stay.
     if geometry == "cone":
-        beam = tj.ConeBeam(192, 288, detector_roll_deg=-roll)
+        beam = tj.ConeBeam(192, 288, detector_roll_deg=roll)
         exact = tj.ConeGeometry(grid, true_detector, angles, beam)
     else:
         base = (

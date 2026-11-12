@@ -58,10 +58,11 @@ def _reference_frames(scan, row_offset, col_offset, rows, cols, factor):
     for part in parts:
         beam, detector = part.beam, part.detector
         # Independent Euler matrices, not ConeBeam.detector_frame or window helpers.
+        # Positive roll turns u towards v (+z): the opposite of a right-handed turn about y.
         rotation = (
             Rotation.from_euler("z", beam.detector_yaw_deg, degrees=True).as_matrix()
             @ Rotation.from_euler("x", beam.detector_pitch_deg, degrees=True).as_matrix()
-            @ Rotation.from_euler("y", beam.detector_roll_deg, degrees=True).as_matrix()
+            @ Rotation.from_euler("y", -beam.detector_roll_deg, degrees=True).as_matrix()
         )
         u = rotation[:, 0] * detector.du
         v = rotation[:, 2] * detector.dv

@@ -69,7 +69,13 @@ width that covers the defect. A faint offset on a steep gradient can remain.
 In Python these are steps of `tomojax.corrections` (`BeamHardening`,
 `Stripes`, `Zingers`) passed to `tj.load_frames(path).corrected(...)`.
 `tomojax import --axis-offset` and TOML keys `detector_roll_deg`,
-`detector_pitch_deg`, `detector_yaw_deg` take values the scanner reports. A TIFF import
+`detector_pitch_deg`, `detector_yaw_deg` set the detector's orientation. They are
+right-handed rotations about the detector's own axes, the normal (pointing back
+towards the source), u and v, in that order: positive roll turns u towards v,
+positive pitch tilts the +v edge towards the source and positive yaw swings the +u
+edge away from it. Scanners do not report these. Nikon's `ObjectRoll` and
+`ObjectTilt` describe the rotation axis and are read by the loader, not typed into
+these keys. A TIFF import
 records no grid: cone datasets without one reconstruct one voxel per detector
 pixel at the axis, the pixel size divided by the magnification
 `source_to_detector / source_to_axis`, and `tomojax recon --grid NX NY NZ`

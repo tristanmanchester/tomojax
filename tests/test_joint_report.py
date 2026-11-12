@@ -1,10 +1,9 @@
 """The facts tj.align reports and the views it flags, on cases built by hand."""
 
 import numpy as np
-
-# check-public-imports: allow-private
 from scipy.spatial.transform import Rotation
 
+# check-public-imports: allow-private
 from tomojax.alignment._joint._report import axial, build, isolated_views, unusual_views
 
 

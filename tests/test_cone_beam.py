@@ -675,3 +675,69 @@ def test_nikon_images_resized_from_the_listed_panel_are_rejected(tmp_path: Path)
     )
     with pytest.raises(ValueError, match="cropped or resized"):
         tj.load_frames(tmp_path / "part.xtekct", darks=0)
+
+
+def test_a_saved_cone_beam_round_trips_and_an_old_rolled_one_is_refused():
+    # check-public-imports: allow-private
+    from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
+    from tomojax.geometry import ConeBeam
+
+    beam = ConeBeam(40.0, 60.0, detector_roll_deg=1.5, detector_pitch_deg=-0.5)
+    assert ConeBeam.from_dict(beam.to_dict()) == beam
+    old = {k: v for k, v in beam.to_dict().items() if k != ROLL_CONVENTION_KEY}
+    with pytest.raises(ValueError, match=r"TomoJAX 0\.3 or earlier.*detector_roll_deg=-1\.5"):
+        ConeBeam.from_dict(old)
+    # Without a roll the two conventions agree, so an old file loads as it was.
+    unrolled = {**old, "detector_roll_deg": 0.0}
+    assert ConeBeam.from_dict(unrolled) == ConeBeam(40.0, 60.0, detector_pitch_deg=-0.5)
+
+
+def test_a_rolled_cone_scan_saves_and_loads_to_the_same_detector_frame(tmp_path):
+    import h5py
+
+    import tomojax as tj
+
+    # check-public-imports: allow-private
+    from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
+
+    path = tmp_path / "rolled.nxs"
+    grid, detector = tj.Grid(3, 3, 2, 0.8, 1.1, 0.9), tj.Detector(3, 2, 0.9, 1.0)
+    beam = tj.ConeBeam(40, 60, detector_roll_deg=2.0)
+    geometry = tj.ConeGeometry(grid, detector, [0.0, 90.0], beam)
+    tj.save(path, tj.Scan(np.ones((2, 2, 3), np.float32), geometry))
+    loaded = tj.load(path).geometry
+    pairs = zip(loaded.beam.detector_frame(detector), beam.detector_frame(detector), strict=True)
+    for got, want in pairs:
+        np.testing.assert_allclose(got, want, atol=1e-12)
+
+    # The same file as TomoJAX 0.3 wrote it: no convention marker.
+    def strip(name, obj):
+        for key, value in list(obj.attrs.items()):
+            if isinstance(value, str | bytes) and ROLL_CONVENTION_KEY in str(value):
+                obj.attrs[key] = _without_marker(value)
+        if isinstance(obj, h5py.Dataset) and obj.dtype.kind in "OS":
+            text = obj[()]
+            if ROLL_CONVENTION_KEY in str(text):
+                del handle[name]
+                handle[name] = _without_marker(text)
+
+    with h5py.File(path, "a") as handle:
+        handle.visititems(strip)
+    with pytest.raises(ValueError, match="TomoJAX 0.3 or earlier"):
+        tj.load(path)
+
+
+def _without_marker(text):
+    # check-public-imports: allow-private
+    from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
+
+    text = text.decode() if isinstance(text, bytes) else str(text)
+
+    def drop(value):
+        if isinstance(value, dict):
+            return {k: drop(v) for k, v in value.items() if k != ROLL_CONVENTION_KEY}
+        if isinstance(value, list):
+            return [drop(v) for v in value]
+        return value
+
+    return json.dumps(drop(json.loads(text)))

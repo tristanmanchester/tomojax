@@ -5,7 +5,14 @@ import pytest
 
 # check-public-imports: allow-private
 from tomojax._data.geometry_meta import DetectorRollGeometry
-from tomojax.geometry import ConeBeam, ConeGeometry, Detector, Grid, LaminographyGeometry
+from tomojax.geometry import (
+    ConeBeam,
+    ConeGeometry,
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+)
 from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
 
 
@@ -46,3 +53,53 @@ def test_cone_inspection_retains_its_source_and_beam_detector_frame():
         expected /= np.linalg.norm(expected)
         np.testing.assert_array_equal(origin(u, v), beam.source())
         np.testing.assert_allclose(direction(u, v), expected, atol=1e-14)
+
+
+@pytest.mark.parametrize("roll", [-3.0, 0.0, 3.0])
+def test_parallel_and_cone_roll_the_detector_the_same_way(roll):
+    # Positive roll turns detector u towards v: a point above the axis (lab +z)
+    # projects to u = h sin(roll) (times the magnification in cone), so it lands
+    # on the +u side for positive roll in both geometries.
+    import tomojax as tj
+
+    grid, detector = Grid(33, 33, 33, 1.0, 1.0, 1.0), Detector(65, 65, 1.0, 1.0)
+    volume = np.zeros((33, 33, 33), np.float32)
+    volume[16 + 12, 16, 16] = 1.0  # (z, y, x): 12 voxels above the centre
+    parallel = DetectorRollGeometry(ParallelGeometry(grid, detector, [0.0]), roll)
+    cone = ConeGeometry(grid, detector, [0.0], ConeBeam(100.0, 150.0, detector_roll_deg=roll))
+    columns = np.arange(65) - 32
+    for geometry in (parallel, cone):
+        image = np.asarray(tj.project(geometry, volume))[0]
+        u = float(np.sum(image.sum(0) * columns) / image.sum())
+        if roll == 0:
+            assert abs(u) < 0.05
+        else:
+            assert np.sign(u) == np.sign(roll) and abs(u) > 0.3
+
+
+@pytest.mark.parametrize(
+    ("angle", "voxel", "axis"), [("pitch", (28, 16, 16), 0), ("yaw", (16, 16, 28), 1)]
+)
+def test_cone_pitch_and_yaw_move_the_detector_edges_as_documented(angle, voxel, axis):
+    # Pitch tilts the +v edge towards the source and yaw swings the +u edge away
+    # from it. A point above the axis (pitch) or beside it (yaw) projects to that
+    # edge, where the source-detector distance, and so the magnification, changes:
+    # nearer the source projects it less far out, further away more.
+    import tomojax as tj
+
+    grid, detector = Grid(33, 33, 33, 1.0, 1.0, 1.0), Detector(65, 65, 1.0, 1.0)
+    volume = np.zeros((33, 33, 33), np.float32)
+    volume[voxel] = 1.0  # (z, y, x): 12 voxels above or beside the centre
+    offset = np.arange(65) - 32
+
+    def outward(degrees):
+        beam = ConeBeam(100.0, 150.0, **{f"detector_{angle}_deg": degrees})
+        image = np.asarray(tj.project(ConeGeometry(grid, detector, [0.0], beam), volume))[0]
+        profile = image.sum(1 - axis)  # along v (rows) for pitch, along u for yaw
+        return float(np.sum(profile * offset) / profile.sum())
+
+    assert outward(0.0) > 15
+    # Foreshortening moves the point outwards for either sign; the documented
+    # direction is the part odd in the angle.
+    odd = outward(10.0) - outward(-10.0)
+    assert odd < -0.5 if angle == "pitch" else odd > 0.5

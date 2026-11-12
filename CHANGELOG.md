@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Cone detector roll sign
+
+`ConeBeam.detector_roll_deg` now follows the documented convention: positive
+roll turns detector u towards v, as for a parallel detector roll and as
+`tj.align` reports a fitted `roll`. Before, a cone roll of +r turned u away from
+v, so a calibration reported by `tj.align` had to be negated before it could be
+passed back to `ConeBeam`. Saved files now mark the convention; a file saved
+with a non-zero cone roll by TomoJAX 0.3 or earlier is refused with a message
+giving the negated value to pass with `geometry=`.
+
 ### Alignment consolidation
 
 `tj.align(scan, fit="translations", grid=None)` uses one joint Gauss–Newton/Schur

@@ -152,7 +152,7 @@ def test_cone_roll_calibration_rolls_the_beam_like_the_parallel_lattice(segmente
     assert "detector_roll_deg" not in patch
     beams = [e["cone_beam"] for e in patch["cone_segments"]] if segmented else [patch["cone_beam"]]
     for rolled in beams:
-        _, u_dir, _ = ConeBeam(**rolled).detector_frame(Detector(4, 4, 1.0, 1.0))
+        _, u_dir, _ = ConeBeam.from_dict(rolled).detector_frame(Detector(4, 4, 1.0, 1.0))
         # The parallel lattice puts u at (cos r, sin r) in lab (x, z).
         np.testing.assert_allclose(
             u_dir[[0, 2]],
