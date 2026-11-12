@@ -131,6 +131,9 @@ class Operators:
     detector pitches; ``lever`` native pixels per radian of rotation.
     """
 
+    # FP16 storage of the step's weights and columns; tests turn it off to check the calculus.
+    _half = True
+
     def __init__(
         self,
         grid,
@@ -403,14 +406,15 @@ class Operators:
             r = profiled_residual(raw[:, 0] - yb, wb)
             # The step stores the weights and columns in FP16; the score and
             # Gram matrix below use the same rounded values.
-            res, sw, _ = robust_batch(r, raw[:, 1:], wb, delta, half=True)
+            res, sw, _ = robust_batch(r, raw[:, 1:], wb, delta, half=self._half)
             # Only what a view's offset and ramp cannot explain informs the step.
             # The objective's projector (under the precision) applies to the
             # columns, then the robust factor: by the chain rule the score, Gram
             # matrix and image gradient are exactly the profiled objective's.
             s0, rho = self._split(sw, wb, valid)
             rounded = partial(jax.lax.reduce_precision, exponent_bits=5, mantissa_bits=10)
-            j = rounded(rho[:, None] * profile(raw[:, 1:] * s0[:, None], s0))
+            j = rho[:, None] * profile(raw[:, 1:] * s0[:, None], s0)
+            j = rounded(j) if self._half else j
             gx = self.back(gx, cf, self._transpose(res, s0, rho))
             dd = self.projection.diagonal(cf, sw, dd)
             valid_px = jnp.sum(wb > 0, dtype=jnp.int64)

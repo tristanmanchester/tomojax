@@ -126,26 +126,35 @@ def test_offsets_and_ramps_are_eliminated_without_touching_the_observations():
     np.testing.assert_allclose(reported, offsets, atol=0.01)
 
 
-def test_linearization_is_the_gradient_of_the_profiled_robust_objective():
+def _linearized(half):
+    """A small tilted scan's linearization, outliers in the loss tail, with FP16 or FP32 storage."""
     # Non-uniform precision makes the profile oblique; outliers put pixels in the
     # loss tail, where the robust weights differ from the precision.
     grid, detector = tj.Grid(6, 6, 4, 0.7, 0.7, 0.7), tj.Detector(8, 6, 0.7, 0.7)
     geometry = tj.LaminographyGeometry(grid, detector, np.arange(10) * 36.0, tilt_deg=20)
     rng = np.random.default_rng(12)
+    nominal = np.asarray(stack_view_poses(geometry, 10))
+    # Cubic sampling: linear interpolation's pose derivative has kinks at
+    # voxel boundaries that a finite difference straddles.
+    ops = Operators(grid, detector, nominal, lever=2, native=(0.7, 0.7), interpolation="cubic")
+    ops._half = half
+    x = jnp.asarray(rng.uniform(0.1, 0.3, ops.shape), jnp.float32)
+    c = jnp.asarray(rng.normal(0, 0.05, 10 * ops.dofs))
+    q = ops.pad_poses(c)
+    y = np.asarray(ops.project(ops.coefficients(ops.nominal, q, ops.valid), x))[:10]
+    y = y + rng.normal(0, 0.01, y.shape) + 0.3 * (rng.uniform(size=y.shape) < 0.1)
+    precision = ops.pad_precision(jnp.asarray(rng.uniform(0.5, 1.5, y.shape), jnp.float32))
+    y, delta = ops.pad_images(y), 0.05
+    out = ops.linearize(q, x, y, precision, delta)
+    return ops, x, c, y, precision, delta, out, rng
+
+
+def test_linearization_is_the_gradient_of_the_profiled_robust_objective():
+    # The chain rule alone: the step's weights and columns kept in FP32.
     # The JAX operators: this checks the objective's calculus, not CUDA column precision.
     with jax.enable_x64(True), jax.default_device(jax.devices("cpu")[0]):
-        nominal = np.asarray(stack_view_poses(geometry, 10))
-        # Cubic sampling: linear interpolation's pose derivative has kinks at
-        # voxel boundaries that a finite difference straddles.
-        ops = Operators(grid, detector, nominal, lever=2, native=(0.7, 0.7), interpolation="cubic")
-        x = jnp.asarray(rng.uniform(0.1, 0.3, ops.shape), jnp.float32)
-        c = jnp.asarray(rng.normal(0, 0.05, 10 * 5))
-        q = ops.pad_poses(c)
-        y = np.asarray(ops.project(ops.coefficients(ops.nominal, q, ops.valid), x))[:10]
-        y = y + rng.normal(0, 0.01, y.shape) + 0.3 * (rng.uniform(size=y.shape) < 0.1)
-        precision = ops.pad_precision(jnp.asarray(rng.uniform(0.5, 1.5, y.shape), jnp.float32))
-        y, delta = ops.pad_images(y), 0.05
-        gx, _, sw, _, score, _, _, _, residual = ops.linearize(q, x, y, precision, delta)
+        ops, x, c, y, precision, delta, out, rng = _linearized(half=False)
+        gx, _, _, _, score, _, _, _, residual = out
         tail = np.mean(np.abs(np.asarray(residual)[:10]) > delta)
         assert tail > 0.05
 
@@ -154,13 +163,39 @@ def test_linearization_is_the_gradient_of_the_profiled_robust_objective():
 
         dx = jnp.asarray(rng.normal(size=ops.shape), jnp.float32)
         dc = jnp.asarray(rng.normal(size=c.shape))
-        for direction, analytic, h in (
-            ((dx, 0 * dc), float(jnp.vdot(gx.astype(jnp.float64), dx)), 1e-3),
-            ((0 * dx, dc), float(jnp.vdot(score, dc)), 1e-3),
+
+        def step(direction):
+            # The step that moves the residuals by 1% of delta, measured along the direction.
+            # Larger steps meet the robust loss's curvature (about 3e-3 at 3%); smaller ones
+            # the FP32 projector's rounding.
+            probe = 1e-3
+            q = ops.pad_poses(c + probe * direction[1])
+            moved = ops.linearize(q, x + probe * direction[0], y, precision, delta)[-1]
+            rate = float(jnp.max(jnp.abs(moved[:10] - residual[:10]))) / probe
+            return 0.01 * delta / rate
+
+        for direction, analytic in (
+            ((dx, 0 * dc), float(jnp.vdot(gx.astype(jnp.float64), dx))),
+            ((0 * dx, dc), float(jnp.vdot(score, dc))),
         ):
+            h = step(direction)
             plus = objective(*(h * d for d in direction))
             minus = objective(*(-h * d for d in direction))
             assert (plus - minus) / (2 * h) == pytest.approx(analytic, rel=1e-3)
+
+
+def test_fp16_step_storage_stays_within_its_rounding_of_fp32():
+    # FP16 keeps 11 significant bits (4.9e-4 relative); sums over many rounded weights and
+    # columns stay within a few parts in a thousand of the FP32 step (measured 3e-4 to 8e-4).
+    # That the score and Gram matrix use the same stored columns is
+    # test_pose_normal_blocks_use_the_same_columns_as_the_schur_operator.
+    with jax.enable_x64(True), jax.default_device(jax.devices("cpu")[0]):
+        half = _linearized(half=True)[6]
+        full = _linearized(half=False)[6]
+    for k in (0, 4, 5):  # image gradient, pose score, pose Gram matrix
+        a, b = np.asarray(half[k], np.float64), np.asarray(full[k], np.float64)
+        assert np.linalg.norm(a - b) < 5e-3 * np.linalg.norm(b)
+        assert np.linalg.norm(a - b) > 0  # the step really is stored in FP16
 
 
 def test_initializer_does_not_capture_observations(monkeypatch):
