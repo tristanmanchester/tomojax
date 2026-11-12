@@ -34,7 +34,7 @@ class Budget:
 
 _CG_RTOL = 0.03
 _LM_MIN = 1e-8
-_POSE_TOL_PX = 0.003
+_POSE_TOL_PX = 0.01
 _MIN_OUTER = 4
 
 

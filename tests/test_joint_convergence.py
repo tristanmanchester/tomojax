@@ -65,7 +65,7 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     ("proposals", "expected_steps", "status", "forced_damping"),
     [
         ([1.0] * 8, 8, "budget_exhausted", None),
-        ([0.003] * 8, 8, "budget_exhausted", None),
+        ([0.01] * 8, 8, "budget_exhausted", None),
         ([0.001] * 8, 4, "converged", None),
         ([1.0, 1.0, 1.0, 0.001, 0.001, 1.0], 5, "converged", None),
         ([0.001, 0.001, 1.0, 0.001, 1.0, 0.001, 0.001, 1.0], 7, "converged", None),
