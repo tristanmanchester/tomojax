@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from bench.fit_alignment import density, line_integrals, make_case, scan_rays, score
+from bench.fit_alignment import (
+    density,
+    line_integrals,
+    make_case,
+    scan_rays,
+    score,
+    solid_line_integrals,
+    solid_phantom,
+)
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -236,6 +244,23 @@ def test_analytic_fixture_integrates_density_independently_of_a_voxel_projector(
     direction /= np.linalg.norm(direction)
     expected = quad(lambda t: float(density(origin + t * direction)[0]), -80, 80, epsabs=1e-10)[0]
     np.testing.assert_allclose(line_integrals(origin, direction), expected, atol=1e-10)
+
+
+def test_solid_fixture_integrates_ellipsoid_chords_independently():
+    # Riemann sum of each ellipsoid's inside test along a ray through one centre.
+    centres, shape, densities = solid_phantom()
+    origin = centres[:1] + np.array([[0.3, -0.2, 0.1]])
+    direction = np.array([[0.4, 0.8, 0.2]])
+    direction /= np.linalg.norm(direction)
+    t = np.arange(-80, 80, 1e-4)
+    points = origin + t[:, None] * direction
+    inside = [
+        value * (np.einsum("ni,ij,nj->n", points - c, m, points - c) <= 1)
+        for c, m, value in zip(centres, shape, densities, strict=True)
+    ]
+    expected = np.sum(inside) * 1e-4
+    assert expected > 0.05
+    np.testing.assert_allclose(solid_line_integrals(origin, direction), expected, atol=2e-5)
 
 
 def test_detector_space_score_counts_centre_and_roll_before_a_rigid_gauge():

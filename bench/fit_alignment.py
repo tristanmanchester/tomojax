@@ -65,6 +65,32 @@ def line_integrals(origins: np.ndarray, directions: np.ndarray) -> np.ndarray:
     return output
 
 
+def solid_phantom() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return centres, shape matrices and densities of sharp-edged uniform ellipsoids.
+
+    A point p lies inside ellipsoid k when (p - c_k)' M_k (p - c_k) <= 1.
+    """
+    rng = np.random.default_rng(4417)
+    centres = rng.uniform(-11, 11, (10, 3))
+    radii = rng.uniform(2.0, 4.5, (10, 3))
+    orientation = Rotation.random(10, random_state=rng).as_matrix()
+    shape = np.einsum("nij,nj,nkj->nik", orientation, radii**-2, orientation)
+    return centres, shape, rng.uniform(0.02, 0.06, 10)
+
+
+def solid_line_integrals(origins: np.ndarray, directions: np.ndarray) -> np.ndarray:
+    """Exact chord lengths times density through the solid phantom along unit-direction rays."""
+    centres, shape, densities = solid_phantom()
+    output = np.zeros(origins.shape[:-1], np.float64)
+    for centre, matrix, value in zip(centres, shape, densities, strict=True):
+        offset = origins - centre
+        a = np.einsum("...i,ij,...j->...", directions, matrix, directions)
+        b = np.einsum("...i,ij,...j->...", directions, matrix, offset)
+        c = np.einsum("...i,ij,...j->...", offset, matrix, offset) - 1
+        output += value * 2 * np.sqrt(np.maximum(b * b - a * c, 0)) / a
+    return output
+
+
 @dataclass(frozen=True)
 class Rays:
     """Object-frame detector centre, pixel steps and beam direction or source."""
@@ -93,8 +119,9 @@ class Rays:
             axis=-1,
         )
 
-    def render(self, size: int) -> np.ndarray:
+    def render(self, size: int, *, solid: bool = False) -> np.ndarray:
         """Render pixel-centre line integrals without a voxel projector."""
+        integrate = solid_line_integrals if solid else line_integrals
         u, v = np.meshgrid(np.arange(size) - (size - 1) / 2, np.arange(size) - (size - 1) / 2)
         output = []
         for centre, us, vs, beam in zip(self.centre, self.u, self.v, self.beam, strict=True):
@@ -105,7 +132,7 @@ class Rays:
                 origins = np.broadcast_to(beam, origins.shape)
             else:
                 directions = np.broadcast_to(beam, origins.shape)
-            output.append(line_integrals(origins, directions))
+            output.append(integrate(origins, directions))
         return np.asarray(output, np.float32)
 
 
@@ -140,11 +167,54 @@ def scan_rays(scan: tj.Scan) -> Rays:
     )
 
 
+def _drift(views: int, seed: int | None) -> np.ndarray:
+    """Per-view (x, y, z) object shifts in 48-pixel units: drift with steps.
+
+    Without a seed, the fixed development motion; with one, random phases and
+    a random step per axis.
+    """
+    t = np.linspace(0, 1, views)
+    if seed is None:
+        return np.stack(
+            [
+                0.8 * np.sin(2 * np.pi * t) + 0.7 * (t > 0.41) - 0.4 * (t > 0.73),
+                0.35 * np.sin(3 * np.pi * t),
+                0.5 * np.cos(2 * np.pi * t),
+            ],
+            axis=-1,
+        )
+    rng = np.random.default_rng(seed)
+    phases = rng.uniform(0, 2 * np.pi, (3, 2))
+    return np.stack(
+        [
+            0.6 * np.sin(2 * np.pi * t + phases[k, 0])
+            + 0.3 * np.sin(4 * np.pi * t + phases[k, 1])
+            + rng.choice([-1, 1]) * 0.5 * (t > rng.uniform(0.2, 0.8))
+            for k in range(3)
+        ],
+        axis=-1,
+    )
+
+
 def make_case(
-    case: str, *, geometry: str = "parallel", size: int = 48, views: int = 60, grid_size: int = 24
+    case: str,
+    *,
+    geometry: str = "parallel",
+    size: int = 48,
+    views: int = 60,
+    grid_size: int = 24,
+    solid: bool = False,
+    seed: int | None = None,
+    aspect: float = 1.0,
 ) -> tuple[tj.Scan, Rays, tuple[str, ...], dict[str, object]]:
-    """Return observations, separate truth, and the parameter names matching the error."""
-    grid = tj.Grid(grid_size, grid_size, grid_size, *([48 / grid_size] * 3))
+    """Return observations, separate truth, and the parameter names matching the error.
+
+    ``solid`` renders sharp-edged uniform ellipsoids instead of smooth Gaussians;
+    ``seed`` draws new motion and nuisance instead of the fixed development
+    motion; ``aspect`` stretches the voxels along z.
+    """
+    pitch_xy = 48 / grid_size
+    grid = tj.Grid(grid_size, grid_size, grid_size, pitch_xy, pitch_xy, pitch_xy * aspect)
     pitch = (72 if geometry == "cone" else 48) / size
     detector = tj.Detector(size, size, pitch, pitch)
     angles = np.linspace(0, 360, views, endpoint=False)
@@ -164,19 +234,11 @@ def make_case(
     centre = (2 * pitch, -pitch if geometry == "cone" else 0) if case == "centre" else (0, 0)
     true_detector = tj.Detector(size, size, pitch, pitch, centre)
     if case in {"translations", "background", "setup"}:
-        t = np.linspace(0, 1, views)
-        shifts = np.stack(
-            [
-                0.8 * np.sin(2 * np.pi * t) + 0.7 * (t > 0.41) - 0.4 * (t > 0.73),
-                0.35 * np.sin(3 * np.pi * t),
-                0.5 * np.cos(2 * np.pi * t),
-            ],
-            axis=-1,
-        )
+        shifts = _drift(views, seed)
         shifts[:, 1] *= geometry == "cone"
         poses[:, :3, 3] = (shifts - shifts.mean(0)) * 48 / size
     if case == "rotations":
-        rng = np.random.default_rng(618)
+        rng = np.random.default_rng(618 if seed is None else seed + 1)
         perturbations = rng.normal(0, 0.37, (views, 3))
         perturbations -= perturbations.mean(0)
         poses[:, :3, :3] = (
@@ -194,12 +256,12 @@ def make_case(
         "rotations": ("translations", "rotations"),
         "setup": ("translations", "tilt", "roll"),
     }[case]
-    projections = truth.render(size)
+    projections = truth.render(size, solid=solid)
     background = np.zeros((views, 2))
     if case == "background":
         # A per-view offset and row ramp (flux, flat drift) the line integrals do not
         # describe, independent from view to view.
-        rng = np.random.default_rng(1729)
+        rng = np.random.default_rng(1729 if seed is None else seed + 2)
         background = rng.normal(0, 1, (views, 2)) * [0.15, 0.1] * projections.std()
         rows = np.linspace(-1, 1, size)[None, :, None]
         projections = projections + background[:, :1, None] + background[:, 1:, None] * rows
