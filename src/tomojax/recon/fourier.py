@@ -80,7 +80,7 @@ def fourier_reconstruct(
     with uniform or nonuniform spacing. Redundant half-turn directions are
     averaged in physical Fourier coordinates after detector phase/orientation.
     Per-view translations are honored in either detector or object coordinates.
-    A detector roll (DetectorRollGeometry) is resampled bilinearly onto the
+    A parallel detector roll (``detector_roll_deg``) is resampled bilinearly onto the
     unrolled detector lattice. Rotational pose corrections and tilted axes are
     not supported.
     Detector offsets, anisotropic voxels, shifted/cropped grids and fractional

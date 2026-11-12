@@ -515,11 +515,7 @@ def _with_corrections(geometry: ConeGeometry, poses: np.ndarray) -> ScanGeometry
 
 def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]:
     """Geometry type, metadata and per-view poses of ``geometry``, and its base geometry."""
-    from tomojax._data.geometry_meta import (
-        AugmentedGeometry,
-        DetectorRollGeometry,
-        detector_poses,
-    )
+    from tomojax._data.geometry_meta import AugmentedGeometry, detector_poses
     from tomojax.geometry import ConeSegments
 
     if isinstance(geometry, ConeSegments):
@@ -534,9 +530,6 @@ def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]
             else (detector_poses(geometry), "detector")
         )
         return kind, meta, poses, base
-    if isinstance(geometry, DetectorRollGeometry):
-        kind, meta, poses, base = describe(geometry.base)
-        return kind, {**meta, "detector_roll_deg": float(geometry.detector_roll_deg)}, poses, base
     meta: dict[str, object] = {}
     if isinstance(geometry, ConeGeometry):
         kind, meta = "cone", geometry.geometry_metadata()
@@ -550,6 +543,8 @@ def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]
         kind = "parallel"
     else:
         raise TypeError(f"cannot describe a {type(geometry).__name__} geometry")
+    if not isinstance(geometry, ConeGeometry) and geometry.detector_roll_deg:
+        meta["detector_roll_deg"] = float(geometry.detector_roll_deg)
     return kind, meta, None, geometry
 
 
@@ -639,12 +634,9 @@ def rebuild(
     *,
     grid: Grid | None = None,
     detector: Callable[[Detector], Detector] | None = None,
-    _rolled: bool = False,
 ) -> ScanGeometry:
     """``geometry`` with a new grid and/or each detector mapped by ``detector``, wrappers kept."""
-    from tomojax._data.geometry_meta import DetectorRollGeometry
     from tomojax.geometry import ConeSegments
-    from tomojax.geometry.api import is_cone_beam
 
     if isinstance(geometry, ConeSegments):
         segments = (rebuild(s, grid=grid, detector=detector) for s in geometry.segments)
@@ -653,14 +645,7 @@ def rebuild(
         raise TypeError(f"cannot rebuild a {type(geometry).__name__} geometry")
     inner = getattr(geometry, "base", None)
     if inner is not None:
-        # The outermost parallel roll owns the detector lattice (an inner roll is
-        # replaced), so a window moves the centre along its rolled pixel axes.
-        if isinstance(geometry, DetectorRollGeometry) and detector is not None and not _rolled:
-            _rolled = True
-            if not is_cone_beam(inner):
-                detector = _rolled_window(detector, geometry.detector_roll_deg)
-        rebuilt = rebuild(inner, grid=grid, detector=detector, _rolled=_rolled)
-        return replace(geometry, base=rebuilt)
+        return replace(geometry, base=rebuild(inner, grid=grid, detector=detector))
     changes: dict[str, object] = {}
     if grid is not None:
         changes["grid"] = grid
@@ -669,25 +654,20 @@ def rebuild(
         if isinstance(geometry, ConeGeometry):
             mapped, beam = _windowed_cone_detector(geometry, mapped)
             changes["beam"] = beam
+        elif roll := getattr(geometry, "detector_roll_deg", 0.0):
+            mapped = _rolled_window(geometry.detector, mapped, roll)
         changes["detector"] = mapped
     return replace(geometry, **changes)
 
 
-def _rolled_window(
-    detector: Callable[[Detector], Detector], roll_deg: float
-) -> Callable[[Detector], Detector]:
-    """Map ``detector``, then rotate its centre shift from rolled pixel axes into x/z."""
+def _rolled_window(original: Detector, window: Detector, roll_deg: float) -> Detector:
+    """``window`` with its centre shift turned from rolled pixel axes into x/z."""
     angle = np.deg2rad(roll_deg)
     c, s = np.cos(angle), np.sin(angle)
-
-    def mapped(original: Detector) -> Detector:
-        window = detector(original)
-        du = window.center[0] - original.center[0]
-        dv = window.center[1] - original.center[1]
-        centre = (original.center[0] + c * du - s * dv, original.center[1] + s * du + c * dv)
-        return replace(window, center=(float(centre[0]), float(centre[1])))
-
-    return mapped
+    du = window.center[0] - original.center[0]
+    dv = window.center[1] - original.center[1]
+    centre = (original.center[0] + c * du - s * dv, original.center[1] + s * du + c * dv)
+    return replace(window, center=(float(centre[0]), float(centre[1])))
 
 
 def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[Detector, ConeBeam]:

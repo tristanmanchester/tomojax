@@ -85,11 +85,17 @@ class tomojax.LaminographyGeometry(
         angles: 'Sequence[float]',
         tilt_deg: 'float' = 30.0,
         tilt_about: 'str' = 'x',
+        detector_roll_deg: 'float' = 0.0,
     ) -> None
     .axis_unit_lab
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
-class tomojax.ParallelGeometry(grid: 'Grid', detector: 'Detector', angles: 'Sequence[float]') -> None
+class tomojax.ParallelGeometry(
+        grid: 'Grid',
+        detector: 'Detector',
+        angles: 'Sequence[float]',
+        detector_roll_deg: 'float' = 0.0,
+    ) -> None
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
 class tomojax.Projector(
@@ -279,11 +285,17 @@ class tomojax.geometry.LaminographyGeometry(
         angles: 'Sequence[float]',
         tilt_deg: 'float' = 30.0,
         tilt_about: 'str' = 'x',
+        detector_roll_deg: 'float' = 0.0,
     ) -> None
     .axis_unit_lab
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
-class tomojax.geometry.ParallelGeometry(grid: 'Grid', detector: 'Detector', angles: 'Sequence[float]') -> None
+class tomojax.geometry.ParallelGeometry(
+        grid: 'Grid',
+        detector: 'Detector',
+        angles: 'Sequence[float]',
+        detector_roll_deg: 'float' = 0.0,
+    ) -> None
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
 class tomojax.geometry.RotationAxisGeometry(
@@ -291,6 +303,7 @@ class tomojax.geometry.RotationAxisGeometry(
         detector: 'Detector',
         angles: 'Sequence[float]',
         axis_unit_lab: 'Sequence[float]',
+        detector_roll_deg: 'float' = 0.0,
     ) -> None
     .pose_for_view(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'

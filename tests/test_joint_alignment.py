@@ -297,18 +297,16 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
     from scipy.spatial.transform import Rotation
 
     from tomojax import _smooth_alignment
-    from tomojax._data.geometry_meta import (  # check-public-imports: allow-private
-        AugmentedGeometry,
-        DetectorRollGeometry,
-    )
+
+    # check-public-imports: allow-private
+    from tomojax._data.geometry_meta import AugmentedGeometry
 
     grid, detector, _, angles = _laminography(views=5)
-    geometry = (
-        tj.ParallelGeometry(grid, detector, angles)
+    calibrated = (
+        tj.ParallelGeometry(grid, detector, angles, detector_roll_deg=0.3)
         if tilt == 0
-        else tj.LaminographyGeometry(grid, detector, angles, tilt_deg=tilt)
+        else tj.LaminographyGeometry(grid, detector, angles, tilt_deg=tilt, detector_roll_deg=0.3)
     )
-    calibrated = DetectorRollGeometry(geometry, 0.3)
     rng = np.random.default_rng(123)
     inner, outer, increment = (
         rng.normal(size=(len(angles), 6)) * [0.04, 0.03, 0.02, 0.3, 0.2, 0.1] for _ in range(3)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+import math
 import operator
 from typing import Any, Protocol, TypedDict
 
@@ -305,18 +306,25 @@ class Detector:
 def _parallel_detector_rays(
     grid: Grid,
     detector: Detector,
+    detector_roll_deg: float = 0.0,
 ) -> RayPair:
-    """Return the standard detector-plane ray model used by parallel-beam setups."""
+    """Return the standard detector-plane ray model used by parallel-beam setups.
+
+    The pixel lattice turns by ``detector_roll_deg`` about the detector centre,
+    from u towards v.
+    """
     nu, nv = int(detector.nu), int(detector.nv)
     du, dv = float(detector.du), float(detector.dv)
     cx, cz = float(detector.center[0]), float(detector.center[1])
+    angle = math.radians(float(detector_roll_deg))
+    c, s = math.cos(angle), math.sin(angle)
 
     y0 = grid_volume_origin(grid)[1]
 
     def origin_fn(u: int, v: int) -> Vec3:
-        x = (u - (nu / 2.0 - 0.5)) * du + cx
-        z = (v - (nv / 2.0 - 0.5)) * dv + cz
-        return float(x), float(y0), float(z)
+        x = (u - (nu / 2.0 - 0.5)) * du
+        z = (v - (nv / 2.0 - 0.5)) * dv
+        return float(cx + c * x - s * z), float(y0), float(cz + s * x + c * z)
 
     def dir_fn(_u: int, _v: int) -> Vec3:
         return (0.0, 1.0, 0.0)

@@ -5,8 +5,14 @@ from dataclasses import replace
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from tomojax._data.geometry_meta import DetectorRollGeometry, nominal_geometry
-from tomojax.geometry import ConeGeometry, ConeSegments, RotationAxisGeometry
+from tomojax._data.geometry_meta import nominal_geometry
+from tomojax.geometry import (
+    ConeGeometry,
+    ConeSegments,
+    LaminographyGeometry,
+    ParallelGeometry,
+    RotationAxisGeometry,
+)
 
 
 def _calibrated_geometry(geometry, corrections, native):
@@ -17,12 +23,6 @@ def _calibrated_geometry(geometry, corrections, native):
                 _calibrated_geometry(part, corrections, native) for part in geometry.segments
             ),
         )
-    roll = 0.0
-    if isinstance(geometry, DetectorRollGeometry):
-        # The outer wrapper owns the effective detector roll, as in describe().
-        roll = float(geometry.detector_roll_deg)
-        while isinstance(geometry, DetectorRollGeometry):
-            geometry = geometry.base
     cone = isinstance(geometry, ConeGeometry)
     centre = np.atleast_1d(corrections.get("centre", (0.0, 0.0) if cone else 0.0))
     shift = (float(centre[0]) * native[0], float(centre[1]) * native[1] if cone else 0.0)
@@ -34,17 +34,14 @@ def _calibrated_geometry(geometry, corrections, native):
         ),
     )
     geometry = replace(geometry, detector=detector)
+    roll = float(corrections.get("roll", 0.0))
     if cone:
+        beam = geometry.beam
         geometry = replace(
-            geometry,
-            beam=replace(
-                geometry.beam,
-                detector_roll_deg=geometry.beam.detector_roll_deg
-                + float(corrections.get("roll", 0.0)),
-            ),
+            geometry, beam=replace(beam, detector_roll_deg=beam.detector_roll_deg + roll)
         )
     else:
-        roll += float(corrections.get("roll", 0.0))
+        geometry = replace(geometry, detector_roll_deg=geometry.detector_roll_deg + roll)
     tilt = float(corrections.get("tilt", 0.0))
     if tilt:
         # A lab tilt of an arbitrary axis changes its minimum-alignment frame
@@ -54,17 +51,28 @@ def _calibrated_geometry(geometry, corrections, native):
         before = np.asarray(zero.pose_for_view(0), np.float64)[:3, :3]
         tilted = Rotation.from_rotvec([-np.deg2rad(tilt), 0, 0]).as_matrix() @ before
         axis = tuple(float(v) for v in tilted[:, 2])
-        updated = (
-            replace(geometry, axis_unit=axis)
-            if cone
-            else RotationAxisGeometry(geometry.grid, detector, geometry.angles, axis)
-        )
+        updated = _about_axis(geometry, axis)
         zero = replace(updated, angles=[0.0])
         after = np.asarray(zero.pose_for_view(0), np.float64)[:3, :3]
         phase = after.T @ tilted
         phase_deg = np.rad2deg(np.arctan2(phase[1, 0], phase[0, 0]))
         geometry = replace(updated, angles=np.asarray(geometry.angles) + phase_deg)
-    return DetectorRollGeometry(geometry, roll) if not cone and roll else geometry
+    return geometry
+
+
+def _about_axis(geometry, axis):
+    """``geometry`` rotating about the lab ``axis``, as the public class that holds it."""
+    if isinstance(geometry, ConeGeometry):
+        return replace(geometry, axis_unit=axis)
+    grid, detector, angles = geometry.grid, geometry.detector, geometry.angles
+    roll = geometry.detector_roll_deg
+    if isinstance(geometry, ParallelGeometry) or (
+        isinstance(geometry, LaminographyGeometry) and geometry.tilt_about == "x"
+    ):
+        # A tilt about x keeps the axis in the y-z plane: laminography with that tilt.
+        tilt = float(np.rad2deg(np.arctan2(axis[1], axis[2])))
+        return LaminographyGeometry(grid, detector, angles, tilt, detector_roll_deg=roll)
+    return RotationAxisGeometry(grid, detector, angles, axis, detector_roll_deg=roll)
 
 
 def _calibration_values(geometry, names):
@@ -76,10 +84,6 @@ def _calibration_values(geometry, names):
             else [v[name] for v in values]
             for name in names
         }
-    roll = 0.0
-    if isinstance(geometry, DetectorRollGeometry):
-        roll = float(geometry.detector_roll_deg)
-        geometry = geometry.base
     cone = isinstance(geometry, ConeGeometry)
     axis = np.asarray(geometry.pose_for_view(0), np.float64)[:3, 2]
     values = {
@@ -87,7 +91,7 @@ def _calibration_values(geometry, names):
         if cone
         else float(geometry.detector.center[0]),
         "tilt": float(np.rad2deg(np.arctan2(axis[1], axis[2]))),
-        "roll": float(geometry.beam.detector_roll_deg) if cone else roll,
+        "roll": float(geometry.beam.detector_roll_deg if cone else geometry.detector_roll_deg),
     }
     return {name: values[name] for name in names}
 

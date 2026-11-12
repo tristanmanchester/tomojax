@@ -9,7 +9,7 @@ from scipy.spatial.transform import Rotation
 from tomojax import Scan
 
 # check-public-imports: allow-private
-from tomojax._data.geometry_meta import DetectorRollGeometry
+from tomojax._data.geometry_meta import nominal_geometry
 from tomojax._scan import describe, record_of, scan_from_record
 
 # check-public-imports: allow-private
@@ -54,13 +54,12 @@ def test_calibration_and_local_poses_replay_the_fitted_physical_geometry(kind):
             )
     else:
         geometry = (
-            ParallelGeometry(grid, detector, angles)
+            ParallelGeometry(grid, detector, angles, detector_roll_deg=3.2)
             if kind == "parallel"
-            else LaminographyGeometry(grid, detector, angles, tilt_deg=31)
+            else LaminographyGeometry(grid, detector, angles, tilt_deg=31, detector_roll_deg=3.2)
             if kind == "lamino"
-            else RotationAxisGeometry(grid, detector, angles, axis)
+            else RotationAxisGeometry(grid, detector, angles, axis, detector_roll_deg=3.2)
         )
-        geometry = DetectorRollGeometry(geometry, 3.2)
     rng = np.random.default_rng(1152)
     previous = rng.normal(size=(n, 6)) * [0.002, 0.001, 0.003, 0.03, 0.04, 0.02]
     fitted = rng.normal(size=(n, 6)) * [0.001, 0.002, 0.001, 0.02, 0.03, 0.01]
@@ -89,6 +88,9 @@ def test_calibration_and_local_poses_replay_the_fitted_physical_geometry(kind):
             assert new_beam.detector_roll_deg == old_beam.detector_roll_deg + 0.75
     else:
         assert describe(corrected.geometry)[1]["detector_roll_deg"] == 3.95
+        # A tilted parallel or laminography axis stays in the y-z plane.
+        tilted = RotationAxisGeometry if kind == "axis" else LaminographyGeometry
+        assert type(nominal_geometry(corrected.geometry)) is tilted
         assert calibration["centre"] == pytest.approx(expected_centre[0])
         assert calibration["roll"] == 3.95
     replay = scan_from_record(record_of(corrected), poses=True)

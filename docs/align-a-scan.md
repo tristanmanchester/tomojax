@@ -161,7 +161,15 @@ translation fit.
    result. An extra parameter should remove a visible artefact; if it does not, use the simpler fit.
 2. Inspect the estimated values. `result.info["calibration"]` holds the fitted global values under
    the names used in `fit=`, and `result.poses` holds the per-view correction table. The returned
-   `result.scan` carries both, so use it for reconstruction and saving.
+   `result.scan` carries both, so use it for reconstruction and saving. Each global value is the
+   final setting, not a change, and passes straight to a constructor in another script:
+
+   | Value | Parallel or laminography data | Cone data |
+   | --- | --- | --- |
+   | `centre` | `Detector(..., center=(centre, v))` | `Detector(..., center=centre)` |
+   | `roll` | `ParallelGeometry(..., detector_roll_deg=roll)`, or the same keyword on `LaminographyGeometry` | `ConeBeam(..., detector_roll_deg=roll)` |
+   | `tilt` | `LaminographyGeometry(..., tilt_deg=tilt)`: a tilted parallel scan is a laminography scan | `ConeGeometry(..., axis_unit=(0, sin(tilt), cos(tilt)))` |
+
 3. Check that the global values are physically plausible: a tilt correction of several degrees, or
    per-view rotations of more than a fraction of a degree, usually means the model is wrong rather
    than the instrument. A sharper image or a lower residual alone does not establish accurate

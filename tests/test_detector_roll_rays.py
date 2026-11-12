@@ -1,10 +1,10 @@
 """Ray inspection agrees with the physical detector lattice of fitted roll."""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-from tomojax._data.geometry_meta import DetectorRollGeometry
 from tomojax.geometry import (
     ConeBeam,
     ConeGeometry,
@@ -16,14 +16,12 @@ from tomojax.geometry import (
 from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
 
 
-@pytest.mark.parametrize("roll", [0.0, 0.75])
-@pytest.mark.parametrize("nested", [False, True])
-def test_parallel_ray_inspection_matches_the_projectors_rolled_detector_grid(roll, nested):
+@pytest.mark.parametrize("roll", [0.0, 0.75, -2.4])
+def test_parallel_ray_inspection_matches_the_projectors_rolled_detector_grid(roll):
     grid = Grid(24, 24, 24, 2, 2, 2, vol_origin=(-23, -19, -21))
     detector = Detector(48, 48, 1.3, 0.7, center=(2.2, -0.9))
     base = LaminographyGeometry(grid, detector, np.linspace(0, 360, 60), tilt_deg=25)
-    inner = DetectorRollGeometry(base, -2.4) if nested else base
-    geometry = DetectorRollGeometry(inner, roll)
+    geometry = replace(base, detector_roll_deg=roll)
     origin, direction = geometry.rays_for_view(17)
     points = np.array([origin(u, v) for v in range(48) for u in range(48)])
     lattice = detector_grid_from_geometry_inputs(detector, geometry)
@@ -42,9 +40,7 @@ def test_cone_inspection_retains_its_source_and_beam_detector_frame():
     grid = Grid(24, 24, 24, 2, 2, 2)
     detector = Detector(48, 48, 1.3, 0.7, center=(2.2, -0.9))
     beam = ConeBeam(192, 288, detector_roll_deg=-0.75, detector_pitch_deg=1, source_height=3)
-    base = ConeGeometry(grid, detector, np.linspace(0, 360, 60), beam)
-    # Parallel roll metadata must not move a cone source or rotate its beam frame again.
-    geometry = DetectorRollGeometry(base, 7.0)
+    geometry = ConeGeometry(grid, detector, np.linspace(0, 360, 60), beam)
     origin, direction = geometry.rays_for_view(17)
     centre, u_axis, v_axis = beam.detector_frame(detector)
     for u, v in ((0, 0), (24, 24), (47, 47)):
@@ -65,7 +61,7 @@ def test_parallel_and_cone_roll_the_detector_the_same_way(roll):
     grid, detector = Grid(33, 33, 33, 1.0, 1.0, 1.0), Detector(65, 65, 1.0, 1.0)
     volume = np.zeros((33, 33, 33), np.float32)
     volume[16 + 12, 16, 16] = 1.0  # (z, y, x): 12 voxels above the centre
-    parallel = DetectorRollGeometry(ParallelGeometry(grid, detector, [0.0]), roll)
+    parallel = ParallelGeometry(grid, detector, [0.0], detector_roll_deg=roll)
     cone = ConeGeometry(grid, detector, [0.0], ConeBeam(100.0, 150.0, detector_roll_deg=roll))
     columns = np.arange(65) - 32
     for geometry in (parallel, cone):
@@ -103,3 +99,23 @@ def test_cone_pitch_and_yaw_move_the_detector_edges_as_documented(angle, voxel, 
     # direction is the part odd in the angle.
     odd = outward(10.0) - outward(-10.0)
     assert odd < -0.5 if angle == "pitch" else odd > 0.5
+
+
+def test_a_rolled_parallel_scan_saves_its_roll_and_a_cone_one_keeps_it_in_the_beam():
+    import tomojax as tj
+
+    # check-public-imports: allow-private
+    from tomojax._scan import record_of, scan_from_record
+
+    grid, detector = Grid(4, 4, 3, 1.0, 1.0, 1.0), Detector(5, 3, 1.0, 1.0)
+    rolled = LaminographyGeometry(grid, detector, [0.0, 90.0], tilt_deg=20, detector_roll_deg=1.5)
+    record = record_of(tj.Scan(np.ones((2, 3, 5), np.float32), rolled))
+    loaded = scan_from_record(record, poses=False).geometry
+    assert type(loaded) is LaminographyGeometry
+    assert (loaded.tilt_deg, loaded.detector_roll_deg) == (20, 1.5)
+
+    cone = ConeGeometry(grid, detector, [0.0, 90.0], ConeBeam(40, 60))
+    record = record_of(tj.Scan(np.ones((2, 3, 5), np.float32), cone))
+    record.geometry_metadata["detector_roll_deg"] = 1.5
+    with pytest.raises(ValueError, match="belongs in cone_beam"):
+        scan_from_record(record, poses=False)

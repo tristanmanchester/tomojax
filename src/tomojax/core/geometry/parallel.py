@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class ParallelGeometry:
-    """Parallel-beam CT geometry with axis-aligned detector.
+    """Parallel-beam CT geometry.
 
     - World frame: detector lies in (x,z) plane; rays along +y.
     - ``angles`` are the view angles, in degrees. View ``i`` rotates the object
@@ -31,11 +31,14 @@ class ParallelGeometry:
         Detector dimensions, pitches and physical centre.
     angles : sequence of float
         View rotation angles in degrees, in acquisition order.
+    detector_roll_deg : float, optional
+        Roll about the detector normal, in degrees; positive turns u towards v.
     """
 
     grid: Grid
     detector: Detector
     angles: Sequence[float]
+    detector_roll_deg: float = 0.0
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose for one view.
@@ -73,4 +76,4 @@ class ParallelGeometry:
             Origin and unit-direction callbacks taking detector pixel indices (u, v).
         """
         del i
-        return _parallel_detector_rays(self.grid, self.detector)
+        return _parallel_detector_rays(self.grid, self.detector, self.detector_roll_deg)

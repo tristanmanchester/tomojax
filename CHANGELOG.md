@@ -12,6 +12,20 @@ passed back to `ConeBeam`. Saved files now mark the convention; a file saved
 with a non-zero cone roll by TomoJAX 0.3 or earlier is refused with a message
 giving the negated value to pass with `geometry=`.
 
+### Parallel detector roll on the geometry
+
+`ParallelGeometry`, `LaminographyGeometry` and `RotationAxisGeometry` take
+`detector_roll_deg`, with the same sign as `ConeBeam`. A roll fitted by
+`tj.align` on parallel or laminography data is now held there rather than in a
+private wrapper, and a fitted tilt of a parallel or laminography (`tilt_about="x"`)
+axis returns a `LaminographyGeometry` with the final tilt. Every value in
+`info["calibration"]` therefore passes straight to a public constructor. Saved
+files keep the same `detector_roll_deg` key and load as before; a cone file with
+that key at the top level, rather than in its `cone_beam`, is refused. `tomojax
+import` now applies `detector_roll_deg` to parallel and laminography stacks, and
+refuses `detector_pitch_deg` or `detector_yaw_deg` for them instead of ignoring
+them.
+
 ### Alignment consolidation
 
 `tj.align(scan, fit="translations", grid=None)` uses one joint Gauss–Newton/Schur

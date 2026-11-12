@@ -141,44 +141,6 @@ class AugmentedGeometry(_WrappedGeometry):
         return tuple(map(tuple, T))
 
 
-@dataclass
-class DetectorRollGeometry(_WrappedGeometry):
-    """Geometry wrapper that preserves calibrated parallel detector roll.
-
-    The roll is right-handed about the detector normal n = u x v, which points
-    back towards the source: positive roll turns u towards v, so a point above
-    the detector centre projects towards +u. ``ConeBeam.detector_roll_deg`` and
-    the roll ``tj.align`` reports are the same angle.
-    """
-
-    detector_roll_deg: float
-
-    def rays_for_view(self, i: int) -> RayPair:
-        """Inspect the rolled parallel lattice; cone frames remain owned by their beam."""
-        from tomojax.core.geometry.cone import is_cone_beam
-
-        origin, direction = self.base.rays_for_view(i)
-        if is_cone_beam(self.base):
-            return origin, direction
-        detector = self.detector
-        y = float(origin(0, 0)[1])
-        angle = np.deg2rad(self.detector_roll_deg)
-        c, s = np.cos(angle), np.sin(angle)
-
-        def rolled_origin(u: int, v: int) -> tuple[float, float, float]:
-            # Rebuild the lattice so an outer wrapper replaces an inner roll,
-            # matching detector_grid_from_geometry_inputs and saved metadata.
-            x = (u - (detector.nu - 1) / 2) * detector.du
-            z = (v - (detector.nv - 1) / 2) * detector.dv
-            return (
-                float(detector.center[0] + c * x - s * z),
-                y,
-                float(detector.center[1] + s * x + c * z),
-            )
-
-        return rolled_origin, direction
-
-
 def _se3_from_pose_params_np(pose_params: np.ndarray) -> np.ndarray:
     row = np.asarray(pose_params, dtype=np.float32)
     alpha, beta, phi, dx, dz, dy = row
@@ -297,7 +259,15 @@ def _base_geometry(
     angles: Sequence[float],
 ) -> ScanGeometry:
     gtype = normalize_geometry_type(meta.get("geometry_type"))
+    roll = float(meta.get("detector_roll_deg", 0.0))
     if gtype == "cone":
+        if roll:
+            # Only a private wrapper could write this; a cone roll lives in its beam.
+            raise ValueError(
+                "A cone scan's detector roll belongs in cone_beam; this file has a "
+                "top-level detector_roll_deg: pass geometry=... with "
+                "ConeBeam(detector_roll_deg=...) to tomojax.load_frames"
+            )
         beam_meta = meta.get("cone_beam")
         if not isinstance(beam_meta, dict):
             raise ValueError(
@@ -319,16 +289,11 @@ def _base_geometry(
         # canonical model: this has no laminographic missing cone and supports
         # the same axial inverses as a scan without redundant axis metadata.
         if axis == (0.0, 0.0, 1.0):
-            return ParallelGeometry(grid=grid, detector=detector, angles=angles)
-        return RotationAxisGeometry(
-            grid=grid,
-            detector=detector,
-            angles=angles,
-            axis_unit_lab=axis,
-        )
+            return ParallelGeometry(grid, detector, angles, detector_roll_deg=roll)
+        return RotationAxisGeometry(grid, detector, angles, axis, detector_roll_deg=roll)
 
     if gtype == "parallel":
-        return ParallelGeometry(grid=grid, detector=detector, angles=angles)
+        return ParallelGeometry(grid, detector, angles, detector_roll_deg=roll)
 
     if "tilt_deg" not in meta:
         raise ValueError(
@@ -338,28 +303,11 @@ def _base_geometry(
     tilt_deg = float(meta["tilt_deg"])
     # An explicit zero tilt also has the canonical axial poses.
     if tilt_deg == 0.0:
-        return ParallelGeometry(grid=grid, detector=detector, angles=angles)
+        return ParallelGeometry(grid, detector, angles, detector_roll_deg=roll)
     tilt_about = str(meta.get("tilt_about", "x"))
     return LaminographyGeometry(
-        grid=grid,
-        detector=detector,
-        angles=angles,
-        tilt_deg=tilt_deg,
-        tilt_about=tilt_about,
+        grid, detector, angles, tilt_deg, tilt_about, detector_roll_deg=roll
     )
-
-
-def _with_detector_roll_metadata(
-    geom: ScanGeometry,
-    meta: LoadedGeometryMeta,
-) -> ScanGeometry:
-    detector_roll = meta.get("detector_roll_deg")
-    if detector_roll is None:
-        return geom
-    roll = float(detector_roll)
-    if not np.isfinite(roll) or roll == 0.0:
-        return geom
-    return DetectorRollGeometry(base=geom, detector_roll_deg=roll)
 
 
 def _segments_from_meta(
@@ -458,10 +406,7 @@ def build_geometry_from_meta(
                 poses=poses,
             ),
         )
-    geom = _with_detector_roll_metadata(
-        _base_geometry(meta=meta, grid=grid, detector=detector, angles=angles),
-        meta,
-    )
+    geom = _base_geometry(meta=meta, grid=grid, detector=detector, angles=angles)
 
     saved = _saved_poses(meta, len(angles), default_frame="object") if poses else None
     if saved is not None:
@@ -504,9 +449,6 @@ def nominal_geometry(geometry: ScanGeometry) -> ScanGeometry:
         return replace(geometry, segments=segments)
     if isinstance(geometry, AugmentedGeometry):
         return nominal_geometry(geometry.base)
-    if isinstance(geometry, DetectorRollGeometry):
-        base = nominal_geometry(geometry.base)
-        return geometry if base is geometry.base else replace(geometry, base=base)
     return geometry
 
 
@@ -522,8 +464,6 @@ def detector_poses(geometry: ScanGeometry) -> np.ndarray | None:
             np.zeros((len(s.angles), 6), np.float32) if t is None else t
             for s, t in zip(geometry.segments, tables, strict=True)
         ])  # fmt: skip
-    if isinstance(geometry, DetectorRollGeometry):
-        return detector_poses(geometry.base)
     if not isinstance(geometry, AugmentedGeometry):
         return None
     params = np.asarray(geometry.align_params, np.float32)

@@ -33,7 +33,6 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 import tomojax as tj
-from tomojax._data.geometry_meta import DetectorRollGeometry  # check-public-imports: allow-private
 from tomojax.alignment._joint import _solver  # check-public-imports: allow-private
 from tomojax.geometry import grid_volume_origin
 
@@ -138,17 +137,20 @@ def _rebuilt(scan: tj.Scan, kind: str, tilt: float = 0.0) -> Callable[[dict[str,
         if name == "centre":
             centre = tuple(value) if isinstance(value, list | tuple) else (value, det.center[1])
             det = tj.Detector(det.nu, det.nv, det.du, det.dv, centre)
-        beam = tj.ConeBeam(192, 288, detector_roll_deg=value if name == "roll" else 0.0)
+        roll = value if name == "roll" else 0.0
         if kind == "cone":
+            beam = tj.ConeBeam(192, 288, detector_roll_deg=roll)
             geometry = tj.ConeGeometry(grid, det, angles, beam)
         elif name == "tilt" or tilt:
             geometry = tj.LaminographyGeometry(
-                grid, det, angles, tilt_deg=value if name == "tilt" else tilt
+                grid,
+                det,
+                angles,
+                tilt_deg=value if name == "tilt" else tilt,
+                detector_roll_deg=roll,
             )
         else:
-            geometry = tj.ParallelGeometry(grid, det, angles)
-        if name == "roll" and kind != "cone":
-            geometry = DetectorRollGeometry(geometry, value)
+            geometry = tj.ParallelGeometry(grid, det, angles, detector_roll_deg=roll)
         return tj.Scan(scan.projections, geometry)
 
     return rebuild

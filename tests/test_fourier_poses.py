@@ -56,9 +56,6 @@ def test_fourier_translation_poses_recover_analytic_gaussian(backend, nx, angle_
 
 @pytest.mark.parametrize("backend", ["numpy", pytest.param("cupy", marks=pytest.mark.gpu)])
 def test_fourier_resamples_a_rolled_parallel_detector(backend):
-    # check-public-imports: allow-private
-    from tomojax._data.geometry_meta import DetectorRollGeometry
-
     if backend == "cupy" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid = tj.Grid(32, 32, 9, 1.0, 1.0, 0.8)
@@ -78,7 +75,7 @@ def test_fourier_resamples_a_rolled_parallel_detector(backend):
         * sigma
         * np.exp(-0.5 * ((u - centre_u[:, None, None]) ** 2 + (v - 0.7) ** 2) / sigma**2)
     ).astype(np.float32)
-    geometry = DetectorRollGeometry(tj.ParallelGeometry(grid, detector, angles), 4.0)
+    geometry = tj.ParallelGeometry(grid, detector, angles, detector_roll_deg=4.0)
     result = tj.reconstruct(
         tj.Scan(data, geometry),
         "fourier",

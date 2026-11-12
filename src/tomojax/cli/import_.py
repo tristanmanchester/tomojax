@@ -102,6 +102,10 @@ def _geometry_metadata(
             tilt_deg=float(cast("float", settings["tilt_deg"])),
             tilt_about=str(settings.get("tilt_about", "x")),
         )
+    if geometry != "cone":
+        if settings.get("detector_pitch_deg") or settings.get("detector_yaw_deg"):
+            parser.error("detector_pitch_deg and detector_yaw_deg need --geometry cone")
+        metadata["detector_roll_deg"] = float(cast("float", settings.get("detector_roll_deg", 0.0)))
     if geometry == "cone":
         sod = cast("float | None", args.source_to_axis)
         sdd = cast("float | None", args.source_to_detector)

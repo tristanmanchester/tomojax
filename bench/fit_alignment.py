@@ -20,7 +20,6 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 import tomojax as tj
-from tomojax._data.geometry_meta import DetectorRollGeometry  # check-public-imports: allow-private
 from tomojax.geometry import grid_volume_origin
 from tomojax.geometry.api import is_cone_beam, view_frames
 
@@ -272,12 +271,13 @@ def make_case(
         beam = tj.ConeBeam(192, 288, detector_roll_deg=roll)
         exact = tj.ConeGeometry(grid, true_detector, angles, beam)
     else:
-        base = (
-            tj.LaminographyGeometry(grid, true_detector, angles, tilt_deg=tilt)
+        exact = (
+            tj.LaminographyGeometry(
+                grid, true_detector, angles, tilt_deg=tilt, detector_roll_deg=roll
+            )
             if geometry == "lamino"
-            else tj.ParallelGeometry(grid, true_detector, angles)
+            else tj.ParallelGeometry(grid, true_detector, angles, detector_roll_deg=roll)
         )
-        exact = DetectorRollGeometry(base, roll) if roll else base
     true_scan = tj.Scan(projections, exact, name=f"analytic {case}, true geometry")
     start = np.asarray([true_scan.geometry.pose_for_view(i) for i in range(views)])
     local = np.einsum("nji,njk->nik", start[:, :3, :3], poses[:, :3, :3])

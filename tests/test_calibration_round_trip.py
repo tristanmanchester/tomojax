@@ -3,10 +3,7 @@
 This is the property a user relies on when they copy a reported calibration into their own
 script or into another program. Each case fits one global value on an analytic scan with a
 known error, rebuilds the geometry from ``info["calibration"]`` through the public
-constructors, and compares projections of a random volume through both.
-
-Known gap: a reported roll on parallel or laminography data has no public constructor yet
-(the fit builds a private wrapper), so those two cells are not covered here. A tilted parallel
+constructors, and compares projections of a random volume through both. A tilted parallel
 axis is a laminography geometry with that tilt.
 """
 
@@ -49,10 +46,18 @@ def test_a_reported_centre_rebuilds_the_fitted_geometry(geometry):
     _same_projections(fitted, tj.Scan(scan.projections, rebuilt))
 
 
-def test_a_reported_cone_roll_rebuilds_the_fitted_geometry():
-    scan, fitted, roll = _fitted("roll", "cone", "roll")
-    beam = tj.ConeBeam(192, 288, detector_roll_deg=roll)
-    rebuilt = tj.ConeGeometry(scan.grid, scan.detector, scan.angles, beam)
+@pytest.mark.parametrize("geometry", ["parallel", "lamino", "cone"])
+def test_a_reported_roll_rebuilds_the_fitted_geometry(geometry):
+    scan, fitted, roll = _fitted("roll", geometry, "roll")
+    if geometry == "cone":
+        beam = tj.ConeBeam(192, 288, detector_roll_deg=roll)
+        rebuilt = tj.ConeGeometry(scan.grid, scan.detector, scan.angles, beam)
+    elif geometry == "lamino":
+        rebuilt = tj.LaminographyGeometry(
+            scan.grid, scan.detector, scan.angles, tilt_deg=25.0, detector_roll_deg=roll
+        )
+    else:
+        rebuilt = tj.ParallelGeometry(scan.grid, scan.detector, scan.angles, detector_roll_deg=roll)
     _same_projections(fitted, tj.Scan(scan.projections, rebuilt))
 
 

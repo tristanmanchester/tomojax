@@ -450,9 +450,6 @@ def test_cuda_fbp_partial_blocks_and_accumulation(mode, run, nz, first_row):
 
 @pytest.mark.parametrize("arc", ["half", "irregular"])
 def test_fbp_of_a_rolled_detector_matches_its_unrolled_equivalent(arc: str) -> None:
-    # check-public-imports: allow-private
-    from tomojax._data.geometry_meta import DetectorRollGeometry
-
     grid = Grid(32, 32, 8, 1.0, 1.0, 0.8)
     detector = Detector(56, 28, 1.0, 0.7, center=(-0.6, 0.3))
     angles = (
@@ -475,9 +472,7 @@ def test_fbp_of_a_rolled_detector_matches_its_unrolled_equivalent(arc: str) -> N
             * sigma
             * np.exp(-0.5 * ((u - centre_u[:, None, None]) ** 2 + (v - 0.7) ** 2) / sigma**2)
         )
-        geometry = ParallelGeometry(grid, detector, angles)
-        if roll_deg:
-            geometry = DetectorRollGeometry(geometry, roll_deg)
+        geometry = ParallelGeometry(grid, detector, angles, detector_roll_deg=roll_deg)
         scan = tj.Scan(data.astype(np.float32), geometry)
         volumes.append(np.asarray(tj.reconstruct(scan, "fbp").volume))
     scale = np.linalg.norm(volumes[0])

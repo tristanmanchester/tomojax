@@ -154,19 +154,15 @@ def test_pitched_detector_asymmetric_row_window_retains_lab_y(operation):
     np.testing.assert_allclose(view_frames(actual.geometry), reference, rtol=1e-7, atol=2e-6)
 
 
-@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("posed", [False, True])
 @pytest.mark.parametrize("operation", ["crop", "bin"])
-def test_rolled_parallel_windows_retain_physical_pixel_positions(nested, operation):
-    # check-public-imports: allow-private
-    from tomojax._data.geometry_meta import DetectorRollGeometry
-
+def test_rolled_parallel_windows_retain_physical_pixel_positions(posed, operation):
     grid = tj.Grid(8, 8, 8, 1, 1, 1)
     detector = tj.Detector(11, 9, 0.43, 0.57, (0.21, -0.19))
-    geometry = tj.ParallelGeometry(grid, detector, [0, 40, 90])
-    if nested:
-        geometry = DetectorRollGeometry(geometry, -3.0)
-    geometry = DetectorRollGeometry(geometry, 7.5)
+    geometry = tj.ParallelGeometry(grid, detector, [0, 40, 90], detector_roll_deg=7.5)
     scan = tj.Scan(np.zeros((3, 9, 11), np.float32), geometry)
+    if posed:
+        scan = scan.with_poses(np.full((3, 6), 0.01))
     origin, _ = scan.geometry.rays_for_view(1)
     before = np.array([[origin(u, v) for u in range(11)] for v in range(9)])
     if operation == "crop":

@@ -226,6 +226,17 @@ def test_import_requires_explicit_detector_center_model_and_lamino_tilt(tmp_path
     assert main(args) == 0
     assert load_dataset(output).geometry_inputs()["tilt_deg"] == 47
 
+    # The detector's roll reaches a parallel-family geometry; pitch and yaw are cone-only.
+    import tomojax as tj
+
+    config.write_text(config.read_text() + "detector_roll_deg = 1.25\n")
+    assert main([*args, "--force"]) == 0
+    assert tj.load(output).geometry.detector_roll_deg == 1.25
+    config.write_text(config.read_text() + "detector_pitch_deg = 0.5\n")
+    with pytest.raises(SystemExit):
+        main([*args, "--force"])
+    assert "need --geometry cone" in capsys.readouterr().err
+
 
 def test_import_cli_needs_angles_for_tiffs(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
