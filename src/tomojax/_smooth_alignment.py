@@ -116,6 +116,7 @@ def reconstruct_with_motion(scan: Scan, *, reconstruct: Callable, grid: Grid | N
             else 8,
             initial_subsets=16,
             tv_weight=0,
+            nonnegative=True,
             iterations=1,
             stream_projections=False,
         ),

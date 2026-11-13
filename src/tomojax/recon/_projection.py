@@ -14,11 +14,11 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 
 from tomojax.backends.host_stream import read_views
-from tomojax.core._plane_coefficients import affine_grid
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import ConeModel, cone_model, use_cuda_cone
 from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
+from tomojax.core.joseph import affine_grid
 from tomojax.core.operator_norm import unit
 from tomojax.recon._cgls_stopping import cancellation_magnitude
 from tomojax.recon._data_term import project_residual

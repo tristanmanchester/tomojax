@@ -118,6 +118,35 @@ def test_automatic_facades_and_saved_pose_reuse(kind, operation, tmp_path):
     assert again.info["automatic"]["geometry"] == "preserved_pose_corrections"
 
 
+def test_a_posed_laminography_scan_reconstructs_with_its_poses():
+    # tj.reconstruct's automatic route on a scan carrying pose corrections runs the real
+    # FISTA (no stub) and uses them: data moved by known per-view shifts reconstruct with
+    # those shifts to the phantom (plain nonnegative FISTA on unmoved data reaches 0.02),
+    # and without them to a blur.
+    grid, detector = tj.Grid(16, 16, 16, 1, 1, 1), tj.Detector(24, 24, 1, 1)
+    views = 128
+    geometry = tj.LaminographyGeometry(
+        grid, detector, np.linspace(0, 360, views, endpoint=False), tilt_deg=30
+    )
+    xyz = np.indices((16, 16, 16)).astype(float)
+    volume = np.exp(-np.sum((xyz - 7.5) ** 2, axis=0) / 8).astype(np.float32)
+    turn = np.linspace(0, 2 * np.pi, views, endpoint=False)
+    shifts = np.zeros((views, 6))
+    shifts[:, 3], shifts[:, 4] = 1.5 * np.sin(2 * turn), np.cos(turn)
+    blank = tj.Scan(np.zeros((views, 24, 24), np.float32), geometry)
+    moved = tj.Scan(np.asarray(tj.project(blank.with_poses(shifts).geometry, volume)), geometry)
+    posed = tj.reconstruct(moved.with_poses(shifts))
+    unposed = tj.reconstruct(moved.with_poses(np.zeros((views, 6))))
+    assert posed.info["automatic"]["geometry"] == "preserved_pose_corrections"
+    assert (np.asarray(posed.volume) >= 0).all()
+
+    def error(result):
+        return np.linalg.norm(np.asarray(result.volume) - volume) / np.linalg.norm(volume)
+
+    assert error(posed) < 0.05
+    assert error(unposed) > 0.2
+
+
 @pytest.mark.parametrize("keep_grid", [False, True])
 def test_working_rays_sample_every_voxel(keep_grid):
     # A 656-pixel detector bins by 3; a grid at the detector pitch must follow it,
