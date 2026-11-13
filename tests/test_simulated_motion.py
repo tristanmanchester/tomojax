@@ -148,10 +148,27 @@ def test_exact_tier_fit_started_at_the_truth_stays_there():
         slips=(motion.Slip(40, (300.0, -200.0, 150.0)),),
     )
     true = motion.poses(m, nominal, ANGLES, np.zeros(3))["poses"]
-    scan = tj.Scan(
-        exact_tier.projections(tj.Scan(np.zeros((72, 32, 32), np.float32), geometry), truth, true),
-        geometry,
-    )
+    scan = tj.Scan(exact_tier.projections(grid, geometry.detector, truth, true), geometry)
     result = tj.align(scan.with_poses(exact_tier.corrections(nominal, true)), fit="translations")
     end = np.asarray(stack_view_poses(result.scan.geometry, len(ANGLES)), np.float64)
     assert np.abs(end[:, [0, 2], 3] - true[:, [0, 2], 3]).max() < 2e-3  # pixels are 1 mm here
+
+
+@pytest.mark.numerical
+def test_exact_tier_linear_kernel_is_the_projector_and_cubic_differs():
+    import tomojax as tj
+    from tomojax.geometry import stack_view_poses
+
+    grid = tj.Grid(16, 16, 16, 1.0, 1.0, 1.0)
+    detector = tj.Detector(20, 20, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(grid, detector, ANGLES[::4])
+    nominal = np.asarray(stack_view_poses(geometry, len(ANGLES[::4])), np.float64)
+    truth = np.random.default_rng(5).random((16, 16, 16)).astype(np.float32)
+    poses = nominal.copy()
+    poses[:, 0, 3] += 0.37  # a sub-pixel shift, where the two kernels disagree
+    scan = tj.Scan(np.zeros((len(poses), 20, 20), np.float32), geometry)
+    reference = tj.project(scan.with_poses(exact_tier.corrections(nominal, poses)).geometry, truth)
+    linear = exact_tier.projections(grid, detector, truth, poses)
+    cubic = exact_tier.projections(grid, detector, truth, poses, interpolation="cubic")
+    np.testing.assert_allclose(linear, np.asarray(reference), rtol=1e-5, atol=1e-5)
+    assert np.abs(cubic - linear).max() > 1e-2

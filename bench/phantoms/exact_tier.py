@@ -1,8 +1,9 @@
 """The exact tier: TomoJAX's own projector on a voxel truth at the true poses, with seeded noise.
 
 This tier judges the solver and its levels. Here the data are exactly what the model predicts
-at the truth, so a correct fit recovers the truth to the noise. Detail a grid cannot represent
-belongs to the independent tier (gVXR from meshes, ``corpus.py``), not to this one.
+at the truth (parallel-beam plane models, with the fit's own kernel), so a correct fit recovers
+the truth to the noise. Detail a grid cannot represent belongs to the independent tier (gVXR
+from meshes, ``corpus.py``), not to this one.
 
 Noise is the corpus's counting model: Poisson at a photon count per pixel, with counts floored
 at 0.5 before the log. Each file has its own seed, derived from the draw's seed, the row's name
@@ -37,14 +38,33 @@ def noise_seed(draw_seed: int, row: str, photons: float) -> int:
     return int(np.random.SeedSequence(entropy).generate_state(1)[0])
 
 
-def projections(scan: tj.Scan, truth: np.ndarray, poses: np.ndarray) -> np.ndarray:
-    """Noise-free line integrals of ``truth`` (z, y, x) through ``scan``'s geometry at ``poses``."""
-    import tomojax as tj
-    from tomojax.geometry import stack_view_poses
+def projections(
+    grid: tj.Grid,
+    detector: tj.Detector,
+    truth: np.ndarray,
+    poses: np.ndarray,
+    *,
+    interpolation: str = "linear",
+) -> np.ndarray:
+    """Noise-free line integrals of ``truth`` (z, y, x) at world-from-object ``poses``.
 
-    nominal = np.asarray(stack_view_poses(scan.geometry, len(poses)), np.float64)
-    posed = scan.with_poses(corrections(nominal, np.asarray(poses, np.float64))).geometry
-    return np.asarray(tj.project(posed, np.ascontiguousarray(truth, dtype=np.float32)), np.float32)
+    ``interpolation`` is the plane kernel, linear or cubic: the tier's data must come from the
+    same kernel as the fit that reads them, or the truth no longer reads zero.
+    """
+    from tomojax.core.backend_policy import cuda_backend
+    from tomojax.forward import project_joseph
+
+    volume = np.ascontiguousarray(truth, dtype=np.float32)
+    backend = "cuda" if cuda_backend() else "jax"
+    out = project_joseph(
+        volume,
+        np.asarray(poses, np.float32),
+        grid,
+        detector,
+        backend=backend,
+        interpolation=interpolation,
+    )
+    return np.asarray(out, np.float32)
 
 
 def counted(line_integrals: np.ndarray, photons: float, seed: int) -> np.ndarray:
