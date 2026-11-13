@@ -318,11 +318,15 @@ def test_a_saved_alignment_is_not_labelled_with_an_earlier_reconstruction(tmp_pa
     loaded = tj.load(tmp_path / "cgls.nxs")
     poses = np.zeros((len(loaded.angles), 6), np.float32)
     aligned = tj.Alignment(
-        volume=np.ones((8, 8, 8), np.float32), scan=loaded, poses=poses, info={"levels": []}
+        volume=np.ones((8, 8, 8), np.float32),
+        grid=loaded.grid,
+        scan=loaded,
+        poses=poses,
+        info={"levels": []},
     )
     tj.save(tmp_path / "aligned.nxs", aligned)
     back = tj.load_reconstruction(tmp_path / "aligned.nxs")
-    assert back.method == "align" and back.info == {"levels": []}
+    assert back.method == "align" and back.info["levels"] == [] and back.grid == loaded.grid
     np.testing.assert_array_equal(back.volume, 1.0)
 
 

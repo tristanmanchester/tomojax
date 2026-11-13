@@ -809,16 +809,19 @@ class Reconstruction:
 class Alignment:
     """The result of :func:`align`.
 
-    ``volume`` is the reconstruction the alignment converged with. ``scan`` is
-    the input scan with the estimated geometry and per-view poses applied:
-    reconstruct it, align it again or save it. ``poses`` are its ``(views, 6)``
-    poses (see :attr:`Scan.poses`), always a table, zero where nothing moved;
-    ``info`` is the solver's record.
+    ``volume`` is the reconstruction the alignment converged with, on ``grid``:
+    the fit's bounded working grid, unless :func:`align` was given one. ``scan``
+    is the input scan, on its own grid, with the estimated geometry and per-view
+    poses applied: reconstruct it, align it again or save it. ``poses`` are its
+    ``(views, 6)`` poses (see :attr:`Scan.poses`), always a table, zero where
+    nothing moved; ``info`` is the solver's record.
 
     Parameters
     ----------
     volume : numpy.ndarray or jax.Array
-        Reconstruction used by the alignment, in (z, y, x) order.
+        Reconstruction used by the alignment, in (z, y, x) order, on ``grid``.
+    grid : Grid
+        The grid ``volume`` is on.
     scan : Scan
         Scan with estimated geometry and per-view corrections applied.
     poses : numpy.ndarray
@@ -828,6 +831,7 @@ class Alignment:
     """
 
     volume: np.ndarray | jax.Array
+    grid: Grid
     scan: Scan
     poses: np.ndarray
     info: Mapping[str, object]

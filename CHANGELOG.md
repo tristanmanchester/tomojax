@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed: reconstructing an aligned scan gave a binned volume
+
+`tj.align(scan).scan` used to carry the alignment's bounded working grid in
+place of the scan's own, so `tj.reconstruct(tj.align(scan).scan)`, as the
+`tj.align` example shows, returned a volume binned to the fit's working scale:
+4x coarser per axis than the scan's grid for a 672-pixel detector, 8x for a
+2560-pixel one, unless `grid=` was passed. A saved alignment reloaded the same
+way. `result.scan` now keeps the scan's grid (or the `grid=` given to
+`tj.align`), so reconstructing it gives the image at the scan's resolution.
+The fit's own image is still `result.volume`, and the new `Alignment.grid`
+says which grid it is on; a saved alignment records that grid, and
+`tj.load_reconstruction` returns the image on it. `tj.Alignment` now takes
+`grid`.
+
 ### Fixed: a laminography scan with poses could not be reconstructed
 
 Since 79912dc9 (2026-11-01), `tj.reconstruct` on any laminography scan that

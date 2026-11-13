@@ -1,6 +1,7 @@
 # tomojax
 class tomojax.Alignment(
         volume: 'np.ndarray | jax.Array',
+        grid: 'Grid',
         scan: 'Scan',
         poses: 'np.ndarray',
         info: 'Mapping[str, object]',

@@ -82,6 +82,10 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     meta = record.geometry_metadata
     info = meta.get("reconstruction_info", meta.get("alignment_info"))
     aligned = "reconstruction_method" not in meta and "alignment_info" in meta
+    if aligned and isinstance(info, dict) and isinstance(info.get("working_grid"), dict):
+        from tomojax.geometry import Grid
+
+        scan = with_grid(scan, Grid(**info["working_grid"]))  # the alignment image's grid
     return Reconstruction(
         volume=np.asarray(record.volume),
         scan=scan,
@@ -142,8 +146,9 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
         # and settings no longer describe it.
         record.geometry_metadata.pop("reconstruction_method", None)
         record.geometry_metadata.pop("reconstruction_info", None)
+        # The image's grid, which need not be the scan's: load_reconstruction reads it back.
         record.geometry_metadata["alignment_info"] = json.loads(
-            json.dumps(dict(item.info), default=_json_value)
+            json.dumps({**item.info, "working_grid": item.grid}, default=_json_value)
         )
     else:
         raise TypeError(f"save takes a Scan, Reconstruction or Alignment, not {type(item)}")
@@ -802,7 +807,9 @@ def align(
     result = align_poses(scan, fit=fit, grid=grid)
     poses = result.scan.poses
     assert poses is not None
-    return Alignment(result.volume, result.scan, np.asarray(poses), result.info)
+    # The fit's working grid belongs to its image; the scan keeps the caller's grid.
+    corrected = with_grid(result.scan, scan.grid if grid is None else grid)
+    return Alignment(result.volume, result.scan.grid, corrected, np.asarray(poses), result.info)
 
 
 def _oversampling(scan: Scan) -> float:

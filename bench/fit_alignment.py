@@ -332,7 +332,7 @@ def run_case(
     volume = np.asarray(result.volume)
     elapsed = time.perf_counter() - start
     after, worst, gauge = score(scan_rays(result.scan), truth)
-    grid = result.scan.grid
+    grid = result.grid
     z, y, x = np.indices(volume.shape)
     positions = np.stack([x, y, z], axis=-1) * [grid.vx, grid.vy, grid.vz] + grid_volume_origin(
         grid

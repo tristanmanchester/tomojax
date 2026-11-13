@@ -101,10 +101,10 @@ def _write_manifest(args: _Args, scan: Scan, result: Alignment, *, masked: bool)
         "fit": result.info["fit"],
         "roi": {
             "requested": args.roi,
-            "grid_changed": result.scan.grid != scan.grid,
+            "grid_changed": result.grid != scan.grid,
             "cylindrical_output_mask": masked,
         },
-        "reconstruction_grid": result.scan.grid.to_dict(),
+        "reconstruction_grid": result.grid.to_dict(),
         "detector": result.scan.detector.to_dict(),
         "poses_shape": list(result.poses.shape),
         "volume_shape": list(np.shape(result.volume)),
@@ -157,9 +157,7 @@ def main() -> None:
     log_jax_env()
     result = tj.align(scan, fit=fit, grid=grid)
     if cylinder is not None:
-        result = replace(
-            result, volume=zero_outside_cylinder(result.volume, result.scan.grid, cylinder)
-        )
+        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
     tj.save(args.out, result)
     logging.info("Saved alignment results to %s", args.out)
     if args.manifest is not None:

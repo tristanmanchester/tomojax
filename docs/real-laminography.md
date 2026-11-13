@@ -183,13 +183,13 @@ setup angles, as above, or `"rotations"` for sample wobble. All settings use the
 same solver.
 
 The physical support is preserved, including explicitly placed volume faces. The returned scan
-retains the original detector samples and fitted corrections; the alignment image remains at the
-working scale. There is no forced native-grid refinement.
+keeps its grid, the original detector samples and the fitted corrections, so reconstructing it
+gives the image at the scan's resolution. The alignment image `result.volume` is at the fit's
+working scale, on `result.grid`.
 
 Pass an explicit `grid=` to `tj.align` or `tj.reconstruct` to fix the physical
 region and output sampling. Explicit grids are not coarsened automatically, so
-choose a grid that fits the device. Use an explicit reconstruction method to
-reconstruct the corrected scan at your desired sampling.
+choose a grid that fits the device.
 
 Inspect several slices and the recovered motion: smoothness and lower projection
 error do not establish physical pose truth. Reserve held-out views before calling

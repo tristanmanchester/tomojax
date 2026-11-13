@@ -248,8 +248,9 @@ returned volume is cropped back to the grid. Each view also has its own offset a
 detector rows, which the line integrals do not describe: flux changes or phase-retrieval offsets
 between views would otherwise look like vertical motion. They are eliminated inside every step,
 so the poses see only what an offset and ramp cannot explain, and the data are never modified;
-`info["offsets"]` reports each view's fitted pair. Reconstruct `result.scan` at the resolution you
-need: the alignment volume is not a final-resolution reconstruction.
+`info["offsets"]` reports each view's fitted pair. `result.scan` keeps the scan's grid, so
+reconstructing it gives the full-resolution image; `result.volume` is the fit's own image, on the
+bounded working grid `result.grid`, not a final-resolution reconstruction.
 
 ## How the figures were made
 
