@@ -9,8 +9,10 @@ Before you align, correct the projections to line integrals and check the declar
 against the instrument, as the [real scan guide](real-laminography.md) describes. Pass
 `RejectViews()` to that correction when frames may be broken or a crystal may diffract: the fit
 otherwise moves those views to explain them. On a real laminography scan with one broken frame,
-`RejectViews` removed that frame and the four others where the fitted corrections jumped.
-Reconstruct once without alignment so that you have an image to compare with.
+`RejectViews` removed that frame and the four others where the fitted corrections jumped. Check
+what it rejected in `scan.corrections`: on scans whose flux hops or alternates, as some lab sources
+and modulated beams do, it can reject good views as well. Reconstruct once without alignment so
+that you have an image to compare with.
 
 ## Choose what to fit
 

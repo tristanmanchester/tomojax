@@ -279,7 +279,9 @@ class RejectViews(Step):
     for 50 views, say) is an event, and its views are rejected although an
     alignment's per-view offset would absorb it. A beam loss that starts at the
     second view reads as a failed first view; the first view is rejected and
-    the loss kept.
+    the loss kept. A beam that alternates between two levels for a stretch of
+    views (a full-flux view every few among dimmed ones) has its minority level
+    taken as the event, so the good views are rejected and the dimmed ones kept.
 
     Views with a nonfinite mean are also rejected and take no part. Rejected
     views are removed from the scan and its geometry; the scan's
