@@ -88,7 +88,7 @@ def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit,
         )
         a = rng.normal(size=(n, parameters.k + 2, parameters.k))
         blocks = np.einsum("nij,nik->njk", a, a) + np.eye(parameters.k)
-        weights = rng.uniform(0.1, 0.7, n - 1)
+        weights = rng.uniform(0.1, 0.7, (n - 1, parameters.nlocal))
         rhs = rng.normal(size=parameters.size)
 
         # Independent dense assembly: every view has its own local indices,
@@ -99,8 +99,11 @@ def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit,
             local = list(range(view * parameters.nlocal, (view + 1) * parameters.nlocal))
             hessian[np.ix_(local + shared, local + shared)] += blocks[view]
         if parameters.nlocal:
-            d = np.kron(np.diff(np.eye(n), axis=0), np.diag(prior.translation_mask))
-            laplacian = d.T @ np.diag(np.repeat(weights, parameters.nlocal)) @ d
+            # Every local column has first-difference coupling with its own link weights;
+            # the drift spline (outside which translations are penalised) spans none of the
+            # rotation columns, so Q leaves those as they are.
+            d = np.kron(np.diff(np.eye(n), axis=0), np.eye(parameters.nlocal))
+            laplacian = d.T @ np.diag(weights.reshape(-1)) @ d
             u = np.asarray(prior.U)
             q = np.eye(parameters.local_size) - u @ u.T
             hessian[: parameters.local_size, : parameters.local_size] += (
@@ -170,7 +173,7 @@ def test_innovation_refinement_holds_global_parameters_exactly():
         )
         blocks = jnp.broadcast_to(jnp.eye(parameters.k), (60, parameters.k, parameters.k))
         rhs = jnp.asarray(rng.normal(size=parameters.size)).at[-2:].set(1000)
-        step = prior.innovation_solve(blocks, jnp.ones(59), rhs)
+        step = prior.innovation_solve(blocks, jnp.ones((59, parameters.nlocal)), rhs)
         np.testing.assert_array_equal(step[-2:], 0)
         assert np.linalg.norm(step[: parameters.local_size]) > 0
         table, _ = parameters.physical(step, np.ones(5))
@@ -271,3 +274,33 @@ def test_detector_space_score_counts_centre_and_roll_before_a_rigid_gauge():
     scan, truth, _, _ = make_case("roll")
     error, _, _ = score(scan_rays(scan), truth)
     assert error > 0.2  # translations/common object rotation cannot undo detector roll
+
+
+@pytest.mark.parametrize(
+    ("fit", "cone"),
+    [
+        (("translations", "rotations"), False),
+        (("translations", "rotations"), True),
+        (("rotations",), False),
+    ],
+)
+def test_rotation_increments_gradient_is_the_weighted_apply(fit, cone):
+    # Robust translation weights and constant rotation weights both come from the value.
+    views = 17
+    parameters = Parameters(views, fit, cone=cone, lever=10)
+    rng = np.random.default_rng(75)
+    with jax.enable_x64(True):
+        prior = MotionPrior(
+            views,
+            rng.normal(size=(views * parameters.full_dofs, 3)),
+            knot_spacing=(5,) * parameters.full_dofs,
+            delta=0.02,
+            parameters=parameters,
+            rotation_scales=np.full(parameters.full_dofs, 0.05),
+            noise_sigma=0.03,
+        )
+        pose = jnp.asarray(rng.normal(scale=0.05, size=parameters.size))
+        gradient = jax.grad(lambda p: prior.value(p, 0.4))(pose)
+        np.testing.assert_allclose(
+            gradient, prior.apply(pose, prior.weights(pose, 0.4)), rtol=2e-12, atol=2e-12
+        )

@@ -27,6 +27,8 @@ Alignment is experimental and needs scan-specific review. Use the
   tilt or roll, or per-view rotation. Add the corresponding parameter only when it explains a
   remaining artefact. A roll can leave the central slice almost unchanged while blurring slices
   above and below it.
+- On a half-turn parallel scan, a slow drift of about 0.1 px across the scan is only weakly
+  determined: the fit may leave it, and the reconstruction is unaffected.
 - The image and geometry are jointly estimated. Common rigid object motion is a gauge, and a
   constant parallel-ray translation shares a gauge with the detector centre. Reported parameter
   values depend on the stated gauge; they are not independent instrument measurements.
@@ -34,8 +36,9 @@ Alignment is experimental and needs scan-specific review. Use the
   about the axis is taken as recorded, so an error in a view's recorded angle is not corrected.
   Such errors are rare on real stages but not small when present: 0.07° RMS moves the features
   of a simulated watch movement by 0.13 detector pixels RMS.
-  They carry a physical angular size prior. This limits unsupported motion but
-  does not resolve repeated-pattern ambiguities. A TEM grid can match at a wrong orientation.
+  They carry a physical angular size prior and are tied to their neighbouring views, so a
+  rotation that jumps at one view (a broken frame, a diffraction flash) is expensive. This
+  limits unsupported motion but does not resolve repeated-pattern ambiguities. A TEM grid can match at a wrong orientation.
   Finite detector pixels also average transmitted intensity before the logarithm, whereas the
   linear projector fits line integrals. At sharp, strongly attenuating edges, that mismatch can
   look like motion. A smaller residual alone does not establish more accurate poses.

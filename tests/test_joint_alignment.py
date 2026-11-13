@@ -95,13 +95,13 @@ def test_global_pose_solves_match_dense_constrained_systems(dofs):
         prior = MotionPrior(views, gauge, knot_spacing=(10,) * k, delta=0.02)
         a = rng.normal(size=(views, k, k))
         blocks = np.einsum("nij,nkj->nik", a, a) + 0.5 * np.eye(k)
-        w = rng.uniform(0.1, 2.0, views - 1)
+        w = rng.uniform(0.1, 2.0, (views - 1, k))  # one weight per link and column
         rhs = rng.normal(size=k * views)
         f = np.zeros((k * views, k * views))
         for i in range(views):
             f[k * i : k * i + k, k * i : k * i + k] = blocks[i]
         diff = np.kron(np.diff(np.eye(views), axis=0), np.eye(k))
-        laplacian = diff.T @ np.diag(np.repeat(w, k)) @ diff
+        laplacian = diff.T @ np.diag(w.reshape(-1)) @ diff
         u, g, c = (np.asarray(m) for m in (prior.U, prior.G, prior.C))
         q = np.eye(k * views) - u @ u.T
         expected = _dense_constrained(f + q @ laplacian @ q, g, rhs)

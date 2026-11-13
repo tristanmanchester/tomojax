@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Per-view rotations are tied to their neighbours
+
+`fit="rotations"` gave each view's wobble only a size prior, so nothing tied
+one view's rotation to the next. A broken frame could take a rotation of
+several degrees, and on axial scans the rotations wandered between views. They
+now also pay Gaussian increments between neighbouring views, priced as a
+translation step of the same edge displacement, with no free drift and no
+heavy tail. On the 24 simulated corpus rows the fit improves on 19 (a
+full-turn axial scan from 0.214 to 0.090 px landmark error), and on real K11
+scans fitted with the tilt and roll, a broken frame and diffraction flashes no
+longer pull the wobble. Two
+laminography rows end 0.011-0.015 px worse: a constant tilt of the axis is a
+once-per-turn wobble that the increments charge a little; fitting `tilt`
+alongside removes it.
+
 ### Rotations are the wobble of the rotation axis
 
 `fit="rotations"` now fits each view's two wobble components of the rotation

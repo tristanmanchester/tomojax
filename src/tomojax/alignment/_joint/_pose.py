@@ -1,9 +1,10 @@
-"""Exact bordered pose solves with translation drift/jumps and rotation size priors.
+"""Exact bordered pose solves with translation drift/jumps and rotation size and continuity priors.
 
 The local normal matrix is F + R + Q K Q: per-view data blocks F, physical
-rotation precision R, and a translation difference Laplacian K outside the
-drift spline U (Q = I - U U.T). Block cyclic reduction plus a spline Woodbury
-correction solves it with the rigid gauge fixed. Shared calibration columns
+rotation precision R, and a difference Laplacian K, for translations outside
+the drift spline U (Q = I - U U.T) and for rotations on their own increments.
+Block cyclic reduction plus a spline Woodbury correction solves it with the
+rigid gauge fixed. Shared calibration columns
 form a small Schur border around that complete local system.
 """
 
@@ -75,12 +76,11 @@ def _pcr_solve(factor, rhs):
     return result[..., 0] if vector else result
 
 
-def _tridiagonal(blocks, w, mask=None):
-    """Factor F + K, K the first-difference Laplacian with edge weights ``w``."""
-    kdiag = jnp.pad(w, (0, 1)) + jnp.pad(w, (1, 0))
-    mask = jnp.ones(blocks.shape[-1], jnp.float64) if mask is None else mask
-    diagonal = jax.vmap(jnp.diag)(kdiag[:, None] * mask)
-    return _pcr_factor(blocks + diagonal, -jnp.pad(w, (0, 1))[:, None] * mask)
+def _tridiagonal(blocks, w):
+    """Factor F + K, K the first-difference Laplacian with (links, columns) weights ``w``."""
+    kdiag = jnp.pad(w, ((0, 1), (0, 0))) + jnp.pad(w, ((1, 0), (0, 0)))
+    diagonal = jax.vmap(jnp.diag)(kdiag)
+    return _pcr_factor(blocks + diagonal, -jnp.pad(w, ((0, 1), (0, 0))))
 
 
 def _spline_design(steps, spacing):
@@ -167,7 +167,11 @@ class MotionPrior:
 
     Local translations have a free cubic drift spline and Student-t innovations.
     Rotations have a zero-mean Gaussian size prior with ``rotation_sigma_deg``
-    standard deviation, in physical radians rather than numerical pixel units.
+    standard deviation, in physical radians rather than numerical pixel units,
+    and Gaussian increments between neighbouring views at the translations'
+    curvature at zero (``weight / delta``), with no free drift: wobble is
+    continuous in the angle, so one view's rotation pays for leaving its
+    neighbour's as a translation step of the same edge displacement would.
     Multiplication by ``noise_sigma**2`` puts that prior in the unnormalised
     data loss's units. Shared centre and angle parameters are not penalised.
 
@@ -210,6 +214,7 @@ class MotionPrior:
             else np.asarray([i >= 3 for i in local], np.float64)
         )
         self.translation_mask = jnp.asarray(translated, jnp.float64)
+        self.rotation_mask = jnp.asarray(1 - translated, jnp.float64)
         columns = [
             np.kron(order.spline_design(step), np.eye(self.nlocal)[:, [i]])
             for i, step in enumerate(spacing)
@@ -267,12 +272,7 @@ class MotionPrior:
         self.rotation_sigma_deg = float(rotation_sigma_deg)
         self.rotation_precision = jnp.asarray(rotation_precision.reshape(-1), jnp.float64)
         self.value = jax.jit(self._value)
-        self.weights = jax.jit(
-            lambda p, weight: weight
-            * self.delta
-            / (self.delta**2 + self._squared_jumps(p))
-            * self.order.edge_scale
-        )
+        self.weights = jax.jit(self._weights)
         self.apply = jax.jit(self._apply)
         self.factor = jax.jit(self._factor)
         self.solve = jax.jit(self._solve)
@@ -304,17 +304,25 @@ class MotionPrior:
         jumps = jnp.diff(residual, axis=0) * self.translation_mask * self.order.jump_scale[:, None]
         return jnp.sum(jumps**2, axis=1)
 
+    def _weights(self, p, weight):
+        """Per link and local column: robust for translations, constant for rotations."""
+        edge = jnp.asarray(self.order.edge_scale)[:, None]
+        robust = (weight * self.delta / (self.delta**2 + self._squared_jumps(p)))[:, None]
+        return edge * (robust * self.translation_mask + weight / self.delta * self.rotation_mask)
+
     def _value(self, p, weight):
         jumps = (
             0.5 * weight * self.delta * jnp.sum(jnp.log1p(self._squared_jumps(p) / self.delta**2))
         )
-        return jumps + 0.5 * jnp.sum(self.rotation_precision * p[: self.local_size] ** 2)
+        local = p[: self.local_size].reshape(self.n, self.nlocal)
+        turns = jnp.diff(local, axis=0) * self.rotation_mask * self.order.jump_scale[:, None]
+        size = self.rotation_precision * p[: self.local_size] ** 2
+        return jumps + 0.5 * (weight / self.delta * jnp.sum(turns**2) + jnp.sum(size))
 
     def _laplacian(self, p, w):
         shape = p.shape
         p = p.reshape((self.n, self.nlocal, *shape[1:]))
-        weights = w[:, None] * self.translation_mask[None]
-        weights = weights.reshape((*weights.shape, *((1,) * (p.ndim - 2))))
+        weights = w.reshape((*w.shape, *((1,) * (p.ndim - 2))))
         dif = jnp.diff(p, axis=0) * weights
         pad = [(0, 0)] * p.ndim
         pad[0] = (0, 1)
@@ -329,7 +337,7 @@ class MotionPrior:
 
     def _local_factor(self, blocks, w):
         blocks = blocks + jax.vmap(jnp.diag)(self.rotation_precision.reshape(self.n, self.nlocal))
-        tri = _tridiagonal(blocks, w, self.translation_mask)
+        tri = _tridiagonal(blocks, w)
         ku = self._laplacian(self.U, w)
         b = jnp.concatenate([self.U, ku], axis=1)
         k = self.U.shape[1]
@@ -379,7 +387,7 @@ class MotionPrior:
             return jnp.zeros_like(rhs)
         blocks = blocks[:, : self.nlocal, : self.nlocal]
         blocks = blocks + jax.vmap(jnp.diag)(self.rotation_precision.reshape(self.n, self.nlocal))
-        tri = _tridiagonal(blocks, w, self.translation_mask)
+        tri = _tridiagonal(blocks, w)
         ar = _pcr_solve(tri, rhs[: self.local_size].reshape(self.n, self.nlocal)).reshape(-1)
         if self.C.shape[1]:
             ac = _pcr_solve(tri, self.C.reshape(self.n, self.nlocal, -1)).reshape(self.C.shape)

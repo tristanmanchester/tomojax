@@ -25,7 +25,7 @@ def test_innovation_gradient_and_center_curvature_match_the_coupled_normal(dofs)
         assert float(prior.value(zero, strength)) == 0
         np.testing.assert_array_equal(gradient(zero), zero)
         curvature = jax.jvp(gradient, (zero,), (pose,))[1]
-        expected = prior.apply(pose, jnp.full(views - 1, strength / delta))
+        expected = prior.apply(pose, jnp.full((views - 1, dofs), strength / delta))
         np.testing.assert_allclose(curvature, expected, rtol=2e-12, atol=2e-12)
 
 
@@ -40,7 +40,8 @@ def test_irls_quadratic_is_a_tangent_upper_bound_for_arbitrary_pose_changes():
         difference = np.kron(np.diff(np.eye(views), axis=0), np.eye(dofs)) @ q
         anchor = rng.normal(scale=0.05, size=views * dofs)
         squared_anchor = np.sum((difference @ anchor).reshape(-1, dofs) ** 2, axis=1)
-        weights = np.asarray(prior.weights(jnp.asarray(anchor), strength))
+        # Without parameters every column is a translation: one robust weight per link.
+        weights = np.asarray(prior.weights(jnp.asarray(anchor), strength))[:, 0]
         assert np.all(weights > 0)
         anchor_value = float(prior.value(jnp.asarray(anchor), strength))
         for scale in (0.0, 0.001, 0.05, 0.5, 5.0):
