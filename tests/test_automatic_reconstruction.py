@@ -9,6 +9,7 @@ import pytest
 import tomojax as tj
 from tomojax.alignment import api as alignment
 from tomojax.corrections import Rings, Stripes
+from tomojax.geometry import RotationAxisGeometry
 from tomojax.io import ProjectionDataset
 from tomojax.recon import FBPConfig
 
@@ -124,3 +125,89 @@ def test_automatic_segmented_cone_preserves_calibration():
     assert actual.scan is scan and actual.method == "cgls"
     assert actual.info["automatic"]["status"] == "limited"
     assert "Segmented cone" in actual.info["automatic"]["reasons"][0]
+
+
+def _phantom(n=16):
+    # An off-centre Gaussian, so a wrong centre or ignored poses move it visibly.
+    xyz = np.indices((n, n, n)).astype(float)
+    centre = np.array([7.5, 6.5, 8.5])[:, None, None, None]
+    return np.exp(-np.sum((xyz - centre) ** 2, axis=0) / 10).astype(np.float32)
+
+
+def _error(result, volume):
+    return np.linalg.norm(np.asarray(result.volume) - volume) / np.linalg.norm(volume)
+
+
+_ANGLES = np.linspace(0, 360, 128, endpoint=False)
+_GRID = tj.Grid(16, 16, 16, 1, 1, 1)
+
+
+def _moved(geometry, volume):
+    """Data from known per-view shifts, and those shifts as the scan's pose corrections."""
+    turn = np.deg2rad(_ANGLES)
+    shifts = np.zeros((len(_ANGLES), 6))
+    shifts[:, 3], shifts[:, 4] = 1.5 * np.sin(2 * turn), np.cos(turn)
+    blank = tj.Scan(
+        np.zeros((len(_ANGLES), geometry.detector.nv, geometry.detector.nu), np.float32), geometry
+    )
+    data = np.asarray(tj.project(blank.with_poses(shifts).geometry, volume))
+    return tj.Scan(data, geometry).with_poses(shifts)
+
+
+_ROUTES = {
+    "parallel": lambda: tj.ParallelGeometry(_GRID, tj.Detector(24, 24, 1, 1), _ANGLES),
+    "cone": lambda: tj.ConeGeometry(
+        _GRID, tj.Detector(24, 24, 1.5, 1.5), _ANGLES, tj.ConeBeam(192, 288)
+    ),
+    "axis": lambda: RotationAxisGeometry(
+        _GRID, tj.Detector(24, 24, 1, 1), _ANGLES, (0.2, -0.3, 0.93)
+    ),
+}
+
+
+def test_automatic_route_reconstructs_a_plain_cone_scan():
+    volume = _phantom()
+    geometry = _ROUTES["cone"]()
+    result = tj.reconstruct(tj.Scan(np.asarray(tj.project(geometry, volume)), geometry))
+    assert result.method == "fbp" and result.info["automatic"]["status"] == "ok"
+    assert _error(result, volume) < 0.08  # FDK at 0.038 measured
+
+
+@pytest.mark.parametrize(
+    ("kind", "method", "geometry", "bound"),
+    [
+        ("parallel", "fbp", "preserved", 0.1),  # 0.053 measured, 0.23 with the poses ignored
+        ("cone", "fbp", "preserved", 0.1),  # 0.053 measured, 0.23 with the poses ignored
+        ("axis", "fista", "preserved_pose_corrections", 0.02),  # 0.001 measured, 0.39 ignored
+    ],
+)
+def test_automatic_route_uses_a_scans_poses(kind, method, geometry, bound):
+    volume = _phantom()
+    result = tj.reconstruct(_moved(_ROUTES[kind](), volume))
+    assert result.method == method
+    assert result.info["automatic"]["geometry"] == geometry
+    assert _error(result, volume) < bound
+
+
+def test_automatic_route_reconstructs_an_unposed_rotation_axis_scan():
+    # Today this route fits the poses and returns the fit's image; only the image is pinned.
+    volume = _phantom()
+    geometry = _ROUTES["axis"]()
+    result = tj.reconstruct(tj.Scan(np.asarray(tj.project(geometry, volume)), geometry))
+    assert np.shape(result.volume) == volume.shape
+    assert _error(result, volume) < 0.05  # 0.007 measured
+
+
+def test_automatic_route_estimates_an_unrecorded_centre_with_the_real_estimator():
+    volume = _phantom()
+    true = tj.ParallelGeometry(_GRID, tj.Detector(24, 24, 1, 1, center=(2.0, 0)), _ANGLES)
+    declared = tj.ParallelGeometry(_GRID, tj.Detector(24, 24, 1, 1), _ANGLES)
+    data = np.asarray(tj.project(true, volume))
+    record = ProjectionDataset(
+        data, _ANGLES, geometry_metadata={"detector_center_status": "not_recorded"}
+    )
+    result = tj.reconstruct(replace(tj.Scan(data, declared), source=record))
+    assert result.method == "fourier"
+    assert result.scan.source.geometry_metadata["detector_center_status"] == "inferred"
+    assert result.scan.detector.center[0] == pytest.approx(2.0, abs=0.05)
+    assert _error(result, volume) < 0.04  # 0.017 measured, 0.47 at the declared centre

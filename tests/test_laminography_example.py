@@ -87,17 +87,14 @@ def test_missing_axis_is_not_silently_inferred():
             operation(scan)
 
 
-@pytest.mark.parametrize(
-    ("kind", "operation"),
-    [("lamino", tj.align), ("lamino", tj.reconstruct), ("parallel", tj.align)],
-)
-def test_automatic_facades_and_saved_pose_reuse(kind, operation, tmp_path):
+@pytest.mark.parametrize("operation", [tj.align, tj.reconstruct])
+def test_automatic_facades_and_saved_pose_reuse(operation, tmp_path):
+    # Align (or let tj.reconstruct align), save, load, and reconstruct the loaded scan through
+    # the real automatic route: its saved poses are used and the image is the phantom's.
+    # 128 views: the route's ordered-subset start needs several views a subset.
     grid = tj.Grid(8, 8, 8, 1, 1, 1)
-    geometry = tj.LaminographyGeometry(
-        grid, tj.Detector(12, 12, 1, 1), np.arange(0, 360, 12), tilt_deg=30
-    )
-    if kind == "parallel":
-        geometry = tj.ParallelGeometry(grid, geometry.detector, geometry.angles)
+    angles = np.linspace(0, 360, 128, endpoint=False)
+    geometry = tj.LaminographyGeometry(grid, tj.Detector(12, 12, 1, 1), angles, tilt_deg=30)
     xyz = np.indices((8, 8, 8)).astype(float)
     volume = np.exp(-np.sum((xyz - 3.5) ** 2, axis=0) / 3).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
@@ -107,15 +104,12 @@ def test_automatic_facades_and_saved_pose_reuse(kind, operation, tmp_path):
     assert result.info["fit"] == ["translations"]
     tj.save(tmp_path / "alignment.nxs", result)
     reused = tj.load(tmp_path / "alignment.nxs")
-    expected = result.scan.poses
-
-    def reconstruct(s, method, *, config):
-        assert s.grid == reused.grid and method == "fista"
-        np.testing.assert_array_equal(s.poses, expected)
-        return tj.Reconstruction(None, s, method, {})
-
-    again = automatic.reconstruct_with_motion(reused, reconstruct=reconstruct)
+    np.testing.assert_array_equal(reused.poses, result.scan.poses)
+    again = tj.reconstruct(reused)
+    assert again.method == "fista"
     assert again.info["automatic"]["geometry"] == "preserved_pose_corrections"
+    error = np.linalg.norm(np.asarray(again.volume) - volume) / np.linalg.norm(volume)
+    assert error < 0.02  # 0.005 measured; 0.115 when the start has two views a subset
 
 
 def test_a_posed_laminography_scan_reconstructs_with_its_poses():
