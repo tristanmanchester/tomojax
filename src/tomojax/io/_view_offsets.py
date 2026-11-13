@@ -32,6 +32,19 @@ def with_view_offsets(record: ProjectionDataset, detector: Detector) -> Projecti
     a rigid object translation in cone geometry; parallel views keep one
     detector and carry the shift as a detector-frame pose. A record without
     recorded offsets is returned on ``detector`` as it is.
+
+    Parameters
+    ----------
+    record : ProjectionDataset
+        Loaded record, possibly carrying per-view detector offsets in its
+        geometry metadata.
+    detector : Detector
+        Detector the views are placed on; its pitches convert the offsets.
+
+    Returns
+    -------
+    ProjectionDataset
+        The record on ``detector`` with each view's offset applied.
     """
     meta = dict(record.geometry_metadata)
     if OFFSETS_KEY not in meta:
@@ -64,7 +77,19 @@ def with_view_offsets(record: ProjectionDataset, detector: Detector) -> Projecti
 
 
 def dropped_offsets_message(record: ProjectionDataset) -> str | None:
-    """Why an explicit ``geometry=`` loses the record's per-view offsets, or None if it doesn't."""
+    """Why an explicit ``geometry=`` loses the record's per-view offsets, or None if it doesn't.
+
+    Parameters
+    ----------
+    record : ProjectionDataset
+        Loaded record, possibly carrying per-view detector offsets.
+
+    Returns
+    -------
+    str or None
+        A message naming how many views move and by how much, or None when no
+        view carries a non-zero offset.
+    """
     offsets = record.geometry_metadata.get(OFFSETS_KEY)
     if offsets is None:
         return None
