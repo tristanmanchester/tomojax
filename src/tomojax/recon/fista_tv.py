@@ -640,7 +640,7 @@ def _prepare_fista_runtime(
 def _batched_projector(
     cfg: FistaConfig,
     n_views: int,
-    det_grid: object,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     geometry: object = None,
     detector: Detector | None = None,
 ) -> tuple[str | ConeModel, str, int] | None:

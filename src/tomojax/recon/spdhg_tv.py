@@ -324,7 +324,7 @@ def _prox_fstar_l2(
 
 def _batched_projector(
     config: SPDHGConfig,
-    det_grid: object,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     geometry: object = None,
     detector: Detector | None = None,
 ) -> tuple[str | ConeModel, str] | None:

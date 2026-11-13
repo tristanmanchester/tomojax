@@ -28,9 +28,7 @@ if TYPE_CHECKING:
 enable_persistent_compilation_cache()
 
 
-def affine_grid(
-    det_grid: tuple[np.ndarray | jax.Array, np.ndarray | jax.Array], detector: Detector
-) -> bool:
+def affine_grid(det_grid: tuple[jax.Array, jax.Array], detector: Detector) -> bool:
     """Whether ``det_grid`` is the lattice :func:`plane_coefficients` reads from its corner pixels.
 
     The plane model takes a detector grid as an affine lattice: its first pixel and its

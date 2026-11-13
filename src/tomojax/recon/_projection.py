@@ -40,7 +40,7 @@ def resolve_projector(
     model: str,
     backend: str,
     *,
-    det_grid: object = None,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
     detector: Detector | None = None,
     context: str,
 ) -> tuple[str, str]:
@@ -76,7 +76,7 @@ def resolve_geometry_projector(
     backend: str,
     *,
     detector: Detector,
-    det_grid: object = None,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
     context: str,
 ) -> tuple[str | ConeModel, str]:
     """Resolve the projector for a geometry: :class:`ConeModel` for cone beams.
