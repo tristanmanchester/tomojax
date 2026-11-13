@@ -117,6 +117,6 @@ def test_rotations_on_an_axial_geometry_carry_the_held_out_advisory():
     }
     with_rotations = build(fit=("translations", "rotations"), axial=True, **common)
     assert len(with_rotations["advisories"]) == 1
-    assert "on 8 and were up to 36% worse on 3" in with_rotations["advisories"][0]
+    assert "worse than fit='translations' on 8, by up to 55%" in with_rotations["advisories"][0]
     assert build(fit=("translations", "rotations"), axial=False, **common)["advisories"] == []
     assert build(fit=("translations",), axial=True, **common)["advisories"] == []

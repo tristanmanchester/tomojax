@@ -12,10 +12,9 @@ Fitting the angle as well was the parameter the data determined worst: on
 axial scans it took a grid-locked per-view error of 1-2 degrees, and most
 axial corpus rows ended worse than a translations-only fit. With the angle held,
 analytic scans with axis wobble end below both nominal and translations-only in
-parallel, laminography and cone geometry, and the tilted corpus rows are as
-good or better. Of 12 axial corpus scans, 8 end better than translations-only
-and 3, all parallel-beam scans of one sample, up to 36% worse; the report's
-advisory states this. The analytic `rotations` benchmark case now draws wobble
+parallel, laminography and cone geometry, and the tilted corpus rows end well
+below translations-only. Axial corpus scans still do not: of 11, 8 end worse
+than translations-only, by up to 55%; the report's advisory states this. The analytic `rotations` benchmark case now draws wobble
 only.
 
 ### RejectViews finds events by their steps
