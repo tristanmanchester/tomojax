@@ -40,6 +40,7 @@ package:
     uv run --no-sync twine check --strict dist/*
     uv run --no-sync python tools/smoke_installed_wheel.py
 
+# Rewrites the ratchet and API-surface records; tests/test_architecture.py is what checks them.
 guardrails:
     JAX_PLATFORMS=cpu uv run --no-sync python tools/guardrails.py --write
 
