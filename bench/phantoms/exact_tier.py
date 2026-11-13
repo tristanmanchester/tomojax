@@ -13,7 +13,7 @@ and the photon count, so no two files share a noise realisation.
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -44,21 +44,22 @@ def projections(
     truth: np.ndarray,
     poses: np.ndarray,
     *,
-    interpolation: str = "linear",
+    interpolation: Literal["linear", "cubic"] = "linear",
 ) -> np.ndarray:
     """Noise-free line integrals of ``truth`` (z, y, x) at world-from-object ``poses``.
 
     ``interpolation`` is the plane kernel, linear or cubic: the tier's data must come from the
     same kernel as the fit that reads them, or the truth no longer reads zero.
     """
+    import jax.numpy as jnp
+
     from tomojax.core.backend_policy import cuda_backend
     from tomojax.forward import project_joseph
 
-    volume = np.ascontiguousarray(truth, dtype=np.float32)
     backend = "cuda" if cuda_backend() else "jax"
     out = project_joseph(
-        volume,
-        np.asarray(poses, np.float32),
+        jnp.asarray(truth, jnp.float32),
+        jnp.asarray(poses, jnp.float32),
         grid,
         detector,
         backend=backend,
