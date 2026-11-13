@@ -3,7 +3,9 @@
 This tier judges the solver and its levels. Here the data are exactly what the model predicts
 at the truth (parallel-beam plane models, with the fit's own kernel), so a correct fit recovers
 the truth to the noise. Detail a grid cannot represent belongs to the independent tier (gVXR
-from meshes, ``corpus.py``), not to this one.
+from meshes, ``corpus.py``), not to this one. The truth must also be gauge-free relative to the
+fit's start (:func:`gauge_free`); otherwise its sub-voxel position differs from the one the
+fit's gauge holds, and the fit bends its poses to buy sharpness instead of reaching it.
 
 Noise is the corpus's counting model: Poisson at a photon count per pixel, with counts floored
 at 0.5 before the log. Each file has its own seed, derived from the draw's seed, the row's name
@@ -29,6 +31,48 @@ def corrections(nominal: np.ndarray, poses: np.ndarray) -> np.ndarray:
     table[:, [1, 0, 2]] = Rotation.from_matrix(local).as_euler("YXZ")
     table[:, [3, 5, 4]] = poses[:, :3, 3] - nominal[:, :3, 3]
     return table
+
+
+def gauge_free(
+    poses: np.ndarray,
+    start: np.ndarray,
+    *,
+    pitch: tuple[float, float],
+    lever_px: float,
+    rotations: bool = False,
+) -> np.ndarray:
+    """The truth's rigid representative nearest ``start`` in the fit's own scaled coordinates.
+
+    The fit holds its gauge (the rigid object motions the data cannot see) at the start's: no
+    component of its correction along those motions. In continuous space the choice is free,
+    but on a voxel grid a sub-voxel rigid shift changes how sharply the grid can represent the
+    object, so a grid-aligned truth at another gauge cannot be reached. This returns
+    ``poses @ T`` for the rigid T minimising the start-relative correction, translations over
+    the pitch and, with ``rotations``, the wobble angles times ``lever_px``. That is the same
+    object moved rigidly, and the representative the fit converges to. Rotations are included
+    only when the fit fits them; a translations-only fit cannot express a rotated truth.
+    """
+    from scipy.optimize import least_squares
+
+    def state(candidate: np.ndarray) -> np.ndarray:
+        table = corrections(start, candidate)
+        columns = [table[:, 3] / pitch[0], table[:, 4] / pitch[1]]
+        if rotations:
+            columns += [table[:, 0] * lever_px, table[:, 1] * lever_px]
+        return np.concatenate(columns)
+
+    def moved(z: np.ndarray) -> np.ndarray:
+        transform = np.eye(4)
+        if rotations:
+            transform[:3, :3] = Rotation.from_rotvec(z[3:]).as_matrix()
+        transform[:3, 3] = z[:3]
+        return poses @ transform
+
+    size = 6 if rotations else 3
+    fitted = least_squares(
+        lambda z: state(moved(z)), np.zeros(size), xtol=1e-14, ftol=1e-14, gtol=1e-14
+    )
+    return moved(fitted.x)
 
 
 def noise_seed(draw_seed: int, row: str, photons: float) -> int:

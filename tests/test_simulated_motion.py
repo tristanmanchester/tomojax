@@ -127,13 +127,57 @@ def test_draws_repeat_by_seed_and_files_get_their_own_noise():
     assert len(seeds) == 4
 
 
+def _landmark_px(poses, true):
+    """RMS detector-pixel error of 27 points after the best rigid gauge (1 mm pixels)."""
+    from scipy.optimize import least_squares
+    from scipy.spatial.transform import Rotation
+
+    points = np.stack(np.meshgrid(*[np.linspace(-7, 7, 3)] * 3, indexing="ij"), -1).reshape(-1, 3)
+
+    def pixels(p, pts):
+        return (np.einsum("nij,kj->nki", p[:, :3, :3], pts) + p[:, None, :3, 3])[..., [0, 2]]
+
+    def residual(z):
+        moved = points @ Rotation.from_rotvec(z[:3]).as_matrix().T + z[3:]
+        return (pixels(poses, moved) - pixels(true, points)).ravel()
+
+    fitted = least_squares(residual, np.zeros(6)).x
+    return float(np.sqrt(np.mean(residual(fitted) ** 2) * 2))
+
+
+def test_gauge_free_truth_has_no_component_along_the_fits_rigid_translations():
+    nominal = axial_nominal(ANGLES)
+    m = motion.Motion(
+        centre_offset_um=300.0,
+        radial_um=((400.0,), (300.0,)),
+        radial_phase=((0.3,), (1.1,)),
+        axial_um=(250.0,),
+        axial_phase=(0.5,),
+    )
+    raw = motion.poses(m, nominal, ANGLES, np.zeros(3))["poses"]
+    free = exact_tier.gauge_free(raw, nominal, pitch=(1.0, 1.0), lever_px=12.0)
+    table = exact_tier.corrections(nominal, free)
+    state = np.stack([table[:, 3], table[:, 4]], -1).reshape(-1)
+    tangents = np.stack(
+        [np.stack([nominal[:, 0, k], nominal[:, 2, k]], -1).reshape(-1) for k in range(3)], -1
+    )
+    raw_table = exact_tier.corrections(nominal, raw)
+    raw_state = np.stack([raw_table[:, 3], raw_table[:, 4]], -1).reshape(-1)
+    # Zero to the least-squares solve's precision, relative to the raw truth's component.
+    assert np.abs(tangents.T @ state).max() < 1e-8 * np.abs(tangents.T @ raw_state).max()
+    # The same object moved rigidly: the rotations are untouched and the shift is common.
+    np.testing.assert_allclose(free[:, :3, :3], raw[:, :3, :3], atol=1e-15)
+    assert _landmark_px(free, raw) < 1e-9
+
+
 @pytest.mark.numerical
-def test_exact_tier_fit_started_at_the_truth_stays_there():
+def test_exact_tier_fit_from_nominal_reaches_a_gauge_free_truth():
     import tomojax as tj
     from tomojax.geometry import stack_view_poses
 
     grid = tj.Grid(24, 24, 24, 1.0, 1.0, 1.0)
-    geometry = tj.ParallelGeometry(grid, tj.Detector(32, 32, 1.0, 1.0), ANGLES)
+    detector = tj.Detector(32, 32, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(grid, detector, ANGLES)
     nominal = np.asarray(stack_view_poses(geometry, len(ANGLES)), np.float64)
     z, y, x = np.mgrid[:24, :24, :24] - 11.5
     truth = np.exp(-((x - 3) ** 2 + y**2 + (z + 2) ** 2) / 20) + 0.6 * (np.abs(x + 4) < 3) * (
@@ -147,11 +191,21 @@ def test_exact_tier_fit_started_at_the_truth_stays_there():
         axial_phase=(0.5,),
         slips=(motion.Slip(40, (300.0, -200.0, 150.0)),),
     )
-    true = motion.poses(m, nominal, ANGLES, np.zeros(3))["poses"]
-    scan = tj.Scan(exact_tier.projections(grid, geometry.detector, truth, true), geometry)
-    result = tj.align(scan.with_poses(exact_tier.corrections(nominal, true)), fit="translations")
-    end = np.asarray(stack_view_poses(result.scan.geometry, len(ANGLES)), np.float64)
-    assert np.abs(end[:, [0, 2], 3] - true[:, [0, 2], 3]).max() < 2e-3  # pixels are 1 mm here
+    raw = motion.poses(m, nominal, ANGLES, np.zeros(3))["poses"]
+    ends = {}
+    for label, true in (
+        ("raw", raw),
+        ("gauge-free", exact_tier.gauge_free(raw, nominal, pitch=(1.0, 1.0), lever_px=12.0)),
+    ):
+        scan = tj.Scan(exact_tier.projections(grid, detector, truth, true), geometry)
+        result = tj.align(scan, fit="translations")
+        ends[label] = _landmark_px(
+            np.asarray(stack_view_poses(result.scan.geometry, len(ANGLES)), np.float64), true
+        )
+    # From a 0.5 px start the fit reaches the gauge-free truth; a truth held at another sub-voxel
+    # position than the fit's gauge cannot be reached, which is what this tier must exclude.
+    assert ends["gauge-free"] < 1e-3
+    assert ends["raw"] > 5e-3
 
 
 @pytest.mark.numerical
