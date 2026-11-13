@@ -6,8 +6,11 @@ suspect, look at the result, and add parameters only while artefacts remain: a p
 do not need costs accuracy, and a missing one leaves an error the fit cannot represent.
 
 Before you align, correct the projections to line integrals and check the declared geometry
-against the instrument, as the [real scan guide](real-laminography.md) describes. Reconstruct once
-without alignment so that you have an image to compare with.
+against the instrument, as the [real scan guide](real-laminography.md) describes. Pass
+`RejectViews()` to that correction when frames may be broken or a crystal may diffract: the fit
+otherwise moves those views to explain them. On a real laminography scan with one broken frame,
+`RejectViews` removed that frame and the four others where the fitted corrections jumped.
+Reconstruct once without alignment so that you have an image to compare with.
 
 ## Choose what to fit
 
@@ -184,7 +187,8 @@ translation fit.
      A slip, where the object moves and stays, is not one.
    - `unusual_views`: views whose residual is at least three times their neighbours', such as a
      broken frame or a crystal diffracting. These need not have moved, so look at the frames.
-   Look at those views before trusting their corrections, and drop broken frames. The report is
+   Look at those views before trusting their corrections, and drop broken frames, or correct
+   with `RejectViews()` and align again. The report is
    advisory: a view below its thresholds can still be wrong. `info["report"]["advisories"]` also
    states measured limits that apply to the fit, such as per-view rotations fitted with the
    rotation axis perpendicular to the beam, which held-out tests found accurate only to
