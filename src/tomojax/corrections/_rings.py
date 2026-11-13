@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax._data import views_of
+from tomojax.core.robust import MAD_TO_SD
 from tomojax.geometry import (
     ConeGeometry,
     ConeSegments,
@@ -135,7 +136,7 @@ def _reference_jax(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> ja
     """
     taps = [_quadratic_taps(w, 1) for w in WINDOWS]
     r = ranked - _correlate(ranked, taps[-1])
-    sigma = 1.4826 * jnp.median(jnp.abs(r), axis=1, keepdims=True)
+    sigma = MAD_TO_SD * jnp.median(jnp.abs(r), axis=1, keepdims=True)
     u = r / (4.685 * jnp.maximum(sigma, 1e-3 * jnp.median(sigma) + 1e-12))
     weights = 1e-3 + jnp.where(jnp.abs(u) < 1, (1 - u * u) ** 2, 0.0)
     refs = _weighted_quadratics(ranked, weights, WINDOWS, 1)
@@ -144,7 +145,7 @@ def _reference_jax(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> ja
     r = ranked - refs[-1]
     shifts = _shifts(jnp.abs(r), local)
     scatter = bitonic_median([shifts[local + k] for k in range(-local, local + 1, 8)])
-    scatter = 1.4826 * scatter / np.sqrt(1 + (taps[-1] ** 2).sum())
+    scatter = MAD_TO_SD * scatter / np.sqrt(1 + (taps[-1] ** 2).sum())
     r = r - r.mean(1, keepdims=True)
     var = jnp.maximum((r * r).mean(1, keepdims=True), jnp.finfo(r.dtype).tiny)
     rho = [jnp.clip((r[:, k:] * r[:, :-k]).mean(1, keepdims=True) / var, 0, 1) for k in (1, 2)]

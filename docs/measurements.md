@@ -1273,6 +1273,13 @@ data were reconstructed with the recovered poses (2026-10-05, commit
 constrained FISTA reaches 0.12 after 100 iterations and 0.091 after 300
 (109 s), against 0.059 for the volume of the full-resolution alignment.
 
+On straight-axis scans per-view rotations are weakly determined (2026-11-13,
+commit `a64ea92e`, rotations tied to their neighbours). On the 13 axial rows of
+the simulated watch and rock corpus, `fit=("translations", "rotations")` ended
+with a lower landmark error than translations alone on 7, the same on 1 and up
+to 27% higher on 5 (the watch's full-turn and half-turn parallel rows and one
+rock half turn).
+
 ### Automatic translation alignment
 
 The earlier automatic route on unposed parallel and laminography scans fitted per-view

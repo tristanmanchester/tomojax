@@ -15,15 +15,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.robust import MAD_TO_SD
+
+from ._noise import LOSS_WIDTH_SIGMAS
 from ._operators import column_gram, column_score, robust_batch, robust_value
 
 _SMOOTH_NATIVE_PX = 8.0
-_WIDTH_SIGMA = 2.5
 _ITERATIONS = 5
 # A smaller proposed step is converged: it cannot change the pose error, and
 # its decrease is below what the FP32 objective resolves, so backtracking on it
 # only spends objective evaluations.
-_POSE_TOL_PX = 1e-4
+_FP32_STEP_PX = 1e-4
 _LM_INITIAL = 0.01
 _NEIGHBOURS = 5
 
@@ -178,7 +180,7 @@ class _EdgeObjective:
             w = self.ops.batch_precision(z[-1], z[2])
             r = jnp.where(w > 0, self._residual(z, x), jnp.nan)
             med = jnp.nanmedian(r, axis=(-1, -2), keepdims=True)
-            return 1.482602218505602 * jnp.nanmedian(jnp.abs(r - med), axis=(-1, -2))
+            return MAD_TO_SD * jnp.nanmedian(jnp.abs(r - med), axis=(-1, -2))
 
         return jnp.nanmedian(
             jax.lax.map(step, self._batches(q, y, precision)).reshape(-1)[: self.ops.n]
@@ -196,7 +198,7 @@ class _Refinement:
         model_sigma = float(self.objective.scale(q, x, y, precision))
         if not np.isfinite(model_sigma):
             raise ValueError("no finite residual scale for the pose refinement")
-        self.delta = max(_WIDTH_SIGMA * float(sigma), _WIDTH_SIGMA * model_sigma, 1e-8)
+        self.delta = max(LOSS_WIDTH_SIGMAS * float(sigma), LOSS_WIDTH_SIGMAS * model_sigma, 1e-8)
         self.first = self.objective.stats(q, x, y, precision, self.delta)
         gram = self.first[1]
         fisher = jnp.median(jnp.trace(gram, axis1=1, axis2=2))
@@ -237,7 +239,7 @@ class _Refinement:
             if slope >= 0:
                 return "stationary"
             # Raised damping shrinks a proposal without evidence of convergence.
-            if not attempt and lm <= _LM_INITIAL and _rms(prior.expand(dc)) < _POSE_TOL_PX:
+            if not attempt and lm <= _LM_INITIAL and _rms(prior.expand(dc)) < _FP32_STEP_PX:
                 return "pose_steps_below_tolerance"
             for ls in range(8):
                 alpha = 0.5**ls

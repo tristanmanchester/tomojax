@@ -20,7 +20,7 @@ class KrylovResult(NamedTuple):
     matvecs: jax.Array
 
 
-def solve(matvec, rhs, invdiag, maxiter, *, rtol=0.03, precondition=None):
+def solve(matvec, rhs, invdiag, maxiter, *, rtol, precondition=None):
     """Solve K x = rhs from zero with verified tolerance convergence.
 
     The caller supplies the same symmetric positive operator for every use.

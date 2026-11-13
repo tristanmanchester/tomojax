@@ -10,8 +10,12 @@ import math
 
 import numpy as np
 
-_MAX_SAMPLES = 65_536
-_NORMAL_MAD = 0.6744897501960817
+from tomojax.core.robust import MAD_TO_SD
+
+# Most residuals any robust statistic here samples.
+MAX_SAMPLES = 65_536
+# Robust loss width in noise standard deviations, for the fit and its refinement.
+LOSS_WIDTH_SIGMAS = 2.5
 
 
 def estimate_noise(projections, *, precision=None, dtype=None):
@@ -44,8 +48,8 @@ def estimate_noise(projections, *, precision=None, dtype=None):
             population = n * rows * columns
             selected = (
                 np.arange(population)
-                if population <= _MAX_SAMPLES
-                else np.random.default_rng(0).integers(population, size=_MAX_SAMPLES)
+                if population <= MAX_SAMPLES
+                else np.random.default_rng(0).integers(population, size=MAX_SAMPLES)
             )
             views, cells = np.divmod(selected, rows * columns)
             row, column = np.divmod(cells, columns)
@@ -67,5 +71,5 @@ def estimate_noise(projections, *, precision=None, dtype=None):
             coefficients = coefficients[valid] / normalizer
             if coefficients.size:
                 centered = coefficients - np.median(coefficients)
-                return float(np.median(np.abs(centered)) / _NORMAL_MAD)
+                return float(np.median(np.abs(centered)) * MAD_TO_SD)
     raise ValueError("noise calibration needs an observed detector contrast")

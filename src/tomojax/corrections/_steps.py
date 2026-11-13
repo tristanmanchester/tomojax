@@ -21,6 +21,8 @@ from jax.scipy.ndimage import map_coordinates
 import numpy as np
 from scipy.fft import next_fast_len
 
+from tomojax.core.robust import MAD_TO_SD
+
 from ._records import Correction, Json
 
 type Domain = Literal["counts", "transmission", "line integrals"]
@@ -356,7 +358,7 @@ class RejectViews(Step):
         return keep, found
 
 
-def _robust_sd(values: np.ndarray) -> float:
+def _quiet_quarter_sd(values: np.ndarray) -> float:
     """A standard deviation from the quietest quarter of ``values``.
 
     A quarter of normal deviations fall below 0.3186 of it, so up to three
@@ -377,7 +379,9 @@ def _steps(means: np.ndarray, z: float) -> tuple[np.ndarray, np.ndarray, float]:
     index = np.arange(len(change))
     # float32 statistics resolve about 1e-6 of the largest mean, whatever the spreads.
     floor = max(
-        z * _robust_sd(change), 0.1 * _robust_sd(means), 1e-5 * float(np.max(np.abs(means)))
+        z * _quiet_quarter_sd(change),
+        0.1 * _quiet_quarter_sd(means),
+        1e-5 * float(np.max(np.abs(means))),
     )
     step = np.zeros(len(change), bool)
     residual, limit = change, np.full(len(change), floor)
@@ -388,7 +392,7 @@ def _steps(means: np.ndarray, z: float) -> tuple[np.ndarray, np.ndarray, float]:
             nearest = others[np.argsort(np.abs(others - i), kind="stable")[:_NEAREST_CHANGES]]
             if len(nearest):
                 predicted[i] = np.median(change[nearest])
-                limit[i] = max(floor, z * _robust_sd(change[nearest]))
+                limit[i] = max(floor, z * _quiet_quarter_sd(change[nearest]))
         residual = change - predicted
         step = np.abs(residual) > limit
     return residual, step, floor
@@ -727,7 +731,7 @@ def _stripe_response(row: jax.Array, width: int) -> jax.Array:
     relative = noise / jnp.where(local > 0, local, 1)
     ratio = jnp.where(local > 0, jnp.log(jnp.maximum(relative, jnp.finfo(row.dtype).eps)), 0)
     deviation = jnp.abs(ratio - jnp.median(ratio))
-    scale = 1.4826 * jnp.median(deviation)
+    scale = MAD_TO_SD * jnp.median(deviation)
     bad = (deviation > 6 * scale) & (scale > 0)
     radius = max(1, width // 8)
     bad = jax.lax.reduce_window(bad, False, jax.lax.bitwise_or, (2 * radius + 1,), (1,), "SAME")

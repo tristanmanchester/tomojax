@@ -5,10 +5,10 @@ selected by ``fit`` have columns or unknowns; shared centre, tilt and roll form 
 small exact Schur border. Local motion uses a drift spline and robust jumps;
 sample rotations additionally have a Gaussian prior in physical radians.
 
-Linear interpolation and four image-CG iterations serve centre/translation
-fits. Angular parameters use cubic interpolation for parallel rays and up to
-eight CG iterations. These are internal discretization/work
-choices for the requested model, never data-dependent route selection. Each
+Linear interpolation serves centre/translation fits and cubic interpolation
+angular fits for parallel rays; every fit's image steps use the same CG
+iteration count. These are internal discretization/work choices for the
+requested model, never data-dependent route selection. Each
 working pixel is one ray through its centre; a block with missing input pixels
 is the mean of its finite ones, weighted by their fraction. Image TV is
 disabled to avoid imposing a shape preference on weak geometry modes.
@@ -26,10 +26,10 @@ from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.joseph import validate_plane_geometry
 from tomojax.recon.fista_tv import resolve_tv_metric
 
-from ._noise import estimate_noise
+from ._noise import LOSS_WIDTH_SIGMAS, MAX_SAMPLES, estimate_noise
 from ._operators import Operators
 from ._parameters import Parameters
-from ._pose import MotionPrior, ViewOrder
+from ._pose import ROTATION_SIGMA_DEG, MotionPrior, ViewOrder
 from ._projection import (
     cone_gauge,
     cone_gauge_constraint,
@@ -49,16 +49,16 @@ _CG_ITERATIONS = 16
 # (binning, maximum Gauss-Newton steps). The active model is the same at both
 # scales; held coordinates have neither unknowns nor derivative columns.
 _LEVELS = ((2, 12), (1, 8))
-_LOSS_SIGMA = 2.5
 _LOSS_CONTRAST = 0.5
 _TV_WEIGHT = 0.0
 _TV_HUBER = 1.0
 # Views between spline knots for each active local coordinate.
 _KNOT_SPACING = 10
-_POSE_HUBER_PX = 0.02
+# Scale of the view-to-view innovations, native px: the Student-t width for translations and
+# the curvature of the rotations' Gaussian increments.
+_INNOVATION_SCALE_PX = 0.02
 # The fitted image extends 1/_Z_MARGIN of the working grid's height past each end.
 _Z_MARGIN = 16
-_ROTATION_SIGMA_DEG = 0.5
 
 
 def _resized(grid, shape_xyz):
@@ -138,7 +138,7 @@ def _capped_contrast(y, rms, precision):
     """The contrast RMS, capped at three central interdecile scales of offset-free samples."""
     total = y.size
     rng = np.random.default_rng(19871)
-    indices = np.arange(total) if total <= 65536 else rng.integers(total, size=65536)
+    indices = np.arange(total) if total <= MAX_SAMPLES else rng.integers(total, size=MAX_SAMPLES)
     values = y.reshape(-1)[indices].astype(np.float64)
     views = indices // (y.shape[1] * y.shape[2])
     valid = np.isfinite(values)
@@ -216,7 +216,7 @@ def _level(
     calibration = {
         "tv_weight": float(metric.weight_over_contrast) * contrast,
         "eps": max(1e-8, _TV_HUBER * contrast * h / float(metric.length_scale) ** 2),
-        "delta": max(_LOSS_SIGMA * sigma, _LOSS_CONTRAST * contrast, 1e-8),
+        "delta": max(LOSS_WIDTH_SIGMAS * sigma, _LOSS_CONTRAST * contrast, 1e-8),
         "sigma": sigma,
         "scale": scale,
         "scales": (1.0, 1.0, 1.0) if g.vx == g.vy == g.vz else (h / g.vz, h / g.vy, h / g.vx),
@@ -367,10 +367,10 @@ def fit_poses(
                     gauge,
                     constraint=constraint,
                     knot_spacing=(_KNOT_SPACING,) * pose_scales.shape[-1],
-                    delta=_POSE_HUBER_PX,
+                    delta=_INNOVATION_SCALE_PX,
                     parameters=parameters,
                     rotation_scales=pose_scales,
-                    rotation_sigma_deg=_ROTATION_SIGMA_DEG,
+                    rotation_sigma_deg=ROTATION_SIGMA_DEG,
                     noise_sigma=cal["sigma"],
                     order=order,
                 )
@@ -412,7 +412,7 @@ def fit_poses(
     record = {
         "fit": list(parameters.fit),
         "corrections": corrections,
-        "rotation_prior_sigma_deg": _ROTATION_SIGMA_DEG if "rotations" in parameters.fit else None,
+        "rotation_prior_sigma_deg": ROTATION_SIGMA_DEG if "rotations" in parameters.fit else None,
         "working_grid": asdict(base),
         "detector_binning": dbin,
         "lever_px_per_radian": lever,

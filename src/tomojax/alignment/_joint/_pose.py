@@ -16,6 +16,9 @@ from jax.scipy.linalg import cho_solve, lu_factor, lu_solve
 import numpy as np
 from scipy.interpolate import BSpline, make_interp_spline
 
+# Standard deviation of the per-view rotation size prior.
+ROTATION_SIGMA_DEG = 0.5
+
 
 def _shift(a, offset):
     """out[i] = a[i + offset], zero filled."""
@@ -197,7 +200,7 @@ class MotionPrior:
         parameters=None,
         rotation_scales=None,
         noise_sigma=0.0,
-        rotation_sigma_deg=0.5,
+        rotation_sigma_deg=ROTATION_SIGMA_DEG,
         order=None,
     ) -> None:
         self.parameters, self.n = parameters, views

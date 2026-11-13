@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from scipy.stats import norm
 
 from tomojax.forward.api import robust_residual_scale
 
@@ -19,7 +20,7 @@ def _reference(values, mask=None) -> float:
     if selected.size == 0:
         return 1.0
     with np.errstate(invalid="ignore", over="ignore"):
-        scale = 1.4826 * np.median(np.abs(selected - np.median(selected)))
+        scale = np.median(np.abs(selected - np.median(selected))) / norm.ppf(0.75)
     return float(scale) if np.isfinite(scale) and scale > 0 else 1.0
 
 

@@ -12,6 +12,8 @@ badly (a broken frame, diffraction), which need not move its pose at all.
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from tomojax.core.robust import MAD_TO_SD
+
 from ._pose import ViewOrder
 
 # An isolated view leaves both neighbours by this many robust standard deviations
@@ -24,11 +26,11 @@ _ISOLATED_MIN_WORKING_PX = 0.1
 # A rotation axis within this angle of perpendicular to the beam is axial.
 _AXIAL_TILT_DEG = 5.0
 _NAMES = ("alpha", "beta", "phi", "dx", "dz", "dy")
-# Corpus rows, rotations tied to neighbours (lab-board/v1-r1b-plain.jsonl), stated where it applies.
+# Measured in docs/measurements.md ("Per-view pose recovery"); stated where it applies.
 _AXIAL_ROTATIONS = (
-    "per-view rotations were fitted with the rotation axis perpendicular to the beam; on 13 "
-    "such simulated scans they beat fit='translations' on 7 and ended up to 27% worse on 5. "
-    "Compare with fit='translations' before relying on them."
+    "per-view rotations were fitted with the rotation axis perpendicular to the beam, where "
+    "they are weakly determined and can end worse than fit='translations'. Compare with "
+    "fit='translations' before relying on them."
 )
 
 
@@ -42,11 +44,6 @@ def axial(nominal, beam):
     axis = turns[np.argmax(sizes)] / sizes.max()
     beam = np.asarray(beam, np.float64) / np.linalg.norm(beam)
     return bool(abs(axis @ beam) < np.sin(np.deg2rad(_AXIAL_TILT_DEG)))
-
-
-def _robust_sd(values, axis=0):
-    median = np.median(values, axis=axis, keepdims=True)
-    return 1.4826 * np.median(np.abs(values - median), axis=axis)
 
 
 def isolated_views(steps, order=None):
@@ -65,7 +62,10 @@ def isolated_views(steps, order=None):
         return []
     scale = order.jump_scale[:, None]
     change = np.diff(steps, axis=0) * scale
-    sd = _robust_sd(change[order.linked]) if order.linked.any() else np.zeros(steps.shape[1])
+    sd = np.zeros(steps.shape[1])
+    if order.linked.any():
+        linked = change[order.linked]
+        sd = MAD_TO_SD * np.median(np.abs(linked - np.median(linked, axis=0)), axis=0)
     limit = np.maximum(_OUTLIER_SIGMAS * sd, _ISOLATED_MIN_WORKING_PX)
     before, after = steps[1:-1] - steps[:-2], steps[1:-1] - steps[2:]
     widen = np.sqrt(np.maximum(order.steps, 1.0))[:, None]
