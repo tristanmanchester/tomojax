@@ -58,3 +58,15 @@ def test_a_level_change_that_never_returns_keeps_its_views():
         p[200:] += 0.05  # the flux settles lower for the rest of the scan
 
     assert _rejected(_scan(events)) == []
+
+
+def test_a_flux_tooth_inside_a_level_change_does_not_make_one_block():
+    # A lab source steps up, then dips and recovers over many views before stepping back:
+    # the inside is not a constant shift, so the steps at its ends are not one event.
+    def events(p):
+        p[100:140] += 0.02
+        dip = 0.08 * np.exp(-np.arange(20) / 4)
+        p[115:135] -= dip[:, None, None]
+
+    rejected = _rejected(_scan(events))
+    assert not set(rejected) & ({*range(100, 115)} | {*range(127, 140)})

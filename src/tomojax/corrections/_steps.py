@@ -267,7 +267,9 @@ class RejectViews(Step):
     themselves (for noise-free scans). The views between a step and a step
     back are rejected, however many, when they form a block: the two steps of
     opposite sign within a factor of two, the inside drifting by less than half
-    the smaller step and standing out from four views on each side. A first or
+    the smaller step from end to end and stepping by less than that between its
+    views (a flux tooth inside is not a shifted block), and standing out from
+    four views on each side. A first or
     last view that steps away from the rest is rejected too. A step that never
     returns is a level change, and its views are kept. The mean is the total
     attenuation per pixel, so an empty or uniform part of the detector neither
@@ -395,7 +397,8 @@ def _events(means: np.ndarray, z: float) -> tuple[np.ndarray, float]:
 
     An event is a block shifted by a constant: a step, a step back of the
     opposite sign within a factor of two, an inside that drifts by less than
-    half the smaller step, and an inside level beyond both sides' by more than
+    half the smaller step end to end and steps by less than that within, and an
+    inside level beyond both sides' by more than
     the step floor. A first or last view that steps away from the rest is one
     too (it has no step back to see). Candidates are taken shortest first, each
     step in one event; a step that never returns is a level change, not an event.
@@ -424,10 +427,11 @@ def _events(means: np.ndarray, z: float) -> tuple[np.ndarray, float]:
             candidates.append((1, n - 1, n - 1, {a}))
         for c in range(a + 1, len(steps)):
             back, returned = steps[c]
+            drift = [means[back] - means[b + 1]] + [inner for _, inner in steps[a + 1 : c]]
             if (
                 np.sign(returned) != np.sign(size)
                 and 0.5 <= abs(returned / size) <= 2
-                and abs(means[back] - means[b + 1]) < 0.5 * min(abs(size), abs(returned))
+                and max(np.abs(drift)) < 0.5 * min(abs(size), abs(returned))
                 and stands_out(b + 1, back, float(np.sign(size)))
             ):
                 candidates.append((back - b, b + 1, back, {a, c}))
