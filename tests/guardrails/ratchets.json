@@ -59,7 +59,7 @@
     "alignment": 3013,
     "backends": 619,
     "cli": 2400,
-    "core": 13886,
+    "core": 13425,
     "corrections": 2682,
     "datasets": 1125,
     "forward": 826,
@@ -69,7 +69,7 @@
     "nuisance": 232,
     "recon": 13873
   },
-  "cuda_kernels": 52,
+  "cuda_kernels": 50,
   "cuda_switches": 36,
   "environment_reads": 29,
   "suppressions": {
