@@ -1,0 +1,157 @@
+"""Physical motion components and the exact tier: units, frames, composition and acceptance."""
+
+from pathlib import Path
+import sys
+
+import numpy as np
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench" / "phantoms"))
+import exact_tier
+import motion
+
+ANGLES = np.linspace(0.0, 360.0, 72, endpoint=False)
+
+
+def axial_nominal(angles):
+    """Parallel axial nominal poses: the object turns about its own z, which is lab z."""
+    out = np.tile(np.eye(4), (len(angles), 1, 1))
+    for i, a in enumerate(np.deg2rad(angles)):
+        out[i, :3, :3] = [[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]]
+    return out
+
+
+def lab_point(poses, point):
+    return np.einsum("nij,j->ni", poses[:, :3, :3], point) + poses[:, :3, 3]
+
+
+def test_a_slip_is_an_object_frame_step_that_turns_with_the_sample():
+    nominal = axial_nominal(ANGLES)
+    shift = (5.0, 0.0, 0.0)  # micrometres along object x
+    slipped = motion.poses(
+        motion.Motion(slips=(motion.Slip(30, shift),)), nominal, ANGLES, np.zeros(3)
+    )
+    still = motion.poses(motion.Motion(), nominal, ANGLES, np.zeros(3))
+    moved = lab_point(slipped["poses"], np.zeros(3)) - lab_point(still["poses"], np.zeros(3))
+    np.testing.assert_allclose(moved[:30], 0.0, atol=1e-12)
+    # After the slip the 5 um object-frame shift turns with the sample: lab x is 5 um cos(angle).
+    theta = np.deg2rad(ANGLES[30:])
+    np.testing.assert_allclose(moved[30:, 0], 5e-3 * np.cos(theta), atol=1e-12)
+    np.testing.assert_allclose(moved[30:, 1], 5e-3 * np.sin(theta), atol=1e-12)
+
+
+def test_a_tip_turns_the_sample_about_its_centre():
+    centre = np.array([0.2, -0.1, 0.4])
+    tip = motion.Slip(0, (0.0, 0.0, 0.0), tip_rad=1e-3, tip_axis=(0.0, 1.0, 0.0))
+    transform = tip.transform(centre)
+    np.testing.assert_allclose(transform[:3, :3] @ centre + transform[:3, 3], centre, atol=1e-15)
+    edge = centre + np.array([0.0, 0.0, 0.5])
+    moved = transform[:3, :3] @ edge + transform[:3, 3] - edge
+    np.testing.assert_allclose(np.linalg.norm(moved), 0.5e-3, rtol=1e-6)
+
+
+def test_stage_tilt_reaches_the_sample_as_tilt_times_height():
+    nominal = axial_nominal(ANGLES)
+    m = motion.Motion(tilt_urad=((10.0,), ()), tilt_phase=((0.0,), ()), sample_height_mm=100.0)
+    lab = lab_point(motion.poses(m, nominal, ANGLES, np.zeros(3))["poses"], np.zeros(3))
+    # Tilt about lab x by 10 urad cos(angle) at 100 mm above the bearing moves the sample in lab y.
+    np.testing.assert_allclose(
+        lab[:, 1], -100.0 * 10e-6 * np.cos(np.deg2rad(ANGLES)), rtol=1e-6, atol=1e-12
+    )
+
+
+def test_recorded_components_compose_to_the_poses():
+    nominal = axial_nominal(ANGLES)
+    ranges = {
+        "centre_um": [1, 5],
+        "axis_tilt_deg": [0.1, 0.5],
+        "axis_roll_deg": [0.0, 0.2],
+        "harmonics": 3,
+        "radial_um": [0.5, 2],
+        "axial_um": [0.5, 2],
+        "tilt_urad": [4, 12],
+        "asynchronous_fraction": [0.1, 0.2],
+        "drift_um_per_hour": [1, 5],
+        "drift_curvature": [-0.5, 0.5],
+        "encoder_arcsec": [1, 5],
+        "scan_minutes": [10, 60],
+        "sample_height_mm": [20, 100],
+        "slips": [2, 2],
+        "slip_um": [1, 10],
+        "tip": "geometric",
+    }
+    m = motion.draw(np.random.default_rng(7), ranges, views=len(ANGLES), sample_size_mm=1.0)
+    out = motion.poses(m, nominal, ANGLES, np.zeros(3))
+    encoder = np.tile(np.eye(4), (len(ANGLES), 1, 1))
+    c, s = np.cos(out["encoder_rad"]), np.sin(out["encoder_rad"])
+    encoder[:, 0, 0], encoder[:, 0, 1], encoder[:, 1, 0], encoder[:, 1, 1] = c, -s, s, c
+    np.testing.assert_allclose(
+        out["stage"] @ nominal @ encoder @ out["sample"], out["poses"], atol=1e-14
+    )
+    assert len(m.slips) == 2
+    for slip in m.slips:
+        size_um = np.linalg.norm(slip.shift_um)
+        np.testing.assert_allclose(abs(slip.tip_rad), size_um * 1e-3 / 1.0, rtol=1e-12)
+        assert slip.tip_axis[2] == 0.0
+
+
+def test_stage_motion_is_smooth_and_only_slips_step():
+    nominal = axial_nominal(ANGLES)
+    ranges = {
+        "harmonics": 3,
+        "radial_um": [2, 2],
+        "axial_um": [2, 2],
+        "drift_um_per_hour": [5, 5],
+        "scan_minutes": [30, 30],
+    }
+    m = motion.draw(np.random.default_rng(3), ranges, views=len(ANGLES), sample_size_mm=1.0)
+    lab = lab_point(motion.poses(m, nominal, ANGLES, np.zeros(3))["poses"], np.zeros(3))
+    # Three harmonics of at most 2 um each change by at most 2 pi k / n per view.
+    step = np.abs(np.diff(lab, axis=0)).max()
+    assert step < 2e-3 * 2 * np.pi * (1 + 2 / 2 + 3 / 3) / len(ANGLES) * 1.01 + 5e-3 * 0.5 / len(
+        ANGLES
+    )
+
+
+def test_draws_repeat_by_seed_and_files_get_their_own_noise():
+    ranges = {"radial_um": [0.5, 2], "slips": [0, 3], "slip_um": [1, 10]}
+    a = motion.draw(np.random.default_rng(11), ranges, views=72, sample_size_mm=1.0)
+    b = motion.draw(np.random.default_rng(11), ranges, views=72, sample_size_mm=1.0)
+    c = motion.draw(np.random.default_rng(12), ranges, views=72, sample_size_mm=1.0)
+    assert a == b and a != c
+    seeds = {
+        exact_tier.noise_seed(0, row, photons)
+        for row in ("watch/parallel", "rock/parallel")
+        for photons in (1e3, 1e4)
+    }
+    assert len(seeds) == 4
+
+
+@pytest.mark.numerical
+def test_exact_tier_fit_started_at_the_truth_stays_there():
+    import tomojax as tj
+    from tomojax.geometry import stack_view_poses
+
+    grid = tj.Grid(24, 24, 24, 1.0, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(32, 32, 1.0, 1.0), ANGLES)
+    nominal = np.asarray(stack_view_poses(geometry, len(ANGLES)), np.float64)
+    z, y, x = np.mgrid[:24, :24, :24] - 11.5
+    truth = np.exp(-((x - 3) ** 2 + y**2 + (z + 2) ** 2) / 20) + 0.6 * (np.abs(x + 4) < 3) * (
+        np.abs(y - 2) < 4
+    ) * (np.abs(z) < 6)
+    m = motion.Motion(
+        centre_offset_um=300.0,
+        radial_um=((0.0, 400.0), (0.0, 300.0)),
+        radial_phase=((0.0, 0.3), (0.0, 1.1)),
+        axial_um=(250.0,),
+        axial_phase=(0.5,),
+        slips=(motion.Slip(40, (300.0, -200.0, 150.0)),),
+    )
+    true = motion.poses(m, nominal, ANGLES, np.zeros(3))["poses"]
+    scan = tj.Scan(
+        exact_tier.projections(tj.Scan(np.zeros((72, 32, 32), np.float32), geometry), truth, true),
+        geometry,
+    )
+    result = tj.align(scan.with_poses(exact_tier.corrections(nominal, true)), fit="translations")
+    end = np.asarray(stack_view_poses(result.scan.geometry, len(ANGLES)), np.float64)
+    assert np.abs(end[:, [0, 2], 3] - true[:, [0, 2], 3]).max() < 2e-3  # pixels are 1 mm here
