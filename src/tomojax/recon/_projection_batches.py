@@ -56,7 +56,7 @@ class ViewBatches:
         elif model == "joseph":
             from tomojax.core.joseph import plane_coefficients
 
-            self.coefficients = plane_coefficients(poses, grid, detector)
+            self.coefficients = plane_coefficients(poses, grid, detector, det_grid)
 
     def lay_out(self, n: int) -> None:
         """Batch ``n`` views."""

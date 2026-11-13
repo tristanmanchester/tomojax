@@ -418,19 +418,20 @@ def test_plane_cgls_matches_independent_damped_system_with_tail_batch(
     assert np.linalg.norm(gradient) < 5e-6 * np.linalg.norm(reference.T @ data.ravel()), info
 
 
-def test_plane_model_rejects_custom_detector_coordinates():
+def test_plane_model_rejects_a_detector_grid_that_is_not_a_lattice():
     from tomojax.geometry import ParallelGeometry
 
     grid, detector, _ = problem()
     geometry = ParallelGeometry(grid, detector, np.arange(6))
-    with pytest.raises(ValueError, match="canonical detector"):
+    scattered = np.random.default_rng(5).normal(size=(2, 63)).astype(np.float32)
+    with pytest.raises(ValueError, match="affine detector grid"):
         cgls(
             geometry,
             grid,
             detector,
             jnp.zeros((6, 7, 9)),
             config=CGLSConfig(projector_model="joseph"),
-            det_grid=(jnp.zeros(63), jnp.zeros(63)),
+            det_grid=(jnp.asarray(scattered[0]), jnp.asarray(scattered[1])),
         )
 
 

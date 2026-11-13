@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import numpy as np
+
 from .geometry.base import Detector, Grid, grid_volume_origin
 
 
@@ -75,3 +77,25 @@ def coefficients(poses, grid: Grid, detector: Detector, det_grid=None, *, xp: An
         ],
         axis=1,
     )
+
+
+def affine_grid(det_grid, detector: Detector) -> bool:
+    """Whether ``det_grid`` is the lattice :func:`coefficients` reads from its corner pixels.
+
+    The plane model takes a detector grid as an affine lattice: its first pixel and its
+    steps along the first row and column. A rolled detector is one; an arbitrary grid is
+    not, and the plane model would silently project onto the lattice through its corners
+    instead. The tolerance is float32 rounding of the coordinates, nothing more.
+    """
+    nu, nv = detector.nu, detector.nv
+    points = np.stack([np.asarray(a, np.float64).ravel() for a in det_grid])
+    if points.shape != (2, nu * nv):
+        return False
+    step_u = (points[:, nu - 1] - points[:, 0]) / (nu - 1) if nu > 1 else np.zeros(2)
+    step_v = (points[:, (nv - 1) * nu] - points[:, 0]) / (nv - 1) if nv > 1 else np.zeros(2)
+    if (nu > 1 and not step_u.any()) or (nv > 1 and not step_v.any()):
+        return False  # a degenerate grid has no lattice to read
+    u, v = np.meshgrid(np.arange(nu), np.arange(nv))
+    lattice = points[:, :1] + step_u[:, None] * u.ravel() + step_v[:, None] * v.ravel()
+    scale = np.abs(points).max() + detector.du + detector.dv
+    return bool(np.abs(lattice - points).max() <= 64 * np.finfo(np.float32).eps * scale)

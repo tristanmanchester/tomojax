@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 
 from tomojax.backends.host_stream import read_views
+from tomojax.core._plane_coefficients import affine_grid
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import ConeModel, cone_model, use_cuda_cone
 from tomojax.core.devices import VIEWS, ViewSplit, pad_views
@@ -40,27 +41,32 @@ def resolve_projector(
     backend: str,
     *,
     det_grid: object = None,
+    detector: Detector | None = None,
     context: str,
 ) -> tuple[str, str]:
     """Resolve ``auto`` choices; explicit choices must be supported, never replaced.
 
-    ``auto`` selects Joseph plane sampling with CUDA kernels on CUDA. Explicit
-    detector grids need the ray model, and CUDA needs CUDA and the canonical
-    detector grid.
+    ``auto`` selects Joseph plane sampling, with CUDA kernels on CUDA, for the
+    canonical and for an affine detector grid such as a rolled one: the plane
+    coefficients carry the lattice. Any other grid needs the ray model, which
+    on CUDA needs the canonical grid.
     """
     if model not in {"auto", "joseph", "ray"}:
         raise ValueError(f"{context}: projector_model must be 'auto', 'joseph' or 'ray'")
     if backend not in {"auto", "jax", "cuda"}:
         raise ValueError(f"{context}: backend must be 'auto', 'jax' or 'cuda'")
+    affine = det_grid is None or (detector is not None and affine_grid(det_grid, detector))
     if model == "auto":
-        model = "ray" if det_grid is not None else "joseph"
-    if model == "joseph" and det_grid is not None:
-        raise ValueError(f"{context}: Joseph sampling requires the canonical detector grid")
-    cuda = cuda_backend()
+        model = "joseph" if affine else "ray"
+    if model == "joseph" and not affine:
+        raise ValueError(
+            f"{context}: Joseph sampling needs the canonical or an affine detector grid"
+        )
+    cuda, ray_grid = cuda_backend(), model == "ray" and det_grid is not None
     if backend == "auto":
-        backend = "cuda" if cuda and det_grid is None else "jax"
-    if backend == "cuda" and (not cuda or det_grid is not None):
-        raise ValueError(f"{context}: CUDA requires CUDA and the canonical detector grid")
+        backend = "cuda" if cuda and not ray_grid else "jax"
+    if backend == "cuda" and (not cuda or ray_grid):
+        raise ValueError(f"{context}: CUDA requires CUDA, and the ray model the canonical grid")
     return model, backend
 
 
@@ -82,7 +88,9 @@ def resolve_geometry_projector(
     available.
     """
     if not is_cone_beam(geometry):
-        return resolve_projector(model, backend, det_grid=det_grid, context=context)
+        return resolve_projector(
+            model, backend, det_grid=det_grid, detector=detector, context=context
+        )
     if det_grid is not None:
         raise ValueError(f"{context}: cone-beam geometry needs the canonical detector grid")
     if model not in {"auto", "joseph"}:

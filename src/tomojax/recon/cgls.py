@@ -57,9 +57,9 @@ class CGLSConfig:
     CUDA that transpose gathers into voxels without atomic writes. Bilinear
     interpolation is the default; ``joseph_interpolation="cubic"`` selects Keys
     cubic convolution with a=-1/2 and a 4-by-4 stencil, including negative
-    weights. ``"ray"`` is the trilinear ray marcher, the only model supporting
-    explicit detector grids. ``"auto"`` selects Joseph unless ``det_grid`` is given;
-    both models match analytic line integrals equally well, and Joseph is faster.
+    weights. ``"ray"`` is the trilinear ray marcher. ``"auto"`` selects Joseph,
+    for a rolled (affine) ``det_grid`` too, whose plane coefficients carry the
+    grid; both models match analytic line integrals equally well, and Joseph is faster.
 
     ``stream_projections`` solves the equivalent normal equations with NumPy or
     memmap projections read from host memory one view batch at a time, so only

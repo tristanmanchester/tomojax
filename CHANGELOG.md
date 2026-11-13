@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### A rolled detector is projected by the same model as an unrolled one
+
+`tj.project`, `tj.Projector`, `tj.backproject` and CGLS now project a rolled
+detector with Joseph planes, as the joint fit already did, instead of
+switching to the trilinear ray march: on a GPU they now use the CUDA kernels
+too. Rolled-detector projections change by about 1%, the difference between
+the two models (0.25% at a 0.25 degree roll against the fit's model; images
+reconstructed from either agree to 0.0874 against 0.0876 relative error). An
+arbitrary, non-affine detector grid still uses the ray march, and
+`projector_model="joseph"` now rejects one instead of projecting onto the
+lattice through its corners. FISTA-TV and SPDHG-TV keep their explicit-grid
+route for now.
+
 ### Two unused public functions are removed
 
 `tomojax.forward.project_parallel_reference` and
