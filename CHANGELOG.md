@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Two unused public functions are removed
+
+`tomojax.forward.project_parallel_reference` and
+`tomojax.recon.api.run_parallel_fbp_direct_cuda` are gone. Nothing in TomoJAX
+called either: the first was a thin wrapper over
+`project_parallel_reference_from_input`, which remains; the second was an
+unscaled z-parallel FBP entry point superseded by `fbp`. Use those instead.
+
 ### Per-view rotations are tied to their neighbours
 
 `fit="rotations"` gave each view's wobble only a size prior, so nothing tied

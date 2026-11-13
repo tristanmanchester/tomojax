@@ -60,7 +60,6 @@ def test_fbp_reconstructs_analytic_gaussian_in_physical_units(spacing: float, nu
     [
         "jax",
         pytest.param("cuda", marks=pytest.mark.gpu),
-        pytest.param("helper", marks=pytest.mark.gpu),
     ],
 )
 @pytest.mark.parametrize("nu", [4, 5])
@@ -86,15 +85,11 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
     y = (np.arange(7) - 3) * 1.2 - 2.3
     # Midpoint angular quadrature over the scanned arc: end views cover half a gap beyond.
     weights = np.deg2rad([31.0, 58.5, 86.0])
-    if backend == "helper":
-        weights = np.full(3, np.pi / len(angles))
     expected = np.zeros((7, 9), dtype=np.float64)
     outside_samples = 0
     for angle, row, view_weight in zip(angles, data[:, 0], weights, strict=True):
         radians = np.deg2rad(float(angle))
         u = np.cos(radians) * x[None, :] - np.sin(radians) * y[:, None]
-        if backend == "helper":
-            u += 2.2
         pixel = (u - 0.27) / 0.7 + (nu - 1) / 2
         lower = np.floor(pixel).astype(int)
         fraction = pixel - lower
@@ -107,18 +102,7 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
             kernel[odd] = -1 / (np.pi**2 * offset[odd] ** 2 * 0.7)
             expected += view_weight * weight * np.sum(kernel * row, axis=-1)
     assert outside_samples > expected.size
-    if backend == "helper":
-        from tomojax.recon.api import run_parallel_fbp_direct_cuda
-
-        poses = np.array([geometry.pose_for_view(i) for i in range(len(angles))], np.float32)
-        poses[:, 0, 3] = 2.2
-        actual = np.asarray(
-            run_parallel_fbp_direct_cuda(poses, data, grid=grid, detector=detector, filter="ramp")
-        )[0] * (np.pi / len(angles))
-    else:
-        actual = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend=backend)))[
-            0
-        ]
+    actual = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend=backend)))[0]
     np.testing.assert_allclose(actual, expected, rtol=4e-5, atol=2e-6)
 
 

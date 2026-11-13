@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
     from tomojax.recon.cgls import CGLSConfig
-    from tomojax.recon.fbp import FBPConfig, default_fbp_scale, run_parallel_fbp_direct_cuda
+    from tomojax.recon.fbp import FBPConfig, default_fbp_scale
     from tomojax.recon.filters import clear_filter_caches
     from tomojax.recon.fista_tv import FistaConfig
     from tomojax.recon.fourier import FourierConfig
@@ -53,7 +53,6 @@ _CONFIGS = {
 _SOURCES = {
     "clear_filter_caches": "filters",
     "default_fbp_scale": "fbp",
-    "run_parallel_fbp_direct_cuda": "fbp",
 }
 
 
@@ -456,5 +455,4 @@ __all__ = [
     "method_config",
     "reconstruct_arrays",
     "reconstruct_slabs",
-    "run_parallel_fbp_direct_cuda",
 ]
