@@ -202,8 +202,8 @@ translation fit.
    with `RejectViews()` and align again. The report is
    advisory: a view below its thresholds can still be wrong. `info["report"]["advisories"]` also
    states measured limits that apply to the fit, such as per-view rotations fitted with the
-   rotation axis perpendicular to the beam, which ended worse than translations alone on 8 of
-   11 simulated scans, by up to 55%.
+   rotation axis perpendicular to the beam, which beat translations alone on 7 of 13 simulated
+   scans and ended up to 27% worse on 5.
 6. To test whether the alignment helped, hold out every sixth view, fit the others, and predict
    the held-out views from a reconstruction of the fitted ones, with poses interpolated in view
    order. Compare the prediction error with the fitted and with the nominal poses, after removing
