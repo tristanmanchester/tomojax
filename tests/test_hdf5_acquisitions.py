@@ -165,3 +165,54 @@ def test_linked_nxtomo_float_keys_preserve_pixels_and_calibration(tmp_path, nest
     pixels.unlink()
     with pytest.raises(ValueError, match="external data unavailable.*pixels.h5"):
         tj.load_frames(path, detector=tj.Detector(1, 1, 1, 1), **options)
+
+
+def _nxtomo(path, *, control=None, declared_by_attribute=False):
+    """A one-pixel NXtomo: dark, flat, three sample-keyed frames, flat; angles without units."""
+    with h5py.File(path, "w") as file:
+        root = file.create_group("entry0000")
+        if declared_by_attribute:
+            root.attrs["definition"] = "NXtomo"
+        else:
+            root["definition"] = "NXtomo"
+        root["instrument/detector/data"] = np.asarray([1, 101, 51, 76, 61, 101], np.float32)[
+            :, None, None
+        ]
+        root["instrument/detector/image_key"] = [2, 1, 0, 0, 0, 1]
+        if control is not None:
+            root["instrument/detector/image_key_control"] = control
+        root["sample/rotation_angle"] = [0.0, 0.0, 0.0, 90.0, 0.0, 0.0]
+
+
+def test_esrf_return_images_are_not_sample_views(tmp_path):
+    # ESRF keys a return image 0 in image_key and -1 in image_key_control: an alignment check
+    # at an angle already measured, not a view.
+    path = tmp_path / "scan.nx"
+    _nxtomo(path, control=[2, 1, 0, 0, -1, 1])
+    frames = tj.load_frames(path, detector=tj.Detector(1, 1, 1.0, 1.0))
+    np.testing.assert_array_equal(frames.geometry.angles, [0.0, 90.0])
+
+
+def test_an_entry_declared_nxtomo_by_attribute_keeps_its_unitless_angles(tmp_path):
+    path = tmp_path / "scan.nx"
+    _nxtomo(path, declared_by_attribute=True)
+    frames = tj.load_frames(path, detector=tj.Detector(1, 1, 1.0, 1.0))
+    np.testing.assert_array_equal(frames.geometry.angles, [0.0, 90.0, 0.0])
+
+
+def test_a_virtual_source_recorded_at_a_missing_absolute_path_is_read_beside_the_file(tmp_path):
+    # Beamline files often record the acquisition machine's absolute path; HDF5 then reads the
+    # source beside the virtual file, and the pixel check must look there too.
+    with h5py.File(tmp_path / "source.h5", "w") as f:
+        f["pixels"] = np.full((3, 2, 4), 7, np.uint16)
+    path = tmp_path / "scan.data"
+    with h5py.File(path, "w") as f:
+        f["entry/definition"] = "NXtomo"
+        f["entry/instrument/detector/image_key"] = [0, 1, 2]
+        f["entry/sample/rotation_angle"] = [0, 0, 0]
+        layout = h5py.VirtualLayout((3, 2, 4), np.uint16)
+        layout[:] = h5py.VirtualSource("/beamline/gone/source.h5", "pixels", shape=(3, 2, 4))
+        f.create_virtual_dataset("entry/instrument/detector/data", layout)
+    np.testing.assert_array_equal(
+        tj.load_frames(path, detector=tj.Detector(4, 2, 1.0, 1.0)).counts[:], 7
+    )
