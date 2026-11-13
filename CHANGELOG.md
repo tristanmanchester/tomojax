@@ -2,13 +2,15 @@
 
 ## Unreleased
 
-### A laminography scan with poses reconstructs again
+### Fixed: a laminography scan with poses could not be reconstructed
 
-`tj.reconstruct` on a laminography scan that carries pose corrections, such as
-an alignment result saved and loaded again, raised `ValueError: initial_epochs
-requires unmasked nonnegative least squares`. Its automatic route asks FISTA
-for the ordered-subset start, which needs a nonnegative image, and did not ask
-for one. It now does, as the alignment's own image already is.
+Since 79912dc9 (2026-11-01), `tj.reconstruct` on any laminography scan that
+carries pose corrections, such as an alignment result saved and loaded again,
+raised `ValueError: initial_epochs requires unmasked nonnegative least
+squares`, so align-then-reconstruct failed for every laminography user. The
+automatic route asks FISTA for the ordered-subset start, which needs a
+nonnegative image; the rewrite in 79912dc9 dropped the request. It now asks
+for one, as the alignment's own image already is.
 
 ### A rolled detector is projected by the same model as an unrolled one
 
