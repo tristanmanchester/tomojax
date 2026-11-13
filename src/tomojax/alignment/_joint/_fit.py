@@ -269,6 +269,7 @@ def fit_poses(
     frames=None,
     detector_roll_deg=0.0,
     view_positions=None,
+    declared_poses=None,
 ):
     """Fit a volume and the selected geometry parameters to line-integral projections.
 
@@ -284,7 +285,11 @@ def fit_poses(
     roll, which is absent from the object pose matrices. Cone frames already
     contain any existing roll. ``view_positions`` place the views in acquisition
     time (see :class:`ViewOrder`); the motion prior and the report's neighbour
-    tests follow them, and None means consecutive.
+    tests follow them, and None means consecutive. ``declared_poses`` are the
+    geometry's poses before any corrections, which set a cone's magnification and so
+    the working scale: the problem's size is a property of the scan as declared, so a
+    start or restart from a different pose table fits on the same grid. None uses
+    ``nominal_poses``, which are the declared ones when no corrections are attached.
     Returns the working-scale volume (nz, ny, nx), its grid, the (views, 6)
     pose table (alpha, beta, phi in radians; dx, dz, dy along lab x, z, y,
     in the grid's length unit; dy is zero only for parallel rays) and a
@@ -311,9 +316,8 @@ def fit_poses(
             if not np.isfinite(frames).all():
                 raise ValueError("cone fitting needs finite (views, 4, 3) lab frames")
             pose_scales = cone_parameter_scales(poses, frames, grid, native)
-        base, dbin, bins = working_scale(
-            grid, detector, keep_grid=keep_grid, magnification=_magnification(poses, frames)
-        )
+        mag = _magnification(poses if declared_poses is None else declared_poses, frames)
+        base, dbin, bins = working_scale(grid, detector, keep_grid=keep_grid, magnification=mag)
         padded, margin = _padded(base, bins)
         multiple = dbin * math.lcm(*bins)
         drop_v, drop_u = detector.nv % multiple, detector.nu % multiple

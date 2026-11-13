@@ -46,7 +46,17 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
     table[:, 3:5] = shifts
 
     def fit(
-        projections, nominal, g, d, *, fit, keep_grid, frames, detector_roll_deg, view_positions
+        projections,
+        nominal,
+        g,
+        d,
+        *,
+        fit,
+        keep_grid,
+        frames,
+        detector_roll_deg,
+        view_positions,
+        declared_poses,
     ):
         assert projections is scan.projections and d == detector and keep_grid == explicit
         assert view_positions is None

@@ -342,6 +342,7 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         frames,
         detector_roll_deg,
         view_positions,
+        declared_poses,
     ):
         assert fit == ("translations", "rotations")
         assert frames is None and detector_roll_deg == 0.3 and view_positions is None
@@ -458,3 +459,30 @@ def test_pose_fit_recovers_per_view_rotations():
     estimated = np.asarray(stack_view_poses(empty.with_poses(table).geometry, len(nominal)))
     before, after = _landmark_error(nominal, truth, grid), _landmark_error(estimated, truth, grid)
     assert after < 0.1 and after < 0.2 * before, (before, after)
+
+
+@pytest.mark.numerical
+def test_working_grid_follows_the_declared_geometry_not_the_pose_table():
+    # A cone scan whose voxel equals the pixel footprint du / M exactly (M = 288 / 192 = 1.5).
+    grid = tj.Grid(12, 12, 12, 1.0, 1.0, 1.0)
+    detector = tj.Detector(12, 12, 1.5, 1.5)
+    angles = np.linspace(0.0, 360.0, 12, endpoint=False)
+    geometry = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(192, 288))
+    z, y, x = np.mgrid[:12, :12, :12] - 5.5
+    volume = (np.exp(-(x**2 + (y - 1) ** 2 + z**2) / 6) + 0.5 * (np.abs(x + 2) < 2)).astype(
+        np.float32
+    )
+    scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
+    shapes = []
+    for along_beam in (
+        0.0,
+        1.0,
+        -1.0,
+    ):  # one voxel either way along lab y: 0.5% of the source distance
+        table = np.zeros((len(angles), 6))
+        table[:, 5] = along_beam
+        result = tj.align(scan.with_poses(table), fit="translations")
+        shapes.append(tuple(result.info["working_grid"][k] for k in ("nx", "ny", "nz")))
+    again = tj.align(result.scan, fit="translations")  # a fit restarted from its own end
+    shapes.append(tuple(again.info["working_grid"][k] for k in ("nx", "ny", "nz")))
+    assert shapes == [(12, 12, 12)] * 4

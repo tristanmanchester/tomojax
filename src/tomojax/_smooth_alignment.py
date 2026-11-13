@@ -31,13 +31,12 @@ def align_poses(
     if grid is not None:
         scan = with_grid(scan, grid)
     views = len(scan.angles)
-    current = np.asarray(stack_view_poses(scan.geometry, views), np.float64)
     native = (scan.detector.du, scan.detector.dv)
     _, metadata, _, _ = describe(scan.geometry)
     try:
         volume, working, fitted, record = fit_poses(
             scan.projections,
-            current,
+            np.asarray(stack_view_poses(scan.geometry, views), np.float64),
             scan.grid,
             scan.detector,
             fit=fit,
@@ -45,6 +44,7 @@ def align_poses(
             frames=cone_frames(scan.geometry),
             detector_roll_deg=float(cast("float", metadata.get("detector_roll_deg", 0.0))),
             view_positions=scan.view_positions,
+            declared_poses=np.asarray(stack_view_poses(scan.with_poses(None).geometry, views)),
         )
     except Exception as exc:
         if grid is None or not is_oom_error(exc):
