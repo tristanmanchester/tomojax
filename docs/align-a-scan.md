@@ -33,6 +33,10 @@ tj.save("aligned.nxs", result)
 recon = tj.reconstruct(result.scan, "cgls")              # result.scan carries the corrections
 ```
 
+After a vertical correction of n pixels, the outermost n slices at the top and bottom of a
+reconstruction on the default grid are not fully covered by data: some corrected views look above
+or below the measured rows there.
+
 The command line uses the same names:
 
 ```bash
