@@ -30,13 +30,7 @@ from ._noise import LOSS_WIDTH_SIGMAS, MAX_SAMPLES, estimate_noise
 from ._operators import Operators
 from ._parameters import Parameters
 from ._pose import ROTATION_SIGMA_DEG, MotionPrior, ViewOrder
-from ._projection import (
-    cone_gauge,
-    cone_gauge_constraint,
-    cone_parameter_scales,
-    cropped_frames,
-    rigid_gauge,
-)
+from ._projection import cone_parameter_scales, cropped_frames, fit_gauge
 from ._refine import refine
 from ._report import axial as axial_geometry, build as build_report
 from ._solver import Budget, solve
@@ -328,14 +322,7 @@ def fit_poses(
         )
         if frames is not None:
             frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
-        gauge, constraint = (
-            (rigid_gauge(poses, pose_scales), None)
-            if frames is None
-            else (
-                cone_gauge(poses, pose_scales, frames),
-                cone_gauge_constraint(poses, pose_scales, frames),
-            )
-        )
+        gauge, constraint = fit_gauge(poses, pose_scales, parameters.fit, detector.center, frames)
         # Angular columns need smooth interpolation as sample points rotate
         # through voxel cells. Centre/translation fits retain the cheaper linear
         # basis.

@@ -78,6 +78,60 @@ def rigid_gauge(nominal, scales):
     return out.reshape(n * k, 6)
 
 
+def shared_axis_patterns(nominal, scales, fit, pivot):
+    """Per-view pose tangents that a fitted tilt or roll can also be written as.
+
+    A tilt turns every nominal orientation R by a lab ``Rx``: in the object frame
+    that is a rotation about ``R.T @ x``, which per-view rotations express exactly
+    when it has no spin component (axial and x-tilted axes). A parallel roll turns
+    each pose about the lab beam axis through the detector ``pivot``: the rotation
+    ``R.T @ y`` and a translation about the pivot. A cone roll turns the detector
+    instead, which equals that only for an object on the central ray; the same
+    tangent is used. Columns follow :func:`rigid_gauge`'s layout, one per radian of
+    the shared parameter, so a fit can give the shared parameter the pattern and
+    keep the per-view poses free of it.
+    """
+    nominal = np.asarray(nominal, np.float64)
+    scales = np.broadcast_to(np.asarray(scales, np.float64), (len(nominal), np.shape(scales)[-1]))
+    n, k = scales.shape
+    columns = []
+    for name, axis in (("tilt", 0), ("roll", 1)):
+        if (
+            name not in fit
+            or "rotations" not in fit
+            or (name == "roll" and "translations" not in fit)
+        ):
+            continue
+        tangent = np.zeros((n, k))
+        tangent[:, :3] = nominal[:, axis, :3] / scales[:, :3]  # R.T @ e_axis, object frame
+        if name == "roll":
+            arm = nominal[:, :3, 3] - np.asarray([pivot[0], 0.0, pivot[1]])
+            shift = np.cross(np.asarray([0.0, 1.0, 0.0]), arm)
+            tangent[:, 3:] = shift[:, [0, 2, 1][: k - 3]] / scales[:, 3:]
+        columns.append(tangent.reshape(-1))
+    return np.column_stack(columns) if columns else None
+
+
+def fit_gauge(nominal, scales, fit, pivot, frames=None):
+    """The fit's gauge columns and their constraint rows (None for parallel beams).
+
+    The rigid object motions (:func:`rigid_gauge`, or :func:`cone_gauge` with its
+    constraint for a cone beam) and the per-view patterns a fitted tilt or roll
+    can also be written as (:func:`shared_axis_patterns`): the shared parameter
+    owns those, so the per-view poses carry none of them.
+    """
+    gauge, constraint = (
+        (rigid_gauge(nominal, scales), None)
+        if frames is None
+        else (cone_gauge(nominal, scales, frames), cone_gauge_constraint(nominal, scales, frames))
+    )
+    patterns = shared_axis_patterns(nominal, scales, fit, pivot)
+    if patterns is not None:
+        gauge = np.column_stack([gauge, patterns])
+        constraint = None if constraint is None else np.column_stack([constraint, patterns])
+    return gauge, constraint
+
+
 def cone_gauge(nominal, scales, frames):
     """Rigid object gauge plus the cone's unobservable common physical scale.
 

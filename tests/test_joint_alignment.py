@@ -486,3 +486,49 @@ def test_working_grid_follows_the_declared_geometry_not_the_pose_table():
     again = tj.align(result.scan, fit="translations")  # a fit restarted from its own end
     shapes.append(tuple(again.info["working_grid"][k] for k in ("nx", "ny", "nz")))
     assert shapes == [(12, 12, 12)] * 4
+
+
+@pytest.mark.numerical
+@pytest.mark.slow
+def test_tilt_roll_and_rotations_together_keep_the_shared_angles():
+    # A fine truth (ellipsoids on a grid twice as fine, projected on a detector twice as fine
+    # and binned) with an axis tilt of -0.35 deg, a detector roll of 0.25 deg, per-view wobble
+    # and translations. Fitting tilt, roll and per-view rotations together, the per-view poses
+    # could also carry the shared angles; without the patterns in the gauge the roll ran to
+    # 10.4 deg and the tilt to -1.7 deg here.
+    from tomojax.geometry import RotationAxisGeometry
+
+    n, views = 48, 60
+    rng = np.random.default_rng(7)
+    f = 2 * n
+    z, y, x = (np.mgrid[:f, :f, :f] - (f - 1) / 2) / f
+    fine = np.zeros((f, f, f), np.float32)
+    for _ in range(12):
+        c, r, a = rng.uniform(-0.25, 0.25, 3), rng.uniform(0.05, 0.15, 3), rng.uniform(0.3, 1.0)
+        inside = ((x - c[0]) / r[0]) ** 2 + ((y - c[1]) / r[1]) ** 2 + ((z - c[2]) / r[2]) ** 2 < 1
+        fine += a * inside
+    fine *= x**2 + y**2 < 0.4**2
+    angles = np.linspace(0, 360, views, endpoint=False)
+    tilt = np.deg2rad(-0.35)
+    true = RotationAxisGeometry(
+        tj.Grid(f, f, f, 0.5, 0.5, 0.5),
+        tj.Detector(f, f, 0.5, 0.5),
+        angles,
+        (0.0, np.sin(tilt), np.cos(tilt)),
+        detector_roll_deg=0.25,
+    )
+    t = np.deg2rad(angles)
+    table = np.zeros((views, 6))
+    table[:, 0] = np.deg2rad(0.05) * np.cos(2 * t + 0.3)
+    table[:, 1] = np.deg2rad(0.04) * np.cos(3 * t + 1.1)
+    slip = np.arange(views) >= views // 3
+    table[:, 3] = 0.5 * (0.6 * np.cos(2 * t) + 0.4 * np.cos(3 * t + 0.7) + 0.7 * slip)
+    table[:, 4] = 0.5 * (0.6 * np.cos(2 * t + 1.9) + 0.8 * np.linspace(0, 1, views))
+    blank = tj.Scan(np.zeros((views, f, f), np.float32), true)
+    data = np.asarray(tj.project(blank.with_poses(table).geometry, fine))
+    data = data.reshape(views, n, 2, n, 2).mean((2, 4)).astype(np.float32)
+    declared = tj.ParallelGeometry(tj.Grid(n, n, n, 1, 1, 1), tj.Detector(n, n, 1, 1), angles)
+    result = tj.align(tj.Scan(data, declared), fit=("translations", "tilt", "roll", "rotations"))
+    calibration = result.info["calibration"]
+    assert abs(float(np.ravel(calibration["roll"])[0]) - 0.25) < 0.1
+    assert abs(float(np.ravel(calibration["tilt"])[0]) + 0.35) < 0.1

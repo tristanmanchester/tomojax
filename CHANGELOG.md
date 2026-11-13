@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fitting tilt or roll with per-view rotations keeps the shared angles
+
+A shared axis tilt or detector roll and a per-view rotation pattern give the
+same projections, and nothing but the rotations' size prior decided between
+them, so `fit=("translations", "tilt", "roll", "rotations")` could hand the
+shared angle to the per-view poses: on a 48-pixel, 60-view synthetic scan with
+a 0.25 degree roll the fit returned 10.4 degrees of roll. The shared parameter
+now owns that pattern (it joins the fit's gauge, as a constant shift already
+does for the centre) and the same scan returns 0.248 degrees of roll and -0.343
+of tilt against -0.35.
+
 ### Fixed: tj.reconstruct no longer aligns a laminography scan behind your back
 
 `tj.reconstruct(scan)` on a laminography or tilted-axis scan without pose
