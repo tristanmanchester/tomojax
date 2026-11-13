@@ -162,3 +162,33 @@ tomojax inspect i13-preview.nxs --preview i13-preview-images
 This is the default reconstruction, not a reproduction of Savu's
 ring-removal/filtering pipeline. For TIFF-only acquisitions without NXtomo
 metadata, see [preparing TIFF data](real-laminography.md#prepare-tiff-data).
+
+The same scan also exists as one folder of TIFFs, `proj_0.tif` to `proj_3300.tif`:
+100 darks, 100 flats, the 3001 projections, then 100 flats. A TIFF folder carries no
+image keys or angles, so split it into projection, flat and dark folders (links are
+enough) and pass the angles, here the 3001 that Savu used:
+
+```python
+from pathlib import Path
+
+import numpy as np
+import tomojax as tj
+
+raw, work = Path("diamond-i13-159815/raw"), Path("i13-split")
+groups = {"darks": range(0, 100), "flats": [*range(100, 200), *range(3201, 3301)],
+          "proj": range(200, 3201)}
+for name, frames in groups.items():
+    (work / name).mkdir(parents=True, exist_ok=True)
+    for i in frames:
+        link = work / name / f"proj_{i:04d}.tif"
+        if not link.exists():
+            link.symlink_to((raw / f"proj_{i}.tif").resolve())
+frames = tj.load_frames(work / "proj", flats=work / "flats", darks=work / "darks",
+                        angles=np.load("savu_angles.npy"),
+                        detector=tj.Detector(2560, 2160, 1, 1, center=(120, 0)))
+```
+
+The counts, flats, darks and angles then match the NXtomo route exactly. One difference
+remains: a flat folder has no positions, so its flats are averaged, whereas the NXtomo
+route interpolates between the sets before and after. This beam decayed by about 6%
+between them, and the corrected views differ by up to ±0.03 on average.

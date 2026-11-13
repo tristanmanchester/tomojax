@@ -76,18 +76,23 @@ pitches below are normalised to millimetres.
 | ESRF raw Bliss step sequence | Sequence-owned detector blocks, image keys and flat positions; external/virtual pixel links checked | Unit-labelled angular commands before raw motors; `technique/optic/sample_pixel_size`; distances from `technique/scan`; missing axial centre is estimated or supplied |
 | ESRF SPEC EDF | Ordered EDF files, reference files, accumulated darks divided by recorded `DARK_N` | `.info`/XML `PixelSize` and propagation `Distance`; caller supplies `angles=` (range alone has no origin), and `detector=` if needed |
 | ESRF PyHST EDF | Explicit `.par` input; inclusive indexed file range and interval, dark/flat schedules | Recorded angles, detector pitch/axis and reconstruction region; raw single-image EDFs with fixed axial parallel geometry |
-| External NXtomo (including ESRF exports) | A group declaring `NXtomo`, with `instrument/detector/data` and `image_key`; the entry name is unrestricted | `sample/rotation_angle` (or `sample/transformations/rotation_angle`), recorded angular units; detector `x_pixel_size`/`y_pixel_size` with length units |
+| External NXtomo (including ESRF exports) | A group declaring `NXtomo` (by a `definition` dataset or attribute), with `instrument/detector/data` and `image_key`; ESRF return images (`image_key_control` −1) are left out; the entry name is unrestricted | `sample/rotation_angle` (or `sample/transformations/rotation_angle`), recorded angular units; detector `x_pixel_size`/`y_pixel_size` with length units |
 | Data Exchange (including PSI TOMCAT and Elettra SYRMEP TomoBank exports) | `/exchange/data`, `data_white`, `data_dark`, or interleaved `image_key` | `/exchange/theta`; `/measurement/instrument/detector/actual_pixel_size_x` and `_y` with `unit`/`units` when present; sample/source/beamline labels are retained |
 
 These readers do not turn an estimated motor position into a calibrated
 rotation centre, or infer pixel pitch from image dimensions. Data Exchange
 exports lacking facility labels remain Data Exchange, not a guessed beamline.
 This support does not establish support for every native TOMCAT/SYRMEP layout.
-Real-file coverage includes ESRF NXtomo converted by nxtomomill, TOMCAT/SYRMEP
-Data Exchange, Diamond I12 HDF5 and K11 GDA, Nikon TIFF acquisitions, Zeiss TXRM,
+Real-file coverage includes ESRF NXtomo converted by nxtomomill (two public nabu
+exports), Data Exchange from APS (TomoBank 13-BM-D and 32-ID), TOMCAT and SYRMEP,
+Diamond I12 HDF5, K11 GDA and I13 NXtomo, Nikon TIFF acquisitions, Zeiss TXRM,
 SkyScan logs/TIFFs, Diamond I13 compressed TIFF folders with explicit calibration,
-and TomoJAX NPZ/NXtomo round trips. Native EDF/Bliss inputs must include every
-file named by the selected sequence or parameter file: missing inputs are errors.
+and TomoJAX NPZ/NXtomo round trips. ESRF SPEC EDF and PyHST `.par` inputs are
+covered by public test acquisitions taken with the beam off: they prove the file
+layout and metadata, not corrected values. The ESRF raw Bliss reader is covered by
+synthetic tests only; no complete public Bliss tomography sequence was found. Native
+EDF/Bliss inputs must include every file named by the selected sequence or parameter
+file: missing inputs are errors.
 These checks do not establish support for native TOMCAT GigaFRoST.
 Missing calibration does not disable content recognition: supply `flats=` (frames
 or one level) and `darks=`. NXtomo/Data Exchange angular fields use their
