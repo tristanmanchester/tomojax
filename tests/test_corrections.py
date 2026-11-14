@@ -557,6 +557,24 @@ def test_gda_frames_use_paired_rotation_and_key(tmp_path, caplog, command):
     assert explicit.source.geometry_metadata["acquisition"]["geometry_status"] == "provided"
 
 
+def test_gda_rotation_without_a_unit_label_is_read_in_degrees(tmp_path):
+    # Older GDA (DIAD) exports: the frames, the EtherCAT key and the summed rotation command,
+    # with no unit label on the command. The angles are the sample frames' commands, and the
+    # record says where the angles and key came from and that the file gave no unit.
+    path = tmp_path / "diad.nxs"
+    stack = np.stack([np.full((2, 3), v, np.int32) for v in (100, 1100, 600, 350, 1100)])
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("entry/imaging/data", data=stack)
+        handle.create_dataset("entry/instrument/EtherCAT/image_key", data=[2, 1, 0, 0, 1])
+        handle.create_dataset("entry/imaging_sum/smaract_zrot", data=[0.0, 0.0, 0.0, 90.0, 0.0])
+    scan = tj.load(path, detector=tiny_detector(nu=3))
+    np.testing.assert_array_equal(scan.angles, [0, 90])
+    acquisition = scan.source.geometry_metadata["acquisition"]
+    assert acquisition["angles_path"] == "/entry/imaging_sum/smaract_zrot"
+    assert acquisition["image_key_path"] == "/entry/instrument/EtherCAT/image_key"
+    assert acquisition["angle_units_recorded"] == "" and acquisition["angle_units"] == "degree"
+
+
 def test_gda_unit_correction_does_not_accept_other_linear_axes(tmp_path):
     path = tmp_path / "unknown-units.nxs"
     with h5py.File(path, "w") as handle:

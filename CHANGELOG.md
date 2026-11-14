@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Older Diamond K11 (DIAD) scans load their angles
+
+Older GDA exports (DIAD, K11 54013 and 54286) write the rotation command
+`imaging_sum/smaract_zrot` with no unit label, and loading discarded it as a
+unitless motor, so `tj.load` asked for `angles=`. In a recognised GDA layout the
+paired rotation command is now read in degrees, and the record keeps
+`angle_units_recorded: ""` beside the angle and key paths it came from. The
+laminography tilt is in no K11 file: pass `geometry=`.
+
 ### tj.load takes the metadata a file does not record
 
 `tj.load` accepted only `poses=`, yet when a file lacked angles, a pixel size,

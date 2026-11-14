@@ -211,6 +211,11 @@ def _gda_metadata(
                 cast(Any, file).filename,
                 angles_at,
             )
+        # Older GDA exports (DIAD) write the paired rotation command with no unit
+        # label; the layout's rotation stage moves in degrees.
+        elif angles_at == gda[2] and not units.strip():
+            units_override = "degree"
+            acquisition.update(angle_units_recorded="", angle_units="degree")
     return acquisition, units_override
 
 
