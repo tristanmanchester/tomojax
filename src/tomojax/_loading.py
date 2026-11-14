@@ -128,7 +128,7 @@ def _record_scan(
 
 
 def _corrected_on_load(frames: Frames, file: Path) -> Scan:
-    scan = _estimate_missing_center(_require_calibration(frames)).corrected()
+    scan = _require_calibration(frames).corrected()
     LOG.info("%s: corrected detector frames to line integrals: %s", file.name,
              ", ".join(str(c) for c in scan.corrections))  # fmt: skip
     return scan
@@ -500,78 +500,15 @@ def load_frames(
         from tomojax.io import load_dataset
 
         frames = _record_frames(file, load_dataset(file), poses=True, **overrides)
-    return _estimate_missing_center(
-        _require_calibration(
-            _with_fields(
-                frames,
-                flats=flats,
-                darks=darks,
-                exposure_times=exposure_times,
-                flat_exposure_times=flat_exposure_times,
-            )
+    return _require_calibration(
+        _with_fields(
+            frames,
+            flats=flats,
+            darks=darks,
+            exposure_times=exposure_times,
+            flat_exposure_times=flat_exposure_times,
         )
     )
-
-
-@dataclass
-class _CorrectedRows:
-    """Array-shaped row access for the centre estimator, without a full host stack."""
-
-    frames: Frames
-
-    @property
-    def shape(self) -> tuple[int, int, int]:
-        return self.frames.counts.shape
-
-    def __getitem__(self, key: tuple[slice | np.ndarray, np.ndarray, slice]) -> np.ndarray:
-        views, rows, cols = key
-        selected = self.frames.selected(views.ravel() if isinstance(views, np.ndarray) else views)
-        corrected = [
-            np.asarray(
-                selected.cropped(slice(int(row), int(row) + 1), slice(None)).corrected().projections
-            )
-            for row in rows.ravel()
-        ]
-        return np.concatenate(corrected, axis=1)[:, :, cols]
-
-
-def _estimate_missing_center(frames: Frames) -> Frames:
-    """Resolve an internal axial centre seed, or fail rather than expose its zero."""
-    from tomojax.alignment.api import estimate_center_report
-
-    source = frames.source
-    if source is None or source.geometry_metadata.get("detector_center_status") != "pending":
-        return frames
-    try:
-        report = estimate_center_report(
-            cast("Any", frames.geometry), cast("Any", _CorrectedRows(frames))
-        )
-    except ValueError as exc:
-        raise ValueError(
-            f"Cannot estimate the detector centre: {exc}; pass detector=... or geometry=... "
-            "to tomojax.load_frames"
-        ) from exc
-    geometry = report.geometry
-    diagnostics = report.to_dict()
-    LOG.warning("%s", diagnostics["uncertainty_reason"])
-    source = replace(
-        source,
-        detector=geometry.detector,
-        geometry_metadata={
-            **source.geometry_metadata,
-            "detector_center_status": "inferred",
-            "detector_center_calibration": {
-                "status": "estimated",
-                "method": "opposite_view_correlation",
-                "diagnostics": diagnostics,
-                "input": list(frames.geometry.detector.center),
-                "output": list(geometry.detector.center),
-                "unit": "geometry_length",
-                "axial_origin": "detector_midplane",
-            },
-        },
-    )
-    return replace(frames, geometry=geometry, source=source)
 
 
 def _require_calibration(frames: Frames) -> Frames:

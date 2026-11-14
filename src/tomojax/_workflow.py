@@ -470,43 +470,25 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
             "Posed or custom parallel geometry uses FBP; "
             "automatic iterative validation is unavailable."
         )
-    center_estimation, center_calibration_reason = _automatic_axial_setup(
-        scan, method=method, reasons=reasons
-    )
+    center_status = _automatic_axial_setup(scan, method=method, reasons=reasons)
     result = reconstruct(scan, method, **options)
     automatic = {
         "method": method,
         "status": "limited" if reasons else "ok",
         "reasons": reasons,
-        "center_calibration_reason": center_calibration_reason,
+        "center_status": center_status,
         "geometry": "preserved",
-        "center_estimation": center_estimation,
         "warning": "Method selection does not validate geometry, support or detector artefacts.",
     }
     return replace(result, info={**result.info, "automatic": automatic})
 
 
-def _automatic_axial_setup(
-    scan: Scan, *, method: Method, reasons: list[str]
-) -> tuple[dict[str, Any] | None, str | None]:
-    """A recorded centre estimate's uncertainty and unresolved raw-workflow limitations."""
-    source_meta = {} if scan.source is None else scan.source.geometry_metadata
-    center_estimation: dict[str, Any] | None = cast(
-        "dict[str, Any] | None", source_meta.get("detector_center_calibration")
+def _automatic_axial_setup(scan: Scan, *, method: Method, reasons: list[str]) -> str | None:
+    """The centre the scan's file recorded, and unresolved raw-workflow limitations."""
+    status = (
+        None if scan.source is None else scan.source.geometry_metadata.get("detector_center_status")
     )
-    if center_estimation is not None:
-        diagnostics = cast("dict[str, Any]", center_estimation.get("diagnostics", {}))
-        uncertainty = diagnostics.get("uncertainty_reason")
-        if uncertainty:
-            reasons.append(uncertainty)
-    center_calibration_reason = None
     if method == "fourier" and any(step.name == "log" for step in scan.corrections):
-        if source_meta.get("detector_center_status") not in {"inferred", "recorded", "provided"}:
-            center_calibration_reason = (
-                "Reconstruction did not perform centre calibration; the supplied geometry was "
-                "preserved. Use align if the centre needs estimating."
-            )
-            reasons.append(center_calibration_reason)
         reasons.append(
             "Corrected projections were already materialized; use reconstruct_slabs on raw "
             "Frames to avoid that host round trip. Raw-workflow speed is not guaranteed here."
@@ -515,7 +497,7 @@ def _automatic_axial_setup(
             reasons.append(
                 "No stripe correction is recorded; detector-ring suppression is unassessed."
             )
-    return center_estimation, center_calibration_reason
+    return status
 
 
 @contextmanager

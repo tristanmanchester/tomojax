@@ -116,8 +116,12 @@ def test_estimate_center_rejects_scans_without_usable_axial_pairs(kind):
         tj.estimate_center(scan)
 
 
-def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(tmp_path, caplog):
+def test_loading_keeps_an_unrecorded_centre_at_the_middle(tmp_path, monkeypatch):
+    # A file with pixel pitches and no centre loads with the centre at the middle and says the
+    # file recorded none; nothing estimates it until asked.
     import h5py
+
+    from tomojax.alignment import api as alignment
 
     scan, true_u, _ = _scan()
     path = tmp_path / "external.data"
@@ -132,21 +136,43 @@ def test_loading_estimates_missing_center_from_recorded_pitch_and_preserves_it(t
                 "measurement/instrument/detector/actual_pixel_size_" + name, data=pitch
             )
             data.attrs["units"] = "mm"
+    estimate = alignment.estimate_center_report
+
+    def no_estimate(*_args, **_kwargs):
+        raise AssertionError("loading estimated a centre")
+
+    monkeypatch.setattr(alignment, "estimate_center_report", no_estimate)
     frames = tj.load_frames(path)
-    assert abs(frames.geometry.detector.center[0] - true_u) <= 0.3 * scan.detector.du
-    assert frames.source.geometry_metadata["detector_center_status"] == "inferred"
-    diagnostics = frames.source.geometry_metadata["detector_center_calibration"]["diagnostics"]
-    assert diagnostics["global_coverage_calibrated"] is False
-    assert "not a calibrated centre interval" in caplog.text
-    assert tj.load(path).detector == frames.geometry.detector
+    loaded = tj.load(path)
+    for item in (frames.geometry.detector, loaded.detector):
+        assert item.center == (0.0, 0.0) and item.du == scan.detector.du
+    assert loaded.source.geometry_metadata["detector_center_status"] == "not_recorded"
     result = frames.cropped(slice(2, 4), slice(None)).corrected()
     expected = -np.log(counts[:, 2:4].astype(np.float64) / 10000)
     np.testing.assert_allclose(result.projections, expected, atol=2e-7)
-    saved = tmp_path / "calibrated.nxs"
-    tj.save(saved, result)
-    loaded = tj.load(saved)
-    assert loaded.detector == result.detector
-    assert loaded.source.geometry_metadata["detector_center_status"] == "inferred"
+    saved = tmp_path / "saved.nxs"
+    tj.save(saved, loaded)
+    again = tj.load(saved)
+    assert again.detector == loaded.detector
+    assert again.source.geometry_metadata["detector_center_status"] == "not_recorded"
+    # Asked for, the centre is estimated.
+    monkeypatch.setattr(alignment, "estimate_center_report", estimate)
+    assert abs(tj.estimate_center(loaded).detector.center[0] - true_u) <= 0.3 * scan.detector.du
+
+
+def test_recon_says_when_the_file_recorded_no_centre(tmp_path, caplog):
+    from tomojax.cli.main import main
+    from tomojax.io import ProjectionDataset
+
+    scan, _, _ = _scan()
+    meta = {"detector_center_status": "not_recorded"}
+    record = ProjectionDataset(scan.projections, scan.angles, geometry_metadata=meta)
+    path, out = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
+    tj.save(path, replace(scan, source=record))
+    for method in ("auto", "fbp"):
+        caplog.clear()
+        assert main(["recon", str(path), "-o", str(out), "--method", method, "--force"]) == 0
+        assert "records no rotation centre" in caplog.text
 
 
 def test_estimate_center_retains_signed_phase_contrast_across_rows():

@@ -161,8 +161,7 @@ def test_bliss_raw_sequence_units_keys_and_virtual_pixels(tmp_path, capsys, rota
     path = tmp_path / "renamed.bin"
     pixels = _write_bliss_sequence(path, rotation_path)
     detector = tj.Detector(5, 3, 0.01, 0.02)
-    with pytest.raises(ValueError, match="detector="):
-        tj.load_frames(path)
+    assert tj.load_frames(path).geometry.detector == detector  # the recorded pitches, middle
     frames = tj.load_frames(path, detector=detector)
     np.testing.assert_array_equal(frames.flat_positions, [0, 0, 2, 2])
     np.testing.assert_array_equal(
@@ -235,3 +234,43 @@ def test_pyhst_file_owns_geometry_calibrations_and_projection_sampling(tmp_path)
     path.write_text(path.read_text().replace("TAKE_LOGARITHM=YES", "TAKE_LOGARITHM=NO"))
     with pytest.raises(ValueError, match="already logarithmic"):
         tj.load_frames(path)
+
+
+def _edf_scan(path: Path) -> Path:
+    """A four-view SPEC EDF scan whose metadata record the pixel size and no centre."""
+    dark = np.full((3, 5), 20.25, np.float32)
+    for i in range(4):
+        _edf(path / f"sample{i:04}.edf", dark + (100 + 5 * (i + 0.5)) * np.exp(-0.2))
+    _edf(path / "darkend0000.edf", (4 * dark).astype(np.int32))
+    for p in (0, 4):
+        _edf(path / f"ref0000_{p:04}.edf", dark + 100 + 5 * p)
+    fields = dict(Prefix="sample", TOMO_N=4, ScanRange=-180, REF_N=1, REF_ON=4, DARK_N=4,
+                  Dim_1=5, Dim_2=3, PixelSize=12.5, Distance=130)  # fmt: skip
+    metadata = path / "scan.txt"
+    metadata.write_text("\n".join(f"{k}={v}" for k, v in fields.items()))
+    return metadata
+
+
+@pytest.mark.parametrize("kind", ["bliss", "edf"])
+def test_a_file_without_a_recorded_centre_loads_it_at_the_middle(kind, tmp_path, monkeypatch):
+    # Recorded pixel sizes and no centre: the scan loads with the centre at the middle of
+    # the detector and says the file recorded none; nothing estimates it.
+    from tomojax.alignment import api as alignment
+
+    def no_estimate(*_args, **_kwargs):
+        raise AssertionError("loading estimated a centre")
+
+    monkeypatch.setattr(alignment, "estimate_center_report", no_estimate)
+    if kind == "bliss":
+        path, angles, pitches = tmp_path / "scan.h5", None, (0.01, 0.02)
+        _write_bliss_sequence(path, "measurement/hrsrot")
+    else:
+        path, angles, pitches = _edf_scan(tmp_path), [0, -45, -90, -135], (0.0125, 0.0125)
+    scan = tj.load(path) if angles is None else tj.load_frames(path, angles=angles).corrected()
+    assert scan.detector.center == (0.0, 0.0)
+    assert (scan.detector.du, scan.detector.dv) == pytest.approx(pitches)
+    assert scan.source.geometry_metadata["detector_center_status"] == "not_recorded"
+    tj.save(tmp_path / "saved.nxs", scan)
+    again = tj.load(tmp_path / "saved.nxs")
+    assert again.detector == scan.detector
+    assert again.source.geometry_metadata["detector_center_status"] == "not_recorded"

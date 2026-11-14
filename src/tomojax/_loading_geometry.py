@@ -86,6 +86,6 @@ def frame_geometry(
     )
     if geometry is None and detector is not None:
         record = with_view_offsets(record, detector)
-    record = record.prepare_center_seed() if geometry is None else record
+    record = record.with_recorded_pitches() if geometry is None else record
     resolved = geometry if geometry is not None else geometry_of(record, poses=poses)
     return record, frame_output_grid(resolved, record)

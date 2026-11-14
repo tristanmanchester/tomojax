@@ -94,11 +94,12 @@ measurements require independent calibration evidence and repair before `Rings`.
   modes against an independent calibration rather than treating a narrow local
   interval as a global accuracy certificate. Runtime reports mark global
   coverage uncalibrated for every estimate, including a single pair without
-  a disagreement test; loading warns about this calibration limitation.
+  a disagreement test.
 - `tomojax inspect` checks storage and missing calibration in recognized raw
-  acquisitions. It does not run data-driven centre inference; a centre pending
-  inference can still fail during loading. A valid report does not certify
-  physical geometry or reconstruction readiness.
+  acquisitions. A file that records no axial centre loads with the centre at the
+  middle of the detector; estimate it with `tj.estimate_center` or
+  `tj.align(fit="centre")`. A valid report does not certify physical geometry or
+  reconstruction readiness.
 - External HDF5 links require readable backing files at their recorded paths.
   The loader reports missing detector sources; it does not repair damaged files
   or guess relocated links.

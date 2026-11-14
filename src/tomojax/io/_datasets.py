@@ -317,12 +317,9 @@ class ProjectionDataset:
             If detector metadata are missing.
         """
         detector = self.detector
-        if (
-            detector is None
-            or self.geometry_metadata.get("detector_center_status") == "not_recorded"
-        ):
+        if detector is None:
             raise ValueError(
-                "Missing detector pixel sizes or centre: pass detector=... or geometry=... "
+                "Missing detector pixel sizes: pass detector=... or geometry=... "
                 "to tomojax.load_frames, or set detector in tomojax preprocess --config"
             )
         if self.geometry_metadata.get("axis_status") == "not_recorded":
@@ -347,29 +344,29 @@ class ProjectionDataset:
         _merge_geometry_metadata_dict(payload, self.geometry_metadata)
         return payload
 
-    def prepare_center_seed(self) -> ProjectionDataset:
-        """Prepare axial centre inference from recorded pitches, without reading pixels.
+    def with_recorded_pitches(self) -> ProjectionDataset:
+        """A parallel record's detector from its recorded pitches, centred on the middle.
 
-        The pending seed is not calibrated; loading must estimate its centre before
-        returning frames. Inspection can check the remaining required metadata.
+        Some files record the pixel pitches but not the rotation centre. The detector is
+        built from the pitches with the centre at the middle, and the record keeps
+        ``detector_center_status`` as the file gave it ("not_recorded"): nothing is
+        estimated. ``tj.estimate_center`` or ``tj.align(fit="centre")`` finds a centre.
 
         Returns
         -------
         ProjectionDataset
-            Original record or a copy with an internal pending detector seed.
+            Original record, or a copy with that detector.
         """
         if self.detector is not None or self.geometry_type != "parallel":
             return self
-        meta = self.geometry_metadata
-        pitches = meta.get("acquisition", {}).get("detector_pixel_size", (None, None))
+        pitches = self.geometry_metadata.get("acquisition", {}).get(
+            "detector_pixel_size", (None, None)
+        )
         if any(p is None for p in pitches):
             return self  # geometry_inputs names detector= for the absent pitches.
         _, nv, nu = self.projections.shape
-        detector = Detector(nu, nv, float(pitches[0]), float(pitches[1]), (0.0, 0.0))
         return replace(
-            self,
-            detector=detector,
-            geometry_metadata={**meta, "detector_center_status": "pending"},
+            self, detector=Detector(nu, nv, float(pitches[0]), float(pitches[1]), (0.0, 0.0))
         )
 
 
@@ -587,7 +584,7 @@ def _dataset_issues(input_path: Path) -> list[str]:
     if raw is not None:
         issues = calibration_issues(raw.flats, raw.darks, raw.white_level)
         try:
-            raw.record.prepare_center_seed().geometry_inputs()
+            raw.record.with_recorded_pitches().geometry_inputs()
         except ValueError as exc:
             issues.insert(0, str(exc))
         return issues

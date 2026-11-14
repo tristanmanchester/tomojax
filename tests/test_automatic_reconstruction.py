@@ -42,9 +42,7 @@ def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     if raw:
         reasons = actual.info["automatic"]["reasons"]
         assert any("stripe correction" in reason for reason in reasons) == (raw is True)
-        assert actual.info["automatic"]["center_calibration_reason"] in reasons
-    else:
-        assert actual.info["automatic"]["center_calibration_reason"] is None
+    assert actual.info["automatic"]["center_status"] is None  # nothing recorded it either way
     tj.save(tmp_path / "reconstruction.nxs", actual)
     loaded = tj.load_reconstruction(tmp_path / "reconstruction.nxs")
     assert loaded.info["automatic"] == actual.info["automatic"]
@@ -78,6 +76,7 @@ def test_automatic_reconstruction_never_estimates_a_centre(status, monkeypatch):
     actual = tj.reconstruct(scan)
     assert actual.scan is scan and actual.scan.detector.center == (-2.2, 0)
     assert actual.info["automatic"]["geometry"] == "preserved"
+    assert actual.info["automatic"]["center_status"] == status
     assert record.geometry_metadata == meta
 
 

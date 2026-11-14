@@ -658,8 +658,8 @@ class tomojax.io.ProjectionDataset(
     ) -> 'ProjectionDataset'
     .geometry_inputs(self) -> 'dict[str, Any]'
     .image_key
-    .prepare_center_seed(self) -> 'ProjectionDataset'
     .to_nxtomo_metadata(self) -> 'NXTomoMetadata'
+    .with_recorded_pitches(self) -> 'ProjectionDataset'
 class tomojax.io.ValidationReport
 def tomojax.io.build_geometry_from_dataset_metadata(
         meta: 'Mapping[str, Any]',

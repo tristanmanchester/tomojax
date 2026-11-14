@@ -339,6 +339,16 @@ def main() -> None:
     if cylinder is not None:
         result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
     report_automatic(result.info)
+    source = result.scan.source
+    if (
+        source is not None
+        and source.geometry_metadata.get("detector_center_status") == "not_recorded"
+    ):
+        logging.warning(
+            "%s records no rotation centre; the detector middle was used. "
+            "Fit one with tomojax align --fit centre before recon.",
+            run.data,
+        )
     tj.save(run.out, result)
     logging.info("Saved reconstruction to %s", run.out)
     if run.preview is not None:

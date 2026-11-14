@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Loading no longer estimates a rotation centre
+
+`tj.load` and `tj.load_frames` estimated the rotation centre of every parallel
+file that records the pixel size but not the centre (external NXtomo and Data
+Exchange, ESRF Bliss and EDF), and raised when the estimate failed. Such a file
+now loads with the centre at the middle of the detector, and its record keeps
+`detector_center_status` "not_recorded" (also through save and load). Estimate
+the centre when you want one: `tj.estimate_center(scan)`, or
+`tj.align(scan, fit="centre")` / `tomojax align --fit centre`. `tj.reconstruct`
+records the file's centre status in `info["automatic"]["center_status"]` and
+`tomojax recon` says when the file recorded none. A file without pixel sizes
+still raises. `ProjectionDataset.prepare_center_seed` is now
+`with_recorded_pitches`.
+
 ### tj.reconstruct no longer estimates a centre
 
 `tj.reconstruct(scan)` estimated the rotation centre when it chose Fourier

@@ -10,7 +10,7 @@ from tomojax.io.api import locate_frames, read_acquisition
 
 @pytest.mark.parametrize("recorded", [False, True])
 @pytest.mark.parametrize("single_row", [False, True])
-def test_data_exchange_preserves_syrmep_units_and_accepts_only_explicit_center(
+def test_data_exchange_preserves_syrmep_units_and_leaves_an_unrecorded_centre_at_the_middle(
     tmp_path, recorded, single_row
 ):
     path = tmp_path / "renamed.bin"
@@ -33,8 +33,13 @@ def test_data_exchange_preserves_syrmep_units_and_accepts_only_explicit_center(
     meta = raw.record.geometry_metadata["acquisition"]
     np.testing.assert_allclose(meta["detector_pixel_size"], [0.00204, 0.00306])
     assert meta["beamline"] == "Syrmep" and meta["length_unit"] == "mm"
-    with pytest.raises(ValueError, match="detector=|flats="):
-        tj.load_frames(path)
+    if recorded:  # pitches and no centre: the middle, and the record says none was recorded
+        loaded = tj.load_frames(path)
+        assert loaded.geometry.detector.center == (0.0, 0.0)
+        assert loaded.source.geometry_metadata["detector_center_status"] == "not_recorded"
+    else:
+        with pytest.raises(ValueError, match="flats="):
+            tj.load_frames(path)
     detector = tj.Detector(4, 1 if single_row else 3, 0.00204, 0.00306, (0.001, -0.002))
     scan = tj.load_frames(
         path, detector=detector, **({} if recorded else {"flats": 100, "darks": 4})

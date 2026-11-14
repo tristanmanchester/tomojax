@@ -62,6 +62,15 @@ tomojax inspect recon.nxs --preview previews
 tomojax export recon.nxs -o slices/
 ```
 
+A file that records the pixel size but not the rotation centre (external
+NXtomo or Data Exchange, ESRF Bliss or EDF) loads with the centre at the middle
+of the detector, and `recon` says so. Fit the centre first:
+
+```bash
+tomojax align scan.h5 -o aligned.nxs --fit centre
+tomojax recon aligned.nxs -o recon.nxs
+```
+
 Nikon scans record no dark field: `--darks` takes a dark image or one level,
 and `--darks 0` suits only counts that are already dark-corrected.
 `align --fit centre roll` estimates the cone detector's centre and roll,
