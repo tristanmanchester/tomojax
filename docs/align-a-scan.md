@@ -246,9 +246,12 @@ keeps that grid and limits the binning instead. The fitted image extends a littl
 the grid, so material that moving views bring into the outer rows has somewhere to be; the
 returned volume is cropped back to the grid. Each view also has its own offset and ramp down the
 detector rows, which the line integrals do not describe: flux changes or phase-retrieval offsets
-between views would otherwise look like vertical motion. They are eliminated inside every step,
-so the poses see only what an offset and ramp cannot explain, and the data are never modified;
-`info["offsets"]` reports each view's fitted pair. `result.scan` keeps the scan's grid, so
+between views would otherwise look like vertical motion. Each view's departure from the level
+the views share is eliminated inside every step, so the poses see only what an offset and ramp
+cannot explain, and the data are never modified. The shared level itself stays with the data:
+an image can produce it (a faint disc, brightest at its rim, whose every view is one constant),
+so removing it too would let the fit invent that disc and drag the views toward their nominal
+positions. `info["offsets"]` reports each view's fitted pair relative to the shared level. `result.scan` keeps the scan's grid, so
 reconstructing it gives the full-resolution image; `result.volume` is the fit's own image, on the
 bounded working grid `result.grid`, not a final-resolution reconstruction.
 

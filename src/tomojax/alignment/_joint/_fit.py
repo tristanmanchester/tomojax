@@ -417,8 +417,8 @@ def fit_poses(
         "trimmed_pixels": {"bottom": drop_v, "right": drop_u},
         "levels": levels,
         "refinement": refinement,
-        # Fitted for information: each view's offset and ramp from the top row (-1)
-        # to the bottom (+1) of the working detector, in the projections' units.
+        # Fitted for information: each view's offset and ramp (top row -1, bottom +1) less
+        # the level all views share, in the projections' units.
         "offsets": (offsets / cal["scale"]).tolist(),
         "report": build_report(
             table=table,

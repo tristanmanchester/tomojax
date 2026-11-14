@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Alignment keeps the level the views share
+
+Since 45f9932d (on this branch, not on main) the alignment step profiled out every
+view's offset and row ramp, including the part all views share. An image can produce
+exactly that part: a faint disc, brightest at its rim, whose every view is one
+constant (and one ramp, with its amplitude linear in z). With nothing holding it, a
+fit under model mismatch filled the disc, and its rim at the detector's edge pulled
+each view's shift back toward nominal. On the watch half turn of the fine-truth tier
+the fitted u error was -0.41 times the true motion and the image held 1.7 times the
+object's mass in empty slices; the landmark error was 0.244 px, and is 0.049 px now.
+Before 45f9932d the per-view refit kept the views' mean background in the image, so
+main was not affected.
+
+Each view's offset and ramp are now profiled out relative to the level the views
+share, which stays with the data: the objective adds the squared size of the
+residual's shared offset and ramp, carried through Gauss-Newton as two more residual
+rows. They couple every view, so the pose block is solved by Woodbury. Views whose
+ramp the profile cannot separate from their offset (one measured row) are left whole
+as before and do not enter the shared level. `info["offsets"]` now reports each
+view's deviation from the shared level; a common offset in the data is no longer
+reported as every view's own.
+
 ### Zeiss's recorded shifts follow `poses=`
 
 A Zeiss file's per-view image shifts and `CenterShift` are the vendor's own

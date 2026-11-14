@@ -532,3 +532,59 @@ def test_tilt_roll_and_rotations_together_keep_the_shared_angles():
     calibration = result.info["calibration"]
     assert abs(float(np.ravel(calibration["roll"])[0]) - 0.25) < 0.1
     assert abs(float(np.ravel(calibration["tilt"])[0]) + 0.35) < 0.1
+
+
+@pytest.mark.numerical
+@pytest.mark.slow
+def test_a_half_turn_of_a_flat_sharp_object_recovers_its_motion_without_a_pedestal():
+    # A watch-like object (three plates, cut with holes and teeth, on a grid four times as
+    # fine, projected and binned) on a half turn, moving in u and v with waves, a trend and a
+    # slip. Profiling every view's offset and ramp, the level the views share included, left
+    # the image a free pedestal the fit filled under this mismatch (1.0x to 1.8x the object's
+    # mass where it is empty), and its rim at the detector's edge pulled each view's u shift
+    # toward nominal: u error -0.15 to -0.19 x the true motion here (and -0.7 to -0.8 at 24
+    # voxels; at 16 it falls to -0.09). Holding the shared level, it is +0.02 to +0.03.
+    n, views, f = 32, 120, 128
+    rng = np.random.default_rng(7)
+    z, y, x = (np.mgrid[:f, :f, :f] - (f - 1) / 2) / f
+    r, theta = np.hypot(x, y), np.arctan2(y, x)
+    fine = np.zeros((f, f, f), np.float32)
+    for z0, thick in ((-0.15, 0.06), (0.0, 0.045), (0.15, 0.075)):
+        plate = (np.abs(z - z0) < thick / 2) & (r < 0.46)
+        plate &= ~((r > 0.42) & (np.cos(24 * theta) < 0))
+        for _ in range(6):
+            c, hole = rng.uniform(-0.3, 0.3, 2), rng.uniform(0.02, 0.07)
+            plate &= np.hypot(x - c[0], y - c[1]) > hole
+        fine += rng.uniform(0.5, 1.0) * plate
+    angles = np.linspace(0, 180, views, endpoint=False)
+    t, ramp = np.deg2rad(angles), np.linspace(0, 1, views)
+    slip = (np.arange(views) >= views // 3).astype(float)
+    table = np.zeros((views, 6))
+    for column, phase, sign in ((3, 0.3, 1), (4, 1.9, -1)):
+        waves = 0.6 * np.cos(2 * t + phase) + 0.4 * np.cos(3 * t + 2 * phase)
+        table[:, column] = waves + 0.8 * ramp + 0.7 * sign * slip
+    h = n / f
+    true = tj.Scan(
+        np.zeros((views, f, f), np.float32),
+        tj.ParallelGeometry(tj.Grid(f, f, f, h, h, h), tj.Detector(f, f, h, h), angles),
+    ).with_poses(table)
+    data = np.asarray(tj.project(true.geometry, fine))
+    data = data.reshape(views, n, 4, n, 4).mean((2, 4)).astype(np.float32)
+    declared = tj.ParallelGeometry(tj.Grid(n, n, n, 1, 1, 1), tj.Detector(n, n, 1, 1), angles)
+    result = tj.align(tj.Scan(data, declared), fit="translations")
+
+    def u(geometry):
+        return np.asarray(stack_view_poses(geometry, views))[:, 0, 3]
+
+    # The object's own shift (cos, sin of the angle) is the gauge: removed before comparing.
+    gauge = np.stack([np.cos(t), np.sin(t)], 1)
+
+    def ungauged(v):
+        return v - gauge @ np.linalg.lstsq(gauge, v, rcond=None)[0]
+
+    error = ungauged(u(result.scan.geometry) - u(true.geometry))
+    motion = ungauged(u(true.geometry) - u(declared))
+    assert abs(error @ motion / (motion @ motion)) < 0.1
+    truth = fine.reshape(n, 4, n, 4, n, 4).mean((1, 3, 5))
+    empty = truth.sum((1, 2)) == 0
+    assert np.asarray(result.volume)[empty].sum() < 0.05 * truth.sum()

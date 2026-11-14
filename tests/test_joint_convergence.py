@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.alignment._joint import _solver  # check-public-imports: allow-private
+from tomojax.alignment._joint import _common, _solver  # check-public-imports: allow-private
 
 
 @pytest.mark.parametrize(("a", "beta"), [(1.0, 0.0), (0.25, 0.5)])
@@ -46,6 +46,10 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     )
     monkeypatch.setattr(_solver, "_line_search", lambda trial, *_: (a, beta, trial(a, beta)))
     # Identity pose normal: back-substitution proposes (-3, -4) at every view.
+    # The views' shared offset and ramp contribute nothing here.
+    shared = _common.Common(
+        jnp.eye(2), jnp.eye(2), jnp.zeros((2, 1)), jnp.zeros((2, 2 * n)), jnp.zeros(2)
+    )
     linear = (
         -jnp.ones(1),
         jnp.ones(1),
@@ -54,6 +58,7 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
         jnp.tile(jnp.array([3.0, 4.0]), n),
         jnp.broadcast_to(jnp.eye(2), (n, 2, 2)),
         None,
+        shared,
     )
     result = level.step(image, state, linear, 0.001, 0.0, 100.0)
     assert result is not None
@@ -124,6 +129,7 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
             jnp.ones((60, 1, 1)),
             100.0,
             (60, 0),
+            None,
             None,
         ),
     )

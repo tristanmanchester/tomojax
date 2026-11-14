@@ -89,7 +89,10 @@ def test_initial_support_and_optional_tv_work(monkeypatch, weight, interpolation
     assert set(calls) == (set(names) if weight else set())
 
 
-def test_offsets_and_ramps_are_eliminated_without_touching_the_observations():
+def test_each_views_offset_and_ramp_are_eliminated_relative_to_the_level_the_views_share():
+    # Per-view offsets with a nonzero common part: each view's deviation is profiled out
+    # and reported; the level every view shares belongs to the data (an image can produce
+    # it, so profiling it away would leave the image a free pedestal) and is not reported.
     grid, detector = tj.Grid(6, 6, 4, 0.7, 0.7, 0.7), tj.Detector(8, 5, 0.7, 0.7)
     geometry = tj.ParallelGeometry(grid, detector, np.arange(12) * 15.0)
     with jax.enable_x64(True):
@@ -135,7 +138,9 @@ def test_offsets_and_ramps_are_eliminated_without_touching_the_observations():
     np.testing.assert_array_equal(np.asarray(y), given)
     np.testing.assert_array_equal(observations, given)
     assert np.isfinite(fitted).all() and np.min(fitted) >= 0
-    np.testing.assert_allclose(reported, offsets, atol=0.01)
+    # Uniform precision: every view weighs the same, so the shared level is the plain mean.
+    assert np.abs(offsets.mean(0)).max() > 0.015  # the injected common part is not small
+    np.testing.assert_allclose(reported, offsets - offsets.mean(0), atol=0.01)
 
 
 def _linearized(half):
@@ -166,12 +171,12 @@ def test_linearization_is_the_gradient_of_the_profiled_robust_objective():
     # The JAX operators: this checks the objective's calculus, not CUDA column precision.
     with jax.enable_x64(True), jax.default_device(jax.devices("cpu")[0]):
         ops, x, c, y, precision, delta, out, rng = _linearized(half=False)
-        gx, _, _, _, score, _, _, _, residual = out
+        gx, _, _, _, score, _, _, _, residual, _ = out
         tail = np.mean(np.abs(np.asarray(residual)[:10]) > delta)
         assert tail > 0.05
 
         def objective(dx, dc):
-            return float(ops.objective(ops.pad_poses(c + dc), x + dx, y, precision, delta))
+            return float(ops.objective(ops.pad_poses(c + dc), x + dx, y, precision, delta)[0])
 
         dx = jnp.asarray(rng.normal(size=ops.shape), jnp.float32)
         dc = jnp.asarray(rng.normal(size=c.shape))
@@ -182,7 +187,7 @@ def test_linearization_is_the_gradient_of_the_profiled_robust_objective():
             # the FP32 projector's rounding.
             probe = 1e-3
             q = ops.pad_poses(c + probe * direction[1])
-            moved = ops.linearize(q, x + probe * direction[0], y, precision, delta)[-1]
+            moved = ops.linearize(q, x + probe * direction[0], y, precision, delta)[-2]
             rate = float(jnp.max(jnp.abs(moved[:10] - residual[:10]))) / probe
             return 0.01 * delta / rate
 
@@ -347,11 +352,12 @@ def test_held_pose_trial_equals_the_projected_objective(masked):
         c = prior.project_gauge(jnp.asarray(rng.normal(scale=0.2, size=prior.size)))
         x = jnp.asarray(rng.uniform(0.1, 0.3, (3, 5, 5)), jnp.float32)
         dx = jnp.asarray(rng.normal(size=(3, 5, 5)), jnp.float32)
-        _, _, sw, j, *_, residual = level.linearize(c, x)
+        _, _, sw, j, *_, residual, shared = level.linearize(c, x)
         assert float(jnp.mean(sw**2 < 0.99 * (1 if precision is None else precision))) > 0.2
         step, _ = ops.weighted_forward(ops.prepare(ops.pad_poses(c)), dx, sw, j)
         for a in (1.0, 0.25):
-            trial = partial(level.trial, x, c, dx, jnp.zeros_like(c), 1.0, (residual, step, sw))
+            held = (residual, step, sw, shared.moments, shared.of_image(dx))
+            trial = partial(level.trial, x, c, dx, jnp.zeros_like(c), 1.0, held)
             held, projected = trial(a, 0.0), trial(a, 1.0)
             np.testing.assert_allclose(held[0], projected[0], rtol=1e-6)
             np.testing.assert_array_equal(held[1], projected[1])
@@ -386,3 +392,84 @@ def test_refinement_stops_on_a_proposal_below_the_pose_tolerance(monkeypatch, sh
     assert bool(record["steps"]) == bool(evaluated) == moves
     if not moves:
         assert record["status"] == "pose_steps_below_tolerance"
+
+
+def test_the_pedestal_costs_nothing_to_the_per_view_profile_and_is_held_by_the_shared_term():
+    # c / sqrt(R^2 - r^2), R the detector's half-width, projects to pi c at every u inside R:
+    # with its amplitude linear in z, every view sees one offset and one row ramp, the same in
+    # every view. The per-view profile removes it whole; only the shared term costs it.
+    n, nz, views = 16, 6, 24
+    grid, detector = tj.Grid(n, n, nz, 1, 1, 1), tj.Detector(n, nz, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, views, endpoint=False))
+    s, radius = 8, n / 2  # voxel means from 8 x 8 in-plane samples
+    yy, xx = (np.mgrid[: n * s, : n * s] + 0.5) / s - radius
+    inside = np.hypot(xx, yy) < radius
+    disc = np.where(inside, 1 / np.sqrt(np.maximum(radius**2 - xx**2 - yy**2, 1e-9)), 0)
+    disc = disc.reshape(n, s, n, s).mean((1, 3))
+    pedestal = ((1 + 0.5 * np.linspace(-1, 1, nz))[:, None, None] * disc).astype(np.float32)
+    seen = np.asarray(tj.project(geometry, pedestal))  # the residual against empty data
+    rows = np.linspace(-1, 1, nz)[:, None]
+    b = np.array([seen.sum(), (rows * seen).sum()])
+    gram = views * n * np.array([[nz, rows.sum()], [rows.sum(), (rows**2).sum()]])
+    expected = 0.5 * b @ np.linalg.solve(gram, b)
+    with jax.enable_x64(True):
+        nominal = np.asarray(stack_view_poses(geometry, views))
+        ops = Operators(grid, detector, nominal, lever=2, native=(1.0, 1.0))
+        prior = MotionPrior(
+            views,
+            rigid_gauge(nominal, [0.5] * 3 + [1.0, 1.0]),
+            knot_spacing=(4,) * 5,
+            delta=0.02,
+            parameters=ops.parameters,
+            rotation_scales=np.ones(5),
+        )
+        y = ops.pad_images(jnp.zeros((views, nz, n), jnp.float32))
+        level = _Level(ops, prior, y, None, lam=0.0, eps=0.0, scales=None, delta=1e6, inner=1)
+        c = jnp.zeros(prior.size)
+        profiled, _ = ops.objective(ops.pad_poses(c), jnp.asarray(pedestal), y, None, 1e6)
+        total = level.linearize(c, jnp.asarray(pedestal))[6]
+    assert float(profiled) < 0.01 * 0.5 * float(np.sum(seen**2))
+    assert float(total) - float(profiled) == pytest.approx(expected, rel=1e-5)
+
+
+def test_the_levels_gradient_includes_the_shared_offset_and_ramp():
+    # Data with a common offset and ramp the image cannot fully explain, and poses that move
+    # the views' moments: the level's gradient and score are the derivatives of the profiled
+    # term plus 0.5 b^T G^-1 b, in the image and along the poses.
+    grid, detector = tj.Grid(6, 6, 5, 0.7, 0.7, 0.7), tj.Detector(8, 6, 0.7, 0.7)
+    geometry = tj.ParallelGeometry(grid, detector, np.arange(10) * 18.0)
+    rng = np.random.default_rng(31)
+    with jax.enable_x64(True), jax.default_device(jax.devices("cpu")[0]):
+        nominal = np.asarray(stack_view_poses(geometry, 10))
+        ops = Operators(grid, detector, nominal, lever=2, native=(0.7, 0.7), interpolation="cubic")
+        prior = MotionPrior(
+            10,
+            rigid_gauge(nominal, [0.5] * 3 + [0.7, 0.7]),
+            knot_spacing=(4,) * 5,
+            delta=0.02,
+            parameters=ops.parameters,
+            rotation_scales=np.ones(5),
+        )
+        x = jnp.asarray(rng.uniform(0.1, 0.3, ops.shape), jnp.float32)
+        c = jnp.asarray(rng.normal(0, 0.05, prior.size))
+        q = ops.pad_poses(c)
+        clean = np.asarray(ops.project(ops.coefficients(ops.nominal, q, ops.valid), x))[:10]
+        rows = np.linspace(-1, 1, 6)[:, None]
+        y = ops.pad_images(jnp.asarray(clean + 0.2 + 0.1 * rows, jnp.float32))
+        level = _Level(ops, prior, y, None, lam=0.0, eps=0.0, scales=None, delta=1e6, inner=1)
+        gx, _, _, _, score, _, data, *_, shared = level.linearize(c, x)
+        assert float(shared.value()) > 0.1 * float(data)
+
+        def objective(dx, dc):
+            value, moments = ops.objective(ops.pad_poses(c + dc), x + dx, y, None, 1e6)
+            return float(value) + 0.5 * float(moments @ level.inverse_gram @ moments)
+
+        dx = jnp.asarray(rng.normal(size=ops.shape), jnp.float32)
+        dc = jnp.asarray(rng.normal(size=c.shape))
+        for direction, analytic, h in (
+            ((dx, 0 * dc), float(jnp.vdot(gx.astype(jnp.float64), dx)), 1e-3),
+            ((0 * dx, dc), float(jnp.vdot(score, dc)), 1e-4),
+        ):
+            plus = objective(*(h * d for d in direction))
+            minus = objective(*(-h * d for d in direction))
+            assert (plus - minus) / (2 * h) == pytest.approx(analytic, rel=2e-3)

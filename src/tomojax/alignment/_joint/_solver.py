@@ -4,9 +4,11 @@ Each outer step linearizes the robust data term at the current volume and
 poses, freezes the IRLS weights and the lagged TV conductance, and eliminates
 the poses exactly: the volume step solves the Schur system by preconditioned CG
 (Jacobi: data diagonal + damping + TV diagonal), and the pose step follows from
-it through the global prior solve. A backtracking line search on the true
-objective chooses the volume step length and the fraction of the pose step.
-Only scalar decisions leave the device.
+it through the global prior solve. The views' shared offset and ramp are held
+(``_common``): they add two residual rows that couple every view, solved by
+Woodbury in the pose block. A backtracking line search on the true objective
+chooses the volume step length and the fraction of the pose step. Only scalar
+decisions leave the device.
 """
 
 from dataclasses import asdict, dataclass
@@ -17,6 +19,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from . import _common
 from . import _tv as tv
 from ._krylov import solve as krylov_solve
 from ._operators import profiled_residual, robust_value
@@ -97,21 +100,30 @@ class _Level:
             else 1 / jnp.maximum(dd + jnp.float32(lm) * damp, jnp.float32(1e-8))
         )
 
+        weights = ops.batch_precision(precision, ops.valid)
+        self.gram = _common.metric(weights)
+        self.inverse_gram = jnp.linalg.pinv(self.gram)  # zero if no view is profiled
+        self.data_moments = _common.moments(jnp.where(weights > 0, y, 0), weights)
+
         # At unchanged poses the prediction is linear in the image: the residual
         # plus a times the step's projection (returned scaled by sw, zero only
-        # where unobserved) gives the data term exactly, without projecting.
-        def held(residual, step, sw, w, a):
+        # where unobserved) gives the profiled term exactly, without projecting;
+        # the shared moments move by a times the step's B dx.
+        def held(residual, step, sw, w, a, moments):
             w = ops.batch_precision(w, ops.valid)
             moved = residual + a * jnp.where(sw > 0, step / jnp.where(sw > 0, sw, 1), 0)
-            return robust_value(profiled_residual(moved, w), w, delta)
+            return robust_value(profiled_residual(moved, w), w, delta) + 0.5 * jnp.vdot(
+                moments, self.inverse_gram @ moments
+            )
 
         self.held = jax.jit(held)
 
         @jax.jit
-        def rhs(q, sw, j, sp, gx, free, precision):
+        def rhs(q, sw, j, sp, gx, free, precision, common):
             # Fixed voxels are discarded, so the gather may skip them.
             active = ops.projection.active(free)
-            return (ops.pose_back(q, sw, j, sp, active, precision) - gx) * free
+            shared = common.image(common.inverse @ (common.poses @ sp))
+            return (ops.pose_back(q, sw, j, sp, active, precision) + shared - gx) * free
 
         self.rhs = rhs
         self.norm = jax.jit(tv.dot)
@@ -123,14 +135,17 @@ class _Level:
         )
 
         @jax.jit
-        def schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag, precision):
+        def schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag, precision, common, poses):
             # Fixed voxels' transpose is discarded: the gather may skip them.
             active = ops.projection.active(free)
 
             def matvec(v):
                 v = v * free
                 r, jr = ops.weighted_forward(q, v, sw, j, precision)
-                out = ops.weighted_back(q, r, sw, j, prior.solve(factor, jr), active, precision)
+                bv = common.of_image(v)
+                p = poses(prior.solve, factor, common, jr + common.poses.T @ (common.inverse @ bv))
+                out = ops.weighted_back(q, r, sw, j, p, active, precision)
+                out = out + common.image(common.inverse @ (bv - common.poses @ p))
                 if lam:
                     out = out + jnp.float32(lam) * tv.diffusion(v, d, scales)
                 out = out + (jnp.float32(lm) * damp) * v
@@ -145,15 +160,24 @@ class _Level:
         return float(self.lam * self.tv_value(x)) if self.lam else 0.0
 
     def initial_volume(self, q, lipschitz, iterations):
-        """FISTA from zero on the Huber initialization data term, without TV."""
+        """FISTA from zero on the Huber initialization data term with the shared term, without TV."""
         ops, y, precision, delta = self.ops, self.y, self.precision, self.delta
+        images = ops.common_images(q, precision)
+        inverse, data_moments = self.inverse_gram, self.data_moments
+        # The shared term's Hessian B^T G^-1 B has rank two; its largest eigenvalue is G^-1 B B^T's.
+        outer = jnp.einsum("i...,j...->ij", images.astype(jnp.float64), images.astype(jnp.float64))
+        lipschitz = lipschitz + float(jnp.max(jnp.real(jnp.linalg.eigvals(inverse @ outer))))
 
         @jax.jit
         def run(x, q, y, precision, lipschitz):
             def fista(_, state):
                 old, z, t = state
+                shared = inverse @ (jnp.einsum("i...,...->i", images, z).astype(jnp.float64) - data_moments)
+                gradient = ops.initial_gradient(q, z, y, precision, delta) + (
+                    shared[0] * images[0] + shared[1] * images[1]
+                ).astype(jnp.float32)
                 new = jnp.maximum(
-                    z - ops.initial_gradient(q, z, y, precision, delta) / lipschitz, 0
+                    z - gradient / lipschitz, 0
                 )
                 tn = (1 + jnp.sqrt(1 + 4 * t * t)) / 2
                 return new, new + ((t - 1) / tn).astype(jnp.float32) * (new - old), tn
@@ -163,21 +187,43 @@ class _Level:
         return run(jnp.zeros(self.ops.shape, jnp.float32), ops.prepare(q), y, precision, lipschitz)
 
     def linearize(self, c, x):
-        """The robust linearization at compact poses ``c`` and volume ``x``."""
-        return self.ops.linearize(self.ops.pad_poses(c), x, self.y, self.precision, self.delta)
+        """The robust linearization at compact poses ``c`` and volume ``x``, with the shared term.
+
+        Returns the gradient, diagonal, weights, columns, score, Gram blocks, data
+        value, observation counts and residual, each including the views' shared
+        offset and ramp (``_common.Common``, returned last).
+        """
+        q = self.ops.pad_poses(c)
+        gx0, dd, sw, j, gr, gram, data, obstats, residual, moved = self.ops.linearize(
+            q, x, self.y, self.precision, self.delta
+        )
+        common = _common.Common(
+            self.gram,
+            self.inverse_gram,
+            self.ops.common_images(q, self.precision),
+            moved,
+            _common.moments(residual, self.ops.batch_precision(self.precision, self.ops.valid)),
+        )
+        gx0 = gx0 + common.image_gradient()
+        dd = dd + common.diagonal()
+        gr = gr + common.pose_score()
+        return gx0, dd, sw, j, gr, gram, data + common.value(), obstats, residual, common
 
     def trial(self, x, c, dx, dc, pose_weight, held, a, beta):
         """Objective after volume step a and pose step a * beta, with the new state.
 
-        ``held`` (residual, weighted projection of dx, weights) gives beta = 0.
+        ``held`` (residual, weighted projection of dx, weights, shared moments and
+        their change B dx) gives beta = 0.
         """
         xt = x + jnp.float32(a) * dx
         cc = c + a * beta * dc
         if beta == 0:
-            data = self.held(*held, self.precision, jnp.float32(a))
+            residual, step, sw, moments, change = held
+            data = self.held(residual, step, sw, self.precision, jnp.float32(a), moments + a * change)
         else:
             q = self.ops.pad_poses(cc)
-            data = self.ops.objective(q, xt, self.y, self.precision, self.delta)
+            value, moments = self.ops.objective(q, xt, self.y, self.precision, self.delta)
+            data = value + 0.5 * jnp.vdot(moments, self.inverse_gram @ moments)
         total = float(data) + self.image_penalty(xt)
         return total + float(self.prior.value(cc, pose_weight)), xt, cc
 
@@ -189,7 +235,7 @@ class _Level:
         """
         ops, prior = self.ops, self.prior
         q = ops.prepare(ops.pad_poses(c))
-        gx0, dd, sw, j, gr, gram, residual = linear
+        gx0, dd, sw, j, gr, gram, residual, common = linear
         damp = jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4)
         d = self.conduct(x) if self.lam else None
         gx = self.gradient(gx0, x, d) if self.lam else gx0
@@ -200,10 +246,12 @@ class _Level:
         pd = jnp.maximum(pd, jnp.maximum(pd.max(), 1e-8) * 0.01)
         for _ in range(5):
             factor = prior.factor(gram + jax.vmap(jnp.diag)(lm * pd + 1e-10), wpose)
-            rhs = self.rhs(q, sw, j, prior.solve(factor, gp), gx, free, self.precision)
+            poses = _common.PoseSolve.build(prior.solve, factor, common)
+            sp = poses(prior.solve, factor, common, gp)
+            rhs = self.rhs(q, sw, j, sp, gx, free, self.precision, common)
             invdiag = self.inverse(d, damp, dd, lm)
             linear_step = self.schur(
-                q, sw, j, factor, free, d, damp, lm, rhs, invdiag, self.precision
+                q, sw, j, factor, free, d, damp, lm, rhs, invdiag, self.precision, common, poses
             )
             dx, cg_steps, cg_residual = (
                 linear_step.solution,
@@ -215,11 +263,14 @@ class _Level:
                 continue
             dx = jnp.maximum(jnp.where(free, x + dx, x), 0) - x
             r, jadx = ops.weighted_forward(q, dx, sw, j, self.precision)
-            dc = -prior.solve(factor, gp + jadx)
+            bdx = common.of_image(dx)
+            jadx = jadx + common.poses.T @ (common.inverse @ bdx)
+            dc = -poses(prior.solve, factor, common, gp + jadx)
             gx_dx, gp_dc = float(self.norm(gx, dx)), float(jnp.vdot(gp, dc))
             accepted = None
             if gx_dx + gp_dc < 0:
-                trial = partial(self.trial, x, c, dx, dc, pose_weight, (residual, r, sw))
+                held = (residual, r, sw, common.moments, bdx)
+                trial = partial(self.trial, x, c, dx, dc, pose_weight, held)
                 accepted = _line_search(trial, f, gx_dx, gp_dc)
             if accepted:
                 a, beta, new = accepted
@@ -232,6 +283,8 @@ class _Level:
                     dc, prior.apply(dc, wpose)
                 )
                 curvature += beta**2 * float(pose)
+                # The shared rows; their cross term is already in jadx.
+                curvature += 2 * float(common.value(bdx) + beta**2 * common.value(common.poses @ dc))
                 predicted = -a * (gx_dx + beta * gp_dc) - 0.5 * a * a * curvature
                 change = float(jnp.sqrt(jnp.mean(jnp.sum((a * beta * dp) ** 2, axis=1))))
                 explicit = bool(linear_step.residual_is_explicit)
@@ -293,7 +346,7 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
     # expose or populate them; this is not a permanent active-set constraint.
     x = jnp.where(observed, x, 0)
     del observed
-    gx0, dd, sw, j, gr, gram, data, obstats, residual = level.linearize(c, x)
+    gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
     fisher = jnp.trace(gram, axis1=1, axis2=2)
     pose_weight = float(pose_sigma * jnp.sqrt(jnp.median(fisher)) * np.sqrt(2 * np.log(n)))
     f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
@@ -303,9 +356,10 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
         if it:
             # Release the previous weights and columns first: two stack-sized sets
             # would not fit beside each other on a small device.
-            del gx0, dd, sw, j, gr, gram, residual
-            gx0, dd, sw, j, gr, gram, data, obstats, residual = level.linearize(c, x)
-        result = level.step(x, c, (gx0, dd, sw, j, gr, gram, residual), lm, pose_weight, f)
+            del gx0, dd, sw, j, gr, gram, residual, common
+            gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
+        linear = (gx0, dd, sw, j, gr, gram, residual, common)
+        result = level.step(x, c, linear, lm, pose_weight, f)
         if result is None:
             status = "line_search_stalled"
             break

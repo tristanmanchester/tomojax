@@ -22,6 +22,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
+from . import _common
 from ._parameters import Parameters
 from ._projection import (
     Coefficients,
@@ -65,13 +66,12 @@ def robust_batch(residual, columns, precision, delta, *, half=False):
 
 def _offset_and_ramp(images, s):
     """Per view (and leading column): the s-whitened fit coefficients of [s, s * v] to images."""
-    v = jnp.linspace(-1, 1, s.shape[-2], dtype=jnp.float64)[:, None]
+    v = _common.rows(s.shape[-2])
     s = s.astype(jnp.float64)
     extra = (slice(None),) + (None,) * (images.ndim - s.ndim)
     w = s * s
-    g00, g01, g11 = (jnp.sum(w * v**k, axis=(-2, -1)) for k in (0, 1, 2))
-    det = g00 * g11 - g01 * g01
-    det = jnp.where(det > 1e-12 * jnp.maximum(g00 * g11, 1e-300), det, jnp.inf)
+    g00, g01, g11 = _common.view_grams(w)
+    det = jnp.where(_common.profiled_views(w), g00 * g11 - g01 * g01, jnp.inf)
     ss, sv = s[extra], (s * v)[extra]
     b0 = jnp.sum(ss * images, axis=(-2, -1))
     b1 = jnp.sum(sv * images, axis=(-2, -1))
@@ -204,6 +204,7 @@ class Operators:
         self._initial_gradient = jax.jit(self._initial_gradient)
         self.linearize = jax.jit(self._linearize)
         self.objective = jax.jit(self._objective)
+        self.common_images = jax.jit(self._common_images)
         self._weighted_forward = jax.jit(self._weighted_forward)
         self.view_summary = jax.jit(self.view_summary)
         self._weighted_back = jax.jit(self._weighted_back)
@@ -424,12 +425,18 @@ class Operators:
             score, gram = column_score(j, res), column_gram(j)
             out = (sw.astype(jnp.float16), j.astype(jnp.float16), score, gram)
             out = (*out, robust_value(r, wb, delta), jnp.where(wb > 0, raw[:, 0] - yb, 0))
-            return (gx, dd), (*out, valid_px, down)
+            # The views' shared offset and ramp (the solver holds them) move with each view's pose.
+            shared = _common.shared_weights(wb)
+            moved = jax.vmap(lambda c, w: jax.vmap(lambda k: _common.moments(k[None], w[None]))(c))(
+                raw[:, 1:], shared
+            )
+            return (gx, dd), (*out, valid_px, down, moved)
 
         batches = (*self.views(q), self.batches(y), self.batches(precision))
         state, out = jax.lax.scan(step, (self._zeros(), self._zeros()), batches)
-        sw, j, g, gram, e, residual, valid, down = out
+        sw, j, g, gram, e, residual, valid, down, moved = out
         n, d, k = self.n, self.detector, self.dofs
+        moved = moved.reshape(self.padded_n, k, 2)[:n]
         return (
             *state,
             sw.reshape(self.image_shape),
@@ -439,25 +446,46 @@ class Operators:
             jnp.sum(e),
             jnp.stack([jnp.sum(valid), jnp.sum(down)]),
             residual.reshape(self.image_shape),
+            jnp.stack([self.parameters.reduce_score(moved[..., i]) for i in range(2)]),
         )
 
     def _objective(self, q, x, y, precision, delta):
+        """The profiled robust data term, and the residual's shared moments b (``_common``)."""
+
         def step(total, z):
             nominal, qb, valid, scales, frames, yb, wb = z
             wb = self.batch_precision(wb, valid)
             cf = self.coefficients(nominal, qb, valid, scales, frames)
-            residual = profiled_residual(self.project(cf, x) - yb, wb)
-            return total + robust_value(residual, wb, delta), None
+            raw = jnp.where(wb > 0, self.project(cf, x) - yb, 0)
+            value = robust_value(profiled_residual(raw, wb), wb, delta)
+            return (total[0] + value, total[1] + _common.moments(raw, wb)), None
 
         batches = (*self.views(q), self.batches(y), self.batches(precision))
-        return jax.lax.scan(step, jnp.asarray(0.0, jnp.float64), batches)[0]
+        start = (jnp.asarray(0.0, jnp.float64), jnp.zeros(2, jnp.float64))
+        return jax.lax.scan(step, start, batches)[0]
+
+    def _common_images(self, q, precision):
+        """B = [A^T w, A^T (w v)] summed over views: the shared moments' image rows."""
+
+        def step(a, z):
+            nominal, qb, valid, scales, frames, wb = z
+            wb = self.batch_precision(wb, valid)
+            cf = self.coefficients(nominal, qb, valid, scales, frames)
+            wb = _common.shared_weights(wb)
+            ramp = (wb * _common.rows(wb.shape[-2])).astype(jnp.float32)
+            return (self.back(a[0], cf, wb.astype(jnp.float32)), self.back(a[1], cf, ramp)), None
+
+        batches = (*self.views(q), self.batches(precision))
+        return jnp.stack(jax.lax.scan(step, (self._zeros(), self._zeros()), batches)[0])
 
     def view_summary(self, q, x, y, precision):
         """Each view's offset and row ramp, and its mean squared profiled residual.
 
-        The offset and ramp are the fit of the observations less the prediction;
-        the residual is what remains, weighted by the precision and averaged over
-        the view's measured pixels.
+        The offset and ramp are the fit of the observations less the prediction,
+        less the views' shared offset and ramp: the solver holds the shared level
+        (``_common``), so only each view's deviation from it is profiled out. The
+        residual is what remains of each view, weighted by the precision and
+        averaged over the view's measured pixels.
         """
 
         def step(z):
@@ -470,11 +498,15 @@ class Operators:
             whitened = whitened - sv * c1[:, None, None]
             mass = jnp.maximum(jnp.sum(wb, axis=(-2, -1), dtype=jnp.float64), 1e-300)
             energy = jnp.sum(whitened**2, axis=(-2, -1)) / mass
-            return jnp.concatenate([jnp.stack([c0, c1], -1), energy[:, None]], -1)
+            gram = jax.vmap(lambda w: _common.metric(w[None]))(wb).reshape(-1, 4)
+            return jnp.concatenate([jnp.stack([c0, c1], -1), energy[:, None], gram], -1)
 
         batches = (*self.views(q), self.batches(y), self.batches(precision))
-        out = jax.lax.map(step, batches).reshape(self.padded_n, 3)[: self.n]
-        return out[:, :2], out[:, 2]
+        out = jax.lax.map(step, batches).reshape(self.padded_n, 7)[: self.n]
+        gram = out[:, 3:].reshape(-1, 2, 2)
+        offsets = out[:, :2]
+        shared = jnp.linalg.solve(jnp.sum(gram, 0), jnp.einsum("nij,nj->i", gram, offsets))
+        return offsets - shared, out[:, 2]
 
     def _split(self, sw, precision, valid):
         """Precision square roots s0 and robust factors rho = sw / s0 of one batch.
