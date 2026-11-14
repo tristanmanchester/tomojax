@@ -218,7 +218,11 @@ def read_hdf5_acquisition(
         np.broadcast_to(np.float32(0), counts.shape),
         np.empty(0, np.float32) if located.angles is None else located.angles[sample],
         detector=None,
-        geometry_metadata={"acquisition": acquisition, "detector_center_status": "not_recorded"},
+        geometry_metadata={
+            "acquisition": acquisition,
+            "detector_center_status": "not_recorded",
+            **({"return_images_excluded": located.return_images} if located.return_images else {}),
+        },
         sample_name=sample_name,
         source_path=str(path),
         source_format=name,

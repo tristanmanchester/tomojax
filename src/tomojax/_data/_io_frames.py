@@ -240,6 +240,8 @@ class LocatedFrames:
         HDF5 path the frame labels were read from, when present.
     angles_path : str or None, optional
         HDF5 path the rotation angles were read from, when present.
+    return_images : int, optional
+        Frames the file marks as return (alignment) images, excluded from the views.
     """
 
     stack: Hdf5Frames
@@ -250,6 +252,7 @@ class LocatedFrames:
     acquisition: dict[str, str] | None = None
     image_key_path: str | None = None
     angles_path: str | None = None
+    return_images: int = 0
 
     @property
     def raw(self) -> bool:
@@ -362,9 +365,11 @@ def locate_frames(
         control = (
             _dataset(file, f"{key_at.rsplit('/', 1)[0]}/image_key_control") if key_at else None
         )
+        returns = 0
         if key is not None and control is not None and control.shape == (frames,):
             # ESRF marks return (alignment) images -1 here while image_key calls them samples.
-            key = np.where(np.asarray(control[()]) == -1, 3, key)
+            marked = np.asarray(control[()]) == -1
+            key, returns = np.where(marked, 3, key), int(np.count_nonzero(marked))
         acquisition, units_override = _gda_metadata(file, gda, where, key_at, angles_at)
         angles = (
             None
@@ -380,7 +385,15 @@ def locate_frames(
             for n, label in (("data_white", 1), ("data_dark", 2))
         )
     return LocatedFrames(
-        Hdf5Frames.open(path, where), key, angles, flats, darks, acquisition, key_at, angles_at
+        Hdf5Frames.open(path, where),
+        key,
+        angles,
+        flats,
+        darks,
+        acquisition,
+        key_at,
+        angles_at,
+        returns,
     )
 
 

@@ -196,6 +196,7 @@ def test_esrf_return_images_are_not_sample_views(tmp_path):
     _nxtomo(path, control=[2, 1, 0, 0, -1, 1])
     frames = tj.load_frames(path, detector=tj.Detector(1, 1, 1.0, 1.0))
     np.testing.assert_array_equal(frames.geometry.angles, [0.0, 90.0])
+    assert frames.source.geometry_metadata["return_images_excluded"] == 1
 
 
 def test_an_entry_declared_nxtomo_by_attribute_keeps_its_unitless_angles(tmp_path):
