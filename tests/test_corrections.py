@@ -805,6 +805,7 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
     frames = tj.load_frames(path, darks=0)
     geometry = frames.geometry
     assert frames.counts.shape == (2, 4, 6)  # closing frame is not a third view
+    assert frames.source.geometry_metadata["closing_frames_excluded"] == 1
     np.testing.assert_array_equal(geometry.angles, [180, 0])
     axis = geometry.rotation_axis()
     if modern:
