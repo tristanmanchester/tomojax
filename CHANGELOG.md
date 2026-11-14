@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### tj.reconstruct no longer estimates a centre
+
+`tj.reconstruct(scan)` estimated the rotation centre when it chose Fourier
+inversion for a scan whose record said the centre was not recorded. It now
+reconstructs with the centre the scan carries; `tj.estimate_center` or
+`tj.align(fit="centre")` estimates one when asked. No file reached that branch:
+a record without a centre does not load as a scan.
+
 ### Fitting tilt or roll with per-view rotations keeps the shared angles
 
 A shared axis tilt or detector roll and a per-view rotation pattern give the

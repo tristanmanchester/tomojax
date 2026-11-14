@@ -271,7 +271,7 @@ def reconstruct(
     tilted-axis scans, matched CGLS for segmented cone geometry, and FBP/FDK
     otherwise. It reconstructs with the geometry and poses the scan carries, on
     its grid or the ``grid`` given; it fits no poses (use :func:`align`).
-    An explicitly unrecorded axial centre may be inferred.
+    It estimates nothing: a centre comes from the file or from :func:`align`.
     ``info["automatic"]`` records those choices and limitations. Explicit
     methods bypass this policy.
 
@@ -470,7 +470,7 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
             "Posed or custom parallel geometry uses FBP; "
             "automatic iterative validation is unavailable."
         )
-    scan, center_estimation, center_calibration_reason = _automatic_axial_setup(
+    center_estimation, center_calibration_reason = _automatic_axial_setup(
         scan, method=method, reasons=reasons
     )
     result = reconstruct(scan, method, **options)
@@ -479,11 +479,7 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
         "status": "limited" if reasons else "ok",
         "reasons": reasons,
         "center_calibration_reason": center_calibration_reason,
-        "geometry": (
-            "center_estimated"
-            if center_estimation and center_estimation["status"] == "estimated"
-            else "preserved"
-        ),
+        "geometry": "preserved",
         "center_estimation": center_estimation,
         "warning": "Method selection does not validate geometry, support or detector artefacts.",
     }
@@ -492,21 +488,12 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
 
 def _automatic_axial_setup(
     scan: Scan, *, method: Method, reasons: list[str]
-) -> tuple[Scan, dict[str, Any] | None, str | None]:
-    """Infer an absent axial centre and identify unresolved raw-workflow limitations."""
+) -> tuple[dict[str, Any] | None, str | None]:
+    """A recorded centre estimate's uncertainty and unresolved raw-workflow limitations."""
     source_meta = {} if scan.source is None else scan.source.geometry_metadata
     center_estimation: dict[str, Any] | None = cast(
         "dict[str, Any] | None", source_meta.get("detector_center_calibration")
     )
-    if method == "fourier" and source_meta.get("detector_center_status") == "not_recorded":
-        try:
-            scan = estimate_center(scan)
-            assert scan.source is not None
-            source_meta = scan.source.geometry_metadata
-            center_estimation = source_meta["detector_center_calibration"]
-        except ValueError as exc:
-            center_estimation = {"status": "failed", "reason": str(exc)}
-            reasons.append("Automatic centre estimation failed: " + str(exc))
     if center_estimation is not None:
         diagnostics = cast("dict[str, Any]", center_estimation.get("diagnostics", {}))
         uncertainty = diagnostics.get("uncertainty_reason")
@@ -528,7 +515,7 @@ def _automatic_axial_setup(
             reasons.append(
                 "No stripe correction is recorded; detector-ring suppression is unassessed."
             )
-    return scan, center_estimation, center_calibration_reason
+    return center_estimation, center_calibration_reason
 
 
 @contextmanager

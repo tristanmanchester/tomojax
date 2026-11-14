@@ -1,7 +1,6 @@
 """Automatic reconstruction selects a measured inverse without changing geometry."""
 
 from dataclasses import replace
-from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -62,50 +61,24 @@ def test_explicit_method_bypasses_automatic_geometry_policy():
         tj.reconstruct(scan, iterations=3)
 
 
-@pytest.mark.parametrize(
-    "status", [None, "recorded", "provided", "inferred", "not_recorded", "failed"]
-)
-def test_automatic_center_provenance_failure_and_saved_reuse(status, monkeypatch, tmp_path):
-    grid, detector = tj.Grid(8, 8, 2, 1, 1, 1), tj.Detector(12, 2, 1, 1)
+@pytest.mark.parametrize("status", [None, "recorded", "provided", "inferred", "not_recorded"])
+def test_automatic_reconstruction_never_estimates_a_centre(status, monkeypatch):
+    # tj.reconstruct reconstructs with the centre it is given, whatever the file recorded.
+    def no_estimate(*_args, **_kwargs):
+        raise AssertionError("tj.reconstruct estimated a centre")
+
+    monkeypatch.setattr(alignment, "estimate_center_report", no_estimate)
+    grid, detector = tj.Grid(8, 8, 2, 1, 1, 1), tj.Detector(12, 2, 1, 1, center=(-2.2, 0))
     angles = np.linspace(0, 180, 33)
     geometry = tj.ParallelGeometry(grid, detector, angles)
     scan = tj.Frames(np.full((33, 2, 12), 0.5, np.float32), geometry, white_level=1).corrected()
     meta = {} if status is None else {"detector_center_status": status}
-    if status == "failed":
-        meta["detector_center_status"] = "not_recorded"
     record = ProjectionDataset(scan.projections, angles, geometry_metadata=meta)
     scan = replace(scan, source=record)
-    estimate = Mock(
-        return_value=Mock(
-            geometry=replace(geometry, detector=replace(detector, center=(-2.2, 0))),
-            to_dict=dict,
-        )
-    )
-    if status == "failed":
-        estimate.side_effect = ValueError("no usable half-turn")
-    monkeypatch.setattr(alignment, "estimate_center_report", estimate)
-    tj.reconstruct(scan, "fourier")
-    assert estimate.call_count == 0
     actual = tj.reconstruct(scan)
-    assert estimate.call_count == int(status in {"not_recorded", "failed"})
-    assert record.geometry_metadata == meta and scan.detector.center == (0, 0)
-    automatic = actual.info["automatic"]
-    if status == "not_recorded":
-        assert actual.scan.detector.center == (-2.2, 0)
-        assert actual.scan.source.geometry_metadata["detector_center_status"] == "inferred"
-        assert automatic["center_calibration_reason"] is None
-        path = tmp_path / "calibrated.nxs"
-        tj.save(path, actual)
-        loaded = tj.load_reconstruction(path)
-        replay = tj.reconstruct(loaded.scan)
-        np.testing.assert_array_equal(actual.volume, replay.volume)
-        assert estimate.call_count == 1 and replay.scan is loaded.scan
-    else:
-        assert actual.scan is scan
-        if status == "failed":
-            assert automatic["center_estimation"]["status"] == "failed"
-            assert automatic["status"] == "limited"
-            assert automatic["center_calibration_reason"] in automatic["reasons"]
+    assert actual.scan is scan and actual.scan.detector.center == (-2.2, 0)
+    assert actual.info["automatic"]["geometry"] == "preserved"
+    assert record.geometry_metadata == meta
 
 
 def test_automatic_segmented_cone_preserves_calibration():
@@ -214,18 +187,3 @@ def test_automatic_route_reconstructs_an_unposed_oblique_scan_with_its_declared_
     declared = tj.reconstruct(scan.with_poses(np.zeros((len(_ANGLES), 6))))
     np.testing.assert_allclose(result.volume, declared.volume, rtol=0, atol=1e-6)
     assert _error(result, volume) < 0.02  # 0.001 measured with poses
-
-
-def test_automatic_route_estimates_an_unrecorded_centre_with_the_real_estimator():
-    volume = _phantom()
-    true = tj.ParallelGeometry(_GRID, tj.Detector(24, 24, 1, 1, center=(2.0, 0)), _ANGLES)
-    declared = tj.ParallelGeometry(_GRID, tj.Detector(24, 24, 1, 1), _ANGLES)
-    data = np.asarray(tj.project(true, volume))
-    record = ProjectionDataset(
-        data, _ANGLES, geometry_metadata={"detector_center_status": "not_recorded"}
-    )
-    result = tj.reconstruct(replace(tj.Scan(data, declared), source=record))
-    assert result.method == "fourier"
-    assert result.scan.source.geometry_metadata["detector_center_status"] == "inferred"
-    assert result.scan.detector.center[0] == pytest.approx(2.0, abs=0.05)
-    assert _error(result, volume) < 0.04  # 0.017 measured, 0.47 at the declared centre
