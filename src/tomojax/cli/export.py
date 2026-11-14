@@ -100,9 +100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         attribute = handle["/entry/processing/tomojax"].attrs.get(_AXES_ATTR)
         try:
-            axes, _ = saved_volume_axes(
-                dataset.shape, None if attribute is None else _decode(attribute, ""), grid, data
-            )
+            axes = saved_volume_axes(None if attribute is None else _decode(attribute, ""), data)
         except ValueError as exc:
             parser.error(str(exc))
         shape = {axis: int(n) for axis, n in zip(axes, dataset.shape, strict=True)}

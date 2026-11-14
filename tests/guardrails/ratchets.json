@@ -55,10 +55,10 @@
   },
   "code_lines": {
     "(modules)": 2798,
-    "_data": 2086,
+    "_data": 2063,
     "alignment": 3035,
     "backends": 619,
-    "cli": 2408,
+    "cli": 2402,
     "core": 13440,
     "corrections": 2682,
     "datasets": 1125,
@@ -88,7 +88,7 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "single_use_helpers": {
-    "tiny": 76,
+    "tiny": 75,
     "forwarders": 7,
     "chained": 4
   },
@@ -100,7 +100,7 @@
     "reportIndexIssue": 6,
     "reportInvalidTypeForm": 1,
     "reportOptionalSubscript": 1,
-    "reportPrivateUsage": 37,
+    "reportPrivateUsage": 36,
     "reportReturnType": 9,
     "reportTypedDictNotRequiredAccess": 3
   },

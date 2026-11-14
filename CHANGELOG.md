@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### A saved volume must record its axis order
+
+Loading a saved volume without its `volume_axes_order` attribute guessed the
+order from the volume's shape against the grid (and refused only when the shape
+fit more than one order, as a cube does). It now refuses with a message naming
+the attribute. TomoJAX has written the attribute with every volume since
+September 2025, so only older files are affected; set the attribute on them.
+`saved_volume_axes` takes the attribute and the path and returns the order.
+
 ### Loading no longer estimates a rotation centre
 
 `tj.load` and `tj.load_frames` estimated the rotation centre of every parallel

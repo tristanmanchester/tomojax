@@ -145,51 +145,17 @@ def test_files_keep_their_angle_and_detector_centre_keys(tmp_path: Path) -> None
     assert load_dataset(nxs_path).detector == loaded.detector
 
 
-def test_nxtomo_loader_does_not_synthesize_grid_from_volume_only(tmp_path: Path) -> None:
-    path = tmp_path / "missing_grid.nxs"
-    with h5py.File(path, "w") as handle:
-        entry = handle.create_group("entry")
-        entry.attrs["definition"] = "NXtomo"
-        detector = entry.create_group("instrument").create_group("detector")
-        detector.create_dataset("data", data=np.zeros((2, 3, 4), dtype=np.float32))
-        detector.create_dataset("image_key", data=np.zeros((2,), dtype=np.int32))
-        sample = entry.create_group("sample")
-        sample.create_dataset("name", data="fixture")
-        transformations = sample.create_group("transformations")
-        rotation_angle = transformations.create_dataset(
-            "rotation_angle",
-            data=np.asarray([0.0, 90.0], dtype=np.float32),
-        )
-        rotation_angle.attrs["units"] = "degree"
-        tomojax = entry.create_group("processing").create_group("tomojax")
-        tomojax.create_dataset("volume", data=np.zeros((5, 6, 7), dtype=np.float32))
-
-    with pytest.raises(ValueError, match="volume axis order is unknown"):
-        load_nxtomo(str(path))
-
-
-def test_nxtomo_loader_marks_equal_xz_volume_axes_ambiguous(tmp_path: Path) -> None:
-    path = tmp_path / "ambiguous_axes.nxs"
-    grid = Grid(nx=5, ny=6, nz=5, vx=1.0, vy=1.0, vz=1.0)
-    with h5py.File(path, "w") as handle:
-        entry = handle.create_group("entry")
-        entry.attrs["definition"] = "NXtomo"
-        entry.attrs["grid_meta_json"] = json.dumps(grid.to_dict())
-        detector = entry.create_group("instrument").create_group("detector")
-        detector.create_dataset("data", data=np.zeros((2, 3, 4), dtype=np.float32))
-        detector.create_dataset("image_key", data=np.zeros((2,), dtype=np.int32))
-        sample = entry.create_group("sample")
-        sample.create_dataset("name", data="fixture")
-        transformations = sample.create_group("transformations")
-        rotation_angle = transformations.create_dataset(
-            "rotation_angle",
-            data=np.asarray([0.0, 90.0], dtype=np.float32),
-        )
-        rotation_angle.attrs["units"] = "degree"
-        tomojax = entry.create_group("processing").create_group("tomojax")
-        tomojax.create_dataset("volume", data=np.zeros((5, 6, 5), dtype=np.float32))
-
-    with pytest.raises(ValueError, match="volume axis order is unknown"):
+def test_a_saved_volume_without_its_axis_order_is_refused(tmp_path: Path) -> None:
+    # The shape cannot say the order (a cube fits every order, and a guess from a non-cube
+    # is still a guess), so a volume whose file does not record it does not load.
+    path = tmp_path / "volume.nxs"
+    dataset = make_projection_dataset()
+    dataset.volume = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
+    save_dataset(path, dataset)
+    assert load_nxtomo(str(path)).disk_volume_axes_order == "zyx"
+    with h5py.File(path, "a") as file:
+        del file["/entry/processing/tomojax"].attrs["volume_axes_order"]
+    with pytest.raises(ValueError, match="does not record its axis order"):
         load_nxtomo(str(path))
 
 

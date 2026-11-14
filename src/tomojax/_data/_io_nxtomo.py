@@ -14,7 +14,6 @@ from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees
 from ._io_frames import Hdf5Frames
 from ._io_helpers import (
     _attr_to_str,
-    _axes_log_warning,
     _detector_group,
     _ensure_group,
     _load_detector_metadata,
@@ -400,68 +399,58 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
         _load_sample_metadata(out, entry)
 
         if volume_raw is not None:
-            volume_np, disk_order, source = _volume_in_internal_axes(
-                volume_raw, volume_axes_attr, grid_hint=out.get("grid"), path=path
+            volume_np, disk_order = _volume_in_internal_axes(
+                volume_raw, volume_axes_attr, path=path
             )
             out["volume"] = volume_np
             out["disk_volume_axes_order"] = disk_order
-            out["volume_axes_source"] = source
     return LoadedNXTomo.from_dataset(out)
 
 
 def _volume_in_internal_axes(
-    volume_raw: np.ndarray, volume_axes_attr: str | None, *, grid_hint: object, path: str
-) -> tuple[np.ndarray, str, str]:
-    """A saved volume in (z, y, x) order, with the disk order and how it was found.
-
-    The order comes from the saved ``volume_axes_order`` attribute when it is
-    valid, else from the volume's shape against the grid; a malformed attribute
-    and every inferred order are logged.
-    """
-    disk_axes, source = saved_volume_axes(volume_raw.shape, volume_axes_attr, grid_hint, path)
+    volume_raw: np.ndarray, volume_axes_attr: str | None, *, path: str
+) -> tuple[np.ndarray, str]:
+    """A saved volume in (z, y, x) order, with its disk order."""
+    disk_axes = saved_volume_axes(volume_axes_attr, path)
     volume_np = np.asarray(volume_raw)
     if disk_axes != "zyx":
         volume_np = np.ascontiguousarray(volume_np.transpose(_volume_permutation(disk_axes)))
-    return volume_np, disk_axes, source
+    return volume_np, disk_axes
 
 
-def saved_volume_axes(
-    shape: tuple[int, ...], attribute: str | None, grid: object, path: object
-) -> tuple[str, str]:
-    """The disk order of a saved volume and how it was found, from metadata alone.
+def saved_volume_axes(attribute: str | None, path: object) -> str:
+    """The disk order of a saved volume, from its ``volume_axes_order`` attribute.
+
+    TomoJAX records the order with every volume it writes; the shape alone cannot
+    say it (a cube fits every order), so a volume without the attribute is refused.
 
     Parameters
     ----------
-    shape : tuple of int
-        Shape of the saved volume.
     attribute : str or None
-        Its ``volume_axes_order`` attribute, if any.
-    grid : mapping or None
-        The saved grid metadata, with ``nx``, ``ny`` and ``nz``.
+        The volume's ``volume_axes_order`` attribute, if any.
     path : object
         The file, for messages.
 
     Returns
     -------
-    tuple of str
-        The order, such as ``"zyx"``, and ``"attr"`` or ``"heuristic"``.
+    str
+        The order, such as ``"zyx"``.
 
     Raises
     ------
     ValueError
-        If neither the attribute nor the grid decides the order.
+        If the attribute is absent or not a permutation of ``xyz``.
     """
-    if attribute:
-        try:
-            _volume_permutation(attribute)
-            return attribute.lower(), "attr"
-        except ValueError:
-            _axes_log_warning("Ignoring malformed volume_axes_order=%r on %s", attribute, path)
-    axes = _infer_volume_axes(shape, grid)
-    if axes is None:
-        raise ValueError(f"{path}: volume axis order is unknown; declare volume_axes_order")
-    _axes_log_warning("load_nxtomo: inferred disk volume axes %s for %s", axes, path)
-    return axes, "heuristic"
+    if not attribute:
+        raise ValueError(
+            f"{path}: the saved volume does not record its axis order; "
+            "set its volume_axes_order attribute (for example 'zyx')"
+        )
+    try:
+        _volume_permutation(attribute)
+    except ValueError as exc:
+        raise ValueError(f"{path}: {exc}") from exc
+    return attribute.lower()
 
 
 def _volume_permutation(axes: str) -> tuple[int, int, int]:
@@ -470,15 +459,6 @@ def _volume_permutation(axes: str) -> tuple[int, int, int]:
     if len(axes) != 3 or set(axes) != {"x", "y", "z"}:
         raise ValueError(f"volume axes must be a permutation of xyz, got {axes!r}")
     return axes.index("z"), axes.index("y"), axes.index("x")
-
-
-def _infer_volume_axes(shape: tuple[int, ...], grid: object) -> str | None:
-    """Infer an undeclared file order only when its physical grid disambiguates it."""
-    if not isinstance(grid, dict) or not all(axis in grid for axis in ("nx", "ny", "nz")):
-        return None
-    dims = tuple(int(grid[axis]) for axis in ("nx", "ny", "nz"))
-    candidates = [axes for axes, sizes in (("xyz", dims), ("zyx", dims[::-1])) if shape == sizes]
-    return candidates[0] if len(candidates) == 1 else None
 
 
 def validate_nxtomo(path: str) -> ValidationReport:

@@ -180,15 +180,12 @@ class LoadedNXTomo:
         Radiation source metadata.
     disk_volume_axes_order : str or None, optional
         Original on-disk volume axis order.
-    volume_axes_source : str or None, optional
-        Origin of the volume-axis convention, recorded during loading.
     """
 
     projections: np.ndarray | Hdf5Frames
     metadata: NXTomoMetadata
     source: SourceInfo | None = None
     disk_volume_axes_order: str | None = None
-    volume_axes_source: str | None = None
 
     @classmethod
     def from_dataset(cls, data: Mapping[str, DatasetValue]) -> LoadedNXTomo:
@@ -219,11 +216,6 @@ class LoadedNXTomo:
                 if data.get("disk_volume_axes_order") is None
                 else str(data.get("disk_volume_axes_order"))
             ),
-            volume_axes_source=(
-                None
-                if data.get("volume_axes_source") is None
-                else str(data.get("volume_axes_source"))
-            ),
         )
 
     def __getattr__(self, name: str) -> object:
@@ -236,7 +228,7 @@ class LoadedNXTomo:
             return False
         if key == "projections":
             return True
-        if key in ("source", "disk_volume_axes_order", "volume_axes_source"):
+        if key in ("source", "disk_volume_axes_order"):
             return getattr(self, key) is not None
         if key in _NXTOMO_METADATA_FIELDS:
             return getattr(self.metadata, key) is not None
@@ -269,8 +261,6 @@ class LoadedNXTomo:
             return self.source
         if key == "disk_volume_axes_order":
             return self.disk_volume_axes_order
-        if key == "volume_axes_source":
-            return self.volume_axes_source
         if key in _NXTOMO_METADATA_FIELDS:
             value = getattr(self.metadata, key)
             return default if value is None else value
@@ -298,8 +288,6 @@ class LoadedNXTomo:
             data["source"] = dict(self.source)
         if self.disk_volume_axes_order is not None:
             data["disk_volume_axes_order"] = self.disk_volume_axes_order
-        if self.volume_axes_source is not None:
-            data["volume_axes_source"] = self.volume_axes_source
         return data
 
     def copy_metadata(self) -> NXTomoMetadata:
