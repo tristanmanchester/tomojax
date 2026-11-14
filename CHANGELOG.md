@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### An alignment level stops when its poses stop moving, whatever the damping
+
+A level stopped after two successive steps proposing a pose change under
+0.01 px, but only if the damping was back at its initial value. Clipping the
+image step at zero can hold the damping high long after the poses have settled
+(on one case 185 of 200 proposals were under 0.01 px and the damping returned to
+its initial value once), so such a fit was never reported converged. The rule
+is now stated on the proposal itself: a small damped proposal is checked again
+at the initial damping, from the same linearisation, and that decides, since
+damping alone could hide a step the fit still wants to take. The step budget is
+unchanged.
+
 ### Alignment keeps the level the views share
 
 Since 45f9932d (on this branch, not on main) the alignment step profiled out every

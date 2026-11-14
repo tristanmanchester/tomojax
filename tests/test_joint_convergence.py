@@ -67,27 +67,30 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
 
 
 @pytest.mark.parametrize(
-    ("proposals", "expected_steps", "status", "forced_damping"),
+    ("proposals", "expected_steps", "status", "forced_damping", "undamped"),
     [
-        ([1.0] * 8, 8, "step_budget_reached", None),
-        ([0.01] * 8, 8, "step_budget_reached", None),
-        ([0.001] * 8, 4, "pose_steps_below_tolerance", None),
-        ([1.0, 1.0, 1.0, 0.001, 0.001, 1.0], 5, "pose_steps_below_tolerance", None),
-        ([0.001, 0.001, 1.0, 0.001, 1.0, 0.001, 0.001, 1.0], 7, "pose_steps_below_tolerance", None),
-        ([0.001] * 2, 2, "step_budget_reached", None),
+        ([1.0] * 8, 8, "step_budget_reached", None, None),
+        ([0.01] * 8, 8, "step_budget_reached", None, None),
+        ([0.001] * 8, 4, "pose_steps_below_tolerance", None, None),
+        ([1.0, 1.0, 1.0, 0.001, 0.001, 1.0], 5, "pose_steps_below_tolerance", None, None),
+        ([0.001, 0.001, 1.0, 0.001, 1.0, 0.001, 0.001, 1.0], 7, "pose_steps_below_tolerance", None, None),
+        ([0.001] * 2, 2, "step_budget_reached", None, None),
+        # Damped harder than the initial damping, a small proposal is checked again at the
+        # initial damping: damping can hide a step the fit still wants to take...
         pytest.param(
-            [0.001] * 8,
-            8,
-            "step_budget_reached",
-            1.0,
-            id="heavy_damping_does_not_converge",
+            [0.001] * 8, 8, "step_budget_reached", 1.0, 0.05, id="damping_hides_a_large_step"
+        ),
+        # ...and cannot stop a fit whose poses have settled from being called converged.
+        pytest.param(
+            [0.001] * 8, 4, "pose_steps_below_tolerance", 1.0, 0.004, id="settled_under_damping"
         ),
     ],
 )
-def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
-    monkeypatch, proposals, expected_steps, status, forced_damping
+def test_stopping_requires_two_small_proposals_at_the_initial_damping(
+    monkeypatch, proposals, expected_steps, status, forced_damping, undamped
 ):
     remaining = iter(proposals)
+    rechecked = []
 
     class Level:
         def __init__(self, ops, *_args, **_kwargs):
@@ -98,6 +101,10 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
 
         def image_penalty(self, _image):
             return 0.0
+
+        def proposal(self, _image, _state, _linear, lm, _weight):
+            rechecked.append(lm)
+            return undamped
 
         def step(self, image, state, _linear, lm, _weight, objective):
             # Image improvement stays large, while the line search holds all poses.
@@ -157,6 +164,10 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
     assert all(step["pose_step_rms"] == 0 for step in record["steps"])
     if forced_damping is not None:
         assert all(step["lm"] == forced_damping for step in record["steps"])
+        # The recheck is made at the initial damping, once per small damped proposal.
+        assert rechecked == [_solver.Budget(1, 1).lm_initial] * expected_steps
+    else:
+        assert rechecked == []  # damping at its initial value: the step's own proposal decides
     np.testing.assert_array_equal(
         [step["proposed_pose_step_rms"] for step in record["steps"]],
         proposals[:expected_steps],

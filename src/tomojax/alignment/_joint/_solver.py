@@ -14,6 +14,7 @@ decisions leave the device.
 from dataclasses import asdict, dataclass
 from functools import partial
 import time
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -70,6 +71,36 @@ def _line_search(trial, f, gx_dx, gp_dc):
         if derivative < 0 and tries[beta][0] <= f + 1e-4 * a * derivative:
             return a, beta, tries[beta]
     return None
+
+
+class _StepContext(NamedTuple):
+    """What every step from one linearisation shares, whatever its damping."""
+
+    q: Any
+    dd: Any
+    sw: Any
+    j: Any
+    gram: Any
+    residual: Any
+    common: Any
+    damp: Any
+    d: Any
+    gx: Any
+    wpose: Any
+    gp: Any
+    free: Any
+    pd: Any
+
+
+class _Proposal(NamedTuple):
+    """A clipped volume step, its pose back-substitution and what the line search needs."""
+
+    dx: Any
+    dc: Any
+    r: Any
+    jadx: Any
+    bdx: Any
+    linear_step: Any
 
 
 class _Level:
@@ -227,49 +258,83 @@ class _Level:
         total = float(data) + self.image_penalty(xt)
         return total + float(self.prior.value(cc, pose_weight)), xt, cc
 
+    def _context(self, x, c, linear, pose_weight):
+        """What every step from this linearisation shares, whatever its damping."""
+        ops, prior = self.ops, self.prior
+        gx0, dd, sw, j, gr, gram, residual, common = linear
+        d = self.conduct(x) if self.lam else None
+        gx = self.gradient(gx0, x, d) if self.lam else gx0
+        wpose = prior.weights(c, pose_weight)
+        pd = jnp.diagonal(gram, axis1=1, axis2=2)
+        return _StepContext(
+            q=ops.prepare(ops.pad_poses(c)),
+            dd=dd,
+            sw=sw,
+            j=j,
+            gram=gram,
+            residual=residual,
+            common=common,
+            damp=jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4),
+            d=d,
+            gx=gx,
+            wpose=wpose,
+            gp=gr + prior.apply(c, wpose),
+            free=(x > 0) | (gx < 0),
+            pd=jnp.maximum(pd, jnp.maximum(pd.max(), 1e-8) * 0.01),
+        )
+
+    def _propose(self, x, k: _StepContext, lm) -> "_Proposal | None":
+        """The Schur volume step at damping lm, clipped to x >= 0, and its pose back-substitution.
+
+        Returns None when the volume solve does not give a finite residual.
+        """
+        ops, prior, common = self.ops, self.prior, k.common
+        factor = prior.factor(k.gram + jax.vmap(jnp.diag)(lm * k.pd + 1e-10), k.wpose)
+        poses = _common.PoseSolve.build(prior.solve, factor, common)
+        sp = poses(prior.solve, factor, common, k.gp)
+        rhs = self.rhs(k.q, k.sw, k.j, sp, k.gx, k.free, self.precision, common)
+        invdiag = self.inverse(k.d, k.damp, k.dd, lm)
+        linear_step = self.schur(
+            k.q, k.sw, k.j, factor, k.free, k.d, k.damp, lm, rhs, invdiag, self.precision, common, poses
+        )
+        if not np.isfinite(float(linear_step.relative_residual)):
+            return None
+        dx = jnp.maximum(jnp.where(k.free, x + linear_step.solution, x), 0) - x
+        r, jadx = ops.weighted_forward(k.q, dx, k.sw, k.j, self.precision)
+        bdx = common.of_image(dx)
+        jadx = jadx + common.poses.T @ (common.inverse @ bdx)
+        dc = -poses(prior.solve, factor, common, k.gp + jadx)
+        return _Proposal(dx, dc, r, jadx, bdx, linear_step)
+
+    def proposal(self, x, c, linear, lm, pose_weight):
+        """The RMS pose change one step from this linearisation proposes at damping lm, or None."""
+        step = self._propose(x, self._context(x, c, linear, pose_weight), lm)
+        if step is None:
+            return None
+        dp = self.prior.expand(step.dc)
+        return float(jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1))))
+
     def step(self, x, c, linear, lm, pose_weight, f):
         """One damped step: Schur volume solve, exact pose back-substitution, line search.
 
         Raises the damping tenfold, up to five times, until the line search accepts.
         Returns the accepted step with its predicted reduction, or None.
         """
-        ops, prior = self.ops, self.prior
-        q = ops.prepare(ops.pad_poses(c))
-        gx0, dd, sw, j, gr, gram, residual, common = linear
-        damp = jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4)
-        d = self.conduct(x) if self.lam else None
-        gx = self.gradient(gx0, x, d) if self.lam else gx0
-        wpose = prior.weights(c, pose_weight)
-        gp = gr + prior.apply(c, wpose)
-        free = (x > 0) | (gx < 0)
-        pd = jnp.diagonal(gram, axis1=1, axis2=2)
-        pd = jnp.maximum(pd, jnp.maximum(pd.max(), 1e-8) * 0.01)
+        prior = self.prior
+        k = self._context(x, c, linear, pose_weight)
+        common = k.common
         for _ in range(5):
-            factor = prior.factor(gram + jax.vmap(jnp.diag)(lm * pd + 1e-10), wpose)
-            poses = _common.PoseSolve.build(prior.solve, factor, common)
-            sp = poses(prior.solve, factor, common, gp)
-            rhs = self.rhs(q, sw, j, sp, gx, free, self.precision, common)
-            invdiag = self.inverse(d, damp, dd, lm)
-            linear_step = self.schur(
-                q, sw, j, factor, free, d, damp, lm, rhs, invdiag, self.precision, common, poses
-            )
-            dx, cg_steps, cg_residual = (
-                linear_step.solution,
-                linear_step.iterations,
-                linear_step.relative_residual,
-            )
-            if not np.isfinite(float(cg_residual)):
+            proposed = self._propose(x, k, lm)
+            if proposed is None:
                 lm *= 10
                 continue
-            dx = jnp.maximum(jnp.where(free, x + dx, x), 0) - x
-            r, jadx = ops.weighted_forward(q, dx, sw, j, self.precision)
-            bdx = common.of_image(dx)
-            jadx = jadx + common.poses.T @ (common.inverse @ bdx)
-            dc = -poses(prior.solve, factor, common, gp + jadx)
-            gx_dx, gp_dc = float(self.norm(gx, dx)), float(jnp.vdot(gp, dc))
+            dx, dc, r, jadx, bdx = proposed.dx, proposed.dc, proposed.r, proposed.jadx, proposed.bdx
+            linear_step = proposed.linear_step
+            cg_steps, cg_residual = linear_step.iterations, linear_step.relative_residual
+            gx_dx, gp_dc = float(self.norm(k.gx, dx)), float(jnp.vdot(k.gp, dc))
             accepted = None
             if gx_dx + gp_dc < 0:
-                held = (residual, r, sw, common.moments, bdx)
+                held = (k.residual, r, k.sw, common.moments, bdx)
                 trial = partial(self.trial, x, c, dx, dc, pose_weight, held)
                 accepted = _line_search(trial, f, gx_dx, gp_dc)
             if accepted:
@@ -277,10 +342,10 @@ class _Level:
                 dp = prior.expand(dc)
                 curvature = float(self.energy(r))
                 if self.lam:
-                    curvature += self.lam * float(self.norm(dx, self.diffuse(dx, d)))
+                    curvature += self.lam * float(self.norm(dx, self.diffuse(dx, k.d)))
                 curvature += beta * 2 * float(jnp.vdot(dc, jadx))
-                pose = jnp.einsum("ni,nij,nj->", dp, gram, dp) + jnp.vdot(
-                    dc, prior.apply(dc, wpose)
+                pose = jnp.einsum("ni,nij,nj->", dp, k.gram, dp) + jnp.vdot(
+                    dc, prior.apply(dc, k.wpose)
                 )
                 curvature += beta**2 * float(pose)
                 # The shared rows; their cross term is already in jadx.
@@ -309,6 +374,23 @@ class _Level:
                 )
             lm *= 10
         return None
+
+def _undamped_proposal(level, step, x, c, linear, budget, pose_weight):
+    """The step's pose proposal at the initial damping when its damped one is small, else None.
+
+    Alignment has converged when its proposed geometry updates are small, even
+    if more image iterations could still reduce the residual. A proposal damped
+    harder than the initial damping is no such evidence: damping can suppress
+    any step. So a small damped proposal is checked again at the initial
+    damping, from the same linearisation, and that proposal decides. The
+    damping itself does not: clipping the image step at x >= 0 can keep it high
+    long after the poses have settled.
+    """
+    if step["proposed_pose_step_rms"] >= _POSE_TOL_PX:
+        return None
+    if step["lm"] <= budget.lm_initial:
+        return step["proposed_pose_step_rms"]
+    return level.proposal(x, c, linear, budget.lm_initial, pose_weight)
 
 
 def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, delta, scales):
@@ -363,6 +445,7 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
         if result is None:
             status = "line_search_stalled"
             break
+        x0, c0 = x, c
         a, beta, (fn, x, c), predicted, change, lm, cg_steps, cg_residual, linear_record = result
         rho = _gain_ratio(f - fn, predicted)
         valid, down = map(float, np.asarray(obstats))
@@ -386,13 +469,9 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
             lm = max(_LM_MIN, lm / 2)
         elif rho < 0.25 or a < 0.5:
             lm = min(lm * 3, 1e6)
-        # Alignment has converged when its proposed geometry updates are small,
-        # even if more image iterations could still reduce the residual. Neither
-        # clipping a large proposal nor raising damping to suppress it provides
-        # evidence of convergence.
-        proposed_change = linear_record["proposed_pose_step_rms"]
-        small = proposed_change < _POSE_TOL_PX and history[-1]["lm"] <= budget.lm_initial
-        stable = stable + 1 if small else 0
+        undamped = _undamped_proposal(level, history[-1], x0, c0, linear, budget, pose_weight)
+        history[-1]["undamped_proposed_pose_step_rms"] = undamped
+        stable = stable + 1 if undamped is not None and undamped < _POSE_TOL_PX else 0
         if stable >= 2 and it + 1 >= _MIN_OUTER:
             status = "pose_steps_below_tolerance"
             break
