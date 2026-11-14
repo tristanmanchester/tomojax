@@ -162,8 +162,8 @@ def test_linked_nxtomo_float_keys_preserve_pixels_and_calibration(tmp_path, nest
     np.testing.assert_array_equal(located.stack[:], values)
     np.testing.assert_array_equal(located.image_key, [2, 1, 0, 0, 1])
     assert located.angles is not None
-    with pytest.raises(ValueError, match="detector="):
-        tj.load_frames(path, **options)
+    loaded = tj.load_frames(path, **options)  # no pixel size recorded: pixel units
+    assert loaded.source.geometry_metadata["length_unit"] == "pixel"
     frames = tj.load_frames(path, detector=tj.Detector(1, 1, 1, 1), **options)
     np.testing.assert_allclose(frames.geometry.angles, [12, 72])
     np.testing.assert_allclose(frames.corrected().projections[:, 0, 0], -np.log([0.5, 0.75]))

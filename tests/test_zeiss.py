@@ -157,8 +157,13 @@ def _check_missing_zeiss_inputs(path, streams, frames, counts):
     ):
         partial = {name: value for name, value in streams.items() if name != key}
         write_ole(path, partial)
-        with pytest.raises(ValueError, match="detector=|geometry="):
-            tj.load_frames(path, darks=0)
+        if key in ("alignment/y-shifts", "ImageInfo/XrayGeometry"):  # no axis without them
+            with pytest.raises(ValueError, match="geometry="):
+                tj.load_frames(path, darks=0)
+        else:  # the middle centre, said; and pixel units only without the pixel size
+            meta = tj.load_frames(path, darks=0).source.geometry_metadata
+            assert meta["detector_center_status"] == "not_recorded"
+            assert (meta.get("length_unit") == "pixel") == (key == "ImageInfo/pixelsize")
         # geometry= replaces whatever shifts the file still records, and says so.
         dropped = key != "alignment/y-shifts"
         with pytest.warns(UserWarning, match="geometry= replaces") if dropped else nullcontext():

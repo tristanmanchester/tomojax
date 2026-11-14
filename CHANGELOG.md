@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### A parallel file without a pixel size loads in pixel units; `pixel_size=`
+
+A parallel-beam file that records no pixel size (TomoBank 00031, 00086 and 00069,
+generic HDF5 frames, GDA files) used to refuse to load until a whole
+`tj.Detector`, shape and centre included, was built by hand. It now loads with a
+pitch of one pixel, and its record says `detector_pixel_size_status:
+"not_recorded"` and `length_unit: "pixel"`: lengths, poses and the centre are in
+pixels and attenuation is per pixel (a reconstruction is the same image, scaled).
+`tj.load(path, pixel_size=0.65)` (also `(du, dv)`, and on `tj.load_frames`) gives
+the pixel size in the geometry's length unit, the shape from the frames and the
+centre from the file or the middle; with `detector=` or `geometry=` it raises. A
+cone-beam file still needs its pixel size, since its distances fix the unit. Pitches
+a file records without a whole detector (partial NXtomo and NPZ records, Zeiss files
+without CenterShift) are now used, with the middle centre, instead of refused.
+`ProjectionDataset.with_recorded_pitches` is now `with_parallel_detector`.
+
 ### Newer Diamond K11 exports load their angles
 
 Newer GDA exports (K11 67208) describe the frames twice: GDA's own layout, whose

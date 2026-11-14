@@ -58,8 +58,9 @@ resolution. Axial-parallel crops follow the measured row window; other models
 retain their output box. File/caller-supplied grids and `Scan.binned()` retain
 their chosen sampling.
 
-Missing values produce an error
-naming the override, not centred unit pixels or a 30° tilt.
+Missing values produce an error naming the argument that supplies them, except a
+parallel-beam pixel size (pixel units, said in the record) and a rotation centre
+(the detector middle, said in the record). A 30° tilt is not assumed.
 
 Workflows outside the table above are research or expert diagnostics.
 

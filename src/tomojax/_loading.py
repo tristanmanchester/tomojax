@@ -49,6 +49,7 @@ def load(
     darks: np.ndarray | float | str | PathLike[str] | None = None,
     angles: Sequence[float] | np.ndarray | None = None,
     detector: Detector | None = None,
+    pixel_size: float | tuple[float, float] | None = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
     exposure_times: np.ndarray | float | None = None,
@@ -74,7 +75,7 @@ def load(
     ----------
     path : str or path-like
         Dataset or recognised acquisition file or directory.
-    flats, darks, angles, detector, grid, geometry : optional
+    flats, darks, angles, detector, pixel_size, grid, geometry : optional
         As :func:`load_frames`.
     exposure_times, flat_exposure_times : optional
         As :func:`load_frames`.
@@ -111,6 +112,7 @@ def load(
     overrides: dict[str, Any] = {
         "angles": angles,
         "detector": detector,
+        "pixel_size": pixel_size,
         "grid": grid,
         "geometry": geometry,
     }
@@ -433,6 +435,7 @@ def load_frames(
     darks: np.ndarray | float | str | PathLike[str] | None = None,
     angles: Sequence[float] | np.ndarray | None = None,
     detector: Detector | None = None,
+    pixel_size: float | tuple[float, float] | None = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
     exposure_times: np.ndarray | float | None = None,
@@ -456,13 +459,14 @@ def load_frames(
     physical calibration and per-view image shifts in the geometry.
     A GDA command mislabeled as mm is read in degrees with a warning; discovered
     paths and this correction stay in source metadata.
-    Generic TIFF stacks without acquisition metadata need ``angles`` (degrees),
-    ``flats`` (frames or one level) and
-    their ``detector`` (including pixel sizes and centre). Missing detector
-    pixel pitch is never replaced by unit pixels. A file that records the pitch but
-    not the rotation centre gives the middle of the detector, and its record says the
-    centre was not recorded. Missing dark fields require ``darks=``; use ``darks=0``
-    only for already dark-corrected counts.
+    Generic TIFF stacks without acquisition metadata need ``angles`` (degrees) and
+    ``flats`` (frames or one level). A parallel-beam file that records no pixel size
+    loads in pixel units (a pitch of one; its record says ``length_unit`` "pixel"), and
+    ``pixel_size`` gives the physical one; a cone-beam file needs one, since its
+    distances fix the unit. A file that records the pitch but not the rotation centre
+    gives the middle of the detector, and its record says the centre was not recorded.
+    Missing dark fields require ``darks=``; use ``darks=0`` only for already
+    dark-corrected counts.
 
     ``flats`` and ``darks`` (arrays, HDF5 stacks, TIFF files or folders, Zeiss XRM
     images, or one level for every pixel), ``angles``, ``detector``, ``grid`` and a
@@ -484,6 +488,10 @@ def load_frames(
         Sample-view angles in degrees, replacing file metadata.
     detector : Detector or None, optional
         Replacement detector dimensions, pixel sizes and physical centre.
+    pixel_size : float, (float, float) or None, optional
+        The detector's pixel size (u, v) in the geometry's length unit, when the file
+        records none or another; the shape comes from the frames and the centre from the
+        file or the middle. Not with ``detector`` or ``geometry``.
     grid : Grid or None, optional
         Replacement reconstruction grid.
     geometry : ScanGeometry or None, optional
@@ -526,6 +534,7 @@ def load_frames(
     overrides: dict[str, Any] = {
         "angles": angles,
         "detector": detector,
+        "pixel_size": pixel_size,
         "grid": grid,
         "geometry": geometry,
     }
@@ -649,6 +658,7 @@ def _hdf5_frames(
     angles: Sequence[float] | np.ndarray | None,
     poses: bool,
     detector: Detector | None = None,
+    pixel_size: float | tuple[float, float] | None = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
 ) -> Frames:
@@ -701,6 +711,7 @@ def _hdf5_frames(
     record, resolved = frame_geometry(
         ProjectionDataset.from_nxtomo(placeholder, source_path=file),
         detector=detector,
+        pixel_size=pixel_size,
         grid=grid,
         geometry=geometry,
         poses=poses,
@@ -737,6 +748,7 @@ def _record_frames(
     poses: bool,
     angles: Sequence[float] | np.ndarray | None = None,
     detector: Detector | None = None,
+    pixel_size: float | tuple[float, float] | None = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
 ) -> Frames:
@@ -765,7 +777,13 @@ def _record_frames(
             _metadata=metadata,
         )
     record, resolved = frame_geometry(
-        record, angles=angles, detector=detector, grid=grid, geometry=geometry, poses=poses
+        record,
+        angles=angles,
+        detector=detector,
+        pixel_size=pixel_size,
+        grid=grid,
+        geometry=geometry,
+        poses=poses,
     )
     flats = stack[key == 1] if (key == 1).any() else None
     return Frames(
@@ -815,6 +833,7 @@ def _tiff_frames(
     *,
     angles: Sequence[float] | np.ndarray | None,
     detector: Detector | None,
+    pixel_size: float | tuple[float, float] | None = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
 ) -> Frames:
@@ -840,7 +859,7 @@ def _tiff_frames(
         source_path=str(file),
         source_format="tiff_stack",
     )
-    record, resolved = frame_geometry(record, grid=grid, geometry=geometry)
+    record, resolved = frame_geometry(record, pixel_size=pixel_size, grid=grid, geometry=geometry)
     return Frames(counts, resolved, source=record)
 
 

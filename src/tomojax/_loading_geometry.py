@@ -56,6 +56,7 @@ def frame_geometry(
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
     poses: bool = True,
+    pixel_size: float | tuple[float, float] | None = None,
 ) -> tuple[ProjectionDataset, ScanGeometry]:
     """Resolve caller metadata before constructing any geometry from a file.
 
@@ -64,10 +65,21 @@ def frame_geometry(
     per-view detector offsets move from the file's detector to a caller's
     ``detector``; an explicit ``geometry`` replaces them, with a warning.
     """
+    if pixel_size is not None and (detector is not None or geometry is not None):
+        raise ValueError(
+            "pixel_size= and detector= (or geometry=) both describe the detector: pass one"
+        )
     if geometry is not None and (message := dropped_offsets_message(record)):
         warnings.warn(message, stacklevel=4)
     meta = dict(record.geometry_metadata)
-    if geometry is not None or detector is not None:
+    if pixel_size is not None:  # the shape from the frames, the centre from the file or the middle
+        du, dv = np.broadcast_to(np.asarray(pixel_size, np.float64), (2,)).tolist()
+        _, nv, nu = record.projections.shape
+        center = (0.0, 0.0) if record.detector is None else record.detector.center
+        detector = Detector(nu, nv, du, dv, center)
+        meta["detector_pixel_size_status"] = "provided"
+        meta.pop("length_unit", None)
+    if geometry is not None or (detector is not None and pixel_size is None):
         meta["detector_center_status"] = "provided"
     if geometry is not None:
         meta["axis_status"] = "provided"
@@ -86,6 +98,6 @@ def frame_geometry(
     )
     if geometry is None and detector is not None:
         record = with_view_offsets(record, detector)
-    record = record.with_recorded_pitches() if geometry is None else record
+    record = record.with_parallel_detector() if geometry is None else record
     resolved = geometry if geometry is not None else geometry_of(record, poses=poses)
     return record, frame_output_grid(resolved, record)

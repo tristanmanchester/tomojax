@@ -319,8 +319,8 @@ class ProjectionDataset:
         detector = self.detector
         if detector is None:
             raise ValueError(
-                "Missing detector pixel sizes: pass detector=... or geometry=..., "
-                "or set detector in tomojax preprocess --config"
+                "Missing detector pixel sizes: pass pixel_size=..., detector=... or "
+                "geometry=..., or set detector in tomojax preprocess --config"
             )
         if self.geometry_metadata.get("axis_status") == "not_recorded":
             raise ValueError("Missing calibrated rotation axis: pass geometry=...")
@@ -341,13 +341,34 @@ class ProjectionDataset:
         _merge_geometry_metadata_dict(payload, self.geometry_metadata)
         return payload
 
-    def with_recorded_pitches(self) -> ProjectionDataset:
-        """A parallel record's detector from its recorded pitches, centred on the middle.
+    def _recorded_pitches(self) -> tuple[float | None, float | None]:
+        """The pixel pitches the file recorded without a whole detector, wherever it put them.
 
-        Some files record the pixel pitches but not the rotation centre. The detector is
-        built from the pitches with the centre at the middle, and the record keeps
-        ``detector_center_status`` as the file gave it ("not_recorded"): nothing is
-        estimated. ``tj.estimate_center`` or ``tj.align(fit="centre")`` finds a centre.
+        A raw acquisition reader keeps them under ``acquisition``; a partial NXtomo
+        record at the top level; a partial NPZ detector in its own mapping.
+        """
+        meta = self.geometry_metadata
+        for found in (
+            meta.get("acquisition", {}).get("detector_pixel_size"),
+            meta.get("detector_pixel_size"),
+        ):
+            if found is not None and all(p is not None for p in found):
+                return float(found[0]), float(found[1])
+        partial = getattr(self._metadata, "detector", None)
+        if isinstance(partial, dict) and {"du", "dv"} <= partial.keys():
+            return float(partial["du"]), float(partial["dv"])
+        return None, None
+
+    def with_parallel_detector(self) -> ProjectionDataset:
+        """A parallel record's detector, from its recorded pitches or in pixel units.
+
+        Some files record the pixel pitches but not the rotation centre, and some record
+        neither. The detector takes the recorded pitches, or a pitch of one pixel when
+        the file records none (the record then says ``detector_pixel_size_status``
+        "not_recorded" and ``length_unit`` "pixel": lengths, poses and the centre are in
+        pixels and attenuation is per pixel). The centre is the middle, and the record
+        keeps ``detector_center_status`` as the file gave it: nothing is estimated. A cone
+        record is left alone, since its pitch and distances must share a unit.
 
         Returns
         -------
@@ -356,15 +377,14 @@ class ProjectionDataset:
         """
         if self.detector is not None or self.geometry_type != "parallel":
             return self
-        pitches = self.geometry_metadata.get("acquisition", {}).get(
-            "detector_pixel_size", (None, None)
-        )
-        if any(p is None for p in pitches):
-            return self  # geometry_inputs names detector= for the absent pitches.
+        meta = {"detector_center_status": "not_recorded", **self.geometry_metadata}
+        du, dv = self._recorded_pitches()
+        if du is None or dv is None:
+            du = dv = 1.0
+            meta = {**meta, "detector_pixel_size_status": "not_recorded", "length_unit": "pixel"}
         _, nv, nu = self.projections.shape
-        return replace(
-            self, detector=Detector(nu, nv, float(pitches[0]), float(pitches[1]), (0.0, 0.0))
-        )
+        detector = Detector(nu, nv, du, dv, (0.0, 0.0))
+        return replace(self, detector=detector, geometry_metadata=meta)
 
 
 def load_dataset(path: PathLike) -> ProjectionDataset:
@@ -581,7 +601,7 @@ def _dataset_issues(input_path: Path) -> list[str]:
     if raw is not None:
         issues = calibration_issues(raw.flats, raw.darks, raw.white_level)
         try:
-            raw.record.with_recorded_pitches().geometry_inputs()
+            raw.record.with_parallel_detector().geometry_inputs()
         except ValueError as exc:
             issues.insert(0, str(exc))
         return issues

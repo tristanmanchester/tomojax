@@ -86,14 +86,13 @@ def test_inspect_raw_acquisition_reports_required_cli_inputs(tmp_path, capsys):
         file["exchange/theta"] = [0, 90]
     assert main(["inspect", str(path), "--json"]) == 1
     issues = json.loads(capsys.readouterr().out)["issues"]
-    assert len(issues) == 3
-    assert "detector" in issues[0] and "--config" in issues[0]
-    assert "--flats" in issues[1] and "--darks" in issues[2]
+    assert len(issues) == 2  # no pixel size is not an issue: it loads in pixel units
+    assert "--flats" in issues[0] and "--darks" in issues[1]
     with h5py.File(path, "a") as file:
         file["exchange/data_white"] = np.ones((1, 2, 4))
         file["exchange/data_dark"] = np.zeros((1, 2, 4))
-    assert main(["inspect", str(path), "--json"]) == 1
-    assert len(json.loads(capsys.readouterr().out)["issues"]) == 1
+    assert main(["inspect", str(path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["issues"] == []
 
 
 @pytest.mark.parametrize("units", ["degrees", "rad"])
@@ -644,12 +643,9 @@ def test_inspect_and_preview_share_raw_acquisition_discovery(tmp_path, capsys, l
             "radians" if layout == "exchange" else "mm" if layout == "gda" else "degree"
         )
     previews = tmp_path / "previews"
-    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == (
-        layout == "exchange"
-    )
+    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert report["valid"] == (layout != "exchange")
-    assert len(report["issues"]) == (layout == "exchange")
+    assert report["valid"] and report["issues"] == []
     assert report["projection"]["path"] == data_path
     assert report["angles"]["path"] == angles_path
     assert report["angles"]["coverage_deg"] == pytest.approx(180)

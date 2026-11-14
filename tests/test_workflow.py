@@ -351,7 +351,7 @@ def test_combined_scans_keep_their_correction_history() -> None:
 def test_following_each_loading_error_loads_the_scan(tmp_path: Path) -> None:
     # Each error tj.load raises for metadata the file lacks names an argument tj.load takes,
     # and passing it moves on, through to a reconstruction: a plain HDF5 file without angles,
-    # then a GDA file without pixel sizes or a recorded rotation axis.
+    # then a GDA file without a recorded rotation axis (both load in pixel units).
     import inspect
     import re
 
@@ -375,7 +375,9 @@ def test_following_each_loading_error_loads_the_scan(tmp_path: Path) -> None:
     with pytest.raises(ValueError) as caught:
         tj.load(plain)
     assert named(caught) == {"angles"} <= takes
-    assert tj.load(plain, angles=angles, detector=detector).projections.shape == (views, rows, cols)
+    loaded = tj.load(plain, angles=angles)  # no pixel size recorded: pixel units
+    assert loaded.projections.shape == (views, rows, cols)
+    assert loaded.source.geometry_metadata["length_unit"] == "pixel"
 
     gda = tmp_path / "gda.nxs"
     with h5py.File(gda, "w") as file:
@@ -383,10 +385,7 @@ def test_following_each_loading_error_loads_the_scan(tmp_path: Path) -> None:
         file["entry/instrument/EtherCAT/image_key"] = key
         file["entry/imaging_sum/smaract_zrot"] = np.r_[0.0, 0.0, angles]
         file["entry/imaging_sum/smaract_zrot"].attrs["units"] = "degree"
-    with pytest.raises(ValueError) as caught:
-        tj.load(gda)
-    assert named(caught) == {"detector", "geometry"} <= takes
-    scan = tj.load(gda, detector=detector)
+    scan = tj.load(gda)
     with pytest.raises(ValueError) as caught:
         tj.reconstruct(scan)
     assert named(caught) == {"geometry"} and "tomojax.load" in str(caught.value)

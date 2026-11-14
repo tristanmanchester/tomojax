@@ -130,8 +130,9 @@ The unpublished Diamond I13 scan 159815 is a GDA NXtomo file,
 `diamond-i13-mg31912-1/raw/159815.nxs`, linked to `pco1-159815.hdf` beside it.
 Keep both files together. Loading discovers its 3001 sample views, 200 flats in
 before/after sets, 100 darks and recorded angles without a TIFF export.
-The detector pixel pitch is not recorded, so `tj.load` reports the missing
-calibration: supply `detector=` through `tj.load_frames`.
+The detector pixel pitch is not recorded, so `tj.load` gives the scan in pixel units
+(its record says `length_unit: "pixel"`); `tj.load(path, pixel_size=...)` gives it in
+millimetres, or `detector=` with its centre too.
 
 This preview uses **pixel units**, not millimetres or micrometres. The Savu
 processing record supplies the crop 441:1872 and axis column 718.5 within that

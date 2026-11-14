@@ -217,9 +217,8 @@ def test_separate_fields_fill_only_calibrations_missing_from_image_key(tmp_path,
     located = locate_frames(str(path))
     assert (located.flats is None) == (marked == 1)
     assert (located.darks is None) == (marked == 2)
-    for read in (tj.load, tj.load_frames):
-        with pytest.raises(ValueError, match="detector="):
-            read(path)
+    # No pixel size recorded: the scan is in pixel units, and says so.
+    assert tj.load(path).source.geometry_metadata["length_unit"] == "pixel"
     for scan in (tj.load_frames(path, detector=tj.Detector(3, 2, 1, 1)).corrected(),):
         np.testing.assert_array_equal(scan.angles, [0, 90])
         np.testing.assert_allclose(scan.projections[:, 0, 0], -np.log([0.5, 0.25]), rtol=1e-6)
@@ -383,7 +382,7 @@ def test_missing_laminography_tilt_requires_geometry_before_materialisation(tmp_
     assert frames.geometry is geometry
 
 
-def test_npz_detector_without_center_stays_incomplete_until_overridden(tmp_path):
+def test_npz_detector_without_center_keeps_its_pitches_and_takes_the_middle(tmp_path):
     path = tmp_path / "old.npz"
     np.savez(
         path,
@@ -391,9 +390,10 @@ def test_npz_detector_without_center_stays_incomplete_until_overridden(tmp_path)
         thetas_deg=[0, 90],
         detector={"nu": 3, "nv": 2, "du": 0.2, "dv": 0.3},
     )
-    for read in (tj.load, tj.load_frames):
-        with pytest.raises(ValueError, match="detector="):
-            read(path)
+    frames = tj.load_frames(path, flats=100, darks=0)
+    assert frames.geometry.detector == tj.Detector(3, 2, 0.2, 0.3, (0.0, 0.0))
+    meta = frames.source.geometry_metadata
+    assert meta["detector_center_status"] == "not_recorded" and "length_unit" not in meta
     detector = tj.Detector(3, 2, 0.2, 0.3, (0.1, -0.2))
     assert tj.load_frames(path, detector=detector, flats=100, darks=0).geometry.detector == detector
 

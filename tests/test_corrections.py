@@ -88,9 +88,9 @@ def test_frame_center_provenance_preserves_explicit_overrides(tmp_path, recorded
     if not recorded:
         with h5py.File(path, "r+") as handle:
             del handle["entry/instrument/detector"].attrs["detector_meta_json"]
-    if not recorded:
-        with pytest.raises(ValueError, match="detector="):
-            tj.load_frames(path)
+    if not recorded:  # pitches without a detector: the middle, and the record says so
+        loaded = tj.load_frames(path).source.geometry_metadata
+        assert loaded["detector_center_status"] == "not_recorded" and "length_unit" not in loaded
     frames = tj.load_frames(path, **({} if recorded else {"detector": tiny_detector(nu=2)}))
     status = "recorded" if recorded else "provided"
     assert frames.source.geometry_metadata["detector_center_status"] == status
@@ -665,7 +665,7 @@ def test_aps_data_exchange_files_load_with_their_flats_and_darks(tmp_path: Path)
     # A foreign file says what it lacks, as an argument tj.load takes.
     with h5py.File(tmp_path / "bare.h5", "w") as handle:
         handle.create_dataset("exchange/data", data=np.full((2, 2, 3), 7, np.uint16))
-    with pytest.raises(ValueError, match="pass detector="):
+    with pytest.raises(ValueError, match="pass angles="):
         tj.load(tmp_path / "bare.h5")
 
 

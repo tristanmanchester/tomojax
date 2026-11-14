@@ -170,6 +170,7 @@ def tomojax.load(
         darks: 'np.ndarray | float | str | PathLike[str] | None' = None,
         angles: 'Sequence[float] | np.ndarray | None' = None,
         detector: 'Detector | None' = None,
+        pixel_size: 'float | tuple[float, float] | None' = None,
         grid: 'Grid | None' = None,
         geometry: 'ScanGeometry | None' = None,
         exposure_times: 'np.ndarray | float | None' = None,
@@ -186,6 +187,7 @@ def tomojax.load_frames(
         darks: 'np.ndarray | float | str | PathLike[str] | None' = None,
         angles: 'Sequence[float] | np.ndarray | None' = None,
         detector: 'Detector | None' = None,
+        pixel_size: 'float | tuple[float, float] | None' = None,
         grid: 'Grid | None' = None,
         geometry: 'ScanGeometry | None' = None,
         exposure_times: 'np.ndarray | float | None' = None,
@@ -674,7 +676,7 @@ class tomojax.io.ProjectionDataset(
     .geometry_inputs(self) -> 'dict[str, Any]'
     .image_key
     .to_nxtomo_metadata(self) -> 'NXTomoMetadata'
-    .with_recorded_pitches(self) -> 'ProjectionDataset'
+    .with_parallel_detector(self) -> 'ProjectionDataset'
 class tomojax.io.ValidationReport
 def tomojax.io.build_geometry_from_dataset_metadata(
         meta: 'Mapping[str, Any]',

@@ -393,6 +393,10 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         record = with_view_offsets(record, Detector(cols, rows, pitch, pitch, center=centre))
     known = record.detector is not None
     record.geometry_metadata["detector_center_status"] = "recorded" if known else "not_recorded"
+    if (
+        not known and pitch is not None
+    ):  # the pitch without a whole detector, as partial records keep it
+        record.geometry_metadata["detector_pixel_size"] = [pitch, pitch]
     if shifts is None or cone is None:
         # Without the shifts or the beam type a detector alone cannot fix the views;
         # with them, detector= supplies the centre the shifts are measured from.

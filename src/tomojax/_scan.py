@@ -773,7 +773,9 @@ class Reconstruction:
     """A reconstructed volume, the scan it came from and how it was made.
 
     ``volume`` is ``(nz, ny, nx)`` on :attr:`grid`, in the reciprocal of the
-    geometry's length unit (a NumPy or JAX array; ``np.asarray`` gives NumPy).
+    geometry's length unit: attenuation per pixel when the scan's record says
+    ``length_unit`` "pixel" (a file without a pixel size), and then poses, the centre
+    and the grid are in pixels too (a NumPy or JAX array; ``np.asarray`` gives NumPy).
     ``info`` records the method's settings.
 
     Parameters

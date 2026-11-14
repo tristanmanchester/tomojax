@@ -86,12 +86,13 @@ closed shutter); `--select-views` and `--crop` keep
 part of the scan. Already-corrected data should skip this
 step; applying the logarithm again changes the data.
 
-Missing detector pitch or an unsuccessful centre estimate requires `detector=`
-in `tj.load_frames`, or a
-`[detector]` table in the preprocessing TOML config with `nu`, `nv`, `du`, `dv`
-and `det_center = [u, v]` in consistent length units. Missing view angles
-require `angles=`; missing laminography tilt requires a complete `geometry=`.
-Centred unit pixels and a 30° tilt are not assumed.
+A parallel-beam file that records no pixel size loads in pixel units (its record
+says `length_unit: "pixel"`); give the pixel size with `pixel_size=`, or a whole
+`detector=`, or a `[detector]` table in the preprocessing TOML config with `nu`,
+`nv`, `du`, `dv` and `det_center = [u, v]`. A cone-beam file needs its pixel size,
+since its distances fix the unit. A rotation centre the file does not record is the
+detector middle. Missing view angles require `angles=`; missing laminography tilt
+requires a complete `geometry=`. A 30° tilt is not assumed.
 
 In Python, `tj.load("raw.nxs")` makes the same correction, and records it in
 `scan.corrections`. For other corrections, load the frames and pass steps from
@@ -186,13 +187,11 @@ before cropping if the warp needs pixels outside the crop, and convert the
 calibration after a crop or binning (see `help(RadialDistortion)`).
 
 A file written by TomoJAX carries its geometry. External NXtomo and Data Exchange
-use their format-defined axial parallel-beam model and recorded angles. They
-need recorded physical detector pitches; missing pitch requires `detector=` or
-`geometry=`, never unit pixels. With pitch available but no rotation centre,
-loading estimates detector-u from a few corrected rows and records `inferred`
-provenance. This needs usable near-opposite views and contrast; otherwise supply a
-calibrated detector, including its centre. The vertical origin is chosen at the
-axial detector midplane, not estimated from the projections.
+use their format-defined axial parallel-beam model and recorded angles. Without a
+recorded pitch they load in pixel units, and `pixel_size=` gives the physical one.
+Without a recorded rotation centre the centre is the detector middle and the record
+says so; `tj.align(scan, fit="centre")` estimates it. The vertical origin is the
+axial detector midplane.
 
 An explicit `detector=tj.Detector(nu, nv, du, dv, center=(u, v))` or full
 `geometry=` remains authoritative and is not automatically recalibrated.
