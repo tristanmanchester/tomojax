@@ -163,7 +163,22 @@ def tomojax.estimate_center(
         views: 'slice | Sequence[int] | np.ndarray | None' = None,
     ) -> 'Scan'
 def tomojax.estimate_region(scan: 'Scan') -> 'RegionEstimate'
-def tomojax.load(path: 'str | PathLike[str]', *, poses: 'bool' = True) -> 'Scan'
+def tomojax.load(
+        path: 'str | PathLike[str]',
+        *,
+        flats: 'np.ndarray | float | str | PathLike[str] | None' = None,
+        darks: 'np.ndarray | float | str | PathLike[str] | None' = None,
+        angles: 'Sequence[float] | np.ndarray | None' = None,
+        detector: 'Detector | None' = None,
+        grid: 'Grid | None' = None,
+        geometry: 'ScanGeometry | None' = None,
+        exposure_times: 'np.ndarray | float | None' = None,
+        flat_exposure_times: 'np.ndarray | float | None' = None,
+        data_path: 'str | None' = None,
+        image_key_path: 'str | None' = None,
+        angles_path: 'str | None' = None,
+        poses: 'bool' = True,
+    ) -> 'Scan'
 def tomojax.load_frames(
         path: 'str | PathLike[str]',
         *,

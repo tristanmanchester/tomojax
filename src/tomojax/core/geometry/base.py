@@ -291,9 +291,7 @@ class Detector:
             If the centre is missing or has the wrong number of coordinates.
         """
         if "det_center" not in data:
-            raise ValueError(
-                "Missing detector centre: pass detector=... or geometry=... to tomojax.load_frames"
-            )
+            raise ValueError("Missing detector centre: pass detector=... or geometry=...")
         return cls(
             nu=int(data["nu"]),
             nv=int(data["nv"]),

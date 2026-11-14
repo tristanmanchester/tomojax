@@ -428,7 +428,7 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
     if unknown_axis:
         raise ValueError(
             "reconstruction requires declared acquisition geometry: this file records no "
-            "rotation axis; declare the geometry when loading"
+            "rotation axis; pass geometry=... to tomojax.load"
         )
     reasons = []
     method: Method = "fbp"

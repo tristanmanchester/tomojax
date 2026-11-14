@@ -276,7 +276,7 @@ def test_validate_dataset_reports_schema_failures(tmp_path: Path) -> None:
 
     assert validate_dataset(valid)["issues"] == []
     assert "no stack of frames found" in validate_dataset(invalid)["issues"][0]
-    with pytest.raises(ValueError, match="supply an acquisition file.*not metadata alone"):
+    with pytest.raises(KeyError, match="no stack of frames found.*data_path"):
         tj.load(invalid)
 
 

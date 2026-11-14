@@ -42,22 +42,44 @@ if TYPE_CHECKING:
 LOG = logging.getLogger(__name__)
 
 
-def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
+def load(
+    path: str | PathLike[str],
+    *,
+    flats: np.ndarray | float | str | PathLike[str] | None = None,
+    darks: np.ndarray | float | str | PathLike[str] | None = None,
+    angles: Sequence[float] | np.ndarray | None = None,
+    detector: Detector | None = None,
+    grid: Grid | None = None,
+    geometry: ScanGeometry | None = None,
+    exposure_times: np.ndarray | float | None = None,
+    flat_exposure_times: np.ndarray | float | None = None,
+    data_path: str | None = None,
+    image_key_path: str | None = None,
+    angles_path: str | None = None,
+    poses: bool = True,
+) -> Scan:
     """Load line integrals from a dataset or recognised raw acquisition.
 
     A file of raw detector frames (an NXtomo ``image_key`` marking flats or
-    darks, or a Nikon or Zeiss acquisition) is corrected with the standard chain, as
-    ``load_frames(path).corrected()``: dark subtraction, flat division and
-    ``-log``; :attr:`Scan.corrections` records it. For other corrections, load
-    the frames with :func:`load_frames`. The scan carries the per-view
-    corrections saved with it (by :func:`align` or ``tomojax align``) unless
-    ``poses`` is False. Frames that ``image_key`` marks as other than sample
-    views are left out.
+    darks, or a Nikon, SkyScan, Zeiss or ESRF acquisition, or a TIFF stack) is
+    corrected with the standard chain, as ``load_frames(path, ...).corrected()``:
+    dark subtraction, flat division and ``-log``; :attr:`Scan.corrections`
+    records it. For other corrections, load the frames with :func:`load_frames`.
+    Every other argument has :func:`load_frames`'s meaning and supplies what the
+    file does not record. The scan carries the per-view corrections saved with
+    it (by :func:`align` or ``tomojax align``) unless ``poses`` is False. Frames
+    that ``image_key`` marks as other than sample views are left out.
 
     Parameters
     ----------
     path : str or path-like
         Dataset or recognised acquisition file or directory.
+    flats, darks, angles, detector, grid, geometry : optional
+        As :func:`load_frames`.
+    exposure_times, flat_exposure_times : optional
+        As :func:`load_frames`.
+    data_path, image_key_path, angles_path : str or None, optional
+        As :func:`load_frames`.
     poses : bool, optional
         Apply the saved per-view pose corrections; default is True.
 
@@ -71,60 +93,90 @@ def load(path: str | PathLike[str], *, poses: bool = True) -> Scan:
     FileNotFoundError
         If the input does not exist.
     ValueError
-        If TIFFs need geometry, counts lack calibration, or metadata are invalid.
+        If metadata the file does not record are needed, counts lack
+        calibration, or metadata are invalid; the message names the argument.
+    KeyError
+        If no stack of frames is found; ``data_path`` names it.
 
     Examples
     --------
     >>> import tomojax as tj
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
+    >>> scan = tj.load("tomo.h5", detector=tj.Detector(960, 600, 0.65, 0.65))  # doctest: +SKIP
     """
-    from tomojax.io import load_dataset
-
     file = Path(path)
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
-    discovered = _acquisition_frames(file)
-    if discovered is not None:
-        return _corrected_on_load(discovered, file)
+    paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
+    overrides: dict[str, Any] = {
+        "angles": angles,
+        "detector": detector,
+        "grid": grid,
+        "geometry": geometry,
+    }
+    discovered = _acquisition_frames(file, **paths, **overrides)
+    if discovered is None:
+        found = _line_integrals(file, **paths)
+        if found is not None:
+            return _record_scan(file, *found, poses=poses, **overrides)
+    frames = _frames(file, discovered, poses=poses, **paths, **overrides)
+    fields = _with_fields(
+        frames,
+        flats=flats,
+        darks=darks,
+        exposure_times=exposure_times,
+        flat_exposure_times=flat_exposure_times,
+    )
+    return _corrected_on_load(fields, file)
+
+
+def _line_integrals(file: Path, **paths: str | None) -> tuple[ProjectionDataset, np.ndarray] | None:
+    """A TomoJAX dataset of line integrals and its discovered key, or None for frames."""
+    from tomojax.io import load_dataset
+
     suffix = file.suffix.lower()
     if file.is_dir() or suffix in {".tif", ".tiff"}:
-        raise ValueError(
-            f"{file} is a TIFF stack, which holds no geometry: load it with "
-            "tomojax.load_frames(path, angles=..., detector=...)"
-        )
-    located = _located(file) if suffix in _HDF5 else None
+        return None
+    located = _located(file, **paths) if suffix in _HDF5 else None
     if located is not None and located.raw:
-        return _corrected_on_load(_hdf5_frames(file, located, angles=None, poses=poses), file)
+        return None
     try:
         record = load_dataset(file)
-    except KeyError as exc:  # HDF5 frames not laid out as TomoJAX's
-        if located is None:
-            raise ValueError(
-                f"{file} has no supported projection dataset: supply an acquisition "
-                "file containing measured detector projections, not metadata alone"
-            ) from exc
-        raise ValueError(
-            f"{file} is not a TomoJAX dataset and holds no flat frames: load its frames with "
-            "tomojax.load_frames(path, flats=..., angles=...)"
-        ) from exc
-    discovered_key = None if located is None else located.image_key
-    return _record_scan(file, record, discovered_key, poses=poses)
+    except KeyError:  # not laid out as TomoJAX's: its frames, with what they need
+        return None
+    discovered = None if located is None else located.image_key
+    key = _saved_image_key(record) if discovered is None else discovered
+    if np.isin(key, (1, 2)).any() or np.issubdtype(
+        np.asarray(record.projections).dtype, np.integer
+    ):
+        return None  # detector counts: corrected like other frames
+    return record, key
 
 
 def _record_scan(
-    file: Path, record: ProjectionDataset, key: np.ndarray | None, *, poses: bool
+    file: Path,
+    record: ProjectionDataset,
+    key: np.ndarray,
+    *,
+    poses: bool,
+    **overrides: Any,
 ) -> Scan:
-    """A TomoJAX record's sample views, corrected first if its labels mark flats or darks."""
-    key = _saved_image_key(record) if key is None else key
-    if np.isin(key, (1, 2)).any():  # an NPZ of detector counts with its flats/darks
-        return _corrected_on_load(_record_frames(file, record, poses=poses), file)
-    if np.issubdtype(np.asarray(record.projections).dtype, np.integer):
-        raise ValueError(
-            f"{file} holds integer detector counts and no flat frames (image_key 1): "
-            "load them with tomojax.load_frames(path, flats=...)"
-        )
-    scan = scan_from_record(record, poses=poses)
-    return scan.selected(key == 0) if np.any(key != 0) else scan
+    """A TomoJAX record's sample views of line integrals, with any caller metadata."""
+    if all(value is None for value in overrides.values()):
+        scan = scan_from_record(record, poses=poses)
+        return scan.selected(key == 0) if np.any(key != 0) else scan
+    frames = _record_frames(file, record, poses=poses, **overrides)
+    meta = frames.source.geometry_metadata if frames.source is not None else {}
+    saved = meta.get("corrections") or ()
+    from tomojax.corrections import Correction
+
+    return Scan(
+        projections=np.asarray(frames.counts),
+        geometry=frames.geometry,
+        name=frames.name,
+        corrections=tuple(Correction.from_dict(c) for c in saved),
+        source=frames.source,
+    )
 
 
 def _corrected_on_load(frames: Frames, file: Path) -> Scan:
@@ -392,8 +444,7 @@ def load_frames(
     """Load detector frames and acquisition metadata from supported scan formats.
 
     An HDF5 file's ``image_key`` marks its flats (1) and darks (2), and its
-    sample, flat and dark frames are read only as they are corrected (including
-    a few sampled rows when an absent axial rotation centre needs estimating). The
+    sample, flat and dark frames are read only as they are corrected. The
     frames, key and angles are found at their NXtomo paths or as the file's only datasets of
     that name (``data``, ``image_key``, ``rotation_angle``), or their paired GDA imaging
     paths; ``data_path``, ``image_key_path`` and ``angles_path`` name them otherwise.
@@ -408,10 +459,10 @@ def load_frames(
     Generic TIFF stacks without acquisition metadata need ``angles`` (degrees),
     ``flats`` (frames or one level) and
     their ``detector`` (including pixel sizes and centre). Missing detector
-    pixel pitch is never replaced by unit pixels. Axial acquisitions with recorded
-    pitch use the opposite-view correlation estimator for an absent rotation centre,
-    recording inferred provenance; failed estimates require ``detector=``.
-    Missing dark fields require ``darks=``; use ``darks=0`` only for already dark-corrected counts.
+    pixel pitch is never replaced by unit pixels. A file that records the pitch but
+    not the rotation centre gives the middle of the detector, and its record says the
+    centre was not recorded. Missing dark fields require ``darks=``; use ``darks=0``
+    only for already dark-corrected counts.
 
     ``flats`` and ``darks`` (arrays, HDF5 stacks, TIFF files or folders, Zeiss XRM
     images, or one level for every pixel), ``angles``, ``detector``, ``grid`` and a
@@ -471,35 +522,16 @@ def load_frames(
     file = Path(path)
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
-    suffix = file.suffix.lower()
+    paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
     overrides: dict[str, Any] = {
         "angles": angles,
         "detector": detector,
         "grid": grid,
         "geometry": geometry,
     }
-    frames = _acquisition_frames(
-        file,
-        data_path=data_path,
-        image_key_path=image_key_path,
-        angles_path=angles_path,
-        **overrides,
+    frames = _frames(
+        file, _acquisition_frames(file, **paths, **overrides), poses=True, **paths, **overrides
     )
-    if frames is not None:
-        pass
-    elif file.is_dir() or suffix in {".tif", ".tiff"}:
-        frames = _tiff_frames(file, **overrides)
-    elif suffix in _HDF5:
-        from tomojax.io.api import locate_frames
-
-        located = locate_frames(
-            str(file), data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
-        )
-        frames = _hdf5_frames(file, located, poses=True, **overrides)
-    else:
-        from tomojax.io import load_dataset
-
-        frames = _record_frames(file, load_dataset(file), poses=True, **overrides)
     return _require_calibration(
         _with_fields(
             frames,
@@ -509,6 +541,34 @@ def load_frames(
             flat_exposure_times=flat_exposure_times,
         )
     )
+
+
+def _frames(
+    file: Path,
+    discovered: Frames | None,
+    *,
+    poses: bool,
+    data_path: str | None,
+    image_key_path: str | None,
+    angles_path: str | None,
+    **overrides: Any,
+) -> Frames:
+    """The file's detector frames: a recognised acquisition's, a TIFF stack's, or HDF5/NPZ."""
+    if discovered is not None:
+        return discovered
+    suffix = file.suffix.lower()
+    if file.is_dir() or suffix in {".tif", ".tiff"}:
+        return _tiff_frames(file, **overrides)
+    if suffix in _HDF5:
+        from tomojax.io.api import locate_frames
+
+        located = locate_frames(
+            str(file), data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
+        )
+        return _hdf5_frames(file, located, poses=poses, **overrides)
+    from tomojax.io import load_dataset
+
+    return _record_frames(file, load_dataset(file), poses=poses, **overrides)
 
 
 def _require_calibration(frames: Frames) -> Frames:
@@ -572,12 +632,12 @@ def _frames_of(value: np.ndarray | float | str | PathLike[str], name: str, count
 _HDF5 = frozenset({".nx", ".nxs", ".h5", ".hdf", ".hdf5"})
 
 
-def _located(file: Path) -> LocatedFrames | None:
-    """The file's frames, key and angles at their usual places, or None if not found."""
+def _located(file: Path, **paths: str | None) -> LocatedFrames | None:
+    """The file's frames, key and angles (at the given or usual places), or None if not found."""
     from tomojax.io.api import locate_frames
 
     try:
-        return locate_frames(str(file))
+        return locate_frames(str(file), **paths)
     except KeyError:
         return None
 
@@ -614,7 +674,10 @@ def _hdf5_frames(
     elif located.angles is not None:
         view_angles = located.angles[sample]
     else:
-        raise ValueError(f"{file} records no rotation angles: pass angles=... (degrees)")
+        raise ValueError(
+            f"{file} records no rotation angles: pass angles=... (degrees), "
+            "or use tomojax preprocess --angles"
+        )
     if view_angles.shape != (views,):
         raise ValueError(f"{file} has {views} sample frames but {view_angles.size} angles")
     try:
@@ -762,7 +825,8 @@ def _tiff_frames(
         angles = np.asarray(cast("Any", geometry).angles)
     if angles is None:
         raise ValueError(
-            f"{file} is a TIFF stack, which holds no angles: pass angles=... (degrees)"
+            f"{file} is a TIFF stack, which holds no angles: pass angles=... (degrees), "
+            "or use tomojax preprocess --angles"
         )
     counts = read_tiff_frames(file, lazy=True)
     views, rows, cols = counts.shape

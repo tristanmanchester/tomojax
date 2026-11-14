@@ -266,13 +266,11 @@ def _base_geometry(
             raise ValueError(
                 "A cone scan's detector roll belongs in cone_beam; this file has a "
                 "top-level detector_roll_deg: pass geometry=... with "
-                "ConeBeam(detector_roll_deg=...) to tomojax.load_frames"
+                "ConeBeam(detector_roll_deg=...)"
             )
         beam_meta = meta.get("cone_beam")
         if not isinstance(beam_meta, dict):
-            raise ValueError(
-                "Missing cone-beam distances: pass geometry=... to tomojax.load_frames"
-            )
+            raise ValueError("Missing cone-beam distances: pass geometry=...")
         axis = meta.get("axis_unit_lab")
         return ConeGeometry(
             grid=grid,
@@ -298,7 +296,7 @@ def _base_geometry(
     if "tilt_deg" not in meta:
         raise ValueError(
             "Missing laminography tilt: pass geometry=... with an explicit tilt_deg "
-            "or axis_unit_lab to tomojax.load_frames"
+            "or axis_unit_lab"
         )
     tilt_deg = float(meta["tilt_deg"])
     # An explicit zero tilt also has the canonical axial poses.

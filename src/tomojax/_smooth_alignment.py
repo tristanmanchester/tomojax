@@ -90,4 +90,7 @@ def _require_declared_geometry(scan: Scan) -> None:
         {} if scan.source is None else scan.source.geometry_metadata.get("acquisition", {})
     )
     if acquisition.get("geometry_status") == "not_recorded":
-        raise ValueError("alignment requires declared acquisition geometry")
+        raise ValueError(
+            "alignment requires declared acquisition geometry: this file records no rotation "
+            "axis; pass geometry=... to tomojax.load"
+        )

@@ -319,17 +319,14 @@ class ProjectionDataset:
         detector = self.detector
         if detector is None:
             raise ValueError(
-                "Missing detector pixel sizes: pass detector=... or geometry=... "
-                "to tomojax.load_frames, or set detector in tomojax preprocess --config"
+                "Missing detector pixel sizes: pass detector=... or geometry=..., "
+                "or set detector in tomojax preprocess --config"
             )
         if self.geometry_metadata.get("axis_status") == "not_recorded":
-            raise ValueError(
-                "Missing calibrated rotation axis: pass geometry=... to tomojax.load_frames"
-            )
+            raise ValueError("Missing calibrated rotation axis: pass geometry=...")
         if self.angles.shape != (self.projections.shape[0],):
             raise ValueError(
-                "Missing view angles: pass angles=... to tomojax.load_frames, "
-                "or use tomojax preprocess --angles"
+                "Missing view angles: pass angles=..., or use tomojax preprocess --angles"
             )
         payload: dict[str, Any] = {
             "detector": detector.to_dict(),

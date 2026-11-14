@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### tj.load takes the metadata a file does not record
+
+`tj.load` accepted only `poses=`, yet when a file lacked angles, a pixel size,
+flats or a rotation axis it told the user to "pass angles=..." or "pass
+detector=..." (or to switch to `tj.load_frames`), and passing them raised
+`TypeError`. `tj.load` now takes `flats`, `darks`, `angles`, `detector`,
+`grid`, `geometry`, `exposure_times`, `flat_exposure_times`, `data_path`,
+`image_key_path` and `angles_path` with `tj.load_frames`'s meaning and corrects
+with the standard chain, so `tj.load` is the one call that gives a scan;
+`tj.load_frames` is for the raw frames and a correction chain of your own. Every
+error on the `tj.load` path names an argument `tj.load` takes (and, where the
+command line can supply it, the `tomojax preprocess` option). A file with no
+stack of frames raises `KeyError` naming `data_path`.
+
 ### A saved volume must record its axis order
 
 Loading a saved volume without its `volume_axes_order` attribute guessed the

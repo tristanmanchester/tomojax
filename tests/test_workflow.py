@@ -346,3 +346,49 @@ def test_combined_scans_keep_their_correction_history() -> None:
     assert mixed.corrections[0] == log and mixed.corrections[1].name == "combine"
     assert mixed.corrections[1].found["inputs"][1][1] == rings.to_dict()
     assert mixed.corrections[1].settings["views"] == [2, 2]
+
+
+def test_following_each_loading_error_loads_the_scan(tmp_path: Path) -> None:
+    # Each error tj.load raises for metadata the file lacks names an argument tj.load takes,
+    # and passing it moves on, through to a reconstruction: a plain HDF5 file without angles,
+    # then a GDA file without pixel sizes or a recorded rotation axis.
+    import inspect
+    import re
+
+    import h5py
+
+    takes = set(inspect.signature(tj.load).parameters)
+    views, rows, cols = 12, 4, 8
+    counts = np.full((views + 2, rows, cols), 900, np.uint16)
+    counts[0], counts[1] = 10, 1000  # a dark and a flat
+    key = [2, 1] + [0] * views
+    angles = np.linspace(0, 180, views, endpoint=False)
+    detector = tj.Detector(cols, rows, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(tj.Grid(cols, cols, rows, 1, 1, 1), detector, angles)
+
+    def named(error: pytest.ExceptionInfo[ValueError]) -> set[str]:
+        return set(re.findall(r"\b(\w+)=\.\.\.", str(error.value)))
+
+    plain = tmp_path / "frames.h5"
+    with h5py.File(plain, "w") as file:
+        file["data"], file["image_key"] = counts, key
+    with pytest.raises(ValueError) as caught:
+        tj.load(plain)
+    assert named(caught) == {"angles"} <= takes
+    assert tj.load(plain, angles=angles, detector=detector).projections.shape == (views, rows, cols)
+
+    gda = tmp_path / "gda.nxs"
+    with h5py.File(gda, "w") as file:
+        file["entry/imaging/data"] = counts
+        file["entry/instrument/EtherCAT/image_key"] = key
+        file["entry/imaging_sum/smaract_zrot"] = np.r_[0.0, 0.0, angles]
+        file["entry/imaging_sum/smaract_zrot"].attrs["units"] = "degree"
+    with pytest.raises(ValueError) as caught:
+        tj.load(gda)
+    assert named(caught) == {"detector", "geometry"} <= takes
+    scan = tj.load(gda, detector=detector)
+    with pytest.raises(ValueError) as caught:
+        tj.reconstruct(scan)
+    assert named(caught) == {"geometry"} and "tomojax.load" in str(caught.value)
+    result = tj.reconstruct(tj.load(gda, geometry=geometry))
+    assert np.isfinite(np.asarray(result.volume)).all()

@@ -38,10 +38,10 @@ The examples distinguish file metadata from explicitly supplied calibration.
 
 ### Raw ESRF acquisitions
 
-`tj.load_frames("scan_folder", detector=..., angles=...)` reads uncompressed
-single-image EDF projections with SPEC `.info` or XML acquisition metadata.
-`PixelSize` records the effective pitch in micrometres, but the scan range alone
-does not establish the starting angle or a calibrated rotation centre.
+`tj.load("scan_folder", angles=...)` reads uncompressed single-image EDF
+projections with SPEC `.info` or XML acquisition metadata. `PixelSize` records
+the effective pitch in micrometres, but the scan range alone does not establish
+the starting angle, so `angles=` gives them.
 
 For EDF acquisitions described by PyHST, pass the parameter file explicitly:
 `tj.load_frames("scan.par").corrected()`. It supplies the indexed EDF series,
@@ -51,11 +51,12 @@ metadata. This route requires raw, single-image EDFs with fixed axial parallel
 geometry; multi-frame, cone, helical, binning and distortion-correction modes
 are not supported.
 
-`tj.load_frames("raw_bliss.h5", detector=...)` reads a basic, half-turn or full-turn
-Bliss sequence, including its flats/darks and recorded angular positions. Select
-among several sequences with `data_path="1.1"`. Effective sample pixels and
-recorded distances are retained in millimetres; neither reader substitutes a
-centred detector for missing axis calibration. Missing virtual detector pixels
+`tj.load("raw_bliss.h5")` reads a basic, half-turn or full-turn Bliss sequence,
+including its flats/darks and recorded angular positions. Select among several
+sequences with `data_path="1.1"`. Effective sample pixels and recorded distances
+are retained in millimetres. Neither format records the rotation centre: the scan
+has the detector middle and its record says so; find the centre with
+`tj.align(scan, fit="centre")`. Missing virtual detector pixels
 and mismatched EDF dimensions are errors. Helical and multi-volume Bliss
 sequences are not yet supported.
 

@@ -168,7 +168,7 @@ declared geometry, so declare it before fitting, as the
 
 ```python
 geometry = tj.LaminographyGeometry(grid, tj.Detector(nu, nv, pitch, pitch), angles, tilt_deg=35)
-scan = tj.load_frames("scan.nxs", geometry=geometry).corrected()
+scan = tj.load("scan.nxs", geometry=geometry)
 result = tj.align(scan, fit=("translations", "tilt", "roll"))
 tj.save("aligned.nxs", result)
 ```

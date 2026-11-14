@@ -339,8 +339,8 @@ def flat_fields(
     if flats is None:
         if white_level is None:
             raise ValueError(
-                "no flat fields: pass flats (frames of the beam without the object) or "
-                "white_level (the counts of an unattenuated pixel) to tomojax.load_frames"
+                "no flat fields: pass flats=... (frames of the beam without the object, or "
+                "the counts of an unattenuated pixel)"
             )
         level = positive_finite(white_level, "white_level")
         stack, variance, sets = np.full((1, *shape), level), np.zeros((1, *shape)), np.zeros(1)
@@ -433,8 +433,7 @@ def exposure_scales(
         return np.ones(views, np.float32), None
     if sample is None or flat is None:
         raise ValueError(
-            "Exposure correction needs both exposure_times=... and flat_exposure_times=... "
-            "in tomojax.load_frames"
+            "Exposure correction needs both exposure_times=... and flat_exposure_times=..."
         )
     rates = []
     for name, value, count in (

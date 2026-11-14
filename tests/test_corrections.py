@@ -143,8 +143,9 @@ def test_missing_dark_requires_explicit_calibration(tmp_path: Path) -> None:
 def test_counts_without_flats_are_refused(tmp_path: Path) -> None:
     frames = np.full((2, 2, 2), 100, np.uint16)
     _write_frames(tmp_path / "scan.nxs", frames, [0, 0], [0, 90])
-    with pytest.raises(ValueError, match="integer detector counts and no flat frames"):
+    with pytest.raises(ValueError, match="No flat fields: pass flats"):
         tj.load(tmp_path / "scan.nxs")
+    assert tj.load(tmp_path / "scan.nxs", flats=200, darks=0).projections.shape == (2, 2, 2)
     with pytest.raises(ValueError, match="No flat fields: pass flats"):
         tj.load_frames(tmp_path / "scan.nxs").corrected()
     scan = tj.load_frames(tmp_path / "scan.nxs", flats=200, darks=0).corrected()
@@ -166,8 +167,10 @@ def test_tiff_stacks_go_through_load_frames(tmp_path: Path, suffix: str) -> None
                 handle.create_dataset("entry/data/data", data=data[None])
         else:
             iio.imwrite(path, data)
-    with pytest.raises(ValueError, match="load_frames"):
+    with pytest.raises(ValueError, match="pass angles="):
         tj.load(views)
+    loaded = tj.load(views, angles=[0, 90], flats=flat, darks=dark, detector=tiny_detector(nu=3))
+    np.testing.assert_allclose(np.asarray(loaded.projections)[:, 0, 0], -np.log([0.5, 0.25]))
     with pytest.raises(ValueError, match="angles"):
         tj.load_frames(views / "view_0000.tif")
     frames = tj.load_frames(
@@ -602,10 +605,10 @@ def test_aps_data_exchange_files_load_with_their_flats_and_darks(tmp_path: Path)
     )
     np.testing.assert_allclose(scan.angles, [0.0, 90.0])
     assert scan.corrections[0].settings == {"flats": 3, "darks": 2, "flat_sets": 1}
-    # Without flats a foreign file says where to go.
+    # A foreign file says what it lacks, as an argument tj.load takes.
     with h5py.File(tmp_path / "bare.h5", "w") as handle:
         handle.create_dataset("exchange/data", data=np.full((2, 2, 3), 7, np.uint16))
-    with pytest.raises(ValueError, match="load_frames"):
+    with pytest.raises(ValueError, match="pass detector="):
         tj.load(tmp_path / "bare.h5")
 
 
