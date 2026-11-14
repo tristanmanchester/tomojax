@@ -76,6 +76,32 @@ def with_view_offsets(record: ProjectionDataset, detector: Detector) -> Projecti
     )
 
 
+def without_view_offsets(record: ProjectionDataset) -> ProjectionDataset:
+    """``record`` with its recorded per-view offsets and centre left out: the nominal geometry.
+
+    The offsets are zeroed rather than removed, so a cone record's single arrangement is
+    rebuilt from its recorded distances; the detector keeps its pitch, centred.
+
+    Parameters
+    ----------
+    record : ProjectionDataset
+        Loaded record, possibly carrying per-view detector offsets and a recorded centre.
+
+    Returns
+    -------
+    ProjectionDataset
+        The record on its detector's nominal centre, with no per-view offsets.
+    """
+    meta = dict(record.geometry_metadata)
+    if OFFSETS_KEY in meta:
+        meta[OFFSETS_KEY] = np.zeros(np.shape(meta[OFFSETS_KEY])).tolist()
+    record = replace(record, geometry_metadata=meta)
+    if record.detector is None:
+        return record
+    d = record.detector
+    return with_view_offsets(record, Detector(d.nu, d.nv, d.du, d.dv, (0.0, 0.0)))
+
+
 def dropped_offsets_message(record: ProjectionDataset) -> str | None:
     """Why an explicit ``geometry=`` loses the record's per-view offsets, or None if it doesn't.
 

@@ -15,7 +15,7 @@ import numpy as np
 
 from tomojax._scan import geometry_of, rebuild
 from tomojax.geometry import Detector, Grid, ParallelGeometry
-from tomojax.io.api import dropped_offsets_message, with_view_offsets
+from tomojax.io.api import dropped_offsets_message, with_view_offsets, without_view_offsets
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,6 +48,19 @@ def frame_output_grid(
     return rebuild(geometry, grid=grid)
 
 
+def _vendor_corrections(record: ProjectionDataset, *, applied: bool) -> ProjectionDataset:
+    """A scanner's own per-view shifts and centre shift, applied or left out, said either way."""
+    vendor = record.geometry_metadata.get("vendor_corrections")
+    if vendor is None:
+        return record
+    if not applied:
+        record = without_view_offsets(record)
+    meta = {**record.geometry_metadata, "vendor_corrections": {**vendor, "applied": applied}}
+    if not applied and meta.get("detector_center_status") == "recorded":
+        meta["detector_center_status"] = "nominal"
+    return replace(record, geometry_metadata=meta)
+
+
 def frame_geometry(
     record: ProjectionDataset,
     *,
@@ -71,6 +84,7 @@ def frame_geometry(
         )
     if geometry is not None and (message := dropped_offsets_message(record)):
         warnings.warn(message, stacklevel=4)
+    record = _vendor_corrections(record, applied=poses and geometry is None)
     meta = dict(record.geometry_metadata)
     if pixel_size is not None:  # the shape from the frames, the centre from the file or the middle
         du, dv = np.broadcast_to(np.asarray(pixel_size, np.float64), (2,)).tolist()

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Zeiss's recorded shifts follow `poses=`
+
+A Zeiss file's per-view image shifts and `CenterShift` are the vendor's own
+corrections. They are still applied by default, because the file records them,
+and `tj.load(path, poses=False)` now gives the nominal geometry without them, the
+same switch that leaves out saved TomoJAX poses. The record's `vendor_corrections`
+names the source and fields and whether they were applied; without them the centre
+status is `"nominal"`.
+
 ### A parallel file without a pixel size loads in pixel units; `pixel_size=`
 
 A parallel-beam file that records no pixel size (TomoBank 00031, 00086 and 00069,

@@ -82,7 +82,9 @@ def load(
     data_path, image_key_path, angles_path : str or None, optional
         As :func:`load_frames`.
     poses : bool, optional
-        Apply the saved per-view pose corrections; default is True.
+        Apply the saved per-view pose corrections, and a scanner's own recorded
+        per-view shifts and centre shift (Zeiss); default is True. False gives the
+        nominal geometry; the record names the scanner's corrections either way.
 
     Returns
     -------
@@ -116,7 +118,7 @@ def load(
         "grid": grid,
         "geometry": geometry,
     }
-    discovered = _acquisition_frames(file, **paths, **overrides)
+    discovered = _acquisition_frames(file, poses=poses, **paths, **overrides)
     if discovered is None:
         found = _line_integrals(file, **paths)
         if found is not None:

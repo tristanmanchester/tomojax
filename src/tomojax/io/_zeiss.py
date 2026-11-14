@@ -368,6 +368,17 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
             pitch = None
     if shifts is not None:
         metadata[OFFSETS_KEY] = shifts.tolist()
+    fields = [
+        name
+        for name, value in (
+            ("alignment/x-shifts", shifts),
+            ("alignment/y-shifts", shifts),
+            ("AutoRecon/CenterShift", centre_shift),
+        )
+        if value is not None
+    ]
+    if fields:  # the vendor's own corrections, applied with the poses (tj.load poses=False omits)
+        metadata["vendor_corrections"] = {"source": "zeiss", "fields": fields, "applied": True}
     metadata["zeiss"] = {
         "path": str(path),
         "declared_view_count": int(_scalar(container, "ImageInfo/NoOfImages")),

@@ -177,11 +177,8 @@ def _check_missing_zeiss_inputs(path, streams, frames, counts):
         tj.load_frames(path, darks=0)
 
 
-@pytest.mark.parametrize("declared_count", [3, 10])
-def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
-    path = tmp_path / "renamed.data"
-    counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
-    reference = np.full((8, 12), 2500, "<f4")
+def _streams(counts: np.ndarray, reference: np.ndarray, declared_count: int = 3) -> dict:
+    """A cone Zeiss scan of three views with its vendor shifts and centre shift."""
     fields = {
         "ImageInfo/NoOfImages": ("<u4", [declared_count]),
         "ImageInfo/ImageWidth": ("<u4", [12]),
@@ -201,6 +198,15 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     streams = {key: np.asarray(values, dtype).tobytes() for key, (dtype, values) in fields.items()}
     streams.update({f"ImageData1/Image{i + 1}": value.tobytes() for i, value in enumerate(counts)})
     streams["ReferenceData/Image"] = reference.tobytes()
+    return streams
+
+
+@pytest.mark.parametrize("declared_count", [3, 10])
+def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
+    path = tmp_path / "renamed.data"
+    counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
+    reference = np.full((8, 12), 2500, "<f4")
+    streams = _streams(counts, reference, declared_count)
     write_ole(path, streams)
     frames = tj.load_frames(path, darks=0)
     assert frames.source.geometry_metadata["zeiss"]["declared_view_count"] == declared_count
@@ -455,3 +461,34 @@ def test_a_supplied_centre_keeps_the_recorded_shifts_as_a_written_one_does(tmp_p
     # An explicit geometry is used as given; the shifts it replaces are named.
     with pytest.warns(UserWarning, match=r"4 of 4 views carry recorded detector shifts.*detector="):
         tj.load_frames(raw, geometry=recorded.geometry, darks=0)
+
+
+@pytest.mark.parametrize("cone", [True, False])
+def test_zeiss_vendor_shifts_follow_the_poses_switch(tmp_path, cone):
+    # The file's per-view shifts and centre shift are the vendor's corrections: applied by
+    # default, left out by poses=False, and named in the record either way.
+    path = tmp_path / "scan.txrm"
+    counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
+    streams = _streams(counts, np.full((8, 12), 2500, "<f4"))
+    streams["alignment/x-shifts"] = np.array([0.25, 0.5, -0.25], "<f4").tobytes()
+    streams["ImageInfo/XrayGeometry"] = np.array([int(cone)], "<u4").tobytes()
+    write_ole(path, streams)
+    for poses in (True, False):
+        scan = tj.load(path, darks=0, poses=poses)
+        vendor = scan.source.geometry_metadata["vendor_corrections"]
+        assert vendor["source"] == "zeiss" and vendor["applied"] is poses
+        assert set(vendor["fields"]) == {
+            "alignment/x-shifts",
+            "alignment/y-shifts",
+            "AutoRecon/CenterShift",
+        }
+        if cone:
+            moved = isinstance(scan.geometry, tj.geometry.ConeSegments)
+            centres = [s.detector.center for s in scan.geometry.segments] if moved else []
+            assert moved is poses
+            assert poses or scan.detector.center == (0.0, 0.0)
+            assert not poses or len({c[0] for c in centres}) == 3
+        else:
+            shifts = np.asarray(stack_view_poses(scan.geometry, 3))[:, 0, 3]
+            assert bool(np.ptp(shifts) > 0) is poses
+            assert bool(scan.detector.center[0] != 0) is poses
