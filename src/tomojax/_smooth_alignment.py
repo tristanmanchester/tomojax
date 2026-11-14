@@ -12,11 +12,8 @@ from tomojax._scan import Reconstruction, describe, record_of, with_grid
 from tomojax.alignment._integration import cone_frames, fit_poses
 from tomojax.backends.api import is_oom_error
 from tomojax.geometry import stack_view_poses
-from tomojax.recon import FistaConfig
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from tomojax._scan import Scan
     from tomojax.geometry import Grid
 
@@ -94,37 +91,3 @@ def _require_declared_geometry(scan: Scan) -> None:
     )
     if acquisition.get("geometry_status") == "not_recorded":
         raise ValueError("alignment requires declared acquisition geometry")
-
-
-def reconstruct_with_motion(scan: Scan, *, reconstruct: Callable, grid: Grid | None = None):
-    """Reconstruct a parallel or laminography scan, fitting its poses unless it has them.
-
-    A scan with saved poses is reconstructed with them by FISTA at its grid; an
-    unposed scan is aligned with :func:`align_poses`.
-    """
-    _require_declared_geometry(scan)
-    if scan.poses is None:
-        return align_poses(scan, grid=grid)
-    if grid is not None:
-        scan = with_grid(scan, grid)
-    result = reconstruct(
-        scan,
-        "fista",
-        config=FistaConfig(
-            initial_epochs=10
-            if scan.grid.vx > 1.5 * max(scan.detector.du, scan.detector.dv)
-            else 8,
-            initial_subsets=16,
-            tv_weight=0,
-            nonnegative=True,
-            iterations=1,
-            stream_projections=False,
-        ),
-    )
-    automatic = {
-        "method": "fista",
-        "geometry": "preserved_pose_corrections",
-        "status": "ok",
-        "reasons": [],
-    }
-    return replace(result, info={**result.info, "automatic": automatic})

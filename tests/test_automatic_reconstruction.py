@@ -178,7 +178,7 @@ def test_automatic_route_reconstructs_a_plain_cone_scan():
     [
         ("parallel", "fbp", "preserved", 0.1),  # 0.053 measured, 0.23 with the poses ignored
         ("cone", "fbp", "preserved", 0.1),  # 0.053 measured, 0.23 with the poses ignored
-        ("axis", "fista", "preserved_pose_corrections", 0.02),  # 0.001 measured, 0.39 ignored
+        ("axis", "fista", "preserved", 0.02),  # 0.001 measured, 0.39 ignored
     ],
 )
 def test_automatic_route_uses_a_scans_poses(kind, method, geometry, bound):
@@ -189,13 +189,31 @@ def test_automatic_route_uses_a_scans_poses(kind, method, geometry, bound):
     assert _error(result, volume) < bound
 
 
-def test_automatic_route_reconstructs_an_unposed_rotation_axis_scan():
-    # Today this route fits the poses and returns the fit's image; only the image is pinned.
+@pytest.mark.parametrize("kind", ["laminography", "axis"])
+def test_automatic_route_reconstructs_an_unposed_oblique_scan_with_its_declared_geometry(
+    kind, monkeypatch
+):
+    # tj.reconstruct reconstructs with the geometry it is given: no pose fit, the scan's grid,
+    # and the same image as the same scan with its declared poses written out.
+    from tomojax import _smooth_alignment  # check-public-imports: allow-private
+
+    def no_fit(*_args, **_kwargs):
+        raise AssertionError("tj.reconstruct ran an alignment")
+
+    monkeypatch.setattr(_smooth_alignment, "fit_poses", no_fit)
     volume = _phantom()
-    geometry = _ROUTES["axis"]()
-    result = tj.reconstruct(tj.Scan(np.asarray(tj.project(geometry, volume)), geometry))
+    geometry = (
+        tj.LaminographyGeometry(_GRID, tj.Detector(24, 24, 1, 1), _ANGLES, tilt_deg=30)
+        if kind == "laminography"
+        else _ROUTES["axis"]()
+    )
+    scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
+    result = tj.reconstruct(scan)
+    assert result.method == "fista" and result.scan is scan
     assert np.shape(result.volume) == volume.shape
-    assert _error(result, volume) < 0.05  # 0.007 measured
+    declared = tj.reconstruct(scan.with_poses(np.zeros((len(_ANGLES), 6))))
+    np.testing.assert_allclose(result.volume, declared.volume, rtol=0, atol=1e-6)
+    assert _error(result, volume) < 0.02  # 0.001 measured with poses
 
 
 def test_automatic_route_estimates_an_unrecorded_centre_with_the_real_estimator():

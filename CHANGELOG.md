@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed: tj.reconstruct no longer aligns a laminography scan behind your back
+
+`tj.reconstruct(scan)` on a laminography or tilted-axis scan without pose
+corrections used to run a full pose alignment (`tj.align`'s fit) and return
+the fit's image: on the working grid, binned up to 8x per axis, with method
+`joint_volume_pose`, and ten times slower (206 s against 21 s on a 64-cubed,
+180-view scan on the CPU). It now reconstructs with the geometry it is given,
+on the scan's grid, by the same nonnegative least squares it already used for
+scans with poses. To fit poses, call `tj.align` and reconstruct its scan.
+`info["automatic"]["geometry"]` is now `"preserved"` for every route.
+
 ### Fixed: reconstructing an aligned scan gave a binned volume
 
 `tj.align(scan).scan` used to carry the alignment's bounded working grid in

@@ -267,14 +267,13 @@ def reconstruct(
     """Reconstruct ``scan`` with ``method``.
 
     ``auto`` (default) chooses Fourier inversion for unposed axial half-turn
-    scans, coarse smooth-pose alignment for unposed oblique scans, matched CGLS
-    for segmented cone geometry, and FBP/FDK otherwise.
-    An explicitly unrecorded axial centre may be inferred. Oblique auto
-    preserves declared geometry and physical support on a bounded coarse grid.
-    An explicit ``grid`` fixes the region and final voxel sampling instead;
-    automatic motion still runs.
-    The scan and ``info["automatic"]``
-    record those choices and limitations. Explicit methods bypass this policy.
+    scans, nonnegative least squares (``fista`` without TV) for laminography and
+    tilted-axis scans, matched CGLS for segmented cone geometry, and FBP/FDK
+    otherwise. It reconstructs with the geometry and poses the scan carries, on
+    its grid or the ``grid`` given; it fits no poses (use :func:`align`).
+    An explicitly unrecorded axial centre may be inferred.
+    ``info["automatic"]`` records those choices and limitations. Explicit
+    methods bypass this policy.
 
     ``fbp``
         Filtered backprojection: FDK for cone beams, with Parker weights for
@@ -426,19 +425,32 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
     unknown_axis = (
         isinstance(acquisition, dict) and acquisition.get("geometry_status") == "not_recorded"
     )
-    if isinstance(base, LaminographyGeometry | RotationAxisGeometry) or unknown_axis:
-        grid = options.pop("grid", None)
-        if options:
+    if unknown_axis:
+        raise ValueError(
+            "reconstruction requires declared acquisition geometry: this file records no "
+            "rotation axis; declare the geometry when loading"
+        )
+    reasons = []
+    method: Method = "fbp"
+    if isinstance(base, LaminographyGeometry | RotationAxisGeometry):
+        if set(options) - {"grid"}:
             raise ValueError(
                 "automatic geometry reconstruction does not take expert overrides; "
                 "choose method='fista' (or another explicit method) to supply them"
             )
-        from tomojax._smooth_alignment import reconstruct_with_motion
+        from tomojax.recon import FistaConfig
 
-        return reconstruct_with_motion(scan, reconstruct=reconstruct, grid=grid)
-    reasons = []
-    method: Method = "fbp"
-    if isinstance(base, ConeSegments):
+        grid = options.get("grid") or scan.grid
+        method = "fista"
+        options["config"] = FistaConfig(
+            initial_epochs=10 if grid.vx > 1.5 * max(scan.detector.du, scan.detector.dv) else 8,
+            initial_subsets=16,
+            tv_weight=0,
+            nonnegative=True,
+            iterations=1,
+            stream_projections=False,
+        )
+    elif isinstance(base, ConeSegments):
         method = "cgls"
         reasons.append(
             "Segmented cone geometry uses matched CGLS because FDK requires one arrangement; "

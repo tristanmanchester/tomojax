@@ -67,7 +67,7 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         return volume, g, table, {"fit": ["translations"], "corrections": {}, "report": report}
 
     monkeypatch.setattr(automatic, "fit_poses", fit)
-    result = automatic.reconstruct_with_motion(scan, reconstruct=None, grid=supplied)
+    result = automatic.align_poses(scan, grid=supplied)
     assert result.scan.projections is scan.projections and result.scan.detector == detector
     np.testing.assert_allclose(result.scan.poses[:, 3:5], shifts)
     np.testing.assert_array_equal(result.scan.poses[:, [0, 1, 2, 5]], 0)
@@ -87,9 +87,8 @@ def test_missing_axis_is_not_silently_inferred():
             operation(scan)
 
 
-@pytest.mark.parametrize("operation", [tj.align, tj.reconstruct])
-def test_automatic_facades_and_saved_pose_reuse(operation, tmp_path):
-    # Align (or let tj.reconstruct align), save, load, and reconstruct the loaded scan through
+def test_saved_alignment_reuse(tmp_path):
+    # Align, save, load, and reconstruct the loaded scan through
     # the real automatic route: its saved poses are used and the image is the phantom's.
     # 128 views: the route's ordered-subset start needs several views a subset.
     grid = tj.Grid(8, 8, 8, 1, 1, 1)
@@ -98,7 +97,7 @@ def test_automatic_facades_and_saved_pose_reuse(operation, tmp_path):
     xyz = np.indices((8, 8, 8)).astype(float)
     volume = np.exp(-np.sum((xyz - 3.5) ** 2, axis=0) / 3).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
-    result = operation(scan)
+    result = tj.align(scan)
     assert np.isfinite(result.volume).all()
     assert result.scan.projections is scan.projections
     assert result.info["fit"] == ["translations"]
@@ -107,7 +106,7 @@ def test_automatic_facades_and_saved_pose_reuse(operation, tmp_path):
     np.testing.assert_array_equal(reused.poses, result.scan.poses)
     again = tj.reconstruct(reused)
     assert again.method == "fista"
-    assert again.info["automatic"]["geometry"] == "preserved_pose_corrections"
+    assert again.info["automatic"]["geometry"] == "preserved"
     error = np.linalg.norm(np.asarray(again.volume) - volume) / np.linalg.norm(volume)
     assert error < 0.02  # 0.005 measured; 0.115 when the start has two views a subset
 
@@ -131,7 +130,7 @@ def test_a_posed_laminography_scan_reconstructs_with_its_poses():
     moved = tj.Scan(np.asarray(tj.project(blank.with_poses(shifts).geometry, volume)), geometry)
     posed = tj.reconstruct(moved.with_poses(shifts))
     unposed = tj.reconstruct(moved.with_poses(np.zeros((views, 6))))
-    assert posed.info["automatic"]["geometry"] == "preserved_pose_corrections"
+    assert posed.info["automatic"]["geometry"] == "preserved"
     assert (np.asarray(posed.volume) >= 0).all()
 
     def error(result):
