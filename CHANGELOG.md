@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Newer Diamond K11 exports load their angles
+
+Newer GDA exports (K11 67208) describe the frames twice: GDA's own layout, whose
+rotation command has the angles, and an NXtomo entry for the same frames with
+none. Loading read the NXtomo entry and asked for `angles=`. When an NXtomo entry
+has no angles, the file's GDA layout is recognised, both describe the same frames
+dataset and the GDA command has one angle per frame, the command's angles now
+complete the entry, and the record says the NXtomo entry recorded none
+(`nxtomo_angles: "not_recorded"`). Otherwise loading still asks for `angles=`.
+
 ### Older Diamond K11 (DIAD) scans load their angles
 
 Older GDA exports (DIAD, K11 54013 and 54286) write the rotation command

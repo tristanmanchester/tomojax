@@ -575,6 +575,45 @@ def test_gda_rotation_without_a_unit_label_is_read_in_degrees(tmp_path):
     assert acquisition["angle_units_recorded"] == "" and acquisition["angle_units"] == "degree"
 
 
+@pytest.mark.parametrize("same_frames", [True, False])
+def test_an_nxtomo_entry_without_angles_takes_the_gda_command_for_the_same_frames(
+    tmp_path, same_frames
+):
+    # Newer GDA exports write an NXtomo entry for the frames with no rotation angles, beside
+    # the GDA layout whose rotation command has them. Only when both describe the same frames
+    # dataset do the command's angles complete the entry; otherwise the file asks for angles=.
+    path = tmp_path / "gda-nxtomo.nxs"
+    stack = np.stack([np.full((2, 3), v, np.int32) for v in (100, 1100, 600, 350, 1100)])
+    key = [2, 1, 0, 0, 1]
+    with h5py.File(path, "w") as handle:
+        frames = handle.create_dataset("entry/imaging/data", data=stack)
+        handle.create_dataset("entry/instrument/EtherCAT/image_key", data=key)
+        command = handle.create_dataset(
+            "entry/imaging/smaract_zrot_value_set", data=[0.0, 0.0, 0.0, 90.0, 0.0]
+        )
+        command.attrs["units"] = "mm"
+        entry = handle.create_group("entry/tomo_entry")
+        entry["definition"] = "NXtomo"
+        entry.create_group("sample")
+        entry["instrument/detector/image_key"] = key
+        if same_frames:
+            entry["instrument/detector/data"] = frames
+            entry["data/data"] = frames
+        else:
+            entry["instrument/detector/data"] = stack + 1
+            entry["data/data"] = entry["instrument/detector/data"]
+    if not same_frames:
+        with pytest.raises(ValueError, match="angles="):
+            tj.load(path, detector=tiny_detector(nu=3))
+        return
+    scan = tj.load(path, detector=tiny_detector(nu=3))
+    np.testing.assert_array_equal(scan.angles, [0, 90])
+    acquisition = scan.source.geometry_metadata["acquisition"]
+    assert acquisition["angles_path"] == "/entry/imaging/smaract_zrot_value_set"
+    assert acquisition["nxtomo_angles"] == "not_recorded"
+    assert acquisition["angle_units_recorded"] == "mm"
+
+
 def test_gda_unit_correction_does_not_accept_other_linear_axes(tmp_path):
     path = tmp_path / "unknown-units.nxs"
     with h5py.File(path, "w") as handle:
