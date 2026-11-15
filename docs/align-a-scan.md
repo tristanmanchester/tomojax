@@ -253,7 +253,10 @@ an image can produce it (a faint disc, brightest at its rim, whose every view is
 so removing it too would let the fit invent that disc and drag the views toward their nominal
 positions. `info["offsets"]` reports each view's fitted pair relative to the shared level. `result.scan` keeps the scan's grid, so
 reconstructing it gives the full-resolution image; `result.volume` is the fit's own image, on the
-bounded working grid `result.grid`, not a final-resolution reconstruction.
+bounded working grid `result.grid`, not a final-resolution reconstruction. The fit compares model
+and data through [1, 2, 1] / 4 along the detector's rows and columns, because at the Nyquist
+frequency a sampled model cannot be right; nothing then constrains that band, so the fit's image
+carries texture at the grid's finest scale that the object does not have.
 
 ## How the figures were made
 

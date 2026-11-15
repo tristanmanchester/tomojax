@@ -394,6 +394,15 @@ def test_refinement_stops_on_a_proposal_below_the_pose_tolerance(monkeypatch, sh
         assert record["status"] == "pose_steps_below_tolerance"
 
 
+def _replicated_tent(n):
+    """[1, 2, 1] / 4 with the edges replicated, as a dense matrix."""
+    k = np.zeros((n, n))
+    for i in range(n):
+        for offset, tap in ((-1, 0.25), (0, 0.5), (1, 0.25)):
+            k[i, min(max(i + offset, 0), n - 1)] += tap
+    return k
+
+
 def test_the_pedestal_costs_nothing_to_the_per_view_profile_and_is_held_by_the_shared_term():
     # c / sqrt(R^2 - r^2), R the detector's half-width, projects to pi c at every u inside R:
     # with its amplitude linear in z, every view sees one offset and one row ramp, the same in
@@ -408,6 +417,9 @@ def test_the_pedestal_costs_nothing_to_the_per_view_profile_and_is_held_by_the_s
     disc = disc.reshape(n, s, n, s).mean((1, 3))
     pedestal = ((1 + 0.5 * np.linspace(-1, 1, nz))[:, None, None] * disc).astype(np.float32)
     seen = np.asarray(tj.project(geometry, pedestal))  # the residual against empty data
+    # The level compares through K = [1, 2, 1] / 4 along v and u, edges replicated.
+    kv, ku = (_replicated_tent(m) for m in (nz, n))
+    seen = np.einsum("ij,vjk,lk->vil", kv, seen, ku)
     rows = np.linspace(-1, 1, nz)[:, None]
     b = np.array([seen.sum(), (rows * seen).sum()])
     gram = views * n * np.array([[nz, rows.sum()], [rows.sum(), (rows**2).sum()]])
@@ -468,7 +480,9 @@ def test_the_levels_gradient_includes_the_shared_offset_and_ramp():
         dc = jnp.asarray(rng.normal(size=c.shape))
         for direction, analytic, h in (
             ((dx, 0 * dc), float(jnp.vdot(gx.astype(jnp.float64), dx)), 1e-3),
-            ((0 * dx, dc), float(jnp.vdot(score, dc)), 1e-4),
+            # At 1e-4 the float32 objective's rounding moves this difference by about 0.3%
+            # (and by 3% at 1e-5); at 1e-3 it agrees with the score to 0.12%, filtered or not.
+            ((0 * dx, dc), float(jnp.vdot(score, dc)), 1e-3),
         ):
             plus = objective(*(h * d for d in direction))
             minus = objective(*(-h * d for d in direction))

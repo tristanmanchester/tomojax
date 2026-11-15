@@ -7,7 +7,7 @@ for a cone beam, lab y translation. ``scales`` converts each numerical parameter
 to radians or physical lengths; it may vary by view.
 """
 
-from typing import NamedTuple
+from typing import NamedTuple, overload
 
 import jax
 import jax.numpy as jnp
@@ -227,6 +227,59 @@ def cropped_frames(frames, detector, *, high_u, high_v):
     return out
 
 
+@overload
+def residual_filter(images: np.ndarray) -> np.ndarray: ...
+@overload
+def residual_filter(images: jax.Array) -> jax.Array: ...
+def residual_filter(images):
+    """K = [1, 2, 1] / 4 along u and along v of (..., v, u) images, the edges replicated.
+
+    The alignment compares its model with the data through K at every level: the
+    objective is the robust loss of the profiled K (A x - y), not of A x - y. At the
+    Nyquist frequency a sampled model cannot be right at all, since the alias of an
+    edge there is as large as the signal, so the comparison should not ask for it.
+    [1, 2, 1] / 4 is the shortest zero-phase filter with unit gain at zero frequency
+    and a zero at Nyquist: a projection alternating pixel to pixel costs nothing, a
+    linear trend is unchanged away from the edge, and the smooth pose derivatives
+    keep their size. With the edge replicated (first row [3, 1] / 4) K is symmetric,
+    so it is its own transpose. It is part of the objective, not of the binning.
+    """
+    xp = np if isinstance(images, np.ndarray) else jnp  # host data stay on the host
+
+    def along(a, axis):
+        n = a.shape[axis]
+        if n == 1:
+            return a
+        pad = [(0, 0)] * a.ndim
+        pad[axis] = (1, 1)
+        e = xp.pad(a, pad, mode="edge")
+        left, middle, right = (
+            e[tuple(slice(lo, lo + n) if i == axis else slice(None) for i in range(a.ndim))]
+            for lo in range(3)
+        )
+        return 0.25 * left + 0.5 * middle + 0.25 * right
+
+    return along(along(images, images.ndim - 1), images.ndim - 2)
+
+
+def filtered_precision(precision):
+    """The precision of K-filtered data: zero wherever a tap of K falls on an unmeasured pixel.
+
+    K mixes each pixel with its neighbours, so a filtered sample is known only where all
+    of its taps were measured; elsewhere its precision is zero, the pixel's own otherwise.
+    """
+    if precision is None:
+        return None
+    seen = (precision > 0).astype(np.float32)
+    padded = np.pad(seen, ((0, 0), (1, 1), (1, 1)), mode="edge")
+    nv, nu = seen.shape[1:]
+    whole = np.ones_like(seen)
+    for dv in range(3):  # K along u then v reaches the whole 3 x 3 neighbourhood
+        for du in range(3):
+            whole *= padded[:, dv : dv + nv, du : du + nu]
+    return (precision * whole).astype(precision.dtype)
+
+
 class Projection:
     """Coefficients, fused pose columns and matched image operators for one geometry.
 
@@ -296,7 +349,7 @@ class Projection:
                 interpolation=self.interpolation,
                 absolute_weights=absolute,
             )
-        return image * cf.valid[:, None, None]
+        return residual_filter(image) * cf.valid[:, None, None]
 
     def active(self, mask):
         """Work lists for ``back`` when only the nonzero ``mask`` voxels are needed."""
@@ -309,7 +362,7 @@ class Projection:
 
         With ``active`` lists, voxels outside their mask may lack the transpose.
         """
-        y = y * cf.valid[:, None, None]
+        y = residual_filter(y * cf.valid[:, None, None])  # K is symmetric: K^T = K
         if self.cone:
             return cone_backproject(
                 y,
@@ -356,7 +409,7 @@ class Projection:
                 lambda dc: jax.jvp(predict, (cf.rays,), (dc,))[1], in_axes=1, out_axes=1
             )(tangent)
             images = jnp.concatenate([predict(cf.rays)[:, None], columns], axis=1)
-        return images * cf.valid[:, None, None, None]
+        return residual_filter(images) * cf.valid[:, None, None, None]
 
     def diagonal(self, cf, sqrtweights, accumulator):
         """Accumulate a positive image preconditioner, preserving the image operator.
@@ -365,7 +418,9 @@ class Projection:
         cubic weights, positive on every voxel the operator reaches. Cone rays
         use a conservative row-sum majorizer. Normal matvecs keep all cross
         terms through the matched forward and transpose. ``diagonal_kind``
-        records the choice.
+        records the choice. ``A`` here is the unfiltered operator: the objective's
+        ``residual_filter`` is not in it, so for the filtered normal matrix this is
+        a Jacobi preconditioner, not its diagonal.
         """
         weights = sqrtweights * cf.valid[:, None, None]
         if not self.cone:
@@ -381,11 +436,12 @@ class Projection:
         return self.majorizer(cf, weights, accumulator)
 
     def majorizer(self, cf, sqrtweights, accumulator):
-        """Accumulate |A|.T W |A| 1, bounding A.T W A.
+        """Accumulate (K |A|).T W (K |A|) 1, bounding (K A).T W (K A).
 
         Cubic interpolation has signed lobes. Using A.T W A 1 instead would
         allow cancellation and would not bound the initialization step. Cone
-        and linear-plane kernels are nonnegative.
+        and linear-plane kernels are nonnegative. K (``residual_filter``) has
+        nonnegative taps, so K |A| bounds |K A| elementwise.
         """
         ones = jnp.ones((self.grid.nz, self.grid.ny, self.grid.nx), jnp.float32)
         images = sqrtweights**2 * self.project(cf, ones, absolute=True)

@@ -811,8 +811,11 @@ class Reconstruction:
 class Alignment:
     """The result of :func:`align`.
 
-    ``volume`` is the reconstruction the alignment converged with, on ``grid``:
-    the fit's bounded working grid, unless :func:`align` was given one. ``scan``
+    ``volume`` is the image the alignment converged with, on ``grid``: the fit's
+    bounded working grid, unless :func:`align` was given one. It is the fit's
+    working image, not a reconstruction: the fit compares model and data through a
+    filter that ignores the grid's finest scale, so the image carries texture there
+    that the object does not have. Reconstruct ``scan`` for the volume. ``scan``
     is the input scan, on its own grid, with the estimated geometry and per-view
     poses applied: reconstruct it, align it again or save it. ``poses`` are its
     ``(views, 6)`` poses (see :attr:`Scan.poses`), always a table, zero where
@@ -821,7 +824,7 @@ class Alignment:
     Parameters
     ----------
     volume : numpy.ndarray or jax.Array
-        Reconstruction used by the alignment, in (z, y, x) order, on ``grid``.
+        The alignment's working image, in (z, y, x) order, on ``grid``.
     grid : Grid
         The grid ``volume`` is on.
     scan : Scan

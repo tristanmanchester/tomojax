@@ -10,8 +10,10 @@ angular fits for parallel rays; every fit's image steps use the same CG
 iteration count. These are internal discretization/work choices for the
 requested model, never data-dependent route selection. Each
 working pixel is one ray through its centre; a block with missing input pixels
-is the mean of its finite ones, weighted by their fraction. Image TV is
-disabled to avoid imposing a shape preference on weak geometry modes.
+is the mean of its finite ones, weighted by their fraction. Model and data are
+compared through ``residual_filter`` (K = [1, 2, 1] / 4 along u and v) at every
+level, so the objective does not ask the sampled model to be right at Nyquist.
+Image TV is disabled to avoid imposing a shape preference on weak geometry modes.
 """
 
 from dataclasses import asdict
@@ -30,7 +32,13 @@ from ._noise import LOSS_WIDTH_SIGMAS, MAX_SAMPLES, estimate_noise
 from ._operators import Operators
 from ._parameters import Parameters
 from ._pose import ROTATION_SIGMA_DEG, MotionPrior, ViewOrder
-from ._projection import cone_parameter_scales, cropped_frames, fit_gauge
+from ._projection import (
+    cone_parameter_scales,
+    cropped_frames,
+    filtered_precision,
+    fit_gauge,
+    residual_filter,
+)
 from ._refine import refine
 from ._report import axial as axial_geometry, build as build_report
 from ._solver import Budget, solve
@@ -177,6 +185,12 @@ def _level(
     scale = 2.0 ** -np.round(np.log2(peak)) if peak > 0 else 1.0
     y, precision = _coarsened(measured, total_bin)
     y *= np.float32(scale)
+    # The objective compares K A x with K y (residual_filter); the filtered data are known
+    # only where every tap was measured. K acts within each view: filter on the host, a
+    # slab of views at a time, as the binning above does.
+    for s in range(0, len(y), 16):
+        y[s : s + 16] = residual_filter(y[s : s + 16])
+    precision = filtered_precision(precision)
     g = _resized(base, tuple(math.ceil(n / b) for n in (base.nx, base.ny, base.nz)))
     d = Detector(
         nu // total_bin,

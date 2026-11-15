@@ -10,6 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench" / "phantoms
 import exact_tier
 import motion
 
+# check-public-imports: allow-private
+from tomojax.alignment._joint import _fit, _solver
+
 ANGLES = np.linspace(0.0, 360.0, 72, endpoint=False)
 
 
@@ -170,8 +173,8 @@ def test_gauge_free_truth_has_no_component_along_the_fits_rigid_translations():
     assert _landmark_px(free, raw) < 1e-9
 
 
-@pytest.mark.numerical
-def test_exact_tier_fit_from_nominal_reaches_a_gauge_free_truth():
+def _exact_tier_ends(labels=("raw", "gauge-free")):
+    """Landmark error of tj.align from nominal against the raw and the gauge-free truth."""
     import tomojax as tj
     from tomojax.geometry import stack_view_poses
 
@@ -192,20 +195,41 @@ def test_exact_tier_fit_from_nominal_reaches_a_gauge_free_truth():
         slips=(motion.Slip(40, (300.0, -200.0, 150.0)),),
     )
     raw = motion.poses(m, nominal, ANGLES, np.zeros(3))["poses"]
+    truths = {
+        "raw": raw,
+        "gauge-free": exact_tier.gauge_free(raw, nominal, pitch=(1.0, 1.0), lever_px=12.0),
+    }
     ends = {}
-    for label, true in (
-        ("raw", raw),
-        ("gauge-free", exact_tier.gauge_free(raw, nominal, pitch=(1.0, 1.0), lever_px=12.0)),
-    ):
+    for label in labels:
+        true = truths[label]
         scan = tj.Scan(exact_tier.projections(grid, detector, truth, true), geometry)
         result = tj.align(scan, fit="translations")
         ends[label] = _landmark_px(
             np.asarray(stack_view_poses(result.scan.geometry, len(ANGLES)), np.float64), true
         )
-    # From a 0.5 px start the fit reaches the gauge-free truth; a truth held at another sub-voxel
-    # position than the fit's gauge cannot be reached, which is what this tier must exclude.
-    assert ends["gauge-free"] < 1e-3
+    return ends
+
+
+@pytest.mark.numerical
+@pytest.mark.slow
+def test_the_exact_tiers_objective_has_its_minimum_at_the_gauge_free_truth(monkeypatch):
+    # The exact tier's data are the fit's own model, so the objective's minimum is the truth
+    # held in the fit's gauge. Run long with the stop rule off, the fit reaches it from a
+    # 0.5 px start; a truth held at another sub-voxel position than the fit's gauge cannot be
+    # reached, which is what this tier must exclude. Anything that moves the minimum (a
+    # pedestal, a filter's free band) fails here.
+    monkeypatch.setattr(_fit, "_LEVELS", ((2, 12), (1, 100)))
+    monkeypatch.setattr(_solver, "_POSE_TOL_PX", -1.0)
+    ends = _exact_tier_ends()
+    assert ends["gauge-free"] < 2e-4
     assert ends["raw"] > 5e-3
+
+
+@pytest.mark.numerical
+def test_the_default_call_on_exact_data_ends_within_the_stop_rules_tolerance():
+    # The stop rule ends a level once two successive pose proposals are under its tolerance;
+    # on exact data the default call's remaining error must be under that same tolerance.
+    assert _exact_tier_ends(("gauge-free",))["gauge-free"] < _solver._POSE_TOL_PX
 
 
 @pytest.mark.numerical

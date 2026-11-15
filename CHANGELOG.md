@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Alignment compares model and data through [1, 2, 1] / 4
+
+At the Nyquist frequency a sampled model cannot be right at all: the alias of an
+edge there is as large as the signal. The alignment's objective asked for it
+anyway, and on sharp objects the fit moved the poses to chase it. It now compares
+the model and the data through K = [1, 2, 1] / 4 along the detector's rows and
+columns, at every level: the shortest zero-phase filter with unit gain at zero
+frequency and a zero at Nyquist. A projection alternating pixel to pixel costs
+nothing, a linear trend is unchanged away from the edge, and the smooth pose
+derivatives keep their size, so the pose priors need no correction. K is part of
+the objective, not of the binning. A filtered sample mixes its 3 x 3
+neighbourhood, so it is unknown, and carries no weight, wherever one of those
+pixels was not measured.
+
+On the noisy corpus at 1e4 the watch rows fit to 0.02-0.04 px where they were
+0.05-0.17, and three thin plates (0.5-0.8 voxels) on a half turn fit to 0.10 px
+of landmark error where they were 0.49. Three things are worse:
+
+- Three rock rows regress by up to 0.02 px (the full turn's translations and tilt,
+  and laminography tilt and tilt-roll by 0.002). The rock sits on a sapphire sheet
+  cut by the grid: at the true poses its three detector rows hold 74% of the
+  residual's power, an error of a truncated object that the filter does not
+  describe and the plain comparison happened to tolerate better.
+- The fit's own image carries more texture at the grid's finest scale than the
+  object has (2-10 times its near-Nyquist energy on the watch), since nothing
+  constrains that band any more. `Alignment.volume` is the fit's working image,
+  not a reconstruction; reconstruct `Alignment.scan` for that.
+- On thick flat plates the tilt can be worse on some seeds, by up to 0.08 px at
+  the plate's edge.
+
 ### An alignment level stops when its poses stop moving, whatever the damping
 
 A level stopped after two successive steps proposing a pose change under

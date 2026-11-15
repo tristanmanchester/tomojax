@@ -7,6 +7,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 # check-public-imports: allow-private
+from tomojax.alignment._joint import _projection
 from tomojax.alignment._joint._pose import MotionPrior
 
 # check-public-imports: allow-private
@@ -148,7 +149,16 @@ def test_cone_row_sum_is_a_normal_majorizer_not_an_approximate_adjoint():
     assert model.diagonal_kind == "normal_row_sum"
 
 
-def test_cubic_majorizer_bounds_the_signed_normal_matrix_and_initial_step():
+def _filter_matrix(n):
+    """[1, 2, 1] / 4 with the edges replicated, as a dense matrix (the objective's K along one axis)."""
+    k = np.zeros((n, n))
+    for i in range(n):
+        for offset, tap in ((-1, 0.25), (0, 0.5), (1, 0.25)):
+            k[i, min(max(i + offset, 0), n - 1)] += tap
+    return k
+
+
+def test_cubic_majorizer_bounds_the_signed_normal_matrix_and_initial_step(monkeypatch):
     grid = Grid(3, 4, 2, 0.7, 0.8, 1.1)
     detector = Detector(5, 4, 0.9, 0.8, center=(0.13, -0.23))
     nominal = jnp.asarray(
@@ -166,8 +176,20 @@ def test_cubic_majorizer_bounds_the_signed_normal_matrix_and_initial_step():
         .reshape(count, -1)
         .T
     )
-    assert dense.min() < -1e-4
-    np.testing.assert_allclose(absolute, np.abs(dense), rtol=2e-6, atol=2e-6)
+    with monkeypatch.context() as unfiltered:  # A itself, without the objective's K
+        unfiltered.setattr(_projection, "residual_filter", lambda images: images)
+        plain = np.asarray(jax.jit(jax.vmap(lambda x: model.project(cf, x)))(basis))
+        plain_absolute = np.asarray(
+            jax.jit(jax.vmap(lambda x: model.project(cf, x, absolute=True)))(basis)
+        )
+    plain, plain_absolute = (a.reshape(count, -1).T for a in (plain, plain_absolute))
+    assert plain.min() < -1e-4
+    np.testing.assert_allclose(plain_absolute, np.abs(plain), rtol=2e-6, atol=2e-6)
+    # The objective compares K A x with K y; the majorizer's images are K |A|, which bound |K A|.
+    k = np.kron(np.eye(2), np.kron(_filter_matrix(detector.nv), _filter_matrix(detector.nu)))
+    np.testing.assert_allclose(dense, k @ plain, rtol=2e-6, atol=2e-6)
+    np.testing.assert_allclose(absolute, k @ plain_absolute, rtol=2e-6, atol=2e-6)
+    assert (absolute >= np.abs(dense) - 2e-6).all()
     sqrtw = (
         np.random.default_rng(19).uniform(0.1, 1, (2, detector.nv, detector.nu)).astype(np.float32)
     )
@@ -179,9 +201,11 @@ def test_cubic_majorizer_bounds_the_signed_normal_matrix_and_initial_step():
     assert np.linalg.eigvalsh(np.diag(diagonal) - normal).min() >= -3e-6
     bound = float(jnp.max(jax.jit(model.majorizer)(cf, jnp.ones_like(sqrtw), zero)))
     assert bound >= np.linalg.eigvalsh(dense.T @ dense).max() - 3e-6
-    # The preconditioner is the cubic operator's own diagonal, positive wherever it reaches.
+    # The preconditioner is the unfiltered cubic operator's own diagonal, positive wherever it
+    # reaches; for the filtered normal matrix it is a Jacobi preconditioner, not its diagonal.
     jacobi = np.asarray(model.diagonal(cf, jnp.asarray(sqrtw), zero)).ravel()
-    np.testing.assert_allclose(jacobi, np.diag(normal), rtol=3e-6, atol=3e-7)
+    plain_normal = plain.T @ (sqrtw.reshape(-1, 1) ** 2 * plain)
+    np.testing.assert_allclose(jacobi, np.diag(plain_normal), rtol=3e-6, atol=3e-7)
     assert model.diagonal_kind == "normal_diagonal"
 
 
