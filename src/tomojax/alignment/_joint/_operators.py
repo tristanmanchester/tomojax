@@ -205,6 +205,7 @@ class Operators:
         self.linearize = jax.jit(self._linearize)
         self.objective = jax.jit(self._objective)
         self.common_images = jax.jit(self._common_images)
+        self.shared_data = jax.jit(self._shared_data)
         self._weighted_forward = jax.jit(self._weighted_forward)
         self.view_summary = jax.jit(self.view_summary)
         self._weighted_back = jax.jit(self._weighted_back)
@@ -424,7 +425,9 @@ class Operators:
             # Quantizing J after these reductions makes the Schur model inconsistent.
             score, gram = column_score(j, res), column_gram(j)
             out = (sw.astype(jnp.float16), j.astype(jnp.float16), score, gram)
-            out = (*out, robust_value(r, wb, delta), jnp.where(wb > 0, raw[:, 0] - yb, 0))
+            residual = jnp.where(wb > 0, raw[:, 0] - yb, 0)
+            # The shared moments are two numbers: accumulate them batch by batch.
+            out = (*out, robust_value(r, wb, delta), _common.moments(residual, wb), residual)
             # The views' shared offset and ramp (the solver holds them) move with each view's pose.
             shared = _common.shared_weights(wb)
             moved = jax.vmap(lambda c, w: jax.vmap(lambda k: _common.moments(k[None], w[None]))(c))(
@@ -434,7 +437,7 @@ class Operators:
 
         batches = (*self.views(q), self.batches(y), self.batches(precision))
         state, out = jax.lax.scan(step, (self._zeros(), self._zeros()), batches)
-        sw, j, g, gram, e, residual, valid, down, moved = out
+        sw, j, g, gram, e, moments, residual, valid, down, moved = out
         n, d, k = self.n, self.detector, self.dofs
         moved = moved.reshape(self.padded_n, k, 2)[:n]
         return (
@@ -445,9 +448,23 @@ class Operators:
             gram.reshape(self.padded_n, k, k)[:n],
             jnp.sum(e),
             jnp.stack([jnp.sum(valid), jnp.sum(down)]),
+            jnp.sum(moments, axis=0),
             residual.reshape(self.image_shape),
             jnp.stack([self.parameters.reduce_score(moved[..., i]) for i in range(2)]),
         )
+
+    def _shared_data(self, y, precision):
+        """G and the data's shared moments over the profiled views, accumulated batch by batch."""
+
+        def step(total, z):
+            valid, yb, wb = z
+            wb = self.batch_precision(wb, valid)
+            gram = _common.metric(wb)
+            return (total[0] + gram, total[1] + _common.moments(jnp.where(wb > 0, yb, 0), wb)), None
+
+        start = (jnp.zeros((2, 2), jnp.float64), jnp.zeros(2, jnp.float64))
+        batches = (self.batches(self.valid), self.batches(y), self.batches(precision))
+        return jax.lax.scan(step, start, batches)[0]
 
     def _objective(self, q, x, y, precision, delta):
         """The profiled robust data term, and the residual's shared moments b (``_common``)."""

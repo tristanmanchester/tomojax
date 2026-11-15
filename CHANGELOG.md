@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Alignment forms its shared level one view batch at a time
+
+The level the views share (5502a625) and the line search's value at unchanged poses
+were formed from the whole stack of views at once: a full precision array for a scan
+that has none, then float64 copies of it and of the residual, each the size of the
+level's data. On K11 54013 (1153 views at 320 x 270) the first linearisation ran out of
+an 8 GB card's memory at 765 MiB each, before the fit had started. Both are now summed
+over the same view batches the score and Gram matrix already stream through, so no array
+the size of the stack is made for them; the values are unchanged.
+
 ### Alignment compares model and data through [1, 2, 1] / 4
 
 At the Nyquist frequency a sampled model cannot be right at all: the alias of an

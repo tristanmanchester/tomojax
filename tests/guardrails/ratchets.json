@@ -56,7 +56,7 @@
   "code_lines": {
     "(modules)": 2892,
     "_data": 2066,
-    "alignment": 3301,
+    "alignment": 3336,
     "backends": 619,
     "cli": 2402,
     "core": 13438,
@@ -109,5 +109,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 136
+  "test_private_imports": 137
 }

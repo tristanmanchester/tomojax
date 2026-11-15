@@ -131,21 +131,23 @@ class _Level:
             else 1 / jnp.maximum(dd + jnp.float32(lm) * damp, jnp.float32(1e-8))
         )
 
-        weights = ops.batch_precision(precision, ops.valid)
-        self.gram = _common.metric(weights)
+        self.gram, self.data_moments = ops.shared_data(y, precision)
         self.inverse_gram = jnp.linalg.pinv(self.gram)  # zero if no view is profiled
-        self.data_moments = _common.moments(jnp.where(weights > 0, y, 0), weights)
 
         # At unchanged poses the prediction is linear in the image: the residual
         # plus a times the step's projection (returned scaled by sw, zero only
         # where unobserved) gives the profiled term exactly, without projecting;
         # the shared moments move by a times the step's B dx.
         def held(residual, step, sw, w, a, moments):
-            w = ops.batch_precision(w, ops.valid)
-            moved = residual + a * jnp.where(sw > 0, step / jnp.where(sw > 0, sw, 1), 0)
-            return robust_value(profiled_residual(moved, w), w, delta) + 0.5 * jnp.vdot(
-                moments, self.inverse_gram @ moments
-            )
+            def batch(total, z):  # the robust value is a sum over views: one batch at a time
+                rb, sb, swb, wb, valid = z
+                wb = ops.batch_precision(wb, valid)
+                moved = rb + a * jnp.where(swb > 0, sb / jnp.where(swb > 0, swb, 1), 0)
+                return total + robust_value(profiled_residual(moved, wb), wb, delta), None
+
+            parts = (residual, step, sw, w, ops.valid)
+            value = jax.lax.scan(batch, jnp.asarray(0.0, jnp.float64), ops.batches(parts))[0]
+            return value + 0.5 * jnp.vdot(moments, self.inverse_gram @ moments)
 
         self.held = jax.jit(held)
 
@@ -203,13 +205,13 @@ class _Level:
         def run(x, q, y, precision, lipschitz):
             def fista(_, state):
                 old, z, t = state
-                shared = inverse @ (jnp.einsum("i...,...->i", images, z).astype(jnp.float64) - data_moments)
+                shared = inverse @ (
+                    jnp.einsum("i...,...->i", images, z).astype(jnp.float64) - data_moments
+                )
                 gradient = ops.initial_gradient(q, z, y, precision, delta) + (
                     shared[0] * images[0] + shared[1] * images[1]
                 ).astype(jnp.float32)
-                new = jnp.maximum(
-                    z - gradient / lipschitz, 0
-                )
+                new = jnp.maximum(z - gradient / lipschitz, 0)
                 tn = (1 + jnp.sqrt(1 + 4 * t * t)) / 2
                 return new, new + ((t - 1) / tn).astype(jnp.float32) * (new - old), tn
 
@@ -225,7 +227,7 @@ class _Level:
         offset and ramp (``_common.Common``, returned last).
         """
         q = self.ops.pad_poses(c)
-        gx0, dd, sw, j, gr, gram, data, obstats, residual, moved = self.ops.linearize(
+        gx0, dd, sw, j, gr, gram, data, obstats, moments, residual, moved = self.ops.linearize(
             q, x, self.y, self.precision, self.delta
         )
         common = _common.Common(
@@ -233,7 +235,7 @@ class _Level:
             self.inverse_gram,
             self.ops.common_images(q, self.precision),
             moved,
-            _common.moments(residual, self.ops.batch_precision(self.precision, self.ops.valid)),
+            moments,
         )
         gx0 = gx0 + common.image_gradient()
         dd = dd + common.diagonal()
@@ -250,7 +252,9 @@ class _Level:
         cc = c + a * beta * dc
         if beta == 0:
             residual, step, sw, moments, change = held
-            data = self.held(residual, step, sw, self.precision, jnp.float32(a), moments + a * change)
+            data = self.held(
+                residual, step, sw, self.precision, jnp.float32(a), moments + a * change
+            )
         else:
             q = self.ops.pad_poses(cc)
             value, moments = self.ops.objective(q, xt, self.y, self.precision, self.delta)
@@ -295,7 +299,19 @@ class _Level:
         rhs = self.rhs(k.q, k.sw, k.j, sp, k.gx, k.free, self.precision, common)
         invdiag = self.inverse(k.d, k.damp, k.dd, lm)
         linear_step = self.schur(
-            k.q, k.sw, k.j, factor, k.free, k.d, k.damp, lm, rhs, invdiag, self.precision, common, poses
+            k.q,
+            k.sw,
+            k.j,
+            factor,
+            k.free,
+            k.d,
+            k.damp,
+            lm,
+            rhs,
+            invdiag,
+            self.precision,
+            common,
+            poses,
         )
         if not np.isfinite(float(linear_step.relative_residual)):
             return None
@@ -349,7 +365,9 @@ class _Level:
                 )
                 curvature += beta**2 * float(pose)
                 # The shared rows; their cross term is already in jadx.
-                curvature += 2 * float(common.value(bdx) + beta**2 * common.value(common.poses @ dc))
+                curvature += 2 * float(
+                    common.value(bdx) + beta**2 * common.value(common.poses @ dc)
+                )
                 predicted = -a * (gx_dx + beta * gp_dc) - 0.5 * a * a * curvature
                 change = float(jnp.sqrt(jnp.mean(jnp.sum((a * beta * dp) ** 2, axis=1))))
                 explicit = bool(linear_step.residual_is_explicit)
@@ -374,6 +392,7 @@ class _Level:
                 )
             lm *= 10
         return None
+
 
 def _undamped_proposal(level, step, x, c, linear, budget, pose_weight):
     """The step's pose proposal at the initial damping when its damped one is small, else None.

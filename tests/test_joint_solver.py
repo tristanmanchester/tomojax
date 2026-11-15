@@ -171,7 +171,7 @@ def test_linearization_is_the_gradient_of_the_profiled_robust_objective():
     # The JAX operators: this checks the objective's calculus, not CUDA column precision.
     with jax.enable_x64(True), jax.default_device(jax.devices("cpu")[0]):
         ops, x, c, y, precision, delta, out, rng = _linearized(half=False)
-        gx, _, _, _, score, _, _, _, residual, _ = out
+        gx, _, _, _, score, _, _, _, _, residual, _ = out
         tail = np.mean(np.abs(np.asarray(residual)[:10]) > delta)
         assert tail > 0.05
 
@@ -442,6 +442,50 @@ def test_the_pedestal_costs_nothing_to_the_per_view_profile_and_is_held_by_the_s
         total = level.linearize(c, jnp.asarray(pedestal))[6]
     assert float(profiled) < 0.01 * 0.5 * float(np.sum(seen**2))
     assert float(total) - float(profiled) == pytest.approx(expected, rel=1e-5)
+
+
+def test_the_shared_offset_and_ramp_are_accumulated_one_view_batch_at_a_time(monkeypatch):
+    # The shared moments and their Gram matrix are a handful of numbers. Forming them from the
+    # whole stack at once made several data-sized float64 arrays: on K11 (1153 views at
+    # 320 x 270) the first linearisation ran out of memory at 765 MiB each. Every array they
+    # are formed from must span one view batch, never the stack; so must the line search's
+    # held value at unchanged poses.
+    from tomojax.alignment._joint import _common  # check-public-imports: allow-private
+
+    seen = []
+    for module, name, which in (
+        (_common, "moments", -1),
+        (_common, "metric", -1),
+        (_solver, "robust_value", 0),  # the line search's held value, at unchanged poses
+    ):
+        original = getattr(module, name)
+
+        def recording(*args, _original=original, _which=which):
+            seen.append(np.shape(args[_which])[0])
+            return _original(*args)
+
+        monkeypatch.setattr(module, name, recording)
+    n, nz, views = 8, 4, 10
+    grid, detector = tj.Grid(n, n, nz, 1, 1, 1), tj.Detector(n, nz, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, views, endpoint=False))
+    with jax.enable_x64(True):
+        nominal = np.asarray(stack_view_poses(geometry, views))
+        ops = Operators(grid, detector, nominal, lever=2, native=(1.0, 1.0), batch_size=4)
+        prior = MotionPrior(
+            views,
+            rigid_gauge(nominal, [0.5] * 3 + [1.0, 1.0]),
+            knot_spacing=(4,) * 5,
+            delta=0.02,
+            parameters=ops.parameters,
+            rotation_scales=np.ones(5),
+        )
+        y = ops.pad_images(jnp.ones((views, nz, n), jnp.float32))
+        level = _Level(ops, prior, y, None, lam=0.0, eps=0.0, scales=None, delta=1.0, inner=1)
+        out = level.linearize(jnp.zeros(prior.size), jnp.zeros(ops.shape, jnp.float32))
+        sw, residual, common = out[2], out[8], out[9]
+        level.held(residual, residual, sw, level.precision, jnp.float32(0.5), common.moments)
+    assert ops.batch == 4 and ops.padded_n == 12
+    assert seen and max(seen) <= ops.batch, seen
 
 
 def test_the_levels_gradient_includes_the_shared_offset_and_ramp():
