@@ -437,14 +437,13 @@ def _pose_weight(level, linear, sigma):
     translations = [i for i, dof in enumerate(local) if dof >= 3]
     if not translations or n < 3:
         return photon, None, fisher
-    w = ops.batch_precision(level.precision, ops.valid)
     columns = jnp.asarray(translations)
     scores = []
     for start in range(0, n, ops.batch):  # a view slab at a time: the columns are stack-sized
         stop = min(start + ops.batch, n)
-        res = jnp.asarray(sw[start:stop], jnp.float32) * profiled_residual(
-            residual[start:stop], w[start:stop]
-        )
+        held = None if level.precision is None else level.precision[start:stop]
+        w = ops.batch_precision(held, ops.valid[start:stop])
+        res = jnp.asarray(sw[start:stop], jnp.float32) * profiled_residual(residual[start:stop], w)
         jb = jnp.asarray(j[start:stop][:, columns], jnp.float32)
         scores.append(jnp.einsum("vkij,vij->vk", jb, res, preferred_element_type=jnp.float32))
     g = np.asarray(jnp.concatenate(scores), np.float64)
