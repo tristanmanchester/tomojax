@@ -1313,6 +1313,26 @@ Against the previous route, that reference improved pose on every moving case
 among the 51 it was not developed on, with image regressions of at most +0.0002
 there; two large-drift development cases regressed by +0.0009 and +0.0012.
 
+### The plain call on K11
+
+Run 15's call, measured again on 2026-11-15: K11 54013, the 1153 views whose index
+is not 2 modulo 5, declared grid 2112 × 2112 × 704 at 2.16 µm, tilt −35°,
+`tj.align(scan)` with nothing set, one process, nothing else on the GPU. Time is
+the `tj.align` call alone, after loading; GPU memory is JAX's peak in use.
+
+| Commit | Result | Time | GPU |
+|---|---|---:|---:|
+| `29836aaa` (main, 2026-11-02) | completes; working grid 352 × 352 × 118, detector binned 2 | 205.0 s | 2.31 GiB |
+| `aa6cec52` (main) | completes | 148.8 s | |
+| `76fc1769` to `ed86a8f0` (main) | runs out of memory in the image solve's Schur matrix-vector product (1.37 GiB) | | |
+| `20b5f42a` (fix/review-high) | runs out of memory in the first linearisation (765 MiB, the shared level's moments) | | |
+| `188f1794` (fix/review-high) | completes | 276.8 s | 3.62 GiB |
+
+On `188f1794` the same call on K11 54286 (all 1441 views, 640 × 640 × 560 declared,
+working grid 214 × 214 × 187) completes in 364.9 s at 3.91 GiB. Against `aa6cec52`,
+the branch takes 128 s (86%) longer on the same call, at a higher peak; that
+difference is not yet explained.
+
 ### Detector centre
 
 The projection-only estimator uses a one-pixel derivative bandwidth and a
