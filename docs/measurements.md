@@ -1323,15 +1323,25 @@ the `tj.align` call alone, after loading; GPU memory is JAX's peak in use.
 | Commit | Result | Time | GPU |
 |---|---|---:|---:|
 | `29836aaa` (main, 2026-11-02) | completes; working grid 352 × 352 × 118, detector binned 2 | 205.0 s | 2.31 GiB |
-| `aa6cec52` (main) | completes | 148.8 s | |
+| `aa6cec52` (main) | completes | 148.8 s | 3.51 GiB |
 | `76fc1769` to `ed86a8f0` (main) | runs out of memory in the image solve's Schur matrix-vector product (1.37 GiB) | | |
 | `20b5f42a` (fix/review-high) | runs out of memory in the first linearisation (765 MiB, the shared level's moments) | | |
 | `188f1794` (fix/review-high) | completes | 276.8 s | 3.62 GiB |
 
 On `188f1794` the same call on K11 54286 (all 1441 views, 640 × 640 × 560 declared,
-working grid 214 × 214 × 187) completes in 364.9 s at 3.91 GiB. Against `aa6cec52`,
-the branch takes 128 s (86%) longer on the same call, at a higher peak; that
-difference is not yet explained.
+working grid 214 × 214 × 187) completes in 364.9 s at 3.91 GiB.
+
+Against `aa6cec52` the branch takes 128 s (86%) longer on the same call, at 0.11 GiB
+more. A profile of both (every phase timed with a device sync) puts 116 s of it in
+the image solve: both take 12 coarse and 8 fine steps, but `aa6cec52` gives the
+image solve 4 conjugate-gradient iterations for a translations fit, while since
+`45f9932d` every fit uses 16, all of which are spent on every step after the
+first (5.12 against 2.27 s a coarse step, 24.21 against 12.65 s a fine one). The
+shared level's two extra back-projections per linearisation add 18.5 s; the
+linearisations are 8.4 s faster (pose columns stored in 16-bit floats); setup,
+the initial image and the refinement differ by 1.2 s. The 0.11 GiB is the shared
+level's two image-sized arrays (127 MiB); the rest of `aa6cec52`'s peak over
+`29836aaa` (3.51 against 2.31 GiB) came on main before the branch.
 
 ### Detector centre
 
