@@ -39,7 +39,7 @@
     "src/tomojax/recon/fista_tv.py": 868
   },
   "long_functions": {
-    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 164,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 166,
     "src/tomojax/cli/simulate.py::_build_parser": 106,
     "src/tomojax/core/cuda_projector/_loss.py::forward_project_residual_sse_T_cuda": 119,
     "src/tomojax/core/cuda_projector/_stack_bind.py::forward_project_views_T_cuda": 101,
@@ -56,7 +56,7 @@
   "code_lines": {
     "(modules)": 2892,
     "_data": 2066,
-    "alignment": 3336,
+    "alignment": 3377,
     "backends": 619,
     "cli": 2402,
     "core": 13438,

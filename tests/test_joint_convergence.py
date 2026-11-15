@@ -73,7 +73,13 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
         ([0.01] * 8, 8, "step_budget_reached", None, None),
         ([0.001] * 8, 4, "pose_steps_below_tolerance", None, None),
         ([1.0, 1.0, 1.0, 0.001, 0.001, 1.0], 5, "pose_steps_below_tolerance", None, None),
-        ([0.001, 0.001, 1.0, 0.001, 1.0, 0.001, 0.001, 1.0], 7, "pose_steps_below_tolerance", None, None),
+        (
+            [0.001, 0.001, 1.0, 0.001, 1.0, 0.001, 0.001, 1.0],
+            7,
+            "pose_steps_below_tolerance",
+            None,
+            None,
+        ),
         ([0.001] * 2, 2, "step_budget_reached", None, None),
         # Damped harder than the initial damping, a small proposal is checked again at the
         # initial damping: damping can hide a step the fit still wants to take...
@@ -127,6 +133,7 @@ def test_stopping_requires_two_small_proposals_at_the_initial_damping(
         pad_precision=lambda value: value,
         pad_poses=lambda value: value,
         sensitivity=lambda _: (1.0, np.ones(1, bool)),
+        parameters=SimpleNamespace(local=()),  # no per-view columns: the photon scale stands
         linearize=lambda *_: (
             jnp.zeros(1),
             jnp.ones(1),

@@ -405,7 +405,9 @@ def fit_poses(
                 }
             )
         assert x is not None  # every schedule has at least one level
-        p, refinement = refine(x, p, y, precision, prior, ops=ops, sigma=cal["sigma"])
+        p, refinement = refine(
+            x, p, y, precision, prior, ops=ops, sigma=cal["sigma"], last=levels[-1]
+        )
         table, corrections = parameters.physical(np.asarray(p, np.float64), pose_scales)
         offsets, energy = (
             np.asarray(a)

@@ -86,6 +86,12 @@ When the sample moves between views, features are doubled or smeared by differen
 depending on when each view was taken. The translation fit follows smooth drift and sudden slips
 of the sample together.
 
+How far a view may move from its neighbours is read from the scan itself: from how much each
+view's own best position scatters from one view to the next. Error that differs from view to
+view and is not motion, such as the model error of a real scan, raises that scale, so the fit
+does not turn it into motion. A slip much larger than the scale is still followed, a little
+short where the scale is large.
+
 ![The balance wheel with drift and five slips between views: the screws are doubled. After fit="translations" the image matches the true geometry.](images/alignment-ladder-drift.png)
 
 The default, `fit="translations"`, removes the drift and slips in this example to 0.008 px in

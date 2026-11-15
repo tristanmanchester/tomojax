@@ -168,13 +168,16 @@ def _orthonormal_columns(matrix):
 class MotionPrior:
     """Translation drift/jumps, a physical rotation prior, and an exact global border.
 
-    Local translations have a free cubic drift spline and Student-t innovations.
-    Rotations have a zero-mean Gaussian size prior with ``rotation_sigma_deg``
-    standard deviation, in physical radians rather than numerical pixel units,
-    and Gaussian increments between neighbouring views at the translations'
-    curvature at zero (``weight / delta``), with no free drift: wobble is
-    continuous in the angle, so one view's rotation pays for leaving its
-    neighbour's as a translation step of the same edge displacement would.
+    Local translations have a free cubic drift spline and Student-t innovations,
+    w delta log(1 + J^2 / delta^2) per link: the restoring force 2 w delta J /
+    (delta^2 + J^2) is largest at J = delta, where it equals the weight w, so w
+    is the force the prior can exert against a view's own error (the threshold
+    the solver derives it as), and it falls for larger jumps. Rotations have a
+    zero-mean Gaussian size prior with ``rotation_sigma_deg`` standard
+    deviation, in physical radians rather than numerical pixel units, and
+    Gaussian increments between neighbouring views of curvature
+    ``weight / delta``, with no free drift: wobble is continuous in the angle.
+    The weight may be a pair, (translations', rotation increments').
     Multiplication by ``noise_sigma**2`` puts that prior in the unnormalised
     data loss's units. Shared centre and angle parameters are not penalised.
 
@@ -309,18 +312,19 @@ class MotionPrior:
 
     def _weights(self, p, weight):
         """Per link and local column: robust for translations, constant for rotations."""
+        weight, turn_weight = weight if isinstance(weight, tuple) else (weight, weight)
         edge = jnp.asarray(self.order.edge_scale)[:, None]
-        robust = (weight * self.delta / (self.delta**2 + self._squared_jumps(p)))[:, None]
-        return edge * (robust * self.translation_mask + weight / self.delta * self.rotation_mask)
+        robust = (2 * weight * self.delta / (self.delta**2 + self._squared_jumps(p)))[:, None]
+        rotation = turn_weight / self.delta * self.rotation_mask
+        return edge * (robust * self.translation_mask + rotation)
 
     def _value(self, p, weight):
-        jumps = (
-            0.5 * weight * self.delta * jnp.sum(jnp.log1p(self._squared_jumps(p) / self.delta**2))
-        )
+        weight, turn_weight = weight if isinstance(weight, tuple) else (weight, weight)
+        jumps = weight * self.delta * jnp.sum(jnp.log1p(self._squared_jumps(p) / self.delta**2))
         local = p[: self.local_size].reshape(self.n, self.nlocal)
         turns = jnp.diff(local, axis=0) * self.rotation_mask * self.order.jump_scale[:, None]
         size = self.rotation_precision * p[: self.local_size] ** 2
-        return jumps + 0.5 * (weight / self.delta * jnp.sum(turns**2) + jnp.sum(size))
+        return jumps + 0.5 * (turn_weight / self.delta * jnp.sum(turns**2) + jnp.sum(size))
 
     def _laplacian(self, p, w):
         shape = p.shape

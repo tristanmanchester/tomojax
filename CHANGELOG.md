@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Alignment no longer adds view-to-view motion that is not in the scan
+
+The motion prior's weight is a threshold: how hard it holds a view against that
+view's own error. It took that error from the photon noise, so on a real scan, where
+each view also carries model error of its own, the default call followed the error
+as if it were motion. On K11 54013, scored against an independent track of a ruby
+sphere in the projections, the default call (inner count 16, the refinement on)
+added view-to-view motion the sphere did not have:
+
+| working px, u / v | all | 2-10 cycles a turn | 11-100 | 101 and up |
+|---|---|---|---|---|
+| before | 0.180 / 0.122 | 0.036 / 0.060 | 0.125 / 0.079 | 0.125 / 0.071 |
+| now | 0.108 / 0.095 | 0.036 / 0.044 | 0.087 / 0.069 | 0.053 / 0.049 |
+
+The weight now takes that error from the views themselves: each view's own step,
+from the score and Gram matrix the solver already forms, and the spread of its
+second differences along the views, where real motion is smooth or rare and error is
+not. On clean data this comes out near the photon value, and alignment results on
+clean simulated scans are unchanged to within the stop tolerance (0.01 px): at most
+0.004 px worse, on cone and laminography rows already near 0.005 px. The Student-t
+innovations are also set so that their largest restoring force is the weight
+itself; before, it was half of it.
+
+A real slip is still followed, a little less closely where a scan's own error is
+large: on the noisy rock's half turn a 0.95 px slip is followed 16% short, where it
+was 9% short; on the other simulated rows within 9%. The refinement stage
+stays: at this weight it no longer puts motion back on the real scan and it improves
+several simulated rows. Rotation increments keep the photon-scaled weight.
+
 ### Alignment forms its shared level one view batch at a time
 
 The level the views share (5502a625) and the line search's value at unchanged poses

@@ -25,7 +25,8 @@ def test_innovation_gradient_and_center_curvature_match_the_coupled_normal(dofs)
         assert float(prior.value(zero, strength)) == 0
         np.testing.assert_array_equal(gradient(zero), zero)
         curvature = jax.jvp(gradient, (zero,), (pose,))[1]
-        expected = prior.apply(pose, jnp.full((views - 1, dofs), strength / delta))
+        # The tail is set so that its largest force is the weight: curvature 2 w / delta at zero.
+        expected = prior.apply(pose, jnp.full((views - 1, dofs), 2 * strength / delta))
         np.testing.assert_allclose(curvature, expected, rtol=2e-12, atol=2e-12)
 
 
@@ -51,9 +52,33 @@ def test_irls_quadratic_is_a_tangent_upper_bound_for_arbitrary_pose_changes():
             assert float(prior.value(jnp.asarray(trial), strength)) <= upper_bound + 1e-11
         np.testing.assert_allclose(
             anchor_value,
-            0.5 * strength * delta * np.log1p(squared_anchor / delta**2).sum(),
+            strength * delta * np.log1p(squared_anchor / delta**2).sum(),
             rtol=2e-12,
         )
+
+
+def test_the_largest_restoring_force_on_a_jump_is_the_weight():
+    # The weight is derived as a threshold: the force the prior can exert against a view's
+    # own error. The force on a link of size J is its IRLS weight times J; scaling a pose
+    # scales every J, so one link can be put at any size, and the force on it peaks at
+    # J = delta, where it equals the weight.
+    views, dofs, delta, strength = 25, 2, 0.02, 0.7
+    rng = np.random.default_rng(75)
+    with jax.enable_x64(True):
+        prior = MotionPrior(
+            views, np.zeros((views * dofs, 0)), knot_spacing=(6,) * dofs, delta=delta
+        )
+        pose = jnp.asarray(rng.normal(size=views * dofs))
+        jumps = np.sqrt(np.asarray(prior._squared_jumps(pose)))
+        link = int(np.argmax(jumps))
+        forces = []
+        for size in np.geomspace(0.01, 100, 81) * delta:
+            scaled = pose * (size / jumps[link])
+            weight = float(np.asarray(prior.weights(scaled, strength))[link, 0])
+            forces.append(weight * size)
+    assert max(forces) == pytest.approx(strength, rel=1e-12)
+    assert np.argmax(forces) == 40  # J = delta, the middle of the geometric sweep
+    assert forces[0] < 0.03 * strength and forces[-1] < 0.03 * strength
 
 
 def test_resolved_jumps_have_decreasing_force_and_coordinate_invariant_cost():

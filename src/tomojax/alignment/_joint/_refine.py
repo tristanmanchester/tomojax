@@ -202,7 +202,8 @@ class _Refinement:
         self.first = self.objective.stats(q, x, y, precision, self.delta)
         gram = self.first[1]
         fisher = jnp.median(jnp.trace(gram, axis1=1, axis2=2))
-        self.weight = float(sigma * jnp.sqrt(fisher) * np.sqrt(2 * np.log(ops.n)))
+        self.photon_weight = float(sigma * jnp.sqrt(fisher) * np.sqrt(2 * np.log(ops.n)))
+        self.weight: float | tuple[float, float] = self.photon_weight
         energy = self.objective.consistency(q, x, y, precision)
         self.anchor = relative_precision(energy, float(sigma))[:, None, None] * gram
 
@@ -254,14 +255,24 @@ def _rms(steps):
     return float(jnp.sqrt(jnp.mean(jnp.sum(steps**2, axis=1))))
 
 
-def refine(x, p, y, precision, prior, *, ops, sigma):
-    """Refine local innovations; the jointly fitted global values stay fixed."""
+def refine(x, p, y, precision, prior, *, ops, sigma, last=None):
+    """Refine local innovations; the jointly fitted global values stay fixed.
+
+    The translations' prior weight takes the ``last`` level's error scale (its
+    ``translation_noise`` in place of the photon standard error, with its ``pose_fisher``):
+    the same multiplier on this stage's photon weight, written so that sigma cancels.
+    Rotation increments keep the photon weight.
+    """
     if prior.nlocal == 0:
         return p, {"status": "no_local_parameters", "steps": []}
     c = prior.project_gauge(jnp.asarray(p, jnp.float64).reshape(-1))
     y = ops.pad_images(y)
     precision = ops.pad_precision(precision)
     problem = _Refinement(x, y, precision, prior, ops, sigma, c)
+    if last is not None and last["translation_noise"] is not None:
+        fisher = float(jnp.median(jnp.trace(problem.first[1], axis1=1, axis2=2)))
+        scale = float(np.sqrt(fisher * last["pose_fisher"] * 2 * np.log(ops.n)))
+        problem.weight = (last["translation_noise"] * scale, problem.photon_weight)
     stats = problem.first
     f, lm, status, steps = (
         float(stats[2] + problem.penalty(c)),

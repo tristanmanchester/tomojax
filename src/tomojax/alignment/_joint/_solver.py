@@ -20,8 +20,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from . import _common
-from . import _tv as tv
+from . import _common, _tv as tv
 from ._krylov import solve as krylov_solve
 from ._operators import profiled_residual, robust_value
 
@@ -193,7 +192,7 @@ class _Level:
         return float(self.lam * self.tv_value(x)) if self.lam else 0.0
 
     def initial_volume(self, q, lipschitz, iterations):
-        """FISTA from zero on the Huber initialization data term with the shared term, without TV."""
+        """FISTA from zero on the Huber initialization data term and the shared term, no TV."""
         ops, y, precision, delta = self.ops, self.y, self.precision, self.delta
         images = ops.common_images(q, precision)
         inverse, data_moments = self.inverse_gram, self.data_moments
@@ -412,6 +411,52 @@ def _undamped_proposal(level, step, x, c, linear, budget, pose_weight):
     return level.proposal(x, c, linear, budget.lm_initial, pose_weight)
 
 
+def _pose_weight(level, linear, sigma):
+    """The motion prior's weight from one linearisation, with the error scale it used.
+
+    The weight is a threshold: the views' median Fisher information F, times the
+    standard error of one view's step, times sqrt(2 log n). For the rotation
+    increments that standard error is the photon model's, sigma / sqrt(F). For the
+    translations it is taken from the data: each view's own step for each
+    translation column, d = g / F_cc (the column's score over its diagonal Gram
+    entry, the other columns held), and s = MAD / 0.6745 of the second differences
+    of d along the views, over sqrt(6) (a second difference of independent values
+    has six times their variance). Real motion is smooth or rare from one view to
+    the next; the error a fit must not follow (noise, and model error that differs
+    from view to view) is not. On clean data s comes out near the photon value;
+    where every view carries its own model error it is larger, and so is the weight.
+
+    Returns the weight ((translations', rotations') when both are fitted), s (None
+    without translation columns) and F.
+    """
+    ops = level.ops
+    _, _, sw, j, _, gram, residual, _ = linear
+    n, local = ops.n, ops.parameters.local
+    fisher = float(jnp.median(jnp.trace(gram, axis1=1, axis2=2)))
+    photon = float(sigma * np.sqrt(fisher) * np.sqrt(2 * np.log(n)))
+    translations = [i for i, dof in enumerate(local) if dof >= 3]
+    if not translations or n < 3:
+        return photon, None, fisher
+    w = ops.batch_precision(level.precision, ops.valid)
+    columns = jnp.asarray(translations)
+    scores = []
+    for start in range(0, n, ops.batch):  # a view slab at a time: the columns are stack-sized
+        stop = min(start + ops.batch, n)
+        res = jnp.asarray(sw[start:stop], jnp.float32) * profiled_residual(
+            residual[start:stop], w[start:stop]
+        )
+        jb = jnp.asarray(j[start:stop][:, columns], jnp.float32)
+        scores.append(jnp.einsum("vkij,vij->vk", jb, res, preferred_element_type=jnp.float32))
+    g = np.asarray(jnp.concatenate(scores), np.float64)
+    diagonal = np.diagonal(np.asarray(gram, np.float64), axis1=1, axis2=2)[:, translations]
+    d = g / np.where(diagonal > 0, diagonal, np.inf)
+    second = d[2:] - 2 * d[1:-1] + d[:-2]
+    spread = np.median(np.abs(second - np.median(second, axis=0)), axis=0) / 0.6745 / np.sqrt(6)
+    s = float(np.sqrt(np.mean(spread**2)))
+    weight = float(fisher * s * np.sqrt(2 * np.log(n)))
+    return (weight, photon) if len(translations) < len(local) else weight, s, fisher
+
+
 def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, delta, scales):
     """Fit the volume and the per-view pose parameters at one level.
 
@@ -448,8 +493,8 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
     x = jnp.where(observed, x, 0)
     del observed
     gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
-    fisher = jnp.trace(gram, axis1=1, axis2=2)
-    pose_weight = float(pose_sigma * jnp.sqrt(jnp.median(fisher)) * np.sqrt(2 * np.log(n)))
+    linear = (gx0, dd, sw, j, gr, gram, residual, common)
+    pose_weight, noise, fisher = _pose_weight(level, linear, pose_sigma)
     f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
     initial_objective = f
     history, lm, stable, status = [], budget.lm_initial, 0, "step_budget_reached"
@@ -457,9 +502,12 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
         if it:
             # Release the previous weights and columns first: two stack-sized sets
             # would not fit beside each other on a small device.
-            del gx0, dd, sw, j, gr, gram, residual, common
+            del gx0, dd, sw, j, gr, gram, residual, common, linear
             gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
-        linear = (gx0, dd, sw, j, gr, gram, residual, common)
+            linear = (gx0, dd, sw, j, gr, gram, residual, common)
+            held = pose_weight  # the weight follows the views' scatter; f is restated at it
+            pose_weight, noise, fisher = _pose_weight(level, linear, pose_sigma)
+            f += float(prior.value(c, pose_weight)) - float(prior.value(c, held))
         result = level.step(x, c, linear, lm, pose_weight, f)
         if result is None:
             status = "line_search_stalled"
@@ -502,7 +550,9 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
         "steps": history,
         "tv_weight": float(weight),
         "noise_sigma": float(pose_sigma),
-        "pose_prior_weight": float(pose_weight),
+        "pose_prior_weight": list(pose_weight) if isinstance(pose_weight, tuple) else pose_weight,
+        "translation_noise": noise,
+        "pose_fisher": fisher,
         "initial_objective": initial_objective,
         "final_objective": f,
         "final_data_objective": f - final_prior - final_image_prior,
