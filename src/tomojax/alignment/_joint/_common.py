@@ -39,21 +39,26 @@ def view_grams(precision):
 
 
 def profiled_views(precision):
-    """Whether the profile removes each view's offset and ramp: a view whose ramp is not
-    distinct from its offset (one measured row, or none) is left whole."""
+    """Whether the profile removes each view's offset and ramp.
+
+    A view whose ramp is not distinct from its offset (one measured row, or none) is left
+    whole.
+    """
     g00, g01, g11 = view_grams(precision)
     return g00 * g11 - g01 * g01 > 1e-12 * jnp.maximum(g00 * g11, 1e-300)
 
 
 def shared_weights(precision):
-    """The precision of the views the profile removes a level from; the others carry
-    their shared part already, unprofiled."""
+    """The precision of the views the profile removes a level from.
+
+    The others carry their shared part already, unprofiled.
+    """
     keep = profiled_views(precision)
-    return precision * keep.reshape(keep.shape + (1, 1)).astype(precision.dtype)
+    return precision * keep.reshape((*keep.shape, 1, 1)).astype(precision.dtype)
 
 
 def moments(residual, precision):
-    """b = [sum w r, sum w v r] over the profiled views of residuals (view, v, u)."""
+    """The moments [sum w r, sum w v r] over the profiled views of residuals (view, v, u)."""
     w, r = shared_weights(precision).astype(jnp.float64), residual.astype(jnp.float64)
     v = rows(r.shape[-2])
     return jnp.stack([jnp.sum(w * r), jnp.sum(w * v * r)])
@@ -118,10 +123,10 @@ class PoseSolve(NamedTuple):
     m: jax.Array
 
     @classmethod
-    def build(cls, solve, factor, common):
+    def build(cls, solve, factor, common) -> "PoseSolve":
         z = jnp.stack([solve(factor, common.poses[0]), solve(factor, common.poses[1])])
         return cls(z, jnp.linalg.pinv(common.gram + common.poses @ z.T))
 
-    def __call__(self, solve, factor, common, g):
+    def __call__(self, solve, factor, common, g) -> jax.Array:
         h = solve(factor, g)
         return h - self.z.T @ (self.m @ (common.poses @ h))

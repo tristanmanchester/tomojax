@@ -7,8 +7,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 # check-public-imports: allow-private
-from tomojax.alignment._joint import _projection
-from tomojax.alignment._joint._pose import MotionPrior
+from tomojax.alignment._joint import _pose, _projection
 
 # check-public-imports: allow-private
 from tomojax.alignment._joint._projection import (
@@ -324,7 +323,7 @@ def test_cone_gauge_keeps_the_recorded_magnification_for_orbits_at_different_hei
     scales = cone_parameter_scales(nominal, frames, grid, (1.0, 1.0))
     gauge = cone_gauge(nominal, scales, frames)
     with jax.enable_x64(True):
-        prior = MotionPrior(
+        prior = _pose.MotionPrior(
             2 * per,
             gauge,
             constraint=cone_gauge_constraint(nominal, scales, frames),
