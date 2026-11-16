@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Simulated data are projected in float32 on every device
+
+`tomojax simulate` and `tomojax.datasets.simulate` projected with a bfloat16 gather on GPUs
+(chosen by `tomojax.backends.default_gather_dtype`). Against float32 that put a repeatable
+error of 8.4e-4 relative RMS into noise-free simulated projections (a 64^3 Shepp phantom,
+parallel and laminography alike), where float32 rounding is 1e-7: **data simulated on a GPU
+before this change carry that error**, which matters wherever a method is scored against them
+at better than 1e-3. They are now projected in float32, as every reconstruction projects;
+on a 256^3, 720-view simulation that takes about 10-20% longer. `default_gather_dtype`, which
+nothing else used, is removed.
+
 ### An interrupted Zeiss scan loads its stored views
 
 An interrupted acquisition records its angles and exposures for the views it stored but its

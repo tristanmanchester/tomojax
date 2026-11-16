@@ -116,24 +116,6 @@ def test_invalid_views_per_batch_env_logs_selected_default(
     assert "Ignoring invalid TOMOJAX_MAX_VIEWS_PER_BATCH value" in caplog.text
 
 
-def test_gpu_compute_capability_probe_logs_subprocess_failure(
-    caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def raise_probe(*_args: object, **_kwargs: object) -> str:
-        raise RuntimeError("nvidia-smi missing")
-
-    _memory._gpu_compute_capability.cache_clear()
-    monkeypatch.setattr(_memory, "check_output_resolved_command", raise_probe)
-
-    with caplog.at_level(logging.DEBUG, logger="tomojax.backends._memory"):
-        capability = _memory._gpu_compute_capability()
-
-    assert capability is None
-    assert "CUDA compute capability probe failed" in caplog.text
-    assert "nvidia-smi missing" in caplog.text
-
-
 @pytest.mark.parametrize(("info", "expected"), [("MemAvailable: 512 kB", 524288), ("", 4096)])
 def test_host_capacity_includes_reclaimable_page_cache(monkeypatch, info, expected):
     monkeypatch.setattr(_memory.Path, "read_text", lambda _: info)

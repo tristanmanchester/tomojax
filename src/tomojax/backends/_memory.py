@@ -2,15 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from functools import cache
 import logging
 import math
 import os
 from pathlib import Path
 import re
 from typing import TYPE_CHECKING, cast
-
-from tomojax.backends._subprocesses import check_output_resolved_command
 
 if TYPE_CHECKING:
     from tomojax._typed_arrays import Device
@@ -350,103 +347,3 @@ def estimate_views_per_batch_info(
         fallback_used=False,
         fallback_reason=None,
     )
-
-
-def default_gather_dtype() -> str:
-    """Choose a default gather dtype based on the active JAX backend.
-
-    Returns "bf16" when the active accelerator supports bfloat16 gathers,
-    falls back to "fp16" on older GPUs that support float16 but not efficient
-    bfloat16, and otherwise returns "fp32". CPU or backend-detection failures
-    also fall back to "fp32".
-    """
-    backend = _current_backend()
-    if isinstance(backend, str) and backend.lower() in ("gpu", "tpu"):
-        if backend.lower() == "tpu":
-            return "bf16"
-        cc = _gpu_compute_capability()
-        if cc and cc < (8, 0):
-            if _device_supports_dtype("float16"):
-                return "fp16"
-            return "fp32"
-        # GPU: prefer bf16 if the device JIT supports it, else fp16/fp32.
-        if _device_supports_dtype("bfloat16"):
-            return "bf16"
-        if _device_supports_dtype("float16"):
-            return "fp16"
-    return "fp32"
-
-
-@cache
-def _device_supports_dtype(dtype_name: str) -> bool:
-    """Heuristic check whether the active accelerator can JIT kernels with `dtype`."""
-    try:
-        import jax  # type: ignore
-        import jax.numpy as jnp  # type: ignore
-    except Exception as exc:
-        LOG.debug(
-            "Could not import JAX while probing %s support; using fp32 fallback: %s",
-            dtype_name,
-            exc,
-        )
-        return False
-    try:
-        devs = jax.devices("gpu")
-    except Exception as exc:
-        LOG.debug(
-            "Could not list GPU devices while probing %s support; using fp32 fallback: %s",
-            dtype_name,
-            exc,
-        )
-        return False
-    if not devs:
-        return False
-    if devs[0].platform != "gpu":
-        return False
-    try:
-        # Simple kernel to trigger compilation in the requested dtype.
-        fn = jax.jit(lambda x: x + x)
-        dtype = getattr(jnp, dtype_name)
-        arr = jnp.ones((1,), dtype=dtype)
-        fn(arr).block_until_ready()
-        return True
-    except Exception as exc:
-        LOG.debug(
-            "JIT probe for %s support failed; using lower-precision fallback chain: %s",
-            dtype_name,
-            exc,
-        )
-        return False
-
-
-@cache
-def _gpu_compute_capability() -> tuple[int, int] | None:
-    """Return (major, minor) compute capability for the first CUDA device, if available."""
-    try:
-        output = check_output_resolved_command(  # nosec B603,B607
-            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
-            stderr=-3,
-            text=True,
-        )
-        first_line = output.strip().splitlines()[0]
-        parts = first_line.replace(" ", "").split(".")
-        if len(parts) >= 2:
-            major, minor = int(parts[0]), int(parts[1])
-            return major, minor
-    except Exception as exc:
-        LOG.debug("CUDA compute capability probe failed; using dtype JIT probe: %s", exc)
-    return None
-
-
-def _current_backend() -> str | None:
-    """Best-effort helper to query the active JAX backend name."""
-    try:
-        import jax  # type: ignore
-
-        backend = getattr(jax, "default_backend", lambda: None)()
-        if backend:
-            return backend
-        return os.environ.get("JAX_PLATFORM_NAME")
-    except Exception as exc:
-        LOG.debug("JAX backend probe failed; using fp32 gather default: %s", exc)
-        return None

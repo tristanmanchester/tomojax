@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax._data import NXTomoMetadata, save_nxtomo
-from tomojax.backends import default_gather_dtype
 from tomojax.core import progress_iter
 from tomojax.core.cone import cone_coefficients, cone_project
 from tomojax.core.geometry import (
@@ -271,9 +270,6 @@ def _project_phantom(
     geom: Geometry, grid: Grid, det: Detector, vol: jax.Array, beam: ConeBeam | None, n_views: int
 ) -> jax.Array:
     """Release projection workspaces before the caller allocates artefact buffers."""
-    # Choose a default mixed-precision gather on accelerators
-    gather = default_gather_dtype()
-
     # Fast path: build all poses and optionally vmapped/jitted projector
     T_all = stack_view_poses(geom, n_views)
     det_grid = get_detector_grid_device(det)
@@ -298,7 +294,6 @@ def _project_phantom(
                     det,
                     vol_in,
                     use_checkpoint=True,
-                    gather_dtype=gather,
                     det_grid=det_grid,
                 )
 
@@ -309,7 +304,7 @@ def _project_phantom(
         # Fallback path with per-view progress logging
         projs = []
         for i in progress_iter(range(n_views), total=n_views, desc="Simulate: views"):
-            p = forward_project_view(geom, grid, det, vol, view_index=i, gather_dtype=gather)
+            p = forward_project_view(geom, grid, det, vol, view_index=i)
             projs.append(p)
         proj = jnp.stack(projs, axis=0)
 

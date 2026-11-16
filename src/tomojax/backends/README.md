@@ -10,7 +10,6 @@ and accelerator capability probes.
 - `is_oom_error(exc)`
 - `estimate_views_per_batch(...)`
 - `estimate_views_per_batch_info(...)`
-- `default_gather_dtype()`
 - `CudaModuleCapability`
 - `resolve_cuda_module()`
 - `resolve_cuda_callable(...)`

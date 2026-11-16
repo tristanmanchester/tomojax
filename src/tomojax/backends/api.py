@@ -2,7 +2,6 @@
 
 from tomojax.backends._memory import (
     ViewsPerBatchEstimate,
-    default_gather_dtype,
     device_free_memory_bytes,
     estimate_views_per_batch,
     estimate_views_per_batch_info,
@@ -23,7 +22,6 @@ __all__ = [
     "CudaModuleCapability",
     "ViewsPerBatchEstimate",
     "check_output_resolved_command",
-    "default_gather_dtype",
     "device_free_memory_bytes",
     "estimate_views_per_batch",
     "estimate_views_per_batch_info",
