@@ -55,7 +55,7 @@
   },
   "code_lines": {
     "(modules)": 2907,
-    "_data": 2126,
+    "_data": 2130,
     "alignment": 3376,
     "backends": 522,
     "cli": 2402,
@@ -64,7 +64,7 @@
     "datasets": 1120,
     "forward": 789,
     "geometry": 908,
-    "io": 3798,
+    "io": 3800,
     "motion": 148,
     "nuisance": 232,
     "recon": 13591

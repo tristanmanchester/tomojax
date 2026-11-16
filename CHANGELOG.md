@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### A Zeiss or SkyScan grid derived from the detector follows binning
+
+The Zeiss and SkyScan readers built a grid from the detector's size and the voxel the file
+states, and put it on the record as if the file stated the grid, so `corrected(binning=)` kept
+the full-size grid: CuO_2 loaded with `binning=4` still reconstructed 2028^3 voxels. They now
+record the stated voxel and `grid_status` "derived", as the Nikon reader does; an unbinned load
+gives the same grid as before, and binning gives a quarter the samples at four times the voxel.
+`Scan.binned` still leaves the grid unchanged, as documented.
+
 ### A save that fails leaves the file it was replacing, and no partial file
 
 `tj.save` (and every NXtomo or NPZ write under it) opened its final name for writing. A save

@@ -618,3 +618,18 @@ def test_an_interrupted_scan_loads_its_stored_views_with_their_shifts(tmp_path):
     write_ole(tmp_path / "scan.txrm", streams)
     with pytest.raises(ValueError, match="5 x-shifts for 3 stored images"):
         tj.load_frames(tmp_path / "scan.txrm", darks=0)
+
+
+def test_the_grid_derived_from_the_detector_follows_binning(tmp_path):
+    # The reader put the grid it derives from the detector (image size, recorded pixel size)
+    # on the record as if the file stated it, so binning kept the full-size grid: CuO_2's
+    # corrected(binning=4) reconstructed 2028^3 voxels. It is derived, as Nikon's is.
+    counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
+    write_ole(tmp_path / "scan.txrm", _streams(counts, np.full((8, 12), 2500, "<f4")))
+    frames = tj.load_frames(tmp_path / "scan.txrm", darks=0)
+    assert frames.geometry.grid == tj.Grid(12, 12, 8, 0.01, 0.01, 0.01)  # as before
+    meta = frames.source.geometry_metadata
+    assert meta["grid_status"] == "derived" and meta["voxel_size"] == pytest.approx([0.01] * 3)
+    binned = frames.corrected(binning=4)
+    assert (binned.grid.nx, binned.grid.ny, binned.grid.nz) == (3, 3, 2)
+    assert (binned.grid.vx, binned.grid.vy, binned.grid.vz) == pytest.approx((0.04, 0.04, 0.04))

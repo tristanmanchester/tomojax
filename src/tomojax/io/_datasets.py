@@ -654,6 +654,7 @@ def _merge_geometry_metadata_dict(
         "cone_beam",
         "cone_segments",
         "trajectory_lengths",
+        "voxel_size",
     ):
         value = geometry_metadata.get(key)
         if value is not None:

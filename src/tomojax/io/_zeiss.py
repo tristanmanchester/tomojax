@@ -14,7 +14,7 @@ import numpy as np
 import olefile
 
 from tomojax._data import FrameStack
-from tomojax.geometry import Detector, Grid
+from tomojax.geometry import Detector
 
 from ._datasets import ProjectionDataset
 from ._view_offsets import DISTANCES_KEY, OFFSETS_KEY, with_view_offsets
@@ -396,6 +396,9 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
     ]
     if fields:  # the vendor's own corrections, applied with the poses (tj.load poses=False omits)
         metadata["vendor_corrections"] = {"source": "zeiss", "fields": fields, "applied": True}
+    if pixel is not None:  # stated by the file; the grid's shape comes from the detector
+        metadata["grid_status"] = "derived"
+        metadata["voxel_size"] = [pixel, pixel, pixel]
     metadata["zeiss"] = {
         "path": str(path),
         "declared_view_count": int(_scalar(container, "ImageInfo/NoOfImages")),
@@ -408,7 +411,7 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
     record = ProjectionDataset(
         projections=np.broadcast_to(np.float32(0), (count, rows, cols)),
         angles=angles,
-        grid=None if pixel is None else Grid(cols, cols, rows, pixel, pixel, pixel),
+        grid=None,
         geometry_type="cone" if cone else "parallel",
         geometry_metadata=metadata,
         source_path=str(path),

@@ -174,6 +174,10 @@ def _grid_from_meta(
             nx = int(detector.nu)
             ny = int(detector.nu)
             nz = int(detector.nv)
+        stated = meta.get("voxel_size")
+        if stated is not None:  # the file states the voxel; the shape follows the detector
+            vx, vy, vz = (float(v) for v in cast("Sequence[float]", stated))
+            return Grid(nx=nx, ny=ny, nz=nz, vx=vx, vy=vy, vz=vz)
         # A cone beam magnifies the axis plane: one voxel per detector pixel there.
         # Segmented scans sample at their most magnified arrangement.
         segments = cast("list[dict[str, Any]]", meta.get("cone_segments") or [])
