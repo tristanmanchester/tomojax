@@ -9,7 +9,9 @@ states, and put it on the record as if the file stated the grid, so `corrected(b
 the full-size grid: CuO_2 loaded with `binning=4` still reconstructed 2028^3 voxels. They now
 record the stated voxel and `grid_status` "derived", as the Nikon reader does; an unbinned load
 gives the same grid as before, and binning gives a quarter the samples at four times the voxel.
-`Scan.binned` still leaves the grid unchanged, as documented.
+`Scan.binned` now follows the same rule: binning averages detector pixels, a grid derived from
+the detector follows it and a grid the file or the caller stated is kept, so `tj.load(path).binned(4)`
+and `corrected(binning=4)` give the same grid. For a fine grid from a binned detector, pass `grid=`.
 
 ### A save that fails leaves the file it was replacing, and no partial file
 

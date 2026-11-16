@@ -423,11 +423,12 @@ class Scan:
     def binned(self, factor: int) -> Scan:
         """The scan with ``factor x factor`` detector pixels averaged into one.
 
-        Use it when the detector samples finer than the reconstruction grid (a
-        pixel's footprint at the rotation axis smaller than a voxel): projection
-        cost falls by ``factor**2`` for little change in the volume. Pixels that
-        do not fill a block at the detector's edges are dropped, and the
-        detector centre moves to match.
+        Projection cost falls by ``factor**2``. Pixels that do not fill a block
+        at the detector's edges are dropped, and the detector centre moves to
+        match. A grid the library derived from the detector follows it, as with
+        ``Frames.corrected(binning=)``; a grid the file or the caller stated is
+        kept. For a fine grid from a binned detector, pass ``grid=`` to
+        ``tj.reconstruct``.
 
         Parameters
         ----------
@@ -437,7 +438,7 @@ class Scan:
         Returns
         -------
         Scan
-            Block-averaged projections and detector geometry; the grid is unchanged.
+            Block-averaged projections and detector geometry; a derived grid follows.
 
         Raises
         ------
@@ -449,7 +450,12 @@ class Scan:
         if factor == 1:
             return self
         binned = mean_detector_pixels(np.asarray(self.projections, np.float32), factor)
-        return replace(self, projections=binned, geometry=binned_geometry(self.geometry, factor))
+        from tomojax._loading_geometry import frame_output_grid
+
+        geometry = frame_output_grid(
+            binned_geometry(self.geometry, factor), self.source, binning=factor
+        )
+        return replace(self, projections=binned, geometry=geometry)
 
     def to_astra(self) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
         """Export projections and cone-beam geometry for ASTRA.

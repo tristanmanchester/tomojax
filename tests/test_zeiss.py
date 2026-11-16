@@ -633,3 +633,20 @@ def test_the_grid_derived_from_the_detector_follows_binning(tmp_path):
     binned = frames.corrected(binning=4)
     assert (binned.grid.nx, binned.grid.ny, binned.grid.nz) == (3, 3, 2)
     assert (binned.grid.vx, binned.grid.vy, binned.grid.vz) == pytest.approx((0.04, 0.04, 0.04))
+
+
+def test_binning_a_scan_follows_a_derived_grid_and_keeps_a_stated_one(tmp_path):
+    # Scan.binned kept every grid, corrected(binning=) only stated ones: tj.load(path).binned(4)
+    # on CuO_2 kept 2028^3 voxels and did not finish in two hours. One rule for both: a grid
+    # the library derived from the detector follows binning; one the file or caller stated stays.
+    counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
+    write_ole(tmp_path / "scan.txrm", _streams(counts, np.full((8, 12), 2500, "<f4")))
+    path = tmp_path / "scan.txrm"
+    derived = tj.load(path, darks=0).binned(4).grid
+    assert derived == tj.load_frames(path, darks=0).corrected(binning=4).grid
+    assert (derived.nx, derived.ny, derived.nz) == (3, 3, 2)
+    stated = tj.load_frames(path, darks=0).geometry  # K11's case: the caller states a geometry
+    kept = tj.load(path, darks=0, geometry=stated).binned(4).grid
+    assert kept == stated.grid
+    plain = tj.Scan(np.ones((3, 8, 12), np.float32), stated)  # built by the caller: stated
+    assert plain.binned(4).grid == stated.grid
