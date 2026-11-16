@@ -23,14 +23,14 @@ class HostFista:
     def __init__(
         self, problem: Any, config: Any, *, metric, noise_scale=None, initial=None, out=None
     ) -> None:
-        from ._host_arrays import automatic_host_output
+        from ._host_arrays import validate_host_arrays
 
         self.problem, self.cfg, self.metric = problem, config, metric
         self.noise_scale = noise_scale
         self.plan, self.xp = problem.plan, problem.engine.xp
         grid = self.plan.grid
         shape = (grid.nz, grid.ny, grid.nx)
-        x = automatic_host_output(problem.data, out, shape, 3, "fista_tv")
+        x = validate_host_arrays(problem.data, out, shape, "fista_tv", copies=3)
         directory = scratch_directory(x)
         arrays = [x, host_volume(shape, directory), host_volume(shape, directory)]
         self.X, self.Z, self.G = [problem.volume(array) for array in arrays]

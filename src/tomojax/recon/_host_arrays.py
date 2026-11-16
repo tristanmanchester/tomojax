@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
-import mmap
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     import jax
 
 
@@ -49,21 +45,6 @@ def _mapped_storage(array: np.ndarray) -> np.memmap | None:
     return None
 
 
-def empty_host_array(shape: tuple[int, int, int], order: Literal["C", "F"]) -> np.ndarray:
-    """Own demand-paged host storage independently of the NumPy allocation arena.
-
-    The ndarray retains the anonymous mapping through its base, including when
-    only a view survives. There is no file, process-wide allocator change or
-    eager huge-page advice; pages are populated as slabs are written.
-    """
-    storage = mmap.mmap(
-        -1,
-        math.prod(shape) * np.dtype(np.float32).itemsize,
-        flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS,
-    )
-    return np.ndarray(shape, dtype=np.float32, buffer=storage, order=order)
-
-
 def validate_host_arrays(
     projections: np.ndarray | jax.Array,
     out: np.ndarray | None,
@@ -71,15 +52,16 @@ def validate_host_arrays(
     context: str = "fbp_host",
     *,
     device_input: bool = False,
-    order: Literal["C", "F"] = "C",
-    allocate: Callable[[tuple[int, int, int], Literal["C", "F"]], np.ndarray] | None = None,
+    copies: int = 1,
 ) -> np.ndarray:
     """Check host input/output arrays and allocate the output volume if needed.
 
     ``device_input`` also accepts a JAX array, which cannot overlap host storage.
-    ``order`` selects storage only when allocating; caller-owned output is kept.
-    ``allocate`` can supply privately owned host storage after input validation.
-    Mapped inputs and outputs must use separate files, including buffer views.
+    Without ``out`` the volume comes from :func:`tomojax.core.host_volume.host_array`:
+    in memory, or a temporary file when ``copies`` volumes (the output and the
+    work volumes a solver keeps beside it) exceed half of host memory. Caller-owned
+    output is kept. Mapped inputs and outputs must use separate files, including
+    buffer views.
     """
     # Host-only inverses must not initialize the JAX import stack merely to
     # reject device arrays. Device callers already have JAX loaded.
@@ -93,11 +75,9 @@ def validate_host_arrays(
         kinds = "NumPy or JAX" if device_input else "NumPy"
         raise TypeError(f"{context}: projections must be a real {kinds} array")
     if out is None:
-        return (
-            np.empty(shape, dtype=np.float32, order=order)
-            if allocate is None
-            else allocate(shape, order)
-        )
+        from tomojax.core.host_volume import host_array
+
+        return host_array(shape, copies=copies)
     if not isinstance(out, np.ndarray) or out.shape != shape or out.dtype != np.float32:
         raise ValueError(f"{context}: out must be a float32 NumPy array with the volume shape")
     if not out.flags.writeable:
@@ -144,30 +124,3 @@ def validate_host_views(array: np.ndarray, *, weights: np.ndarray | None = None)
             finite = np.isfinite(np.asarray(chunk, dtype=np.float32)).all()
         if not finite:
             raise ValueError("streamed projections must be finite in FP32")
-
-
-def automatic_host_output(
-    data: np.ndarray,
-    out: np.ndarray | None,
-    shape: tuple[int, int, int],
-    volumes: int,
-    context: str,
-) -> np.ndarray:
-    """Allocate host state in RAM when it fits, otherwise in unlinked temporary files.
-
-    A solver allocates its work files beside the returned mapped output. The
-    standard temporary directory (and therefore TMPDIR) chooses the disk; the
-    result owns its file until its last reference is released. Caller-supplied
-    storage and small resident solves are unchanged.
-    """
-    from tomojax.core.host_volume import host_array
-
-    if out is not None:
-        return validate_host_arrays(data, out, shape, context)
-    return validate_host_arrays(
-        data,
-        out,
-        shape,
-        context,
-        allocate=lambda shape, _order: host_array(shape, copies=volumes),
-    )

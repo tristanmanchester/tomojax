@@ -58,7 +58,11 @@ def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> n
         If ``directory`` has less free space than the array needs.
     """
     if directory is None:
-        return np.zeros(shape, np.float32, order="C")
+        # Anonymous pages, zero and populated as they are written: no NumPy arena and no
+        # eager huge-page advice (712cab8e: host FBP 16.1 s against 22.1 s on I12).
+        size = max(1, math.prod(shape) * np.dtype(np.float32).itemsize)
+        storage = mmap.mmap(-1, size, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)
+        return np.ndarray(shape, np.float32, buffer=storage, order="C")
     _require_room(shape, directory)
     with tempfile.NamedTemporaryFile(dir=directory) as handle:
         array = np.memmap(handle.name, np.float32, "w+", shape=shape, order="C")

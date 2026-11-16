@@ -624,19 +624,26 @@ class ConeProblem:
     retain: bool = True
 
     def iterate(
-        self, initial: Any, out: np.ndarray | None, context: str, *, written: bool = False
+        self,
+        initial: Any,
+        out: np.ndarray | None,
+        context: str,
+        *,
+        written: bool = False,
+        copies: int = 1,
     ) -> Any:
         """The solver's iterate holding ``initial`` (zero for None): ``out``, device or host.
 
         With ``written`` the solver writes every voxel before reading any, so
-        a zero start is not written to host storage.
+        a zero start is not written to host storage. ``copies`` counts the iterate
+        and the work volumes the solver will keep beside it.
         """
         grid = self.plan.grid
         shape = (grid.nz, grid.ny, grid.nx)
         if out is not None or not self.on_device:
             # A row reader holds no storage that could overlap ``out``.
             data = np.empty(0, np.float32) if isinstance(self.data, RowReader) else self.data
-            target = validate_host_arrays(data, out, shape, context, order="C")
+            target = validate_host_arrays(data, out, shape, context, copies=copies)
             if initial is None and written:
                 return target
             return fill(target, None if initial is None else np.asarray(initial))
@@ -647,13 +654,13 @@ class ConeProblem:
                 target[z0:z1] = xp.asarray(np.asarray(initial[z0:z1], np.float32))
         return target
 
-    def work(self, out: np.ndarray | None) -> Any:
-        """A zeroed work volume beside the iterate: device, file beside ``out``, or host."""
+    def work(self, iterate: Any) -> Any:
+        """A zeroed work volume beside ``iterate``: on the device, or in its host storage."""
         grid = self.plan.grid
         shape = (grid.nz, grid.ny, grid.nx)
-        if self.on_device and out is None:
+        if not isinstance(iterate, np.ndarray):
             return self.engine.xp.zeros(shape, self.engine.xp.float32)
-        return host_volume(shape, scratch_directory(out))
+        return host_volume(shape, scratch_directory(iterate))
 
     def result(self, volume: Any) -> Any:
         """The returned volume: a JAX array for a device volume, otherwise ``volume``.

@@ -1,7 +1,9 @@
 """Public reconstruction keeps oversized volumes on the host and fills caller storage."""
 
+from collections import namedtuple
 from dataclasses import replace
 import importlib
+import tempfile
 
 import jax
 import jax.numpy as jnp
@@ -10,6 +12,7 @@ import pytest
 
 import tomojax as tj
 import tomojax.backends
+import tomojax.backends.api
 from tomojax.backends.host_stream import host_buffer, read_block, should_stream, write_block
 
 
@@ -104,6 +107,34 @@ def test_the_default_reconstructs_a_posed_laminography_scan_whose_volume_is_on_t
     np.testing.assert_allclose(
         actual.volume, expected.volume, atol=1e-5 * float(np.abs(expected.volume).max())
     )
+
+
+@pytest.mark.parametrize("kind", ["parallel", "cone"])
+def test_a_host_volume_too_large_for_memory_is_held_in_a_temporary_file(
+    tmp_path, monkeypatch, kind
+):
+    # I13 159815 reconstructs to a 56 GB volume on a 30 GB machine: FBP's host slabs were
+    # written into anonymous memory, which the kernel kills when it runs out. The volume
+    # follows the corrected stack's rule: a temporary file past half of host memory.
+    from tomojax.core.host_volume import scratch_directory
+
+    scan = _scan(kind)
+    host = importlib.import_module("tomojax.recon.fbp_host")
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda **kwargs: 4096)
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda **kwargs: 4096)
+    expected = tj.reconstruct(scan)  # host slabs, in memory
+    assert expected.method == "fbp" and expected.info["host_slabs"]
+    assert scratch_directory(expected.volume) is None and "temporary_file" not in expected.info
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(tomojax.backends.api, "host_available_memory_bytes", lambda: 1024)
+    actual = tj.reconstruct(scan)
+    assert scratch_directory(actual.volume) == tmp_path
+    assert actual.info["temporary_file"] == str(tmp_path) and not list(tmp_path.iterdir())
+    np.testing.assert_array_equal(np.asarray(actual.volume), np.asarray(expected.volume))
+    usage = namedtuple("usage", "total used free")
+    monkeypatch.setattr("tomojax.core.host_volume.shutil.disk_usage", lambda _: usage(1, 1, 0))
+    with pytest.raises(MemoryError, match=r"TMPDIR"):
+        tj.reconstruct(scan)
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "cone", "fourier"])

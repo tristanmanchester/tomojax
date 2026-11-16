@@ -815,7 +815,7 @@ def fdk_host(
         projections, detector, geometry=geometry, context="fdk_host projections"
     )
     ordered_arc(grouped_angles(geometry, n_views)[0])
-    result = validate_host_arrays(projections, out, (nz, ny, nx), "fdk_host", order="C")
+    result = validate_host_arrays(projections, out, (nz, ny, nx), "fdk_host")
     devices = as_devices(cfg.fdk.devices) or (None,)
     if depth is None:
         # Every worker runs slabs of one depth: size them for the smallest device.

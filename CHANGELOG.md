@@ -66,6 +66,14 @@ solver's work volume on a `TMPDIR` without room (a small RAM disk) ended the pro
 a bus error once the disk filled; now a `MemoryError` gives the size, the memory and free
 space, and the ways out (`TMPDIR`, `binning=`, `load_frames(...).selected(...)`).
 
+A reconstruction's volume follows the same rule. FBP, FDK and Fourier wrote their host
+slabs into anonymous memory, and FDK and MLEM into `np.empty`, whatever the size, so a
+volume larger than memory (I13 159815's is about 56 GB) was killed the same way. Every
+automatic output now comes from the one rule, counting the work volumes a solver keeps
+beside it (accelerated SIRT's work volume also followed the caller's `out=`, so it stayed
+in memory beside a file-backed iterate). `info["temporary_file"]` names the directory of
+the unnamed file when the volume is in one; a supplied `out=` is unchanged.
+
 ### `tj.reconstruct(scan)` reconstructs a laminography scan with FBP
 
 The automatic choice for laminography and tilted-axis scans was nonnegative least

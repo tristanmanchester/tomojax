@@ -27,9 +27,15 @@ temporary directory (`TMPDIR`), and a NumPy memmap is returned in its place.
 | Array | Held in a temporary file when |
 |---|---|
 | The corrected stack `tj.load` and `Frames.corrected` return | the stack is more than half of available host memory |
-| A solver's output and work volumes (CGLS, FISTA-TV host slabs) | those volumes together are more than half of it |
+| A reconstruction's volume in host slabs (FBP, FDK, Fourier, MLEM, SIRT) | the volume is more than half of available host memory |
+| A solver's output and the work volumes it keeps (CGLS, FISTA-TV, accelerated SIRT host slabs) | those volumes together are more than half of it |
 
-`tj.load` logs when it holds the stack in a file, and where. A full-size
+`tj.load` logs when it holds the stack in a file, and where; `tj.reconstruct`
+logs it for the volume and records the directory as `info["temporary_file"]`.
+Such a file has no name: it is deleted when the array is released, so keep the
+volume with `tj.save`, or give `out=` a memmap of your own file
+(`np.lib.format.open_memmap("volume.npy", "w+", np.float32, shape)`) to write it
+straight there. A volume passed as `out=` is never moved. A full-size
 synchrotron scan does this on an ordinary workstation: I13 159815, 3301 frames
 of 2560 x 2160, is 73 GB corrected. The file is created only if `TMPDIR` has
 room for all of it; otherwise a `MemoryError` gives the size, the memory and

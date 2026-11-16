@@ -28,7 +28,7 @@ from tomojax.core.host_volume import fill, host_volume, scratch_directory
 
 from ._cgls_stopping import precision_stalled, termination
 from ._cone_slabs import Batch, RowReader, cone_problem, host_projections, host_volumes
-from ._host_arrays import automatic_host_output
+from ._host_arrays import validate_host_arrays
 from ._quadratic import gradient_normal
 from ._view_statistics import ViewStatistics
 
@@ -134,7 +134,7 @@ class _HostCGLS:
         shape = (grid.nz, grid.ny, grid.nx)
         data = np.empty(0, np.float32) if isinstance(problem.data, RowReader) else problem.data
         self.zero = initial is None
-        self.x = automatic_host_output(data, out, shape, 4, "cgls")
+        self.x = validate_host_arrays(data, out, shape, "cgls", copies=4)
         if out is not None or initial is not None:
             fill(self.x, initial)
         work = [host_volume(shape, scratch_directory(self.x)) for _ in range(3)]

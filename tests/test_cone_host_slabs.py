@@ -467,3 +467,38 @@ def test_cuda_roundoff_test_matches_the_host_one_without_slab_temporaries():
         host = JaxEngine(grid, detector, "jax").moves(step, current)
         device = CudaEngine(grid, detector).moves(cp.asarray(step), cp.asarray(current))
         assert host is device is expected
+
+
+def test_accelerated_sirt_holds_its_iterate_and_work_volume_by_their_total(
+    host, monkeypatch, tmp_path
+):
+    # The storage rule counts the copies a solver holds: accelerated SIRT keeps a work
+    # volume beside its iterate. With host memory between one and two volumes' worth of
+    # twice their size, the iterate alone would fit but both do not: both go to files in
+    # TMPDIR, the work volume beside the iterate, and the result is unchanged.
+    import tempfile
+
+    import tomojax.backends.api
+    from tomojax.core import host_volume
+
+    host(2)
+    geometry = _geometry("cone")
+    data = _data(geometry)
+    config = SIRTConfig(iterations=4, acceleration=True, relaxation=0.9)
+    expected, _ = sirt(geometry, GRID, DETECTOR, data, config=config)
+    volume = 4 * GRID.nx * GRID.ny * GRID.nz
+    places = []
+    made = host_volume.host_volume
+
+    def recording(shape, directory=None):
+        places.append(directory)
+        return made(shape, directory)
+
+    monkeypatch.setattr(host_volume, "host_volume", recording)
+    monkeypatch.setattr(_cone_slabs, "host_volume", recording)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(tomojax.backends.api, "host_available_memory_bytes", lambda: 3 * volume)
+    actual, _ = sirt(geometry, GRID, DETECTOR, data, config=config)
+    assert places == [tmp_path, tmp_path], places  # the iterate, then its work volume
+    assert host_volume.scratch_directory(actual) == tmp_path
+    assert _relative(actual, expected) < 1e-6

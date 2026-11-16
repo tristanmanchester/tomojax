@@ -17,6 +17,7 @@ from __future__ import annotations
 from contextlib import closing, contextmanager
 from dataclasses import is_dataclass, replace
 import json
+import logging
 from typing import TYPE_CHECKING, Any, Literal, cast
 import warnings
 
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from tomojax.recon.api import MethodConfig
 
 type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
+LOG = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------------- files
@@ -405,6 +407,13 @@ def reconstruct(
         warm_start=bool(warm_start),
         out=out,
     )
+    from tomojax.core.host_volume import scratch_directory
+
+    directory = None if out is not None else scratch_directory(volume)
+    if directory is not None:  # more than half of host memory: an unlinked file in TMPDIR
+        info = {**info, "temporary_file": str(directory)}
+        LOG.info("The %.1f GiB volume is held in a temporary file in %s, as more than half of "
+                 "host memory", volume.nbytes / 2**30, directory)  # fmt: skip
     return Reconstruction(volume=volume, scan=scan, method=method, info=info)
 
 

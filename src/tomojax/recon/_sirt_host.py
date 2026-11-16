@@ -100,7 +100,8 @@ class _HostSIRT:
         self.lower, self.upper = (np.float32(b) for b in bounds)
         # A zero start is neither stored nor projected: the first sweep writes every voxel.
         self.zero = initial is None and self.lower <= 0 <= self.upper
-        self.x = problem.iterate(initial, out, "sirt", written=self.zero)
+        copies = 2 if cfg.acceleration else 1  # the iterate, and its momentum point
+        self.x = problem.iterate(initial, out, "sirt", written=self.zero, copies=copies)
         self.support = (
             None if cfg.support is None else np.broadcast_to(np.asarray(cfg.support) != 0, shape)
         )
@@ -119,7 +120,7 @@ class _HostSIRT:
         self.volume = problem.volume(self.x)
         self.point = self.volume
         if cfg.acceleration:
-            work = problem.work(out)
+            work = problem.work(self.x)
             self.point = problem.volume(work if self.zero else fill(work, self.x))
         self.relaxation, self.momentum = np.float32(cfg.relaxation), np.float32(0)
         self.accelerated = cfg.acceleration
