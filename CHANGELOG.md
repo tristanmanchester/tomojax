@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### The correction record reports counts above the camera's stated linear range
+
+A Zeiss file states the top of its camera's linear range (`MaxLinearRange`, 45 000 on
+every scan here) and holds its references inside it, but not its views: 21 of the 84 scans
+on disk have view counts above it, and 8 have saturated air, which corrects to a false
+absorption (about 0.33 on CuO_2). The `flat_dark` record now gives the range, where the file
+states it, the fraction of counts above it and the line integral where it ends, counted in
+the batches the correction already runs, and `tj.load` warns when any count lies above it.
+No value changes. `Frames` gains `linear_limit` for it.
+
 ### A Zeiss scan whose camera removed the dark loads without `darks=`
 
 Every Zeiss scan on disk here (84 of 84) records

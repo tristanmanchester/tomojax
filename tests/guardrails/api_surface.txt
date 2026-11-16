@@ -55,6 +55,7 @@ class tomojax.Frames(
         exposure_times: 'np.ndarray | float | None' = None,
         flat_exposure_times: 'np.ndarray | float | None' = None,
         dark_source: 'str | None' = None,
+        linear_limit: 'tuple[float, str] | None' = None,
         name: 'str' = 'sample',
         source: 'ProjectionDataset | None' = None,
     ) -> None

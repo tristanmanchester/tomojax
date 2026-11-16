@@ -108,11 +108,23 @@ rates. Multiple embedded references are interpolated at their acquisition
 timestamps. Raw pixels remain unchanged. If supplying calibration arrays rather
 than XRM files, also pass their `flat_exposure_times=` in seconds.
 If no flat is available, supply the measured open-beam level as `flats=`; one is not inferred
-from the detector's bit depth. If no
-dark reference is stored, supply measured darks
-with `--darks` or `load_frames(..., darks=...)`; absent dark calibration is an
-error, not an assumed zero. The examples below explicitly choose zero for
-already dark-corrected counts.
+from the detector's bit depth. A file that records
+`AcquisitionSettings/CameraStaticBackground` = 1 had its dark removed by the camera
+and needs no dark; otherwise, if no dark reference is stored, supply measured darks
+with `--darks` or `load_frames(..., darks=...)`: absent dark calibration is an
+error, not an assumed zero.
+
+The camera states the top of its linear range
+(`ConfigureBackup/ConfigCamera/Camera 1/MaxLinearRange`, 45 000 counts on the scans
+measured here). Zeiss holds the references inside it but not the views, so a long
+exposure can put the bright parts of a view, usually the air beside the sample, above
+it or into saturation. The `flat_dark` correction record gives the range, the fraction
+of counts above it, and `linear_limit_line_integral`, the line integral where the range
+ends; `tj.load` warns when any count lies above it. Line integrals below that value are
+unreliable, and saturated air reads as absorbing: on CuO_2 (6 s views, 2.8 s
+references, 52% of counts above the range) air corrects to about 0.33 instead of 0,
+which the reconstruction carries as a false background around the sample. The values
+are not changed.
 
 This is a coarse, whole-volume CPU preview. It keeps every eighth view, bins
 16 x 16 detector pixels and resamples the original physical volume to 64³ voxels.

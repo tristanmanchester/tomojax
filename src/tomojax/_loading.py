@@ -235,6 +235,9 @@ class Frames:
     dark_source : str or None, optional
         Where the file states that the instrument removed the dark before writing the
         counts (``darks`` is then a zero frame, and the correction record names it).
+    linear_limit : tuple of (float, str) or None, optional
+        The camera's stated upper count of its linear range and where the file states
+        it. Counts above it are reported in the correction record, not changed.
     name : str, optional
         Sample name.
     source : ProjectionDataset or None, optional
@@ -256,6 +259,7 @@ class Frames:
     exposure_times: np.ndarray | float | None = None
     flat_exposure_times: np.ndarray | float | None = None
     dark_source: str | None = None
+    linear_limit: tuple[float, str] | None = None
     name: str = "sample"
     source: ProjectionDataset | None = field(default=None, compare=False)
 
@@ -343,6 +347,7 @@ class Frames:
             flat_exposure_times=self.flat_exposure_times,
             darks=self.darks,
             dark_source=self.dark_source,
+            linear_limit=self.linear_limit,
             white_level=self.white_level,
             steps=steps,
             epsilon=epsilon,
@@ -841,6 +846,7 @@ def _acquisition_frames(
         exposure_times=found.exposure_times,
         flat_exposure_times=found.flat_exposure_times,
         dark_source=found.dark_source,
+        linear_limit=found.linear_limit,
         name=record.sample_name or "sample",
         source=record,
     )

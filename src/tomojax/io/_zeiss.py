@@ -160,6 +160,7 @@ def _values(container: Any, name: str, dtype: str) -> np.ndarray:
 
 
 _DARK = "AcquisitionSettings/CameraStaticBackground"
+_LINEAR = "ConfigureBackup/ConfigCamera/Camera 1/MaxLinearRange"
 
 
 def _scalar(container: Any, name: str, dtype: str = "<u4") -> float:
@@ -444,6 +445,8 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
         # The camera subtracted its static background (the dark) before writing the counts.
         removed = container.exists(_DARK) and _scalar(container, _DARK, "<i4") == 1
         dark_source = f"the instrument ({_DARK} = 1)" if removed else None
+        linear = container.exists(_LINEAR)
+        linear_limit = (float(_scalar(container, _LINEAR, "<i4")), _LINEAR) if linear else None
     return RawAcquisition(
         record,
         counts,
@@ -454,4 +457,5 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
         flat_exposure_times=None if flats is None else flats.exposure_times,
         darks=None if dark_source is None else np.zeros((1, *counts.image_shape), np.float32),
         dark_source=dark_source,
+        linear_limit=linear_limit,
     )

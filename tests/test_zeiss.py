@@ -543,3 +543,54 @@ def test_a_dark_the_instrument_removed_is_declared_by_the_file(tmp_path, flag):
     assert "AcquisitionSettings/CameraStaticBackground" in fields.settings["dark_removed_by"]
     (given,) = [c for c in tj.load(path, darks=100).corrections if c.name == "flat_dark"]
     assert "dark_removed_by" not in given.settings and given.settings["darks"] == 1
+
+
+@pytest.mark.parametrize("limit", [700, 1000, None])
+def test_counts_above_the_cameras_stated_linear_range_are_reported_not_changed(
+    tmp_path, limit, caplog
+):
+    # Every Zeiss scan here states MaxLinearRange = 45000, and 21 of 84 have view counts above
+    # it (the references are held inside it, the views are not; saturated air then reads as
+    # absorbing). The record reports the range, its source, the fraction of counts above it
+    # and the line integral where it ends; no value changes.
+    import logging
+
+    counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)  # 500 ... 787
+    streams = _streams(counts, np.full((8, 12), 2500, "<f4"))
+    stream = "ConfigureBackup/ConfigCamera/Camera 1/MaxLinearRange"
+    path = tmp_path / "scan.txrm"
+    write_ole(path, streams)
+    plain = tj.load(path, darks=0)
+    if limit is not None:
+        streams[stream] = np.array([limit], "<i4").tobytes()
+    write_ole(path, streams)
+    with caplog.at_level(logging.WARNING, logger="tomojax"):
+        scan = tj.load(path, darks=0)
+    np.testing.assert_array_equal(scan.projections, plain.projections)
+    (fields,) = [c for c in scan.corrections if c.name == "flat_dark"]
+    if limit is None:
+        assert "linear_limit" not in fields.settings and not caplog.records
+        return
+    assert fields.settings["linear_limit"] == limit
+    assert fields.settings["linear_limit_source"] == stream
+    above = float(np.mean(counts > limit))
+    assert fields.found["counts_above_linear_limit"] == pytest.approx(above)
+    # Counts at the limit over the 2500-count flat, at equal exposure: -log(limit / 2500).
+    assert fields.found["linear_limit_line_integral"] == pytest.approx(-np.log(limit / 2500))
+    warned = [r.getMessage() for r in caplog.records if "linear range" in r.getMessage()]
+    assert bool(warned) == (above > 0)
+
+
+def test_reconstructing_in_slabs_reports_the_same_counts_above_the_linear_range(tmp_path):
+    counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
+    streams = _streams(counts, np.full((8, 12), 2500, "<f4"))
+    streams["ConfigureBackup/ConfigCamera/Camera 1/MaxLinearRange"] = np.array(
+        [700], "<i4"
+    ).tobytes()
+    write_ole(tmp_path / "scan.txrm", streams)
+    with tj.reconstruct_slabs(tj.load_frames(tmp_path / "scan.txrm", darks=0), "fbp") as slabs:
+        for _, part in slabs:
+            (fields,) = [c for c in part.scan.corrections if c.name == "flat_dark"]
+            assert fields.settings["linear_limit"] == 700
+            assert fields.found["counts_above_linear_limit"] == pytest.approx(87 / 288)
+            assert fields.found["linear_limit_line_integral"] == pytest.approx(-np.log(700 / 2500))
