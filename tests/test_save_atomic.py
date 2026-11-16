@@ -22,6 +22,7 @@ def _reconstruction(value=1.0):
 def _fail_part_way(monkeypatch, suffix):
     """The disk fills while the volume is written (NXtomo) or while the archive is (NPZ)."""
     if suffix == ".nxs":
+        # check-public-imports: allow-private
         import tomojax._data._io_nxtomo as nxtomo
 
         written = nxtomo._write_volume_section
@@ -32,6 +33,7 @@ def _fail_part_way(monkeypatch, suffix):
 
         monkeypatch.setattr(nxtomo, "_write_volume_section", full)
     else:
+        # check-public-imports: allow-private
         import tomojax._data._io_npz as npz
 
         def full(file, **payload):

@@ -89,12 +89,19 @@ def correct_frames(
     flat_exposure_times : numpy.ndarray or float or None, optional
         Flat exposure durations in seconds. Supply both exposure arrays to compare
         dark-subtracted count rates rather than integrated counts.
-
     batch_views : int or None, optional
         Positive view-batch size. None selects a memory-bounded size automatically.
     binning : int, optional
         Positive detector-block side length for mean binning of the corrected line
         integrals. Default is 1; incomplete edge blocks are dropped.
+    dark_source : str or None, optional
+        What removed the dark before the counts were recorded (a camera that
+        subtracts it, say), kept in the record as ``dark_removed_by`` in place of
+        a count of dark frames. Default None.
+    linear_limit : tuple of (float, str) or None, optional
+        The detector's stated linear range in counts and where it is stated. The
+        record keeps the fraction of counts above it and the line integral where
+        it ends, and a warning names both when any count lies above. Default None.
 
     Returns
     -------

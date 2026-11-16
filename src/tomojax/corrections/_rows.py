@@ -156,6 +156,14 @@ def corrected_row_source(
     host : bool, optional
         Return NumPy bands using bounded device view batches, instead of keeping
         the whole corrected band on the device. Default is False.
+    dark_source : str or None, optional
+        What removed the dark before the counts were recorded (a camera that
+        subtracts it, say), kept in the record as ``dark_removed_by`` in place of
+        a count of dark frames. Default None.
+    linear_limit : tuple of (float, str) or None, optional
+        The detector's stated linear range in counts and where it is stated. The
+        record keeps the fraction of counts above it and the line integral where
+        it ends, and a warning names both when any count lies above. Default None.
 
     Yields
     ------
