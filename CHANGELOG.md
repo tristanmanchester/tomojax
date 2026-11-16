@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### A save that fails leaves the file it was replacing, and no partial file
+
+`tj.save` (and every NXtomo or NPZ write under it) opened its final name for writing. A save
+that failed part-way, a full disk for instance, left a truncated file under that name, and
+saving over a good file emptied it before the first byte of the new one was written. Writes now
+go to a temporary file in the same directory, reach the disk, and replace the file in one step
+when complete; on any failure the temporary file is removed and the old file is untouched. A
+full disk raises a plain error with the bytes written, the room left and the size of each part
+being written (volume, projections).
+
 ### Simulated data are projected in float32 on every device
 
 `tomojax simulate` and `tomojax.datasets.simulate` projected with a bfloat16 gather on GPUs

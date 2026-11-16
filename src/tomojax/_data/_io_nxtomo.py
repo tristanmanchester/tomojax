@@ -25,6 +25,8 @@ from ._io_helpers import (
     _load_sample_metadata,
     _load_source_metadata,
     _write_string_attr,
+    replaced_when_complete,
+    sizes_of,
 )
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata, ValidationReport
 from .geometry_meta import normalize_geometry_type
@@ -73,12 +75,9 @@ def save_nxtomo(
     OSError
         If output cannot be written or already exists with overwrite=False.
     """
-    parent = Path(path).parent
-    if str(parent) not in {"", "."}:
-        parent.mkdir(parents=True, exist_ok=True)
-
     meta = metadata or NXTomoMetadata()
-    mode = "w" if overwrite else "x"
+    if not overwrite and Path(path).exists():
+        raise FileExistsError(f"{path} exists; pass overwrite=True to replace it")
 
     proj = np.asarray(projections)
     if proj.ndim != 3:
@@ -89,7 +88,8 @@ def save_nxtomo(
     if meta.volume is not None and meta.volume.ndim != 3:
         raise ValueError("volume must be 3D (nz, ny, nx)")
 
-    with h5py.File(path, mode) as f:
+    parts = sizes_of(proj, meta.volume)
+    with replaced_when_complete(path, parts) as temporary, h5py.File(temporary, "w") as f:
         entry = _ensure_group(f, "entry", "NXentry")
         # NXtomo names its application definition in a field; the attribute
         # remains for readers of earlier TomoJAX files.
