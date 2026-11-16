@@ -52,6 +52,7 @@ def correct_frames(
     flat_exposure_times: np.ndarray | float | None = None,
     batch_views: int | None = None,
     binning: int = 1,
+    dark_source: str | None = None,
 ) -> Corrected:
     """Convert detector counts to line integrals and record each correction.
 
@@ -131,8 +132,9 @@ def correct_frames(
     ordered = ordered_steps(steps)
     view_scales, flat_scales = exposure_scales(exposure_times, flat_exposure_times, views, flats)
     fields, field_record = flat_fields(
-        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales
-    )
+        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales,
+        dark_source=dark_source,
+    )  # fmt: skip
     if flat_scales is not None and exposure_times is not None:
         field_record[0].settings["sample_exposure_range_s"] = [
             float(np.min(exposure_times)),
@@ -321,6 +323,7 @@ def flat_fields(
     epsilon: float,
     *,
     flat_scales: np.ndarray | None = None,
+    dark_source: str | None = None,
 ) -> tuple[Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them.
 
@@ -336,7 +339,7 @@ def flat_fields(
         LOG.warning("no dark fields: correcting with a dark field of zero")
     zero = np.zeros(shape)
     dark, dark_variance = (zero, zero) if darks is None else _moments(darks, shape, "darks")
-    dark_frames = 0 if darks is None else len(darks)
+    dark_frames = 0 if darks is None or dark_source is not None else len(darks)
     if flats is None:
         if white_level is None:
             raise ValueError(
@@ -371,6 +374,8 @@ def flat_fields(
             settings["flat_exposure_times"] = (1 / flat_scales).tolist()
         if len(sets) > 1:
             settings["flat_positions"] = [float(p) for p in sets]
+    if dark_source is not None:
+        settings["dark_removed_by"] = dark_source
     light = stack - dark if flat_scales is None else stack
     dark_scale = (
         np.ones(len(sets))

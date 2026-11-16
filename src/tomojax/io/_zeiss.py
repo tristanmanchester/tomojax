@@ -159,6 +159,9 @@ def _values(container: Any, name: str, dtype: str) -> np.ndarray:
     return np.frombuffer(container.openstream(name).read(), dtype=np.dtype(dtype))
 
 
+_DARK = "AcquisitionSettings/CameraStaticBackground"
+
+
 def _scalar(container: Any, name: str, dtype: str = "<u4") -> float:
     return float(_values(container, name, dtype).item())
 
@@ -438,6 +441,9 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
         counts = _images(container, path)
         record = _record(container, path, counts.shape)
         flats, flat_positions, view_positions = _references(container, path, counts)
+        # The camera subtracted its static background (the dark) before writing the counts.
+        removed = container.exists(_DARK) and _scalar(container, _DARK, "<i4") == 1
+        dark_source = f"the instrument ({_DARK} = 1)" if removed else None
     return RawAcquisition(
         record,
         counts,
@@ -446,4 +452,6 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
         view_positions=view_positions,
         exposure_times=counts.exposure_times,
         flat_exposure_times=None if flats is None else flats.exposure_times,
+        darks=None if dark_source is None else np.zeros((1, *counts.image_shape), np.float32),
+        dark_source=dark_source,
     )

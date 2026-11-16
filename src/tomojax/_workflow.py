@@ -583,6 +583,7 @@ def reconstruct_slabs(
         exposure_times=frames.exposure_times,
         flat_exposure_times=frames.flat_exposure_times,
         host=cone,
+        dark_source=frames.dark_source,
     ) as source:
 
         def read(first: int, stop: int):

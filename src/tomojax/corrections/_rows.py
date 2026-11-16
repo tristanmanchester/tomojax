@@ -117,6 +117,7 @@ def corrected_row_source(
     exposure_times: np.ndarray | float | None = None,
     flat_exposure_times: np.ndarray | float | None = None,
     host: bool = False,
+    dark_source: str | None = None,
 ) -> Iterator[Callable[[int, int], CorrectedRows | Corrected]]:
     """Read corrected detector-row intervals without a materialized projection stack.
 
@@ -182,8 +183,9 @@ def corrected_row_source(
     views, rows, cols = counts.shape
     view_scales, flat_scales = exposure_scales(exposure_times, flat_exposure_times, views, flats)
     fields, records = flat_fields(
-        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales
-    )
+        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales,
+        dark_source=dark_source,
+    )  # fmt: skip
     if flat_scales is not None and exposure_times is not None:
         records[0].settings["sample_exposure_range_s"] = [
             float(np.min(exposure_times)),

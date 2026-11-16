@@ -232,6 +232,9 @@ class Frames:
         Sample exposure durations in seconds, one per view or a common duration.
     flat_exposure_times : numpy.ndarray or float or None, optional
         Flat exposure durations in seconds, one per flat or a common duration.
+    dark_source : str or None, optional
+        Where the file states that the instrument removed the dark before writing the
+        counts (``darks`` is then a zero frame, and the correction record names it).
     name : str, optional
         Sample name.
     source : ProjectionDataset or None, optional
@@ -252,6 +255,7 @@ class Frames:
     view_positions: np.ndarray | None = None
     exposure_times: np.ndarray | float | None = None
     flat_exposure_times: np.ndarray | float | None = None
+    dark_source: str | None = None
     name: str = "sample"
     source: ProjectionDataset | None = field(default=None, compare=False)
 
@@ -268,7 +272,10 @@ class Frames:
             parts.append(f"{_count(len(self.flats), 'flat')} in {_count(sets, 'set')}")
         if self.white_level is not None:
             parts.append(f"white level {self.white_level:g}")
-        parts.append(_count(0 if self.darks is None else len(self.darks), "dark"))
+        if self.dark_source is not None:
+            parts.append("dark removed by the instrument")
+        else:
+            parts.append(_count(0 if self.darks is None else len(self.darks), "dark"))
         return f"Frames({self.name!r}: {', '.join(parts)}, {type(self.geometry).__name__})"
 
     @property
@@ -335,6 +342,7 @@ class Frames:
             exposure_times=self.exposure_times,
             flat_exposure_times=self.flat_exposure_times,
             darks=self.darks,
+            dark_source=self.dark_source,
             white_level=self.white_level,
             steps=steps,
             epsilon=epsilon,
@@ -619,9 +627,9 @@ def _with_fields(
             "flat_exposure_times": getattr(flat_frames, "exposure_times", None),
         }
     if isinstance(darks, numbers.Real):
-        changes["darks"] = np.full((1, *shape), float(darks), np.float32)
+        changes |= {"darks": np.full((1, *shape), float(darks), np.float32), "dark_source": None}
     elif darks is not None:
-        changes["darks"] = _frames_of(darks, "darks", frames.counts)
+        changes |= {"darks": _frames_of(darks, "darks", frames.counts), "dark_source": None}
     if exposure_times is not None:
         changes["exposure_times"] = exposure_times
     if flat_exposure_times is not None:
@@ -832,6 +840,7 @@ def _acquisition_frames(
         view_positions=found.view_positions,
         exposure_times=found.exposure_times,
         flat_exposure_times=found.flat_exposure_times,
+        dark_source=found.dark_source,
         name=record.sample_name or "sample",
         source=record,
     )

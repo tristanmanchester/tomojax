@@ -517,3 +517,29 @@ def test_a_cone_scan_without_a_centre_shift_loads_with_the_middle_as_its_centre(
     )
     np.testing.assert_array_equal(scan.projections, recorded.projections)
     np.testing.assert_array_equal(scan.angles, recorded.angles)
+
+
+@pytest.mark.parametrize("flag", [1, 0, None])
+def test_a_dark_the_instrument_removed_is_declared_by_the_file(tmp_path, flag):
+    # Every Zeiss scan on disk records AcquisitionSettings/CameraStaticBackground = 1: the
+    # camera's static background (its dark) was subtracted before the counts were written,
+    # and no dark is stored. Where the file says so, no darks= is needed and the record
+    # names the stream; where it does not, darks= is required as before.
+    counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
+    streams = _streams(counts, np.full((8, 12), 2500, "<f4"))
+    if flag is not None:
+        streams["AcquisitionSettings/CameraStaticBackground"] = np.array([flag], "<i4").tobytes()
+    path = tmp_path / "scan.txrm"
+    write_ole(path, streams)
+    zero = tj.load(path, darks=0)
+    if flag != 1:
+        with pytest.raises(ValueError, match="No dark fields"):
+            tj.load(path)
+        return
+    scan = tj.load(path)
+    np.testing.assert_array_equal(scan.projections, zero.projections)
+    (fields,) = [c for c in scan.corrections if c.name == "flat_dark"]
+    assert fields.settings["darks"] == 0
+    assert "AcquisitionSettings/CameraStaticBackground" in fields.settings["dark_removed_by"]
+    (given,) = [c for c in tj.load(path, darks=100).corrections if c.name == "flat_dark"]
+    assert "dark_removed_by" not in given.settings and given.settings["darks"] == 1

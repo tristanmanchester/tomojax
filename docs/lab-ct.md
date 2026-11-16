@@ -93,15 +93,16 @@ angles, detector calibration and source distances. The file's per-view image
 shifts (`alignment/x-shifts`, `y-shifts`) become per-view detector centres, so
 the measured pixels are never resampled. They are measured from the centre that
 a Zeiss reconstruction setup records as `AutoRecon/CenterShift`. A raw scan without
-it needs that one value: pass `detector=tj.Detector(nu, nv, pitch, pitch, (u, 0))`,
-with `pitch` the recorded pixel size times the magnification, and the shifts are added to that centre; if it is unknown, start from `u = 0` and
-include `"centre"` in `tj.align`'s `fit=`. An explicit `geometry=` is used as given,
+it loads with the centre at the middle of the detector, the shifts added to it, and
+`detector_center_status` "not_recorded": include `"centre"` in `tj.align`'s `fit=`, or
+pass `detector=tj.Detector(nu, nv, pitch, pitch, (u, 0))` for a known centre, with
+`pitch` the recorded pixel size times the magnification. An explicit `geometry=` is used as given,
 without the shifts, and the loader warns how many views it dropped. Because the
 shifts move the detector, `tj.align` leaves them out of `result.poses`; a pose
 translation moves the object instead, so the same correction written as a pose is
 the shift times the recorded (object-plane) pixel size, with the opposite sign. For a
 separate reference image, pass `--flats reference_Front.xrm` or
-`load_frames("scan.txrm", flats="reference_Front.xrm", darks=0)`.
+`load_frames("scan.txrm", flats="reference_Front.xrm")`.
 Sample and reference exposure times are used to compare dark-subtracted count
 rates. Multiple embedded references are interpolated at their acquisition
 timestamps. Raw pixels remain unchanged. If supplying calibration arrays rather
@@ -132,7 +133,7 @@ The equivalent Python route is:
 ```python
 import tomojax as tj
 
-scan = tj.load_frames("scan.txrm", darks=0).selected(slice(None, None, 8)).corrected(binning=16)
+scan = tj.load_frames("scan.txrm").selected(slice(None, None, 8)).corrected(binning=16)
 grid = scan.grid.resampled((64, 64, 64))
 recon = tj.reconstruct(scan, "cgls", iterations=10, grid=grid)
 tj.save("preview.nxs", recon)

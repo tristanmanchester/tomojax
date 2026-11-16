@@ -33,6 +33,7 @@ class RawAcquisition:
     view_positions: np.ndarray | None = None
     exposure_times: np.ndarray | None = None
     flat_exposure_times: np.ndarray | None = None
+    dark_source: str | None = None  # the file's statement that the instrument removed the dark
 
 
 def metadata_candidates(path: Path) -> list[Path]:

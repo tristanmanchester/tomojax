@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### A Zeiss scan whose camera removed the dark loads without `darks=`
+
+Every Zeiss scan on disk here (84 of 84) records
+`AcquisitionSettings/CameraStaticBackground` = 1: the camera subtracted its static
+background, the dark, before writing the counts, and no dark is stored. `tj.load` asked for
+`darks=` all the same. The reader now declares it: the dark is zero, the `flat_dark`
+correction record gives `darks=0` and `dark_removed_by` naming the stream, and the result is
+the same as with `darks=0`. A file without that statement still asks for `darks=`, and a
+`darks=` given by the user replaces the declaration.
+
 ### A Zeiss scan without a reconstruction setup loads with the file's pixel size
 
 Only a Zeiss reconstruction setup writes `AutoRecon/CenterShift`, so a raw scan often

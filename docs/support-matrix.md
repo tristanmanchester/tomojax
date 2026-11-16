@@ -21,7 +21,7 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Ring (stripe), zinger, outlier-view and beam-hardening corrections; Paganin phase retrieval | Supported | `tomojax preprocess raw.nxs -o scan.nxs --stripes 9 --zingers --reject-views` (and the expert `--paganin`); beam hardening uses explicit `tomojax.corrections.BeamHardening` curves |
 | Volume export as TIFF slices or raw (`uint16` or `float32`) | Supported | `tomojax export recon.nxs -o slices/`; `tomojax export recon.nxs -o recon.raw --dtype uint16` |
 | Nikon (X-Tek) scan import, including its calibrated rotation axis | Supported | `tj.load_frames("scan/part.xtekct", darks=0).corrected()`, or `tomojax preprocess scan/part.xtekct --darks 0 -o scan.nxs` |
-| Zeiss Xradia projection acquisitions | Supported | `tj.load_frames("scan.txrm", darks=0).corrected(...)`; separate reference images use `flats="reference_Front.xrm"`; [CPU preview](lab-ct.md#zeiss-xradia-preview) |
+| Zeiss Xradia projection acquisitions | Supported | `tj.load("scan.txrm")`, or `tj.load_frames("scan.txrm").corrected(...)`; separate reference images use `flats="reference_Front.xrm"`; [CPU preview](lab-ct.md#zeiss-xradia-preview) |
 | Multi-orbit cone-beam scans (`ConeSegments`): iterative reconstruction and pose alignment | Supported; alignment experimental | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then `tj.reconstruct(scan, "cgls")` and `tj.align(scan)` |
 | Shared detector centre and roll, including cone data | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --fit centre roll` |
 | Detector-centre/COR alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --fit centre` |
@@ -46,8 +46,10 @@ rotation centre is absent, loading places the centre at the middle of the
 detector and records `detector_center_status` "not_recorded"; nothing is
 estimated. The centre comes from the file, from `detector=`, or from
 `tj.align(scan, fit="centre")`. Vertical zero defines the free axial origin. Laminography requires a recorded tilt/axis or
-`geometry=`. Nikon and Zeiss files lacking dark calibration require `darks=`; zero is
-only an explicit choice for already corrected counts. SkyScan additionally
+`geometry=`. Nikon files lacking dark calibration require `darks=`; zero is
+only an explicit choice for already corrected counts. A Zeiss file that records
+`AcquisitionSettings/CameraStaticBackground` = 1 (the camera subtracted its dark
+before writing the counts) needs none, and the correction record says so. SkyScan additionally
 requires `flats=` (frames or one level) rather than deriving it from bit depth.
 Compressed TIFF crops decode only their intersecting strips/tiles. In folders,
 TIFF-suffixed entries are image storage, not acquisition text sidecars.
