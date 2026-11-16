@@ -398,14 +398,15 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         source_format="zeiss_ole",
         sample_name=path.stem,
     )
-    if pitch is not None and shifts is not None and cone is not None and centre_shift is not None:
-        # The shifts are measured from the recorded centre.
-        centre = (-pitch * centre_shift, 0.0)
+    if pitch is not None and shifts is not None and cone is not None:
+        # The shifts are measured from the recorded centre; a raw scan with no
+        # reconstruction setup records none, and its shifts are measured from the middle.
+        centre = (-pitch * (centre_shift or 0.0), 0.0)
         record = with_view_offsets(record, Detector(cols, rows, pitch, pitch, center=centre))
-    known = record.detector is not None
+    known = record.detector is not None and centre_shift is not None
     record.geometry_metadata["detector_center_status"] = "recorded" if known else "not_recorded"
     if (
-        not known and pitch is not None
+        record.detector is None and pitch is not None
     ):  # the pitch without a whole detector, as partial records keep it
         record.geometry_metadata["detector_pixel_size"] = [pitch, pitch]
     if shifts is None or cone is None:

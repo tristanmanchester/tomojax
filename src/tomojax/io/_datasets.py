@@ -317,13 +317,13 @@ class ProjectionDataset:
             If detector metadata are missing.
         """
         detector = self.detector
+        if self.geometry_metadata.get("axis_status") == "not_recorded":
+            raise ValueError("Missing calibrated rotation axis: pass geometry=...")
         if detector is None:
             raise ValueError(
                 "Missing detector pixel sizes: pass pixel_size=..., detector=... or "
                 "geometry=..., or set detector in tomojax preprocess --config"
             )
-        if self.geometry_metadata.get("axis_status") == "not_recorded":
-            raise ValueError("Missing calibrated rotation axis: pass geometry=...")
         if self.angles.shape != (self.projections.shape[0],):
             raise ValueError(
                 "Missing view angles: pass angles=..., or use tomojax preprocess --angles"

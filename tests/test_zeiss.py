@@ -492,3 +492,28 @@ def test_zeiss_vendor_shifts_follow_the_poses_switch(tmp_path, cone):
             shifts = np.asarray(stack_view_poses(scan.geometry, 3))[:, 0, 3]
             assert bool(np.ptp(shifts) > 0) is poses
             assert bool(scan.detector.center[0] != 0) is poses
+
+
+def test_a_cone_scan_without_a_centre_shift_loads_with_the_middle_as_its_centre(tmp_path):
+    # Only a reconstruction setup writes AutoRecon/CenterShift, so a raw scan (CuO_2 tomo-A)
+    # lacks it; the detector was then never built and tj.load asked for the pixel size the
+    # file records. As for every format: the middle is the centre, said, nothing estimated.
+    counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
+    streams = _streams(counts, np.full((8, 12), 2500, "<f4"))
+    write_ole(tmp_path / "with.txrm", streams)
+    recorded = tj.load(tmp_path / "with.txrm", darks=0)
+    del streams["AutoRecon/CenterShift"]
+    write_ole(tmp_path / "without.txrm", streams)
+    scan = tj.load(tmp_path / "without.txrm", darks=0)
+    meta = scan.source.geometry_metadata
+    assert meta["detector_center_status"] == "not_recorded"
+    assert meta["zeiss"]["center_shift_pixels"] is None
+    assert scan.detector.du == pytest.approx(0.015)  # 10 um at the sample, magnified 1.5
+    # The recorded shifts (0.25, -0.5 px) are applied from the middle: 0.25 x 0.015 mm.
+    np.testing.assert_allclose(scan.detector.center, [0.00375, -0.0075])
+    # The centre shift (0.125 px) moves the centre by its pitch and changes nothing else.
+    np.testing.assert_allclose(
+        np.subtract(recorded.detector.center, scan.detector.center), [-0.125 * 0.015, 0]
+    )
+    np.testing.assert_array_equal(scan.projections, recorded.projections)
+    np.testing.assert_array_equal(scan.angles, recorded.angles)

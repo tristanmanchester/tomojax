@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### A Zeiss scan without a reconstruction setup loads with the file's pixel size
+
+Only a Zeiss reconstruction setup writes `AutoRecon/CenterShift`, so a raw scan often
+lacks it (42 of the 84 unique scans on disk here, CuO_2 among them). The reader then built
+no detector, and `tj.load` asked for the pixel size the file records. It now builds the
+detector from the recorded pitch with the centre at the middle, applies the recorded
+per-view shifts from there, and records `detector_center_status` "not_recorded", as every
+other format does since loading stopped estimating centres; `tj.align(scan, fit="centre")`
+finds the centre. A file with the centre shift loads exactly as before. A file whose rotation
+axis cannot be placed now says so before asking for pixel sizes.
+
 ### `tj.load` holds a stack larger than memory in a temporary file
 
 A bare `tj.load` on a full-size synchrotron scan filled an in-memory stack: I13 159815
