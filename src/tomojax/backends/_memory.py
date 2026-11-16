@@ -94,7 +94,14 @@ def _cuda_free_memory_bytes(device: Device) -> int | None:
 
 
 def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
-    """Best-effort query of free memory (bytes) on ``device``.
+    """Best-effort query of free memory (bytes) on ``device``: an upper bound on what fits.
+
+    Under XLA's pool this is the pool's limit less the bytes in use, the total room. It
+    cannot see fragmentation: an array needs one contiguous block, and once use is spread
+    over the pool's regions the largest block can be far smaller (K11 67208's alignment
+    failed a 1.29 GiB allocation with 2.95 GiB "free" and a 1.0 GiB largest block). Nor do
+    the allocator's statistics give the true room, because the pool returns wholly free
+    regions to the driver and retries; only an allocation says whether an array fits.
 
     - ``device`` defaults to ``jax.default_device``, else the first GPU.
     - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
