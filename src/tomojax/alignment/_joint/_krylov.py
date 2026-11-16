@@ -65,9 +65,8 @@ def solve(matvec, rhs, invdiag, maxiter, *, rtol, work, precondition=None):
         verify = (residual_squared <= threshold) & ~explicit
         return ok & (advance | verify)
 
-    def advance(state):
-        k, x, r, p, rz, ok, _, _, products, work = state
-        ap, work = matvec(p, work)
+    def advance(state, ap):
+        k, x, r, p, rz, ok, _, _, products = state
         denominator = _dot(p, ap)
         safe = jnp.isfinite(denominator) & (denominator > 0)
         alpha = jnp.where(safe, rz / jnp.where(safe, denominator, 1), 0).astype(rhs.dtype)
@@ -86,21 +85,25 @@ def solve(matvec, rhs, invdiag, maxiter, *, rtol, work, precondition=None):
             _dot(r, r),
             jnp.asarray(False),
             products + 1,
-            work,
         )
 
-    def verify(state):
-        k, x, _, _, _, ok, _, _, products, work = state
-        ax, work = matvec(x, work)
+    def verify(state, ax):
+        k, x, _, _, _, ok, _, _, products = state
         r = rhs - ax
         z = apply_inverse(r)
         gamma, residual_squared = _dot(r, z), _dot(r, r)
         ok = ok & jnp.isfinite(gamma) & jnp.isfinite(residual_squared)
         ok = ok & ((gamma > 0) | (residual_squared == 0))
-        return k, x, r, z, gamma, ok, residual_squared, jnp.asarray(True), products + 1, work
+        return k, x, r, z, gamma, ok, residual_squared, jnp.asarray(True), products + 1
 
     def step(state):
-        return jax.lax.cond(state[6] <= threshold, verify, advance, state)
+        # Verifying or advancing, each makes one product: x's or p's. It is made here, outside
+        # the conditional, so the work buffer passes straight through the loop. Returned from a
+        # conditional, it was copied every iteration (a whole stack of temporaries on the GPU).
+        *state, work = state
+        verifying = state[6] <= threshold
+        product, work = matvec(jnp.where(verifying, state[1], state[3]), work)
+        return (*jax.lax.cond(verifying, verify, advance, tuple(state), product), work)
 
     k, x, _, _, _, valid, residual_squared, explicit, products, work = jax.lax.while_loop(
         condition, step, initial
