@@ -123,9 +123,11 @@ was 9% short; on the other simulated rows within 9%. The refinement stage
 stays: at this weight it no longer puts motion back on the real scan and it improves
 several simulated rows. Rotation increments keep the photon-scaled weight.
 
-The error scale is formed one view batch at a time. As first written it made a unit
-precision the size of the whole stack for a scan that has none, and `tj.align` ran out
-of an 8 GB card's memory on K11 67208 (4000 views, 1.29 GiB).
+The error scale is formed one view batch at a time: as first written it made a unit
+precision the size of the whole stack for a scan that has none. This does not make K11
+67208 (4000 views) align on an 8 GB card, as an earlier version of this entry said: the
+working stacks the alignment holds on the device do not fit there, and a full-size
+synchrotron scan above roughly 2500-3000 views still runs out of device memory.
 
 ### Alignment forms its shared level one view batch at a time
 
