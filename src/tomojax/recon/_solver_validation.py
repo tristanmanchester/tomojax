@@ -37,9 +37,9 @@ def validate_fista_config(cfg: FistaConfig) -> tuple[bool, float | None, float |
     context = "fista_tv config"
     if cfg.data_term not in {"absolute", "per_view_contrast"}:
         raise ValueError(f"{context}: data_term must be absolute or per_view_contrast")
-    for name in ("iterations", "recon_patience", "initial_epochs"):
+    for name in ("iterations", "recon_patience"):
         _count(getattr(cfg, name), name, minimum=0, context=context)
-    for name in ("projector_unroll", "tv_prox_iterations", "power_iterations", "initial_subsets"):
+    for name in ("projector_unroll", "tv_prox_iterations", "power_iterations"):
         _count(getattr(cfg, name), name, minimum=1, context=context)
     if cfg.views_per_batch is not None:
         _count(cfg.views_per_batch, "views_per_batch", minimum=1, context=context)

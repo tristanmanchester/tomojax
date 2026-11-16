@@ -79,6 +79,33 @@ def test_volume_larger_than_the_device_is_reconstructed_in_host_slabs(
     np.testing.assert_allclose(actual.volume, expected, atol=3e-6, rtol=5e-5)
 
 
+def test_the_default_reconstructs_a_posed_laminography_scan_whose_volume_is_on_the_host(
+    monkeypatch,
+):
+    # K11 54013 (704 x 704 x 234, 1441 views) on an 8 GB card: the automatic laminography
+    # route asked for an ordered-subset start with resident projections, which put the volume
+    # on the host path, and that path refused the start, so tj.reconstruct(scan) raised. The
+    # default is FBP, as for every geometry, and it reconstructs there in host slabs.
+    n, views = 16, 48
+    grid = tj.Grid(n, n, n, 1, 1, 1)
+    angles = np.linspace(0, 360, views, endpoint=False)
+    geometry = tj.LaminographyGeometry(grid, tj.Detector(24, 24, 1, 1), angles, tilt_deg=30)
+    z, y, x = np.indices((n, n, n))
+    volume = np.exp(-((x - 7.5) ** 2 + (y - 8.5) ** 2 + (z - 7) ** 2) / 12).astype(np.float32)
+    scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
+    scan = scan.with_poses(np.zeros((views, 6)))  # a loaded alignment result
+    expected = tj.reconstruct(scan)
+    assert expected.method == "fbp" and expected.info["automatic"]["method"] == "fbp"
+    host = importlib.import_module("tomojax.recon.fbp_host")
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
+    monkeypatch.setattr(host, "device_free_memory_bytes", lambda **kwargs: 4096)
+    actual = tj.reconstruct(scan)
+    assert actual.method == "fbp" and actual.info["host_slabs"]
+    np.testing.assert_allclose(
+        actual.volume, expected.volume, atol=1e-5 * float(np.abs(expected.volume).max())
+    )
+
+
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "cone", "fourier"])
 @pytest.mark.parametrize("storage", ["C", "F", "strided"])
 def test_out_is_filled_and_returned(tmp_path, kind, storage):

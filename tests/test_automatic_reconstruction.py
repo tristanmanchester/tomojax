@@ -55,7 +55,7 @@ def test_explicit_method_bypasses_automatic_geometry_policy():
     scan = tj.Scan(np.ones((12, 3, 8), np.float32), geometry)
     result = tj.reconstruct(scan, "fbp", config=FBPConfig())
     assert "automatic" not in result.info and result.scan is scan
-    with pytest.raises(ValueError, match="choose method='fista'"):
+    with pytest.raises(ValueError, match="method 'fbp' does not take iterations"):
         tj.reconstruct(scan, iterations=3)
 
 
@@ -150,7 +150,7 @@ def test_automatic_route_reconstructs_a_plain_cone_scan():
     [
         ("parallel", "fbp", "preserved", 0.1),  # 0.053 measured, 0.23 with the poses ignored
         ("cone", "fbp", "preserved", 0.1),  # 0.053 measured, 0.23 with the poses ignored
-        ("axis", "fista", "preserved", 0.02),  # 0.001 measured, 0.39 ignored
+        ("axis", "fbp", "preserved", 0.2),  # 0.151 measured, 0.30 with the poses ignored
     ],
 )
 def test_automatic_route_uses_a_scans_poses(kind, method, geometry, bound):
@@ -181,8 +181,10 @@ def test_automatic_route_reconstructs_an_unposed_oblique_scan_with_its_declared_
     )
     scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
     result = tj.reconstruct(scan)
-    assert result.method == "fista" and result.scan is scan
+    assert result.method == "fbp" and result.scan is scan
     assert np.shape(result.volume) == volume.shape
     declared = tj.reconstruct(scan.with_poses(np.zeros((len(_ANGLES), 6))))
     np.testing.assert_allclose(result.volume, declared.volume, rtol=0, atol=1e-6)
-    assert _error(result, volume) < 0.02  # 0.001 measured with poses
+    # FBP leaves the tilted axis's missing cone empty: 0.300 (laminography) and 0.150 (axis)
+    # measured, where fista at 100 iterations reaches 0.009 and 0.003.
+    assert _error(result, volume) < (0.4 if kind == "laminography" else 0.2)

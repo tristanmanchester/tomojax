@@ -35,13 +35,7 @@ from tomojax.core.view_chunks import chunk_schedule, chunk_size
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._data_term import project_residual
-from ._fista_initialization import (
-    first_gradient as estimate_first_gradient,
-    initial_view_order,
-    ordered_start,
-    power_start,
-    validate_initialization,
-)
+from ._fista_initialization import first_gradient as estimate_first_gradient, power_start
 from ._fista_owned import FistaScanState, run_owned_fista, use_owned_fista
 from ._noise import estimate_projection_noise
 from ._noise_probe import probe_gradient_rms
@@ -113,7 +107,6 @@ class FistaRuntime:
     stream: bool = field(default=False, metadata={"static": True})
     # The views shared among devices, the data placed accordingly; None for one.
     split: ViewSplit | None = field(default=None, metadata={"static": True})
-    initial_order: jax.Array | None = None
 
 
 @dataclass(kw_only=True)
@@ -148,15 +141,8 @@ class FistaConfig:
     data it renders propagation fringes as smooth bands where FBP keeps them.
     Apply alignment poses before comparing methods on a real scan.
 
-    ``initial_epochs`` optionally initializes nonnegative least squares with
-    accelerated, interleaved ordered subsets before the full-data iterations.
-    Each epoch interleaves nominal angle order into ``initial_subsets`` groups; more groups save
-    time but increase gradient error. This needs resident, unmasked parallel or
-    laminographic Joseph data, ``tv_weight=0``, and at least one final iteration.
-    It is not a convergence or image-quality guarantee. Defaults leave it off.
-    Its norm bounds are reused unless ``lipschitz`` is supplied. Unmasked resident
-    nonnegative Joseph volumes larger than the data reuse two owned buffers
-    for zero or ordered starts; this changes FP32 summation order.
+    Unmasked resident nonnegative Joseph volumes larger than the data reuse two
+    owned buffers; this changes FP32 summation order.
 
     ``devices`` (two or more JAX devices) shares the views among them, each
     holding the whole volume, and sums their backprojections; one device, or
@@ -168,11 +154,6 @@ class FistaConfig:
     iterations : int, optional
         Maximum number of solver updates. For SIRT and MLEM, an update is a complete
         subset sweep. Default is 50.
-    initial_epochs : int, optional
-        Number of ordered-subset initialization sweeps; zero disables
-        initialization. Default is 0.
-    initial_subsets : int, optional
-        Number of angle-interleaved groups per initialization sweep. Default is 16.
     data_term : DataTerm, optional
         "absolute" (default) fits line integrals. Use "per_view_contrast" when
         material lies outside the field of view: it profiles an unknown constant
@@ -252,8 +233,6 @@ class FistaConfig:
     """
 
     iterations: int = 50
-    initial_epochs: int = 0
-    initial_subsets: int = 16
     data_term: DataTerm = "absolute"
     tv_weight: float | None = None
     regulariser: Regulariser = "tv"
@@ -574,7 +553,6 @@ def _prepare_fista_runtime(
     if stream and projector is None:
         raise ValueError("fista_tv: stream_projections requires the batched projection operators")
 
-    validate_initialization(cfg, projector, n_views, stream=stream, split=split)
     metric = (
         resolve_tv_metric(
             geometry,
@@ -633,7 +611,6 @@ def _prepare_fista_runtime(
         projector=projector,
         stream=stream,
         split=split,
-        initial_order=initial_view_order(cfg, geometry),
     )
 
 
@@ -836,10 +813,6 @@ def _run_fista_scan(
         else runtime.metric,
     )
     L, first_value, first_gradient = runtime.lipschitz, None, None
-    if cfg.initial_epochs:
-        initial, bound = ordered_start(grid, detector, projections, runtime)
-        runtime = replace(runtime, x0=initial)
-        L = bound if L is None else L
     if L is None:
         L, first_value, first_gradient = estimate_first_gradient(
             grid, detector, projections, runtime
@@ -983,8 +956,8 @@ def fista_tv(
     out : numpy.ndarray or None, optional
         Writable float32 host output. CUDA Joseph solves use host slabs when
         supplied, or automatically when their resident state exceeds device memory.
-        The host route supports ordinary TV without support masks or ordered
-        initialization. Large host state uses temporary files in TMPDIR.
+        The host route supports ordinary TV without support masks. Large host
+        state uses temporary files in TMPDIR.
 
     Returns
     -------
@@ -1090,7 +1063,4 @@ def fista_tv(
     if losses:
         final_step = max(count - 1, 0)
         emit_loss_callback_endpoints(callback, ((0, losses[0]), (final_step, losses[final_step])))
-    if runtime.config.initial_epochs:
-        info["initial_epochs"] = runtime.config.initial_epochs
-        info["initial_updates"] = runtime.config.initial_epochs * runtime.config.initial_subsets
     return volume, info

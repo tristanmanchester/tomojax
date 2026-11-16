@@ -5,7 +5,7 @@
     "FBPHostConfig": 5,
     "FDKConfig": 4,
     "FDKHostConfig": 2,
-    "FistaConfig": 26,
+    "FistaConfig": 24,
     "FourierConfig": 2,
     "MLEMConfig": 6,
     "SIRTConfig": 10,
@@ -36,7 +36,7 @@
   },
   "long_files": {
     "src/tomojax/core/cone.py": 826,
-    "src/tomojax/recon/fista_tv.py": 868
+    "src/tomojax/recon/fista_tv.py": 850
   },
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 166,
@@ -47,14 +47,14 @@
     "src/tomojax/recon/_cgls_jax.py::_solve": 169,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 120,
     "src/tomojax/recon/_cgls_jax.py::cgls": 113,
-    "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 123,
-    "src/tomojax/recon/fista_tv.py::_run_fista_scan": 118,
+    "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 121,
+    "src/tomojax/recon/fista_tv.py::_run_fista_scan": 114,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 147,
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 127,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
   "code_lines": {
-    "(modules)": 2892,
+    "(modules)": 2880,
     "_data": 2066,
     "alignment": 3376,
     "backends": 619,
@@ -67,7 +67,7 @@
     "io": 3772,
     "motion": 148,
     "nuisance": 232,
-    "recon": 13834
+    "recon": 13632
   },
   "cuda_kernels": 50,
   "cuda_switches": 36,

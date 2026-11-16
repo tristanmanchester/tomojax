@@ -88,9 +88,9 @@ def test_missing_axis_is_not_silently_inferred():
 
 
 def test_saved_alignment_reuse(tmp_path):
-    # Align, save, load, and reconstruct the loaded scan through
-    # the real automatic route: its saved poses are used and the image is the phantom's.
-    # 128 views: the route's ordered-subset start needs several views a subset.
+    # Align, save, load, and reconstruct the loaded scan through the real automatic route
+    # (FBP): its saved poses are used, and on data that never moved the image is the one the
+    # declared geometry gives.
     grid = tj.Grid(8, 8, 8, 1, 1, 1)
     angles = np.linspace(0, 360, 128, endpoint=False)
     geometry = tj.LaminographyGeometry(grid, tj.Detector(12, 12, 1, 1), angles, tilt_deg=30)
@@ -105,17 +105,18 @@ def test_saved_alignment_reuse(tmp_path):
     reused = tj.load(tmp_path / "alignment.nxs")
     np.testing.assert_array_equal(reused.poses, result.scan.poses)
     again = tj.reconstruct(reused)
-    assert again.method == "fista"
+    assert again.method == "fbp"
     assert again.info["automatic"]["geometry"] == "preserved"
-    error = np.linalg.norm(np.asarray(again.volume) - volume) / np.linalg.norm(volume)
-    assert error < 0.02  # 0.005 measured; 0.115 when the start has two views a subset
+    declared = np.asarray(tj.reconstruct(scan).volume)
+    distance = np.linalg.norm(np.asarray(again.volume) - declared) / np.linalg.norm(declared)
+    assert distance < 0.02  # 5e-5 measured: the fit finds the scan still
 
 
 def test_a_posed_laminography_scan_reconstructs_with_its_poses():
-    # tj.reconstruct's automatic route on a scan carrying pose corrections runs the real
-    # FISTA (no stub) and uses them: data moved by known per-view shifts reconstruct with
-    # those shifts to the phantom (plain nonnegative FISTA on unmoved data reaches 0.02),
-    # and without them to a blur.
+    # tj.reconstruct's automatic route (FBP) on a scan carrying pose corrections uses them:
+    # data moved by known per-view shifts reconstruct with those shifts to the image the
+    # unmoved data give, and without them to a blur. (FBP leaves the missing cone empty, so
+    # the oracle is the same method on unmoved data, not the phantom.)
     grid, detector = tj.Grid(16, 16, 16, 1, 1, 1), tj.Detector(24, 24, 1, 1)
     views = 128
     geometry = tj.LaminographyGeometry(
@@ -130,14 +131,15 @@ def test_a_posed_laminography_scan_reconstructs_with_its_poses():
     moved = tj.Scan(np.asarray(tj.project(blank.with_poses(shifts).geometry, volume)), geometry)
     posed = tj.reconstruct(moved.with_poses(shifts))
     unposed = tj.reconstruct(moved.with_poses(np.zeros((views, 6))))
+    still = tj.reconstruct(tj.Scan(np.asarray(tj.project(geometry, volume)), geometry))
     assert posed.info["automatic"]["geometry"] == "preserved"
-    assert (np.asarray(posed.volume) >= 0).all()
 
-    def error(result):
-        return np.linalg.norm(np.asarray(result.volume) - volume) / np.linalg.norm(volume)
+    def distance(result):
+        reference = np.asarray(still.volume)
+        return np.linalg.norm(np.asarray(result.volume) - reference) / np.linalg.norm(reference)
 
-    assert error(posed) < 0.05
-    assert error(unposed) > 0.2
+    assert distance(posed) < 0.03  # 0.0096 measured
+    assert distance(unposed) > 0.2  # 0.33 measured
 
 
 @pytest.mark.parametrize("keep_grid", [False, True])

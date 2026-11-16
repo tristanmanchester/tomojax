@@ -161,11 +161,6 @@ optional scalar damping and quadratic smoothness. It supports JAX and CUDA execu
 budgets are dynamic, so changing the budget reuses compiled code. Use FISTA or
 SPDHG for TV regularization and nonnegativity constraints.
 
-For resident, unmasked parallel or laminographic nonnegative least squares,
-`FistaConfig(initial_epochs=8, initial_subsets=16, iterations=10, tv_weight=0,
-nonnegative=True)` optionally initializes with ordered subsets before the full-data
-iterations; it is off by default, and more subsets can worsen image quality.
-
 ```python
 from tomojax.recon import CGLSConfig, cgls
 
@@ -231,8 +226,8 @@ level raises `FloatingPointError`.
 
 CUDA Joseph `fista_tv` uses host slabs automatically when resident state
 would exceed device memory; its `out=` argument explicitly selects host output.
-The host route supports ordinary TV and box constraints without a support mask
-or ordered-subset initialization. It uses the same global power estimate,
+The host route supports ordinary TV and box constraints without a support mask.
+It uses the same global power estimate,
 clipped momentum, objective stopping and finite-step TV proximal, not independent
 slice solves. Three host volumes move to unlinked temporary files in `TMPDIR`
 when their aggregate exceeds half of available host RAM. The output owns its

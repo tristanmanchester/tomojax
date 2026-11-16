@@ -324,10 +324,8 @@ def solve_on_host(
         need += 4 * 4 * grid.nx * grid.ny * grid.nz if scratch is None else scratch
     if out is None and (free is None or need <= 0.85 * free):
         return None
-    if cfg.support is not None or cfg.regulariser != "tv" or cfg.initial_epochs:
-        raise ValueError(
-            "fista_tv: host volumes require TV, no support mask or ordered initialization"
-        )
+    if cfg.support is not None or cfg.regulariser != "tv":
+        raise ValueError("fista_tv: host volumes require TV and no support mask")
     from ._parallel_slabs import parallel_problem
 
     data = host_projections(projections, "fista_tv")

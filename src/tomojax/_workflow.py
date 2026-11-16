@@ -267,10 +267,11 @@ def reconstruct(
     """Reconstruct ``scan`` with ``method``.
 
     ``auto`` (default) chooses Fourier inversion for unposed axial half-turn
-    scans, nonnegative least squares (``fista`` without TV) for laminography and
-    tilted-axis scans, matched CGLS for segmented cone geometry, and FBP/FDK
-    otherwise. It reconstructs with the geometry and poses the scan carries, on
-    its grid or the ``grid`` given; it fits no poses (use :func:`align`).
+    scans, matched CGLS for segmented cone geometry, and FBP/FDK otherwise,
+    laminography and tilted-axis scans included: for those, ``fista`` gives a
+    better image at the cost of its iterations (docs/measurements.md). It
+    reconstructs with the geometry and poses the scan carries, on its grid or
+    the ``grid`` given; it fits no poses (use :func:`align`).
     It estimates nothing: a centre comes from the file or from :func:`align`.
     ``info["automatic"]`` records those choices and limitations. Explicit
     methods bypass this policy.
@@ -432,25 +433,7 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
         )
     reasons = []
     method: Method = "fbp"
-    if isinstance(base, LaminographyGeometry | RotationAxisGeometry):
-        if set(options) - {"grid"}:
-            raise ValueError(
-                "automatic geometry reconstruction does not take expert overrides; "
-                "choose method='fista' (or another explicit method) to supply them"
-            )
-        from tomojax.recon import FistaConfig
-
-        grid = options.get("grid") or scan.grid
-        method = "fista"
-        options["config"] = FistaConfig(
-            initial_epochs=10 if grid.vx > 1.5 * max(scan.detector.du, scan.detector.dv) else 8,
-            initial_subsets=16,
-            tv_weight=0,
-            nonnegative=True,
-            iterations=1,
-            stream_projections=False,
-        )
-    elif isinstance(base, ConeSegments):
+    if isinstance(base, ConeSegments):
         method = "cgls"
         reasons.append(
             "Segmented cone geometry uses matched CGLS because FDK requires one arrangement; "
@@ -465,6 +448,12 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
             reasons.append(
                 "Sparse or incomplete half-turn coverage: Fourier inversion was not selected."
             )
+    elif isinstance(base, LaminographyGeometry | RotationAxisGeometry):
+        reasons.append(
+            "FBP leaves the frequencies no view measures (the missing cone of a tilted "
+            "axis) empty; method='fista' estimates them from nonnegativity and its "
+            "regulariser, at the cost of its iterations."
+        )
     elif getattr(base, "beam", None) is None:
         reasons.append(
             "Posed or custom parallel geometry uses FBP; "

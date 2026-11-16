@@ -124,19 +124,31 @@ the new file with `tomojax inspect` before reconstructing it.
 
 ## Reconstruct with the recorded geometry
 
-For tilted or irregular-angle data, try an iterative reconstruction:
+The default reconstruction of a laminography scan is FBP, as for every
+geometry: `tj.reconstruct(scan)` or `tomojax recon corrected.nxs -o recon.nxs`.
+It takes seconds (5.5 s on a 1441-view K11 scan with a 704 × 704 × 234 grid).
+
+For a better image, ask for FISTA by name:
 
 ```bash
 uv run --no-sync tomojax recon corrected.nxs -o recon.nxs \
-  --method fista --iterations 50 --tv-weight 0.005 --nonnegative --roi off \
+  --method fista --iterations 100 --nonnegative --roi off \
   --manifest recon-manifest.json
 uv run --no-sync tomojax inspect recon.nxs --preview previews
 ```
 
+On two simulated laminography scans with an independent truth, FISTA with its
+automatic TV weight halves FBP's error on the frequencies the views measure
+(0.079 against 0.165 and 0.163) and fills part of the missing cone, which FBP
+leaves empty. It costs its iterations: about 12 s each on that K11 scan, so
+about 20 minutes at 100. Its default of 50 iterations is not converged on these
+scans (5% and 16% above its converged error), and `iterations` is the setting
+to raise. The [measurements](measurements.md#laminography-the-default-fbp-against-fista)
+give the table.
+
 Use `corrected-lamino.nxs` as input if you created that file above. `previews/`
 holds PNGs of the central projection and the volume's central slices
-(`slice_z.png`, `slice_y.png`, `slice_x.png`). The iteration budget and TV
-weight are illustrative. Inspect residuals and image features,
+(`slice_z.png`, `slice_y.png`, `slice_x.png`). Inspect residuals and image features,
 and assess sensitivity to regularisation before quantitative use. Positivity
 is appropriate only when the object model permits nonnegative attenuation.
 Laminography leaves a cone of frequencies around the rotation axis unmeasured.

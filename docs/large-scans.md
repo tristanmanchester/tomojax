@@ -45,9 +45,8 @@ Streamed CGLS solves the equivalent normal equations, which square the
 condition number of each step's recurrence. It recomputes the exact gradient
 periodically, as in-core CGLS recomputes its residual.
 
-CUDA Joseph FISTA with ordinary TV, no support mask and no ordered-subset
-initializer switches to host slabs when its estimated resident state will not
-fit. It retains the same global objective, power estimate and finite-iteration
+CUDA Joseph FISTA with ordinary TV and no support mask switches to host slabs
+when its estimated resident state will not fit. It retains the same global objective, power estimate and finite-iteration
 TV proximal; the planes are not reconstructed independently. Three host volumes
 hold the iterate, extrapolate and gradient. If they would occupy more than half
 of available host RAM, they are anonymous temporary files in the standard

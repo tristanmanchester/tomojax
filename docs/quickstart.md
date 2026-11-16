@@ -378,8 +378,9 @@ for u_px in (-4, -2, 0, 2, 4):
 If the projections or the volume are larger than GPU memory, see
 [large scans and several GPUs](large-scans.md).
 
-For tilted or irregular-angle data, start with the iterative workflow in the
-[real scan guide](real-laminography.md#reconstruct-with-the-recorded-geometry).
+For laminography and tilted-axis data the default is FBP; the
+[real scan guide](real-laminography.md#reconstruct-with-the-recorded-geometry)
+shows when and how to ask for FISTA instead.
 If motion remains plausible, use the [alignment guide](align-a-scan.md) after
 checking geometry and preprocessing. A visually sharper aligned image does not
 by itself establish accurate recovered poses.

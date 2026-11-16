@@ -484,6 +484,35 @@ JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/calibration/scale
 JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 uv run --no-sync python ../../shared/agent08/calibration/focal_reciprocity.py
 ```
 
+## Laminography: the default FBP against FISTA
+
+`tj.reconstruct(scan)` on a laminography scan runs FBP, as for every geometry.
+Two simulated laminography scans with an independent truth: a rock (120 views,
+-35° tilt) and a watch (360 views, -15° tilt), 96³ grids. The data are the
+meshes' fine truth (4× finer, at a sub-voxel offset) projected at the true
+poses, counted at 1e4 photons per fine pixel and binned 4. The error is
+relative to the truth's norm and split in Fourier space: the region the views
+measure, within the band holding all but 1e-4 of the truth's energy, and the
+missing cone no view's plane contains (2026-11-15, 03a44438; RTX 4070 Laptop
+8 GB).
+
+| Method | Rock: measured / missing cone | Watch: measured / missing cone |
+|---|---|---|
+| FBP (default) | 0.165 / 0.316 | 0.163 / 0.396 |
+| `fista`, 50 iterations (its default) | 0.0835 / 0.212 | 0.0918 / 0.215 |
+| `fista`, 100 iterations | 0.0788 / 0.185 | 0.0790 / 0.208 |
+| `fista`, 1000 iterations | 0.0792 / 0.186 | 0.0788 / 0.208 |
+
+`fista` is `tj.reconstruct(scan, "fista", nonnegative=True, iterations=N)` with
+its automatic TV weight. It halves the error on the measured region and fills
+part of the missing cone from nonnegativity and the regulariser. At its default
+50 iterations it is not converged on these scans (5% and 16% above its converged
+error); at 100 it is. Raise `iterations` for the converged image.
+
+The cost on a real scan, K11 54013 (1441 views of 540 × 640, 704 × 704 × 234
+grid): FBP 5.5 s; `fista` 614 s at 50 iterations, so about 20 minutes at 100
+(about 12 s an iteration, projections streamed from host memory).
+
 ## Reconstruction against ASTRA
 
 Measured 2026-10-05 on commit `6fa1585`. The matrix has 27 cells: Gaussian,

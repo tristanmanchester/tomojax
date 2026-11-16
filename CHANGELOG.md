@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### `tj.reconstruct(scan)` reconstructs a laminography scan with FBP
+
+The automatic choice for laminography and tilted-axis scans was nonnegative least
+squares with an ordered-subset start and one FISTA step. On a real scan it failed:
+on K11 54013 (1441 views, a 704 x 704 x 234 grid) on an 8 GB card the start needed the
+projections held on the device, which sent the volume to the host path, and that path
+refused the start, so `tj.reconstruct(scan)` raised. It was also unregularised least
+squares that worked only by stopping early: run to convergence it got worse.
+
+The default is now FBP, as for every geometry: 5.5 s on that scan. `info["automatic"]`
+names it and says that FBP leaves the missing cone empty. For a better image ask for
+`method="fista"`: on two simulated laminography scans it halves FBP's error on the
+measured frequencies (0.079 against 0.165 and 0.163) and fills part of the cone, at
+about 12 s an iteration on K11. Its default 50 iterations are not converged there; raise
+`iterations` (docs/measurements.md has the table).
+
+`FistaConfig.initial_epochs` and `initial_subsets` are removed with the ordered-subset
+start they configured, and the `info` keys `initial_epochs` and `initial_updates` with
+them.
+
 ### Alignment no longer adds view-to-view motion that is not in the scan
 
 The motion prior's weight is a threshold: how hard it holds a view against that
