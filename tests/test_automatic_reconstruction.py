@@ -150,7 +150,8 @@ def test_automatic_route_reconstructs_a_plain_cone_scan():
     [
         ("parallel", "fbp", "preserved", 0.1),  # 0.053 measured, 0.23 with the poses ignored
         ("cone", "fbp", "preserved", 0.1),  # 0.053 measured, 0.23 with the poses ignored
-        ("axis", "fbp", "preserved", 0.2),  # 0.151 measured, 0.30 with the poses ignored
+        # A regression guard for FBP, which leaves the cone empty: 0.151 measured, 0.30 ignored.
+        ("axis", "fbp", "preserved", 0.2),
     ],
 )
 def test_automatic_route_uses_a_scans_poses(kind, method, geometry, bound):
@@ -185,6 +186,8 @@ def test_automatic_route_reconstructs_an_unposed_oblique_scan_with_its_declared_
     assert np.shape(result.volume) == volume.shape
     declared = tj.reconstruct(scan.with_poses(np.zeros((len(_ANGLES), 6))))
     np.testing.assert_allclose(result.volume, declared.volume, rtol=0, atol=1e-6)
-    # FBP leaves the tilted axis's missing cone empty: 0.300 (laminography) and 0.150 (axis)
-    # measured, where fista at 100 iterations reaches 0.009 and 0.003.
+    # A regression guard, not a correctness test (the comparison with the declared poses
+    # above is the oracle): FBP leaves the tilted axis's missing cone empty, 0.300
+    # (laminography) and 0.150 (axis) measured, where fista at 100 iterations reaches 0.009
+    # and 0.003.
     assert _error(result, volume) < (0.4 if kind == "laminography" else 0.2)

@@ -184,9 +184,16 @@ def _record_scan(
 
 
 def _corrected_on_load(frames: Frames, file: Path) -> Scan:
+    from tomojax.core.host_volume import scratch_directory
+
     scan = _require_calibration(frames).corrected()
     LOG.info("%s: corrected detector frames to line integrals: %s", file.name,
              ", ".join(str(c) for c in scan.corrections))  # fmt: skip
+    directory = scratch_directory(scan.projections)
+    if directory is not None:
+        LOG.info("%s: the corrected stack (%.1f GiB) is held in a temporary file in %s, "
+                 "as more than half of host memory", file.name,
+                 scan.projections.nbytes / 2**30, directory)  # fmt: skip
     return scan
 
 

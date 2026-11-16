@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### `tj.load` holds a stack larger than memory in a temporary file
+
+A bare `tj.load` on a full-size synchrotron scan filled an in-memory stack: I13 159815
+(3301 frames of 2560 x 2160, 73 GB corrected) on a 30 GB machine, and the kernel killed
+the process with no message. The corrected stack now follows the rule the solvers'
+volumes already followed: more than half of available host memory, and it is an unlinked
+temporary file in `TMPDIR`, returned as a memmap; `tj.load` logs where. A scan that fits
+loads as before.
+
+Any such file is now created only when its directory has room for all of it. Before, a
+solver's work volume on a `TMPDIR` without room (a small RAM disk) ended the process with
+a bus error once the disk filled; now a `MemoryError` gives the size, the memory and free
+space, and the ways out (`TMPDIR`, `binning=`, `load_frames(...).selected(...)`).
+
 ### `tj.reconstruct(scan)` reconstructs a laminography scan with FBP
 
 The automatic choice for laminography and tilted-axis scans was nonnegative least

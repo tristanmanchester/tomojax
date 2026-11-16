@@ -23,6 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.array_ops import mean_detector_pixels
+from tomojax.core.host_volume import host_array
 
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
@@ -164,7 +165,7 @@ def correct_frames(
     else:
         # Binned on the device while the batches come back, unless the tail needs full frames.
         factor = 1 if tail or transmission_tail else binning
-        out = np.empty((views, rows // factor, cols // factor), np.float32)
+        out = host_array((views, rows // factor, cols // factor))
         batch = batch_views or frame_batch_size(
             views, rows, cols, (*counts_steps, *transmission_steps, *head)
         )
@@ -658,7 +659,7 @@ def _correct_row_slabs(
     """Correct and optionally bin slabs of whole rows: the corrected stack and the tally."""
     views, rows, cols = counts.shape
     factor = settings["factor"]
-    out = np.empty((views, rows // factor, cols // factor), np.float32)
+    out = host_array((views, rows // factor, cols // factor))
     flats, dark, usable = (jax.device_put(a) for a in (fields.flats, fields.dark, fields.usable))
     lo, hi, t, exposure_scale = (jax.device_put(q) for q in interpolation)
     tally = np.zeros(2, np.int64)
@@ -719,7 +720,7 @@ def _binned(out: np.ndarray, factor: int, batch_views: int | None) -> np.ndarray
     """The detector block means of ``out``, a batch of views at a time."""
     views, rows, cols = out.shape
     batch = batch_views or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
-    binned = np.empty((views, rows // factor, cols // factor), np.float32)
+    binned = host_array((views, rows // factor, cols // factor))
     for start in range(0, views, batch):
         binned[start : start + batch] = mean_detector_pixels(out[start : start + batch], factor)
     return binned

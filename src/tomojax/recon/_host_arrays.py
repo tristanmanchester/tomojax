@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import mmap
-from pathlib import Path
-import tempfile
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -162,18 +160,14 @@ def automatic_host_output(
     result owns its file until its last reference is released. Caller-supplied
     storage and small resident solves are unchanged.
     """
-    from tomojax.backends.api import host_available_memory_bytes
-    from tomojax.core.host_volume import host_volume
+    from tomojax.core.host_volume import host_array
 
     if out is not None:
         return validate_host_arrays(data, out, shape, context)
-    free = host_available_memory_bytes()
-    need = volumes * math.prod(shape) * np.dtype(np.float32).itemsize
-    directory = Path(tempfile.gettempdir()) if free is not None and need > 0.5 * free else None
     return validate_host_arrays(
         data,
         out,
         shape,
         context,
-        allocate=lambda shape, _order: host_volume(shape, directory),
+        allocate=lambda shape, _order: host_array(shape, copies=volumes),
     )

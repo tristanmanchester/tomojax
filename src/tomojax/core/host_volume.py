@@ -8,9 +8,11 @@ so a volume larger than memory never stays resident.
 
 from __future__ import annotations
 
+import math
 import mmap
 import os
 from pathlib import Path
+import shutil
 import tempfile
 from typing import Any
 import weakref
@@ -20,19 +22,44 @@ import numpy as np
 _DESCRIPTORS: dict[int, int] = {}  # open files of the work volumes alive, by id
 
 
-def scratch_directory(array: np.ndarray | None) -> Path | None:
-    """The directory of a file-backed array, where work volumes beside it belong."""
+def scratch_directory(array: object) -> Path | None:
+    """The directory of a file-backed array, where work volumes beside it belong; else None."""
     name = getattr(array, "filename", None)
     return None if name is None else Path(name).parent
 
 
+def host_array(shape: tuple[int, int, int], *, copies: int = 1) -> np.ndarray:
+    """A zeroed C-ordered FP32 array: in memory, or a temporary file when it is large.
+
+    The array goes to an unlinked file in the standard temporary directory
+    (``TMPDIR``) when ``copies`` arrays of ``shape`` would take more than half of
+    the available host memory; otherwise it is an ordinary array. Every large host
+    array the library makes (a corrected stack, a solver's output and work
+    volumes) follows this one rule.
+    """
+    from tomojax.backends.api import host_available_memory_bytes
+
+    available = host_available_memory_bytes()
+    need = copies * math.prod(shape) * np.dtype(np.float32).itemsize
+    large = available is not None and need > 0.5 * available
+    return host_volume(shape, Path(tempfile.gettempdir()) if large else None)
+
+
 def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> np.ndarray:
-    """A zeroed C-ordered FP32 work volume: in memory, or a temporary file in ``directory``.
+    """A zeroed C-ordered FP32 array: in memory, or a temporary file in ``directory``.
 
     The temporary file has no name and is removed when the array is released.
+    A file is made only when ``directory`` has room for all of it: a mapped page
+    written past a full disk would end the process with a bus error.
+
+    Raises
+    ------
+    MemoryError
+        If ``directory`` has less free space than the array needs.
     """
     if directory is None:
         return np.zeros(shape, np.float32, order="C")
+    _require_room(shape, directory)
     with tempfile.NamedTemporaryFile(dir=directory) as handle:
         array = np.memmap(handle.name, np.float32, "w+", shape=shape, order="C")
         descriptor = os.open(handle.name, os.O_RDWR)
@@ -40,6 +67,26 @@ def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> n
     _DESCRIPTORS[id(array)] = descriptor
     weakref.finalize(array, lambda key: os.close(_DESCRIPTORS.pop(key)), id(array))
     return array
+
+
+def _require_room(shape: tuple[int, int, int], directory: Path) -> None:
+    """Raise a plain error when ``directory`` cannot hold a float32 array of ``shape``."""
+    from tomojax.backends.api import host_available_memory_bytes
+
+    need = math.prod(shape) * np.dtype(np.float32).itemsize
+    free = shutil.disk_usage(directory).free
+    if need <= free:
+        return
+    available = host_available_memory_bytes()
+    memory = "an unknown amount" if available is None else f"{available / 2**30:.1f} GiB"
+    raise MemoryError(
+        f"a {' x '.join(map(str, shape))} float32 array needs {need / 2**30:.1f} GiB; "
+        f"host memory has {memory} available, so it is held in a temporary file in "
+        f"{directory}, which has {free / 2**30:.1f} GiB free. Set TMPDIR to a directory "
+        "on a disk with room (a RAM disk such as /tmp on some systems is memory, not "
+        "disk), or make the array smaller: binning=, fewer views "
+        "(tj.load_frames(path).selected(...)), or a smaller grid."
+    )
 
 
 def _owned_descriptor(array: np.ndarray) -> int | None:
