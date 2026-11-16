@@ -15,10 +15,13 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import weakref
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from numpy.typing import DTypeLike
 
 _DESCRIPTORS: dict[int, int] = {}  # open files of the work volumes alive, by id
 
@@ -108,23 +111,27 @@ def scratch_directory(array: object) -> Path | None:
     return None if name is None else Path(name).parent
 
 
-def host_array(shape: tuple[int, int, int], *, copies: int = 1) -> np.ndarray:
-    """A zeroed C-ordered FP32 array: in memory, or a temporary file when it is large.
+def host_array(
+    shape: tuple[int, ...], *, dtype: DTypeLike = np.float32, copies: float = 1
+) -> np.ndarray:
+    """A zeroed C-ordered array: in memory, or a temporary file when it is large.
 
     The array goes to an unlinked file in the standard temporary directory
     (``TMPDIR``) when ``copies`` arrays of ``shape`` would take more than half of
     the available host memory; otherwise it is an ordinary array. Every large host
     array the library makes (a corrected stack, a solver's output and work
-    volumes) follows this one rule.
+    volumes, the alignment's stacks) follows this one rule.
     """
     available = host_available_memory_bytes()
-    need = copies * math.prod(shape) * np.dtype(np.float32).itemsize
+    need = copies * math.prod(shape) * np.dtype(dtype).itemsize
     large = available is not None and need > 0.5 * available
-    return host_volume(shape, Path(tempfile.gettempdir()) if large else None)
+    return host_volume(shape, Path(tempfile.gettempdir()) if large else None, dtype=dtype)
 
 
-def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> np.ndarray:
-    """A zeroed C-ordered FP32 array: in memory, or a temporary file in ``directory``.
+def host_volume(
+    shape: tuple[int, ...], directory: Path | None = None, *, dtype: DTypeLike = np.float32
+) -> np.ndarray:
+    """A zeroed C-ordered array (FP32 by default): in memory, or a temporary file in ``directory``.
 
     The temporary file has no name and is removed when the array is released.
     A file is made only when ``directory`` has room for all of it: a mapped page
@@ -138,12 +145,12 @@ def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> n
     if directory is None:
         # Anonymous pages, zero and populated as they are written: no NumPy arena and no
         # eager huge-page advice (712cab8e: host FBP 16.1 s against 22.1 s on I12).
-        size = max(1, math.prod(shape) * np.dtype(np.float32).itemsize)
+        size = max(1, math.prod(shape) * np.dtype(dtype).itemsize)
         storage = mmap.mmap(-1, size, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)
-        return np.ndarray(shape, np.float32, buffer=storage, order="C")
-    _require_room(shape, directory)
+        return np.ndarray(shape, dtype, buffer=storage, order="C")
+    _require_room(shape, directory, dtype)
     with tempfile.NamedTemporaryFile(dir=directory) as handle:
-        array = np.memmap(handle.name, np.float32, "w+", shape=shape, order="C")
+        array = np.memmap(handle.name, dtype, "w+", shape=shape, order="C")
         descriptor = os.open(handle.name, os.O_RDWR)
     # The descriptor keeps the unlinked file open for slab reads and writes.
     _DESCRIPTORS[id(array)] = descriptor
@@ -151,16 +158,17 @@ def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> n
     return array
 
 
-def _require_room(shape: tuple[int, int, int], directory: Path) -> None:
-    """Raise a plain error when ``directory`` cannot hold a float32 array of ``shape``."""
-    need = math.prod(shape) * np.dtype(np.float32).itemsize
+def _require_room(shape: tuple[int, ...], directory: Path, dtype: DTypeLike = np.float32) -> None:
+    """Raise a plain error when ``directory`` cannot hold an array of ``shape`` and ``dtype``."""
+    need = math.prod(shape) * np.dtype(dtype).itemsize
     free = shutil.disk_usage(directory).free
     if need <= free:
         return
     available = host_available_memory_bytes()
     memory = "an unknown amount" if available is None else f"{available / 2**30:.1f} GiB"
     raise MemoryError(
-        f"a {' x '.join(map(str, shape))} float32 array needs {need / 2**30:.1f} GiB; "
+        f"a {' x '.join(map(str, shape))} {np.dtype(dtype).name} array needs "
+        f"{need / 2**30:.1f} GiB; "
         f"host memory has {memory} available, so it is held in a temporary file in "
         f"{directory}, which has {free / 2**30:.1f} GiB free. Set TMPDIR to a directory "
         "on a disk with room (a RAM disk such as /tmp on some systems is memory, not "

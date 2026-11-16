@@ -23,6 +23,7 @@ import numpy as np
 from . import _common, _tv as tv
 from ._krylov import solve as krylov_solve
 from ._operators import profiled_residual, robust_value
+from ._stacks import level_stacks, unplaced
 
 
 @dataclass(frozen=True)
@@ -109,8 +110,7 @@ class _Level:
         self,
         ops,
         prior,
-        y,
-        precision,
+        stacks,
         *,
         lam,
         eps,
@@ -118,7 +118,8 @@ class _Level:
         delta,
         inner,
     ) -> None:
-        self.ops, self.prior = ops, prior
+        self.ops, self.prior, self.stacks = ops, prior, stacks
+        y, precision = stacks["y"], stacks.get("precision")
         self.y, self.precision, self.lam, self.delta = y, precision, lam, delta
         self.tv_value = jax.jit(lambda x: tv.energy(x, eps, scales))
         self.conduct = jax.jit(lambda x: tv.conductance(x, eps, scales))
@@ -139,13 +140,14 @@ class _Level:
         # the shared moments move by a times the step's B dx.
         def held(residual, step, sw, w, a, moments):
             def batch(total, z):  # the robust value is a sum over views: one batch at a time
-                rb, sb, swb, wb, valid = z
-                wb = ops.batch_precision(wb, valid)
+                i, valid = z
+                rb, sb, swb = residual.read(i), step.read(i), sw.read(i)
+                wb = ops.batch_precision(None if w is None else w.read(i), valid)
                 moved = rb + a * jnp.where(swb > 0, sb / jnp.where(swb > 0, swb, 1), 0)
                 return total + robust_value(profiled_residual(moved, wb), wb, delta), None
 
-            parts = (residual, step, sw, w, ops.valid)
-            value = jax.lax.scan(batch, jnp.asarray(0.0, jnp.float64), ops.batches(parts))[0]
+            parts = (jnp.arange(ops.nb), ops.batches(ops.valid))
+            value = jax.lax.scan(batch, jnp.asarray(0.0, jnp.float64), parts)[0]
             return value + 0.5 * jnp.vdot(moments, self.inverse_gram @ moments)
 
         self.held = jax.jit(held)
@@ -162,18 +164,20 @@ class _Level:
         # Batch by batch: a whole-sinogram FP64 product would be a stack-sized temporary.
         self.energy = jax.jit(
             lambda r: jnp.sum(
-                jax.lax.map(lambda b: tv.dot(b, b), ops.batches(r)), dtype=jnp.float64
+                jax.lax.map(lambda i: tv.dot(r.read(i), r.read(i)), jnp.arange(ops.nb)),
+                dtype=jnp.float64,
             )
         )
 
-        @jax.jit
-        def schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag, precision, common, poses):
+        # r is donated: the matvec rewrites the level's one weighted-projection stack.
+        @partial(jax.jit, donate_argnums=(13,))
+        def schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag, precision, common, poses, r):
             # Fixed voxels' transpose is discarded: the gather may skip them.
             active = ops.projection.active(free)
 
-            def matvec(v):
+            def matvec(v, r):
                 v = v * free
-                r, jr = ops.weighted_forward(q, v, sw, j, precision)
+                r, jr = ops.weighted_forward(q, v, sw, j, precision, r)
                 bv = common.of_image(v)
                 p = poses(prior.solve, factor, common, jr + common.poses.T @ (common.inverse @ bv))
                 out = ops.weighted_back(q, r, sw, j, p, active, precision)
@@ -181,11 +185,17 @@ class _Level:
                 if lam:
                     out = out + jnp.float32(lam) * tv.diffusion(v, d, scales)
                 out = out + (jnp.float32(lm) * damp) * v
-                return out * free
+                return out * free, r
 
-            return krylov_solve(matvec, rhs, invdiag, inner, rtol=_CG_RTOL)
+            return krylov_solve(matvec, rhs, invdiag, inner, rtol=_CG_RTOL, work=r)
 
-        self.schur = schur
+        self._schur = schur
+
+    def schur(self, *args: Any) -> Any:
+        """The Schur volume solve, rewriting the level's ``r`` stack in place."""
+        solution, r = self._schur(*args, self.stacks["r"])
+        self.stacks.update([("r", r)])
+        return solution
 
     def image_penalty(self, x):
         """Image-prior objective, with no TV call or temporary when its weight is zero."""
@@ -226,9 +236,12 @@ class _Level:
         offset and ramp (``_common.Common``, returned last).
         """
         q = self.ops.pad_poses(c)
+        stacks = self.stacks
+        out = (stacks["sw"], stacks["j"], stacks["residual"])
         gx0, dd, sw, j, gr, gram, data, obstats, moments, residual, moved = self.ops.linearize(
-            q, x, self.y, self.precision, self.delta
+            q, x, self.y, self.precision, self.delta, out
         )
+        stacks.update([("sw", sw), ("j", j), ("residual", residual)])
         common = _common.Common(
             self.gram,
             self.inverse_gram,
@@ -315,7 +328,9 @@ class _Level:
         if not np.isfinite(float(linear_step.relative_residual)):
             return None
         dx = jnp.maximum(jnp.where(k.free, x + linear_step.solution, x), 0) - x
-        r, jadx = ops.weighted_forward(k.q, dx, k.sw, k.j, self.precision)
+        # The step's projection and the matvec's never coexist: one stack serves both.
+        r, jadx = ops.weighted_forward(k.q, dx, k.sw, k.j, self.precision, self.stacks["r"])
+        self.stacks.update([("r", r)])
         bdx = common.of_image(dx)
         jadx = jadx + common.poses.T @ (common.inverse @ bdx)
         dc = -poses(prior.solve, factor, common, k.gp + jadx)
@@ -430,7 +445,7 @@ def _pose_weight(level, linear, sigma):
     without translation columns) and F.
     """
     ops = level.ops
-    _, _, sw, j, _, gram, residual, _ = linear
+    gram = linear[5]
     n, local = ops.n, ops.parameters.local
     fisher = float(jnp.median(jnp.trace(gram, axis1=1, axis2=2)))
     photon = float(sigma * np.sqrt(fisher) * np.sqrt(2 * np.log(n)))
@@ -439,12 +454,15 @@ def _pose_weight(level, linear, sigma):
         return photon, None, fisher
     columns = jnp.asarray(translations)
     scores = []
+    stacks = level.stacks
     for start in range(0, n, ops.batch):  # a view slab at a time: the columns are stack-sized
         stop = min(start + ops.batch, n)
-        held = None if level.precision is None else level.precision[start:stop]
+        held = None if level.precision is None else stacks.rows("precision", start, stop)
         w = ops.batch_precision(held, ops.valid[start:stop])
-        res = jnp.asarray(sw[start:stop], jnp.float32) * profiled_residual(residual[start:stop], w)
-        jb = jnp.asarray(j[start:stop][:, columns], jnp.float32)
+        res = jnp.asarray(stacks.rows("sw", start, stop), jnp.float32) * profiled_residual(
+            stacks.rows("residual", start, stop), w
+        )
+        jb = jnp.asarray(stacks.rows("j", start, stop)[:, columns], jnp.float32)
         scores.append(jnp.einsum("vkij,vij->vk", jb, res, preferred_element_type=jnp.float32))
     g = np.asarray(jnp.concatenate(scores), np.float64)
     diagonal = np.diagonal(np.asarray(gram, np.float64), axis1=1, axis2=2)[:, translations]
@@ -456,31 +474,61 @@ def _pose_weight(level, linear, sigma):
     return (weight, photon) if len(translations) < len(local) else weight, s, fisher
 
 
-def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, delta, scales):
+def solve(
+    y,
+    precision,
+    prior,
+    weight,
+    eps,
+    *,
+    ops,
+    budget,
+    x0,
+    p0,
+    pose_sigma,
+    delta,
+    scales,
+    placement=None,
+):
     """Fit the volume and the per-view pose parameters at one level.
 
-    Returns the volume, compact free parameters, and a record of the steps.
+    ``y`` and ``precision`` are the level's host data (``precision`` None when
+    uniform). The level's stacks are placed and allocated first (``_stacks``) and
+    released when it ends, whatever the outcome; ``placement`` forces stacks to
+    "device" or "host" by name. Returns the volume, compact free parameters, the
+    data and a record of the steps, the stacks' placement and the level's time.
     """
-    start, n = time.perf_counter(), ops.n
+    start = time.perf_counter()
     width = prior.size
     c = (
         jnp.zeros(width, jnp.float64)
         if p0 is None
         else prior.project_gauge(jnp.asarray(p0, jnp.float64).reshape(-1))
     )
-    y = ops.pad_images(y)
-    precision = ops.pad_precision(precision)
-    level = _Level(
-        ops,
-        prior,
-        y,
-        precision,
-        lam=weight,
-        eps=eps,
-        scales=scales,
-        delta=delta,
-        inner=budget.inner,
-    )
+    stacks = level_stacks(ops, y, precision, placement=placement)
+    try:
+        level = _Level(
+            ops,
+            prior,
+            stacks,
+            lam=weight,
+            eps=eps,
+            scales=scales,
+            delta=delta,
+            inner=budget.inner,
+        )
+        x, c, record = _descend(level, c, x0, budget, pose_sigma, weight)
+    except jax.errors.JaxRuntimeError as err:
+        raise unplaced(err, stacks) from err
+    finally:
+        stacks.close()
+    record = {**record, "seconds": time.perf_counter() - start, "stacks": stacks.record()}
+    return x, c, y, record
+
+
+def _descend(level, c, x0, budget, pose_sigma, weight):
+    """The level's damped Gauss-Newton steps from poses ``c`` and volume ``x0`` (None: FISTA)."""
+    ops, prior = level.ops, level.prior
     lipschitz, observed = ops.sensitivity(ops.pad_poses(c))
     if x0 is None:
         x = level.initial_volume(ops.pad_poses(c), lipschitz, budget.init_iterations)
@@ -545,7 +593,6 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
     final_image_prior = level.image_penalty(x)
     record = {
         "status": status,
-        "seconds": time.perf_counter() - start,
         "steps": history,
         "tv_weight": float(weight),
         "noise_sigma": float(pose_sigma),
@@ -559,4 +606,4 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
         "final_image_prior": final_image_prior,
         "budget": asdict(budget),
     }
-    return x, c, level.y[:n], record
+    return x, c, record

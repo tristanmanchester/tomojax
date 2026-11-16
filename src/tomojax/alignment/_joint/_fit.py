@@ -278,6 +278,7 @@ def fit_poses(
     detector_roll_deg=0.0,
     view_positions=None,
     declared_poses=None,
+    placement=None,
 ):
     """Fit a volume and the selected geometry parameters to line-integral projections.
 
@@ -298,6 +299,8 @@ def fit_poses(
     the working scale: the problem's size is a property of the scan as declared, so a
     start or restart from a different pose table fits on the same grid. None uses
     ``nominal_poses``, which are the declared ones when no corrections are attached.
+    ``placement`` forces the levels' stacks to "device" or "host" by name
+    (``_stacks.ORDER``); None plans each level from the device's room.
     Returns the working-scale volume (nz, ny, nx), its grid, the (views, 6)
     pose table (alpha, beta, phi in radians; dx, dz, dy along lab x, z, y,
     in the grid's length unit; dy is zero only for parallel rays) and a
@@ -396,6 +399,7 @@ def fit_poses(
                 pose_sigma=cal["sigma"],
                 delta=cal["delta"],
                 scales=cal["scales"],
+                placement=placement,
             )
             levels.append(
                 {
@@ -405,16 +409,9 @@ def fit_poses(
                 }
             )
         assert x is not None  # every schedule has at least one level
-        p, refinement = refine(
-            x, p, y, precision, prior, ops=ops, sigma=cal["sigma"], last=levels[-1]
-        )
+        stage = {"ops": ops, "sigma": cal["sigma"], "last": levels[-1], "placement": placement}
+        p, refinement, (offsets, energy) = refine(x, p, y, precision, prior, **stage)
         table, corrections = parameters.physical(np.asarray(p, np.float64), pose_scales)
-        offsets, energy = (
-            np.asarray(a)
-            for a in ops.view_summary(
-                ops.pad_poses(p), x, ops.pad_images(y), ops.pad_precision(precision)
-            )
-        )
         x = x[margin : margin + base.nz] / np.float32(cal["scale"])
     record = {
         "fit": list(parameters.fit),

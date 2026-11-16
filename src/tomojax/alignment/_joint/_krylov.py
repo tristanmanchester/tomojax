@@ -20,7 +20,7 @@ class KrylovResult(NamedTuple):
     matvecs: jax.Array
 
 
-def solve(matvec, rhs, invdiag, maxiter, *, rtol, precondition=None):
+def solve(matvec, rhs, invdiag, maxiter, *, rtol, work, precondition=None):
     """Solve K x = rhs from zero with verified tolerance convergence.
 
     The caller supplies the same symmetric positive operator for every use.
@@ -32,6 +32,9 @@ def solve(matvec, rhs, invdiag, maxiter, *, rtol, precondition=None):
     exhausts its budget above tolerance reports its recursive residual as such,
     without spending another matvec on a diagnostic that cannot change the step.
     The zero initial step has the exact residual ``rhs`` without a matvec.
+    ``work`` is the matvec's own buffer, carried through every product:
+    ``matvec(v, work)`` returns the product and the buffer, which is returned
+    with the result, so a donated buffer is rewritten in place, not reallocated.
     A non-positive operator or preconditioner reports an infinite residual.
     """
 
@@ -52,18 +55,19 @@ def solve(matvec, rhs, invdiag, maxiter, *, rtol, precondition=None):
         squared,
         jnp.asarray(True),
         jnp.int32(0),
+        work,
     )
     threshold = rtol**2 * squared
 
     def condition(state):
-        k, _, _, _, _, ok, residual_squared, explicit, _ = state
+        k, _, _, _, _, ok, residual_squared, explicit, _, _ = state
         advance = (k < maxiter) & (residual_squared > threshold)
         verify = (residual_squared <= threshold) & ~explicit
         return ok & (advance | verify)
 
     def advance(state):
-        k, x, r, p, rz, ok, _, _, products = state
-        ap = matvec(p)
+        k, x, r, p, rz, ok, _, _, products, work = state
+        ap, work = matvec(p, work)
         denominator = _dot(p, ap)
         safe = jnp.isfinite(denominator) & (denominator > 0)
         alpha = jnp.where(safe, rz / jnp.where(safe, denominator, 1), 0).astype(rhs.dtype)
@@ -82,22 +86,24 @@ def solve(matvec, rhs, invdiag, maxiter, *, rtol, precondition=None):
             _dot(r, r),
             jnp.asarray(False),
             products + 1,
+            work,
         )
 
     def verify(state):
-        k, x, _, _, _, ok, _, _, products = state
-        r = rhs - matvec(x)
+        k, x, _, _, _, ok, _, _, products, work = state
+        ax, work = matvec(x, work)
+        r = rhs - ax
         z = apply_inverse(r)
         gamma, residual_squared = _dot(r, z), _dot(r, r)
         ok = ok & jnp.isfinite(gamma) & jnp.isfinite(residual_squared)
         ok = ok & ((gamma > 0) | (residual_squared == 0))
-        return k, x, r, z, gamma, ok, residual_squared, jnp.asarray(True), products + 1
+        return k, x, r, z, gamma, ok, residual_squared, jnp.asarray(True), products + 1, work
 
     def step(state):
         return jax.lax.cond(state[6] <= threshold, verify, advance, state)
 
-    k, x, _, _, _, valid, residual_squared, explicit, products = jax.lax.while_loop(
+    k, x, _, _, _, valid, residual_squared, explicit, products, work = jax.lax.while_loop(
         condition, step, initial
     )
     relative = jnp.sqrt(residual_squared / jnp.maximum(squared, 1e-300))
-    return KrylovResult(x, k, jnp.where(valid, relative, jnp.inf), explicit, products)
+    return KrylovResult(x, k, jnp.where(valid, relative, jnp.inf), explicit, products), work

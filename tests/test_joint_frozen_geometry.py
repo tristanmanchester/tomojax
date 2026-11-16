@@ -5,10 +5,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-from tomojax.alignment._joint._operators import Operators
+from tomojax.alignment._joint._operators import Operators  # check-public-imports: allow-private
 from tomojax.core.cone import beam_frame
 from tomojax.geometry import ConeBeam, Detector, Grid, LaminographyGeometry, stack_view_poses
+
+from . import _joint_stacks as js
 
 
 @pytest.mark.parametrize("cone", [False, True])
@@ -45,22 +46,22 @@ def test_frozen_geometry_preserves_batched_normal_and_cross_actions(cone, batch_
         )
         p = jnp.asarray(rng.normal(size=3 * ops.dofs), jnp.float64)
         np.testing.assert_array_equal(
-            ops.initial_gradient(q, x, sw, None, 1.0),
-            ops.initial_gradient(frozen, x, sw, None, 1.0),
+            ops.initial_gradient(q, x, js.stack(ops, sw), None, 1.0),
+            ops.initial_gradient(frozen, x, js.stack(ops, sw), None, 1.0),
         )
-        fresh = ops.weighted_forward(q, x, sw, columns)
-        cached = ops.weighted_forward(frozen, x, sw, columns)
+        fresh = js.weighted_forward(ops, q, x, sw, columns)
+        cached = js.weighted_forward(ops, frozen, x, sw, columns)
         for left, right in zip(fresh, cached, strict=True):
             np.testing.assert_array_equal(left, right)
         np.testing.assert_array_equal(
-            ops.weighted_back(q, fresh[0], sw, columns, p),
-            ops.weighted_back(frozen, fresh[0], sw, columns, p),
+            js.weighted_back(ops, q, fresh[0], sw, columns, p),
+            js.weighted_back(ops, frozen, fresh[0], sw, columns, p),
         )
         np.testing.assert_array_equal(
-            ops.pose_back(q, sw, columns, p), ops.pose_back(frozen, sw, columns, p)
+            js.pose_back(ops, q, sw, columns, p), js.pose_back(ops, frozen, sw, columns, p)
         )
         left = jnp.vdot(p, cached[1])
         right = jnp.vdot(
-            x.astype(jnp.float64), ops.pose_back(frozen, sw, columns, p).astype(jnp.float64)
+            x.astype(jnp.float64), js.pose_back(ops, frozen, sw, columns, p).astype(jnp.float64)
         )
         np.testing.assert_allclose(left, right, rtol=5e-6, atol=2e-5)

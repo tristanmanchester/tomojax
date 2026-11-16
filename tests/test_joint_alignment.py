@@ -21,6 +21,8 @@ from tomojax.alignment._joint._projection import (  # check-public-imports: allo
 from tomojax.core.joseph import forward_project_planes, plane_coefficients, plane_weighted_diagonal
 from tomojax.geometry import stack_view_poses
 
+from . import _joint_stacks as js
+
 
 def _laminography(*, nx=5, ny=4, nz=3, nu=7, nv=6, views=4, tilt=-30.0):
     grid = tj.Grid(nx, ny, nz, 1.0, 1.1, 0.9)
@@ -185,8 +187,8 @@ def test_parallel_image_pose_cross_blocks_use_the_matched_transpose(column_dtype
             rng.normal(size=(ops.padded_n, ops.dofs, detector.nv, detector.nu)), column_dtype
         )
         p = jnp.asarray(rng.normal(size=len(angles) * ops.dofs), jnp.float64)
-        _, cross = ops.weighted_forward(q, volume, sw, columns)
-        back = ops.pose_back(q, sw, columns, p)
+        _, cross = js.weighted_forward(ops, q, volume, sw, columns)
+        back = js.pose_back(ops, q, sw, columns, p)
         left = float(jnp.vdot(p, cross))
         right = float(jnp.vdot(volume.astype(jnp.float64), back.astype(jnp.float64)))
         assert abs(left - right) < 2e-5 * max(abs(left), abs(right), 1)
@@ -205,8 +207,8 @@ def test_pose_normal_blocks_use_the_same_columns_as_the_schur_operator():
         measured = ops.pad_images(rng.normal(size=(len(angles), detector.nv, detector.nu)))
         precision = rng.uniform(0.1, 1.0, measured.shape).astype(np.float32)
         precision[ops.n :] = 0
-        _, _, sw, cached, score, blocks, *_ = ops.linearize(
-            q, volume, measured, jnp.asarray(precision), 100.0
+        _, _, sw, cached, score, blocks, *_ = js.linearize(
+            ops, q, volume, measured, jnp.asarray(precision), 100.0
         )
         prediction = ops.project(ops.coefficients(ops.nominal, q, ops.valid), volume)
         # Each view's precision-weighted offset and row ramp are eliminated (no

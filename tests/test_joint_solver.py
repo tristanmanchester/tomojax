@@ -23,6 +23,8 @@ from tomojax.alignment._joint._solver import (
 )  # check-public-imports: allow-private
 from tomojax.geometry import stack_view_poses
 
+from . import _joint_stacks as js
+
 
 @pytest.mark.parametrize("weight", [0.0, 0.02])
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
@@ -130,9 +132,7 @@ def test_each_views_offset_and_ramp_are_eliminated_relative_to_the_level_the_vie
             scales=(1.0, 1.0, 1.0),
         )
         reported = np.asarray(
-            ops.view_summary(ops.pad_poses(c), fitted, ops.pad_images(y), ops.pad_precision(None))[
-                0
-            ]
+            ops.view_summary(ops.pad_poses(c), fitted, js.stack(ops, ops.pad_images(y)), None)[0]
         )
     # The nuisance is eliminated inside each solve: the data are never rescaled.
     np.testing.assert_array_equal(np.asarray(y), given)
@@ -162,7 +162,7 @@ def _linearized(half):
     y = y + rng.normal(0, 0.01, y.shape) + 0.3 * (rng.uniform(size=y.shape) < 0.1)
     precision = ops.pad_precision(jnp.asarray(rng.uniform(0.5, 1.5, y.shape), jnp.float32))
     y, delta = ops.pad_images(y), 0.05
-    out = ops.linearize(q, x, y, precision, delta)
+    out = js.linearize(ops, q, x, y, precision, delta)
     return ops, x, c, y, precision, delta, out, rng
 
 
@@ -175,8 +175,10 @@ def test_linearization_is_the_gradient_of_the_profiled_robust_objective():
         tail = np.mean(np.abs(np.asarray(residual)[:10]) > delta)
         assert tail > 0.05
 
+        stacked = js.stack(ops, y), js.stack(ops, precision)
+
         def objective(dx, dc):
-            return float(ops.objective(ops.pad_poses(c + dc), x + dx, y, precision, delta)[0])
+            return float(ops.objective(ops.pad_poses(c + dc), x + dx, *stacked, delta)[0])
 
         dx = jnp.asarray(rng.normal(size=ops.shape), jnp.float32)
         dc = jnp.asarray(rng.normal(size=c.shape))
@@ -187,7 +189,7 @@ def test_linearization_is_the_gradient_of_the_profiled_robust_objective():
             # the FP32 projector's rounding.
             probe = 1e-3
             q = ops.pad_poses(c + probe * direction[1])
-            moved = ops.linearize(q, x + probe * direction[0], y, precision, delta)[-2]
+            moved = js.linearize(ops, q, x + probe * direction[0], y, precision, delta)[-2]
             rate = float(jnp.max(jnp.abs(moved[:10] - residual[:10]))) / probe
             return 0.01 * delta / rate
 
@@ -238,11 +240,11 @@ def test_initializer_does_not_capture_observations(monkeypatch):
         )
         y = ops.pad_images(np.random.default_rng(58).normal(size=(8, 2, 2)))
         precision = jnp.ones_like(y)
+        stacks = js.level_stacks(ops, y, precision)
         level = _Level(
             ops,
             prior,
-            y,
-            precision,
+            stacks,
             lam=0,
             eps=0.01,
             scales=(1, 1, 1),
@@ -265,7 +267,8 @@ def test_initializer_does_not_capture_observations(monkeypatch):
         level.initial_volume(q, 1.0, 1)
         monkeypatch.setattr(jax, "jit", original_jit)
         constants = captured["initializer"]
-        assert all(a is not y and a is not precision for a in constants)
+        held = (stacks["y"].data, stacks["precision"].data)
+        assert all(a is not b for a in constants for b in held)
 
 
 @pytest.mark.parametrize(("predicted", "expected"), [(2.0, 0.5), (0.0, 0.0), (-2.0, 0.0)])
@@ -348,13 +351,16 @@ def test_held_pose_trial_equals_the_projected_objective(masked):
         if masked:
             weights = rng.uniform(0, 2, (6, 3, 7)) * (rng.uniform(size=(6, 3, 7)) > 0.3)
             precision = ops.pad_precision(jnp.asarray(weights, jnp.float32))
-        level = _Level(ops, prior, y, precision, lam=0.0, eps=0.0, scales=None, delta=0.05, inner=1)
+        stacks = js.level_stacks(ops, y, precision)
+        level = _Level(ops, prior, stacks, lam=0.0, eps=0.0, scales=None, delta=0.05, inner=1)
         c = prior.project_gauge(jnp.asarray(rng.normal(scale=0.2, size=prior.size)))
         x = jnp.asarray(rng.uniform(0.1, 0.3, (3, 5, 5)), jnp.float32)
         dx = jnp.asarray(rng.normal(size=(3, 5, 5)), jnp.float32)
         _, _, sw, j, *_, residual, shared = level.linearize(c, x)
-        assert float(jnp.mean(sw**2 < 0.99 * (1 if precision is None else precision))) > 0.2
-        step, _ = ops.weighted_forward(ops.prepare(ops.pad_poses(c)), dx, sw, j)
+        weights = sw.data.astype(jnp.float32)
+        assert float(jnp.mean(weights**2 < 0.99 * (1 if precision is None else precision))) > 0.2
+        q = ops.prepare(ops.pad_poses(c))
+        step, _ = ops.weighted_forward(q, dx, sw, j, level.precision, stacks["r"])
         for a in (1.0, 0.25):
             held = (residual, step, sw, shared.moments, shared.of_image(dx))
             trial = partial(level.trial, x, c, dx, jnp.zeros_like(c), 1.0, held)
@@ -388,7 +394,7 @@ def test_refinement_stops_on_a_proposal_below_the_pose_tolerance(monkeypatch, sh
         monkeypatch.setattr(
             _refine._Refinement, "value", lambda self, c: evaluated.append(c) or value(self, c)
         )
-        _, record = _refine.refine(x, np.zeros(prior.size), y, None, prior, ops=ops, sigma=1e-3)
+        _, record, _ = _refine.refine(x, np.zeros(prior.size), y, None, prior, ops=ops, sigma=1e-3)
     assert bool(record["steps"]) == bool(evaluated) == moves
     if not moves:
         assert record["status"] == "pose_steps_below_tolerance"
@@ -436,9 +442,11 @@ def test_the_pedestal_costs_nothing_to_the_per_view_profile_and_is_held_by_the_s
             rotation_scales=np.ones(5),
         )
         y = ops.pad_images(jnp.zeros((views, nz, n), jnp.float32))
-        level = _Level(ops, prior, y, None, lam=0.0, eps=0.0, scales=None, delta=1e6, inner=1)
+        level = _Level(
+            ops, prior, js.level_stacks(ops, y), lam=0.0, eps=0.0, scales=None, delta=1e6, inner=1
+        )
         c = jnp.zeros(prior.size)
-        profiled, _ = ops.objective(ops.pad_poses(c), jnp.asarray(pedestal), y, None, 1e6)
+        profiled, _ = ops.objective(ops.pad_poses(c), jnp.asarray(pedestal), level.y, None, 1e6)
         total = level.linearize(c, jnp.asarray(pedestal))[6]
     assert float(profiled) < 0.01 * 0.5 * float(np.sum(seen**2))
     assert float(total) - float(profiled) == pytest.approx(expected, rel=1e-5)
@@ -489,7 +497,9 @@ def test_the_shared_terms_and_the_prior_scale_are_formed_one_view_batch_at_a_tim
             rotation_scales=np.ones(5),
         )
         y = ops.pad_images(jnp.ones((views, nz, n), jnp.float32))
-        level = _Level(ops, prior, y, None, lam=0.0, eps=0.0, scales=None, delta=1.0, inner=1)
+        level = _Level(
+            ops, prior, js.level_stacks(ops, y), lam=0.0, eps=0.0, scales=None, delta=1.0, inner=1
+        )
         out = level.linearize(jnp.zeros(prior.size), jnp.zeros(ops.shape, jnp.float32))
         sw, residual, common = out[2], out[8], out[9]
         level.held(residual, residual, sw, level.precision, jnp.float32(0.5), common.moments)
@@ -523,12 +533,14 @@ def test_the_levels_gradient_includes_the_shared_offset_and_ramp():
         clean = np.asarray(ops.project(ops.coefficients(ops.nominal, q, ops.valid), x))[:10]
         rows = np.linspace(-1, 1, 6)[:, None]
         y = ops.pad_images(jnp.asarray(clean + 0.2 + 0.1 * rows, jnp.float32))
-        level = _Level(ops, prior, y, None, lam=0.0, eps=0.0, scales=None, delta=1e6, inner=1)
+        level = _Level(
+            ops, prior, js.level_stacks(ops, y), lam=0.0, eps=0.0, scales=None, delta=1e6, inner=1
+        )
         gx, _, _, _, score, _, data, *_, shared = level.linearize(c, x)
         assert float(shared.value()) > 0.1 * float(data)
 
         def objective(dx, dc):
-            value, moments = ops.objective(ops.pad_poses(c + dc), x + dx, y, None, 1e6)
+            value, moments = ops.objective(ops.pad_poses(c + dc), x + dx, level.y, None, 1e6)
             return float(value) + 0.5 * float(moments @ level.inverse_gram @ moments)
 
         dx = jnp.asarray(rng.normal(size=ops.shape), jnp.float32)

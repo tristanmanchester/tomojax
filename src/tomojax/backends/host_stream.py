@@ -22,7 +22,7 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from numpy.typing import ArrayLike
+    from numpy.typing import ArrayLike, DTypeLike
 
 
 _SOURCES: dict[int, np.ndarray] = {}
@@ -115,9 +115,15 @@ def _write_block(key: np.ndarray, start: np.ndarray, block: np.ndarray) -> np.in
     return np.int32(0)
 
 
-def read_block(key: jax.Array, start: jax.Array, shape: tuple[int, int, int]) -> jax.Array:
-    """Read rows of a registered buffer, ordered after earlier writes."""
-    out = jax.ShapeDtypeStruct(shape, jnp.float32)
+def read_block(
+    key: jax.Array, start: jax.Array, shape: tuple[int, ...], dtype: DTypeLike = jnp.float32
+) -> jax.Array:
+    """Read rows of a registered buffer, ordered after earlier writes.
+
+    ``shape`` is the block's (rows first) and ``dtype`` the buffer's: a float16 buffer is
+    read as float16, not converted on the host.
+    """
+    out = jax.ShapeDtypeStruct(shape, dtype)
     return io_callback(partial(_read_block, size=shape[0]), out, key, start, ordered=True)
 
 

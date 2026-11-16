@@ -15,7 +15,7 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     n = 60
     image, state = jnp.ones(1), jnp.zeros(2 * n)
     level = object.__new__(_solver._Level)
-    level.lam, level.precision = 0, None
+    level.lam, level.precision, level.stacks = 0, None, {"r": None}
     level.ops = SimpleNamespace(
         prepare=lambda value: value,
         pad_poses=lambda value: value,
@@ -99,8 +99,8 @@ def test_stopping_requires_two_small_proposals_at_the_initial_damping(
     rechecked = []
 
     class Level:
-        def __init__(self, ops, *_args, **_kwargs):
-            self.ops, self.y = ops, np.zeros((60, 1, 1))
+        def __init__(self, ops, prior, *_args, **_kwargs):
+            self.ops, self.prior, self.y = ops, prior, np.zeros((60, 1, 1))
 
         def linearize(self, _state, _image):
             return self.ops.linearize()
@@ -149,6 +149,8 @@ def test_stopping_requires_two_small_proposals_at_the_initial_damping(
     )
     prior = SimpleNamespace(size=60, value=lambda *_: 0.0)
     monkeypatch.setattr(_solver, "_Level", Level)
+    placed = SimpleNamespace(close=lambda: None, record=dict)
+    monkeypatch.setattr(_solver, "level_stacks", lambda *_args, **_kwargs: placed)
     with jax.enable_x64(True):
         _, fitted, _, record = _solver.solve(
             np.zeros((60, 1, 1)),

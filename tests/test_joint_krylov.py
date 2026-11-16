@@ -6,7 +6,14 @@ import numpy as np
 from scipy.sparse.linalg import cg
 
 # check-public-imports: allow-private
-from tomojax.alignment._joint._krylov import solve
+from tomojax.alignment._joint._krylov import solve as solve_with_work
+
+
+def solve(matvec, *args, **kwargs):
+    """The solve for a matvec that needs no buffer of its own (``work`` None)."""
+    result, work = solve_with_work(lambda v, w: (matvec(v), w), *args, work=None, **kwargs)
+    assert work is None
+    return result
 
 
 def test_custom_symmetric_positive_inverse_solves_the_dense_system():

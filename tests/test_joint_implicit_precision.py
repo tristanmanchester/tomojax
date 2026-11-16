@@ -10,6 +10,8 @@ from tomojax.alignment._joint._refine import _EdgeObjective  # check-public-impo
 from tomojax.core.cone import beam_frame
 from tomojax.geometry import ConeBeam, Detector, Grid, LaminographyGeometry, stack_view_poses
 
+from . import _joint_stacks as js
+
 
 @pytest.mark.parametrize("cone", [False, True])
 def test_implicit_precision_matches_explicit_ones_in_joint_and_edge_objectives(cone):
@@ -36,12 +38,20 @@ def test_implicit_precision_matches_explicit_ones_in_joint_and_edge_objectives(c
         q = ops.pad_poses(rng.normal(0, 0.02, (3, ops.dofs)))
         x = jnp.asarray(rng.uniform(0.1, 1, ops.shape), jnp.float32)
         y = ops.pad_images(rng.normal(size=(3, detector.nv, detector.nu)))
-        for function in (ops.linearize, ops.initial_gradient, ops.objective):
+        linearize = lambda *args: js.linearize(ops, *args)  # noqa: E731
+        initial_gradient = lambda q, x, y, w, d: ops.initial_gradient(  # noqa: E731
+            q, x, js.stack(ops, y), js.stack(ops, w), d
+        )
+        objective = lambda q, x, y, w, d: ops.objective(  # noqa: E731
+            q, x, js.stack(ops, y), js.stack(ops, w), d
+        )
+        for function in (linearize, initial_gradient, objective):
             left = function(q, x, y, None, 0.8)
             right = function(q, x, y, explicit, 0.8)
             for a, b in zip(jax.tree.leaves(left), jax.tree.leaves(right), strict=True):
                 np.testing.assert_allclose(a, b, rtol=2e-6, atol=2e-6)
         edge = _EdgeObjective(ops)
+        y, explicit = js.stack(ops, y), js.stack(ops, explicit)
         for function in (edge.stats, edge.value):
             for a, b in zip(
                 jax.tree.leaves(function(q, x, y, None, 0.8)),
