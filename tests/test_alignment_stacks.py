@@ -155,3 +155,69 @@ def test_align_reports_each_levels_placement_and_time():
         assert set(stacks["placement"].values()) <= {"device", "host"}
         assert stacks["planned"].keys() == stacks["placement"].keys()
         assert level["seconds"] > 0
+
+
+_PEAK_PROBE = """
+import json
+import jax, numpy as np
+import tomojax as tj
+from tomojax.alignment._joint import _fit, _solver
+from tomojax.geometry import stack_view_poses
+
+_fit._LEVELS = ((1, 8),)  # one level: the process's peak is the level's
+dev, seen = jax.devices()[0], {}
+solve = _solver.solve
+
+
+def measured(*args, **kwargs):
+    base = dev.memory_stats()["bytes_in_use"]
+    out = solve(*args, **kwargs)
+    stacks = out[3]["stacks"]
+    seen.update(
+        used=dev.memory_stats()["peak_bytes_in_use"] - base,
+        stacks=sum(stacks["stack_bytes"].values()),
+        reserve=stacks["reserve_bytes"],
+        volume=4 * int(np.prod(kwargs["ops"].shape)),
+    )
+    return out
+
+
+_solver.solve = _fit.solve = measured
+grid, detector, views = tj.Grid(192, 192, 128, 1, 1, 1), tj.Detector(256, 160, 1, 1), 480
+angles = np.linspace(0, 360, views, endpoint=False)
+geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
+rng = np.random.default_rng(1)
+volume = rng.uniform(0, 1, (128, 192, 192)).astype(np.float32)
+with jax.default_device(jax.devices("cpu")[0]):
+    projections = np.array(tj.project(geometry, volume))
+projections += rng.normal(0, 0.01, projections.shape).astype(np.float32)
+nominal = np.asarray(stack_view_poses(geometry, views))
+_fit.fit_poses(projections, nominal, grid, detector, keep_grid=True)
+print(json.dumps(seen))
+"""
+
+
+@pytest.mark.gpu
+def test_the_plans_reserve_covers_a_levels_own_peak_and_not_much_more():
+    # The reserve is a count (_stacks.level_reserve): 36 volumes and the batches, from K11
+    # 54013's fine level (33 volumes beside the stacks at its peak). A change to the solver's
+    # arrays moves it; this keeps the count honest. A level's own peak, in a fresh process
+    # (the allocator's peak less what was in use at its setup), must not exceed the plan's
+    # prediction, nor fall short of it by more than 13 volumes. At this scale the level keeps
+    # about 24 (measured: the plan is 12.2 over): fewer of the Schur solve's FP64 temporaries
+    # than at K11's size, and 4 steps rather than 8, each keeping a little more. Outside that
+    # range, recount and record the composition in level_reserve.
+    import json
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "PYTHONWARNINGS": "ignore"}
+    run = subprocess.run(
+        [sys.executable, "-c", _PEAK_PROBE], check=True, capture_output=True, text=True, env=env
+    )
+    m = json.loads(run.stdout.strip().splitlines()[-1])
+    predicted = m["stacks"] + m["reserve"]
+    assert m["used"] <= predicted, (m["used"], predicted)
+    spare = (predicted - m["used"]) / m["volume"]
+    assert spare <= 13, f"the plan reserves {spare:.1f} volumes more than the level used"

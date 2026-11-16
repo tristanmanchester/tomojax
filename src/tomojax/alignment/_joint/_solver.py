@@ -350,61 +350,66 @@ class _Level:
         Raises the damping tenfold, up to five times, until the line search accepts.
         Returns the accepted step with its predicted reduction, or None.
         """
-        prior = self.prior
         k = self._context(x, c, linear, pose_weight)
-        common = k.common
         for _ in range(5):
-            proposed = self._propose(x, k, lm)
-            if proposed is None:
-                lm *= 10
-                continue
-            dx, dc, r, jadx, bdx = proposed.dx, proposed.dc, proposed.r, proposed.jadx, proposed.bdx
-            linear_step = proposed.linear_step
-            cg_steps, cg_residual = linear_step.iterations, linear_step.relative_residual
-            gx_dx, gp_dc = float(self.norm(k.gx, dx)), float(jnp.vdot(k.gp, dc))
-            accepted = None
-            if gx_dx + gp_dc < 0:
-                held = (k.residual, r, k.sw, common.moments, bdx)
-                trial = partial(self.trial, x, c, dx, dc, pose_weight, held)
-                accepted = _line_search(trial, f, gx_dx, gp_dc)
-            if accepted:
-                a, beta, new = accepted
-                dp = prior.expand(dc)
-                curvature = float(self.energy(r))
-                if self.lam:
-                    curvature += self.lam * float(self.norm(dx, self.diffuse(dx, k.d)))
-                curvature += beta * 2 * float(jnp.vdot(dc, jadx))
-                pose = jnp.einsum("ni,nij,nj->", dp, k.gram, dp) + jnp.vdot(
-                    dc, prior.apply(dc, k.wpose)
-                )
-                curvature += beta**2 * float(pose)
-                # The shared rows; their cross term is already in jadx.
-                curvature += 2 * float(
-                    common.value(bdx) + beta**2 * common.value(common.poses @ dc)
-                )
-                predicted = -a * (gx_dx + beta * gp_dc) - 0.5 * a * a * curvature
-                change = float(jnp.sqrt(jnp.mean(jnp.sum((a * beta * dp) ** 2, axis=1))))
-                explicit = bool(linear_step.residual_is_explicit)
-                linear_record = {
-                    "proposed_pose_step_rms": float(jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1)))),
-                    "cg_residual_kind": "explicit" if explicit else "recursive",
-                    "cg_status": "converged"
-                    if explicit and float(cg_residual) <= _CG_RTOL
-                    else "budget_exhausted",
-                    "cg_matvecs": int(linear_step.matvecs),
-                }
-                return (
-                    a,
-                    beta,
-                    new,
-                    predicted,
-                    change,
-                    lm,
-                    int(cg_steps),
-                    float(cg_residual),
-                    linear_record,
-                )
+            # A refused proposal's step and trials end with the attempt, before the next
+            # Schur solve: kept, they were the level's peak (13 volumes on K11 54013).
+            accepted = self._attempt(x, c, k, lm, pose_weight, f)
+            if accepted is not None:
+                return accepted
             lm *= 10
+        return None
+
+    def _attempt(self, x, c, k, lm, pose_weight, f):
+        """One proposal at damping lm and its line search: the accepted step's record, or None."""
+        prior, common = self.prior, k.common
+        proposed = self._propose(x, k, lm)
+        if proposed is None:
+            return None
+        dx, dc, r, jadx, bdx = proposed.dx, proposed.dc, proposed.r, proposed.jadx, proposed.bdx
+        linear_step = proposed.linear_step
+        cg_steps, cg_residual = linear_step.iterations, linear_step.relative_residual
+        gx_dx, gp_dc = float(self.norm(k.gx, dx)), float(jnp.vdot(k.gp, dc))
+        accepted = None
+        if gx_dx + gp_dc < 0:
+            held = (k.residual, r, k.sw, common.moments, bdx)
+            trial = partial(self.trial, x, c, dx, dc, pose_weight, held)
+            accepted = _line_search(trial, f, gx_dx, gp_dc)
+        if accepted:
+            a, beta, new = accepted
+            dp = prior.expand(dc)
+            curvature = float(self.energy(r))
+            if self.lam:
+                curvature += self.lam * float(self.norm(dx, self.diffuse(dx, k.d)))
+            curvature += beta * 2 * float(jnp.vdot(dc, jadx))
+            pose = jnp.einsum("ni,nij,nj->", dp, k.gram, dp) + jnp.vdot(
+                dc, prior.apply(dc, k.wpose)
+            )
+            curvature += beta**2 * float(pose)
+            # The shared rows; their cross term is already in jadx.
+            curvature += 2 * float(common.value(bdx) + beta**2 * common.value(common.poses @ dc))
+            predicted = -a * (gx_dx + beta * gp_dc) - 0.5 * a * a * curvature
+            change = float(jnp.sqrt(jnp.mean(jnp.sum((a * beta * dp) ** 2, axis=1))))
+            explicit = bool(linear_step.residual_is_explicit)
+            linear_record = {
+                "proposed_pose_step_rms": float(jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1)))),
+                "cg_residual_kind": "explicit" if explicit else "recursive",
+                "cg_status": "converged"
+                if explicit and float(cg_residual) <= _CG_RTOL
+                else "budget_exhausted",
+                "cg_matvecs": int(linear_step.matvecs),
+            }
+            return (
+                a,
+                beta,
+                new,
+                predicted,
+                change,
+                lm,
+                int(cg_steps),
+                float(cg_residual),
+                linear_record,
+            )
         return None
 
 
