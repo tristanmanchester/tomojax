@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### One GPU memory policy for Python and the shell
+
+Importing TomoJAX let JAX's pool grow on demand to JAX's own 75% ceiling in Python, while the
+`tomojax` commands set 90% and `tomojax align` used the releasing `platform` allocator, 14%
+slower (K11 54013, 401 s against 353 s). The same work had two memory budgets and two speeds.
+Importing TomoJAX now sets one policy everywhere: the pool, grown on demand, to at most 90% of
+the GPU. Explicit `XLA_*` settings still take precedence.
+
 ### One cone orbit with per-view detector offsets reconstructs with FDK
 
 The automatic choice sent every segmented cone scan to matched CGLS. A scan whose per-view

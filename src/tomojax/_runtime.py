@@ -4,22 +4,24 @@ from __future__ import annotations
 
 import os
 
+# The pool's ceiling, as a fraction of device memory: one policy for Python and the shell.
+MEMORY_FRACTION = 0.9
 
-def configure_jax_allocator_defaults(
-    *, allocator: str | None = None, memory_fraction: float | None = None
-) -> None:
-    """Leave GPU memory available to CUDA libraries outside JAX's pool.
 
-    JAX eagerly reserves 75% of device memory by default, leaving too little
-    for cuSolver initialization and TomoJAX's CuPy workspaces on small GPUs.
-    Growing the pool on demand avoids that reservation while retaining reuse.
-    Python retains JAX's memory ceiling; only the CLI requests a larger pool.
-    Neither spelling of an explicitly configured memory fraction is overwritten.
-    Explicit environment settings take precedence. An existing JAX backend
-    cannot be reconfigured; these defaults must run before its first operation.
+def configure_jax_allocator_defaults() -> None:
+    """Grow JAX's pool on demand up to 90% of device memory, for Python and the shell alike.
+
+    JAX eagerly reserves 75% of device memory by default, leaving too little for
+    cuSolver initialization and TomoJAX's CuPy workspaces on small GPUs; growing
+    the pool on demand avoids that reservation while retaining reuse. The ceiling
+    is 90%: the alignment places its stacks by the room under it (``_stacks``), so
+    a lower ceiling in Python than in the shell gave the same call two answers,
+    and the shell's align had used the releasing ``platform`` allocator instead
+    (14% slower on K11 54013). Neither spelling of an explicitly configured memory
+    fraction, nor an explicit preallocation or allocator, is overwritten. An
+    existing JAX backend cannot be reconfigured: these defaults apply at import,
+    before its first operation.
     """
     _ = os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-    if memory_fraction is not None and "XLA_PYTHON_CLIENT_MEM_FRACTION" not in os.environ:
-        _ = os.environ.setdefault("XLA_CLIENT_MEM_FRACTION", str(memory_fraction))
-    if allocator is not None:
-        _ = os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", allocator)
+    if "XLA_PYTHON_CLIENT_MEM_FRACTION" not in os.environ:
+        _ = os.environ.setdefault("XLA_CLIENT_MEM_FRACTION", str(MEMORY_FRACTION))

@@ -10,11 +10,10 @@ there.
 
 Importing `tomojax` defaults JAX to on-demand allocation rather than an eager
 75% GPU reservation, leaving room for cuSolver and CuPy workspaces. The pool
-retains memory for reuse; Python keeps JAX's default pool limit, while GPU CLI
-commands set a 90% ceiling. Explicit
-`XLA_PYTHON_CLIENT_PREALLOCATE`, `XLA_CLIENT_MEM_FRACTION` (or JAX's legacy
-`XLA_PYTHON_CLIENT_MEM_FRACTION`) and `XLA_PYTHON_CLIENT_ALLOCATOR` take precedence; the align
-CLI defaults to the releasing `platform` allocator. These process-wide
+retains memory for reuse and grows to at most 90% of the GPU, the same in Python
+and from the shell. Explicit `XLA_PYTHON_CLIENT_PREALLOCATE`,
+`XLA_CLIENT_MEM_FRACTION` (or JAX's legacy `XLA_PYTHON_CLIENT_MEM_FRACTION`) and
+`XLA_PYTHON_CLIENT_ALLOCATOR` take precedence. These process-wide
 settings cannot change an already initialized JAX backend: import TomoJAX or
 set the environment before the first JAX operation in a notebook.
 
