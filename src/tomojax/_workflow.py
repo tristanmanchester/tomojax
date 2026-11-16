@@ -443,11 +443,16 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
     reasons = []
     method: Method = "fbp"
     if isinstance(base, ConeSegments):
-        method = "cgls"
-        reasons.append(
-            "Segmented cone geometry uses matched CGLS because FDK requires one arrangement; "
-            "iteration count and image quality are not automatically validated."
-        )
+        # Per-view detector offsets (a Zeiss scan's shifts) make segments of one orbit, which
+        # FDK weights and backprojects view by view, exactly. Several trajectories, or
+        # arrangements that differ (a source at several heights), are not one circular orbit.
+        beams = [getattr(segment, "beam", None) for segment in base.segments]
+        if len(base.trajectory_lengths) > 1 or any(b != beams[0] for b in beams):
+            method = "cgls"
+            reasons.append(
+                "Segmented cone geometry uses matched CGLS because FDK requires one arrangement; "
+                "iteration count and image quality are not automatically validated."
+            )
     elif type(scan.geometry) is ParallelGeometry:
         angles = np.unique(np.mod(np.asarray(scan.angles, np.float64), 180.0))
         gaps = np.diff(np.r_[angles, angles[0] + 180])

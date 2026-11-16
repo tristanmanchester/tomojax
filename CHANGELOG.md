@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### One cone orbit with per-view detector offsets reconstructs with FDK
+
+The automatic choice sent every segmented cone scan to matched CGLS. A scan whose per-view
+detector offsets make the segments (a Zeiss scan's recorded shifts) is one circular orbit with
+one source and detector arrangement, which FDK weights and backprojects view by view exactly; it
+now gets FDK, as every circular scan does. Several trajectories, or arrangements that differ (a
+source at several heights, the FIPS walnut's three orbits), keep CGLS and its reason.
+
 ### A Zeiss or SkyScan grid derived from the detector follows binning
 
 The Zeiss and SkyScan readers built a grid from the detector's size and the voxel the file

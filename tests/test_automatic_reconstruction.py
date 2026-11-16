@@ -191,3 +191,39 @@ def test_automatic_route_reconstructs_an_unposed_oblique_scan_with_its_declared_
     # (laminography) and 0.150 (axis) measured, where fista at 100 iterations reaches 0.009
     # and 0.003.
     assert _error(result, volume) < (0.4 if kind == "laminography" else 0.2)
+
+
+def test_one_orbit_with_per_view_detector_offsets_reconstructs_with_fdk():
+    # A Zeiss scan is one circular orbit whose recorded per-view shifts move only the detector;
+    # the automatic rule tested the type (ConeSegments) and sent it to CGLS, 90 times slower on
+    # CuO_2. FDK keeps each view's own arrangement exactly: with the offsets known it should
+    # cost nothing but interpolation against the same orbit without them.
+    from tomojax.geometry import ConeSegments
+
+    volume = _phantom()
+    detector, beam = tj.Detector(24, 24, 1.5, 1.5), tj.ConeBeam(192, 288)
+    shift = np.random.default_rng(5).uniform(-1.5, 1.5, (len(_ANGLES), 2)) * 1.5
+    offset = ConeSegments(
+        tuple(
+            tj.ConeGeometry(_GRID, replace(detector, center=tuple(s)), [a], beam)
+            for s, a in zip(shift, _ANGLES, strict=True)
+        ),
+        trajectory_lengths=(len(_ANGLES),),
+    )
+    plain = tj.ConeGeometry(_GRID, detector, _ANGLES, beam)
+    shifted = tj.reconstruct(tj.Scan(np.asarray(tj.project(offset, volume)), offset))
+    unshifted = tj.reconstruct(tj.Scan(np.asarray(tj.project(plain, volume)), plain))
+    assert shifted.method == "fbp" and shifted.info["automatic"]["status"] == "ok"
+    # 0.0589 against 0.0377 measured. The same orbit with one shared detector offset of these
+    # sizes (a plain ConeGeometry, no segments) gives 0.043-0.068: the extra is FDK's own
+    # behaviour with an off-centre detector on a 16^3 case, which per-view offsets do not worsen.
+    assert _error(shifted, volume) < 2 * _error(unshifted, volume)
+    # Two orbits whose arrangements differ (a source at two heights) stay with CGLS.
+    two = ConeSegments(
+        (
+            tj.ConeGeometry(_GRID, detector, _ANGLES[::2], beam),
+            tj.ConeGeometry(_GRID, detector, _ANGLES[1::2], replace(beam, source_height=4.0)),
+        )
+    )
+    blank = tj.Scan(np.zeros((len(_ANGLES), 24, 24), np.float32), two)
+    assert tj.reconstruct(blank, iterations=1).method == "cgls"
