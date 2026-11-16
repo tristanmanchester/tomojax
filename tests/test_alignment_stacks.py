@@ -200,14 +200,12 @@ print(json.dumps(seen))
 @pytest.mark.gpu
 @pytest.mark.fresh_gpu  # the probe's process needs the device's room, not what this one holds
 def test_the_plans_reserve_covers_a_levels_own_peak_and_not_much_more():
-    # The reserve is a count (_stacks.level_reserve): 36 volumes and the batches, from K11
-    # 54013's fine level (33 volumes beside the stacks at its peak). A change to the solver's
-    # arrays moves it; this keeps the count honest. A level's own peak, in a fresh process
-    # (the allocator's peak less what was in use at its setup), must not exceed the plan's
-    # prediction, nor fall short of it by more than 13 volumes. At this scale the level keeps
-    # about 24 (measured: the plan is 12.2 over): fewer of the Schur solve's FP64 temporaries
-    # than at K11's size, and 4 steps rather than 8, each keeping a little more. Outside that
-    # range, recount and record the composition in level_reserve.
+    # The reserve is a count (_stacks.level_reserve): 25 volumes and the batches. It holds only
+    # because no compiled level function keeps a temporary that grows with the views
+    # (test_alignment_memory); a change to the solver's arrays moves it, and this keeps it honest.
+    # A level's own peak, in a fresh process (the allocator's peak less what was in use at its
+    # setup), must not exceed the plan's prediction, nor fall short of it by more than 6
+    # volumes: this level keeps 24.5 beside its stacks, K11 54013's fine level about 20.
     import json
     import os
     import subprocess
@@ -221,4 +219,4 @@ def test_the_plans_reserve_covers_a_levels_own_peak_and_not_much_more():
     predicted = m["stacks"] + m["reserve"]
     assert m["used"] <= predicted, (m["used"], predicted)
     spare = (predicted - m["used"]) / m["volume"]
-    assert spare <= 13, f"the plan reserves {spare:.1f} volumes more than the level used"
+    assert spare <= 6, f"the plan reserves {spare:.1f} volumes more than the level used"

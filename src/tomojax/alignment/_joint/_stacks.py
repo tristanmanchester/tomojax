@@ -233,23 +233,23 @@ def device_room() -> int | None:
 
 
 def level_reserve(ops: Any) -> int:
-    """Device bytes a level needs besides its stacks, from its shapes: 36 volumes and the batches.
+    """Device bytes a level needs besides its stacks, from its shapes: 25 volumes and the batches.
 
-    Measured on K11 54013's fine level (a3d17ee1): 1.28 GiB beside the stacks at the
-    peak, 35 volumes of FP32. About 14 are the level's state between solves (the
-    volume and the previous one, the linearisation's gradient and diagonal, the
-    damping, the stepped gradient, TV's conductance, the free-voxel mask, the views'
-    two shared images, the Schur right-hand side and preconditioner, the clipped
-    step); the Schur solve's own temporaries are 0.55 GiB by XLA's memory analysis,
-    15 volumes (conjugate gradients' vectors and the FP64 copies its dot products
-    and the shared images take, the matvec's product and TV term). Then one batch's
-    projections and pose columns at FP32, four times over, for the scans' per-batch
-    temporaries.
+    Nothing a level compiles keeps a temporary that grows with the views (tested at two view
+    counts), so the rest is volumes and per-batch terms. Measured at the peak beside the
+    stacks: 24.5 volumes on a 192 x 192 x 128 level with 480 views, about 20 on K11 54013's
+    fine level (2f735f89): the level's state between solves (the volume and the previous one,
+    the linearisation's gradient and diagonal, the damping, the stepped gradient, TV's
+    conductance, the free-voxel mask, the views' two shared images, the Schur right-hand side
+    and preconditioner, the clipped step) and the Schur solve's temporaries (conjugate
+    gradients' vectors, their FP64 dot-product copies, the shared images in FP64, the
+    matvec's product and TV term). Then one batch's projections and pose columns at FP32, four
+    times over, for the scans' per-batch temporaries.
     """
     d, (nz, ny, nx) = ops.detector, ops.shape
     volume = 4 * nz * ny * nx
     batch = 4 * ops.batch * (1 + ops.dofs) * d.nv * d.nu
-    return 36 * volume + 4 * batch
+    return 25 * volume + 4 * batch
 
 
 def level_stacks(
