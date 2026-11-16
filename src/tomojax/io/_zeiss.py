@@ -324,13 +324,26 @@ def _offsets(container: Any, count: int) -> tuple[np.ndarray | None, float | Non
     ``AutoRecon/CenterShift`` subtracts from the horizontal image shifts. Its
     sign and recorded-pixel convention were checked against the supplied Zeiss
     reconstruction; acquisition binning is already in the pixel calibration.
-    Only a reconstruction setup writes it, so a raw scan may lack it.
+    Only a reconstruction setup writes it, so a raw scan may lack it. An interrupted
+    acquisition records its shift tables at the planned length (``NoOfImages``), the
+    stored views first, while its angles and exposures cover the stored views only.
     """
     names = ("alignment/x-shifts", "alignment/y-shifts")
     if not all(container.exists(name) for name in names):
         return None, None
-    shifts = np.column_stack([_values(container, name, "<f4") for name in names])
-    shifts = np.broadcast_to(shifts, (count, 2)).astype(np.float64).copy()
+    planned = int(_scalar(container, "ImageInfo/NoOfImages"))
+    columns = []
+    for name in names:
+        values = _values(container, name, "<f4")
+        if len(values) == planned > count:  # the plan of an interrupted acquisition
+            values = values[:count]
+        if len(values) not in (1, count):
+            raise ValueError(
+                f"Zeiss {name} has {len(values)} {name.split('/')[1]} for {count} stored images "
+                f"({planned} declared); supply an acquisition with matching shift records"
+            )
+        columns.append(np.broadcast_to(values, (count,)))
+    shifts = np.column_stack(columns).astype(np.float64)
     centre = "AutoRecon/CenterShift"
     return shifts, _scalar(container, centre, "<f4") if container.exists(centre) else None
 

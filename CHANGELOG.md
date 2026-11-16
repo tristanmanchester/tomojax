@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### An interrupted Zeiss scan loads its stored views
+
+An interrupted acquisition records its angles and exposures for the views it stored but its
+shift tables at the planned length (CuO_6 tomo-B: 201 planned, 2 stored), and the reader
+failed on a NumPy broadcast. The shift tables now follow the stored views, the first ones
+of the plan, and the record keeps both counts; a shift table of any other length is refused
+with a message saying what the file holds.
+
 ### The correction record reports counts above the camera's stated linear range
 
 A Zeiss file states the top of its camera's linear range (`MaxLinearRange`, 45 000 on

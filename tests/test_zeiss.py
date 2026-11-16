@@ -594,3 +594,27 @@ def test_reconstructing_in_slabs_reports_the_same_counts_above_the_linear_range(
             assert fields.settings["linear_limit"] == 700
             assert fields.found["counts_above_linear_limit"] == pytest.approx(87 / 288)
             assert fields.found["linear_limit_line_integral"] == pytest.approx(-np.log(700 / 2500))
+
+
+def test_an_interrupted_scan_loads_its_stored_views_with_their_shifts(tmp_path):
+    # An interrupted Zeiss acquisition (CuO_6 tomo-B: 201 views planned, 2 stored) records
+    # angles, exposures and dates for the stored views only, but its shift tables at the
+    # planned length, the stored views first. The reader failed on a NumPy broadcast.
+    counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
+    streams = _streams(counts, np.full((8, 12), 2500, "<f4"), declared_count=10)
+    planned = np.r_[[0.25, 0.5, -0.25], np.zeros(7)].astype("<f4")
+    streams["alignment/x-shifts"] = planned.tobytes()
+    streams["alignment/y-shifts"] = np.r_[[-0.5] * 3, np.zeros(7)].astype("<f4").tobytes()
+    write_ole(tmp_path / "scan.txrm", streams)
+    frames = tj.load_frames(tmp_path / "scan.txrm", darks=0)
+    zeiss = frames.source.geometry_metadata["zeiss"]
+    assert (zeiss["declared_view_count"], zeiss["stored_view_count"]) == (10, 3)
+    assert frames.views == 3
+    np.testing.assert_array_equal(frames.geometry.angles, [0, 90, 180])
+    centres = [s.detector.center for s in frames.geometry.segments]  # pitch 0.015, shift 0.125
+    np.testing.assert_allclose([c[0] for c in centres], [0.001875, 0.005625, -0.005625])
+    # A shift table of any other length is not the planned one: say what the file holds.
+    streams["alignment/x-shifts"] = planned[:5].tobytes()
+    write_ole(tmp_path / "scan.txrm", streams)
+    with pytest.raises(ValueError, match="5 x-shifts for 3 stored images"):
+        tj.load_frames(tmp_path / "scan.txrm", darks=0)
