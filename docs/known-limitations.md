@@ -130,10 +130,10 @@ measurements require independent calibration evidence and repair before `Rings`.
   pass `geometry=` to `tj.load_frames`; see the
   [real scan guide](real-laminography.md#prepare-tiff-data).
 - Missing detector pixel sizes require `detector=` or `geometry=`. For axial
-  acquisitions with recorded pitch, loading estimates an absent rotation centre
-  from corrected rows and records its provenance; at least a usable half-turn
-  is needed. Failed estimates require explicit `detector=` and never return the
-  internal zero seed. Missing angles require `angles=`. See the
+  acquisitions with recorded pitch, an absent rotation centre is not estimated
+  at load: the scan has the centre at the detector middle and its record says
+  "not_recorded"; `tj.reconstruct` reports that status. Supply `detector=` or
+  fit it with `tj.align(scan, fit="centre")`. Missing angles require `angles=`. See the
   [quickstart](quickstart.md#correct-raw-detector-frames).
 - Content-discovered external acquisitions remain detector counts even when
   stored as floats. Missing flat/dark calibration requires `flats=` (frames or

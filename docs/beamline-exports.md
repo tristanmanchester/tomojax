@@ -26,9 +26,10 @@ frames = tj.load_frames("bamboo_reduced_bliss.nx")
 
 The reader finds the group declaring `NXtomo`, regardless of the entry's name,
 and reads its sample angles, image keys, flat/dark fields and unit-labelled
-pixel pitches. If the axial centre is absent, loading estimates it from
-corrected near-opposite views and records that it was inferred; an explicit
-calibrated `detector=` overrides this estimate.
+pixel pitches. If the axial centre is absent, loading places it at the middle
+of the detector and records that it was not recorded; nothing is estimated.
+Supply a calibrated `detector=`, or fit the centre with
+`tj.align(scan, fit="centre")`.
 
 Continue with the [one-row preview](#correct-reconstruct-and-inspect) below.
 An ESRF NXtomo export is not a raw Bliss master or an EDF folder. Those have

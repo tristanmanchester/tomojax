@@ -42,10 +42,10 @@ certificates; check recovered geometry and reconstructed images.
 NXtomo and generic TIFF/HDF5 frame loading requires recorded or explicitly
 supplied detector pixel sizes and view angles. External NXtomo/Data Exchange
 use their format-defined axial parallel model. If the pitch is recorded but the
-rotation centre is absent, loading estimates detector-u from a few corrected
-rows with opposite-view gradient correlation and records `inferred` provenance;
-vertical zero defines the free axial origin. Insufficient coverage/contrast
-requires explicit `detector=`. Laminography requires a recorded tilt/axis or
+rotation centre is absent, loading places the centre at the middle of the
+detector and records `detector_center_status` "not_recorded"; nothing is
+estimated. The centre comes from the file, from `detector=`, or from
+`tj.align(scan, fit="centre")`. Vertical zero defines the free axial origin. Laminography requires a recorded tilt/axis or
 `geometry=`. Nikon and Zeiss files lacking dark calibration require `darks=`; zero is
 only an explicit choice for already corrected counts. SkyScan additionally
 requires `flats=` (frames or one level) rather than deriving it from bit depth.
@@ -68,13 +68,14 @@ Workflows outside the table above are research or expert diagnostics.
 
 `load_frames` recognises these raw exports by content, even with a renamed file.
 A partial detector record is retained for inspection, not completed with a
-zero rotation centre. Missing axial centres may be estimated from data; an
-unavailable pitch or failed estimate requires `detector=`/`geometry=`. Physical
+zero rotation centre. A missing axial centre is recorded as "not_recorded" with
+the centre at the detector middle, not estimated; a missing pitch requires
+`detector=`/`geometry=`. Physical
 pitches below are normalised to millimetres.
 
 | Export | Frames and calibration | Angles and detector metadata |
 |---|---|---|
-| ESRF raw Bliss step sequence | Sequence-owned detector blocks, image keys and flat positions; external/virtual pixel links checked | Unit-labelled angular commands before raw motors; `technique/optic/sample_pixel_size`; distances from `technique/scan`; missing axial centre is estimated or supplied |
+| ESRF raw Bliss step sequence | Sequence-owned detector blocks, image keys and flat positions; external/virtual pixel links checked | Unit-labelled angular commands before raw motors; `technique/optic/sample_pixel_size`; distances from `technique/scan`; a missing axial centre is recorded as not recorded (detector middle) or supplied |
 | ESRF SPEC EDF | Ordered EDF files, reference files, accumulated darks divided by recorded `DARK_N` | `.info`/XML `PixelSize` and propagation `Distance`; caller supplies `angles=` (range alone has no origin), and `detector=` if needed |
 | ESRF PyHST EDF | Explicit `.par` input; inclusive indexed file range and interval, dark/flat schedules | Recorded angles, detector pitch/axis and reconstruction region; raw single-image EDFs with fixed axial parallel geometry |
 | External NXtomo (including ESRF exports) | A group declaring `NXtomo` (by a `definition` dataset or attribute), with `instrument/detector/data` and `image_key`; ESRF return images (`image_key_control` −1) are left out; the entry name is unrestricted | `sample/rotation_angle` (or `sample/transformations/rotation_angle`), recorded angular units; detector `x_pixel_size`/`y_pixel_size` with length units |
