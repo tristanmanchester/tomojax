@@ -233,21 +233,23 @@ def device_room() -> int | None:
 
 
 def level_reserve(ops: Any) -> int:
-    """Device bytes a level needs besides its stacks, from its shapes.
+    """Device bytes a level needs besides its stacks, from its shapes: 36 volumes and the batches.
 
-    Volume-sized arrays alive at once at the level's worst moment, a retried
-    proposal's Schur solve: the volume, the previous volume, the gradients and
-    diagonals of the linearisation (gx0, dd, gx, damp), TV's conductance and the
-    free-voxel mask, the views' two shared images, the solve's right-hand side and
-    preconditioner, conjugate gradients' four vectors and the matvec's argument,
-    product and TV term, and the clipped step: 20. Then one batch's projections
-    and pose columns at FP32, the per-batch temporaries of the scans, four times
-    over (measured, projected, residual and whitened forms).
+    Measured on K11 54013's fine level (a3d17ee1): 1.28 GiB beside the stacks at the
+    peak, 35 volumes of FP32. About 14 are the level's state between solves (the
+    volume and the previous one, the linearisation's gradient and diagonal, the
+    damping, the stepped gradient, TV's conductance, the free-voxel mask, the views'
+    two shared images, the Schur right-hand side and preconditioner, the clipped
+    step); the Schur solve's own temporaries are 0.55 GiB by XLA's memory analysis,
+    15 volumes (conjugate gradients' vectors and the FP64 copies its dot products
+    and the shared images take, the matvec's product and TV term). Then one batch's
+    projections and pose columns at FP32, four times over, for the scans' per-batch
+    temporaries.
     """
     d, (nz, ny, nx) = ops.detector, ops.shape
     volume = 4 * nz * ny * nx
     batch = 4 * ops.batch * (1 + ops.dofs) * d.nv * d.nu
-    return 20 * volume + 4 * batch
+    return 36 * volume + 4 * batch
 
 
 def level_stacks(
