@@ -489,9 +489,9 @@ def test_accelerated_sirt_holds_its_iterate_and_work_volume_by_their_total(
     places = []
     made = host_volume.host_volume
 
-    def recording(shape, directory=None):
+    def recording(shape, directory=None, **kwargs):
         places.append(directory)
-        return made(shape, directory)
+        return made(shape, directory, **kwargs)
 
     monkeypatch.setattr(host_volume, "host_volume", recording)
     monkeypatch.setattr(_cone_slabs, "host_volume", recording)

@@ -198,6 +198,7 @@ print(json.dumps(seen))
 
 
 @pytest.mark.gpu
+@pytest.mark.fresh_gpu  # the probe's process needs the device's room, not what this one holds
 def test_the_plans_reserve_covers_a_levels_own_peak_and_not_much_more():
     # The reserve is a count (_stacks.level_reserve): 36 volumes and the batches, from K11
     # 54013's fine level (33 volumes beside the stacks at its peak). A change to the solver's
@@ -212,7 +213,7 @@ def test_the_plans_reserve_covers_a_levels_own_peak_and_not_much_more():
     import subprocess
     import sys
 
-    env = {**os.environ, "PYTHONWARNINGS": "ignore"}
+    env = {**os.environ, "PYTHONWARNINGS": "ignore", "JAX_PLATFORMS": "cuda,cpu"}
     run = subprocess.run(
         [sys.executable, "-c", _PEAK_PROBE], check=True, capture_output=True, text=True, env=env
     )
