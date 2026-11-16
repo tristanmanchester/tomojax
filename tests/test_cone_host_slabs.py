@@ -478,7 +478,6 @@ def test_accelerated_sirt_holds_its_iterate_and_work_volume_by_their_total(
     # TMPDIR, the work volume beside the iterate, and the result is unchanged.
     import tempfile
 
-    import tomojax.backends.api
     from tomojax.core import host_volume
 
     host(2)
@@ -497,7 +496,7 @@ def test_accelerated_sirt_holds_its_iterate_and_work_volume_by_their_total(
     monkeypatch.setattr(host_volume, "host_volume", recording)
     monkeypatch.setattr(_cone_slabs, "host_volume", recording)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    monkeypatch.setattr(tomojax.backends.api, "host_available_memory_bytes", lambda: 3 * volume)
+    monkeypatch.setattr(host_volume, "host_available_memory_bytes", lambda: 3 * volume)
     actual, _ = sirt(geometry, GRID, DETECTOR, data, config=config)
     assert places == [tmp_path, tmp_path], places  # the iterate, then its work volume
     assert host_volume.scratch_directory(actual) == tmp_path

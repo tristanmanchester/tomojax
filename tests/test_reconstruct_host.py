@@ -12,7 +12,6 @@ import pytest
 
 import tomojax as tj
 import tomojax.backends
-import tomojax.backends.api
 from tomojax.backends.host_stream import host_buffer, read_block, should_stream, write_block
 
 
@@ -116,6 +115,7 @@ def test_a_host_volume_too_large_for_memory_is_held_in_a_temporary_file(
     # I13 159815 reconstructs to a 56 GB volume on a 30 GB machine: FBP's host slabs were
     # written into anonymous memory, which the kernel kills when it runs out. The volume
     # follows the corrected stack's rule: a temporary file past half of host memory.
+    from tomojax.core import host_volume
     from tomojax.core.host_volume import scratch_directory
 
     scan = _scan(kind)
@@ -126,7 +126,7 @@ def test_a_host_volume_too_large_for_memory_is_held_in_a_temporary_file(
     assert expected.method == "fbp" and expected.info["host_slabs"]
     assert scratch_directory(expected.volume) is None and "temporary_file" not in expected.info
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    monkeypatch.setattr(tomojax.backends.api, "host_available_memory_bytes", lambda: 1024)
+    monkeypatch.setattr(host_volume, "host_available_memory_bytes", lambda: 1024)
     actual = tj.reconstruct(scan)
     assert scratch_directory(actual.volume) == tmp_path
     assert actual.info["temporary_file"] == str(tmp_path) and not list(tmp_path.iterdir())

@@ -19,12 +19,13 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from tomojax._data import calibration_issues, views_of
-from tomojax._loading_geometry import frame_geometry, frame_output_grid
+from tomojax._loading_geometry import frame_geometry
 from tomojax._scan import (
     Scan,
     binned_geometry,
     check_shape,
     detector_window,
+    frame_output_grid,
     rebuild,
     scan_from_record,
 )

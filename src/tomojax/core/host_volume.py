@@ -12,6 +12,7 @@ import math
 import mmap
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from typing import Any
@@ -20,6 +21,85 @@ import weakref
 import numpy as np
 
 _DESCRIPTORS: dict[int, int] = {}  # open files of the work volumes alive, by id
+
+
+_OWN_CGROUP, _CGROUP_MOUNTS = Path("/proc/self/cgroup"), Path("/proc/self/mountinfo")
+
+
+def _cgroup_room_bytes() -> int | None:
+    """Conservative no-reclaim room under visible cgroup v2 limits.
+
+    ``memory.high`` is a throttle boundary, not a hard allocation limit. Current
+    usage includes reclaimable page cache, so this can underestimate capacity.
+    Hidden ancestors cannot be measured from inside a cgroup namespace.
+    """
+    try:
+        paths = [
+            line[3:] for line in _OWN_CGROUP.read_text().splitlines() if line.startswith("0::")
+        ]
+        mounts = _CGROUP_MOUNTS.read_text().splitlines()
+    except OSError:
+        return None
+    if len(paths) != 1 or not paths[0].startswith("/") or ".." in Path(paths[0]).parts:
+        return None
+    own, rooms = Path(paths[0]), []
+    for entry in mounts:
+        header, separator, filesystem = entry.partition(" - ")
+        fields = header.split()
+        if not separator or not filesystem.startswith("cgroup2 ") or len(fields) < 5:
+            continue
+        root, mount = [
+            Path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), text)) for text in fields[3:5]
+        ]
+        if not own.is_relative_to(root) or not mount.is_absolute():
+            continue
+        # Every level from the process's group up to the mount has its own limits.
+        relative = own.relative_to(root)
+        group = mount / relative
+        for level in (group, *group.parents[: len(relative.parts)]):
+            for limit in ("memory.high", "memory.max"):
+                try:
+                    text = (level / limit).read_text().strip()
+                    if text != "max":
+                        used = int((level / "memory.current").read_text())
+                        rooms.append(max(0, int(text) - used))
+                except (OSError, ValueError):
+                    pass
+    return min(rooms, default=None)
+
+
+def _system_available_bytes() -> int | None:
+    """The machine's available memory, including Linux's reclaimable page cache."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError):
+        pass
+    try:
+        names = getattr(os, "sysconf_names", {})
+        if "SC_AVPHYS_PAGES" not in names or "SC_PAGE_SIZE" not in names:
+            return None
+        avail_pages = int(os.sysconf("SC_AVPHYS_PAGES"))
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        if avail_pages <= 0 or page_size <= 0:
+            return None
+        return avail_pages * page_size
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def host_available_memory_bytes() -> int | None:
+    """Return available host bytes, bounded by any Linux cgroup memory limit.
+
+    Returns
+    -------
+    int or None
+        Available host memory, including reclaimable page cache, or None when
+        neither the operating system nor a cgroup reports capacity.
+    """
+    known = [n for n in (_system_available_bytes(), _cgroup_room_bytes()) if n is not None]
+    return min(known, default=None)
 
 
 def scratch_directory(array: object) -> Path | None:
@@ -37,8 +117,6 @@ def host_array(shape: tuple[int, int, int], *, copies: int = 1) -> np.ndarray:
     array the library makes (a corrected stack, a solver's output and work
     volumes) follows this one rule.
     """
-    from tomojax.backends.api import host_available_memory_bytes
-
     available = host_available_memory_bytes()
     need = copies * math.prod(shape) * np.dtype(np.float32).itemsize
     large = available is not None and need > 0.5 * available
@@ -75,8 +153,6 @@ def host_volume(shape: tuple[int, int, int], directory: Path | None = None) -> n
 
 def _require_room(shape: tuple[int, int, int], directory: Path) -> None:
     """Raise a plain error when ``directory`` cannot hold a float32 array of ``shape``."""
-    from tomojax.backends.api import host_available_memory_bytes
-
     need = math.prod(shape) * np.dtype(np.float32).itemsize
     free = shutil.disk_usage(directory).free
     if need <= free:

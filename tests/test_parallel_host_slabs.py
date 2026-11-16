@@ -82,7 +82,7 @@ def test_parallel_host_cgls_matches_resident_with_penalties(monkeypatch, initial
 
 
 def test_automatic_disk_output_is_owned_and_explicit_output_is_preserved(monkeypatch, tmp_path):
-    from tomojax.backends import api as backends
+    from tomojax.core import host_volume as backends
 
     monkeypatch.setattr(backends, "host_available_memory_bytes", lambda: 1)
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
@@ -97,7 +97,7 @@ def test_automatic_disk_output_is_owned_and_explicit_output_is_preserved(monkeyp
 
 
 def test_owned_unlinked_output_can_be_reused_with_mapped_input(monkeypatch, tmp_path):
-    import tomojax.backends.api as backends
+    from tomojax.core import host_volume as backends
 
     monkeypatch.setattr(backends, "host_available_memory_bytes", lambda: 1)
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))

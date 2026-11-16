@@ -10,6 +10,7 @@ import pytest
 
 # check-public-imports: allow-private
 from tomojax.backends import _memory, estimate_views_per_batch_info
+from tomojax.core import host_volume
 
 
 @pytest.mark.parametrize(
@@ -41,9 +42,9 @@ def test_host_capacity_respects_visible_cgroups(monkeypatch, updates, expected):
             raise FileNotFoundError(str(path))
         return value
 
-    monkeypatch.setattr(_memory.Path, "read_text", read)
-    monkeypatch.setattr(_memory.os, "sysconf", lambda name: 64)
-    assert _memory.host_available_memory_bytes() == expected
+    monkeypatch.setattr(host_volume.Path, "read_text", read)
+    monkeypatch.setattr(host_volume.os, "sysconf", lambda name: 64)
+    assert host_volume.host_available_memory_bytes() == expected
 
 
 def test_device_memory_probe_logs_debug_before_host_fallback(
@@ -118,9 +119,9 @@ def test_invalid_views_per_batch_env_logs_selected_default(
 
 @pytest.mark.parametrize(("info", "expected"), [("MemAvailable: 512 kB", 524288), ("", 4096)])
 def test_host_capacity_includes_reclaimable_page_cache(monkeypatch, info, expected):
-    monkeypatch.setattr(_memory.Path, "read_text", lambda _: info)
-    monkeypatch.setattr(_memory.os, "sysconf", lambda _: 64)
-    assert _memory.host_available_memory_bytes() == expected
+    monkeypatch.setattr(host_volume.Path, "read_text", lambda _: info)
+    monkeypatch.setattr(host_volume.os, "sysconf", lambda _: 64)
+    assert host_volume.host_available_memory_bytes() == expected
 
 
 @pytest.mark.parametrize("free", [None, -1, 0, 1])

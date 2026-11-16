@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-import tomojax.backends.api
 from tomojax.core import host_volume
 
 
@@ -48,7 +47,7 @@ def test_a_corrected_stack_too_large_for_memory_is_held_in_a_temporary_file(
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(scratch))
-    monkeypatch.setattr(tomojax.backends.api, "host_available_memory_bytes", lambda: 1024)
+    monkeypatch.setattr(host_volume, "host_available_memory_bytes", lambda: 1024)
     with caplog.at_level(logging.INFO, logger="tomojax"):
         actual = tj.load(path)
     assert host_volume.scratch_directory(actual.projections) == scratch
@@ -65,7 +64,7 @@ def test_a_temporary_file_is_refused_with_a_plain_error_when_its_directory_has_n
     path = tmp_path / "raw.nxs"
     _raw_nxtomo(path)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    monkeypatch.setattr(tomojax.backends.api, "host_available_memory_bytes", lambda: 1024)
+    monkeypatch.setattr(host_volume, "host_available_memory_bytes", lambda: 1024)
     usage = namedtuple("usage", "total used free")
     monkeypatch.setattr(host_volume.shutil, "disk_usage", lambda _: usage(1000, 900, 100))
     with pytest.raises(MemoryError, match=r"needs 0\.0 GiB.*TMPDIR.*binning=.*selected"):

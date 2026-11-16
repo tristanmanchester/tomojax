@@ -2,6 +2,7 @@
 
 import errno
 
+import h5py
 import numpy as np
 import pytest
 
@@ -20,27 +21,24 @@ def _reconstruction(value=1.0):
 
 
 def _fail_part_way(monkeypatch, suffix):
-    """The disk fills while the volume is written (NXtomo) or while the archive is (NPZ)."""
+    """The disk fills once the volume is written (NXtomo) or part-way through the archive (NPZ)."""
     if suffix == ".nxs":
-        # check-public-imports: allow-private
-        import tomojax._data._io_nxtomo as nxtomo
+        written = h5py.Group.create_dataset
 
-        written = nxtomo._write_volume_section
+        def full(group, name, *args, **kwargs):
+            dataset = written(group, name, *args, **kwargs)
+            if name == "volume":
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return dataset
 
-        def full(entry, meta, **kwargs):
-            written(entry, meta, **kwargs)
-            raise OSError(errno.ENOSPC, "No space left on device")
-
-        monkeypatch.setattr(nxtomo, "_write_volume_section", full)
+        monkeypatch.setattr(h5py.Group, "create_dataset", full)
     else:
-        # check-public-imports: allow-private
-        import tomojax._data._io_npz as npz
 
         def full(file, **payload):
             file.write(b"\0" * 4096)
             raise OSError(errno.ENOSPC, "No space left on device")
 
-        monkeypatch.setattr(npz.np, "savez_compressed", full)
+        monkeypatch.setattr(np, "savez_compressed", full)
 
 
 @pytest.mark.parametrize("suffix", [".nxs", ".npz"])

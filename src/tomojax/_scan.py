@@ -18,6 +18,7 @@ from tomojax.core.array_ops import mean_detector_pixels
 from tomojax.core.validation import view_indices
 from tomojax.geometry import (
     ConeGeometry,
+    Grid,
     LaminographyGeometry,
     ParallelGeometry,
     RotationAxisGeometry,
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
     import jax
 
     from tomojax.corrections import Correction, Step
-    from tomojax.geometry import ConeBeam, ConeSegments, Detector, Geometry, Grid, ScanGeometry
+    from tomojax.geometry import ConeBeam, ConeSegments, Detector, Geometry, ScanGeometry
     from tomojax.io import ProjectionDataset
 
 LOG = logging.getLogger(__name__)
@@ -450,8 +451,6 @@ class Scan:
         if factor == 1:
             return self
         binned = mean_detector_pixels(np.asarray(self.projections, np.float32), factor)
-        from tomojax._loading_geometry import frame_output_grid
-
         geometry = frame_output_grid(
             binned_geometry(self.geometry, factor), self.source, binning=factor
         )
@@ -749,6 +748,30 @@ def _combined(scans: Sequence[Scan]) -> tuple[Correction, ...]:
         {"inputs": [[c.to_dict() for c in s.corrections] for s in scans]},
     )
     return (*shared, record)
+
+
+def frame_output_grid(
+    geometry: ScanGeometry, source: ProjectionDataset | None, *, binning: int = 1
+) -> ScanGeometry:
+    """Keep explicit grids; size detector-derived grids at the corrected resolution.
+
+    Only an unposed axial parallel model identifies detector rows with object z.
+    Other models retain their physical output box, resampling it when binned.
+    This is a numerical grid policy, not a change to acquired ray geometry.
+    """
+    if source is None or source.grid is not None:
+        return geometry
+    if isinstance(geometry, ParallelGeometry):
+        d = geometry.detector
+        grid = Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
+    elif binning > 1:
+        g = geometry.grid
+        grid = g.resampled(
+            (max(1, g.nx // binning), max(1, g.ny // binning), max(1, g.nz // binning))
+        )
+    else:
+        return geometry
+    return rebuild(geometry, grid=grid)
 
 
 def binned_geometry(geometry: ScanGeometry, factor: int) -> ScanGeometry:

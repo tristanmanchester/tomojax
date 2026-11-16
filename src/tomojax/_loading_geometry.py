@@ -13,8 +13,8 @@ import warnings
 
 import numpy as np
 
-from tomojax._scan import geometry_of, rebuild
-from tomojax.geometry import Detector, Grid, ParallelGeometry
+from tomojax._scan import frame_output_grid, geometry_of
+from tomojax.geometry import Detector, Grid
 from tomojax.io.api import dropped_offsets_message, with_view_offsets, without_view_offsets
 
 if TYPE_CHECKING:
@@ -22,30 +22,6 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import ScanGeometry
     from tomojax.io import ProjectionDataset
-
-
-def frame_output_grid(
-    geometry: ScanGeometry, source: ProjectionDataset | None, *, binning: int = 1
-) -> ScanGeometry:
-    """Keep explicit grids; size detector-derived grids at the corrected resolution.
-
-    Only an unposed axial parallel model identifies detector rows with object z.
-    Other models retain their physical output box, resampling it when binned.
-    This is a numerical grid policy, not a change to acquired ray geometry.
-    """
-    if source is None or source.grid is not None:
-        return geometry
-    if isinstance(geometry, ParallelGeometry):
-        d = geometry.detector
-        grid = Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
-    elif binning > 1:
-        g = geometry.grid
-        grid = g.resampled(
-            (max(1, g.nx // binning), max(1, g.ny // binning), max(1, g.nz // binning))
-        )
-    else:
-        return geometry
-    return rebuild(geometry, grid=grid)
 
 
 def _vendor_corrections(record: ProjectionDataset, *, applied: bool) -> ProjectionDataset:

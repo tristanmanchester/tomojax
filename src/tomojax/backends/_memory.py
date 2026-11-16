@@ -5,9 +5,9 @@ from dataclasses import dataclass
 import logging
 import math
 import os
-from pathlib import Path
-import re
 from typing import TYPE_CHECKING, cast
+
+from tomojax.core.host_volume import host_available_memory_bytes
 
 if TYPE_CHECKING:
     from tomojax._typed_arrays import Device
@@ -53,85 +53,6 @@ def _normalized_safety_fraction(safety_frac: float) -> float:
     if not math.isfinite(frac):
         frac = 0.75
     return min(max(frac, 1e-6), 1.0)
-
-
-_OWN_CGROUP, _CGROUP_MOUNTS = Path("/proc/self/cgroup"), Path("/proc/self/mountinfo")
-
-
-def _cgroup_room_bytes() -> int | None:
-    """Conservative no-reclaim room under visible cgroup v2 limits.
-
-    ``memory.high`` is a throttle boundary, not a hard allocation limit. Current
-    usage includes reclaimable page cache, so this can underestimate capacity.
-    Hidden ancestors cannot be measured from inside a cgroup namespace.
-    """
-    try:
-        paths = [
-            line[3:] for line in _OWN_CGROUP.read_text().splitlines() if line.startswith("0::")
-        ]
-        mounts = _CGROUP_MOUNTS.read_text().splitlines()
-    except OSError:
-        return None
-    if len(paths) != 1 or not paths[0].startswith("/") or ".." in Path(paths[0]).parts:
-        return None
-    own, rooms = Path(paths[0]), []
-    for entry in mounts:
-        header, separator, filesystem = entry.partition(" - ")
-        fields = header.split()
-        if not separator or not filesystem.startswith("cgroup2 ") or len(fields) < 5:
-            continue
-        root, mount = [
-            Path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), text)) for text in fields[3:5]
-        ]
-        if not own.is_relative_to(root) or not mount.is_absolute():
-            continue
-        # Every level from the process's group up to the mount has its own limits.
-        relative = own.relative_to(root)
-        group = mount / relative
-        for level in (group, *group.parents[: len(relative.parts)]):
-            for limit in ("memory.high", "memory.max"):
-                try:
-                    text = (level / limit).read_text().strip()
-                    if text != "max":
-                        used = int((level / "memory.current").read_text())
-                        rooms.append(max(0, int(text) - used))
-                except (OSError, ValueError):
-                    pass
-    return min(rooms, default=None)
-
-
-def _system_available_bytes() -> int | None:
-    """The machine's available memory, including Linux's reclaimable page cache."""
-    try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
-            if line.startswith("MemAvailable:"):
-                return int(line.split()[1]) * 1024
-    except (OSError, ValueError):
-        pass
-    try:
-        names = getattr(os, "sysconf_names", {})
-        if "SC_AVPHYS_PAGES" not in names or "SC_PAGE_SIZE" not in names:
-            return None
-        avail_pages = int(os.sysconf("SC_AVPHYS_PAGES"))
-        page_size = int(os.sysconf("SC_PAGE_SIZE"))
-        if avail_pages <= 0 or page_size <= 0:
-            return None
-        return avail_pages * page_size
-    except (AttributeError, OSError, TypeError, ValueError):
-        return None
-
-
-def host_available_memory_bytes() -> int | None:
-    """Return available host bytes, bounded by any Linux cgroup memory limit.
-
-    Returns
-    -------
-    int or None
-        Available host memory, including reclaimable page cache, or None when
-        neither the operating system nor a cgroup reports capacity.
-    """
-    known = [n for n in (_system_available_bytes(), _cgroup_room_bytes()) if n is not None]
-    return min(known, default=None)
 
 
 def _free_bytes_from_memory_info(info: object) -> int | None:
