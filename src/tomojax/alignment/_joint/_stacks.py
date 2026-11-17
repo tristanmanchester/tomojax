@@ -246,22 +246,23 @@ def level_reserve(ops: Any, prior: Any) -> dict[str, int]:
     - ``state``: what persists through a step at its worst (the volume and the previous one,
       the linearisation's gradient and diagonal, the damping, the stepped gradient, TV's
       conductance, the free-voxel mask, the two shared images, the clipped step; growing a
-      little over the steps), 8 volumes, and 0.2 GiB that no array holds (the compiled
-      programs and the libraries' workspaces): 0.49 and 0.68 GiB measured.
+      little over the steps, with a retried proposal's), 9 volumes and 0.2 GiB that no array
+      holds (the compiled programs and the libraries' workspaces): measured at the worst step
+      as 0.2 GiB and 8.2, 8.1 and 8.8 volumes on K11 54013, K11 67208 and I13 159815.
     - ``prior_held``: the motion prior's matrices and factor (``MotionPrior.device_bytes``).
     - ``transient``: the larger of the Schur solve's temporaries (conjugate gradients'
       vectors and their FP64 copies, the matvec's product and TV term, per-batch
-      projections and columns; 6.3 to 6.6 volumes and the batches by XLA's memory
-      analysis, planned as 7 volumes and 8 batches) and the prior factor's (which runs
+      projections and columns; beyond the batches 4.6, 5.7 and 7.9 volumes on the same
+      three scans, planned as 9 volumes and 8 batches) and the prior factor's (which runs
       before the solve, not during it).
     """
     d, (nz, ny, nx) = ops.detector, ops.shape
     volume = 4 * nz * ny * nx
     batch = 4 * ops.batch * (1 + ops.dofs) * d.nv * d.nu
     prior_bytes = prior.device_bytes()
-    schur = 7 * volume + 8 * batch
+    schur = 9 * volume + 8 * batch
     return {
-        "state": 8 * volume + 200 * 2**20,
+        "state": 9 * volume + 200 * 2**20,
         "prior_held": prior_bytes["held"],
         "transient": max(schur, prior_bytes["transient"]),
     }

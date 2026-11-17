@@ -217,14 +217,14 @@ def _level_peak(*shape):
 @pytest.mark.gpu
 @pytest.mark.fresh_gpu  # the probe's process needs the device's room, not what this one holds
 def test_the_plan_covers_a_levels_own_peak_and_not_much_more():
-    # The reserve is counted (_stacks.level_reserve): the state, 8 volumes and 0.2 GiB that no
+    # The reserve is counted (_stacks.level_reserve): the state, 9 volumes and 0.2 GiB that no
     # array holds; the prior's held bytes; and the larger of the Schur solve's temporaries
-    # (7 volumes and 8 batches) and the prior factor's. It holds only because nothing a level
+    # (9 volumes and 8 batches) and the prior factor's. It holds only because nothing a level
     # compiles grows faster than the views but the prior (test_alignment_memory). A level's own
     # peak, in a fresh process (the allocator's peak less what was in use at its setup), must
     # not exceed the plan, nor fall short of it by more than 6 volumes: on this level, where
-    # volumes dominate, the plan's spare is the Schur term's half volume over XLA's count and
-    # the state's allowance for growth over the steps (measured 2.1 volumes).
+    # volumes dominate, the plan's spare is what the two counts hold over this level's own
+    # (they are set by the largest of three real scans, I13 159815).
     m = _level_peak(192, 128, 256, 160, 480)
     predicted = m["stacks"] + m["reserve"]
     assert m["used"] <= predicted, (m["used"], predicted)
@@ -239,12 +239,12 @@ def test_the_plan_takes_the_larger_transient_where_the_prior_dominates():
     # peak) outweighs the Schur solve, and they never run together, so the plan takes the
     # larger of the two, not their sum (summed, K11 67208's fine level sent j to the host for
     # nothing, +10%). The level's peak must not exceed the plan, and the plan's spare must be
-    # no more than what it is made of: the state (8 volumes and 0.2 GiB, measured on K11's
-    # fine levels), which a level this small does not reach; the transient's sixth copy of b
+    # no more than what it is made of: the state (9 volumes and 0.2 GiB, measured on real
+    # scans), which a level this small does not reach; the transient's sixth copy of b
     # and its 8 MiB against 5 MB measured; and 2 volumes.
     m = _level_peak(48, 32, 64, 48, 3000)
     predicted = m["stacks"] + m["reserve"]
     assert m["used"] <= predicted, (m["used"], predicted)
-    state = 8 * m["volume"] + 200 * 2**20
+    state = 9 * m["volume"] + 200 * 2**20
     margin = state + m["design"] + 8 * 2**20 + 2 * m["volume"]
     assert predicted - m["used"] <= margin, (predicted - m["used"], margin)
