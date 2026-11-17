@@ -69,7 +69,7 @@ def test_the_largest_restoring_force_on_a_jump_is_the_weight():
             views, np.zeros((views * dofs, 0)), knot_spacing=(6,) * dofs, delta=delta
         )
         pose = jnp.asarray(rng.normal(size=views * dofs))
-        jumps = np.sqrt(np.asarray(prior._squared_jumps(pose)))
+        jumps = np.sqrt(np.asarray(prior._squared_jumps(prior.matrices, pose)))
         link = int(np.argmax(jumps))
         forces = []
         for size in np.geomspace(0.01, 100, 81) * delta:

@@ -270,7 +270,8 @@ def refine(x, p, y, precision, prior, *, ops, sigma, last=None, placement=None):
     offset and ramp and residual energy at the result (``Operators.view_summary``).
     """
     start = time.perf_counter()
-    stacks = level_stacks(ops, y, precision, names=("y", "precision"), placement=placement)
+    names = ("y", "precision")
+    stacks = level_stacks(ops, y, precision, prior=prior, names=names, placement=placement)
     try:
         y, precision = stacks["y"], stacks.get("precision")
         if prior.nlocal == 0:

@@ -41,9 +41,12 @@ def _abstract(tree):
     return jax.tree.map(shape, tree)
 
 
-def level_temporaries(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
-    """XLA's temporary bytes of every function a one-level fit compiles, by name."""
-    jit, seen = jax.jit, {}
+def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
+    """Temporaries, outputs and captured constants (bytes) of each compiled level function.
+
+    By name, with the fit's motion prior.
+    """
+    jit, seen, priors = jax.jit, {}, []
 
     def recording(fun=None, **options):
         if fun is None:
@@ -61,31 +64,88 @@ def level_temporaries(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
 
         return call
 
+    built = _fit.MotionPrior
+
+    def prior(*args, **kwargs):
+        priors.append(built(*args, **kwargs))
+        return priors[-1]
+
     monkeypatch.setattr(jax, "jit", recording)
+    monkeypatch.setattr(_fit, "MotionPrior", prior)
     monkeypatch.setattr(_fit, "_LEVELS", ((1, 2),))
     projections, nominal, grid, detector = _scan(views, nu, nv, n, nz)
     _fit.fit_poses(projections, nominal, grid, detector, keep_grid=True)
     monkeypatch.setattr(jax, "jit", jit)
+    monkeypatch.setattr(_fit, "MotionPrior", built)
     out = {}
     for name, (compiled, args, kwargs) in seen.items():
         ARGS[name] = (compiled, args, kwargs)
-        analysis = compiled.lower(*args, **kwargs).compile().memory_analysis()
-        out[name] = analysis.temp_size_in_bytes
-    return out
+        with jax.enable_x64(True):  # as fit_poses runs them: its FP64 stays FP64
+            analysis = compiled.lower(*args, **kwargs).compile().memory_analysis()
+            consts = jax.make_jaxpr(compiled)(*args, **kwargs).consts
+        out[name] = {
+            "temp": analysis.temp_size_in_bytes,
+            "output": analysis.output_size_in_bytes,
+            "consts": sum(getattr(c, "nbytes", 0) for c in consts),
+        }
+    return out, priors[-1]
+
+
+def level_temporaries(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
+    """XLA's temporary bytes of every function a one-level fit compiles, by name."""
+    memory, _ = level_memory(views, monkeypatch, nu, nv, n, nz)
+    return {name: m["temp"] for name, m in memory.items()}
+
+
+# Known to grow faster than the views, with the growth order measured from 300 to 900 views:
+# the motion prior's factor, built from its dense spline design (local rows by about
+# views / 10 knots). Its temporaries and the innovation solve's grow the same way at more
+# views (5 to 6 copies of the design at 1000 to 4000), but a fixed part hides that at these
+# counts. Item 64 makes the prior linear; remove the entry then.
+SUPERLINEAR = {
+    "MotionPrior._factor": 1.9,  # its output, measured in FP64 as the fit runs
+}
+
+
+def _order(small, large, ratio):
+    """The growth exponent between two view counts, or 0 for what is too small to grow."""
+    if large <= 256 * 1024 or small <= 0:
+        return 0.0
+    return float(np.log(large / small) / np.log(ratio))
 
 
 @pytest.mark.gpu
-def test_no_compiled_level_function_keeps_a_temporary_that_grows_with_the_views(monkeypatch):
-    # The same grid and detector at 48 and 144 views, compiled for the GPU, whose buffer
-    # assignment made the copy (the CPU's did not). A temporary that holds a stack grows by at
-    # least two bytes a pixel for each added view (FP16); the motion prior's per-view matrices
-    # grow by about 2 KiB a view whatever the detector. At 96 x 64 pixels a stack is 12 KiB a
-    # view at FP16, so one byte a pixel separates the two.
-    few = level_temporaries(48, monkeypatch)
-    many = level_temporaries(144, monkeypatch)
-    limit = (144 - 48) * 96 * 64
-    grown = {name: many[name] - few[name] for name in few if many.get(name, 0) - few[name] > limit}
-    assert not grown, f"temporaries growing with the views (bytes, limit {limit}): {grown}"
+def test_no_level_function_grows_faster_than_the_views(monkeypatch):
+    # A reserve counted in volumes and a plan's prior term are only right if what each compiled
+    # function holds grows no faster than the views. At 100, 300 and 900 views on one grid and
+    # detector, each function's temporaries, outputs and captured constants are measured; the
+    # growth order from 300 to 900 must be at most 1.3 (linear, with fixed parts), except the
+    # motion prior's known quadratic functions, which must still need their exception.
+    counts = (100, 300, 900)
+    profiles = [level_memory(views, monkeypatch) for views in counts]
+    ratio = counts[2] / counts[1]
+    superlinear = {}
+    for name, memory in profiles[2][0].items():
+        for kind in ("temp", "output", "consts"):
+            small = profiles[1][0].get(name, {}).get(kind, 0)
+            order = _order(small, memory[kind], ratio)
+            if order > 1.3:
+                superlinear[name] = max(order, superlinear.get(name, 0.0))
+    unexpected = {name: order for name, order in superlinear.items() if name not in SUPERLINEAR}
+    assert not unexpected, f"growing faster than the views (order from 300 to 900): {unexpected}"
+    gone = set(SUPERLINEAR) - set(superlinear)
+    assert not gone, f"no longer superlinear, remove from SUPERLINEAR (item 64): {gone}"
+    # No function captures a large array as a compiled constant.
+    captured = {name: m["consts"] for name, m in profiles[2][0].items() if m["consts"] > 256 * 1024}
+    assert not captured, f"large captured constants (bytes): {captured}"
+    # The plan's prior term covers what the prior holds and needs, within half again.
+    for memory, prior in profiles[1:]:
+        planned = prior.device_bytes()
+        held = sum(int(a.size) * a.dtype.itemsize for a in prior.matrices)
+        held += memory["MotionPrior._factor"]["output"]
+        transient = max(memory[n]["temp"] for n in memory if n.startswith("MotionPrior."))
+        assert held <= planned["held"] <= 1.5 * held, (planned, held)
+        assert transient <= planned["transient"] <= 2 * transient, (planned, transient)
 
 
 def _conditionals(jaxpr):
@@ -107,10 +167,11 @@ def test_the_schur_solves_conditionals_carry_no_stack(monkeypatch):
     # r out of it on every iteration: a whole stack of temporaries (0.47 GiB at 1441 views,
     # 1.29 GiB at 4000) that the plan did not count. The product is made outside the
     # conditional; nothing the size of the views may pass through one.
-    level_temporaries(48, monkeypatch)
+    level_memory(48, monkeypatch)
     compiled, args, kwargs = next(v for k, v in ARGS.items() if k.endswith("schur"))
     views = args[1].shape[0]  # the weights sw: (padded views, rows, pixels)
-    jaxpr = jax.make_jaxpr(compiled)(*args, **kwargs).jaxpr
+    with jax.enable_x64(True):
+        jaxpr = jax.make_jaxpr(compiled)(*args, **kwargs).jaxpr
     carried = [
         var.aval.shape
         for eqn in _conditionals(jaxpr)

@@ -79,7 +79,8 @@ def test_a_level_with_little_device_room_plans_the_cold_stacks_onto_the_host(mon
     def room_for_the_hot_three(self, specs, batch, *, data, room, reserve, placement=None):
         sizes = {n: int(np.prod(s)) * np.dtype(d).itemsize for n, (s, d) in specs.items()}
         hot = sum(sizes[n] for n in ("sw", "r", "j") if n in sizes)
-        original(self, specs, batch, data=data, room=hot + reserve, reserve=reserve)
+        total = sum(reserve.values())
+        original(self, specs, batch, data=data, room=hot + total, reserve=reserve)
         plans.append(dict(self.planned))
 
     monkeypatch.setattr(_stacks.LevelStacks, "__init__", room_for_the_hot_three)

@@ -9,6 +9,7 @@ form a small Schur border around that complete local system.
 """
 
 import math
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -165,6 +166,16 @@ def _orthonormal_columns(matrix):
     return u[:, singular > tolerance]
 
 
+class PriorMatrices(NamedTuple):
+    """The motion prior's fixed matrices, passed to its compiled functions as an argument."""
+
+    U: jax.Array
+    G: jax.Array
+    C: jax.Array
+    gauge_step: jax.Array
+    rotation_precision: jax.Array
+
+
 class MotionPrior:
     """Translation drift/jumps, a physical rotation prior, and an exact global border.
 
@@ -256,7 +267,7 @@ class MotionPrior:
         # that needs constraints transversal to the tangents, one for each.
         cross = g.T @ tangents
         if not oblique or not cross.size:
-            self.gauge_step = jnp.asarray(tangents)  # fixed by themselves: orthogonal
+            gauge_step = jnp.asarray(tangents)  # fixed by themselves: orthogonal
         elif cross.shape[0] != cross.shape[1] or np.linalg.cond(cross) > 1e8:
             condition = np.linalg.cond(cross) if cross.shape[0] == cross.shape[1] else np.inf
             raise ValueError(
@@ -264,10 +275,8 @@ class MotionPrior:
                 f"{tangents.shape[1]} gauge tangents of this geometry (condition {condition:.3g})"
             )
         else:
-            self.gauge_step = jnp.asarray(tangents @ np.linalg.inv(cross))
-        self.U, self.G = jnp.asarray(u), jnp.asarray(g)
+            gauge_step = jnp.asarray(tangents @ np.linalg.inv(cross))
         outside = _orthonormal_columns(g - u @ (u.T @ g))
-        self.C = jnp.asarray(np.column_stack([u, outside]))
         rotation_precision = np.zeros((views, self.nlocal))
         if parameters is not None and "rotations" in parameters.fit:
             scales = np.broadcast_to(
@@ -276,14 +285,91 @@ class MotionPrior:
             radians = np.deg2rad(rotation_sigma_deg)
             rotation_precision = (float(noise_sigma) * scales / radians) ** 2 * (1 - translated)
         self.rotation_sigma_deg = float(rotation_sigma_deg)
-        self.rotation_precision = jnp.asarray(rotation_precision.reshape(-1), jnp.float64)
-        self.value = jax.jit(self._value)
-        self.weights = jax.jit(self._weights)
-        self.apply = jax.jit(self._apply)
-        self.factor = jax.jit(self._factor)
+        # Passed to the compiled functions as an argument, never captured: a captured array is
+        # a constant of each executable, once per function (U and C grow as views squared).
+        self.matrices = PriorMatrices(
+            U=jnp.asarray(u),
+            G=jnp.asarray(g),
+            C=jnp.asarray(np.column_stack([u, outside])),
+            gauge_step=gauge_step,
+            rotation_precision=jnp.asarray(rotation_precision.reshape(-1), jnp.float64),
+        )
+        self._compiled = {
+            name: jax.jit(getattr(self, f"_{name}"))
+            for name in ("value", "weights", "apply", "factor", "innovation_solve", "project_gauge")
+        }
+        # The solve takes everything it needs from the factor, so it can run inside the Schur
+        # solve's compiled program without bringing a matrix into it as a constant.
         self.solve = jax.jit(self._solve)
-        self.innovation_solve = jax.jit(self._innovation_solve)
-        self.project_gauge = jax.jit(self._project_gauge)
+
+    def device_bytes(self) -> dict[str, int]:
+        """Device bytes the prior needs during a level, from its shapes: held and transient.
+
+        Held through a step: its matrices (U and C, local rows by about views / 10 knots
+        each, so they grow as views squared; G, the gauge step, the rotation precision) and
+        the factor of the pose system it keeps (b = [U, K U] and its tridiagonal solve, each
+        local rows by twice the knots, and the small LU), sized exactly from the factor's
+        output shapes. Transient: the factor's temporaries, measured from 300 to 4000 views
+        as five copies of b (its cyclic reduction) and a fixed 5 MB (the small solves'
+        workspace), within 1%; planned as six copies and 8 MiB. Item 64 makes all of it
+        linear.
+        """
+        m = self.matrices
+        item, rows, knots = m.U.dtype.itemsize, self.local_size, 2 * m.U.shape[1]
+        with jax.enable_x64(m.U.dtype == jnp.float64):
+            p = jax.ShapeDtypeStruct((self.size,), m.U.dtype)
+            w = jax.eval_shape(self._weights, m, p, 1.0)
+            blocks = jax.ShapeDtypeStruct((self.n, self.k, self.k), m.U.dtype)
+            factor = jax.eval_shape(self._factor, m, blocks, w)
+        # Each array rounded up to 256 bytes, as the allocator aligns its buffers.
+        held = sum(
+            -(-int(a.size) * a.dtype.itemsize // 256) * 256 for a in (*m, *jax.tree.leaves(factor))
+        )
+        return {"held": held, "transient": 6 * item * rows * knots + 8 * 2**20}
+
+    @property
+    def U(self):
+        """The drift splines' orthonormal basis (local rows by knots)."""
+        return self.matrices.U
+
+    @property
+    def G(self):
+        """The gauge constraints' rows (local rows by gauge directions)."""
+        return self.matrices.G
+
+    @property
+    def C(self):
+        """The drift basis with the gauge rows it does not span."""
+        return self.matrices.C
+
+    @property
+    def rotation_precision(self):
+        """The rotation increments' size precision, per local row."""
+        return self.matrices.rotation_precision
+
+    def value(self, p, weight):
+        """The prior's value at compact poses ``p`` with motion weight ``weight``."""
+        return self._compiled["value"](self.matrices, p, weight)
+
+    def weights(self, p, weight):
+        """Per link and local column, the IRLS weights at ``p``."""
+        return self._compiled["weights"](self.matrices, p, weight)
+
+    def apply(self, p, w):
+        """The prior's quadratic form at weights ``w`` applied to ``p``."""
+        return self._compiled["apply"](self.matrices, p, w)
+
+    def factor(self, blocks, w):
+        """The pose normal system with the prior at weights ``w``, factored for ``solve``."""
+        return self._compiled["factor"](self.matrices, blocks, w)
+
+    def innovation_solve(self, blocks, w, rhs):
+        """The local innovation step with drift, gauge and globals held."""
+        return self._compiled["innovation_solve"](self.matrices, blocks, w, rhs)
+
+    def project_gauge(self, state):
+        """``state`` with its gauge coordinates fixed by the constraints."""
+        return self._compiled["project_gauge"](self.matrices, state)
 
     def expand(self, state):
         """Projector rows with one shared value per global coordinate."""
@@ -297,33 +383,33 @@ class MotionPrior:
             return jnp.asarray(rows).reshape(-1)
         return self.parameters.reduce_score(rows)
 
-    def _project_gauge(self, state):
+    def _project_gauge(self, m, state):
         local = state[: self.local_size]
-        local = local - self.gauge_step @ (self.G.T @ local)
+        local = local - m.gauge_step @ (m.G.T @ local)
         return jnp.concatenate([local, state[self.local_size :]])
 
-    def _residual(self, p):
-        return p - self.U @ (self.U.T @ p)
+    def _residual(self, m, p):
+        return p - m.U @ (m.U.T @ p)
 
-    def _squared_jumps(self, p):
-        residual = self._residual(p[: self.local_size]).reshape(self.n, self.nlocal)
+    def _squared_jumps(self, m, p):
+        residual = self._residual(m, p[: self.local_size]).reshape(self.n, self.nlocal)
         jumps = jnp.diff(residual, axis=0) * self.translation_mask * self.order.jump_scale[:, None]
         return jnp.sum(jumps**2, axis=1)
 
-    def _weights(self, p, weight):
+    def _weights(self, m, p, weight):
         """Per link and local column: robust for translations, constant for rotations."""
         weight, turn_weight = weight if isinstance(weight, tuple) else (weight, weight)
         edge = jnp.asarray(self.order.edge_scale)[:, None]
-        robust = (2 * weight * self.delta / (self.delta**2 + self._squared_jumps(p)))[:, None]
+        robust = (2 * weight * self.delta / (self.delta**2 + self._squared_jumps(m, p)))[:, None]
         rotation = turn_weight / self.delta * self.rotation_mask
         return edge * (robust * self.translation_mask + rotation)
 
-    def _value(self, p, weight):
+    def _value(self, m, p, weight):
         weight, turn_weight = weight if isinstance(weight, tuple) else (weight, weight)
-        jumps = weight * self.delta * jnp.sum(jnp.log1p(self._squared_jumps(p) / self.delta**2))
+        jumps = weight * self.delta * jnp.sum(jnp.log1p(self._squared_jumps(m, p) / self.delta**2))
         local = p[: self.local_size].reshape(self.n, self.nlocal)
         turns = jnp.diff(local, axis=0) * self.rotation_mask * self.order.jump_scale[:, None]
-        size = self.rotation_precision * p[: self.local_size] ** 2
+        size = m.rotation_precision * p[: self.local_size] ** 2
         return jumps + 0.5 * (turn_weight / self.delta * jnp.sum(turns**2) + jnp.sum(size))
 
     def _laplacian(self, p, w):
@@ -337,42 +423,44 @@ class MotionPrior:
         pad[0] = (1, 0)
         return (jnp.pad(dif, pad) - left).reshape(shape)
 
-    def _apply(self, p, w):
+    def _apply(self, m, p, w):
         local = p[: self.local_size]
-        jump = self._residual(self._laplacian(self._residual(local), w))
-        return jnp.concatenate([jump + self.rotation_precision * local, jnp.zeros(self.nglobal)])
+        jump = self._residual(m, self._laplacian(self._residual(m, local), w))
+        return jnp.concatenate([jump + m.rotation_precision * local, jnp.zeros(self.nglobal)])
 
-    def _local_factor(self, blocks, w):
-        blocks = blocks + jax.vmap(jnp.diag)(self.rotation_precision.reshape(self.n, self.nlocal))
+    def _local_factor(self, m, blocks, w):
+        blocks = blocks + jax.vmap(jnp.diag)(m.rotation_precision.reshape(self.n, self.nlocal))
         tri = _tridiagonal(blocks, w)
-        ku = self._laplacian(self.U, w)
-        b = jnp.concatenate([self.U, ku], axis=1)
-        k = self.U.shape[1]
+        ku = self._laplacian(m.U, w)
+        b = jnp.concatenate([m.U, ku], axis=1)
+        k = m.U.shape[1]
         if k:
             zero, eye = jnp.zeros((k, k), jnp.float64), jnp.eye(k, dtype=jnp.float64)
-            small = jnp.block([[zero, -eye], [-eye, -self.U.T @ ku]])
+            small = jnp.block([[zero, -eye], [-eye, -m.U.T @ ku]])
             ab = _pcr_solve(tri, b.reshape(self.n, self.nlocal, -1)).reshape(self.local_size, -1)
             small = small + b.T @ ab
             fac = lu_factor((small + small.T) * 0.5)
         else:
             ab, fac = b, None
-        ag = _pcr_solve(tri, self.G.reshape(self.n, self.nlocal, -1)).reshape(self.G.shape)
+        ag = _pcr_solve(tri, m.G.reshape(self.n, self.nlocal, -1)).reshape(m.G.shape)
         hg = ag - ab @ lu_solve(fac, b.T @ ag) if k else ag
-        gauge = self.G.T @ hg
-        chol = jnp.linalg.cholesky((gauge + gauge.T) * 0.5) if self.G.shape[1] else None
-        return tri, b, ab, fac, hg, chol
+        gauge = m.G.T @ hg
+        chol = jnp.linalg.cholesky((gauge + gauge.T) * 0.5) if m.G.shape[1] else None
+        return tri, b, ab, fac, hg, chol, m.G
 
     def _local_solve(self, factor, rhs):
-        tri, b, ab, fac, hg, chol = factor
+        tri, b, ab, fac, hg, chol, g = factor
         ar = _pcr_solve(tri, rhs.reshape((self.n, self.nlocal, *rhs.shape[1:]))).reshape(rhs.shape)
-        result = ar - ab @ lu_solve(fac, b.T @ ar) if self.U.shape[1] else ar
-        if self.G.shape[1]:
-            result = result - hg @ cho_solve((chol, True), self.G.T @ result)
+        result = ar - ab @ lu_solve(fac, b.T @ ar) if b.shape[1] else ar
+        if g.shape[1]:
+            result = result - hg @ cho_solve((chol, True), g.T @ result)
         return result
 
-    def _factor(self, blocks, w):
+    def _factor(self, m, blocks, w):
         local = (
-            self._local_factor(blocks[:, : self.nlocal, : self.nlocal], w) if self.nlocal else None
+            self._local_factor(m, blocks[:, : self.nlocal, : self.nlocal], w)
+            if self.nlocal
+            else None
         )
         border = blocks[:, : self.nlocal, self.nlocal :].reshape(self.local_size, self.nglobal)
         solved = self._local_solve(local, border) if self.nlocal and self.nglobal else border
@@ -388,17 +476,17 @@ class MotionPrior:
         shared = cho_solve((chol, True), rhs[self.local_size :] - border.T @ direct)
         return jnp.concatenate([direct - solved @ shared, shared])
 
-    def _innovation_solve(self, blocks, w, rhs):
+    def _innovation_solve(self, m, blocks, w, rhs):
         """Exact local innovation step with drift, rigid gauge and globals held."""
         if not self.nlocal:
             return jnp.zeros_like(rhs)
         blocks = blocks[:, : self.nlocal, : self.nlocal]
-        blocks = blocks + jax.vmap(jnp.diag)(self.rotation_precision.reshape(self.n, self.nlocal))
+        blocks = blocks + jax.vmap(jnp.diag)(m.rotation_precision.reshape(self.n, self.nlocal))
         tri = _tridiagonal(blocks, w)
         ar = _pcr_solve(tri, rhs[: self.local_size].reshape(self.n, self.nlocal)).reshape(-1)
-        if self.C.shape[1]:
-            ac = _pcr_solve(tri, self.C.reshape(self.n, self.nlocal, -1)).reshape(self.C.shape)
-            small = self.C.T @ ac
+        if m.C.shape[1]:
+            ac = _pcr_solve(tri, m.C.reshape(self.n, self.nlocal, -1)).reshape(m.C.shape)
+            small = m.C.T @ ac
             chol = jnp.linalg.cholesky(0.5 * (small + small.T))
-            ar = ar - ac @ cho_solve((chol, True), self.C.T @ ar)
+            ar = ar - ac @ cho_solve((chol, True), m.C.T @ ar)
         return jnp.concatenate([ar, jnp.zeros(self.nglobal)])

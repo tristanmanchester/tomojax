@@ -510,7 +510,7 @@ def solve(
         if p0 is None
         else prior.project_gauge(jnp.asarray(p0, jnp.float64).reshape(-1))
     )
-    stacks = level_stacks(ops, y, precision, placement=placement)
+    stacks = level_stacks(ops, y, precision, prior=prior, placement=placement)
     try:
         level = _Level(
             ops,

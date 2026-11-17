@@ -28,6 +28,7 @@ allocating fresh stacks at every linearisation and matvec.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import ExitStack
 import math
 from typing import TYPE_CHECKING, Any, Literal
@@ -40,7 +41,7 @@ from tomojax.backends.host_stream import host_source, read_block, write_block
 from tomojax.core.host_volume import host_array
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable
 
 Place = Literal["device", "host"]
 
@@ -117,7 +118,7 @@ class LevelStacks:
         *,
         data: Mapping[str, np.ndarray],
         room: int | None,
-        reserve: int,
+        reserve: int | Mapping[str, int],
         placement: Mapping[str, Place] | None = None,
     ) -> None:
         self.names = [name for name in ORDER if name in specs]
@@ -126,6 +127,8 @@ class LevelStacks:
             name: (tuple(specs[name][0]), np.dtype(specs[name][1])) for name in self.names
         }
         self.sizes = {n: math.prod(s) * d.itemsize for n, (s, d) in self.specs.items()}
+        self.reserve_parts = dict(reserve) if isinstance(reserve, Mapping) else {"total": reserve}
+        reserve = sum(self.reserve_parts.values())
         self.planned = self._plan(room, reserve, placement or {})
         self.room, self.reserve = room, reserve
         self.stacks: dict[str, Stack] = {}
@@ -213,6 +216,7 @@ class LevelStacks:
             "stack_bytes": dict(self.sizes),
             "room_bytes": self.room,
             "reserve_bytes": self.reserve,
+            "reserve_parts": dict(self.reserve_parts),
         }
 
     def close(self) -> None:
@@ -257,10 +261,16 @@ def level_stacks(
     y: np.ndarray,
     precision: np.ndarray | None,
     *,
+    prior: Any,
     names: Iterable[str] | None = None,
     placement: Mapping[str, Place] | None = None,
 ) -> LevelStacks:
-    """Place and allocate a level's stacks (``names``; all of them by default) for its data."""
+    """Place and allocate a level's stacks (``names``; all of them by default) for its data.
+
+    The reserve beside the stacks has two terms: the level's volumes and batches
+    (``level_reserve``) and the motion prior's bytes (``MotionPrior.device_bytes``), which
+    grow with the views, not the volume.
+    """
     specs = ops.stack_specs(precision)
     if names is not None:
         specs = {name: specs[name] for name in names if name in specs}
@@ -272,7 +282,10 @@ def level_stacks(
         ops.batch,
         data={name: value for name, value in data.items() if name in specs},
         room=device_room(),
-        reserve=level_reserve(ops),
+        reserve={
+            "volumes": level_reserve(ops),
+            **{f"prior_{k}": v for k, v in prior.device_bytes().items()},
+        },
         placement=placement,
     )
 
