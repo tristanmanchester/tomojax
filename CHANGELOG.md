@@ -7,8 +7,10 @@
 Importing TomoJAX let JAX's pool grow on demand to JAX's own 75% ceiling in Python, while the
 `tomojax` commands set 90% and `tomojax align` used the releasing `platform` allocator, 14%
 slower (K11 54013, 401 s against 353 s). The same work had two memory budgets and two speeds.
-Importing TomoJAX now sets one policy everywhere: the pool, grown on demand, to at most 90% of
-the GPU. Explicit `XLA_*` settings still take precedence.
+Importing TomoJAX now sets one policy everywhere: the pool, grown on demand, to JAX's 75%
+ceiling. The shell's commands lose the larger pool they had: `tomojax recon` and
+`tomojax simulate` may stream projections or use host slabs a little sooner than before. An
+explicit `XLA_CLIENT_MEM_FRACTION` (or `XLA_PYTHON_CLIENT_MEM_FRACTION`) still wins.
 
 ### One cone orbit with per-view detector offsets reconstructs with FDK
 
