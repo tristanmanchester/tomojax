@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### `tj.align` fits full-size synchrotron scans on an 8 GB card
+
+The alignment made its stack-sized arrays (the data, the residual, the IRLS weights, the pose
+columns and the weighted projections) afresh at every linearisation and matvec, and a 4000-view
+K11 scan or a 3001-view I13 scan ran out of device memory. Each level now plans, at its setup,
+which of its stacks stay on the device and which are held on the host, from the device's room
+less the level's other arrays and the motion prior's; allocates them once, in the order of who
+most needs the device; reads and writes them a batch at a time; and releases them when it ends.
+The result does not depend on where the stacks live. `info["levels"][i]["stacks"]` (and the
+refinement's) reports each stack's placement, the plan, any misprediction, the room and the
+reserve, beside the level's time. On an RTX 4070 Laptop (8 GB): K11 67208 (4000 views) aligns
+in 1384 s, I13 159815 (3001 views) in 1253 s after its load, from Python and from the shell;
+K11 54013 runs as before (365 s) with its peak device memory down from 4.0 to 3.0 GiB.
+
 ### One GPU memory policy for Python and the shell
 
 Importing TomoJAX let JAX's pool grow on demand to JAX's own 75% ceiling in Python, while the
