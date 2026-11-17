@@ -159,12 +159,13 @@ def test_align_reports_each_levels_placement_and_time():
 
 
 _PEAK_PROBE = """
-import json
+import json, sys
 import jax, numpy as np
 import tomojax as tj
 from tomojax.alignment._joint import _fit, _solver
 from tomojax.geometry import stack_view_poses
 
+n, nz, nu, nv, views = (int(a) for a in sys.argv[1:6])
 _fit._LEVELS = ((1, 8),)  # one level: the process's peak is the level's
 dev, seen = jax.devices()[0], {}
 solve = _solver.solve
@@ -173,22 +174,24 @@ solve = _solver.solve
 def measured(*args, **kwargs):
     base = dev.memory_stats()["bytes_in_use"]
     out = solve(*args, **kwargs)
-    stacks = out[3]["stacks"]
+    stacks, prior = out[3]["stacks"], args[2]
+    u = prior.matrices.U
     seen.update(
         used=dev.memory_stats()["peak_bytes_in_use"] - base,
         stacks=sum(stacks["stack_bytes"].values()),
         reserve=stacks["reserve_bytes"],
         volume=4 * int(np.prod(kwargs["ops"].shape)),
+        design=u.dtype.itemsize * prior.local_size * 2 * u.shape[1],  # one copy of b
     )
     return out
 
 
 _solver.solve = _fit.solve = measured
-grid, detector, views = tj.Grid(192, 192, 128, 1, 1, 1), tj.Detector(256, 160, 1, 1), 480
+grid, detector = tj.Grid(n, n, nz, 1, 1, 1), tj.Detector(nu, nv, 1, 1)
 angles = np.linspace(0, 360, views, endpoint=False)
 geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
 rng = np.random.default_rng(1)
-volume = rng.uniform(0, 1, (128, 192, 192)).astype(np.float32)
+volume = rng.uniform(0, 1, (nz, n, n)).astype(np.float32)
 with jax.default_device(jax.devices("cpu")[0]):
     projections = np.array(tj.project(geometry, volume))
 projections += rng.normal(0, 0.01, projections.shape).astype(np.float32)
@@ -198,26 +201,50 @@ print(json.dumps(seen))
 """
 
 
-@pytest.mark.gpu
-@pytest.mark.fresh_gpu  # the probe's process needs the device's room, not what this one holds
-def test_the_plans_reserve_covers_a_levels_own_peak_and_not_much_more():
-    # The reserve is a count (_stacks.level_reserve): 25 volumes and the batches. It holds only
-    # because no compiled level function keeps a temporary that grows with the views
-    # (test_alignment_memory); a change to the solver's arrays moves it, and this keeps it honest.
-    # A level's own peak, in a fresh process (the allocator's peak less what was in use at its
-    # setup), must not exceed the plan's prediction, nor fall short of it by more than 6
-    # volumes: this level keeps 24.5 beside its stacks, K11 54013's fine level about 20.
+def _level_peak(*shape):
+    """A one-level fit's own device peak and its plan, in a fresh process on the GPU."""
     import json
     import os
     import subprocess
     import sys
 
     env = {**os.environ, "PYTHONWARNINGS": "ignore", "JAX_PLATFORMS": "cuda,cpu"}
-    run = subprocess.run(
-        [sys.executable, "-c", _PEAK_PROBE], check=True, capture_output=True, text=True, env=env
-    )
-    m = json.loads(run.stdout.strip().splitlines()[-1])
+    argv = [sys.executable, "-c", _PEAK_PROBE, *map(str, shape)]
+    run = subprocess.run(argv, check=True, capture_output=True, text=True, env=env)
+    return json.loads(run.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.gpu
+@pytest.mark.fresh_gpu  # the probe's process needs the device's room, not what this one holds
+def test_the_plan_covers_a_levels_own_peak_and_not_much_more():
+    # The reserve is counted (_stacks.level_reserve): the state, 8 volumes and 0.2 GiB that no
+    # array holds; the prior's held bytes; and the larger of the Schur solve's temporaries
+    # (7 volumes and 8 batches) and the prior factor's. It holds only because nothing a level
+    # compiles grows faster than the views but the prior (test_alignment_memory). A level's own
+    # peak, in a fresh process (the allocator's peak less what was in use at its setup), must
+    # not exceed the plan, nor fall short of it by more than 6 volumes: on this level, where
+    # volumes dominate, the plan's spare is the Schur term's half volume over XLA's count and
+    # the state's allowance for growth over the steps (measured 2.1 volumes).
+    m = _level_peak(192, 128, 256, 160, 480)
     predicted = m["stacks"] + m["reserve"]
     assert m["used"] <= predicted, (m["used"], predicted)
     spare = (predicted - m["used"]) / m["volume"]
     assert spare <= 6, f"the plan reserves {spare:.1f} volumes more than the level used"
+
+
+@pytest.mark.gpu
+@pytest.mark.fresh_gpu
+def test_the_plan_takes_the_larger_transient_where_the_prior_dominates():
+    # 3000 views on a small grid: the prior's factor (about five copies of its design b at its
+    # peak) outweighs the Schur solve, and they never run together, so the plan takes the
+    # larger of the two, not their sum (summed, K11 67208's fine level sent j to the host for
+    # nothing, +10%). The level's peak must not exceed the plan, and the plan's spare must be
+    # no more than what it is made of: the state (8 volumes and 0.2 GiB, measured on K11's
+    # fine levels), which a level this small does not reach; the transient's sixth copy of b
+    # and its 8 MiB against 5 MB measured; and 2 volumes.
+    m = _level_peak(48, 32, 64, 48, 3000)
+    predicted = m["stacks"] + m["reserve"]
+    assert m["used"] <= predicted, (m["used"], predicted)
+    state = 8 * m["volume"] + 200 * 2**20
+    margin = state + m["design"] + 8 * 2**20 + 2 * m["volume"]
+    assert predicted - m["used"] <= margin, (predicted - m["used"], margin)

@@ -236,24 +236,35 @@ def device_room() -> int | None:
     return device_free_memory_bytes() if jax.default_backend() == "gpu" else None
 
 
-def level_reserve(ops: Any) -> int:
-    """Device bytes a level needs besides its stacks, from its shapes: 25 volumes and the batches.
+def level_reserve(ops: Any, prior: Any) -> dict[str, int]:
+    """Device bytes a level needs besides its stacks, in parts, from its shapes.
 
-    Nothing a level compiles keeps a temporary that grows with the views (tested at two view
-    counts), so the rest is volumes and per-batch terms. Measured at the peak beside the
-    stacks: 24.5 volumes on a 192 x 192 x 128 level with 480 views, about 20 on K11 54013's
-    fine level (2f735f89): the level's state between solves (the volume and the previous one,
-    the linearisation's gradient and diagonal, the damping, the stepped gradient, TV's
-    conductance, the free-voxel mask, the views' two shared images, the Schur right-hand side
-    and preconditioner, the clipped step) and the Schur solve's temporaries (conjugate
-    gradients' vectors, their FP64 dot-product copies, the shared images in FP64, the
-    matvec's product and TV term). Then one batch's projections and pose columns at FP32, four
-    times over, for the scans' per-batch temporaries.
+    Nothing a level compiles keeps a temporary that grows faster than the views but the
+    motion prior (tests/test_alignment_memory.py), so the rest is volumes, batches and a
+    fixed part. Measured on K11 54013's and 67208's fine levels (358e3ce2):
+
+    - ``state``: what persists through a step at its worst (the volume and the previous one,
+      the linearisation's gradient and diagonal, the damping, the stepped gradient, TV's
+      conductance, the free-voxel mask, the two shared images, the clipped step; growing a
+      little over the steps), 8 volumes, and 0.2 GiB that no array holds (the compiled
+      programs and the libraries' workspaces): 0.49 and 0.68 GiB measured.
+    - ``prior_held``: the motion prior's matrices and factor (``MotionPrior.device_bytes``).
+    - ``transient``: the larger of the Schur solve's temporaries (conjugate gradients'
+      vectors and their FP64 copies, the matvec's product and TV term, per-batch
+      projections and columns; 6.3 to 6.6 volumes and the batches by XLA's memory
+      analysis, planned as 7 volumes and 8 batches) and the prior factor's (which runs
+      before the solve, not during it).
     """
     d, (nz, ny, nx) = ops.detector, ops.shape
     volume = 4 * nz * ny * nx
     batch = 4 * ops.batch * (1 + ops.dofs) * d.nv * d.nu
-    return 25 * volume + 4 * batch
+    prior_bytes = prior.device_bytes()
+    schur = 7 * volume + 8 * batch
+    return {
+        "state": 8 * volume + 200 * 2**20,
+        "prior_held": prior_bytes["held"],
+        "transient": max(schur, prior_bytes["transient"]),
+    }
 
 
 def level_stacks(
@@ -282,10 +293,7 @@ def level_stacks(
         ops.batch,
         data={name: value for name, value in data.items() if name in specs},
         room=device_room(),
-        reserve={
-            "volumes": level_reserve(ops),
-            **{f"prior_{k}": v for k, v in prior.device_bytes().items()},
-        },
+        reserve=level_reserve(ops, prior),
         placement=placement,
     )
 
