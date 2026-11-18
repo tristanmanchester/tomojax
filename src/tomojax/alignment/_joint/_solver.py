@@ -210,8 +210,9 @@ class _Level:
         outer = jnp.einsum("i...,j...->ij", images.astype(jnp.float64), images.astype(jnp.float64))
         lipschitz = lipschitz + float(jnp.max(jnp.real(jnp.linalg.eigvals(inverse @ outer))))
 
+        # The shared images are an argument: captured, the program would hold them as a constant.
         @jax.jit
-        def run(x, q, y, precision, lipschitz):
+        def run(x, q, y, precision, lipschitz, images, inverse, data_moments):
             def fista(_, state):
                 old, z, t = state
                 shared = inverse @ (
@@ -226,7 +227,8 @@ class _Level:
 
             return jax.lax.fori_loop(0, iterations, fista, (x, x, jnp.asarray(1.0, jnp.float64)))[0]
 
-        return run(jnp.zeros(self.ops.shape, jnp.float32), ops.prepare(q), y, precision, lipschitz)
+        x = jnp.zeros(self.ops.shape, jnp.float32)
+        return run(x, ops.prepare(q), y, precision, lipschitz, images, inverse, data_moments)
 
     def linearize(self, c, x):
         """The robust linearization at compact poses ``c`` and volume ``x``, with the shared term.

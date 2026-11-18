@@ -8,6 +8,7 @@ of 0.47 GiB at 1441 views and 1.29 GiB at 4000 that the plan had counted as volu
 """
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -41,6 +42,15 @@ def _abstract(tree):
     return jax.tree.map(shape, tree)
 
 
+def captured_constants(compiled, *args, **kwargs):
+    """The arrays a compiled function holds as constants of its program.
+
+    ``trace``, not ``make_jaxpr``: a jitted closure's captured arrays are the consts of
+    its own traced jaxpr; ``make_jaxpr`` of the jitted function shows none of them.
+    """
+    return compiled.trace(*args, **kwargs).jaxpr.consts
+
+
 def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
     """Temporaries, outputs and captured constants (bytes) of each compiled level function.
 
@@ -64,29 +74,44 @@ def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
 
         return call
 
-    built = _fit.MotionPrior
+    built, operators, shapes = _fit.MotionPrior, _fit.Operators, []
 
     def prior(*args, **kwargs):
         priors.append(built(*args, **kwargs))
         return priors[-1]
 
+    def made(*args, **kwargs):
+        ops = operators(*args, **kwargs)
+        shapes.append((tuple(ops.shape), (ops.detector.nv, ops.detector.nu)))
+        return ops
+
     monkeypatch.setattr(jax, "jit", recording)
     monkeypatch.setattr(_fit, "MotionPrior", prior)
+    monkeypatch.setattr(_fit, "Operators", made)
     monkeypatch.setattr(_fit, "_LEVELS", ((1, 2),))
     projections, nominal, grid, detector = _scan(views, nu, nv, n, nz)
     _fit.fit_poses(projections, nominal, grid, detector, keep_grid=True)
     monkeypatch.setattr(jax, "jit", jit)
     monkeypatch.setattr(_fit, "MotionPrior", built)
+    monkeypatch.setattr(_fit, "Operators", operators)
+    volume, image = shapes[-1]
+
+    def bulky(c):
+        """Shaped like the level's volume or like detector images: a volume or a stack."""
+        shape = tuple(getattr(c, "shape", ()))
+        return shape[-3:] == volume or shape[-2:] == image
+
     out = {}
     for name, (compiled, args, kwargs) in seen.items():
         ARGS[name] = (compiled, args, kwargs)
         with jax.enable_x64(True):  # as fit_poses runs them: its FP64 stays FP64
             analysis = compiled.lower(*args, **kwargs).compile().memory_analysis()
-            consts = jax.make_jaxpr(compiled)(*args, **kwargs).consts
+            consts = captured_constants(compiled, *args, **kwargs)
         out[name] = {
             "temp": analysis.temp_size_in_bytes,
             "output": analysis.output_size_in_bytes,
             "consts": sum(getattr(c, "nbytes", 0) for c in consts),
+            "captured_shapes": [tuple(c.shape) for c in consts if bulky(c)],
         }
     return out, priors[-1]
 
@@ -135,9 +160,14 @@ def test_no_level_function_grows_faster_than_the_views(monkeypatch):
     assert not unexpected, f"growing faster than the views (order from 300 to 900): {unexpected}"
     gone = set(SUPERLINEAR) - set(superlinear)
     assert not gone, f"no longer superlinear, remove from SUPERLINEAR (item 64): {gone}"
-    # No function captures a large array as a compiled constant.
-    captured = {name: m["consts"] for name, m in profiles[2][0].items() if m["consts"] > 256 * 1024}
-    assert not captured, f"large captured constants (bytes): {captured}"
+    # No function captures a volume or a stack as a compiled constant: held by the program for
+    # its life, beside the level's own arrays (the start's FISTA once held the shared images).
+    captured = {
+        name: m["captured_shapes"] for name, m in profiles[0][0].items() if m["captured_shapes"]
+    }
+    assert not captured, f"volume- or stack-shaped captured constants: {captured}"
+    large = {name: m["consts"] for name, m in profiles[2][0].items() if m["consts"] > 256 * 1024}
+    assert not large, f"large captured constants (bytes): {large}"
     # The plan's prior term covers what the prior holds and needs, within half again.
     for memory, prior in profiles[1:]:
         planned = prior.device_bytes()
@@ -179,3 +209,13 @@ def test_the_schur_solves_conditionals_carry_no_stack(monkeypatch):
         if len(var.aval.shape) >= 3 and var.aval.shape[0] == views
     ]
     assert not carried, f"stack-sized results of a conditional in the Schur solve: {carried}"
+
+
+def test_the_constants_check_sees_a_captured_volume():
+    # make_jaxpr of a jitted closure reported no constants, so the guard above could not see
+    # a captured volume: the check must find one planted on purpose.
+    volume = jnp.ones((16, 24, 24), jnp.float32)
+    planted = jax.jit(lambda x: x + volume)
+    assert jax.make_jaxpr(planted)(volume).consts == []  # what the guard used to read
+    shapes = [tuple(c.shape) for c in captured_constants(planted, volume)]
+    assert shapes == [(16, 24, 24)]
