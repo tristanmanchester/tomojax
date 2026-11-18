@@ -9,8 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 
 # check-public-imports: allow-private
-from tomojax.alignment._joint._solver import _Level
-from tomojax.alignment._joint._stacks import LevelStacks, Stack
+from tomojax.alignment._joint import _solver, _stacks
 
 
 def stack(ops, array):
@@ -20,7 +19,7 @@ def stack(ops, array):
 
 def arrays(result):
     """A result tuple with each stack replaced by its device array."""
-    return tuple(item.data if isinstance(item, Stack) else item for item in result)
+    return tuple(item.data if isinstance(item, _stacks.Stack) else item for item in result)
 
 
 def level_stacks(ops, y, precision=None, placement=None):
@@ -29,12 +28,14 @@ def level_stacks(ops, y, precision=None, placement=None):
     if precision is not None:
         data["precision"] = np.asarray(precision, np.float32)
     specs = ops.stack_specs(precision)
-    return LevelStacks(specs, ops.batch, data=data, room=None, reserve=0, placement=placement)
+    return _stacks.LevelStacks(
+        specs, ops.batch, data=data, room=None, reserve=0, placement=placement
+    )
 
 
 def placed_level(ops, prior, y, precision=None, **options):
     """A solver level placed on already padded ``y`` and ``precision`` (``_Level.place``)."""
-    level = _Level(ops, prior, **options)
+    level = _solver._Level(ops, prior, **options)
     level.place(*(None if a is None else np.asarray(a)[: ops.n] for a in (y, precision)))
     return level
 
