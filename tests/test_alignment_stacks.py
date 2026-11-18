@@ -166,6 +166,7 @@ from tomojax.alignment._joint import _fit, _solver
 from tomojax.geometry import stack_view_poses
 
 n, nz, nu, nv, views = (int(a) for a in sys.argv[1:6])
+cone = sys.argv[6] == "cone"
 _fit._LEVELS = ((1, 8),)  # one level: the process's peak is the level's
 dev, seen = jax.devices()[0], {}
 solve = _solver.solve
@@ -189,7 +190,10 @@ def measured(*args, **kwargs):
 _solver.solve = _fit.solve = measured
 grid, detector = tj.Grid(n, n, nz, 1, 1, 1), tj.Detector(nu, nv, 1, 1)
 angles = np.linspace(0, 360, views, endpoint=False)
-geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
+if cone:  # a circular orbit, magnification 1.5, the volume filling the beam
+    geometry = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(3 * n, 4.5 * n))
+else:
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
 rng = np.random.default_rng(1)
 volume = rng.uniform(0, 1, (nz, n, n)).astype(np.float32)
 with jax.default_device(jax.devices("cpu")[0]):
@@ -201,7 +205,7 @@ print(json.dumps(seen))
 """
 
 
-def _level_peak(*shape):
+def _level_peak(*shape, geometry="laminography"):
     """A one-level fit's own device peak and its plan, in a fresh process on the GPU."""
     import json
     import os
@@ -209,14 +213,15 @@ def _level_peak(*shape):
     import sys
 
     env = {**os.environ, "PYTHONWARNINGS": "ignore", "JAX_PLATFORMS": "cuda,cpu"}
-    argv = [sys.executable, "-c", _PEAK_PROBE, *map(str, shape)]
+    argv = [sys.executable, "-c", _PEAK_PROBE, *map(str, shape), geometry]
     run = subprocess.run(argv, check=True, capture_output=True, text=True, env=env)
     return json.loads(run.stdout.strip().splitlines()[-1])
 
 
 @pytest.mark.gpu
 @pytest.mark.fresh_gpu  # the probe's process needs the device's room, not what this one holds
-def test_the_plan_covers_a_levels_own_peak_and_not_much_more():
+@pytest.mark.parametrize("geometry", ["laminography", "cone"])
+def test_the_plan_covers_a_levels_own_peak_and_not_much_more(geometry):
     # The reserve is counted (_stacks.level_reserve): the state, 9 volumes and 0.2 GiB that no
     # array holds; the prior's held bytes; and the larger of the Schur solve's temporaries
     # (9 volumes and 8 batches) and the prior factor's. It holds only because nothing a level
@@ -225,7 +230,7 @@ def test_the_plan_covers_a_levels_own_peak_and_not_much_more():
     # not exceed the plan, nor fall short of it by more than 6 volumes: on this level, where
     # volumes dominate, the plan's spare is what the two counts hold over this level's own
     # (they are set by the largest of three real scans, I13 159815).
-    m = _level_peak(192, 128, 256, 160, 480)
+    m = _level_peak(192, 128, 256, 160, 480, geometry=geometry)
     predicted = m["stacks"] + m["reserve"]
     assert m["used"] <= predicted, (m["used"], predicted)
     spare = (predicted - m["used"]) / m["volume"]
