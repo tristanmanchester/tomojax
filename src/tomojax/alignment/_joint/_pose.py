@@ -17,6 +17,8 @@ from jax.scipy.linalg import cho_solve, lu_factor, lu_solve
 import numpy as np
 from scipy.interpolate import BSpline, make_interp_spline
 
+from ._stacks import temporaries
+
 # Standard deviation of the per-view rotation size prior.
 ROTATION_SIGMA_DEG = 0.5
 
@@ -296,8 +298,10 @@ class MotionPrior:
         )
         self._compiled = {
             name: jax.jit(getattr(self, f"_{name}"))
-            for name in ("value", "weights", "apply", "factor", "innovation_solve", "project_gauge")
+            for name in ("value", "weights", "apply", "innovation_solve", "project_gauge")
         }
+        # A level writes the factor into buffers it owns (``_stacks``), donated and unread.
+        self._compiled["factor"] = jax.jit(self._factor, donate_argnums=(3,), keep_unused=True)
         # The solve takes everything it needs from the factor, so it can run inside the Schur
         # solve's compiled program without bringing a matrix into it as a constant.
         self.solve = jax.jit(self._solve)
@@ -316,16 +320,31 @@ class MotionPrior:
         """
         m = self.matrices
         item, rows, knots = m.U.dtype.itemsize, self.local_size, 2 * m.U.shape[1]
-        with jax.enable_x64(m.U.dtype == jnp.float64):
-            p = jax.ShapeDtypeStruct((self.size,), m.U.dtype)
-            w = jax.eval_shape(self._weights, m, p, 1.0)
-            blocks = jax.ShapeDtypeStruct((self.n, self.k, self.k), m.U.dtype)
-            factor = jax.eval_shape(self._factor, m, blocks, w)
+        factor = self.factor_shapes()
         # Each array rounded up to 256 bytes, as the allocator aligns its buffers.
         held = sum(
             -(-int(a.size) * a.dtype.itemsize // 256) * 256 for a in (*m, *jax.tree.leaves(factor))
         )
         return {"held": held, "transient": 6 * item * rows * knots + 8 * 2**20}
+
+    def _factor_arguments(self):
+        """The factor's arguments but the matrices, and its result, as shapes."""
+        m = self.matrices
+        p = jax.ShapeDtypeStruct((self.size,), m.U.dtype)
+        w = jax.eval_shape(self._weights, m, p, 1.0)
+        blocks = jax.ShapeDtypeStruct((self.n, self.k, self.k), m.U.dtype)
+        return blocks, w, jax.eval_shape(self._factor, m, blocks, w)
+
+    def factor_shapes(self):
+        """The factor's arrays as shapes (``factor``), for a buffer to hold it."""
+        with jax.enable_x64(self.matrices.U.dtype == jnp.float64):
+            return self._factor_arguments()[2]
+
+    def temporaries(self) -> int:
+        """The factor's temporary bytes, from its compile, which its calls into a buffer reuse."""
+        with jax.enable_x64(self.matrices.U.dtype == jnp.float64):
+            blocks, w, out = self._factor_arguments()
+            return temporaries(self._compiled["factor"], self.matrices, blocks, w, out)
 
     @property
     def U(self):
@@ -359,9 +378,9 @@ class MotionPrior:
         """The prior's quadratic form at weights ``w`` applied to ``p``."""
         return self._compiled["apply"](self.matrices, p, w)
 
-    def factor(self, blocks, w):
+    def factor(self, blocks, w, out=None):
         """The pose normal system with the prior at weights ``w``, factored for ``solve``."""
-        return self._compiled["factor"](self.matrices, blocks, w)
+        return self._compiled["factor"](self.matrices, blocks, w, out)
 
     def innovation_solve(self, blocks, w, rhs):
         """The local innovation step with drift, gauge and globals held."""
@@ -456,7 +475,8 @@ class MotionPrior:
             result = result - hg @ cho_solve((chol, True), g.T @ result)
         return result
 
-    def _factor(self, m, blocks, w):
+    def _factor(self, m, blocks, w, _out=None):
+        """The factor, written into ``_out`` (donated, unread) when given."""
         local = (
             self._local_factor(m, blocks[:, : self.nlocal, : self.nlocal], w)
             if self.nlocal

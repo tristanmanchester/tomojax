@@ -99,18 +99,8 @@ class Common(NamedTuple):
             jnp.float64
         )
 
-    def image_gradient(self):
-        return self.image(self.inverse @ self.moments)
-
     def pose_score(self):
         return self.poses.T @ (self.inverse @ self.moments)
-
-    def diagonal(self):
-        """The rows' contribution to the image Jacobi diagonal, diag(B^T G^-1 B)."""
-        g, b = self.inverse, self.images
-        return (g[0, 0] * b[0] ** 2 + 2 * g[0, 1] * b[0] * b[1] + g[1, 1] * b[1] ** 2).astype(
-            jnp.float32
-        )
 
 
 class PoseSolve(NamedTuple):

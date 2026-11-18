@@ -1,8 +1,10 @@
-"""A level's working memory beside its stacks must not grow with the number of views.
+"""A level's working memory beside its stacks must not grow faster than the number of views.
 
-The plan reserves the level's other arrays as a count of volumes (``_stacks.level_reserve``).
-That is only right if nothing a level compiles holds a temporary that scales with the views:
-K11 67208 (4000 views) failed in its Schur solve because conjugate gradients copied the
+A level's plan measures its storage at setup and takes its largest transients from their
+programs' compiles (``_solver._Level.place``); the level's other programs are not compiled
+then, and the pose refinement reserves counts of volumes (``_stacks.level_reserve``). Both
+are only right if nothing a level compiles holds a temporary that scales faster than the
+views: K11 67208 (4000 views) failed in its Schur solve because conjugate gradients copied the
 whole weighted-projection stack ``r`` out of a conditional on every iteration, a temporary
 of 0.47 GiB at 1441 views and 1.29 GiB at 4000 that the plan had counted as volumes.
 """
@@ -58,6 +60,21 @@ def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
     """
     jit, seen, priors = jax.jit, {}, []
 
+    class Recorded:
+        """A compiled function that keeps its first concrete call's arguments, by name."""
+
+        def __init__(self, compiled, name):
+            self.compiled, self.name = compiled, name
+
+        def __getattr__(self, attr):  # lower, trace: the plan compiles some at setup
+            return getattr(self.compiled, attr)
+
+        def __call__(self, *args, **kwargs):
+            leaves = jax.tree.leaves((args, kwargs))
+            if self.name not in seen and not any(isinstance(a, jax.core.Tracer) for a in leaves):
+                seen[self.name] = (self.compiled, _abstract(args), _abstract(kwargs))
+            return self.compiled(*args, **kwargs)
+
     def recording(fun=None, **options):
         if fun is None:
             return lambda f: recording(f, **options)
@@ -65,14 +82,7 @@ def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
         name = getattr(fun, "__qualname__", repr(fun))
         if "_joint" not in getattr(fun, "__module__", "") or name in seen:
             return compiled
-
-        def call(*args, **kwargs):
-            leaves = jax.tree.leaves((args, kwargs))
-            if name not in seen and not any(isinstance(a, jax.core.Tracer) for a in leaves):
-                seen[name] = (compiled, _abstract(args), _abstract(kwargs))
-            return compiled(*args, **kwargs)
-
-        return call
+        return Recorded(compiled, name)
 
     built, operators, shapes = _fit.MotionPrior, _fit.Operators, []
 

@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 
 # check-public-imports: allow-private
+from tomojax.alignment._joint._solver import _Level
 from tomojax.alignment._joint._stacks import LevelStacks, Stack
 
 
@@ -31,10 +32,18 @@ def level_stacks(ops, y, precision=None, placement=None):
     return LevelStacks(specs, ops.batch, data=data, room=None, reserve=0, placement=placement)
 
 
+def placed_level(ops, prior, y, precision=None, **options):
+    """A solver level placed on already padded ``y`` and ``precision`` (``_Level.place``)."""
+    level = _Level(ops, prior, **options)
+    level.place(*(None if a is None else np.asarray(a)[: ops.n] for a in (y, precision)))
+    return level
+
+
 def linearize(ops, q, x, y, precision, delta):
     """``Operators.linearize`` on arrays, into fresh resident stacks."""
     specs = ops.stack_specs(None)
-    out = tuple(ops.stack(jnp.zeros(*specs[name])) for name in ("sw", "j", "residual"))
+    volumes = (jnp.zeros(ops.shape, jnp.float32), jnp.zeros(ops.shape, jnp.float32))
+    out = volumes + tuple(ops.stack(jnp.zeros(*specs[n])) for n in ("sw", "j", "residual"))
     return arrays(ops.linearize(q, x, stack(ops, y), stack(ops, precision), delta, out))
 
 

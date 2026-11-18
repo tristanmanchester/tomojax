@@ -18,7 +18,6 @@ from tomojax.alignment._joint._pose import MotionPrior  # check-public-imports: 
 from tomojax.alignment._joint._projection import rigid_gauge  # check-public-imports: allow-private
 from tomojax.alignment._joint._solver import (
     Budget,
-    _Level,
     solve,
 )  # check-public-imports: allow-private
 from tomojax.geometry import stack_view_poses
@@ -240,17 +239,10 @@ def test_initializer_does_not_capture_observations(monkeypatch):
         )
         y = ops.pad_images(np.random.default_rng(58).normal(size=(8, 2, 2)))
         precision = jnp.ones_like(y)
-        stacks = js.level_stacks(ops, y, precision)
-        level = _Level(
-            ops,
-            prior,
-            stacks,
-            lam=0,
-            eps=0.01,
-            scales=(1, 1, 1),
-            delta=1,
-            inner=1,
+        level = js.placed_level(
+            ops, prior, y, precision, lam=0, eps=0.01, scales=(1, 1, 1), delta=1, inner=1
         )
+        stacks = level.stacks
         original_jit, captured = jax.jit, {}
 
         def inspect(fn, *args, **kwargs):
@@ -351,8 +343,10 @@ def test_held_pose_trial_equals_the_projected_objective(masked):
         if masked:
             weights = rng.uniform(0, 2, (6, 3, 7)) * (rng.uniform(size=(6, 3, 7)) > 0.3)
             precision = ops.pad_precision(jnp.asarray(weights, jnp.float32))
-        stacks = js.level_stacks(ops, y, precision)
-        level = _Level(ops, prior, stacks, lam=0.0, eps=0.0, scales=None, delta=0.05, inner=1)
+        level = js.placed_level(
+            ops, prior, y, precision, lam=0.0, eps=0.0, scales=None, delta=0.05, inner=1
+        )
+        stacks = level.stacks
         c = prior.project_gauge(jnp.asarray(rng.normal(scale=0.2, size=prior.size)))
         x = jnp.asarray(rng.uniform(0.1, 0.3, (3, 5, 5)), jnp.float32)
         dx = jnp.asarray(rng.normal(size=(3, 5, 5)), jnp.float32)
@@ -442,9 +436,7 @@ def test_the_pedestal_costs_nothing_to_the_per_view_profile_and_is_held_by_the_s
             rotation_scales=np.ones(5),
         )
         y = ops.pad_images(jnp.zeros((views, nz, n), jnp.float32))
-        level = _Level(
-            ops, prior, js.level_stacks(ops, y), lam=0.0, eps=0.0, scales=None, delta=1e6, inner=1
-        )
+        level = js.placed_level(ops, prior, y, lam=0.0, eps=0.0, scales=None, delta=1e6, inner=1)
         c = jnp.zeros(prior.size)
         profiled, _ = ops.objective(ops.pad_poses(c), jnp.asarray(pedestal), level.y, None, 1e6)
         total = level.linearize(c, jnp.asarray(pedestal))[6]
@@ -497,9 +489,7 @@ def test_the_shared_terms_and_the_prior_scale_are_formed_one_view_batch_at_a_tim
             rotation_scales=np.ones(5),
         )
         y = ops.pad_images(jnp.ones((views, nz, n), jnp.float32))
-        level = _Level(
-            ops, prior, js.level_stacks(ops, y), lam=0.0, eps=0.0, scales=None, delta=1.0, inner=1
-        )
+        level = js.placed_level(ops, prior, y, lam=0.0, eps=0.0, scales=None, delta=1.0, inner=1)
         out = level.linearize(jnp.zeros(prior.size), jnp.zeros(ops.shape, jnp.float32))
         sw, residual, common = out[2], out[8], out[9]
         level.held(residual, residual, sw, level.precision, jnp.float32(0.5), common.moments)
@@ -533,9 +523,7 @@ def test_the_levels_gradient_includes_the_shared_offset_and_ramp():
         clean = np.asarray(ops.project(ops.coefficients(ops.nominal, q, ops.valid), x))[:10]
         rows = np.linspace(-1, 1, 6)[:, None]
         y = ops.pad_images(jnp.asarray(clean + 0.2 + 0.1 * rows, jnp.float32))
-        level = _Level(
-            ops, prior, js.level_stacks(ops, y), lam=0.0, eps=0.0, scales=None, delta=1e6, inner=1
-        )
+        level = js.placed_level(ops, prior, y, lam=0.0, eps=0.0, scales=None, delta=1e6, inner=1)
         gx, _, _, _, score, _, data, *_, shared = level.linearize(c, x)
         assert float(shared.value()) > 0.1 * float(data)
 

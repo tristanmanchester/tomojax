@@ -15,7 +15,10 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     n = 60
     image, state = jnp.ones(1), jnp.zeros(2 * n)
     level = object.__new__(_solver._Level)
-    level.lam, level.precision, level.stacks = 0, None, {"r": None}
+    level.lam, level.precision = 0, None
+    # The level's volumes as one-voxel arrays; the step holds the solution the Schur solve wrote.
+    level.stacks = {name: jnp.ones(1) for name in ("damp", "rhs", "invdiag", "step")}
+    level.stacks |= {"r": None, "factor": None, "free": jnp.ones(1, bool)}
     level.ops = SimpleNamespace(
         prepare=lambda value: value,
         pad_poses=lambda value: value,
@@ -101,6 +104,16 @@ def test_stopping_requires_two_small_proposals_at_the_initial_damping(
     class Level:
         def __init__(self, ops, prior, *_args, **_kwargs):
             self.ops, self.prior, self.y = ops, prior, np.zeros((60, 1, 1))
+            self.transients = {}
+
+        def place(self, *_args, **_kwargs):
+            return SimpleNamespace(close=lambda: None, record=dict, take=lambda _: None)
+
+        def start(self, _state, image, _iterations):
+            return image
+
+        def accept(self, _image, _previous):
+            pass
 
         def linearize(self, _state, _image):
             return self.ops.linearize()
@@ -132,7 +145,6 @@ def test_stopping_requires_two_small_proposals_at_the_initial_damping(
         pad_images=lambda value: value,
         pad_precision=lambda value: value,
         pad_poses=lambda value: value,
-        sensitivity=lambda _: (1.0, np.ones(1, bool)),
         parameters=SimpleNamespace(local=()),  # no per-view columns: the photon scale stands
         linearize=lambda *_: (
             jnp.zeros(1),
@@ -149,8 +161,6 @@ def test_stopping_requires_two_small_proposals_at_the_initial_damping(
     )
     prior = SimpleNamespace(size=60, value=lambda *_: 0.0)
     monkeypatch.setattr(_solver, "_Level", Level)
-    placed = SimpleNamespace(close=lambda: None, record=dict)
-    monkeypatch.setattr(_solver, "level_stacks", lambda *_args, **_kwargs: placed)
     with jax.enable_x64(True):
         _, fitted, _, record = _solver.solve(
             np.zeros((60, 1, 1)),

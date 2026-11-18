@@ -21,7 +21,7 @@ from tomojax.core.robust import MAD_TO_SD
 
 from ._noise import LOSS_WIDTH_SIGMAS
 from ._operators import column_gram, column_score, robust_batch, robust_value
-from ._stacks import level_stacks, unplaced
+from ._stacks import level_reserve, level_stacks, unplaced
 
 _SMOOTH_NATIVE_PX = 8.0
 _ITERATIONS = 5
@@ -271,7 +271,8 @@ def refine(x, p, y, precision, prior, *, ops, sigma, last=None, placement=None):
     """
     start = time.perf_counter()
     names = ("y", "precision")
-    stacks = level_stacks(ops, y, precision, prior=prior, names=names, placement=placement)
+    reserve = level_reserve(ops, prior)
+    stacks = level_stacks(ops, y, precision, reserve=reserve, names=names, placement=placement)
     try:
         y, precision = stacks["y"], stacks.get("precision")
         if prior.nlocal == 0:

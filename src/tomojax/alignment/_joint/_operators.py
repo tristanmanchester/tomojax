@@ -201,11 +201,14 @@ class Operators:
             # later image/pose iterations. The projector and transpose are shared.
             self.affine = jax.jit(self._affine_geometry)(self.nominal, self.scales)
         self._geometry = jax.jit(self._geometry)
-        self.sensitivity = jax.jit(self._sensitivity)
+        # A level's outputs are written into buffers it owns, donated (``_stacks``); a buffer
+        # the program does not read must still be kept as an argument to receive its output.
+        owned = partial(jax.jit, keep_unused=True)
+        self.sensitivity = owned(self._sensitivity, donate_argnums=(1,))
         self._initial_gradient = jax.jit(self._initial_gradient)
-        self.linearize = jax.jit(self._linearize, donate_argnums=(5,))
+        self.linearize = owned(self._linearize, donate_argnums=(5,))
         self.objective = jax.jit(self._objective)
-        self.common_images = jax.jit(self._common_images)
+        self.common_images = owned(self._common_images, donate_argnums=(2,))
         self.shared_data = jax.jit(self._shared_data)
         self._weighted_forward = jax.jit(self._weighted_forward, donate_argnums=(5,))
         self.view_summary = jax.jit(self.view_summary)
@@ -398,7 +401,8 @@ class Operators:
             None if self.frames is None else self.batches(self.frames),
         )
 
-    def _sensitivity(self, q):
+    def _sensitivity(self, q, _out=None):
+        """The Lipschitz bound and the voxels any ray sees, into ``_out`` (a bool volume)."""
         weights = jnp.ones((self.batch, self.detector.nv, self.detector.nu), jnp.float32)
 
         def step(a, z):
@@ -426,7 +430,11 @@ class Operators:
         return jax.lax.scan(step, self._zeros(), batches)[0]
 
     def _linearize(self, q, x, y, precision, delta, out):
-        """The linearisation, with ``out`` = (sw, j, residual) donated and rewritten in place."""
+        """The linearisation, with ``out`` = (gradient, diagonal, sw, j, residual) donated.
+
+        The stacks are rewritten in place; the gradient and diagonal are written into the
+        two volumes, unread.
+        """
 
         def step(state, z):
             gx, dd, (sw_out, j_out, residual_out) = state
@@ -472,7 +480,7 @@ class Operators:
 
         batches = (jnp.arange(self.nb), *self.views(q))
         (gx, dd, (sw, j, residual)), out = jax.lax.scan(
-            step, (self._zeros(), self._zeros(), out), batches
+            step, (self._zeros(), self._zeros(), out[2:]), batches
         )
         g, gram, e, moments, valid, down, moved = out
         n, k = self.n, self.dofs
@@ -521,8 +529,8 @@ class Operators:
         start = (jnp.asarray(0.0, jnp.float64), jnp.zeros(2, jnp.float64))
         return jax.lax.scan(step, start, batches)[0]
 
-    def _common_images(self, q, precision):
-        """B = [A^T w, A^T (w v)] summed over views: the shared moments' image rows."""
+    def _common_images(self, q, precision, _out=None):
+        """B = [A^T w, A^T (w v)] summed over views: the shared image rows, into ``_out``."""
 
         def step(a, z):
             i, nominal, qb, valid, scales, frames = z

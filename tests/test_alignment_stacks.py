@@ -74,16 +74,14 @@ def test_a_level_with_little_device_room_plans_the_cold_stacks_onto_the_host(mon
     # on the host, and the result is the one a device with room gives.
     expected_volume, _, expected, _ = _aligned(("translations",), DEVICE)
     plans = []
-    original = _stacks.LevelStacks.__init__
+    original = _stacks.LevelStacks._plan
 
-    def room_for_the_hot_three(self, specs, batch, *, data, room, reserve, placement=None):
-        sizes = {n: int(np.prod(s)) * np.dtype(d).itemsize for n, (s, d) in specs.items()}
-        hot = sum(sizes[n] for n in ("sw", "r", "j") if n in sizes)
-        total = sum(reserve.values())
-        original(self, specs, batch, data=data, room=hot + total, reserve=reserve)
-        plans.append(dict(self.planned))
+    def room_for_the_hot_three(self, room, reserve, forced):
+        hot = sum(self.sizes[n] for n in ("sw", "r", "j") if n in self.sizes)
+        plans.append(original(self, hot + reserve, reserve, forced))
+        return plans[-1]
 
-    monkeypatch.setattr(_stacks.LevelStacks, "__init__", room_for_the_hot_three)
+    monkeypatch.setattr(_stacks.LevelStacks, "_plan", room_for_the_hot_three)
     volume, _, table, record = _aligned(("translations",))
     np.testing.assert_array_equal(table, expected)
     np.testing.assert_array_equal(np.asarray(volume), np.asarray(expected_volume))
@@ -130,19 +128,75 @@ def test_running_out_of_device_memory_inside_a_level_names_the_placement(monkeyp
         _aligned(("translations",), COLD)
 
 
-def test_released_stacks_leave_nothing_of_the_level_on_the_device():
+def test_released_storage_leaves_nothing_of_the_level_on_the_device():
+    # The stacks and every volume but the result (handed to the caller first) are released.
     projections, nominal, grid, detector = _scan()
     held = []
     original = _stacks.LevelStacks.close
 
     def close(self):
-        held.append([s.data for s in self.stacks.values() if not s.host])
+        stacks = [s.data for s in self.stacks.values() if not s.host]
+        held.append([*stacks, *jax.tree.leaves(self.volumes)])
         original(self)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(_stacks.LevelStacks, "close", close)
         _fit.fit_poses(projections, nominal, grid, detector, placement=COLD)
     assert held and all(array.is_deleted() for level in held for array in level)
+
+
+def _watch_the_volumes(monkeypatch):
+    """Each level, and the buffers and the device's bytes no array holds at setup and each solve."""
+    seen = []
+    place, schur = _solver._Level.place, _solver._Level.schur
+
+    def state(level):
+        buffers = {a.unsafe_buffer_pointer() for a in jax.tree.leaves(level.stacks.volumes)}
+        stats = jax.devices()[0].memory_stats()
+        if stats is None:
+            return buffers, None
+        live = sum(a.nbytes for a in jax.live_arrays() if not a.is_deleted())
+        return buffers, stats["bytes_in_use"] - live
+
+    def placed(self, *args, **kwargs):
+        out = place(self, *args, **kwargs)
+        seen.append((self, state(self), []))
+        return out
+
+    def solving(self, *args):
+        jax.block_until_ready(args)
+        seen[-1][2].append(state(self))
+        return schur(self, *args)
+
+    monkeypatch.setattr(_solver._Level, "place", placed)
+    monkeypatch.setattr(_solver._Level, "schur", solving)
+    return seen
+
+
+def test_a_levels_volumes_stay_where_its_setup_put_them(monkeypatch):
+    # A level allocates its volumes once and every step writes them in place, donated: one
+    # reallocated mid-level could take a chunk of up to twice its size, and the plan, measured
+    # at setup, would no longer hold. At every Schur solve each level holds the buffers its
+    # setup allocated (the volume and the other trade places), and the solve that runs is the
+    # one its setup compiled for the plan.
+    seen = _watch_the_volumes(monkeypatch)
+    _aligned(("translations", "rotations"), DEVICE)
+    assert len(seen) == 2
+    for level, (buffers, _), solves in seen:
+        assert solves and all(entry[0] == buffers for entry in solves)
+        assert level._schur._cache_size() == 1
+
+
+@pytest.mark.gpu
+def test_nothing_a_level_holds_beyond_its_arrays_grows_during_it(monkeypatch):
+    # What the device holds that no array does (the allocator's rounding of its chunks) is
+    # measured at a level's setup and counted in its plan. It is the same at every Schur solve:
+    # nothing allocated during a step outlives it.
+    seen = _watch_the_volumes(monkeypatch)
+    _aligned(("translations", "rotations"), DEVICE)
+    for _, (_, setup), solves in seen:
+        for _, other in solves:
+            assert abs(other - setup) <= 2**20, (other, setup)
 
 
 def test_align_reports_each_levels_placement_and_time():
@@ -162,6 +216,7 @@ _PEAK_PROBE = """
 import json, sys
 import jax, numpy as np
 import tomojax as tj
+from tomojax.alignment._integration import cone_frames
 from tomojax.alignment._joint import _fit, _solver
 from tomojax.geometry import stack_view_poses
 
@@ -175,14 +230,14 @@ solve = _solver.solve
 def measured(*args, **kwargs):
     base = dev.memory_stats()["bytes_in_use"]
     out = solve(*args, **kwargs)
-    stacks, prior = out[3]["stacks"], args[2]
-    u = prior.matrices.U
+    stacks = out[3]["stacks"]
     seen.update(
         used=dev.memory_stats()["peak_bytes_in_use"] - base,
-        stacks=sum(stacks["stack_bytes"].values()),
-        reserve=stacks["reserve_bytes"],
+        setup=stacks["in_use_bytes"] - base,
+        free=stacks["free_bytes"],
+        chunk=stacks["reserve_parts"]["chunk"],
+        transients=stacks["transients"],
         volume=4 * int(np.prod(kwargs["ops"].shape)),
-        design=u.dtype.itemsize * prior.local_size * 2 * u.shape[1],  # one copy of b
     )
     return out
 
@@ -200,7 +255,9 @@ with jax.default_device(jax.devices("cpu")[0]):
     projections = np.array(tj.project(geometry, volume))
 projections += rng.normal(0, 0.01, projections.shape).astype(np.float32)
 nominal = np.asarray(stack_view_poses(geometry, views))
-_fit.fit_poses(projections, nominal, grid, detector, keep_grid=True)
+frames = cone_frames(geometry)
+_fit.fit_poses(projections, nominal, grid, detector, keep_grid=True, frames=frames)
+seen["cone"] = frames is not None
 print(json.dumps(seen))
 """
 
@@ -218,38 +275,36 @@ def _level_peak(*shape, geometry="laminography"):
     return json.loads(run.stdout.strip().splitlines()[-1])
 
 
+def _assert_the_plan_is_the_peak(m):
+    # Nothing is counted: a level's volumes and stacks are allocated at its setup and what the
+    # device holds then is measured, waste included; beside it the plan keeps the largest
+    # transient (from its program's compile) free, with the one chunk it lands in, which the
+    # allocator hands out whole when it is under twice the request and wastes under 128 MiB.
+    # A level's own peak (in a fresh process: the allocator's peak less what was in use before
+    # it) must not exceed the plan, and the plan may exceed the peak by no more than that chunk.
+    plan = m["setup"] + m["free"]
+    assert m["used"] <= plan, (m["used"], plan)
+    assert plan - m["used"] <= m["chunk"], (plan - m["used"], m["chunk"])
+
+
 @pytest.mark.gpu
 @pytest.mark.fresh_gpu  # the probe's process needs the device's room, not what this one holds
 @pytest.mark.parametrize("geometry", ["laminography", "cone"])
 def test_the_plan_covers_a_levels_own_peak_and_not_much_more(geometry):
-    # The reserve is counted (_stacks.level_reserve): the state, 9 volumes and 0.2 GiB that no
-    # array holds; the prior's held bytes; and the larger of the Schur solve's temporaries
-    # (9 volumes and 8 batches) and the prior factor's. It holds only because nothing a level
-    # compiles grows faster than the views but the prior (test_alignment_memory). A level's own
-    # peak, in a fresh process (the allocator's peak less what was in use at its setup), must
-    # not exceed the plan, nor fall short of it by more than 6 volumes: on this level, where
-    # volumes dominate, the plan's spare is what the two counts hold over this level's own
-    # (they are set by the largest of three real scans, I13 159815).
+    # Where the volume dominates the Schur solve is the largest transient; the cone projector's
+    # temporaries are its own.
     m = _level_peak(192, 128, 256, 160, 480, geometry=geometry)
-    predicted = m["stacks"] + m["reserve"]
-    assert m["used"] <= predicted, (m["used"], predicted)
-    spare = (predicted - m["used"]) / m["volume"]
-    assert spare <= 6, f"the plan reserves {spare:.1f} volumes more than the level used"
+    assert m["cone"] == (geometry == "cone")
+    assert max(m["transients"], key=m["transients"].get) == "schur"
+    _assert_the_plan_is_the_peak(m)
 
 
 @pytest.mark.gpu
 @pytest.mark.fresh_gpu
 def test_the_plan_takes_the_larger_transient_where_the_prior_dominates():
-    # 3000 views on a small grid: the prior's factor (about five copies of its design b at its
-    # peak) outweighs the Schur solve, and they never run together, so the plan takes the
-    # larger of the two, not their sum (summed, K11 67208's fine level sent j to the host for
-    # nothing, +10%). The level's peak must not exceed the plan, and the plan's spare must be
-    # no more than what it is made of: the state (9 volumes and 0.2 GiB, measured on real
-    # scans), which a level this small does not reach; the transient's sixth copy of b
-    # and its 8 MiB against 5 MB measured; and 2 volumes.
+    # 3000 views on a small grid: the prior's factor outweighs the Schur solve, and they never
+    # run together, so the plan takes the larger of the two, not their sum (summed, K11
+    # 67208's fine level sent j to the host for nothing, +10%).
     m = _level_peak(48, 32, 64, 48, 3000)
-    predicted = m["stacks"] + m["reserve"]
-    assert m["used"] <= predicted, (m["used"], predicted)
-    state = 9 * m["volume"] + 200 * 2**20
-    margin = state + m["design"] + 8 * 2**20 + 2 * m["volume"]
-    assert predicted - m["used"] <= margin, (predicted - m["used"], margin)
+    assert max(m["transients"], key=m["transients"].get) == "prior"
+    _assert_the_plan_is_the_peak(m)

@@ -1,4 +1,4 @@
-"""The level's stack-sized arrays, each on the device or in a host buffer for the level's life.
+"""A level's storage: its stacks, each on the device or in a host buffer, and its volumes.
 
 A level holds up to six arrays with one image per view: the data ``y`` and its
 ``precision`` (when not uniform), the linearisation's ``residual``, IRLS weights
@@ -7,16 +7,23 @@ the Schur matvec and then the step's line search use in turn (they never
 coexist, so one buffer serves both). Together they are what a large scan cannot
 fit on the device; everything else in a level is volume-sized.
 
-At level setup a plan is made from the device's total room under its limit,
-less the level's other arrays, keeping resident the stacks that most deserve the
-device (read in every matvec first) and putting the rest on the host. The plan
-is a prediction: the total room is an upper bound, blind to fragmentation, and
-the allocator's statistics cannot say more (the pool returns wholly free regions
-to the driver and retries). So the resident stacks are then really allocated, in
-the same order, each waited for; the first that fails goes to the host with every
-stack after it, and the level records the misprediction. Little is in use at
-setup, which keeps the plan close to exact; releasing every buffer at the level's
-end keeps that true for the next level.
+The level's volume-sized arrays (the volume, its gradient and diagonal, the step
+and the rest, and the motion prior's factor) are its *volumes*: allocated on the
+device first, once, and rewritten in place by donating calls for the level's
+life, so nothing volume-sized is allocated again during a step. What the device
+reports in use above them then (the allocator's rounding of their chunks) is
+measured, and counted with them.
+
+Then a plan is made from the device's total room under its limit, less the
+volumes and a reserve kept free for the level's largest transient, keeping
+resident the stacks that most deserve the device (read in every matvec first)
+and putting the rest on the host. The plan is a prediction: the total room is an
+upper bound, blind to fragmentation, and the allocator can hand a stack a whole
+chunk of up to twice its size. So the resident stacks are then really allocated,
+in the same order, each waited for; the first that fails, or leaves less than the
+reserve free, goes to the host with every stack after it, and the level records
+the misprediction. Little is in use at setup, which keeps the plan close to
+exact; releasing every buffer at the level's end keeps that true for the next level.
 
 Compiled functions take :class:`Stack` handles and read and write a batch at a
 time. A handle's placement is static, so a function compiles once per placement:
@@ -101,14 +108,27 @@ def _exhausted(err: Exception) -> bool:
     return "RESOURCE_EXHAUSTED" in str(err)
 
 
-class LevelStacks:
-    """A level's stacks: planned, allocated in device-priority order, and released at its end.
+def _in_use() -> int | None:
+    """Bytes the device's allocator has handed out; None off the GPU."""
+    if jax.default_backend() != "gpu":
+        return None
+    return int(jax.local_devices()[0].memory_stats()["bytes_in_use"])
 
-    ``y`` and ``precision`` are the level's padded host data (``precision`` None
-    when uniform); ``names`` the stacks the level uses; ``room`` the device's total
-    room and ``reserve`` the bytes the level needs besides its stacks. ``placement``
-    forces named stacks to "device" or "host" (the tests' and, until the public
-    setting, the only override); a forced stack is still really allocated.
+
+class LevelStacks:
+    """A level's storage: its volumes, then its stacks, planned and allocated, released at its end.
+
+    ``volumes`` names the level's volume-sized arrays (each a ``jax.ShapeDtypeStruct`` or a
+    pytree of them), allocated first and always on the device. ``data`` holds the
+    level's padded host stacks (``y``, and ``precision`` when not uniform); ``specs`` the
+    stacks the level uses; ``room`` the device's total room before the volumes and
+    ``reserve`` the bytes that must stay free beside the level's storage, by part. The
+    volumes and what the device holds above them once allocated are the plan's ``state``.
+    A stack the plan puts on the device goes to the host with every stack after it if its
+    allocation fails or leaves less than the reserve free: like the volumes, a stack can
+    take a whole chunk of up to twice its size, so what it leaves is measured, not assumed.
+    ``placement`` forces named stacks to "device" or "host" (the tests' and, until the
+    public setting, the only override); a forced stack is still really allocated.
     """
 
     def __init__(
@@ -119,6 +139,7 @@ class LevelStacks:
         data: Mapping[str, np.ndarray],
         room: int | None,
         reserve: int | Mapping[str, int],
+        volumes: Mapping[str, Any] | None = None,
         placement: Mapping[str, Place] | None = None,
     ) -> None:
         self.names = [name for name in ORDER if name in specs]
@@ -128,18 +149,40 @@ class LevelStacks:
         }
         self.sizes = {n: math.prod(s) * d.itemsize for n, (s, d) in self.specs.items()}
         self.reserve_parts = dict(reserve) if isinstance(reserve, Mapping) else {"total": reserve}
-        reserve = sum(self.reserve_parts.values())
-        self.planned = self._plan(room, reserve, placement or {})
-        self.room, self.reserve = room, reserve
+        self.free = sum(self.reserve_parts.values())
+        self.forced = dict(placement or {})
+        self.volumes: dict[str, Any] = {}
+        self.volume_bytes: dict[str, int] = {}
         self.stacks: dict[str, Stack] = {}
         self.placed: dict[str, Place] = {}
         self._host: dict[str, np.ndarray] = {}
         self._keys = ExitStack()
+        self.room, self.setup_waste = room, 0
         try:
+            if volumes:
+                self._own(volumes)
+            self.reserve = sum(self.reserve_parts.values())
+            self.planned = self._plan(room, self.reserve, self.forced)
             self._allocate(data)
+            self.in_use = _in_use()
         except BaseException:
             self.close()
             raise
+
+    def _own(self, volumes: Mapping[str, Any]) -> None:
+        """Allocate the volumes, and count them with what the device holds above them."""
+        before = _in_use()
+        for name, spec in volumes.items():
+            self.volumes[name] = jax.tree.map(lambda s: jnp.zeros(s.shape, s.dtype), spec)
+            leaves = jax.tree.leaves(spec)
+            self.volume_bytes[name] = sum(math.prod(a.shape) * a.dtype.itemsize for a in leaves)
+        jax.block_until_ready(self.volumes)
+        after = _in_use()
+        held = sum(self.volume_bytes.values())
+        # The allocator hands out a free chunk whole when it is under twice the request:
+        # the volumes' chunks can hold more than the volumes. Measured here, once.
+        self.setup_waste = 0 if before is None or after is None else after - before - held
+        self.reserve_parts = {"state": held + self.setup_waste, **self.reserve_parts}
 
     def _plan(self, room, reserve, forced) -> dict[str, Place]:
         unknown = set(forced) - set(ORDER)
@@ -162,11 +205,8 @@ class LevelStacks:
         for name in self.names:
             shape, dtype = self.specs[name]
             if self.planned[name] == "device" and not failed:
-                try:
-                    array = self._device(shape, dtype, data.get(name))
-                except jax.errors.JaxRuntimeError as err:
-                    if not _exhausted(err):
-                        raise
+                array = self._fitting(name, shape, dtype, data.get(name))
+                if array is None:
                     failed = True  # this stack and every one after it go to the host
                 else:
                     self.stacks[name] = Stack(
@@ -184,22 +224,40 @@ class LevelStacks:
             self.stacks[name] = Stack(key, host=True, shape=shape, dtype=dtype, batch=self.batch)
             self.placed[name] = "host"
 
+    def _fitting(self, name, shape, dtype, value) -> jax.Array | None:
+        """The stack on the device, or None if it fails or leaves less than the reserve free."""
+        try:
+            array = self._device(shape, dtype, value)
+        except jax.errors.JaxRuntimeError as err:
+            if not _exhausted(err):
+                raise
+            return None
+        room = device_room()
+        if name in self.forced or room is None or room >= self.free:
+            return array
+        array.delete()
+        return None
+
     @staticmethod
     def _device(shape: tuple[int, ...], dtype: Any, value: np.ndarray | None) -> jax.Array:
         """Allocate one stack on the device and wait for it: the allocator is the judge."""
         array = jnp.zeros(shape, dtype) if value is None else jax.device_put(value)
         return array.block_until_ready()
 
-    def __getitem__(self, name: str) -> Stack:
-        return self.stacks[name]
+    def __getitem__(self, name: str) -> Any:
+        return self.stacks[name] if name in self.stacks else self.volumes[name]
 
     def get(self, name: str) -> Stack | None:
         return self.stacks.get(name)
 
-    def update(self, stacks: Iterable[tuple[str, Stack]]) -> None:
-        """Hold the stacks a donating call returned in place of the ones it consumed."""
-        for name, stack in stacks:
-            self.stacks[name] = stack
+    def update(self, arrays: Iterable[tuple[str, Any]]) -> None:
+        """Hold the stacks or volumes a donating call returned in place of the ones it consumed."""
+        for name, array in arrays:
+            (self.volumes if name in self.volumes else self.stacks)[name] = array
+
+    def take(self, name: str) -> Any:
+        """Hand a volume to the caller: it is no longer the level's, and outlives it."""
+        return self.volumes.pop(name)
 
     def rows(self, name: str, start: int, stop: int) -> jax.Array:
         """Views ``start`` to ``stop`` of a stack, on the device, outside compiled code."""
@@ -217,16 +275,33 @@ class LevelStacks:
             "room_bytes": self.room,
             "reserve_bytes": self.reserve,
             "reserve_parts": dict(self.reserve_parts),
+            "volume_bytes": dict(self.volume_bytes),
+            "setup_waste_bytes": self.setup_waste,
+            "in_use_bytes": self.in_use,
+            "free_bytes": self.free,
         }
 
     def close(self) -> None:
         """Release every buffer now, so the next level starts with nothing of this one in use."""
-        for stack in self.stacks.values():
-            if not stack.host and not stack.data.is_deleted():
-                stack.data.delete()
+        arrays = [stack.data for stack in self.stacks.values() if not stack.host]
+        for array in [*arrays, *jax.tree.leaves(self.volumes)]:
+            if not array.is_deleted():
+                array.delete()
         self.stacks.clear()
+        self.volumes.clear()
         self._keys.close()
         self._host.clear()
+
+
+def temporaries(compiled: Any, *args: Any) -> int:
+    """The temporary bytes of ``compiled`` (a jitted function) at ``args``, from its compile.
+
+    The compile is the one its calls with arguments of the same shapes then reuse.
+    """
+    analysis = compiled.lower(*args).compile().memory_analysis()
+    if analysis is None:
+        raise RuntimeError(f"no memory analysis on {jax.default_backend()}: cannot plan a level")
+    return int(analysis.temp_size_in_bytes)
 
 
 def device_room() -> int | None:
@@ -237,7 +312,11 @@ def device_room() -> int | None:
 
 
 def level_reserve(ops: Any, prior: Any) -> dict[str, int]:
-    """Device bytes a level needs besides its stacks, in parts, from its shapes.
+    """Device bytes the pose refinement reserves besides its stacks, in parts, from its shapes.
+
+    These are the counts the solver's levels planned with before they owned their volumes
+    (``_solver.level_volumes``); the refinement holds no level state of its own, so they
+    over-reserve for it.
 
     Nothing a level compiles keeps a temporary that grows faster than the views but the
     motion prior (tests/test_alignment_memory.py), so the rest is volumes, batches and a
@@ -273,15 +352,14 @@ def level_stacks(
     y: np.ndarray,
     precision: np.ndarray | None,
     *,
-    prior: Any,
+    reserve: Mapping[str, int],
+    volumes: Mapping[str, Any] | None = None,
     names: Iterable[str] | None = None,
     placement: Mapping[str, Place] | None = None,
 ) -> LevelStacks:
-    """Place and allocate a level's stacks (``names``; all of them by default) for its data.
+    """Allocate a level's ``volumes``, then place and allocate its stacks for its data.
 
-    The reserve beside the stacks has two terms: the level's volumes and batches
-    (``level_reserve``) and the motion prior's bytes (``MotionPrior.device_bytes``), which
-    grow with the views, not the volume.
+    ``names`` are the stacks (all of them by default); ``reserve`` is kept free beside both.
     """
     specs = ops.stack_specs(precision)
     if names is not None:
@@ -294,7 +372,8 @@ def level_stacks(
         ops.batch,
         data={name: value for name, value in data.items() if name in specs},
         room=device_room(),
-        reserve=level_reserve(ops, prior),
+        reserve=reserve,
+        volumes=volumes,
         placement=placement,
     )
 

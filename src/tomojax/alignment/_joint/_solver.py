@@ -23,7 +23,7 @@ import numpy as np
 from . import _common, _tv as tv
 from ._krylov import solve as krylov_solve
 from ._operators import profiled_residual, robust_value
-from ._stacks import level_stacks, unplaced
+from ._stacks import Stack, level_stacks, temporaries, unplaced
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,88 @@ _CG_RTOL = 0.03
 _LM_MIN = 1e-8
 _POSE_TOL_PX = 0.01
 _MIN_OUTER = 4
+_CHUNK = 128 * 2**20  # the most the allocator wastes on a chunk it hands out whole
+
+# The level writes each volume it holds into a buffer it owns (``level_volumes``), donated
+# as the first argument; one the program does not read must still be kept to receive the
+# output. A product is held behind a barrier where the uncompiled code made it on its own:
+# the CPU compiler would fuse it into the sum that follows (one rounding in place of two).
+_barrier = jax.lax.optimization_barrier
+
+
+def _into(fun):
+    return jax.jit(fun, donate_argnums=(0,), keep_unused=True)
+
+
+def _by_slice(update):
+    """An elementwise ``update(v, b, m)`` by the shared images b, into v a z-slice at a time.
+
+    The same values as made whole, with a slice of FP64 terms at a time: whole, they
+    were the largest temporaries of the level after the prior's (7 volumes).
+    """
+
+    def run(v, b, m):
+        def one(k, v):
+            vk, bk = (jax.lax.dynamic_slice_in_dim(a, k, 1, axis) for a, axis in ((v, 0), (b, 1)))
+            return jax.lax.dynamic_update_slice_in_dim(v, update(vk, bk, m), k, 0)
+
+        return jax.lax.fori_loop(0, v.shape[0], one, v)
+
+    return _into(run)
+
+
+class _Volumes:
+    """Elementwise updates of a level's volumes, each compiled into the volume passed first."""
+
+    start = _into(  # zero, or the start x0 clipped at zero
+        lambda x, x0: jnp.broadcast_to(jnp.maximum(jnp.asarray(x0, jnp.float32), 0), x.shape)
+    )
+    observed_only = _into(lambda x, observed: jnp.where(observed, x, 0))
+    damping = _into(lambda _out, dd: jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4))
+    free = _into(lambda _out, x, gx: (x > 0) | (gx < 0))
+    # The step to max(x + solution, 0) on the free voxels, in the solution's buffer.
+    clipped = _into(lambda s, free, x: jnp.maximum(jnp.where(free, x + s, x), 0) - x)
+    stepped = _into(lambda _out, x, a, dx: x + _barrier(a * dx))
+    # The shared rows' image gradient B^T G^-1 b (m = G^-1 b) and their part of the image
+    # Jacobi diagonal, diag(B^T G^-1 B), added to the linearisation's (``_common``).
+    plus_image = _by_slice(
+        lambda v, b, m: v
+        + _barrier((_barrier(m[0] * b[0]) + _barrier(m[1] * b[1])).astype(jnp.float32))
+    )
+    plus_diagonal = _by_slice(
+        lambda dd, b, g: dd
+        + _barrier(
+            (
+                _barrier(g[0, 0] * b[0] ** 2)
+                + _barrier(2 * g[0, 1] * b[0] * b[1])
+                + _barrier(g[1, 1] * b[1] ** 2)
+            ).astype(jnp.float32)
+        )
+    )
+
+
+@jax.jit
+def _shared_gram(images):
+    """B B^T in FP64: compiled, the FP64 copy of the images is no array of its own."""
+    return jnp.einsum("i...,j...->ij", images.astype(jnp.float64), images.astype(jnp.float64))
+
+
+def level_volumes(ops, prior, lam) -> dict[str, Any]:
+    """The arrays a level holds through its steps, as shapes: allocated once, at its setup.
+
+    The volume ``x`` and ``other`` (the line search's trial; once a step is accepted, the
+    previous volume), the linearisation's gradient ``gx0`` and diagonal ``dd``, the shared
+    images (``_common``), the damping, the free-voxel mask, the Schur solve's right-hand
+    side, preconditioner and ``step`` (its solution, then the clipped step), with TV the
+    stepped gradient ``gx`` and conductance ``d``, and the motion prior's ``factor``.
+    """
+    volume = jax.ShapeDtypeStruct(ops.shape, jnp.float32)
+    names = ("x", "other", "gx0", "dd", "damp", "rhs", "invdiag", "step")
+    shapes: dict[str, Any] = dict.fromkeys(names + (("gx", "d") if lam else ()), volume)
+    shapes["images"] = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
+    shapes["free"] = jax.ShapeDtypeStruct(ops.shape, jnp.bool_)
+    shapes["factor"] = prior.factor_shapes()
+    return shapes
 
 
 def _gain_ratio(actual, predicted):
@@ -110,7 +192,6 @@ class _Level:
         self,
         ops,
         prior,
-        stacks,
         *,
         lam,
         eps,
@@ -118,21 +199,19 @@ class _Level:
         delta,
         inner,
     ) -> None:
-        self.ops, self.prior, self.stacks = ops, prior, stacks
-        y, precision = stacks["y"], stacks.get("precision")
-        self.y, self.precision, self.lam, self.delta = y, precision, lam, delta
+        self.ops, self.prior, self.lam, self.delta = ops, prior, lam, delta
+        self._made = None
         self.tv_value = jax.jit(lambda x: tv.energy(x, eps, scales))
-        self.conduct = jax.jit(lambda x: tv.conductance(x, eps, scales))
+        self.conduct = _into(lambda _out, x: tv.conductance(x, eps, scales))
         self.diffuse = jax.jit(lambda x, d: tv.diffusion(x, d, scales))
-        self.gradient = jax.jit(lambda gx, x, d: gx + jnp.float32(lam) * tv.diffusion(x, d, scales))
-        self.inverse = jax.jit(
-            lambda d, damp, dd, lm: tv.inverse_diagonal(d, damp, dd, lam, lm, scales)
+        self.gradient = _into(
+            lambda _out, gx, x, d: gx + jnp.float32(lam) * tv.diffusion(x, d, scales)
+        )
+        self.inverse = _into(
+            lambda _out, d, damp, dd, lm: tv.inverse_diagonal(d, damp, dd, lam, lm, scales)
             if lam
             else 1 / jnp.maximum(dd + jnp.float32(lm) * damp, jnp.float32(1e-8))
         )
-
-        self.gram, self.data_moments = ops.shared_data(y, precision)
-        self.inverse_gram = jnp.linalg.pinv(self.gram)  # zero if no view is profiled
 
         # At unchanged poses the prediction is linear in the image: the residual
         # plus a times the step's projection (returned scaled by sw, zero only
@@ -152,8 +231,8 @@ class _Level:
 
         self.held = jax.jit(held)
 
-        @jax.jit
-        def rhs(q, sw, j, sp, gx, free, precision, common):
+        @_into
+        def rhs(_out, q, sw, j, sp, gx, free, precision, common):
             # Fixed voxels are discarded, so the gather may skip them.
             active = ops.projection.active(free)
             shared = common.image(common.inverse @ (common.poses @ sp))
@@ -169,9 +248,12 @@ class _Level:
             )
         )
 
-        # r is donated: the matvec rewrites the level's one weighted-projection stack.
-        @partial(jax.jit, donate_argnums=(13,))
-        def schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag, precision, common, poses, r):
+        # r is donated: the matvec rewrites the level's one weighted-projection stack. So is
+        # the step volume, unread: the solution is written into it.
+        @partial(jax.jit, donate_argnums=(13, 14), keep_unused=True)
+        def schur(
+            q, sw, j, factor, free, d, damp, lm, rhs, invdiag, precision, common, poses, r, _out
+        ):
             # Fixed voxels' transpose is discarded: the gather may skip them.
             active = ops.projection.active(free)
 
@@ -191,11 +273,71 @@ class _Level:
 
         self._schur = schur
 
+    def place(self, y, precision, placement=None, *, start=False):
+        """Allocate the level's volumes and place and allocate its stacks (``_stacks``).
+
+        Beside them the plan keeps the largest transient free: the temporaries of the Schur
+        solve, of the motion prior's factor, or, when the level starts from zero
+        (``start``), of the start's Gram of the shared images, each from its compile here
+        (the calls later reuse it); and the one chunk it lands in, which the allocator can
+        hand out whole up to twice the request when that wastes under 128 MiB. Returns the
+        level's storage, which the caller closes.
+        """
+        ops, prior = self.ops, self.prior
+        specs = ops.stack_specs(precision)
+        shapes = self._schur_shapes(specs, precision is not None)
+        self.transients = {"schur": temporaries(self._schur, *shapes), "prior": prior.temporaries()}
+        if start:
+            images = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
+            self.transients["start"] = temporaries(_shared_gram, images)
+        transient = max(self.transients.values())
+        reserve = {"transient": transient, "chunk": min(transient, _CHUNK)}
+        volumes = level_volumes(ops, prior, self.lam)
+        self.stacks = level_stacks(
+            ops, y, precision, reserve=reserve, volumes=volumes, placement=placement
+        )
+        self.y, self.precision = self.stacks["y"], self.stacks.get("precision")
+        self.gram, self.data_moments = ops.shared_data(self.y, self.precision)
+        self.inverse_gram = jnp.linalg.pinv(self.gram)  # zero if no view is profiled
+        return self.stacks
+
+    def _schur_shapes(self, specs, weighted):
+        """The Schur solve's arguments as shapes, every stack on the device."""
+        ops, prior = self.ops, self.prior
+        f64 = partial(jax.ShapeDtypeStruct, dtype=jnp.float64)
+        volume = jax.ShapeDtypeStruct(ops.shape, jnp.float32)
+
+        def stack(name):
+            shape, dtype = specs[name]
+            data = jax.ShapeDtypeStruct(shape, dtype)
+            return Stack(data, host=False, shape=shape, dtype=dtype, batch=ops.batch)
+
+        q = jax.eval_shape(lambda c: ops.prepare(ops.pad_poses(c)), f64((prior.size,)))
+        factor = prior.factor_shapes()
+        images = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
+        parts = (f64((2, 2)), f64((2, 2)), images, f64((2, prior.size)), f64((2,)))
+        common = jax.eval_shape(_common.Common, *parts)
+        poses = jax.eval_shape(partial(_common.PoseSolve.build, prior.solve), factor, common)
+        free = jax.ShapeDtypeStruct(ops.shape, jnp.bool_)
+        d = volume if self.lam else None
+        precision = stack("precision") if weighted else None
+        head = (q, stack("sw"), stack("j"), factor, free, d, volume, 1.0, volume, volume)
+        return (*head, precision, common, poses, stack("r"), volume)
+
+    def _write(self, name, fun, *args: Any) -> Any:
+        """``fun`` run into the level's volume ``name``, its donated first argument; held."""
+        out = fun(self.stacks[name], *args)
+        self.stacks.update([(name, out)])
+        return out
+
     def schur(self, *args: Any) -> Any:
-        """The Schur volume solve, rewriting the level's ``r`` stack in place."""
-        solution, r = self._schur(*args, self.stacks["r"])
-        self.stacks.update([("r", r)])
-        return solution
+        """The Schur volume solve, into the level's step volume, rewriting ``r`` in place.
+
+        The result's solution is the step volume, until the clipped step replaces it.
+        """
+        result, r = self._schur(*args, self.stacks["r"], self.stacks["step"])
+        self.stacks.update([("r", r), ("step", result.solution)])
+        return result
 
     def image_penalty(self, x):
         """Image-prior objective, with no TV call or temporary when its weight is zero."""
@@ -204,14 +346,15 @@ class _Level:
     def initial_volume(self, q, lipschitz, iterations):
         """FISTA from zero on the Huber initialization data term and the shared term, no TV."""
         ops, y, precision, delta = self.ops, self.y, self.precision, self.delta
-        images = ops.common_images(q, precision)
+        images = ops.common_images(q, precision, self.stacks["images"])
+        self.stacks.update([("images", images)])
         inverse, data_moments = self.inverse_gram, self.data_moments
         # The shared term's Hessian B^T G^-1 B has rank two; its largest eigenvalue is G^-1 B B^T's.
-        outer = jnp.einsum("i...,j...->ij", images.astype(jnp.float64), images.astype(jnp.float64))
+        outer = _shared_gram(images)
         lipschitz = lipschitz + float(jnp.max(jnp.real(jnp.linalg.eigvals(inverse @ outer))))
 
         # The shared images are an argument: captured, the program would hold them as a constant.
-        @jax.jit
+        @_into
         def run(x, q, y, precision, lipschitz, images, inverse, data_moments):
             def fista(_, state):
                 old, z, t = state
@@ -227,8 +370,27 @@ class _Level:
 
             return jax.lax.fori_loop(0, iterations, fista, (x, x, jnp.asarray(1.0, jnp.float64)))[0]
 
-        x = jnp.zeros(self.ops.shape, jnp.float32)
-        return run(x, ops.prepare(q), y, precision, lipschitz, images, inverse, data_moments)
+        self._write("x", _Volumes.start, 0.0)  # an argument: a constant zero could be folded
+        args = (ops.prepare(q), y, precision, lipschitz, images, inverse, data_moments)
+        return self._write("x", run, *args)
+
+    def start(self, c, x0, iterations):
+        """The level's first volume, from ``x0`` (None: FISTA from zero) at poses ``c``."""
+        q = self.ops.pad_poses(c)
+        lipschitz, observed = self.ops.sensitivity(q, self.stacks["free"])
+        self.stacks.update([("free", observed)])
+        if x0 is None:
+            self.initial_volume(q, lipschitz, iterations)
+        else:
+            self._write("x", _Volumes.start, x0)
+        # Prolongation can populate voxels invisible to every ray at this level.
+        # Start those undetermined values at zero, but let later pose/image steps
+        # expose or populate them; this is not a permanent active-set constraint.
+        return self._write("x", _Volumes.observed_only, observed)
+
+    def accept(self, x, previous):
+        """Hold an accepted step's volume as the level's, and the previous one beside it."""
+        self.stacks.update([("x", x), ("other", previous)])
 
     def linearize(self, c, x):
         """The robust linearization at compact poses ``c`` and volume ``x``, with the shared term.
@@ -239,20 +401,15 @@ class _Level:
         """
         q = self.ops.pad_poses(c)
         stacks = self.stacks
-        out = (stacks["sw"], stacks["j"], stacks["residual"])
+        names = ("gx0", "dd", "sw", "j", "residual")
         gx0, dd, sw, j, gr, gram, data, obstats, moments, residual, moved = self.ops.linearize(
-            q, x, self.y, self.precision, self.delta, out
+            q, x, self.y, self.precision, self.delta, tuple(stacks[n] for n in names)
         )
-        stacks.update([("sw", sw), ("j", j), ("residual", residual)])
-        common = _common.Common(
-            self.gram,
-            self.inverse_gram,
-            self.ops.common_images(q, self.precision),
-            moved,
-            moments,
-        )
-        gx0 = gx0 + common.image_gradient()
-        dd = dd + common.diagonal()
+        images = self.ops.common_images(q, self.precision, stacks["images"])
+        stacks.update(zip((*names, "images"), (gx0, dd, sw, j, residual, images), strict=True))
+        common = _common.Common(self.gram, self.inverse_gram, images, moved, moments)
+        gx0 = self._write("gx0", _Volumes.plus_image, images, common.inverse @ common.moments)
+        dd = self._write("dd", _Volumes.plus_diagonal, images, common.inverse)
         gr = gr + common.pose_score()
         return gx0, dd, sw, j, gr, gram, data + common.value(), obstats, residual, common
 
@@ -262,7 +419,12 @@ class _Level:
         ``held`` (residual, weighted projection of dx, weights, shared moments and
         their change B dx) gives beta = 0.
         """
-        xt = x + jnp.float32(a) * dx
+        # The trial volume, made once for each line step a in the level's other volume.
+        made = self._made
+        if made is None or made[0] is not dx or made[1] != a:
+            stepped = self._write("other", _Volumes.stepped, x, jnp.float32(a), dx)
+            made = self._made = (dx, a, stepped)
+        xt = made[2]
         cc = c + a * beta * dc
         if beta == 0:
             residual, step, sw, moments, change = held
@@ -280,8 +442,8 @@ class _Level:
         """What every step from this linearisation shares, whatever its damping."""
         ops, prior = self.ops, self.prior
         gx0, dd, sw, j, gr, gram, residual, common = linear
-        d = self.conduct(x) if self.lam else None
-        gx = self.gradient(gx0, x, d) if self.lam else gx0
+        d = self._write("d", self.conduct, x) if self.lam else None
+        gx = self._write("gx", self.gradient, gx0, x, d) if self.lam else gx0
         wpose = prior.weights(c, pose_weight)
         pd = jnp.diagonal(gram, axis1=1, axis2=2)
         return _StepContext(
@@ -292,12 +454,12 @@ class _Level:
             gram=gram,
             residual=residual,
             common=common,
-            damp=jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4),
+            damp=self._write("damp", _Volumes.damping, dd),
             d=d,
             gx=gx,
             wpose=wpose,
             gp=gr + prior.apply(c, wpose),
-            free=(x > 0) | (gx < 0),
+            free=self._write("free", _Volumes.free, x, gx),
             pd=jnp.maximum(pd, jnp.maximum(pd.max(), 1e-8) * 0.01),
         )
 
@@ -307,11 +469,13 @@ class _Level:
         Returns None when the volume solve does not give a finite residual.
         """
         ops, prior, common = self.ops, self.prior, k.common
-        factor = prior.factor(k.gram + jax.vmap(jnp.diag)(lm * k.pd + 1e-10), k.wpose)
+        blocks = k.gram + jax.vmap(jnp.diag)(lm * k.pd + 1e-10)
+        factor = prior.factor(blocks, k.wpose, self.stacks["factor"])
+        self.stacks.update([("factor", factor)])
         poses = _common.PoseSolve.build(prior.solve, factor, common)
         sp = poses(prior.solve, factor, common, k.gp)
-        rhs = self.rhs(k.q, k.sw, k.j, sp, k.gx, k.free, self.precision, common)
-        invdiag = self.inverse(k.d, k.damp, k.dd, lm)
+        rhs = self._write("rhs", self.rhs, k.q, k.sw, k.j, sp, k.gx, k.free, self.precision, common)
+        invdiag = self._write("invdiag", self.inverse, k.d, k.damp, k.dd, lm)
         linear_step = self.schur(
             k.q,
             k.sw,
@@ -329,7 +493,7 @@ class _Level:
         )
         if not np.isfinite(float(linear_step.relative_residual)):
             return None
-        dx = jnp.maximum(jnp.where(k.free, x + linear_step.solution, x), 0) - x
+        dx = self._write("step", _Volumes.clipped, k.free, x)
         # The step's projection and the matvec's never coexist: one stack serves both.
         r, jadx = ops.weighted_forward(k.q, dx, k.sw, k.j, self.precision, self.stacks["r"])
         self.stacks.update([("r", r)])
@@ -512,40 +676,24 @@ def solve(
         if p0 is None
         else prior.project_gauge(jnp.asarray(p0, jnp.float64).reshape(-1))
     )
-    stacks = level_stacks(ops, y, precision, prior=prior, placement=placement)
+    level = _Level(ops, prior, lam=weight, eps=eps, scales=scales, delta=delta, inner=budget.inner)
+    stacks = level.place(y, precision, placement, start=x0 is None)
     try:
-        level = _Level(
-            ops,
-            prior,
-            stacks,
-            lam=weight,
-            eps=eps,
-            scales=scales,
-            delta=delta,
-            inner=budget.inner,
-        )
-        x, c, record = _descend(level, c, x0, budget, pose_sigma, weight)
+        _, c, record = _descend(level, c, x0, budget, pose_sigma, weight)
+        x = stacks.take("x")  # the caller's now: the level's other storage is released
     except jax.errors.JaxRuntimeError as err:
         raise unplaced(err, stacks) from err
     finally:
         stacks.close()
-    record = {**record, "seconds": time.perf_counter() - start, "stacks": stacks.record()}
+    stacks_record = {**stacks.record(), "transients": dict(level.transients)}
+    record = {**record, "seconds": time.perf_counter() - start, "stacks": stacks_record}
     return x, c, y, record
 
 
 def _descend(level, c, x0, budget, pose_sigma, weight):
     """The level's damped Gauss-Newton steps from poses ``c`` and volume ``x0`` (None: FISTA)."""
-    ops, prior = level.ops, level.prior
-    lipschitz, observed = ops.sensitivity(ops.pad_poses(c))
-    if x0 is None:
-        x = level.initial_volume(ops.pad_poses(c), lipschitz, budget.init_iterations)
-    else:
-        x = jnp.maximum(jnp.asarray(x0, jnp.float32), 0)
-    # Prolongation can populate voxels invisible to every ray at this level.
-    # Start those undetermined values at zero, but let later pose/image steps
-    # expose or populate them; this is not a permanent active-set constraint.
-    x = jnp.where(observed, x, 0)
-    del observed
+    prior = level.prior
+    x = level.start(c, x0, budget.init_iterations)
     gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
     linear = (gx0, dd, sw, j, gr, gram, residual, common)
     pose_weight, noise, fisher = _pose_weight(level, linear, pose_sigma)
@@ -568,6 +716,7 @@ def _descend(level, c, x0, budget, pose_sigma, weight):
             break
         x0, c0 = x, c
         a, beta, (fn, x, c), predicted, change, lm, cg_steps, cg_residual, linear_record = result
+        level.accept(x, x0)
         rho = _gain_ratio(f - fn, predicted)
         valid, down = map(float, np.asarray(obstats))
         history.append(
