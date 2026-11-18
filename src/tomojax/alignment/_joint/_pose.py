@@ -306,27 +306,6 @@ class MotionPrior:
         # solve's compiled program without bringing a matrix into it as a constant.
         self.solve = jax.jit(self._solve)
 
-    def device_bytes(self) -> dict[str, int]:
-        """Device bytes the prior needs during a level, from its shapes: held and transient.
-
-        Held through a step: its matrices (U and C, local rows by about views / 10 knots
-        each, so they grow as views squared; G, the gauge step, the rotation precision) and
-        the factor of the pose system it keeps (b = [U, K U] and its tridiagonal solve, each
-        local rows by twice the knots, and the small LU), sized exactly from the factor's
-        output shapes. Transient: the factor's temporaries, measured from 300 to 4000 views
-        as five copies of b (its cyclic reduction) and a fixed 5 MB (the small solves'
-        workspace), within 1%; planned as six copies and 8 MiB. Item 64 makes all of it
-        linear.
-        """
-        m = self.matrices
-        item, rows, knots = m.U.dtype.itemsize, self.local_size, 2 * m.U.shape[1]
-        factor = self.factor_shapes()
-        # Each array rounded up to 256 bytes, as the allocator aligns its buffers.
-        held = sum(
-            -(-int(a.size) * a.dtype.itemsize // 256) * 256 for a in (*m, *jax.tree.leaves(factor))
-        )
-        return {"held": held, "transient": 6 * item * rows * knots + 8 * 2**20}
-
     def _factor_arguments(self):
         """The factor's arguments but the matrices, and its result, as shapes."""
         m = self.matrices
@@ -340,11 +319,15 @@ class MotionPrior:
         with jax.enable_x64(self.matrices.U.dtype == jnp.float64):
             return self._factor_arguments()[2]
 
-    def temporaries(self) -> int:
-        """The factor's temporary bytes, from its compile, which its calls into a buffer reuse."""
+    def temporaries(self, name="factor") -> int:
+        """The temporary bytes of ``factor`` (into a buffer) or ``innovation_solve``, compiled.
+
+        Their calls reuse the compile.
+        """
         with jax.enable_x64(self.matrices.U.dtype == jnp.float64):
             blocks, w, out = self._factor_arguments()
-            return temporaries(self._compiled["factor"], self.matrices, blocks, w, out)
+            last = out if name == "factor" else jax.ShapeDtypeStruct((self.size,), blocks.dtype)
+            return temporaries(self._compiled[name], self.matrices, blocks, w, last)
 
     @property
     def U(self):

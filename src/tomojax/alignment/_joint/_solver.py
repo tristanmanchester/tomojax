@@ -23,7 +23,7 @@ import numpy as np
 from . import _common, _tv as tv
 from ._krylov import solve as krylov_solve
 from ._operators import profiled_residual, robust_value
-from ._stacks import Stack, level_stacks, temporaries, unplaced
+from ._stacks import Stack, level_stacks, temporaries, transient_reserve, unplaced
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,6 @@ _CG_RTOL = 0.03
 _LM_MIN = 1e-8
 _POSE_TOL_PX = 0.01
 _MIN_OUTER = 4
-_CHUNK = 128 * 2**20  # the most the allocator wastes on a chunk it hands out whole
 
 # The level writes each volume it holds into a buffer it owns (``level_volumes``), donated
 # as the first argument; one the program does not read must still be kept to receive the
@@ -290,8 +289,7 @@ class _Level:
         if start:
             images = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
             self.transients["start"] = temporaries(_shared_gram, images)
-        transient = max(self.transients.values())
-        reserve = {"transient": transient, "chunk": min(transient, _CHUNK)}
+        reserve = transient_reserve(self.transients)
         volumes = level_volumes(ops, prior, self.lam)
         self.stacks = level_stacks(
             ops, y, precision, reserve=reserve, volumes=volumes, placement=placement
@@ -308,9 +306,7 @@ class _Level:
         volume = jax.ShapeDtypeStruct(ops.shape, jnp.float32)
 
         def stack(name):
-            shape, dtype = specs[name]
-            data = jax.ShapeDtypeStruct(shape, dtype)
-            return Stack(data, host=False, shape=shape, dtype=dtype, batch=ops.batch)
+            return Stack.shaped(specs[name], ops.batch)
 
         q = jax.eval_shape(lambda c: ops.prepare(ops.pad_poses(c)), f64((prior.size,)))
         factor = prior.factor_shapes()

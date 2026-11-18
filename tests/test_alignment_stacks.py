@@ -214,24 +214,26 @@ def test_align_reports_each_levels_placement_and_time():
 
 _PEAK_PROBE = """
 import json, sys
-import jax, numpy as np
+import jax, jax.numpy as jnp, numpy as np
 import tomojax as tj
 from tomojax.alignment._integration import cone_frames
 from tomojax.alignment._joint import _fit, _solver
 from tomojax.geometry import stack_view_poses
 
 n, nz, nu, nv, views = (int(a) for a in sys.argv[1:6])
-cone = sys.argv[6] == "cone"
+cone, stage = sys.argv[6] == "cone", sys.argv[7]
 _fit._LEVELS = ((1, 8),)  # one level: the process's peak is the level's
 dev, seen = jax.devices()[0], {}
-solve = _solver.solve
+solve, refine = _solver.solve, _fit.refine
 
 
-def measured(*args, **kwargs):
-    base = dev.memory_stats()["bytes_in_use"]
-    out = solve(*args, **kwargs)
-    stacks = out[3]["stacks"]
+def measure(run, stacks_of, *args, **kwargs):
+    stats = dev.memory_stats()
+    base = stats["bytes_in_use"]
+    out = run(*args, **kwargs)
+    stacks = stacks_of(out)
     seen.update(
+        earlier=stats["peak_bytes_in_use"] - base,
         used=dev.memory_stats()["peak_bytes_in_use"] - base,
         setup=stacks["in_use_bytes"] - base,
         free=stacks["free_bytes"],
@@ -242,7 +244,27 @@ def measured(*args, **kwargs):
     return out
 
 
-_solver.solve = _fit.solve = measured
+def level(*args, **kwargs):
+    return measure(solve, lambda out: out[3]["stacks"], *args, **kwargs)
+
+
+def stand_in(y, precision, prior, *_args, ops, **_kwargs):
+    # A level that holds nothing: the refinement after it sets the process's peak.
+    return jnp.full(ops.shape, 0.5, jnp.float32), jnp.zeros(prior.size), y, {
+        "translation_noise": None, "pose_fisher": 1.0
+    }
+
+
+def refinement(*args, **kwargs):
+    measure(refine, lambda out: out[1]["stacks"], *args, **kwargs)
+    print(json.dumps(seen))
+    sys.exit(0)
+
+
+if stage == "level":
+    _solver.solve = _fit.solve = level
+else:
+    _fit.solve, _fit.refine = stand_in, refinement
 grid, detector = tj.Grid(n, n, nz, 1, 1, 1), tj.Detector(nu, nv, 1, 1)
 angles = np.linspace(0, 360, views, endpoint=False)
 if cone:  # a circular orbit, magnification 1.5, the volume filling the beam
@@ -256,21 +278,24 @@ with jax.default_device(jax.devices("cpu")[0]):
 projections += rng.normal(0, 0.01, projections.shape).astype(np.float32)
 nominal = np.asarray(stack_view_poses(geometry, views))
 frames = cone_frames(geometry)
-_fit.fit_poses(projections, nominal, grid, detector, keep_grid=True, frames=frames)
 seen["cone"] = frames is not None
+_fit.fit_poses(projections, nominal, grid, detector, keep_grid=True, frames=frames)
 print(json.dumps(seen))
 """
 
 
-def _level_peak(*shape, geometry="laminography"):
-    """A one-level fit's own device peak and its plan, in a fresh process on the GPU."""
+def _level_peak(*shape, geometry="laminography", stage="level"):
+    """A one-level fit's own device peak and its plan, in a fresh process on the GPU.
+
+    ``stage`` "refinement" measures the pose refinement after a level that holds nothing.
+    """
     import json
     import os
     import subprocess
     import sys
 
     env = {**os.environ, "PYTHONWARNINGS": "ignore", "JAX_PLATFORMS": "cuda,cpu"}
-    argv = [sys.executable, "-c", _PEAK_PROBE, *map(str, shape), geometry]
+    argv = [sys.executable, "-c", _PEAK_PROBE, *map(str, shape), geometry, stage]
     run = subprocess.run(argv, check=True, capture_output=True, text=True, env=env)
     return json.loads(run.stdout.strip().splitlines()[-1])
 
@@ -283,6 +308,7 @@ def _assert_the_plan_is_the_peak(m):
     # A level's own peak (in a fresh process: the allocator's peak less what was in use before
     # it) must not exceed the plan, and the plan may exceed the peak by no more than that chunk.
     plan = m["setup"] + m["free"]
+    assert m["earlier"] < m["used"], "the peak was set before the stage measured"
     assert m["used"] <= plan, (m["used"], plan)
     assert plan - m["used"] <= m["chunk"], (plan - m["used"], m["chunk"])
 
@@ -307,4 +333,16 @@ def test_the_plan_takes_the_larger_transient_where_the_prior_dominates():
     # 67208's fine level sent j to the host for nothing, +10%).
     m = _level_peak(48, 32, 64, 48, 3000)
     assert max(m["transients"], key=m["transients"].get) == "prior"
+    _assert_the_plan_is_the_peak(m)
+
+
+@pytest.mark.gpu
+@pytest.mark.fresh_gpu
+@pytest.mark.parametrize("geometry", ["laminography", "cone"])
+def test_the_refinement_plans_its_own_peak_the_same_way(geometry):
+    # The pose refinement holds the data and its precision and runs its own programs on the
+    # level's volume: its plan is what its setup measures in use, its largest compiled
+    # transient and that one chunk, like a level's.
+    m = _level_peak(192, 128, 256, 160, 480, geometry=geometry, stage="refinement")
+    assert m["cone"] == (geometry == "cone")
     _assert_the_plan_is_the_peak(m)

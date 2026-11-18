@@ -2,8 +2,7 @@
 
 A level's plan measures its storage at setup and takes its largest transients from their
 programs' compiles (``_solver._Level.place``); the level's other programs are not compiled
-then, and the pose refinement reserves counts of volumes (``_stacks.level_reserve``). Both
-are only right if nothing a level compiles holds a temporary that scales faster than the
+then, so the plan is only right if none of them holds a temporary that scales faster than the
 views: K11 67208 (4000 views) failed in its Schur solve because conjugate gradients copied the
 whole weighted-projection stack ``r`` out of a conditional on every iteration, a temporary
 of 0.47 GiB at 1441 views and 1.29 GiB at 4000 that the plan had counted as volumes.
@@ -56,9 +55,9 @@ def captured_constants(compiled, *args, **kwargs):
 def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
     """Temporaries, outputs and captured constants (bytes) of each compiled level function.
 
-    By name, with the fit's motion prior.
+    By name.
     """
-    jit, seen, priors = jax.jit, {}, []
+    jit, seen = jax.jit, {}
 
     class Recorded:
         """A compiled function that keeps its first concrete call's arguments, by name."""
@@ -84,11 +83,7 @@ def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
             return compiled
         return Recorded(compiled, name)
 
-    built, operators, shapes = _fit.MotionPrior, _fit.Operators, []
-
-    def prior(*args, **kwargs):
-        priors.append(built(*args, **kwargs))
-        return priors[-1]
+    operators, shapes = _fit.Operators, []
 
     def made(*args, **kwargs):
         ops = operators(*args, **kwargs)
@@ -96,13 +91,11 @@ def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
         return ops
 
     monkeypatch.setattr(jax, "jit", recording)
-    monkeypatch.setattr(_fit, "MotionPrior", prior)
     monkeypatch.setattr(_fit, "Operators", made)
     monkeypatch.setattr(_fit, "_LEVELS", ((1, 2),))
     projections, nominal, grid, detector = _scan(views, nu, nv, n, nz)
     _fit.fit_poses(projections, nominal, grid, detector, keep_grid=True)
     monkeypatch.setattr(jax, "jit", jit)
-    monkeypatch.setattr(_fit, "MotionPrior", built)
     monkeypatch.setattr(_fit, "Operators", operators)
     volume, image = shapes[-1]
 
@@ -123,12 +116,12 @@ def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
             "consts": sum(getattr(c, "nbytes", 0) for c in consts),
             "captured_shapes": [tuple(c.shape) for c in consts if bulky(c)],
         }
-    return out, priors[-1]
+    return out
 
 
 def level_temporaries(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
     """XLA's temporary bytes of every function a one-level fit compiles, by name."""
-    memory, _ = level_memory(views, monkeypatch, nu, nv, n, nz)
+    memory = level_memory(views, monkeypatch, nu, nv, n, nz)
     return {name: m["temp"] for name, m in memory.items()}
 
 
@@ -160,9 +153,9 @@ def test_no_level_function_grows_faster_than_the_views(monkeypatch):
     profiles = [level_memory(views, monkeypatch) for views in counts]
     ratio = counts[2] / counts[1]
     superlinear = {}
-    for name, memory in profiles[2][0].items():
+    for name, memory in profiles[2].items():
         for kind in ("temp", "output", "consts"):
-            small = profiles[1][0].get(name, {}).get(kind, 0)
+            small = profiles[1].get(name, {}).get(kind, 0)
             order = _order(small, memory[kind], ratio)
             if order > 1.3:
                 superlinear[name] = max(order, superlinear.get(name, 0.0))
@@ -173,19 +166,11 @@ def test_no_level_function_grows_faster_than_the_views(monkeypatch):
     # No function captures a volume or a stack as a compiled constant: held by the program for
     # its life, beside the level's own arrays (the start's FISTA once held the shared images).
     captured = {
-        name: m["captured_shapes"] for name, m in profiles[0][0].items() if m["captured_shapes"]
+        name: m["captured_shapes"] for name, m in profiles[0].items() if m["captured_shapes"]
     }
     assert not captured, f"volume- or stack-shaped captured constants: {captured}"
-    large = {name: m["consts"] for name, m in profiles[2][0].items() if m["consts"] > 256 * 1024}
+    large = {name: m["consts"] for name, m in profiles[2].items() if m["consts"] > 256 * 1024}
     assert not large, f"large captured constants (bytes): {large}"
-    # The plan's prior term covers what the prior holds and needs, within half again.
-    for memory, prior in profiles[1:]:
-        planned = prior.device_bytes()
-        held = sum(int(a.size) * a.dtype.itemsize for a in prior.matrices)
-        held += memory["MotionPrior._factor"]["output"]
-        transient = max(memory[n]["temp"] for n in memory if n.startswith("MotionPrior."))
-        assert held <= planned["held"] <= 1.5 * held, (planned, held)
-        assert transient <= planned["transient"] <= 2 * transient, (planned, transient)
 
 
 def _conditionals(jaxpr):

@@ -21,7 +21,7 @@ from tomojax.core.robust import MAD_TO_SD
 
 from ._noise import LOSS_WIDTH_SIGMAS
 from ._operators import column_gram, column_score, robust_batch, robust_value
-from ._stacks import level_reserve, level_stacks, unplaced
+from ._stacks import Stack, level_stacks, temporaries, transient_reserve, unplaced
 
 _SMOOTH_NATIVE_PX = 8.0
 _ITERATIONS = 5
@@ -193,10 +193,10 @@ class _EdgeObjective:
 class _Refinement:
     """The fixed-volume edge objective, its anchored prior and one damped step."""
 
-    def __init__(self, x, y, precision, prior, ops, sigma, c0) -> None:
+    def __init__(self, x, y, precision, prior, objective, ops, sigma, c0) -> None:
         self.x, self.y, self.precision = x, y, precision
         self.prior, self.ops, self.c0 = prior, ops, c0
-        self.objective = _EdgeObjective(ops)
+        self.objective = objective
         q = ops.pad_poses(c0)
         model_sigma = float(self.objective.scale(q, x, y, precision))
         if not np.isfinite(model_sigma):
@@ -270,28 +270,54 @@ def refine(x, p, y, precision, prior, *, ops, sigma, last=None, placement=None):
     offset and ramp and residual energy at the result (``Operators.view_summary``).
     """
     start = time.perf_counter()
+    objective = _EdgeObjective(ops)
+    transients = _transients(objective, x, prior, ops, precision)
+    reserve = transient_reserve(transients)
     names = ("y", "precision")
-    reserve = level_reserve(ops, prior)
     stacks = level_stacks(ops, y, precision, reserve=reserve, names=names, placement=placement)
     try:
         y, precision = stacks["y"], stacks.get("precision")
         if prior.nlocal == 0:
             c, record = p, {"status": "no_local_parameters", "steps": []}
         else:
-            c, record = _refine(x, p, y, precision, prior, ops=ops, sigma=sigma, last=last)
+            c, record = _refine(
+                x, p, y, precision, prior, objective, ops=ops, sigma=sigma, last=last
+            )
         summary = ops.view_summary(ops.pad_poses(c), x, y, precision)
         summary = tuple(np.asarray(a) for a in summary)
     except jax.errors.JaxRuntimeError as err:
         raise unplaced(err, stacks) from err
     finally:
         stacks.close()
-    record = {**record, "seconds": time.perf_counter() - start, "stacks": stacks.record()}
+    stacks_record = {**stacks.record(), "transients": transients}
+    record = {**record, "seconds": time.perf_counter() - start, "stacks": stacks_record}
     return c, record, summary
 
 
-def _refine(x, p, y, precision, prior, *, ops, sigma, last):
+def _transients(objective, x, prior, ops, precision):
+    """The temporary bytes of the stage's compiled functions, from their compiles here.
+
+    Its stacks are resident in the compile; the calls later reuse it.
+    """
+    specs = ops.stack_specs(precision)
+    weights = None if precision is None else Stack.shaped(specs["precision"], ops.batch)
+    q = jax.eval_shape(ops.pad_poses, jax.ShapeDtypeStruct((prior.size,), jnp.float64))
+    data = (q, x, Stack.shaped(specs["y"], ops.batch), weights)
+    out = {
+        "stats": temporaries(objective.stats, *data, 1.0),
+        "value": temporaries(objective.value, *data, 1.0),
+        "consistency": temporaries(objective.consistency, *data),
+        "scale": temporaries(objective.scale, *data),
+        "summary": temporaries(ops.view_summary, *data),
+    }
+    if prior.nlocal:
+        out["innovation_solve"] = prior.temporaries("innovation_solve")
+    return out
+
+
+def _refine(x, p, y, precision, prior, objective, *, ops, sigma, last):
     c = prior.project_gauge(jnp.asarray(p, jnp.float64).reshape(-1))
-    problem = _Refinement(x, y, precision, prior, ops, sigma, c)
+    problem = _Refinement(x, y, precision, prior, objective, ops, sigma, c)
     if last is not None and last["translation_noise"] is not None:
         fisher = float(jnp.median(jnp.trace(problem.first[1], axis1=1, axis2=2)))
         scale = float(np.sqrt(fisher * last["pose_fisher"] * 2 * np.log(ops.n)))

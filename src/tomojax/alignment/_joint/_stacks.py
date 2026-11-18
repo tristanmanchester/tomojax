@@ -79,6 +79,14 @@ class Stack:
         host, shape, dtype, batch = aux
         return cls(children[0], host=host, shape=shape, dtype=dtype, batch=batch)
 
+    @classmethod
+    def shaped(cls, spec: tuple[tuple[int, ...], Any], batch: int) -> Stack:
+        """A resident stack as a shape, for a compile before the stack exists."""
+        shape, dtype = spec
+        return cls(
+            jax.ShapeDtypeStruct(shape, dtype), host=False, shape=shape, dtype=dtype, batch=batch
+        )
+
     def read(self, i: jax.Array) -> jax.Array:
         """Batch ``i`` (``batch`` views) on the device.
 
@@ -293,6 +301,17 @@ class LevelStacks:
         self._host.clear()
 
 
+# The most the allocator wastes on a chunk: it hands a free chunk out whole when it is under
+# twice the request and the rest is under 128 MiB.
+CHUNK = 128 * 2**20
+
+
+def transient_reserve(transients: Mapping[str, int]) -> dict[str, int]:
+    """What a stage keeps free beside its storage: its largest transient and the chunk it takes."""
+    transient = max(transients.values())
+    return {"transient": transient, "chunk": min(transient, CHUNK)}
+
+
 def temporaries(compiled: Any, *args: Any) -> int:
     """The temporary bytes of ``compiled`` (a jitted function) at ``args``, from its compile.
 
@@ -309,42 +328,6 @@ def device_room() -> int | None:
     from tomojax.backends import device_free_memory_bytes
 
     return device_free_memory_bytes() if jax.default_backend() == "gpu" else None
-
-
-def level_reserve(ops: Any, prior: Any) -> dict[str, int]:
-    """Device bytes the pose refinement reserves besides its stacks, in parts, from its shapes.
-
-    These are the counts the solver's levels planned with before they owned their volumes
-    (``_solver.level_volumes``); the refinement holds no level state of its own, so they
-    over-reserve for it.
-
-    Nothing a level compiles keeps a temporary that grows faster than the views but the
-    motion prior (tests/test_alignment_memory.py), so the rest is volumes, batches and a
-    fixed part. Measured on K11 54013's and 67208's fine levels (358e3ce2):
-
-    - ``state``: what persists through a step at its worst (the volume and the previous one,
-      the linearisation's gradient and diagonal, the damping, the stepped gradient, TV's
-      conductance, the free-voxel mask, the two shared images, the clipped step; growing a
-      little over the steps, with a retried proposal's), 9 volumes and 0.2 GiB that no array
-      holds (the compiled programs and the libraries' workspaces): measured at the worst step
-      as 0.2 GiB and 8.2, 8.1 and 8.8 volumes on K11 54013, K11 67208 and I13 159815.
-    - ``prior_held``: the motion prior's matrices and factor (``MotionPrior.device_bytes``).
-    - ``transient``: the larger of the Schur solve's temporaries (conjugate gradients'
-      vectors and their FP64 copies, the matvec's product and TV term, per-batch
-      projections and columns; beyond the batches 4.6, 5.7 and 7.9 volumes on the same
-      three scans, planned as 9 volumes and 8 batches) and the prior factor's (which runs
-      before the solve, not during it).
-    """
-    d, (nz, ny, nx) = ops.detector, ops.shape
-    volume = 4 * nz * ny * nx
-    batch = 4 * ops.batch * (1 + ops.dofs) * d.nv * d.nu
-    prior_bytes = prior.device_bytes()
-    schur = 9 * volume + 8 * batch
-    return {
-        "state": 9 * volume + 200 * 2**20,
-        "prior_held": prior_bytes["held"],
-        "transient": max(schur, prior_bytes["transient"]),
-    }
 
 
 def level_stacks(
