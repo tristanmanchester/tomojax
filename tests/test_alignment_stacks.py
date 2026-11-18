@@ -222,7 +222,9 @@ from tomojax.geometry import stack_view_poses
 
 n, nz, nu, nv, views = (int(a) for a in sys.argv[1:6])
 cone, stage = sys.argv[6] == "cone", sys.argv[7]
-_fit._LEVELS = ((1, 8),)  # one level: the process's peak is the level's
+# One level, so the process's peak is the level's; for "fine", a short coarse level first,
+# whose volume the fine level (measured, being the last and larger) starts from.
+_fit._LEVELS = ((2, 2), (1, 8)) if stage == "fine" else ((1, 8),)
 dev, seen = jax.devices()[0], {}
 solve, refine = _solver.solve, _fit.refine
 
@@ -261,7 +263,7 @@ def refinement(*args, **kwargs):
     sys.exit(0)
 
 
-if stage == "level":
+if stage in ("level", "fine"):
     _solver.solve = _fit.solve = level
 else:
     _fit.solve, _fit.refine = stand_in, refinement
@@ -287,7 +289,8 @@ print(json.dumps(seen))
 def _level_peak(*shape, geometry="laminography", stage="level"):
     """A one-level fit's own device peak and its plan, in a fresh process on the GPU.
 
-    ``stage`` "refinement" measures the pose refinement after a level that holds nothing.
+    ``stage`` "fine" measures the second of two levels, started from the first's volume;
+    "refinement", the pose refinement after a level that holds nothing.
     """
     import json
     import os
@@ -333,6 +336,17 @@ def test_the_plan_takes_the_larger_transient_where_the_prior_dominates():
     # 67208's fine level sent j to the host for nothing, +10%).
     m = _level_peak(48, 32, 64, 48, 3000)
     assert max(m["transients"], key=m["transients"].get) == "prior"
+    _assert_the_plan_is_the_peak(m)
+
+
+@pytest.mark.gpu
+@pytest.mark.fresh_gpu
+def test_a_level_started_from_a_coarser_levels_volume_plans_its_peak_the_same_way():
+    # The level upsamples the coarser level's volume into its own start volume, a program
+    # compiled into it whose temporaries the plan counts; the coarse volume is the caller's
+    # and alive throughout, so nothing the setup measured is freed before the peak.
+    m = _level_peak(192, 128, 256, 160, 480, stage="fine")
+    assert m["transients"]["start"] > 0
     _assert_the_plan_is_the_peak(m)
 
 

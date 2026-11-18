@@ -72,9 +72,15 @@ def _by_slice(update):
 class _Volumes:
     """Elementwise updates of a level's volumes, each compiled into the volume passed first."""
 
-    start = _into(  # zero, or the start x0 clipped at zero
-        lambda x, x0: jnp.broadcast_to(jnp.maximum(jnp.asarray(x0, jnp.float32), 0), x.shape)
-    )
+    @staticmethod
+    @_into
+    def start(x: jax.Array, x0: Any) -> jax.Array:
+        """Zero, or ``x0`` clipped at zero: a coarser level's volume, upsampled first."""
+        x0 = jnp.asarray(x0, jnp.float32)
+        if x0.shape not in ((), x.shape):
+            x0 = jax.image.resize(x0, x.shape, method="linear", antialias=False)
+        return jnp.broadcast_to(jnp.maximum(x0, 0), x.shape)
+
     observed_only = _into(lambda x, observed: jnp.where(observed, x, 0))
     damping = _into(lambda _out, dd: jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4))
     free = _into(lambda _out, x, gx: (x > 0) | (gx < 0))
@@ -272,23 +278,24 @@ class _Level:
 
         self._schur = schur
 
-    def place(self, y, precision, placement=None, *, start=False):
+    def place(self, y, precision, placement=None, *, x0=None):
         """Allocate the level's volumes and place and allocate its stacks (``_stacks``).
 
         Beside them the plan keeps the largest transient free: the temporaries of the Schur
-        solve, of the motion prior's factor, or, when the level starts from zero
-        (``start``), of the start's Gram of the shared images, each from its compile here
-        (the calls later reuse it); and the one chunk it lands in, which the allocator can
-        hand out whole up to twice the request when that wastes under 128 MiB. Returns the
-        level's storage, which the caller closes.
+        solve, of the motion prior's factor, and of the start (with ``x0`` None, the Gram of
+        the shared images FISTA starts from; otherwise ``x0`` brought to the level's shape),
+        each from its compile here (the calls later reuse it); and the one chunk it lands
+        in, which the allocator can hand out whole up to twice the request when that wastes
+        under 128 MiB. Returns the level's storage, which the caller closes.
         """
         ops, prior = self.ops, self.prior
         specs = ops.stack_specs(precision)
         shapes = self._schur_shapes(specs, precision is not None)
         self.transients = {"schur": temporaries(self._schur, *shapes), "prior": prior.temporaries()}
-        if start:
-            images = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
-            self.transients["start"] = temporaries(_shared_gram, images)
+        start = (_shared_gram, jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32))
+        if x0 is not None:  # a coarser level's volume, brought to this level's shape
+            start = (_Volumes.start, jax.ShapeDtypeStruct(ops.shape, jnp.float32), x0)
+        self.transients["start"] = temporaries(*start)
         reserve = transient_reserve(self.transients)
         volumes = level_volumes(ops, prior, self.lam)
         self.stacks = level_stacks(
@@ -371,7 +378,7 @@ class _Level:
         return self._write("x", run, *args)
 
     def start(self, c, x0, iterations):
-        """The level's first volume, from ``x0`` (None: FISTA from zero) at poses ``c``."""
+        """The level's first volume at poses ``c``, from ``x0`` (None: FISTA from zero)."""
         q = self.ops.pad_poses(c)
         lipschitz, observed = self.ops.sensitivity(q, self.stacks["free"])
         self.stacks.update([("free", observed)])
@@ -673,7 +680,7 @@ def solve(
         else prior.project_gauge(jnp.asarray(p0, jnp.float64).reshape(-1))
     )
     level = _Level(ops, prior, lam=weight, eps=eps, scales=scales, delta=delta, inner=budget.inner)
-    stacks = level.place(y, precision, placement, start=x0 is None)
+    stacks = level.place(y, precision, placement, x0=x0)
     try:
         _, c, record = _descend(level, c, x0, budget, pose_sigma, weight)
         x = stacks.take("x")  # the caller's now: the level's other storage is released

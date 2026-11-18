@@ -382,10 +382,6 @@ def fit_poses(
                     noise_sigma=cal["sigma"],
                     order=order,
                 )
-            if x is not None and x.shape != ops.shape:
-                x = jax.image.resize(x, ops.shape, method="linear", antialias=False).astype(
-                    jnp.float32
-                )
             x, p, y, record = solve(
                 y,
                 precision,
