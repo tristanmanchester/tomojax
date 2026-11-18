@@ -187,6 +187,31 @@ def test_a_levels_volumes_stay_where_its_setup_put_them(monkeypatch):
         assert level._schur._cache_size() == 1
 
 
+def test_at_a_schur_solve_the_volumes_alive_are_the_levels_own(monkeypatch):
+    # The second level starts from the first's volume and upsamples it into its own start
+    # volume: at every Schur solve the live arrays of a level's volume shape are exactly the
+    # volumes it owns. A copy resized outside the level and held beside them would be one no
+    # plan owns.
+    extras = []
+    schur = _solver._Level.schur
+
+    def solving(self, *args):
+        jax.block_until_ready(args)
+
+        def pointers(arrays):
+            same = (a for a in arrays if a.shape == self.ops.shape and a.dtype == np.float32)
+            return {a.unsafe_buffer_pointer() for a in same if not a.is_deleted()}
+
+        owned = pointers(jax.tree.leaves(self.stacks.volumes))
+        extras.append((self.ops.shape, pointers(jax.live_arrays()) - owned))
+        return schur(self, *args)
+
+    monkeypatch.setattr(_solver._Level, "schur", solving)
+    _aligned(("translations",), DEVICE)
+    assert len({shape for shape, _ in extras}) == 2
+    assert all(not extra for _, extra in extras), extras
+
+
 @pytest.mark.gpu
 def test_nothing_a_level_holds_beyond_its_arrays_grows_during_it(monkeypatch):
     # What the device holds that no array does (the allocator's rounding of its chunks) is
