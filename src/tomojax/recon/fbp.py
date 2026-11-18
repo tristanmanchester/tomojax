@@ -47,12 +47,12 @@ class FBPConfig:
     ``scale=None`` weights each view exactly for the scanned arc (see
     :func:`fbp`). A number instead weights every view by that constant and
     filters along u only, the convention before exact weights; ``pi / n`` gives
-    the uniform half-turn result. ``views_per_batch`` bounds the views held at
-    once by the host and explicit ``det_grid`` paths.
+    the uniform half-turn result. Cone beams take FDK's exact weights and
+    refuse a constant ``scale``.
 
     ``devices`` (one or several JAX devices) shares the views among them: each
     filters and backprojects its own, weighted for the whole scan, and the
-    volumes are summed on the first. Not with an explicit ``det_grid``.
+    volumes are summed on the first.
 
     Parameters
     ----------
@@ -60,8 +60,6 @@ class FBPConfig:
         Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
     scale : float | None, optional
         Constant angular weight per view, or None for geometry-derived weights.
-    views_per_batch : int, optional
-        Number of views processed together to bound temporary storage. Default is 1.
     backend : Literal['auto', 'jax', 'cuda'], optional
         Backprojection backend: "auto", "jax" or "cuda". Auto uses CUDA
         acceleration when available. Default is 'auto'.
@@ -72,7 +70,6 @@ class FBPConfig:
 
     filter: str = "ramp"
     scale: float | None = None
-    views_per_batch: int = 1
     backend: Literal["auto", "jax", "cuda"] = "auto"
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
@@ -200,9 +197,10 @@ def _filter_views(
     row_ramp = jnp.abs(t_v) <= 1e-6 * jnp.abs(t_u)
     window = spectrum / jnp.maximum(jnp.abs(fu[0, 0]), spectrum[0])
     # A rolled detector needs the ramp along a u-v diagonal; keep the finite-kernel DC term.
-    oblique = jnp.where(
-        (fu == 0) & (fv == 0), jnp.hypot(t_u, t_v) * spectrum[0], jnp.abs(along) * window
-    )
+    # Its window (Hann, Shepp-Logan) follows the frequency along that ramp, not along u.
+    length = jnp.hypot(t_u, t_v)
+    along_window = jnp.interp(jnp.abs(along) / jnp.maximum(length, 1e-30), fu[0, 0], window)
+    oblique = jnp.where((fu == 0) & (fv == 0), length * spectrum[0], jnp.abs(along) * along_window)
     ramp = jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique)
     filtered = jnp.fft.irfft2(transformed * (ramp * weight / count), s=(n_v, n_u))
     return filtered[:, : detector.nv, : detector.nu]
@@ -542,84 +540,59 @@ def supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
     return abs(first - round(first)) + (grid.nz - 1) * abs(step - round(step)) <= tol
 
 
-def run_parallel_fbp_direct_cuda(
-    T_all: jnp.ndarray,
-    proj: jnp.ndarray,
-    *,
-    grid: Grid,
-    detector: Detector,
-    filter: str,
-) -> jnp.ndarray:
-    """Run unscaled z-parallel FBP, retaining filtered tails through the volume.
-
-    Parameters
-    ----------
-    T_all : array-like
-        Object-to-world rigid poses of shape ``(views, 4, 4)`` for rotations about z.
-    proj : array-like
-        Line integrals of shape ``(views, nv, nu)``.
-    grid : Grid
-        Reconstruction grid with z slices aligned to detector rows.
-    detector : Detector
-        Canonical detector grid with rows aligned to voxel z slices.
-    filter : str
-        Frequency filter: "ramp", "shepp-logan" or "hann".
-
-    Returns
-    -------
-    jax.Array
-        Unscaled float32 backprojection of shape ``(nz, ny, nx)``. Angular
-        quadrature weights have not been applied.
-
-    Raises
-    ------
-    ValueError
-        If shapes, poses or detector-row alignment are incompatible.
-    """
-    validate_grid(grid, "run_parallel_fbp_direct_cuda")
-    n_views, _, _ = validate_projection_stack(
-        proj, detector, context="run_parallel_fbp_direct_cuda"
-    )
-    validate_pose_stack(T_all, n_views, context="run_parallel_fbp_direct_cuda")
-    if not supports_parallel_fbp_z_integer(grid, detector):
-        raise ValueError("CUDA integer-row FBP requires detector rows aligned with voxel z-slices")
-    poses = np.asarray(T_all)
-    if not (
-        np.allclose(poses[:, 2, :], [0, 0, 1, 0], atol=1e-7, rtol=0)
-        and np.allclose(poses[:, :2, 2], 0, atol=1e-7, rtol=0)
-    ):
-        raise ValueError("CUDA integer-row FBP requires z-axis rotations without z translation")
-    ox, oy, _ = grid_volume_origin(grid)
-    xx, yy = np.meshgrid([ox, ox + (grid.nx - 1) * grid.vx], [oy, oy + (grid.ny - 1) * grid.vy])
-    coordinates = (
-        poses[:, 0, 0, None] * xx.ravel() + poses[:, 0, 1, None] * yy.ravel() + poses[:, 0, 3, None]
-    )
-    required_radius = np.max(np.abs(coordinates - detector.center[0])) / detector.du
-    padding = max(0, math.ceil(required_radius - (detector.nu - 1) / 2))
-    detector = replace(detector, nu=detector.nu + 2 * padding)
-    ramp = rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
-    return _run_fbp_streamed(
-        jnp.asarray(T_all, dtype=jnp.float32),
-        jnp.asarray(proj, dtype=jnp.float32),
-        jnp.ones((n_views,), jnp.float32),
-        jnp.zeros((n_views, 6), jnp.float32),
-        ramp,
-        jnp.float32(0),
-        grid=grid,
-        detector=detector,
-        backend="cuda",
-        batch_size=_parallel_filter_batch_size(n_views, detector.nv, 2 * (ramp.shape[0] - 1)),
-        z_mode="integer",
-        separable=True,
-    )
-
-
 def _can_use_direct_parallel_fbp(
     geometry: Geometry,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> bool:
     """Return true only for the built-in z-axis ``ParallelGeometry`` convention."""
     return type(geometry) is ParallelGeometry and det_grid is None
+
+
+def _lattice_motion(
+    detector: Detector, det_grid: tuple[jnp.ndarray, jnp.ndarray]
+) -> np.ndarray | None:
+    """The pose motion taking ``det_grid``'s rays to the canonical lattice's, None if equal.
+
+    Parallel rays run along lab y through detector-plane points (x, z). A
+    lattice ``o + R q`` (q the centred pixel offsets, R a rotation) sees the
+    object the canonical lattice ``c + q`` sees after moving it by
+    ``p -> c + R.T (p - o)`` in that plane.
+    """
+    nu, nv = detector.nu, detector.nv
+    x, z = (np.asarray(a, np.float64).reshape(nv, nu) for a in det_grid)
+    origin = np.array([x.mean(), z.mean()])
+    qu = (np.arange(nu) - (nu - 1) / 2) * detector.du
+    qv = (np.arange(nv) - (nv - 1) / 2) * detector.dv
+    # Lattice axes from the extreme pixels; a single row or column is completed
+    # by the rotation's right-handed perpendicular.
+    span_u = np.array([1.0, 0.0])
+    if nu > 1:
+        span_u = np.array([x[0, -1] - x[0, 0], z[0, -1] - z[0, 0]]) / (qu[-1] - qu[0])
+    if nv > 1:
+        span_v = np.array([x[-1, 0] - x[0, 0], z[-1, 0] - z[0, 0]]) / (qv[-1] - qv[0])
+        if nu == 1:
+            span_u = np.array([span_v[1], -span_v[0]])
+    else:
+        span_v = np.array([-span_u[1], span_u[0]])
+    rotation = np.column_stack([span_u, span_v])
+    fitted_x = origin[0] + rotation[0, 0] * qu[None, :] + rotation[0, 1] * qv[:, None]
+    fitted_z = origin[1] + rotation[1, 0] * qu[None, :] + rotation[1, 1] * qv[:, None]
+    extent = float(np.max(np.abs(np.r_[x.ravel(), z.ravel()]))) + max(detector.du, detector.dv)
+    residual = max(np.max(np.abs(x - fitted_x)), np.max(np.abs(z - fitted_z)))
+    rigid = np.allclose(rotation.T @ rotation, np.eye(2), atol=1e-5) and np.linalg.det(rotation) > 0
+    if residual > 1e-5 * extent or not rigid:
+        raise ValueError(
+            "fbp: det_grid must be the detector lattice rotated and shifted in its plane"
+        )
+    centre = np.asarray(detector.center, np.float64)
+    if np.allclose(rotation, np.eye(2), atol=1e-7) and np.allclose(
+        origin, centre, atol=1e-6 * extent
+    ):
+        return None
+    motion = np.eye(4)
+    motion[np.ix_([0, 2], [0, 2])] = rotation.T
+    motion[[0, 2], 3] = centre - rotation.T @ origin
+    return motion.astype(np.float32)
 
 
 def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
@@ -753,11 +726,15 @@ def _plan(
     cfg: FBPConfig,
     *,
     cuda: bool,
+    moved: bool = False,
 ) -> _Plan:
-    """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan."""
+    """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan.
+
+    ``moved`` poses carry a detector-plane motion, so the z axis is not the axis.
+    """
     n_views = int(poses.shape[0])
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
-    parallel = _can_use_direct_parallel_fbp(geometry, None)
+    parallel = _can_use_direct_parallel_fbp(geometry, None) and not moved
     if parallel:
         filter_detector = _parallel_filter_detector(grid, detector)
     else:
@@ -808,8 +785,9 @@ def fbp(
     Backprojection is voxel-driven with bilinear detector interpolation and
     retains filtered tails through the full output volume, assuming zero raw
     attenuation beyond the measured detector. This is not a correction for
-    truncated objects. An explicit ``det_grid`` instead uses the ray-model
-    adjoint with uniform weights.
+    truncated objects. An explicit ``det_grid`` must be the detector lattice
+    rotated and shifted in its plane (a detector roll); its rays are the
+    canonical lattice's under a detector-plane motion of the poses.
 
     Parameters
     ----------
@@ -857,16 +835,10 @@ def fbp(
         # Cone beams: FDK, with the same filter and the CUDA kernel for "cuda".
         if det_grid is not None:
             raise ValueError("fbp: cone-beam geometry needs the canonical detector grid")
-        from tomojax.recon.fdk import FDKConfig, fdk
+        from tomojax.recon._fbp_storage import fdk_config
+        from tomojax.recon.fdk import fdk
 
-        backend = cfg.backend
-        return fdk(
-            geometry,
-            grid,
-            detector,
-            projections,
-            config=FDKConfig(filter=cfg.filter, backend=backend, devices=cfg.devices),
-        )
+        return fdk(geometry, grid, detector, projections, config=fdk_config(cfg))
 
     validate_fbp_geometry(geometry, grid, detector, cfg.scale, "fbp")
     n_views, _, _ = validate_projection_stack(
@@ -877,24 +849,22 @@ def fbp(
     )
     validate_detector_grid(det_grid, detector, context="fbp det_grid")
     # Host arrays (including memmaps) stream through the device batch by batch.
-    on_host = not isinstance(projections, jax.Array) and det_grid is None
+    on_host = not isinstance(projections, jax.Array)
     proj = projections if on_host else jnp.asarray(projections, dtype=jnp.float32)
     # Precompute poses once
     T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="fbp geometry")
-    if det_grid is not None:
-        if cfg.devices is not None:
-            raise ValueError("fbp: an explicit det_grid cannot be shared among devices")
-        from ._fbp_detector_grid import fbp_on_detector_grid
-
-        return fbp_on_detector_grid(T_all, proj, grid, detector, cfg, det_grid)
+    motion = None if det_grid is None else _lattice_motion(detector, det_grid)
+    if motion is not None:
+        # The same rays through the canonical lattice: one geometry-aware method.
+        T_all = jnp.matmul(jnp.asarray(motion), T_all, precision=jax.lax.Precision.HIGHEST)
     cuda = all(
         device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
         for device in (T_all.devices() if on_host else proj.devices())
     )
     if cfg.backend == "cuda" and not cuda:
         raise ValueError("CUDA FBP requires CUDA arrays")
-    plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda)
+    plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda, moved=motion is not None)
     split = view_split(cfg.devices, n_views)
     whole = range(n_views)
     acc = plan.backprojected(None, whole) if split is None else split.summed(plan.backprojected)

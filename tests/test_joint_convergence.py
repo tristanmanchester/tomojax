@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.alignment._joint import _solver  # check-public-imports: allow-private
+from tomojax.alignment._joint import _common, _solver  # check-public-imports: allow-private
 
 
 @pytest.mark.parametrize(("a", "beta"), [(1.0, 0.0), (0.25, 0.5)])
@@ -15,7 +15,10 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     n = 60
     image, state = jnp.ones(1), jnp.zeros(2 * n)
     level = object.__new__(_solver._Level)
-    level.lam = 0
+    level.lam, level.precision = 0, None
+    # The level's volumes as one-voxel arrays; the step holds the solution the Schur solve wrote.
+    level.stacks = {name: jnp.ones(1) for name in ("damp", "rhs", "invdiag", "step")}
+    level.stacks |= {"r": None, "factor": None, "free": jnp.ones(1, bool)}
     level.ops = SimpleNamespace(
         prepare=lambda value: value,
         pad_poses=lambda value: value,
@@ -39,13 +42,17 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     )
     level.norm = jnp.vdot
     level.energy = lambda value: jnp.vdot(value, value)
-    level.trial = lambda x, c, dx, dc, _, step, fraction: (
+    level.trial = lambda x, c, dx, dc, _, _held, step, fraction: (
         99.0,
         x + step * dx,
         c + step * fraction * dc,
     )
     monkeypatch.setattr(_solver, "_line_search", lambda trial, *_: (a, beta, trial(a, beta)))
     # Identity pose normal: back-substitution proposes (-3, -4) at every view.
+    # The views' shared offset and ramp contribute nothing here.
+    shared = _common.Common(
+        jnp.eye(2), jnp.eye(2), jnp.zeros((2, 1)), jnp.zeros((2, 2 * n)), jnp.zeros(2)
+    )
     linear = (
         -jnp.ones(1),
         jnp.ones(1),
@@ -53,6 +60,8 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
         None,
         jnp.tile(jnp.array([3.0, 4.0]), n),
         jnp.broadcast_to(jnp.eye(2), (n, 2, 2)),
+        None,
+        shared,
     )
     result = level.step(image, state, linear, 0.001, 0.0, 100.0)
     assert result is not None
@@ -61,40 +70,60 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
 
 
 @pytest.mark.parametrize(
-    ("proposals", "expected_steps", "status", "forced_damping"),
+    ("proposals", "expected_steps", "status", "forced_damping", "undamped"),
     [
-        ([1.0] * 8, 8, "budget_exhausted", None),
-        ([0.003] * 8, 8, "budget_exhausted", None),
-        ([0.001] * 8, 4, "converged", None),
-        ([1.0, 1.0, 1.0, 0.001, 0.001, 1.0], 5, "converged", None),
-        ([0.001, 0.001, 1.0, 0.001, 1.0, 0.001, 0.001, 1.0], 7, "converged", None),
-        ([0.001] * 2, 2, "budget_exhausted", None),
+        ([1.0] * 8, 8, "step_budget_reached", None, None),
+        ([0.01] * 8, 8, "step_budget_reached", None, None),
+        ([0.001] * 8, 4, "pose_steps_below_tolerance", None, None),
+        ([1.0, 1.0, 1.0, 0.001, 0.001, 1.0], 5, "pose_steps_below_tolerance", None, None),
+        (
+            [0.001, 0.001, 1.0, 0.001, 1.0, 0.001, 0.001, 1.0],
+            7,
+            "pose_steps_below_tolerance",
+            None,
+            None,
+        ),
+        ([0.001] * 2, 2, "step_budget_reached", None, None),
+        # Damped harder than the initial damping, a small proposal is checked again at the
+        # initial damping: damping can hide a step the fit still wants to take...
         pytest.param(
-            [0.001] * 8,
-            8,
-            "budget_exhausted",
-            1.0,
-            id="heavy_damping_does_not_converge",
+            [0.001] * 8, 8, "step_budget_reached", 1.0, 0.05, id="damping_hides_a_large_step"
+        ),
+        # ...and cannot stop a fit whose poses have settled from being called converged.
+        pytest.param(
+            [0.001] * 8, 4, "pose_steps_below_tolerance", 1.0, 0.004, id="settled_under_damping"
         ),
     ],
 )
-def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
-    monkeypatch, proposals, expected_steps, status, forced_damping
+def test_stopping_requires_two_small_proposals_at_the_initial_damping(
+    monkeypatch, proposals, expected_steps, status, forced_damping, undamped
 ):
     remaining = iter(proposals)
+    rechecked = []
 
     class Level:
-        def __init__(self, ops, *_args, **_kwargs):
-            self.ops, self.y, self.gain = ops, np.zeros((60, 1, 1)), np.ones(60)
+        def __init__(self, ops, prior, *_args, **_kwargs):
+            self.ops, self.prior, self.y = ops, prior, np.zeros((60, 1, 1))
+            self.transients = {}
+
+        def place(self, *_args, **_kwargs):
+            return SimpleNamespace(close=lambda: None, record=dict, take=lambda _: None)
+
+        def start(self, _state, image, _iterations):
+            return image
+
+        def accept(self, _image, _previous):
+            pass
 
         def linearize(self, _state, _image):
             return self.ops.linearize()
 
-        def refit(self, state, image, _sums):
-            return False, self.linearize(state, image)
-
         def image_penalty(self, _image):
             return 0.0
+
+        def proposal(self, _image, _state, _linear, lm, _weight):
+            rechecked.append(lm)
+            return undamped
 
         def step(self, image, state, _linear, lm, _weight, objective):
             # Image improvement stays large, while the line search holds all poses.
@@ -116,7 +145,7 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
         pad_images=lambda value: value,
         pad_precision=lambda value: value,
         pad_poses=lambda value: value,
-        sensitivity=lambda _: (1.0, np.ones(1, bool)),
+        parameters=SimpleNamespace(local=()),  # no per-view columns: the photon scale stands
         linearize=lambda *_: (
             jnp.zeros(1),
             jnp.ones(1),
@@ -126,10 +155,8 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
             jnp.ones((60, 1, 1)),
             100.0,
             (60, 0),
-            # Normal equations whose solution is gain one and no background.
-            np.concatenate(
-                [np.tile(np.eye(3), (60, 1, 1)), np.tile([[1.0], [0], [0]], (60, 1, 1))], -1
-            ),
+            None,
+            None,
         ),
     )
     prior = SimpleNamespace(size=60, value=lambda *_: 0.0)
@@ -156,6 +183,10 @@ def test_stopping_requires_two_small_raw_proposals_after_the_minimum_iterations(
     assert all(step["pose_step_rms"] == 0 for step in record["steps"])
     if forced_damping is not None:
         assert all(step["lm"] == forced_damping for step in record["steps"])
+        # The recheck is made at the initial damping, once per small damped proposal.
+        assert rechecked == [_solver.Budget(1, 1).lm_initial] * expected_steps
+    else:
+        assert rechecked == []  # damping at its initial value: the step's own proposal decides
     np.testing.assert_array_equal(
         [step["proposed_pose_step_rms"] for step in record["steps"]],
         proposals[:expected_steps],

@@ -62,7 +62,6 @@ def _supports_z_integer4_for_stack(
     if T_host.shape[0] == 0 or not np.isfinite(T_host).all():
         return False
 
-    tol = 1e-5
     # A small tilt is not necessarily a small error in voxel coordinates: long
     # rays through thin slices amplify it. Built-in z-axis rotations have exact
     # zeros here. Use the generic kernel for any mixing of x/y into object z.
@@ -81,7 +80,10 @@ def _supports_z_integer4_for_stack(
     # A near-integer increment can drift by many tolerances on a tall detector.
     row_error = np.abs(iz0 - np.round(iz0))
     row_error += (detector.nv - 1) * np.abs(diz_dv - np.round(diz_dv))
-    return bool(np.all(row_error <= tol))
+    # The kernel snaps rows to integers while the transpose interpolates: allow
+    # only rows already integral to FP32 rounding, where snapping changes nothing.
+    reach = np.maximum(1.0, np.abs(iz0) + (detector.nv - 1) * np.abs(diz_dv))
+    return bool(np.all(row_error <= 4 * np.finfo(np.float32).eps * reach))
 
 
 def _supports_parallel_z_rotation_stack(

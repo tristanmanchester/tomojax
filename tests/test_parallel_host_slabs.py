@@ -1,6 +1,7 @@
 """Global-coordinate host slabs agree with the resident matched Joseph operator."""
 
 from importlib import import_module
+import tempfile
 
 import numpy as np
 import pytest
@@ -81,32 +82,32 @@ def test_parallel_host_cgls_matches_resident_with_penalties(monkeypatch, initial
 
 
 def test_automatic_disk_output_is_owned_and_explicit_output_is_preserved(monkeypatch, tmp_path):
-    from tomojax.backends import api as backends
+    from tomojax.core import host_volume as backends
 
     monkeypatch.setattr(backends, "host_available_memory_bytes", lambda: 1)
-    monkeypatch.setattr(arrays.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     data = np.ones((2, 3, 4), np.float32)
-    mapped = arrays.automatic_host_output(data, None, (5, 4, 3), 4, "test")
+    mapped = arrays.validate_host_arrays(data, None, (5, 4, 3), "test", copies=4)
     assert isinstance(mapped, np.memmap)
     assert not list(tmp_path.iterdir())
     mapped[2] = 7
     np.testing.assert_array_equal(mapped[2], 7)
     out = np.empty_like(mapped, subok=False)
-    assert arrays.automatic_host_output(data, out, out.shape, 4, "test") is out
+    assert arrays.validate_host_arrays(data, out, out.shape, "test", copies=4) is out
 
 
 def test_owned_unlinked_output_can_be_reused_with_mapped_input(monkeypatch, tmp_path):
-    import tomojax.backends.api as backends
+    from tomojax.core import host_volume as backends
 
     monkeypatch.setattr(backends, "host_available_memory_bytes", lambda: 1)
-    monkeypatch.setattr(arrays.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     data = np.memmap(tmp_path / "data", np.float32, "w+", shape=(2, 3, 4))
-    out = arrays.automatic_host_output(data, None, (5, 4, 3), 4, "test")
+    out = arrays.validate_host_arrays(data, None, (5, 4, 3), "test", copies=4)
     # Explicit outputs neither query memory nor initialize a host device.
     monkeypatch.setattr(backends, "host_available_memory_bytes", lambda: pytest.fail("probed"))
-    assert arrays.automatic_host_output(data, out, out.shape, 4, "test") is out
+    assert arrays.validate_host_arrays(data, out, out.shape, "test", copies=4) is out
     view = out.view()
-    assert arrays.automatic_host_output(data, view, view.shape, 4, "test") is view
+    assert arrays.validate_host_arrays(data, view, view.shape, "test", copies=4) is view
     import os
 
     from tomojax.core.host_volume import slab_file

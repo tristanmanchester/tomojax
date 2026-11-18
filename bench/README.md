@@ -56,6 +56,27 @@ The watch cases, spark-plug figures, K11 and PSI, equal-accuracy default runtime
 suites remain separate qualification gates. Do not infer those outcomes from a small analytic fit
 or from forward/transpose component timing.
 
+### Qualification matrix
+
+`qualify_alignment.py` runs every row twice, each in a fresh process: from the declared geometry,
+and from the true geometry, which must be a fixed point. Rows are the seven analytic cases in
+parallel, laminography and cone beam at two sizes (60 views of 48² on 24³, 180 views of 96² on
+48³), the two run-17 watch laminography cases (scored in native pixels), and the gVXR spark plug
+with roll, tilt and a 2-pixel centre offset. Each record holds the nominal error, the fitted error,
+the pose error after every outer step (local-only fits outside cone beam), cold seconds, peak GPU
+memory, level statuses, the largest CG relative residual per level, the first proposed pose step
+and the fitted calibration. Truth only renders and scores: the true
+geometry reaches the solver only as the second run's starting point.
+
+```bash
+.venv/bin/python bench/qualify_alignment.py --list
+.venv/bin/python bench/qualify_alignment.py --rows 'analytic/*/small' --output /tmp/qualify.jsonl
+.venv/bin/python bench/qualify_alignment.py --row watch/rotations --start truth
+```
+
+The watch and plug rows read their data from the lab board (`PACK` at the top of the script).
+Keep the JSON lines out of the repository.
+
 ## Joseph first-order differentiation
 
 ```bash
@@ -98,7 +119,7 @@ accuracy is established by the comparison above and the numerical tests.
 Use Python 3.12 on Linux with a CUDA-capable NVIDIA GPU:
 
 ```bash
-uv sync --locked --extra cuda12 --dev --group benchmark
+uv sync --locked --extra cuda12 --dev --group benchmark --group examples
 uv run --no-sync python bench/compare_projectors.py \
   --sizes 32,64,128,256 --views 60 --repeats 7 \
   --geometries parallel,lamino,anisotropic --libraries tomojax,astra
@@ -198,10 +219,6 @@ XLA_PYTHON_CLIENT_PREALLOCATE=false compute-sanitizer \
   tests/test_cuda_numerics.py tests/test_projector_adjoint.py tests/test_fbp_accuracy.py
 ```
 
-The existing `fista_projection_benchmark.py` exercises weighted loss/gradient and
-FISTA integration variants. It is a separate stochastic diagnostic; its summary
-must be inspected for failures and fallback paths.
-
 The batched adjoint memory and timing experiment is also reproducible without
 checking out an older implementation. It compares the current shared accumulator
 with `vmap` of the single-view adjoint followed by reduction:
@@ -245,7 +262,8 @@ the `gaussian-v1` suite and its acceptance thresholds are defined in
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py \
   --sizes 64 128 256 --views 180 --repeats 7 \
-  --methods tomojax_fista tomojax_cgls_jax tomojax_cgls_cuda astra_cgls astra_sirt tigre_cgls
+  --methods tomojax_fista tomojax_cgls_jax tomojax_cgls_cuda astra_cgls astra_sirt tigre_cgls \
+  --output bench/results/gaussian-quality.json
 ```
 
 Each method/case runs in an isolated process using identical host inputs. Data
@@ -292,10 +310,12 @@ datasets to check its limitations without changing the policy:
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py \
   --suite structured-v1 --sizes 64 128 256 --batch 180 --repeats 7 \
-  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls
+  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls \
+  --output bench/results/structured-quality.json
 uv run --no-sync python bench/compare_reconstructions.py \
   --suite structured-noisy-v1 --sizes 64 128 256 --batch 180 --repeats 7 \
-  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls
+  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls \
+  --output bench/results/structured-noisy-quality.json
 ```
 
 These suites use analytic chord lengths through five fixed ellipsoids. The noisy
@@ -340,7 +360,8 @@ accuracy and complete reconstruction quality, not just kernel throughput:
 uv run --no-sync python bench/operator_models.py --sizes 64 128 256 --repeats 9
 uv run --no-sync python bench/compare_reconstructions.py --sizes 64 128 \
   --batch 180 --repeats 7 --suite structured-v1 \
-  --methods tomojax_joseph_cgls_cuda tomojax_multires_joseph_cgls_cuda astra_cgls
+  --methods tomojax_joseph_cgls_cuda tomojax_multires_joseph_cgls_cuda astra_cgls \
+  --output bench/results/joseph-structured-quality.json
 ```
 
 The resident operator comparison uses dynamic poses and includes coefficient
@@ -714,7 +735,8 @@ The same fixed-quality runner also supports single-pass methods:
 ```bash
 uv run --no-sync python bench/compare_reconstructions.py --sizes 64 128 \
   --batch 180 --repeats 7 --suite structured-v1 \
-  --methods tomojax_fbp_cuda astra_fbp3d_cupy astra_fbp2d tigre_fbp
+  --methods tomojax_fbp_cuda astra_fbp3d_cupy astra_fbp2d tigre_fbp \
+  --output bench/results/direct-structured-quality.json
 ```
 
 `astra_fbp3d_cupy` combines a CuPy/cuFFT discrete Ram-Lak filter with ASTRA's

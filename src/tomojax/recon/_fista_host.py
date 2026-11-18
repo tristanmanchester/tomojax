@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from tomojax.core.host_volume import host_volume, scratch_directory
+from tomojax.core.operator_norm import bounds_settled
 
 from ._cuda_tv import proximal_host
 from ._noise_probe import gaussian_probe
@@ -22,14 +23,14 @@ class HostFista:
     def __init__(
         self, problem: Any, config: Any, *, metric, noise_scale=None, initial=None, out=None
     ) -> None:
-        from ._host_arrays import automatic_host_output
+        from ._host_arrays import validate_host_arrays
 
         self.problem, self.cfg, self.metric = problem, config, metric
         self.noise_scale = noise_scale
         self.plan, self.xp = problem.plan, problem.engine.xp
         grid = self.plan.grid
         shape = (grid.nz, grid.ny, grid.nx)
-        x = automatic_host_output(problem.data, out, shape, 3, "fista_tv")
+        x = validate_host_arrays(problem.data, out, shape, "fista_tv", copies=3)
         directory = scratch_directory(x)
         arrays = [x, host_volume(shape, directory), host_volume(shape, directory)]
         self.X, self.Z, self.G = [problem.volume(array) for array in arrays]
@@ -120,12 +121,18 @@ class HostFista:
 
         def finish(batch, first, stop, rows):
             # Draw and center the FULL detector before selecting a row window.
-            # DLPack shares the one-batch buffer with the native transpose.
-            probe = draw(jnp.asarray(batch.views), (detector.nv, detector.nu))
-            native = self.xp.from_dlpack(probe)
-            rows[0][...] = native[:, first:stop]
-            # Finish the borrowed-buffer copy before JAX can reclaim the draw.
-            self.xp.cuda.get_current_stream().synchronize()
+            # Each view's draw is seeded by its index, so drawing views in chunks
+            # no larger than the planned row window bounds the full-view probe.
+            views = np.asarray(batch.views)
+            chunk = max(1, rows[0].nbytes // (4 * detector.nv * detector.nu))
+            for start in range(0, len(views), chunk):
+                probe = draw(jnp.asarray(views[start : start + chunk]), (detector.nv, detector.nu))
+                # DLPack shares the draw with the native transpose's buffer.
+                native = self.xp.from_dlpack(probe)
+                rows[0][start : start + chunk] = native[:, first:stop]
+                # Finish the borrowed-buffer copy before JAX can reclaim the draw.
+                self.xp.cuda.get_current_stream().synchronize()
+                del probe, native
 
         def sink(_k, accumulated, _sources):
             nonlocal energy
@@ -155,19 +162,24 @@ class HostFista:
                 self.X.put(z0, z1, start)
             del start
             power, normal = self.X, self.Z
-            for _ in range(max(1, self.cfg.power_iterations)):
+            engine, iterations = self.problem.engine, max(1, self.cfg.power_iterations)
+            steps, upper = 0, math.inf
+            # The step-safe Collatz bound, once it meets the power estimate (see
+            # tomojax.core.operator_norm.normal_upper_bound).
+            while not bounds_settled(steps, iterations, math.sqrt(norm), upper):
                 for k in range(self.plan.count):
                     z0, z1 = self.plan.planes(k)
                     power.put(z0, z1, power.view(z0, z1) / np.float32(math.sqrt(norm) or 1))
                 self.apply(power, normal)
-                norm = 0.0
+                norm = upper = 0.0
                 for k in range(self.plan.count):
                     z0, z1 = self.plan.planes(k)
                     part = normal.view(z0, z1)
-                    norm += self.problem.engine.norm2(part)
+                    norm += engine.norm2(part)
+                    upper = max(upper, engine.max_ratio(part, power.view(z0, z1)))
                 del part
-                power, normal = normal, power
-            limit = math.sqrt(norm) or 1e-6
+                power, normal, steps = normal, power, steps + 1
+            limit = upper * (1 + 8 * float(np.finfo(np.float32).eps)) or 1e-6
         for k in range(self.plan.count):
             z0, z1 = self.plan.planes(k)
             part = (
@@ -312,10 +324,8 @@ def solve_on_host(
         need += 4 * 4 * grid.nx * grid.ny * grid.nz if scratch is None else scratch
     if out is None and (free is None or need <= 0.85 * free):
         return None
-    if cfg.support is not None or cfg.regulariser != "tv" or cfg.initial_epochs:
-        raise ValueError(
-            "fista_tv: host volumes require TV, no support mask or ordered initialization"
-        )
+    if cfg.support is not None or cfg.regulariser != "tv":
+        raise ValueError("fista_tv: host volumes require TV and no support mask")
     from ._parallel_slabs import parallel_problem
 
     data = host_projections(projections, "fista_tv")

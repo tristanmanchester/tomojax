@@ -2,15 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from functools import cache
 import logging
 import math
 import os
-from pathlib import Path
-import re
 from typing import TYPE_CHECKING, cast
 
-from tomojax.backends._subprocesses import check_output_resolved_command
+from tomojax.core.host_volume import host_available_memory_bytes
 
 if TYPE_CHECKING:
     from tomojax._typed_arrays import Device
@@ -58,85 +55,6 @@ def _normalized_safety_fraction(safety_frac: float) -> float:
     return min(max(frac, 1e-6), 1.0)
 
 
-_OWN_CGROUP, _CGROUP_MOUNTS = Path("/proc/self/cgroup"), Path("/proc/self/mountinfo")
-
-
-def _cgroup_room_bytes() -> int | None:
-    """Conservative no-reclaim room under visible cgroup v2 limits.
-
-    ``memory.high`` is a throttle boundary, not a hard allocation limit. Current
-    usage includes reclaimable page cache, so this can underestimate capacity.
-    Hidden ancestors cannot be measured from inside a cgroup namespace.
-    """
-    try:
-        paths = [
-            line[3:] for line in _OWN_CGROUP.read_text().splitlines() if line.startswith("0::")
-        ]
-        mounts = _CGROUP_MOUNTS.read_text().splitlines()
-    except OSError:
-        return None
-    if len(paths) != 1 or not paths[0].startswith("/") or ".." in Path(paths[0]).parts:
-        return None
-    own, rooms = Path(paths[0]), []
-    for entry in mounts:
-        header, separator, filesystem = entry.partition(" - ")
-        fields = header.split()
-        if not separator or not filesystem.startswith("cgroup2 ") or len(fields) < 5:
-            continue
-        root, mount = [
-            Path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), text)) for text in fields[3:5]
-        ]
-        if not own.is_relative_to(root) or not mount.is_absolute():
-            continue
-        # Every level from the process's group up to the mount has its own limits.
-        relative = own.relative_to(root)
-        group = mount / relative
-        for level in (group, *group.parents[: len(relative.parts)]):
-            for limit in ("memory.high", "memory.max"):
-                try:
-                    text = (level / limit).read_text().strip()
-                    if text != "max":
-                        used = int((level / "memory.current").read_text())
-                        rooms.append(max(0, int(text) - used))
-                except (OSError, ValueError):
-                    pass
-    return min(rooms, default=None)
-
-
-def _system_available_bytes() -> int | None:
-    """The machine's available memory, including Linux's reclaimable page cache."""
-    try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
-            if line.startswith("MemAvailable:"):
-                return int(line.split()[1]) * 1024
-    except (OSError, ValueError):
-        pass
-    try:
-        names = getattr(os, "sysconf_names", {})
-        if "SC_AVPHYS_PAGES" not in names or "SC_PAGE_SIZE" not in names:
-            return None
-        avail_pages = int(os.sysconf("SC_AVPHYS_PAGES"))
-        page_size = int(os.sysconf("SC_PAGE_SIZE"))
-        if avail_pages <= 0 or page_size <= 0:
-            return None
-        return avail_pages * page_size
-    except (AttributeError, OSError, TypeError, ValueError):
-        return None
-
-
-def host_available_memory_bytes() -> int | None:
-    """Return available host bytes, bounded by any Linux cgroup memory limit.
-
-    Returns
-    -------
-    int or None
-        Available host memory, including reclaimable page cache, or None when
-        neither the operating system nor a cgroup reports capacity.
-    """
-    known = [n for n in (_system_available_bytes(), _cgroup_room_bytes()) if n is not None]
-    return min(known, default=None)
-
-
 def _free_bytes_from_memory_info(info: object) -> int | None:
     """Extract free bytes from JAX/XLA memory-info shapes."""
     if isinstance(info, Mapping):
@@ -176,7 +94,14 @@ def _cuda_free_memory_bytes(device: Device) -> int | None:
 
 
 def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
-    """Best-effort query of free memory (bytes) on ``device``.
+    """Best-effort query of free memory (bytes) on ``device``: an upper bound on what fits.
+
+    Under XLA's pool this is the pool's limit less the bytes in use, the total room. It
+    cannot see fragmentation: an array needs one contiguous block, and once use is spread
+    over the pool's regions the largest block can be far smaller (K11 67208's alignment
+    failed a 1.29 GiB allocation with 2.95 GiB "free" and a 1.0 GiB largest block). Nor do
+    the allocator's statistics give the true room, because the pool returns wholly free
+    regions to the driver and retries; only an allocation says whether an array fits.
 
     - ``device`` defaults to ``jax.default_device``, else the first GPU.
     - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
@@ -350,103 +275,3 @@ def estimate_views_per_batch_info(
         fallback_used=False,
         fallback_reason=None,
     )
-
-
-def default_gather_dtype() -> str:
-    """Choose a default gather dtype based on the active JAX backend.
-
-    Returns "bf16" when the active accelerator supports bfloat16 gathers,
-    falls back to "fp16" on older GPUs that support float16 but not efficient
-    bfloat16, and otherwise returns "fp32". CPU or backend-detection failures
-    also fall back to "fp32".
-    """
-    backend = _current_backend()
-    if isinstance(backend, str) and backend.lower() in ("gpu", "tpu"):
-        if backend.lower() == "tpu":
-            return "bf16"
-        cc = _gpu_compute_capability()
-        if cc and cc < (8, 0):
-            if _device_supports_dtype("float16"):
-                return "fp16"
-            return "fp32"
-        # GPU: prefer bf16 if the device JIT supports it, else fp16/fp32.
-        if _device_supports_dtype("bfloat16"):
-            return "bf16"
-        if _device_supports_dtype("float16"):
-            return "fp16"
-    return "fp32"
-
-
-@cache
-def _device_supports_dtype(dtype_name: str) -> bool:
-    """Heuristic check whether the active accelerator can JIT kernels with `dtype`."""
-    try:
-        import jax  # type: ignore
-        import jax.numpy as jnp  # type: ignore
-    except Exception as exc:
-        LOG.debug(
-            "Could not import JAX while probing %s support; using fp32 fallback: %s",
-            dtype_name,
-            exc,
-        )
-        return False
-    try:
-        devs = jax.devices("gpu")
-    except Exception as exc:
-        LOG.debug(
-            "Could not list GPU devices while probing %s support; using fp32 fallback: %s",
-            dtype_name,
-            exc,
-        )
-        return False
-    if not devs:
-        return False
-    if devs[0].platform != "gpu":
-        return False
-    try:
-        # Simple kernel to trigger compilation in the requested dtype.
-        fn = jax.jit(lambda x: x + x)
-        dtype = getattr(jnp, dtype_name)
-        arr = jnp.ones((1,), dtype=dtype)
-        fn(arr).block_until_ready()
-        return True
-    except Exception as exc:
-        LOG.debug(
-            "JIT probe for %s support failed; using lower-precision fallback chain: %s",
-            dtype_name,
-            exc,
-        )
-        return False
-
-
-@cache
-def _gpu_compute_capability() -> tuple[int, int] | None:
-    """Return (major, minor) compute capability for the first CUDA device, if available."""
-    try:
-        output = check_output_resolved_command(  # nosec B603,B607
-            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
-            stderr=-3,
-            text=True,
-        )
-        first_line = output.strip().splitlines()[0]
-        parts = first_line.replace(" ", "").split(".")
-        if len(parts) >= 2:
-            major, minor = int(parts[0]), int(parts[1])
-            return major, minor
-    except Exception as exc:
-        LOG.debug("CUDA compute capability probe failed; using dtype JIT probe: %s", exc)
-    return None
-
-
-def _current_backend() -> str | None:
-    """Best-effort helper to query the active JAX backend name."""
-    try:
-        import jax  # type: ignore
-
-        backend = getattr(jax, "default_backend", lambda: None)()
-        if backend:
-            return backend
-        return os.environ.get("JAX_PLATFORM_NAME")
-    except Exception as exc:
-        LOG.debug("JAX backend probe failed; using fp32 gather default: %s", exc)
-        return None

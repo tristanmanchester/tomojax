@@ -17,12 +17,12 @@ def calibration_issues(
     issues = []
     if flats is None and white_level is None:
         issues.append(
-            "No flat fields: pass flats=... (frames or one level) to tomojax.load_frames, "
+            "No flat fields: pass flats=... (frames or one level), "
             "or use tomojax preprocess --flats"
         )
     if darks is None:
         issues.append(
-            "No dark fields: pass darks=... to tomojax.load_frames, "
+            "No dark fields: pass darks=..., "
             "or use tomojax preprocess --darks "
             "(zero only for counts already dark-corrected)"
         )

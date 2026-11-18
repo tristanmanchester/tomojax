@@ -11,7 +11,6 @@ grids, and per-view 4x4 `T_all`, then projects with
 
 ## Public API
 
-- `project_parallel_reference`
 - `project_parallel_reference_from_input`
 - `ProjectionArrayGeometryInput`
 - `ProjectionOperatorName`

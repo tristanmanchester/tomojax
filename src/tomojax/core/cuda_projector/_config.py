@@ -139,20 +139,14 @@ def _validate_cached_volume(
     state: CudaProjectorTraversalMetadata, volume: jnp.ndarray, *, context: str
 ) -> None:
     """Check volume shape and precision against prepared traversal metadata."""
-    nx, ny, nz = validate_volume(
+    # validate_volume raises unless the volume has the state's shape.
+    validate_volume(
         volume,
         Grid(nx=state.nx, ny=state.ny, nz=state.nz, vx=1.0, vy=1.0, vz=1.0),
         context=context,
         name="volume",
     )
     _ensure_float32_volume(volume)
-    if (nx, ny, nz) != (state.nx, state.ny, state.nz):
-        raise CudaProjectorUnsupported(
-            _unsupported(
-                "volume shape does not match cached traversal state: "
-                f"got {(nx, ny, nz)}, expected {(state.nx, state.ny, state.nz)}"
-            )
-        )
 
 
 def _traversal_call_parameters(

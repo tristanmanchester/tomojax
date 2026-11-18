@@ -123,3 +123,23 @@ def test_public_projection_matches_independent_view_groups(kind, monkeypatch):
     separate_bp = tj.backproject(first, images[:32]) + tj.backproject(last, images[32:])
     np.testing.assert_allclose(tj.project(geometry, volume), separate_fp, rtol=2e-6, atol=2e-6)
     np.testing.assert_allclose(tj.backproject(geometry, images), separate_bp, rtol=2e-6, atol=2e-5)
+
+
+@pytest.mark.parametrize("redundant_top_level_beam", [False, True])
+def test_segmented_cone_grid_samples_the_segments_own_magnification(redundant_top_level_beam):
+    detector = tj.Detector(200, 100, 0.2, 0.4)
+    segments = [
+        {"views": 1, "detector": detector.to_dict(), "cone_beam": tj.ConeBeam(20, 40).to_dict()},
+        {"views": 1, "detector": detector.to_dict(), "cone_beam": tj.ConeBeam(30, 40).to_dict()},
+    ]
+    meta = {
+        "geometry_type": "cone",
+        "detector": detector.to_dict(),
+        "angles": [0.0, 90.0],
+        "cone_segments": segments,
+    }
+    if redundant_top_level_beam:
+        meta["cone_beam"] = segments[1]["cone_beam"]
+    grid = build_geometry_from_dataset_metadata(meta)[0]
+    # The most magnified arrangement (x2) sets the pitch, whatever the top level says.
+    assert (grid.vx, grid.vy, grid.vz) == pytest.approx((0.1, 0.1, 0.2))

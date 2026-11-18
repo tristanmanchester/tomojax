@@ -98,7 +98,8 @@ def _angles(params: dict[str, str], views: int) -> np.ndarray:
     return start + step * np.arange(views)
 
 
-def _projection_files(directory: Path, params: dict[str, str]) -> list[Path]:
+def _projection_files(directory: Path, params: dict[str, str]) -> tuple[list[Path], int]:
+    """The declared projection files, and how many closing-turn frames were excluded."""
     directory = directory / params.get("InputFolderName", "").strip()
     name = params.get("Name", "").strip()
     prefix = name + params.get("InputSeparator", "_") if name else ""
@@ -125,7 +126,7 @@ def _projection_files(directory: Path, params: dict[str, str]) -> list[Path]:
         raise ValueError(
             f"{directory}: {len(files)} projection files for {declared} declared views"
         )
-    return files
+    return files, int(closing)
 
 
 def _axis(
@@ -164,13 +165,16 @@ def _raw_nikon(file: Path) -> RawAcquisition:
     from ._tiff import TiffFrames
 
     params = _parameters(file)
-    files = _projection_files(file.parent, params)
+    files, closing = _projection_files(file.parent, params)
     # Nikon uses a top-right panel origin, not the top-left image convention.
     counts = TiffFrames.from_files(files, flip_rows=True, flip_cols=True)
     if len(counts) != len(files):
         raise ValueError("Nikon projection TIFFs must hold one image per file")
     white = _number(params, "WhiteLevel") if "WhiteLevel" in params else None
     record = _nikon_record(file, params, counts.shape, white)
+    if closing:  # recorded, as other excluded frames are
+        meta = {**record.geometry_metadata, "closing_frames_excluded": closing}
+        record = replace(record, geometry_metadata=meta)
     return RawAcquisition(record=record, counts=counts, white_level=white)
 
 
@@ -225,7 +229,13 @@ def _nikon_record(
         int(_number(params, "DetectorPixelsX", nu)),
     )
     if expected != (nv, nu):
-        LOG.warning("projections are %s pixels; the .xtekct file lists %s", (nv, nu), expected)
+        # Pitch, offsets and the axis are calibrated for the listed panel; a
+        # resize changes the scale and a crop the placement, and neither is recorded.
+        raise ValueError(
+            f"{file}: projections are {(nv, nu)} pixels, but the .xtekct file lists "
+            f"{expected}; cropped or resized images need updated DetectorPixels, "
+            "DetectorPixelSize and DetectorOffset entries"
+        )
     angles = _angles(params, views)
     detector_keys = (
         "DetectorPixelSizeX",

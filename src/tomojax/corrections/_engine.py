@@ -23,6 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.array_ops import mean_detector_pixels
+from tomojax.core.host_volume import host_array
 
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
@@ -51,6 +52,8 @@ def correct_frames(
     flat_exposure_times: np.ndarray | float | None = None,
     batch_views: int | None = None,
     binning: int = 1,
+    dark_source: str | None = None,
+    linear_limit: tuple[float, str] | None = None,
 ) -> Corrected:
     """Convert detector counts to line integrals and record each correction.
 
@@ -86,12 +89,19 @@ def correct_frames(
     flat_exposure_times : numpy.ndarray or float or None, optional
         Flat exposure durations in seconds. Supply both exposure arrays to compare
         dark-subtracted count rates rather than integrated counts.
-
     batch_views : int or None, optional
         Positive view-batch size. None selects a memory-bounded size automatically.
     binning : int, optional
         Positive detector-block side length for mean binning of the corrected line
         integrals. Default is 1; incomplete edge blocks are dropped.
+    dark_source : str or None, optional
+        What removed the dark before the counts were recorded (a camera that
+        subtracts it, say), kept in the record as ``dark_removed_by`` in place of
+        a count of dark frames. Default None.
+    linear_limit : tuple of (float, str) or None, optional
+        The detector's stated linear range in counts and where it is stated. The
+        record keeps the fraction of counts above it and the line integral where
+        it ends, and a warning names both when any count lies above. Default None.
 
     Returns
     -------
@@ -130,8 +140,9 @@ def correct_frames(
     ordered = ordered_steps(steps)
     view_scales, flat_scales = exposure_scales(exposure_times, flat_exposure_times, views, flats)
     fields, field_record = flat_fields(
-        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales
-    )
+        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales,
+        dark_source=dark_source,
+    )  # fmt: skip
     if flat_scales is not None and exposure_times is not None:
         field_record[0].settings["sample_exposure_range_s"] = [
             float(np.min(exposure_times)),
@@ -148,7 +159,8 @@ def correct_frames(
     counts_steps = tuple(s for d, s in ordered if d == "counts")
     transmission_steps = tuple(s for d, s in ordered if d == "transmission")
     transmission_head, transmission_tail = _split_at_break(list(transmission_steps))
-    settings = {"epsilon": float(epsilon), "factor": binning}
+    limit = np.float32(np.inf if linear_limit is None else linear_limit[0])
+    settings = {"epsilon": float(epsilon), "factor": binning, "limit": limit}
     slab = _row_slab(counts, ordered, batch_views, binning)
     if slab is not None:
         out, tally = _correct_row_slabs(
@@ -164,7 +176,7 @@ def correct_frames(
     else:
         # Binned on the device while the batches come back, unless the tail needs full frames.
         factor = 1 if tail or transmission_tail else binning
-        out = np.empty((views, rows // factor, cols // factor), np.float32)
+        out = host_array((views, rows // factor, cols // factor))
         batch = batch_views or frame_batch_size(
             views, rows, cols, (*counts_steps, *transmission_steps, *head)
         )
@@ -172,18 +184,25 @@ def correct_frames(
             counts, out, fields, interpolation, batch, counts_steps=counts_steps,
             transmission_steps=tuple(transmission_head),
             line_steps=() if transmission_tail else tuple(head),
-            epsilon=float(epsilon), factor=factor, take_log=not transmission_tail,
+            epsilon=float(epsilon), factor=factor, take_log=not transmission_tail, limit=limit,
         )  # fmt: skip
         if transmission_tail:
             out, _, _ = apply_steps(out, transmission_tail, batch_views)
+            above = tally[2]
             out, tally = log_batches(out, tuple(head), epsilon, batch_views)
+            tally = np.append(tally, above)
         out, kept, tail_records = apply_steps(out, tail, batch_views)
         if (tail or transmission_tail) and binning > 1:
             out = _binned(out, binning, batch_views)
-    found: dict[str, Json] = {
-        "nonpositive_transmission": int(tally[0]),
-        "nonfinite_set_to_zero": int(tally[1]),
-    }
+    if linear_limit is not None:
+        report_linear_limit(
+            field_record[0],
+            linear_limit,
+            fields,
+            view_scales,
+            float(tally[2]) / counts_size(counts),
+        )
+    found: dict[str, Json] = {"nonpositive_transmission": int(tally[0])}
     log = Correction("log", {"epsilon": float(epsilon)}, found)
     records = tuple(
         [s.record() for s in counts_steps] + list(field_record)
@@ -323,6 +342,7 @@ def flat_fields(
     epsilon: float,
     *,
     flat_scales: np.ndarray | None = None,
+    dark_source: str | None = None,
 ) -> tuple[Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them.
 
@@ -338,12 +358,12 @@ def flat_fields(
         LOG.warning("no dark fields: correcting with a dark field of zero")
     zero = np.zeros(shape)
     dark, dark_variance = (zero, zero) if darks is None else _moments(darks, shape, "darks")
-    dark_frames = 0 if darks is None else len(darks)
+    dark_frames = 0 if darks is None or dark_source is not None else len(darks)
     if flats is None:
         if white_level is None:
             raise ValueError(
-                "no flat fields: pass flats (frames of the beam without the object) or "
-                "white_level (the counts of an unattenuated pixel) to tomojax.load_frames"
+                "no flat fields: pass flats=... (frames of the beam without the object, or "
+                "the counts of an unattenuated pixel)"
             )
         level = positive_finite(white_level, "white_level")
         stack, variance, sets = np.full((1, *shape), level), np.zeros((1, *shape)), np.zeros(1)
@@ -373,6 +393,8 @@ def flat_fields(
             settings["flat_exposure_times"] = (1 / flat_scales).tolist()
         if len(sets) > 1:
             settings["flat_positions"] = [float(p) for p in sets]
+    if dark_source is not None:
+        settings["dark_removed_by"] = dark_source
     light = stack - dark if flat_scales is None else stack
     dark_scale = (
         np.ones(len(sets))
@@ -436,8 +458,7 @@ def exposure_scales(
         return np.ones(views, np.float32), None
     if sample is None or flat is None:
         raise ValueError(
-            "Exposure correction needs both exposure_times=... and flat_exposure_times=... "
-            "in tomojax.load_frames"
+            "Exposure correction needs both exposure_times=... and flat_exposure_times=..."
         )
     rates = []
     for name, value, count in (
@@ -497,8 +518,11 @@ def first_pass(
     factor: int = 1,
     fill_gaps: bool = True,
     take_log: bool = True,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
+    limit: jax.Array | float = jnp.inf,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     x = raw.astype(jnp.float32)
+    # Recorded counts above the camera's stated linear range: counted, never changed.
+    above = jnp.sum(x > limit)
     for step in counts_steps:
         x = step.apply(x)
     weight = t[:, None, None]
@@ -512,8 +536,11 @@ def first_pass(
     for step in transmission_steps:
         transmission = step.apply(transmission)
     if not take_log:
-        return transmission, jnp.asarray(0), jnp.asarray(0)
-    return _log_transmission(transmission, epsilon=epsilon, line_steps=line_steps, factor=factor)
+        return transmission, jnp.asarray(0), jnp.asarray(0), above
+    return (
+        *_log_transmission(transmission, epsilon=epsilon, line_steps=line_steps, factor=factor),
+        above,
+    )
 
 
 @partial(jax.jit, static_argnames=("epsilon", "line_steps", "factor"))
@@ -524,14 +551,17 @@ def _log_transmission(
     line_steps: tuple[Step, ...] = (),
     factor: int = 1,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Floor and log transmission, then run the phase prefix and bin its result."""
+    """Floor and log transmission, then run the phase prefix and bin its result.
+
+    Non-finite results are counted, not replaced: an unknown measurement is not
+    zero absorption, and the batch loops reject them.
+    """
     nonpositive = jnp.sum(transmission <= 0)
     p = -jnp.log(jnp.maximum(transmission, epsilon))
     for step in line_steps:
         p = step.apply(p)
-    bad = ~jnp.isfinite(p)
-    p = jnp.where(bad, 0.0, p)
-    return (mean_detector_pixels(p, factor) if factor > 1 else p), nonpositive, jnp.sum(bad)
+    bad = jnp.sum(~jnp.isfinite(p))
+    return (mean_detector_pixels(p, factor) if factor > 1 else p), nonpositive, bad
 
 
 def _interpolate_unmeasured(transmission: jax.Array, usable: jax.Array) -> jax.Array:
@@ -567,12 +597,13 @@ def correct_view_batches(
     """Run ``first_pass`` over batches of views into ``out``; the tally of what it found."""
     flats, dark, usable = (jax.device_put(a) for a in (fields.flats, fields.dark, fields.usable))
     lo, hi, t, exposure_scale = interpolation
-    tally = np.zeros(2, np.int64)  # non-positive transmission, non-finite results
+    tally = np.zeros(3, np.int64)  # non-positive transmission, non-finite, above linear limit
     fill_gaps = not bool(fields.usable.all())
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
         out[start:stop] = np.asarray(result)
         tally[:] += [int(b) for b in bad]
+        reject_nonfinite(int(bad[1]) if bad else 0, start, stop)
 
     pending = None
     for start, stop, raw in _batches(counts, counts.shape[0], batch):
@@ -591,6 +622,46 @@ def correct_view_batches(
     return tally
 
 
+def counts_size(counts: Any) -> int:
+    """How many recorded counts a stack holds."""
+    return int(np.prod(counts.shape))
+
+
+def linear_limit_edge(limit: float, fields: Fields, view_scales: np.ndarray) -> float:
+    """The median line integral of a count at ``limit``: -log((limit - dark) x scale / flat)."""
+    light = fields.flats[:, fields.usable].astype(np.float64)
+    ratio = (limit - fields.dark[fields.usable]) * float(np.median(view_scales)) / light
+    return float(np.median(-np.log(np.maximum(ratio, np.finfo(np.float64).tiny))))
+
+
+def report_linear_limit(
+    record: Correction,
+    linear_limit: tuple[float, str],
+    fields: Fields,
+    view_scales: np.ndarray,
+    fraction: float,
+) -> None:
+    """Record the camera's stated linear range and what lies above it; warn when anything does.
+
+    The line integral where the range ends is the median over measured pixels of
+    -log((limit - dark) x exposure scale / flat): smaller line integrals come from counts
+    above the range, so they are unreliable, and saturated air reads as absorbing.
+    """
+    limit, source = linear_limit
+    edge = linear_limit_edge(limit, fields, view_scales)
+    record.settings["linear_limit"] = float(limit)
+    record.settings["linear_limit_source"] = source
+    record.found["counts_above_linear_limit"] = fraction
+    record.found["linear_limit_line_integral"] = edge
+    if fraction > 0:
+        LOG.warning(
+            "%.1f%% of the recorded counts lie above the detector's stated linear range "
+            "(%g counts, %s): line integrals below about %.3f are unreliable, and saturated "
+            "air reads as absorbing.",
+            100 * fraction, limit, source, edge,
+        )  # fmt: skip
+
+
 def log_batches(
     out: np.ndarray, steps: tuple[Step, ...], epsilon: float, batch_views: int | None
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -604,7 +675,17 @@ def log_batches(
         )
         out[first : first + batch] = np.asarray(done)
         tally += (int(nonpositive), int(bad))
+        reject_nonfinite(int(bad), first, min(first + batch, views))
     return out, tally
+
+
+def reject_nonfinite(count: int, start: int, stop: int) -> None:
+    """Raise for NaN or infinite line integrals: they are not measurements of zero absorption."""
+    if count:
+        raise ValueError(
+            f"{count} corrected line integrals in views {start}-{stop - 1} are not finite; "
+            "check the raw counts, flats and darks, and any correction step for NaN or Inf"
+        )
 
 
 def _row_slab(
@@ -648,14 +729,15 @@ def _correct_row_slabs(
     """Correct and optionally bin slabs of whole rows: the corrected stack and the tally."""
     views, rows, cols = counts.shape
     factor = settings["factor"]
-    out = np.empty((views, rows // factor, cols // factor), np.float32)
+    out = host_array((views, rows // factor, cols // factor))
     flats, dark, usable = (jax.device_put(a) for a in (fields.flats, fields.dark, fields.usable))
     lo, hi, t, exposure_scale = (jax.device_put(q) for q in interpolation)
-    tally = np.zeros(2, np.int64)
+    tally = np.zeros(3, np.int64)
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
         out[:, start // factor : stop // factor] = np.asarray(result)
         tally[:] += [int(b) for b in bad]
+        reject_nonfinite(int(bad[1]), 0, views)
 
     def read(start: int, stop: int) -> np.ndarray:
         frames = (
@@ -670,7 +752,7 @@ def _correct_row_slabs(
 
     def run(
         start: int, stop: int, raw: np.ndarray
-    ) -> tuple[int, int, jax.Array, jax.Array, jax.Array]:
+    ) -> tuple[int, int, jax.Array, jax.Array, jax.Array, jax.Array]:
         with jax.default_device(device):
             done = first_pass(
                 jnp.asarray(raw), lo, hi, t, exposure_scale,
@@ -683,7 +765,9 @@ def _correct_row_slabs(
                 jax.block_until_ready(done)
             return start, stop, *done
 
-    def now(function, *args: Any) -> Future[tuple[int, int, jax.Array, jax.Array, jax.Array]]:
+    def now(
+        function, *args: Any
+    ) -> Future[tuple[int, int, jax.Array, jax.Array, jax.Array, jax.Array]]:
         done = Future()
         done.set_result(function(*args))
         return done
@@ -708,7 +792,7 @@ def _binned(out: np.ndarray, factor: int, batch_views: int | None) -> np.ndarray
     """The detector block means of ``out``, a batch of views at a time."""
     views, rows, cols = out.shape
     batch = batch_views or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
-    binned = np.empty((views, rows // factor, cols // factor), np.float32)
+    binned = host_array((views, rows // factor, cols // factor))
     for start in range(0, views, batch):
         binned[start : start + batch] = mean_detector_pixels(out[start : start + batch], factor)
     return binned
@@ -751,6 +835,9 @@ def apply_steps(
                 raise ValueError(f"{type(step).__name__} would reject every view")
             if not keep.all():
                 out, kept = out[keep], kept[keep]
+                # Later steps planned from the geometry see only the retained views.
+                retained = np.flatnonzero(keep)
+                steps = (*steps[: i + 1], *(s.retained(retained) for s in steps[i + 1 :]))
             records.append(Correction(step.record().name, step.record().settings, found))
             i += 1
         else:

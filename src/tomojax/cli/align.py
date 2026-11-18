@@ -61,8 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=["translations"],
         metavar="NAME",
         help=(
-            "Parameters to fit: centre, tilt, roll, translations, rotations "
-            "(default translations). All other parameters stay fixed."
+            "Parameters to fit: centre, tilt, roll, translations, rotations (the axis's wobble; "
+            "view angles as recorded) (default translations). All other parameters stay fixed."
         ),
     )
     _ = parser.add_argument("--roi", choices=ROI_CHOICES, default="auto", help=ROI_HELP)
@@ -101,10 +101,10 @@ def _write_manifest(args: _Args, scan: Scan, result: Alignment, *, masked: bool)
         "fit": result.info["fit"],
         "roi": {
             "requested": args.roi,
-            "grid_changed": result.scan.grid != scan.grid,
+            "grid_changed": result.grid != scan.grid,
             "cylindrical_output_mask": masked,
         },
-        "reconstruction_grid": result.scan.grid.to_dict(),
+        "reconstruction_grid": result.grid.to_dict(),
         "detector": result.scan.detector.to_dict(),
         "poses_shape": list(result.poses.shape),
         "volume_shape": list(np.shape(result.volume)),
@@ -133,10 +133,10 @@ def main() -> None:
         force=args.force,
     )
     scan = tj.load(args.data, poses=args.poses)
-    grid, masked = (None, False)
+    grid, cylinder = (None, None)
     if args.grid is not None or args.roi != "auto":
         shape = None if args.grid is None else (args.grid[0], args.grid[1], args.grid[2])
-        grid, masked = region_grid(scan, roi=args.roi, grid=shape)
+        grid, cylinder = region_grid(scan, roi=args.roi, grid=shape)
     fit = tuple(args.fit)
     if args.dry_run:
         print(
@@ -156,14 +156,12 @@ def main() -> None:
     setup_logging()
     log_jax_env()
     result = tj.align(scan, fit=fit, grid=grid)
-    if masked:
-        result = replace(
-            result, volume=zero_outside_cylinder(result.volume, result.scan.grid, scan.detector)
-        )
+    if cylinder is not None:
+        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
     tj.save(args.out, result)
     logging.info("Saved alignment results to %s", args.out)
     if args.manifest is not None:
-        _write_manifest(args, scan, result, masked=masked)
+        _write_manifest(args, scan, result, masked=cylinder is not None)
 
 
 __all__ = ["build_parser", "main"]

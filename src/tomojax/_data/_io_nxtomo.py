@@ -14,7 +14,6 @@ from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees
 from ._io_frames import Hdf5Frames
 from ._io_helpers import (
     _attr_to_str,
-    _axes_log_warning,
     _detector_group,
     _ensure_group,
     _load_detector_metadata,
@@ -26,6 +25,8 @@ from ._io_helpers import (
     _load_sample_metadata,
     _load_source_metadata,
     _write_string_attr,
+    replaced_when_complete,
+    sizes_of,
 )
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata, ValidationReport
 from .geometry_meta import normalize_geometry_type
@@ -74,12 +75,9 @@ def save_nxtomo(
     OSError
         If output cannot be written or already exists with overwrite=False.
     """
-    parent = Path(path).parent
-    if str(parent) not in {"", "."}:
-        parent.mkdir(parents=True, exist_ok=True)
-
     meta = metadata or NXTomoMetadata()
-    mode = "w" if overwrite else "x"
+    if not overwrite and Path(path).exists():
+        raise FileExistsError(f"{path} exists; pass overwrite=True to replace it")
 
     proj = np.asarray(projections)
     if proj.ndim != 3:
@@ -90,8 +88,12 @@ def save_nxtomo(
     if meta.volume is not None and meta.volume.ndim != 3:
         raise ValueError("volume must be 3D (nz, ny, nx)")
 
-    with h5py.File(path, mode) as f:
+    parts = sizes_of(proj, meta.volume)
+    with replaced_when_complete(path, parts) as temporary, h5py.File(temporary, "w") as f:
         entry = _ensure_group(f, "entry", "NXentry")
+        # NXtomo names its application definition in a field; the attribute
+        # remains for readers of earlier TomoJAX files.
+        entry.create_dataset("definition", data=np.bytes_(b"NXtomo"))
         _write_string_attr(entry, "definition", "NXtomo")
         inst = _ensure_group(entry, "instrument", "NXinstrument")
 
@@ -159,10 +161,13 @@ def _write_detector_section(
     if meta.detector is not None:
         det_dict = meta.detector if isinstance(meta.detector, dict) else meta.detector.to_dict()
         det.attrs["detector_meta_json"] = json.dumps(det_dict)
-        det.create_dataset("x_pixel_size", data=np.asarray(det_dict["du"]))
-        det["x_pixel_size"].attrs["units"] = "pixel"
-        det.create_dataset("y_pixel_size", data=np.asarray(det_dict["dv"]))
-        det["y_pixel_size"].attrs["units"] = "pixel"
+        # Pitches are in the geometry's length unit; label it only when recorded.
+        acquisition = (meta.geometry_meta or {}).get("acquisition")
+        unit = acquisition.get("length_unit") if isinstance(acquisition, dict) else None
+        for name, key in (("x_pixel_size", "du"), ("y_pixel_size", "dv")):
+            det.create_dataset(name, data=np.asarray(det_dict[key]))
+            if isinstance(unit, str):
+                det[name].attrs["units"] = unit
     return det
 
 
@@ -394,68 +399,58 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
         _load_sample_metadata(out, entry)
 
         if volume_raw is not None:
-            volume_np, disk_order, source = _volume_in_internal_axes(
-                volume_raw, volume_axes_attr, grid_hint=out.get("grid"), path=path
+            volume_np, disk_order = _volume_in_internal_axes(
+                volume_raw, volume_axes_attr, path=path
             )
             out["volume"] = volume_np
             out["disk_volume_axes_order"] = disk_order
-            out["volume_axes_source"] = source
     return LoadedNXTomo.from_dataset(out)
 
 
 def _volume_in_internal_axes(
-    volume_raw: np.ndarray, volume_axes_attr: str | None, *, grid_hint: object, path: str
-) -> tuple[np.ndarray, str, str]:
-    """A saved volume in (z, y, x) order, with the disk order and how it was found.
-
-    The order comes from the saved ``volume_axes_order`` attribute when it is
-    valid, else from the volume's shape against the grid; a malformed attribute
-    and every inferred order are logged.
-    """
-    disk_axes, source = saved_volume_axes(volume_raw.shape, volume_axes_attr, grid_hint, path)
+    volume_raw: np.ndarray, volume_axes_attr: str | None, *, path: str
+) -> tuple[np.ndarray, str]:
+    """A saved volume in (z, y, x) order, with its disk order."""
+    disk_axes = saved_volume_axes(volume_axes_attr, path)
     volume_np = np.asarray(volume_raw)
     if disk_axes != "zyx":
         volume_np = np.ascontiguousarray(volume_np.transpose(_volume_permutation(disk_axes)))
-    return volume_np, disk_axes, source
+    return volume_np, disk_axes
 
 
-def saved_volume_axes(
-    shape: tuple[int, ...], attribute: str | None, grid: object, path: object
-) -> tuple[str, str]:
-    """The disk order of a saved volume and how it was found, from metadata alone.
+def saved_volume_axes(attribute: str | None, path: object) -> str:
+    """The disk order of a saved volume, from its ``volume_axes_order`` attribute.
+
+    TomoJAX records the order with every volume it writes; the shape alone cannot
+    say it (a cube fits every order), so a volume without the attribute is refused.
 
     Parameters
     ----------
-    shape : tuple of int
-        Shape of the saved volume.
     attribute : str or None
-        Its ``volume_axes_order`` attribute, if any.
-    grid : mapping or None
-        The saved grid metadata, with ``nx``, ``ny`` and ``nz``.
+        The volume's ``volume_axes_order`` attribute, if any.
     path : object
         The file, for messages.
 
     Returns
     -------
-    tuple of str
-        The order, such as ``"zyx"``, and ``"attr"`` or ``"heuristic"``.
+    str
+        The order, such as ``"zyx"``.
 
     Raises
     ------
     ValueError
-        If neither the attribute nor the grid decides the order.
+        If the attribute is absent or not a permutation of ``xyz``.
     """
-    if attribute:
-        try:
-            _volume_permutation(attribute)
-            return attribute.lower(), "attr"
-        except ValueError:
-            _axes_log_warning("Ignoring malformed volume_axes_order=%r on %s", attribute, path)
-    axes = _infer_volume_axes(shape, grid)
-    if axes is None:
-        raise ValueError(f"{path}: volume axis order is unknown; declare volume_axes_order")
-    _axes_log_warning("load_nxtomo: inferred disk volume axes %s for %s", axes, path)
-    return axes, "heuristic"
+    if not attribute:
+        raise ValueError(
+            f"{path}: the saved volume does not record its axis order; "
+            "set its volume_axes_order attribute (for example 'zyx')"
+        )
+    try:
+        _volume_permutation(attribute)
+    except ValueError as exc:
+        raise ValueError(f"{path}: {exc}") from exc
+    return attribute.lower()
 
 
 def _volume_permutation(axes: str) -> tuple[int, int, int]:
@@ -464,15 +459,6 @@ def _volume_permutation(axes: str) -> tuple[int, int, int]:
     if len(axes) != 3 or set(axes) != {"x", "y", "z"}:
         raise ValueError(f"volume axes must be a permutation of xyz, got {axes!r}")
     return axes.index("z"), axes.index("y"), axes.index("x")
-
-
-def _infer_volume_axes(shape: tuple[int, ...], grid: object) -> str | None:
-    """Infer an undeclared file order only when its physical grid disambiguates it."""
-    if not isinstance(grid, dict) or not all(axis in grid for axis in ("nx", "ny", "nz")):
-        return None
-    dims = tuple(int(grid[axis]) for axis in ("nx", "ny", "nz"))
-    candidates = [axes for axes, sizes in (("xyz", dims), ("zyx", dims[::-1])) if shape == sizes]
-    return candidates[0] if len(candidates) == 1 else None
 
 
 def validate_nxtomo(path: str) -> ValidationReport:
@@ -517,7 +503,10 @@ def validate_nxtomo(path: str) -> ValidationReport:
 def _required_entry_issues(f: h5py.File, e: h5py.Group) -> tuple[list[str], str | None, int | None]:
     """Missing or misshapen required NXtomo members, the angle path and the view count."""
     issues = []
-    if _attr_to_str(e.attrs.get("definition")) != "NXtomo":
+    field = e.get("definition")
+    stored = np.asarray(field).tolist() if isinstance(field, h5py.Dataset) else None
+    stored = stored.decode() if isinstance(stored, bytes) else stored
+    if "NXtomo" not in (stored, _attr_to_str(e.attrs.get("definition"))):
         issues.append("entry/definition must be 'NXtomo'")
     if "instrument/detector/data" not in e:
         issues.append("Missing instrument/detector/data")

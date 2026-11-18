@@ -86,14 +86,13 @@ def test_inspect_raw_acquisition_reports_required_cli_inputs(tmp_path, capsys):
         file["exchange/theta"] = [0, 90]
     assert main(["inspect", str(path), "--json"]) == 1
     issues = json.loads(capsys.readouterr().out)["issues"]
-    assert len(issues) == 3
-    assert "detector" in issues[0] and "--config" in issues[0]
-    assert "--flats" in issues[1] and "--darks" in issues[2]
+    assert len(issues) == 2  # no pixel size is not an issue: it loads in pixel units
+    assert "--flats" in issues[0] and "--darks" in issues[1]
     with h5py.File(path, "a") as file:
         file["exchange/data_white"] = np.ones((1, 2, 4))
         file["exchange/data_dark"] = np.zeros((1, 2, 4))
-    assert main(["inspect", str(path), "--json"]) == 1
-    assert len(json.loads(capsys.readouterr().out)["issues"]) == 1
+    assert main(["inspect", str(path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["issues"] == []
 
 
 @pytest.mark.parametrize("units", ["degrees", "rad"])
@@ -226,6 +225,17 @@ def test_import_requires_explicit_detector_center_model_and_lamino_tilt(tmp_path
     assert main(args) == 0
     assert load_dataset(output).geometry_inputs()["tilt_deg"] == 47
 
+    # The detector's roll reaches a parallel-family geometry; pitch and yaw are cone-only.
+    import tomojax as tj
+
+    config.write_text(config.read_text() + "detector_roll_deg = 1.25\n")
+    assert main([*args, "--force"]) == 0
+    assert tj.load(output).geometry.detector_roll_deg == 1.25
+    config.write_text(config.read_text() + "detector_pitch_deg = 0.5\n")
+    with pytest.raises(SystemExit):
+        main([*args, "--force"])
+    assert "need --geometry cone" in capsys.readouterr().err
+
 
 def test_import_cli_needs_angles_for_tiffs(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -325,7 +335,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     manifest = tmp_path / "recon-manifest.json"
     config = tmp_path / "recon.toml"
     write_projection_dataset(scan)
-    _ = config.write_text("views_per_batch = 1\nscale = 0.5\n", encoding="utf-8")
+    _ = config.write_text("scale = 0.5\n", encoding="utf-8")
 
     args = [
         "recon",
@@ -356,9 +366,9 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
 
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
     assert resolved["method"] == "fbp"
-    assert resolved["settings"] == {"views_per_batch": 1, "scale": 0.5}
+    assert resolved["settings"] == {"scale": 0.5}
     settings = resolved["reconstruction"]["config"]
-    assert (settings["filter"], settings["views_per_batch"], settings["scale"]) == ("ramp", 1, 0.5)
+    assert (settings["filter"], settings["scale"]) == ("ramp", 0.5)
     assert resolved["reconstruction_grid"]["nx"] == 4
     assert resolved["roi"] == {
         "requested": "off",
@@ -395,6 +405,13 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
     assert resolved["reconstruction"]["warm_start"] == warm_start
     assert resolved["reconstruction"]["config"]["iterations"] == 6
     assert 1 <= resolved["reconstruction"]["effective_iterations"] <= 6
+    # The saved image is the Python solver's on the same scan, grid and start.
+    import tomojax as tj
+
+    source = tj.load(scan)
+    grid = source.grid.resampled((4, 4, 2))
+    expected = tj.reconstruct(source, "cgls", grid=grid, iterations=6, warm_start=warm_start)
+    np.testing.assert_allclose(loaded.volume, np.asarray(expected.volume), rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("scale", [1e-6, 1.0, 1e6])
@@ -431,10 +448,12 @@ def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path
     # The CLI's grid for --roi cyl, and the cylinder as FISTA's support.
     grid = tj.load_reconstruction(recon_path).grid
     # check-public-imports: allow-private
-    from tomojax.cli._reconstruction_region import cylinder_support
+    from tomojax.cli._reconstruction_region import cylinder_support, region_grid
 
     # The support constrains FISTA's updates, and the saved volume is zero outside.
-    support = cylinder_support(grid, scan.detector)
+    _, cylinder = region_grid(scan, roi="cyl", grid=None)
+    assert cylinder is not None
+    support = cylinder_support(grid, cylinder)
     config = FistaConfig(support=support)
     expected = tj.reconstruct(scan, "fista", grid=grid, config=config, iterations=4).volume
     actual = tj.load_reconstruction(recon_path).volume
@@ -493,7 +512,7 @@ def test_recon_cli_refuses_settings_the_method_does_not_take(
     err = capsys.readouterr().err
     assert message in err
     if toml:
-        assert "has " in err and "views_per_batch" in err  # the valid ones
+        assert "has " in err and "backend" in err  # the valid ones
 
 
 def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path) -> None:
@@ -624,12 +643,9 @@ def test_inspect_and_preview_share_raw_acquisition_discovery(tmp_path, capsys, l
             "radians" if layout == "exchange" else "mm" if layout == "gda" else "degree"
         )
     previews = tmp_path / "previews"
-    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == (
-        layout == "exchange"
-    )
+    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert report["valid"] == (layout != "exchange")
-    assert len(report["issues"]) == (layout == "exchange")
+    assert report["valid"] and report["issues"] == []
     assert report["projection"]["path"] == data_path
     assert report["angles"]["path"] == angles_path
     assert report["angles"]["coverage_deg"] == pytest.approx(180)
@@ -646,9 +662,10 @@ def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
     import tomojax as tj
     from tomojax.geometry import grid_volume_origin
 
-    grid, detector = tj.Grid(12, 12, 10, 1, 1, 1), tj.Detector(12, 10, 1, 1)
+    # The field (radius 6.5) reaches a voxel centre in each of the 12 columns.
+    grid, detector = tj.Grid(12, 12, 10, 1, 1, 1), tj.Detector(14, 10, 1, 1)
     scan = tj.Scan(
-        np.ones((20, 10, 12), np.float32),
+        np.ones((20, 10, 14), np.float32),
         tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 20, endpoint=False)),
     ).cropped(slice(6, 8), slice(None))
     src, out = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
@@ -659,3 +676,33 @@ def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
     assert grid_volume_origin(result.grid)[2] == (-2.5 if roi == "off" else 1.5)
     if roi == "cyl":
         assert not np.asarray(result.volume)[:, 0, 0].any()
+
+
+@pytest.mark.parametrize("auxiliary", ["--preview", "--manifest"])
+def test_recon_refuses_to_replace_an_existing_auxiliary_output(tmp_path: Path, auxiliary):
+    scan = tmp_path / "scan.nxs"
+    write_projection_dataset(scan)
+    existing = tmp_path / ("preview.png" if auxiliary == "--preview" else "run.json")
+    existing.write_text("keep")
+    command = ["recon", str(scan), "-o", str(tmp_path / "recon.nxs"), auxiliary, str(existing)]
+    with pytest.raises(SystemExit) as exit_info:
+        main(command)
+    assert exit_info.value.code == 2 and existing.read_text() == "keep"
+
+
+def test_raw_export_refuses_to_replace_an_existing_sidecar(tmp_path: Path):
+    from tomojax.geometry import Detector, Grid
+    from tomojax.io import ProjectionDataset
+
+    dataset = ProjectionDataset(
+        projections=np.zeros((2, 4, 6), np.float32),
+        angles=np.asarray([0.0, 90.0], np.float32),
+        volume=np.ones((4, 5, 6), np.float32),
+        detector=Detector(6, 4, 1.0, 1.0),
+        grid=Grid(6, 5, 4, 0.5, 0.5, 0.25),
+    )
+    save_dataset(tmp_path / "recon.nxs", dataset)
+    (tmp_path / "volume.json").write_text("keep")
+    with pytest.raises(SystemExit) as exit_info:
+        main(["export", str(tmp_path / "recon.nxs"), "-o", str(tmp_path / "volume.raw")])
+    assert exit_info.value.code == 2 and (tmp_path / "volume.json").read_text() == "keep"

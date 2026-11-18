@@ -499,3 +499,38 @@ def test_pitched_detector_slabs_read_bounded_physical_row_windows(monkeypatch, b
     )
     assert min(heights) < detector.nv
     np.testing.assert_allclose(actual, expected, atol=2e-3 if backend == "cuda" else 3e-6)
+
+
+@pytest.mark.gpu
+def test_host_slab_depth_fits_the_smallest_selected_device(monkeypatch):
+    from importlib import import_module
+
+    import jax
+
+    import tomojax.backends
+
+    fdk_module = import_module("tomojax.recon.fdk")
+    grid = Grid(8, 8, 12, 1.0, 1.0, 1.0)
+    detector = Detector(12, 12, 1.0, 1.0)
+    geometry = ConeGeometry(
+        grid, detector, np.linspace(0, 360, 16, endpoint=False), ConeBeam(40, 60)
+    )
+    gpu = jax.devices("gpu")[0]
+    plane = 4 * grid.nx * grid.ny
+    # The default-device query reports room for every plane; the selected worker for two.
+    free = {None: 3 * plane * 64, gpu: 3 * plane * 2}
+    monkeypatch.setattr(
+        tomojax.backends, "device_free_memory_bytes", lambda device=None: free[device]
+    )
+    depths = []
+    run = fdk_module._Slabs.run
+
+    def recorded(self, slabs, device, **kwargs):
+        depths.extend(z1 - z0 for z0, z1 in slabs)
+        return run(self, slabs, device, **kwargs)
+
+    monkeypatch.setattr(fdk_module._Slabs, "run", recorded)
+    config = FDKHostConfig(fdk=FDKConfig(backend="jax", devices=(gpu,)))
+    projections = np.zeros((16, 12, 12), np.float32)
+    fdk_module.fdk_host(geometry, grid, detector, projections, config=config)
+    assert max(depths) == 2

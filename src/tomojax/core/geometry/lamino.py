@@ -63,6 +63,8 @@ class LaminographyGeometry:
         Axis tilt away from +z, in degrees; defaults to 30.
     tilt_about : {'x', 'z'}
         Tilt convention: x leans towards +y; z leans towards +x.
+    detector_roll_deg : float, optional
+        Roll about the detector normal, in degrees; positive turns u towards v.
     """
 
     grid: Grid
@@ -70,6 +72,7 @@ class LaminographyGeometry:
     angles: Sequence[float]
     tilt_deg: float = 30.0
     tilt_about: str = "x"  # or "z"
+    detector_roll_deg: float = 0.0
 
     @property
     def axis_unit_lab(self) -> np.ndarray:
@@ -134,4 +137,4 @@ class LaminographyGeometry:
         """
         del i
         # Use the same detector plane and beam direction as parallel CT.
-        return _parallel_detector_rays(self.grid, self.detector)
+        return _parallel_detector_rays(self.grid, self.detector, self.detector_roll_deg)

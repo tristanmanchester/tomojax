@@ -85,10 +85,12 @@ def adjoint_cuda(
     absolute_weights: bool = False,
     accumulate: jax.Array | None = None,
     z_fast: bool = False,
+    active: tuple[jax.Array, ...] | None = None,
 ) -> jax.Array:
     """Add the matched transpose to an initializer without scattered atomics.
 
     The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
+    ``active`` tiles may limit the gather (see ``_joseph_generic.adjoint``).
     """
     validate_interpolation(interpolation)
     shape = (grid.nx, grid.ny, grid.nz) if z_fast else (grid.nz, grid.ny, grid.nx)
@@ -98,7 +100,7 @@ def adjoint_cuda(
         c, y, x = args
         if interpolation == "linear" and not absolute_weights and use_cuda_gather(grid):
             y = generic.swap_detector_axes(y)
-            return gather_transpose_cuda(c, y, grid, detector, x, z_fast=z_fast)
+            return gather_transpose_cuda(c, y, grid, detector, x, z_fast=z_fast, active=active)
         return generic.adjoint(
             c,
             y,
@@ -108,6 +110,7 @@ def adjoint_cuda(
             interpolation=interpolation,
             absolute_weights=absolute_weights,
             z_fast=z_fast,
+            active=active,
         )
 
     if not absolute_weights and use_cuda_gather(grid, axial=True):

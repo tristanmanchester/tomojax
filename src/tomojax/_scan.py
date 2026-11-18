@@ -13,10 +13,12 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tomojax._data import views_of
 from tomojax.core.array_ops import mean_detector_pixels
 from tomojax.core.validation import view_indices
 from tomojax.geometry import (
     ConeGeometry,
+    Grid,
     LaminographyGeometry,
     ParallelGeometry,
     RotationAxisGeometry,
@@ -28,7 +30,7 @@ if TYPE_CHECKING:
     import jax
 
     from tomojax.corrections import Correction, Step
-    from tomojax.geometry import ConeBeam, ConeSegments, Detector, Geometry, Grid, ScanGeometry
+    from tomojax.geometry import ConeBeam, ConeSegments, Detector, Geometry, ScanGeometry
     from tomojax.io import ProjectionDataset
 
 LOG = logging.getLogger(__name__)
@@ -57,7 +59,13 @@ class Scan:
     returned by :func:`align` may carry per-view pose corrections, which every
     operation applies (see :attr:`poses`). ``corrections`` records how its
     projections were made from detector frames (see :mod:`tomojax.corrections`),
-    and is saved with it.
+    and is saved with it. ``view_positions`` place the views in acquisition
+    time, as :attr:`Frames.view_positions` does (by default view ``i`` at
+    ``i + 1/2``); selecting or rejecting views keeps them, so the alignment's
+    motion prior knows where views are missing. They are the time order, not
+    the angle order: an interlaced scan's positions follow when each view was
+    taken. Positions that decrease start a new acquisition (as in
+    :meth:`combine`), which the prior does not link to the one before.
 
     Parameters
     ----------
@@ -72,11 +80,14 @@ class Scan:
         Record of corrections already applied to the projections.
     source : ProjectionDataset or None, optional
         Source metadata retained for saving and provenance.
+    view_positions : numpy.ndarray or None, optional
+        Each view's place in acquisition time, in sample views; None is i + 1/2.
 
     Raises
     ------
     ValueError
-        If projection dimensions disagree with the detector or view count.
+        If projection dimensions disagree with the detector or view count, or
+        view_positions has the wrong length or nonfinite values.
 
     Examples
     --------
@@ -93,6 +104,7 @@ class Scan:
     name: str = "sample"
     corrections: tuple[Correction, ...] = ()
     source: ProjectionDataset | None = field(default=None, repr=False, compare=False)
+    view_positions: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         views, rows, cols = self.projections.shape
@@ -129,16 +141,13 @@ class Scan:
         from tomojax.corrections import correct_projections
 
         done = correct_projections(self.projections, steps, batch_views=batch_views)
-        geometry = (
-            self.geometry
-            if len(done.kept) == self.projections.shape[0]
-            else views_of(self.geometry, done.kept)
-        )
+        everything = len(done.kept) == self.projections.shape[0]
         return replace(
             self,
             projections=done.projections,
-            geometry=geometry,
+            geometry=self.geometry if everything else views_of(self.geometry, done.kept),
             corrections=(*self.corrections, *done.records),
+            view_positions=self.view_positions if everything else self.positions()[done.kept],
         )
 
     def cropped(self, rows: slice, cols: slice) -> Scan:
@@ -191,12 +200,30 @@ class Scan:
             self,
             projections=np.asarray(self.projections)[kept],
             geometry=views_of(self.geometry, kept),
+            view_positions=self.positions()[kept],
         )
+
+    def positions(self) -> np.ndarray:
+        """Each view's place in acquisition time: :attr:`view_positions`, or i + 1/2.
+
+        Returns
+        -------
+        numpy.ndarray
+            One float64 position per view.
+        """
+        if self.view_positions is None:
+            return np.arange(self.projections.shape[0]) + 0.5
+        return self.view_positions
 
     def __post_init__(self) -> None:
         if self.projections.ndim == 2:
             object.__setattr__(self, "projections", self.projections[:, None, :])
         check_shape("Scan: projections", self.projections.shape, self.geometry)
+        if self.view_positions is not None:
+            positions = np.asarray(self.view_positions, np.float64)
+            if positions.shape != (self.projections.shape[0],) or not np.isfinite(positions).all():
+                raise ValueError("view_positions needs one finite position for each view")
+            object.__setattr__(self, "view_positions", positions)
 
     @property
     def grid(self) -> Grid:
@@ -384,16 +411,25 @@ class Scan:
             )
         projections = np.concatenate([np.asarray(s.projections) for s in scans])
         geometry = ConeSegments(tuple(parts), trajectory_lengths=tuple(trajectories))
-        return cls(projections, geometry, name=name or scans[0].name)
+        # Each scan keeps its own acquisition times; a restart marks the break.
+        positions = np.concatenate([s.positions() for s in scans])
+        return cls(
+            projections,
+            geometry,
+            name=name or scans[0].name,
+            corrections=_combined(scans),
+            view_positions=positions,
+        )
 
     def binned(self, factor: int) -> Scan:
         """The scan with ``factor x factor`` detector pixels averaged into one.
 
-        Use it when the detector samples finer than the reconstruction grid (a
-        pixel's footprint at the rotation axis smaller than a voxel): projection
-        cost falls by ``factor**2`` for little change in the volume. Pixels that
-        do not fill a block at the detector's edges are dropped, and the
-        detector centre moves to match.
+        Projection cost falls by ``factor**2``. Pixels that do not fill a block
+        at the detector's edges are dropped, and the detector centre moves to
+        match. A grid the library derived from the detector follows it, as with
+        ``Frames.corrected(binning=)``; a grid the file or the caller stated is
+        kept. For a fine grid from a binned detector, pass ``grid=`` to
+        ``tj.reconstruct``.
 
         Parameters
         ----------
@@ -403,7 +439,7 @@ class Scan:
         Returns
         -------
         Scan
-            Block-averaged projections and detector geometry; the grid is unchanged.
+            Block-averaged projections and detector geometry; a derived grid follows.
 
         Raises
         ------
@@ -415,7 +451,10 @@ class Scan:
         if factor == 1:
             return self
         binned = mean_detector_pixels(np.asarray(self.projections, np.float32), factor)
-        return replace(self, projections=binned, geometry=binned_geometry(self.geometry, factor))
+        geometry = frame_output_grid(
+            binned_geometry(self.geometry, factor), self.source, binning=factor
+        )
+        return replace(self, projections=binned, geometry=geometry)
 
     def to_astra(self) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
         """Export projections and cone-beam geometry for ASTRA.
@@ -486,46 +525,9 @@ def _calibration_parts(geometry: ScanGeometry) -> tuple[ScanGeometry, ...]:
     return tuple(wrapped)
 
 
-def views_of(geometry: ScanGeometry, kept: np.ndarray) -> ScanGeometry:
-    """``geometry`` of the views ``kept`` (increasing indices), wrappers and segments kept."""
-    from tomojax._data.geometry_meta import AugmentedGeometry
-    from tomojax.geometry import ConeSegments
-
-    if isinstance(geometry, ConeSegments):
-        parts, start = [], 0
-        for segment in geometry.segments:
-            n = _view_count(segment)
-            mine = kept[(kept >= start) & (kept < start + n)] - start
-            if len(mine):
-                parts.append(views_of(segment, mine))
-            start += n
-        stops = np.searchsorted(kept, np.cumsum(geometry.trajectory_lengths))
-        counts = np.diff(np.r_[0, stops])
-        trajectories = tuple(int(n) for n in counts if n)
-        if len(parts) == 1 and len(trajectories) == 1:
-            return parts[0]
-        return ConeSegments(tuple(parts), trajectory_lengths=trajectories)
-    if isinstance(geometry, AugmentedGeometry):
-        return replace(
-            geometry,
-            base=views_of(geometry.base, kept),
-            align_params=np.asarray(geometry.align_params)[kept],
-        )
-    if not is_dataclass(geometry) or isinstance(geometry, type):
-        raise TypeError(f"cannot select views of a {type(geometry).__name__} geometry")
-    fields: dict[str, Any] = vars(geometry)  # a wrapper's base, or a geometry's own angles
-    if "base" in fields:
-        return replace(geometry, base=views_of(fields["base"], kept))
-    return replace(geometry, angles=np.asarray(fields["angles"])[kept])
-
-
-def _view_count(geometry: ScanGeometry) -> int:
-    return len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
-
-
 def check_shape(what: str, shape: tuple[int, ...], geometry: ScanGeometry) -> None:
     detector = geometry.detector
-    views = _view_count(geometry)
+    views = len(geometry.angles)  # pyright: ignore[reportAttributeAccessIssue]
     if tuple(int(s) for s in shape) != (views, detector.nv, detector.nu):
         raise ValueError(
             f"{what} are {tuple(shape)} but the geometry has {views} views of "
@@ -551,11 +553,7 @@ def _with_corrections(geometry: ConeGeometry, poses: np.ndarray) -> ScanGeometry
 
 def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]:
     """Geometry type, metadata and per-view poses of ``geometry``, and its base geometry."""
-    from tomojax._data.geometry_meta import (
-        AugmentedGeometry,
-        DetectorRollGeometry,
-        detector_poses,
-    )
+    from tomojax._data.geometry_meta import AugmentedGeometry, detector_poses
     from tomojax.geometry import ConeSegments
 
     if isinstance(geometry, ConeSegments):
@@ -570,9 +568,6 @@ def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]
             else (detector_poses(geometry), "detector")
         )
         return kind, meta, poses, base
-    if isinstance(geometry, DetectorRollGeometry):
-        kind, meta, poses, base = describe(geometry.base)
-        return kind, {**meta, "detector_roll_deg": float(geometry.detector_roll_deg)}, poses, base
     meta: dict[str, object] = {}
     if isinstance(geometry, ConeGeometry):
         kind, meta = "cone", geometry.geometry_metadata()
@@ -586,6 +581,8 @@ def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]
         kind = "parallel"
     else:
         raise TypeError(f"cannot describe a {type(geometry).__name__} geometry")
+    if not isinstance(geometry, ConeGeometry) and geometry.detector_roll_deg:
+        meta["detector_roll_deg"] = float(geometry.detector_roll_deg)
     return kind, meta, None, geometry
 
 
@@ -621,7 +618,7 @@ def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
         else {
             k: v
             for k, v in source.geometry_metadata.items()
-            if k not in GEOMETRY_KEYS and k != "corrections"
+            if k not in GEOMETRY_KEYS and k not in ("corrections", "view_positions")
         }
     )
     fields: dict[str, Any] = {
@@ -640,6 +637,8 @@ def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
     }
     if scan.corrections:
         fields["geometry_metadata"]["corrections"] = [c.to_dict() for c in scan.corrections]
+    if scan.view_positions is not None:
+        fields["geometry_metadata"]["view_positions"] = scan.view_positions.tolist()
     if source is None:
         return ProjectionDataset(**fields)
     # A Scan holds only sample-view line integrals, not the acquisition's raw
@@ -654,12 +653,14 @@ def scan_from_record(record: ProjectionDataset, *, poses: bool) -> Scan:
     from tomojax.corrections import Correction
 
     saved = record.geometry_metadata.get("corrections") or ()
+    positions = record.geometry_metadata.get("view_positions")
     return Scan(
         projections=record.projections,
         geometry=geometry_of(record, poses=poses),
         name=record.sample_name or "sample",
         corrections=tuple(Correction.from_dict(c) for c in saved),
         source=record,
+        view_positions=None if positions is None else np.asarray(positions, np.float64),
     )
 
 
@@ -695,8 +696,20 @@ def rebuild(
         if isinstance(geometry, ConeGeometry):
             mapped, beam = _windowed_cone_detector(geometry, mapped)
             changes["beam"] = beam
+        elif roll := getattr(geometry, "detector_roll_deg", 0.0):
+            mapped = _rolled_window(geometry.detector, mapped, roll)
         changes["detector"] = mapped
     return replace(geometry, **changes)
+
+
+def _rolled_window(original: Detector, window: Detector, roll_deg: float) -> Detector:
+    """``window`` with its centre shift turned from rolled pixel axes into x/z."""
+    angle = np.deg2rad(roll_deg)
+    c, s = np.cos(angle), np.sin(angle)
+    du = window.center[0] - original.center[0]
+    dv = window.center[1] - original.center[1]
+    centre = (original.center[0] + c * du - s * dv, original.center[1] + s * du + c * dv)
+    return replace(window, center=(float(centre[0]), float(centre[1])))
 
 
 def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[Detector, ConeBeam]:
@@ -719,6 +732,46 @@ def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[D
         ),
         replace(beam, source_to_detector=float(beam.source_to_detector + shift[1])),
     )
+
+
+def _combined(scans: Sequence[Scan]) -> tuple[Correction, ...]:
+    """The corrections every scan shares; differing histories kept per input in order."""
+    first = scans[0].corrections
+    if all(s.corrections == first for s in scans):
+        return first
+    from tomojax.corrections import Correction  # imports JAX: only when needed
+
+    shared = tuple(c for c in first if all(c in s.corrections for s in scans))
+    record = Correction(
+        "combine",
+        {"views": [int(s.projections.shape[0]) for s in scans]},
+        {"inputs": [[c.to_dict() for c in s.corrections] for s in scans]},
+    )
+    return (*shared, record)
+
+
+def frame_output_grid(
+    geometry: ScanGeometry, source: ProjectionDataset | None, *, binning: int = 1
+) -> ScanGeometry:
+    """Keep explicit grids; size detector-derived grids at the corrected resolution.
+
+    Only an unposed axial parallel model identifies detector rows with object z.
+    Other models retain their physical output box, resampling it when binned.
+    This is a numerical grid policy, not a change to acquired ray geometry.
+    """
+    if source is None or source.grid is not None:
+        return geometry
+    if isinstance(geometry, ParallelGeometry):
+        d = geometry.detector
+        grid = Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
+    elif binning > 1:
+        g = geometry.grid
+        grid = g.resampled(
+            (max(1, g.nx // binning), max(1, g.ny // binning), max(1, g.nz // binning))
+        )
+    else:
+        return geometry
+    return rebuild(geometry, grid=grid)
 
 
 def binned_geometry(geometry: ScanGeometry, factor: int) -> ScanGeometry:
@@ -749,7 +802,9 @@ class Reconstruction:
     """A reconstructed volume, the scan it came from and how it was made.
 
     ``volume`` is ``(nz, ny, nx)`` on :attr:`grid`, in the reciprocal of the
-    geometry's length unit (a NumPy or JAX array; ``np.asarray`` gives NumPy).
+    geometry's length unit: attenuation per pixel when the scan's record says
+    ``length_unit`` "pixel" (a file without a pixel size), and then poses, the centre
+    and the grid are in pixels too (a NumPy or JAX array; ``np.asarray`` gives NumPy).
     ``info`` records the method's settings.
 
     Parameters
@@ -785,16 +840,22 @@ class Reconstruction:
 class Alignment:
     """The result of :func:`align`.
 
-    ``volume`` is the reconstruction the alignment converged with. ``scan`` is
-    the input scan with the estimated geometry and per-view poses applied:
-    reconstruct it, align it again or save it. ``poses`` are its ``(views, 6)``
-    poses (see :attr:`Scan.poses`), always a table, zero where nothing moved;
-    ``info`` is the solver's record.
+    ``volume`` is the image the alignment converged with, on ``grid``: the fit's
+    bounded working grid, unless :func:`align` was given one. It is the fit's
+    working image, not a reconstruction: the fit compares model and data through a
+    filter that ignores the grid's finest scale, so the image carries texture there
+    that the object does not have. Reconstruct ``scan`` for the volume. ``scan``
+    is the input scan, on its own grid, with the estimated geometry and per-view
+    poses applied: reconstruct it, align it again or save it. ``poses`` are its
+    ``(views, 6)`` poses (see :attr:`Scan.poses`), always a table, zero where
+    nothing moved; ``info`` is the solver's record.
 
     Parameters
     ----------
     volume : numpy.ndarray or jax.Array
-        Reconstruction used by the alignment, in (z, y, x) order.
+        The alignment's working image, in (z, y, x) order, on ``grid``.
+    grid : Grid
+        The grid ``volume`` is on.
     scan : Scan
         Scan with estimated geometry and per-view corrections applied.
     poses : numpy.ndarray
@@ -804,6 +865,7 @@ class Alignment:
     """
 
     volume: np.ndarray | jax.Array
+    grid: Grid
     scan: Scan
     poses: np.ndarray
     info: Mapping[str, object]

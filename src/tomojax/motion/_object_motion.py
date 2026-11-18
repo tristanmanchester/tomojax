@@ -61,6 +61,11 @@ def read_object_motion_csv(path: Path) -> ObjectMotionTrace:
         if missing:
             raise ValueError(f"object-motion CSV missing columns: {sorted(missing)}")
         rows = list(reader)
+    # Rows may come in any order, but must name each view 0..n-1 exactly once.
+    views = np.asarray([int(row["view"]) for row in rows], dtype=np.int64)
+    if not np.array_equal(np.sort(views), np.arange(len(rows))):
+        raise ValueError("object-motion CSV must list each view 0..n-1 exactly once")
+    rows = [rows[i] for i in np.argsort(views)]
     return ObjectMotionTrace(
         tx_obj_px=_column(rows, "tx_obj_px"),
         ty_obj_px=_column(rows, "ty_obj_px"),

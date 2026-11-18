@@ -163,60 +163,6 @@ class CoreProjectionGeometry:
         }
 
 
-def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> jax.Array:
-    """Project a volume from a geometry state using trilinear ray sampling.
-
-    Parameters
-    ----------
-    volume : jax.Array
-        Three-dimensional volume in (nz, ny, nx) order, converted to float32.
-        Voxel and detector spacing are both one in this reference adapter.
-    geometry : GeometryState
-        Nominal acquisition, setup corrections and per-view poses. Angles use
-        radians and detector translations use pixels.
-
-    Returns
-    -------
-    jax.Array
-        Float32 projections of shape (views, nz, nx).
-
-    Raises
-    ------
-    ValueError
-        If the volume is not three-dimensional or pose array shapes disagree.
-    """
-    vol = jnp.asarray(volume, dtype=jnp.float32)
-    if vol.ndim != 3:
-        raise ValueError("volume must be 3D")
-    theta = jnp.asarray(geometry.theta_total_rad(), dtype=jnp.float32)
-    dx = jnp.asarray(geometry.setup.det_u_px.value + geometry.pose.dx_px, dtype=jnp.float32)
-    dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
-    dz = jnp.asarray(dz_setup + geometry.pose.dz_px, dtype=jnp.float32)
-    alpha = jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32)
-    beta = jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32)
-    detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
-    axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
-    axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
-    nominal_axis = nominal_axis_unit_from_geometry(geometry)
-    return project_parallel_reference_from_input(
-        vol,
-        ProjectionArrayGeometryInput(
-            theta_rad=theta,
-            alpha_rad=alpha,
-            beta_rad=beta,
-            dx_px=dx,
-            dz_px=dz,
-            detector_roll_rad=detector_roll,
-            axis_rot_x_rad=axis_rot_x,
-            axis_rot_y_rad=axis_rot_y,
-            nominal_axis_unit=nominal_axis,
-            acquisition_model=geometry.acquisition.model,
-            laminography_tilt_rad=geometry.acquisition.laminography_tilt_rad,
-            laminography_tilt_about=geometry.acquisition.laminography_tilt_about,
-        ),
-    )
-
-
 def project_parallel_reference_from_input(
     volume: jax.Array,
     geometry_input: ProjectionArrayGeometryInput,
@@ -317,8 +263,8 @@ def core_projection_geometry_from_state(
     alpha = jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32)
     beta = jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32)
     dx = jnp.asarray(geometry.setup.det_u_px.value + geometry.pose.dx_px, dtype=jnp.float32)
-    dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
-    dz = jnp.asarray(dz_setup + geometry.pose.dz_px, dtype=jnp.float32)
+    # ``active`` marks a value for fitting; a fixed calibration still applies.
+    dz = jnp.asarray(geometry.setup.det_v_px.value + geometry.pose.dz_px, dtype=jnp.float32)
     detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
     axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
     axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)

@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.core.operator_norm import estimate_normal_norm
+from tomojax.core.operator_norm import BOUND_GAP, estimate_normal_norm, normal_upper_bound
 
 # check-public-imports: allow-private
 from tomojax.core.projector import forward_project_view_T
@@ -28,7 +28,7 @@ from tomojax.geometry import (
 from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
 
 # check-public-imports: allow-private
-from tomojax.recon._projection import normal_operator_norm, projection_operators
+from tomojax.recon._projection import projection_operators
 
 
 def _physical_tv_parameters(grid, detector, data, weights, config):
@@ -451,25 +451,31 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regulariser):
 
 
 @pytest.mark.numerical
-def test_batched_normal_norm_matches_dense_scaled_spectrum():
-    # Physical length units and an unnormalised start must not change the estimate.
+def test_batched_normal_bound_brackets_the_dense_scaled_spectrum():
+    # Physical length units and an unnormalised start must not change the bound.
     scale, start_scale = 1e-4, 1e3
     matrix = jnp.asarray([[1.0, 0.3], [0.3, 2.0]], dtype=jnp.float32) * scale
     support = jnp.asarray([0.4, 1.0]).reshape(1, 1, 2)
 
-    def forward(x):
-        return matrix @ x.ravel()
+    def normal(x):
+        return (matrix.T @ (matrix @ (x * support).ravel())).reshape(1, 1, 2) * support
 
-    def adjoint(y):
-        return (matrix.T @ y).reshape(1, 1, 2)
-
-    actual = jax.jit(
-        lambda start: normal_operator_norm(
-            lambda x: adjoint(forward(x)), (1, 1, 2), iterations=30, mask=support, start=start
-        )
-    )(jnp.full((1, 1, 2), start_scale))
+    actual = jax.jit(lambda start: normal_upper_bound(normal, start * support, iterations=3))(
+        jnp.full((1, 1, 2), start_scale)
+    )
     expected = np.linalg.norm(np.asarray(matrix, np.float64) * np.asarray(support).ravel(), 2) ** 2
-    np.testing.assert_allclose(actual, expected, rtol=3e-6)
+    assert expected * (1 - 1e-6) <= actual <= expected * (1 + BOUND_GAP)
+
+
+@pytest.mark.numerical
+def test_normal_bound_is_safe_when_the_start_misses_the_leading_mode():
+    # diag(1, 4) from a start nearly orthogonal to its leading mode: three power
+    # passes estimate about 1.002, and a step from that would diverge.
+    def normal(x):
+        return x * jnp.asarray([1.0, 4.0]).reshape(1, 1, 2)
+
+    bound = normal_upper_bound(normal, jnp.asarray([1.001, 0.001]).reshape(1, 1, 2), iterations=3)
+    assert 4.0 <= float(bound) <= 4.0 * (1 + BOUND_GAP)
 
 
 @pytest.mark.numerical

@@ -7,7 +7,6 @@ from tomojax.forward.api import (
     joseph_l2_value_and_grad,
     joseph_pose_normal_equations,
     project_joseph,
-    project_parallel_reference,
     project_parallel_reference_from_input,
 )
 
@@ -16,6 +15,5 @@ __all__ = [
     "joseph_l2_value_and_grad",
     "joseph_pose_normal_equations",
     "project_joseph",
-    "project_parallel_reference",
     "project_parallel_reference_from_input",
 ]

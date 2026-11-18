@@ -12,7 +12,6 @@ from tomojax.cli._runtime import transfer_guard_context
 
 # check-public-imports: allow-private
 from tomojax.core.backend_policy import (
-    backend_provenance,
     cuda_backend,
     normalize_projector_backend,
 )
@@ -26,30 +25,9 @@ from tomojax.core.validation import (
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 
-def test_backend_policy_normalizes_aliases_and_reports_fallback_status() -> None:
-    assert normalize_projector_backend(" default ") == "jax"
+def test_backend_policy_normalizes_spelling_and_rejects_unknown_backends() -> None:
+    assert normalize_projector_backend(" JAX ") == "jax"
     assert normalize_projector_backend("CUDA") == "cuda"
-
-    provenance = backend_provenance(
-        requested_backend="cuda",
-        actual_backend="jax",
-        api_surface="unit-test",
-        fallback_reason="unsupported detector tile",
-        differentiability="performance_only",
-    )
-
-    assert provenance.status == "fallback"
-    assert provenance.eligible_for_speed_claim is False
-    assert provenance.to_dict() == {
-        "requested_backend": "cuda",
-        "actual_backend": "jax",
-        "status": "fallback",
-        "fallback_reason": "unsupported detector tile",
-        "api_surface": "unit-test",
-        "differentiability": "performance_only",
-        "eligible_for_speed_claim": False,
-    }
-
     with pytest.raises(ValueError, match="backend must be one of"):
         normalize_projector_backend("pallas")
 

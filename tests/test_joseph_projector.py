@@ -18,6 +18,7 @@ from tomojax.core.cuda_projector._joseph import adjoint_cuda, forward_cuda
 
 # check-public-imports: allow-private
 from tomojax.core.joseph import (
+    active_voxels,
     adjoint_jax,
     forward_jax,
     forward_project_planes,
@@ -243,6 +244,62 @@ def test_generic_gather_detector_columns_match_physical_matrix(interpolation, ab
     np.testing.assert_array_equal(execute(images, jnp.asarray(initial)), actual)
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
+@pytest.mark.parametrize("z_fast", [False, True])
+def test_gather_limited_to_active_work_matches_physical_matrix(monkeypatch, interpolation, z_fast):
+    # Cubic: each view adds its transpose to exactly the voxels whose 4x4 tile,
+    # in that view's major-axis plane, holds a masked voxel. Linear: the voxels
+    # whose 4-voxel z run holds one. The others keep initial.
+    linear = interpolation == "linear"
+    # The CuPy run gather, or the generic tile gather; mixed views are not axial.
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1" if linear else "0")
+    grid = Grid(9, 6, 7, 0.8, 1.1, 1.3, vol_origin=(-3.7, -2.9, -3.1))
+    detector = Detector(13, 11, 0.9, 1.2, (0.17, -0.23))
+    _, _, poses = problem()
+    rng = np.random.default_rng(58)
+    mask = np.zeros((7, 6, 9), bool)  # (z, y, x)
+    mask[[0, 3, 6, 6], [5, 2, 0, 4], [8, 4, 1, 1]] = True
+    images = rng.normal(size=(6, 11, 13)).astype(np.float32)
+    initial = rng.normal(size=(7, 6, 9)).astype(np.float32)
+    physical = matrix(poses, grid, detector, interpolation).reshape(6, -1, 7 * 6 * 9)
+    voxel = np.array([grid.vx, grid.vy, grid.vz])
+    xyz = mask.transpose(2, 1, 0)
+    expected = initial.copy()
+    for view, pose in enumerate(poses.astype(np.float64)):
+        axis = int(np.argmax(np.abs(pose[1, :3] / voxel)))
+        order = (axis, (axis + 1) % 3, (axis + 2) % 3)
+        abc = np.moveaxis(xyz, order, (0, 1, 2))
+        a, b, c = np.indices(abc.shape)
+        tiles = np.zeros((abc.shape[0], -(-abc.shape[1] // 4), -(-abc.shape[2] // 4)), bool)
+        i, j, k = np.nonzero(abc)
+        tiles[i, j // 4, k // 4] = True
+        keep = np.moveaxis(tiles[a, b // 4, c // 4], (0, 1, 2), order).transpose(2, 1, 0)
+        if linear:
+            runs = np.zeros((2, 6, 9), bool)
+            runs[np.nonzero(mask)[0] // 4, *np.nonzero(mask)[1:]] = True
+            keep = runs[np.arange(7)[:, None, None] // 4, np.arange(6)[:, None], np.arange(9)]
+        full = (physical[view].T @ images[view].ravel()).reshape(7, 6, 9)
+        expected += np.where(keep, full, 0).astype(np.float32)
+    assert 0 < np.mean(expected != initial) < 1
+    volume = jnp.asarray(mask.transpose(2, 1, 0) if z_fast else mask)
+    active = active_voxels(volume, backend="cuda", interpolation=interpolation, z_fast=z_fast)
+    start = initial.transpose(2, 1, 0) if z_fast else initial
+    actual = sum_backproject_planes(
+        plane_coefficients(jnp.asarray(poses), grid, detector),
+        jnp.asarray(images),
+        grid,
+        detector,
+        backend="cuda",
+        interpolation=interpolation,
+        accumulate=jnp.asarray(start),
+        z_fast=z_fast,
+        active=active,
+    )
+    actual = np.asarray(actual).transpose(2, 1, 0) if z_fast else np.asarray(actual)
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=5e-6)
+
+
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 @pytest.mark.parametrize("z_fast", [False, True])
 def test_generic_gather_prepares_launches_before_runtime_callback(
@@ -361,19 +418,20 @@ def test_plane_cgls_matches_independent_damped_system_with_tail_batch(
     assert np.linalg.norm(gradient) < 5e-6 * np.linalg.norm(reference.T @ data.ravel()), info
 
 
-def test_plane_model_rejects_custom_detector_coordinates():
+def test_plane_model_rejects_a_detector_grid_that_is_not_a_lattice():
     from tomojax.geometry import ParallelGeometry
 
     grid, detector, _ = problem()
     geometry = ParallelGeometry(grid, detector, np.arange(6))
-    with pytest.raises(ValueError, match="canonical detector"):
+    scattered = np.random.default_rng(5).normal(size=(2, 63)).astype(np.float32)
+    with pytest.raises(ValueError, match="affine detector grid"):
         cgls(
             geometry,
             grid,
             detector,
             jnp.zeros((6, 7, 9)),
             config=CGLSConfig(projector_model="joseph"),
-            det_grid=(jnp.zeros(63), jnp.zeros(63)),
+            det_grid=(jnp.asarray(scattered[0]), jnp.asarray(scattered[1])),
         )
 
 
@@ -913,3 +971,18 @@ def test_eager_coefficient_device_roundoff_is_bounded():
     difference = outputs[1] - outputs[0]
     assert np.max(np.abs(difference)) / max(1.0, np.max(np.abs(outputs[0]))) <= 1.48445e-6
     assert np.linalg.norm(difference) / np.linalg.norm(outputs[0]) <= 4.40001e-7
+
+
+def test_explicit_detector_grid_gives_the_canonical_lattice_on_a_wide_detector():
+    from tomojax.core._plane_coefficients import (  # check-public-imports: allow-private
+        coefficients,
+    )
+    from tomojax.core.projector import get_detector_grid_device
+
+    # FP32 neighbours 0.7 apart differ by 0.69995: 0.2 lengths of drift over 4097 columns.
+    grid, detector = Grid(8, 8, 8, 1.0, 1.0, 1.0), Detector(4097, 3, 0.7, 0.7)
+    poses = np.eye(4, dtype=np.float32)[None]
+    grid_values = tuple(np.asarray(a) for a in get_detector_grid_device(detector))
+    explicit = coefficients(poses, grid, detector, grid_values, xp=np)
+    canonical = coefficients(poses, grid, detector, xp=np)
+    np.testing.assert_allclose(explicit, canonical, rtol=2e-6, atol=2e-6)

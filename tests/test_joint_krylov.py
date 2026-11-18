@@ -6,7 +6,14 @@ import numpy as np
 from scipy.sparse.linalg import cg
 
 # check-public-imports: allow-private
-from tomojax.alignment._joint._krylov import solve
+from tomojax.alignment._joint._krylov import solve as solve_with_work
+
+
+def solve(matvec, *args, **kwargs):
+    """The solve for a matvec that needs no buffer of its own (``work`` None)."""
+    result, work = solve_with_work(lambda v, w: (matvec(v), w), *args, work=None, **kwargs)
+    assert work is None
+    return result
 
 
 def test_custom_symmetric_positive_inverse_solves_the_dense_system():
@@ -34,7 +41,7 @@ def test_custom_symmetric_positive_inverse_solves_the_dense_system():
 def test_nonpositive_operator_is_reported_as_failure():
     with jax.enable_x64(True):
         matrix = jnp.diag(jnp.array([-1.0, 2, 3]))
-        result = solve(lambda p: matrix @ p, jnp.ones(3), jnp.ones(3), 5)
+        result = solve(lambda p: matrix @ p, jnp.ones(3), jnp.ones(3), 5, rtol=0.03)
     assert np.isinf(float(result[2]))
 
 
@@ -87,7 +94,7 @@ def test_convergence_is_explicitly_verified_and_zero_rhs_needs_no_matvec():
         )
         np.testing.assert_allclose(result.relative_residual, explicit, atol=1e-15)
         calls.clear()
-        zero = solve(matvec, jnp.zeros_like(rhs), 1 / diagonal, 8)
+        zero = solve(matvec, jnp.zeros_like(rhs), 1 / diagonal, 8, rtol=0.03)
         jax.block_until_ready(zero)
         jax.effects_barrier()
     assert int(zero.iterations) == int(zero.matvecs) == len(calls) == 0

@@ -44,8 +44,9 @@ def test_training_uses_projector_gradients_but_not_test_targets():
     angles = np.linspace(0, 180, 24, endpoint=False)
     geometry = tj.ParallelGeometry(tj.Grid(12, 12, 2, 1, 1, 1), tj.Detector(12, 2, 1, 1), angles)
     axis = np.arange(12) - 5.5
-    volume = np.exp(-(axis[:, None, None] ** 2 + axis[None, :, None] ** 2) / 8)
-    volume = np.broadcast_to(volume, (12, 12, 2)).astype(np.float32)
+    # A Gaussian over (y, x), repeated in both (z, y, x) planes.
+    volume = np.exp(-(axis[:, None] ** 2 + axis[None, :] ** 2) / 8)
+    volume = np.broadcast_to(volume, (2, 12, 12)).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
     torch.manual_seed(2)
     baseline, denoised, model, metrics = module.train(scan, steps=2, learning_rate=1e-3)

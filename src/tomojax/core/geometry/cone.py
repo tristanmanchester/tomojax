@@ -11,12 +11,16 @@ from .lamino import laminography_tilt_matrix
 from .transforms import align_u_to_v
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     import jax
     import jax.numpy as jnp
 
     from .base import Detector, Grid, PoseMatrix, RayPair, ScanGeometry
+
+
+# Marks saved cone beams whose positive roll turns detector u towards v.
+ROLL_CONVENTION_KEY = "detector_roll_turns_u_towards_v"
 
 
 @dataclass(frozen=True)
@@ -33,9 +37,13 @@ class ConeBeam:
     units. ``source_height`` is the calibrated lab-frame z position of the source
     and unshifted detector centre, not an editable per-view object correction.
     ``Detector.center`` offsets the detector relative to that centre. Roll,
-    pitch and yaw rotate the detector about its centre: roll about the beam
-    (y), pitch about detector u (x) and yaw about detector v (z), applied in
-    that order.
+    pitch and yaw rotate the detector about its centre, right-handed about its
+    own axes: the normal n = u x v (pointing back towards the source), u and v,
+    applied in that order. Positive roll turns u towards v: a point above the
+    detector centre projects towards +u, so the rotation axis leans towards +u
+    at the top of the image. Positive pitch tilts the +v edge towards the
+    source; positive yaw swings the +u edge away from it. Roll is the same
+    angle as a parallel detector roll and as ``tj.align`` reports it.
 
     Parameters
     ----------
@@ -44,11 +52,11 @@ class ConeBeam:
     source_to_detector : float
         Source-to-detector distance, greater than source_to_axis.
     detector_roll_deg : float, optional
-        Detector roll about the lab y axis, in degrees.
+        Roll about the detector normal, in degrees; positive turns u towards v.
     detector_pitch_deg : float, optional
-        Detector pitch about the x axis, in degrees.
+        Pitch about detector u, in degrees; positive tilts the +v edge towards the source.
     detector_yaw_deg : float, optional
-        Detector yaw about the z axis, in degrees.
+        Yaw about detector v, in degrees; positive swings the +u edge away from the source.
     axis_offset : float, optional
         Lateral x displacement of the rotation axis, in physical units.
     source_height : float, optional
@@ -113,7 +121,8 @@ class ConeBeam:
         roll, pitch, yaw = np.deg2rad(
             [self.detector_roll_deg, self.detector_pitch_deg, self.detector_yaw_deg]
         )
-        rotation = _rotation("z", yaw) @ _rotation("x", pitch) @ _rotation("y", roll)
+        # A right-handed turn about +y takes +x towards -z: roll is its opposite.
+        rotation = _rotation("z", yaw) @ _rotation("x", pitch) @ _rotation("y", -roll)
         centre = np.array(
             [
                 float(detector.center[0]),
@@ -122,6 +131,37 @@ class ConeBeam:
             ]
         )
         return centre, rotation @ np.array([1.0, 0.0, 0.0]), rotation @ np.array([0.0, 0.0, 1.0])
+
+    @classmethod
+    def from_dict(cls, saved: Mapping[str, float]) -> ConeBeam:
+        """The beam :meth:`to_dict` saved.
+
+        Parameters
+        ----------
+        saved : mapping
+            Saved distances, axis offset and detector rotations.
+
+        Returns
+        -------
+        ConeBeam
+            The saved beam.
+
+        Raises
+        ------
+        ValueError
+            If the mapping holds a non-zero roll saved before positive roll
+            turned detector u towards v (TomoJAX 0.3 or earlier).
+        """
+        values = {str(k): float(v) for k, v in saved.items() if k != ROLL_CONVENTION_KEY}
+        if ROLL_CONVENTION_KEY not in saved and values.get("detector_roll_deg", 0.0) != 0.0:
+            raise ValueError(
+                "This file stores a cone-beam detector roll saved by TomoJAX 0.3 or earlier, "
+                "when positive roll turned detector u away from v. Positive roll now turns u "
+                "towards v, as for parallel beam and as tj.align reports it. Load the file "
+                "with geometry=... and ConeBeam(detector_roll_deg="
+                f"{-values['detector_roll_deg']:g}, ...) to keep its physical geometry."
+            )
+        return cls(**values)
 
     def to_dict(self) -> dict[str, float]:
         """Return JSON-compatible metadata.
@@ -135,6 +175,8 @@ class ConeBeam:
             "source_to_axis": float(self.source_to_axis),
             "source_to_detector": float(self.source_to_detector),
             "detector_roll_deg": float(self.detector_roll_deg),
+            # Saved files before this convention stored the opposite sign.
+            ROLL_CONVENTION_KEY: 1.0,
             "detector_pitch_deg": float(self.detector_pitch_deg),
             "detector_yaw_deg": float(self.detector_yaw_deg),
             "axis_offset": float(self.axis_offset),

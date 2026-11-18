@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +8,6 @@ import pytest
 from tomojax.core.projector import (
     _build_detector_grid,
     forward_project_view_T,
-    get_detector_grid_device,
 )
 from tomojax.forward import (
     ProjectionArrayGeometryInput,
@@ -18,16 +16,7 @@ from tomojax.forward import (
 
 # check-public-imports: allow-private
 from tomojax.forward._projector import core_projection_geometry_from_input
-from tomojax.geometry import Detector, Grid, LaminographyGeometry
-from tomojax.recon import fista_tv_core
-
-# check-public-imports: allow-private
-from tomojax.recon.fista_tv_core import (
-    FistaCoreConfig,
-    _fixed_geometry_is_available,
-    _resolve_fista_core_data_projectors,
-    projection_loss_arrays,
-)
+from tomojax.geometry import Detector, Grid
 
 
 def test_detector_grid_is_flattened_centered_and_read_only() -> None:
@@ -83,48 +72,6 @@ def test_forward_project_view_output_changes_when_pose_changes() -> None:
     assert float(jnp.linalg.norm(base - shifted)) > 1e-3
 
 
-def test_traced_geometry_is_not_fixed_geometry_for_fast_paths() -> None:
-    @jax.jit
-    def visible_in_trace(T: jnp.ndarray) -> jnp.ndarray:
-        return jnp.asarray(_fixed_geometry_is_available(T), dtype=jnp.bool_)
-
-    pose_stack = jnp.eye(4, dtype=jnp.float32)[None, ...]
-
-    assert _fixed_geometry_is_available(pose_stack)
-    assert not bool(visible_in_trace(pose_stack))
-
-
-def test_fixed_geometry_core_respects_explicit_jax_backend(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
-    detector = Detector(nu=64, nv=64, du=1.0, dv=1.0)
-    pose_stack = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (16, 4, 4))
-    cfg = FistaCoreConfig(forward_projector="jax", backprojector="jax")
-    canonical_det_grid = get_detector_grid_device(detector)
-
-    shifted_grid = (canonical_det_grid[0] + jnp.float32(0.25), canonical_det_grid[1])
-    for det_grid in (None, canonical_det_grid, shifted_grid):
-        result = _resolve_fista_core_data_projectors(cfg, T_all=pose_stack, det_grid=det_grid)
-        assert result == ("jax", "jax")
-
-
-def test_explicit_jax_backend_does_not_need_cuda_callable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
-    monkeypatch.setattr(
-        fista_tv_core,
-        "resolve_cuda_callable",
-        lambda _name, *, missing_reason: (None, missing_reason),
-    )
-    pose_stack = jnp.broadcast_to(jnp.eye(4, dtype=jnp.float32), (16, 4, 4))
-    cfg = FistaCoreConfig(forward_projector="jax", backprojector="jax")
-
-    result = _resolve_fista_core_data_projectors(cfg, T_all=pose_stack, det_grid=None)
-    assert result == ("jax", "jax")
-
-
 def test_forward_adapter_rejects_mismatched_pose_arrays() -> None:
     volume = jnp.ones((2, 2, 2), dtype=jnp.float32)
 
@@ -174,111 +121,3 @@ def test_core_projection_geometry_uses_volume_or_explicit_detector_shape(detecto
     assert core.provenance()["n_steps"] == 7
     assert core.provenance()["checkpoint_projector"] is False
     assert core.provenance()["projector_unroll"] == 2
-
-
-@pytest.mark.parametrize(
-    ("integrator", "interpolation"), [("joseph", "linear"), ("joseph_cubic", "cubic")]
-)
-@pytest.mark.parametrize("batch", [2, 7])
-def test_joseph_core_gradient_is_the_matched_plane_transpose(integrator, interpolation, batch):
-    # check-public-imports: allow-private
-    from tomojax.core.joseph import (
-        forward_project_planes,
-        plane_coefficients,
-        sum_backproject_planes,
-    )
-    from tomojax.geometry import Detector, Grid, LaminographyGeometry, stack_view_poses
-
-    # check-public-imports: allow-private
-    from tomojax.recon import fista_tv_core
-
-    grid, detector = Grid(6, 5, 4, 0.8, 1.1, 1.3), Detector(7, 5, 0.9, 1.2, (0.1, -0.2))
-    geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 9, endpoint=False), 30)
-    poses = stack_view_poses(geometry, 9)
-    rng = np.random.default_rng(3)
-    volume = jnp.asarray(rng.random((4, 5, 6)), jnp.float32)
-    data = jnp.asarray(rng.random((9, 5, 7)), jnp.float32)
-    coeff = plane_coefficients(poses, grid, detector)
-    residual = (
-        forward_project_planes(
-            coeff, volume, grid, detector, backend="jax", interpolation=interpolation
-        )
-        - data
-    )
-    expected = sum_backproject_planes(
-        coeff, residual, grid, detector, backend="jax", interpolation=interpolation
-    )
-    loss, grad = fista_tv_core._projection_loss_and_explicit_grad(
-        T_all=poses,
-        grid=grid,
-        detector=detector,
-        volume=volume,
-        det_grid=None,
-        projections=data,
-        weights=jnp.ones((9, 1, 1)),
-        checkpoint_projector=True,
-        projector_unroll=1,
-        gather_dtype="fp32",
-        views_per_batch=batch,
-        forward_projector="jax",
-        backprojector="jax",
-        cuda_tile_shape=(16, 4),
-        cuda_num_warps=1,
-        ray_integrator=integrator,
-    )
-    np.testing.assert_allclose(grad, expected, rtol=2e-5, atol=2e-6)
-    np.testing.assert_allclose(loss, 0.5 * float(jnp.vdot(residual, residual)), rtol=1e-5)
-
-
-@pytest.mark.numerical
-@pytest.mark.parametrize("geometry_input", ["poses", "detector"])
-def test_sampled_objective_uses_the_requested_step_when_geometry_is_traced(geometry_input):
-    scale = 1.7
-    grid, detector = Grid(2, 2, 1, 0.8, 1.1, 1.3), Detector(5, 3, 0.6, 0.8)
-    geometry = LaminographyGeometry(grid, detector, [13, 71, 127], tilt_deg=17)
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], jnp.float32)
-    coordinates = get_detector_grid_device(detector)
-    volume = jnp.asarray([0.2, 1.0, 0.7, 0.4]).reshape(1, 2, 2)
-    data = jnp.full((3, 3, 5), 0.1)
-    weights = jnp.asarray([0.4, 0.0, 1.3])
-    cfg = FistaCoreConfig(
-        forward_projector="cuda",
-        backprojector="cuda",
-        cuda_step_size_scale=scale,
-        views_per_batch=2,
-    )
-
-    def geometry_arrays(parameter):
-        if geometry_input == "poses":
-            return poses.at[:, 0, 3].add(parameter), coordinates
-        return poses, (coordinates[0] + parameter, coordinates[1])
-
-    def objective(parameter, reference):
-        dynamic_poses, dynamic_coordinates = geometry_arrays(parameter)
-        if reference:
-            pred = jax.vmap(
-                lambda pose: forward_project_view_T(
-                    pose,
-                    grid,
-                    detector,
-                    volume,
-                    step_size=grid.vy * scale,
-                    det_grid=dynamic_coordinates,
-                )
-            )(dynamic_poses)
-            return 0.5 * jnp.sum((pred - data) ** 2 * weights[:, None, None])
-        return projection_loss_arrays(
-            T_all=dynamic_poses,
-            grid=grid,
-            detector=detector,
-            volume=volume,
-            det_grid=dynamic_coordinates,
-            projections=data,
-            cfg=cfg,
-            view_weights=weights,
-        )
-
-    parameter = jnp.float32(0.11)
-    expected = jax.jit(jax.value_and_grad(lambda p: objective(p, True)))(parameter)
-    actual = jax.jit(jax.value_and_grad(lambda p: objective(p, False)))(parameter)
-    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)

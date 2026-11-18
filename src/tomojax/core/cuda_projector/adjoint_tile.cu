@@ -4,12 +4,18 @@
 
 extern "C" __global__ void joseph_gather_tile(
     const float* __restrict__ coeff,const float* __restrict__ images,
-    float* out,const float* initial,int nviews,int nx,int ny,int nz,int nu,int nv) {
+    float* out,const float* initial,const int* listed_tiles,const int* listed_count,
+    int listed,int nviews,int nx,int ny,int nz,int nu,int nv) {
     const int A=AXIS,B=4,C=4,VB=32;
     int na=A==0?nx:(A==1?ny:nz),nb=A==0?ny:(A==1?nz:nx),nc=A==0?nz:(A==1?nx:ny);
     int tiles_b=(nb+B-1)/B,tiles_c=(nc+C-1)/C;
-    long tile=(long)blockIdx.x*blockDim.x+threadIdx.x;
-    bool valid=tile<(long)na*tiles_b*tiles_c;
+    // A listed launch covers only the tiles whose result is needed; whole
+    // blocks past the list return before any barrier.
+    long slot=(long)blockIdx.x*blockDim.x+threadIdx.x;
+    long count=listed?*listed_count:(long)na*tiles_b*tiles_c;
+    if((long)blockIdx.x*blockDim.x>=count) return;
+    bool valid=slot<count;
+    long tile=listed&&valid?listed_tiles[slot]:slot;
     int k=tile/((long)tiles_b*tiles_c);
     int b0=B*(A==1?tile%tiles_b:(tile/tiles_c)%tiles_b);
     int c0=C*(A==1?(tile/tiles_b)%tiles_c:tile%tiles_c);

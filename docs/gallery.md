@@ -5,7 +5,8 @@ laptop GPU (RTX 4070, 8 GB). The synthetic objects are the procedural phantoms
 in [bench/phantoms](../bench/phantoms), voxelised 1.5 times finer than the
 reconstruction grid, or STL meshes rendered by gVXR, so the data are never
 made by the projector that inverts them. Errors are relative L2 against the
-phantom inside the object.
+phantom inside the object. The scripts plot with Matplotlib from the `examples`
+dependency group (`uv sync --group examples`).
 
 ## Ruby sphere in a real laminography scan
 

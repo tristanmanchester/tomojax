@@ -88,9 +88,9 @@ def test_frame_center_provenance_preserves_explicit_overrides(tmp_path, recorded
     if not recorded:
         with h5py.File(path, "r+") as handle:
             del handle["entry/instrument/detector"].attrs["detector_meta_json"]
-    if not recorded:
-        with pytest.raises(ValueError, match="detector="):
-            tj.load_frames(path)
+    if not recorded:  # pitches without a detector: the middle, and the record says so
+        loaded = tj.load_frames(path).source.geometry_metadata
+        assert loaded["detector_center_status"] == "not_recorded" and "length_unit" not in loaded
     frames = tj.load_frames(path, **({} if recorded else {"detector": tiny_detector(nu=2)}))
     status = "recorded" if recorded else "provided"
     assert frames.source.geometry_metadata["detector_center_status"] == status
@@ -143,8 +143,9 @@ def test_missing_dark_requires_explicit_calibration(tmp_path: Path) -> None:
 def test_counts_without_flats_are_refused(tmp_path: Path) -> None:
     frames = np.full((2, 2, 2), 100, np.uint16)
     _write_frames(tmp_path / "scan.nxs", frames, [0, 0], [0, 90])
-    with pytest.raises(ValueError, match="integer detector counts and no flat frames"):
+    with pytest.raises(ValueError, match="No flat fields: pass flats"):
         tj.load(tmp_path / "scan.nxs")
+    assert tj.load(tmp_path / "scan.nxs", flats=200, darks=0).projections.shape == (2, 2, 2)
     with pytest.raises(ValueError, match="No flat fields: pass flats"):
         tj.load_frames(tmp_path / "scan.nxs").corrected()
     scan = tj.load_frames(tmp_path / "scan.nxs", flats=200, darks=0).corrected()
@@ -166,8 +167,10 @@ def test_tiff_stacks_go_through_load_frames(tmp_path: Path, suffix: str) -> None
                 handle.create_dataset("entry/data/data", data=data[None])
         else:
             iio.imwrite(path, data)
-    with pytest.raises(ValueError, match="load_frames"):
+    with pytest.raises(ValueError, match="pass angles="):
         tj.load(views)
+    loaded = tj.load(views, angles=[0, 90], flats=flat, darks=dark, detector=tiny_detector(nu=3))
+    np.testing.assert_allclose(np.asarray(loaded.projections)[:, 0, 0], -np.log([0.5, 0.25]))
     with pytest.raises(ValueError, match="angles"):
         tj.load_frames(views / "view_0000.tif")
     frames = tj.load_frames(
@@ -554,6 +557,63 @@ def test_gda_frames_use_paired_rotation_and_key(tmp_path, caplog, command):
     assert explicit.source.geometry_metadata["acquisition"]["geometry_status"] == "provided"
 
 
+def test_gda_rotation_without_a_unit_label_is_read_in_degrees(tmp_path):
+    # Older GDA (DIAD) exports: the frames, the EtherCAT key and the summed rotation command,
+    # with no unit label on the command. The angles are the sample frames' commands, and the
+    # record says where the angles and key came from and that the file gave no unit.
+    path = tmp_path / "diad.nxs"
+    stack = np.stack([np.full((2, 3), v, np.int32) for v in (100, 1100, 600, 350, 1100)])
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("entry/imaging/data", data=stack)
+        handle.create_dataset("entry/instrument/EtherCAT/image_key", data=[2, 1, 0, 0, 1])
+        handle.create_dataset("entry/imaging_sum/smaract_zrot", data=[0.0, 0.0, 0.0, 90.0, 0.0])
+    scan = tj.load(path, detector=tiny_detector(nu=3))
+    np.testing.assert_array_equal(scan.angles, [0, 90])
+    acquisition = scan.source.geometry_metadata["acquisition"]
+    assert acquisition["angles_path"] == "/entry/imaging_sum/smaract_zrot"
+    assert acquisition["image_key_path"] == "/entry/instrument/EtherCAT/image_key"
+    assert acquisition["angle_units_recorded"] == "" and acquisition["angle_units"] == "degree"
+
+
+@pytest.mark.parametrize("same_frames", [True, False])
+def test_an_nxtomo_entry_without_angles_takes_the_gda_command_for_the_same_frames(
+    tmp_path, same_frames
+):
+    # Newer GDA exports write an NXtomo entry for the frames with no rotation angles, beside
+    # the GDA layout whose rotation command has them. Only when both describe the same frames
+    # dataset do the command's angles complete the entry; otherwise the file asks for angles=.
+    path = tmp_path / "gda-nxtomo.nxs"
+    stack = np.stack([np.full((2, 3), v, np.int32) for v in (100, 1100, 600, 350, 1100)])
+    key = [2, 1, 0, 0, 1]
+    with h5py.File(path, "w") as handle:
+        frames = handle.create_dataset("entry/imaging/data", data=stack)
+        handle.create_dataset("entry/instrument/EtherCAT/image_key", data=key)
+        command = handle.create_dataset(
+            "entry/imaging/smaract_zrot_value_set", data=[0.0, 0.0, 0.0, 90.0, 0.0]
+        )
+        command.attrs["units"] = "mm"
+        entry = handle.create_group("entry/tomo_entry")
+        entry["definition"] = "NXtomo"
+        entry.create_group("sample")
+        entry["instrument/detector/image_key"] = key
+        if same_frames:
+            entry["instrument/detector/data"] = frames
+            entry["data/data"] = frames
+        else:
+            entry["instrument/detector/data"] = stack + 1
+            entry["data/data"] = entry["instrument/detector/data"]
+    if not same_frames:
+        with pytest.raises(ValueError, match="angles="):
+            tj.load(path, detector=tiny_detector(nu=3))
+        return
+    scan = tj.load(path, detector=tiny_detector(nu=3))
+    np.testing.assert_array_equal(scan.angles, [0, 90])
+    acquisition = scan.source.geometry_metadata["acquisition"]
+    assert acquisition["angles_path"] == "/entry/imaging/smaract_zrot_value_set"
+    assert acquisition["nxtomo_angles"] == "not_recorded"
+    assert acquisition["angle_units_recorded"] == "mm"
+
+
 def test_gda_unit_correction_does_not_accept_other_linear_axes(tmp_path):
     path = tmp_path / "unknown-units.nxs"
     with h5py.File(path, "w") as handle:
@@ -602,10 +662,10 @@ def test_aps_data_exchange_files_load_with_their_flats_and_darks(tmp_path: Path)
     )
     np.testing.assert_allclose(scan.angles, [0.0, 90.0])
     assert scan.corrections[0].settings == {"flats": 3, "darks": 2, "flat_sets": 1}
-    # Without flats a foreign file says where to go.
+    # A foreign file says what it lacks, as an argument tj.load takes.
     with h5py.File(tmp_path / "bare.h5", "w") as handle:
         handle.create_dataset("exchange/data", data=np.full((2, 2, 3), 7, np.uint16))
-    with pytest.raises(ValueError, match="load_frames"):
+    with pytest.raises(ValueError, match="pass angles="):
         tj.load(tmp_path / "bare.h5")
 
 
@@ -805,6 +865,7 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
     frames = tj.load_frames(path, darks=0)
     geometry = frames.geometry
     assert frames.counts.shape == (2, 4, 6)  # closing frame is not a third view
+    assert frames.source.geometry_metadata["closing_frames_excluded"] == 1
     np.testing.assert_array_equal(geometry.angles, [180, 0])
     axis = geometry.rotation_axis()
     if modern:
@@ -926,3 +987,30 @@ def test_nikon_rays_match_cil_frame_with_tilt_and_offset_panel(tmp_path):
         ]
     )  # bases already account for reversing both raw TIFF axes
     np.testing.assert_allclose(view_frames(frames.geometry), expected, rtol=2e-7, atol=2e-6)
+
+
+@pytest.mark.parametrize("failed", [None, 0, 8])
+def test_reject_views_keeps_a_smooth_trend_and_rejects_failed_end_views(failed) -> None:
+    medians = np.linspace(0.5, 1.5, 9)
+    if failed is not None:
+        medians[failed] = 3.0  # a shutter failure at the start or end of the scan
+    keep, found = RejectViews().select(medians, np.arange(9))
+    expected = np.ones(9, bool)
+    if failed is not None:
+        expected[failed] = False
+    np.testing.assert_array_equal(keep, expected)
+
+
+def test_rings_after_rejected_views_is_planned_for_the_views_that_remain() -> None:
+    from tomojax.corrections import Rings
+
+    grid, detector = tj.Grid(8, 8, 4, 1, 1, 1), tj.Detector(8, 4, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 360, 180, endpoint=False))
+    data = np.full((180, 4, 8), 0.7, np.float32)
+    data[90] = 3.0  # the shutter failed on one view
+    scan = tj.Scan(data, geometry)
+    expected = scan.selected(np.delete(np.arange(180), 90))
+    corrected = scan.corrected(RejectViews(), Rings(geometry))
+    assert corrected.projections.shape[0] == 179
+    reference = expected.corrected(Rings(expected.geometry))
+    np.testing.assert_allclose(np.asarray(corrected.projections), np.asarray(reference.projections))

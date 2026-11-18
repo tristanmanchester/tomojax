@@ -54,5 +54,4 @@ def test_phase_retrieval_limits_automatic_reads_and_preserves_explicit_batches(
     np.testing.assert_array_equal(actual.angles, np.arange(65))
     assert next(record for record in actual.corrections if record.name == "log").found == {
         "nonpositive_transmission": 0,
-        "nonfinite_set_to_zero": 0,
     }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ._io_helpers import replaced_when_complete, sizes_of
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata
 
 # The file's key for the view angles (``NXTomoMetadata.angles``); earlier
@@ -28,7 +29,9 @@ def save_npz(
         payload[_ANGLES_KEY] = payload.pop("angles")
     if "volume" in payload:
         payload[_AXES_KEY] = "zyx"
-    np.savez_compressed(path, **payload)
+    parts = sizes_of(projections, metadata.volume)
+    with replaced_when_complete(path, parts) as temporary, temporary.open("wb") as stream:
+        np.savez_compressed(stream, **payload)
 
 
 def _load_npz_dataset(path: str) -> LoadedDataset:

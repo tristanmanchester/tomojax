@@ -85,8 +85,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     data, out = Path(cast("str", args.data)), Path(cast("str", args.out))
-    check_paths(parser, inputs=[data], outputs=[out], force=cast("bool", args.force))
     fmt = "raw" if out.suffix.lower() == ".raw" else "tiff"
+    # A raw volume writes a JSON sidecar beside it; refuse to replace either.
+    outputs = [out, out.with_suffix(".json")] if fmt == "raw" else [out]
+    check_paths(parser, inputs=[data], outputs=outputs, force=cast("bool", args.force))
     dtype, prefix = cast("str", args.dtype), cast("str", args.prefix)
     with h5py.File(data, "r") as handle:
         dataset = handle.get(_VOLUME_PATH)
@@ -98,9 +100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         attribute = handle["/entry/processing/tomojax"].attrs.get(_AXES_ATTR)
         try:
-            axes, _ = saved_volume_axes(
-                dataset.shape, None if attribute is None else _decode(attribute, ""), grid, data
-            )
+            axes = saved_volume_axes(None if attribute is None else _decode(attribute, ""), data)
         except ValueError as exc:
             parser.error(str(exc))
         shape = {axis: int(n) for axis, n in zip(axes, dataset.shape, strict=True)}

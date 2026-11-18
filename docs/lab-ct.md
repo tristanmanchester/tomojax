@@ -69,7 +69,14 @@ width that covers the defect. A faint offset on a steep gradient can remain.
 In Python these are steps of `tomojax.corrections` (`BeamHardening`,
 `Stripes`, `Zingers`) passed to `tj.load_frames(path).corrected(...)`.
 `tomojax import --axis-offset` and TOML keys `detector_roll_deg`,
-`detector_pitch_deg`, `detector_yaw_deg` take values the scanner reports. A TIFF import
+`detector_pitch_deg`, `detector_yaw_deg` set the detector's orientation; pitch and
+yaw apply to cone data only. They are
+right-handed rotations about the detector's own axes, the normal (pointing back
+towards the source), u and v, in that order: positive roll turns u towards v,
+positive pitch tilts the +v edge towards the source and positive yaw swings the +u
+edge away from it. Scanners do not report these. Nikon's `ObjectRoll` and
+`ObjectTilt` describe the rotation axis and are read by the loader, not typed into
+these keys. A TIFF import
 records no grid: cone datasets without one reconstruct one voxel per detector
 pixel at the axis, the pixel size divided by the magnification
 `source_to_detector / source_to_axis`, and `tomojax recon --grid NX NY NZ`
@@ -82,20 +89,42 @@ grid is `scan.grid.resampled((64, 64, 64))`, passed as `grid=` to reconstruction
 
 Use the **projection acquisition** (usually `.txrm`), not a reconstructed `.txm`
 volume or a single scout image. TomoJAX reads the embedded reference image,
-angles, detector calibration and source distances. Fractional per-view image
-shifts stay in the geometry rather than resampling the measured pixels. For a
+angles, detector calibration and source distances. The file's per-view image
+shifts (`alignment/x-shifts`, `y-shifts`) become per-view detector centres, so
+the measured pixels are never resampled. They are measured from the centre that
+a Zeiss reconstruction setup records as `AutoRecon/CenterShift`. A raw scan without
+it loads with the centre at the middle of the detector, the shifts added to it, and
+`detector_center_status` "not_recorded": include `"centre"` in `tj.align`'s `fit=`, or
+pass `detector=tj.Detector(nu, nv, pitch, pitch, (u, 0))` for a known centre, with
+`pitch` the recorded pixel size times the magnification. An explicit `geometry=` is used as given,
+without the shifts, and the loader warns how many views it dropped. Because the
+shifts move the detector, `tj.align` leaves them out of `result.poses`; a pose
+translation moves the object instead, so the same correction written as a pose is
+the shift times the recorded (object-plane) pixel size, with the opposite sign. For a
 separate reference image, pass `--flats reference_Front.xrm` or
-`load_frames("scan.txrm", flats="reference_Front.xrm", darks=0)`.
+`load_frames("scan.txrm", flats="reference_Front.xrm")`.
 Sample and reference exposure times are used to compare dark-subtracted count
 rates. Multiple embedded references are interpolated at their acquisition
 timestamps. Raw pixels remain unchanged. If supplying calibration arrays rather
 than XRM files, also pass their `flat_exposure_times=` in seconds.
 If no flat is available, supply the measured open-beam level as `flats=`; one is not inferred
-from the detector's bit depth. If no
-dark reference is stored, supply measured darks
-with `--darks` or `load_frames(..., darks=...)`; absent dark calibration is an
-error, not an assumed zero. The examples below explicitly choose zero for
-already dark-corrected counts.
+from the detector's bit depth. A file that records
+`AcquisitionSettings/CameraStaticBackground` = 1 had its dark removed by the camera
+and needs no dark; otherwise, if no dark reference is stored, supply measured darks
+with `--darks` or `load_frames(..., darks=...)`: absent dark calibration is an
+error, not an assumed zero.
+
+The camera states the top of its linear range
+(`ConfigureBackup/ConfigCamera/Camera 1/MaxLinearRange`, 45 000 counts on the scans
+measured here). Zeiss holds the references inside it but not the views, so a long
+exposure can put the bright parts of a view, usually the air beside the sample, above
+it or into saturation. The `flat_dark` correction record gives the range, the fraction
+of counts above it, and `linear_limit_line_integral`, the line integral where the range
+ends; `tj.load` warns when any count lies above it. Line integrals below that value are
+unreliable, and saturated air reads as absorbing: on CuO_2 (6 s views, 2.8 s
+references, 52% of counts above the range) air corrects to about 0.33 instead of 0,
+which the reconstruction carries as a false background around the sample. The values
+are not changed.
 
 This is a coarse, whole-volume CPU preview. It keeps every eighth view, bins
 16 x 16 detector pixels and resamples the original physical volume to 64³ voxels.
@@ -116,7 +145,7 @@ The equivalent Python route is:
 ```python
 import tomojax as tj
 
-scan = tj.load_frames("scan.txrm", darks=0).selected(slice(None, None, 8)).corrected(binning=16)
+scan = tj.load_frames("scan.txrm").selected(slice(None, None, 8)).corrected(binning=16)
 grid = scan.grid.resampled((64, 64, 64))
 recon = tj.reconstruct(scan, "cgls", iterations=10, grid=grid)
 tj.save("preview.nxs", recon)
@@ -218,11 +247,12 @@ selection and gauges.
 
 ## Speed
 
-On a 256³, 360-view scan on a laptop RTX 4070, FDK takes 0.048 s (ASTRA
-0.29 s, TIGRE 0.51 s) and the forward projection 0.093 s (ASTRA 0.17 s). The
-exact transpose takes 0.18 s, slower than ASTRA's approximate backprojector
-(0.075 s). The [measurements](measurements.md#cone-beam-projection-and-fdk)
-give the protocol, errors and the 1024³ FDK.
+On a 256³, 360-view scan on a laptop RTX 4070, with every library taking and
+returning host arrays, FDK takes 0.092 s (ASTRA 0.26 s, TIGRE 0.50 s) and the
+forward projection 0.13 s (ASTRA 0.17 s). The exact transpose takes 0.12 s,
+slower than ASTRA's approximate backprojector (0.073 s). The
+[measurements](measurements.md#cone-beam-projection-and-fdk) give the protocol,
+errors, device-resident times and the 1024³ FDK.
 
 ## Python
 

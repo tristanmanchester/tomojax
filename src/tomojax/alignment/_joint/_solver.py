@@ -4,21 +4,26 @@ Each outer step linearizes the robust data term at the current volume and
 poses, freezes the IRLS weights and the lagged TV conductance, and eliminates
 the poses exactly: the volume step solves the Schur system by preconditioned CG
 (Jacobi: data diagonal + damping + TV diagonal), and the pose step follows from
-it through the global prior solve. A backtracking line search on the true
-objective chooses the volume step length and the fraction of the pose step.
-Only scalar decisions leave the device.
+it through the global prior solve. The views' shared offset and ramp are held
+(``_common``): they add two residual rows that couple every view, solved by
+Woodbury in the pose block. A backtracking line search on the true objective
+chooses the volume step length and the fraction of the pose step. Only scalar
+decisions leave the device.
 """
 
 from dataclasses import asdict, dataclass
 from functools import partial
 import time
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from . import _tv as tv
+from . import _common, _tv as tv
 from ._krylov import solve as krylov_solve
+from ._operators import profiled_residual, robust_value
+from ._stacks import Stack, level_stacks, temporaries, transient_reserve, unplaced
 
 
 @dataclass(frozen=True)
@@ -33,47 +38,89 @@ class Budget:
 
 _CG_RTOL = 0.03
 _LM_MIN = 1e-8
-_POSE_TOL_PX = 0.003
+_POSE_TOL_PX = 0.01
 _MIN_OUTER = 4
 
+# The level writes each volume it holds into a buffer it owns (``level_volumes``), donated
+# as the first argument; one the program does not read must still be kept to receive the
+# output. A product is held behind a barrier where the uncompiled code made it on its own:
+# the CPU compiler would fuse it into the sum that follows (one rounding in place of two).
+_barrier = jax.lax.optimization_barrier
 
-def _photometric(sums):
-    """Each view's gain and affine background fitting its projections to the prediction.
 
-    Least squares, per view, of the observations on the prediction, a constant
-    and a ramp down the detector rows: returns gains (views,) and backgrounds
-    (views, 2) for the constant and the ramp. Their means are removed (gain:
-    divided by): what all views share belongs to the image. A view without a
-    well-conditioned fit keeps gain one and no background.
+def _into(fun):
+    return jax.jit(fun, donate_argnums=(0,), keep_unused=True)
+
+
+def _by_slice(update):
+    """An elementwise ``update(v, b, m)`` by the shared images b, into v a z-slice at a time.
+
+    The same values as made whole, with a slice of FP64 terms at a time: whole, they
+    were the largest temporaries of the level after the prior's (7 volumes).
     """
-    sums = np.asarray(sums, np.float64)
-    gram, rhs = sums[..., :3], sums[..., 3]
-    scale = np.sqrt(np.maximum(np.einsum("nkk->nk", gram), 1e-300))
-    normal = gram / scale[:, :, None] / scale[:, None, :]
-    ok = np.linalg.cond(normal) < 1e8
-    eye = np.eye(3)[None]
-    solution = np.linalg.solve(np.where(ok[:, None, None], normal, eye), (rhs / scale)[..., None])
-    coefficients = np.where(ok[:, None], solution[..., 0] / scale, [1.0, 0.0, 0.0])
-    gain = np.clip(coefficients[:, 0] / np.mean(coefficients[ok, 0]) if ok.any() else 1.0, 0.5, 2.0)
-    background = coefficients[:, 1:] - (coefficients[ok, 1:].mean(0) if ok.any() else 0)
-    return gain, background
+
+    def run(v, b, m):
+        def one(k, v):
+            vk, bk = (jax.lax.dynamic_slice_in_dim(a, k, 1, axis) for a, axis in ((v, 0), (b, 1)))
+            return jax.lax.dynamic_update_slice_in_dim(v, update(vk, bk, m), k, 0)
+
+        return jax.lax.fori_loop(0, v.shape[0], one, v)
+
+    return _into(run)
 
 
-def _rescaled(ops, y, sums):
-    """The step's gains and the observations with the refitted gain and background removed.
+class _Volumes:
+    """Elementwise updates of a level's volumes, each compiled into the volume passed first."""
 
-    Returns (None, y) when the fit leaves every view unchanged.
+    start = _into(  # zero, or the start x0 clipped at zero
+        lambda x, x0: jnp.broadcast_to(jnp.maximum(jnp.asarray(x0, jnp.float32), 0), x.shape)
+    )
+    observed_only = _into(lambda x, observed: jnp.where(observed, x, 0))
+    damping = _into(lambda _out, dd: jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4))
+    free = _into(lambda _out, x, gx: (x > 0) | (gx < 0))
+    # The step to max(x + solution, 0) on the free voxels, in the solution's buffer.
+    clipped = _into(lambda s, free, x: jnp.maximum(jnp.where(free, x + s, x), 0) - x)
+    stepped = _into(lambda _out, x, a, dx: x + _barrier(a * dx))
+    # The shared rows' image gradient B^T G^-1 b (m = G^-1 b) and their part of the image
+    # Jacobi diagonal, diag(B^T G^-1 B), added to the linearisation's (``_common``).
+    plus_image = _by_slice(
+        lambda v, b, m: v
+        + _barrier((_barrier(m[0] * b[0]) + _barrier(m[1] * b[1])).astype(jnp.float32))
+    )
+    plus_diagonal = _by_slice(
+        lambda dd, b, g: dd
+        + _barrier(
+            (
+                _barrier(g[0, 0] * b[0] ** 2)
+                + _barrier(2 * g[0, 1] * b[0] * b[1])
+                + _barrier(g[1, 1] * b[1] ** 2)
+            ).astype(jnp.float32)
+        )
+    )
+
+
+@jax.jit
+def _shared_gram(images):
+    """B B^T in FP64: compiled, the FP64 copy of the images is no array of its own."""
+    return jnp.einsum("i...,j...->ij", images.astype(jnp.float64), images.astype(jnp.float64))
+
+
+def level_volumes(ops, prior, lam) -> dict[str, Any]:
+    """The arrays a level holds through its steps, as shapes: allocated once, at its setup.
+
+    The volume ``x`` and ``other`` (the line search's trial; once a step is accepted, the
+    previous volume), the linearisation's gradient ``gx0`` and diagonal ``dd``, the shared
+    images (``_common``), the damping, the free-voxel mask, the Schur solve's right-hand
+    side, preconditioner and ``step`` (its solution, then the clipped step), with TV the
+    stepped gradient ``gx`` and conductance ``d``, and the motion prior's ``factor``.
     """
-    gain, background = _photometric(sums)
-    if not (np.any(gain != 1) or np.any(background != 0)):
-        return None, y
-    rows = jnp.linspace(-1, 1, y.shape[-2], dtype=jnp.float32)[None, :, None]
-    b = jnp.asarray(background, jnp.float32)
-    n = ops.n
-    rescaled = (y[:n] - b[:, :1, None] - b[:, 1:, None] * rows) / jnp.asarray(gain, jnp.float32)[
-        :, None, None
-    ]
-    return gain, ops.pad_images(rescaled)
+    volume = jax.ShapeDtypeStruct(ops.shape, jnp.float32)
+    names = ("x", "other", "gx0", "dd", "damp", "rhs", "invdiag", "step")
+    shapes: dict[str, Any] = dict.fromkeys(names + (("gx", "d") if lam else ()), volume)
+    shapes["images"] = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
+    shapes["free"] = jax.ShapeDtypeStruct(ops.shape, jnp.bool_)
+    shapes["factor"] = prior.factor_shapes()
+    return shapes
 
 
 def _gain_ratio(actual, predicted):
@@ -107,6 +154,36 @@ def _line_search(trial, f, gx_dx, gp_dc):
     return None
 
 
+class _StepContext(NamedTuple):
+    """What every step from one linearisation shares, whatever its damping."""
+
+    q: Any
+    dd: Any
+    sw: Any
+    j: Any
+    gram: Any
+    residual: Any
+    common: Any
+    damp: Any
+    d: Any
+    gx: Any
+    wpose: Any
+    gp: Any
+    free: Any
+    pd: Any
+
+
+class _Proposal(NamedTuple):
+    """A clipped volume step, its pose back-substitution and what the line search needs."""
+
+    dx: Any
+    dc: Any
+    r: Any
+    jadx: Any
+    bdx: Any
+    linear_step: Any
+
+
 class _Level:
     """One level's data, compiled operators and damped Gauss-Newton step."""
 
@@ -114,8 +191,6 @@ class _Level:
         self,
         ops,
         prior,
-        y,
-        precision,
         *,
         lam,
         eps,
@@ -123,91 +198,313 @@ class _Level:
         delta,
         inner,
     ) -> None:
-        self.ops, self.prior = ops, prior
-        self.y, self.precision, self.lam, self.delta = y, precision, lam, delta
-        self.gain = np.ones(ops.n)
+        self.ops, self.prior, self.lam, self.delta = ops, prior, lam, delta
+        self._made = None
         self.tv_value = jax.jit(lambda x: tv.energy(x, eps, scales))
-        self.conduct = jax.jit(lambda x: tv.conductance(x, eps, scales))
+        self.conduct = _into(lambda _out, x: tv.conductance(x, eps, scales))
         self.diffuse = jax.jit(lambda x, d: tv.diffusion(x, d, scales))
-        self.gradient = jax.jit(lambda gx, x, d: gx + jnp.float32(lam) * tv.diffusion(x, d, scales))
-        self.inverse = jax.jit(
-            lambda d, damp, dd, lm: tv.inverse_diagonal(d, damp, dd, lam, lm, scales)
+        self.gradient = _into(
+            lambda _out, gx, x, d: gx + jnp.float32(lam) * tv.diffusion(x, d, scales)
+        )
+        self.inverse = _into(
+            lambda _out, d, damp, dd, lm: tv.inverse_diagonal(d, damp, dd, lam, lm, scales)
             if lam
             else 1 / jnp.maximum(dd + jnp.float32(lm) * damp, jnp.float32(1e-8))
         )
-        self.rhs = jax.jit(lambda q, sw, j, sp, gx, free: (ops.pose_back(q, sw, j, sp) - gx) * free)
+
+        # At unchanged poses the prediction is linear in the image: the residual
+        # plus a times the step's projection (returned scaled by sw, zero only
+        # where unobserved) gives the profiled term exactly, without projecting;
+        # the shared moments move by a times the step's B dx.
+        def held(residual, step, sw, w, a, moments):
+            def batch(total, z):  # the robust value is a sum over views: one batch at a time
+                i, valid = z
+                rb, sb, swb = residual.read(i), step.read(i), sw.read(i)
+                wb = ops.batch_precision(None if w is None else w.read(i), valid)
+                moved = rb + a * jnp.where(swb > 0, sb / jnp.where(swb > 0, swb, 1), 0)
+                return total + robust_value(profiled_residual(moved, wb), wb, delta), None
+
+            parts = (jnp.arange(ops.nb), ops.batches(ops.valid))
+            value = jax.lax.scan(batch, jnp.asarray(0.0, jnp.float64), parts)[0]
+            return value + 0.5 * jnp.vdot(moments, self.inverse_gram @ moments)
+
+        self.held = jax.jit(held)
+
+        @_into
+        def rhs(_out, q, sw, j, sp, gx, free, precision, common):
+            # Fixed voxels are discarded, so the gather may skip them.
+            active = ops.projection.active(free)
+            shared = common.image(common.inverse @ (common.poses @ sp))
+            return (ops.pose_back(q, sw, j, sp, active, precision) + shared - gx) * free
+
+        self.rhs = rhs
         self.norm = jax.jit(tv.dot)
         # Batch by batch: a whole-sinogram FP64 product would be a stack-sized temporary.
         self.energy = jax.jit(
             lambda r: jnp.sum(
-                jax.lax.map(lambda b: tv.dot(b, b), ops.batches(r)), dtype=jnp.float64
+                jax.lax.map(lambda i: tv.dot(r.read(i), r.read(i)), jnp.arange(ops.nb)),
+                dtype=jnp.float64,
             )
         )
 
-        @jax.jit
-        def schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag):
-            def matvec(v):
+        # r is donated: the matvec rewrites the level's one weighted-projection stack. So is
+        # the step volume, unread: the solution is written into it.
+        @partial(jax.jit, donate_argnums=(13, 14), keep_unused=True)
+        def schur(
+            q, sw, j, factor, free, d, damp, lm, rhs, invdiag, precision, common, poses, r, _out
+        ):
+            # Fixed voxels' transpose is discarded: the gather may skip them.
+            active = ops.projection.active(free)
+
+            def matvec(v, r):
                 v = v * free
-                r, jr = ops.weighted_forward(q, v, sw, j)
-                out = ops.weighted_back(q, r, sw, j, prior.solve(factor, jr))
+                r, jr = ops.weighted_forward(q, v, sw, j, precision, r)
+                bv = common.of_image(v)
+                p = poses(prior.solve, factor, common, jr + common.poses.T @ (common.inverse @ bv))
+                out = ops.weighted_back(q, r, sw, j, p, active, precision)
+                out = out + common.image(common.inverse @ (bv - common.poses @ p))
                 if lam:
                     out = out + jnp.float32(lam) * tv.diffusion(v, d, scales)
                 out = out + (jnp.float32(lm) * damp) * v
-                return out * free
+                return out * free, r
 
-            return krylov_solve(matvec, rhs, invdiag, inner, rtol=_CG_RTOL)
+            return krylov_solve(matvec, rhs, invdiag, inner, rtol=_CG_RTOL, work=r)
 
-        self.schur = schur
+        self._schur = schur
+
+    def place(self, y, precision, placement=None, *, start=False):
+        """Allocate the level's volumes and place and allocate its stacks (``_stacks``).
+
+        Beside them the plan keeps the largest transient free: the temporaries of the Schur
+        solve, of the motion prior's factor, or, when the level starts from zero
+        (``start``), of the start's Gram of the shared images, each from its compile here
+        (the calls later reuse it); and the one chunk it lands in, which the allocator can
+        hand out whole up to twice the request when that wastes under 128 MiB. Returns the
+        level's storage, which the caller closes.
+        """
+        ops, prior = self.ops, self.prior
+        specs = ops.stack_specs(precision)
+        shapes = self._schur_shapes(specs, precision is not None)
+        self.transients = {"schur": temporaries(self._schur, *shapes), "prior": prior.temporaries()}
+        if start:
+            images = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
+            self.transients["start"] = temporaries(_shared_gram, images)
+        reserve = transient_reserve(self.transients)
+        volumes = level_volumes(ops, prior, self.lam)
+        self.stacks = level_stacks(
+            ops, y, precision, reserve=reserve, volumes=volumes, placement=placement
+        )
+        self.y, self.precision = self.stacks["y"], self.stacks.get("precision")
+        self.gram, self.data_moments = ops.shared_data(self.y, self.precision)
+        self.inverse_gram = jnp.linalg.pinv(self.gram)  # zero if no view is profiled
+        return self.stacks
+
+    def _schur_shapes(self, specs, weighted):
+        """The Schur solve's arguments as shapes, every stack on the device."""
+        ops, prior = self.ops, self.prior
+        f64 = partial(jax.ShapeDtypeStruct, dtype=jnp.float64)
+        volume = jax.ShapeDtypeStruct(ops.shape, jnp.float32)
+
+        def stack(name):
+            return Stack.shaped(specs[name], ops.batch)
+
+        q = jax.eval_shape(lambda c: ops.prepare(ops.pad_poses(c)), f64((prior.size,)))
+        factor = prior.factor_shapes()
+        images = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
+        parts = (f64((2, 2)), f64((2, 2)), images, f64((2, prior.size)), f64((2,)))
+        common = jax.eval_shape(_common.Common, *parts)
+        poses = jax.eval_shape(partial(_common.PoseSolve.build, prior.solve), factor, common)
+        free = jax.ShapeDtypeStruct(ops.shape, jnp.bool_)
+        d = volume if self.lam else None
+        precision = stack("precision") if weighted else None
+        head = (q, stack("sw"), stack("j"), factor, free, d, volume, 1.0, volume, volume)
+        return (*head, precision, common, poses, stack("r"), volume)
+
+    def _write(self, name, fun, *args: Any) -> Any:
+        """``fun`` run into the level's volume ``name``, its donated first argument; held."""
+        out = fun(self.stacks[name], *args)
+        self.stacks.update([(name, out)])
+        return out
+
+    def schur(self, *args: Any) -> Any:
+        """The Schur volume solve, into the level's step volume, rewriting ``r`` in place.
+
+        The result's solution is the step volume, until the clipped step replaces it.
+        """
+        result, r = self._schur(*args, self.stacks["r"], self.stacks["step"])
+        self.stacks.update([("r", r), ("step", result.solution)])
+        return result
 
     def image_penalty(self, x):
         """Image-prior objective, with no TV call or temporary when its weight is zero."""
         return float(self.lam * self.tv_value(x)) if self.lam else 0.0
 
     def initial_volume(self, q, lipschitz, iterations):
-        """FISTA from zero on the Huber initialization data term, without TV."""
+        """FISTA from zero on the Huber initialization data term and the shared term, no TV."""
         ops, y, precision, delta = self.ops, self.y, self.precision, self.delta
+        images = ops.common_images(q, precision, self.stacks["images"])
+        self.stacks.update([("images", images)])
+        inverse, data_moments = self.inverse_gram, self.data_moments
+        # The shared term's Hessian B^T G^-1 B has rank two; its largest eigenvalue is G^-1 B B^T's.
+        outer = _shared_gram(images)
+        lipschitz = lipschitz + float(jnp.max(jnp.real(jnp.linalg.eigvals(inverse @ outer))))
 
-        @jax.jit
-        def run(x, q, y, precision, lipschitz):
+        # The shared images are an argument: captured, the program would hold them as a constant.
+        @_into
+        def run(x, q, y, precision, lipschitz, images, inverse, data_moments):
             def fista(_, state):
                 old, z, t = state
-                new = jnp.maximum(
-                    z - ops.initial_gradient(q, z, y, precision, delta) / lipschitz, 0
+                shared = inverse @ (
+                    jnp.einsum("i...,...->i", images, z).astype(jnp.float64) - data_moments
                 )
+                gradient = ops.initial_gradient(q, z, y, precision, delta) + (
+                    shared[0] * images[0] + shared[1] * images[1]
+                ).astype(jnp.float32)
+                new = jnp.maximum(z - gradient / lipschitz, 0)
                 tn = (1 + jnp.sqrt(1 + 4 * t * t)) / 2
                 return new, new + ((t - 1) / tn).astype(jnp.float32) * (new - old), tn
 
             return jax.lax.fori_loop(0, iterations, fista, (x, x, jnp.asarray(1.0, jnp.float64)))[0]
 
-        return run(jnp.zeros(self.ops.shape, jnp.float32), ops.prepare(q), y, precision, lipschitz)
+        self._write("x", _Volumes.start, 0.0)  # an argument: a constant zero could be folded
+        args = (ops.prepare(q), y, precision, lipschitz, images, inverse, data_moments)
+        return self._write("x", run, *args)
 
-    def refit(self, c, x, sums):
-        """Refit each view's gain and background, then linearize at (c, x).
+    def start(self, c, x0, iterations):
+        """The level's first volume, from ``x0`` (None: FISTA from zero) at poses ``c``."""
+        q = self.ops.pad_poses(c)
+        lipschitz, observed = self.ops.sensitivity(q, self.stacks["free"])
+        self.stacks.update([("free", observed)])
+        if x0 is None:
+            self.initial_volume(q, lipschitz, iterations)
+        else:
+            self._write("x", _Volumes.start, x0)
+        # Prolongation can populate voxels invisible to every ray at this level.
+        # Start those undetermined values at zero, but let later pose/image steps
+        # expose or populate them; this is not a permanent active-set constraint.
+        return self._write("x", _Volumes.observed_only, observed)
 
-        Views can differ by a gain and a background the line integrals do not
-        describe (flux, phase retrieval). Removing the fit to the current
-        prediction from the observations keeps them from looking like motion;
-        the next linearization and line search use the result. Returns the
-        whether any view changed, and the linearization.
-        """
-        gain, self.y = _rescaled(self.ops, self.y, sums)
-        if gain is not None:
-            self.gain = self.gain * gain
-        return gain is not None, self.linearize(c, x)
+    def accept(self, x, previous):
+        """Hold an accepted step's volume as the level's, and the previous one beside it."""
+        self.stacks.update([("x", x), ("other", previous)])
 
     def linearize(self, c, x):
-        """The robust linearization at compact poses ``c`` and volume ``x``."""
-        return self.ops.linearize(self.ops.pad_poses(c), x, self.y, self.precision, self.delta)
+        """The robust linearization at compact poses ``c`` and volume ``x``, with the shared term.
 
-    def trial(self, x, c, dx, dc, pose_weight, a, beta):
-        """Objective after volume step a and pose step a * beta, with the new state."""
-        xt = x + jnp.float32(a) * dx
-        cc = c + a * beta * dc
-        total = float(
-            self.ops.objective(self.ops.pad_poses(cc), xt, self.y, self.precision, self.delta)
+        Returns the gradient, diagonal, weights, columns, score, Gram blocks, data
+        value, observation counts and residual, each including the views' shared
+        offset and ramp (``_common.Common``, returned last).
+        """
+        q = self.ops.pad_poses(c)
+        stacks = self.stacks
+        names = ("gx0", "dd", "sw", "j", "residual")
+        gx0, dd, sw, j, gr, gram, data, obstats, moments, residual, moved = self.ops.linearize(
+            q, x, self.y, self.precision, self.delta, tuple(stacks[n] for n in names)
         )
-        total += self.image_penalty(xt)
+        images = self.ops.common_images(q, self.precision, stacks["images"])
+        stacks.update(zip((*names, "images"), (gx0, dd, sw, j, residual, images), strict=True))
+        common = _common.Common(self.gram, self.inverse_gram, images, moved, moments)
+        gx0 = self._write("gx0", _Volumes.plus_image, images, common.inverse @ common.moments)
+        dd = self._write("dd", _Volumes.plus_diagonal, images, common.inverse)
+        gr = gr + common.pose_score()
+        return gx0, dd, sw, j, gr, gram, data + common.value(), obstats, residual, common
+
+    def trial(self, x, c, dx, dc, pose_weight, held, a, beta):
+        """Objective after volume step a and pose step a * beta, with the new state.
+
+        ``held`` (residual, weighted projection of dx, weights, shared moments and
+        their change B dx) gives beta = 0.
+        """
+        # The trial volume, made once for each line step a in the level's other volume.
+        made = self._made
+        if made is None or made[0] is not dx or made[1] != a:
+            stepped = self._write("other", _Volumes.stepped, x, jnp.float32(a), dx)
+            made = self._made = (dx, a, stepped)
+        xt = made[2]
+        cc = c + a * beta * dc
+        if beta == 0:
+            residual, step, sw, moments, change = held
+            data = self.held(
+                residual, step, sw, self.precision, jnp.float32(a), moments + a * change
+            )
+        else:
+            q = self.ops.pad_poses(cc)
+            value, moments = self.ops.objective(q, xt, self.y, self.precision, self.delta)
+            data = value + 0.5 * jnp.vdot(moments, self.inverse_gram @ moments)
+        total = float(data) + self.image_penalty(xt)
         return total + float(self.prior.value(cc, pose_weight)), xt, cc
+
+    def _context(self, x, c, linear, pose_weight):
+        """What every step from this linearisation shares, whatever its damping."""
+        ops, prior = self.ops, self.prior
+        gx0, dd, sw, j, gr, gram, residual, common = linear
+        d = self._write("d", self.conduct, x) if self.lam else None
+        gx = self._write("gx", self.gradient, gx0, x, d) if self.lam else gx0
+        wpose = prior.weights(c, pose_weight)
+        pd = jnp.diagonal(gram, axis1=1, axis2=2)
+        return _StepContext(
+            q=ops.prepare(ops.pad_poses(c)),
+            dd=dd,
+            sw=sw,
+            j=j,
+            gram=gram,
+            residual=residual,
+            common=common,
+            damp=self._write("damp", _Volumes.damping, dd),
+            d=d,
+            gx=gx,
+            wpose=wpose,
+            gp=gr + prior.apply(c, wpose),
+            free=self._write("free", _Volumes.free, x, gx),
+            pd=jnp.maximum(pd, jnp.maximum(pd.max(), 1e-8) * 0.01),
+        )
+
+    def _propose(self, x, k: _StepContext, lm) -> "_Proposal | None":
+        """The Schur volume step at damping lm, clipped to x >= 0, and its pose back-substitution.
+
+        Returns None when the volume solve does not give a finite residual.
+        """
+        ops, prior, common = self.ops, self.prior, k.common
+        blocks = k.gram + jax.vmap(jnp.diag)(lm * k.pd + 1e-10)
+        factor = prior.factor(blocks, k.wpose, self.stacks["factor"])
+        self.stacks.update([("factor", factor)])
+        poses = _common.PoseSolve.build(prior.solve, factor, common)
+        sp = poses(prior.solve, factor, common, k.gp)
+        rhs = self._write("rhs", self.rhs, k.q, k.sw, k.j, sp, k.gx, k.free, self.precision, common)
+        invdiag = self._write("invdiag", self.inverse, k.d, k.damp, k.dd, lm)
+        linear_step = self.schur(
+            k.q,
+            k.sw,
+            k.j,
+            factor,
+            k.free,
+            k.d,
+            k.damp,
+            lm,
+            rhs,
+            invdiag,
+            self.precision,
+            common,
+            poses,
+        )
+        if not np.isfinite(float(linear_step.relative_residual)):
+            return None
+        dx = self._write("step", _Volumes.clipped, k.free, x)
+        # The step's projection and the matvec's never coexist: one stack serves both.
+        r, jadx = ops.weighted_forward(k.q, dx, k.sw, k.j, self.precision, self.stacks["r"])
+        self.stacks.update([("r", r)])
+        bdx = common.of_image(dx)
+        jadx = jadx + common.poses.T @ (common.inverse @ bdx)
+        dc = -poses(prior.solve, factor, common, k.gp + jadx)
+        return _Proposal(dx, dc, r, jadx, bdx, linear_step)
+
+    def proposal(self, x, c, linear, lm, pose_weight):
+        """The RMS pose change one step from this linearisation proposes at damping lm, or None."""
+        step = self._propose(x, self._context(x, c, linear, pose_weight), lm)
+        if step is None:
+            return None
+        dp = self.prior.expand(step.dc)
+        return float(jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1))))
 
     def step(self, x, c, linear, lm, pose_weight, f):
         """One damped step: Schur volume solve, exact pose back-substitution, line search.
@@ -215,131 +512,207 @@ class _Level:
         Raises the damping tenfold, up to five times, until the line search accepts.
         Returns the accepted step with its predicted reduction, or None.
         """
-        ops, prior = self.ops, self.prior
-        q = ops.prepare(ops.pad_poses(c))
-        gx0, dd, sw, j, gr, gram = linear
-        damp = jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4)
-        d = self.conduct(x) if self.lam else None
-        gx = self.gradient(gx0, x, d) if self.lam else gx0
-        wpose = prior.weights(c, pose_weight)
-        gp = gr + prior.apply(c, wpose)
-        free = (x > 0) | (gx < 0)
-        pd = jnp.diagonal(gram, axis1=1, axis2=2)
-        pd = jnp.maximum(pd, jnp.maximum(pd.max(), 1e-8) * 0.01)
+        k = self._context(x, c, linear, pose_weight)
         for _ in range(5):
-            factor = prior.factor(gram + jax.vmap(jnp.diag)(lm * pd + 1e-10), wpose)
-            rhs = self.rhs(q, sw, j, prior.solve(factor, gp), gx, free)
-            invdiag = self.inverse(d, damp, dd, lm)
-            linear_step = self.schur(q, sw, j, factor, free, d, damp, lm, rhs, invdiag)
-            dx, cg_steps, cg_residual = (
-                linear_step.solution,
-                linear_step.iterations,
-                linear_step.relative_residual,
-            )
-            if not np.isfinite(float(cg_residual)):
-                lm *= 10
-                continue
-            dx = jnp.maximum(jnp.where(free, x + dx, x), 0) - x
-            r, jadx = ops.weighted_forward(q, dx, sw, j)
-            dc = -prior.solve(factor, gp + jadx)
-            gx_dx, gp_dc = float(self.norm(gx, dx)), float(jnp.vdot(gp, dc))
-            accepted = None
-            if gx_dx + gp_dc < 0:
-                accepted = _line_search(
-                    partial(self.trial, x, c, dx, dc, pose_weight), f, gx_dx, gp_dc
-                )
-            if accepted:
-                a, beta, new = accepted
-                dp = prior.expand(dc)
-                curvature = float(self.energy(r))
-                if self.lam:
-                    curvature += self.lam * float(self.norm(dx, self.diffuse(dx, d)))
-                curvature += beta * 2 * float(jnp.vdot(dc, jadx))
-                pose = jnp.einsum("ni,nij,nj->", dp, gram, dp) + jnp.vdot(
-                    dc, prior.apply(dc, wpose)
-                )
-                curvature += beta**2 * float(pose)
-                predicted = -a * (gx_dx + beta * gp_dc) - 0.5 * a * a * curvature
-                change = float(jnp.sqrt(jnp.mean(jnp.sum((a * beta * dp) ** 2, axis=1))))
-                explicit = bool(linear_step.residual_is_explicit)
-                linear_record = {
-                    "proposed_pose_step_rms": float(jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1)))),
-                    "cg_residual_kind": "explicit" if explicit else "recursive",
-                    "cg_status": "converged"
-                    if explicit and float(cg_residual) <= _CG_RTOL
-                    else "budget_exhausted",
-                    "cg_matvecs": int(linear_step.matvecs),
-                }
-                return (
-                    a,
-                    beta,
-                    new,
-                    predicted,
-                    change,
-                    lm,
-                    int(cg_steps),
-                    float(cg_residual),
-                    linear_record,
-                )
+            # A refused proposal's step and trials end with the attempt, before the next
+            # Schur solve: kept, they were the level's peak (13 volumes on K11 54013).
+            accepted = self._attempt(x, c, k, lm, pose_weight, f)
+            if accepted is not None:
+                return accepted
             lm *= 10
         return None
 
+    def _attempt(self, x, c, k, lm, pose_weight, f):
+        """One proposal at damping lm and its line search: the accepted step's record, or None."""
+        prior, common = self.prior, k.common
+        proposed = self._propose(x, k, lm)
+        if proposed is None:
+            return None
+        dx, dc, r, jadx, bdx = proposed.dx, proposed.dc, proposed.r, proposed.jadx, proposed.bdx
+        linear_step = proposed.linear_step
+        cg_steps, cg_residual = linear_step.iterations, linear_step.relative_residual
+        gx_dx, gp_dc = float(self.norm(k.gx, dx)), float(jnp.vdot(k.gp, dc))
+        accepted = None
+        if gx_dx + gp_dc < 0:
+            held = (k.residual, r, k.sw, common.moments, bdx)
+            trial = partial(self.trial, x, c, dx, dc, pose_weight, held)
+            accepted = _line_search(trial, f, gx_dx, gp_dc)
+        if accepted:
+            a, beta, new = accepted
+            dp = prior.expand(dc)
+            curvature = float(self.energy(r))
+            if self.lam:
+                curvature += self.lam * float(self.norm(dx, self.diffuse(dx, k.d)))
+            curvature += beta * 2 * float(jnp.vdot(dc, jadx))
+            pose = jnp.einsum("ni,nij,nj->", dp, k.gram, dp) + jnp.vdot(
+                dc, prior.apply(dc, k.wpose)
+            )
+            curvature += beta**2 * float(pose)
+            # The shared rows; their cross term is already in jadx.
+            curvature += 2 * float(common.value(bdx) + beta**2 * common.value(common.poses @ dc))
+            predicted = -a * (gx_dx + beta * gp_dc) - 0.5 * a * a * curvature
+            change = float(jnp.sqrt(jnp.mean(jnp.sum((a * beta * dp) ** 2, axis=1))))
+            explicit = bool(linear_step.residual_is_explicit)
+            linear_record = {
+                "proposed_pose_step_rms": float(jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1)))),
+                "cg_residual_kind": "explicit" if explicit else "recursive",
+                "cg_status": "converged"
+                if explicit and float(cg_residual) <= _CG_RTOL
+                else "budget_exhausted",
+                "cg_matvecs": int(linear_step.matvecs),
+            }
+            return (
+                a,
+                beta,
+                new,
+                predicted,
+                change,
+                lm,
+                int(cg_steps),
+                float(cg_residual),
+                linear_record,
+            )
+        return None
 
-def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, delta, scales):
+
+def _undamped_proposal(level, step, x, c, linear, budget, pose_weight):
+    """The step's pose proposal at the initial damping when its damped one is small, else None.
+
+    Alignment has converged when its proposed geometry updates are small, even
+    if more image iterations could still reduce the residual. A proposal damped
+    harder than the initial damping is no such evidence: damping can suppress
+    any step. So a small damped proposal is checked again at the initial
+    damping, from the same linearisation, and that proposal decides. The
+    damping itself does not: clipping the image step at x >= 0 can keep it high
+    long after the poses have settled.
+    """
+    if step["proposed_pose_step_rms"] >= _POSE_TOL_PX:
+        return None
+    if step["lm"] <= budget.lm_initial:
+        return step["proposed_pose_step_rms"]
+    return level.proposal(x, c, linear, budget.lm_initial, pose_weight)
+
+
+def _pose_weight(level, linear, sigma):
+    """The motion prior's weight from one linearisation, with the error scale it used.
+
+    The weight is a threshold: the views' median Fisher information F, times the
+    standard error of one view's step, times sqrt(2 log n). For the rotation
+    increments that standard error is the photon model's, sigma / sqrt(F). For the
+    translations it is taken from the data: each view's own step for each
+    translation column, d = g / F_cc (the column's score over its diagonal Gram
+    entry, the other columns held), and s = MAD / 0.6745 of the second differences
+    of d along the views, over sqrt(6) (a second difference of independent values
+    has six times their variance). Real motion is smooth or rare from one view to
+    the next; the error a fit must not follow (noise, and model error that differs
+    from view to view) is not. On clean data s comes out near the photon value;
+    where every view carries its own model error it is larger, and so is the weight.
+
+    Returns the weight ((translations', rotations') when both are fitted), s (None
+    without translation columns) and F.
+    """
+    ops = level.ops
+    gram = linear[5]
+    n, local = ops.n, ops.parameters.local
+    fisher = float(jnp.median(jnp.trace(gram, axis1=1, axis2=2)))
+    photon = float(sigma * np.sqrt(fisher) * np.sqrt(2 * np.log(n)))
+    translations = [i for i, dof in enumerate(local) if dof >= 3]
+    if not translations or n < 3:
+        return photon, None, fisher
+    columns = jnp.asarray(translations)
+    scores = []
+    stacks = level.stacks
+    for start in range(0, n, ops.batch):  # a view slab at a time: the columns are stack-sized
+        stop = min(start + ops.batch, n)
+        held = None if level.precision is None else stacks.rows("precision", start, stop)
+        w = ops.batch_precision(held, ops.valid[start:stop])
+        res = jnp.asarray(stacks.rows("sw", start, stop), jnp.float32) * profiled_residual(
+            stacks.rows("residual", start, stop), w
+        )
+        jb = jnp.asarray(stacks.rows("j", start, stop)[:, columns], jnp.float32)
+        scores.append(jnp.einsum("vkij,vij->vk", jb, res, preferred_element_type=jnp.float32))
+    g = np.asarray(jnp.concatenate(scores), np.float64)
+    diagonal = np.diagonal(np.asarray(gram, np.float64), axis1=1, axis2=2)[:, translations]
+    d = g / np.where(diagonal > 0, diagonal, np.inf)
+    second = d[2:] - 2 * d[1:-1] + d[:-2]
+    spread = np.median(np.abs(second - np.median(second, axis=0)), axis=0) / 0.6745 / np.sqrt(6)
+    s = float(np.sqrt(np.mean(spread**2)))
+    weight = float(fisher * s * np.sqrt(2 * np.log(n)))
+    return (weight, photon) if len(translations) < len(local) else weight, s, fisher
+
+
+def solve(
+    y,
+    precision,
+    prior,
+    weight,
+    eps,
+    *,
+    ops,
+    budget,
+    x0,
+    p0,
+    pose_sigma,
+    delta,
+    scales,
+    placement=None,
+):
     """Fit the volume and the per-view pose parameters at one level.
 
-    Returns the volume, compact free parameters, and a record of the steps.
+    ``y`` and ``precision`` are the level's host data (``precision`` None when
+    uniform). The level's stacks are placed and allocated first (``_stacks``) and
+    released when it ends, whatever the outcome; ``placement`` forces stacks to
+    "device" or "host" by name. Returns the volume, compact free parameters, the
+    data and a record of the steps, the stacks' placement and the level's time.
     """
-    start, n = time.perf_counter(), ops.n
+    start = time.perf_counter()
     width = prior.size
     c = (
         jnp.zeros(width, jnp.float64)
         if p0 is None
         else prior.project_gauge(jnp.asarray(p0, jnp.float64).reshape(-1))
     )
-    y = ops.pad_images(y)
-    precision = ops.pad_precision(precision)
-    level = _Level(
-        ops,
-        prior,
-        y,
-        precision,
-        lam=weight,
-        eps=eps,
-        scales=scales,
-        delta=delta,
-        inner=budget.inner,
-    )
-    lipschitz, observed = ops.sensitivity(ops.pad_poses(c))
-    if x0 is None:
-        x = level.initial_volume(ops.pad_poses(c), lipschitz, budget.init_iterations)
-    else:
-        x = jnp.maximum(jnp.asarray(x0, jnp.float32), 0)
-    # Prolongation can populate voxels invisible to every ray at this level.
-    # Start those undetermined values at zero, but let later pose/image steps
-    # expose or populate them; this is not a permanent active-set constraint.
-    x = jnp.where(observed, x, 0)
-    del observed
-    gx0, dd, sw, j, gr, gram, data, obstats, sums = level.linearize(c, x)
-    fisher = jnp.trace(gram, axis1=1, axis2=2)
-    pose_weight = float(pose_sigma * jnp.sqrt(jnp.median(fisher)) * np.sqrt(2 * np.log(n)))
+    level = _Level(ops, prior, lam=weight, eps=eps, scales=scales, delta=delta, inner=budget.inner)
+    stacks = level.place(y, precision, placement, start=x0 is None)
+    try:
+        _, c, record = _descend(level, c, x0, budget, pose_sigma, weight)
+        x = stacks.take("x")  # the caller's now: the level's other storage is released
+    except jax.errors.JaxRuntimeError as err:
+        raise unplaced(err, stacks) from err
+    finally:
+        stacks.close()
+    stacks_record = {**stacks.record(), "transients": dict(level.transients)}
+    record = {**record, "seconds": time.perf_counter() - start, "stacks": stacks_record}
+    return x, c, y, record
+
+
+def _descend(level, c, x0, budget, pose_sigma, weight):
+    """The level's damped Gauss-Newton steps from poses ``c`` and volume ``x0`` (None: FISTA)."""
+    prior = level.prior
+    x = level.start(c, x0, budget.init_iterations)
+    gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
+    linear = (gx0, dd, sw, j, gr, gram, residual, common)
+    pose_weight, noise, fisher = _pose_weight(level, linear, pose_sigma)
     f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
     initial_objective = f
-    history, lm, stable, status = [], budget.lm_initial, 0, "budget_exhausted"
+    history, lm, stable, status = [], budget.lm_initial, 0, "step_budget_reached"
     for it in range(budget.outer):
         if it:
             # Release the previous weights and columns first: two stack-sized sets
             # would not fit beside each other on a small device.
-            del gx0, dd, sw, j, gr, gram
-            changed, linear = level.refit(c, x, sums)
-            gx0, dd, sw, j, gr, gram, data, obstats, sums = linear
-            if changed:
-                f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
-        result = level.step(x, c, (gx0, dd, sw, j, gr, gram), lm, pose_weight, f)
+            del gx0, dd, sw, j, gr, gram, residual, common, linear
+            gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
+            linear = (gx0, dd, sw, j, gr, gram, residual, common)
+            held = pose_weight  # the weight follows the views' scatter; f is restated at it
+            pose_weight, noise, fisher = _pose_weight(level, linear, pose_sigma)
+            f += float(prior.value(c, pose_weight)) - float(prior.value(c, held))
+        result = level.step(x, c, linear, lm, pose_weight, f)
         if result is None:
             status = "line_search_stalled"
             break
+        x0, c0 = x, c
         a, beta, (fn, x, c), predicted, change, lm, cg_steps, cg_residual, linear_record = result
+        level.accept(x, x0)
         rho = _gain_ratio(f - fn, predicted)
         valid, down = map(float, np.asarray(obstats))
         history.append(
@@ -362,31 +735,27 @@ def solve(y, precision, prior, weight, eps, *, ops, budget, x0, p0, pose_sigma, 
             lm = max(_LM_MIN, lm / 2)
         elif rho < 0.25 or a < 0.5:
             lm = min(lm * 3, 1e6)
-        # Alignment has converged when its proposed geometry updates are small,
-        # even if more image iterations could still reduce the residual. Neither
-        # clipping a large proposal nor raising damping to suppress it provides
-        # evidence of convergence.
-        proposed_change = linear_record["proposed_pose_step_rms"]
-        small = proposed_change < _POSE_TOL_PX and history[-1]["lm"] <= budget.lm_initial
-        stable = stable + 1 if small else 0
+        undamped = _undamped_proposal(level, history[-1], x0, c0, linear, budget, pose_weight)
+        history[-1]["undamped_proposed_pose_step_rms"] = undamped
+        stable = stable + 1 if undamped is not None and undamped < _POSE_TOL_PX else 0
         if stable >= 2 and it + 1 >= _MIN_OUTER:
-            status = "converged"
+            status = "pose_steps_below_tolerance"
             break
     final_prior = float(prior.value(c, pose_weight))
     final_image_prior = level.image_penalty(x)
     record = {
         "status": status,
-        "seconds": time.perf_counter() - start,
         "steps": history,
         "tv_weight": float(weight),
         "noise_sigma": float(pose_sigma),
-        "pose_prior_weight": float(pose_weight),
+        "pose_prior_weight": list(pose_weight) if isinstance(pose_weight, tuple) else pose_weight,
+        "translation_noise": noise,
+        "pose_fisher": fisher,
         "initial_objective": initial_objective,
         "final_objective": f,
         "final_data_objective": f - final_prior - final_image_prior,
         "final_pose_prior": final_prior,
         "final_image_prior": final_image_prior,
         "budget": asdict(budget),
-        "gain_range": [float(np.min(level.gain)), float(np.max(level.gain))],
     }
-    return x, c, level.y[:n], record
+    return x, c, record

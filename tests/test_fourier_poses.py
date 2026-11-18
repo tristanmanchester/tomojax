@@ -54,6 +54,44 @@ def test_fourier_translation_poses_recover_analytic_gaussian(backend, nx, angle_
     assert result.scan.geometry is scan.geometry
 
 
+@pytest.mark.parametrize("backend", ["numpy", pytest.param("cupy", marks=pytest.mark.gpu)])
+def test_fourier_resamples_a_rolled_parallel_detector(backend):
+    if backend == "cupy" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    grid = tj.Grid(32, 32, 9, 1.0, 1.0, 0.8)
+    detector = tj.Detector(64, 41, 1.0, 0.7, center=(-0.6, 0.3))
+    angles = np.arange(0, 180, 2.0)
+    theta = np.deg2rad(angles)
+    roll = np.deg2rad(4.0)
+    # Rolled pixel offsets (x', z') sit at R(roll) @ (x', z') from the detector centre.
+    xr = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
+    zr = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
+    u = detector.center[0] + np.cos(roll) * xr[None, :] - np.sin(roll) * zr[:, None]
+    v = detector.center[1] + np.sin(roll) * xr[None, :] + np.cos(roll) * zr[:, None]
+    sigma = 3.1
+    centre_u = 1.2 * np.cos(theta) + 2.0 * np.sin(theta)
+    data = (
+        np.sqrt(2 * np.pi)
+        * sigma
+        * np.exp(-0.5 * ((u - centre_u[:, None, None]) ** 2 + (v - 0.7) ** 2) / sigma**2)
+    ).astype(np.float32)
+    geometry = tj.ParallelGeometry(grid, detector, angles, detector_roll_deg=4.0)
+    result = tj.reconstruct(
+        tj.Scan(data, geometry),
+        "fourier",
+        config=FourierConfig(backend=backend, slices_per_batch=4),
+    )
+    origin = grid_volume_origin(grid)
+    z, y, x = np.meshgrid(
+        origin[2] + np.arange(grid.nz) * grid.vz,
+        origin[1] + np.arange(grid.ny) * grid.vy,
+        origin[0] + np.arange(grid.nx) * grid.vx,
+        indexing="ij",
+    )
+    truth = np.exp(-0.5 * ((x - 1.2) ** 2 + (y + 2) ** 2 + (z - 0.7) ** 2) / sigma**2)
+    assert np.linalg.norm(result.volume - truth) / np.linalg.norm(truth) < 0.012
+
+
 def test_fourier_rejects_rotational_pose_corrections_before_writing():
     grid, detector = tj.Grid(8, 8, 2, 1, 1, 1), tj.Detector(12, 2, 1, 1)
     scan = tj.Scan(

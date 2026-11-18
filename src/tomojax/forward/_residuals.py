@@ -9,6 +9,8 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 
+from tomojax.core.robust import MAD_TO_SD
+
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
@@ -143,8 +145,8 @@ def robust_residual_scale(residual: jax.Array, *, mask: jax.Array | None = None)
     Returns
     -------
     jax.Array
-        Scalar 1.4826 times the selected median absolute deviation about the
-        selected median, or one when that estimate is unusable.
+        Scalar ``MAD_TO_SD`` (1.4826...) times the selected median absolute
+        deviation about the selected median, or one when that estimate is unusable.
 
     Raises
     ------
@@ -171,7 +173,7 @@ def robust_residual_scale(residual: jax.Array, *, mask: jax.Array | None = None)
         count = jnp.sum(mask_arr)
         median = _selected_median(values, mask_arr, count)
         mad = _selected_median(jnp.abs(values - median), mask_arr, count)
-    scale = jnp.asarray(1.4826, dtype=jnp.float32) * mad
+    scale = jnp.asarray(MAD_TO_SD, dtype=jnp.float32) * mad
     return jnp.where(
         valid & jnp.isfinite(scale) & (scale > 0.0), scale, jnp.asarray(1.0, dtype=jnp.float32)
     )

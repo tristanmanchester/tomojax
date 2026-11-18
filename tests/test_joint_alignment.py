@@ -13,13 +13,15 @@ from tomojax.alignment._joint import (  # check-public-imports: allow-private
     MotionPrior,
     fit_poses,
 )
-from tomojax.alignment._joint._fit import _gauge  # check-public-imports: allow-private
-from tomojax.alignment._joint._operators import (  # check-public-imports: allow-private
-    Operators,
+from tomojax.alignment._joint._operators import Operators  # check-public-imports: allow-private
+from tomojax.alignment._joint._projection import (  # check-public-imports: allow-private
     posed,
+    rigid_gauge,
 )
 from tomojax.core.joseph import forward_project_planes, plane_coefficients, plane_weighted_diagonal
 from tomojax.geometry import stack_view_poses
+
+from . import _joint_stacks as js
 
 
 def _laminography(*, nx=5, ny=4, nz=3, nu=7, nv=6, views=4, tilt=-30.0):
@@ -31,8 +33,13 @@ def _laminography(*, nx=5, ny=4, nz=3, nu=7, nv=6, views=4, tilt=-30.0):
 
 
 @pytest.mark.numerical
-def test_weighted_diagonal_is_the_explicit_matrix_diagonal():
-    grid, detector, geometry, angles = _laminography()
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
+@pytest.mark.parametrize("tilt", [-30.0, 0.0])
+def test_weighted_diagonal_is_the_explicit_matrix_diagonal(backend, interpolation, tilt):
+    # Axial parallel beam (tilt 0) has whole planes the cubic footprint reaches and a
+    # linear one does not; a linear diagonal for cubic rays is zero there.
+    grid, detector, geometry, angles = _laminography(tilt=tilt)
     poses = jnp.asarray(stack_view_poses(geometry, len(angles)))
     cf = plane_coefficients(poses, grid, detector)
     rng = np.random.default_rng(3)
@@ -41,14 +48,22 @@ def test_weighted_diagonal_is_the_explicit_matrix_diagonal():
     for k in range(grid.nx * grid.ny * grid.nz):
         unit = jnp.zeros(grid.nx * grid.ny * grid.nz, jnp.float32).at[k].set(1.0)
         volume = unit.reshape(grid.nz, grid.ny, grid.nx)
-        columns.append(forward_project_planes(cf, volume, grid, detector, backend="jax"))
+        columns.append(
+            forward_project_planes(
+                cf, volume, grid, detector, backend="jax", interpolation=interpolation
+            )
+        )
     matrix = jnp.stack(columns, -1)
     expected = jnp.sum((sw[..., None] * matrix) ** 2, axis=(0, 1, 2)).reshape(
         grid.nz, grid.ny, grid.nx
     )
     zeros = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
-    got = plane_weighted_diagonal(cf, sw, zeros, grid, detector, backend="jax")
+    got = plane_weighted_diagonal(
+        cf, sw, zeros, grid, detector, backend=backend, interpolation=interpolation
+    )
     np.testing.assert_allclose(got, expected, rtol=2e-5, atol=1e-6)
+    # Every voxel the operator reaches has a positive preconditioner entry.
+    assert np.all((np.asarray(got) > 0) == (np.asarray(expected) > 0))
 
 
 @pytest.mark.gpu
@@ -82,13 +97,13 @@ def test_global_pose_solves_match_dense_constrained_systems(dofs):
         prior = MotionPrior(views, gauge, knot_spacing=(10,) * k, delta=0.02)
         a = rng.normal(size=(views, k, k))
         blocks = np.einsum("nij,nkj->nik", a, a) + 0.5 * np.eye(k)
-        w = rng.uniform(0.1, 2.0, views - 1)
+        w = rng.uniform(0.1, 2.0, (views - 1, k))  # one weight per link and column
         rhs = rng.normal(size=k * views)
         f = np.zeros((k * views, k * views))
         for i in range(views):
             f[k * i : k * i + k, k * i : k * i + k] = blocks[i]
         diff = np.kron(np.diff(np.eye(views), axis=0), np.eye(k))
-        laplacian = diff.T @ np.diag(np.repeat(w, k)) @ diff
+        laplacian = diff.T @ np.diag(w.reshape(-1)) @ diff
         u, g, c = (np.asarray(m) for m in (prior.U, prior.G, prior.C))
         q = np.eye(k * views) - u @ u.T
         expected = _dense_constrained(f + q @ laplacian @ q, g, rhs)
@@ -132,10 +147,10 @@ def test_parallel_pose_columns_match_finite_differences_at_nonzero_poses(interpo
             batch_size=3,
             interpolation=interpolation,
         )
-        q = jnp.asarray(rng.uniform(-0.2, 0.2, (len(angles), 5)), jnp.float32)
+        q = jnp.asarray(rng.uniform(-0.2, 0.2, (len(angles), ops.dofs)), jnp.float32)
         raw = ops.columns(ops.nominal, q, ops.valid, volume)
-        for k in range(5):
-            direction = np.zeros((len(angles), 5), np.float32)
+        for k in range(ops.dofs):
+            direction = np.zeros((len(angles), ops.dofs), np.float32)
             direction[:, k] = 0.001
             plus = ops.project(ops.coefficients(ops.nominal, q + direction, ops.valid), volume)
             minus = ops.project(ops.coefficients(ops.nominal, q - direction, ops.valid), volume)
@@ -162,18 +177,18 @@ def test_parallel_image_pose_cross_blocks_use_the_matched_transpose(column_dtype
             batch_size=3,
             interpolation=interpolation,
         )
-        q = ops.pad_poses(rng.normal(0, 0.1, (len(angles), 5)))
+        q = ops.pad_poses(rng.normal(0, 0.1, (len(angles), ops.dofs)))
         volume = jnp.asarray(rng.normal(size=ops.shape), jnp.float32)
         weights = rng.uniform(0, 1, (len(angles), detector.nv, detector.nu))
         weights[weights < 0.2] = 0
         sw = ops.pad_images(weights)
         # Compressed and full-precision columns must have the same transpose semantics.
         columns = jnp.asarray(
-            rng.normal(size=(ops.padded_n, 5, detector.nv, detector.nu)), column_dtype
+            rng.normal(size=(ops.padded_n, ops.dofs, detector.nv, detector.nu)), column_dtype
         )
-        p = jnp.asarray(rng.normal(size=len(angles) * 5), jnp.float64)
-        _, cross = ops.weighted_forward(q, volume, sw, columns)
-        back = ops.pose_back(q, sw, columns, p)
+        p = jnp.asarray(rng.normal(size=len(angles) * ops.dofs), jnp.float64)
+        _, cross = js.weighted_forward(ops, q, volume, sw, columns)
+        back = js.pose_back(ops, q, sw, columns, p)
         left = float(jnp.vdot(p, cross))
         right = float(jnp.vdot(volume.astype(jnp.float64), back.astype(jnp.float64)))
         assert abs(left - right) < 2e-5 * max(abs(left), abs(right), 1)
@@ -187,16 +202,24 @@ def test_pose_normal_blocks_use_the_same_columns_as_the_schur_operator():
     rng = np.random.default_rng(122)
     with jax.enable_x64(True):
         ops = Operators(grid, detector, nominal, lever=4.0, native=(0.7, 0.9), batch_size=3)
-        q = ops.pad_poses(rng.normal(0, 0.1, (len(angles), 5)))
+        q = ops.pad_poses(rng.normal(0, 0.1, (len(angles), ops.dofs)))
         volume = jnp.asarray(rng.uniform(0.1, 1.0, ops.shape), jnp.float32)
         measured = ops.pad_images(rng.normal(size=(len(angles), detector.nv, detector.nu)))
         precision = rng.uniform(0.1, 1.0, measured.shape).astype(np.float32)
         precision[ops.n :] = 0
-        _, _, sw, cached, score, blocks, _, _, _ = ops.linearize(
-            q, volume, measured, jnp.asarray(precision), 100.0
+        _, _, sw, cached, score, blocks, *_ = js.linearize(
+            ops, q, volume, measured, jnp.asarray(precision), 100.0
         )
         prediction = ops.project(ops.coefficients(ops.nominal, q, ops.valid), volume)
-        residual = np.asarray(sw * (prediction - measured), np.float64)[: ops.n]
+        # Each view's precision-weighted offset and row ramp are eliminated (no
+        # pixel reaches the robust tail at this delta): an independent lstsq.
+        error = np.asarray(prediction - measured, np.float64)[: ops.n]
+        rows = np.repeat(np.linspace(-1, 1, detector.nv), detector.nu)
+        design = np.stack([np.ones_like(rows), rows], 1)
+        for view, w in enumerate(np.sqrt(precision[: ops.n])):
+            fit = np.linalg.lstsq(design * w.ravel()[:, None], error[view].ravel() * w.ravel())[0]
+            error[view] -= (design @ fit).reshape(error.shape[1:])
+        residual = np.asarray(sw, np.float64)[: ops.n] * error
         columns = np.asarray(cached, np.float64)[: ops.n]
         expected_score = np.einsum("nkvu,nvu->nk", columns, residual).ravel()
         expected_blocks = np.einsum("nkvu,nlvu->nkl", columns, columns)
@@ -219,7 +242,8 @@ def test_rigid_gauge_reproduces_one_shared_object_transform():
     lever, native = 11.0, (0.6, 1.1)
     epsilon = 1e-5
     with jax.enable_x64(True):
-        columns = _gauge(nominal, lever=lever, native=native).reshape(7, 5, 6)
+        scales = jnp.asarray([1 / lever] * 3 + list(native))
+        columns = rigid_gauge(nominal, [1 / lever] * 3 + list(native)).reshape(7, 5, 6)
         for axis in range(6):
             generator = np.zeros((4, 4))
             if axis < 3:
@@ -236,8 +260,8 @@ def test_rigid_gauge_reproduces_one_shared_object_transform():
             reference = (
                 nominal @ expm(-epsilon * generator) - nominal @ expm(epsilon * generator)
             ) / (2 * epsilon)
-            positive = posed(jnp.asarray(nominal), epsilon * columns[:, :, axis], lever, native)
-            negative = posed(jnp.asarray(nominal), -epsilon * columns[:, :, axis], lever, native)
+            positive = posed(jnp.asarray(nominal), epsilon * columns[:, :, axis], scales)
+            negative = posed(jnp.asarray(nominal), -epsilon * columns[:, :, axis], scales)
             actual = np.asarray((positive - negative) / (2 * epsilon))
             np.testing.assert_allclose(actual[:, :3, :3], reference[:, :3, :3], atol=1e-8)
             np.testing.assert_allclose(actual[:, [0, 2], 3], reference[:, [0, 2], 3], atol=1e-8)
@@ -252,7 +276,9 @@ def test_pose_composition_preserves_geometry_with_reduced_default_matmul_precisi
     nominal[:, :3, :3] = Rotation.random(11, random_state=rng).as_matrix()
     nominal[:, :3, 3] = rng.normal(size=(11, 3))
     lever, native = 64.0, (0.7, 0.9)
-    calculate = jax.jit(lambda n, q: posed(n, q, lever, native))
+    calculate = jax.jit(
+        lambda n, q: posed(n, q, jnp.asarray([1 / lever] * 3 + list(native), q.dtype))
+    )
     with jax.default_matmul_precision("bfloat16"):
         zero = np.asarray(calculate(jnp.asarray(nominal), jnp.zeros((11, 5), jnp.float32)))
         np.testing.assert_array_equal(zero, nominal)
@@ -273,18 +299,16 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
     from scipy.spatial.transform import Rotation
 
     from tomojax import _smooth_alignment
-    from tomojax._data.geometry_meta import (  # check-public-imports: allow-private
-        AugmentedGeometry,
-        DetectorRollGeometry,
-    )
+
+    # check-public-imports: allow-private
+    from tomojax._data.geometry_meta import AugmentedGeometry
 
     grid, detector, _, angles = _laminography(views=5)
-    geometry = (
-        tj.ParallelGeometry(grid, detector, angles)
+    calibrated = (
+        tj.ParallelGeometry(grid, detector, angles, detector_roll_deg=0.3)
         if tilt == 0
-        else tj.LaminographyGeometry(grid, detector, angles, tilt_deg=tilt)
+        else tj.LaminographyGeometry(grid, detector, angles, tilt_deg=tilt, detector_roll_deg=0.3)
     )
-    calibrated = DetectorRollGeometry(geometry, 0.3)
     rng = np.random.default_rng(123)
     inner, outer, increment = (
         rng.normal(size=(len(angles), 6)) * [0.04, 0.03, 0.02, 0.3, 0.2, 0.1] for _ in range(3)
@@ -304,8 +328,9 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         "fit": ["translations", "rotations"],
         "corrections": {},
         "detector_binning": 1,
-        "levels": [{"status": "budget_exhausted"}],
-        "refinement": {"status": "converged"},
+        "levels": [{"status": "step_budget_reached"}],
+        "refinement": {"status": "pose_steps_below_tolerance"},
+        "report": {"isolated_views": [], "unusual_views": [], "advisories": []},
     }
 
     def fit(
@@ -318,9 +343,11 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         keep_grid,
         frames,
         detector_roll_deg,
+        view_positions,
+        declared_poses,
     ):
         assert fit == ("translations", "rotations")
-        assert frames is None and detector_roll_deg == 0.3
+        assert frames is None and detector_roll_deg == 0.3 and view_positions is None
         assert projections is scan.projections
         assert working == grid and current_detector == detector and keep_grid is False
         np.testing.assert_allclose(nominal, before, atol=5e-7)
@@ -397,14 +424,27 @@ def _landmark_error(estimated, truth, grid):
 def test_pose_fit_recovers_a_slip_and_keeps_a_clean_scan_still():
     projections, nominal, grid, detector, _ = _moving_scan(slip=1.5)
     _, _, table, record = fit_poses(projections, nominal, grid, detector)
-    jumps = np.abs(np.diff(table[:, 3]))
+    # The signed step: a fit with the slip's direction reversed must fail.
+    jumps = np.diff(table[:, 3])
     assert abs(jumps[44] - 1.5) < 0.15, record["levels"][-1]["status"]
-    assert np.median(np.delete(jumps, 44)) < 0.05
+    assert np.median(np.abs(np.delete(jumps, 44))) < 0.05
     projections, nominal, grid, detector, _ = _moving_scan()
     _, _, table, record = fit_poses(projections, nominal, grid, detector)
     lever = record["lever_px_per_radian"]
     assert np.sqrt(np.mean(table[:, 3:5] ** 2)) < 0.05
     assert np.sqrt(np.mean((lever * table[:, :3]) ** 2)) < 0.05
+
+
+@pytest.mark.numerical
+@pytest.mark.slow
+def test_pose_fit_is_exactly_covariant_with_the_data_scale():
+    # The FP16 step storage must not see the data's units: 2**-17 brings the
+    # largest projection to 1.3e-4, where FP16 values would be subnormal.
+    projections, nominal, grid, detector, _ = _moving_scan(slip=1.5)
+    volume, _, table, _ = fit_poses(projections, nominal, grid, detector)
+    small, _, scaled, _ = fit_poses(projections * np.float32(2.0**-17), nominal, grid, detector)
+    np.testing.assert_array_equal(scaled, table)
+    np.testing.assert_array_equal(np.asarray(small) * np.float32(2.0**17), np.asarray(volume))
 
 
 @pytest.mark.numerical
@@ -421,3 +461,132 @@ def test_pose_fit_recovers_per_view_rotations():
     estimated = np.asarray(stack_view_poses(empty.with_poses(table).geometry, len(nominal)))
     before, after = _landmark_error(nominal, truth, grid), _landmark_error(estimated, truth, grid)
     assert after < 0.1 and after < 0.2 * before, (before, after)
+
+
+@pytest.mark.numerical
+def test_working_grid_follows_the_declared_geometry_not_the_pose_table():
+    # A cone scan whose voxel equals the pixel footprint du / M exactly (M = 288 / 192 = 1.5).
+    grid = tj.Grid(12, 12, 12, 1.0, 1.0, 1.0)
+    detector = tj.Detector(12, 12, 1.5, 1.5)
+    angles = np.linspace(0.0, 360.0, 12, endpoint=False)
+    geometry = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(192, 288))
+    z, y, x = np.mgrid[:12, :12, :12] - 5.5
+    volume = (np.exp(-(x**2 + (y - 1) ** 2 + z**2) / 6) + 0.5 * (np.abs(x + 2) < 2)).astype(
+        np.float32
+    )
+    scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
+    shapes = []
+    for along_beam in (
+        0.0,
+        1.0,
+        -1.0,
+    ):  # one voxel either way along lab y: 0.5% of the source distance
+        table = np.zeros((len(angles), 6))
+        table[:, 5] = along_beam
+        result = tj.align(scan.with_poses(table), fit="translations")
+        shapes.append(tuple(result.info["working_grid"][k] for k in ("nx", "ny", "nz")))
+    again = tj.align(result.scan, fit="translations")  # a fit restarted from its own end
+    shapes.append(tuple(again.info["working_grid"][k] for k in ("nx", "ny", "nz")))
+    assert shapes == [(12, 12, 12)] * 4
+
+
+@pytest.mark.numerical
+@pytest.mark.slow
+def test_tilt_roll_and_rotations_together_keep_the_shared_angles():
+    # A fine truth (ellipsoids on a grid twice as fine, projected on a detector twice as fine
+    # and binned) with an axis tilt of -0.35 deg, a detector roll of 0.25 deg, per-view wobble
+    # and translations. Fitting tilt, roll and per-view rotations together, the per-view poses
+    # could also carry the shared angles; without the patterns in the gauge the roll ran to
+    # 10.4 deg and the tilt to -1.7 deg here.
+    from tomojax.geometry import RotationAxisGeometry
+
+    n, views = 48, 60
+    rng = np.random.default_rng(7)
+    f = 2 * n
+    z, y, x = (np.mgrid[:f, :f, :f] - (f - 1) / 2) / f
+    fine = np.zeros((f, f, f), np.float32)
+    for _ in range(12):
+        c, r, a = rng.uniform(-0.25, 0.25, 3), rng.uniform(0.05, 0.15, 3), rng.uniform(0.3, 1.0)
+        inside = ((x - c[0]) / r[0]) ** 2 + ((y - c[1]) / r[1]) ** 2 + ((z - c[2]) / r[2]) ** 2 < 1
+        fine += a * inside
+    fine *= x**2 + y**2 < 0.4**2
+    angles = np.linspace(0, 360, views, endpoint=False)
+    tilt = np.deg2rad(-0.35)
+    true = RotationAxisGeometry(
+        tj.Grid(f, f, f, 0.5, 0.5, 0.5),
+        tj.Detector(f, f, 0.5, 0.5),
+        angles,
+        (0.0, np.sin(tilt), np.cos(tilt)),
+        detector_roll_deg=0.25,
+    )
+    t = np.deg2rad(angles)
+    table = np.zeros((views, 6))
+    table[:, 0] = np.deg2rad(0.05) * np.cos(2 * t + 0.3)
+    table[:, 1] = np.deg2rad(0.04) * np.cos(3 * t + 1.1)
+    slip = np.arange(views) >= views // 3
+    table[:, 3] = 0.5 * (0.6 * np.cos(2 * t) + 0.4 * np.cos(3 * t + 0.7) + 0.7 * slip)
+    table[:, 4] = 0.5 * (0.6 * np.cos(2 * t + 1.9) + 0.8 * np.linspace(0, 1, views))
+    blank = tj.Scan(np.zeros((views, f, f), np.float32), true)
+    data = np.asarray(tj.project(blank.with_poses(table).geometry, fine))
+    data = data.reshape(views, n, 2, n, 2).mean((2, 4)).astype(np.float32)
+    declared = tj.ParallelGeometry(tj.Grid(n, n, n, 1, 1, 1), tj.Detector(n, n, 1, 1), angles)
+    result = tj.align(tj.Scan(data, declared), fit=("translations", "tilt", "roll", "rotations"))
+    calibration = result.info["calibration"]
+    assert abs(float(np.ravel(calibration["roll"])[0]) - 0.25) < 0.1
+    assert abs(float(np.ravel(calibration["tilt"])[0]) + 0.35) < 0.1
+
+
+@pytest.mark.numerical
+@pytest.mark.slow
+def test_a_half_turn_of_a_flat_sharp_object_recovers_its_motion_without_a_pedestal():
+    # A watch-like object (three plates, cut with holes and teeth, on a grid four times as
+    # fine, projected and binned) on a half turn, moving in u and v with waves, a trend and a
+    # slip. Profiling every view's offset and ramp, the level the views share included, left
+    # the image a free pedestal the fit filled under this mismatch (1.0x to 1.8x the object's
+    # mass where it is empty), and its rim at the detector's edge pulled each view's u shift
+    # toward nominal: u error -0.15 to -0.19 x the true motion here (and -0.7 to -0.8 at 24
+    # voxels; at 16 it falls to -0.09). Holding the shared level, it is +0.02 to +0.03.
+    n, views, f = 32, 120, 128
+    rng = np.random.default_rng(7)
+    z, y, x = (np.mgrid[:f, :f, :f] - (f - 1) / 2) / f
+    r, theta = np.hypot(x, y), np.arctan2(y, x)
+    fine = np.zeros((f, f, f), np.float32)
+    for z0, thick in ((-0.15, 0.06), (0.0, 0.045), (0.15, 0.075)):
+        plate = (np.abs(z - z0) < thick / 2) & (r < 0.46)
+        plate &= ~((r > 0.42) & (np.cos(24 * theta) < 0))
+        for _ in range(6):
+            c, hole = rng.uniform(-0.3, 0.3, 2), rng.uniform(0.02, 0.07)
+            plate &= np.hypot(x - c[0], y - c[1]) > hole
+        fine += rng.uniform(0.5, 1.0) * plate
+    angles = np.linspace(0, 180, views, endpoint=False)
+    t, ramp = np.deg2rad(angles), np.linspace(0, 1, views)
+    slip = (np.arange(views) >= views // 3).astype(float)
+    table = np.zeros((views, 6))
+    for column, phase, sign in ((3, 0.3, 1), (4, 1.9, -1)):
+        waves = 0.6 * np.cos(2 * t + phase) + 0.4 * np.cos(3 * t + 2 * phase)
+        table[:, column] = waves + 0.8 * ramp + 0.7 * sign * slip
+    h = n / f
+    true = tj.Scan(
+        np.zeros((views, f, f), np.float32),
+        tj.ParallelGeometry(tj.Grid(f, f, f, h, h, h), tj.Detector(f, f, h, h), angles),
+    ).with_poses(table)
+    data = np.asarray(tj.project(true.geometry, fine))
+    data = data.reshape(views, n, 4, n, 4).mean((2, 4)).astype(np.float32)
+    declared = tj.ParallelGeometry(tj.Grid(n, n, n, 1, 1, 1), tj.Detector(n, n, 1, 1), angles)
+    result = tj.align(tj.Scan(data, declared), fit="translations")
+
+    def u(geometry):
+        return np.asarray(stack_view_poses(geometry, views))[:, 0, 3]
+
+    # The object's own shift (cos, sin of the angle) is the gauge: removed before comparing.
+    gauge = np.stack([np.cos(t), np.sin(t)], 1)
+
+    def ungauged(v):
+        return v - gauge @ np.linalg.lstsq(gauge, v, rcond=None)[0]
+
+    error = ungauged(u(result.scan.geometry) - u(true.geometry))
+    motion = ungauged(u(true.geometry) - u(declared))
+    assert abs(error @ motion / (motion @ motion)) < 0.1
+    truth = fine.reshape(n, 4, n, 4, n, 4).mean((1, 3, 5))
+    empty = truth.sum((1, 2)) == 0
+    assert np.asarray(result.volume)[empty].sum() < 0.05 * truth.sum()

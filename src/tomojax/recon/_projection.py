@@ -18,6 +18,7 @@ from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import ConeModel, cone_model, use_cuda_cone
 from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
+from tomojax.core.joseph import affine_grid
 from tomojax.core.operator_norm import unit
 from tomojax.recon._cgls_stopping import cancellation_magnitude
 from tomojax.recon._data_term import project_residual
@@ -39,28 +40,33 @@ def resolve_projector(
     model: str,
     backend: str,
     *,
-    det_grid: object = None,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
+    detector: Detector | None = None,
     context: str,
 ) -> tuple[str, str]:
     """Resolve ``auto`` choices; explicit choices must be supported, never replaced.
 
-    ``auto`` selects Joseph plane sampling with CUDA kernels on CUDA. Explicit
-    detector grids need the ray model, and CUDA needs CUDA and the canonical
-    detector grid.
+    ``auto`` selects Joseph plane sampling, with CUDA kernels on CUDA, for the
+    canonical and for an affine detector grid such as a rolled one: the plane
+    coefficients carry the lattice. Any other grid needs the ray model, which
+    on CUDA needs the canonical grid.
     """
     if model not in {"auto", "joseph", "ray"}:
         raise ValueError(f"{context}: projector_model must be 'auto', 'joseph' or 'ray'")
     if backend not in {"auto", "jax", "cuda"}:
         raise ValueError(f"{context}: backend must be 'auto', 'jax' or 'cuda'")
+    affine = det_grid is None or (detector is not None and affine_grid(det_grid, detector))
     if model == "auto":
-        model = "ray" if det_grid is not None else "joseph"
-    if model == "joseph" and det_grid is not None:
-        raise ValueError(f"{context}: Joseph sampling requires the canonical detector grid")
-    cuda = cuda_backend()
+        model = "joseph" if affine else "ray"
+    if model == "joseph" and not affine:
+        raise ValueError(
+            f"{context}: Joseph sampling needs the canonical or an affine detector grid"
+        )
+    cuda, ray_grid = cuda_backend(), model == "ray" and det_grid is not None
     if backend == "auto":
-        backend = "cuda" if cuda and det_grid is None else "jax"
-    if backend == "cuda" and (not cuda or det_grid is not None):
-        raise ValueError(f"{context}: CUDA requires CUDA and the canonical detector grid")
+        backend = "cuda" if cuda and not ray_grid else "jax"
+    if backend == "cuda" and (not cuda or ray_grid):
+        raise ValueError(f"{context}: CUDA requires CUDA, and the ray model the canonical grid")
     return model, backend
 
 
@@ -70,7 +76,7 @@ def resolve_geometry_projector(
     backend: str,
     *,
     detector: Detector,
-    det_grid: object = None,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
     context: str,
 ) -> tuple[str | ConeModel, str]:
     """Resolve the projector for a geometry: :class:`ConeModel` for cone beams.
@@ -82,7 +88,9 @@ def resolve_geometry_projector(
     available.
     """
     if not is_cone_beam(geometry):
-        return resolve_projector(model, backend, det_grid=det_grid, context=context)
+        return resolve_projector(
+            model, backend, det_grid=det_grid, detector=detector, context=context
+        )
     if det_grid is not None:
         raise ValueError(f"{context}: cone-beam geometry needs the canonical detector grid")
     if model not in {"auto", "joseph"}:
@@ -445,36 +453,6 @@ def least_squares_operators(
         return _summed(split, ops, at, shared=shared, views=(data,))
 
     return value_and_gradient
-
-
-def normal_operator_norm(
-    apply_normal: Callable[[jax.Array], jax.Array],
-    shape: tuple[int, int, int],
-    *,
-    iterations: int,
-    mask: jax.Array | None = None,
-    start: jax.Array | None = None,
-) -> jax.Array:
-    """Estimate ``||M A^T A M||`` by power iteration from ``start`` (default constant).
-
-    Power iteration approaches the largest eigenvalue from below; callers
-    needing a safe step size should add a margin.
-    """
-
-    def normal(x: jax.Array) -> jax.Array:
-        x = x if mask is None else x * mask
-        y = apply_normal(x)
-        return y if mask is None else y * mask
-
-    def step(_: jax.Array, carry: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
-        x, _ = carry
-        return unit(normal(x))
-
-    x0 = jnp.ones(shape, jnp.float32) if start is None else start
-    x0 = x0 if mask is None else x0 * mask
-    x0, _ = unit(x0)
-    _, norm = jax.lax.fori_loop(0, max(1, iterations), step, (x0, jnp.float32(0)))
-    return norm
 
 
 def positive_normal_bound(

@@ -2,6 +2,507 @@
 
 ## Unreleased
 
+### `tj.align` fits full-size synchrotron scans on an 8 GB card
+
+The alignment made its stack-sized arrays (the data, the residual, the IRLS weights, the pose
+columns and the weighted projections) afresh at every linearisation and matvec, and a 4000-view
+K11 scan or a 3001-view I13 scan ran out of device memory. Each level now plans, at its setup,
+which of its stacks stay on the device and which are held on the host, from the device's room
+less the level's other arrays and the motion prior's; allocates them once, in the order of who
+most needs the device; reads and writes them a batch at a time; and releases them when it ends.
+The result does not depend on where the stacks live. `info["levels"][i]["stacks"]` (and the
+refinement's) reports each stack's placement, the plan, any misprediction, the room and the
+reserve, beside the level's time. On an RTX 4070 Laptop (8 GB): K11 67208 (4000 views) aligns
+in 1384 s, I13 159815 (3001 views) in 1253 s after its load, from Python and from the shell;
+K11 54013 runs as before (365 s) with its peak device memory down from 4.0 to 3.0 GiB.
+
+### One GPU memory policy for Python and the shell
+
+Importing TomoJAX let JAX's pool grow on demand to JAX's own 75% ceiling in Python, while the
+`tomojax` commands set 90% and `tomojax align` used the releasing `platform` allocator, 14%
+slower (K11 54013, 401 s against 353 s). The same work had two memory budgets and two speeds.
+Importing TomoJAX now sets one policy everywhere: the pool, grown on demand, to JAX's 75%
+ceiling. The shell's commands lose the larger pool they had: `tomojax recon` and
+`tomojax simulate` may stream projections or use host slabs a little sooner than before. An
+explicit `XLA_CLIENT_MEM_FRACTION` (or `XLA_PYTHON_CLIENT_MEM_FRACTION`) still wins.
+
+### One cone orbit with per-view detector offsets reconstructs with FDK
+
+The automatic choice sent every segmented cone scan to matched CGLS. A scan whose per-view
+detector offsets make the segments (a Zeiss scan's recorded shifts) is one circular orbit with
+one source and detector arrangement, which FDK weights and backprojects view by view exactly; it
+now gets FDK, as every circular scan does. Several trajectories, or arrangements that differ (a
+source at several heights, the FIPS walnut's three orbits), keep CGLS and its reason.
+
+### A Zeiss or SkyScan grid derived from the detector follows binning
+
+The Zeiss and SkyScan readers built a grid from the detector's size and the voxel the file
+states, and put it on the record as if the file stated the grid, so `corrected(binning=)` kept
+the full-size grid: CuO_2 loaded with `binning=4` still reconstructed 2028^3 voxels. They now
+record the stated voxel and `grid_status` "derived", as the Nikon reader does; an unbinned load
+gives the same grid as before, and binning gives a quarter the samples at four times the voxel.
+`Scan.binned` now follows the same rule: binning averages detector pixels, a grid derived from
+the detector follows it and a grid the file or the caller stated is kept, so `tj.load(path).binned(4)`
+and `corrected(binning=4)` give the same grid. For a fine grid from a binned detector, pass `grid=`.
+
+### A save that fails leaves the file it was replacing, and no partial file
+
+`tj.save` (and every NXtomo or NPZ write under it) opened its final name for writing. A save
+that failed part-way, a full disk for instance, left a truncated file under that name, and
+saving over a good file emptied it before the first byte of the new one was written. Writes now
+go to a temporary file in the same directory, reach the disk, and replace the file in one step
+when complete; on any failure the temporary file is removed and the old file is untouched. A
+full disk raises a plain error with the bytes written, the room left and the size of each part
+being written (volume, projections).
+
+### Simulated data are projected in float32 on every device
+
+`tomojax simulate` and `tomojax.datasets.simulate` projected with a bfloat16 gather on GPUs
+(chosen by `tomojax.backends.default_gather_dtype`). Against float32 that put a repeatable
+error of 8.4e-4 relative RMS into noise-free simulated projections (a 64^3 Shepp phantom,
+parallel and laminography alike), where float32 rounding is 1e-7: **data simulated on a GPU
+before this change carry that error**, which matters wherever a method is scored against them
+at better than 1e-3. They are now projected in float32, as every reconstruction projects;
+on a 256^3, 720-view simulation that takes about 10-20% longer. `default_gather_dtype`, which
+nothing else used, is removed.
+
+### An interrupted Zeiss scan loads its stored views
+
+An interrupted acquisition records its angles and exposures for the views it stored but its
+shift tables at the planned length (CuO_6 tomo-B: 201 planned, 2 stored), and the reader
+failed on a NumPy broadcast. The shift tables now follow the stored views, the first ones
+of the plan, and the record keeps both counts; a shift table of any other length is refused
+with a message saying what the file holds.
+
+### The correction record reports counts above the camera's stated linear range
+
+A Zeiss file states the top of its camera's linear range (`MaxLinearRange`, 45 000 on
+every scan here) and holds its references inside it, but not its views: 21 of the 84 scans
+on disk have view counts above it, and 8 have saturated air, which corrects to a false
+absorption (about 0.33 on CuO_2). The `flat_dark` record now gives the range, where the file
+states it, the fraction of counts above it and the line integral where it ends, counted in
+the batches the correction already runs, and `tj.load` warns when any count lies above it.
+No value changes. `Frames` gains `linear_limit` for it.
+
+### A Zeiss scan whose camera removed the dark loads without `darks=`
+
+Every Zeiss scan on disk here (84 of 84) records
+`AcquisitionSettings/CameraStaticBackground` = 1: the camera subtracted its static
+background, the dark, before writing the counts, and no dark is stored. `tj.load` asked for
+`darks=` all the same. The reader now declares it: the dark is zero, the `flat_dark`
+correction record gives `darks=0` and `dark_removed_by` naming the stream, and the result is
+the same as with `darks=0`. A file without that statement still asks for `darks=`, and a
+`darks=` given by the user replaces the declaration.
+
+### A Zeiss scan without a reconstruction setup loads with the file's pixel size
+
+Only a Zeiss reconstruction setup writes `AutoRecon/CenterShift`, so a raw scan often
+lacks it (42 of the 84 unique scans on disk here, CuO_2 among them). The reader then built
+no detector, and `tj.load` asked for the pixel size the file records. It now builds the
+detector from the recorded pitch with the centre at the middle, applies the recorded
+per-view shifts from there, and records `detector_center_status` "not_recorded", as every
+other format does since loading stopped estimating centres; `tj.align(scan, fit="centre")`
+finds the centre. A file with the centre shift loads exactly as before. A file whose rotation
+axis cannot be placed now says so before asking for pixel sizes.
+
+### `tj.load` holds a stack larger than memory in a temporary file
+
+A bare `tj.load` on a full-size synchrotron scan filled an in-memory stack: I13 159815
+(3301 frames of 2560 x 2160, 73 GB corrected) on a 30 GB machine, and the kernel killed
+the process with no message. The corrected stack now follows the rule the solvers'
+volumes already followed: more than half of available host memory, and it is an unlinked
+temporary file in `TMPDIR`, returned as a memmap; `tj.load` logs where. A scan that fits
+loads as before.
+
+Any such file is now created only when its directory has room for all of it. Before, a
+solver's work volume on a `TMPDIR` without room (a small RAM disk) ended the process with
+a bus error once the disk filled; now a `MemoryError` gives the size, the memory and free
+space, and the ways out (`TMPDIR`, `binning=`, `load_frames(...).selected(...)`).
+
+A reconstruction's volume follows the same rule. FBP, FDK and Fourier wrote their host
+slabs into anonymous memory, and FDK and MLEM into `np.empty`, whatever the size, so a
+volume larger than memory (I13 159815's is about 56 GB) was killed the same way. Every
+automatic output now comes from the one rule, counting the work volumes a solver keeps
+beside it (accelerated SIRT's work volume also followed the caller's `out=`, so it stayed
+in memory beside a file-backed iterate). `info["temporary_file"]` names the directory of
+the unnamed file when the volume is in one; a supplied `out=` is unchanged.
+
+### `tj.reconstruct(scan)` reconstructs a laminography scan with FBP
+
+The automatic choice for laminography and tilted-axis scans was nonnegative least
+squares with an ordered-subset start and one FISTA step. On a real scan it failed:
+on K11 54013 (1441 views, a 704 x 704 x 234 grid) on an 8 GB card the start needed the
+projections held on the device, which sent the volume to the host path, and that path
+refused the start, so `tj.reconstruct(scan)` raised. It was also unregularised least
+squares that worked only by stopping early: run to convergence it got worse.
+
+The default is now FBP, as for every geometry: 5.5 s on that scan. `info["automatic"]`
+names it and says that FBP leaves the missing cone empty. For a better image ask for
+`method="fista"`: on two simulated laminography scans it halves FBP's error on the
+measured frequencies (0.079 against 0.165 and 0.163) and fills part of the cone, at
+about 12 s an iteration on K11. Its default 50 iterations are not converged there; raise
+`iterations` (docs/measurements.md has the table).
+
+`FistaConfig.initial_epochs` and `initial_subsets` are removed with the ordered-subset
+start they configured, and the `info` keys `initial_epochs` and `initial_updates` with
+them.
+
+### Alignment no longer adds view-to-view motion that is not in the scan
+
+The motion prior's weight is a threshold: how hard it holds a view against that
+view's own error. It took that error from the photon noise, so on a real scan, where
+each view also carries model error of its own, the default call followed the error
+as if it were motion. On K11 54013, scored against an independent track of a ruby
+sphere in the projections, the default call (inner count 16, the refinement on)
+added view-to-view motion the sphere did not have:
+
+| working px, u / v | all | 2-10 cycles a turn | 11-100 | 101 and up |
+|---|---|---|---|---|
+| before | 0.180 / 0.122 | 0.036 / 0.060 | 0.125 / 0.079 | 0.125 / 0.071 |
+| now | 0.108 / 0.095 | 0.036 / 0.044 | 0.087 / 0.069 | 0.053 / 0.049 |
+
+The weight now takes that error from the views themselves: each view's own step,
+from the score and Gram matrix the solver already forms, and the spread of its
+second differences along the views, where real motion is smooth or rare and error is
+not. On clean data this comes out near the photon value, and alignment results on
+clean simulated scans are unchanged to within the stop tolerance (0.01 px): at most
+0.004 px worse, on cone and laminography rows already near 0.005 px. The Student-t
+innovations are also set so that their largest restoring force is the weight
+itself; before, it was half of it.
+
+A real slip is still followed, a little less closely where a scan's own error is
+large: on the noisy rock's half turn a 0.95 px slip is followed 16% short, where it
+was 9% short; on the other simulated rows within 9%. The refinement stage
+stays: at this weight it no longer puts motion back on the real scan and it improves
+several simulated rows. Rotation increments keep the photon-scaled weight.
+
+The error scale is formed one view batch at a time: as first written it made a unit
+precision the size of the whole stack for a scan that has none. This does not make K11
+67208 (4000 views) align on an 8 GB card, as an earlier version of this entry said: the
+working stacks the alignment holds on the device do not fit there, and a full-size
+synchrotron scan above roughly 2500-3000 views still runs out of device memory.
+
+### Alignment forms its shared level one view batch at a time
+
+The level the views share (5502a625) and the line search's value at unchanged poses
+were formed from the whole stack of views at once: a full precision array for a scan
+that has none, then float64 copies of it and of the residual, each the size of the
+level's data. On K11 54013 (1153 views at 320 x 270) the first linearisation ran out of
+an 8 GB card's memory at 765 MiB each, before the fit had started. Both are now summed
+over the same view batches the score and Gram matrix already stream through, so no array
+the size of the stack is made for them; the values are unchanged.
+
+### Alignment compares model and data through [1, 2, 1] / 4
+
+At the Nyquist frequency a sampled model cannot be right at all: the alias of an
+edge there is as large as the signal. The alignment's objective asked for it
+anyway, and on sharp objects the fit moved the poses to chase it. It now compares
+the model and the data through K = [1, 2, 1] / 4 along the detector's rows and
+columns, at every level: the shortest zero-phase filter with unit gain at zero
+frequency and a zero at Nyquist. A projection alternating pixel to pixel costs
+nothing, a linear trend is unchanged away from the edge, and the smooth pose
+derivatives keep their size, so the pose priors need no correction. K is part of
+the objective, not of the binning. A filtered sample mixes its 3 x 3
+neighbourhood, so it is unknown, and carries no weight, wherever one of those
+pixels was not measured.
+
+On the noisy corpus at 1e4 the watch rows fit to 0.02-0.04 px where they were
+0.05-0.17, and three thin plates (0.5-0.8 voxels) on a half turn fit to 0.10 px
+of landmark error where they were 0.49. Three things are worse:
+
+- Three rock rows regress by up to 0.02 px (the full turn's translations and tilt,
+  and laminography tilt and tilt-roll by 0.002). The rock sits on a sapphire sheet
+  cut by the grid: at the true poses its three detector rows hold 74% of the
+  residual's power, an error of a truncated object that the filter does not
+  describe and the plain comparison happened to tolerate better.
+- The fit's own image carries more texture at the grid's finest scale than the
+  object has (2-10 times its near-Nyquist energy on the watch), since nothing
+  constrains that band any more. `Alignment.volume` is the fit's working image,
+  not a reconstruction; reconstruct `Alignment.scan` for that.
+- On thick flat plates the tilt can be worse on some seeds, by up to 0.08 px at
+  the plate's edge.
+
+### An alignment level stops when its poses stop moving, whatever the damping
+
+A level stopped after two successive steps proposing a pose change under
+0.01 px, but only if the damping was back at its initial value. Clipping the
+image step at zero can hold the damping high long after the poses have settled
+(on one case 185 of 200 proposals were under 0.01 px and the damping returned to
+its initial value once), so such a fit was never reported converged. The rule
+is now stated on the proposal itself: a small damped proposal is checked again
+at the initial damping, from the same linearisation, and that decides, since
+damping alone could hide a step the fit still wants to take. The step budget is
+unchanged.
+
+### Alignment keeps the level the views share
+
+Since 45f9932d (on this branch, not on main) the alignment step profiled out every
+view's offset and row ramp, including the part all views share. An image can produce
+exactly that part: a faint disc, brightest at its rim, whose every view is one
+constant (and one ramp, with its amplitude linear in z). With nothing holding it, a
+fit under model mismatch filled the disc, and its rim at the detector's edge pulled
+each view's shift back toward nominal. On the watch half turn of the fine-truth tier
+the fitted u error was -0.41 times the true motion and the image held 1.7 times the
+object's mass in empty slices; the landmark error was 0.244 px, and is 0.049 px now.
+Before 45f9932d the per-view refit kept the views' mean background in the image, so
+main was not affected.
+
+Each view's offset and ramp are now profiled out relative to the level the views
+share, which stays with the data: the objective adds the squared size of the
+residual's shared offset and ramp, carried through Gauss-Newton as two more residual
+rows. They couple every view, so the pose block is solved by Woodbury. Views whose
+ramp the profile cannot separate from their offset (one measured row) are left whole
+as before and do not enter the shared level. `info["offsets"]` now reports each
+view's deviation from the shared level; a common offset in the data is no longer
+reported as every view's own.
+
+### Zeiss's recorded shifts follow `poses=`
+
+A Zeiss file's per-view image shifts and `CenterShift` are the vendor's own
+corrections. They are still applied by default, because the file records them,
+and `tj.load(path, poses=False)` now gives the nominal geometry without them, the
+same switch that leaves out saved TomoJAX poses. The record's `vendor_corrections`
+names the source and fields and whether they were applied; without them the centre
+status is `"nominal"`.
+
+### A parallel file without a pixel size loads in pixel units; `pixel_size=`
+
+A parallel-beam file that records no pixel size (TomoBank 00031, 00086 and 00069,
+generic HDF5 frames, GDA files) used to refuse to load until a whole
+`tj.Detector`, shape and centre included, was built by hand. It now loads with a
+pitch of one pixel, and its record says `detector_pixel_size_status:
+"not_recorded"` and `length_unit: "pixel"`: lengths, poses and the centre are in
+pixels and attenuation is per pixel (a reconstruction is the same image, scaled).
+`tj.load(path, pixel_size=0.65)` (also `(du, dv)`, and on `tj.load_frames`) gives
+the pixel size in the geometry's length unit, the shape from the frames and the
+centre from the file or the middle; with `detector=` or `geometry=` it raises. A
+cone-beam file still needs its pixel size, since its distances fix the unit. Pitches
+a file records without a whole detector (partial NXtomo and NPZ records, Zeiss files
+without CenterShift) are now used, with the middle centre, instead of refused.
+`ProjectionDataset.with_recorded_pitches` is now `with_parallel_detector`.
+
+### Newer Diamond K11 exports load their angles
+
+Newer GDA exports (K11 67208) describe the frames twice: GDA's own layout, whose
+rotation command has the angles, and an NXtomo entry for the same frames with
+none. Loading read the NXtomo entry and asked for `angles=`. When an NXtomo entry
+has no angles, the file's GDA layout is recognised, both describe the same frames
+dataset and the GDA command has one angle per frame, the command's angles now
+complete the entry, and the record says the NXtomo entry recorded none
+(`nxtomo_angles: "not_recorded"`). Otherwise loading still asks for `angles=`.
+
+### Older Diamond K11 (DIAD) scans load their angles
+
+Older GDA exports (DIAD, K11 54013 and 54286) write the rotation command
+`imaging_sum/smaract_zrot` with no unit label, and loading discarded it as a
+unitless motor, so `tj.load` asked for `angles=`. In a recognised GDA layout the
+paired rotation command is now read in degrees, and the record keeps
+`angle_units_recorded: ""` beside the angle and key paths it came from. The
+laminography tilt is in no K11 file: pass `geometry=`.
+
+### tj.load takes the metadata a file does not record
+
+`tj.load` accepted only `poses=`, yet when a file lacked angles, a pixel size,
+flats or a rotation axis it told the user to "pass angles=..." or "pass
+detector=..." (or to switch to `tj.load_frames`), and passing them raised
+`TypeError`. `tj.load` now takes `flats`, `darks`, `angles`, `detector`,
+`grid`, `geometry`, `exposure_times`, `flat_exposure_times`, `data_path`,
+`image_key_path` and `angles_path` with `tj.load_frames`'s meaning and corrects
+with the standard chain, so `tj.load` is the one call that gives a scan;
+`tj.load_frames` is for the raw frames and a correction chain of your own. Every
+error on the `tj.load` path names an argument `tj.load` takes (and, where the
+command line can supply it, the `tomojax preprocess` option). A file with no
+stack of frames raises `KeyError` naming `data_path`.
+
+### A saved volume must record its axis order
+
+Loading a saved volume without its `volume_axes_order` attribute guessed the
+order from the volume's shape against the grid (and refused only when the shape
+fit more than one order, as a cube does). It now refuses with a message naming
+the attribute. TomoJAX has written the attribute with every volume since
+September 2025, so only older files are affected; set the attribute on them.
+`saved_volume_axes` takes the attribute and the path and returns the order.
+
+### Loading no longer estimates a rotation centre
+
+`tj.load` and `tj.load_frames` estimated the rotation centre of every parallel
+file that records the pixel size but not the centre (external NXtomo and Data
+Exchange, ESRF Bliss and EDF), and raised when the estimate failed. Such a file
+now loads with the centre at the middle of the detector, and its record keeps
+`detector_center_status` "not_recorded" (also through save and load). Estimate
+the centre when you want one: `tj.estimate_center(scan)`, or
+`tj.align(scan, fit="centre")` / `tomojax align --fit centre`. `tj.reconstruct`
+records the file's centre status in `info["automatic"]["center_status"]` and
+`tomojax recon` says when the file recorded none. A file without pixel sizes
+still raises. `ProjectionDataset.prepare_center_seed` is now
+`with_recorded_pitches`.
+
+### tj.reconstruct no longer estimates a centre
+
+`tj.reconstruct(scan)` estimated the rotation centre when it chose Fourier
+inversion for a scan whose record said the centre was not recorded. It now
+reconstructs with the centre the scan carries; `tj.estimate_center` or
+`tj.align(fit="centre")` estimates one when asked. No file reached that branch:
+a record without a centre does not load as a scan.
+
+### Fitting tilt or roll with per-view rotations keeps the shared angles
+
+A shared axis tilt or detector roll and a per-view rotation pattern give the
+same projections, and nothing but the rotations' size prior decided between
+them, so `fit=("translations", "tilt", "roll", "rotations")` could hand the
+shared angle to the per-view poses: on a 48-pixel, 60-view synthetic scan with
+a 0.25 degree roll the fit returned 10.4 degrees of roll. The shared parameter
+now owns that pattern (it joins the fit's gauge, as a constant shift already
+does for the centre) and the same scan returns 0.248 degrees of roll and -0.343
+of tilt against -0.35.
+
+### Fixed: tj.reconstruct no longer aligns a laminography scan behind your back
+
+`tj.reconstruct(scan)` on a laminography or tilted-axis scan without pose
+corrections used to run a full pose alignment (`tj.align`'s fit) and return
+the fit's image: on the working grid, binned up to 8x per axis, with method
+`joint_volume_pose`, and ten times slower (206 s against 21 s on a 64-cubed,
+180-view scan on the CPU). It now reconstructs with the geometry it is given,
+on the scan's grid, by the same nonnegative least squares it already used for
+scans with poses. To fit poses, call `tj.align` and reconstruct its scan.
+`info["automatic"]["geometry"]` is now `"preserved"` for every route.
+
+### Fixed: reconstructing an aligned scan gave a binned volume
+
+`tj.align(scan).scan` used to carry the alignment's bounded working grid in
+place of the scan's own, so `tj.reconstruct(tj.align(scan).scan)`, as the
+`tj.align` example shows, returned a volume binned to the fit's working scale:
+4x coarser per axis than the scan's grid for a 672-pixel detector, 8x for a
+2560-pixel one, unless `grid=` was passed. A saved alignment reloaded the same
+way. `result.scan` now keeps the scan's grid (or the `grid=` given to
+`tj.align`), so reconstructing it gives the image at the scan's resolution.
+The fit's own image is still `result.volume`, and the new `Alignment.grid`
+says which grid it is on; a saved alignment records that grid, and
+`tj.load_reconstruction` returns the image on it. `tj.Alignment` now takes
+`grid`.
+
+### Fixed: a laminography scan with poses could not be reconstructed
+
+Since 79912dc9 (2026-11-01), `tj.reconstruct` on any laminography scan that
+carries pose corrections, such as an alignment result saved and loaded again,
+raised `ValueError: initial_epochs requires unmasked nonnegative least
+squares`, so align-then-reconstruct failed for every laminography user. The
+automatic route asks FISTA for the ordered-subset start, which needs a
+nonnegative image; the rewrite in 79912dc9 dropped the request. It now asks
+for one, as the alignment's own image already is.
+
+### A rolled detector is projected by the same model as an unrolled one
+
+`tj.project`, `tj.Projector`, `tj.backproject` and CGLS now project a rolled
+detector with Joseph planes, as the joint fit already did, instead of
+switching to the trilinear ray march: on a GPU they now use the CUDA kernels
+too. Rolled-detector projections change by about 1%, the difference between
+the two models (0.25% at a 0.25 degree roll against the fit's model; images
+reconstructed from either agree to 0.0874 against 0.0876 relative error). An
+arbitrary, non-affine detector grid still uses the ray march, and
+`projector_model="joseph"` now rejects one instead of projecting onto the
+lattice through its corners. FISTA-TV and SPDHG-TV keep their explicit-grid
+route for now.
+
+### Two unused public functions are removed
+
+`tomojax.forward.project_parallel_reference` and
+`tomojax.recon.api.run_parallel_fbp_direct_cuda` are gone. Nothing in TomoJAX
+called either: the first was a thin wrapper over
+`project_parallel_reference_from_input`, which remains; the second was an
+unscaled z-parallel FBP entry point superseded by `fbp`. Use those instead.
+
+### Per-view rotations are tied to their neighbours
+
+`fit="rotations"` gave each view's wobble only a size prior, so nothing tied
+one view's rotation to the next. A broken frame could take a rotation of
+several degrees, and on axial scans the rotations wandered between views. They
+now also pay Gaussian increments between neighbouring views, priced as a
+translation step of the same edge displacement, with no free drift and no
+heavy tail. On the 24 simulated corpus rows the fit improves on 19 (a
+full-turn axial scan from 0.214 to 0.090 px landmark error), and on real K11
+scans fitted with the tilt and roll, a broken frame and diffraction flashes no
+longer pull the wobble. Two
+laminography rows end 0.011-0.015 px worse: a constant tilt of the axis is a
+once-per-turn wobble that the increments charge a little; fitting `tilt`
+alongside removes it.
+
+### Rotations are the wobble of the rotation axis
+
+`fit="rotations"` now fits each view's two wobble components of the rotation
+axis and takes each view's angle about the axis as recorded: stage encoders
+give that angle, and errors in it are rare on real stages. The pose table keeps
+its six columns; the fitted correction in the angle column (phi) is zero.
+Fitting the angle as well was the parameter the data determined worst: on
+axial scans it took a grid-locked per-view error of 1-2 degrees, and most
+axial corpus rows ended worse than a translations-only fit. With the angle held,
+analytic scans with axis wobble end below both nominal and translations-only in
+parallel, laminography and cone geometry, and the tilted corpus rows end well
+below translations-only. On the 13 axial corpus scans, with rotations tied to
+their neighbours (below), 7 end better than translations-only and 5 up to 27%
+worse; the report's advisory states this. The analytic `rotations` benchmark case now draws wobble
+only.
+
+### RejectViews finds events by their steps
+
+`RejectViews` judged each view's median against a local trend, with a floor
+of 5% of the typical median. On a scan whose detector is mostly empty or a
+container, the median sat in that region: a container turning edge-on raised
+it fast enough to reject 99 good views of I13 159815 (two blocks, half a turn
+apart), while a 30-view beam loss was rejected only at its edges. It now
+follows the mean line integral and rejects the views of an abrupt event: a step,
+a step back, and a constant shift between. A smooth change of the object is
+kept however fast, a level change that never returns keeps its views, and a
+failed first or last view is still rejected. Every threshold comes from the
+scan's own spread. `neighbours` and `min_jump` are gone; the record's
+`robust_scale` is now `step_limit`.
+
+### Scans keep when each view was taken
+
+`Scan` carries `view_positions`, as `Frames` already did: each view's place in
+acquisition time, by default view i at i + 1/2. Selecting views, `RejectViews`,
+binning, combining and saving keep them. `tj.align`'s motion prior and its
+report's neighbour tests follow them: a gap left by dropped views is charged
+as the steps it hides (exactly the full chain with those views integrated
+out), and positions that restart, as in `Scan.combine`, begin a new
+acquisition with no link to the one before. Before, a dropped view silently
+made its neighbours adjacent. A scan with consecutive or regularly selected
+views aligns exactly as before. The positions are the time order, not the
+angle order, so an interlaced scan's follow when each view was taken.
+### Zeiss raw scans keep their recorded shifts
+
+A Zeiss acquisition without `AutoRecon/CenterShift` (a raw scan that no Zeiss
+reconstruction has set up) was refused unless `geometry=` was passed, and that
+silently dropped the file's per-view image shifts. `detector=` now supplies the
+missing centre and the shifts are added to it, giving the same geometry as a
+file that records the centre; a `detector=` passed for a file that does record it
+also keeps the shifts. `geometry=` is still used as given, with a warning naming
+how many views carried shifts.
+
+### Cone detector roll sign
+
+`ConeBeam.detector_roll_deg` now follows the documented convention: positive
+roll turns detector u towards v, as for a parallel detector roll and as
+`tj.align` reports a fitted `roll`. Before, a cone roll of +r turned u away from
+v, so a calibration reported by `tj.align` had to be negated before it could be
+passed back to `ConeBeam`. Saved files now mark the convention; a file saved
+with a non-zero cone roll by TomoJAX 0.3 or earlier is refused with a message
+giving the negated value to pass with `geometry=`.
+
+### Parallel detector roll on the geometry
+
+`ParallelGeometry`, `LaminographyGeometry` and `RotationAxisGeometry` take
+`detector_roll_deg`, with the same sign as `ConeBeam`. A roll fitted by
+`tj.align` on parallel or laminography data is now held there rather than in a
+private wrapper, and a fitted tilt of a parallel or laminography (`tilt_about="x"`)
+axis returns a `LaminographyGeometry` with the final tilt. Every value in
+`info["calibration"]` therefore passes straight to a public constructor. Saved
+files keep the same `detector_roll_deg` key and load as before; a cone file with
+that key at the top level, rather than in its `cone_beam`, is refused. `tomojax
+import` now applies `detector_roll_deg` to parallel and laminography stacks, and
+refuses `detector_pitch_deg` or `detector_yaw_deg` for them instead of ignoring
+them.
+
 ### Alignment consolidation
 
 `tj.align(scan, fit="translations", grid=None)` uses one joint Gauss–Newton/Schur

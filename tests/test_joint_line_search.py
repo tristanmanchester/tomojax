@@ -43,3 +43,14 @@ def test_pose_move_must_improve_on_the_same_image_only_step():
     # The image supplies all improvement. Ties must keep the held pose.
     a, beta, state = _line_search(lambda a, b: (2 - a, a, b), 2.0, -1.0, 0.0)
     assert (a, beta, state[0]) == (1.0, 0.0, 1.0)
+
+
+def test_an_overlong_image_step_is_halved_until_armijo_holds():
+    # f(a) = (1 - 4a)^2 / 2 from f = 1/2 with slope -4 per unit image step:
+    # a = 1 and 1/2 increase f; a = 1/4 reaches the minimum.
+    def trial(a, beta):
+        x = 1 - 4 * a
+        return 0.5 * x * x, x, beta
+
+    a, beta, state = _line_search(trial, 0.5, -4.0, 0.0)
+    assert a == 0.25 and state[0] == 0.0

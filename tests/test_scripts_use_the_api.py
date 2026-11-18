@@ -67,9 +67,42 @@ def _resolve(module: str, attributes: list[str]) -> Any:
     return obj
 
 
+def _literal_keys(node: ast.expr) -> list[str] | None:
+    """The keys of a dict literal or ``dict(...)`` call whose keys are all known statically."""
+    if isinstance(node, ast.Dict):
+        keys = [k.value for k in node.keys if isinstance(k, ast.Constant)]
+        strings = [k for k in keys if isinstance(k, str)]
+        return strings if len(strings) == len(node.keys) else None
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict":
+        names = [k.arg for k in node.keywords if k.arg is not None]
+        return names if not node.args and len(names) == len(node.keywords) else None
+    return None
+
+
+def _constants(tree: ast.Module) -> dict[str, list[str]]:
+    """Module-level names bound once to a dict whose keys are known statically."""
+    bound: dict[str, list[str] | None] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                # A name assigned twice is not a constant.
+                bound[target.id] = None if target.id in bound else _literal_keys(node.value)
+    return {name: keys for name, keys in bound.items() if keys is not None}
+
+
+def _expanded(keyword: ast.keyword, constants: dict[str, list[str]]) -> list[str]:
+    """Keyword names a ``**`` expansion passes, where they are known statically."""
+    value = keyword.value
+    if isinstance(value, ast.Name):
+        return constants.get(value.id, [])
+    return _literal_keys(value) or []
+
+
 def _unknown_keywords(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names = _imports(tree)
+    constants = _constants(tree)
     unknown = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -92,10 +125,13 @@ def _unknown_keywords(path: Path) -> list[str]:
             continue
         if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
             continue
-        unknown += [
-            f"line {node.lineno}: {target}({k.arg}=...)"
+        passed = [
+            name
             for k in node.keywords
-            if k.arg is not None and k.arg not in parameters
+            for name in ([k.arg] if k.arg is not None else _expanded(k, constants))
+        ]
+        unknown += [
+            f"line {node.lineno}: {target}({name}=...)" for name in passed if name not in parameters
         ]
     return unknown
 
@@ -104,3 +140,19 @@ def _unknown_keywords(path: Path) -> list[str]:
 def test_script_calls_tomojax_with_keywords_it_takes(path: Path) -> None:
     unknown = _unknown_keywords(path)
     assert not unknown, f"{path.name} calls TomoJAX in ways it does not support: {unknown}"
+
+
+def test_keyword_guard_reads_constant_expansions(tmp_path: Path) -> None:
+    script = tmp_path / "script.py"
+    script.write_text(
+        "import tomojax as tj\n"
+        'SETTINGS = {"iteratons": 3}\n'
+        "tj.reconstruct(None, **SETTINGS)\n"
+        'tj.reconstruct(None, **dict(method="fbp", grd=None))\n'
+        "tj.reconstruct(None, **{name: 1 for name in []})\n",
+        encoding="utf-8",
+    )
+    assert _unknown_keywords(script) == [
+        "line 3: tomojax.reconstruct(iteratons=...)",
+        "line 4: tomojax.reconstruct(grd=...)",
+    ]

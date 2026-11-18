@@ -34,9 +34,7 @@ def _install_fast_public_simulator(monkeypatch: pytest.MonkeyPatch) -> None:
         volume: jnp.ndarray,
         *,
         view_index: int,
-        gather_dtype: str,
     ) -> jnp.ndarray:
-        del gather_dtype
         value = jnp.mean(volume) + jnp.asarray(float(view_index), dtype=jnp.float32)
         return jnp.full((int(detector.nv), int(detector.nu)), value, dtype=jnp.float32)
 
@@ -188,3 +186,29 @@ def test_phantoms_use_non_cubic_zyx_arrays(phantom):
     assert volume.flags.c_contiguous
     if phantom == "lamino_disk":
         assert not volume[:4].any() and not volume[7:].any()
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("geometry", ["parallel", "lamino"])
+def test_simulated_data_on_a_gpu_agree_with_float32_on_the_cpu(
+    tmp_path: Path, geometry: str
+) -> None:
+    # The simulator projected with a bf16 gather on GPUs: 8.4e-4 relative RMS against float32
+    # on a 64^3 Shepp phantom, a repeatable error four orders of magnitude above float32
+    # rounding (1e-7) in data that methods are scored against.
+    import os
+    import subprocess
+    import sys
+
+    config = SimConfig(nx=32, ny=32, nz=32, nu=48, nv=48, n_views=64, geometry=geometry)
+    gpu = np.asarray(simulate(config)["projections"], np.float64)
+    reference = tmp_path / "cpu.npy"
+    code = (
+        "import numpy as np, sys; from tomojax.datasets import SimConfig, simulate; "
+        f"c = SimConfig(nx=32, ny=32, nz=32, nu=48, nv=48, n_views=64, geometry={geometry!r}); "
+        "np.save(sys.argv[1], np.asarray(simulate(c)['projections'], np.float64))"
+    )
+    env = {**os.environ, "JAX_PLATFORMS": "cpu"}
+    subprocess.run([sys.executable, "-c", code, str(reference)], check=True, env=env)
+    cpu = np.load(reference)
+    assert np.linalg.norm(gpu - cpu) / np.linalg.norm(cpu) < 1e-6

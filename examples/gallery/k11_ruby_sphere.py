@@ -99,8 +99,8 @@ def main() -> None:
     result = tj.align(scan)
     print(f"load/correct/align: {time.perf_counter() - start:.1f} s")
     print("Final level:", result.info["levels"][-1]["status"])
-    print("Reconstruction grid:", result.scan.grid)
-    slice_figure(result.volume, result.scan.grid, args.output)
+    print("Reconstruction grid:", result.grid)
+    slice_figure(result.volume, result.grid, args.output)
 
 
 if __name__ == "__main__":

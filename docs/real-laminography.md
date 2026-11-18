@@ -124,19 +124,31 @@ the new file with `tomojax inspect` before reconstructing it.
 
 ## Reconstruct with the recorded geometry
 
-For tilted or irregular-angle data, try an iterative reconstruction:
+The default reconstruction of a laminography scan is FBP, as for every
+geometry: `tj.reconstruct(scan)` or `tomojax recon corrected.nxs -o recon.nxs`.
+It takes seconds (5.5 s on a 1441-view K11 scan with a 704 × 704 × 234 grid).
+
+For a better image, ask for FISTA by name:
 
 ```bash
 uv run --no-sync tomojax recon corrected.nxs -o recon.nxs \
-  --method fista --iterations 50 --tv-weight 0.005 --nonnegative --roi off \
+  --method fista --iterations 100 --nonnegative --roi off \
   --manifest recon-manifest.json
 uv run --no-sync tomojax inspect recon.nxs --preview previews
 ```
 
+On two simulated laminography scans with an independent truth, FISTA with its
+automatic TV weight halves FBP's error on the frequencies the views measure
+(0.079 against 0.165 and 0.163) and fills part of the missing cone, which FBP
+leaves empty. It costs its iterations: about 12 s each on that K11 scan, so
+about 20 minutes at 100. Its default of 50 iterations is not converged on these
+scans (5% and 16% above its converged error), and `iterations` is the setting
+to raise. The [measurements](measurements.md#laminography-the-default-fbp-against-fista)
+give the table.
+
 Use `corrected-lamino.nxs` as input if you created that file above. `previews/`
 holds PNGs of the central projection and the volume's central slices
-(`slice_z.png`, `slice_y.png`, `slice_x.png`). The iteration budget and TV
-weight are illustrative. Inspect residuals and image features,
+(`slice_z.png`, `slice_y.png`, `slice_x.png`). Inspect residuals and image features,
 and assess sensitivity to regularisation before quantitative use. Positivity
 is appropriate only when the object model permits nonnegative attenuation.
 Laminography leaves a cone of frequencies around the rotation axis unmeasured.
@@ -161,34 +173,35 @@ data-dependent, especially for truncated or periodic objects; a lower training r
 
 ## Automatic NeXus laminography
 
-Recognised Diamond/GDA NeXus layouts need no dataset paths. The
-[laminography example](../examples/align_laminography.py) uses the same default
-workflow as Python and the CLI:
+Recognised Diamond/GDA NeXus layouts need no dataset paths, but raw frames do not
+record the laminography tilt and often not the detector pitch. Alignment requires
+declared geometry, so declare it before fitting, as the
+[laminography example](../examples/align_laminography.py) does:
 
 ```python
-scan = tj.load_frames("scan.nxs").corrected()
-result = tj.align(scan)
-print(result.info["calibration"])
+geometry = tj.LaminographyGeometry(grid, tj.Detector(nu, nv, pitch, pitch), angles, tilt_deg=35)
+scan = tj.load("scan.nxs", geometry=geometry)
+result = tj.align(scan, fit=("translations", "tilt", "roll"))
 tj.save("aligned.nxs", result)
 ```
 
 ```bash
-tomojax align scan.nxs -o aligned.nxs
+uv run --no-sync python examples/align_laminography.py scan.nxs --tilt 35 --pixel 0.00216 -o aligned.nxs
 ```
 
-Alignment requires declared geometry; supply missing axis metadata before fitting. The default
-fits per-view lab-frame translations jointly with the image, using a smooth-drift and robust-jump
-prior. Add `fit=("translations", "tilt", "roll")` for shared setup angles or
-`fit=("translations", "rotations")` for sample wobble. All settings use the same solver.
+`tj.align`'s default fits per-view lab-frame translations jointly with the image,
+using a smooth-drift and robust-jump prior. Add `"tilt"` and `"roll"` for shared
+setup angles, as above, or `"rotations"` for sample wobble. All settings use the
+same solver.
 
 The physical support is preserved, including explicitly placed volume faces. The returned scan
-retains the original detector samples and fitted corrections; the alignment image remains at the
-working scale. There is no forced native-grid refinement.
+keeps its grid, the original detector samples and the fitted corrections, so reconstructing it
+gives the image at the scan's resolution. The alignment image `result.volume` is at the fit's
+working scale, on `result.grid`.
 
 Pass an explicit `grid=` to `tj.align` or `tj.reconstruct` to fix the physical
 region and output sampling. Explicit grids are not coarsened automatically, so
-choose a grid that fits the device. Use an explicit reconstruction method to
-reconstruct the corrected scan at your desired sampling.
+choose a grid that fits the device.
 
 Inspect several slices and the recovered motion: smoothness and lower projection
 error do not establish physical pose truth. Reserve held-out views before calling

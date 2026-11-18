@@ -10,13 +10,39 @@ there.
 
 Importing `tomojax` defaults JAX to on-demand allocation rather than an eager
 75% GPU reservation, leaving room for cuSolver and CuPy workspaces. The pool
-retains memory for reuse; Python keeps JAX's default pool limit, while GPU CLI
-commands set a 90% ceiling. Explicit
-`XLA_PYTHON_CLIENT_PREALLOCATE`, `XLA_CLIENT_MEM_FRACTION` (or JAX's legacy
-`XLA_PYTHON_CLIENT_MEM_FRACTION`) and `XLA_PYTHON_CLIENT_ALLOCATOR` take precedence; the align
-CLI defaults to the releasing `platform` allocator. These process-wide
+retains memory for reuse and grows to at most JAX's 75% of the GPU, the same in
+Python and from the shell; it never hands memory back, so the rest is what the CUDA
+libraries and kernel modules have. Explicit `XLA_PYTHON_CLIENT_PREALLOCATE`,
+`XLA_CLIENT_MEM_FRACTION` (or JAX's legacy `XLA_PYTHON_CLIENT_MEM_FRACTION`) and
+`XLA_PYTHON_CLIENT_ALLOCATOR` take precedence. These process-wide
 settings cannot change an already initialized JAX backend: import TomoJAX or
 set the environment before the first JAX operation in a notebook.
+
+## What has to fit in host memory
+
+Every large host array follows one rule: when it would take more than half of
+the available host memory, it is an unlinked temporary file in the standard
+temporary directory (`TMPDIR`), and a NumPy memmap is returned in its place.
+
+| Array | Held in a temporary file when |
+|---|---|
+| The corrected stack `tj.load` and `Frames.corrected` return | the stack is more than half of available host memory |
+| A reconstruction's volume in host slabs (FBP, FDK, Fourier, MLEM, SIRT) | the volume is more than half of available host memory |
+| A solver's output and the work volumes it keeps (CGLS, FISTA-TV, accelerated SIRT host slabs) | those volumes together are more than half of it |
+
+`tj.load` logs when it holds the stack in a file, and where; `tj.reconstruct`
+logs it for the volume and records the directory as `info["temporary_file"]`.
+Such a file has no name: it is deleted when the array is released, so keep the
+volume with `tj.save`, or give `out=` a memmap of your own file
+(`np.lib.format.open_memmap("volume.npy", "w+", np.float32, shape)`) to write it
+straight there. A volume passed as `out=` is never moved. A full-size
+synchrotron scan does this on an ordinary workstation: I13 159815, 3301 frames
+of 2560 x 2160, is 73 GB corrected. The file is created only if `TMPDIR` has
+room for all of it; otherwise a `MemoryError` gives the size, the memory and
+free space, and the ways out: point `TMPDIR` at a disk with room, bin the
+detector (`binning=`), or load fewer views (`tj.load_frames(path).selected(...)`).
+On systems where `/tmp` is a RAM disk (tmpfs), a file there is memory, not disk:
+set `TMPDIR` to a directory on a fast local disk before loading a large scan.
 
 ## What has to fit on the GPU
 
@@ -45,10 +71,9 @@ Streamed CGLS solves the equivalent normal equations, which square the
 condition number of each step's recurrence. It recomputes the exact gradient
 periodically, as in-core CGLS recomputes its residual.
 
-CUDA Joseph FISTA with ordinary TV, no support mask and no ordered-subset
-initializer switches to host slabs when its estimated resident state will not
-fit. It retains the same global objective, power estimate and finite-iteration
-TV proximal; the planes are not reconstructed independently. Three host volumes
+CUDA Joseph FISTA with ordinary TV and no support mask switches to host slabs
+when its estimated resident state will not fit. It retains the same global
+objective, power estimate and finite-iteration TV proximal; the planes are not reconstructed independently. Three host volumes
 hold the iterate, extrapolate and gradient. If they would occupy more than half
 of available host RAM, they are anonymous temporary files in the standard
 `TMPDIR` directory. Use a fast local disk with room for the complete state;
@@ -57,7 +82,7 @@ released. Passing `out=` to `tj.reconstruct(scan, "fista", out=volume)`
 forces this route and fills the supplied float32 array or memmap.
 `info["host_slabs"]` identifies this storage route. The exact TV halo
 uses `tv_prox_iterations` planes on each side, so very large proximal iteration
-counts can still exhaust device workspace. Huber-TV, masks, ordered initialization
+counts can still exhaust device workspace. Huber-TV, masks
 and multi-device FISTA still require resident volume state. With
 `data_term="per_view_contrast"`, host FISTA reduces one mean per complete detector view
 before forming the gradient. If the row ring holds the entire detector, this

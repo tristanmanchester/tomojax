@@ -59,16 +59,13 @@ void run(int r,bool dense,const float* c,Image image,const int* xyz,
     }
 }
 extern "C" void evaluate(int r,int dense,int layout,int n,int nu,int nv,
-        int wu,int wv,int u0,int v0,const float* coeff,const float* images,
-        const int* samples,float* out) {
+        const float* coeff,const float* images,const int* samples,float* out) {
     for(int i=0;i<n;++i) {
         const int* sample=samples+4*i;
         const float* c=coeff+14*sample[0];
-        const float* image=images+(long)sample[0]*(layout==2?wu*wv:nu*nv);
+        const float* image=images+(long)sample[0]*nu*nv;
         if(layout==0) run(r,dense,c,image,sample+1,nu,nv,out+r*i);
         if(layout==1) run(r,dense,c,DetectorColumns{image,nv},sample+1,nu,nv,out+r*i);
-        if(layout==2) run(r,dense,c,DetectorRegion{image,wu,wv,u0,v0},
-                         sample+1,nu,nv,out+r*i);
     }
 }
 extern "C" void intervals(int n,const float* cases,const int* bounds,int* result) {
@@ -99,9 +96,9 @@ extern "C" void volume(int tiled,int nviews,int nx,int ny,int nz,int nu,int nv,
         for(int tile=0;tile<count+3;++tile) {
             blockIdx.x=tile;
             const float* start=a==0?initial:out;
-            if(a==0) joseph_gather_tile_0(coeff,images,out,start,nviews,nx,ny,nz,nu,nv);
-            if(a==1) joseph_gather_tile_1(coeff,images,out,start,nviews,nx,ny,nz,nu,nv);
-            if(a==2) joseph_gather_tile_2(coeff,images,out,start,nviews,nx,ny,nz,nu,nv);
+            if(a==0) joseph_gather_tile_0(coeff,images,out,start,nullptr,nullptr,0,nviews,nx,ny,nz,nu,nv);
+            if(a==1) joseph_gather_tile_1(coeff,images,out,start,nullptr,nullptr,0,nviews,nx,ny,nz,nu,nv);
+            if(a==2) joseph_gather_tile_2(coeff,images,out,start,nullptr,nullptr,0,nviews,nx,ny,nz,nu,nv);
         }
     }
 }
@@ -126,9 +123,8 @@ CudaIndex blockIdx,blockDim,threadIdx;
 inline void __syncthreads() {}
 """
     prefix = prefix.replace("#define Z_FAST 0", f"#define Z_FAST {z_fast}")
-    for kernel in ("adjoint_unit", "region"):
-        code = (core / "cuda_projector" / (kernel + ".cu")).read_text()
-        prefix += code.split('#include "joseph_sampling.cuh"')[0]
+    code = (core / "cuda_projector" / "adjoint_unit.cu").read_text()
+    prefix += code.split('#include "joseph_sampling.cuh"')[0]
     kernel = (core / "cuda_projector/adjoint_tile.cu").read_text()
     kernel = "\n".join(line for line in kernel.splitlines() if not line.startswith("#include"))
     kernels = ""
@@ -179,7 +175,7 @@ def gather_host(request, tmp_path_factory):
     function = compiled.evaluate
     floats = np.ctypeslib.ndpointer(np.float32, flags="C_CONTIGUOUS")
     integers = np.ctypeslib.ndpointer(np.int32, flags="C_CONTIGUOUS")
-    function.argtypes = [ctypes.c_int] * 10 + [floats, floats, integers, floats]
+    function.argtypes = [ctypes.c_int] * 6 + [floats, floats, integers, floats]
     function.restype = None
     interval = compiled.intervals
     interval.argtypes = [ctypes.c_int, floats, integers, integers]
@@ -188,14 +184,10 @@ def gather_host(request, tmp_path_factory):
     volume.argtypes = [ctypes.c_int] * 7 + [floats] * 4
     volume.restype = None
 
-    def evaluate(coeff, images, samples, run, *, dense=False, layout=0, window=None):
+    def evaluate(coeff, images, samples, run, *, dense=False, layout=0):
         nv, nu = images.shape[-2:]
-        wu, wv, u0, v0 = nu, nv, 0, 0
         if layout == 1:
             images = images.swapaxes(-1, -2)
-        if window is not None:
-            u0, v0, wu, wv = window
-            images = images[:, v0 : v0 + wv, u0 : u0 + wu]
         out = np.empty((len(samples), run), np.float32)
         function(
             run,
@@ -204,10 +196,6 @@ def gather_host(request, tmp_path_factory):
             len(samples),
             nu,
             nv,
-            wu,
-            wv,
-            u0,
-            v0,
             np.ascontiguousarray(coeff),
             np.ascontiguousarray(images),
             np.ascontiguousarray(samples),
@@ -284,16 +272,6 @@ def test_gather_support_and_layout_equal_exhaustive_float32_ray_sum(gather_host,
         np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
 
 
-def test_gather_window_uses_global_support_coordinates(gather_host):
-    coeff, images, samples = coefficient_cases()
-    window = (3, 2, 13, 11)
-    masked = np.zeros_like(images)
-    masked[:, 2:13, 3:16] = images[:, 2:13, 3:16]
-    expected = gather_host.evaluate(coeff, masked, samples, 4, dense=True)
-    actual = gather_host.evaluate(coeff, images, samples, 4, layout=2, window=window)
-    np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
-
-
 def test_interval_clipping_keeps_exact_rounded_coordinate_support(gather_host):
     rng = np.random.default_rng(37)
     cases = rng.uniform(-30, 30, (2048, 6)).astype(np.float32)
@@ -316,8 +294,7 @@ def test_interval_clipping_keeps_exact_rounded_coordinate_support(gather_host):
     np.testing.assert_array_equal(actual, expected)
 
 
-@pytest.mark.parametrize("window", [None, (3, 2, 13, 11)])
-def test_transverse_tile_keeps_every_independent_ray_weight(gather_host, window):
+def test_transverse_tile_keeps_every_independent_ray_weight(gather_host):
     coeff, images, samples = coefficient_cases()
     repeated = np.repeat(samples, 16, axis=0)
     b = samples[:, 2:3] + np.repeat(np.arange(4), 4)
@@ -327,13 +304,9 @@ def test_transverse_tile_keeps_every_independent_ray_weight(gather_host, window)
     repeated[:, 1] = np.where(a == 0, k, np.where(a == 1, c, b)).ravel()
     repeated[:, 2] = np.where(a == 0, b, np.where(a == 1, k, c)).ravel()
     repeated[:, 3] = np.where(a == 0, c, np.where(a == 1, b, k)).ravel()
-    reference_images = images.copy()
-    if window is not None:
-        reference_images[:] = 0
-        reference_images[:, 2:13, 3:16] = images[:, 2:13, 3:16]
-    expected = gather_host.evaluate(coeff, reference_images, repeated, 1, dense=True)
-    for layout in (0, 1) if window is None else (2,):
-        actual = gather_host.evaluate(coeff, images, samples, 16, layout=layout, window=window)
+    expected = gather_host.evaluate(coeff, images, repeated, 1, dense=True)
+    for layout in (0, 1):
+        actual = gather_host.evaluate(coeff, images, samples, 16, layout=layout)
         np.testing.assert_array_equal(
             actual.view(np.uint32).ravel(), expected.view(np.uint32).ravel()
         )

@@ -26,11 +26,10 @@ def _check_virtual(data: Any, checked: set[tuple[str, str]] | None = None) -> No
     checked.add(identity)
     sources: dict[Path, list[Any]] = {}
     for source in data.virtual_sources():
-        path = (
-            Path(data.file.filename)
-            if source.file_name == "."
-            else Path(data.file.filename).parent / source.file_name
-        )
+        name, here = Path(source.file_name), Path(data.file.filename)
+        path = here if source.file_name == "." else here.parent / name
+        if name.is_absolute() and not path.exists():  # HDF5 then looks beside the virtual file
+            path = here.parent / name.name
         sources.setdefault(path, []).append(source)
     for path, mappings in sources.items():
         try:
@@ -212,6 +211,11 @@ def _gda_metadata(
                 cast(Any, file).filename,
                 angles_at,
             )
+        # Older GDA exports (DIAD) write the paired rotation command with no unit
+        # label; the layout's rotation stage moves in degrees.
+        elif angles_at == gda[2] and not units.strip():
+            units_override = "degree"
+            acquisition.update(angle_units_recorded="", angle_units="degree")
     return acquisition, units_override
 
 
@@ -241,6 +245,8 @@ class LocatedFrames:
         HDF5 path the frame labels were read from, when present.
     angles_path : str or None, optional
         HDF5 path the rotation angles were read from, when present.
+    return_images : int, optional
+        Frames the file marks as return (alignment) images, excluded from the views.
     """
 
     stack: Hdf5Frames
@@ -251,6 +257,7 @@ class LocatedFrames:
     acquisition: dict[str, str] | None = None
     image_key_path: str | None = None
     angles_path: str | None = None
+    return_images: int = 0
 
     @property
     def raw(self) -> bool:
@@ -360,6 +367,14 @@ def locate_frames(
             if key_at is None
             else checked_image_key(_read(file, key_at, path), frames=frames, path=path)
         )
+        control = (
+            _dataset(file, f"{key_at.rsplit('/', 1)[0]}/image_key_control") if key_at else None
+        )
+        returns = 0
+        if key is not None and control is not None and control.shape == (frames,):
+            # ESRF marks return (alignment) images -1 here while image_key calls them samples.
+            marked = np.asarray(control[()]) == -1
+            key, returns = np.where(marked, 3, key), int(np.count_nonzero(marked))
         acquisition, units_override = _gda_metadata(file, gda, where, key_at, angles_at)
         angles = (
             None
@@ -375,7 +390,15 @@ def locate_frames(
             for n, label in (("data_white", 1), ("data_dark", 2))
         )
     return LocatedFrames(
-        Hdf5Frames.open(path, where), key, angles, flats, darks, acquisition, key_at, angles_at
+        Hdf5Frames.open(path, where),
+        key,
+        angles,
+        flats,
+        darks,
+        acquisition,
+        key_at,
+        angles_at,
+        returns,
     )
 
 
@@ -435,9 +458,13 @@ def _degree_convention(file: h5py.File, where: str) -> bool:
             continue
         root = where[: -len(suffix)]
         while root:
-            definition = file.get(root + "/definition")
-            if isinstance(definition, h5py.Dataset):
-                value = np.asarray(definition[()]).item()
+            found = file.get(root + "/definition")
+            # NXtomo is declared by a definition dataset, or by an attribute of the entry.
+            definition = (
+                found[()] if isinstance(found, h5py.Dataset) else file[root].attrs.get("definition")
+            )
+            if definition is not None:
+                value = np.asarray(definition).item()
                 value = value.decode() if isinstance(value, bytes) else str(value)
                 if value == "NXtomo":
                     return True

@@ -72,3 +72,16 @@ def test_noise_never_materializes_a_large_stack():
             raise AssertionError("the whole input must not be copied")
 
     assert np.isfinite(estimate_projection_noise(SampleOnly()))
+
+
+def test_noise_drops_a_partially_masked_cell_whole():
+    # Seven masked rows split the cells spanning rows 6-7; their masked pixel is a
+    # large finite value, so only excluding the whole cell gives the expected scale.
+    values = np.random.default_rng(41).normal(size=(4, 16, 18)).astype(np.float32)
+    weights = np.ones((1, 16, 18), np.float32)
+    weights[:, :7] = 0
+    values[:, :7] = 1e3
+    expected = estimate_projection_noise(values[:, 8:])
+    assert estimate_projection_noise(values, weights=weights) == pytest.approx(expected)
+    actual = estimate_projection_noise(jnp.asarray(values), weights=jnp.asarray(weights))
+    assert float(actual) == pytest.approx(expected, rel=2e-6)

@@ -145,51 +145,17 @@ def test_files_keep_their_angle_and_detector_centre_keys(tmp_path: Path) -> None
     assert load_dataset(nxs_path).detector == loaded.detector
 
 
-def test_nxtomo_loader_does_not_synthesize_grid_from_volume_only(tmp_path: Path) -> None:
-    path = tmp_path / "missing_grid.nxs"
-    with h5py.File(path, "w") as handle:
-        entry = handle.create_group("entry")
-        entry.attrs["definition"] = "NXtomo"
-        detector = entry.create_group("instrument").create_group("detector")
-        detector.create_dataset("data", data=np.zeros((2, 3, 4), dtype=np.float32))
-        detector.create_dataset("image_key", data=np.zeros((2,), dtype=np.int32))
-        sample = entry.create_group("sample")
-        sample.create_dataset("name", data="fixture")
-        transformations = sample.create_group("transformations")
-        rotation_angle = transformations.create_dataset(
-            "rotation_angle",
-            data=np.asarray([0.0, 90.0], dtype=np.float32),
-        )
-        rotation_angle.attrs["units"] = "degree"
-        tomojax = entry.create_group("processing").create_group("tomojax")
-        tomojax.create_dataset("volume", data=np.zeros((5, 6, 7), dtype=np.float32))
-
-    with pytest.raises(ValueError, match="volume axis order is unknown"):
-        load_nxtomo(str(path))
-
-
-def test_nxtomo_loader_marks_equal_xz_volume_axes_ambiguous(tmp_path: Path) -> None:
-    path = tmp_path / "ambiguous_axes.nxs"
-    grid = Grid(nx=5, ny=6, nz=5, vx=1.0, vy=1.0, vz=1.0)
-    with h5py.File(path, "w") as handle:
-        entry = handle.create_group("entry")
-        entry.attrs["definition"] = "NXtomo"
-        entry.attrs["grid_meta_json"] = json.dumps(grid.to_dict())
-        detector = entry.create_group("instrument").create_group("detector")
-        detector.create_dataset("data", data=np.zeros((2, 3, 4), dtype=np.float32))
-        detector.create_dataset("image_key", data=np.zeros((2,), dtype=np.int32))
-        sample = entry.create_group("sample")
-        sample.create_dataset("name", data="fixture")
-        transformations = sample.create_group("transformations")
-        rotation_angle = transformations.create_dataset(
-            "rotation_angle",
-            data=np.asarray([0.0, 90.0], dtype=np.float32),
-        )
-        rotation_angle.attrs["units"] = "degree"
-        tomojax = entry.create_group("processing").create_group("tomojax")
-        tomojax.create_dataset("volume", data=np.zeros((5, 6, 5), dtype=np.float32))
-
-    with pytest.raises(ValueError, match="volume axis order is unknown"):
+def test_a_saved_volume_without_its_axis_order_is_refused(tmp_path: Path) -> None:
+    # The shape cannot say the order (a cube fits every order, and a guess from a non-cube
+    # is still a guess), so a volume whose file does not record it does not load.
+    path = tmp_path / "volume.nxs"
+    dataset = make_projection_dataset()
+    dataset.volume = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
+    save_dataset(path, dataset)
+    assert load_nxtomo(str(path)).disk_volume_axes_order == "zyx"
+    with h5py.File(path, "a") as file:
+        del file["/entry/processing/tomojax"].attrs["volume_axes_order"]
+    with pytest.raises(ValueError, match="does not record its axis order"):
         load_nxtomo(str(path))
 
 
@@ -310,7 +276,7 @@ def test_validate_dataset_reports_schema_failures(tmp_path: Path) -> None:
 
     assert validate_dataset(valid)["issues"] == []
     assert "no stack of frames found" in validate_dataset(invalid)["issues"][0]
-    with pytest.raises(ValueError, match="supply an acquisition file.*not metadata alone"):
+    with pytest.raises(KeyError, match="no stack of frames found.*data_path"):
         tj.load(invalid)
 
 
@@ -467,3 +433,86 @@ def test_npz_volume_round_trips_and_an_untagged_one_is_refused(tmp_path: Path):
     np.savez_compressed(tmp_path / "old.npz", **fields)
     with pytest.raises(ValueError, match="axes tag"):
         load_dataset(tmp_path / "old.npz")
+
+
+def _labelled_dataset(values, key):
+    from tomojax.io.api import LoadedNXTomo, NXTomoMetadata
+
+    frames = len(key)
+    metadata = NXTomoMetadata(
+        angles=np.arange(frames, dtype=np.float32) * 45.0,
+        image_key=np.asarray(key, np.int32),
+        grid=tj.Grid(4, 4, 2, 1.0, 1.0, 1.0),
+        detector=tj.Detector(4, 2, 1.0, 1.0),
+    )
+    projections = np.broadcast_to(np.asarray(values, np.float32)[:, None, None], (frames, 2, 4))
+    return ProjectionDataset.from_nxtomo(LoadedNXTomo(np.array(projections), metadata))
+
+
+@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
+def test_saved_image_keys_split_raw_frames_in_every_container(tmp_path: Path, suffix: str) -> None:
+    path = tmp_path / f"raw{suffix}"
+    save_dataset(path, _labelled_dataset([5, 11, 9, 1], [0, 1, 0, 2]))
+    scan = tj.load(path)
+    np.testing.assert_allclose(
+        np.asarray(scan.projections)[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6
+    )
+    np.testing.assert_allclose(scan.geometry.angles, [0.0, 90.0])
+    frames = tj.load_frames(path)
+    assert frames.views == 2 and frames.flats is not None and frames.darks is not None
+
+
+@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
+def test_saved_image_keys_drop_invalid_processed_frames(tmp_path: Path, suffix: str) -> None:
+    path = tmp_path / f"processed{suffix}"
+    save_dataset(path, _labelled_dataset([0.5, 7.0, 0.25], [0, 3, 0]))
+    scan = tj.load(path)
+    np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], [0.5, 0.25])
+    np.testing.assert_allclose(scan.geometry.angles, [0.0, 90.0])
+
+
+def test_saved_scans_name_nxtomo_and_never_label_pitches_as_pixels(tmp_path: Path) -> None:
+    from tomojax.io.api import validate_nxtomo
+
+    grid, detector = Grid(4, 4, 2, 1.0, 1.0, 1.0), Detector(4, 2, 0.0065, 0.0065)
+    scan = tj.Scan(
+        np.ones((3, 2, 4), np.float32), tj.ParallelGeometry(grid, detector, [0, 60, 120])
+    )
+    tj.save(tmp_path / "scan.nxs", scan)
+    with h5py.File(tmp_path / "scan.nxs") as f:
+        assert f["entry/definition"][()].decode() == "NXtomo"
+        # A pitch of unrecorded unit carries no unit, not "pixel".
+        assert "units" not in f["entry/instrument/detector/x_pixel_size"].attrs
+    assert not validate_nxtomo(str(tmp_path / "scan.nxs"))["issues"]
+
+
+def test_tiled_writes_read_the_source_one_bounded_tile_at_a_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # check-public-imports: allow-private
+    from tomojax._data import _io_nxtomo
+
+    monkeypatch.setattr(_io_nxtomo, "_TILE_BYTES", 4000)
+    volume = np.random.default_rng(6).normal(size=(30, 20, 40)).astype(np.float32)
+
+    class Source:
+        shape, dtype = volume.shape, volume.dtype
+
+        def __init__(self):
+            self.reads: list[int] = []
+
+        def __getitem__(self, region):
+            block = volume[region]
+            self.reads.append(block.size)
+            return block
+
+        def __array__(self, *args, **kwargs):
+            raise AssertionError("the whole volume must not be converted at once")
+
+    source = Source()
+    with h5py.File(tmp_path / "tiles.h5", "w") as f:
+        target = f.create_dataset("v", shape=volume.shape, dtype=np.float32, chunks=(5, 5, 10))
+        _io_nxtomo._write_in_tiles(target, source)  # pyright: ignore[reportArgumentType]
+        np.testing.assert_array_equal(target[()], volume)
+    assert len(source.reads) > 1 and max(source.reads) * 4 <= 4000
+    assert sum(source.reads) == volume.size

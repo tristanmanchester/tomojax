@@ -13,9 +13,9 @@ from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
 from ._fourier_backend import FourierPlan, fourier_slab_depth, is_cuda_oom, resolve_fourier_backend
-from ._fourier_grid import sample_projection_rows, sorted_half_turn
+from ._fourier_grid import sample_projection_rows, sample_rolled_rows, sorted_half_turn
 from ._fourier_rows import ProjectionRows, prepare_projection_rows
-from ._host_arrays import empty_host_array, validate_host_arrays
+from ._host_arrays import validate_host_arrays
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -80,7 +80,9 @@ def fourier_reconstruct(
     with uniform or nonuniform spacing. Redundant half-turn directions are
     averaged in physical Fourier coordinates after detector phase/orientation.
     Per-view translations are honored in either detector or object coordinates.
-    Rotational pose corrections and tilted axes are not supported.
+    A parallel detector roll (``detector_roll_deg``) is resampled bilinearly onto the
+    unrolled detector lattice. Rotational pose corrections and tilted axes are
+    not supported.
     Detector offsets, anisotropic voxels, shifted/cropped grids and fractional
     detector-v rows retain their physical coordinates.
 
@@ -154,14 +156,15 @@ def fourier_reconstruct(
     order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
     plan_detector, shifts, positions = _sampling_coordinates(geometry, grid, detector, order)
     depth = fourier_slab_depth(grid, plan_detector, cfg.slices_per_batch, backend)
-    output = validate_host_arrays(
-        projections, out, shape, "fourier_reconstruct", allocate=empty_host_array
-    )
+    output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
+
+    roll = float(getattr(geometry, "detector_roll_deg", 0.0) or 0.0)
+    rolled = None if not roll else (roll, detector.dv / detector.du)
 
     def prepare(start: int) -> np.ndarray | ProjectionRows:
         rows = positions[start : start + depth]
-        return _prepare_slab(projections, order, rows, depth, backend)
+        return _prepare_slab(projections, order, rows, depth, backend, rolled)
 
     def write(start: int, volume: np.ndarray) -> None:
         stop = min(start + depth, grid.nz)
@@ -259,11 +262,18 @@ def _prepare_slab(
     positions: np.ndarray,
     depth: int,
     backend: Literal["numpy", "cupy"],
+    rolled: tuple[float, float] | None = None,
 ) -> np.ndarray | ProjectionRows:
-    """Finite measured rows for a fixed-depth FFT, padded only after row sampling."""
-    data = (prepare_projection_rows if backend == "cupy" else sample_projection_rows)(
-        projections, order, positions
-    )
+    """Finite measured rows for a fixed-depth FFT, padded only after row sampling.
+
+    ``rolled`` (roll in degrees, dv / du) resamples a rolled detector's rows.
+    """
+    if rolled is not None:
+        data = sample_rolled_rows(projections, order, positions, *rolled)
+    else:
+        data = (prepare_projection_rows if backend == "cupy" else sample_projection_rows)(
+            projections, order, positions
+        )
     if isinstance(data, ProjectionRows):
         return data
     if not np.isfinite(data).all():

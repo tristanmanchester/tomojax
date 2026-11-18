@@ -22,7 +22,11 @@ miss short peaks, and it includes runtime and allocator overhead.
 
 Commands, adapters and physical conventions are in the
 [benchmark guide](../bench/README.md). Raw records are kept out of the
-repository; each result names the command, commit and date to rerun it.
+repository; each result names the command, commit and date. Commands under
+`bench/` and `examples/` run from a checkout. Commands under `shared/`,
+`../../shared/` or `artifacts/`, and `run_default.py`, are lab harness scripts
+kept outside the repository with the run evidence: they record the protocol but
+cannot be rerun from a checkout.
 
 ## Raw NXtomo loading and held-out split integrity
 
@@ -480,6 +484,35 @@ JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/calibration/scale
 JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 uv run --no-sync python ../../shared/agent08/calibration/focal_reciprocity.py
 ```
 
+## Laminography: the default FBP against FISTA
+
+`tj.reconstruct(scan)` on a laminography scan runs FBP, as for every geometry.
+Two simulated laminography scans with an independent truth: a rock (120 views,
+-35° tilt) and a watch (360 views, -15° tilt), 96³ grids. The data are the
+meshes' fine truth (4× finer, at a sub-voxel offset) projected at the true
+poses, counted at 1e4 photons per fine pixel and binned 4. The error is
+relative to the truth's norm and split in Fourier space: the region the views
+measure, within the band holding all but 1e-4 of the truth's energy, and the
+missing cone no view's plane contains (2026-11-15, 03a44438; RTX 4070 Laptop
+8 GB).
+
+| Method | Rock: measured / missing cone | Watch: measured / missing cone |
+|---|---|---|
+| FBP (default) | 0.165 / 0.316 | 0.163 / 0.396 |
+| `fista`, 50 iterations (its default) | 0.0835 / 0.212 | 0.0918 / 0.215 |
+| `fista`, 100 iterations | 0.0788 / 0.185 | 0.0790 / 0.208 |
+| `fista`, 1000 iterations | 0.0792 / 0.186 | 0.0788 / 0.208 |
+
+`fista` is `tj.reconstruct(scan, "fista", nonnegative=True, iterations=N)` with
+its automatic TV weight. It halves the error on the measured region and fills
+part of the missing cone from nonnegativity and the regulariser. At its default
+50 iterations it is not converged on these scans (5% and 16% above its converged
+error); at 100 it is. Raise `iterations` for the converged image.
+
+The cost on a real scan, K11 54013 (1441 views of 540 × 640, 704 × 704 × 234
+grid): FBP 5.5 s; `fista` 614 s at 50 iterations, so about 20 minutes at 100
+(about 12 s an iteration, projections streamed from host memory).
+
 ## Reconstruction against ASTRA
 
 Measured 2026-10-05 on commit `6fa1585`. The matrix has 27 cells: Gaussian,
@@ -539,47 +572,48 @@ outweigh solves of 30–180 ms.
 
 ## TV-regularised reconstruction against TIGRE
 
-Measured 2026-10-05 on commit `7dbf427` with
+Measured 2026-11-11 on commit `d545a8d` with
 [`bench/compare_tv.py`](../bench/compare_tv.py). A 128³ structured parallel
 phantom is scanned with 180 views and 3% noise. Each library runs 50
 iterations over its own grid of regularisation weights, and the best relative
-L2 error is reported with its warm time. TIGRE's times include its host
-transfers.
+L2 error is reported with its warm time. Both libraries are warmed by an
+untimed run, and every time includes moving the data and volume between host
+and device.
 
 | Method | Best relative L2 error | Warm time |
 |---|---:|---:|
-| TomoJAX FISTA-TV | 0.076 | 1.13 s |
-| TIGRE FISTA | 0.101 | 9.7 s |
-| TIGRE ASD-POCS | 0.146 | 5.7 s |
+| TomoJAX FISTA-TV | 0.075 (automatic weight: 0.077) | 0.35 s |
+| TIGRE FISTA | 0.101 | 9.1 s |
+| TIGRE ASD-POCS | 0.146 | 5.4 s |
 
 Larger TIGRE FISTA weights diverge. Unregularised CGLS reaches 0.138 at best
 (10 iterations). This is one phantom at one noise level, not a general ranking.
 
 ## Cone-beam projection and FDK
 
-Measured 2026-10-07 on commit `5ea7c22` with
+Measured 2026-11-11 on commit `e84b296` with
 [`bench/compare_cone.py`](../bench/compare_cone.py): five voxelised ellipsoids
 (256³, 2×2×2 sub-samples) on a circular 360-view scan with a 384² detector at
 1.5× magnification. Forward projections are compared with exact analytic line
 integrals and FDK volumes with the phantom. Times are the best of three warm
-calls; ASTRA and TIGRE take host arrays.
+calls. Every library takes and returns host arrays, so each time includes
+moving a 64 MiB volume and 202.5 MiB of projections.
 
 | Operation | TomoJAX | ASTRA 2.5 | TIGRE |
 |---|---:|---:|---:|
-| Forward projection | 0.093 s (error 0.0060) | 0.170 s (0.0060) | 0.477 s interpolated (0.0062), 1.24 s Siddon (0.0068) |
-| Backprojection | 0.178 s, exact transpose | 0.075 s, approximate transpose | 0.103 s, "matched" |
-| FDK | 0.048 s (error 0.0581) | 0.293 s (0.0581) | 0.513 s (0.0581) |
-| Forward, axis tilted 0.5° | 0.092 s | 0.171 s | |
-| Backprojection, axis tilted 0.5° | 0.232 s, exact transpose | 0.075 s, approximate transpose | |
+| Forward projection | 0.132 s (error 0.0060) | 0.168 s (0.0060) | 0.471 s interpolated (0.0062), 1.23 s Siddon (0.0068) |
+| Backprojection | 0.121 s, exact transpose | 0.073 s, approximate transpose | 0.087 s, "matched" |
+| FDK | 0.092 s (error 0.0581) | 0.257 s (0.0581) | 0.499 s (0.0581) |
+| Forward, axis tilted 0.5° | 0.132 s | 0.168 s | |
+| Backprojection, axis tilted 0.5° | 0.104 s, exact transpose | 0.073 s, approximate transpose | |
+
+Iterative solvers keep their arrays on the device. There TomoJAX's forward
+projection takes 0.096 s, its exact transpose 0.082 s and FDK 0.048 s; ASTRA's
+and TIGRE's device-resident times are not measured here.
 
 TomoJAX's backprojection is the exact transpose of its forward projector,
 which the iterative solvers and gradients rely on. ASTRA's voxel-driven
-backprojector is cheaper but only approximately its transpose, so a CGLS
-iteration (one of each) costs about 0.27 s in TomoJAX against ASTRA's 0.25 s.
-The transpose has a faster path for views whose detector columns are parallel
-to the rotation axis. A tilted axis, a rolled or pitched detector, or the
-per-view poses of alignment rule that path out, and an iteration then costs
-about 0.32 s at this size. ASTRA's times do not depend on the geometry.
+backprojector is cheaper but only approximately its transpose.
 
 On the same scan (2026-10-06, commit `dc411a2`, before the forward projector
 was made faster), CGLS with the matched transpose took 3.4, 6.6 and 13.2 s for
@@ -1268,6 +1302,13 @@ data were reconstructed with the recovered poses (2026-10-05, commit
 constrained FISTA reaches 0.12 after 100 iterations and 0.091 after 300
 (109 s), against 0.059 for the volume of the full-resolution alignment.
 
+On straight-axis scans per-view rotations are weakly determined (2026-11-13,
+commit `a64ea92e`, rotations tied to their neighbours). On the 13 axial rows of
+the simulated watch and rock corpus, `fit=("translations", "rotations")` ended
+with a lower landmark error than translations alone on 7, the same on 1 and up
+to 27% higher on 5 (the watch's full-turn and half-turn parallel rows and one
+rock half turn).
+
 ### Automatic translation alignment
 
 The earlier automatic route on unposed parallel and laminography scans fitted per-view
@@ -1300,6 +1341,36 @@ with; the largest pose increase is +0.009 px on a low-dose jittered watch scan.
 Against the previous route, that reference improved pose on every moving case
 among the 51 it was not developed on, with image regressions of at most +0.0002
 there; two large-drift development cases regressed by +0.0009 and +0.0012.
+
+### The plain call on K11
+
+Run 15's call, measured again on 2026-11-15: K11 54013, the 1153 views whose index
+is not 2 modulo 5, declared grid 2112 × 2112 × 704 at 2.16 µm, tilt −35°,
+`tj.align(scan)` with nothing set, one process, nothing else on the GPU. Time is
+the `tj.align` call alone, after loading; GPU memory is JAX's peak in use.
+
+| Commit | Result | Time | GPU |
+|---|---|---:|---:|
+| `29836aaa` (main, 2026-11-02) | completes; working grid 352 × 352 × 118, detector binned 2 | 205.0 s | 2.31 GiB |
+| `aa6cec52` (main) | completes | 148.8 s | 3.51 GiB |
+| `76fc1769` to `ed86a8f0` (main) | runs out of memory in the image solve's Schur matrix-vector product (1.37 GiB) | | |
+| `20b5f42a` (fix/review-high) | runs out of memory in the first linearisation (765 MiB, the shared level's moments) | | |
+| `188f1794` (fix/review-high) | completes | 276.8 s | 3.62 GiB |
+
+On `188f1794` the same call on K11 54286 (all 1441 views, 640 × 640 × 560 declared,
+working grid 214 × 214 × 187) completes in 364.9 s at 3.91 GiB.
+
+Against `aa6cec52` the branch takes 128 s (86%) longer on the same call, at 0.11 GiB
+more. A profile of both (every phase timed with a device sync) puts 116 s of it in
+the image solve: both take 12 coarse and 8 fine steps, but `aa6cec52` gives the
+image solve 4 conjugate-gradient iterations for a translations fit, while since
+`45f9932d` every fit uses 16, all of which are spent on every step after the
+first (5.12 against 2.27 s a coarse step, 24.21 against 12.65 s a fine one). The
+shared level's two extra back-projections per linearisation add 18.5 s; the
+linearisations are 8.4 s faster (pose columns stored in 16-bit floats); setup,
+the initial image and the refinement differ by 1.2 s. The 0.11 GiB is the shared
+level's two image-sized arrays (127 MiB); the rest of `aa6cec52`'s peak over
+`29836aaa` (3.51 against 2.31 GiB) came on main before the branch.
 
 ### Detector centre
 

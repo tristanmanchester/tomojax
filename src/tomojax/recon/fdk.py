@@ -6,6 +6,8 @@ distance weight, where U is the voxel's distance from the source along the
 detector normal. Full turns share angular measure across conjugate views;
 shorter arcs of at least a half turn plus the fan angle use Parker weights
 with a virtual fan spanning the acquired arc, retaining overscan measurements.
+On an offset detector, a ray whose conjugate falls off the panel keeps the
+whole weight of its line.
 
 FDK is exact only in the plane through the source orbit; away from it the
 reconstruction carries the usual cone-beam artefacts, growing with the cone
@@ -18,7 +20,6 @@ from __future__ import annotations
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from functools import partial
-import logging
 import math
 import operator
 from typing import TYPE_CHECKING
@@ -35,7 +36,7 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
-from tomojax.recon._fdk_coverage import full_turn_weights
+from tomojax.recon._fdk_coverage import full_turn_weights, reliability
 from tomojax.recon._fdk_cuda import backproject_cuda
 from tomojax.recon._host_arrays import validate_host_arrays
 from tomojax.recon.filters import get_fbp_filter_np
@@ -48,7 +49,6 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.cone import ConeBeam
     from tomojax.recon.types import ReconstructionSlab
 
-LOG = logging.getLogger(__name__)
 
 # The CUDA path filters rows up to this wide by matrix product (see _filter_operator):
 # on an RTX 4070 that beats the FFTs 3x at 768 pixels and breaks even near 2500.
@@ -98,44 +98,34 @@ def _fan_angles(beam: ConeBeam, detector: Detector) -> np.ndarray:
     )
 
 
-def _full_turn(geometry: Geometry, n_views: int) -> bool:
-    angles, _, _ = grouped_angles(geometry, n_views)
-    return ordered_arc(angles)[2]
+def _virtual_columns(beam: ConeBeam, detector: Detector) -> tuple[int, int]:
+    """Columns to add below and above an offset detector, to its conjugate rays' reach.
 
-
-def _virtual_columns(
-    geometry: Geometry,
-    beam: ConeBeam,
-    detector: Detector,
-    n_views: int,
-    *,
-    full_turn: bool | None = None,
-) -> tuple[int, int]:
-    """Columns to add below and above an offset detector, mirroring it about the axis.
-
-    In a full turn an offset detector reconstructs the whole field its long
-    side covers; voxels on the short side then project past the detector, where
-    the filtered rows (zero data, nonzero ramp tail) must still be read.
+    An offset detector reconstructs the whole field its long side covers, in a
+    full turn or a short scan; voxels on the short side then project past the
+    detector, where the filtered rows (zero data, nonzero ramp tail) must still
+    be read. A column's conjugate has the opposite fan angle (see
+    :func:`_fan_angles`), which a laterally offset axis maps nonlinearly to u.
     """
-    if full_turn is None:
-        full_turn = _full_turn(geometry, n_views)
-    if not full_turn or not _windowable(beam):
+    if not _windowable(beam):
         return 0, 0
-    axis = (float(beam.axis_offset) * beam.magnification - float(detector.center[0])) / float(
-        detector.du
-    ) + (detector.nu - 1) / 2
-    below, above = axis, detector.nu - 1 - axis
-    if abs(above - below) <= 1.0:
-        return 0, 0
-    pad = min(math.ceil(abs(above - below)), detector.nu)
-    return (pad, 0) if above > below else (0, pad)
+    sdd, du = float(beam.source_to_detector), float(detector.du)
+    gamma = _fan_angles(beam, detector)
+    tilt = np.arctan(float(beam.axis_offset) / float(beam.source_to_axis))
+    # Column of fan angle g: u = SDD tan(g + tilt), clipped short of the 90-degree pole.
+    reach = sdd * np.tan(np.clip(-gamma[[-1, 0]] + tilt, -1.5, 1.5))
+    # Fractional column indices of the conjugates of the last and first columns.
+    low, high = (reach - float(detector.center[0])) / du + (detector.nu - 1) / 2
+    pad = (max(0, math.ceil(-low - 1e-6)), max(0, math.ceil(high - (detector.nu - 1) - 1e-6)))
+    return (0, 0) if max(pad) <= 1 else pad
 
 
 def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.ndarray:
     """Return ``(views, nu)`` FDK angular weights.
 
     Full turns share each ray's angular measure with its conjugate view's
-    detector coverage; short scans use Parker weights. Views repeating
+    detector coverage; short scans use Parker weights, normalised over the
+    conjugate rays the panel actually measured. Views repeating
     an angle (several turns, at several heights say) share its measure, so a
     scan of several turns averages their reconstructions. Angle labels may
     wrap at 360 degrees or differ by whole turns without changing the weights.
@@ -183,14 +173,6 @@ def _distinct_view_weights(
     # Parker weights over the fan angle of each detector column.
     gamma = _fan_angles(beam, detector)
     pixel = float(detector.du) / float(beam.source_to_detector)
-    if abs(float(gamma.max() + gamma.min())) > 0.05 * float(gamma.max() - gamma.min()):
-        LOG.warning(
-            "FDK short scan with an offset detector: Parker weights assume the axis "
-            "projects near the detector centre (fan %.2f to %.2f degrees); columns beyond "
-            "the short side are weighted as if their conjugate rays were measured",
-            np.rad2deg(gamma.min() - pixel / 2),
-            np.rad2deg(gamma.max() + pixel / 2),
-        )
     delta = float(np.max(np.abs(gamma)))
     if arc < np.pi + 2 * delta - 1e-6:
         raise ValueError(
@@ -200,19 +182,27 @@ def _distinct_view_weights(
     # Treat the extra acquisition angle as a virtual fan. Otherwise the
     # minimum-scan window assigns zero to valid later views of an overscan.
     delta = max(delta, (arc - np.pi) / 2)
+    end = np.pi + 2 * delta
+
+    def parker(beta: np.ndarray, g: np.ndarray) -> np.ndarray:
+        rise = np.sin(np.pi / 4 * beta / np.maximum(delta - g, 1e-12)) ** 2
+        fall = np.sin(np.pi / 4 * (end - beta) / np.maximum(delta + g, 1e-12)) ** 2
+        weight = np.where(beta < 2 * (delta - g), rise, 1.0)
+        weight = np.where(beta > np.pi - 2 * g, fall, weight)
+        return np.where((beta < 0) | (beta > end), 0.0, weight)
+
     beta = np.empty((n_views, 1))
     beta[order, 0] = sorted_angles - sorted_angles[0]
     beta = beta[selected]
     g = gamma[None, :]
-    weight = np.ones((len(selected), detector.nu))
-    rise = beta < 2 * (delta - g)
-    weight = np.where(rise, np.sin(np.pi / 4 * beta / np.maximum(delta - g, 1e-12)) ** 2, weight)
-    end = np.pi + 2 * delta
-    fall = beta > np.pi - 2 * g
-    weight = np.where(
-        fall, np.sin(np.pi / 4 * (end - beta) / np.maximum(delta + g, 1e-12)) ** 2, weight
-    )
-    weight = np.where(beta > end, 0.0, weight)
+    # Parker's pair sums to one only where the conjugate ray was measured. An
+    # offset panel misses some conjugates: share each line's weight between the
+    # rays that measured it, by panel-edge reliability as in a full turn.
+    panel = np.array([gamma.min() - pixel / 2, gamma.max() + pixel / 2, pixel])
+    own = parker(beta, g) * reliability(g, panel)
+    conjugates = parker(beta + np.pi + 2 * g, -g) + parker(beta - np.pi + 2 * g, -g)
+    total = own + conjugates * reliability(-g, panel)
+    weight = np.divide(own, total, out=np.ones_like(own), where=total > 0)
     return weight * measure[selected, None]
 
 
@@ -466,11 +456,7 @@ def _prepare(
     du_iso = float(detector.du) / magnification
     column_parts = cone_parts(geometry, columns)
     assert column_parts is not None
-    full_turn = _full_turn(geometry, n_views)
-    padding = [
-        _virtual_columns(geometry, beam, own, n_views, full_turn=full_turn)
-        for _, beam, own in column_parts
-    ]
+    padding = [_virtual_columns(beam, own) for _, beam, own in column_parts]
     pad_lo, pad_hi = np.max(padding, axis=0).tolist()
     # A shared detector-pitch ramp is linear in magnification. Fold each
     # view's remaining inverse magnification into its angular weight.
@@ -507,53 +493,6 @@ def _device_views(
     if isinstance(part, jax.Array):
         return jax.device_put(part.astype(jnp.float32), device)
     return upload_host(np.asarray(part, np.float32), device)
-
-
-_filter_jit = jax.jit(_filter, static_argnames=("pad_lo", "pad_hi"))
-
-
-@partial(jax.jit, static_argnames=("grid", "detector", "scale", "cuda"), donate_argnames=("out",))
-def _backproject_batch(
-    filtered: jax.Array,
-    coeff: jax.Array,
-    out: jax.Array,
-    *,
-    grid: Grid,
-    detector: Detector,
-    scale: float,
-    cuda: bool,
-) -> jax.Array:
-    backproject = backproject_cuda if cuda else _backproject_jax
-    return backproject(filtered, coeff, grid, detector, scale, out)
-
-
-def _filter_views(prep: _Prepared, projections: jax.Array | np.ndarray, n_views: int) -> jax.Array:
-    """Weighted, ramp-filtered ``(views, nv, nu)`` projections on the device."""
-    parts = []
-    for start in range(0, n_views, prep.batch):
-        stop = min(start + prep.batch, n_views)
-        views = _device_views(projections, start, stop, next(iter(prep.weights.devices())))
-        weights = prep.weights[start:stop]
-        cosine = _batch_cosines(prep.cosine, start, stop - start, prep.detector)
-        parts.append(_filter_jit(views, cosine, weights, prep.kernel, prep.pad_lo, prep.pad_hi))
-    return jnp.concatenate(parts, axis=0)
-
-
-def _backproject_filtered(
-    geometry: Geometry, grid: Grid, detector: Detector, filtered: jax.Array, prep: _Prepared
-) -> jax.Array:
-    """Backproject filtered projections from :func:`_filter_views` into ``grid``."""
-    n_views = int(filtered.shape[0])
-    coeff = prep.coefficients(geometry, grid, detector, stack_view_poses(geometry, n_views))
-    detector = prep.virtual(detector)
-    out = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
-    for start in range(0, n_views, prep.batch):
-        stop = min(start + prep.batch, n_views)
-        out = _backproject_batch(
-            filtered[start:stop], coeff[start:stop], out,
-            grid=grid, detector=detector, scale=prep.scale, cuda=prep.cuda,
-        )  # fmt: skip
-    return out
 
 
 def fdk(
@@ -717,35 +656,6 @@ def _windowable(beam: ConeBeam) -> bool:
     return float(beam.detector_pitch_deg) == 0.0 and float(beam.detector_yaw_deg) == 0.0
 
 
-def _detector_window(
-    beam: ConeBeam,
-    detector: Detector,
-    r0: int,
-    r1: int,
-    c1: int | None = None,
-    f: int = 1,
-) -> Detector:
-    """Rows ``[r0, r1)`` and columns ``[0, c1)`` of ``detector``, binned ``f x f``.
-
-    The window keeps its place on the rolled detector: its centre moves along
-    the detector's own u and v. Needs :func:`_windowable` beams, whose detector
-    axes stay in the plane of ``detector.center``.
-    """
-    rows, cols = (r1 - r0) // f, (detector.nu if c1 is None else c1) // f
-    su = ((f * cols - 1) / 2 - (detector.nu - 1) / 2) * detector.du
-    sv = (r0 + (f * rows - 1) / 2 - (detector.nv - 1) / 2) * detector.dv
-    _, u_dir, v_dir = beam.detector_frame(detector)
-    shift = su * u_dir + sv * v_dir
-    return replace(
-        detector,
-        nu=cols,
-        nv=rows,
-        du=detector.du * f,
-        dv=detector.dv * f,
-        center=(detector.center[0] + shift[0], detector.center[1] + shift[2]),
-    )
-
-
 def _slab_grid(grid: Grid, z0: int, z1: int) -> Grid:
     """Grid of z slices ``[z0, z1)``."""
     origin = grid_volume_origin(grid)
@@ -905,15 +815,16 @@ def fdk_host(
         projections, detector, geometry=geometry, context="fdk_host projections"
     )
     ordered_arc(grouped_angles(geometry, n_views)[0])
-    result = validate_host_arrays(projections, out, (nz, ny, nx), "fdk_host", order="C")
+    result = validate_host_arrays(projections, out, (nz, ny, nx), "fdk_host")
+    devices = as_devices(cfg.fdk.devices) or (None,)
     if depth is None:
-        free = device_free_memory_bytes() or 2 * 1024**3
+        # Every worker runs slabs of one depth: size them for the smallest device.
+        free = min(device_free_memory_bytes(device=d) or 2 * 1024**3 for d in devices)
         depth = max(1, int(free // (3 * max(1, 4 * grid.nx * grid.ny))))
     depth = min(int(depth), grid.nz)
     slabs = [(z0, min(z0 + depth, grid.nz)) for z0 in range(0, grid.nz, depth)]
     poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
     work = _Slabs(geometry, grid, detector, projections, poses, result)
-    devices = as_devices(cfg.fdk.devices) or (None,)
     # Each device's slabs in turn, copied into ``result`` (slow for memmaps)
     # while the next one runs.
     with ThreadPoolExecutor(len(devices)) as writer, ThreadPoolExecutor(len(devices)) as pool:

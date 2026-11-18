@@ -35,6 +35,12 @@ def test_finite_references_are_shared_but_sample_noise_is_not():
     target_variance = 2 * 10000 * np.exp(-0.5) + 9
     assert np.var(first.counts) / target_variance == pytest.approx(1, rel=0.03)
     assert abs(np.corrcoef((first.expected - q)[0, 0], (first.expected - q)[0, 1])[0, 1]) < 0.5
+    # Each view draws its own counts: adjacent views are uncorrelated, and their
+    # difference carries twice one view's variance.
+    noise = first.counts - first.counts.mean(axis=0)
+    a, b = noise[:-1].ravel(), noise[1:].ravel()
+    assert abs(np.corrcoef(a, b)[0, 1]) < 0.02
+    assert np.var(a - b) / (2 * target_variance) == pytest.approx(1, rel=0.03)
 
 
 def test_calibration_and_single_dark_requires_explicit_noise():

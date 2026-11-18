@@ -41,8 +41,13 @@ def test_render_integrates_energy_then_pixels_and_sets_fixed_detector_frame(
     api.computePathLength.return_value = raster
     api.getVersionOfCoreGVXR.return_value = "test"
     monkeypatch.setitem(sys.modules, "gvxrPython3", SimpleNamespace(gvxr=api))
+    # An asymmetric rotation and a translation: the object sees the lab inverted.
+    from scipy.spatial.transform import Rotation
+
     pose = np.eye(4)
+    pose[:3, :3] = Rotation.from_euler("xyz", [17, -29, 41], degrees=True).as_matrix()
     pose[:3, 3] = [0.2, -0.3, 0.4]
+    to_object = pose[:3, :3].T
     plan = dict(
         meshes=".",
         names=["material"],
@@ -61,14 +66,16 @@ def test_render_integrates_energy_then_pixels_and_sets_fixed_detector_frame(
     result = renderer.render(plan)
     expected = (np.exp(-10 * length_cm[..., None] * [0.2, 0.8]) @ [0.25, 0.75]).mean()
     np.testing.assert_allclose(result["transmission"], [[[expected]]], rtol=1e-7)
-    np.testing.assert_allclose(api.setDetectorUpVector.call_args.args, [0, 0, 1])
-    source = [0, -20, 0] if cone else [0.17, -100, -0.23]
-    np.testing.assert_allclose(api.setSourcePosition.call_args.args[:3], source - pose[:3, 3])
+    np.testing.assert_allclose(api.setDetectorUpVector.call_args.args, to_object @ [0, 0, 1])
+    source = np.array([0, -20, 0] if cone else [0.17, -100, -0.23])
+    np.testing.assert_allclose(
+        api.setSourcePosition.call_args.args[:3], to_object @ (source - pose[:3, 3])
+    )
     (api.usePointSource if cone else api.useParallelBeam).assert_called_once()
     api.setDetectorNumberOfPixels.assert_called_once_with(2 * refinement, 2 * refinement)
     api.destroy.assert_called_once()
     if cone:
-        np.testing.assert_allclose(api.setDetectorRightVector.call_args.args, [1, 0, 0])
+        np.testing.assert_allclose(api.setDetectorRightVector.call_args.args, to_object @ [1, 0, 0])
         spectral = result["energy_transmission"]
         assert spectral.shape == (2, 1, 1, 1)
         expected = np.exp(-10 * length_cm[..., None] * [0.2, 0.8]).mean(axis=(0, 1))

@@ -110,6 +110,8 @@ def adjoint(
     interpolation: str,
     absolute_weights: bool,
     z_fast: bool = False,
+    active: tuple[jax.Array, ...] | None = None,
+    squared: bool = False,
 ) -> jax.Array:
     """Gather the exact plane weights at each voxel and add an initial volume.
 
@@ -117,7 +119,12 @@ def adjoint(
     Detector v is contiguous inside the gather, matching adjacent threads' z runs.
     Cubic sampling shares weights over 4x4 transverse tiles. Three ordered axis
     passes retain each axis's view order; only cross-axis addition is reordered.
+    Cubic ``active`` tiles (see ``active_tiles``) limit the gather to them; the
+    other tiles keep ``initial``. ``squared`` gathers squared weights instead,
+    so ``images`` of squared pixel weights give the diagonal of A.T W A.
     """
+    active = active if interpolation == "cubic" else None
+    weights = 2 if squared else int(absolute_weights)
     shape = (grid.nx, grid.ny, grid.nz)
     run = min(4, grid.nz)
     runs = grid.nx * grid.ny * ((grid.nz + run - 1) // run)
@@ -129,7 +136,7 @@ def adjoint(
                 "adjoint_unit",
                 RUN=run,
                 CUBIC=0,
-                ABSOLUTE=int(absolute_weights),
+                ABSOLUTE=weights,
                 Z_FAST=int(z_fast),
             )
             launch_plans.append((text, "joseph_gather", runs))
@@ -140,14 +147,17 @@ def adjoint(
                 "adjoint_tile",
                 AXIS=axis,
                 CUBIC=1,
-                ABSOLUTE=int(absolute_weights),
+                ABSOLUTE=weights,
                 Z_FAST=int(z_fast),
             )
             launch_plans.append((text, "joseph_gather_tile", count))
     plans = tuple(launch_plans)
 
-    def launch(context: Any, out: Any, cf: Any, y: Any, x: Any) -> None:
-        for kernel_text, kernel, count in plans:
+    def launch(context: Any, out: Any, cf: Any, y: Any, x: Any, *lists: Any) -> None:
+        for axis, (kernel_text, kernel, count) in enumerate(plans):
+            tiles = ()
+            if kernel == "joseph_gather_tile":  # an unlisted launch reads no list
+                tiles = (*(lists[2 * axis : 2 * axis + 2] or (cf, cf)), np.int32(bool(lists)))
             launch_kernel(
                 kernel_text,
                 kernel,
@@ -160,6 +170,7 @@ def adjoint(
                     y,
                     out,
                     x,
+                    *tiles,
                     *map(np.int32, (views, *shape, detector.nu, detector.nv)),
                 ),
             )
@@ -171,7 +182,7 @@ def adjoint(
         input_output_aliases={2: 0},
         command_buffer_compatible=True,
         vmap_method="sequential",
-    )(coeff, swap_detector_axes(images), initial)
+    )(coeff, swap_detector_axes(images), initial, *(active or ()))
 
 
 def swap_detector_axes(images: jax.Array) -> jax.Array:
@@ -189,3 +200,23 @@ def swap_detector_axes(images: jax.Array) -> jax.Array:
         command_buffer_compatible=True,
         vmap_method="sequential",
     )(images)
+
+
+def active_tiles(mask: jax.Array, *, z_fast: bool = False) -> tuple[jax.Array, ...]:
+    """Each cubic axis pass's 4x4 tiles holding a nonzero ``mask`` voxel.
+
+    Returns (ids, count) per pass, in the kernel's tile numbering, ids first
+    and padded to the pass's tile total. Build it once for many gathers.
+    """
+    xyz = mask if z_fast else jnp.transpose(mask, (2, 1, 0))
+    lists = []
+    for axis in range(3):
+        abc = jnp.moveaxis(xyz != 0, (axis, (axis + 1) % 3, (axis + 2) % 3), (0, 1, 2))
+        na, nb, nc = abc.shape
+        abc = jnp.pad(abc, ((0, 0), (0, -nb % 4), (0, -nc % 4)))
+        tiles = abc.reshape(na, abc.shape[1] // 4, 4, abc.shape[2] // 4, 4).any(axis=(2, 4))
+        # The y pass numbers its tiles with b fastest.
+        tiles = (jnp.swapaxes(tiles, 1, 2) if axis == 1 else tiles).ravel()
+        ids = jnp.nonzero(tiles, size=tiles.size, fill_value=0)[0].astype(jnp.int32)
+        lists += [ids, jnp.sum(tiles, dtype=jnp.int32)[None]]
+    return tuple(lists)

@@ -158,7 +158,6 @@ def test_beam_hardening_mixture_must_be_physical(rates, weights) -> None:
         (Paganin, "energy_kev"),
         (Paganin, "pixel_size"),
         (RejectViews, "z"),
-        (RejectViews, "min_jump"),
         (Zingers, "threshold"),
     ],
 )

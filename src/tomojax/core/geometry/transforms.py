@@ -116,12 +116,3 @@ def pose_rotations(angles: np.ndarray) -> np.ndarray:
     ry = np.stack([cb, zero, sb, zero, one, zero, -sb, zero, cb], -1).reshape(-1, 3, 3)
     rz = np.stack([cp, -sp, zero, sp, cp, zero, zero, zero, one], -1).reshape(-1, 3, 3)
     return ry @ rx @ rz
-
-
-def pose_angles(rotations: np.ndarray) -> np.ndarray:
-    """Inverse of :func:`pose_rotations`: ``(alpha, beta, phi)`` per rotation."""
-    r = np.asarray(rotations, dtype=np.float64)
-    alpha = np.arcsin(np.clip(-r[:, 1, 2], -1.0, 1.0))
-    beta = np.arctan2(r[:, 0, 2], r[:, 2, 2])
-    phi = np.arctan2(r[:, 1, 0], r[:, 1, 1])
-    return np.stack([alpha, beta, phi], axis=1)

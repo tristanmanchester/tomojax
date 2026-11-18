@@ -212,12 +212,13 @@ reconstruction with the authors' reference.
 
 ## Reconstruct raw laminography from nominal geometry
 
-[align_laminography.py](align_laminography.py) combines public setup/motion
-initialization, data-selected region, sparse pose fitting, untouched-view checks
-and positive reconstruction. It is a conservative example, not a new alignment
-mode or default. See the [automatic laminography section](../docs/real-laminography.md#automatic-nexus-laminography)
-for the command and limitations. Its HDF5 dataset paths and nominal tilt are
-explicit arguments; it writes nothing unless `-o` is supplied.
+[align_laminography.py](align_laminography.py) declares a laminography geometry
+from the nominal tilt (`--tilt`) and detector pitch (`--pixel`), which raw frames
+do not record, then fits translations, tilt and roll jointly with the image (choose
+others with `--fit`). Recognised Diamond/GDA layouts need no dataset paths; other
+files take `--data-path`, `--angles-path` and `--image-key-path`. See the
+[laminography section](../docs/real-laminography.md#automatic-nexus-laminography)
+for the limitations. It writes nothing unless `-o` is supplied.
 
 ## Gallery figures
 
@@ -235,7 +236,7 @@ Install a CUDA-enabled PyTorch separately, then run
 counts with flat and dark frames, Zenodo 3339629):
 
 ```bash
-python examples/train_denoiser.py full_rows1048-1111.nxs --center -138
+python examples/train_denoiser.py full_rows1048-1111.nxs --center-px -138
 ```
 
 The small residual CNN learns from two disjoint, angle-interleaved view sets:
@@ -245,9 +246,10 @@ The CUDA PyTorch projector backpropagates with its exact transpose. A third view
 only for final projection-error reporting, never for training or input FBP.
 The default bins 8×8, uses all views and takes 500 training steps.
 Do not undersample each split: missing angular detail can teach the CNN to
-blur structures even while its held-out projection error improves. Binning preserves physical
-units, so the calibrated detector centre stays −138, not −138/8. Omit
-`--center` to estimate it from the scan before splitting.
+blur structures even while its held-out projection error improves. `--center-px`
+is the calibrated centre in native detector pixels (−138 for this scan), converted
+with the native pitch whatever the binning. Omit it to estimate the centre from the
+scan before splitting.
 
 No clean image is needed for training. This is a single-scan demonstration;
 projection residual is not image accuracy, and shared calibration errors,

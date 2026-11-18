@@ -15,7 +15,6 @@ from tomojax.io import ProjectionDataset, load_dataset, save_dataset
 from tomojax.recon import FBPConfig, FDKConfig, FistaConfig, api, fbp, fista_tv
 
 # check-public-imports: allow-private
-from tomojax.recon._fbp_detector_grid import _run_fbp_generic_with_oom_fallback
 from tomojax.recon.api import clear_filter_caches, default_fbp_scale
 from tomojax.recon.fdk import fdk, view_weights
 from tomojax.recon.filters import get_fbp_filter_np
@@ -61,80 +60,11 @@ def test_fbp_ramp_filter_smoke_is_finite() -> None:
         grid,
         detector,
         projections,
-        config=FBPConfig(filter="ramp", views_per_batch=1),
+        config=FBPConfig(filter="ramp"),
     )
 
     assert volume.shape == (4, 4, 4)
     assert bool(jnp.all(jnp.isfinite(volume)))
-
-
-def test_fbp_generic_fallback_helper_synchronizes_before_oom_backoff() -> None:
-    calls: list[str] = []
-
-    class AsyncFailure:
-        def block_until_ready(self) -> None:
-            raise RuntimeError("RESOURCE_EXHAUSTED: simulated async allocation failure")
-
-    def fake_fast_path(*args: object, **kwargs: object) -> AsyncFailure:
-        del args, kwargs
-        calls.append("fast")
-        return AsyncFailure()
-
-    def fake_backoff(*args: object, **kwargs: object) -> jnp.ndarray:
-        del args, kwargs
-        calls.append("backoff")
-        return jnp.ones((2, 2, 2), dtype=jnp.float32)
-
-    volume = _run_fbp_generic_with_oom_fallback(
-        fast_path=fake_fast_path,
-        backoff_path=fake_backoff,
-        view_progress=iter(range(4)),
-        n_views=4,
-    )
-
-    assert calls == ["fast", "backoff"]
-    np.testing.assert_allclose(np.asarray(volume), 1.0)
-
-
-@pytest.mark.parametrize(("fail_call", "expected_batches"), [(1, [4, 2, 2, 2]), (2, [4, 4, 2])])
-def test_fbp_chunk_backoff_preserves_accumulator_and_progress_on_async_oom(
-    monkeypatch, fail_call, expected_batches
-) -> None:
-    import importlib
-
-    module = importlib.import_module("tomojax.recon._fbp_detector_grid")
-    calls = []
-    progress = iter(range(5))
-
-    class AsyncFailure:
-        def __radd__(self, other):
-            return self
-
-        def block_until_ready(self):
-            raise RuntimeError("RESOURCE_EXHAUSTED: asynchronous chunk allocation")
-
-    def backproject(poses, filtered, **kwargs):
-        calls.append(int(poses.shape[0]))
-        if len(calls) == fail_call:
-            return AsyncFailure()
-        return jnp.ones((2, 2, 1), dtype=jnp.float32) * jnp.sum(filtered)
-
-    monkeypatch.setattr(module, "_bp_batch_sum_jit", backproject)
-    result = module._run_fbp_with_backoff(
-        jnp.broadcast_to(jnp.eye(4), (5, 4, 4)),
-        jnp.arange(1, 6, dtype=jnp.float32).reshape(5, 1, 1),
-        batch_size=4,
-        grid=Grid(2, 2, 1, 1.0, 1.0, 1.0),
-        detector=Detector(1, 1, 1.0, 1.0),
-        filter="ramp",
-        det_grid=None,
-        view_progress=progress,
-    )
-    # A one-pixel ramp row is multiplied by h[0] = 1/4. All five views
-    # contribute once, including when an OOM occurs after a successful chunk.
-    np.testing.assert_allclose(result, (1 + 2 + 3 + 4 + 5) / 4)
-    assert calls == expected_batches
-    assert next(progress, None) is None
 
 
 @pytest.mark.numerical
@@ -399,7 +329,17 @@ def test_iterative_axial_slabs_bound_the_warm_initializer(monkeypatch, method):
         return initialize(geometry, grid, *args, **kwargs)
 
     monkeypatch.setattr(warm, "fbp_start", bounded_initializer)
+    incore, supports = api._iterative_incore, []
+
+    def recorded(method, geometry, grid, detector, data, config, *args, **kwargs):
+        supports.append(config.support)
+        return incore(method, geometry, grid, detector, data, config, *args, **kwargs)
+
+    monkeypatch.setattr(api, "_iterative_incore", recorded)
     actual = tj.reconstruct(scan, method, config=cfg, warm_start=True)
     assert seen == [2, 2, 1]
+    # The mask stays on the host; each slab receives only its own rows.
+    assert [s.shape[0] for s in supports] == [2, 2, 1]
+    assert all(isinstance(s, np.ndarray) for s in supports)
     assert isinstance(actual.volume, np.ndarray)
     np.testing.assert_allclose(actual.volume, expected, rtol=2e-5, atol=2e-6)

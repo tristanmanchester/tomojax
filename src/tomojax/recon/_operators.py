@@ -241,7 +241,9 @@ class Projector:
     def _coefficients(self):
         with jax.ensure_compile_time_eval():  # the geometry is concrete inside any trace
             poses = stack_view_poses(self.geometry, self.projection_shape[0])
-            return plane_coefficients(poses, self.grid, self.geometry.detector)
+            detector = self.geometry.detector
+            det_grid = detector_grid_from_geometry_inputs(detector, self.geometry)
+            return plane_coefficients(poses, self.grid, detector, det_grid)
 
     @functools.cached_property
     def _batch(self) -> int:

@@ -86,13 +86,15 @@ def test_public_scan_load_does_not_hide_malformed_saved_angle_offsets(
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "cone", "segments"])
-@pytest.mark.parametrize("offsets", [np.full(4, 2e-9), np.asarray([0.1, -0.2, 0.3, -0.4])])
+# 1e-4 degrees is inside np.allclose's tolerance of these angles but resolved by FP32.
+@pytest.mark.parametrize("offsets", [np.full(4, 1e-4), np.asarray([0.1, -0.2, 0.3, -0.4])])
 def test_finite_offsets_even_below_allclose_tolerance_match_independent_poses(kind, offsets):
     dataset = _dataset(kind, offsets)
     original = dataset.angles.copy()
     _, _, geometry = build_geometry_from_dataset_metadata(dataset.geometry_inputs(), poses=True)
     expected_angles = original + offsets
-    np.testing.assert_allclose(geometry.angles, expected_angles, rtol=1e-6)
+    applied = np.asarray(geometry.angles, np.float64) - np.asarray(original, np.float64)
+    np.testing.assert_allclose(applied, offsets, rtol=0, atol=2e-5)
     expected = np.broadcast_to(np.eye(4), (4, 4, 4)).copy()
     tilt = (
         np.eye(3) if kind == "parallel" else Rotation.from_euler("X", -27, degrees=True).as_matrix()

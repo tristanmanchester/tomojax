@@ -22,7 +22,7 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from numpy.typing import ArrayLike
+    from numpy.typing import ArrayLike, DTypeLike
 
 
 _SOURCES: dict[int, np.ndarray] = {}
@@ -76,12 +76,15 @@ def read_views(
     return jax.pure_callback(partial(_read, size=shape[0]), out, key, start, weights_key, indices)
 
 
-def should_stream(projections: object, *, fraction: float = 0.4, reserve_bytes: int = 0) -> bool:
+def should_stream(
+    projections: object, *, fraction: float = 0.4, reserve_bytes: int = 0, copies: int = 1
+) -> bool:
     """Stream host data that exceeds the remaining device budget.
 
     ``reserve_bytes`` accounts for solver state and scratch beyond arrays
-    already resident on the device. Only ``fraction`` of the remainder is
-    available for measurements, leaving room for their batched products.
+    already resident on the device. ``copies`` counts the measurement-shaped
+    arrays held with them (weights, data duals). Only ``fraction`` of the
+    remainder is available for those, leaving room for their batched products.
     Resident device data is never copied back just to change its placement.
     """
     if isinstance(projections, jax.Array) or jax.default_backend() != "gpu":
@@ -89,7 +92,7 @@ def should_stream(projections: object, *, fraction: float = 0.4, reserve_bytes: 
     from tomojax.backends import device_free_memory_bytes
 
     free = device_free_memory_bytes()
-    nbytes = int(np.prod(np.shape(cast("ArrayLike", projections)))) * 4
+    nbytes = int(np.prod(np.shape(cast("ArrayLike", projections)))) * 4 * copies
     return free is not None and nbytes > fraction * max(0, free - reserve_bytes)
 
 
@@ -112,9 +115,15 @@ def _write_block(key: np.ndarray, start: np.ndarray, block: np.ndarray) -> np.in
     return np.int32(0)
 
 
-def read_block(key: jax.Array, start: jax.Array, shape: tuple[int, int, int]) -> jax.Array:
-    """Read rows of a registered buffer, ordered after earlier writes."""
-    out = jax.ShapeDtypeStruct(shape, jnp.float32)
+def read_block(
+    key: jax.Array, start: jax.Array, shape: tuple[int, ...], dtype: DTypeLike = jnp.float32
+) -> jax.Array:
+    """Read rows of a registered buffer, ordered after earlier writes.
+
+    ``shape`` is the block's (rows first) and ``dtype`` the buffer's: a float16 buffer is
+    read as float16, not converted on the host.
+    """
+    out = jax.ShapeDtypeStruct(shape, dtype)
     return io_callback(partial(_read_block, size=shape[0]), out, key, start, ordered=True)
 
 

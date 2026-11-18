@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from bench.fit_alignment import density, line_integrals, make_case, scan_rays, score
+from bench.fit_alignment import (
+    density,
+    line_integrals,
+    make_case,
+    scan_rays,
+    score,
+    solid_line_integrals,
+    solid_phantom,
+)
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,6 +20,12 @@ from scipy.spatial.transform import Rotation
 # check-public-imports: allow-private
 from tomojax.alignment._joint._parameters import Parameters
 from tomojax.alignment._joint._pose import MotionPrior  # check-public-imports: allow-private
+from tomojax.alignment._joint._projection import (  # check-public-imports: allow-private
+    fit_gauge,
+    posed,
+    rigid_gauge,
+    shared_axis_patterns,
+)
 from tomojax.geometry import Detector
 
 
@@ -25,7 +39,7 @@ def test_held_parameters_have_no_state_and_are_exactly_zero_in_the_output(fit, c
     scales = np.array([0.01, 0.02, 0.03, 0.7, 1.1, 0.9])[: parameters.full_dofs]
     table, calibration = parameters.physical(state, scales)
     selected = (fit,) if isinstance(fit, str) else fit
-    expected_local = (3 if "rotations" in selected else 0) + (
+    expected_local = (2 if "rotations" in selected else 0) + (
         (3 if cone else 2) if "translations" in selected else 0
     )
     expected_shared = ((2 if cone else 1) if "centre" in selected else 0) + sum(
@@ -35,6 +49,7 @@ def test_held_parameters_have_no_state_and_are_exactly_zero_in_the_output(fit, c
     assert set(calibration) == set(selected) - {"translations", "rotations"}
     if "rotations" not in selected:
         np.testing.assert_array_equal(table[:, :3], 0)
+    np.testing.assert_array_equal(table[:, 2], 0)  # each view's angle is taken as recorded
     if "translations" not in selected:
         np.testing.assert_array_equal(table[:, 3:], 0)
     if not cone:
@@ -79,7 +94,7 @@ def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit,
         )
         a = rng.normal(size=(n, parameters.k + 2, parameters.k))
         blocks = np.einsum("nij,nik->njk", a, a) + np.eye(parameters.k)
-        weights = rng.uniform(0.1, 0.7, n - 1)
+        weights = rng.uniform(0.1, 0.7, (n - 1, parameters.nlocal))
         rhs = rng.normal(size=parameters.size)
 
         # Independent dense assembly: every view has its own local indices,
@@ -90,8 +105,11 @@ def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit,
             local = list(range(view * parameters.nlocal, (view + 1) * parameters.nlocal))
             hessian[np.ix_(local + shared, local + shared)] += blocks[view]
         if parameters.nlocal:
-            d = np.kron(np.diff(np.eye(n), axis=0), np.diag(prior.translation_mask))
-            laplacian = d.T @ np.diag(np.repeat(weights, parameters.nlocal)) @ d
+            # Every local column has first-difference coupling with its own link weights;
+            # the drift spline (outside which translations are penalised) spans none of the
+            # rotation columns, so Q leaves those as they are.
+            d = np.kron(np.diff(np.eye(n), axis=0), np.eye(parameters.nlocal))
+            laplacian = d.T @ np.diag(weights.reshape(-1)) @ d
             u = np.asarray(prior.U)
             q = np.eye(parameters.local_size) - u @ u.T
             hessian[: parameters.local_size, : parameters.local_size] += (
@@ -126,7 +144,7 @@ def test_centre_and_translation_share_one_identifiable_parallel_offset():
 
 
 def test_rotations_pay_the_same_physical_size_prior_at_different_numeric_scales():
-    physical = np.tile(np.deg2rad([0.3, -0.2, 0.1]), (60, 1))
+    physical = np.tile(np.deg2rad([0.3, -0.2]), (60, 1))  # the axis's two wobble components
     noise_sigma = 0.04
     expected = 0.5 * noise_sigma**2 * np.sum((physical / np.deg2rad(0.5)) ** 2)
     with jax.enable_x64(True):
@@ -161,7 +179,7 @@ def test_innovation_refinement_holds_global_parameters_exactly():
         )
         blocks = jnp.broadcast_to(jnp.eye(parameters.k), (60, parameters.k, parameters.k))
         rhs = jnp.asarray(rng.normal(size=parameters.size)).at[-2:].set(1000)
-        step = prior.innovation_solve(blocks, jnp.ones(59), rhs)
+        step = prior.innovation_solve(blocks, jnp.ones((59, parameters.nlocal)), rhs)
         np.testing.assert_array_equal(step[-2:], 0)
         assert np.linalg.norm(step[: parameters.local_size]) > 0
         table, _ = parameters.physical(step, np.ones(5))
@@ -238,6 +256,23 @@ def test_analytic_fixture_integrates_density_independently_of_a_voxel_projector(
     np.testing.assert_allclose(line_integrals(origin, direction), expected, atol=1e-10)
 
 
+def test_solid_fixture_integrates_ellipsoid_chords_independently():
+    # Riemann sum of each ellipsoid's inside test along a ray through one centre.
+    centres, shape, densities = solid_phantom()
+    origin = centres[:1] + np.array([[0.3, -0.2, 0.1]])
+    direction = np.array([[0.4, 0.8, 0.2]])
+    direction /= np.linalg.norm(direction)
+    t = np.arange(-80, 80, 1e-4)
+    points = origin + t[:, None] * direction
+    inside = [
+        value * (np.einsum("ni,ij,nj->n", points - c, m, points - c) <= 1)
+        for c, m, value in zip(centres, shape, densities, strict=True)
+    ]
+    expected = np.sum(inside) * 1e-4
+    assert expected > 0.05
+    np.testing.assert_allclose(solid_line_integrals(origin, direction), expected, atol=2e-5)
+
+
 def test_detector_space_score_counts_centre_and_roll_before_a_rigid_gauge():
     scan, truth, _, _ = make_case("centre")
     error, _, _ = score(scan_rays(scan), truth)
@@ -245,3 +280,170 @@ def test_detector_space_score_counts_centre_and_roll_before_a_rigid_gauge():
     scan, truth, _, _ = make_case("roll")
     error, _, _ = score(scan_rays(scan), truth)
     assert error > 0.2  # translations/common object rotation cannot undo detector roll
+
+
+@pytest.mark.parametrize(
+    ("fit", "cone"),
+    [
+        (("translations", "rotations"), False),
+        (("translations", "rotations"), True),
+        (("rotations",), False),
+    ],
+)
+def test_rotation_increments_gradient_is_the_weighted_apply(fit, cone):
+    # Robust translation weights and constant rotation weights both come from the value.
+    views = 17
+    parameters = Parameters(views, fit, cone=cone, lever=10)
+    rng = np.random.default_rng(75)
+    with jax.enable_x64(True):
+        prior = MotionPrior(
+            views,
+            rng.normal(size=(views * parameters.full_dofs, 3)),
+            knot_spacing=(5,) * parameters.full_dofs,
+            delta=0.02,
+            parameters=parameters,
+            rotation_scales=np.full(parameters.full_dofs, 0.05),
+            noise_sigma=0.03,
+        )
+        pose = jnp.asarray(rng.normal(scale=0.05, size=parameters.size))
+        gradient = jax.grad(lambda p: prior.value(p, 0.4))(pose)
+        np.testing.assert_allclose(
+            gradient, prior.apply(pose, prior.weights(pose, 0.4)), rtol=2e-12, atol=2e-12
+        )
+
+
+@pytest.mark.parametrize("tilt_deg", [0.0, -30.0])
+@pytest.mark.parametrize(("name", "sign"), [("tilt", -1.0), ("roll", 1.0)])
+def test_a_shared_tilt_or_roll_is_its_per_view_pattern_to_first_order(tilt_deg, name, sign):
+    # The poses a small shared tilt (a lab Rx(-t)) or parallel roll (about the beam through
+    # the detector centre) produce are the ones its per-view pattern produces: the tangent
+    # comes from the geometry, not from a copy of its formula.
+    import tomojax as tj
+    from tomojax.geometry import stack_view_poses
+
+    grid = tj.Grid(8, 8, 6, 1.0, 1.0, 1.0, vol_center=(0.4, -0.3, 1.5))
+    detector = Detector(12, 9, 1.0, 1.0, (0.7, -0.4))
+    geometry = tj.LaminographyGeometry(grid, detector, np.arange(0, 360, 40.0), tilt_deg=tilt_deg)
+    nominal = np.asarray(stack_view_poses(geometry, 9), np.float64)
+    fit = ("translations", "rotations", name)
+    parameters = Parameters(9, fit, lever=6.0)
+    scales = np.asarray([1 / 6.0] * 3 + [1.0, 1.0])
+    pattern = shared_axis_patterns(nominal, scales, fit, detector.center)[:, 0].reshape(9, 5)
+    eps = 1e-5
+    with jax.enable_x64(True):
+        state = np.zeros(parameters.size)
+        state[-1] = eps * parameters.lever  # eps radians of the shared parameter
+        rows = parameters.expand(jnp.asarray(state))
+        shared = np.asarray(
+            parameters.geometry(
+                jnp.asarray(nominal), rows, jnp.asarray(scales), detector=detector, native=(1, 1)
+            )[0]
+        )
+
+        def written(table):
+            return np.asarray(posed(jnp.asarray(nominal), jnp.asarray(table), jnp.asarray(scales)))
+
+        assert np.abs(shared - written(sign * eps * pattern)).max() < 1e-8  # second order in eps
+        assert np.abs(shared - written(-sign * eps * pattern)).max() > 1e-6  # the sign matters
+    # Per-view rotations hold each view's angle, so any spin in a pattern must be a constant
+    # object rotation, which is the rigid gauge: none for a tilt or an axial roll.
+    spin = pattern[:, 2]
+    assert np.ptp(spin) < 1e-12
+    if name == "tilt" or tilt_deg == 0:
+        assert np.abs(spin).max() < 1e-12
+
+
+def test_the_constrained_solve_leaves_no_per_view_component_along_a_shared_pattern():
+    import tomojax as tj
+    from tomojax.geometry import stack_view_poses
+
+    grid, detector = tj.Grid(8, 8, 6, 1.0, 1.0, 1.0), Detector(12, 9, 1.0, 1.0)
+    nominal = np.asarray(
+        stack_view_poses(tj.ParallelGeometry(grid, detector, np.arange(0, 360, 12.0)), 30)
+    )
+    fit = ("translations", "rotations", "tilt", "roll")
+    parameters = Parameters(30, fit, lever=6.0)
+    scales = np.asarray([1 / 6.0] * 3 + [1.0, 1.0])
+    pattern = shared_axis_patterns(nominal, scales, fit, detector.center)
+    local = pattern.reshape(30, 5, -1)[:, list(parameters.local)].reshape(parameters.local_size, -1)
+    rng = np.random.default_rng(31)
+    a = rng.normal(size=(30, parameters.k + 2, parameters.k))
+    blocks = jnp.asarray(np.einsum("nij,nik->njk", a, a) + np.eye(parameters.k))
+    rhs = jnp.asarray(rng.normal(size=parameters.size))
+    weights = jnp.full((29, parameters.nlocal), 0.3)
+    with jax.enable_x64(True):
+
+        def along(gauge):
+            prior = MotionPrior(
+                30,
+                gauge,
+                knot_spacing=(5,) * 5,
+                delta=0.02,
+                parameters=parameters,
+                rotation_scales=scales,
+                noise_sigma=0.02,
+            )
+            step = np.asarray(prior.solve(prior.factor(blocks, weights), rhs))[
+                : parameters.local_size
+            ]
+            return np.abs(local.T @ step).max() / np.linalg.norm(step)
+
+        rigid = rigid_gauge(nominal, scales)
+        assert along(np.column_stack([rigid, pattern])) < 1e-10
+        assert along(rigid) > 1e-3  # without the patterns the per-view poses take part of them
+
+
+@pytest.mark.parametrize("name", ["tilt", "roll"])
+def test_a_shared_tilt_or_roll_is_a_per_view_direction_the_fit_gauge_removes(name):
+    # R1b's runaway: a shared tilt or roll and a per-view pose pattern give the same
+    # projections, and the neighbour-increment prior does not see the pattern, so only the
+    # size prior held that direction. The pattern comes here from the geometry (no fit code):
+    # a tilted axis, or the scene turned about the beam through the detector centre for a
+    # rolled detector. The fit's gauge must contain it, so the per-view poses cannot carry it.
+    import tomojax as tj
+    from tomojax.geometry import RotationAxisGeometry, stack_view_poses
+
+    grid = tj.Grid(8, 8, 6, 1.0, 1.0, 1.0)
+    detector = Detector(12, 9, 1.0, 1.0, (0.7, -0.4))
+    angles = np.arange(0, 360, 12.0)
+    n, eps = len(angles), 1e-3
+    nominal = np.asarray(
+        stack_view_poses(tj.ParallelGeometry(grid, detector, angles), n), np.float64
+    )
+    if name == "tilt":
+        shared = RotationAxisGeometry(grid, detector, angles, (0.0, np.sin(eps), np.cos(eps)))
+        moved = np.asarray(stack_view_poses(shared, n), np.float64)
+    else:
+        shared = RotationAxisGeometry(
+            grid, detector, angles, (0, 0, 1), detector_roll_deg=np.rad2deg(eps)
+        )
+        pivot = np.array([detector.center[0], 0.0, detector.center[1]])
+        turn = np.eye(4)
+        turn[:3, :3] = Rotation.from_rotvec(
+            [0.0, eps, 0.0]
+        ).as_matrix()  # the scene with the detector
+        turn[:3, 3] = pivot - turn[:3, :3] @ pivot
+        moved = turn @ nominal
+    local = np.einsum("nji,njk->nik", nominal[:, :3, :3], moved[:, :3, :3])
+    table = np.zeros((n, 6))
+    table[:, [1, 0, 2]] = Rotation.from_matrix(local).as_euler("YXZ")
+    table[:, [3, 5, 4]] = moved[:, :3, 3] - nominal[:, :3, 3]
+    volume = np.random.default_rng(3).random((6, 8, 8)).astype(np.float32)
+    blank = tj.Scan(np.zeros((n, 9, 12), np.float32), tj.ParallelGeometry(grid, detector, angles))
+    by_poses = np.asarray(tj.project(blank.with_poses(table).geometry, volume))
+    by_shared = np.asarray(tj.project(shared, volume))
+    # The degeneracy is real: per-view poses (with no spin) give the shared change's data.
+    assert np.abs(by_poses - by_shared).max() < 1e-3 * np.abs(by_shared).max()
+    assert np.abs(table[:, 2]).max() < eps**2  # no spin to first order
+    # In the fit's units (object-frame rotation vector over its scale, lab x and z over theirs),
+    # the pattern lies in the fit's gauge to first order in eps.
+    lever = 6.0
+    scales = np.asarray([1 / lever] * 3 + [1.0, 1.0])
+    direction = np.column_stack(
+        [Rotation.from_matrix(local).as_rotvec() / scales[:3], table[:, [3, 4]] / scales[3:]]
+    ).reshape(-1)
+    fit = ("translations", "rotations", "tilt", "roll")
+    gauge, _ = fit_gauge(nominal, scales, fit, detector.center)
+    coefficients = np.linalg.lstsq(gauge, direction, rcond=None)[0]
+    left = np.linalg.norm(direction - gauge @ coefficients) / np.linalg.norm(direction)
+    assert left < 10 * eps  # second order; R1b's rigid gauge leaves it whole (about 1)

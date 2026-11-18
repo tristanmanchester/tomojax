@@ -35,7 +35,12 @@ def _fitter(monkeypatch, *, corrections=None, poses=None):
         names = options["fit"]
         names = (names,) if isinstance(names, str) else names
         table = np.zeros((len(nominal), 6)) if poses is None else poses
-        record = {"fit": list(names), "corrections": corrections or {}, "seconds": 0.0}
+        record = {
+            "fit": list(names),
+            "corrections": corrections or {},
+            "report": {"isolated_views": [], "unusual_views": [], "advisories": []},
+            "seconds": 0.0,
+        }
         return np.zeros((grid.nz, grid.ny, grid.nx), np.float32), grid, table, record
 
     monkeypatch.setattr(_smooth_alignment, "fit_poses", fit)
@@ -160,3 +165,16 @@ def test_cli_rejects_unknown_or_repeated_fit_names(fit, capsys):
         main(["align", "scan.nxs", "-o", "aligned.nxs", "--fit", *fit])
     assert error.value.code == 2
     assert "--fit" in capsys.readouterr().err
+
+
+def test_running_out_of_memory_on_an_explicit_grid_says_how_to_bound_it(monkeypatch):
+    def exhausted(*args, **kwargs):
+        raise RuntimeError("RESOURCE_EXHAUSTED: Out of memory while trying to allocate 789.17MiB")
+
+    monkeypatch.setattr(_smooth_alignment, "fit_poses", exhausted)
+    scan = _scan()
+    with pytest.raises(MemoryError, match="used as given.*Omit grid= to let the fit bound its own"):
+        tj.align(scan, grid=scan.grid)
+    # Without an explicit grid the fit already chose its scale: the device error is unchanged.
+    with pytest.raises(RuntimeError, match="RESOURCE_EXHAUSTED"):
+        tj.align(scan)

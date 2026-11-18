@@ -11,15 +11,25 @@ where a view's non-geometric residual energy is ordinary for its neighbours,
 and lets an inconsistent view move.
 """
 
+import time
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.robust import MAD_TO_SD
+
+from ._noise import LOSS_WIDTH_SIGMAS
 from ._operators import column_gram, column_score, robust_batch, robust_value
+from ._stacks import Stack, level_stacks, temporaries, transient_reserve, unplaced
 
 _SMOOTH_NATIVE_PX = 8.0
-_WIDTH_SIGMA = 2.5
 _ITERATIONS = 5
+# A smaller proposed step is converged: it cannot change the pose error, and
+# its decrease is below what the FP32 objective resolves, so backtracking on it
+# only spends objective evaluations.
+_FP32_STEP_PX = 1e-4
+_LM_INITIAL = 0.01
 _NEIGHBOURS = 5
 
 
@@ -103,13 +113,13 @@ class _EdgeObjective:
         self.consistency = jax.jit(self._consistency)
         self.scale = jax.jit(self._scale)
 
-    def _batches(self, q, y, precision):
-        o = self.ops
-        return (
-            *o.views(q),
-            o.batches(y),
-            o.batches(precision),
-        )
+    def _batches(self, q):
+        return (jnp.arange(self.ops.nb), *self.ops.views(q))
+
+    def _z(self, z, y, precision):
+        """One batch's geometry, data and precision, read from the level's stacks."""
+        i, *views = z
+        return (*views, y.read(i), self.ops.batch_of(precision, i))
 
     def _residual(self, z, x):
         nominal, qb, valid, scales, frames, yy, w = z
@@ -123,14 +133,14 @@ class _EdgeObjective:
         o, h = self.ops, self.filter
 
         def step(z):
-            nominal, qb, valid, scales, frames, yy, w = z
+            nominal, qb, valid, scales, frames, yy, w = self._z(z, y, precision)
             w = o.batch_precision(w, valid)
             raw = o.columns(nominal, qb, valid, x, scales=scales, frames=frames)
             r = h.forward(raw[:, 0] - yy, w)
             res, _, jw = robust_batch(r, h.forward(raw[:, 1:], w[:, None]), w, delta)
             return column_score(jw, res), column_gram(jw), robust_value(r, w, delta)
 
-        g, gram, energy = jax.lax.map(step, self._batches(q, y, precision))
+        g, gram, energy = jax.lax.map(step, self._batches(q))
         n, k = o.n, g.shape[-1]
         return (
             o.parameters.reduce_score(g.reshape(o.padded_n, k)[:n]),
@@ -140,17 +150,18 @@ class _EdgeObjective:
 
     def _value(self, q, x, y, precision, delta):
         def step(total, z):
+            z = self._z(z, y, precision)
             w = self.ops.batch_precision(z[-1], z[2])
             return total + robust_value(self._residual(z, x), w, delta), None
 
-        return jax.lax.scan(step, jnp.asarray(0.0, jnp.float64), self._batches(q, y, precision))[0]
+        return jax.lax.scan(step, jnp.asarray(0.0, jnp.float64), self._batches(q))[0]
 
     def _consistency(self, q, x, y, precision):
         """Per-view mean energy of the smooth residual left after the best pose step."""
         o, h = self.ops, self.filter
 
         def step(z):
-            nominal, qb, valid, scales, frames, yy, w = z
+            nominal, qb, valid, scales, frames, yy, w = self._z(z, y, precision)
             w = o.batch_precision(w, valid)
             raw = o.columns(nominal, qb, valid, x, scales=scales, frames=frames)
             r, j = raw[:, 0] - yy, raw[:, 1:]
@@ -164,38 +175,38 @@ class _EdgeObjective:
             mass = jnp.maximum(jnp.sum(w, axis=(-1, -2)), 1.0)
             return jnp.sum(w * photometric**2, axis=(-1, -2)) / mass
 
-        return jax.lax.map(step, self._batches(q, y, precision)).reshape(-1)[: o.n]
+        return jax.lax.map(step, self._batches(q)).reshape(-1)[: o.n]
 
     def _scale(self, q, x, y, precision):
         """Median over views of each view's MAD of the filtered residual."""
 
         def step(z):
+            z = self._z(z, y, precision)
             w = self.ops.batch_precision(z[-1], z[2])
             r = jnp.where(w > 0, self._residual(z, x), jnp.nan)
             med = jnp.nanmedian(r, axis=(-1, -2), keepdims=True)
-            return 1.482602218505602 * jnp.nanmedian(jnp.abs(r - med), axis=(-1, -2))
+            return MAD_TO_SD * jnp.nanmedian(jnp.abs(r - med), axis=(-1, -2))
 
-        return jnp.nanmedian(
-            jax.lax.map(step, self._batches(q, y, precision)).reshape(-1)[: self.ops.n]
-        )
+        return jnp.nanmedian(jax.lax.map(step, self._batches(q)).reshape(-1)[: self.ops.n])
 
 
 class _Refinement:
     """The fixed-volume edge objective, its anchored prior and one damped step."""
 
-    def __init__(self, x, y, precision, prior, ops, sigma, c0) -> None:
+    def __init__(self, x, y, precision, prior, objective, ops, sigma, c0) -> None:
         self.x, self.y, self.precision = x, y, precision
         self.prior, self.ops, self.c0 = prior, ops, c0
-        self.objective = _EdgeObjective(ops)
+        self.objective = objective
         q = ops.pad_poses(c0)
         model_sigma = float(self.objective.scale(q, x, y, precision))
         if not np.isfinite(model_sigma):
             raise ValueError("no finite residual scale for the pose refinement")
-        self.delta = max(_WIDTH_SIGMA * float(sigma), _WIDTH_SIGMA * model_sigma, 1e-8)
+        self.delta = max(LOSS_WIDTH_SIGMAS * float(sigma), LOSS_WIDTH_SIGMAS * model_sigma, 1e-8)
         self.first = self.objective.stats(q, x, y, precision, self.delta)
         gram = self.first[1]
         fisher = jnp.median(jnp.trace(gram, axis1=1, axis2=2))
-        self.weight = float(sigma * jnp.sqrt(fisher) * np.sqrt(2 * np.log(ops.n)))
+        self.photon_weight = float(sigma * jnp.sqrt(fisher) * np.sqrt(2 * np.log(ops.n)))
+        self.weight: float | tuple[float, float] = self.photon_weight
         energy = self.objective.consistency(q, x, y, precision)
         self.anchor = relative_precision(energy, float(sigma))[:, None, None] * gram
 
@@ -223,7 +234,7 @@ class _Refinement:
         gp = g + prior.apply(c, wpose) + change
         pd = jnp.diagonal(gram, axis1=1, axis2=2)
         pd = jnp.maximum(pd, jnp.maximum(jnp.max(gram), 1e-8) * 0.01)
-        for _ in range(4):
+        for attempt in range(4):
             damped = gram + anchor + jax.vmap(jnp.diag)(lm * pd + 1e-10)
             dc = -prior.innovation_solve(damped, wpose, gp)
             slope = float(jnp.vdot(gp, dc))
@@ -231,6 +242,9 @@ class _Refinement:
                 raise FloatingPointError("non-finite pose refinement slope")
             if slope >= 0:
                 return "stationary"
+            # Raised damping shrinks a proposal without evidence of convergence.
+            if not attempt and lm <= _LM_INITIAL and _rms(prior.expand(dc)) < _FP32_STEP_PX:
+                return "pose_steps_below_tolerance"
             for ls in range(8):
                 alpha = 0.5**ls
                 fn = self.value(c + alpha * dc)
@@ -240,16 +254,81 @@ class _Refinement:
         return "line_search_stalled"
 
 
-def refine(x, p, y, precision, prior, *, ops, sigma):
-    """Refine local innovations; the jointly fitted global values stay fixed."""
-    if prior.nlocal == 0:
-        return p, {"status": "no_local_parameters", "steps": []}
+def _rms(steps):
+    return float(jnp.sqrt(jnp.mean(jnp.sum(steps**2, axis=1))))
+
+
+def refine(x, p, y, precision, prior, *, ops, sigma, last=None, placement=None):
+    """Refine local innovations; the jointly fitted global values stay fixed.
+
+    The translations' prior weight takes the ``last`` level's error scale (its
+    ``translation_noise`` in place of the photon standard error, with its ``pose_fisher``):
+    the same multiplier on this stage's photon weight, written so that sigma cancels.
+    Rotation increments keep the photon weight. The stage is a level for the device:
+    its data and precision are placed and allocated first (``placement`` as for a
+    level) and released at its end. Returns the poses, the record, and each view's
+    offset and ramp and residual energy at the result (``Operators.view_summary``).
+    """
+    start = time.perf_counter()
+    objective = _EdgeObjective(ops)
+    transients = _transients(objective, x, prior, ops, precision)
+    reserve = transient_reserve(transients)
+    names = ("y", "precision")
+    stacks = level_stacks(ops, y, precision, reserve=reserve, names=names, placement=placement)
+    try:
+        y, precision = stacks["y"], stacks.get("precision")
+        if prior.nlocal == 0:
+            c, record = p, {"status": "no_local_parameters", "steps": []}
+        else:
+            c, record = _refine(
+                x, p, y, precision, prior, objective, ops=ops, sigma=sigma, last=last
+            )
+        summary = ops.view_summary(ops.pad_poses(c), x, y, precision)
+        summary = tuple(np.asarray(a) for a in summary)
+    except jax.errors.JaxRuntimeError as err:
+        raise unplaced(err, stacks) from err
+    finally:
+        stacks.close()
+    stacks_record = {**stacks.record(), "transients": transients}
+    record = {**record, "seconds": time.perf_counter() - start, "stacks": stacks_record}
+    return c, record, summary
+
+
+def _transients(objective, x, prior, ops, precision):
+    """The temporary bytes of the stage's compiled functions, from their compiles here.
+
+    Its stacks are resident in the compile; the calls later reuse it.
+    """
+    specs = ops.stack_specs(precision)
+    weights = None if precision is None else Stack.shaped(specs["precision"], ops.batch)
+    q = jax.eval_shape(ops.pad_poses, jax.ShapeDtypeStruct((prior.size,), jnp.float64))
+    data = (q, x, Stack.shaped(specs["y"], ops.batch), weights)
+    out = {
+        "stats": temporaries(objective.stats, *data, 1.0),
+        "value": temporaries(objective.value, *data, 1.0),
+        "consistency": temporaries(objective.consistency, *data),
+        "scale": temporaries(objective.scale, *data),
+        "summary": temporaries(ops.view_summary, *data),
+    }
+    if prior.nlocal:
+        out["innovation_solve"] = prior.temporaries("innovation_solve")
+    return out
+
+
+def _refine(x, p, y, precision, prior, objective, *, ops, sigma, last):
     c = prior.project_gauge(jnp.asarray(p, jnp.float64).reshape(-1))
-    y = ops.pad_images(y)
-    precision = ops.pad_precision(precision)
-    problem = _Refinement(x, y, precision, prior, ops, sigma, c)
+    problem = _Refinement(x, y, precision, prior, objective, ops, sigma, c)
+    if last is not None and last["translation_noise"] is not None:
+        fisher = float(jnp.median(jnp.trace(problem.first[1], axis1=1, axis2=2)))
+        scale = float(np.sqrt(fisher * last["pose_fisher"] * 2 * np.log(ops.n)))
+        problem.weight = (last["translation_noise"] * scale, problem.photon_weight)
     stats = problem.first
-    f, lm, status, steps = float(stats[2] + problem.penalty(c)), 0.01, "budget_exhausted", []
+    f, lm, status, steps = (
+        float(stats[2] + problem.penalty(c)),
+        _LM_INITIAL,
+        "step_budget_reached",
+        [],
+    )
     for it in range(_ITERATIONS):
         if it:
             stats = problem.objective.stats(ops.pad_poses(c), x, y, precision, problem.delta)
@@ -258,10 +337,7 @@ def refine(x, p, y, precision, prior, *, ops, sigma):
             status = result
             break
         c, f, alpha, dc, lm = result
-        step = float(jnp.sqrt(jnp.mean(jnp.sum((alpha * prior.expand(dc)) ** 2, axis=1))))
+        step = _rms(alpha * prior.expand(dc))
         steps.append({"objective": f, "pose_step_rms": step, "line_step": alpha, "lm": lm})
         lm = max(1e-5, lm * 0.5)
-        if step < 1e-5:
-            status = "converged"
-            break
     return c, {"status": status, "steps": steps, "delta": problem.delta}

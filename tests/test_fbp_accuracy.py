@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import tomojax as tj
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.recon import FBPConfig, FBPHostConfig, fbp, fbp_host
 
@@ -59,7 +60,6 @@ def test_fbp_reconstructs_analytic_gaussian_in_physical_units(spacing: float, nu
     [
         "jax",
         pytest.param("cuda", marks=pytest.mark.gpu),
-        pytest.param("helper", marks=pytest.mark.gpu),
     ],
 )
 @pytest.mark.parametrize("nu", [4, 5])
@@ -85,15 +85,11 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
     y = (np.arange(7) - 3) * 1.2 - 2.3
     # Midpoint angular quadrature over the scanned arc: end views cover half a gap beyond.
     weights = np.deg2rad([31.0, 58.5, 86.0])
-    if backend == "helper":
-        weights = np.full(3, np.pi / len(angles))
     expected = np.zeros((7, 9), dtype=np.float64)
     outside_samples = 0
     for angle, row, view_weight in zip(angles, data[:, 0], weights, strict=True):
         radians = np.deg2rad(float(angle))
         u = np.cos(radians) * x[None, :] - np.sin(radians) * y[:, None]
-        if backend == "helper":
-            u += 2.2
         pixel = (u - 0.27) / 0.7 + (nu - 1) / 2
         lower = np.floor(pixel).astype(int)
         fraction = pixel - lower
@@ -106,18 +102,7 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
             kernel[odd] = -1 / (np.pi**2 * offset[odd] ** 2 * 0.7)
             expected += view_weight * weight * np.sum(kernel * row, axis=-1)
     assert outside_samples > expected.size
-    if backend == "helper":
-        from tomojax.recon.api import run_parallel_fbp_direct_cuda
-
-        poses = np.array([geometry.pose_for_view(i) for i in range(len(angles))], np.float32)
-        poses[:, 0, 3] = 2.2
-        actual = np.asarray(
-            run_parallel_fbp_direct_cuda(poses, data, grid=grid, detector=detector, filter="ramp")
-        )[0] * (np.pi / len(angles))
-    else:
-        actual = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend=backend)))[
-            0
-        ]
+    actual = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend=backend)))[0]
     np.testing.assert_allclose(actual, expected, rtol=4e-5, atol=2e-6)
 
 
@@ -190,7 +175,7 @@ def test_fbp_is_invariant_to_change_of_length_units(use_explicit_detector_grid: 
                 grid,
                 detector,
                 jnp.asarray(projections * scale),
-                config=FBPConfig(views_per_batch=2),
+                config=FBPConfig(),
                 det_grid=det_grid,
             )
         )
@@ -445,3 +430,73 @@ def test_cuda_fbp_partial_blocks_and_accumulation(mode, run, nz, first_row):
         np.testing.assert_allclose(
             actual, expected + (0 if initial is None else offset), rtol=5e-5, atol=3e-5
         )
+
+
+@pytest.mark.parametrize("arc", ["half", "irregular"])
+def test_fbp_of_a_rolled_detector_matches_its_unrolled_equivalent(arc: str) -> None:
+    grid = Grid(32, 32, 8, 1.0, 1.0, 0.8)
+    detector = Detector(56, 28, 1.0, 0.7, center=(-0.6, 0.3))
+    angles = (
+        np.arange(0, 180, 2.0)
+        if arc == "half"
+        else np.sort(np.random.default_rng(3).uniform(0, 150, 80))
+    )
+    theta = np.deg2rad(angles)
+    sigma = 3.1
+    volumes = []
+    for roll_deg in (0.0, 4.0):
+        roll = np.deg2rad(roll_deg)
+        xr = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
+        zr = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
+        u = detector.center[0] + np.cos(roll) * xr[None, :] - np.sin(roll) * zr[:, None]
+        v = detector.center[1] + np.sin(roll) * xr[None, :] + np.cos(roll) * zr[:, None]
+        centre_u = 1.2 * np.cos(theta) + 2.0 * np.sin(theta)
+        data = (
+            np.sqrt(2 * np.pi)
+            * sigma
+            * np.exp(-0.5 * ((u - centre_u[:, None, None]) ** 2 + (v - 0.7) ** 2) / sigma**2)
+        )
+        geometry = ParallelGeometry(grid, detector, angles, detector_roll_deg=roll_deg)
+        scan = tj.Scan(data.astype(np.float32), geometry)
+        volumes.append(np.asarray(tj.reconstruct(scan, "fbp").volume))
+    scale = np.linalg.norm(volumes[0])
+    assert np.linalg.norm(volumes[1] - volumes[0]) < 5e-3 * scale
+
+
+def test_fbp_rejects_a_detector_grid_that_is_not_a_moved_lattice() -> None:
+    grid = Grid(4, 4, 2, 1.0, 1.0, 1.0)
+    detector = Detector(6, 2, 1.0, 1.0)
+    geometry = ParallelGeometry(grid, detector, [0.0, 60.0, 120.0])
+    u = (np.arange(6) - 2.5) * 1.3  # stretched pitch: not a rigid motion
+    det_grid = (jnp.asarray(np.tile(u, 2)), jnp.asarray(np.repeat([-0.5, 0.5], 6)))
+    with pytest.raises(ValueError, match="rotated and shifted"):
+        fbp(geometry, grid, detector, jnp.zeros((3, 2, 6)), det_grid=det_grid)
+
+
+@pytest.mark.parametrize("filter_name", ["hann", "shepp-logan"])
+def test_oblique_fbp_window_follows_the_ramp_direction(filter_name) -> None:
+    # check-public-imports: allow-private
+    from tomojax.recon.fbp import _filter_views
+
+    # A ramp purely along v (rotation about lab x) must filter columns exactly as
+    # the separable path filters rows: window included, not just the ramp.
+    detector = Detector(40, 40, 1.0, 1.0)
+    spectrum = rfft_filter_array(filter_name, detector.nu, detector.du, jnp.float32)
+    rows = jnp.asarray(np.random.default_rng(3).normal(size=(1, 40, 40)), jnp.float32)
+    params = jnp.asarray([[[0.0], [1.0], [1.0], [0.0], [0.0], [1.0]]], jnp.float32)[..., 0]
+    actual = _filter_views(
+        rows, jnp.ones(1), params, spectrum, jnp.float32(0.0), detector=detector, separable=False
+    )
+    expected = jnp.swapaxes(fft_filter_rows(jnp.swapaxes(rows, 1, 2), spectrum), 1, 2)
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-3)
+
+
+def test_cone_fbp_refuses_a_constant_scale_it_would_ignore() -> None:
+    from tomojax.geometry import ConeBeam, ConeGeometry
+
+    grid, detector = Grid(4, 4, 4, 1.0, 1.0, 1.0), Detector(6, 6, 1.0, 1.0)
+    geometry = ConeGeometry(
+        grid, detector, np.linspace(0, 360, 8, endpoint=False), ConeBeam(20, 30)
+    )
+    with pytest.raises(ValueError, match="exact view weights"):
+        fbp(geometry, grid, detector, jnp.zeros((8, 6, 6)), config=FBPConfig(scale=0.3))

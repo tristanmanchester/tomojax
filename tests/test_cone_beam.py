@@ -478,7 +478,7 @@ def test_fbp_reconstructs_volumes_larger_than_the_device_on_the_host(monkeypatch
     data = np.random.default_rng(4).random((24, detector.nv, detector.nu)).astype(np.float32)
     on_device, info = reconstruct_arrays("fbp", geometry, grid, detector, data)
     assert "host_slabs" not in info
-    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 4096)
+    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda device=None: 4096)
     volume, info = reconstruct_arrays("fbp", geometry, grid, detector, data)
     assert isinstance(volume, np.ndarray) and info["host_slabs"]
     # On CUDA, slabs' shifted detector windows round the texture unit's 1/256
@@ -515,12 +515,12 @@ def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):
     assert info["shape_zyx"] == [4, 5, 6] and info["voxel_size_xyz"] == [0.5, 0.5, 0.25]
 
 
-@pytest.mark.parametrize(
-    ("shape", "stored_as", "loads"), [((3, 4, 5), "xyz", True), ((3, 4, 3), "xyz", False)]
-)
-def test_export_and_previews_decide_an_untagged_volume_as_the_loader_does(
-    tmp_path: Path, shape: tuple[int, int, int], stored_as: str, loads: bool
+@pytest.mark.parametrize("shape", [(3, 4, 5), (3, 4, 3)])
+def test_export_and_previews_refuse_an_untagged_volume_as_the_loader_does(
+    tmp_path: Path, shape: tuple[int, int, int]
 ):
+    # A saved volume without volume_axes_order is an older TomoJAX file (4aa6c997): its
+    # order is not guessed from its shape, whether or not the shape would decide it.
     import h5py
 
     # check-public-imports: allow-private
@@ -545,16 +545,11 @@ def test_export_and_previews_decide_an_untagged_volume_as_the_loader_does(
         del group["volume"], group.attrs["volume_axes_order"]
         group["volume"] = volume.transpose(2, 1, 0)
     out = tmp_path / "out.raw"
-    if loads:
-        assert main(["export", str(path), "-o", str(out)]) == 0
-        np.testing.assert_array_equal(np.fromfile(out, "<f4").reshape(shape), volume)
-        np.testing.assert_array_equal(_hdf5_images(path)["slice_z"].shape, (ny, nx))
-    else:
-        with pytest.raises(SystemExit):
-            main(["export", str(path), "-o", str(out)])
-        assert not out.exists()
-        with pytest.raises(ValueError, match="axis order is unknown"):
-            _hdf5_images(path)
+    with pytest.raises(SystemExit):
+        main(["export", str(path), "-o", str(out)])
+    assert not out.exists()
+    with pytest.raises(ValueError, match="does not record its axis order"):
+        _hdf5_images(path)
 
 
 @pytest.mark.gpu
@@ -605,3 +600,139 @@ def test_cuda_cone_entry_can_lower_and_differentiate_on_cpu(monkeypatch):
         ):
             assert a.devices() == b.devices() == {jax.devices("cpu")[0]}
             np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-6)
+
+
+def test_nikon_flat_and_dark_tiffs_take_the_projection_panel_orientation(tmp_path: Path):
+    import imageio.v3 as iio
+
+    import tomojax as tj
+
+    views, nv, nu = 4, 6, 8
+    rows, cols = np.mgrid[0:nv, 0:nu]
+    flat = 50000.0 * (1 + 0.4 * cols / nu + 0.3 * rows / nv)
+    dark = 100.0 + 20.0 * cols + 5.0 * rows
+    data = np.linspace(0.1, 0.9, views * nv * nu).reshape(views, nv, nu)
+    counts = np.exp(-data) * (flat - dark) + dark
+    # Nikon TIFFs, sample and calibration alike, use a top-right panel origin.
+    for i, image in enumerate(counts):
+        iio.imwrite(tmp_path / f"part_{i + 1:04d}.tif", image[::-1, ::-1].astype(np.float32))
+    iio.imwrite(tmp_path / "flat.tif", flat[::-1, ::-1].astype(np.float32))
+    iio.imwrite(tmp_path / "dark.tif", dark[::-1, ::-1].astype(np.float32))
+    (tmp_path / "part.xtekct").write_text(
+        "[XTekCT]\nName=part\nInputSeparator=_\nSrcToObject=12.0\nSrcToDetector=18.0\n"
+        f"DetectorPixelsX={nu}\nDetectorPixelsY={nv}\nDetectorPixelSizeX=0.075\n"
+        "DetectorPixelSizeY=0.075\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "CentreOfRotationTop=0\nCentreOfRotationBottom=0\n"
+        "VoxelsX=8\nVoxelsY=8\nVoxelsZ=6\nVoxelSizeX=0.05\nVoxelSizeY=0.05\nVoxelSizeZ=0.05\n"
+        f"Projections={views}\nInitialAngle=0\nAngularStep=90\n"
+    )
+    frames = tj.load_frames(
+        tmp_path / "part.xtekct", flats=tmp_path / "flat.tif", darks=tmp_path / "dark.tif"
+    )
+    scan = frames.corrected()
+    np.testing.assert_allclose(np.asarray(scan.projections), data, atol=1e-5)
+
+
+@pytest.mark.parametrize("backend", ["jax", cuda])
+@pytest.mark.parametrize("offset", [4.0, 6.0])
+def test_fdk_short_scan_on_an_offset_detector_matches_a_centred_one(backend, offset):
+    # The phantom lies within the short side's field, so every line is measured;
+    # rays whose conjugates fall off the panel must keep their whole weight.
+    n = 32
+    grid = Grid(n, n, n, 1.0, 1.0, 1.0)
+    shapes = _ellipsoids(20.0)
+    truth = _voxelise(grid, shapes)
+    angles = np.linspace(0.0, 230.0, 115, endpoint=False)
+    errors = []
+    centred = Detector(48, 48, 1.0, 1.0)
+    for detector in (centred, Detector(48 - 2 * int(offset), 48, 1.0, 1.0, (offset, 0.0))):
+        geometry = ConeGeometry(grid, detector, angles, ConeBeam(96, 144))
+        config = FDKConfig(backend=backend)
+        volume = fdk(geometry, grid, detector, _analytic(shapes, geometry), config=config)
+        errors.append(np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth))
+    assert errors[1] < 1.03 * errors[0] < 0.1
+
+
+def test_nikon_images_resized_from_the_listed_panel_are_rejected(tmp_path: Path):
+    import imageio.v3 as iio
+
+    import tomojax as tj
+
+    for i in range(2):
+        iio.imwrite(tmp_path / f"part_{i + 1:04d}.tif", np.full((3, 4), 100, np.uint16))
+    (tmp_path / "part.xtekct").write_text(
+        "[XTekCT]\nName=part\nInputSeparator=_\nSrcToObject=12.0\nSrcToDetector=18.0\n"
+        "DetectorPixelsX=8\nDetectorPixelsY=6\nDetectorPixelSizeX=0.075\n"
+        "DetectorPixelSizeY=0.075\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "CentreOfRotationTop=0\nCentreOfRotationBottom=0\nWhiteLevel=1000\n"
+        "VoxelsX=8\nVoxelsY=8\nVoxelsZ=6\nVoxelSizeX=0.05\nVoxelSizeY=0.05\nVoxelSizeZ=0.05\n"
+        "Projections=2\nInitialAngle=0\nAngularStep=90\n"
+    )
+    with pytest.raises(ValueError, match="cropped or resized"):
+        tj.load_frames(tmp_path / "part.xtekct", darks=0)
+
+
+def test_a_saved_cone_beam_round_trips_and_an_old_rolled_one_is_refused():
+    # check-public-imports: allow-private
+    from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
+    from tomojax.geometry import ConeBeam
+
+    beam = ConeBeam(40.0, 60.0, detector_roll_deg=1.5, detector_pitch_deg=-0.5)
+    assert ConeBeam.from_dict(beam.to_dict()) == beam
+    old = {k: v for k, v in beam.to_dict().items() if k != ROLL_CONVENTION_KEY}
+    with pytest.raises(ValueError, match=r"TomoJAX 0\.3 or earlier.*detector_roll_deg=-1\.5"):
+        ConeBeam.from_dict(old)
+    # Without a roll the two conventions agree, so an old file loads as it was.
+    unrolled = {**old, "detector_roll_deg": 0.0}
+    assert ConeBeam.from_dict(unrolled) == ConeBeam(40.0, 60.0, detector_pitch_deg=-0.5)
+
+
+def test_a_rolled_cone_scan_saves_and_loads_to_the_same_detector_frame(tmp_path):
+    import h5py
+
+    import tomojax as tj
+
+    # check-public-imports: allow-private
+    from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
+
+    path = tmp_path / "rolled.nxs"
+    grid, detector = tj.Grid(3, 3, 2, 0.8, 1.1, 0.9), tj.Detector(3, 2, 0.9, 1.0)
+    beam = tj.ConeBeam(40, 60, detector_roll_deg=2.0)
+    geometry = tj.ConeGeometry(grid, detector, [0.0, 90.0], beam)
+    tj.save(path, tj.Scan(np.ones((2, 2, 3), np.float32), geometry))
+    loaded = tj.load(path).geometry
+    pairs = zip(loaded.beam.detector_frame(detector), beam.detector_frame(detector), strict=True)
+    for got, want in pairs:
+        np.testing.assert_allclose(got, want, atol=1e-12)
+
+    # The same file as TomoJAX 0.3 wrote it: no convention marker.
+    def strip(name, obj):
+        for key, value in list(obj.attrs.items()):
+            if isinstance(value, str | bytes) and ROLL_CONVENTION_KEY in str(value):
+                obj.attrs[key] = _without_marker(value)
+        if isinstance(obj, h5py.Dataset) and obj.dtype.kind in "OS":
+            text = obj[()]
+            if ROLL_CONVENTION_KEY in str(text):
+                del handle[name]
+                handle[name] = _without_marker(text)
+
+    with h5py.File(path, "a") as handle:
+        handle.visititems(strip)
+    with pytest.raises(ValueError, match="TomoJAX 0.3 or earlier"):
+        tj.load(path)
+
+
+def _without_marker(text):
+    # check-public-imports: allow-private
+    from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
+
+    text = text.decode() if isinstance(text, bytes) else str(text)
+
+    def drop(value):
+        if isinstance(value, dict):
+            return {k: drop(v) for k, v in value.items() if k != ROLL_CONVENTION_KEY}
+        if isinstance(value, list):
+            return [drop(v) for v in value]
+        return value
+
+    return json.dumps(drop(json.loads(text)))

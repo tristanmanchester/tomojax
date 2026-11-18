@@ -91,7 +91,7 @@ operation returns a result that carries its geometry:
 ```python
 import tomojax as tj
 
-scan = tj.load("scan.nxs")                        # or a Nikon .xtekct
+scan = tj.load("scan.nxs")
 recon = tj.reconstruct(scan)                      # choose from the geometry
 recon = tj.reconstruct(scan, "cgls", iterations=50)
 result = tj.align(scan, fit=("translations", "rotations"))     # result.scan carries the corrections

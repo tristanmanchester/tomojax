@@ -1,6 +1,7 @@
 """The reusable projector is the matched functional pair, with stable geometry."""
 
 from dataclasses import replace
+import importlib.util
 import math
 
 import jax
@@ -19,10 +20,14 @@ def _geometry(kind):
         return tj.ConeGeometry(*args, tj.ConeBeam(30.0, 50.0), tilt_deg=3)
     if kind == "lamino":
         return tj.LaminographyGeometry(*args, tilt_deg=31)
+    if kind == "lamino-rolled":
+        return tj.LaminographyGeometry(*args, tilt_deg=31, detector_roll_deg=7.0)
+    if kind == "parallel-rolled":
+        return tj.ParallelGeometry(*args, detector_roll_deg=7.0)
     return tj.ParallelGeometry(*args)
 
 
-@pytest.mark.parametrize("kind", ["parallel", "lamino", "cone"])
+@pytest.mark.parametrize("kind", ["parallel", "parallel-rolled", "lamino", "lamino-rolled", "cone"])
 def test_operator_matches_functions_and_independent_transpose(kind):
     geometry = _geometry(kind)
     operator = tj.Projector(geometry)
@@ -37,6 +42,27 @@ def test_operator_matches_functions_and_independent_transpose(kind):
     np.testing.assert_allclose(jnp.vdot(projected, y), jnp.vdot(x, adjoint), atol=1e-4, rtol=2e-5)
     compiled = jax.jit(lambda v: operator.adjoint(operator(v)))
     np.testing.assert_allclose(compiled(x), operator.adjoint(projected), atol=1e-5, rtol=3e-5)
+
+
+@pytest.mark.parametrize("kind", ["parallel", "lamino"])
+def test_rolled_detector_projects_as_the_alignment_folds_it(kind):
+    # The joint fit writes a parallel detector roll on the poses (an inverse rotation about the
+    # beam through the detector centre) and projects with Joseph planes; tj.project on the
+    # rolled geometry must be the same model, not a different one.
+    from tomojax.forward import project_joseph
+    from tomojax.geometry import stack_view_poses
+
+    rolled, flat = _geometry(f"{kind}-rolled"), _geometry(kind)
+    poses = np.asarray(stack_view_poses(flat, len(flat.angles)), np.float64)
+    a = np.deg2rad(7.0)
+    inverse = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+    pivot = np.array([flat.detector.center[0], 0.0, flat.detector.center[1]])
+    folded = poses.copy()
+    folded[:, :3, :3] = inverse @ poses[:, :3, :3]
+    folded[:, :3, 3] = (poses[:, :3, 3] - pivot) @ inverse.T + pivot
+    volume = jnp.asarray(np.random.default_rng(11).normal(size=(3, 5, 7)), jnp.float32)
+    expected = project_joseph(volume, jnp.asarray(folded, jnp.float32), flat.grid, flat.detector)
+    np.testing.assert_allclose(tj.project(rolled, volume), expected, atol=3e-6, rtol=3e-6)
 
 
 def test_snapshot_grid_override_and_shape_checks():
@@ -145,9 +171,11 @@ def test_private_storage_calls_give_the_public_bits(kind, monkeypatch):
     rng = np.random.default_rng(3)
     x = jnp.asarray(rng.normal(size=(4, 5, 7)), dtype=jnp.float32)
     y = jnp.asarray(rng.normal(size=(4, 4, 9)), dtype=jnp.float32)
+    # The prerequisites, checked apart from the feature: then the builder must exist.
+    if jax.default_backend() != "gpu" or importlib.util.find_spec("cupy") is None:
+        pytest.skip("requires CUDA and CuPy")
     operator = tj.Projector(geometry)
-    if operator._build_private is None:
-        pytest.skip("requires the CUDA Joseph projector")
+    assert operator._build_private is not None
     results = [operator(x), operator.adjoint(y)]
     traced = jax.jit(lambda v, w: (tj.project(geometry, v), tj.backproject(geometry, w)))(x, y)
     monkeypatch.setattr("tomojax.recon._operators.device_free_memory_bytes", lambda: 0)

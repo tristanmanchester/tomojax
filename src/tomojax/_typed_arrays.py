@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import Protocol, cast
 
 import numpy as np
 from numpy.typing import NDArray
 
-if TYPE_CHECKING:
-    import jax
-
-type FloatArray = NDArray[np.floating[Any]]
 type Float32Array = NDArray[np.float32]
 type Float64Array = NDArray[np.float64]
-type Int64Array = NDArray[np.int64]
-type BoolArray = NDArray[np.bool_]
 
 
 class Device(Protocol):
@@ -28,13 +22,6 @@ class Device(Protocol):
 
     @property
     def local_hardware_id(self) -> int: ...
-
-
-def jax_float32_array(value: object) -> jax.Array:
-    """Convert an array-like value to a JAX float32 array."""
-    import jax.numpy as jnp
-
-    return cast("jax.Array", jnp.asarray(value, dtype=np.float32))
 
 
 def numpy_array(value: object) -> NDArray[np.object_]:

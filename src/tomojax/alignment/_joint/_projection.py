@@ -7,7 +7,7 @@ for a cone beam, lab y translation. ``scales`` converts each numerical parameter
 to radians or physical lengths; it may vary by view.
 """
 
-from typing import NamedTuple
+from typing import NamedTuple, overload
 
 import jax
 import jax.numpy as jnp
@@ -21,6 +21,7 @@ from tomojax.core.cone import (
     frame_coefficients,
 )
 from tomojax.core.joseph import (
+    active_voxels,
     forward_project_planes,
     plane_coefficients,
     plane_pose_columns,
@@ -77,14 +78,68 @@ def rigid_gauge(nominal, scales):
     return out.reshape(n * k, 6)
 
 
+def shared_axis_patterns(nominal, scales, fit, pivot):
+    """Per-view pose tangents that a fitted tilt or roll can also be written as.
+
+    A tilt turns every nominal orientation R by a lab ``Rx``: in the object frame
+    that is a rotation about ``R.T @ x``, which per-view rotations express exactly
+    when it has no spin component (axial and x-tilted axes). A parallel roll turns
+    each pose about the lab beam axis through the detector ``pivot``: the rotation
+    ``R.T @ y`` and a translation about the pivot. A cone roll turns the detector
+    instead, which equals that only for an object on the central ray; the same
+    tangent is used. Columns follow :func:`rigid_gauge`'s layout, one per radian of
+    the shared parameter, so a fit can give the shared parameter the pattern and
+    keep the per-view poses free of it.
+    """
+    nominal = np.asarray(nominal, np.float64)
+    scales = np.broadcast_to(np.asarray(scales, np.float64), (len(nominal), np.shape(scales)[-1]))
+    n, k = scales.shape
+    columns = []
+    for name, axis in (("tilt", 0), ("roll", 1)):
+        if (
+            name not in fit
+            or "rotations" not in fit
+            or (name == "roll" and "translations" not in fit)
+        ):
+            continue
+        tangent = np.zeros((n, k))
+        tangent[:, :3] = nominal[:, axis, :3] / scales[:, :3]  # R.T @ e_axis, object frame
+        if name == "roll":
+            arm = nominal[:, :3, 3] - np.asarray([pivot[0], 0.0, pivot[1]])
+            shift = np.cross(np.asarray([0.0, 1.0, 0.0]), arm)
+            tangent[:, 3:] = shift[:, [0, 2, 1][: k - 3]] / scales[:, 3:]
+        columns.append(tangent.reshape(-1))
+    return np.column_stack(columns) if columns else None
+
+
+def fit_gauge(nominal, scales, fit, pivot, frames=None):
+    """The fit's gauge columns and their constraint rows (None for parallel beams).
+
+    The rigid object motions (:func:`rigid_gauge`, or :func:`cone_gauge` with its
+    constraint for a cone beam) and the per-view patterns a fitted tilt or roll
+    can also be written as (:func:`shared_axis_patterns`): the shared parameter
+    owns those, so the per-view poses carry none of them.
+    """
+    gauge, constraint = (
+        (rigid_gauge(nominal, scales), None)
+        if frames is None
+        else (cone_gauge(nominal, scales, frames), cone_gauge_constraint(nominal, scales, frames))
+    )
+    patterns = shared_axis_patterns(nominal, scales, fit, pivot)
+    if patterns is not None:
+        gauge = np.column_stack([gauge, patterns])
+        constraint = None if constraint is None else np.column_stack([constraint, patterns])
+    return gauge, constraint
+
+
 def cone_gauge(nominal, scales, frames):
     """Rigid object gauge plus the cone's unobservable common physical scale.
 
     With an unknown image and free beam-depth poses, scaling the image support
     by a and its density by 1/a, and setting t' = a*t + (1-a)*source preserves
-    every line integral. The seventh column fixes this similarity gauge to
-    the declared nominal magnification convention; it does not estimate a
-    physical object size from the data.
+    every line integral. The seventh column is that dilation's tangent; the
+    data cannot estimate a physical object size, and :func:`cone_gauge_constraint`
+    chooses the representative.
     """
     nominal = np.asarray(nominal, np.float64)
     frames = np.broadcast_to(np.asarray(frames, np.float64), (len(nominal), 4, 3))
@@ -92,6 +147,26 @@ def cone_gauge(nominal, scales, frames):
     dilation = np.zeros((len(nominal), 6))
     dilation[:, 3:] = (nominal[:, [0, 2, 1], 3] - frames[:, 3, [0, 2, 1]]) / scales[:, 3:]
     return np.column_stack([rigid_gauge(nominal, scales), dilation.reshape(-1)])
+
+
+def cone_gauge_constraint(nominal, scales, frames):
+    """Rows fixing :func:`cone_gauge`: the rigid tangents and the mean beam depth.
+
+    The scale is fixed by keeping the views' mean object displacement along
+    their beam normals at its nominal value, so the declared magnification
+    stands. Constraining the dilation tangent itself would instead pick the
+    representative nearest zero in scaled units, where a common height
+    correction of orbits at different source heights resembles a dilation:
+    it shrank Walnut 1's recorded 0.40 and 0.79 mm orbit offsets by 5%.
+    """
+    nominal = np.asarray(nominal, np.float64)
+    frames = np.broadcast_to(np.asarray(frames, np.float64), (len(nominal), 4, 3))
+    scales = np.broadcast_to(np.asarray(scales, np.float64), (len(nominal), 6))
+    normal = np.cross(frames[:, 1], frames[:, 2])
+    normal /= np.linalg.norm(normal, axis=1, keepdims=True)
+    depth = np.zeros((len(nominal), 6))
+    depth[:, 3:] = normal[:, [0, 2, 1]] * scales[:, 3:]
+    return np.column_stack([rigid_gauge(nominal, scales), depth.reshape(-1)])
 
 
 def cone_parameter_scales(nominal, frames, grid, native):
@@ -152,6 +227,59 @@ def cropped_frames(frames, detector, *, high_u, high_v):
     return out
 
 
+@overload
+def residual_filter(images: np.ndarray) -> np.ndarray: ...
+@overload
+def residual_filter(images: jax.Array) -> jax.Array: ...
+def residual_filter(images):
+    """K = [1, 2, 1] / 4 along u and along v of (..., v, u) images, the edges replicated.
+
+    The alignment compares its model with the data through K at every level: the
+    objective is the robust loss of the profiled K (A x - y), not of A x - y. At the
+    Nyquist frequency a sampled model cannot be right at all, since the alias of an
+    edge there is as large as the signal, so the comparison should not ask for it.
+    [1, 2, 1] / 4 is the shortest zero-phase filter with unit gain at zero frequency
+    and a zero at Nyquist: a projection alternating pixel to pixel costs nothing, a
+    linear trend is unchanged away from the edge, and the smooth pose derivatives
+    keep their size. With the edge replicated (first row [3, 1] / 4) K is symmetric,
+    so it is its own transpose. It is part of the objective, not of the binning.
+    """
+    xp = np if isinstance(images, np.ndarray) else jnp  # host data stay on the host
+
+    def along(a, axis):
+        n = a.shape[axis]
+        if n == 1:
+            return a
+        pad = [(0, 0)] * a.ndim
+        pad[axis] = (1, 1)
+        e = xp.pad(a, pad, mode="edge")
+        left, middle, right = (
+            e[tuple(slice(lo, lo + n) if i == axis else slice(None) for i in range(a.ndim))]
+            for lo in range(3)
+        )
+        return 0.25 * left + 0.5 * middle + 0.25 * right
+
+    return along(along(images, images.ndim - 1), images.ndim - 2)
+
+
+def filtered_precision(precision):
+    """The precision of K-filtered data: zero wherever a tap of K falls on an unmeasured pixel.
+
+    K mixes each pixel with its neighbours, so a filtered sample is known only where all
+    of its taps were measured; elsewhere its precision is zero, the pixel's own otherwise.
+    """
+    if precision is None:
+        return None
+    seen = (precision > 0).astype(np.float32)
+    padded = np.pad(seen, ((0, 0), (1, 1), (1, 1)), mode="edge")
+    nv, nu = seen.shape[1:]
+    whole = np.ones_like(seen)
+    for dv in range(3):  # K along u then v reaches the whole 3 x 3 neighbourhood
+        for du in range(3):
+            whole *= padded[:, dv : dv + nv, du : du + nu]
+    return (precision * whole).astype(precision.dtype)
+
+
 class Projection:
     """Coefficients, fused pose columns and matched image operators for one geometry.
 
@@ -183,13 +311,7 @@ class Projection:
         self.interpolation = interpolation
         self.dofs = 6 if self.cone else 5
         self.backend = backend or ("cuda" if cuda_backend() else "jax")
-        self.diagonal_kind = (
-            "normal_row_sum"
-            if self.cone
-            else "linear_basis_diagonal_proxy"
-            if interpolation == "cubic"
-            else "normal_diagonal"
-        )
+        self.diagonal_kind = "normal_row_sum" if self.cone else "normal_diagonal"
 
     def raw_coefficients(self, poses, frames=None):
         """Unmasked core coefficients; their pose derivative excludes the mask."""
@@ -227,11 +349,20 @@ class Projection:
                 interpolation=self.interpolation,
                 absolute_weights=absolute,
             )
-        return image * cf.valid[:, None, None]
+        return residual_filter(image) * cf.valid[:, None, None]
 
-    def back(self, accumulator, cf, y, *, absolute=False):
-        """Accumulate A.T y (or |A|.T y) over the valid views."""
-        y = y * cf.valid[:, None, None]
+    def active(self, mask):
+        """Work lists for ``back`` when only the nonzero ``mask`` voxels are needed."""
+        if self.cone:
+            return None
+        return active_voxels(mask, backend=self.backend, interpolation=self.interpolation)
+
+    def back(self, accumulator, cf, y, *, absolute=False, active=None):
+        """Accumulate A.T y (or |A|.T y) over the valid views.
+
+        With ``active`` lists, voxels outside their mask may lack the transpose.
+        """
+        y = residual_filter(y * cf.valid[:, None, None])  # K is symmetric: K^T = K
         if self.cone:
             return cone_backproject(
                 y,
@@ -250,6 +381,7 @@ class Projection:
             interpolation=self.interpolation,
             absolute_weights=absolute,
             accumulate=accumulator,
+            active=active,
         )
 
     def columns(self, cf, x, tangent):
@@ -277,16 +409,18 @@ class Projection:
                 lambda dc: jax.jvp(predict, (cf.rays,), (dc,))[1], in_axes=1, out_axes=1
             )(tangent)
             images = jnp.concatenate([predict(cf.rays)[:, None], columns], axis=1)
-        return images * cf.valid[:, None, None, None]
+        return residual_filter(images) * cf.valid[:, None, None, None]
 
     def diagonal(self, cf, sqrtweights, accumulator):
         """Accumulate a positive image preconditioner, preserving the image operator.
 
-        Linear parallel rays use exact ``diag(A.T W A)``. Cubic rays use the
-        corresponding linear-basis diagonal as a positive preconditioner proxy.
-        Cone rays use a conservative row-sum
-        majorizer. Normal matvecs keep all cross terms through the matched
-        forward and transpose. ``diagonal_kind`` records the choice.
+        Parallel rays use the exact ``diag(A.T W A)`` of their own linear or
+        cubic weights, positive on every voxel the operator reaches. Cone rays
+        use a conservative row-sum majorizer. Normal matvecs keep all cross
+        terms through the matched forward and transpose. ``diagonal_kind``
+        records the choice. ``A`` here is the unfiltered operator: the objective's
+        ``residual_filter`` is not in it, so for the filtered normal matrix this is
+        a Jacobi preconditioner, not its diagonal.
         """
         weights = sqrtweights * cf.valid[:, None, None]
         if not self.cone:
@@ -297,15 +431,17 @@ class Projection:
                 self.grid,
                 self.detector,
                 backend=self.backend,
+                interpolation=self.interpolation,
             )
         return self.majorizer(cf, weights, accumulator)
 
     def majorizer(self, cf, sqrtweights, accumulator):
-        """Accumulate |A|.T W |A| 1, bounding A.T W A.
+        """Accumulate (K |A|).T W (K |A|) 1, bounding (K A).T W (K A).
 
         Cubic interpolation has signed lobes. Using A.T W A 1 instead would
         allow cancellation and would not bound the initialization step. Cone
-        and linear-plane kernels are nonnegative.
+        and linear-plane kernels are nonnegative. K (``residual_filter``) has
+        nonnegative taps, so K |A| bounds |K A| elementwise.
         """
         ones = jnp.ones((self.grid.nz, self.grid.ny, self.grid.nx), jnp.float32)
         images = sqrtweights**2 * self.project(cf, ones, absolute=True)

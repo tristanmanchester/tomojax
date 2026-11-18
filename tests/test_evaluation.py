@@ -36,6 +36,14 @@ def test_frozen_masks_and_streamed_scores_match_independent_sums(split):
     assert score.squared_error == pytest.approx(np.sum(w * residual**2), rel=1e-14)
     assert score.target_energy == pytest.approx(np.sum(w * target[test].astype(float) ** 2))
     assert score.count == test.sum()
+    # The ratios against explicit weighted sums, and unchanged by rescaled weights.
+    assert score.weight_sum == pytest.approx(np.sum(w), rel=1e-12)
+    assert score.mse == pytest.approx(np.sum(w * residual**2) / np.sum(w), rel=1e-12)
+    expected_l2 = np.sqrt(np.sum(w * residual**2) / np.sum(w * target[test].astype(float) ** 2))
+    assert score.relative_l2 == pytest.approx(expected_l2, rel=1e-12)
+    rescaled = split.score(prediction, target, weights=7.5 * weights)
+    assert rescaled.mse == pytest.approx(score.mse, rel=1e-12)
+    assert rescaled.relative_l2 == pytest.approx(score.relative_l2, rel=1e-12)
     total = Score(0, 0, 0, 0)
     for start in range(0, split.shape[0], 5):
         v = slice(start, start + 5)
@@ -95,3 +103,11 @@ def test_invalid_splits_do_not_silently_use_training_observations_for_scoring():
             test=np.ones((2, 1, 1), bool),
             specification="{}",
         )
+
+
+@pytest.mark.parametrize("offset", [0, 1, 3])
+def test_interleaved_split_holds_out_exactly_the_offset_views(offset):
+    split = Split.interleaved((24, 2, 31), stride=4, offset=offset)
+    held = np.flatnonzero(np.broadcast_to(split.test, (24, 2, 31))[:, 0, 0])
+    np.testing.assert_array_equal(held, np.arange(offset, 24, 4))
+    assert not np.broadcast_to(split.train, (24, 2, 31))[held].any()

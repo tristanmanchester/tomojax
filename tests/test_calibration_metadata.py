@@ -120,3 +120,42 @@ def test_calibration_variable_from_dict_rejects_unknown_literals(
 
     with pytest.raises(ValueError, match=message):
         CalibrationVariable.from_dict(payload)
+
+
+@pytest.mark.parametrize("segmented", [False, True])
+def test_cone_roll_calibration_rolls_the_beam_like_the_parallel_lattice(segmented) -> None:
+    from tomojax.geometry import ConeBeam, Detector
+
+    beam = ConeBeam(20.0, 40.0).to_dict()
+    meta = (
+        {"cone_segments": [{"views": 1, "cone_beam": beam}] * 2}
+        if segmented
+        else {"cone_beam": beam}
+    )
+    state = CalibrationState(
+        detector=(
+            CalibrationVariable(
+                name="detector_roll_deg",
+                value=5.0,
+                unit="deg",
+                status="estimated",
+                frame="detector",
+            ),
+        )
+    )
+    patch = build_calibrated_geometry_metadata_patch(
+        calibration_state=state,
+        detector={"nu": 4, "nv": 4, "du": 1.0, "dv": 1.0},
+        geometry_meta=meta,
+    )["geometry_meta"]
+    # The parallel-only replay field would leave the cone rays unrolled.
+    assert "detector_roll_deg" not in patch
+    beams = [e["cone_beam"] for e in patch["cone_segments"]] if segmented else [patch["cone_beam"]]
+    for rolled in beams:
+        _, u_dir, _ = ConeBeam.from_dict(rolled).detector_frame(Detector(4, 4, 1.0, 1.0))
+        # The parallel lattice puts u at (cos r, sin r) in lab (x, z).
+        np.testing.assert_allclose(
+            u_dir[[0, 2]],
+            np.cos(np.deg2rad(5.0)) * np.array([1, np.tan(np.deg2rad(5.0))]),
+            atol=1e-12,
+        )

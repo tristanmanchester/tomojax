@@ -6,8 +6,8 @@ forward projections with exact analytic line integrals and FDK volumes with the
 voxelised phantom. TomoJAX and ASTRA run in this process; TIGRE runs in a child
 process because it refuses a GPU on which JAX holds memory. A second scan with
 the rotation axis tilted by ``--tilt-deg`` times the general-geometry kernels.
-Times are the best of ``--repeats`` warm calls, with host-array inputs for
-ASTRA and TIGRE.
+Times are the best of ``--repeats`` warm calls, each library taking and
+returning host arrays; TomoJAX's device-resident times are reported separately.
 
     uv run --no-sync python bench/compare_cone.py --size 256 --views 360 \\
         --output bench/results/cone-256.json
@@ -148,9 +148,14 @@ def run_tomojax(
     forward = jax.jit(lambda x: cone_project(x, coeff, grid, det))
     adjoint = jax.jit(lambda y: cone_backproject(y, coeff, grid, det))
     sync = jax.block_until_ready
-    fp, t_fp = best(lambda: forward(dvol), repeats, sync)
-    _, t_bp = best(lambda: adjoint(ddata), repeats, sync)
-    rec, t_fdk = best(lambda: fdk(geometry, grid, det, ddata), repeats, sync)
+    # ASTRA and TIGRE take and return host arrays: time TomoJAX the same way,
+    # uploading its input and downloading its result inside the timer.
+    fp, t_fp = best(lambda: np.asarray(forward(jnp.asarray(volume))), repeats)
+    _, t_bp = best(lambda: np.asarray(adjoint(jnp.asarray(data))), repeats)
+    rec, t_fdk = best(lambda: np.asarray(fdk(geometry, grid, det, jnp.asarray(data))), repeats)
+    _, r_fp = best(lambda: forward(dvol), repeats, sync)
+    _, r_bp = best(lambda: adjoint(ddata), repeats, sync)
+    _, r_fdk = best(lambda: fdk(geometry, grid, det, ddata), repeats, sync)
     # A tilted rotation axis takes the general (non-separable) kernels.
     tilted = ConeGeometry(
         grid, det, case["angles"], ConeBeam(case["sod"], case["sdd"]), tilt_deg=case["tilt_deg"]
@@ -158,8 +163,8 @@ def run_tomojax(
     coeff_t = cone_coefficients(jnp.asarray(tilted.poses(), jnp.float32), grid, det, tilted.beam)
     forward_t = jax.jit(lambda x: cone_project(x, coeff_t, grid, det))
     adjoint_t = jax.jit(lambda y: cone_backproject(y, coeff_t, grid, det))
-    _, t_fp_t = best(lambda: forward_t(dvol), repeats, sync)
-    _, t_bp_t = best(lambda: adjoint_t(ddata), repeats, sync)
+    _, t_fp_t = best(lambda: np.asarray(forward_t(jnp.asarray(volume))), repeats)
+    _, t_bp_t = best(lambda: np.asarray(adjoint_t(jnp.asarray(data))), repeats)
     tilt = f"axis tilted {case['tilt_deg']:g} deg"
     return [
         {
@@ -177,6 +182,10 @@ def run_tomojax(
         },
         {"library": "tomojax", "operation": f"forward, {tilt}", "seconds": t_fp_t},
         {"library": "tomojax", "operation": f"backproject, {tilt}", "seconds": t_bp_t},
+        # Device-resident inputs and outputs, as inside an iterative solver.
+        {"library": "tomojax", "operation": "forward, device-resident", "seconds": r_fp},
+        {"library": "tomojax", "operation": "backproject, device-resident", "seconds": r_bp},
+        {"library": "tomojax", "operation": "fdk, device-resident", "seconds": r_fdk},
     ]
 
 
@@ -223,6 +232,18 @@ def tigre_geometry(case: dict[str, Any]) -> tuple[Any, np.ndarray]:
     return geo, angles.astype(np.float32)
 
 
+def tilted_scan(case: dict[str, Any]) -> Any:
+    """The benchmark scan with its rotation axis tilted by ``tilt_deg``, without data."""
+    import tomojax as tj
+
+    n = case["size"]
+    grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
+    det = tj.Detector(case["nu"], case["nv"], 1.0, 1.0)
+    beam = tj.ConeBeam(case["sod"], case["sdd"])
+    geometry = tj.ConeGeometry(grid, det, case["angles"], beam, tilt_deg=case["tilt_deg"])
+    return tj.Scan(np.zeros((case["views"], case["nv"], case["nu"]), np.float32), geometry)
+
+
 def run_astra(
     case: dict[str, Any], volume: np.ndarray, data: np.ndarray, repeats: int
 ) -> list[dict]:
@@ -248,15 +269,9 @@ def run_astra(
             astra.projector3d.delete(projector)
         return t_fp, t_bp
 
-    # Same scan with the rotation axis tilted about x (timings only).
-    tau = np.deg2rad(case["tilt_deg"])
-    tilt_x = np.array(
-        [[1.0, 0.0, 0.0], [0.0, np.cos(tau), np.sin(tau)], [0.0, -np.sin(tau), np.cos(tau)]]
-    )
-    tilted = vectors.copy()
-    for j in range(4):
-        tilted[:, 3 * j : 3 * j + 3] = vectors[:, 3 * j : 3 * j + 3] @ tilt_x.T
-    t_fp_t, t_bp_t = time_pair(astra.create_proj_geom("cone_vec", case["nv"], case["nu"], tilted))
+    # Same scan with the rotation axis tilted about x (timings only), with the rays
+    # of TomoJAX's tilted geometry from its own ASTRA export.
+    t_fp_t, t_bp_t = time_pair(tilted_scan(case).to_astra()[1])
     t_fp, t_bp = time_pair(proj_geom)
 
     def fdk_call() -> np.ndarray:

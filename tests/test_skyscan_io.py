@@ -59,3 +59,28 @@ def test_skyscan_log_drives_geometry_and_selects_only_sample_tiffs(tmp_path: Pat
         tj.load_frames(path, detector=detector, flats=65536, darks=0)
     explicit = tj.load_frames(path, detector=detector, angles=[0, 0.2], flats=65536, darks=0)
     np.testing.assert_allclose(explicit.corrected().projections, scan.projections)
+
+
+def test_the_logged_voxel_is_kept_and_the_grid_follows_binning(tmp_path: Path) -> None:
+    # The log states the voxel (Image Pixel Size); the grid's shape comes from the detector.
+    # Binning keeps the stated voxel's meaning: a quarter the samples, twice the voxel at 2.
+    counts = (20000 + np.arange(2 * 6 * 8).reshape(2, 6, 8)).astype(np.uint16)
+    for view, frame in enumerate(counts):
+        tifffile.imwrite(tmp_path / f"grain{view:04d}.tif", frame)
+    path = tmp_path / "scan.log"
+    path.write_text(
+        "[System]\nScanner=Skyscan1172\nCamera Pixel Size (um)=20\n"
+        "[Acquisition]\nFilename Prefix=grain\nNumber of Files=2\nNumber of Rows=6\n"
+        "Number of Columns=8\nCamera binning=2x2\nImage Pixel Size (um)=20\n"
+        "Object to Source (mm)=20\nCamera to Source (mm)=40\nOptical Axis (line)=1.5\n"
+        "Rotation Step (deg)=.2\nRotation Direction=CC\nDepth (bits)=16\n"
+        "Geometrical Correction=ON\nFlat Field Correction=ON\n"
+    )
+    detector = tj.Detector(8, 6, 0.04, 0.04, (0, -0.06))
+    frames = tj.load_frames(path, detector=detector, flats=65536, darks=0)
+    assert frames.geometry.grid == tj.Grid(8, 8, 6, 0.02, 0.02, 0.02)  # as before
+    meta = frames.source.geometry_metadata
+    assert meta["grid_status"] == "derived" and meta["voxel_size"] == pytest.approx([0.02] * 3)
+    binned = frames.corrected(binning=2).grid
+    assert (binned.nx, binned.ny, binned.nz) == (4, 4, 3)
+    assert (binned.vx, binned.vy, binned.vz) == pytest.approx((0.04, 0.04, 0.04))

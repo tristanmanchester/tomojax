@@ -28,7 +28,7 @@ from tomojax.core.host_volume import fill, host_volume, scratch_directory
 
 from ._cgls_stopping import precision_stalled, termination
 from ._cone_slabs import Batch, RowReader, cone_problem, host_projections, host_volumes
-from ._host_arrays import automatic_host_output
+from ._host_arrays import validate_host_arrays
 from ._quadratic import gradient_normal
 from ._view_statistics import ViewStatistics
 
@@ -134,7 +134,7 @@ class _HostCGLS:
         shape = (grid.nz, grid.ny, grid.nx)
         data = np.empty(0, np.float32) if isinstance(problem.data, RowReader) else problem.data
         self.zero = initial is None
-        self.x = automatic_host_output(data, out, shape, 4, "cgls")
+        self.x = validate_host_arrays(data, out, shape, "cgls", copies=4)
         if out is not None or initial is not None:
             fill(self.x, initial)
         work = [host_volume(shape, scratch_directory(self.x)) for _ in range(3)]
@@ -143,7 +143,7 @@ class _HostCGLS:
         self.damp2 = np.float32(cfg.damping) ** 2
         self.smooth2 = np.float32(cfg.gradient_damping) ** 2
         self.penalized = bool(self.damp2 or self.smooth2)
-        self.total = problem.engine.norm2
+        self.total, self.moves = problem.engine.norm2, problem.engine.moves
         self.keep = problem.keep
         self.statistics = (
             ViewStatistics(problem, self.views) if cfg.data_term == "per_view_contrast" else None
@@ -353,7 +353,7 @@ class _HostCGLS:
 
     def update(self, alpha: np.float32) -> tuple[float, bool, float]:
         """``x += alpha d``, ``g -= alpha w``; return ``||g||²``, voxel roundoff and ``||x||²``."""
-        xp, gamma, roundoff, size = self.xp, 0.0, True, 0.0
+        gamma, roundoff, size = 0.0, True, 0.0
         ahead = self._prefetch(self.D, self.X, self.W, self.G)
         for k in range(self.plan.count):
             z0, z1 = self.plan.planes(k)
@@ -363,10 +363,8 @@ class _HostCGLS:
             step *= alpha
             current = self.X.view(z0, z1)
             current += step
-            bound = xp.maximum(xp.abs(current), _TINY)
-            bound *= np.float32(_EPS)
-            roundoff &= not bool(xp.any(xp.abs(step) > bound))
-            del step, bound
+            roundoff &= not self.moves(step, current)
+            del step
             applied = self.W.view(z0, z1)
             applied *= alpha
             residual = self.G.view(z0, z1)

@@ -38,10 +38,10 @@ The examples distinguish file metadata from explicitly supplied calibration.
 
 ### Raw ESRF acquisitions
 
-`tj.load_frames("scan_folder", detector=..., angles=...)` reads uncompressed
-single-image EDF projections with SPEC `.info` or XML acquisition metadata.
-`PixelSize` records the effective pitch in micrometres, but the scan range alone
-does not establish the starting angle or a calibrated rotation centre.
+`tj.load("scan_folder", angles=...)` reads uncompressed single-image EDF
+projections with SPEC `.info` or XML acquisition metadata. `PixelSize` records
+the effective pitch in micrometres, but the scan range alone does not establish
+the starting angle, so `angles=` gives them.
 
 For EDF acquisitions described by PyHST, pass the parameter file explicitly:
 `tj.load_frames("scan.par").corrected()`. It supplies the indexed EDF series,
@@ -51,11 +51,12 @@ metadata. This route requires raw, single-image EDFs with fixed axial parallel
 geometry; multi-frame, cone, helical, binning and distortion-correction modes
 are not supported.
 
-`tj.load_frames("raw_bliss.h5", detector=...)` reads a basic, half-turn or full-turn
-Bliss sequence, including its flats/darks and recorded angular positions. Select
-among several sequences with `data_path="1.1"`. Effective sample pixels and
-recorded distances are retained in millimetres; neither reader substitutes a
-centred detector for missing axis calibration. Missing virtual detector pixels
+`tj.load("raw_bliss.h5")` reads a basic, half-turn or full-turn Bliss sequence,
+including its flats/darks and recorded angular positions. Select among several
+sequences with `data_path="1.1"`. Effective sample pixels and recorded distances
+are retained in millimetres. Neither format records the rotation centre: the scan
+has the detector middle and its record says so; find the centre with
+`tj.align(scan, fit="centre")`. Missing virtual detector pixels
 and mismatched EDF dimensions are errors. Helical and multi-volume Bliss
 sequences are not yet supported.
 
@@ -85,12 +86,13 @@ closed shutter); `--select-views` and `--crop` keep
 part of the scan. Already-corrected data should skip this
 step; applying the logarithm again changes the data.
 
-Missing detector pitch or an unsuccessful centre estimate requires `detector=`
-in `tj.load_frames`, or a
-`[detector]` table in the preprocessing TOML config with `nu`, `nv`, `du`, `dv`
-and `det_center = [u, v]` in consistent length units. Missing view angles
-require `angles=`; missing laminography tilt requires a complete `geometry=`.
-Centred unit pixels and a 30° tilt are not assumed.
+A parallel-beam file that records no pixel size loads in pixel units (its record
+says `length_unit: "pixel"`); give the pixel size with `pixel_size=`, or a whole
+`detector=`, or a `[detector]` table in the preprocessing TOML config with `nu`,
+`nv`, `du`, `dv` and `det_center = [u, v]`. A cone-beam file needs its pixel size,
+since its distances fix the unit. A rotation centre the file does not record is the
+detector middle. Missing view angles require `angles=`; missing laminography tilt
+requires a complete `geometry=`. A 30° tilt is not assumed.
 
 In Python, `tj.load("raw.nxs")` makes the same correction, and records it in
 `scan.corrections`. For other corrections, load the frames and pass steps from
@@ -100,7 +102,7 @@ In Python, `tj.load("raw.nxs")` makes the same correction, and records it in
 import tomojax as tj
 from tomojax.corrections import RejectViews, Stripes
 
-frames = tj.load_frames("raw.nxs")  # or a Nikon .xtekct, or TIFFs with angles=
+frames = tj.load_frames("raw.nxs")  # or TIFFs with angles=, or a Nikon .xtekct with darks=
 scan = frames.cropped(slice(100, 900), slice(None)).corrected(RejectViews(), Stripes(9))
 print(scan)  # Scan('sample': ..., corrections: flat_dark(...), log(...), reject_views(...), ...)
 tj.save("corrected.nxs", scan)
@@ -185,13 +187,11 @@ before cropping if the warp needs pixels outside the crop, and convert the
 calibration after a crop or binning (see `help(RadialDistortion)`).
 
 A file written by TomoJAX carries its geometry. External NXtomo and Data Exchange
-use their format-defined axial parallel-beam model and recorded angles. They
-need recorded physical detector pitches; missing pitch requires `detector=` or
-`geometry=`, never unit pixels. With pitch available but no rotation centre,
-loading estimates detector-u from a few corrected rows and records `inferred`
-provenance. This needs usable near-opposite views and contrast; otherwise supply a
-calibrated detector, including its centre. The vertical origin is chosen at the
-axial detector midplane, not estimated from the projections.
+use their format-defined axial parallel-beam model and recorded angles. Without a
+recorded pitch they load in pixel units, and `pixel_size=` gives the physical one.
+Without a recorded rotation centre the centre is the detector middle and the record
+says so; `tj.align(scan, fit="centre")` estimates it. The vertical origin is the
+axial detector midplane.
 
 An explicit `detector=tj.Detector(nu, nv, du, dv, center=(u, v))` or full
 `geometry=` remains authoritative and is not automatically recalibrated.
@@ -349,8 +349,8 @@ same names: `iterations=100` wins over the config's `iterations`.
 
 CGLS, FISTA and SPDHG fit absolute line integrals by default. When material
 lies outside the field of view, explicitly select
-`data_term="per_view_contrast"`, for example
-`tj.reconstruct(scan, "fista", data_term="per_view_contrast")`.
+`data_term="per_view_contrast"` in the method's configuration, for example
+`tj.reconstruct(scan, "fista", config=FistaConfig(data_term="per_view_contrast"))`.
 This fits detector contrast while profiling one unknown constant per view;
 absolute background density is not recoverable. There is no automatic switch
 by geometry. FISTA's default `tv_weight=None` uses a projection-only noise
@@ -378,8 +378,9 @@ for u_px in (-4, -2, 0, 2, 4):
 If the projections or the volume are larger than GPU memory, see
 [large scans and several GPUs](large-scans.md).
 
-For tilted or irregular-angle data, start with the iterative workflow in the
-[real scan guide](real-laminography.md#reconstruct-with-the-recorded-geometry).
+For laminography and tilted-axis data the default is FBP; the
+[real scan guide](real-laminography.md#reconstruct-with-the-recorded-geometry)
+shows when and how to ask for FISTA instead.
 If motion remains plausible, use the [alignment guide](align-a-scan.md) after
 checking geometry and preprocessing. A visually sharper aligned image does not
 by itself establish accurate recovered poses.

@@ -45,15 +45,29 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
     table = np.zeros((25, 6))
     table[:, 3:5] = shifts
 
-    def fit(projections, nominal, g, d, *, fit, keep_grid, frames, detector_roll_deg):
+    def fit(
+        projections,
+        nominal,
+        g,
+        d,
+        *,
+        fit,
+        keep_grid,
+        frames,
+        detector_roll_deg,
+        view_positions,
+        declared_poses,
+    ):
         assert projections is scan.projections and d == detector and keep_grid == explicit
+        assert view_positions is None
         assert g == (supplied or grid) and nominal.shape == (25, 4, 4)
         assert fit == "translations" and frames is None and detector_roll_deg == 0
         volume = np.zeros((g.nz, g.ny, g.nx), np.float32)
-        return volume, g, table, {"fit": ["translations"], "corrections": {}}
+        report = {"isolated_views": [], "unusual_views": [], "advisories": []}
+        return volume, g, table, {"fit": ["translations"], "corrections": {}, "report": report}
 
     monkeypatch.setattr(automatic, "fit_poses", fit)
-    result = automatic.reconstruct_with_motion(scan, reconstruct=None, grid=supplied)
+    result = automatic.align_poses(scan, grid=supplied)
     assert result.scan.projections is scan.projections and result.scan.detector == detector
     np.testing.assert_allclose(result.scan.poses[:, 3:5], shifts)
     np.testing.assert_array_equal(result.scan.poses[:, [0, 1, 2, 5]], 0)
@@ -73,35 +87,59 @@ def test_missing_axis_is_not_silently_inferred():
             operation(scan)
 
 
-@pytest.mark.parametrize(
-    ("kind", "operation"),
-    [("lamino", tj.align), ("lamino", tj.reconstruct), ("parallel", tj.align)],
-)
-def test_automatic_facades_and_saved_pose_reuse(kind, operation, tmp_path):
+def test_saved_alignment_reuse(tmp_path):
+    # Align, save, load, and reconstruct the loaded scan through the real automatic route
+    # (FBP): its saved poses are used, and on data that never moved the image is the one the
+    # declared geometry gives.
     grid = tj.Grid(8, 8, 8, 1, 1, 1)
-    geometry = tj.LaminographyGeometry(
-        grid, tj.Detector(12, 12, 1, 1), np.arange(0, 360, 12), tilt_deg=30
-    )
-    if kind == "parallel":
-        geometry = tj.ParallelGeometry(grid, geometry.detector, geometry.angles)
+    angles = np.linspace(0, 360, 128, endpoint=False)
+    geometry = tj.LaminographyGeometry(grid, tj.Detector(12, 12, 1, 1), angles, tilt_deg=30)
     xyz = np.indices((8, 8, 8)).astype(float)
     volume = np.exp(-np.sum((xyz - 3.5) ** 2, axis=0) / 3).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
-    result = operation(scan)
+    result = tj.align(scan)
     assert np.isfinite(result.volume).all()
     assert result.scan.projections is scan.projections
     assert result.info["fit"] == ["translations"]
     tj.save(tmp_path / "alignment.nxs", result)
     reused = tj.load(tmp_path / "alignment.nxs")
-    expected = result.scan.poses
+    np.testing.assert_array_equal(reused.poses, result.scan.poses)
+    again = tj.reconstruct(reused)
+    assert again.method == "fbp"
+    assert again.info["automatic"]["geometry"] == "preserved"
+    declared = np.asarray(tj.reconstruct(scan).volume)
+    distance = np.linalg.norm(np.asarray(again.volume) - declared) / np.linalg.norm(declared)
+    assert distance < 0.02  # 5e-5 measured: the fit finds the scan still
 
-    def reconstruct(s, method, *, config):
-        assert s.grid == reused.grid and method == "fista"
-        np.testing.assert_array_equal(s.poses, expected)
-        return tj.Reconstruction(None, s, method, {})
 
-    again = automatic.reconstruct_with_motion(reused, reconstruct=reconstruct)
-    assert again.info["automatic"]["geometry"] == "preserved_pose_corrections"
+def test_a_posed_laminography_scan_reconstructs_with_its_poses():
+    # tj.reconstruct's automatic route (FBP) on a scan carrying pose corrections uses them:
+    # data moved by known per-view shifts reconstruct with those shifts to the image the
+    # unmoved data give, and without them to a blur. (FBP leaves the missing cone empty, so
+    # the oracle is the same method on unmoved data, not the phantom.)
+    grid, detector = tj.Grid(16, 16, 16, 1, 1, 1), tj.Detector(24, 24, 1, 1)
+    views = 128
+    geometry = tj.LaminographyGeometry(
+        grid, detector, np.linspace(0, 360, views, endpoint=False), tilt_deg=30
+    )
+    xyz = np.indices((16, 16, 16)).astype(float)
+    volume = np.exp(-np.sum((xyz - 7.5) ** 2, axis=0) / 8).astype(np.float32)
+    turn = np.linspace(0, 2 * np.pi, views, endpoint=False)
+    shifts = np.zeros((views, 6))
+    shifts[:, 3], shifts[:, 4] = 1.5 * np.sin(2 * turn), np.cos(turn)
+    blank = tj.Scan(np.zeros((views, 24, 24), np.float32), geometry)
+    moved = tj.Scan(np.asarray(tj.project(blank.with_poses(shifts).geometry, volume)), geometry)
+    posed = tj.reconstruct(moved.with_poses(shifts))
+    unposed = tj.reconstruct(moved.with_poses(np.zeros((views, 6))))
+    still = tj.reconstruct(tj.Scan(np.asarray(tj.project(geometry, volume)), geometry))
+    assert posed.info["automatic"]["geometry"] == "preserved"
+
+    def distance(result):
+        reference = np.asarray(still.volume)
+        return np.linalg.norm(np.asarray(result.volume) - reference) / np.linalg.norm(reference)
+
+    assert distance(posed) < 0.03  # 0.0096 measured
+    assert distance(unposed) > 0.2  # 0.33 measured
 
 
 @pytest.mark.parametrize("keep_grid", [False, True])

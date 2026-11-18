@@ -17,6 +17,7 @@ from __future__ import annotations
 from contextlib import closing, contextmanager
 from dataclasses import is_dataclass, replace
 import json
+import logging
 from typing import TYPE_CHECKING, Any, Literal, cast
 import warnings
 
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from tomojax.recon.api import MethodConfig
 
 type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
+LOG = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------------- files
@@ -81,10 +83,15 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
         raise ValueError(f"{path} holds no reconstructed volume")
     meta = record.geometry_metadata
     info = meta.get("reconstruction_info", meta.get("alignment_info"))
+    aligned = "reconstruction_method" not in meta and "alignment_info" in meta
+    if aligned and isinstance(info, dict) and isinstance(info.get("working_grid"), dict):
+        from tomojax.geometry import Grid
+
+        scan = with_grid(scan, Grid(**info["working_grid"]))  # the alignment image's grid
     return Reconstruction(
         volume=np.asarray(record.volume),
         scan=scan,
-        method=str(meta.get("reconstruction_method", "unknown")),
+        method="align" if aligned else str(meta.get("reconstruction_method", "unknown")),
         info=dict(info) if isinstance(info, dict) else {},
     )
 
@@ -137,8 +144,13 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
     elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
         record = record_of(item.scan)
         record.volume = item.volume
+        # The alignment made this volume: an earlier reconstruction's method
+        # and settings no longer describe it.
+        record.geometry_metadata.pop("reconstruction_method", None)
+        record.geometry_metadata.pop("reconstruction_info", None)
+        # The image's grid, which need not be the scan's: load_reconstruction reads it back.
         record.geometry_metadata["alignment_info"] = json.loads(
-            json.dumps(dict(item.info), default=_json_value)
+            json.dumps({**item.info, "working_grid": item.grid}, default=_json_value)
         )
     else:
         raise TypeError(f"save takes a Scan, Reconstruction or Alignment, not {type(item)}")
@@ -257,14 +269,14 @@ def reconstruct(
     """Reconstruct ``scan`` with ``method``.
 
     ``auto`` (default) chooses Fourier inversion for unposed axial half-turn
-    scans, coarse smooth-pose alignment for unposed oblique scans, matched CGLS
-    for segmented cone geometry, and FBP/FDK otherwise.
-    An explicitly unrecorded axial centre may be inferred. Oblique auto
-    preserves declared geometry and physical support on a bounded coarse grid.
-    An explicit ``grid`` fixes the region and final voxel sampling instead;
-    automatic motion still runs.
-    The scan and ``info["automatic"]``
-    record those choices and limitations. Explicit methods bypass this policy.
+    scans, matched CGLS for segmented cone geometry, and FBP/FDK otherwise,
+    laminography and tilted-axis scans included: for those, ``fista`` gives a
+    better image at the cost of its iterations (docs/measurements.md). It
+    reconstructs with the geometry and poses the scan carries, on its grid or
+    the ``grid`` given; it fits no poses (use :func:`align`).
+    It estimates nothing: a centre comes from the file or from :func:`align`.
+    ``info["automatic"]`` records those choices and limitations. Explicit
+    methods bypass this policy.
 
     ``fbp``
         Filtered backprojection: FDK for cone beams, with Parker weights for
@@ -395,6 +407,13 @@ def reconstruct(
         warm_start=bool(warm_start),
         out=out,
     )
+    from tomojax.core.host_volume import scratch_directory
+
+    directory = None if out is not None else scratch_directory(volume)
+    if directory is not None:  # more than half of host memory: an unlinked file in TMPDIR
+        info = {**info, "temporary_file": str(directory)}
+        LOG.info("The %.1f GiB volume is held in a temporary file in %s, as more than half of "
+                 "host memory", volume.nbytes / 2**30, directory)  # fmt: skip
     return Reconstruction(volume=volume, scan=scan, method=method, info=info)
 
 
@@ -416,24 +435,24 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
     unknown_axis = (
         isinstance(acquisition, dict) and acquisition.get("geometry_status") == "not_recorded"
     )
-    if isinstance(base, LaminographyGeometry | RotationAxisGeometry) or unknown_axis:
-        grid = options.pop("grid", None)
-        if options:
-            raise ValueError(
-                "automatic geometry reconstruction does not take expert overrides; "
-                "choose method='fista' (or another explicit method) to supply them"
-            )
-        from tomojax._smooth_alignment import reconstruct_with_motion
-
-        return reconstruct_with_motion(scan, reconstruct=reconstruct, grid=grid)
+    if unknown_axis:
+        raise ValueError(
+            "reconstruction requires declared acquisition geometry: this file records no "
+            "rotation axis; pass geometry=... to tomojax.load"
+        )
     reasons = []
     method: Method = "fbp"
     if isinstance(base, ConeSegments):
-        method = "cgls"
-        reasons.append(
-            "Segmented cone geometry uses matched CGLS because FDK requires one arrangement; "
-            "iteration count and image quality are not automatically validated."
-        )
+        # Per-view detector offsets (a Zeiss scan's shifts) make segments of one orbit, which
+        # FDK weights and backprojects view by view, exactly. Several trajectories, or
+        # arrangements that differ (a source at several heights), are not one circular orbit.
+        beams = [getattr(segment, "beam", None) for segment in base.segments]
+        if len(base.trajectory_lengths) > 1 or any(b != beams[0] for b in beams):
+            method = "cgls"
+            reasons.append(
+                "Segmented cone geometry uses matched CGLS because FDK requires one arrangement; "
+                "iteration count and image quality are not automatically validated."
+            )
     elif type(scan.geometry) is ParallelGeometry:
         angles = np.unique(np.mod(np.asarray(scan.angles, np.float64), 180.0))
         gaps = np.diff(np.r_[angles, angles[0] + 180])
@@ -443,61 +462,36 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
             reasons.append(
                 "Sparse or incomplete half-turn coverage: Fourier inversion was not selected."
             )
+    elif isinstance(base, LaminographyGeometry | RotationAxisGeometry):
+        reasons.append(
+            "FBP leaves the frequencies no view measures (the missing cone of a tilted "
+            "axis) empty; method='fista' estimates them from nonnegativity and its "
+            "regulariser, at the cost of its iterations."
+        )
     elif getattr(base, "beam", None) is None:
         reasons.append(
             "Posed or custom parallel geometry uses FBP; "
             "automatic iterative validation is unavailable."
         )
-    scan, center_estimation, center_calibration_reason = _automatic_axial_setup(
-        scan, method=method, reasons=reasons
-    )
+    center_status = _automatic_axial_setup(scan, method=method, reasons=reasons)
     result = reconstruct(scan, method, **options)
     automatic = {
         "method": method,
         "status": "limited" if reasons else "ok",
         "reasons": reasons,
-        "center_calibration_reason": center_calibration_reason,
-        "geometry": (
-            "center_estimated"
-            if center_estimation and center_estimation["status"] == "estimated"
-            else "preserved"
-        ),
-        "center_estimation": center_estimation,
+        "center_status": center_status,
+        "geometry": "preserved",
         "warning": "Method selection does not validate geometry, support or detector artefacts.",
     }
     return replace(result, info={**result.info, "automatic": automatic})
 
 
-def _automatic_axial_setup(
-    scan: Scan, *, method: Method, reasons: list[str]
-) -> tuple[Scan, dict[str, Any] | None, str | None]:
-    """Infer an absent axial centre and identify unresolved raw-workflow limitations."""
-    source_meta = {} if scan.source is None else scan.source.geometry_metadata
-    center_estimation: dict[str, Any] | None = cast(
-        "dict[str, Any] | None", source_meta.get("detector_center_calibration")
+def _automatic_axial_setup(scan: Scan, *, method: Method, reasons: list[str]) -> str | None:
+    """The centre the scan's file recorded, and unresolved raw-workflow limitations."""
+    status = (
+        None if scan.source is None else scan.source.geometry_metadata.get("detector_center_status")
     )
-    if method == "fourier" and source_meta.get("detector_center_status") == "not_recorded":
-        try:
-            scan = estimate_center(scan)
-            assert scan.source is not None
-            source_meta = scan.source.geometry_metadata
-            center_estimation = source_meta["detector_center_calibration"]
-        except ValueError as exc:
-            center_estimation = {"status": "failed", "reason": str(exc)}
-            reasons.append("Automatic centre estimation failed: " + str(exc))
-    if center_estimation is not None:
-        diagnostics = cast("dict[str, Any]", center_estimation.get("diagnostics", {}))
-        uncertainty = diagnostics.get("uncertainty_reason")
-        if uncertainty:
-            reasons.append(uncertainty)
-    center_calibration_reason = None
     if method == "fourier" and any(step.name == "log" for step in scan.corrections):
-        if source_meta.get("detector_center_status") not in {"inferred", "recorded", "provided"}:
-            center_calibration_reason = (
-                "Reconstruction did not perform centre calibration; the supplied geometry was "
-                "preserved. Use align if the centre needs estimating."
-            )
-            reasons.append(center_calibration_reason)
         reasons.append(
             "Corrected projections were already materialized; use reconstruct_slabs on raw "
             "Frames to avoid that host round trip. Raw-workflow speed is not guaranteed here."
@@ -506,7 +500,7 @@ def _automatic_axial_setup(
             reasons.append(
                 "No stripe correction is recorded; detector-ring suppression is unassessed."
             )
-    return scan, center_estimation, center_calibration_reason
+    return status
 
 
 @contextmanager
@@ -603,6 +597,8 @@ def reconstruct_slabs(
         exposure_times=frames.exposure_times,
         flat_exposure_times=frames.flat_exposure_times,
         host=cone,
+        dark_source=frames.dark_source,
+        linear_limit=frames.linear_limit,
     ) as source:
 
         def read(first: int, stop: int):
@@ -634,7 +630,12 @@ def reconstruct_slabs(
                         detector=detector_window(slab.rows, slice(None), frames.geometry.detector),
                     )
                     scan = Scan(
-                        slab.projections, geometry, frames.name, slab.context.records, frames.source
+                        slab.projections,
+                        geometry,
+                        frames.name,
+                        slab.context.records,
+                        frames.source,
+                        view_positions=frames.view_positions,
                     )
                     info = {
                         "config": cfg,
@@ -741,8 +742,11 @@ def align(
     ``translations`` and ``rotations``. Centre, tilt and roll are shared by all
     views. Translations and rotations are per view; every unselected parameter
     is held at its declared value. Translations have two components for parallel
-    rays and three for cone beams; rotations have three. The default fits drift
-    and slips. Per-view rotations have a prior on their physical size.
+    rays and three for cone beams. Rotations are the per-view wobble of the
+    rotation axis, two components; each view's angle about the axis is taken as
+    recorded, since stage encoders give it and errors in it are rare. The
+    default fits drift and slips. Per-view rotations have a prior on their
+    physical size.
 
     The same solver handles parallel, laminography and cone-beam scans. Existing
     poses are preserved and the fitted correction is composed with them. The
@@ -766,7 +770,9 @@ def align(
         Fitted globals appear under their names in ``info["calibration"]``:
         centre in geometry length units (u, or u/v for cone beams), and angles
         in degrees. Tilt is the signed inclination ``atan2(axis_y, axis_z)``;
-        positive roll turns detector u towards v. Cone segments with different
+        positive roll turns detector u towards v (right-handed about the detector
+        normal, which points back towards the source), so a point above the
+        detector centre projects towards +u. Cone segments with different
         calibrated values report them in segment order.
 
     Raises
@@ -787,7 +793,9 @@ def align(
     result = align_poses(scan, fit=fit, grid=grid)
     poses = result.scan.poses
     assert poses is not None
-    return Alignment(result.volume, result.scan, np.asarray(poses), result.info)
+    # The fit's working grid belongs to its image; the scan keeps the caller's grid.
+    corrected = with_grid(result.scan, scan.grid if grid is None else grid)
+    return Alignment(result.volume, result.scan.grid, corrected, np.asarray(poses), result.info)
 
 
 def _oversampling(scan: Scan) -> float:

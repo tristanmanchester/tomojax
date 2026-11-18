@@ -16,6 +16,32 @@ __device__ __forceinline__ long volume_index(int x,int y,int z,int nx,int ny,int
 #define SEL(i, x0, x1, x2) ((i) == 0 ? (x0) : ((i) == 1 ? (x1) : (x2)))
 __device__ __forceinline__ float trif(float f, float j) { return fmaxf(1.f - fabsf(f - j), 0.f); }
 __device__ __forceinline__ bool separable(const float* c) { return c[12] > 0.5f; }
+// floor(x) as an int and a float on the FP32 pipe: below 2^22, x + 1.5 * 2^23 rounded down
+// holds floor(x) in its low bits. Other x (inf, NaN) give |int| >= 2^22, which callers reject.
+__device__ __forceinline__ int floor_split(float x, float& whole)
+{
+    const float magic = 12582912.f;  // 1.5 * 2^23
+    float t = __fadd_rd(x, magic);
+    whole = __fsub_rn(t, magic);
+    return __float_as_int(t) - 0x4B400000;
+}
+// Joseph's bilinear sample of the taps at p, p + sc, p + sb, p + sb + sc (zero outside nb x nc),
+// rounded in the one order every forward path uses; inside, the taps load without tests.
+__device__ __forceinline__ float bilinear(const float* p, long sb, long sc, int b0, int c0, int nb,
+                                          int nc, float wb0, float wb1, float wc0, float wc1)
+{
+    float v00, v01, v10, v11;
+    if ((unsigned)b0 < (unsigned)(nb - 1) && (unsigned)c0 < (unsigned)(nc - 1)) {
+        v00 = __ldg(p); v01 = __ldg(p + sc); v10 = __ldg(p + sb); v11 = __ldg(p + sb + sc);
+    } else {
+        bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
+        bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
+        v00 = b0in && c0in ? __ldg(p) : 0.f; v01 = b0in && c1in ? __ldg(p + sc) : 0.f;
+        v10 = b1in && c0in ? __ldg(p + sb) : 0.f; v11 = b1in && c1in ? __ldg(p + sb + sc) : 0.f;
+    }
+    return __fmaf_rn(wb1, __fmaf_rn(v11, wc1, __fmul_rn(v10, wc0)),
+                     __fmul_rn(wb0, __fmaf_rn(v01, wc1, __fmul_rn(v00, wc0))));
+}
 // A projected interval has no finite corner bound when its denominator crosses zero.
 __device__ __forceinline__ bool crosses_zero(float lo, float hi) {
     return (lo <= 0.f && hi >= 0.f) || (hi <= 0.f && lo >= 0.f);
@@ -157,15 +183,8 @@ __device__ __forceinline__ float plane_sum(
         int b0 = (int)fb0, c0 = (int)fc0;
         // The same weights as plane_adjoint's.
         float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
-        bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
-        bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
-        const float* p = plane + (long)b0 * sb + (long)c0 * sc;
-        float s0 = 0.f, s1 = 0.f;
-        if (b0in && c0in) s0 = __ldg(p) * wc0;
-        if (b0in && c1in) s0 += __ldg(p + sc) * wc1;
-        if (b1in && c0in) s1 = __ldg(p + sb) * wc0;
-        if (b1in && c1in) s1 += __ldg(p + sb + sc) * wc1;
-        sum += wb0 * s0 + wb1 * s1;
+        sum = __fadd_rn(sum, bilinear(plane + (long)b0 * sb + (long)c0 * sc, sb, sc, b0, c0, nb,
+                                      nc, wb0, wb1, wc0, wc1));
     }
     return sum;
 }
@@ -258,15 +277,8 @@ __device__ __forceinline__ float plane_sum(
         int b0 = (int)fb0, c0 = (int)fc0;
         // The same weights as plane_adjoint's.
         float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
-        bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
-        bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
-        Offset p = plane + (Offset)b0 * (Offset)sb + (Offset)c0 * (Offset)sc;
-        float s0 = 0.f, s1 = 0.f;
-        if (b0in && c0in) s0 = __ldg(vol + p) * wc0;
-        if (b0in && c1in) s0 += __ldg(vol + (Offset)(p + (Offset)sc)) * wc1;
-        if (b1in && c0in) s1 = __ldg(vol + (Offset)(p + (Offset)sb)) * wc0;
-        if (b1in && c1in) s1 += __ldg(vol + (Offset)(p + (Offset)sb + (Offset)sc)) * wc1;
-        sum += wb0 * s0 + wb1 * s1;
+        const float* p = vol + ((long)plane + (long)b0 * sb + (long)c0 * sc);
+        sum = __fadd_rn(sum, bilinear(p, sb, sc, b0, c0, nb, nc, wb0, wb1, wc0, wc1));
     }
     return sum;
 }
@@ -357,15 +369,8 @@ __device__ float register_ray_sum(const float* __restrict__ vol,const float* c,f
                 float fb0=floorf(fb),fc0=floorf(fc);
                 int b0=(int)fb0,c0=(int)fc0;
                 float wb1=fb-fb0,wc1=fc-fc0,wb0=1.f-wb1,wc0=1.f-wc1;
-                bool b0in=(unsigned)b0<(unsigned)ny,b1in=(unsigned)(b0+1)<(unsigned)ny;
-                bool c0in=(unsigned)c0<(unsigned)nz,c1in=(unsigned)(c0+1)<(unsigned)nz;
-                Offset point=((Offset)c0*(Offset)ny+(Offset)b0)*(Offset)nx+(Offset)k;
-                float s0=0.f,s1=0.f;
-                if(b0in && c0in)s0=__ldg(vol+point)*wc0;
-                if(b0in && c1in)s0+=__ldg(vol+(Offset)(point+(Offset)nx*(Offset)ny))*wc1;
-                if(b1in && c0in)s1=__ldg(vol+(Offset)(point+(Offset)nx))*wc0;
-                if(b1in && c1in)s1+=__ldg(vol+(Offset)(point+(Offset)nx+(Offset)nx*(Offset)ny))*wc1;
-                value=wb0*s0+wb1*s1;
+                const float* point=vol+(((long)c0*ny+b0)*nx+k);
+                value=bilinear(point,nx,(long)nx*ny,b0,c0,ny,nz,wb0,wb1,wc0,wc1);
             }
             values[p]=value;
         }
@@ -495,15 +500,8 @@ __device__ __forceinline__ float plane_sum(
         int b0 = (int)fb0, c0 = (int)fc0;
         // The same weights as plane_adjoint's.
         float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
-        bool b0in = (unsigned)b0 < (unsigned)nb, b1in = (unsigned)(b0 + 1) < (unsigned)nb;
-        bool c0in = (unsigned)c0 < (unsigned)nc, c1in = (unsigned)(c0 + 1) < (unsigned)nc;
-        Offset p = plane + (Offset)b0 * (Offset)sb + (Offset)c0 * (Offset)sc;
-        float s0 = 0.f, s1 = 0.f;
-        if (b0in && c0in) s0 = __ldg(vol + p) * wc0;
-        if (b0in && c1in) s0 += __ldg(vol + (Offset)(p + (Offset)sc)) * wc1;
-        if (b1in && c0in) s1 = __ldg(vol + (Offset)(p + (Offset)sb)) * wc0;
-        if (b1in && c1in) s1 += __ldg(vol + (Offset)(p + (Offset)sb + (Offset)sc)) * wc1;
-        sum += wb0 * s0 + wb1 * s1;
+        const float* p = vol + ((long)plane + (long)b0 * sb + (long)c0 * sc);
+        sum = __fadd_rn(sum, bilinear(p, sb, sc, b0, c0, nb, nc, wb0, wb1, wc0, wc1));
     }
     return sum;
 }
@@ -587,15 +585,8 @@ __device__ float register_ray_sum(const float* __restrict__ vol,const float* c,f
                 float fb0=floorf(fb),fc0=floorf(fc);
                 int b0=(int)fb0,c0=(int)fc0;
                 float wb1=fb-fb0,wc1=fc-fc0,wb0=1.f-wb1,wc0=1.f-wc1;
-                bool b0in=(unsigned)b0<(unsigned)ny,b1in=(unsigned)(b0+1)<(unsigned)ny;
-                bool c0in=(unsigned)c0<(unsigned)nz,c1in=(unsigned)(c0+1)<(unsigned)nz;
-                Offset point=((Offset)c0*(Offset)ny+(Offset)b0)*(Offset)nx+(Offset)k;
-                float s0=0.f,s1=0.f;
-                if(b0in && c0in)s0=__ldg(vol+point)*wc0;
-                if(b0in && c1in)s0+=__ldg(vol+(Offset)(point+(Offset)nx*(Offset)ny))*wc1;
-                if(b1in && c0in)s1=__ldg(vol+(Offset)(point+(Offset)nx))*wc0;
-                if(b1in && c1in)s1+=__ldg(vol+(Offset)(point+(Offset)nx+(Offset)nx*(Offset)ny))*wc1;
-                value=wb0*s0+wb1*s1;
+                const float* point=vol+(((long)c0*ny+b0)*nx+k);
+                value=bilinear(point,nx,(long)nx*ny,b0,c0,ny,nz,wb0,wb1,wc0,wc1);
             }
             values[p]=value;
         }
@@ -688,12 +679,13 @@ __device__ __forceinline__ float box_boundary(int k, float Sa, float Sb, float S
     float fb0=floorf(fb), fc0=floorf(fc);
     int b0=(int)fb0, c0=(int)fc0;
     float wb1=fb-fb0, wc1=fc-fc0, wb0=1.f-wb1, wc0=1.f-wc1;
-    float s0=0.f, s1=0.f;
-    if ((unsigned)b0<(unsigned)nb && (unsigned)c0<(unsigned)nc)s0=wc0;
-    if ((unsigned)b0<(unsigned)nb && (unsigned)(c0+1)<(unsigned)nc)s0+=wc1;
-    if ((unsigned)(b0+1)<(unsigned)nb && (unsigned)c0<(unsigned)nc)s1=wc0;
-    if ((unsigned)(b0+1)<(unsigned)nb && (unsigned)(c0+1)<(unsigned)nc)s1+=wc1;
-    return wb0*s0+wb1*s1;
+    // The forward's rounding order, for a volume of ones.
+    float v00=(unsigned)b0<(unsigned)nb && (unsigned)c0<(unsigned)nc ? 1.f : 0.f;
+    float v01=(unsigned)b0<(unsigned)nb && (unsigned)(c0+1)<(unsigned)nc ? 1.f : 0.f;
+    float v10=(unsigned)(b0+1)<(unsigned)nb && (unsigned)c0<(unsigned)nc ? 1.f : 0.f;
+    float v11=(unsigned)(b0+1)<(unsigned)nb && (unsigned)(c0+1)<(unsigned)nc ? 1.f : 0.f;
+    float s0=__fmaf_rn(v01,wc1,__fmul_rn(v00,wc0)), s1=__fmaf_rn(v11,wc1,__fmul_rn(v10,wc0));
+    return __fmaf_rn(wb1,s1,__fmul_rn(wb0,s0));
 }
 __device__ float box_sum(const float* c, float fu, float fv, int nx, int ny, int nz) {
     float r0, r1, r2;
@@ -768,16 +760,17 @@ __device__ float box_sum(const float* c, float fu, float fv, int nx, int ny, int
     for (int k=last+1;k<=k1;++k)sum+=box_boundary(k, Sa, Sb, Sc, inv, rb, rc, nb, nc);
     return sum;
 }
+// Pixels stride over grid y, which CUDA caps at 65535 blocks.
 extern "C" __global__ void cone_box_forward(const float* coeff, float* out, int nx, int ny, int nz, int nu, int nv, float sx, float sy, float sz) {
-    int j=blockIdx.y*blockDim.x+threadIdx.x;
-    if (j>=nu*nv)return;
-    int u=j%nu, v=j/nu;
     const float* c=coeff+(long)blockIdx.x*NC;
-    float sum=box_sum(c, (float)u, (float)v, nx, ny, nz);
-    float r0, r1, r2;
-    ray_of(c, (float)u, (float)v, r0, r1, r2);
-    float ra=SEL(ray_axis(r0, r1, r2), r0, r1, r2);
-    out[(long)blockIdx.x*nu*nv+j]=sum*path_w(r0, r1, r2, ra, sx, sy, sz);
+    for (int j=blockIdx.y*blockDim.x+threadIdx.x; j<nu*nv; j+=gridDim.y*blockDim.x) {
+        int u=j%nu, v=j/nu;
+        float sum=box_sum(c, (float)u, (float)v, nx, ny, nz);
+        float r0, r1, r2;
+        ray_of(c, (float)u, (float)v, r0, r1, r2);
+        float ra=SEL(ray_axis(r0, r1, r2), r0, r1, r2);
+        out[(long)blockIdx.x*nu*nv+j]=sum*path_w(r0, r1, r2, ra, sx, sy, sz);
+    }
 }
 
 // Weight and transpose (view, v, u) images in coalesced 32x32 tiles,
@@ -1068,18 +1061,13 @@ __device__ __forceinline__ void add_fixed(int* p, int words, float x, float scal
     atomicAdd(p + words, __float2int_rn((y - whole) * fine));
 }
 
-// Adds x0..x3 to four padded shared cells. Pair the two rows of each column:
-// moving one column retains both right-hand cells, so their flush is all zero.
-__device__ __forceinline__ void add4(int* p0, float x0, int* p1, float x1, int* p2,
-                                     float x2, int* p3, float x3, int words, float scale,
-                                     float fine)
+// Adds x0, x2 (the left column) if left, and x1, x3 (the right column) if right.
+__device__ __forceinline__ void add4_if(int* p0, float x0, int* p1, float x1, int* p2,
+                                        float x2, int* p3, float x3, bool left, bool right,
+                                        int words, float scale, float fine)
 {
-    if (x0 != 0.f || x2 != 0.f) {
-        add_fixed(p0, words, x0, scale, fine); add_fixed(p2, words, x2, scale, fine);
-    }
-    if (x1 != 0.f || x3 != 0.f) {
-        add_fixed(p1, words, x1, scale, fine); add_fixed(p3, words, x3, scale, fine);
-    }
+    if (left) { add_fixed(p0, words, x0, scale, fine); add_fixed(p2, words, x2, scale, fine); }
+    if (right) { add_fixed(p1, words, x1, scale, fine); add_fixed(p3, words, x3, scale, fine); }
 }
 
 // A two-word fixed-point cell's value, rounded once.
@@ -1210,6 +1198,7 @@ __device__ __forceinline__ void plane_tile(
     __shared__ float scale[RHS], unit[RHS], fine[2], partial[RHS + 1][32];
     __shared__ float cf[VMAX][12];  // source, detector origin, u and v axes
     __shared__ int foot[VMAX][4];   // first column and row, rows, runs per column
+    __shared__ unsigned long long run_magic[VMAX];  // ceil(2^40 / runs): q / runs = q * magic >> 40
     __shared__ int first[VMAX + 1]; // each view's first run in the block's list
     __shared__ int touched;         // whether any view's footprint met the tile
     int b = a == 0 ? 1 : 0, cc = a == 2 ? 1 : 2;
@@ -1295,6 +1284,7 @@ __device__ __forceinline__ void plane_tile(
                 int wv = vhi - vlo + 1, runs = (wv + RUN - 1) / RUN;
                 runs_here = (uhi - ulo + 1) * runs;
                 foot[t][0] = ulo; foot[t][1] = vlo; foot[t][2] = wv; foot[t][3] = runs;
+                run_magic[t] = ((1ull << 40) + runs - 1) / runs;
             }
         }
         if (t < 32) {  // each view's first run: a prefix sum over the (<= 32) views
@@ -1311,6 +1301,7 @@ __device__ __forceinline__ void plane_tile(
         int total = first[count];
         if (t == 0 && total > 0) touched = 1;
         int w = 0, cw = -1, ulo = 0, vlo = 0, wv = 0, runs = 1;
+        unsigned long long inverse_runs = 0;
         const float* image = img;
         float Sa = 0.f, Sb = 0.f, Sc = 0.f, DVa = 0.f, DVb = 0.f, DVc = 0.f;
         for (int p = t; p < total; p += blockDim.x) {
@@ -1319,13 +1310,16 @@ __device__ __forceinline__ void plane_tile(
             if (w != cw) {  // the view's constants, while this thread stays on it
                 cw = w;
                 ulo = foot[w][0]; vlo = foot[w][1]; wv = foot[w][2]; runs = foot[w][3];
+                inverse_runs = run_magic[w];
                 image = img + (long)(start + w) * nu * nv;
                 Sa = c[0]; Sb = c[1]; Sc = c[2];
                 DVa = c[9]; DVb = c[10]; DVc = c[11];
             }
+            // Exact: q * runs < 2^40 (a view has fewer than 2^26 runs of 2^14 rows).
             int q = p - first[w];
-            int u = ulo + q / runs, v0 = vlo + RUN * (q % runs), v1 = min(v0 + RUN, vlo + wv);
-            float fu = (float)u;
+            int column = (int)(((unsigned long long)q * inverse_runs) >> 40);
+            int u = ulo + column, v0 = vlo + RUN * (q - column * runs), v1 = min(v0 + RUN, vlo + wv);
+            float fu = (float)u, fv0 = (float)v0;
             // Keep the detector-column position, not position minus source: ray_of
             // adds the v displacement first, then subtracts the source.
             float ra = __fmaf_rn(fu, c[6], c[3]);
@@ -1345,7 +1339,7 @@ __device__ __forceinline__ void plane_tile(
             float fbs[PLANES][RUN], fcs[PLANES][RUN];
             #pragma unroll
             for (int i = 0; i < RUN; ++i) {
-                float fv = (float)(v0 + i);
+                float fv = __fadd_rn(fv0, (float)i);  // exact: integers below 2^24
                 float r_a = __fsub_rn(__fmaf_rn(fv, DVa, ra), Sa);
                 float r_b = __fsub_rn(__fmaf_rn(fv, DVb, rb), Sb);
                 float r_c = __fsub_rn(__fmaf_rn(fv, DVc, rc), Sc);
@@ -1370,19 +1364,26 @@ __device__ __forceinline__ void plane_tile(
                 #pragma unroll
                 for (int i = 0; i < RUN; ++i) {
                     float fb = fbs[plane][i], fc = fcs[plane][i];
-                    float fb0 = floorf(fb), fc0 = floorf(fc);
-                    int jb = (int)fb0 - b0, jc = (int)fc0 - c0;
+                    // The conversion unit, not the arithmetic, bounds this loop: floor
+                    // on the FP32 pipe instead, with the same result.
+                    float fb0, fc0;
+                    int jb = floor_split(fb, fb0) - b0, jc = floor_split(fc, fc0) - c0;
                     if (jb < -1 || jb >= ROWS || jc < -1 || jc >= PC) continue;
                     float wb1 = fb - fb0, wc1 = fc - fc0, wb0 = 1.f - wb1, wc0 = 1.f - wc1;
-                    if (jb != cb || jc != ccj) {
-                        bool next = jb == cb && jc == ccj + 1;
+                    {
+                        // Every sample decides its flush without a branch: staying on the cell
+                        // flushes nothing, stepping to the next column flushes the left one,
+                        // any other move flushes all four. The cells are live once a sample landed.
+                        bool same = jb == cb && jc == ccj, next = jb == cb && jc == ccj + 1;
+                        bool left = cb > -100 && !same, right = left && !next;
                         #pragma unroll
                         for (int r = 0; r < RHS; ++r) {
                             int* cell = &acc[r][0][plane][cb + 1][ccj + 1];
-                            add4(cell, x00[r], cell + 1, next ? 0.f : x01[r], cell + (PC + 3), x10[r],
-                                 cell + (PC + 4), next ? 0.f : x11[r], WORDS, scales[r], fraction);
-                            x00[r] = next ? x01[r] : 0.f; x10[r] = next ? x11[r] : 0.f;
-                            x01[r] = x11[r] = 0.f;
+                            add4_if(cell, x00[r], cell + 1, x01[r], cell + (PC + 3), x10[r],
+                                    cell + (PC + 4), x11[r], left, right, WORDS, scales[r], fraction);
+                            x00[r] = same ? x00[r] : (next ? x01[r] : 0.f);
+                            x10[r] = same ? x10[r] : (next ? x11[r] : 0.f);
+                            x01[r] = same ? x01[r] : 0.f; x11[r] = same ? x11[r] : 0.f;
                         }
                         cb = jb; ccj = jc;
                     }
@@ -1397,8 +1398,8 @@ __device__ __forceinline__ void plane_tile(
                     #pragma unroll
                     for (int r = 0; r < RHS; ++r) {
                         int* cell = &acc[r][0][plane][cb + 1][ccj + 1];
-                        add4(cell, x00[r], cell + 1, x01[r], cell + (PC + 3), x10[r], cell + (PC + 4),
-                             x11[r], WORDS, scales[r], fraction);
+                        add4_if(cell, x00[r], cell + 1, x01[r], cell + (PC + 3), x10[r], cell + (PC + 4),
+                                x11[r], true, true, WORDS, scales[r], fraction);
                     }
                 }
             }
@@ -1508,8 +1509,8 @@ __device__ void cone_pose_derivative(
         float v01=b0in&&c1in?__ldg(p+sc):0.f;
         float v10=b1in&&c0in?__ldg(p+sb):0.f;
         float v11=b1in&&c1in?__ldg(p+sb+sc):0.f;
-        float s0=v00*wc0+v01*wc1,s1=v10*wc0+v11*wc1;
-        sum+=wb0*s0+wb1*s1;
+        float s0=__fmaf_rn(v01,wc1,__fmul_rn(v00,wc0)),s1=__fmaf_rn(v11,wc1,__fmul_rn(v10,wc0));
+        sum=__fadd_rn(sum,__fmaf_rn(wb1,s1,__fmul_rn(wb0,s0)));
         float db=s1-s0,dc=wb0*(v01-v00)+wb1*(v11-v10);
         gb+=db;gc+=dc;gtb+=t*db;gtc+=t*dc;
     }

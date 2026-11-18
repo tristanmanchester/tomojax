@@ -309,3 +309,85 @@ def test_single_slice_operator_output_feeds_scan_and_reconstruction():
     actual = tj.reconstruct(scan, "cgls", iterations=20).volume
     assert actual.shape == (1, 7, 9)
     assert np.linalg.norm(np.asarray(actual)[0] - truth) / np.linalg.norm(truth) < 0.06
+
+
+def test_a_saved_alignment_is_not_labelled_with_an_earlier_reconstruction(tmp_path: Path) -> None:
+    geometry = _geometries(8)["parallel"]
+    scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(8))), geometry)
+    tj.save(tmp_path / "cgls.nxs", tj.reconstruct(scan, "cgls", iterations=2))
+    loaded = tj.load(tmp_path / "cgls.nxs")
+    poses = np.zeros((len(loaded.angles), 6), np.float32)
+    aligned = tj.Alignment(
+        volume=np.ones((8, 8, 8), np.float32),
+        grid=loaded.grid,
+        scan=loaded,
+        poses=poses,
+        info={"levels": []},
+    )
+    tj.save(tmp_path / "aligned.nxs", aligned)
+    back = tj.load_reconstruction(tmp_path / "aligned.nxs")
+    assert back.method == "align" and back.info["levels"] == [] and back.grid == loaded.grid
+    np.testing.assert_array_equal(back.volume, 1.0)
+
+
+def test_combined_scans_keep_their_correction_history() -> None:
+    from tomojax.corrections import Correction
+
+    geometry = tj.ConeGeometry(
+        tj.Grid(4, 4, 4, 1, 1, 1), tj.Detector(6, 4, 1, 1), [0.0, 90.0], tj.ConeBeam(20, 30)
+    )
+    log = Correction("log", {"epsilon": 1e-6})
+    first = tj.Scan(np.zeros((2, 4, 6), np.float32), geometry, corrections=(log,))
+    same = tj.Scan.combine([first, first])
+    assert same.corrections == (log,)
+    rings = Correction("rings", {"views": 512})
+    second = replace(first, corrections=(log, rings))
+    mixed = tj.Scan.combine([first, second])
+    assert mixed.corrections[0] == log and mixed.corrections[1].name == "combine"
+    assert mixed.corrections[1].found["inputs"][1][1] == rings.to_dict()
+    assert mixed.corrections[1].settings["views"] == [2, 2]
+
+
+def test_following_each_loading_error_loads_the_scan(tmp_path: Path) -> None:
+    # Each error tj.load raises for metadata the file lacks names an argument tj.load takes,
+    # and passing it moves on, through to a reconstruction: a plain HDF5 file without angles,
+    # then a GDA file without a recorded rotation axis (both load in pixel units).
+    import inspect
+    import re
+
+    import h5py
+
+    takes = set(inspect.signature(tj.load).parameters)
+    views, rows, cols = 12, 4, 8
+    counts = np.full((views + 2, rows, cols), 900, np.uint16)
+    counts[0], counts[1] = 10, 1000  # a dark and a flat
+    key = [2, 1] + [0] * views
+    angles = np.linspace(0, 180, views, endpoint=False)
+    detector = tj.Detector(cols, rows, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(tj.Grid(cols, cols, rows, 1, 1, 1), detector, angles)
+
+    def named(error: pytest.ExceptionInfo[ValueError]) -> set[str]:
+        return set(re.findall(r"\b(\w+)=\.\.\.", str(error.value)))
+
+    plain = tmp_path / "frames.h5"
+    with h5py.File(plain, "w") as file:
+        file["data"], file["image_key"] = counts, key
+    with pytest.raises(ValueError) as caught:
+        tj.load(plain)
+    assert named(caught) == {"angles"} <= takes
+    loaded = tj.load(plain, angles=angles)  # no pixel size recorded: pixel units
+    assert loaded.projections.shape == (views, rows, cols)
+    assert loaded.source.geometry_metadata["length_unit"] == "pixel"
+
+    gda = tmp_path / "gda.nxs"
+    with h5py.File(gda, "w") as file:
+        file["entry/imaging/data"] = counts
+        file["entry/instrument/EtherCAT/image_key"] = key
+        file["entry/imaging_sum/smaract_zrot"] = np.r_[0.0, 0.0, angles]
+        file["entry/imaging_sum/smaract_zrot"].attrs["units"] = "degree"
+    scan = tj.load(gda)
+    with pytest.raises(ValueError) as caught:
+        tj.reconstruct(scan)
+    assert named(caught) == {"geometry"} and "tomojax.load" in str(caught.value)
+    result = tj.reconstruct(tj.load(gda, geometry=geometry))
+    assert np.isfinite(np.asarray(result.volume)).all()

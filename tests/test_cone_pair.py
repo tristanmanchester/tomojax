@@ -1,5 +1,7 @@
 """Independent dense and whole-update checks for shared-geometry transposes."""
 
+import importlib
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -62,8 +64,18 @@ def test_uncached_sirt_preserves_masked_subset_updates(monkeypatch, backend):
         backend=backend,
     )
     cached, _ = sirt(geometry, grid, detector, data, init_x=truth * 0.1, config=cfg)
-    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 1)
+    # Stay resident but recompute the subset columns: the uncached device path.
+    module = importlib.import_module("tomojax.recon.sirt")
+    storage, uncached = module._storage, []
+
+    def without_columns(*args, **kwargs):
+        initial, stream, _ = storage(*args, **kwargs)
+        uncached.append(True)
+        return initial, stream, False
+
+    monkeypatch.setattr(module, "_storage", without_columns)
     paired, _ = sirt(geometry, grid, detector, data, init_x=truth * 0.1, config=cfg)
+    assert uncached  # the resident solve ran, not host slabs
     np.testing.assert_allclose(paired, cached, rtol=3e-6, atol=3e-6)
 
 

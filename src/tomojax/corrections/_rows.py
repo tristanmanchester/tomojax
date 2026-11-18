@@ -20,9 +20,11 @@ from ._engine import (
     flat_fields,
     flat_weights,
     frame_batch_size,
+    linear_limit_edge,
     log_batches,
     ordered_steps,
     positive_finite,
+    reject_nonfinite,
 )
 from ._records import Correction
 from ._steps import Step
@@ -45,13 +47,9 @@ class CorrectedRows:
     @property
     def records(self) -> tuple[Correction, ...]:
         """Correction records for these measured rows, including any sampling halo."""
+        reject_nonfinite(int(self.counts[1]), 0, len(self.projections))
         log = Correction(
-            "log",
-            {"epsilon": self.epsilon},
-            {
-                "nonpositive_transmission": int(self.counts[0]),
-                "nonfinite_set_to_zero": int(self.counts[1]),
-            },
+            "log", {"epsilon": self.epsilon}, {"nonpositive_transmission": int(self.counts[0])}
         )
         before = [step.record() for step in self.steps if step.domain == "transmission"]
         after = [step.record() for step in self.steps if step.domain == "line integrals"]
@@ -120,6 +118,8 @@ def corrected_row_source(
     exposure_times: np.ndarray | float | None = None,
     flat_exposure_times: np.ndarray | float | None = None,
     host: bool = False,
+    dark_source: str | None = None,
+    linear_limit: tuple[float, str] | None = None,
 ) -> Iterator[Callable[[int, int], CorrectedRows | Corrected]]:
     """Read corrected detector-row intervals without a materialized projection stack.
 
@@ -156,6 +156,14 @@ def corrected_row_source(
     host : bool, optional
         Return NumPy bands using bounded device view batches, instead of keeping
         the whole corrected band on the device. Default is False.
+    dark_source : str or None, optional
+        What removed the dark before the counts were recorded (a camera that
+        subtracts it, say), kept in the record as ``dark_removed_by`` in place of
+        a count of dark frames. Default None.
+    linear_limit : tuple of (float, str) or None, optional
+        The detector's stated linear range in counts and where it is stated. The
+        record keeps the fraction of counts above it and the line integral where
+        it ends, and a warning names both when any count lies above. Default None.
 
     Yields
     ------
@@ -185,8 +193,9 @@ def corrected_row_source(
     views, rows, cols = counts.shape
     view_scales, flat_scales = exposure_scales(exposure_times, flat_exposure_times, views, flats)
     fields, records = flat_fields(
-        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales
-    )
+        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales,
+        dark_source=dark_source,
+    )  # fmt: skip
     if flat_scales is not None and exposure_times is not None:
         records[0].settings["sample_exposure_range_s"] = [
             float(np.min(exposure_times)),
@@ -198,6 +207,12 @@ def corrected_row_source(
     if at.shape != (views,) or not np.isfinite(at).all():
         raise ValueError(f"view_positions needs one finite position for each of the {views} views")
     interpolation = flat_weights(at, fields.positions, exposure_scales=view_scales)
+    limit = np.float32(np.inf if linear_limit is None else linear_limit[0])
+    edge = None
+    if linear_limit is not None:  # each band's record reports its counts above it
+        edge = linear_limit_edge(linear_limit[0], fields, view_scales)
+        records[0].settings["linear_limit"] = float(linear_limit[0])
+        records[0].settings["linear_limit_source"] = linear_limit[1]
     device_interpolation = None if host else tuple(jax.device_put(v) for v in interpolation)
     reader = None if host else _RowReader(counts)
     steps = tuple(s for _, s in ordered)
@@ -207,7 +222,7 @@ def corrected_row_source(
     def correct(first: int, stop: int) -> CorrectedRows | Corrected:
         if host:
             return _correct_host_rows(
-                counts, fields, interpolation, records[0], first, stop, steps, epsilon
+                counts, fields, interpolation, records[0], first, stop, steps, epsilon, limit, edge
             )
         assert reader is not None
         assert device_interpolation is not None
@@ -222,11 +237,15 @@ def corrected_row_source(
             line_steps=line_steps,
             transmission_steps=transmission_steps,
             fill_gaps=not bool(selected[2].all()),
+            limit=limit,
         )
         flat = Correction(
             "flat_dark",
             records[0].settings,
-            {"pixels_without_light": int(np.count_nonzero(~selected[2]))},
+            {
+                "pixels_without_light": int(np.count_nonzero(~selected[2])),
+                **_above(int(done[3]), raw.size, edge),
+            },
         )
         return CorrectedRows(done[0], flat, steps, epsilon, (done[1], done[2]), raw)
 
@@ -246,6 +265,8 @@ def _correct_host_rows(
     stop: int,
     steps: tuple[Step, ...],
     epsilon: float,
+    limit: np.floating,
+    edge: float | None,
 ) -> Corrected:
     """Correct a host band with bounded raw reads and device workspaces."""
     rows = slice(first, stop)
@@ -258,8 +279,10 @@ def _correct_host_rows(
     transmission = tuple(s for s in steps if s.domain == "transmission")
     line = tuple(s for s in steps if s.domain == "line integrals")
     tally = correct_view_batches(
-        raw, output, selected, interpolation, batch, epsilon=epsilon, take_log=not transmission
-    )
+        raw, output, selected, interpolation, batch, epsilon=epsilon, take_log=not transmission,
+        limit=limit,
+    )  # fmt: skip
+    above = int(tally[2])
     if transmission:
         output, _, _ = apply_steps(output, transmission, None)
         output, tally = log_batches(output, (), epsilon, None)
@@ -267,14 +290,17 @@ def _correct_host_rows(
     flat = Correction(
         "flat_dark",
         flat_record.settings,
-        {"pixels_without_light": int(np.count_nonzero(~selected.usable))},
-    )
-    log = Correction(
-        "log",
-        {"epsilon": epsilon},
         {
-            "nonpositive_transmission": int(tally[0]),
-            "nonfinite_set_to_zero": int(tally[1]),
+            "pixels_without_light": int(np.count_nonzero(~selected.usable)),
+            **_above(above, int(np.prod(raw.shape)), edge),
         },
     )
+    log = Correction("log", {"epsilon": epsilon}, {"nonpositive_transmission": int(tally[0])})
     return Corrected(output, (flat, *(s.record() for s in transmission), log, *rest), kept)
+
+
+def _above(count: int, size: int, edge: float | None) -> dict[str, float]:
+    """A band's counts above the stated linear range, when the camera states one."""
+    if edge is None:
+        return {}
+    return {"counts_above_linear_limit": count / size, "linear_limit_line_integral": edge}

@@ -28,6 +28,28 @@ if TYPE_CHECKING:
 enable_persistent_compilation_cache()
 
 
+def affine_grid(det_grid: tuple[jax.Array, jax.Array], detector: Detector) -> bool:
+    """Whether ``det_grid`` is the lattice :func:`plane_coefficients` reads from its corner pixels.
+
+    The plane model takes a detector grid as an affine lattice: its first pixel and its
+    steps along the first row and column. A rolled detector is one; an arbitrary grid is
+    not, and the plane model would silently project onto the lattice through its corners
+    instead. The tolerance is float32 rounding of the coordinates, nothing more.
+    """
+    nu, nv = detector.nu, detector.nv
+    points = np.stack([np.asarray(a, np.float64).ravel() for a in det_grid])
+    if points.shape != (2, nu * nv):
+        return False
+    step_u = (points[:, nu - 1] - points[:, 0]) / (nu - 1) if nu > 1 else np.zeros(2)
+    step_v = (points[:, (nv - 1) * nu] - points[:, 0]) / (nv - 1) if nv > 1 else np.zeros(2)
+    if (nu > 1 and not step_u.any()) or (nv > 1 and not step_v.any()):
+        return False  # a degenerate grid has no lattice to read
+    u, v = np.meshgrid(np.arange(nu), np.arange(nv))
+    lattice = points[:, :1] + step_u[:, None] * u.ravel() + step_v[:, None] * v.ravel()
+    scale = np.abs(points).max() + detector.du + detector.dv
+    return bool(np.abs(lattice - points).max() <= 64 * np.finfo(np.float32).eps * scale)
+
+
 def validate_plane_geometry(poses: jax.Array, grid: Grid, detector: Detector) -> None:
     """Reject geometry that would make the plane map or gather bounds undefined."""
     if not np.isfinite((*grid_volume_origin(grid), *detector.center)).all():
@@ -227,6 +249,11 @@ def transpose_bands(
     return "gather" if use_cuda_gather(grid) and not any(axial) else None
 
 
+def _fp32(*arrays: jax.Array) -> tuple[jax.Array, ...]:
+    """The CUDA kernels read FP32 storage; any other dtype would be reinterpreted."""
+    return tuple(jnp.asarray(a, jnp.float32) for a in arrays)
+
+
 def forward_bands(
     coefficients: jax.Array,
     volume: jax.Array,
@@ -245,6 +272,7 @@ def forward_bands(
     from ._cuda_axial import forward_bands_cuda
 
     def on_cuda(c: jax.Array, x: jax.Array) -> jax.Array:
+        c, x = _fp32(c, x)
         return forward_bands_cuda(c, x, grid, detector, depth=depth, axial=axial)
 
     def on_jax(c: jax.Array, x: jax.Array) -> jax.Array:
@@ -272,6 +300,7 @@ def backproject_bands(
     from ._cuda_joseph import gather_bands_cuda
 
     def on_cuda(c: jax.Array, y: jax.Array) -> jax.Array:
+        c, y = _fp32(c, y)
         if axial:
             return transpose_axial_vu_cuda(
                 c, y, None, grid=grid, interpolation="linear", batch=batch
@@ -327,6 +356,7 @@ def forward_project_planes(
         raise ValueError("Plane projection backend must be 'jax' or 'cuda'")
 
     def on_cuda(c: jax.Array, v: jax.Array) -> jax.Array:
+        c, v = _fp32(c, v)
         if absolute_weights:
             from .cuda_projector._joseph import forward_cuda
 
@@ -341,6 +371,25 @@ def forward_project_planes(
     return jax.lax.platform_dependent(coefficients, volume, cuda=on_cuda, default=on_jax)
 
 
+def active_voxels(
+    mask: jax.Array, *, backend: str, interpolation: str, z_fast: bool = False
+) -> tuple[jax.Array, ...] | None:
+    """Work lists for ``sum_backproject_planes(active=...)`` from a voxel mask, or None.
+
+    The CUDA gathers use them to skip cubic 4x4 tiles, or linear z runs, with
+    no nonzero ``mask`` voxel. Build them once for many transposes.
+    """
+    if backend != "cuda" or mask.size >= 2**31:  # the lists hold int32 ids
+        return None
+    if interpolation == "linear":
+        from ._cuda_joseph import active_runs
+
+        return active_runs(mask, z_fast=z_fast)
+    from .cuda_projector._joseph_generic import active_tiles
+
+    return active_tiles(mask, z_fast=z_fast)
+
+
 def sum_backproject_planes(
     coefficients: jax.Array,
     images: jax.Array,
@@ -352,10 +401,13 @@ def sum_backproject_planes(
     absolute_weights: bool = False,
     accumulate: jax.Array | None = None,
     z_fast: bool = False,
+    active: tuple[jax.Array, ...] | None = None,
 ) -> jax.Array:
     """Apply the matched transpose, or abs(A).T when estimating cancellation.
 
     A given ``accumulate`` volume is added to the result; CUDA adds in place.
+    ``active`` (``active_voxels``) marks the voxels whose result is needed; the
+    others may or may not receive their transpose.
     The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
     The CUDA backend runs the CUDA kernels where the program runs on a GPU,
     and the JAX model elsewhere.
@@ -377,8 +429,11 @@ def sum_backproject_planes(
         from .cuda_projector._joseph import adjoint_cuda
 
         options = {"interpolation": interpolation, "absolute_weights": absolute_weights}
-        accumulate = initial[0] if initial else None
-        return adjoint_cuda(c, y, grid, detector, **options, accumulate=accumulate, z_fast=z_fast)
+        c, y = _fp32(c, y)
+        accumulate = _fp32(initial[0])[0] if initial else None
+        return adjoint_cuda(
+            c, y, grid, detector, **options, accumulate=accumulate, z_fast=z_fast, active=active
+        )
 
     return jax.lax.platform_dependent(coefficients, images, *initial, cuda=on_cuda, default=on_jax)
 
@@ -404,6 +459,7 @@ def plane_pose_columns(
         from ._cuda_joseph_columns import pose_columns_cuda
 
         if cuda_gather_available():
+            coefficients, volume, tangent = _fp32(coefficients, volume, tangent)
             return pose_columns_cuda(
                 coefficients,
                 volume,
@@ -434,8 +490,9 @@ def plane_weighted_diagonal(
     detector: Detector,
     *,
     backend: str,
+    interpolation: str = "linear",
 ) -> jax.Array:
-    """Add diag(A.T W A) of the linear plane projector to ``accumulate`` (nz, ny, nx).
+    """Add diag(A.T W A) of the plane projector to ``accumulate`` (nz, ny, nx).
 
     ``sqrtweights`` holds the square roots of the pixel weights, shaped
     ``(views, nv, nu)``. A Jacobi preconditioner input; the matched transpose
@@ -443,7 +500,15 @@ def plane_weighted_diagonal(
     """
     from ._weighted_diagonal import weighted_diagonal
 
-    return weighted_diagonal(coefficients, sqrtweights, accumulate, grid, detector, backend=backend)
+    return weighted_diagonal(
+        coefficients,
+        sqrtweights,
+        accumulate,
+        grid,
+        detector,
+        backend=backend,
+        interpolation=interpolation,
+    )
 
 
 def plane_l2_value_and_grad(

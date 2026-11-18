@@ -27,11 +27,18 @@ Alignment is experimental and needs scan-specific review. Use the
   tilt or roll, or per-view rotation. Add the corresponding parameter only when it explains a
   remaining artefact. A roll can leave the central slice almost unchanged while blurring slices
   above and below it.
+- On a half-turn parallel scan, a slow drift of about 0.1 px across the scan is only weakly
+  determined: the fit may leave it, and the reconstruction is unaffected.
 - The image and geometry are jointly estimated. Common rigid object motion is a gauge, and a
   constant parallel-ray translation shares a gauge with the detector centre. Reported parameter
   values depend on the stated gauge; they are not independent instrument measurements.
-- Per-view rotations carry a physical angular size prior. This limits unsupported motion but
-  does not resolve repeated-pattern ambiguities. A TEM grid can match at a wrong orientation.
+- Per-view rotations are the two wobble components of the rotation axis; each view's angle
+  about the axis is taken as recorded, so an error in a view's recorded angle is not corrected.
+  Such errors are rare on real stages but not small when present: 0.07° RMS moves the features
+  of a simulated watch movement by 0.13 detector pixels RMS.
+  They carry a physical angular size prior and are tied to their neighbouring views, so a
+  rotation that jumps at one view (a broken frame, a diffraction flash) is expensive. This
+  limits unsupported motion but does not resolve repeated-pattern ambiguities. A TEM grid can match at a wrong orientation.
   Finite detector pixels also average transmitted intensity before the logarithm, whereas the
   linear projector fits line integrals. At sharp, strongly attenuating edges, that mismatch can
   look like motion. A smaller residual alone does not establish more accurate poses.
@@ -87,11 +94,12 @@ measurements require independent calibration evidence and repair before `Rings`.
   modes against an independent calibration rather than treating a narrow local
   interval as a global accuracy certificate. Runtime reports mark global
   coverage uncalibrated for every estimate, including a single pair without
-  a disagreement test; loading warns about this calibration limitation.
+  a disagreement test.
 - `tomojax inspect` checks storage and missing calibration in recognized raw
-  acquisitions. It does not run data-driven centre inference; a centre pending
-  inference can still fail during loading. A valid report does not certify
-  physical geometry or reconstruction readiness.
+  acquisitions. A file that records no axial centre loads with the centre at the
+  middle of the detector; estimate it with `tj.estimate_center` or
+  `tj.align(fit="centre")`. A valid report does not certify physical geometry or
+  reconstruction readiness.
 - External HDF5 links require readable backing files at their recorded paths.
   The loader reports missing detector sources; it does not repair damaged files
   or guess relocated links.
@@ -122,10 +130,10 @@ measurements require independent calibration evidence and repair before `Rings`.
   pass `geometry=` to `tj.load_frames`; see the
   [real scan guide](real-laminography.md#prepare-tiff-data).
 - Missing detector pixel sizes require `detector=` or `geometry=`. For axial
-  acquisitions with recorded pitch, loading estimates an absent rotation centre
-  from corrected rows and records its provenance; at least a usable half-turn
-  is needed. Failed estimates require explicit `detector=` and never return the
-  internal zero seed. Missing angles require `angles=`. See the
+  acquisitions with recorded pitch, an absent rotation centre is not estimated
+  at load: the scan has the centre at the detector middle and its record says
+  "not_recorded"; `tj.reconstruct` reports that status. Supply `detector=` or
+  fit it with `tj.align(scan, fit="centre")`. Missing angles require `angles=`. See the
   [quickstart](quickstart.md#correct-raw-detector-frames).
 - Content-discovered external acquisitions remain detector counts even when
   stored as floats. Missing flat/dark calibration requires `flats=` (frames or
@@ -159,9 +167,9 @@ measurements require independent calibration evidence and repair before `Rings`.
 - Cone-beam scans: FDK assumes a circular source orbit (it is exact only in
   the orbit plane, with cone artefacts growing away from it) and supports full
   turns, including offset-detector (half-fan) turns weighted by actual
-  conjugate-panel coverage, and
-  Parker-weighted short scans on a centred detector (an offset detector in a
-  short scan logs a warning). The iterative solvers model any per-view poses exactly. Cone-beam
+  conjugate-panel coverage, and Parker-weighted short scans, whose weights an
+  offset detector shares only between rays that were both measured. The
+  iterative solvers model any per-view poses exactly. Cone-beam
   projection needs the canonical detector grid (no `detector_roll_deg`
   replay grid; detector roll is part of `ConeBeam`). The CUDA kernels need
   CuPy; without it the JAX reference runs, about ten times slower. On CUDA
@@ -184,9 +192,10 @@ measurements require independent calibration evidence and repair before `Rings`.
   part of the cone only through a bounded volume or a prior.
 - FBP retains filtered tails across the full volume, assuming zero raw
   attenuation outside the measured detector. This does not recover missing
-  measurements of a truncated object. With explicit detector coordinates
-  (`det_grid`), FBP uses the ray-model adjoint, uniform `pi / n` weights and the
-  supplied detector support.
+  measurements of a truncated object. Explicit detector coordinates
+  (`det_grid`) must be the detector lattice rotated and shifted in its plane,
+  such as a fitted detector roll; FBP moves the poses to match and weights them
+  as any other scan.
 - CUDA projector paths are optional accelerator backends. Parallel FBP selects
   CUDA C kernels automatically on CUDA; `FBPConfig(backend="jax")` selects JAX.
   Reference/JAX paths and independent analytic data both validate correctness.
@@ -248,7 +257,7 @@ An explicit file-owned reconstruction grid survives detector cropping. The
 ESRF `scan_3_.par` fixture specifies 2048×2048×1200 voxels: one float32 volume
 alone needs 20,132,659,200 bytes, above the 18 GB input-audit memory limit.
 The 2026-10-27 audit on `2626e6e5` loaded it but stopped before reconstruction
-(`TOMO_SOURCE_COMMIT=2626e6e5 JAX_PLATFORMS=cpu uv run --no-sync python
+(lab harness outside the repository: `TOMO_SOURCE_COMMIT=2626e6e5 JAX_PLATFORMS=cpu uv run --no-sync python
 shared/agent06-audit/run_default.py 510`, with `LAB_ARTIFACTS` set to an output
 directory).
 Supply a smaller `grid=` to `tj.load_frames` when the file grid exceeds available

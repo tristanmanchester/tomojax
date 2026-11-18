@@ -6,8 +6,13 @@ suspect, look at the result, and add parameters only while artefacts remain: a p
 do not need costs accuracy, and a missing one leaves an error the fit cannot represent.
 
 Before you align, correct the projections to line integrals and check the declared geometry
-against the instrument, as the [real scan guide](real-laminography.md) describes. Reconstruct once
-without alignment so that you have an image to compare with.
+against the instrument, as the [real scan guide](real-laminography.md) describes. Pass
+`RejectViews()` to that correction when frames may be broken or a crystal may diffract: the fit
+otherwise moves those views to explain them. On a real laminography scan with one broken frame,
+`RejectViews` removed that frame and the four others where the fitted corrections jumped. Check
+what it rejected in `scan.corrections`: on scans whose flux hops or alternates, as some lab sources
+and modulated beams do, it can reject good views as well. Reconstruct once without alignment so
+that you have an image to compare with.
 
 ## Choose what to fit
 
@@ -17,7 +22,7 @@ without alignment so that you have an image to compare with.
 | Doubled or smeared edges that vary from feature to feature | Drift or sudden slips of the sample between views | `fit="translations"` (the default) |
 | Sharp slices at the detector's centre row, with haloes and doubled edges that grow towards the top and bottom of the volume | The rotation axis or the detector rolled about the beam | `fit=("translations", "roll")` |
 | In laminography, doubling that remains after translations, worst far from the rotation axis | The laminography tilt | `fit=("translations", "tilt")` |
-| Blur that remains after translations and the setup angles | The sample rotating or wobbling between views | `fit=("translations", "rotations")` |
+| Blur that remains after translations and the setup angles | The rotation axis wobbling between views | `fit=("translations", "rotations")` |
 
 ```python
 import tomojax as tj
@@ -29,6 +34,10 @@ result = tj.align(scan, fit=("translations", "roll"))    # add the axis roll
 tj.save("aligned.nxs", result)
 recon = tj.reconstruct(result.scan, "cgls")              # result.scan carries the corrections
 ```
+
+After a vertical correction of n pixels, the outermost n slices at the top and bottom of a
+reconstruction on the default grid are not fully covered by data: some corrected views look above
+or below the measured rows there.
 
 The command line uses the same names:
 
@@ -44,9 +53,9 @@ selected parameters, for parallel, laminography and cone data.
 | --- | --- | --- |
 | `centre` | One detector-u centre, plus detector-v for cone data | Physical detector-centre lengths, in the same units as `Detector.center` |
 | `tilt` | One axis or laminography tilt correction shared by every view | Degrees; positive tilt leans the rotation axis towards the beam |
-| `roll` | One detector roll correction shared by every view | Degrees about the beam |
+| `roll` | One detector roll correction shared by every view | Degrees, right-handed about the detector normal: positive turns u towards v, so a point above the centre projects towards +u |
 | `translations` | Two translations per view; three for cone data | Physical lab-frame lengths: across the beam and vertically, plus along the beam for cone |
-| `rotations` | Three rotations per view | Sample-frame rotations in radians |
+| `rotations` | Two wobble components of the rotation axis per view; each view's angle about the axis is taken as recorded | Sample-frame rotations in radians, about object x and y |
 
 The figures below show each error on simulated scans, before and after the matching fit: a watch
 movement in laminography, and a spark plug in parallel-beam tomography. The lower row of each
@@ -76,6 +85,12 @@ with opposing views. It does not reconstruct, and it estimates neither tilt, rol
 When the sample moves between views, features are doubled or smeared by different amounts,
 depending on when each view was taken. The translation fit follows smooth drift and sudden slips
 of the sample together.
+
+How far a view may move from its neighbours is read from the scan itself: from how much each
+view's own best position scatters from one view to the next. Error that differs from view to
+view and is not motion, such as the model error of a real scan, raises that scale, so the fit
+does not turn it into motion. A slip much larger than the scale is still followed, a little
+short where the scale is large.
 
 ![The balance wheel with drift and five slips between views: the screws are doubled. After fit="translations" the image matches the true geometry.](images/alignment-ladder-drift.png)
 
@@ -142,9 +157,14 @@ calibration.
 
 ## Sample rotation
 
-If the sample itself tips or turns slightly between views, translations remove most of the blur
-but leave a residual at the finest features. Fitting rotations estimates three more parameters for
-every view.
+If the rotation axis wobbles between views, tipping the sample slightly, translations remove most
+of the blur but leave a residual at the finest features. Fitting rotations estimates the two
+wobble components of the axis for every view. Each view's angle about the axis is taken as
+recorded: stage encoders give it, and errors in it are rare. A real laminography scan whose file
+records set-point angles rather than encoder readings, checked against a tracked sphere, turned at
+constant speed right to its ends. Angle errors are not small when present:
+on the simulated watch movement, 0.07° RMS of error in the recorded angles moves its features by
+0.13 detector pixels RMS, and no fit here corrects it.
 
 ![The balance wheel with random rotations of 0.37° RMS between views: the screws are smeared. fit="translations" removes most of the blur and leaves a faint ring at the screws; fit=("translations", "rotations") matches the true geometry.](images/alignment-ladder-rotations.png)
 
@@ -161,13 +181,62 @@ translation fit.
    result. An extra parameter should remove a visible artefact; if it does not, use the simpler fit.
 2. Inspect the estimated values. `result.info["calibration"]` holds the fitted global values under
    the names used in `fit=`, and `result.poses` holds the per-view correction table. The returned
-   `result.scan` carries both, so use it for reconstruction and saving.
+   `result.scan` carries both, so use it for reconstruction and saving. Each global value is the
+   final setting, not a change, and passes straight to a constructor in another script:
+
+   | Value | Parallel or laminography data | Cone data |
+   | --- | --- | --- |
+   | `centre` | `Detector(..., center=(centre, v))` | `Detector(..., center=centre)` |
+   | `roll` | `ParallelGeometry(..., detector_roll_deg=roll)`, or the same keyword on `LaminographyGeometry` | `ConeBeam(..., detector_roll_deg=roll)` |
+   | `tilt` | `LaminographyGeometry(..., tilt_deg=tilt)`: a tilted parallel scan is a laminography scan | `ConeGeometry(..., axis_unit=(0, sin(tilt), cos(tilt)))` |
+
 3. Check that the global values are physically plausible: a tilt correction of several degrees, or
    per-view rotations of more than a fraction of a degree, usually means the model is wrong rather
    than the instrument. A sharper image or a lower residual alone does not establish accurate
    poses.
 4. Compare poses only after removing one common rigid motion of the object. Moving the whole
    object and moving every pose back predicts the same data.
+5. Read `result.info["report"]`. It states how each level ended ("pose_steps_below_tolerance"
+   or "step_budget_reached"), the size of the corrections in detector pixels or degrees, split
+   into a smooth part and a view-to-view part, and the range of the per-view offsets. It also
+   lists two kinds of view, and `tj.align` warns when either is present:
+   - `isolated_views`: a correction that jumps away from both neighbours in the same direction.
+     A slip, where the object moves and stays, is not one.
+   - `unusual_views`: views whose residual is at least three times their neighbours', such as a
+     broken frame or a crystal diffracting. These need not have moved, so look at the frames.
+   Look at those views before trusting their corrections, and drop broken frames, or correct
+   with `RejectViews()` and align again. The report is
+   advisory: a view below its thresholds can still be wrong. `info["report"]["advisories"]` also
+   states measured limits that apply to the fit, such as per-view rotations fitted with the
+   rotation axis perpendicular to the beam, where they are weakly determined and can end worse
+   than translations alone.
+6. To test whether the alignment helped, hold out every sixth view, fit the others, and predict
+   the held-out views from a reconstruction of the fitted ones, with poses interpolated in view
+   order. Compare the prediction error with the fitted and with the nominal poses, after removing
+   each view's offset and row ramp, which the fit does not predict. This tests only the smooth
+   part of the correction: a single view's error cannot be interpolated into it.
+
+   ```python
+   import numpy as np
+
+   index = np.arange(len(scan.angles))
+   train, test = index % 6 != 5, index % 6 == 5
+   fitted = tj.align(scan.selected(train)).poses
+   poses = np.stack([np.interp(index, index[train], fitted[:, j]) for j in range(6)], 1)
+
+   def held_out_error(table):
+       candidate = scan.with_poses(table)
+       volume = tj.reconstruct(candidate.selected(train), "fbp").volume
+       error = np.asarray(tj.project(candidate.selected(test).geometry, volume))
+       error = error - np.asarray(scan.projections)[test]
+       rows = np.linspace(-1, 1, error.shape[1]).repeat(error.shape[2])
+       basis = np.stack([np.ones_like(rows), rows], 1)
+       flat = error.reshape(len(error), -1).T
+       flat = flat - basis @ np.linalg.lstsq(basis, flat, rcond=None)[0]
+       return float(np.sqrt(np.mean(flat**2)))
+
+   print(held_out_error(np.zeros((len(index), 6))), held_out_error(poses))
+   ```
 
 `calibration` reports final global values: `centre` is a scalar for parallel data and a `(u, v)`
 pair for cone data; `tilt` is the signed lab inclination `atan2(axis_y, axis_z)` in degrees; `roll`
@@ -181,11 +250,19 @@ The fit works on a bounded grid of at most 16 million voxels and a detector of a
 side, binned so that each working pixel is no wider than a voxel at the object. Supplying `grid=`
 keeps that grid and limits the binning instead. The fitted image extends a little above and below
 the grid, so material that moving views bring into the outer rows has somewhere to be; the
-returned volume is cropped back to the grid. Each view also gets its own gain and a background
-that is constant plus a ramp down the detector rows, refitted at every step: flux changes or
-phase-retrieval offsets between views would otherwise look like vertical motion. Only the
-differences between views are fitted; what all views share stays in the image. Reconstruct `result.scan` at the resolution you need:
-the alignment volume is not a final-resolution reconstruction.
+returned volume is cropped back to the grid. Each view also has its own offset and ramp down the
+detector rows, which the line integrals do not describe: flux changes or phase-retrieval offsets
+between views would otherwise look like vertical motion. Each view's departure from the level
+the views share is eliminated inside every step, so the poses see only what an offset and ramp
+cannot explain, and the data are never modified. The shared level itself stays with the data:
+an image can produce it (a faint disc, brightest at its rim, whose every view is one constant),
+so removing it too would let the fit invent that disc and drag the views toward their nominal
+positions. `info["offsets"]` reports each view's fitted pair relative to the shared level. `result.scan` keeps the scan's grid, so
+reconstructing it gives the full-resolution image; `result.volume` is the fit's own image, on the
+bounded working grid `result.grid`, not a final-resolution reconstruction. The fit compares model
+and data through [1, 2, 1] / 4 along the detector's rows and columns, because at the Nyquist
+frequency a sampled model cannot be right; nothing then constrains that band, so the fit's image
+carries texture at the grid's finest scale that the object does not have.
 
 ## How the figures were made
 

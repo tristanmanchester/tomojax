@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from typing import TYPE_CHECKING
+import warnings
 
 import numpy as np
 
-from tomojax._scan import geometry_of, rebuild
-from tomojax.geometry import Detector, Grid, ParallelGeometry
+from tomojax._scan import frame_output_grid, geometry_of
+from tomojax.geometry import Detector, Grid
+from tomojax.io.api import dropped_offsets_message, with_view_offsets, without_view_offsets
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -22,28 +24,17 @@ if TYPE_CHECKING:
     from tomojax.io import ProjectionDataset
 
 
-def frame_output_grid(
-    geometry: ScanGeometry, source: ProjectionDataset | None, *, binning: int = 1
-) -> ScanGeometry:
-    """Keep explicit grids; size detector-derived grids at the corrected resolution.
-
-    Only an unposed axial parallel model identifies detector rows with object z.
-    Other models retain their physical output box, resampling it when binned.
-    This is a numerical grid policy, not a change to acquired ray geometry.
-    """
-    if source is None or source.grid is not None:
-        return geometry
-    if isinstance(geometry, ParallelGeometry):
-        d = geometry.detector
-        grid = Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
-    elif binning > 1:
-        g = geometry.grid
-        grid = g.resampled(
-            (max(1, g.nx // binning), max(1, g.ny // binning), max(1, g.nz // binning))
-        )
-    else:
-        return geometry
-    return rebuild(geometry, grid=grid)
+def _vendor_corrections(record: ProjectionDataset, *, applied: bool) -> ProjectionDataset:
+    """A scanner's own per-view shifts and centre shift, applied or left out, said either way."""
+    vendor = record.geometry_metadata.get("vendor_corrections")
+    if vendor is None:
+        return record
+    if not applied:
+        record = without_view_offsets(record)
+    meta = {**record.geometry_metadata, "vendor_corrections": {**vendor, "applied": applied}}
+    if not applied and meta.get("detector_center_status") == "recorded":
+        meta["detector_center_status"] = "nominal"
+    return replace(record, geometry_metadata=meta)
 
 
 def frame_geometry(
@@ -54,14 +45,31 @@ def frame_geometry(
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
     poses: bool = True,
+    pixel_size: float | tuple[float, float] | None = None,
 ) -> tuple[ProjectionDataset, ScanGeometry]:
     """Resolve caller metadata before constructing any geometry from a file.
 
     Readers may return incomplete records. An explicit geometry must not first
-    require constructing (and guessing) the missing source geometry.
+    require constructing (and guessing) the missing source geometry. Recorded
+    per-view detector offsets move from the file's detector to a caller's
+    ``detector``; an explicit ``geometry`` replaces them, with a warning.
     """
+    if pixel_size is not None and (detector is not None or geometry is not None):
+        raise ValueError(
+            "pixel_size= and detector= (or geometry=) both describe the detector: pass one"
+        )
+    if geometry is not None and (message := dropped_offsets_message(record)):
+        warnings.warn(message, stacklevel=4)
+    record = _vendor_corrections(record, applied=poses and geometry is None)
     meta = dict(record.geometry_metadata)
-    if geometry is not None or detector is not None:
+    if pixel_size is not None:  # the shape from the frames, the centre from the file or the middle
+        du, dv = np.broadcast_to(np.asarray(pixel_size, np.float64), (2,)).tolist()
+        _, nv, nu = record.projections.shape
+        center = (0.0, 0.0) if record.detector is None else record.detector.center
+        detector = Detector(nu, nv, du, dv, center)
+        meta["detector_pixel_size_status"] = "provided"
+        meta.pop("length_unit", None)
+    if geometry is not None or (detector is not None and pixel_size is None):
         meta["detector_center_status"] = "provided"
     if geometry is not None:
         meta["axis_status"] = "provided"
@@ -78,6 +86,8 @@ def frame_geometry(
         grid=geometry.grid if geometry is not None else grid or record.grid,
         geometry_metadata=meta,
     )
-    record = record.prepare_center_seed() if geometry is None else record
+    if geometry is None and detector is not None:
+        record = with_view_offsets(record, detector)
+    record = record.with_parallel_detector() if geometry is None else record
     resolved = geometry if geometry is not None else geometry_of(record, poses=poses)
     return record, frame_output_grid(resolved, record)

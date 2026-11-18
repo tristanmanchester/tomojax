@@ -81,3 +81,25 @@ def test_packet_paths_partition_pixels_and_match_individual_views(views, suffix,
             (coeff, volume, target, *ring_args),
         )
     np.testing.assert_array_equal(target.view(cp.uint32).get(), reference.view(cp.uint32).get())
+
+
+@pytest.mark.gpu
+def test_box_forward_covers_detectors_beyond_the_cuda_grid_y_limit():
+    import cupy as cp
+
+    # 4100 x 2100 pixels need 67266 blocks of 128: more than grid y's 65535.
+    grid = tj.Grid(8, 8, 8, 1.0, 1.0, 1.0)
+    detector = tj.Detector(4100, 2100, 0.01, 0.01)
+    geometry = tj.ConeGeometry(grid, detector, [30.0], tj.ConeBeam(50.0, 75.0))
+    frames = cone.cone_model(geometry).frames(1)
+    coeff = cp.asarray(
+        cone.frame_coefficients(stack_view_poses(geometry, 1), frames, grid, detector)
+    )
+    boxes = cp.full((1, detector.nv, detector.nu), cp.nan, cp.float32)
+    cone.box_forward_into(boxes, coeff, grid=grid, det=detector)
+    ones = cp.ones((grid.nz, grid.ny, grid.nx), cp.float32)
+    expected = cp.empty_like(boxes)
+    cone.forward_into(expected, coeff, ones, grid=grid, det=detector)
+    # The last rows lie in blocks past the limit; every pixel must be written.
+    assert bool(cp.isfinite(boxes).all())
+    cp.testing.assert_allclose(boxes[:, -50:], expected[:, -50:], rtol=1e-5, atol=1e-6)

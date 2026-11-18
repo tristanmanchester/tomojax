@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tomojax.geometry import ConeBeam, Grid
+from tomojax.geometry import ConeBeam
 
 from ._acquisition import RawAcquisition, metadata_candidates
 from ._datasets import ProjectionDataset
@@ -125,11 +125,8 @@ def read_skyscan(path: Path, *, data_path: str | None = None) -> RawAcquisition 
     image_pixel = acquisition.getfloat("Image Pixel Size (um)", fallback=None)
     voxel = None if image_pixel is None else image_pixel * 1e-3
     ratio = None if binning is None else [float(v) for v in binning.split("x")]
-    grid = (
-        None
-        if ratio is None or voxel is None
-        else Grid(nu, nu, nv, voxel, voxel, voxel * ratio[1] / ratio[0])
-    )
+    # The log states the voxel; the grid's shape comes from the detector, so binning follows it.
+    stated = None if ratio is None or voxel is None else [voxel, voxel, voxel * ratio[1] / ratio[0]]
     indices = np.asarray([int(p.stem[len(prefix) :]) for p in files], np.float64)
     direction = acquisition.get("Rotation Direction", "").strip().upper()
     if direction and direction not in {"CC", "CW"}:
@@ -145,9 +142,10 @@ def read_skyscan(path: Path, *, data_path: str | None = None) -> RawAcquisition 
         projections=np.broadcast_to(np.float32(0), counts.shape),
         angles=angles.astype(np.float32),
         detector=None,
-        grid=grid,
+        grid=None,
         geometry_type="cone",
         geometry_metadata={
+            **({} if stated is None else {"grid_status": "derived", "voxel_size": stated}),
             "cone_beam": None if beam is None else beam.to_dict(),
             "ingest_source": "skyscan",
             "detector_center_status": "not_recorded",

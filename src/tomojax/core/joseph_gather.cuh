@@ -9,14 +9,17 @@ __device__ __forceinline__ float joseph_pixel(DetectorColumns image,int,int u,in
     return image.data[(long)u*image.nv+v];
 }
 #define RADIUS (CUBIC ? 2.f : 1.f)
+// ABSOLUTE 0 gathers the signed weights, 1 their magnitudes and 2 their squares
+// (with the view's path weight squared too): the diagonal of A.T W A.
 __device__ __forceinline__ float plane_weight(float q) {
 #if CUBIC
     float w=joseph_cubic_weight(q);
-    return ABSOLUTE ? fabsf(w) : w;
 #else
-    return fmaxf(1.f-fabsf(q),0.f);
+    float w=fmaxf(1.f-fabsf(q),0.f);
 #endif
+    return ABSOLUTE == 2 ? w*w : (ABSOLUTE ? fabsf(w) : w);
 }
+#define PATH_WEIGHT(c) (ABSOLUTE == 2 ? (c)[9]*(c)[9] : (c)[9])
 
 // The interval estimate only seeds a search. Correct it with the very same
 // rounded affine coordinate as the forward sampler, so a near-edge ray is
@@ -68,7 +71,7 @@ template<int R, typename Image>
 __device__ __forceinline__ void gather_unit_rows(
  const float* c,Image image,int ix,int iy,int iz0,int nu,int nv,float (&total)[R]) {
  const int a=(int)c[0], radius=CUBIC?2:1, taps=2*radius;
- float ub=c[1],vb=c[2],kb=c[3],cb=c[4],uc=c[5],vc=c[6],kc=c[7],cc=c[8],weight=c[9];
+ float ub=c[1],vb=c[2],kb=c[3],cb=c[4],uc=c[5],vc=c[6],kc=c[7],cc=c[8],weight=PATH_WEIGHT(c);
  float iub=c[10],iuc=c[11];
  bool diagonal=vb==0.f && uc==0.f && fabsf(vc)==1.f;
  #pragma unroll
@@ -105,7 +108,7 @@ __device__ __forceinline__ void gather_view(
     int nu, int nv, float (&total)[R]) {
     const int a=(int)c[0];
     float ub = c[1], vb = c[2], kb = c[3], cb = c[4];
-    float uc = c[5], vc = c[6], kc = c[7], cc = c[8], weight = c[9];
+    float uc = c[5], vc = c[6], kc = c[7], cc = c[8], weight = PATH_WEIGHT(c);
     float iub = c[10], iuc = c[11], ivb = c[12], ivc = c[13];
     int k0 = a == 0 ? ix : (a == 1 ? iy : iz0);
     int b0 = a == 0 ? iy : (a == 1 ? iz0 : ix);

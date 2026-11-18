@@ -889,3 +889,15 @@ def test_cuda_fourier_coordinate_pass_matches_physical_reference(nonuniform):
         for backend in ("numpy", "cupy")
     ]
     np.testing.assert_allclose(results[1], results[0], rtol=3e-4, atol=2e-7)
+
+
+def test_per_view_rows_never_read_a_neighbour_of_zero_weight():
+    # check-public-imports: allow-private
+    from tomojax.recon._fourier_grid import sample_projection_rows
+
+    projections = np.ones((2, 3, 4), np.float32)
+    projections[:, 0] = np.nan  # only the zero-weight lower neighbour is invalid
+    # 0.99999999 rounds to a lower weight of exactly zero in FP32.
+    positions = np.array([[0.99999999, 1.0]])
+    rows = sample_projection_rows(projections, np.arange(2), positions)
+    np.testing.assert_array_equal(rows, np.ones((1, 2, 4), np.float32))

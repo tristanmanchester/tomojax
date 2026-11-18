@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
     from tomojax.recon.cgls import CGLSConfig
-    from tomojax.recon.fbp import FBPConfig, default_fbp_scale, run_parallel_fbp_direct_cuda
+    from tomojax.recon.fbp import FBPConfig, default_fbp_scale
     from tomojax.recon.filters import clear_filter_caches
     from tomojax.recon.fista_tv import FistaConfig
     from tomojax.recon.fourier import FourierConfig
@@ -53,7 +53,6 @@ _CONFIGS = {
 _SOURCES = {
     "clear_filter_caches": "filters",
     "default_fbp_scale": "fbp",
-    "run_parallel_fbp_direct_cuda": "fbp",
 }
 
 
@@ -344,13 +343,14 @@ def _iterative_result(
         ):
             support = algebraic.support
             if support is not None:
-                import jax.numpy as jnp
+                import numpy as np
 
                 if method == "sirt":
                     from tomojax.core.validation import validate_volume
 
                     validate_volume(support, grid, context="sirt", name="support")
-                support = jnp.broadcast_to(jnp.asarray(support, bool), (grid.nz, grid.ny, grid.nx))
+                # A host broadcast view: each slab uploads only its own rows.
+                support = np.broadcast_to(np.asarray(support, bool), (grid.nz, grid.ny, grid.nx))
 
             solver = None
             if method == "sirt":
@@ -433,7 +433,6 @@ def _iterative_incore(
         "fista": "fista_tv",
         "spdhg": "spdhg_tv",
         "sirt": "sirt",
-        "mlem": "mlem",
     }[method]
     solve = getattr(recon, name) if solver is None else solver
     storage = {} if out is None else {"out": out}
@@ -456,5 +455,4 @@ __all__ = [
     "method_config",
     "reconstruct_arrays",
     "reconstruct_slabs",
-    "run_parallel_fbp_direct_cuda",
 ]

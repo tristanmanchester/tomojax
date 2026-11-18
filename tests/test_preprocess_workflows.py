@@ -115,12 +115,20 @@ def test_tiff_frames_need_flats_and_angles(
     assert not (tmp_path / "scan.nxs").exists()
 
 
-def test_detector_requires_a_record_or_an_explicit_override(tmp_path: Path) -> None:
+def test_detector_comes_from_the_record_or_an_explicit_override(tmp_path: Path) -> None:
+    # Recorded pitches with no detector give those pitches and the middle; none give pixel
+    # units; --config replaces either.
     write_raw_nxtomo(tmp_path / "raw.nxs")
     for i, sizes in enumerate(((0.5, 0.75), None)):
         _set_detector(tmp_path / "raw.nxs", record=None, sizes=sizes)
         out = tmp_path / f"scan{i}.nxs"
-        assert _preprocess(tmp_path / "raw.nxs", "-o", out) == 1
+        assert _preprocess(tmp_path / "raw.nxs", "-o", out) == 0
+        du, dv = sizes or (1.0, 1.0)
+        assert tj.load(out).detector == tj.Detector(2, 2, du, dv)
+        assert (tj.load(out).source.geometry_metadata.get("length_unit") == "pixel") == (
+            sizes is None
+        )
+        out = tmp_path / f"configured{i}.nxs"
         assert (
             _preprocess(tmp_path / "raw.nxs", "-o", out, "--config", _detector_config(tmp_path))
             == 0

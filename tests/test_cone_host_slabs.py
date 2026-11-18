@@ -447,3 +447,57 @@ def test_host_contrast_cgls_matches_dense_optimum_and_true_stopping(host, depth)
     assert info["converged"] and info["normal_residual_is_recomputed"]
     assert np.linalg.norm(gradient) <= 1.01 * info["normal_residual_tolerance"]
     assert info["data_term"] == "per_view_contrast" and info["background_unresolved"]
+
+
+@pytest.mark.gpu
+def test_cuda_roundoff_test_matches_the_host_one_without_slab_temporaries():
+    import cupy as cp
+
+    # check-public-imports: allow-private
+    from tomojax.recon._slab_engines import CudaEngine, JaxEngine
+
+    grid, detector = tj.Grid(4, 4, 4, 1.0, 1.0, 1.0), tj.Detector(4, 4, 1.0, 1.0)
+    current = np.array([1.0, -2.0, 0.0, 3e-38, 1e4], np.float32)
+    eps = np.finfo(np.float32).eps
+    for step, expected in (
+        (current * eps * 0.5, False),  # below the roundoff of each value
+        (np.array([0, 0, 0, 0, 1e4 * eps * 2], np.float32), True),
+        (np.array([0, 0, 1e-30, 0, 0], np.float32), True),  # any normal step at zero
+    ):
+        host = JaxEngine(grid, detector, "jax").moves(step, current)
+        device = CudaEngine(grid, detector).moves(cp.asarray(step), cp.asarray(current))
+        assert host is device is expected
+
+
+def test_accelerated_sirt_holds_its_iterate_and_work_volume_by_their_total(
+    host, monkeypatch, tmp_path
+):
+    # The storage rule counts the copies a solver holds: accelerated SIRT keeps a work
+    # volume beside its iterate. With host memory between one and two volumes' worth of
+    # twice their size, the iterate alone would fit but both do not: both go to files in
+    # TMPDIR, the work volume beside the iterate, and the result is unchanged.
+    import tempfile
+
+    from tomojax.core import host_volume
+
+    host(2)
+    geometry = _geometry("cone")
+    data = _data(geometry)
+    config = SIRTConfig(iterations=4, acceleration=True, relaxation=0.9)
+    expected, _ = sirt(geometry, GRID, DETECTOR, data, config=config)
+    volume = 4 * GRID.nx * GRID.ny * GRID.nz
+    places = []
+    made = host_volume.host_volume
+
+    def recording(shape, directory=None, **kwargs):
+        places.append(directory)
+        return made(shape, directory, **kwargs)
+
+    monkeypatch.setattr(host_volume, "host_volume", recording)
+    monkeypatch.setattr(_cone_slabs, "host_volume", recording)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(host_volume, "host_available_memory_bytes", lambda: 3 * volume)
+    actual, _ = sirt(geometry, GRID, DETECTOR, data, config=config)
+    assert places == [tmp_path, tmp_path], places  # the iterate, then its work volume
+    assert host_volume.scratch_directory(actual) == tmp_path
+    assert _relative(actual, expected) < 1e-6

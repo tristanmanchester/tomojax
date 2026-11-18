@@ -103,7 +103,9 @@ reconstruction of the added signal. Walnut uses all 1200 views from each orbit
 before splitting and exact cell-overlap averaging of the published reference.
 
 Measured 2026-10-27 with numerical source `20fe1a9c` and evaluation `09437d17`.
-Commands are `OPENBLAS_NUM_THREADS=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
+Commands, from the lab harness kept outside the repository (see
+[measurements](measurements.md#test-environment)), are
+`OPENBLAS_NUM_THREADS=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
 uv run --no-sync python shared/agent02/` followed by
 `stopping_stack_kill.py`, `stopping_walnut_protocol.py` or
 `stopping_i13_increment.py`, with `LAB_ARTIFACTS` set to an output directory.

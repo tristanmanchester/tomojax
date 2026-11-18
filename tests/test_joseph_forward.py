@@ -161,3 +161,36 @@ def test_cgls_rejects_invalid_or_inapplicable_interpolation(interpolation):
             np.zeros((len(poses), d.nv, d.nu)),
             config=CGLSConfig(projector_model="ray", joseph_interpolation=interpolation),
         )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("dtype", [jnp.float16, jnp.bfloat16])
+def test_cuda_joseph_reads_non_fp32_volumes_by_value(dtype):
+    from tomojax.core.projector import forward_project_view_T
+
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    g, d, poses = problem()
+    rng = np.random.default_rng(11)
+    x = jnp.asarray(rng.normal(size=(g.nz, g.ny, g.nx)), dtype)
+    pose = jnp.asarray(poses[1])
+
+    def forward(v):
+        return forward_project_view_T(pose, g, d, v, ray_integrator="joseph", backend="cuda")
+
+    np.testing.assert_allclose(
+        np.asarray(forward(x)), np.asarray(forward(x.astype(jnp.float32))), rtol=1e-6, atol=1e-6
+    )
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_fixed_vertical_detector_calibration_still_moves_the_rays(active):
+    from tomojax.forward.api import core_projection_geometry_from_state
+    from tomojax.geometry.api import GeometryState
+
+    state = GeometryState.zeros(1)
+    offset = replace(state.setup.det_v_px, value=1.0, active=active)
+    state = replace(state, setup=replace(state.setup, det_v_px=offset))
+    geometry = core_projection_geometry_from_state((4, 4, 4), state)
+    # Fitting a value (active) must not change what a fixed one projects.
+    assert float(geometry.t_all[0, 2, 3]) == -1.0

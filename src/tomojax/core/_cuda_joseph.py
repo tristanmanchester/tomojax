@@ -102,7 +102,7 @@ def _launch(
     coeff: Any,
     images: Any,
     accumulate: Any,
-    *,
+    *listed: Any,
     shape: tuple[int, int, int],
     z_fast: bool,
 ) -> None:
@@ -115,13 +115,16 @@ def _launch(
         if target.data.ptr != initial.data.ptr:
             target[...] = initial
         runs = nx * ny * -(-nz // RUN)
+        coeff = cp.asarray(coeff)
         gather_kernel(z_fast=z_fast)(
             (-(-runs // THREADS),),
             (THREADS,),
             (
-                cp.asarray(coeff),
+                coeff,
                 cp.asarray(images),
                 target,
+                *(map(cp.asarray, listed) if listed else (coeff, coeff)),
+                np.int32(bool(listed)),
                 np.int32(views),
                 np.int32(nx),
                 np.int32(ny),
@@ -141,10 +144,13 @@ def gather_transpose_cuda(
     accumulate: jax.Array | None = None,
     *,
     z_fast: bool = False,
+    active: tuple[jax.Array, ...] | None = None,
 ) -> jax.Array:
     """Add the linear Joseph transpose of ``(view, u, v)`` images to ``accumulate``.
 
     The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
+    ``active`` runs (``active_runs``) limit the gather to them; others keep
+    ``accumulate``.
     """
     del detector  # Detector sizes come from the image array.
     shape = (grid.nx, grid.ny, grid.nz)
@@ -163,7 +169,7 @@ def gather_transpose_cuda(
     coeff = coeff.astype(jnp.float32)
 
     def generic(_: None) -> jax.Array:
-        return call(coeff, images_uv, initial)
+        return call(coeff, images_uv, initial, *(active or ()))
 
     # The axial transpose bounds its vertical-resampling scratch by splitting
     # views. Nonseparable views keep the existing gather unchanged.
@@ -213,6 +219,7 @@ def gather_bands_cuda(coeff: jax.Array, images: jax.Array, grid: Grid, *, batch:
                         Offset(c, 14 * first),
                         swapped,
                         band,
+                        *(c, c, np.int32(0)),  # no run list
                         *map(np.int32, (count, nx, ny, planes, nu, nv, z0)),
                     ),
                 )
@@ -264,3 +271,15 @@ def project_ones_cuda(coeff: jax.Array, grid: Grid, detector: Detector) -> jax.A
         return forward_jax(c, ones, grid, detector)
 
     return jax.lax.platform_dependent(coeff.astype(jnp.float32), cuda=call, default=on_jax)
+
+
+def active_runs(mask: jax.Array, *, z_fast: bool = False) -> tuple[jax.Array, jax.Array]:
+    """The linear gather's z runs holding a nonzero ``mask`` voxel: (ids, count).
+
+    Ids come first, padded to the run total. Build them once for many gathers.
+    """
+    xyz = (mask if z_fast else jnp.transpose(mask, (2, 1, 0))) != 0
+    xyz = jnp.pad(xyz, ((0, 0), (0, 0), (0, -xyz.shape[2] % RUN)))
+    runs = xyz.reshape(*xyz.shape[:2], -1, RUN).any(-1).ravel()
+    ids = jnp.nonzero(runs, size=runs.size, fill_value=0)[0].astype(jnp.int32)
+    return ids, jnp.sum(runs, dtype=jnp.int32)[None]

@@ -31,10 +31,11 @@ released in the same joint solver; it takes one or more of `centre`, `translatio
 - `inspect`: describe a dataset and check that it can be reconstructed;
   `--json` prints the report as JSON, and `--preview DIR` writes PNGs of the
   central projection and, for a reconstruction, the volume's central slices.
-- `import`: write a dataset from a Nikon `.xtekct` scan, a TIFF stack (with
+- `import`: write a dataset from a TIFF stack of line integrals (with
   `--angles`, `--pixel-size` and, for cone beams, the distances) or another
   `.nxs`/`.npz` dataset.
-- `preprocess`: flat- and dark-correct raw frames into absorption projections.
+- `preprocess`: flat- and dark-correct raw frames, including a Nikon `.xtekct`
+  scan, into absorption projections.
 - `recon`: choose automatically, or reconstruct with Fourier, FBP/FDK, CGLS, FISTA-TV
   or SPDHG-TV with `tj.reconstruct`, with the poses saved in the input unless
   `--no-poses`. Its expert settings are fields of the method's configuration
@@ -53,7 +54,7 @@ released in the same joint solver; it takes one or more of `centre`, `translatio
 ## A lab CT scan from start to finish
 
 ```bash
-tomojax import scan/scan.xtekct -o scan.nxs
+tomojax preprocess scan/scan.xtekct --darks dark.tif -o scan.nxs
 tomojax inspect scan.nxs
 tomojax align scan.nxs -o aligned.nxs --fit centre roll
 tomojax recon aligned.nxs -o recon.nxs
@@ -61,6 +62,17 @@ tomojax inspect recon.nxs --preview previews
 tomojax export recon.nxs -o slices/
 ```
 
+A file that records the pixel size but not the rotation centre (external
+NXtomo or Data Exchange, ESRF Bliss or EDF) loads with the centre at the middle
+of the detector, and `recon` says so. Fit the centre first:
+
+```bash
+tomojax align scan.h5 -o aligned.nxs --fit centre
+tomojax recon aligned.nxs -o recon.nxs
+```
+
+Nikon scans record no dark field: `--darks` takes a dark image or one level,
+and `--darks 0` suits only counts that are already dark-corrected.
 `align --fit centre roll` estimates the cone detector's centre and roll,
 and `recon` uses them. `previews/` then holds `projection.png`, `slice_z.png`,
 `slice_y.png` and `slice_x.png`. See the [lab cone-beam CT guide](../../../docs/lab-ct.md).

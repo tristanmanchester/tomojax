@@ -5,8 +5,6 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-AXIS_DIRECTION_DOFS: tuple[str, ...] = ("axis_rot_x_deg", "axis_rot_y_deg")
-
 
 def axis_unit_from_rotations(
     nominal_axis_unit: object,

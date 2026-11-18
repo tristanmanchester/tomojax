@@ -8,12 +8,13 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-# check-public-imports: allow-private
-from tomojax.alignment._joint._operators import Operators
+from tomojax.alignment._joint._operators import Operators  # check-public-imports: allow-private
 from tomojax.alignment._joint._parameters import Parameters  # check-public-imports: allow-private
 from tomojax.core.cone import beam_frame, frame_coefficients
 from tomojax.core.joseph import plane_coefficients
 from tomojax.geometry import ConeBeam, Detector, Grid, LaminographyGeometry, stack_view_poses
+
+from . import _joint_stacks as js
 
 pytestmark = pytest.mark.numerical
 
@@ -170,8 +171,8 @@ def test_shared_global_image_pose_cross_block_has_its_exact_transpose():
         sqrtweights = ops.pad_images(rng.uniform(0.1, 1, size=(n, 48, 48)))
         columns = jnp.asarray(rng.normal(size=(ops.padded_n, parameters.k, 48, 48)), jnp.float32)
         step = jnp.asarray(rng.normal(size=parameters.size))
-        _, score = ops.weighted_forward(packet, x, sqrtweights, columns)
-        transpose = ops.pose_back(packet, sqrtweights, columns, step)
+        _, score = js.weighted_forward(ops, packet, x, sqrtweights, columns)
+        transpose = js.pose_back(ops, packet, sqrtweights, columns, step)
         left, right = (
             jnp.vdot(step, score),
             jnp.vdot(x.astype(jnp.float64), transpose.astype(jnp.float64)),

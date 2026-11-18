@@ -108,7 +108,7 @@ def test_transmission_row_stage_preserves_domain_and_within_domain_order(batch):
         "log",
         "phase_rows",
     ]
-    assert done.records[-2].found == {"nonpositive_transmission": 0, "nonfinite_set_to_zero": 0}
+    assert done.records[-2].found == {"nonpositive_transmission": 0}
 
 
 @pytest.mark.parametrize("factor", [1, 2])

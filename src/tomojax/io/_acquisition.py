@@ -33,6 +33,8 @@ class RawAcquisition:
     view_positions: np.ndarray | None = None
     exposure_times: np.ndarray | None = None
     flat_exposure_times: np.ndarray | None = None
+    dark_source: str | None = None  # the file's statement that the instrument removed the dark
+    linear_limit: tuple[float, str] | None = None  # the camera's stated linear range, and where
 
 
 def metadata_candidates(path: Path) -> list[Path]:

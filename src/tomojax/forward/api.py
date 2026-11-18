@@ -22,7 +22,6 @@ from tomojax.forward._projector import (
     core_projection_geometry_from_input,
     core_projection_geometry_from_state,
     nominal_axis_unit_from_geometry,
-    project_parallel_reference,
     project_parallel_reference_from_input,
 )
 from tomojax.forward._residuals import (
@@ -54,7 +53,6 @@ __all__ = [
     "masked_whitened_residual",
     "nominal_axis_unit_from_geometry",
     "project_joseph",
-    "project_parallel_reference",
     "project_parallel_reference_from_input",
     "pseudo_huber_loss",
     "pseudo_huber_weights",

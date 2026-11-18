@@ -9,6 +9,8 @@ from jax.core import Tracer
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.robust import MAD_TO_SD
+
 
 def _gather_samples(array, coordinates):
     """Gather only requested pixels, including broadcast observation weights."""
@@ -82,5 +84,5 @@ def estimate_projection_noise(projections, *, weights=None):
             _require_samples(present)
         coefficients = xp.where(valid, coefficients, xp.nan)
     median = xp.nanmedian(coefficients)
-    sigma = xp.nanmedian(xp.abs(coefficients - median)) / 0.6744897501960817
+    sigma = xp.nanmedian(xp.abs(coefficients - median)) * MAD_TO_SD
     return jax.lax.stop_gradient(sigma) if on_device else sigma

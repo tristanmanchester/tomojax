@@ -22,7 +22,7 @@ from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_detector, validate_projection_stack
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
-from ._host_arrays import ProjectionRows, empty_host_array, validate_host_arrays
+from ._host_arrays import ProjectionRows, validate_host_arrays
 from .fbp import (
     FBPConfig,
     _fbp_from_host,  # pyright: ignore[reportPrivateUsage]
@@ -283,9 +283,7 @@ def fbp_host(
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
-    output = validate_host_arrays(
-        projections, out, shape, device_input=True, allocate=empty_host_array
-    )
+    output = validate_host_arrays(projections, out, shape, device_input=True)
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
     slab_bytes = 4 * grid.nx * grid.ny * depth
@@ -344,9 +342,7 @@ def _general_slabs(
     views: int,
 ) -> np.ndarray:
     """Reconstruct z-slabs, streaming every view batch once per slab."""
-    output = validate_host_arrays(
-        projections, out, (grid.nz, grid.ny, grid.nx), device_input=True, allocate=empty_host_array
-    )
+    output = validate_host_arrays(projections, out, (grid.nz, grid.ny, grid.nx), device_input=True)
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import functools
-import logging
 import math
 import operator
 from typing import TYPE_CHECKING, Any, cast
@@ -42,7 +41,6 @@ from .validation import (
 # - We compute object_from_world = inv(T_world_from_obj) and sample the volume in the
 #   object frame directly. This makes reconstructed volumes live in the object (sample) frame.
 
-LOG = logging.getLogger(__name__)
 
 _JOSEPH_INTEGRATORS = {"joseph": "linear", "joseph_cubic": "cubic"}
 RAY_INTEGRATORS = ("sampled", "exact", *_JOSEPH_INTEGRATORS)
@@ -261,13 +259,11 @@ def _projector_traversal_state(
     return ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps_val, n_rays
 
 
-@jax.jit
-def _flat_index(ix, iy, iz, nx, ny, _nz):
-    return iz * (ny * nx) + iy * nx + ix
-
-
-@jax.jit
+# Grid sizes are static: per-axis (z, y, x) indices address volumes above 2**31
+# voxels, where a flat int32 offset would wrap.
+@functools.partial(jax.jit, static_argnums=(4, 5, 6))
 def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
+    volume = recon_flat.reshape(nz, ny, nx)
     fx = jnp.floor(ix_f).astype(jnp.int32)
     fy = jnp.floor(iy_f).astype(jnp.int32)
     fz = jnp.floor(iz_f).astype(jnp.int32)
@@ -284,8 +280,7 @@ def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
         inb = ((ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)).astype(
             jnp.float32
         )
-        idx = _flat_index(ix, iy, iz, nx, ny, nz)
-        val = jnp.take(recon_flat, idx, mode="clip")
+        val = volume[jnp.clip(iz, 0, nz - 1), jnp.clip(iy, 0, ny - 1), jnp.clip(ix, 0, nx - 1)]
         return inb * val
 
     c000 = gather(fx, fy, fz) * (wx0 * wy0 * wz0)
@@ -300,7 +295,7 @@ def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
     return c000 + c001 + c010 + c011 + c100 + c101 + c110 + c111
 
 
-@jax.jit
+@functools.partial(jax.jit, static_argnums=(5, 6, 7))
 def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
     if acc_flat.dtype == jnp.float32:
         # Scatter into the existing accumulator. Transposing gather first builds
@@ -320,8 +315,9 @@ def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
             * jnp.where(oz == 0, 1.0 - wz, wz)
         )
         inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
-        idx = jnp.where(inb, iz * (ny * nx) + iy * nx + ix, acc_flat.size)
-        return acc_flat.at[idx.ravel()].add((weight * ray_vals).ravel(), mode="drop")
+        at = tuple(jnp.where(inb, i, n).ravel() for i, n in ((iz, nz), (iy, ny), (ix, nx)))
+        acc = acc_flat.reshape(nz, ny, nx).at[at].add((weight * ray_vals).ravel(), mode="drop")
+        return acc.reshape(-1)
     # Keep the transpose's per-corner casts for the mixed-precision contract.
     scatter = jax.linear_transpose(
         lambda recon: _trilinear_gather(recon, ix_f, iy_f, iz_f, nx, ny, nz),
@@ -349,9 +345,8 @@ def cuda_unsupported_exception_type(
 
 
 def _cone_backend(backend: object) -> str:
-    from tomojax.core.cone import use_cuda_cone
-
-    return "cuda" if backend == "cuda" and use_cuda_cone() else "jax"
+    """An explicit CUDA request stays one: cone_project refuses it when CUDA is absent."""
+    return normalize_projector_backend(cast("ProjectorBackendInput", backend))
 
 
 def cone_views(
@@ -442,12 +437,10 @@ def forward_project_view_T(
     if ray_integrator != "sampled":
         raise ValueError(f"ray_integrator must be one of {RAY_INTEGRATORS}")
     if backend == "cuda":
-        projected = _sampled_view_cuda(
+        return _sampled_view_cuda(
             T, grid, detector, volume, step_size=step_size, n_steps=n_steps, unroll=unroll,
             gather_dtype=gather_dtype, det_grid=det_grid,
         )  # fmt: skip
-        if projected is not None:
-            return projected
     nx, ny, nz = validate_volume(volume, grid, context="forward_project_view_T", name="volume")
     validate_detector(detector, "forward_project_view_T")
     validate_detector_grid(det_grid, detector, context="forward_project_view_T")
@@ -495,8 +488,14 @@ def _sampled_view_cuda(
     unroll: int | None,
     gather_dtype: str,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-) -> jnp.ndarray | None:
-    """One view by the CUDA sampled projector, or None when it is absent or declines."""
+) -> jnp.ndarray:
+    """One view by the CUDA sampled projector, which an explicit request requires.
+
+    Raises
+    ------
+    ValueError
+        If the CUDA projector is absent or declines this geometry, with the reason.
+    """
     cuda_project, reason = resolve_cuda_callable(
         "forward_project_view_T_cuda",
         missing_reason="cuda_single_view_callable_missing",
@@ -523,9 +522,8 @@ def _sampled_view_cuda(
         except Exception as exc:
             if unsupported_exc is None or not isinstance(exc, unsupported_exc):
                 raise
-            reason = f"{type(exc).__name__}: {exc}"
-    LOG.debug("Falling back to JAX single-view projector after CUDA rejection: %s", reason)
-    return None
+            raise ValueError(f"backend='cuda' cannot project this view: {exc}") from exc
+    raise ValueError(f"backend='cuda' is unavailable: {reason}")
 
 
 def _backproject_view_accum_T(

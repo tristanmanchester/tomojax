@@ -26,9 +26,10 @@ frames = tj.load_frames("bamboo_reduced_bliss.nx")
 
 The reader finds the group declaring `NXtomo`, regardless of the entry's name,
 and reads its sample angles, image keys, flat/dark fields and unit-labelled
-pixel pitches. If the axial centre is absent, loading estimates it from
-corrected near-opposite views and records that it was inferred; an explicit
-calibrated `detector=` overrides this estimate.
+pixel pitches. If the axial centre is absent, loading places it at the middle
+of the detector and records that it was not recorded; nothing is estimated.
+Supply a calibrated `detector=`, or fit the centre with
+`tj.align(scan, fit="centre")`.
 
 Continue with the [one-row preview](#correct-reconstruct-and-inspect) below.
 An ESRF NXtomo export is not a raw Bliss master or an EDF folder. Those have
@@ -130,8 +131,9 @@ The unpublished Diamond I13 scan 159815 is a GDA NXtomo file,
 `diamond-i13-mg31912-1/raw/159815.nxs`, linked to `pco1-159815.hdf` beside it.
 Keep both files together. Loading discovers its 3001 sample views, 200 flats in
 before/after sets, 100 darks and recorded angles without a TIFF export.
-The detector pixel pitch is not recorded, so `tj.load` reports the missing
-calibration: supply `detector=` through `tj.load_frames`.
+The detector pixel pitch is not recorded, so `tj.load` gives the scan in pixel units
+(its record says `length_unit: "pixel"`); `tj.load(path, pixel_size=...)` gives it in
+millimetres, or `detector=` with its centre too.
 
 This preview uses **pixel units**, not millimetres or micrometres. The Savu
 processing record supplies the crop 441:1872 and axis column 718.5 within that
@@ -162,3 +164,33 @@ tomojax inspect i13-preview.nxs --preview i13-preview-images
 This is the default reconstruction, not a reproduction of Savu's
 ring-removal/filtering pipeline. For TIFF-only acquisitions without NXtomo
 metadata, see [preparing TIFF data](real-laminography.md#prepare-tiff-data).
+
+The same scan also exists as one folder of TIFFs, `proj_0.tif` to `proj_3300.tif`:
+100 darks, 100 flats, the 3001 projections, then 100 flats. A TIFF folder carries no
+image keys or angles, so split it into projection, flat and dark folders (links are
+enough) and pass the angles, here the 3001 that Savu used:
+
+```python
+from pathlib import Path
+
+import numpy as np
+import tomojax as tj
+
+raw, work = Path("diamond-i13-159815/raw"), Path("i13-split")
+groups = {"darks": range(0, 100), "flats": [*range(100, 200), *range(3201, 3301)],
+          "proj": range(200, 3201)}
+for name, frames in groups.items():
+    (work / name).mkdir(parents=True, exist_ok=True)
+    for i in frames:
+        link = work / name / f"proj_{i:04d}.tif"
+        if not link.exists():
+            link.symlink_to((raw / f"proj_{i}.tif").resolve())
+frames = tj.load_frames(work / "proj", flats=work / "flats", darks=work / "darks",
+                        angles=np.load("savu_angles.npy"),
+                        detector=tj.Detector(2560, 2160, 1, 1, center=(120, 0)))
+```
+
+The counts, flats, darks and angles then match the NXtomo route exactly. One difference
+remains: a flat folder has no positions, so its flats are averaged, whereas the NXtomo
+route interpolates between the sets before and after. This beam decayed by about 6%
+between them, and the corrected views differ by up to ±0.03 on average.

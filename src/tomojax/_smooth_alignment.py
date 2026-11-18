@@ -4,17 +4,16 @@ from __future__ import annotations
 
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
+import warnings
 
 import numpy as np
 
 from tomojax._scan import Reconstruction, describe, record_of, with_grid
 from tomojax.alignment._integration import cone_frames, fit_poses
+from tomojax.backends.api import is_oom_error
 from tomojax.geometry import stack_view_poses
-from tomojax.recon import FistaConfig
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from tomojax._scan import Scan
     from tomojax.geometry import Grid
 
@@ -29,28 +28,61 @@ def align_poses(
     if grid is not None:
         scan = with_grid(scan, grid)
     views = len(scan.angles)
-    current = np.asarray(stack_view_poses(scan.geometry, views), np.float64)
     native = (scan.detector.du, scan.detector.dv)
     _, metadata, _, _ = describe(scan.geometry)
-    volume, working, fitted, record = fit_poses(
-        scan.projections,
-        current,
-        scan.grid,
-        scan.detector,
-        fit=fit,
-        keep_grid=grid is not None,
-        frames=cone_frames(scan.geometry),
-        detector_roll_deg=float(cast("float", metadata.get("detector_roll_deg", 0.0))),
-    )
+    try:
+        volume, working, fitted, record = fit_poses(
+            scan.projections,
+            np.asarray(stack_view_poses(scan.geometry, views), np.float64),
+            scan.grid,
+            scan.detector,
+            fit=fit,
+            keep_grid=grid is not None,
+            frames=cone_frames(scan.geometry),
+            detector_roll_deg=float(cast("float", metadata.get("detector_roll_deg", 0.0))),
+            view_positions=scan.view_positions,
+            declared_poses=np.asarray(stack_view_poses(scan.with_poses(None).geometry, views)),
+        )
+    except Exception as exc:
+        if grid is None or not is_oom_error(exc):
+            raise
+        raise MemoryError(
+            f"tj.align ran out of device memory on the {grid.nx} x {grid.ny} x {grid.nz} grid it "
+            "was given: an explicit grid= is used as given, at its full resolution. Omit grid= "
+            "to let the fit bound its own working scale."
+        ) from exc
     corrected, calibration = publish_calibration(
         scan, fitted, record["corrections"], native_pixel_size=native
     )
     corrected = with_grid(corrected, working)
     info = {**record, "method": "joint_volume_pose", "calibration": calibration}
+    _warn_about_views(record["report"])
     source = record_of(corrected)
     source.geometry_metadata["alignment_info"] = info
     corrected = replace(corrected, source=source)
     return Reconstruction(volume, corrected, "joint_volume_pose", info)
+
+
+def _warn_about_views(report: dict) -> None:
+    """Name the views a user should look at before trusting the corrections."""
+    isolated, unusual = report["isolated_views"], report["unusual_views"]
+    parts = list(report["advisories"])
+    if isolated:
+        parts.append(f"{len(isolated)} views jump away from both neighbours ({_first(isolated)})")
+    if unusual:
+        parts.append(f"{len(unusual)} views fit unusually badly ({_first(unusual)})")
+    if not parts:
+        return
+    warnings.warn(
+        f"tj.align: {'; '.join(parts)}. The report is advisory: see info['report'] and "
+        "'Check the result' in docs/align-a-scan.md.",
+        stacklevel=3,
+    )
+
+
+def _first(views: list[int], count: int = 5) -> str:
+    shown = ", ".join(map(str, views[:count]))
+    return f"views {shown}, ..." if len(views) > count else f"views {shown}"
 
 
 def _require_declared_geometry(scan: Scan) -> None:
@@ -58,37 +90,7 @@ def _require_declared_geometry(scan: Scan) -> None:
         {} if scan.source is None else scan.source.geometry_metadata.get("acquisition", {})
     )
     if acquisition.get("geometry_status") == "not_recorded":
-        raise ValueError("alignment requires declared acquisition geometry")
-
-
-def reconstruct_with_motion(scan: Scan, *, reconstruct: Callable, grid: Grid | None = None):
-    """Reconstruct a parallel or laminography scan, fitting its poses unless it has them.
-
-    A scan with saved poses is reconstructed with them by FISTA at its grid; an
-    unposed scan is aligned with :func:`align_poses`.
-    """
-    _require_declared_geometry(scan)
-    if scan.poses is None:
-        return align_poses(scan, grid=grid)
-    if grid is not None:
-        scan = with_grid(scan, grid)
-    result = reconstruct(
-        scan,
-        "fista",
-        config=FistaConfig(
-            initial_epochs=10
-            if scan.grid.vx > 1.5 * max(scan.detector.du, scan.detector.dv)
-            else 8,
-            initial_subsets=16,
-            tv_weight=0,
-            iterations=1,
-            stream_projections=False,
-        ),
-    )
-    automatic = {
-        "method": "fista",
-        "geometry": "preserved_pose_corrections",
-        "status": "ok",
-        "reasons": [],
-    }
-    return replace(result, info={**result.info, "automatic": automatic})
+        raise ValueError(
+            "alignment requires declared acquisition geometry: this file records no rotation "
+            "axis; pass geometry=... to tomojax.load"
+        )

@@ -531,10 +531,9 @@ def _plan(
                 plan.append((tag, command, 2400, library == "astra"))
         if alignment:
             tag = f"walnut-align-{count}"
-            command = ["python", "walnut_alignment.py", "/data/Walnut1", "--levels", "4,2",
+            command = ["python", "walnut_alignment.py", "/data/Walnut1",
                        "--gpus", str(count), "--output", str(out / f"{tag}.json"),
                        "--slices", str(out / f"{tag}.npz"),
-                       "--checkpoint", str(out / f"{tag}.ckpt"),
                        "--cache", _walnut_cache((1, 2, 3), 4)]  # fmt: skip
             plan.append((tag, command, 2400, False))
 

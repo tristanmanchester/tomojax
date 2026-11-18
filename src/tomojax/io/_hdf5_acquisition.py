@@ -6,8 +6,9 @@ In particular, pixel pitch does not establish the rotation-axis position.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import numpy as np
@@ -16,6 +17,9 @@ from tomojax._data import locate_frames
 
 from ._acquisition import RawAcquisition
 from ._datasets import ProjectionDataset
+
+if TYPE_CHECKING:
+    from tomojax._data import LocatedFrames
 
 _MM = {
     "m": 1000.0,
@@ -155,6 +159,37 @@ def _metadata(file: Any, layout: str, where: str) -> dict[str, Any]:
     return acquisition
 
 
+def _gda_angles(
+    path: Path, file: Any, located: LocatedFrames
+) -> tuple[LocatedFrames, dict[str, str]]:
+    """An NXtomo entry without angles, completed from the same file's GDA rotation command.
+
+    GDA writes some files twice over: its own layout, and an NXtomo entry for the same
+    frames that may lack the angles. Only when the file's GDA layout is recognised, both
+    describe the same frames dataset (the resolved target, not the shape) and the GDA
+    command has one angle per frame of the key do its angles complete the entry; the
+    record says the NXtomo entry recorded none. Otherwise the entry stays as it is.
+    """
+    try:
+        gda = locate_frames(str(path))
+    except (KeyError, ValueError):
+        return located, {}
+    recorded = gda.acquisition or {}
+    if (
+        recorded.get("layout") != "diamond_gda"
+        or gda.angles is None
+        or located.image_key is None
+        or len(gda.angles) != len(located.image_key)
+        or file[gda.stack.dataset].id != file[located.stack.dataset].id
+    ):
+        return located, {}
+    completed: dict[str, str] = {"nxtomo_angles": "not_recorded"}
+    for key in ("angle_units_recorded", "angle_units"):
+        if key in recorded:
+            completed[key] = recorded[key]
+    return replace(located, angles=gda.angles, angles_path=gda.angles_path), completed
+
+
 def read_hdf5_acquisition(
     path: Path,
     *,
@@ -188,6 +223,9 @@ def read_hdf5_acquisition(
                 "to identify its sample/flat/dark frames"
             )
         acquisition = _metadata(file, name, where)
+        if name == "nxtomo" and located.angles is None and angles_path is None:
+            located, completed = _gda_angles(path, file, located)
+            acquisition.update(completed)
         acquisition["angles_path"] = located.angles_path
         acquisition["image_key_path"] = located.image_key_path
         if located.image_key is not None:
@@ -218,7 +256,11 @@ def read_hdf5_acquisition(
         np.broadcast_to(np.float32(0), counts.shape),
         np.empty(0, np.float32) if located.angles is None else located.angles[sample],
         detector=None,
-        geometry_metadata={"acquisition": acquisition, "detector_center_status": "not_recorded"},
+        geometry_metadata={
+            "acquisition": acquisition,
+            "detector_center_status": "not_recorded",
+            **({"return_images_excluded": located.return_images} if located.return_images else {}),
+        },
         sample_name=sample_name,
         source_path=str(path),
         source_format=name,
