@@ -101,6 +101,17 @@ the centre separately first. If you request `"center"` and `"translations"` toge
 translations are given zero mean: a common translation and a centre offset describe the same
 parallel-ray geometry, and the data cannot tell them apart.
 
+![Two slices through Diamond K11 laminography scan 54013 at 2.16 µm, through a ruby sphere's equator and 78 µm lower, as loaded and after tj.align(scan), each with an enlarged region where a large bubble meets the sphere. As loaded, the edges of the sphere and the bubble are doubled; after the call each is one line.](images/alignment-k11-sphere.png)
+
+On a real scan the motion is not known, so the check is the slices. In Diamond K11 laminography
+scan 54013 (1441 views) the edges of a ruby sphere and a bubble beside it are doubled as loaded;
+after the plain `tj.align(scan)` on a 6.48 µm grid each is one line, here reconstructed by FBP at
+the detector's 2.16 µm pitch.
+
+```bash
+uv run python examples/gallery/k11_sphere_alignment.py k11-54013.nxs alignment-k11-sphere.png
+```
+
 ## The setup angles
 
 ### Roll
