@@ -57,7 +57,7 @@ def check_fixture(path: Path, iterations: int) -> dict:
                     data[channel],
                     config=CGLSConfig(
                         iterations=iterations,
-                        rtol=0.0,
+                        tolerance=0.0,
                         views_per_batch=len(data["poses"]),
                         backend="cuda",
                         projector_model=method,

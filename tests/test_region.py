@@ -115,7 +115,7 @@ def test_uninformative_region_is_broad_and_does_not_recalibrate() -> None:
             "detector_roll": 7,
             "align_params": poses,
         },
-        poses=True,
+        apply_poses=True,
     )
     scan = replace(scan, projections=np.zeros_like(scan.projections), geometry=geometry)
     estimate = tj.estimate_region(scan)

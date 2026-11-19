@@ -104,8 +104,8 @@ def _solve(
     initial: jax.Array | None,
     det_grid: tuple[jax.Array, jax.Array] | None,
     max_iters: jax.Array,
-    rtol: jax.Array,
-    atol: jax.Array,
+    tolerance: jax.Array,
+    absolute_tolerance: jax.Array,
     damping: jax.Array,
     *,
     grid: Grid,
@@ -157,7 +157,7 @@ def _solve(
         initial
     )
     gamma = jnp.sum(gradient * gradient)
-    threshold = atol + rtol * jnp.sqrt(gamma)
+    threshold = absolute_tolerance + tolerance * jnp.sqrt(gamma)
     state = _State(
         jnp.int32(0),
         initial,
@@ -286,8 +286,8 @@ def _solve_streamed(
     key: jax.Array,
     initial: jax.Array | None,
     max_iters: jax.Array,
-    rtol: jax.Array,
-    atol: jax.Array,
+    tolerance: jax.Array,
+    absolute_tolerance: jax.Array,
     damping: jax.Array,
     *,
     grid: Grid,
@@ -327,7 +327,7 @@ def _solve_streamed(
     gradient = data_gradient - penalty(x0)
     gamma = jnp.sum(gradient * gradient)
     finite = jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(x0))
-    threshold = atol + rtol * jnp.sqrt(gamma)
+    threshold = absolute_tolerance + tolerance * jnp.sqrt(gamma)
     state = _State(
         jnp.int32(0),
         x0,
@@ -482,7 +482,7 @@ def cgls(
     iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)
     if iterations < 0 or batch < 1:
         raise ValueError("cgls: iterations must be nonnegative and views_per_batch positive")
-    for name in ("rtol", "atol", "damping", "gradient_damping"):
+    for name in ("tolerance", "absolute_tolerance", "damping", "gradient_damping"):
         value = float(getattr(cfg, name))
         if not math.isfinite(value) or value < 0:
             raise ValueError(f"cgls: {name} must be finite and nonnegative")
@@ -515,7 +515,11 @@ def cgls(
         from tomojax.core.joseph import validate_plane_geometry
 
         validate_plane_geometry(poses, grid, detector)
-    budget = (jnp.int32(iterations), jnp.float32(cfg.rtol), jnp.float32(cfg.atol))
+    budget = (
+        jnp.int32(iterations),
+        jnp.float32(cfg.tolerance),
+        jnp.float32(cfg.absolute_tolerance),
+    )
     options = {
         "grid": grid,
         "detector": detector,

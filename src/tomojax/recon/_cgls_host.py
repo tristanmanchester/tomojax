@@ -382,7 +382,7 @@ class _HostCGLS:
         cfg = self.cfg
         gamma, _ = self.gradient()
         first, initial_norm = gamma, float(np.sqrt(gamma))
-        threshold = cfg.atol + cfg.rtol * initial_norm
+        threshold = cfg.absolute_tolerance + cfg.tolerance * initial_norm
         state = {"failed": not np.isfinite(gamma), "roundoff": False, "verified": True}
         count, recomputations, beta = 0, 0, None
         while (

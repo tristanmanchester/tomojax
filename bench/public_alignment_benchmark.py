@@ -312,7 +312,7 @@ def one_run(path: Path, *, fit: tuple[str, ...] = ("translations", "rotations"))
         else ParallelGeometry(grid, detector, fixture["angles"])
     )
     result = tj.align(tj.Scan(fixture["data"], geometry), fit=fit, grid=grid)
-    volume, parameters = jax.device_get((result.volume, result.poses))
+    volume, parameters = jax.device_get((result.image, result.poses))
     quality = verify(volume, parameters, fixture)
     return {
         "verified_ms": (time.perf_counter() - start) * 1000,

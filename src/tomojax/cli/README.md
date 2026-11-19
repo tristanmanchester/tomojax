@@ -30,7 +30,8 @@ released in the same joint solver; it takes one or more of `center`, `translatio
 
 - `inspect`: describe a dataset and check that it can be reconstructed;
   `--json` prints the report as JSON, and `--preview DIR` writes PNGs of the
-  central projection and, for a reconstruction, the volume's central slices.
+  central projection, when the file holds projections, and of a reconstruction's
+  central slices.
 - `import`: write a dataset from a TIFF stack of line integrals (with
   `--angles`, `--pixel-size` and, for cone beams, the distances) or another
   `.nxs`/`.npz` dataset.
@@ -38,13 +39,14 @@ released in the same joint solver; it takes one or more of `center`, `translatio
   scan, into absorption projections.
 - `recon`: choose automatically, or reconstruct with Fourier, FBP/FDK, CGLS, FISTA-TV
   or SPDHG-TV with `tj.reconstruct`, with the poses saved in the input unless
-  `--no-poses`. Its expert settings are fields of the method's configuration
+  `--no-apply-poses`. Its expert settings are fields of the method's configuration
   class (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig` or
   `SPDHGConfig`), each replacing that field of the class's defaults, as
   `tj.reconstruct(config=...)` takes them; `--roi cyl` zeroes the volume
-  outside the cylinder every view sees.
+  outside the cylinder every view sees. The output holds the volume, its geometry and
+  record, and names the input projections; `--include-scan` keeps them too.
 - `align`: jointly estimate the image and the named geometry corrections with `tj.align`, on
-  top of the poses saved in the input unless `--no-poses`. `--fit center` fits one shared centre
+  top of the poses saved in the input unless `--no-apply-poses`. `--fit center` fits one shared centre
   (two for cone data); `--fit translations tilt roll` adds shared setup angles to per-view shifts.
   `--fit translations rotations` adds per-view sample rotations. `--grid` sets image sampling.
 - `export`: write a reconstruction as TIFF slices, or as one raw file when
@@ -74,5 +76,5 @@ tomojax recon aligned.nxs -o recon.nxs
 Nikon scans record no dark field: `--darks` takes a dark image or one level,
 and `--darks 0` suits only counts that are already dark-corrected.
 `align --fit center roll` estimates the cone detector's centre and roll,
-and `recon` uses them. `previews/` then holds `projection.png`, `slice_z.png`,
-`slice_y.png` and `slice_x.png`. See the [lab cone-beam CT guide](../../../docs/lab-ct.md).
+and `recon` uses them. `previews/` then holds `slice_z.png`, `slice_y.png` and
+`slice_x.png`. See the [lab cone-beam CT guide](../../../docs/lab-ct.md).

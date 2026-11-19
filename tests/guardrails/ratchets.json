@@ -22,14 +22,14 @@
     "tomojax.datasets": 15,
     "tomojax.geometry.api": 12,
     "tomojax.recon.api": 6,
-    "tomojax.io.api": 24,
+    "tomojax.io.api": 25,
     "tomojax.alignment.api": 4
   },
   "cli_flags": {
     "inspect": 4,
     "import": 12,
     "preprocess": 20,
-    "recon": 18,
+    "recon": 19,
     "align": 9,
     "export": 6,
     "simulate": 19
@@ -46,7 +46,7 @@
     "src/tomojax/core/cuda_projector/_stack_state.py::prepare_forward_project_views_T_cuda_state": 109,
     "src/tomojax/recon/_cgls_jax.py::_solve": 169,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 120,
-    "src/tomojax/recon/_cgls_jax.py::cgls": 113,
+    "src/tomojax/recon/_cgls_jax.py::cgls": 117,
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 121,
     "src/tomojax/recon/fista_tv.py::_run_fista_scan": 112,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 147,
@@ -54,20 +54,20 @@
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
   "code_lines": {
-    "(modules)": 2916,
-    "_data": 2127,
-    "alignment": 4023,
+    "(modules)": 3018,
+    "_data": 2151,
+    "alignment": 4024,
     "backends": 460,
-    "cli": 2396,
+    "cli": 2420,
     "core": 13538,
-    "corrections": 2766,
+    "corrections": 2772,
     "datasets": 1120,
     "forward": 789,
     "geometry": 908,
-    "io": 3800,
+    "io": 3817,
     "motion": 148,
     "nuisance": 232,
-    "recon": 13589
+    "recon": 13593
   },
   "cuda_kernels": 50,
   "cuda_switches": 36,
@@ -75,7 +75,7 @@
   "suppressions": {
     "noqa": 4,
     "type: ignore": 12,
-    "pyright: ignore": 12
+    "pyright: ignore": 13
   },
   "complex_functions": [
     "src/tomojax/core/_logging.py::PLR0911::format_duration",

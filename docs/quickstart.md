@@ -251,11 +251,13 @@ uv run --no-sync tomojax inspect recon.nxs --preview previews
 
 The default `--method auto` selects a reconstruction from the geometry and
 reports any limitations; use an explicit `--method` for a fixed solver.
-`recon.nxs` stores the volume and copies the projections. The manifest records
+`recon.nxs` stores the volume and its geometry and names the projections it came
+from; `--include-scan` stores the projections too. The manifest records
 the selected method, reconstruction settings and automatic outcome. CPU execution
 is supported and does not by itself mark the automatic outcome as limited. `previews/`
-contains PNGs of the central projection (`projection.png`) and the volume's
-three central planes (`slice_z.png`, `slice_y.png`, `slice_x.png`). PNG contrast is scaled for
+contains PNGs of the volume's three central planes (`slice_z.png`, `slice_y.png`,
+`slice_x.png`), and of the central projection (`projection.png`) when the file holds
+projections. PNG contrast is scaled for
 display; read the stored floating-point volume for quantitative work.
 `tomojax export recon.nxs -o slices/` writes the volume as TIFF slices for other
 software.
@@ -272,7 +274,7 @@ import tomojax as tj
 recon = tj.load_reconstruction("recon.nxs")  # Or keep the tj.reconstruct result.
 slices = Path("slices")
 slices.mkdir()  # Refuse an existing directory rather than overwrite slices.
-for z in range(recon.scan.grid.nz):
+for z in range(recon.grid.nz):
     plane = np.asarray(recon.volume[z], dtype=np.float32)
     tifffile.imwrite(slices / f"slice_{z:04d}.tif", plane)
 ```
@@ -367,7 +369,7 @@ from dataclasses import replace
 
 import tomojax as tj
 
-scan = tj.load("corrected.nxs", poses=False)
+scan = tj.load("corrected.nxs", apply_poses=False)
 d = scan.detector
 for shift in (-4, -2, 0, 2, 4):
     detector = replace(d, center=(shift * d.du, d.center[1]))

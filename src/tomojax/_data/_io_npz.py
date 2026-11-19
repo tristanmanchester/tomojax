@@ -13,16 +13,17 @@ _AXES_KEY = "volume_axes_order"
 
 def save_npz(
     path: str,
-    projections: np.ndarray,
+    projections: np.ndarray | None,
     *,
     metadata: NXTomoMetadata,
 ) -> None:
     """Write a typed TomoJAX payload to compressed NPZ.
 
-    ``metadata`` mirrors the required ``save_nxtomo`` persistence contract.
+    ``metadata`` mirrors the required ``save_nxtomo`` persistence contract; None
+    projections save a reconstruction without its scan.
     """
     payload: LoadedDataset = LoadedNXTomo(
-        projections=np.asarray(projections),
+        projections=None if projections is None else np.asarray(projections),
         metadata=metadata,
     ).to_dataset_dict()
     if "angles" in payload:

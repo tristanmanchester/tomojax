@@ -1,6 +1,6 @@
 # tomojax
 class tomojax.Alignment(
-        volume: 'np.ndarray | jax.Array',
+        image: 'np.ndarray | jax.Array',
         grid: 'Grid',
         scan: 'Scan',
         poses: 'np.ndarray',
@@ -57,6 +57,7 @@ class tomojax.Frames(
         dark_source: 'str | None' = None,
         linear_limit: 'tuple[float, str] | None' = None,
         name: 'str' = 'sample',
+        corrections: 'tuple[Correction, ...]' = (),
         source: 'ProjectionDataset | None' = None,
     ) -> None
     .corrected(
@@ -110,9 +111,10 @@ class tomojax.Projector(
     .adjoint(self, projections: 'jax.Array | np.ndarray') -> 'jax.Array'
 class tomojax.Reconstruction(
         volume: 'np.ndarray | jax.Array',
-        scan: 'Scan',
+        geometry: 'ScanGeometry',
         method: 'str',
         info: 'Mapping[str, object]',
+        scan: 'Scan | None' = None,
     ) -> None
     .grid
 class tomojax.RegionEstimate(scan: 'Scan', info: 'Mapping[str, object]') -> None
@@ -179,7 +181,7 @@ def tomojax.load(
         data_path: 'str | None' = None,
         image_key_path: 'str | None' = None,
         angles_path: 'str | None' = None,
-        poses: 'bool' = True,
+        apply_poses: 'bool' = True,
     ) -> 'Scan'
 def tomojax.load_frames(
         path: 'str | PathLike[str]',
@@ -233,6 +235,8 @@ def tomojax.reconstruct_slabs(
 def tomojax.save(
         path: 'str | PathLike[str]',
         item: 'Scan | Reconstruction | Alignment',
+        *,
+        include_scan: 'bool' = False,
     ) -> 'None'
 
 # tomojax.geometry
@@ -400,8 +404,8 @@ class tomojax.recon.CGLSConfig(
         *,
         data_term: 'DataTerm' = 'absolute',
         iterations: 'int' = 50,
-        rtol: 'float' = 1e-06,
-        atol: 'float' = 0.0,
+        tolerance: 'float' = 1e-06,
+        absolute_tolerance: 'float' = 0.0,
         damping: 'float' = 0.0,
         views_per_batch: 'int' = 64,
         backend: "Literal['auto', 'jax', 'cuda']" = 'auto',
@@ -649,14 +653,14 @@ def tomojax.recon.spdhg_tv(
 
 # tomojax.io
 class tomojax.io.ProjectionDataset(
-        projections: 'np.ndarray',
+        projections: 'np.ndarray | None',
         angles: 'np.ndarray',
         volume: 'np.ndarray | jax.Array | None' = None,
         detector: 'Detector | None' = None,
         grid: 'Grid | None' = None,
         geometry_type: 'str' = 'parallel',
         geometry_metadata: 'dict[str, Any]' = <factory>,
-        angle_offset_deg: 'np.ndarray | None' = None,
+        angle_offset: 'np.ndarray | None' = None,
         align_params: 'np.ndarray | None' = None,
         align_gauge: 'dict[str, JsonValue] | None' = None,
         misalign_spec: 'dict[str, JsonValue] | None' = None,
@@ -681,7 +685,7 @@ def tomojax.io.build_geometry_from_dataset_metadata(
         meta: 'Mapping[str, Any]',
         *,
         grid_override: 'Grid | tuple[int, int, int] | list[int] | None' = None,
-        poses: 'bool' = False,
+        apply_poses: 'bool' = False,
         volume_shape: 'Sequence[int] | None' = None,
     ) -> 'tuple[Grid, Detector, ScanGeometry]'
 def tomojax.io.load_dataset(path: 'PathLike') -> 'ProjectionDataset'

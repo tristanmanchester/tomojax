@@ -228,11 +228,11 @@ def test_config_files_set_on_off_flags_and_expert_settings(tmp_path: Path) -> No
     from tomojax.cli.recon import build_parser
 
     config = tmp_path / "recon.toml"
-    _ = config.write_text("poses = false\nviews_per_batch = 7\n", encoding="utf-8")
+    _ = config.write_text("apply_poses = false\nviews_per_batch = 7\n", encoding="utf-8")
     args, metadata = parse_args_with_config(
         build_parser(), ["scan.nxs", "-o", "out.nxs", "--config", str(config)]
     )
-    assert args.poses is False
+    assert args.apply_poses is False
     assert metadata["settings"] == {"views_per_batch": 7}
 
 

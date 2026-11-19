@@ -196,7 +196,7 @@ same solver.
 
 The physical support is preserved, including explicitly placed volume faces. The returned scan
 keeps its grid, the original detector samples and the fitted corrections, so reconstructing it
-gives the image at the scan's resolution. The alignment image `result.volume` is at the fit's
+gives the image at the scan's resolution. The alignment image `result.image` is at the fit's
 working scale, on `result.grid`.
 
 Pass an explicit `grid=` to `tj.align` or `tj.reconstruct` to fix the physical

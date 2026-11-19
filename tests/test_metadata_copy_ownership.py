@@ -21,7 +21,7 @@ def _stored_dataset():
         detector=tj.Detector(5, 3, 0.8, 0.85),
         volume=np.ones((2, 4, 3), np.float32),
         align_params=np.zeros((2, 6), np.float32),
-        angle_offset_deg=np.asarray([0.031415926535, -0.271828182846]),
+        angle_offset=np.asarray([0.031415926535, -0.271828182846]),
         geometry_calibration={"source": "stored calibration"},
         simulation_artefacts={"source": "stored simulation"},
         source_name="beamline",
@@ -46,13 +46,13 @@ def test_metadata_uses_current_owned_arrays_and_preserves_scanner_fields(method,
     if fortran and arrays:
         dataset.volume = np.asfortranarray(dataset.volume)
     dataset.align_params = np.full((2, 6), 0.1, np.float32) if arrays else None
-    dataset.angle_offset_deg = np.asarray([0.123456789, -0.234567891]) if arrays else None
+    dataset.angle_offset = np.asarray([0.123456789, -0.234567891]) if arrays else None
     dataset.geometry_metadata = {"updated": "current geometry"}
     dataset.align_gauge = {"pose_translation_frame": "detector"}
     dataset.misalign_spec = {"source": "current provenance"}
     dataset.sample_name = "current sample"
     copied = getattr(dataset, method)()
-    for field in ("angles", "volume", "align_params", "angle_offset_deg"):
+    for field in ("angles", "volume", "align_params", "angle_offset"):
         source, value = getattr(dataset, field), getattr(copied, field)
         if source is None:
             assert value is None
@@ -103,12 +103,12 @@ def test_resaved_reconstruction_uses_edited_volume_and_keeps_known_image(tmp_pat
     )
     truth = np.random.default_rng(7).uniform(0.1, 1, (3, 5, 4)).astype(np.float32)
     data = tj.project(geometry, truth)
-    config = CGLSConfig(iterations=200, rtol=1e-8)
+    config = CGLSConfig(iterations=200, tolerance=1e-8)
     reconstructed = tj.reconstruct(tj.Scan(data, geometry), "cgls", config=config)
     original, edited = tmp_path / ("original" + suffix), tmp_path / ("edited" + suffix)
-    tj.save(original, reconstructed)
+    tj.save(original, reconstructed, include_scan=True)
     loaded = tj.load_reconstruction(original)
-    tj.save(edited, replace(loaded, volume=truth.copy()))
+    tj.save(edited, replace(loaded, volume=truth.copy()), include_scan=True)
     saved = tj.load_reconstruction(edited)
     np.testing.assert_array_equal(saved.volume, truth)
     np.testing.assert_allclose(saved.scan.angles, angles, rtol=1e-6)

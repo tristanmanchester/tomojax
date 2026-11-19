@@ -27,7 +27,7 @@ def _scan(cone=False):
     return tj.Scan(np.zeros((60, 48, 48), np.float32), geometry)
 
 
-def _fitter(monkeypatch, *, corrections=None, poses=None):
+def _fitter(monkeypatch, *, changes=None, poses=None):
     calls = []
 
     def fit(projections, nominal, grid, detector, **options):
@@ -37,7 +37,7 @@ def _fitter(monkeypatch, *, corrections=None, poses=None):
         table = np.zeros((len(nominal), 6)) if poses is None else poses
         record = {
             "fit": list(names),
-            "corrections": corrections or {},
+            "calibration": changes or {},
             "report": {"isolated_views": [], "unusual_views": [], "advisories": []},
             "seconds": 0.0,
         }
@@ -66,14 +66,15 @@ def test_invalid_fit_fails_before_a_solve(fit):
 def test_global_fits_publish_the_named_calibration_and_hold_local_poses(monkeypatch, cone, name):
     scan = _scan(cone)
     correction = {"center": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}[name]
-    calls = _fitter(monkeypatch, corrections={name: correction})
+    calls = _fitter(monkeypatch, changes={name: correction})
     result = tj.align(scan, fit=name)
     assert calls[0][4]["fit"] == name
     assert result.scan.projections is scan.projections
     assert set(result.info["calibration"]) == {name}
     np.testing.assert_array_equal(result.poses, 0)
     expected = {"center": (1.45, -1.05) if cone else 1.45, "tilt": 0.5, "roll": 0.75}[name]
-    np.testing.assert_allclose(result.info["calibration"][name], expected, atol=2e-6)
+    np.testing.assert_allclose(result.info["calibration"][name]["value"], expected, atol=2e-6)
+    assert result.info["calibration"][name]["change"] == correction
     if name != "center":
         assert result.scan.detector.center == scan.detector.center
 
@@ -91,7 +92,7 @@ def test_default_fit_preserves_existing_rotations_and_uses_the_requested_grid(mo
     result = tj.align(scan, grid=grid)
     np.testing.assert_allclose(calls[0][1], stack_view_poses(scan.geometry, 60), atol=1e-7)
     assert calls[0][4]["fit"] == "translations" and calls[0][4]["keep_grid"]
-    assert result.scan.grid == grid and result.volume.shape == (16, 18, 20)
+    assert result.scan.grid == grid and result.image.shape == (16, 18, 20)
     np.testing.assert_array_equal(result.poses[:, :3], scan.poses[:, :3])
     np.testing.assert_allclose(result.poses[:, 3:], previous[:, 3:] + correction[:, 3:], atol=1e-7)
     assert result.info["calibration"] == {}
@@ -102,8 +103,8 @@ def test_default_fit_preserves_existing_rotations_and_uses_the_requested_grid(mo
 def test_fitted_global_geometry_round_trips_with_held_local_poses(
     monkeypatch, tmp_path, cone, suffix
 ):
-    corrections = {"center": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}
-    _fitter(monkeypatch, corrections=corrections)
+    changes = {"center": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}
+    _fitter(monkeypatch, changes=changes)
     result = tj.align(_scan(cone), fit=("center", "tilt", "roll"))
     target = tmp_path / f"aligned{suffix}"
     tj.save(target, result)
@@ -124,7 +125,7 @@ def test_fitted_global_geometry_round_trips_with_held_local_poses(
 def test_cli_fit_forwards_one_selection_and_saves_its_calibration(monkeypatch, tmp_path):
     scan, output, manifest = tmp_path / "scan.nxs", tmp_path / "aligned.nxs", tmp_path / "run.json"
     tj.save(scan, _scan())
-    calls = _fitter(monkeypatch, corrections={"tilt": 0.5, "roll": 0.75})
+    calls = _fitter(monkeypatch, changes={"tilt": 0.5, "roll": 0.75})
     assert (
         main(
             [
@@ -145,7 +146,8 @@ def test_cli_fit_forwards_one_selection_and_saves_its_calibration(monkeypatch, t
     assert calls[0][4]["fit"] == ("translations", "tilt", "roll")
     saved = json.loads(manifest.read_text())["resolved_config"]
     assert saved["fit"] == ["translations", "tilt", "roll"]
-    assert saved["alignment"]["calibration"] == pytest.approx({"tilt": 0.5, "roll": 0.75})
+    values = {name: entry["value"] for name, entry in saved["alignment"]["calibration"].items()}
+    assert values == pytest.approx({"tilt": 0.5, "roll": 0.75})
     np.testing.assert_array_equal(tj.load(output).poses, 0)
 
 

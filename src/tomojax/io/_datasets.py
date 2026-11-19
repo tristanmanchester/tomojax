@@ -23,6 +23,7 @@ from tomojax._data import (
     save_npz,
     save_nxtomo,
     saved_volume_axes,
+    saved_without_frames,
     validate_nxtomo,
 )
 from tomojax.core.geometry import Detector, Grid, ScanGeometry
@@ -43,6 +44,7 @@ __all__ = [
     "save_dataset",
     "save_nxtomo",
     "saved_volume_axes",
+    "saved_without_frames",
     "validate_dataset",
     "validate_nxtomo",
 ]
@@ -76,12 +78,12 @@ def build_geometry_from_dataset_metadata(
     meta: Mapping[str, Any],
     *,
     grid_override: Grid | tuple[int, int, int] | list[int] | None = None,
-    poses: bool = False,
+    apply_poses: bool = False,
     volume_shape: Sequence[int] | None = None,
 ) -> tuple[Grid, Detector, ScanGeometry]:
     """Build geometry objects from normalized dataset metadata.
 
-    ``poses`` applies the per-view corrections and angle offsets saved with
+    ``apply_poses`` applies the per-view corrections and angle offsets saved with
     the data. Keeping this wrapper in `tomojax.io` makes the command/data dependency
     explicit and gives the `ProjectionDataset` solver contract one replacement
     point.
@@ -92,7 +94,7 @@ def build_geometry_from_dataset_metadata(
         Normalized geometry metadata, as returned by geometry_inputs.
     grid_override : Grid, tuple of int, list of int or None, optional
         Replacement grid or (nx, ny, nz) dimensions.
-    poses : bool, optional
+    apply_poses : bool, optional
         Apply saved per-view alignment and angle corrections; defaults to False.
     volume_shape : sequence of int or None, optional
         Fallback (nz, ny, nx) array dimensions when no grid is recorded.
@@ -114,7 +116,7 @@ def build_geometry_from_dataset_metadata(
     return build_geometry_from_meta(
         cast("LoadedGeometryMeta", dict(meta)),
         grid_override=grid_override,
-        poses=poses,
+        apply_poses=apply_poses,
         volume_shape=volume_shape,
     )
 
@@ -130,8 +132,9 @@ class ProjectionDataset:
 
     Parameters
     ----------
-    projections : numpy.ndarray
-        Measured projections in (view, v, u) order.
+    projections : numpy.ndarray or None
+        Measured projections in (view, v, u) order; None in a reconstruction saved
+        without its scan.
     angles : numpy.ndarray
         One rotation angle per view, in degrees.
     volume : numpy.ndarray, jax.Array or None, optional
@@ -144,7 +147,7 @@ class ProjectionDataset:
         Geometry family, such as parallel, lamino or cone.
     geometry_metadata : dict, optional
         Additional geometry and acquisition metadata.
-    angle_offset_deg : numpy.ndarray or None, optional
+    angle_offset : numpy.ndarray or None, optional
         Per-view angular corrections in degrees.
     align_params : numpy.ndarray or None, optional
         Saved per-view alignment parameters, with convention in align_gauge.
@@ -162,14 +165,14 @@ class ProjectionDataset:
         Internal retained acquisition metadata; normally populated by from_nxtomo.
     """
 
-    projections: np.ndarray
+    projections: np.ndarray | None
     angles: np.ndarray
     volume: np.ndarray | jax.Array | None = None
     detector: Detector | None = None
     grid: Grid | None = None
     geometry_type: str = "parallel"
     geometry_metadata: dict[str, Any] = field(default_factory=dict)
-    angle_offset_deg: np.ndarray | None = None
+    angle_offset: np.ndarray | None = None
     align_params: np.ndarray | None = None
     align_gauge: dict[str, JsonValue] | None = None
     # Simulated misalignment, whose angle offsets ``angles`` already include.
@@ -213,7 +216,7 @@ class ProjectionDataset:
             detector = None
         grid = metadata.grid
         return cls(
-            projections=np.asarray(payload.projections),
+            projections=None if payload.projections is None else np.asarray(payload.projections),
             angles=np.asarray(
                 np.empty(0, dtype=np.float32) if metadata.angles is None else metadata.angles,
                 dtype=np.float32,
@@ -227,10 +230,10 @@ class ProjectionDataset:
             else (_grid_from_mapping(grid) if grid is not None else None),
             geometry_type=str(metadata.geometry_type),
             geometry_metadata=dict(metadata.geometry_meta or {}),
-            angle_offset_deg=(
+            angle_offset=(
                 None
-                if metadata.angle_offset_deg is None
-                else np.asarray(metadata.angle_offset_deg, dtype=np.float32)
+                if metadata.angle_offset is None
+                else np.asarray(metadata.angle_offset, dtype=np.float32)
             ),
             align_params=(
                 None if metadata.align_params is None else np.asarray(metadata.align_params)
@@ -290,10 +293,10 @@ class ProjectionDataset:
         metadata.detector = self.detector
         metadata.geometry_type = self.geometry_type
         metadata.geometry_meta = _copied(self.geometry_metadata)
-        metadata.angle_offset_deg = (
+        metadata.angle_offset = (
             None
-            if self.angle_offset_deg is None
-            else np.array(self.angle_offset_deg, dtype=np.float32, copy=True)
+            if self.angle_offset is None
+            else np.array(self.angle_offset, dtype=np.float32, copy=True)
         )
         metadata.align_params = (
             None if self.align_params is None else np.array(self.align_params, copy=True)
@@ -324,7 +327,8 @@ class ProjectionDataset:
                 "Missing detector pixel sizes: pass pixel_size=..., detector=... or "
                 "geometry=..., or set detector in tomojax preprocess --config"
             )
-        if self.angles.shape != (self.projections.shape[0],):
+        views = len(self.angles) if self.projections is None else self.projections.shape[0]
+        if not views or self.angles.shape != (views,):
             raise ValueError(
                 "Missing view angles: pass angles=..., or use tomojax preprocess --angles"
             )
@@ -382,7 +386,7 @@ class ProjectionDataset:
         if du is None or dv is None:
             du = dv = 1.0
             meta = {**meta, "detector_pixel_size_status": "not_recorded", "length_unit": "pixel"}
-        _, nv, nu = self.projections.shape
+        _, nv, nu = cast("np.ndarray", self.projections).shape  # a record without a detector
         detector = Detector(nu, nv, du, dv, (0.0, 0.0))
         return replace(self, detector=detector, geometry_metadata=meta)
 
@@ -453,19 +457,12 @@ def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
     # The metadata copy would duplicate a large volume that the writer only reads.
     metadata = replace(dataset, volume=None).to_nxtomo_metadata()
     metadata.volume = dataset.volume
+    projections = None if dataset.projections is None else np.asarray(dataset.projections)
     if suffix in _HDF5_SUFFIXES:
-        save_nxtomo(
-            str(output_path),
-            projections=np.asarray(dataset.projections),
-            metadata=metadata,
-        )
+        save_nxtomo(str(output_path), projections=projections, metadata=metadata)
         return
     if suffix == ".npz":
-        save_npz(
-            str(output_path),
-            np.asarray(dataset.projections),
-            metadata=metadata,
-        )
+        save_npz(str(output_path), projections, metadata=metadata)
         return
     raise ValueError(f"unsupported dataset output format for {output_path}")
 
@@ -606,6 +603,14 @@ def _dataset_issues(input_path: Path) -> list[str]:
             issues.insert(0, str(exc))
         return issues
     suffix = input_path.suffix.lower()
+    # An NPZ, or a reconstruction saved without its scan, is checked by reading it.
+    whole = suffix == ".npz" or (suffix in _HDF5_SUFFIXES and saved_without_frames(input_path))
+    if whole:
+        try:
+            load_dataset(input_path)
+        except Exception as exc:
+            return [str(exc)]
+        return []
     if suffix in _HDF5_SUFFIXES:
         located = locate_frames(str(input_path))
         issues = []
@@ -614,12 +619,6 @@ def _dataset_issues(input_path: Path) -> list[str]:
         if located.image_key is not None and not np.any(located.image_key == 0):
             issues.append("No sample frames (image_key == 0)")
         return issues
-    if suffix == ".npz":
-        try:
-            load_dataset(input_path)
-        except Exception as exc:
-            return [str(exc)]
-        return []
     if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
         return [
             "TIFF stacks require an angle sidecar or explicit angles; "
@@ -632,8 +631,8 @@ def _merge_dataset_solver_metadata(
     payload: dict[str, Any],
     dataset: ProjectionDataset,
 ) -> None:
-    if dataset.angle_offset_deg is not None:
-        payload["angle_offset_deg"] = np.asarray(dataset.angle_offset_deg, dtype=np.float32)
+    if dataset.angle_offset is not None:
+        payload["angle_offset"] = np.asarray(dataset.angle_offset, dtype=np.float32)
     if dataset.align_params is not None:
         payload["align_params"] = np.asarray(dataset.align_params)
     if dataset.align_gauge is not None:

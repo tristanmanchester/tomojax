@@ -51,16 +51,16 @@ def align_poses(
             "was given: an explicit grid= is used as given, at its full resolution. Omit grid= "
             "to let the fit bound its own working scale."
         ) from exc
-    corrected, calibration = publish_calibration(
-        scan, fitted, record["corrections"], native_pixel_size=native
-    )
+    changes = record["calibration"]
+    corrected, values = publish_calibration(scan, fitted, changes, native_pixel_size=native)
     corrected = with_grid(corrected, working)
+    calibration = {name: {"value": values[name], "change": changes[name]} for name in changes}
     info = {**record, "method": "joint_volume_pose", "calibration": calibration}
     _warn_about_views(record["report"])
     source = record_of(corrected)
     source.geometry_metadata["alignment_info"] = info
     corrected = replace(corrected, source=source)
-    return Reconstruction(volume, corrected, "joint_volume_pose", info)
+    return Reconstruction(volume, corrected.geometry, "joint_volume_pose", info, corrected)
 
 
 def _warn_about_views(report: dict) -> None:

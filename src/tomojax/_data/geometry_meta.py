@@ -49,7 +49,7 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
     tilt_about: str
     axis_unit_lab: Sequence[float]
     detector_roll: float
-    angle_offset_deg: np.ndarray
+    angle_offset: np.ndarray
     misalign_spec: dict[str, JsonValue]
     align_params: np.ndarray
     align_gauge: dict[str, JsonValue]
@@ -240,7 +240,7 @@ def _resolve_angles(
     if not apply_saved_angle_offset:
         return thetas
 
-    angle_offset = meta.get("angle_offset_deg")
+    angle_offset = meta.get("angle_offset")
     # Simulated misalignment already bakes these offsets into `angles`; the
     # separate schedule is provenance, not a requested second correction.
     if angle_offset is None or meta.get("misalign_spec") is not None:
@@ -248,9 +248,9 @@ def _resolve_angles(
 
     offset = np.asarray(angle_offset, dtype=np.float32)
     if offset.shape != thetas.shape:
-        raise ValueError(f"angle_offset_deg must have shape {thetas.shape}, got {offset.shape}")
+        raise ValueError(f"angle_offset must have shape {thetas.shape}, got {offset.shape}")
     if not np.isfinite(offset).all():
-        raise ValueError("angle_offset_deg must contain only finite values")
+        raise ValueError("angle_offset must contain only finite values")
 
     return thetas + offset
 
@@ -314,13 +314,13 @@ def _segments_from_meta(
     grid: Grid,
     angles: Sequence[float],
     *,
-    poses: bool,
+    apply_poses: bool,
 ) -> ScanGeometry:
     """A ``ConeSegments`` geometry from saved ``cone_segments`` metadata."""
     from tomojax.core.geometry.cone import ConeSegments
 
     entries = cast("list[dict[str, Any]]", meta.get("cone_segments", []))
-    saved = _saved_poses(meta, len(angles), default_frame="detector") if poses else None
+    saved = _saved_poses(meta, len(angles), default_frame="detector") if apply_poses else None
     segments: list[ScanGeometry] = []
     start = 0
     for entry in entries:
@@ -362,7 +362,7 @@ def _saved_poses(
     if params.shape[1] != 6:
         raise ValueError(
             "align_params must provide exactly 6 columns "
-            f"[alpha, beta, phi, dx, dz, dy], got {params.shape[1]}"
+            f"[alpha, beta, phi, x, z, y], got {params.shape[1]}"
         )
     frame = str(meta.get("align_gauge", {}).get("pose_translation_frame", default_frame))
     if frame not in {"object", "detector"}:
@@ -374,25 +374,25 @@ def build_geometry_from_meta(
     meta: LoadedGeometryMeta,
     *,
     grid_override: GridOverride = None,
-    poses: bool = False,
+    apply_poses: bool = False,
     volume_shape: Sequence[int] | None = None,
 ) -> tuple[Grid, Detector, ScanGeometry]:
     """Build geometry from NXtomo metadata with sensible fallbacks.
 
     When `grid` metadata is missing, the grid is inferred from detector dimensions
     unless an explicit `grid_override` or `volume_shape` is supplied; both reuse
-    detector pixel spacings as voxel spacings. When `poses` is
+    detector pixel spacings as voxel spacings. When `apply_poses` is
     True, any saved `align_params` are composed onto the nominal poses. Saved
     alignments must provide one row per view and six columns ordered as
-    `[alpha, beta, phi, dx, dz, dy]`. Saved
-    `angle_offset_deg` is applied unless it is known to have already been baked
+    `[alpha, beta, phi, x, z, y]`. Saved
+    `angle_offset` is applied unless it is known to have already been baked
     into `angles`.
     """
     detector = _detector_from_meta(meta)
     grid = _grid_from_meta(meta, detector, grid_override, volume_shape)
     angles = _resolve_angles(
         meta,
-        apply_saved_angle_offset=poses,
+        apply_saved_angle_offset=apply_poses,
     )
     if meta.get("cone_segments"):
         return (
@@ -402,12 +402,12 @@ def build_geometry_from_meta(
                 meta,
                 grid,
                 [float(t) for t in angles],
-                poses=poses,
+                apply_poses=apply_poses,
             ),
         )
     geom = _base_geometry(meta=meta, grid=grid, detector=detector, angles=angles)
 
-    saved = _saved_poses(meta, len(angles), default_frame="object") if poses else None
+    saved = _saved_poses(meta, len(angles), default_frame="object") if apply_poses else None
     if saved is not None:
         align_params, frame = saved
         geom = AugmentedGeometry(base=geom, align_params=align_params, translation_frame=frame)
@@ -432,7 +432,7 @@ def composed_poses(geometry: ScanGeometry, corrections: np.ndarray, frame: str) 
     rotation = np.einsum("nji,njk->nik", start[:, :3, :3], moved[:, :3, :3])
     beta, alpha, phi = Rotation.from_matrix(rotation).as_euler("YXZ").T
     shift = moved[:, :3, 3] - start[:, :3, 3]
-    # (alpha, beta, phi, dx, dz, dy), as Scan.poses.
+    # (alpha, beta, phi, x, z, y), as Scan.poses.
     table = np.stack([alpha, beta, phi, shift[:, 0], shift[:, 2], shift[:, 1]], axis=1)
     return table.astype(np.float32)
 

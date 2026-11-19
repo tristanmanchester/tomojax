@@ -241,7 +241,7 @@ uv run --no-sync tomojax recon aligned.nxs -o recon.nxs --method cgls
 ```
 
 The corrections are fitted on top of any input poses, including imported and multi-orbit scans.
-`tomojax recon` applies the calibrated geometry and poses saved in `aligned.nxs`; `--no-poses`
+`tomojax recon` applies the calibrated geometry and poses saved in `aligned.nxs`; `--no-apply-poses`
 removes per-view corrections when loading. See [align a scan](align-a-scan.md) for parameter
 selection and gauges.
 

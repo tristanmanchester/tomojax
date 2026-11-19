@@ -58,8 +58,9 @@ instead of installing from the package index, then run the same three commands.
 
 `inspect` describes the file, checks it and ends with `Valid: yes`. Open
 `previews/slice_x.png`, `slice_y.png`, and `slice_z.png`, the volume's central
-slices (`projection.png` is the central projection). `recon.nxs` contains the
-projections, volume, and geometry metadata. The PNGs are display-scaled
+slices. `recon.nxs` contains the volume, its geometry and the reconstruction's
+record, and names the projections it came from (`--include-scan` keeps them too).
+The PNGs are display-scaled
 previews; use the stored volume for quantitative analysis. This CLI example
 automatically selects Fourier inversion for its axial parallel geometry.
 

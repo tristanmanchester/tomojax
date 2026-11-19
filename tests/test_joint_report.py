@@ -70,7 +70,7 @@ def test_report_states_sizes_in_native_pixels_and_flags_in_working_pixels():
         local=(3, 4),
         fit=("translations",),
         axial=True,
-        corrections={},
+        calibration={},
         native=native,
         binning=binning,
         levels=levels,
@@ -82,7 +82,7 @@ def test_report_states_sizes_in_native_pixels_and_flags_in_working_pixels():
     assert report["isolated_views"] == [30]
     assert report["unusual_views"] == [50]
     assert report["levels"] == [{"steps": 3, "ended": "pose_steps_below_tolerance"}]
-    dx = report["corrections"]["per_view"]["dx"]
+    dx = report["poses"]["x"]
     assert dx["max"] == np.abs(working[:, 0] * binning).max()
     # The spline carries the drift (RMS 0.6 / sqrt(2) working px); the view-to-view
     # part is the spike, 1 working px in one of 90 views, and the scatter.
@@ -106,7 +106,7 @@ def test_rotations_on_an_axial_geometry_carry_the_held_out_advisory():
     common = {
         "table": np.zeros((views, 6)),
         "local": (0, 1, 2, 3, 4),
-        "corrections": {},
+        "calibration": {},
         "native": (1.0, 1.0),
         "binning": 1,
         "levels": [],

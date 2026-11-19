@@ -326,7 +326,7 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
     expected[:, :3, 3] += increment[:, [3, 5, 4]]
     record = {
         "fit": ["translations", "rotations"],
-        "corrections": {},
+        "calibration": {},
         "detector_binning": 1,
         "levels": [{"status": "step_budget_reached"}],
         "refinement": {"status": "pose_steps_below_tolerance"},
@@ -532,8 +532,8 @@ def test_tilt_roll_and_rotations_together_keep_the_shared_angles():
     declared = tj.ParallelGeometry(tj.Grid(n, n, n, 1, 1, 1), tj.Detector(n, n, 1, 1), angles)
     result = tj.align(tj.Scan(data, declared), fit=("translations", "tilt", "roll", "rotations"))
     calibration = result.info["calibration"]
-    assert abs(float(np.ravel(calibration["roll"])[0]) - 0.25) < 0.1
-    assert abs(float(np.ravel(calibration["tilt"])[0]) + 0.35) < 0.1
+    assert abs(float(np.ravel(calibration["roll"]["value"])[0]) - 0.25) < 0.1
+    assert abs(float(np.ravel(calibration["tilt"]["value"])[0]) + 0.35) < 0.1
 
 
 @pytest.mark.numerical
@@ -589,4 +589,4 @@ def test_a_half_turn_of_a_flat_sharp_object_recovers_its_motion_without_a_pedest
     assert abs(error @ motion / (motion @ motion)) < 0.1
     truth = fine.reshape(n, 4, n, 4, n, 4).mean((1, 3, 5))
     empty = truth.sum((1, 2)) == 0
-    assert np.asarray(result.volume)[empty].sum() < 0.05 * truth.sum()
+    assert np.asarray(result.image)[empty].sum() < 0.05 * truth.sum()

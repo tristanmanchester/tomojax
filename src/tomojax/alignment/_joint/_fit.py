@@ -322,7 +322,8 @@ def fit_poses(
     Returns the working-scale volume (nz, ny, nx), its grid, the (views, 6)
     pose table (alpha, beta, phi in radians; dx, dz, dy along lab x, z, y,
     in the grid's length unit; dy is zero only for parallel rays) and a
-    record containing the global corrections in native pixels and degrees.
+    record with the change in each fitted global, in native pixels and degrees, under
+    ``calibration``.
     """
     started = time.perf_counter()
     with jax.enable_x64(True):
@@ -428,17 +429,17 @@ def fit_poses(
         assert x is not None  # every schedule has at least one level
         stage = {"ops": ops, "sigma": cal["sigma"], "last": levels[-1], "placement": placement}
         p, refinement, (offsets, energy) = refine(x, p, y, precision, prior, **stage)
-        table, corrections = parameters.physical(np.asarray(p, np.float64), pose_scales)
+        table, changes = parameters.physical(np.asarray(p, np.float64), pose_scales)
         x = x[margin : margin + base.nz] / np.float32(cal["scale"])
     record = {
         "fit": list(parameters.fit),
-        "corrections": corrections,
+        "calibration": changes,
         "rotation_prior_sigma": ROTATION_SIGMA_DEG if "rotations" in parameters.fit else None,
         "working_grid": asdict(base),
         "detector_binning": dbin,
         "lever_px_per_radian": lever,
         "ray_geometry": "parallel" if frames is None else "cone",
-        "pose_dofs": [["alpha", "beta", "phi", "dx", "dz", "dy"][i] for i in parameters.local],
+        "pose_columns": [["alpha", "beta", "phi", "x", "z", "y"][i] for i in parameters.local],
         "image_preconditioner": ops.projection.diagonal_kind,
         "interpolation": ops.projection.interpolation,
         "noise_estimator": "normalized_fourth_difference_mad",
@@ -457,7 +458,7 @@ def fit_poses(
             axial=axial_geometry(
                 poses, (0.0, 1.0, 0.0) if frames is None else frames[0, 0] - frames[0, 3]
             ),
-            corrections=corrections,
+            calibration=changes,
             native=native,
             binning=dbin,
             levels=levels,

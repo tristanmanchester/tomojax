@@ -64,7 +64,7 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         assert fit == "translations" and frames is None and detector_roll == 0
         volume = np.zeros((g.nz, g.ny, g.nx), np.float32)
         report = {"isolated_views": [], "unusual_views": [], "advisories": []}
-        return volume, g, table, {"fit": ["translations"], "corrections": {}, "report": report}
+        return volume, g, table, {"fit": ["translations"], "calibration": {}, "report": report}
 
     monkeypatch.setattr(automatic, "fit_poses", fit)
     result = automatic.align_poses(scan, grid=supplied)
@@ -98,7 +98,7 @@ def test_saved_alignment_reuse(tmp_path):
     volume = np.exp(-np.sum((xyz - 3.5) ** 2, axis=0) / 3).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
     result = tj.align(scan)
-    assert np.isfinite(result.volume).all()
+    assert np.isfinite(result.image).all()
     assert result.scan.projections is scan.projections
     assert result.info["fit"] == ["translations"]
     tj.save(tmp_path / "alignment.nxs", result)

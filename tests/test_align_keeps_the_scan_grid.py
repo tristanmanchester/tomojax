@@ -39,7 +39,7 @@ def test_reconstructing_an_aligned_scan_keeps_the_scan_grid(kind):
     scan = _scan(kind)
     result = tj.align(scan)
     assert result.grid != scan.grid  # the fit worked at a binned scale
-    assert np.shape(result.volume) == _shape(result.grid)
+    assert np.shape(result.image) == _shape(result.grid)
     assert result.scan.grid == scan.grid
     assert np.shape(tj.reconstruct(result.scan).volume) == _shape(scan.grid)
 
@@ -62,4 +62,4 @@ def test_a_saved_alignment_reloads_on_the_scan_grid(tmp_path: Path):
     # The saved alignment image comes back with the grid it is on.
     image = tj.load_reconstruction(tmp_path / "aligned.nxs")
     assert image.grid == result.grid
-    np.testing.assert_array_equal(image.volume, result.volume)
+    np.testing.assert_array_equal(image.volume, result.image)

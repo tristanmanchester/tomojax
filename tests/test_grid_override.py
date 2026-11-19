@@ -66,7 +66,7 @@ def _geometry(kind: str, posed: bool = False):
         "align_params": table,
         "align_gauge": {"pose_translation_frame": "object"},
     }
-    return build_geometry_from_dataset_metadata(meta, poses=True)[2]
+    return build_geometry_from_dataset_metadata(meta, apply_poses=True)[2]
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "axis", "cone", "segments"])
@@ -104,7 +104,10 @@ def test_grid_override_reconstruction_recovers_a_known_image(kind):
     truth = np.exp(-((x - 0.3) ** 2 + (y + 0.2) ** 2 + (z - 0.1) ** 2)).astype(np.float32)
     data = tj.project(reference_geometry, truth)
     result = tj.reconstruct(
-        tj.Scan(data, geometry), "cgls", config=CGLSConfig(iterations=200, rtol=1e-8), grid=region
+        tj.Scan(data, geometry),
+        "cgls",
+        config=CGLSConfig(iterations=200, tolerance=1e-8),
+        grid=region,
     )
     image = np.asarray(result.volume)
     assert np.linalg.norm(image - truth) / np.linalg.norm(truth) < 2e-4

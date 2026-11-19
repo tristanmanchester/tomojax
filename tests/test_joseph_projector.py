@@ -400,7 +400,7 @@ def test_plane_cgls_matches_independent_damped_system_with_tail_batch(
         init_x=initial,
         config=CGLSConfig(
             iterations=120,
-            rtol=1e-7,
+            tolerance=1e-7,
             damping=damping,
             views_per_batch=4,
             backend=backend,

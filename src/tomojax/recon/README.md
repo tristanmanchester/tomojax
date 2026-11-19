@@ -166,7 +166,7 @@ from tomojax.recon import CGLSConfig, cgls
 
 volume, info = cgls(
     geometry, grid, detector, projections,
-    config=CGLSConfig(iterations=50, rtol=1e-6, damping=0.0),
+    config=CGLSConfig(iterations=50, tolerance=1e-6, damping=0.0),
 )
 ```
 
@@ -210,7 +210,7 @@ from tomojax.recon import cgls_multires
 volume, info = cgls_multires(
     geometry, grid, detector, projections,
     factors=(4, 2, 1), iterations_per_level=(40, 20, 20),
-    config=CGLSConfig(rtol=1e-6),
+    config=CGLSConfig(tolerance=1e-6),
 )
 ```
 
@@ -270,7 +270,7 @@ for nonnegative linear weights `abs(A)` is `A`. Cubic uses an explicit
 absolute-weight transpose so its negative lobes cannot cancel this bound.
 With quadratic smoothness, the estimate also includes
 `8 * eps32 * gradient_damping**2 * abs(D.T @ D) @ abs(x)`;
-it diagnoses numerical stagnation without relaxing `rtol` or `atol`. A residual
+it diagnoses numerical stagnation without relaxing `tolerance` or `absolute_tolerance`. A residual
 replacement resets the conjugate direction. These checks add operator work near
 stopping, while ordinary fixed-budget updates retain the existing operator pair.
 Near the FP32 noise floor, checks also run every 16 iterations: an atomic JAX

@@ -65,7 +65,7 @@ def test_parallel_host_cgls_matches_resident_with_penalties(monkeypatch, initial
     cfg = CGLSConfig(
         data_term=data_term,
         iterations=5,
-        rtol=0,
+        tolerance=0,
         damping=0.2,
         gradient_damping=0.1,
         views_per_batch=3,

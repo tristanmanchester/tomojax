@@ -194,6 +194,25 @@ def test_corrections_are_saved_with_the_scan(tmp_path: Path) -> None:
     np.testing.assert_allclose(np.asarray(again.projections), np.asarray(scan.projections))
 
 
+def test_a_scan_records_how_it_was_cut_down(tmp_path: Path) -> None:
+    write_raw_nxtomo(tmp_path / "raw.nxs")
+    frames = tj.load_frames(tmp_path / "raw.nxs")
+    nv, nu = frames.geometry.detector.nv, frames.geometry.detector.nu
+    rows, cols = slice(0, nv - nv % 2), slice(0, nu - nu % 2)
+    scan = frames.selected([1]).cropped(rows, cols).corrected(binning=2)
+    names = [c.name for c in scan.corrections]
+    assert names[:2] == ["selected", "cropped"] and names[-1] == "binned"
+    assert scan.corrections[0].settings == {"views": [1]}
+    assert scan.corrections[1].settings == {"rows": [0, rows.stop], "cols": [0, cols.stop]}
+    assert scan.corrections[-1].settings == {"binning": 2}
+
+    again = tj.load(tmp_path / "raw.nxs").selected(slice(1, None)).cropped(rows, cols).binned(2)
+    assert [c.name for c in again.corrections][-3:] == ["selected", "cropped", "binned"]
+    assert again.corrections[-3].settings["views"][0] == 1
+    tj.save(tmp_path / "cut.nxs", again)
+    assert tj.load(tmp_path / "cut.nxs").corrections == again.corrections
+
+
 def test_a_processed_file_loads_as_it_is(tmp_path: Path) -> None:
     dataset = write_projection_dataset(tmp_path / "scan.nxs")
     scan = tj.load(tmp_path / "scan.nxs")

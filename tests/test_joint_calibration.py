@@ -93,7 +93,7 @@ def test_calibration_and_local_poses_replay_the_fitted_physical_geometry(kind):
         assert type(nominal_geometry(corrected.geometry)) is tilted
         assert calibration["center"] == pytest.approx(expected_center[0])
         assert calibration["roll"] == 3.95
-    replay = scan_from_record(record_of(corrected), poses=True)
+    replay = scan_from_record(record_of(corrected), apply_poses=True)
     np.testing.assert_allclose(stack_view_poses(replay.geometry, n), expected, atol=8e-7)
     np.testing.assert_allclose(replay.detector.center, corrected.detector.center, atol=1e-14)
 

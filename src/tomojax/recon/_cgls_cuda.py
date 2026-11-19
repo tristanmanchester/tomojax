@@ -128,7 +128,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp)) - cp.multiply(damp2, x)
     gamma = cp.sum(gradient * gradient)
     initial_norm = float(cp.sqrt(gamma))
-    tolerance = np.float32(cfg.atol + cfg.rtol * initial_norm)
+    tolerance = np.float32(cfg.absolute_tolerance + cfg.tolerance * initial_norm)
     direction = gradient
     count, recomputations = 0, 0
     failed = not np.isfinite(initial_norm)

@@ -77,10 +77,12 @@ def _disk_full(err: BaseException) -> bool:
     return False
 
 
-def sizes_of(projections: ArrayLike, volume: ArrayLike | None) -> str:
+def sizes_of(projections: ArrayLike | None, volume: ArrayLike | None) -> str:
     """What a dataset write holds, by part, for its error messages."""
     parts = [] if volume is None else [f"volume {np.asarray(volume).nbytes / 2**30:.1f} GiB"]
-    return ", ".join([*parts, f"projections {np.asarray(projections).nbytes / 2**30:.1f} GiB"])
+    if projections is not None:
+        parts.append(f"projections {np.asarray(projections).nbytes / 2**30:.1f} GiB")
+    return ", ".join(parts)
 
 
 def _axes_warnings_silenced() -> bool:
@@ -325,8 +327,8 @@ def _load_processing_metadata(
     if align_grp is not None:
         if "thetas" in align_grp:
             out["align_params"] = align_grp["thetas"][...]
-        if "angle_offset_deg" in align_grp:
-            out["angle_offset_deg"] = align_grp["angle_offset_deg"][...]
+        if "angle_offset" in align_grp:
+            out["angle_offset"] = align_grp["angle_offset"][...]
     for group, attr, key, context in _PROCESSING_JSON_SECTIONS:
         section = tomojax_grp.get(group)
         if section is None:

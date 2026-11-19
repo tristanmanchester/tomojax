@@ -62,7 +62,7 @@ not treated as absent. Ambiguous candidates require an explicit metadata path.
 other than sample views. Saving a scan retains every pose update, including an
 update around a cone-segmented acquisition whose segments have their own;
 `Scan.poses` is their complete composition in the detector translation frame,
-and loading with `poses=False` removes all of them.
+and loading with `apply_poses=False` removes all of them.
 
 ## TIFF angle sidecars
 

@@ -16,7 +16,11 @@ def _reconstruction(value=1.0):
     )
     scan = tj.Scan(np.full((6, 4, 8), value, np.float32), geometry)
     return tj.Reconstruction(
-        volume=np.full((4, 5, 6), value, np.float32), scan=scan, method="fbp", info={}
+        volume=np.full((4, 5, 6), value, np.float32),
+        geometry=scan.geometry,
+        method="fbp",
+        info={},
+        scan=scan,
     )
 
 
@@ -49,7 +53,7 @@ def test_a_save_that_fails_part_way_leaves_no_file(tmp_path, monkeypatch, suffix
     with pytest.raises(
         OSError, match=r"stopped after .* written: .* free.*volume .* GiB, projections"
     ):
-        tj.save(path, _reconstruction())
+        tj.save(path, _reconstruction(), include_scan=True)
     assert list(tmp_path.iterdir()) == []  # neither the file nor a partial one
 
 
@@ -57,10 +61,10 @@ def test_a_save_that_fails_part_way_leaves_no_file(tmp_path, monkeypatch, suffix
 def test_a_save_that_fails_over_a_good_file_keeps_it(tmp_path, monkeypatch, suffix):
     # Opening the final name for writing emptied a good file before the new one was complete.
     path = tmp_path / f"recon{suffix}"
-    tj.save(path, _reconstruction(1.0))
+    tj.save(path, _reconstruction(1.0), include_scan=True)
     _fail_part_way(monkeypatch, suffix)
     with pytest.raises(OSError, match="stopped after"):
-        tj.save(path, _reconstruction(2.0))
+        tj.save(path, _reconstruction(2.0), include_scan=True)
     monkeypatch.undo()
     assert list(tmp_path.iterdir()) == [path]
     np.testing.assert_array_equal(tj.load_reconstruction(path).volume, 1.0)
@@ -69,7 +73,7 @@ def test_a_save_that_fails_over_a_good_file_keeps_it(tmp_path, monkeypatch, suff
 @pytest.mark.parametrize("suffix", [".nxs", ".npz"])
 def test_a_save_replaces_the_file_when_complete(tmp_path, suffix):
     path = tmp_path / f"recon{suffix}"
-    tj.save(path, _reconstruction(1.0))
-    tj.save(path, _reconstruction(2.0))
+    tj.save(path, _reconstruction(1.0), include_scan=True)
+    tj.save(path, _reconstruction(2.0), include_scan=True)
     assert list(tmp_path.iterdir()) == [path]
     np.testing.assert_array_equal(tj.load_reconstruction(path).volume, 2.0)

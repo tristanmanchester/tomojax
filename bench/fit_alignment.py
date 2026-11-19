@@ -327,7 +327,7 @@ def run_case(
     before, _, _ = score(scan_rays(scan), truth)
     start = time.perf_counter()
     result = tj.align(scan, fit=matching if fit is None else fit, grid=scan.grid)
-    volume = np.asarray(result.volume)
+    volume = np.asarray(result.image)
     elapsed = time.perf_counter() - start
     after, worst, gauge = score(scan_rays(result.scan), truth)
     grid = result.grid

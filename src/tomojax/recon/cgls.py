@@ -27,7 +27,8 @@ class CGLSConfig:
     using the discrete matched adjoint. ``C`` is the identity for absolute data
     and subtracts each full detector view's mean for per-view contrast.
     Stop when the normal-residual norm falls below
-    ``atol + rtol * initial_normal_residual_norm`` or after ``iterations`` updates.
+    ``absolute_tolerance + tolerance * initial_normal_residual_norm`` or after
+    ``iterations`` updates.
     ``roundoff_limit`` indicates voxelwise update stagnation or a normal gradient
     stagnating within an FP32 cancellation estimate, without claiming the requested tolerance.
     Before reporting convergence or roundoff, recompute the data and normal
@@ -81,10 +82,10 @@ class CGLSConfig:
     iterations : int, optional
         Maximum number of solver updates. For SIRT and MLEM, an update is a complete
         subset sweep. Default is 50.
-    rtol : float, optional
+    tolerance : float, optional
         Nonnegative relative tolerance on the normal-residual norm. Default is
         1e-06.
-    atol : float, optional
+    absolute_tolerance : float, optional
         Nonnegative absolute tolerance on the normal-residual norm. Default is 0.0.
     damping : float, optional
         Nonnegative weight of the volume-norm penalty; squared in the objective.
@@ -114,8 +115,8 @@ class CGLSConfig:
 
     data_term: DataTerm = "absolute"
     iterations: int = 50
-    rtol: float = 1e-6
-    atol: float = 0.0
+    tolerance: float = 1e-6
+    absolute_tolerance: float = 0.0
     damping: float = 0.0
     views_per_batch: int = 64
     backend: Literal["auto", "jax", "cuda"] = "auto"
@@ -239,7 +240,7 @@ def cgls(
     iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)
     if iterations < 0 or batch < 1:
         raise ValueError("cgls: iterations must be nonnegative and views_per_batch positive")
-    for name in ("rtol", "atol", "damping", "gradient_damping"):
+    for name in ("tolerance", "absolute_tolerance", "damping", "gradient_damping"):
         value = float(getattr(cfg, name))
         if not math.isfinite(value) or value < 0:
             raise ValueError(f"cgls: {name} must be finite and nonnegative")

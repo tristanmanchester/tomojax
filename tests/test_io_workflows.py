@@ -45,7 +45,7 @@ def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Pat
         geometry_type=gtype,
         geometry_metadata={"tilt": 55.0, "tilt_about": "x", "detector_roll": 1.25},
     )
-    dataset.angle_offset_deg = np.asarray([1.0, 2.0], dtype=np.float32)
+    dataset.angle_offset = np.asarray([1.0, 2.0], dtype=np.float32)
     dataset.align_params = align_params
     dataset.align_gauge = {"mode": "mean_zero"}
 
@@ -65,7 +65,7 @@ def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Pat
     assert geometry_inputs["tilt"] == pytest.approx(55.0)
     assert geometry_inputs["tilt_about"] == "x"
     assert geometry_inputs["detector_roll"] == pytest.approx(1.25)
-    np.testing.assert_allclose(geometry_inputs["angle_offset_deg"], [1.0, 2.0])
+    np.testing.assert_allclose(geometry_inputs["angle_offset"], [1.0, 2.0])
     np.testing.assert_allclose(geometry_inputs["align_params"], align_params)
     assert geometry_inputs["align_gauge"] == {"mode": "mean_zero"}
 
@@ -184,7 +184,7 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     dataset = make_projection_dataset()
     dataset.volume = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
     dataset.align_params = np.ones((2, 5), dtype=np.float32)
-    dataset.angle_offset_deg = np.asarray([0.25, -0.25], dtype=np.float32)
+    dataset.angle_offset = np.asarray([0.25, -0.25], dtype=np.float32)
 
     direct_copy = dataset.copy_metadata()
     assert not np.shares_memory(direct_copy.angles, dataset.angles)
@@ -192,8 +192,8 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     assert not np.shares_memory(direct_copy.volume, dataset.volume)
     assert direct_copy.align_params is not None
     assert not np.shares_memory(direct_copy.align_params, dataset.align_params)
-    assert direct_copy.angle_offset_deg is not None
-    assert not np.shares_memory(direct_copy.angle_offset_deg, dataset.angle_offset_deg)
+    assert direct_copy.angle_offset is not None
+    assert not np.shares_memory(direct_copy.angle_offset, dataset.angle_offset)
 
     save_dataset(path, dataset)
     loaded = load_nxtomo(str(path))
@@ -210,9 +210,9 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     assert loaded_copy.align_params is not None
     assert loaded.metadata.align_params is not None
     assert not np.shares_memory(loaded_copy.align_params, loaded.metadata.align_params)
-    assert loaded_copy.angle_offset_deg is not None
-    assert loaded.metadata.angle_offset_deg is not None
-    assert not np.shares_memory(loaded_copy.angle_offset_deg, loaded.metadata.angle_offset_deg)
+    assert loaded_copy.angle_offset is not None
+    assert loaded.metadata.angle_offset is not None
+    assert not np.shares_memory(loaded_copy.angle_offset, loaded.metadata.angle_offset)
 
 
 @pytest.mark.parametrize("single_row", [False, True])

@@ -110,7 +110,7 @@ def test_a_rolled_parallel_scan_saves_its_roll_and_a_cone_one_keeps_it_in_the_be
     grid, detector = Grid(4, 4, 3, 1.0, 1.0, 1.0), Detector(5, 3, 1.0, 1.0)
     rolled = LaminographyGeometry(grid, detector, [0.0, 90.0], tilt=20, detector_roll=1.5)
     record = record_of(tj.Scan(np.ones((2, 3, 5), np.float32), rolled))
-    loaded = scan_from_record(record, poses=False).geometry
+    loaded = scan_from_record(record, apply_poses=False).geometry
     assert type(loaded) is LaminographyGeometry
     assert (loaded.tilt, loaded.detector_roll) == (20, 1.5)
 
@@ -118,4 +118,4 @@ def test_a_rolled_parallel_scan_saves_its_roll_and_a_cone_one_keeps_it_in_the_be
     record = record_of(tj.Scan(np.ones((2, 3, 5), np.float32), cone))
     record.geometry_metadata["detector_roll"] = 1.5
     with pytest.raises(ValueError, match="belongs in cone_beam"):
-        scan_from_record(record, poses=False)
+        scan_from_record(record, apply_poses=False)

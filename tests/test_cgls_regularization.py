@@ -103,7 +103,7 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
         init_x=initial,
         config=CGLSConfig(
             iterations=80,
-            rtol=1e-7,
+            tolerance=1e-7,
             damping=damping,
             gradient_damping=gradient_damping,
             views_per_batch=3,

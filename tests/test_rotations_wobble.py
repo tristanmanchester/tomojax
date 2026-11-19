@@ -23,4 +23,4 @@ def test_rotations_fit_the_wobble_and_leave_every_view_angle_as_recorded():
     result = tj.align(tj.Scan(projections, geometry), fit=("translations", "rotations"))
     assert np.all(result.poses[:, 2] == 0.0)  # the recorded angle is never corrected
     assert np.any(result.poses[:, :2] != 0.0)  # the wobble is
-    assert result.info["pose_dofs"] == ["alpha", "beta", "dx", "dz"]
+    assert result.info["pose_columns"] == ["alpha", "beta", "x", "z"]

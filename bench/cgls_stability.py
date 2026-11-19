@@ -59,7 +59,7 @@ def run(backends: list[str], seeds: int) -> list[dict[str, Any]]:
                     data,
                     config=CGLSConfig(
                         iterations=100,
-                        rtol=1e-7,
+                        tolerance=1e-7,
                         damping=damping,
                         views_per_batch=3,
                         projector_model="joseph",

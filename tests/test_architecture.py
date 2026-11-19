@@ -109,7 +109,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--warm-start": ("reconstruct", "warm_start"),
         "--seed": ("reconstruct", "seed"),
         "--grid": ("reconstruct", "grid"),
-        "--poses": ("load", "poses"),
+        "--apply-poses": ("load", "apply_poses"),
         "--roi": "crops the grid to the field of view; Python passes the grid",
         "--preview": "file output",
         "--manifest": "file output",
@@ -118,7 +118,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
     "align": {
         "--fit": ("align", "fit"),
         "--grid": ("align", "grid"),
-        "--poses": ("load", "poses"),
+        "--apply-poses": ("load", "apply_poses"),
         "--roi": "crops the grid to the field of view; Python passes the grid",
         "--manifest": "file output",
         "--dry-run": "prints the selected parameters and grid without fitting",

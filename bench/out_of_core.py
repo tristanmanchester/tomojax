@@ -193,7 +193,7 @@ def _synthetic(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
     try:
         start, disk = time.perf_counter(), _disk()
         if args.method == "cgls":
-            config = CGLSConfig(iterations=args.iterations, rtol=0)
+            config = CGLSConfig(iterations=args.iterations, tolerance=0)
             volume, info = cgls(geometry, grid, detector, data, config=config, out=out)
         else:
             config = SIRTConfig(iterations=args.iterations)

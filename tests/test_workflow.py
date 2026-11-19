@@ -184,10 +184,14 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     tj.save(tmp_path / "recon.nxs", recon)
     with h5py.File(tmp_path / "recon.nxs") as handle:
         assert handle["entry/processing/tomojax/volume"].attrs["long_name"] == "volume"
-    back = tj.load_reconstruction(tmp_path / "recon.nxs")
+    with pytest.warns(UserWarning, match="without its scan"):
+        back = tj.load_reconstruction(tmp_path / "recon.nxs")
     np.testing.assert_allclose(back.volume, np.asarray(recon.volume), rtol=1e-6, atol=1e-6)
     assert back.method == "fbp" and back.grid == recon.grid
-    assert back.info == {"config": asdict(recon.info["config"])}  # the configuration's fields
+    # The configuration's fields, and what names the projections the volume came from.
+    assert back.info.keys() == {"config", "source"}
+    assert back.info["config"] == asdict(recon.info["config"])
+    assert back.info["source"]["shape"] == list(np.shape(loaded.projections))
     with pytest.raises(FileNotFoundError, match="no such file"):
         tj.load(tmp_path / "missing.nxs")
 
@@ -314,11 +318,11 @@ def test_single_slice_operator_output_feeds_scan_and_reconstruction():
 def test_a_saved_alignment_is_not_labelled_with_an_earlier_reconstruction(tmp_path: Path) -> None:
     geometry = _geometries(8)["parallel"]
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(8))), geometry)
-    tj.save(tmp_path / "cgls.nxs", tj.reconstruct(scan, "cgls", iterations=2))
+    tj.save(tmp_path / "cgls.nxs", tj.reconstruct(scan, "cgls", iterations=2), include_scan=True)
     loaded = tj.load(tmp_path / "cgls.nxs")
     poses = np.zeros((len(loaded.angles), 6), np.float32)
     aligned = tj.Alignment(
-        volume=np.ones((8, 8, 8), np.float32),
+        image=np.ones((8, 8, 8), np.float32),
         grid=loaded.grid,
         scan=loaded,
         poses=poses,
@@ -391,3 +395,35 @@ def test_following_each_loading_error_loads_the_scan(tmp_path: Path) -> None:
     assert named(caught) == {"geometry"} and "tomojax.load" in str(caught.value)
     result = tj.reconstruct(tj.load(gda, geometry=geometry))
     assert np.isfinite(np.asarray(result.volume)).all()
+
+
+def test_a_saved_reconstruction_names_its_projections_and_keeps_them_only_when_asked(
+    tmp_path: Path,
+) -> None:
+    grid, detector = tj.Grid(8, 8, 4, 1, 1, 1), tj.Detector(10, 6, 1, 1)
+    geometry = tj.LaminographyGeometry(grid, detector, np.linspace(0, 360, 6, endpoint=False), 30)
+    projections = np.random.default_rng(3).random((6, 6, 10)).astype(np.float32)
+    recon = tj.reconstruct(tj.Scan(projections, geometry), "cgls", iterations=2)
+    tj.save(tmp_path / "recon.nxs", recon)
+    tj.save(tmp_path / "with-scan.nxs", recon, include_scan=True)
+    with h5py.File(tmp_path / "recon.nxs") as file:
+        assert "/entry/instrument/detector/data" not in file
+
+    with pytest.warns(UserWarning, match="without its scan"):
+        alone = tj.load_reconstruction(tmp_path / "recon.nxs")
+    assert alone.scan is None and alone.grid == recon.grid and alone.method == "cgls"
+    np.testing.assert_array_equal(alone.volume, np.asarray(recon.volume))
+    source = alone.info["source"]
+    assert source["shape"] == [6, 6, 10] and source["bytes"] == projections.nbytes
+    with pytest.raises(ValueError, match="load_reconstruction"):
+        tj.load(tmp_path / "recon.nxs")
+
+    whole = tj.load_reconstruction(tmp_path / "with-scan.nxs")
+    assert whole.scan is not None and whole.info["source"] == source
+    np.testing.assert_array_equal(np.asarray(whole.scan.projections), projections)
+    # A reconstruction loaded without its scan saves again, still naming its projections.
+    tj.save(tmp_path / "again.nxs", alone)
+    with pytest.warns(UserWarning, match="without its scan"):
+        assert tj.load_reconstruction(tmp_path / "again.nxs").info["source"] == source
+    with pytest.raises(ValueError, match="without its scan"):
+        tj.save(tmp_path / "none.nxs", alone, include_scan=True)

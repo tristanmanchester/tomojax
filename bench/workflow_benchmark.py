@@ -71,7 +71,7 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
 
         def call() -> tuple:
             result = tj.align(scan, fit=("translations", "rotations"), grid=grid)
-            return result.volume, result.poses, result.info
+            return result.image, result.poses, result.info
 
     runs = []
     for repeat in range(args.repeats + 1):

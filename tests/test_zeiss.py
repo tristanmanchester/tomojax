@@ -466,7 +466,7 @@ def test_a_supplied_center_keeps_the_recorded_shifts_as_a_written_one_does(tmp_p
 @pytest.mark.parametrize("cone", [True, False])
 def test_zeiss_vendor_shifts_follow_the_poses_switch(tmp_path, cone):
     # The file's per-view shifts and centre shift are the vendor's corrections: applied by
-    # default, left out by poses=False, and named in the record either way.
+    # default, left out by apply_poses=False, and named in the record either way.
     path = tmp_path / "scan.txrm"
     counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
     streams = _streams(counts, np.full((8, 12), 2500, "<f4"))
@@ -474,7 +474,7 @@ def test_zeiss_vendor_shifts_follow_the_poses_switch(tmp_path, cone):
     streams["ImageInfo/XrayGeometry"] = np.array([int(cone)], "<u4").tobytes()
     write_ole(path, streams)
     for poses in (True, False):
-        scan = tj.load(path, darks=0, poses=poses)
+        scan = tj.load(path, darks=0, apply_poses=poses)
         vendor = scan.source.geometry_metadata["vendor_corrections"]
         assert vendor["source"] == "zeiss" and vendor["applied"] is poses
         assert set(vendor["fields"]) == {

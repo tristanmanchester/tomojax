@@ -15,6 +15,8 @@ from tomojax.io.api import load_angles
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    import numpy as np
+
     from tomojax.io import ProjectionDataset
 
 _DATASETS = (".nxs", ".h5", ".hdf", ".hdf5", ".npz")
@@ -150,7 +152,7 @@ def _tiff_stack(
     record = load_tiff_stack(
         cast("str", args.data), angles=load_angles(Path(angles)), geometry_type=geometry
     )
-    nv, nu = cast("tuple[int, int, int]", record.projections.shape)[1:]
+    nv, nu = cast("np.ndarray", record.projections).shape[1:]
     record.detector = Detector(nu=nu, nv=nv, du=du, dv=dv, center=(center[0], center[1]))
     record.geometry_metadata = metadata
     return record
@@ -171,7 +173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if name is not None:
         record.sample_name = name
     save_dataset(output, record)
-    print(f"wrote {output} ({record.projections.shape[0]} projections)")
+    print(f"wrote {output} ({len(record.angles)} projections)")
     return 0
 
 

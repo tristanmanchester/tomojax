@@ -69,7 +69,7 @@ def test_underdetermined_cgls_preserves_initial_null_component(
         init_x=initial if warm_start else None,
         config=CGLSConfig(
             iterations=100,
-            rtol=1e-7,
+            tolerance=1e-7,
             views_per_batch=1,
             backend=backend,
             projector_model=model,
@@ -125,7 +125,7 @@ def test_cgls_matches_dense_lstsq_with_tail_batches(stream, damping, warm_start)
         config=CGLSConfig(
             projector_model="ray",
             iterations=60,
-            rtol=1e-7,
+            tolerance=1e-7,
             damping=damping,
             views_per_batch=3,
             backend="jax",
@@ -159,7 +159,7 @@ def test_unattainable_tolerance_stops_at_roundoff_without_diverging():
             config=CGLSConfig(
                 projector_model="ray",
                 iterations=160,
-                rtol=0,
+                tolerance=0,
                 damping=0.7,
                 views_per_batch=3,
                 backend="jax",
@@ -222,9 +222,12 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
     [
         (CGLSConfig(iterations=-1), "iterations must be nonnegative"),
         (CGLSConfig(views_per_batch=0), "views_per_batch positive"),
-        (CGLSConfig(rtol=-0.1), "rtol must be finite and nonnegative"),
+        (CGLSConfig(tolerance=-0.1), "tolerance must be finite and nonnegative"),
         (CGLSConfig(damping=np.inf), "damping must be finite and nonnegative"),
-        (CGLSConfig(atol=np.nan), "atol must be finite and nonnegative"),
+        (
+            CGLSConfig(absolute_tolerance=np.nan),
+            "absolute_tolerance must be finite and nonnegative",
+        ),
         (CGLSConfig(backend="invalid"), "backend must be"),
         (CGLSConfig(iterations=-1, backend="invalid"), "iterations must be nonnegative"),
     ],
@@ -261,7 +264,7 @@ def test_cuda_cgls_matches_dense_damped_solution():
         config=CGLSConfig(
             projector_model="ray",
             iterations=60,
-            rtol=1e-7,
+            tolerance=1e-7,
             damping=damping,
             views_per_batch=3,
             backend="cuda",
@@ -304,7 +307,7 @@ def test_bright_region_does_not_hide_weak_region_updates(backend, model):
         init_x=initial,
         config=CGLSConfig(
             iterations=60,
-            rtol=1e-6,
+            tolerance=1e-6,
             views_per_batch=5,
             projector_model=model,
             backend=backend,
@@ -334,7 +337,7 @@ def test_cancellation_estimate_does_not_stop_decreasing_normal_residual():
             lambda t, x: _operators(t, grid, detector, None, "jax", 5, "joseph")[0](x)
         )
         data = project(poses, jnp.asarray(truth))
-        config = CGLSConfig(rtol=1e-7, backend="jax", views_per_batch=5)
+        config = CGLSConfig(tolerance=1e-7, backend="jax", views_per_batch=5)
         actual, info = cgls(geometry, grid, detector, data, init_x=initial, config=config)
         from dataclasses import replace
 
@@ -472,7 +475,7 @@ def test_native_cuda_cgls_matches_independent_damped_system(tilt):
         d,
         data,
         config=CGLSConfig(
-            iterations=100, rtol=1e-6, damping=0.3, backend="cuda", views_per_batch=3
+            iterations=100, tolerance=1e-6, damping=0.3, backend="cuda", views_per_batch=3
         ),
     )
     assert info["execution_backend"] == "cupy"

@@ -179,10 +179,11 @@ translation fit.
 
 1. Compare the aligned reconstruction with your unaligned one and with the previous setting's
    result. An extra parameter should remove a visible artefact; if it does not, use the simpler fit.
-2. Inspect the estimated values. `result.info["calibration"]` holds the fitted global values under
-   the names used in `fit=`, and `result.poses` holds the per-view correction table. The returned
-   `result.scan` carries both, so use it for reconstruction and saving. Each global value is the
-   final setting, not a change, and passes straight to a constructor in another script:
+2. Inspect the estimated values. `result.info["calibration"]` holds each fitted global under the
+   name used in `fit=`, and `result.poses` holds the per-view correction table. The returned
+   `result.scan` carries both, so use it for reconstruction and saving. Each global's `"value"` is
+   the final setting and passes straight to a constructor in another script; its `"change"` is how
+   far the fit moved it:
 
    | Value | Parallel or laminography data | Cone data |
    | --- | --- | --- |
@@ -238,13 +239,14 @@ translation fit.
    print(held_out_error(np.zeros((len(index), 6))), held_out_error(poses))
    ```
 
-`calibration` reports final global values: `center` is a scalar for parallel data and a `(u, v)`
-pair for cone data; `tilt` is the signed lab inclination `atan2(axis_y, axis_z)` in degrees; `roll`
-is the detector angle from u towards v in degrees. Only requested globals appear. For a segmented
-cone scan whose starting calibrations differ, their final values are listed in segment order.
-`info["corrections"]` records the fitted increments, with centre increments in detector pixels and
-angular increments in degrees. Per-view tables use `(alpha, beta, phi, x, z, y)`; rotations are in
-radians and translations in physical lengths.
+`calibration` has one entry for each requested global, `{"value": ..., "change": ...}`. The value
+is final: `center` is a scalar for parallel data and a `(u, v)` pair for cone data; `tilt` is the
+signed lab inclination `atan2(axis_y, axis_z)` in degrees; `roll` is the detector angle from u
+towards v in degrees. For a segmented cone scan whose starting calibrations differ, the final values
+are listed in segment order. The change is the fitted increment, in detector pixels for the centre
+and degrees for the angles. Per-view tables use `(alpha, beta, phi, x, z, y)`; rotations are in
+radians and translations in physical lengths. `info["report"]` gives the same split:
+`"calibration"` for the globals' changes and `"poses"` for the size of the per-view corrections.
 
 The fit works on a bounded grid of at most 16 million voxels and a detector of at most 320 pixels a
 side, binned so that each working pixel is no wider than a voxel at the object. Supplying `grid=`
@@ -258,7 +260,7 @@ cannot explain, and the data are never modified. The shared level itself stays w
 an image can produce it (a faint disc, brightest at its rim, whose every view is one constant),
 so removing it too would let the fit invent that disc and drag the views toward their nominal
 positions. `info["offsets"]` reports each view's fitted pair relative to the shared level. `result.scan` keeps the scan's grid, so
-reconstructing it gives the full-resolution image; `result.volume` is the fit's own image, on the
+reconstructing it gives the full-resolution image; `result.image` is the fit's own image, on the
 bounded working grid `result.grid`, not a final-resolution reconstruction. The fit compares model
 and data through [1, 2, 1] / 4 along the detector's rows and columns, because at the Nyquist
 frequency a sampled model cannot be right; nothing then constrains that band, so the fit's image

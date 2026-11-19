@@ -64,7 +64,7 @@ def test_geometry_wrappers_survive_pickling():
         ),
         "detector_roll": 0.5,
     }
-    _, _, wrapped = build_geometry_from_dataset_metadata(meta, poses=True)
+    _, _, wrapped = build_geometry_from_dataset_metadata(meta, apply_poses=True)
     again = pickle.loads(pickle.dumps(wrapped))  # as for a worker process
     assert type(again) is type(wrapped) and list(np.asarray(again.angles)) == [0.0, 90.0]
     # The corrected poses and the rolled detector lattice survive, not just the wrapper.

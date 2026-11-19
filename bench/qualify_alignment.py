@@ -305,14 +305,14 @@ def run(name: str, start: str) -> dict[str, Any]:
     level.step = step
     t = time.perf_counter()
     result = tj.align(scan, fit=row.fit, grid=row.grid)
-    np.asarray(result.volume)
+    np.asarray(result.image)
     seconds = time.perf_counter() - t
     fitted, worst, bands = score_bands(
         analytic.scan_rays(result.scan), row.truth, row.points, row.pixel
     )
     stats = jax.devices()[0].memory_stats() or {}
     levels = result.info.get("levels", [])
-    calibration = result.info.get("calibration", {})
+    calibration = {k: v["value"] for k, v in result.info.get("calibration", {}).items()}
     round_trip = (
         score(analytic.scan_rays(row.rebuild(calibration)), row.truth, row.points, row.pixel)[0]
         if row.rebuild and start == "nominal" and len(calibration) == 1

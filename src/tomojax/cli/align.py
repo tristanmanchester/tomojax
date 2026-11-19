@@ -30,7 +30,7 @@ class _Args(argparse.Namespace):
     fit: list[str]
     roi: str
     grid: list[int] | None
-    poses: bool
+    apply_poses: bool
     manifest: str | None
     dry_run: bool
 
@@ -75,10 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resample the selected field of view to NX x NY x NZ voxels",
     )
     _ = parser.add_argument(
-        "--poses",
+        "--apply-poses",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Correct on top of saved poses (--no-poses uses the nominal geometry)",
+        help="Correct on top of saved poses (--no-apply-poses uses the nominal geometry)",
     )
     _ = parser.add_argument("--manifest", metavar="JSON", help="Also save a JSON record of the run")
     _ = parser.add_argument(
@@ -107,7 +107,7 @@ def _write_manifest(args: _Args, scan: Scan, result: Alignment, *, masked: bool)
         "reconstruction_grid": result.grid.to_dict(),
         "detector": result.scan.detector.to_dict(),
         "poses_shape": list(result.poses.shape),
-        "volume_shape": list(np.shape(result.volume)),
+        "image_shape": list(np.shape(result.image)),
         "alignment": result.info,
     }
     save_manifest(
@@ -132,7 +132,7 @@ def main() -> None:
         outputs=[args.out, args.manifest],
         force=args.force,
     )
-    scan = tj.load(args.data, poses=args.poses)
+    scan = tj.load(args.data, apply_poses=args.apply_poses)
     grid, cylinder = (None, None)
     if args.grid is not None or args.roi != "auto":
         shape = None if args.grid is None else (args.grid[0], args.grid[1], args.grid[2])
@@ -157,7 +157,7 @@ def main() -> None:
     log_jax_env()
     result = tj.align(scan, fit=fit, grid=grid)
     if cylinder is not None:
-        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
+        result = replace(result, image=zero_outside_cylinder(result.image, result.grid, cylinder))
     tj.save(args.out, result)
     logging.info("Saved alignment results to %s", args.out)
     if args.manifest is not None:

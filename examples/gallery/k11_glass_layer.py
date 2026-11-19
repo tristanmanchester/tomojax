@@ -120,7 +120,7 @@ def main() -> None:
     print(f"load/correct/align: {time.perf_counter() - start:.1f} s")
     print("Final level:", result.info["levels"][-1]["status"])
     print("Reconstruction grid:", result.grid)
-    slice_figure(result.volume, result.grid, args.output)
+    slice_figure(result.image, result.grid, args.output)
 
 
 if __name__ == "__main__":

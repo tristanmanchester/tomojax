@@ -201,7 +201,7 @@ def solve_tomojax(
             factors=factors,
             iterations_per_level=budgets,
             config=CGLSConfig(
-                rtol=0.0,
+                tolerance=0.0,
                 views_per_batch=batch,
                 backend="cuda",
                 projector_model="joseph" if "joseph" in method else "ray",
@@ -235,7 +235,7 @@ def solve_tomojax(
             init_x=initial,
             config=CGLSConfig(
                 iterations=iterations,
-                rtol=0.0,
+                tolerance=0.0,
                 views_per_batch=batch,
                 backend=method.rsplit("_", 1)[-1],
                 projector_model="joseph" if "joseph" in method else "ray",

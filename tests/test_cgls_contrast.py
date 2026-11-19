@@ -61,7 +61,7 @@ def test_contrast_cgls_dense_reference_and_constant_invariance(
     config = CGLSConfig(
         iterations=150,
         damping=0.2,
-        rtol=1e-6,
+        tolerance=1e-6,
         views_per_batch=3,
         backend=backend,
         projector_model="joseph",

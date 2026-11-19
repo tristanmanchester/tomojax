@@ -29,6 +29,39 @@ There are no aliases. Each old name is gone, and files saved before this release
 | `FistaConfig(recon_rel_tol=, recon_patience=)` | `tolerance=`, `patience=` |
 | `geometry.pose_for_view(i)` | `geometry.pose_matrix(i)` |
 | `ConeGeometry.poses()` | `ConeGeometry.pose_matrices()` |
+| `Alignment.volume` (the fit's working image) | `Alignment.image` |
+| `tj.load(poses=)`, `--poses` / `--no-poses` | `apply_poses=`, `--apply-poses` / `--no-apply-poses` |
+| `CGLSConfig(rtol=, atol=)` | `tolerance=`, `absolute_tolerance=` |
+| `info["calibration"][name]` (the value) and `info["corrections"][name]` (the change) | `info["calibration"][name] = {"value": ..., "change": ...}` |
+| `info["report"]["corrections"] = {"global": ..., "per_view": ...}` | `info["report"]["calibration"]`, `info["report"]["poses"]` |
+| `info["pose_dofs"]`, columns `dx`, `dz`, `dy` (also the report's and saved table's) | `info["pose_columns"]`, columns `x`, `z`, `y` |
+| saved `angle_offset_deg` | `angle_offset` |
+| `Reconstruction(volume, scan, method, info)` | `Reconstruction(volume, geometry, method, info, scan=None)` |
+
+### A saved reconstruction names its projections instead of holding them
+
+`tj.save` used to write a reconstruction with its whole scan, so every file held its
+projections. Now it holds the volume, its geometry and the full record, and
+`info["source"]` names the projections it came from: their path, shape, size and a hash
+of three views. `tj.save(path, recon, include_scan=True)` (or
+`tomojax reconstruct --include-scan`) keeps the scan as well.
+
+`tj.load_reconstruction` reattaches the scan when the file holds it. Otherwise it returns
+the reconstruction with `scan` None and warns that the scan is missing; it does not look
+for the projections. `tj.load` refuses such a file and names `tj.load_reconstruction`.
+`tomojax inspect --preview` shows the volume's central slices when a file has no
+projections. A saved alignment is still its corrected scan with its poses.
+
+### A scan records how it was cut down
+
+`selected`, `cropped` and binning (`Scan.binned`, `Frames.corrected(binning=)`) now each
+leave a record in `scan.corrections`, saved with the scan:
+- `selected` records `views`, the views kept;
+- `cropped` records `rows` and `cols`, the window as `[start, stop)`;
+- binning records `binning`.
+
+Before, two scans from one file could differ in views, field and resolution with nothing
+saying so.
 
 ### `tj.align` fits full-size synchrotron scans on an 8 GB card
 

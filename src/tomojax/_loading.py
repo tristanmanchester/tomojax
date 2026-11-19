@@ -24,6 +24,8 @@ from tomojax._scan import (
     Scan,
     binned_geometry,
     check_shape,
+    cropped_record,
+    cut,
     detector_window,
     frame_output_grid,
     rebuild,
@@ -35,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from os import PathLike
 
-    from tomojax.corrections import Step
+    from tomojax.corrections import Correction, Step
     from tomojax.geometry import Detector, Grid, ScanGeometry
     from tomojax.io import ProjectionDataset
     from tomojax.io.api import LocatedFrames
@@ -58,7 +60,7 @@ def load(
     data_path: str | None = None,
     image_key_path: str | None = None,
     angles_path: str | None = None,
-    poses: bool = True,
+    apply_poses: bool = True,
 ) -> Scan:
     """Load line integrals from a dataset or recognised raw acquisition.
 
@@ -69,7 +71,7 @@ def load(
     records it. For other corrections, load the frames with :func:`load_frames`.
     Every other argument has :func:`load_frames`'s meaning and supplies what the
     file does not record. The scan carries the per-view corrections saved with
-    it (by :func:`align` or ``tomojax align``) unless ``poses`` is False. Frames
+    it (by :func:`align` or ``tomojax align``) unless ``apply_poses`` is False. Frames
     that ``image_key`` marks as other than sample views are left out.
 
     Parameters
@@ -82,7 +84,7 @@ def load(
         As :func:`load_frames`.
     data_path, image_key_path, angles_path : str or None, optional
         As :func:`load_frames`.
-    poses : bool, optional
+    apply_poses : bool, optional
         Apply the saved per-view pose corrections, and a scanner's own recorded
         per-view shifts and centre shift (Zeiss); default is True. False gives the
         nominal geometry; the record names the scanner's corrections either way.
@@ -119,12 +121,12 @@ def load(
         "grid": grid,
         "geometry": geometry,
     }
-    discovered = _acquisition_frames(file, poses=poses, **paths, **overrides)
+    discovered = _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides)
     if discovered is None:
         found = _line_integrals(file, **paths)
         if found is not None:
-            return _record_scan(file, *found, poses=poses, **overrides)
-    frames = _frames(file, discovered, poses=poses, **paths, **overrides)
+            return _record_scan(file, *found, apply_poses=apply_poses, **overrides)
+    frames = _frames(file, discovered, apply_poses=apply_poses, **paths, **overrides)
     fields = _with_fields(
         frames,
         flats=flats,
@@ -158,19 +160,32 @@ def _line_integrals(file: Path, **paths: str | None) -> tuple[ProjectionDataset,
     return record, key
 
 
+def _frames_in(record: ProjectionDataset, file: Path) -> np.ndarray:
+    """``record``'s frames; a reconstruction saved without its scan has none to load."""
+    if record.projections is None:
+        raise ValueError(
+            f"{file} holds a reconstruction saved without its scan: tj.load_reconstruction reads it"
+        )
+    return record.projections
+
+
 def _record_scan(
     file: Path,
     record: ProjectionDataset,
     key: np.ndarray,
     *,
-    poses: bool,
+    apply_poses: bool,
     **overrides: Any,
 ) -> Scan:
     """A TomoJAX record's sample views of line integrals, with any caller metadata."""
+    _frames_in(record, file)
     if all(value is None for value in overrides.values()):
-        scan = scan_from_record(record, poses=poses)
-        return scan.selected(key == 0) if np.any(key != 0) else scan
-    frames = _record_frames(file, record, poses=poses, **overrides)
+        scan = scan_from_record(record, apply_poses=apply_poses)
+        if not np.any(key != 0):
+            return scan
+        # The file's sample frames, not a selection made by the caller: no record.
+        return replace(scan.selected(key == 0), corrections=scan.corrections)
+    frames = _record_frames(file, record, apply_poses=apply_poses, **overrides)
     meta = frames.source.geometry_metadata if frames.source is not None else {}
     saved = meta.get("corrections") or ()
     from tomojax.corrections import Correction
@@ -241,6 +256,9 @@ class Frames:
         it. Counts above it are reported in the correction record, not changed.
     name : str, optional
         Sample name.
+    corrections : tuple of Correction, optional
+        How these frames were cut down (``selected``, ``cropped``), carried into the
+        corrected scan's records.
     source : ProjectionDataset or None, optional
         Original dataset metadata retained when loading from a file.
 
@@ -262,6 +280,7 @@ class Frames:
     dark_source: str | None = None
     linear_limit: tuple[float, str] | None = None
     name: str = "sample"
+    corrections: tuple[Correction, ...] = ()
     source: ProjectionDataset | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
@@ -365,11 +384,12 @@ class Frames:
         geometry = frame_output_grid(geometry, self.source, binning=binning)
         at = np.arange(self.views) + 0.5 if self.view_positions is None else self.view_positions
         positions = self.view_positions if everything else np.asarray(at, np.float64)[done.kept]
+        binned = (cut("binned", binning=binning),) if binning > 1 else ()
         return Scan(
             done.projections,
             geometry,
             self.name,
-            done.records,
+            (*self.corrections, *done.records, *binned),
             self.source,
             view_positions=positions,
         )
@@ -412,6 +432,7 @@ class Frames:
             flats=flats,
             darks=darks,
             geometry=frame_output_grid(rebuild(self.geometry, detector=window), self.source),
+            corrections=(*self.corrections, cropped_record(rows, cols, self.geometry.detector)),
         )
 
     def selected(self, views: slice | Sequence[int] | np.ndarray) -> Frames:
@@ -452,6 +473,7 @@ class Frames:
                 if self.exposure_times is None
                 else np.broadcast_to(self.exposure_times, (self.views,))[kept]
             ),
+            corrections=(*self.corrections, cut("selected", views=kept.tolist())),
         )
 
 
@@ -566,7 +588,11 @@ def load_frames(
         "geometry": geometry,
     }
     frames = _frames(
-        file, _acquisition_frames(file, **paths, **overrides), poses=True, **paths, **overrides
+        file,
+        _acquisition_frames(file, **paths, **overrides),
+        apply_poses=True,
+        **paths,
+        **overrides,
     )
     return _require_calibration(
         _with_fields(
@@ -583,7 +609,7 @@ def _frames(
     file: Path,
     discovered: Frames | None,
     *,
-    poses: bool,
+    apply_poses: bool,
     data_path: str | None,
     image_key_path: str | None,
     angles_path: str | None,
@@ -601,10 +627,10 @@ def _frames(
         located = locate_frames(
             str(file), data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
         )
-        return _hdf5_frames(file, located, poses=poses, **overrides)
+        return _hdf5_frames(file, located, apply_poses=apply_poses, **overrides)
     from tomojax.io import load_dataset
 
-    return _record_frames(file, load_dataset(file), poses=poses, **overrides)
+    return _record_frames(file, load_dataset(file), apply_poses=apply_poses, **overrides)
 
 
 def _require_calibration(frames: Frames) -> Frames:
@@ -683,7 +709,7 @@ def _hdf5_frames(
     located: LocatedFrames,
     *,
     angles: Sequence[float] | np.ndarray | None,
-    poses: bool,
+    apply_poses: bool,
     detector: Detector | None = None,
     pixel_size: float | tuple[float, float] | None = None,
     grid: Grid | None = None,
@@ -741,7 +767,7 @@ def _hdf5_frames(
         pixel_size=pixel_size,
         grid=grid,
         geometry=geometry,
-        poses=poses,
+        apply_poses=apply_poses,
     )
     flats = stack.frames_at(key == 1) if (key == 1).any() else None
     darks = stack.frames_at(key == 2) if (key == 2).any() else None
@@ -772,7 +798,7 @@ def _record_frames(
     file: Path,
     record: ProjectionDataset,
     *,
-    poses: bool,
+    apply_poses: bool,
     angles: Sequence[float] | np.ndarray | None = None,
     detector: Detector | None = None,
     pixel_size: float | tuple[float, float] | None = None,
@@ -784,9 +810,10 @@ def _record_frames(
     sample = key == 0
     if not sample.any():
         raise ValueError(f"{file} holds no sample frames (image_key 0)")
-    stack = record.projections
+    stack = samples = _frames_in(record, file)
     if not sample.all():
         frames = len(key)
+        samples = stack[sample]
 
         def views(values: np.ndarray | None) -> np.ndarray | None:
             if values is None or np.ndim(values) == 0 or len(values) != frames:
@@ -797,9 +824,9 @@ def _record_frames(
         metadata.image_key = None
         record = replace(
             record,
-            projections=stack[sample],
+            projections=samples,
             angles=views(record.angles),
-            angle_offset_deg=views(record.angle_offset_deg),
+            angle_offset=views(record.angle_offset),
             align_params=views(record.align_params),
             _metadata=metadata,
         )
@@ -810,11 +837,11 @@ def _record_frames(
         pixel_size=pixel_size,
         grid=grid,
         geometry=geometry,
-        poses=poses,
+        apply_poses=apply_poses,
     )
     flats = stack[key == 1] if (key == 1).any() else None
     return Frames(
-        record.projections,
+        samples,
         resolved,
         flats=flats,
         darks=stack[key == 2] if (key == 2).any() else None,

@@ -17,7 +17,7 @@ import tomojax as tj
 def _fitted(case, geometry, name):
     scan, _, _, _ = make_case(case, geometry=geometry, size=24, views=30, grid_size=12)
     result = tj.align(scan, fit=(name,), grid=scan.grid)
-    return scan, result.scan, result.info["calibration"][name]
+    return scan, result.scan, result.info["calibration"][name]["value"]
 
 
 def _same_projections(a, b):

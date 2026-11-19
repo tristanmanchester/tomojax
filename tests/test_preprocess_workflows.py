@@ -55,7 +55,8 @@ def test_a_raw_nxtomo_file_becomes_a_scan_that_records_its_corrections(tmp_path,
         np.asarray(scan.projections)[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6
     )
     np.testing.assert_allclose(scan.angles, [0.0, 90.0])
-    assert [c.name for c in scan.corrections] == ["flat_dark", "log"]
+    binned = ["binned"] if binning > 1 else []
+    assert [c.name for c in scan.corrections] == ["flat_dark", "log", *binned]
     assert scan.detector.nu == 2 // binning and scan.detector.nv == 2 // binning
 
 

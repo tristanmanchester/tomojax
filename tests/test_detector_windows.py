@@ -45,7 +45,9 @@ def _problem(rotations, structure):
             align_params=params,
             align_gauge={"pose_translation_frame": "detector"},
         )
-        _, _, geometry = build_geometry_from_dataset_metadata(record.geometry_inputs(), poses=True)
+        _, _, geometry = build_geometry_from_dataset_metadata(
+            record.geometry_inputs(), apply_poses=True
+        )
     else:
         geometry = first
     data = np.arange(len(geometry.angles) * 9 * 11, dtype=np.float32).reshape(-1, 9, 11)

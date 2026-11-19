@@ -115,10 +115,10 @@ def test_host_cgls_matches_streamed_normal_equations(host, depth):
     data = _data(geometry)
     start = np.random.default_rng(3).random((9, 4, 5), np.float32)
     cases = [
-        (CGLSConfig(iterations=6, rtol=0), None),
-        (CGLSConfig(iterations=4, rtol=0, damping=0.7), start),
-        (CGLSConfig(iterations=60, rtol=1e-4, damping=0.3), None),
-        (CGLSConfig(iterations=5, rtol=0, gradient_damping=0.5, damping=0.3), start),
+        (CGLSConfig(iterations=6, tolerance=0), None),
+        (CGLSConfig(iterations=4, tolerance=0, damping=0.7), start),
+        (CGLSConfig(iterations=60, tolerance=1e-4, damping=0.3), None),
+        (CGLSConfig(iterations=5, tolerance=0, gradient_damping=0.5, damping=0.3), start),
     ]
     expected = [
         cgls(
@@ -427,7 +427,7 @@ def test_host_contrast_cgls_matches_dense_optimum_and_true_stopping(host, depth)
     detector = replace(DETECTOR, nv=31)
     geometry = replace(_geometry("cone"), detector=detector)
     data = _data(geometry) + np.linspace(-0.2, 0.3, len(ANGLES))[:, None, None]
-    cfg = CGLSConfig(iterations=100, rtol=1e-5, damping=0.3, data_term="per_view_contrast")
+    cfg = CGLSConfig(iterations=100, tolerance=1e-5, damping=0.3, data_term="per_view_contrast")
     matrix = np.asarray(
         jax.jacfwd(lambda x: tj.project(geometry, x.reshape(9, 4, 5)))(jnp.zeros(180)),
         dtype=np.float64,

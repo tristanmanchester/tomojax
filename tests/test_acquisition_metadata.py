@@ -137,9 +137,9 @@ def test_raw_load_can_ignore_saved_poses_and_angle_offsets(tmp_path):
     with h5py.File(path, "a") as handle:
         align = handle.create_group("entry/processing/tomojax/align")
         align.create_dataset("thetas", data=params)
-        align.create_dataset("angle_offset_deg", data=[3, -7])
+        align.create_dataset("angle_offset", data=[3, -7])
         align.attrs["gauge_fix_json"] = '{"pose_translation_frame": "detector"}'
-    nominal = tj.load(path, poses=False)
+    nominal = tj.load(path, apply_poses=False)
     assert nominal.poses is None
     np.testing.assert_array_equal(nominal.angles, [0, 90])
     corrected = tj.load(path)
@@ -164,9 +164,9 @@ def test_processed_load_keeps_only_sample_frames_and_their_saved_poses(tmp_path,
         handle["entry/sample/transformations/rotation_angle"][[0, 2]] = np.nan
         align = handle.create_group("entry/processing/tomojax/align")
         align.create_dataset("thetas", data=params)
-        align.create_dataset("angle_offset_deg", data=[0, 3, 0, -7])
+        align.create_dataset("angle_offset", data=[0, 3, 0, -7])
         align.attrs["gauge_fix_json"] = '{"pose_translation_frame": "detector"}'
-    loaded = tj.load(path, poses=poses)
+    loaded = tj.load(path, apply_poses=poses)
     np.testing.assert_array_equal(loaded.projections, values[[1, 3]])
     np.testing.assert_array_equal(loaded.angles, [-34.0, 106.0] if poses else [-37.0, 113.0])
     assert (loaded.poses is not None) == poses

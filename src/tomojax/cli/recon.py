@@ -1,6 +1,6 @@
 """``tomojax recon``: :func:`tomojax.reconstruct` on the command line.
 
-The command loads INPUT with its saved poses (unless ``--no-poses``); chooses
+The command loads INPUT with its saved poses (unless ``--no-apply-poses``); chooses
 the grid (``--roi``, ``--grid``); builds the method's configuration from a
 ``--config`` file's expert settings, which are fields of that configuration
 class; reconstructs with :func:`tomojax.reconstruct`, whose keywords the other
@@ -59,7 +59,7 @@ _PUBLIC = (
     "--seed",
     "--grid",
     "--roi",
-    "--poses",
+    "--apply-poses",
     "--preview",
     "--manifest",
     "--progress",
@@ -86,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="tomojax recon",
         description=(
             "Reconstruct a volume from a scan, with the poses saved with it (by tomojax "
-            "align) unless --no-poses."
+            "align) unless --no-apply-poses."
         ),
         epilog=_EPILOG,
     )
@@ -149,10 +149,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _ = p.add_argument("--roi", choices=ROI_CHOICES, default="auto", help=ROI_HELP)
     _ = p.add_argument(
-        "--poses",
+        "--apply-poses",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Apply the per-view corrections saved in INPUT (--no-poses: the nominal geometry)",
+        help="Apply the per-view corrections saved in INPUT (--no-apply-poses: nominal geometry)",
+    )
+    _ = p.add_argument(
+        "--include-scan",
+        action="store_true",
+        help="Also save the scan in OUTPUT, so it reloads as a scan too",
     )
     _ = p.add_argument(
         "--preview", metavar="PNG", default=None, help="Also write a PNG of the central x-y slice"
@@ -205,7 +210,8 @@ class _Run:
     seed: int | None
     grid: tuple[int, int, int] | None
     roi: str
-    poses: bool
+    apply_poses: bool
+    include_scan: bool
     preview: str | None
     manifest: str | None
 
@@ -225,7 +231,8 @@ class _Run:
             seed=cast("int | None", args.seed),
             grid=None if grid is None else (grid[0], grid[1], grid[2]),
             roi=cast("str", args.roi),
-            poses=cast("bool", args.poses),
+            apply_poses=cast("bool", args.apply_poses),
+            include_scan=cast("bool", args.include_scan),
             preview=cast("str | None", args.preview),
             manifest=cast("str | None", args.manifest),
         )
@@ -286,7 +293,7 @@ def _write_manifest(
             "cylindrical_output_mask": masked,
         },
         "reconstruction_grid": result.grid.to_dict(),
-        "detector": result.scan.detector.to_dict(),
+        "detector": result.geometry.detector.to_dict(),
         "volume_shape": list(np.shape(result.volume)),
         # The resolved configuration and the solver's record.
         "reconstruction": result.info,
@@ -316,7 +323,7 @@ def main() -> None:
     if cast("bool", args.progress):
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
-    scan = tj.load(run.data, poses=run.poses)
+    scan = tj.load(run.data, apply_poses=run.apply_poses)
     grid, cylinder = (None, None)
     if run.method != "auto" or run.grid is not None or run.roi != "auto":
         grid, cylinder = region_grid(scan, roi=run.roi, grid=run.grid)
@@ -339,7 +346,7 @@ def main() -> None:
     if cylinder is not None:
         result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
     report_automatic(result.info)
-    source = result.scan.source
+    source = scan.source
     if (
         source is not None
         and source.geometry_metadata.get("detector_center_status") == "not_recorded"
@@ -349,7 +356,7 @@ def main() -> None:
             "Fit one with tomojax align --fit center before recon.",
             run.data,
         )
-    tj.save(run.out, result)
+    tj.save(run.out, result, include_scan=run.include_scan)
     logging.info("Saved reconstruction to %s", run.out)
     if run.preview is not None:
         from tomojax.recon.quicklook import save_quicklook_png

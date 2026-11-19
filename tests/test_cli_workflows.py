@@ -35,7 +35,7 @@ def test_recon_cli_defaults_defer_policy_and_report_limitations(monkeypatch, tmp
     def automatic_result(scan, method, **kwargs):
         assert method == "auto" and kwargs["grid"] is None and kwargs["config"] is None
         volume = np.zeros((scan.grid.nz, scan.grid.ny, scan.grid.nx), np.float32)
-        return tj.Reconstruction(volume, scan, "fbp", {"automatic": automatic})
+        return tj.Reconstruction(volume, scan.geometry, "fbp", {"automatic": automatic}, scan)
 
     monkeypatch.setattr(tj, "reconstruct", automatic_result)
     assert main(["recon", str(path), "-o", str(output), "--manifest", str(manifest)]) == 0
@@ -273,7 +273,7 @@ def _fake_reconstruct(
             raise error
         calls.update(method=method, grid=grid, config=config, **keywords)
         volume = np.zeros((grid.nz, grid.ny, grid.nx), np.float32)
-        return tomojax.Reconstruction(volume, scan, method, {"config": config})
+        return tomojax.Reconstruction(volume, scan.geometry, method, {"config": config}, scan)
 
     monkeypatch.setattr(tomojax, "reconstruct", fake)
     return calls

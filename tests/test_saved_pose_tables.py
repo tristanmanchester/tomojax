@@ -44,8 +44,8 @@ def _metadata(columns: int, frame: str, segmented: bool) -> dict:
     return meta
 
 
-def _scan(meta: dict, *, poses: bool = True) -> tj.Scan:
-    _, detector, geometry = build_geometry_from_dataset_metadata(meta, poses=poses)
+def _scan(meta: dict, *, apply_poses: bool = True) -> tj.Scan:
+    _, detector, geometry = build_geometry_from_dataset_metadata(meta, apply_poses=apply_poses)
     data = np.zeros((len(meta["angles"]), detector.nv, detector.nu), np.float32)
     return tj.Scan(data, geometry)
 
@@ -88,7 +88,7 @@ def test_saved_pose_tables_have_six_coordinates_and_independent_frames(
 @pytest.mark.parametrize("segmented", [False, True])
 def test_posed_and_unposed_orbits_combine_and_round_trip(segmented: bool, tmp_path: Path) -> None:
     meta = _metadata(6, "object", segmented)
-    posed, plain = _scan(meta), _scan(meta, poses=False)
+    posed, plain = _scan(meta), _scan(meta, apply_poses=False)
     combined = tj.Scan.combine([posed, plain])
     assert combined.poses is not None and combined.poses.shape == (12, 6)
     np.testing.assert_array_equal(combined.poses[6:], np.zeros((6, 6), np.float32))
@@ -108,7 +108,7 @@ def test_posed_and_unposed_orbits_combine_and_round_trip(segmented: bool, tmp_pa
         atol=1e-7,
     )
     np.testing.assert_allclose(restored.poses, combined.poses, atol=1e-7)
-    assert tj.load(path, poses=False).poses is None
+    assert tj.load(path, apply_poses=False).poses is None
 
 
 @pytest.mark.parametrize("segmented", [False, True])
@@ -130,7 +130,7 @@ def test_saved_pose_validation_is_the_same_for_one_and_several_orbits(
     meta["align_params"] = table
     with pytest.raises(ValueError, match=message):
         _scan(meta)
-    assert _scan(meta, poses=False).poses is None
+    assert _scan(meta, apply_poses=False).poses is None
 
 
 @pytest.mark.parametrize("segmented", [False, True])
@@ -151,7 +151,7 @@ def test_loading_five_column_pose_files_rejects_legacy_shape(
     extension: str, tmp_path: Path
 ) -> None:
     meta = _metadata(5, "detector", segmented=True)
-    nominal = _scan(meta, poses=False)
+    nominal = _scan(meta, apply_poses=False)
     dataset = ProjectionDataset(
         projections=nominal.projections,
         angles=meta["angles"],

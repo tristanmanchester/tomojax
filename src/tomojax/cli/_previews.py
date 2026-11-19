@@ -12,7 +12,12 @@ import h5py
 import numpy as np
 
 from tomojax._typed_arrays import numpy_float32_array, write_image
-from tomojax.io.api import locate_frames, read_acquisition, saved_volume_axes
+from tomojax.io.api import (
+    locate_frames,
+    read_acquisition,
+    saved_volume_axes,
+    saved_without_frames,
+)
 from tomojax.recon.quicklook import scale_to_uint8
 
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
@@ -29,6 +34,8 @@ def preview_paths(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
     with h5py.File(path, "r") as file:
         if isinstance(file.get(_VOLUME_PATH), h5py.Dataset):
             paths.update({f"slice_{axis}": out / f"slice_{axis}.png" for axis in _DISPLAY_AXES})
+    if saved_without_frames(path):  # a reconstruction saved without its scan
+        del paths["projection"]
     return paths
 
 
@@ -49,6 +56,9 @@ def write_previews(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
 
 def _hdf5_images(path: str | Path) -> dict[str, np.ndarray]:
     images: dict[str, np.ndarray] = {}
+    if saved_without_frames(path):  # a reconstruction saved without its scan
+        with h5py.File(path, "r") as file:
+            return _slices(file, path)
     located = locate_frames(str(path))
     samples = (
         located.stack.frames
@@ -60,12 +70,18 @@ def _hdf5_images(path: str | Path) -> dict[str, np.ndarray]:
     with h5py.File(path, "r") as file:
         projections = cast("h5py.Dataset", file[located.stack.dataset])
         images["projection"] = numpy_float32_array(projections[int(samples[len(samples) // 2])])
-        volume = file.get(_VOLUME_PATH)
-        if isinstance(volume, h5py.Dataset):
-            attribute = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
-            axes = saved_volume_axes(None if attribute is None else str(attribute), path)
-            images.update({f"slice_{axis}": _central_slice(volume, axes, axis) for axis in "zyx"})
+        images.update(_slices(file, path))
     return images
+
+
+def _slices(file: h5py.File, path: str | Path) -> dict[str, np.ndarray]:
+    """The saved volume's central slices, by name; none without a volume."""
+    volume = file.get(_VOLUME_PATH)
+    if not isinstance(volume, h5py.Dataset):
+        return {}
+    attribute = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
+    axes = saved_volume_axes(None if attribute is None else str(attribute), path)
+    return {f"slice_{axis}": _central_slice(volume, axes, axis) for axis in "zyx"}
 
 
 def _central_slice(volume: h5py.Dataset, axes: str, axis: str) -> np.ndarray:

@@ -18,6 +18,7 @@ from contextlib import closing, contextmanager
 from dataclasses import is_dataclass, replace
 import json
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Literal, cast
 import warnings
 
@@ -28,7 +29,12 @@ from tomojax._scan import (
     Alignment,
     Reconstruction,
     Scan,
+    cropped_record,
+    geometry_of,
+    geometry_record,
+    rebuild,
     record_of,
+    source_of,
     with_grid,
 )
 
@@ -53,7 +59,12 @@ LOG = logging.getLogger(__name__)
 
 
 def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
-    """Load a reconstruction saved by :func:`save` or ``tomojax recon``.
+    """Load a reconstruction or alignment saved by :func:`save` or the ``tomojax`` commands.
+
+    The reconstruction has its scan when the file holds the projections (saved with
+    ``include_scan=True``, or an alignment). A file saved without them gives a
+    reconstruction whose ``scan`` is None, and says so; ``info["source"]`` names
+    the projections it came from. Nothing looks for them.
 
     Parameters
     ----------
@@ -63,7 +74,7 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     Returns
     -------
     Reconstruction
-        Volume, source scan and stored reconstruction settings.
+        Volume, geometry, stored settings and, when saved with them, the scan.
 
     Raises
     ------
@@ -77,31 +88,49 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     >>> import tomojax as tj
     >>> recon = tj.load_reconstruction("recon.nxs")  # doctest: +SKIP
     """
-    scan = load(path)
-    record = scan.source
-    if record is None or record.volume is None:
+    from tomojax.io import load_dataset
+
+    record = load_dataset(os.fspath(path))
+    if record.volume is None:
         raise ValueError(f"{path} holds no reconstructed volume")
+    scan = None if record.projections is None else load(path)
+    if scan is None:
+        warnings.warn(
+            f"{path} holds the reconstruction without its scan (saved without "
+            "include_scan=True): its scan is None, and info['source'] names the projections",
+            stacklevel=2,
+        )
+    geometry = geometry_of(record, apply_poses=True) if scan is None else scan.geometry
     meta = record.geometry_metadata
     info = meta.get("reconstruction_info", meta.get("alignment_info"))
     aligned = "reconstruction_method" not in meta and "alignment_info" in meta
     if aligned and isinstance(info, dict) and isinstance(info.get("working_grid"), dict):
         from tomojax.geometry import Grid
 
-        scan = with_grid(scan, Grid(**info["working_grid"]))  # the alignment image's grid
+        geometry = rebuild(geometry, grid=Grid(**info["working_grid"]))  # the image's grid
+        scan = None if scan is None else replace(scan, geometry=geometry)
     return Reconstruction(
         volume=np.asarray(record.volume),
-        scan=scan,
+        geometry=geometry,
         method="align" if aligned else str(meta.get("reconstruction_method", "unknown")),
         info=dict(info) if isinstance(info, dict) else {},
+        scan=scan,
     )
 
 
-def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> None:
+def save(
+    path: str | PathLike[str],
+    item: Scan | Reconstruction | Alignment,
+    *,
+    include_scan: bool = False,
+) -> None:
     """Save a scan, reconstruction or alignment as a TomoJAX dataset.
 
-    Reconstructions and alignments are saved with their scan (projections,
-    geometry and any pose corrections), so the file reloads with :func:`load`
-    and :func:`load_reconstruction`.
+    A reconstruction is saved with its volume, geometry and full record, and names
+    the projections it came from (``info["source"]``: their path, shape, size and a
+    hash of three views); ``include_scan=True`` saves the scan too, so the file also
+    reloads with :func:`load`. An alignment is saved as its corrected scan with its
+    poses and working image.
 
     Parameters
     ----------
@@ -109,6 +138,8 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
         Output dataset path; an existing file is overwritten.
     item : Scan, Reconstruction or Alignment
         Scan or result to save with its geometry and metadata.
+    include_scan : bool, optional
+        Also save a reconstruction's scan. Default is False.
 
     Returns
     -------
@@ -120,7 +151,8 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
     TypeError
         If item is not a scan, reconstruction or alignment.
     ValueError
-        If the output format is unsupported.
+        If the output format is unsupported, or ``include_scan`` is asked of a
+        reconstruction loaded without its scan.
 
     Examples
     --------
@@ -133,17 +165,28 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
     if isinstance(item, Scan):
         record = record_of(item)
     elif isinstance(item, Reconstruction):
-        record = record_of(item.scan)
+        if item.scan is None and include_scan:
+            raise ValueError(
+                "this reconstruction was loaded without its scan: there is none to save"
+            )
+        if item.scan is None:
+            record = geometry_record(item.geometry)
+            source = item.info.get("source")
+        else:
+            record = record_of(item.scan, grid=item.grid)
+            source = source_of(item.scan)
+            if not include_scan:
+                record = replace(record, projections=None)
         record.volume = item.volume
         record.geometry_metadata["reconstruction_method"] = item.method
         # As JSON, which the file's metadata is: a configuration as its fields, and
         # what else JSON cannot hold as text.
         record.geometry_metadata["reconstruction_info"] = json.loads(
-            json.dumps(dict(item.info), default=_json_value)
+            json.dumps({**item.info, "source": source}, default=_json_value)
         )
     elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
         record = record_of(item.scan)
-        record.volume = item.volume
+        record.volume = item.image
         # The alignment made this volume: an earlier reconstruction's method
         # and settings no longer describe it.
         record.geometry_metadata.pop("reconstruction_method", None)
@@ -414,7 +457,7 @@ def reconstruct(
         info = {**info, "temporary_file": str(directory)}
         LOG.info("The %.1f GiB volume is held in a temporary file in %s, as more than half of "
                  "host memory", volume.nbytes / 2**30, directory)  # fmt: skip
-    return Reconstruction(volume=volume, scan=scan, method=method, info=info)
+    return Reconstruction(volume, scan.geometry, method, info, scan)
 
 
 def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstruction:
@@ -629,11 +672,12 @@ def reconstruct_slabs(
                         grid=block,
                         detector=detector_window(slab.rows, slice(None), frames.geometry.detector),
                     )
+                    cropped = cropped_record(slab.rows, slice(None), frames.geometry.detector)
                     scan = Scan(
                         slab.projections,
                         geometry,
                         frames.name,
-                        slab.context.records,
+                        (*frames.corrections, cropped, *slab.context.records),
                         frames.source,
                         view_positions=frames.view_positions,
                     )
@@ -645,7 +689,7 @@ def reconstruct_slabs(
                     }
                     yield (
                         slice(slab.start, slab.stop),
-                        Reconstruction(slab.volume, scan, method, info),
+                        Reconstruction(slab.volume, scan.geometry, method, info, scan),
                     )
                     del slab, scan  # Do not retain device rows while preparing the next slab.
 
@@ -766,14 +810,16 @@ def align(
     Returns
     -------
     Alignment
-        Volume, corrected scan, composed per-view poses and solver record.
-        Fitted globals appear under their names in ``info["calibration"]``:
-        centre in geometry length units (u, or u/v for cone beams), and angles
-        in degrees. Tilt is the signed inclination ``atan2(axis_y, axis_z)``;
-        positive roll turns detector u towards v (right-handed about the detector
-        normal, which points back towards the source), so a point above the
-        detector centre projects towards +u. Cone segments with different
-        calibrated values report them in segment order.
+        Working image, corrected scan, composed per-view poses and solver record.
+        Each fitted global appears under its name in ``info["calibration"]`` as
+        ``{"value": ..., "change": ...}``: the final value, the centre in geometry
+        length units (u, or u/v for cone beams) and angles in degrees, and the
+        fitted change, the centre in detector pixels and angles in degrees. Tilt
+        is the signed inclination ``atan2(axis_y, axis_z)``; positive roll turns
+        detector u towards v (right-handed about the detector normal, which points
+        back towards the source), so a point above the detector centre projects
+        towards +u. Cone segments with different calibrated values report them in
+        segment order.
 
     Raises
     ------
@@ -791,11 +837,11 @@ def align(
     from tomojax._smooth_alignment import align_poses
 
     result = align_poses(scan, fit=fit, grid=grid)
-    poses = result.scan.poses
-    assert poses is not None
+    assert result.scan is not None  # the alignment's corrected scan
+    assert result.scan.poses is not None
     # The fit's working grid belongs to its image; the scan keeps the caller's grid.
     corrected = with_grid(result.scan, scan.grid if grid is None else grid)
-    return Alignment(result.volume, result.scan.grid, corrected, np.asarray(poses), result.info)
+    return Alignment(result.volume, result.grid, corrected, result.scan.poses, result.info)
 
 
 def _oversampling(scan: Scan) -> float:

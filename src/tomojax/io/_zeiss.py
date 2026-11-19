@@ -394,7 +394,9 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         )
         if value is not None
     ]
-    if fields:  # the vendor's own corrections, applied with the poses (tj.load poses=False omits)
+    if (
+        fields
+    ):  # the vendor's own corrections, applied with the poses (tj.load apply_poses=False omits)
         metadata["vendor_corrections"] = {"source": "zeiss", "fields": fields, "applied": True}
     if pixel is not None:  # stated by the file; the grid's shape comes from the detector
         metadata["grid_status"] = "derived"
