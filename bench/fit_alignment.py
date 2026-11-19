@@ -283,7 +283,7 @@ def make_case(
     start = np.asarray([true_scan.geometry.pose_matrix(i) for i in range(views)])
     local = np.einsum("nji,njk->nik", start[:, :3, :3], poses[:, :3, :3])
     table = np.zeros((views, 6))
-    table[:, [1, 0, 2]] = Rotation.from_matrix(local).as_euler("YXZ")
+    table[:, [1, 0, 2]] = Rotation.from_matrix(local).as_euler("YXZ", degrees=True)
     table[:, [3, 5, 4]] = poses[:, :3, 3] - start[:, :3, 3]
     metadata = {
         "center_physical": center,

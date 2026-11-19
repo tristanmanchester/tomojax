@@ -55,7 +55,7 @@ selected parameters, for parallel, laminography and cone data.
 | `tilt` | One axis or laminography tilt correction shared by every view | Degrees; positive tilt leans the rotation axis towards the beam |
 | `roll` | One detector roll correction shared by every view | Degrees, right-handed about the detector normal: positive turns u towards v, so a point above the centre projects towards +u |
 | `translations` | Two translations per view; three for cone data | Physical lab-frame lengths: across the beam and vertically, plus along the beam for cone |
-| `rotations` | Two wobble components of the rotation axis per view; each view's angle about the axis is taken as recorded | Sample-frame rotations in radians, about object x and y |
+| `rotations` | Two wobble components of the rotation axis per view; each view's angle about the axis is taken as recorded | Sample-frame rotations in degrees, about object x and y |
 
 The figures below show each error on simulated scans, before and after the matching fit: a watch
 movement in laminography, and a spark plug in parallel-beam tomography. The lower row of each
@@ -246,7 +246,7 @@ signed lab inclination `atan2(axis_y, axis_z)` in degrees; `roll` is the detecto
 towards v in degrees. For a segmented cone scan whose starting calibrations differ, the final values
 are listed in segment order. The change is the fitted increment, in detector pixels for the centre
 and degrees for the angles. Per-view tables use `(alpha, beta, phi, x, z, y)`; rotations are in
-radians and translations in physical lengths. `info["report"]` gives the same split:
+degrees and translations in physical lengths. `info["report"]` gives the same split:
 `"calibration"` for the globals' changes and `"poses"` for the size of the per-view corrections.
 
 The fit works on a bounded grid of at most 16 million voxels and a detector of at most 320 pixels a

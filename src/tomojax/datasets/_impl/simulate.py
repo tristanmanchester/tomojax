@@ -101,7 +101,7 @@ class SimConfig:
         Detector pixel pitches; both default to 1.
     vx, vy, vz : float, optional
         Object voxel pitches; all default to 1.
-    rotation_deg : float or None, optional
+    rotation : float or None, optional
         Total angular range in degrees. None gives 180 for parallel geometry
         and 360 for laminography or cone geometry.
     geometry : {'parallel', 'lamino', 'cone'}, optional
@@ -132,7 +132,7 @@ class SimConfig:
         defaults are 4 and 32.
     min_value, max_value : float, optional
         Bounds on random object intensities; defaults are 0.1 and 1.
-    max_rot_deg : float, optional
+    max_rotation : float, optional
         Maximum absolute random cube Euler angle in degrees; default is 180.
     artefacts : SimulationArtefacts or None, optional
         Projection-domain artefacts; None disables them.
@@ -153,7 +153,7 @@ class SimConfig:
     vx: float = 1.0
     vy: float = 1.0
     vz: float = 1.0
-    rotation_deg: float | None = None  # total rotation range; defaults by geometry
+    rotation: float | None = None  # total rotation range; defaults by geometry
     geometry: str = "parallel"  # "lamino" or "cone"
     tilt: float = 30.0  # lamino; a cone scan's axis tilt
     tilt_about: str = "x"
@@ -171,7 +171,7 @@ class SimConfig:
     max_size: int = 32
     min_value: float = 0.1
     max_value: float = 1.0
-    max_rot_deg: float = 180.0
+    max_rotation: float = 180.0
     artefacts: SimulationArtefacts | None = None
     seed: int = 0
     lamino_thickness_ratio: float = 0.2
@@ -236,7 +236,7 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
             max_size=cfg.max_size,
             min_value=cfg.min_value,
             max_value=cfg.max_value,
-            max_rot_degrees=cfg.max_rot_deg,
+            max_rotation=cfg.max_rotation,
             use_inscribed_fov=True,
             seed=cfg.seed,
         )
@@ -253,7 +253,7 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
             max_size=cfg.max_size,
             min_value=cfg.min_value,
             max_value=cfg.max_value,
-            max_rot_degrees=cfg.max_rot_deg,
+            max_rotation=cfg.max_rotation,
         )
     else:
         raise ValueError(f"unknown phantom {cfg.phantom}")
@@ -295,8 +295,8 @@ def simulate(cfg: SimConfig) -> SimulatedData:
     grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz)
     det = Detector(cfg.nu, cfg.nv, cfg.du, cfg.dv, center=(0.0, 0.0))
     # Determine total rotation based on geometry unless overridden
-    if cfg.rotation_deg is not None:
-        total_deg = float(cfg.rotation_deg)
+    if cfg.rotation is not None:
+        total_deg = float(cfg.rotation)
     else:
         total_deg = 180.0 if cfg.geometry == "parallel" else 360.0
     thetas = np.linspace(0.0, total_deg, cfg.n_views, endpoint=False).astype(np.float32)

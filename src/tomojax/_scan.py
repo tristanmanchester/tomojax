@@ -252,7 +252,7 @@ class Scan:
     def poses(self) -> np.ndarray | None:
         """Per-view pose corrections, ``(views, 6)`` as alpha, beta, phi, x, z, y.
 
-        Rotations in radians, translations in the geometry's length unit, in
+        Rotations in degrees, translations in the geometry's length unit, in
         the detector frame. None when the scan carries no corrections.
 
         Returns
@@ -262,7 +262,13 @@ class Scan:
         """
         from tomojax._data.geometry_meta import detector_poses
 
-        return detector_poses(self.geometry)
+        table = detector_poses(self.geometry)
+        if table is None:
+            return None
+        # Stored in radians; FP64 degrees convert back to the same FP32 radians.
+        out = np.asarray(table, np.float64)
+        out[:, :3] = np.degrees(out[:, :3])
+        return out
 
     def with_poses(self, poses: np.ndarray | None) -> Scan:
         """The scan with its per-view corrections replaced by ``poses``.
@@ -297,11 +303,14 @@ class Scan:
 
         geometry = nominal_geometry(self.geometry)
         if poses is not None:
-            table = np.asarray(poses, dtype=np.float32)
+            table = np.array(poses, dtype=np.float64)
             shape = (self.projections.shape[0], 6)
             if table.shape != shape:
                 raise ValueError(f"Scan.with_poses needs a {shape} table, not {table.shape}")
-            geometry = AugmentedGeometry(geometry, table, translation_frame="detector")
+            table[:, :3] = np.radians(table[:, :3])  # stored in radians
+            geometry = AugmentedGeometry(
+                geometry, table.astype(np.float32), translation_frame="detector"
+            )
         return replace(self, geometry=geometry)
 
     @classmethod
@@ -923,7 +932,7 @@ class Alignment:
             Complete correction table, as :attr:`Scan.poses` names its columns.
         """
         poses = self.scan.poses
-        return np.zeros((len(self.scan.angles), 6), np.float32) if poses is None else poses
+        return np.zeros((len(self.scan.angles), 6)) if poses is None else poses
 
 
 __all__ = ["Alignment", "Reconstruction", "Scan"]

@@ -109,5 +109,6 @@ def test_global_calibration_does_not_leak_into_held_local_rotations():
     corrected, _ = publish_calibration(
         scan, fitted, {"tilt": 0.7, "roll": 0.75}, native_pixel_size=(1, 1)
     )
-    np.testing.assert_array_equal(corrected.poses[:, :3], previous[:, :3])
+    # The held rotations read back exactly as the scan's own (degrees, stored in radians).
+    np.testing.assert_array_equal(corrected.poses[:, :3], scan.poses[:, :3])
     np.testing.assert_allclose(corrected.poses[:, 3:], previous[:, 3:] + fitted[:, 3:], atol=1e-8)

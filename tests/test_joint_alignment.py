@@ -381,8 +381,8 @@ def _moving_scan(slip=0.0, wobble_deg=0.0):
     table = np.zeros((views, 6))
     table[45:, 3] = slip
     phase = np.deg2rad(angles)
-    table[:, 0] = np.deg2rad(wobble_deg) * np.sin(3 * phase)
-    table[:, 1] = np.deg2rad(wobble_deg) * np.cos(2 * phase + 0.5)
+    table[:, 0] = wobble_deg * np.sin(3 * phase)  # the public table is in degrees
+    table[:, 1] = wobble_deg * np.cos(2 * phase + 0.5)
     empty = tj.Scan(np.zeros((views, 32, 40), np.float32), geometry)
     projections = np.array(tj.project(empty.with_poses(table).geometry, volume))
     projections += np.random.default_rng(7).normal(0, 0.01, projections.shape).astype(np.float32)
@@ -431,9 +431,9 @@ def test_pose_fit_recovers_a_slip_and_keeps_a_clean_scan_still():
     assert np.median(np.abs(np.delete(jumps, 44))) < 0.05
     projections, nominal, grid, detector, _ = _moving_scan()
     _, _, table, record = fit_poses(projections, nominal, grid, detector)
-    lever = record["lever_px_per_radian"]
+    lever = record["lever"]  # native pixels per degree; the table's rotations are radians
     assert np.sqrt(np.mean(table[:, 3:5] ** 2)) < 0.05
-    assert np.sqrt(np.mean((lever * table[:, :3]) ** 2)) < 0.05
+    assert np.sqrt(np.mean((lever * np.degrees(table[:, :3])) ** 2)) < 0.05
 
 
 @pytest.mark.numerical
@@ -459,7 +459,9 @@ def test_pose_fit_recovers_per_view_rotations():
     _, _, table, _ = fit_poses(
         projections, nominal, grid, detector, fit=("translations", "rotations")
     )
-    estimated = np.asarray(stack_view_poses(empty.with_poses(table).geometry, len(nominal)))
+    # The fit's table is in radians; the public one in degrees.
+    public = np.c_[np.degrees(table[:, :3]), table[:, 3:]]
+    estimated = np.asarray(stack_view_poses(empty.with_poses(public).geometry, len(nominal)))
     before, after = _landmark_error(nominal, truth, grid), _landmark_error(estimated, truth, grid)
     assert after < 0.1 and after < 0.2 * before, (before, after)
 
@@ -522,8 +524,8 @@ def test_tilt_roll_and_rotations_together_keep_the_shared_angles():
     )
     t = np.deg2rad(angles)
     table = np.zeros((views, 6))
-    table[:, 0] = np.deg2rad(0.05) * np.cos(2 * t + 0.3)
-    table[:, 1] = np.deg2rad(0.04) * np.cos(3 * t + 1.1)
+    table[:, 0] = 0.05 * np.cos(2 * t + 0.3)  # degrees
+    table[:, 1] = 0.04 * np.cos(3 * t + 1.1)
     slip = np.arange(views) >= views // 3
     table[:, 3] = 0.5 * (0.6 * np.cos(2 * t) + 0.4 * np.cos(3 * t + 0.7) + 0.7 * slip)
     table[:, 4] = 0.5 * (0.6 * np.cos(2 * t + 1.9) + 0.8 * np.linspace(0, 1, views))

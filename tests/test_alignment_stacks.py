@@ -32,7 +32,7 @@ def _scan():
         volume[(z - cz) ** 2 + (y - cy) ** 2 + (x - cx) ** 2 <= r * r] = mu
     table = np.zeros((views, 6))
     table[24:, 3] = 1.0
-    table[:, 0] = np.deg2rad(0.5) * np.sin(3 * np.deg2rad(angles))
+    table[:, 0] = 0.5 * np.sin(3 * np.deg2rad(angles))  # degrees
     moved = tj.Scan(np.zeros((views, 22, 28), np.float32), geometry).with_poses(table).geometry
     projections = np.array(tj.project(moved, volume))
     rng = np.random.default_rng(5)

@@ -63,7 +63,7 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
         config = None
         phase = np.linspace(0.0, 2 * np.pi, n_views, endpoint=False)
         initial = np.zeros((n_views, 6), dtype=np.float32)
-        initial[:, 2] = 0.003 * np.sin(phase)
+        initial[:, 2] = np.degrees(0.003) * np.sin(phase)
         initial[:, 3] = 0.2 * detector.du * np.sin(phase)
         initial[:, 4] = 0.2 * detector.dv * np.cos(phase)
         scan = tj.Scan(data, geometry).with_poses(initial)

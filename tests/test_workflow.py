@@ -425,9 +425,10 @@ def test_a_saved_reconstruction_names_its_projections_and_keeps_them_only_when_a
 
 
 def test_the_commands_api_counterparts_simulate_inspect_and_export(tmp_path: Path) -> None:
-    truth = tj.simulate("sphere", size=8, n_views=6, seed=1)
-    assert truth.scan is not None and np.shape(truth.volume) == (8, 8, 8)
-    assert truth.scan.projections.shape == (6, 8, 8)
+    scan, phantom = tj.simulate("sphere", size=8, n_views=6, seed=1)
+    assert np.shape(phantom) == (8, 8, 8) and scan.projections.shape == (6, 8, 8)
+    # What tomojax simulate writes: the scan, with the phantom as its volume.
+    truth = tj.Reconstruction(phantom, scan.geometry, "simulate", {}, scan)
     tj.save(tmp_path / "truth.nxs", truth, include_scan=True)
     report = tj.inspect(tmp_path / "truth.nxs")
     assert report["valid"] and report["issues"] == [] and report["angles"]["count"] == 6
