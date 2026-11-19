@@ -1,4 +1,4 @@
-"""The compact TV field and the in-place SPDHG update retain FP32 accuracy."""
+"""The slab-wise, in-place SPDHG update matches the whole-volume update."""
 
 from __future__ import annotations
 
@@ -11,30 +11,11 @@ import pytest
 
 from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon import SPDHGConfig
-from tomojax.recon._spdhg_flux import (
-    pack_flux,
-    unpack_flux,
-)  # check-public-imports: allow-private
 from tomojax.recon.spdhg_tv import (  # check-public-imports: allow-private
     _prepare_spdhg_runtime,
     _run_spdhg_scan,
     _sweep,
 )
-
-
-def test_packed_flux_rounds_within_one_ulp_of_each_group():
-    # Signed extrema immediately below a power of two round up at 24 bits.
-    # Include zero, a short final group and groups on different physical scales.
-    rng = np.random.default_rng(6)
-    values = rng.uniform(-1, 1, (3, 3, 1, 19)).astype(np.float32)
-    values[0, :, :, :2] = [np.nextafter(np.float32(2), np.float32(0)), -2]
-    values[:, 0, :, :8] = 0
-    values[:, :, :, 8:16] *= 1e-5
-    actual = np.stack(jax.jit(lambda p: unpack_flux(pack_flux(p)))(tuple(values)))
-    for start in range(0, 19, 8):
-        group = values[..., start : start + 8]
-        spacing = np.spacing(np.max(abs(group), axis=(0, 2, 3), keepdims=True))
-        assert np.all(abs(actual[..., start : start + 8] - group) <= spacing)
 
 
 @pytest.mark.parametrize("regularizer", ["tv", "huber_tv"])
@@ -58,9 +39,9 @@ def test_sweep_matches_whole_volume_update(regularizer):
 
     @jax.jit
     def update(x, p, data):
-        return _sweep(SimpleNamespace(x=x, flux=p, s_data=data), runtime, jnp.int32(0))
+        return _sweep(SimpleNamespace(x=x, p=p, s_data=data), runtime, jnp.int32(0))
 
-    actual, partial = update(x, pack_flux(p), data)
+    actual, partial = update(x, p, data)
     gradients = tuple(
         c * jnp.diff(x, axis=i, append=jnp.take(x, jnp.array([-1]), axis=i))
         for i, c in zip((2, 1, 0), scales, strict=True)
@@ -78,14 +59,14 @@ def test_sweep_matches_whole_volume_update(regularizer):
 
     tv = -divergence(expected)
     extrapolated = tv + 0.8 * (tv + divergence(p))
-    np.testing.assert_allclose(unpack_flux(actual), expected, rtol=0, atol=4e-8)
+    np.testing.assert_allclose(np.stack(actual), expected, rtol=0, atol=4e-8)
     np.testing.assert_allclose(
         partial, x - 0.3 * (extrapolated - 0.8 / 0.25 * data), rtol=1e-6, atol=5e-7
     )
 
 
 @pytest.mark.gpu
-def test_compiled_solve_fits_in_four_and_a_half_volume_buffers():
+def test_compiled_solve_holds_its_state_and_bounded_scratch():
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     grid, detector = Grid(256, 256, 257, 1.0, 1.0, 1.0), Detector(256, 257, 1.0, 1.0)
@@ -103,9 +84,10 @@ def test_compiled_solve_fits_in_four_and_a_half_volume_buffers():
     )
     mem = _run_spdhg_scan.lower(grid, detector, runtime).compile().memory_analysis()
     volume = 4 * grid.nx * grid.ny * grid.nz
-    # One accumulator plus bounded scratch must fit in a single allocator region.
-    assert mem.temp_size_in_bytes <= 1.25 * volume + data.nbytes
-    assert mem.temp_size_in_bytes + mem.output_size_in_bytes <= 4.5 * volume + data.nbytes
+    # Five volumes of state (the iterate, the accumulated backprojection, the TV dual's three
+    # components), the data dual, and scratch of a block's projections and a few planes.
+    assert mem.temp_size_in_bytes <= 1.125 * volume + data.nbytes
+    assert mem.temp_size_in_bytes + mem.output_size_in_bytes <= 5.125 * volume + 2 * data.nbytes
 
 
 def test_insufficient_state_memory_names_host_solvers(monkeypatch):

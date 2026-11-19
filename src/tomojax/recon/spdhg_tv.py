@@ -41,7 +41,6 @@ from ._host_arrays import validate_host_views
 from ._noise import estimate_projection_noise
 from ._noise_probe import probe_gradient_rms
 from ._solver_validation import validate_spdhg_config, validate_spdhg_weights
-from ._spdhg_flux import empty_flux, flux_bytes, pack_flux, unpack_flux
 from ._spdhg_steps import SPDHGStepSizes, make_spdhg_chunk_operators, resolve_spdhg_step_sizes
 from ._tv_metric import TVMetric, raise_tv_weight, resolve_tv_metric
 from ._tv_ops import (
@@ -178,7 +177,8 @@ jax.tree_util.register_dataclass(
 class _SPDHGScanState(NamedTuple):
     x: jnp.ndarray
     y_data: jnp.ndarray
-    flux: tuple[jax.Array, ...]
+    # The TV dual's three components, empty when TV is off.
+    p: tuple[jax.Array, ...]
     # Sum of A_i^T y_i over data blocks; the TV part, -div p, is recomputed.
     s_data: jnp.ndarray
     losses: jnp.ndarray
@@ -342,7 +342,7 @@ def _initial_spdhg_state(runtime: _SPDHGRuntime, shape: tuple[int, int, int]) ->
             if runtime.y_meas is None
             else jnp.zeros_like(runtime.y_meas)
         ),
-        flux=empty_flux(shape, enabled=cfg.tv_weight != 0),
+        p=tuple(jnp.zeros(shape if cfg.tv_weight != 0 else (0,), jnp.float32) for _ in range(3)),
         s_data=zeros,
         losses=jnp.zeros((cfg.iterations,), dtype=jnp.float32),
     )
@@ -399,7 +399,8 @@ def _stream_data(
     shape: tuple[int, int, int],
 ) -> bool:
     """Place measurements and data duals after accounting for the volume state."""
-    state_bytes = 8 * math.prod(shape) + flux_bytes(shape, enabled=cfg.tv_weight != 0)
+    # The iterate, the accumulated backprojection and, with TV, the dual's three components.
+    state_bytes = 4 * (2 + 3 * (cfg.tv_weight != 0)) * math.prod(shape)
     free = device_free_memory_bytes()
     if free is not None and state_bytes > free:
         raise MemoryError(
@@ -624,7 +625,7 @@ def _sweep(
         s_old = jax.lax.dynamic_slice_in_dim(state.s_data, start, size)
         gradient_bar = -(cfg.theta / runtime.schedule.selection_prob) * s_old
         if tv:
-            old = unpack_flux(tuple(jax.lax.dynamic_slice_in_dim(q, start, size) for q in p))
+            old = tuple(jax.lax.dynamic_slice_in_dim(q, start, size) for q in p)
             previous = divergence(old, below_old)
             gradient = (
                 cx * forward_difference(u, 2),
@@ -637,7 +638,7 @@ def _sweep(
             gradient_bar += tv_adjoint + cfg.theta * (tv_adjoint + previous)
             p = tuple(
                 jax.lax.dynamic_update_slice_in_dim(q, n, start, 0)
-                for q, n in zip(p, pack_flux(new), strict=True)
+                for q, n in zip(p, new, strict=True)
             )
             below_old, below_new = old[2][-1:], new[2][-1:]
         candidate = u - runtime.step_sizes.tau * gradient_bar
@@ -649,13 +650,13 @@ def _sweep(
         return update(carry, start, depth, jax.lax.dynamic_slice_in_dim(carry[1], start + 1, depth))
 
     edge = jnp.zeros((1, ny, nx), x.dtype)
-    carry = (state.flux, x, edge, edge)
+    carry = (state.p, x, edge, edge)
     carry = jax.lax.fori_loop(0, full, slab, carry)
     # The remaining planes; the last is its own successor, a zero z difference (Neumann).
     start = full * depth
     after = jnp.concatenate([carry[1][start + 1 :], carry[1][-1:]])
-    flux, x, _, _ = update(carry, start, nz - start, after)
-    return flux, x
+    p, x, _, _ = update(carry, start, nz - start, after)
+    return p, x
 
 
 @functools.partial(jax.jit, static_argnames=("grid", "detector"))
@@ -663,7 +664,7 @@ def _run_spdhg_scan(
     grid: Grid,
     detector: Detector,
     runtime: _SPDHGRuntime,
-) -> tuple[jax.Array, jax.Array, tuple[jax.Array, ...]]:
+) -> tuple[jax.Array, jax.Array, tuple[jax.Array, ...], jax.Array]:
     cfg, schedule, step_sizes = runtime.config, runtime.schedule, runtime.step_sizes
     n_views, nv, nu = runtime.data_shape
     block_shape = (schedule.views_per_batch, nv, nu)
@@ -751,7 +752,7 @@ def _run_spdhg_scan(
 
         # The objective at the current primal, before the sweep overwrites it.
         losses_new = jax.lax.cond(do_log, log_step, lambda: state.losses)
-        flux, partial = _sweep(state, runtime, t)
+        p, partial = _sweep(state, runtime, t)
         # Consume the old accumulator before the matched transpose overwrites it.
         partial, acc = jax.lax.optimization_barrier((partial, state.s_data))
         s_data_new = backproject_chunk(delta_y, start_shifted, T_chunk, acc)
@@ -764,7 +765,7 @@ def _run_spdhg_scan(
         return _SPDHGScanState(
             x=x_new,
             y_data=y_data_new,
-            flux=flux,
+            p=p,
             s_data=s_data_new,
             losses=losses_new,
         ), None
@@ -772,9 +773,9 @@ def _run_spdhg_scan(
     initial = _initial_spdhg_state(runtime, volume_shape(runtime.projector[0], grid))
     steps = jnp.arange(cfg.iterations)
     final = jax.lax.scan(one_step, initial, steps)[0] if cfg.iterations else initial
-    # XLA allocates outputs separately. Keeping the packed dual in the outputs lets the
-    # allocator reuse volume-sized regions from setup instead of finding one large temporary.
-    return final.x, final.losses, final.flux
+    # Return every large carry: a carry left out of the outputs becomes a temporary that
+    # XLA keeps beside the loop's own copy, one more volume or data stack at the peak.
+    return final.x, final.losses, final.p, final.y_data
 
 
 def spdhg_tv(
