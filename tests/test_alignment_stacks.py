@@ -67,33 +67,70 @@ def test_every_placement_gives_the_same_result_bit_for_bit(fit):
         assert stage == {n: placement[n] for n in ("y", "precision")}
 
 
-@pytest.mark.slow
-def test_a_level_with_little_device_room_plans_the_cold_stacks_onto_the_host(monkeypatch):
-    # Room for the three stacks the matvec reads (sw, r, j) and the level's other arrays,
-    # not for the data: the plan keeps the hot three and holds y, precision and residual
-    # on the host, and the result is the one a device with room gives.
-    expected_volume, _, expected, _ = _aligned(("translations",), DEVICE)
-    plans = []
-    original = _stacks.LevelStacks._plan
+def _stacks_under(monkeypatch, *, limit, pool, largest_free, transient):
+    """Five small stacks placed under supplied allocator figures, and the allocations tried.
 
-    def room_for_the_hot_three(self, room, reserve, forced):
-        hot = sum(self.sizes[n] for n in ("sw", "r", "j") if n in self.sizes)
-        plans.append(original(self, hot + reserve, reserve, forced))
-        return plans[-1]
+    The pool's largest free block is ``largest_free`` less what its device stacks hold.
+    """
+    tried, held = [], []
+    device = _stacks.LevelStacks._device
 
-    monkeypatch.setattr(_stacks.LevelStacks, "_plan", room_for_the_hot_three)
-    volume, _, table, record = _aligned(("translations",))
-    np.testing.assert_array_equal(table, expected)
-    np.testing.assert_array_equal(np.asarray(volume), np.asarray(expected_volume))
-    assert plans[0] == {**dict.fromkeys(("sw", "r", "j"), "device"), **COLD}
-    assert record["levels"][0]["stacks"]["mispredicted"] == []
+    def allocate(shape, dtype, value):
+        tried.append(shape)
+        held.append(device(shape, dtype, value))
+        return held[-1]
+
+    def figures():
+        taken = sum(a.nbytes for a in held if not a.is_deleted())
+        free = largest_free - taken
+        return {
+            "bytes_limit": limit,
+            "pool_bytes": pool,
+            "largest_free_block_bytes": free,
+            "bytes_in_use": taken,
+        }
+
+    monkeypatch.setattr(_stacks.LevelStacks, "_device", staticmethod(allocate))
+    monkeypatch.setattr(_stacks, "_device_stats", figures)
+    specs = dict.fromkeys(("sw", "r", "j", "y", "residual"), ((4, 2, 3), np.float32))  # 96 B
+    stacks = _stacks.LevelStacks(specs, 4, data={}, room=None, reserve={"transient": transient})
+    return stacks, tried
+
+
+def test_a_stack_no_free_block_holds_goes_to_the_host_untried(monkeypatch):
+    # The pool at its limit never returns a free region, so a stack larger than its largest
+    # free block cannot be had however much is free in all: it is not tried (a refused
+    # allocation waits 10 s in the allocator's retry), and it and every stack after it go to
+    # the host.
+    stacks, tried = _stacks_under(monkeypatch, limit=1000, pool=1000, largest_free=50, transient=0)
+    assert tried == [] and set(stacks.placed.values()) == {"host"}
+    stacks.close()
+
+
+def test_a_stack_that_takes_the_transients_block_goes_to_the_host(monkeypatch):
+    # The first stack fits, but once allocated no block is left for the level's largest
+    # transient (one block too): it is released and it and every stack after it go to the host.
+    stacks, tried = _stacks_under(
+        monkeypatch, limit=1000, pool=1000, largest_free=150, transient=100
+    )
+    assert len(tried) == 1 and set(stacks.placed.values()) == {"host"}
+    assert stacks.record()["raised"] == []
+    stacks.close()
+
+
+def test_a_pool_below_its_limit_can_grow_a_block_for_a_stack(monkeypatch):
+    # Below its limit the pool can add a region: a stack larger than its largest free block
+    # is tried, and here it is had.
+    stacks, tried = _stacks_under(monkeypatch, limit=1000, pool=500, largest_free=10, transient=0)
+    assert len(tried) == 5 and set(stacks.placed.values()) == {"device"}
+    stacks.close()
 
 
 @pytest.mark.slow
 def test_a_stack_the_device_refuses_goes_to_the_host_with_every_stack_after_it(monkeypatch):
-    # The plan is a prediction from the total room; the allocator is the judge. A refused
-    # allocation is a misprediction: that stack and the ones after it in device order go to
-    # the host, the level says so, and nothing else changes.
+    # The allocator is the judge of a stack that fits by its figures: a refused allocation
+    # sends that stack and the ones after it in device order to the host, the level names it,
+    # and nothing else changes.
     expected_volume, _, expected, _ = _aligned(("translations",), DEVICE)
     device = _stacks.LevelStacks._device
 
@@ -112,7 +149,7 @@ def test_a_stack_the_device_refuses_goes_to_the_host_with_every_stack_after_it(m
         "r": "device",
         **dict.fromkeys(("j", "y", "precision", "residual"), "host"),
     }
-    assert stacks["mispredicted"] == ["j", "y", "precision", "residual"]
+    assert stacks["raised"] == ["j"]
 
 
 @pytest.mark.parametrize("where", ["linearize", "schur"])
@@ -233,7 +270,7 @@ def test_align_reports_each_levels_placement_and_time():
     for level in [*info["levels"], info["refinement"]]:
         stacks = level["stacks"]
         assert set(stacks["placement"].values()) <= {"device", "host"}
-        assert stacks["planned"].keys() == stacks["placement"].keys()
+        assert stacks["raised"] == []
         assert level["seconds"] > 0
 
 

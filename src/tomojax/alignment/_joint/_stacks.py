@@ -14,16 +14,16 @@ life, so nothing volume-sized is allocated again during a step. What the device
 reports in use above them then (the allocator's rounding of their chunks) is
 measured, and counted with them.
 
-Then a plan is made from the device's total room under its limit, less the
-volumes and a reserve kept free for the level's largest transient, keeping
-resident the stacks that most deserve the device (read in every matvec first)
-and putting the rest on the host. The plan is a prediction: the total room is an
-upper bound, blind to fragmentation, and the allocator can hand a stack a whole
-chunk of up to twice its size. So the resident stacks are then really allocated,
-in the same order, each waited for; the first that fails, or leaves less than the
-reserve free, goes to the host with every stack after it, and the level records
-the misprediction. Little is in use at setup, which keeps the plan close to
-exact; releasing every buffer at the level's end keeps that true for the next level.
+Then the stacks are placed in the order of who most deserves the device (read in
+every matvec first). An array needs one block, and the pool never hands a free
+region back to the driver, so free space spread over regions is not one block:
+whether one can be had is the allocator's own figure (``fits``), its largest free
+block or what it may still grow by under its limit. A stack goes to the device only
+if one block for it can be had, and is then really allocated, the allocator judging
+a yes; it stays only if a block for the level's largest transient can still be had.
+Otherwise it goes to the host with every stack after it. An allocation that still
+raises (the allocator retries for 10 s first) is recorded by name. Releasing every
+buffer at the level's end keeps the next level's setup to its own arrays.
 
 Compiled functions take :class:`Stack` handles and read and write a batch at a
 time. A handle's placement is static, so a function compiles once per placement:
@@ -116,11 +116,32 @@ def _exhausted(err: Exception) -> bool:
     return "RESOURCE_EXHAUSTED" in str(err)
 
 
-def _in_use() -> int | None:
-    """Bytes the device's allocator has handed out; None off the GPU."""
+def _device_stats() -> Mapping[str, int] | None:
+    """The device allocator's statistics; None off the GPU."""
     if jax.default_backend() != "gpu":
         return None
-    return int(jax.local_devices()[0].memory_stats()["bytes_in_use"])
+    return jax.local_devices()[0].memory_stats()
+
+
+def _in_use() -> int | None:
+    """Bytes the device's allocator has handed out; None off the GPU."""
+    stats = _device_stats()
+    return None if stats is None else int(stats["bytes_in_use"])
+
+
+def fits(size: int) -> bool:
+    """Whether one block of ``size`` bytes can be had on the device (always, off the GPU).
+
+    That is the pool's largest free block, or what the pool may still grow by under its
+    limit: it never returns a free region to the driver, so a request larger than both
+    raises after the allocator's retry, however much is free in all.
+    """
+    stats = _device_stats()
+    if stats is None:
+        return True
+    return size <= max(
+        stats["largest_free_block_bytes"], stats["bytes_limit"] - stats["pool_bytes"]
+    )
 
 
 class LevelStacks:
@@ -129,12 +150,12 @@ class LevelStacks:
     ``volumes`` names the level's volume-sized arrays (each a ``jax.ShapeDtypeStruct`` or a
     pytree of them), allocated first and always on the device. ``data`` holds the
     level's padded host stacks (``y``, and ``precision`` when not uniform); ``specs`` the
-    stacks the level uses; ``room`` the device's total room before the volumes and
-    ``reserve`` the bytes that must stay free beside the level's storage, by part. The
-    volumes and what the device holds above them once allocated are the plan's ``state``.
-    A stack the plan puts on the device goes to the host with every stack after it if its
-    allocation fails or leaves less than the reserve free: like the volumes, a stack can
-    take a whole chunk of up to twice its size, so what it leaves is measured, not assumed.
+    stacks the level uses; ``room`` the device's total room before the volumes (recorded)
+    and ``reserve`` the bytes that must stay free beside the level's storage, by part: its
+    ``transient`` is the block a device stack must leave room for. The volumes and what the
+    device holds above them once allocated are the plan's ``state``. A stack goes to the
+    device only if one block for it can be had (``fits``) and stays only if one for the
+    transient still can; otherwise it goes to the host with every stack after it.
     ``placement`` forces named stacks to "device" or "host" (the tests' and, until the
     public setting, the only override); a forced stack is still really allocated.
     """
@@ -158,11 +179,18 @@ class LevelStacks:
         self.sizes = {n: math.prod(s) * d.itemsize for n, (s, d) in self.specs.items()}
         self.reserve_parts = dict(reserve) if isinstance(reserve, Mapping) else {"total": reserve}
         self.free = sum(self.reserve_parts.values())
+        self.transient = self.reserve_parts.get("transient", self.free)
         self.forced = dict(placement or {})
+        unknown = set(self.forced) - set(ORDER)
+        if unknown or any(place not in ("device", "host") for place in self.forced.values()):
+            raise ValueError(
+                f"placement takes {ORDER} mapped to 'device' or 'host', not {placement}"
+            )
         self.volumes: dict[str, Any] = {}
         self.volume_bytes: dict[str, int] = {}
         self.stacks: dict[str, Stack] = {}
         self.placed: dict[str, Place] = {}
+        self.raised: list[str] = []
         self._host: dict[str, np.ndarray] = {}
         self._keys = ExitStack()
         self.room, self.setup_waste = room, 0
@@ -170,7 +198,6 @@ class LevelStacks:
             if volumes:
                 self._own(volumes)
             self.reserve = sum(self.reserve_parts.values())
-            self.planned = self._plan(room, self.reserve, self.forced)
             self._allocate(data)
             self.in_use = _in_use()
         except BaseException:
@@ -192,27 +219,11 @@ class LevelStacks:
         self.setup_waste = 0 if before is None or after is None else after - before - held
         self.reserve_parts = {"state": held + self.setup_waste, **self.reserve_parts}
 
-    def _plan(self, room, reserve, forced) -> dict[str, Place]:
-        unknown = set(forced) - set(ORDER)
-        if unknown or any(place not in ("device", "host") for place in forced.values()):
-            raise ValueError(f"placement takes {ORDER} mapped to 'device' or 'host', not {forced}")
-        budget = math.inf if room is None else room - reserve
-        plan, used, spilled = {}, 0, False
-        for name in self.names:
-            if name in forced:
-                plan[name] = forced[name]
-            elif not spilled and used + self.sizes[name] <= budget:
-                plan[name] = "device"
-            else:
-                plan[name], spilled = "host", True
-            used += self.sizes[name] if plan[name] == "device" else 0
-        return plan
-
     def _allocate(self, data: Mapping[str, np.ndarray]) -> None:
         failed = False
         for name in self.names:
             shape, dtype = self.specs[name]
-            if self.planned[name] == "device" and not failed:
+            if self.forced.get(name) != "host" and not failed:
                 array = self._fitting(name, shape, dtype, data.get(name))
                 if array is None:
                     failed = True  # this stack and every one after it go to the host
@@ -233,15 +244,22 @@ class LevelStacks:
             self.placed[name] = "host"
 
     def _fitting(self, name, shape, dtype, value) -> jax.Array | None:
-        """The stack on the device, or None if it fails or leaves less than the reserve free."""
+        """The stack on the device, or None if no block fits it, it raised, or it took the last.
+
+        The last block is the one the level's largest transient needs. A forced stack is
+        only allocated.
+        """
+        forced = name in self.forced
+        if not (forced or fits(self.sizes[name])):
+            return None
         try:
             array = self._device(shape, dtype, value)
         except jax.errors.JaxRuntimeError as err:
             if not _exhausted(err):
                 raise
+            self.raised.append(name)
             return None
-        room = device_room()
-        if name in self.forced or room is None or room >= self.free:
+        if forced or fits(self.transient):
             return array
         array.delete()
         return None
@@ -277,8 +295,7 @@ class LevelStacks:
         """What ``info`` reports: each stack's placement and size, and the plan it came from."""
         return {
             "placement": dict(self.placed),
-            "planned": dict(self.planned),
-            "mispredicted": [n for n in self.names if self.planned[n] != self.placed[n]],
+            "raised": list(self.raised),
             "stack_bytes": dict(self.sizes),
             "room_bytes": self.room,
             "reserve_bytes": self.reserve,
