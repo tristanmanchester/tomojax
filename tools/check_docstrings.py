@@ -74,7 +74,6 @@ MAIN_ENTRY_POINTS = frozenset(
         "reconstruct",
         "reconstruct_slabs",
         "align",
-        "estimate_center",
         "estimate_region",
     )
 )

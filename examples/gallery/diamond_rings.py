@@ -39,7 +39,7 @@ def main() -> None:
     args = parser.parse_args()
 
     frames = tj.load_frames(args.raw)
-    plain = tj.estimate_center(frames.corrected())
+    plain = tj.align(frames.corrected(), fit="center", method="opposite-views").scan
     steps = (Stripes(), Stripes(51, varying=True))
     cleaned = replace(frames.corrected(*steps), geometry=plain.geometry)
     reference = tifffile.imread(args.reference).astype(np.float32)
@@ -83,7 +83,7 @@ def main() -> None:
             ax.set_axis_off()
     fig.suptitle(
         f"Diamond I12, raw counts to slice: {frames.counts.shape[0]} views, "
-        f"{n} x {n} pixels, centre found by tj.estimate_center",
+        f"{n} x {n} pixels, centre found by tj.align(method='opposite-views')",
         y=0.995,
     )
     fig.tight_layout()

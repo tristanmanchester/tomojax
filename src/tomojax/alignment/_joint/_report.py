@@ -149,7 +149,7 @@ def build(
     isolated = isolated_views(values[:, detector] / binning, order) if local and detector else []
     offsets = np.asarray(offsets, np.float64)
     return {
-        "levels": [{"steps": len(lv["steps"]), "ended": lv["status"]} for lv in levels],
+        "levels": [{"iterations": len(lv["steps"]), "ended": lv["status"]} for lv in levels],
         "refinement": refinement.get("status"),
         "calibration": calibration,
         "poses": per_view,

@@ -38,7 +38,7 @@ Validation of recognized raw acquisitions reports missing detector/axis metadata
 and flat/dark references, using the same requirements as frame loading. A file
 that records the pitches but not the axial centre loads with the centre at the
 middle of the detector and `detector_center_status` "not_recorded"; nothing
-estimates it unless asked (`tj.estimate_center`, `tj.align(fit="center")`). CLI errors
+estimates it unless asked (`tj.align(fit="center")`). CLI errors
 name `preprocess --config`, `--flats`, `--darks` or `--angles` where those options
 can supply the missing input. Storage validation of other datasets is not a
 geometry-calibration or reconstruction-quality certificate.

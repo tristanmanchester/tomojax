@@ -132,7 +132,7 @@ For a better image, ask for FISTA by name:
 
 ```bash
 uv run --no-sync tomojax recon corrected.nxs -o recon.nxs \
-  --method fista --iterations 100 --nonnegative --roi off \
+  --method fista --iterations 100 --nonnegative --region off \
   --manifest recon-manifest.json
 uv run --no-sync tomojax inspect recon.nxs --preview previews
 ```

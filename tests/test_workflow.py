@@ -320,13 +320,8 @@ def test_a_saved_alignment_is_not_labelled_with_an_earlier_reconstruction(tmp_pa
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(8))), geometry)
     tj.save(tmp_path / "cgls.nxs", tj.reconstruct(scan, "cgls", iterations=2), include_scan=True)
     loaded = tj.load(tmp_path / "cgls.nxs")
-    poses = np.zeros((len(loaded.angles), 6), np.float32)
     aligned = tj.Alignment(
-        image=np.ones((8, 8, 8), np.float32),
-        grid=loaded.grid,
-        scan=loaded,
-        poses=poses,
-        info={"levels": []},
+        loaded, {"levels": []}, image=np.ones((8, 8, 8), np.float32), grid=loaded.grid
     )
     tj.save(tmp_path / "aligned.nxs", aligned)
     back = tj.load_reconstruction(tmp_path / "aligned.nxs")

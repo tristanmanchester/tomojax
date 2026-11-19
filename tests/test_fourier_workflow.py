@@ -67,7 +67,7 @@ def test_cli_fourier_uses_config_and_round_trips_context(tmp_path):
                 str(output),
                 "--method",
                 "fourier",
-                "--roi",
+                "--region",
                 "off",
                 "--config",
                 str(settings),

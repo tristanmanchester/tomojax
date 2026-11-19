@@ -1,4 +1,8 @@
-"""The grid ``--roi`` and ``--grid`` choose, for ``tomojax recon`` and ``tomojax align``."""
+"""The part of a scan's grid every view sees.
+
+It is ``region=`` of :func:`tomojax.reconstruct` and :func:`tomojax.align`, and
+``--region`` of their commands.
+"""
 
 from __future__ import annotations
 
@@ -15,9 +19,14 @@ if TYPE_CHECKING:
     import jax
 
     from tomojax import Scan
+    from tomojax._region import RegionEstimate
 
-ROI_CHOICES = ("auto", "off", "cube", "bbox", "cyl")
-ROI_HELP = (
+# The regions by name: the box every view sees ("auto", "bbox"), its largest cube or
+# cylinder about the axis ("cube", "cyl", which also zeroes outside it).
+REGIONS = ("auto", "bbox", "cube", "cyl")
+# The command line's --region: the API's names, and "off" for its None (the scan's grid).
+REGION_CHOICES = (*REGIONS, "off")
+REGION_HELP = (
     "Crop the grid to the detector's field of view: auto (default), cube, bbox, "
     "cyl (auto, zeroing outside the cylinder every view sees), or off"
 )
@@ -35,35 +44,45 @@ class Cylinder:
 
 
 def region_grid(
-    scan: Scan, *, roi: str, grid: tuple[int, int, int] | None
+    scan: Scan, region: str | RegionEstimate | None, *, shape: tuple[int, int, int] | None = None
 ) -> tuple[Grid, Cylinder | None]:
-    """The grid ``--roi`` and ``--grid`` choose, and the cylinder ``cyl`` zeroes outside.
+    """The grid ``region`` chooses of ``scan``'s, and the cylinder ``"cyl"`` zeroes outside.
 
     The field of view is where the scan's own rays fall: voxel centres that
     every view projects onto the detector, with cone magnification, poses, a
-    tilted axis and detector roll. ``--grid`` resamples the selected ROI to new
-    voxel counts, preserving its physical extent.
+    tilted axis and detector roll. None keeps the scan's grid, and a
+    :class:`RegionEstimate` gives its own. ``"auto"`` falls back to the scan's
+    grid, with a warning, when no box is seen. ``shape`` resamples the region to
+    new voxel counts, preserving its physical extent.
     """
+    from tomojax._region import RegionEstimate
+
+    if isinstance(region, RegionEstimate):
+        chosen = region.grid
+        return (chosen if shape is None else chosen.resampled(shape)), None
+    if region is not None and region not in REGIONS:
+        names = ", ".join(REGIONS)
+        raise ValueError(f"region is one of {names} or a RegionEstimate, not {region!r}")
     chosen, support = scan.grid, None
     try:
-        first, last, cylinder = _seen_voxels(scan) if roi != "off" else (None, None, None)
+        first, last, cylinder = _seen_voxels(scan) if region is not None else (None, None, None)
     except ValueError as exc:
-        if roi != "auto":
-            raise ValueError(f"Failed to apply requested --roi={roi!r}") from exc
-        logging.warning("--roi=auto could not be applied; continuing without ROI crop: %s", exc)
+        if region != "auto":
+            raise ValueError(f"region={region!r} could not be applied") from exc
+        logging.warning("region='auto' could not be applied; using the scan's grid: %s", exc)
         first = last = None
     if first is not None and last is not None:
-        if roi in {"cube", "cyl"}:
-            axes = (0, 1, 2) if roi == "cube" else (0, 1)
+        if region in {"cube", "cyl"}:
+            axes = (0, 1, 2) if region == "cube" else (0, 1)
             side = int(min(last[a] - first[a] + 1 for a in axes))
             for a in axes:
                 # Centre the shared side in the seen interval, keeping whole voxels.
                 first[a] += (last[a] - first[a] + 1 - side) // 2
                 last[a] = first[a] + side - 1
         chosen = _window(scan.grid, first, last)
-        support = cylinder if roi == "cyl" else None
-    if grid is not None:
-        chosen = chosen.resampled(grid)
+        support = cylinder if region == "cyl" else None
+    if shape is not None:
+        chosen = chosen.resampled(shape)
     return chosen, support
 
 
@@ -173,8 +192,9 @@ def _pixel_coordinates(scan: Scan, views: np.ndarray, points: np.ndarray):
 
 
 __all__ = [
-    "ROI_CHOICES",
-    "ROI_HELP",
+    "REGIONS",
+    "REGION_CHOICES",
+    "REGION_HELP",
     "Cylinder",
     "cylinder_support",
     "region_grid",

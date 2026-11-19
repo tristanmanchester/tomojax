@@ -49,7 +49,15 @@ def _fitter(monkeypatch, *, changes=None, poses=None):
 
 def test_alignment_has_one_fit_argument_and_an_optional_grid():
     parameters = inspect.signature(tj.align).parameters
-    assert tuple(parameters) == ("scan", "fit", "grid")
+    assert tuple(parameters) == (
+        "scan",
+        "fit",
+        "grid",
+        "region",
+        "method",
+        *("iterations", "image_iterations", "tolerance", "interpolation", "resolution"),
+        "config",
+    )
     assert parameters["fit"].default == "translations"
     assert parameters["fit"].kind == inspect.Parameter.KEYWORD_ONLY
     assert parameters["grid"].default is None

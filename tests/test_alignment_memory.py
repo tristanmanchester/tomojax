@@ -92,9 +92,9 @@ def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
 
     monkeypatch.setattr(jax, "jit", recording)
     monkeypatch.setattr(_fit, "Operators", made)
-    monkeypatch.setattr(_fit, "_LEVELS", ((1, 2),))
     projections, nominal, grid, detector = _scan(views, nu, nv, n, nz)
-    _fit.fit_poses(projections, nominal, grid, detector, keep_grid=True)
+    config = tj.AlignConfig(levels=(1,), iterations=2)
+    _fit.fit_poses(projections, nominal, grid, detector, keep_grid=True, config=config)
     monkeypatch.setattr(jax, "jit", jit)
     monkeypatch.setattr(_fit, "Operators", operators)
     volume, image = shapes[-1]

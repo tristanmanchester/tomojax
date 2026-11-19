@@ -170,7 +170,7 @@ tj.save("aligned-phase.nxs", aligned.scan)
 ```
 
 ```bash
-uv run --no-sync tomojax recon aligned-phase.nxs -o phase-recon.nxs --method fourier --roi off
+uv run --no-sync tomojax recon aligned-phase.nxs -o phase-recon.nxs --method fourier --region off
 uv run --no-sync tomojax inspect phase-recon.nxs --preview phase-previews
 ```
 

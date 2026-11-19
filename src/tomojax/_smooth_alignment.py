@@ -15,11 +15,16 @@ from tomojax.geometry import stack_view_poses
 
 if TYPE_CHECKING:
     from tomojax._scan import Scan
+    from tomojax.alignment import AlignConfig
     from tomojax.geometry import Grid
 
 
 def align_poses(
-    scan: Scan, *, fit: str | tuple[str, ...] = "translations", grid: Grid | None = None
+    scan: Scan,
+    *,
+    fit: str | tuple[str, ...] = "translations",
+    grid: Grid | None = None,
+    config: AlignConfig | None = None,
 ) -> Reconstruction:
     """Jointly fit one image and the selected global and per-view parameters."""
     from tomojax.alignment._calibration import publish_calibration
@@ -42,6 +47,7 @@ def align_poses(
             detector_roll=float(cast("float", metadata.get("detector_roll", 0.0))),
             view_positions=scan.view_positions,
             declared_poses=np.asarray(stack_view_poses(scan.with_poses(None).geometry, views)),
+            config=config,
         )
     except Exception as exc:
         if grid is None or not is_oom_error(exc):

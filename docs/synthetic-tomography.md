@@ -28,7 +28,7 @@ shapes (`grid`, `detector`), are keys of a `--config` TOML file;
 uv run --no-sync tomojax simulate -o tilted.nxs --geometry lamino --tilt 30 \
   --size 32 --n-views 60
 uv run --no-sync tomojax recon tilted.nxs -o tilted-recon.nxs \
-  --method fista --iterations 50 --tv-weight 0.005 --nonnegative --roi off
+  --method fista --iterations 50 --tv-weight 0.005 --nonnegative --region off
 uv run --no-sync tomojax inspect tilted-recon.nxs --preview tilted-previews
 ```
 

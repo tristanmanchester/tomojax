@@ -50,7 +50,7 @@ def test_implicit_precision_matches_explicit_ones_in_joint_and_edge_objectives(c
             right = function(q, x, y, explicit, 0.8)
             for a, b in zip(jax.tree.leaves(left), jax.tree.leaves(right), strict=True):
                 np.testing.assert_allclose(a, b, rtol=2e-6, atol=2e-6)
-        edge = _EdgeObjective(ops)
+        edge = _EdgeObjective(ops, smoothing=8.0)
         y, explicit = js.stack(ops, y), js.stack(ops, explicit)
         for function in (edge.stats, edge.value):
             for a, b in zip(

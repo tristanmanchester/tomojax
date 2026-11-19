@@ -109,8 +109,9 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--warm-start": ("reconstruct", "warm_start"),
         "--seed": ("reconstruct", "seed"),
         "--grid": ("reconstruct", "grid"),
+        "--region": ("reconstruct", "region"),
         "--apply-poses": ("load", "apply_poses"),
-        "--roi": "crops the grid to the field of view; Python passes the grid",
+        "--include-scan": ("save", "include_scan"),
         "--preview": "file output",
         "--manifest": "file output",
         "--progress": "terminal display",
@@ -118,8 +119,14 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
     "align": {
         "--fit": ("align", "fit"),
         "--grid": ("align", "grid"),
+        "--region": ("align", "region"),
+        "--method": ("align", "method"),
+        "--iterations": ("align", "iterations"),
+        "--image-iterations": ("align", "image_iterations"),
+        "--tolerance": ("align", "tolerance"),
+        "--interpolation": ("align", "interpolation"),
+        "--resolution": ("align", "resolution"),
         "--apply-poses": ("load", "apply_poses"),
-        "--roi": "crops the grid to the field of view; Python passes the grid",
         "--manifest": "file output",
         "--dry-run": "prints the selected parameters and grid without fitting",
     },
@@ -189,8 +196,11 @@ def _configuration_fields(command: str) -> set[str]:
         SPDHGConfig,
     )
 
-    if command == "align":
-        return set()
+    if command == "align":  # every AlignConfig field but the everyday ones, which are options
+        from tomojax import AlignConfig
+
+        everyday = {"iterations", "image_iterations", "tolerance", "interpolation", "resolution"}
+        return {item.name for item in fields(AlignConfig)} - everyday
     configs = (
         FBPConfig,
         FourierConfig,

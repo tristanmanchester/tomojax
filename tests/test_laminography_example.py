@@ -57,6 +57,7 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         detector_roll,
         view_positions,
         declared_poses,
+        config=None,
     ):
         assert projections is scan.projections and d == detector and keep_grid == explicit
         assert view_positions is None

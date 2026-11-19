@@ -15,7 +15,7 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     n = 60
     image, state = jnp.ones(1), jnp.zeros(2 * n)
     level = object.__new__(_solver._Level)
-    level.lam, level.precision = 0, None
+    level.lam, level.precision, level.image_tolerance = 0, None, 0.03
     # The level's volumes as one-voxel arrays; the step holds the solution the Schur solve wrote.
     level.stacks = {name: jnp.ones(1) for name in ("damp", "rhs", "invdiag", "step")}
     level.stacks |= {"r": None, "factor": None, "free": jnp.ones(1, bool)}
@@ -169,7 +169,7 @@ def test_stopping_requires_two_small_proposals_at_the_initial_damping(
             0.0,
             0.0,
             ops=ops,
-            budget=_solver.Budget(outer=len(proposals), inner=1),
+            budget=_solver.Budget(iterations=len(proposals), image_iterations=1),
             x0=np.ones(1),
             p0=None,
             pose_sigma=0.01,

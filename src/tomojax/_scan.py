@@ -885,35 +885,45 @@ class Reconstruction:
 class Alignment:
     """The result of :func:`align`.
 
-    ``image`` is the image the alignment converged with, on ``grid``: the fit's
-    bounded working grid, unless :func:`align` was given one. It is the fit's
-    working image, not a reconstruction: the fit compares model and data through a
-    filter that ignores the grid's finest scale, so the image carries texture there
-    that the object does not have. Reconstruct ``scan`` for the volume. ``scan``
-    is the input scan, on its own grid, with the estimated geometry and per-view
-    poses applied: reconstruct it, align it again or save it. ``poses`` are its
-    ``(views, 6)`` poses (see :attr:`Scan.poses`), always a table, zero where
-    nothing moved; ``info`` is the solver's record.
+    ``scan`` is the input scan, on its own grid, with the estimated geometry and
+    per-view poses applied: reconstruct it, align it again or save it.
+    :attr:`poses` are its ``(views, 6)`` poses (see :attr:`Scan.poses`), always a
+    table, zero where nothing moved; ``info`` is the method's record. ``image`` is
+    the image the joint fit converged with, on ``grid``: the fit's bounded working
+    grid, unless :func:`align` was given one. It is the fit's working image, not a
+    reconstruction: the fit compares model and data through a filter that ignores
+    the grid's finest scale, so the image carries texture there that the object
+    does not have. Reconstruct ``scan`` for the volume. A method that fits no image
+    leaves ``image`` and ``grid`` None.
 
     Parameters
     ----------
-    image : numpy.ndarray or jax.Array
-        The alignment's working image, in (z, y, x) order, on ``grid``.
-    grid : Grid
-        The grid ``image`` is on.
     scan : Scan
         Scan with estimated geometry and per-view corrections applied.
-    poses : numpy.ndarray
-        Complete (views, 6) correction table, zero where nothing moved.
     info : mapping
-        Solver record and resolved alignment settings.
+        The method's record and resolved settings.
+    image : numpy.ndarray, jax.Array or None, optional
+        The joint fit's working image, in (z, y, x) order, on ``grid``.
+    grid : Grid or None, optional
+        The grid ``image`` is on.
     """
 
-    image: np.ndarray | jax.Array
-    grid: Grid
     scan: Scan
-    poses: np.ndarray
     info: Mapping[str, object]
+    image: np.ndarray | jax.Array | None = None
+    grid: Grid | None = None
+
+    @property
+    def poses(self) -> np.ndarray:
+        """The scan's ``(views, 6)`` poses, zero where nothing moved.
+
+        Returns
+        -------
+        numpy.ndarray
+            Complete correction table, as :attr:`Scan.poses` names its columns.
+        """
+        poses = self.scan.poses
+        return np.zeros((len(self.scan.angles), 6), np.float32) if poses is None else poses
 
 
 __all__ = ["Alignment", "Reconstruction", "Scan"]

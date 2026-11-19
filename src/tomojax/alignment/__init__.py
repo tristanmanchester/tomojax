@@ -2,7 +2,10 @@
 
 Use :func:`tomojax.align` with ``fit`` to select global calibration, per-view
 translations and per-view rotations. The implementation uses one joint solver.
-The projection-domain centre preview is available as :func:`tomojax.estimate_center`.
+``method="opposite-views"`` estimates a centre from near-opposite views without an image.
+:class:`AlignConfig` holds every setting.
 """
 
-__all__ = []
+from tomojax.alignment._config import AlignConfig
+
+__all__ = ["AlignConfig"]

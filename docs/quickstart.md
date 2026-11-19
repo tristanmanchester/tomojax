@@ -155,7 +155,7 @@ uv run --no-sync tomojax preprocess raw.nxs -o binned.nxs --config preview.toml
 
 Binning reduces detector sampling, not the reconstruction grid. In Python,
 pass a coarser `grid=` to `tj.reconstruct` when you also want larger voxels;
-On the CLI, `--grid NX NY NZ` resamples the field of view selected by `--roi`
+On the CLI, `--grid NX NY NZ` resamples the field of view selected by `--region`
 to those counts, preserving its physical extent. Python uses
 `scan.grid.resampled((NX, NY, NZ))` to do the same without changing any data.
 
@@ -167,7 +167,7 @@ upsampling the binned data back onto the original fine grid:
 import tomojax as tj
 
 scan = tj.load_frames("raw.nxs").selected(slice(None, None, 4)).corrected(binning=8)
-scan = tj.estimate_center(scan)
+scan = tj.align(scan, fit="center", method="opposite-views").scan
 d = scan.detector
 grid = tj.Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
 tj.save("preview.nxs", tj.reconstruct(scan, grid=grid))
@@ -195,8 +195,9 @@ axial detector midplane.
 
 An explicit `detector=tj.Detector(nu, nv, du, dv, center=(u, v))` or full
 `geometry=` remains authoritative and is not automatically recalibrated.
-For an already loaded unposed axial scan, `tj.estimate_center(scan)` estimates
-physical detector-u from row-gradient correlations without a volume solve.
+For an already loaded unposed axial scan, `tj.align(scan, fit="center",
+method="opposite-views")` estimates physical detector-u from row-gradient
+correlations without a volume solve.
 Near-opposite views are resampled in angle before matching. Inspect the result:
 repetitive structure, motion and truncation can make the estimate ambiguous.
 
@@ -284,14 +285,14 @@ floating-point pixels. The CLI export also writes a JSON geometry sidecar and
 reads one disk slice at a time, avoiding a full-volume load.
 
 Without grid/ROI overrides, automatic mode leaves region selection to the
-Python workflow. With an explicit method, the default `--roi auto` may crop
-to the detector field of view; `--roi off` preserves the recorded grid.
+Python workflow. With an explicit method, the default `--region auto` may crop
+to the detector field of view; `--region off` preserves the recorded grid.
 `--grid NX NY NZ` changes voxel counts and spacing together, preserving the
-selected physical extent. Use `--roi off` to retain the whole recorded field of
-view, or let `--roi auto` restrict it to the measured detector window first.
+selected physical extent. Use `--region off` to retain the whole recorded field of
+view, or let `--region auto` restrict it to the measured detector window first.
 Automatic policies that cannot honor an override require an explicit method.
 Check both field of view and physical units before comparing reconstructions.
-`--roi cyl` also zeroes the volume outside the cylinder every view sees.
+`--region cyl` also zeroes the volume outside the cylinder every view sees.
 
 For supported parallel scans, `--method fourier` uses the Fourier-slice inverse,
 with the volume on the host in bounded slabs. The backend uses matching available

@@ -42,12 +42,15 @@ released in the same joint solver; it takes one or more of `center`, `translatio
   `--no-apply-poses`. Its expert settings are fields of the method's configuration
   class (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig` or
   `SPDHGConfig`), each replacing that field of the class's defaults, as
-  `tj.reconstruct(config=...)` takes them; `--roi cyl` zeroes the volume
+  `tj.reconstruct(config=...)` takes them; `--region cyl` zeroes the volume
   outside the cylinder every view sees. The output holds the volume, its geometry and
   record, and names the input projections; `--include-scan` keeps them too.
 - `align`: jointly estimate the image and the named geometry corrections with `tj.align`, on
   top of the poses saved in the input unless `--no-apply-poses`. `--fit center` fits one shared centre
   (two for cone data); `--fit translations tilt roll` adds shared setup angles to per-view shifts.
+  `--iterations`, `--image-iterations`, `--tolerance`, `--interpolation` and `--resolution`
+  are `tj.align`'s keywords; a `--config` file sets the other `tj.AlignConfig` fields.
+  `--method opposite-views` estimates `--fit center` from near-opposite views without an image.
   `--fit translations rotations` adds per-view sample rotations. `--grid` sets image sampling.
 - `export`: write a reconstruction as TIFF slices, or as one raw file when
   OUTPUT ends in `.raw`.

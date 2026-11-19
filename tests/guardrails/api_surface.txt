@@ -1,11 +1,37 @@
 # tomojax
-class tomojax.Alignment(
-        image: 'np.ndarray | jax.Array',
-        grid: 'Grid',
-        scan: 'Scan',
-        poses: 'np.ndarray',
-        info: 'Mapping[str, object]',
+class tomojax.AlignConfig(
+        *,
+        iterations: 'int' = 8,
+        coarse_iterations: 'int' = 12,
+        levels: 'tuple[int, ...]' = (2, 1),
+        image_iterations: 'int' = 16,
+        image_tolerance: 'float' = 0.03,
+        tolerance: 'float' = 0.01,
+        min_iterations: 'int' = 4,
+        resolution: 'int' = 320,
+        max_voxels: 'int' = 16000000,
+        interpolation: 'Interpolation | None' = None,
+        refine_iterations: 'int' = 5,
+        initial_image_iterations: 'int' = 5,
+        innovation_scale: 'float' = 0.02,
+        knot_spacing: 'int' = 10,
+        rotation_sigma: 'float' = 0.5,
+        loss_width: 'float' = 2.5,
+        loss_contrast_floor: 'float' = 0.5,
+        image_tv_weight: 'float' = 0.0,
+        image_tv_huber: 'float' = 1.0,
+        margin: 'float' = 0.0625,
+        refine_smoothing: 'float' = 8.0,
+        refine_neighbors: 'int' = 5,
     ) -> None
+    .resolved(self, fit: 'tuple[str, ...]', *, cone: 'bool') -> 'AlignConfig'
+class tomojax.Alignment(
+        scan: 'Scan',
+        info: 'Mapping[str, object]',
+        image: 'np.ndarray | jax.Array | None' = None,
+        grid: 'Grid | None' = None,
+    ) -> None
+    .poses
 class tomojax.ConeBeam(
         source_to_axis: 'float',
         source_to_detector: 'float',
@@ -152,6 +178,14 @@ def tomojax.align(
         *,
         fit: 'str | tuple[str, ...]' = 'translations',
         grid: 'Grid | None' = None,
+        region: 'Region | None' = None,
+        method: 'AlignMethod | None' = None,
+        iterations: 'int | None' = None,
+        image_iterations: 'int | None' = None,
+        tolerance: 'float | None' = None,
+        interpolation: "Literal['linear', 'cubic'] | None" = None,
+        resolution: 'int | None' = None,
+        config: 'AlignConfig | None' = None,
     ) -> 'Alignment'
 def tomojax.backproject(
         geometry: 'ScanGeometry',
@@ -160,11 +194,6 @@ def tomojax.backproject(
         grid: 'Grid | None' = None,
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'jax.Array'
-def tomojax.estimate_center(
-        scan: 'Scan',
-        *,
-        views: 'slice | Sequence[int] | np.ndarray | None' = None,
-    ) -> 'Scan'
 def tomojax.estimate_region(scan: 'Scan') -> 'RegionEstimate'
 def tomojax.load(
         path: 'str | PathLike[str]',
@@ -212,6 +241,7 @@ def tomojax.reconstruct(
         method: 'Method' = 'auto',
         *,
         grid: 'Grid | None' = None,
+        region: 'Region | None' = None,
         out: 'np.ndarray | None' = None,
         config: 'MethodConfig | None' = None,
         filter: 'str | None' = None,
@@ -702,6 +732,32 @@ def tomojax.io.save_dataset(path: 'PathLike', dataset: 'ProjectionDataset') -> '
 def tomojax.io.validate_dataset(path: 'PathLike') -> 'ValidationReport'
 
 # tomojax.alignment
+class tomojax.alignment.AlignConfig(
+        *,
+        iterations: 'int' = 8,
+        coarse_iterations: 'int' = 12,
+        levels: 'tuple[int, ...]' = (2, 1),
+        image_iterations: 'int' = 16,
+        image_tolerance: 'float' = 0.03,
+        tolerance: 'float' = 0.01,
+        min_iterations: 'int' = 4,
+        resolution: 'int' = 320,
+        max_voxels: 'int' = 16000000,
+        interpolation: 'Interpolation | None' = None,
+        refine_iterations: 'int' = 5,
+        initial_image_iterations: 'int' = 5,
+        innovation_scale: 'float' = 0.02,
+        knot_spacing: 'int' = 10,
+        rotation_sigma: 'float' = 0.5,
+        loss_width: 'float' = 2.5,
+        loss_contrast_floor: 'float' = 0.5,
+        image_tv_weight: 'float' = 0.0,
+        image_tv_huber: 'float' = 1.0,
+        margin: 'float' = 0.0625,
+        refine_smoothing: 'float' = 8.0,
+        refine_neighbors: 'int' = 5,
+    ) -> None
+    .resolved(self, fit: 'tuple[str, ...]', *, cone: 'bool') -> 'AlignConfig'
 
 # tomojax.datasets
 class tomojax.datasets.DetectorModel(

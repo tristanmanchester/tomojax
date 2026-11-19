@@ -398,10 +398,10 @@ def estimate_center_report(
         Exact opposing views do not require angular interpolation.
     """
     if type(geometry) is not ParallelGeometry:
-        raise ValueError("estimate_center requires an unposed axial ParallelGeometry")
+        raise ValueError('method="opposite-views" needs an unposed axial ParallelGeometry')
     geometry = cast("ParallelGeometry", geometry)
     validate_projection_stack(
-        projections, geometry.detector, geometry=geometry, context="estimate_center"
+        projections, geometry.detector, geometry=geometry, context="opposite-views"
     )
     detector = geometry.detector
     angles = np.asarray(geometry.angles, np.float64)
@@ -444,7 +444,7 @@ def estimate_center_report(
             row_offsets.append(tuple(_paired_offset(a[group], b[group], error) for group in groups))
     if not pairs:
         raise ValueError(
-            "estimate_center needs finite, nonconstant opposite projections. "
+            'method="opposite-views" needs finite, nonconstant opposite projections. '
             "Near-opposite pairs need angular neighbours within 2 degrees; "
             "use finer angular sampling when subsampling views."
         )

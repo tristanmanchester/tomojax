@@ -37,6 +37,24 @@ There are no aliases. Each old name is gone, and files saved before this release
 | `info["pose_dofs"]`, columns `dx`, `dz`, `dy` (also the report's and saved table's) | `info["pose_columns"]`, columns `x`, `z`, `y` |
 | saved `angle_offset_deg` | `angle_offset` |
 | `Reconstruction(volume, scan, method, info)` | `Reconstruction(volume, geometry, method, info, scan=None)` |
+| `tj.estimate_center(scan)` | `tj.align(scan, fit="center", method="opposite-views").scan` |
+| `--roi` (`recon`, `align`) | `--region`, and `region=` on `tj.reconstruct` and `tj.align` |
+| `info["levels"][i]["budget"] = {outer, inner, init_iterations, lm_initial}` | `info["levels"][i]["iterations"]`, `["image_iterations"]`, `["initial_image_iterations"]` |
+| `info["report"]["levels"][i]["steps"]` (a count) | `info["report"]["levels"][i]["iterations"]` |
+| `Alignment(volume, grid, scan, poses, info)` | `Alignment(scan, info, image=None, grid=None)`, with `poses` a property |
+
+### `tj.align` takes its settings
+
+`tj.align(scan, fit=..., *, grid, region, method, iterations, image_iterations, tolerance,
+interpolation, resolution, config)`. The five settings most runs change are keywords;
+`tj.AlignConfig` holds every setting with its default, all numbers the fit used to fix in
+code: levels, iteration counts, stopping rule, working resolution, the motion prior's scales,
+the robust loss and the refinement. A keyword replaces the config's field, and
+`info["config"]` records what a call used. `tomojax align` takes the same keywords as flags
+and the rest from `--config`. `method="opposite-views"` replaces `tj.estimate_center`. It fits
+`fit="center"` alone, from near-opposite views and without an image, so its `Alignment` has
+`image` None. `region=` is new on both `tj.align` and `tj.reconstruct`. The defaults give
+the same results as before.
 
 ### A saved reconstruction names its projections instead of holding them
 

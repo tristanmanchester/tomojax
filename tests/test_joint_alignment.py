@@ -343,6 +343,7 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         keep_grid,
         frames,
         detector_roll,
+        config=None,
         view_positions,
         declared_poses,
     ):

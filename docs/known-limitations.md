@@ -97,8 +97,8 @@ measurements require independent calibration evidence and repair before `Rings`.
   a disagreement test.
 - `tomojax inspect` checks storage and missing calibration in recognized raw
   acquisitions. A file that records no axial centre loads with the centre at the
-  middle of the detector; estimate it with `tj.estimate_center` or
-  `tj.align(fit="center")`. A valid report does not certify physical geometry or
+  middle of the detector; estimate it with `tj.align(fit="center")`, or quickly with
+  `method="opposite-views"`. A valid report does not certify physical geometry or
   reconstruction readiness.
 - External HDF5 links require readable backing files at their recorded paths.
   The loader reports missing detector sources; it does not repair damaged files

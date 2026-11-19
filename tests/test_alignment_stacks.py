@@ -288,7 +288,7 @@ n, nz, nu, nv, views = (int(a) for a in sys.argv[1:6])
 cone, stage = sys.argv[6] == "cone", sys.argv[7]
 # One level, so the process's peak is the level's; for "fine", a short coarse level first,
 # whose volume the fine level (measured, being the last and larger) starts from.
-_fit._LEVELS = ((2, 2), (1, 8)) if stage == "fine" else ((1, 8),)
+config = tj.AlignConfig(levels=(2, 1), coarse_iterations=2) if stage == "fine" else tj.AlignConfig(levels=(1,))
 dev, seen = jax.devices()[0], {}
 solve, refine = _solver.solve, _fit.refine
 
@@ -345,7 +345,7 @@ projections += rng.normal(0, 0.01, projections.shape).astype(np.float32)
 nominal = np.asarray(stack_view_poses(geometry, views))
 frames = cone_frames(geometry)
 seen["cone"] = frames is not None
-_fit.fit_poses(projections, nominal, grid, detector, keep_grid=True, frames=frames)
+_fit.fit_poses(projections, nominal, grid, detector, keep_grid=True, frames=frames, config=config)
 print(json.dumps(seen))
 """
 

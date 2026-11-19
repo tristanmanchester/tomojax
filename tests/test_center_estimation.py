@@ -9,6 +9,11 @@ import tomojax as tj
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 
+def _centered(scan):
+    """The scan with its centre from near-opposite views (``tj.align``'s method)."""
+    return tj.align(scan, fit="center", method="opposite-views").scan
+
+
 def _scan(*, pitch=0.8, views=180, span=180):
     angles = 350 + np.linspace(0, span, views, endpoint=False)
     detector = Detector(64, 8, pitch, 1.3, (2.7, -4.2))
@@ -59,9 +64,9 @@ def test_encoder_variations_do_not_concentrate_center_pairs_in_one_sector():
     assert abs(result.detector.center[0] - true_u) < 0.3 * scan.detector.du
 
 
-def test_estimate_center_returns_the_scan_with_its_physical_center():
+def test_opposite_views_returns_the_scan_with_its_physical_center():
     scan, true_u, truth = _scan()
-    result = tj.estimate_center(scan)
+    result = _centered(scan)
     assert result.projections is scan.projections
     assert result.source is None
     assert result.grid is scan.grid
@@ -73,7 +78,7 @@ def test_estimate_center_returns_the_scan_with_its_physical_center():
     assert np.linalg.norm(volume[4] - truth) / np.linalg.norm(truth) < 0.025
 
 
-def test_estimate_center_after_crop_and_bin_keeps_absolute_physical_units():
+def test_opposite_views_after_crop_and_bin_keeps_absolute_physical_units():
     scan, true_u, _ = _scan()
     known = replace(
         scan,
@@ -82,14 +87,14 @@ def test_estimate_center_after_crop_and_bin_keeps_absolute_physical_units():
     for factor in (1, 2):
         preview = scan.cropped(slice(1, 7), slice(2, 61)).binned(factor)
         expected = known.cropped(slice(1, 7), slice(2, 61)).binned(factor)
-        result = tj.estimate_center(preview)
+        result = _centered(preview)
         assert (
             abs(result.detector.center[0] - expected.detector.center[0])
             <= 0.4 * preview.detector.du
         )
 
 
-def test_estimate_center_orders_wrapped_repeated_angles_by_direction():
+def test_opposite_views_orders_wrapped_repeated_angles_by_direction():
     scan, true_u, _ = _scan()
     indices = np.repeat(np.arange(179, -1, -1), 2)
     angles = scan.angles[indices] % 360
@@ -97,12 +102,12 @@ def test_estimate_center_orders_wrapped_repeated_angles_by_direction():
     scan = replace(
         scan, projections=scan.projections[indices], geometry=replace(scan.geometry, angles=angles)
     )
-    result = tj.estimate_center(scan)
+    result = _centered(scan)
     assert abs(result.detector.center[0] - true_u) <= 0.3 * scan.detector.du
 
 
 @pytest.mark.parametrize("kind", ["short_arc", "cone", "sparse_views"])
-def test_estimate_center_rejects_scans_without_usable_axial_pairs(kind):
+def test_opposite_views_rejects_scans_without_usable_axial_pairs(kind):
     scan, _, _ = _scan()
     if kind == "short_arc":
         scan = scan.selected(slice(0, 100))
@@ -111,9 +116,9 @@ def test_estimate_center_rejects_scans_without_usable_axial_pairs(kind):
     else:
         geometry = tj.ConeGeometry(scan.grid, scan.detector, scan.angles, tj.ConeBeam(100, 200))
         scan = replace(scan, geometry=geometry)
-    message = "angular neighbours" if kind == "sparse_views" else "estimate_center"
+    message = "angular neighbours" if kind == "sparse_views" else "opposite-views"
     with pytest.raises(ValueError, match=message):
-        tj.estimate_center(scan)
+        _centered(scan)
 
 
 def test_loading_keeps_an_unrecorded_center_at_the_middle(tmp_path, monkeypatch):
@@ -157,7 +162,7 @@ def test_loading_keeps_an_unrecorded_center_at_the_middle(tmp_path, monkeypatch)
     assert again.source.geometry_metadata["detector_center_status"] == "not_recorded"
     # Asked for, the centre is estimated.
     monkeypatch.setattr(alignment, "estimate_center_report", estimate)
-    assert abs(tj.estimate_center(loaded).detector.center[0] - true_u) <= 0.3 * scan.detector.du
+    assert abs(_centered(loaded).detector.center[0] - true_u) <= 0.3 * scan.detector.du
 
 
 def test_recon_says_when_the_file_recorded_no_center(tmp_path, caplog):
@@ -175,7 +180,7 @@ def test_recon_says_when_the_file_recorded_no_center(tmp_path, caplog):
         assert "records no rotation centre" in caplog.text
 
 
-def test_estimate_center_retains_signed_phase_contrast_across_rows():
+def test_opposite_views_retains_signed_phase_contrast_across_rows():
     from scipy.ndimage import gaussian_filter1d
 
     scan, true_u, _ = _scan(views=181)
@@ -184,7 +189,7 @@ def test_estimate_center_retains_signed_phase_contrast_across_rows():
     phase *= np.asarray([1, -1] * 4)[None, :, None]
     phase += np.random.default_rng(17).normal(0, 0.015, phase.shape)
     phase += np.sin(np.deg2rad(scan.angles))[:, None, None]
-    result = tj.estimate_center(replace(scan, projections=phase))
+    result = _centered(replace(scan, projections=phase))
     assert abs(result.detector.center[0] - true_u) < 0.15 * scan.detector.du
 
 
@@ -303,6 +308,6 @@ def test_calibration_subset_excludes_every_interpolation_contributor(form):
             assert getattr(actual, side) == tuple(
                 (int(kept[i]), w) for i, w in getattr(local, side)
             )
-    result = tj.estimate_center(replace(scan, projections=poisoned), views=views)
-    assert result.projections is poisoned and result.detector == report.geometry.detector
-    assert estimate_center(scan.geometry, poisoned, views=views).detector == result.detector
+    assert (
+        estimate_center(scan.geometry, poisoned, views=views).detector == report.geometry.detector
+    )

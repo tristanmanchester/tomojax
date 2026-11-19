@@ -143,7 +143,9 @@ def run_tomojax(
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
     det = Detector(case["nu"], case["nv"], 1.0, 1.0)
     geometry = ConeGeometry(grid, det, case["angles"], ConeBeam(case["sod"], case["sdd"]))
-    coeff = cone_coefficients(jnp.asarray(geometry.pose_matrices(), jnp.float32), grid, det, geometry.beam)
+    coeff = cone_coefficients(
+        jnp.asarray(geometry.pose_matrices(), jnp.float32), grid, det, geometry.beam
+    )
     dvol, ddata = jnp.asarray(volume), jnp.asarray(data)
     forward = jax.jit(lambda x: cone_project(x, coeff, grid, det))
     adjoint = jax.jit(lambda y: cone_backproject(y, coeff, grid, det))
@@ -160,7 +162,9 @@ def run_tomojax(
     tilted = ConeGeometry(
         grid, det, case["angles"], ConeBeam(case["sod"], case["sdd"]), tilt=case["tilt"]
     )
-    coeff_t = cone_coefficients(jnp.asarray(tilted.pose_matrices(), jnp.float32), grid, det, tilted.beam)
+    coeff_t = cone_coefficients(
+        jnp.asarray(tilted.pose_matrices(), jnp.float32), grid, det, tilted.beam
+    )
     forward_t = jax.jit(lambda x: cone_project(x, coeff_t, grid, det))
     adjoint_t = jax.jit(lambda y: cone_backproject(y, coeff_t, grid, det))
     _, t_fp_t = best(lambda: np.asarray(forward_t(jnp.asarray(volume))), repeats)

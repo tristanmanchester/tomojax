@@ -285,7 +285,7 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
     write_projection_dataset(scan)
     calls = _fake_reconstruct(monkeypatch)
 
-    args = ["recon", str(scan), "-o", str(recon), "--method", "cgls", "--roi", "off"]
+    args = ["recon", str(scan), "-o", str(recon), "--method", "cgls", "--region", "off"]
     assert main([*args, "--grid", "4", "4", "2", "--iterations", "7", "--warm-start"]) == 0
 
     assert calls.pop("method") == "cgls"
@@ -344,7 +344,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
         str(recon),
         "--method",
         "fbp",
-        "--roi",
+        "--region",
         "off",
         "--grid",
         "4",
@@ -370,7 +370,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     settings = resolved["reconstruction"]["config"]
     assert (settings["filter"], settings["scale"]) == ("ramp", 0.5)
     assert resolved["reconstruction_grid"]["nx"] == 4
-    assert resolved["roi"] == {
+    assert resolved["region"] == {
         "requested": "off",
         "grid_changed": False,
         "cylindrical_output_mask": False,
@@ -385,7 +385,7 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
     manifest = tmp_path / "recon-manifest.json"
     write_projection_dataset(scan)
     args = [
-        "--roi",
+        "--region",
         "off",
         "--grid",
         "4",
@@ -442,16 +442,16 @@ def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path
     scan_path, recon_path = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
     write_projection_dataset(scan_path)
     command = ["recon", str(scan_path), "-o", str(recon_path), "--method", "fista"]
-    assert main([*command, "--roi", "cyl", "--iterations", "4"]) == 0
+    assert main([*command, "--region", "cyl", "--iterations", "4"]) == 0
 
     scan = tj.load(scan_path)
-    # The CLI's grid for --roi cyl, and the cylinder as FISTA's support.
+    # The CLI's grid for --region cyl, and the cylinder as FISTA's support.
     grid = tj.load_reconstruction(recon_path).grid
     # check-public-imports: allow-private
-    from tomojax.cli._reconstruction_region import cylinder_support, region_grid
+    from tomojax._field_of_view import cylinder_support, region_grid
 
     # The support constrains FISTA's updates, and the saved volume is zero outside.
-    _, cylinder = region_grid(scan, roi="cyl", grid=None)
+    _, cylinder = region_grid(scan, "cyl")
     assert cylinder is not None
     support = cylinder_support(grid, cylinder)
     config = FistaConfig(support=support)
@@ -472,7 +472,7 @@ def test_recon_cli_config_settings_are_fields_of_the_methods_configuration(
     )
 
     args = ["recon", str(scan), "-o", str(tmp_path / "out.nxs"), "--method", "fista"]
-    assert main([*args, "--config", str(config), "--roi", "off"]) == 0
+    assert main([*args, "--config", str(config), "--region", "off"]) == 0
 
     cfg = calls["config"]
     assert (cfg.regularizer, cfg.huber_delta, cfg.iterations) == ("huber_tv", 0.05, 50)
@@ -670,7 +670,7 @@ def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
     ).cropped(slice(6, 8), slice(None))
     src, out = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
     tj.save(src, scan)
-    assert main(["recon", str(src), "-o", str(out), "--grid", "6", "6", "2", "--roi", roi]) == 0
+    assert main(["recon", str(src), "-o", str(out), "--grid", "6", "6", "2", "--region", roi]) == 0
     result = tj.load_reconstruction(out)
     assert (result.grid.vx, result.grid.vy, result.grid.vz) == (2, 2, 5 if roi == "off" else 1)
     assert grid_volume_origin(result.grid)[2] == (-2.5 if roi == "off" else 1.5)

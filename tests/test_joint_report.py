@@ -81,7 +81,7 @@ def test_report_states_sizes_in_native_pixels_and_flags_in_working_pixels():
     )
     assert report["isolated_views"] == [30]
     assert report["unusual_views"] == [50]
-    assert report["levels"] == [{"steps": 3, "ended": "pose_steps_below_tolerance"}]
+    assert report["levels"] == [{"iterations": 3, "ended": "pose_steps_below_tolerance"}]
     dx = report["poses"]["x"]
     assert dx["max"] == np.abs(working[:, 0] * binning).max()
     # The spline carries the drift (RMS 0.6 / sqrt(2) working px); the view-to-view

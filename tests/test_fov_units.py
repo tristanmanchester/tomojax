@@ -10,7 +10,7 @@ import pytest
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax.cli._reconstruction_region import cylinder_support, region_grid
+from tomojax._field_of_view import cylinder_support, region_grid
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
 pytestmark = pytest.mark.numerical
@@ -42,7 +42,7 @@ def _scaled(grid: Grid, detector: Detector, scale: float) -> tuple[Grid, Detecto
 @pytest.mark.parametrize("roi", ["auto", "bbox", "cube", "cyl"])
 def test_roi_cropping_gives_the_same_dimensions_at_any_unit(scale, roi) -> None:
     grid, detector = _scaled(Grid(11, 11, 11, 1.0, 1.0, 1.0), Detector(9, 9, 1.0, 1.0), scale)
-    cropped, _ = region_grid(_scan(grid, detector), roi=roi, grid=None)
+    cropped, _ = region_grid(_scan(grid, detector), roi)
     assert (cropped.nx, cropped.ny, cropped.nz) == (9, 9, 9)
     assert cropped.vx == grid.vx
 
@@ -59,7 +59,7 @@ def test_cylinder_matches_independent_world_coordinates_at_any_unit(scale, cente
     grid, detector = _scaled(grid, detector, scale)
     angles = np.linspace(0, 360, 720, endpoint=False)
     scan = _scan(grid, detector, tj.ParallelGeometry(grid, detector, angles))
-    _, cylinder = region_grid(scan, roi="cyl", grid=None)
+    _, cylinder = region_grid(scan, "cyl")
     assert cylinder is not None
     np.testing.assert_array_equal(cylinder_support(grid, cylinder)[0] > 0, expected)
 
@@ -68,7 +68,7 @@ def test_cylinder_matches_independent_world_coordinates_at_any_unit(scale, cente
 def test_cylinder_includes_voxels_exactly_on_a_diagonal_boundary(scale) -> None:
     grid = Grid(nx=11, ny=11, nz=1, vx=scale, vy=scale, vz=scale)
     detector = Detector(nu=11, nv=1, du=scale, dv=scale)
-    _, cylinder = region_grid(_scan(grid, detector), roi="cyl", grid=None)
+    _, cylinder = region_grid(_scan(grid, detector), "cyl")
     assert cylinder is not None
     coords = np.arange(11) - 5
     expected = coords[:, None] ** 2 + coords[None, :] ** 2 <= 25
@@ -77,7 +77,7 @@ def test_cylinder_includes_voxels_exactly_on_a_diagonal_boundary(scale) -> None:
 
 def test_single_pixel_detector_cylinder_keeps_only_the_on_axis_voxel() -> None:
     grid, detector = Grid(5, 5, 1, 1.0, 1.0, 1.0), Detector(1, 1, 1.0, 1.0)
-    cropped, cylinder = region_grid(_scan(grid, detector), roi="cyl", grid=None)
+    cropped, cylinder = region_grid(_scan(grid, detector), "cyl")
     assert cylinder is not None and (cropped.nx, cropped.ny) == (1, 1)
     expected = np.zeros((5, 5), bool)
     expected[2, 2] = True
@@ -87,8 +87,8 @@ def test_single_pixel_detector_cylinder_keeps_only_the_on_axis_voxel() -> None:
 def test_roi_keeps_placement_only_when_shape_is_unchanged():
     # The grid sits off the axis in-plane but inside the detector's rows axially.
     grid = Grid(9, 9, 9, 0.5, 0.5, 0.5, vol_origin=(2.0, 3.0, -2.0))
-    assert region_grid(_scan(grid, Detector(31, 31, 0.5, 0.5)), roi="bbox", grid=None)[0] is grid
-    cropped, _ = region_grid(_scan(grid, Detector(21, 21, 0.5, 0.5)), roi="bbox", grid=None)
+    assert region_grid(_scan(grid, Detector(31, 31, 0.5, 0.5)), "bbox")[0] is grid
+    cropped, _ = region_grid(_scan(grid, Detector(21, 21, 0.5, 0.5)), "bbox")
     # Voxel centres keep their positions: the crop is a window of the grid.
     offsets = (np.asarray(grid_volume_origin(cropped)) - grid_volume_origin(grid)) / 0.5
     np.testing.assert_allclose(offsets, np.round(offsets), atol=1e-9)
@@ -98,7 +98,7 @@ def test_roi_keeps_placement_only_when_shape_is_unchanged():
 def test_axial_roi_follows_off_center_detector_rows():
     grid = Grid(12, 12, 10, 1, 1, 1, vol_center=(0, 0, 1))
     detector = Detector(12, 2, 1, 1, center=(0, 2))
-    result, _ = region_grid(_scan(grid, detector), roi="bbox", grid=None)
+    result, _ = region_grid(_scan(grid, detector), "bbox")
     assert result.nz == 2 and result.vz == 1
     assert grid_volume_origin(result)[2] == 1.5
 
@@ -106,13 +106,11 @@ def test_axial_roi_follows_off_center_detector_rows():
 @pytest.mark.parametrize("shape", [(9, 7, 3), (5, 4, 3), (7, 9, 3)])
 def test_automatic_roi_keeps_a_rectangular_grid_the_detector_covers(shape):
     grid = Grid(*shape, 0.7, 1.1, 1.9, vol_origin=(2, 3, 4))
-    assert region_grid(_scan(grid, Detector(101, 101, 1, 1)), roi="auto", grid=None)[0] == grid
+    assert region_grid(_scan(grid, Detector(101, 101, 1, 1)), "auto")[0] == grid
 
 
 def test_automatic_roi_still_crops_what_the_detector_cannot_see():
-    cropped, _ = region_grid(
-        _scan(Grid(11, 11, 5, 1, 1, 1), Detector(9, 3, 1, 1)), roi="auto", grid=None
-    )
+    cropped, _ = region_grid(_scan(Grid(11, 11, 5, 1, 1, 1), Detector(9, 3, 1, 1)), "auto")
     assert (cropped.nx, cropped.ny, cropped.nz) == (9, 9, 3)
 
 
@@ -123,7 +121,7 @@ def test_cone_roi_measures_the_field_in_object_lengths():
     # Magnification 2 halves the detector's reach in the object: about 9.5 x 4.5.
     angles = np.linspace(0, 360, 90, endpoint=False)
     scan = _scan(grid, detector, ConeGeometry(grid, detector, angles, ConeBeam(100, 200)))
-    cropped, _ = region_grid(scan, roi="bbox", grid=None)
+    cropped, _ = region_grid(scan, "bbox")
     assert 17 <= cropped.nx <= 21 and 17 <= cropped.ny <= 21 and 7 <= cropped.nz <= 10
 
 
@@ -133,7 +131,7 @@ def test_laminography_roi_keeps_voxels_the_tilted_rays_measure():
     grid, detector = Grid(9, 9, 21, 1, 1, 1), Detector(30, 10, 1, 1)
     angles = np.linspace(0, 360, 90, endpoint=False)
     scan = _scan(grid, detector, LaminographyGeometry(grid, detector, angles, tilt=60))
-    cropped, _ = region_grid(scan, roi="bbox", grid=None)
+    cropped, _ = region_grid(scan, "bbox")
     # The axis point at height 8 projects to detector v = 4, inside the 10 rows.
     top = grid_volume_origin(cropped)[2] + (cropped.nz - 1) * cropped.vz
     assert top >= 8

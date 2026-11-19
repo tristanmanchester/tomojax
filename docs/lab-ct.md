@@ -82,7 +82,7 @@ pixel at the axis, the pixel size divided by the magnification
 `source_to_detector / source_to_axis`, and `tomojax recon --grid NX NY NZ`
 sets the number of voxels while preserving the selected physical field of view
 (adjusting voxel sizes). For a small whole-volume preview, bin the detector
-with `preprocess` and use `recon --grid 64 64 64 --roi off`. In Python the same
+with `preprocess` and use `recon --grid 64 64 64 --region off`. In Python the same
 grid is `scan.grid.resampled((64, 64, 64))`, passed as `grid=` to reconstruction.
 
 ### Zeiss Xradia preview
@@ -136,7 +136,7 @@ printf 'binning = 16\n' > preview.toml
 uv run --no-sync tomojax preprocess scan.txrm --darks 0 -o corrected.nxs \
   --views 0:801:8 --config preview.toml
 uv run --no-sync tomojax recon corrected.nxs -o preview.nxs \
-  --method cgls --iterations 10 --grid 64 64 64 --roi off
+  --method cgls --iterations 10 --grid 64 64 64 --region off
 uv run --no-sync tomojax inspect preview.nxs --preview previews
 ```
 
@@ -310,8 +310,8 @@ Its defaults keep every twentieth view of the middle orbit, bin the detector
 
 ```bash
 uv run --no-sync python examples/import_walnut.py ~/data/walnuts/Walnut1 -o orbit.nxs
-uv run --no-sync tomojax recon orbit.nxs -o fdk.nxs --method fbp --roi off
-uv run --no-sync tomojax recon orbit.nxs -o cgls.nxs --method cgls --iterations 20 --roi off
+uv run --no-sync tomojax recon orbit.nxs -o fdk.nxs --method fbp --region off
+uv run --no-sync tomojax recon orbit.nxs -o cgls.nxs --method cgls --iterations 20 --region off
 uv run --no-sync tomojax inspect cgls.nxs --preview walnut-previews
 ```
 
