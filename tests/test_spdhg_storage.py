@@ -103,6 +103,8 @@ def test_compiled_solve_fits_in_four_and_a_half_volume_buffers():
     )
     mem = _run_spdhg_scan.lower(grid, detector, runtime).compile().memory_analysis()
     volume = 4 * grid.nx * grid.ny * grid.nz
+    # One accumulator plus bounded scratch must fit in a single allocator region.
+    assert mem.temp_size_in_bytes <= 1.25 * volume + data.nbytes
     assert mem.temp_size_in_bytes + mem.output_size_in_bytes <= 4.5 * volume + data.nbytes
 
 

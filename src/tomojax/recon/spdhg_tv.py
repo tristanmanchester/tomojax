@@ -663,7 +663,7 @@ def _run_spdhg_scan(
     grid: Grid,
     detector: Detector,
     runtime: _SPDHGRuntime,
-) -> tuple[jax.Array, jax.Array]:
+) -> tuple[jax.Array, jax.Array, tuple[jax.Array, ...]]:
     cfg, schedule, step_sizes = runtime.config, runtime.schedule, runtime.step_sizes
     n_views, nv, nu = runtime.data_shape
     block_shape = (schedule.views_per_batch, nv, nu)
@@ -705,9 +705,8 @@ def _run_spdhg_scan(
         return jax.lax.dynamic_update_slice_in_dim(state.y_data, duals, start, axis=0)
 
     def one_step(state: _SPDHGScanState, t: jnp.ndarray) -> tuple[_SPDHGScanState, None]:
-        block = schedule.block_ids[t]
         size = schedule.views_per_batch
-        start = block * size
+        start = schedule.block_ids[t] * size
         start_shifted = jnp.minimum(start, n_views - size)
 
         T_chunk = jax.lax.dynamic_slice_in_dim(
@@ -771,12 +770,11 @@ def _run_spdhg_scan(
         ), None
 
     initial = _initial_spdhg_state(runtime, volume_shape(runtime.projector[0], grid))
-    final = (
-        jax.lax.scan(one_step, initial, jnp.arange(cfg.iterations))[0]
-        if cfg.iterations
-        else initial
-    )
-    return final.x, final.losses
+    steps = jnp.arange(cfg.iterations)
+    final = jax.lax.scan(one_step, initial, steps)[0] if cfg.iterations else initial
+    # XLA allocates outputs separately. Keeping the packed dual in the outputs lets the
+    # allocator reuse volume-sized regions from setup instead of finding one large temporary.
+    return final.x, final.losses, final.flux
 
 
 def spdhg_tv(
@@ -888,10 +886,10 @@ def spdhg_tv(
                 stack.enter_context(host_source(w_host)) if w_host is not None else jnp.int32(-1),
             ]
             runtime = replace(runtime, host_keys=jnp.stack(keys))
-            x, losses = _run_spdhg_scan(grid, detector, runtime)
+            x, losses = _run_spdhg_scan(grid, detector, runtime)[:2]
             x.block_until_ready()
     else:
-        x, losses = _run_spdhg_scan(grid, detector, runtime)
+        x, losses = _run_spdhg_scan(grid, detector, runtime)[:2]
     result = _SPDHGResult(
         volume=restore_volume(x, runtime.projector[0]),
         losses=losses,

@@ -46,7 +46,7 @@
     "src/tomojax/recon/_cgls_jax.py::cgls": 115,
     "src/tomojax/recon/fista_tv.py::_run_fista_scan": 112,
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115,
-    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 118
+    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 116
   },
   "code_lines": {
     "(modules)": 3541,
@@ -62,7 +62,7 @@
     "io": 3920,
     "motion": 153,
     "nuisance": 232,
-    "recon": 13174
+    "recon": 13172
   },
   "cuda_kernels": 48,
   "cuda_switches": 34,

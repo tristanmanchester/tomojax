@@ -1669,8 +1669,9 @@ The packed SPDHG-TV recurrence on the same card fits a 711³ grid under the
 default 75% allocator limit, with `XLA_PYTHON_CLIENT_PREALLOCATE=true`
 (2026-11-19). Its volume state is 5.73 GiB and the
 JAX allocator peaked at 5.78 GiB. A 712³ grid exhausted the pool. This capacity
-test ran three updates with automatic steps and TV weight, four views per batch
-and a zero start. It used unit-pitch cubic voxels, a matching square detector
+test ran eleven updates with automatic steps and TV weight, four views per batch,
+a zero start and one logged objective. With the library's default on-demand pool,
+the same test completed at 690³. It used unit-pitch cubic voxels, a matching square detector
 and six laminography views at −35° tilt (23°, 65°, 99°, 101°, 240°, 300°),
 with uniform random FP32 projections. Detector size, batch size and additional
 volume inputs affect the limit.
