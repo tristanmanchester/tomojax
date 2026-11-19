@@ -1,7 +1,7 @@
 # tomojax.io
 
 `tomojax.io` reads and writes TomoJAX datasets, reads Nikon, SkyScan, Zeiss and
-ESRF acquisitions and TIFF stacks, and validates and inspects datasets. Detector frames are read
+ESRF acquisitions, TIFF stacks and PSI cSAXS ptychographic tomography `.mat` files, and validates and inspects datasets. Detector frames are read
 with `tomojax.load_frames` and corrected with
 [`tomojax.corrections`](../corrections/README.md).
 
