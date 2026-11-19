@@ -228,9 +228,11 @@ def test_at_a_schur_solve_the_volumes_alive_are_the_levels_own(monkeypatch):
     # The second level starts from the first's volume and upsamples it into its own start
     # volume: at every Schur solve the live arrays of a level's volume shape are exactly the
     # volumes it owns. A copy resized outside the level and held beside them would be one no
-    # plan owns.
+    # plan owns. Arrays alive before the call (another test's) are held, so none of their
+    # buffers is reused, and left out.
     extras = []
     schur = _solver._Level.schur
+    before = [a for a in jax.live_arrays() if not a.is_deleted()]
 
     def solving(self, *args):
         jax.block_until_ready(args)
@@ -240,7 +242,7 @@ def test_at_a_schur_solve_the_volumes_alive_are_the_levels_own(monkeypatch):
             return {a.unsafe_buffer_pointer() for a in same if not a.is_deleted()}
 
         owned = pointers(jax.tree.leaves(self.stacks.volumes))
-        extras.append((self.ops.shape, pointers(jax.live_arrays()) - owned))
+        extras.append((self.ops.shape, pointers(jax.live_arrays()) - owned - pointers(before)))
         return schur(self, *args)
 
     monkeypatch.setattr(_solver._Level, "schur", solving)
