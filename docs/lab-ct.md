@@ -247,7 +247,7 @@ selection and gauges.
 ## Speed
 
 On a 256³, 360-view scan on a laptop RTX 4070, with every library taking and
-returning host arrays, FDK takes 0.092 s (ASTRA 0.26 s, TIGRE 0.50 s) and the
+returning host arrays, FDK takes 0.090 s (ASTRA 0.21 s, TIGRE 0.48 s) and the
 forward projection 0.13 s (ASTRA 0.17 s). The exact transpose takes 0.12 s,
 slower than ASTRA's approximate backprojector (0.073 s). The
 [measurements](measurements.md#cone-beam-projection-and-fdk) give the protocol,
