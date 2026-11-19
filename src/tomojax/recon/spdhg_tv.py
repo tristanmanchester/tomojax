@@ -44,7 +44,7 @@ from ._spdhg_steps import SPDHGStepSizes, make_spdhg_chunk_operators, resolve_sp
 from ._tv_metric import TVMetric, raise_tv_weight, resolve_tv_metric
 from ._tv_ops import (
     div3,
-    grad3,
+    forward_difference,
     huber_tv_value,
     isotropic_tv_value,
     project_tv_duals,
@@ -322,16 +322,13 @@ def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
 
 
 def _initial_spdhg_state(
-    grid: Grid,
-    runtime: _SPDHGRuntime,
+    runtime: _SPDHGRuntime, volumes: tuple[jnp.ndarray, ...]
 ) -> _SPDHGScanState:
-    # Called inside the compiled solve: zero states are never input buffers.
+    # Called inside the compiled solve on the donated zero volumes.
     cfg = runtime.config
-    x0 = runtime.init_x
-    if x0 is None:
-        x0 = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
+    zeros, p1, p2, p3, s_data = volumes
+    x0 = zeros if runtime.init_x is None else runtime.init_x
     x0 = _proj_pos_support(x0, runtime.support, nonnegative=cfg.nonnegative)
-    tv_zero = jnp.zeros_like(x0) if cfg.tv_weight != 0 else jnp.zeros((0,), jnp.float32)
     return _SPDHGScanState(
         x=x0,
         # Streaming keeps the duals on the host; a placeholder stands in here.
@@ -340,10 +337,10 @@ def _initial_spdhg_state(
             if runtime.y_meas is None
             else jnp.zeros_like(runtime.y_meas)
         ),
-        p1=tv_zero,
-        p2=tv_zero,
-        p3=tv_zero,
-        s_data=jnp.zeros_like(x0),
+        p1=p1,
+        p2=p2,
+        p3=p3,
+        s_data=s_data,
         losses=jnp.zeros((cfg.iterations,), dtype=jnp.float32),
     )
 
@@ -552,16 +549,16 @@ def _spdhg_data_residual(
     return residual if weights is None else residual * jnp.sqrt(weights)
 
 
-def _update_spdhg_tv_duals(
-    state: _SPDHGScanState, x: jnp.ndarray, runtime: _SPDHGRuntime
+def _tv_dual_step(
+    p: tuple[jnp.ndarray, ...],
+    gradient: tuple[jnp.ndarray, ...],
+    runtime: _SPDHGRuntime,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """The TV duals' ascent and proximal step, pointwise in the duals and the gradient."""
     step_sizes = runtime.step_sizes
-    gx, gy, gz = grad3(x, gradient_scale_xyz=runtime.metric.gradient_scale_xyz)
-    p1_u = state.p1 + step_sizes.sigma_tv * gx
-    p2_u = state.p2 + step_sizes.sigma_tv * gy
-    p3_u = state.p3 + step_sizes.sigma_tv * gz
+    p1_u, p2_u, p3_u = (q + step_sizes.sigma_tv * g for q, g in zip(p, gradient, strict=True))
     if runtime.regularizer == "huber_tv":
-        p1_new, p2_new, p3_new = prox_huber_tv_conj(
+        return prox_huber_tv_conj(
             p1_u,
             p2_u,
             p3_u,
@@ -569,9 +566,43 @@ def _update_spdhg_tv_duals(
             lam=runtime.metric.weight,
             delta=runtime.huber_delta,
         )
-    else:
-        p1_new, p2_new, p3_new = project_tv_duals(p1_u, p2_u, p3_u, radius=runtime.metric.weight)
-    return p1_new, p2_new, p3_new
+    return project_tv_duals(p1_u, p2_u, p3_u, radius=runtime.metric.weight)
+
+
+def _update_spdhg_tv_duals(
+    state: _SPDHGScanState, x: jnp.ndarray, runtime: _SPDHGRuntime
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """The new TV duals, written over the old ones a slab of planes at a time.
+
+    Each plane's step reads the old duals there and the iterate's next plane, so a
+    slab is replaced in place and only slab-sized temporaries are needed.
+    """
+    nz = x.shape[0]
+    # About 2**20 voxels (4 MiB a field) a slab: measured fastest from 0.25 to 1 M.
+    depth = min(max(1, 2**20 // (x.shape[1] * x.shape[2])), max(1, nz - 1))
+    full = (nz - 1) // depth  # slabs whose next plane exists
+    cx, cy, cz = runtime.metric.gradient_scale_xyz
+
+    def step(start: jax.Array | int, size: int, after: jnp.ndarray, p: tuple) -> tuple:
+        # grad3's forward differences on planes whose successors are ``after``.
+        u = jax.lax.dynamic_slice_in_dim(x, start, size)
+        gradient = (cx * forward_difference(u, 2), cy * forward_difference(u, 1), cz * (after - u))
+        old = tuple(jax.lax.dynamic_slice_in_dim(q, start, size) for q in p)
+        new = _tv_dual_step(old, gradient, runtime)
+        return tuple(
+            jax.lax.dynamic_update_slice_in_dim(q, n, start, 0) for q, n in zip(p, new, strict=True)
+        )
+
+    def slab(i: jax.Array, p: tuple) -> tuple:
+        start = i * depth
+        return step(start, depth, jax.lax.dynamic_slice_in_dim(x, start + 1, depth), p)
+
+    p = jax.lax.fori_loop(0, full, slab, (state.p1, state.p2, state.p3))
+    # The remaining planes; the last is its own successor, a zero z difference (Neumann).
+    start = full * depth
+    after = jnp.concatenate([x[start + 1 :], x[-1:]])
+    p1, p2, p3 = step(start, nz - start, after, p)
+    return p1, p2, p3
 
 
 def _extrapolate_spdhg_gradient(
@@ -587,13 +618,16 @@ def _extrapolate_spdhg_gradient(
     )
     if cfg.tv_weight == 0:
         return state.p1, state.p2, state.p3, gradient_bar
-    p1, p2, p3 = _update_spdhg_tv_duals(state, x, runtime)
     scales = runtime.metric.gradient_scale_xyz
+    # The old duals' divergence reads their neighbours: formed first, as one volume,
+    # it lets the new duals (pointwise in the old) replace the old ones in place.
+    previous = jax.lax.optimization_barrier(
+        div3(state.p1, state.p2, state.p3, gradient_scale_xyz=scales)
+    )
+    p1, p2, p3 = _update_spdhg_tv_duals(state, x, runtime)
     tv_adjoint = -div3(p1, p2, p3, gradient_scale_xyz=scales)
     # TV is selected on every iteration, so its probability is one.
-    gradient_bar += tv_adjoint + cfg.theta * (
-        tv_adjoint + div3(state.p1, state.p2, state.p3, gradient_scale_xyz=scales)
-    )
+    gradient_bar += tv_adjoint + cfg.theta * (tv_adjoint + previous)
     return p1, p2, p3, gradient_bar
 
 
@@ -612,15 +646,14 @@ def _spdhg_primal_successor(
     return jnp.where(step + 1 < runtime.config.iterations, candidate, x)
 
 
-@functools.partial(jax.jit, static_argnames=("grid", "detector"))
+@functools.partial(jax.jit, static_argnames=("grid", "detector"), donate_argnames=("volumes",))
 def _run_spdhg_scan(  # noqa: PLR0915
     grid: Grid,
     detector: Detector,
     runtime: _SPDHGRuntime,
+    volumes: tuple[jnp.ndarray, ...],
 ) -> _SPDHGScanState:
-    cfg = runtime.config
-    schedule = runtime.schedule
-    step_sizes = runtime.step_sizes
+    cfg, schedule, step_sizes = runtime.config, runtime.schedule, runtime.step_sizes
     n_views, nv, nu = runtime.data_shape
     block_shape = (schedule.views_per_batch, nv, nu)
     keys = runtime.host_keys
@@ -728,7 +761,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
             losses=losses_new,
         ), None
 
-    initial = _initial_spdhg_state(grid, runtime)
+    initial = _initial_spdhg_state(runtime, volumes)
     if cfg.iterations == 0:
         return initial
     return jax.lax.scan(one_step, initial, jnp.arange(cfg.iterations))[0]
@@ -822,6 +855,11 @@ def spdhg_tv(
     >>> volume.shape
     (1, 4, 4)
     """
+    # The iterate, TV duals and data backprojection first, so the estimates'
+    # temporaries do not split their blocks; the solve rewrites them in place.
+    shape = (grid.nz, grid.ny, grid.nx)
+    tv = shape if (config or SPDHGConfig()).tv_weight != 0 else (0,)
+    volumes = tuple(jnp.zeros(s, jnp.float32) for s in (shape, tv, tv, tv, shape))
     runtime = _prepare_spdhg_runtime(
         geometry,
         grid,
@@ -843,10 +881,10 @@ def spdhg_tv(
                 stack.enter_context(host_source(w_host)) if w_host is not None else jnp.int32(-1),
             ]
             runtime = replace(runtime, host_keys=jnp.stack(keys))
-            final = _run_spdhg_scan(grid, detector, runtime)
+            final = _run_spdhg_scan(grid, detector, runtime, volumes)
             final.x.block_until_ready()
     else:
-        final = _run_spdhg_scan(grid, detector, runtime)
+        final = _run_spdhg_scan(grid, detector, runtime, volumes)
     result = _SPDHGResult(
         volume=final.x,
         losses=final.losses,

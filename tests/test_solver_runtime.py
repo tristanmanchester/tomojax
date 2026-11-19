@@ -197,7 +197,8 @@ def test_fista_streams_host_projections_like_device_projections(tmp_path, batch)
     stored = np.memmap(tmp_path / "views.f32", mode="w+", dtype=np.float32, shape=data.shape)
     stored[:] = data
     results = {}
-    for stream, projections in [(False, jnp.asarray(data)), (True, stored)]:
+    # The same host arrays either way: only the placement differs.
+    for stream, projections in [(False, data), (True, stored)]:
         config = FistaConfig(
             iterations=4,
             tv_weight=0.01,
@@ -225,20 +226,22 @@ def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted, data
     stored = np.memmap(tmp_path / "views.f32", mode="w+", dtype=np.float32, shape=data.shape)
     stored[:] = data
     results = {}
-    for stream, projections in [(False, jnp.asarray(data)), (True, stored)]:
+    # The same host arrays either way: only the placement differs.
+    for stream, projections in [(False, data), (True, stored)]:
         config = SPDHGConfig(
             iterations=20,
             data_term=data_term,
             tv_weight=0.01,
             views_per_batch=4,
-            backend="jax",
             stream=stream,
         )
-        w = None if weights is None else (weights if stream else jnp.asarray(weights))
-        results[stream] = spdhg_tv(geometry, grid, detector, projections, weights=w, config=config)
-    # The two compiled programs round differently in float32 (by ~2e-7 on a GPU).
-    np.testing.assert_allclose(results[True][0], results[False][0], rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(results[True][1]["loss"], results[False][1]["loss"], rtol=1e-6)
+        results[stream] = spdhg_tv(
+            geometry, grid, detector, projections, weights=weights, config=config
+        )
+    # The host and device placements give the same bits with the default projector
+    # (JAX on a CPU, CUDA on a GPU).
+    np.testing.assert_array_equal(results[True][0], results[False][0])
+    np.testing.assert_array_equal(results[True][1]["loss"], results[False][1]["loss"])
 
 
 @pytest.mark.numerical
