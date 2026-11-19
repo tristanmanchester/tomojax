@@ -53,7 +53,7 @@ set `TMPDIR` to a directory on a fast local disk before loading a large scan.
 | FDK (cone beam) | Read from host memory a slab's detector rows at a time when the volume is large | Moves to host z-slabs automatically when it does not fit |
 | CGLS | Streamed when resident data and solver state would exceed free GPU memory | Cone and CUDA linear Joseph parallel/laminography use host slabs automatically when the working state does not fit |
 | FISTA-TV | Streamed under the same rule; host-volume sweeps keep a detector-row ring | CUDA Joseph moves unmasked ordinary-TV state to host slabs when it does not fit |
-| SPDHG-TV | Streamed under the same rule, with its sinogram-sized dual and any weights also kept in host memory | On the GPU, with about eight volumes |
+| SPDHG-TV | Streamed under the same rule, with its sinogram-sized dual and any weights also kept in host memory | Five volumes on the GPU (the iterate, the data backprojection and three TV duals), plus a block's projections and a few planes of workspace |
 
 `stream = true` or `false` in the method's configuration (a
 `--config` key) overrides the 40% rule. Streaming needs the batched projection

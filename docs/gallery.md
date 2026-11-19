@@ -21,6 +21,19 @@ grayscale range; scale bars are 200 µm. Missing-cone artefacts remain.
 uv run python examples/gallery/k11_ruby_sphere.py k11-54013.nxs k11-ruby-sphere.png
 ```
 
+## Aligning a real laminography scan
+
+![Two slices through a ruby sphere and a bubble beside it, as loaded and after tj.align(scan), each with an enlarged region where they meet.](images/alignment-k11-sphere.png)
+
+The same scan, aligned with the plain `tj.align(scan)` on a 6.48 µm grid and
+reconstructed by FBP at the detector's 2.16 µm pitch, through the sphere's
+equator and 78 µm lower. As loaded, the edges of the sphere and of the bubble
+beside it are doubled; after the call each is one line.
+
+```bash
+uv run python examples/gallery/k11_sphere_alignment.py k11-54013.nxs alignment-k11-sphere.png
+```
+
 ## Glass spheres between PEKK plates
 
 ![An in-plane view of the glass-sphere layer and two enlarged cross-sections between PEKK plates.](../images/gallery/k11-glass-layer.png)

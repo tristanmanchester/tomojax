@@ -18,12 +18,13 @@ import numpy as np
 
 from ._projection import chunk_operators
 from ._tv_ops import gradient_norm_squared
+from ._volume_storage import volume_shape
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
 
-    from ._projection import ConeModel
     from ._tv_metric import TVMetric
+    from ._volume_storage import Model
     from .spdhg_tv import SPDHGConfig
 
 _SPDHGProjectChunk = Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
@@ -46,7 +47,7 @@ def make_spdhg_chunk_operators(
     poses: jnp.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
-    projector: tuple[str | ConeModel, str],
+    projector: tuple[Model, str],
     views_per_batch: int,
 ) -> tuple[_SPDHGProjectChunk, _SPDHGBackprojectChunk]:
     """Slice full-scan coefficients along with poses, retaining each arrangement."""
@@ -66,7 +67,7 @@ def _block_row_column_bounds(
     *,
     grid: Grid,
     detector: Detector,
-    projector: tuple[str | ConeModel, str],
+    projector: tuple[Model, str],
     views_per_batch: int,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     n = poses.shape[0]
@@ -79,7 +80,7 @@ def _block_row_column_bounds(
         projector=projector,
         views_per_batch=batch,
     )
-    shape = (grid.nz, grid.ny, grid.nx)
+    shape = volume_shape(projector[0], grid)
     zero, one = jnp.zeros(shape, jnp.float32), jnp.ones(shape, jnp.float32)
 
     def bound(block, maxima):
@@ -106,7 +107,7 @@ def resolve_spdhg_step_sizes(
     poses: jnp.ndarray,
     config: SPDHGConfig,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-    projector: tuple[str | ConeModel, str],
+    projector: tuple[Model, str],
     *,
     metric: TVMetric,
 ) -> SPDHGStepSizes:

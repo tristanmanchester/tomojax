@@ -60,7 +60,7 @@ def gradient_norm_squared(
     )
 
 
-def _backward_difference(p: jnp.ndarray, axis: int) -> jnp.ndarray:
+def backward_difference(p: jnp.ndarray, axis: int) -> jnp.ndarray:
     n = p.shape[axis]
     if n == 1:
         return jnp.zeros_like(p)
@@ -84,9 +84,9 @@ def div3(
     x, z = (0, 2) if z_fast else (2, 0)
     cx, cy, cz = gradient_scale_xyz
     return (
-        cx * _backward_difference(px, x)
-        + cy * _backward_difference(py, 1)
-        + cz * _backward_difference(pz, z)
+        cx * backward_difference(px, x)
+        + cy * backward_difference(py, 1)
+        + cz * backward_difference(pz, z)
     )
 
 
