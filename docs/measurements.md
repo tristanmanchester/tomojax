@@ -1665,16 +1665,13 @@ SPDHG-TV first rewrote its five state volumes in place (2026-11-19, commit
 memory) takes 137 s with a 3.2 GiB device peak on the RTX 4070 Laptop (8 GB),
 under the default 75% limit; before, it ran out of memory.
 
-The packed SPDHG-TV recurrence on the same card fits a 711³ grid under the
-default 75% allocator limit, with `XLA_PYTHON_CLIENT_PREALLOCATE=true`
-(2026-11-19). Its volume state is 5.73 GiB and the
-JAX allocator peaked at 5.78 GiB. A 712³ grid exhausted the pool. This capacity
-test ran eleven updates with automatic steps and TV weight, four views per batch,
-a zero start and one logged objective. With the library's default on-demand pool,
-the same test completed at 690³. It used unit-pitch cubic voxels, a matching square detector
-and six laminography views at −35° tilt (23°, 65°, 99°, 101°, 240°, 300°),
-with uniform random FP32 projections. Detector size, batch size and additional
-volume inputs affect the limit.
+SPDHG-TV now keeps its volume state in the projector's native layout and folds the
+old data backprojection into the primal update before the next transpose overwrites
+it (2026-11-19, commit `19431f9`). The same plain call on K11 54013 takes 98 s with
+a 2.36 GiB device peak, against 135 s and 3.20 GiB on `f58a6f7`, measured the same day
+on the same card. The volumes agree to 3.4e-7 relative (L2). On the 4×-binned scan
+(`frames.corrected(binning=4)`, 160 × 160 × 135 grid, 8.64 µm voxels, projections on
+the device, 600 updates) it takes 1.8 s with a 322 MiB peak, against 2.9 s and 366 MiB.
 
 ### Fourier inverse
 
