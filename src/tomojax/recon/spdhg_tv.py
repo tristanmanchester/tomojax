@@ -5,12 +5,14 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass, field, fields, replace
 import functools
+import math
 from typing import TYPE_CHECKING, NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.host_stream import (
     host_buffer,
     host_source,
@@ -858,6 +860,15 @@ def spdhg_tv(
     # The iterate, TV duals and data backprojection first, so the estimates'
     # temporaries do not split their blocks; the solve rewrites them in place.
     shape = (grid.nz, grid.ny, grid.nx)
+    need, free = 5 * 4 * math.prod(shape), device_free_memory_bytes()
+    if free is not None and need > free:
+        raise MemoryError(
+            f"spdhg keeps five volumes on the device (the iterate, three TV duals and the "
+            f"data backprojection): {need / 2**30:.1f} GiB for this {grid.nx} x {grid.ny} x "
+            f"{grid.nz} grid, with {free / 2**30:.1f} GiB free. fista, cgls and sirt keep a "
+            "volume this size on the host; or bin the scan (Scan.binned) or reconstruct a "
+            "smaller region"
+        )
     tv = shape if (config or SPDHGConfig()).tv_weight != 0 else (0,)
     volumes = tuple(jnp.zeros(s, jnp.float32) for s in (shape, tv, tv, tv, shape))
     runtime = _prepare_spdhg_runtime(

@@ -70,3 +70,17 @@ def test_the_solve_keeps_at_most_three_volumes_beside_its_donated_state():
     volume = 4 * grid.nx * grid.ny * grid.nz
     assert memory.alias_size_in_bytes == 5 * volume
     assert memory.temp_size_in_bytes <= 3 * volume
+
+
+def test_a_grid_whose_five_volumes_exceed_the_device_names_what_runs(monkeypatch):
+    import importlib
+
+    from tomojax.recon import spdhg_tv
+
+    module = importlib.import_module("tomojax.recon.spdhg_tv")
+    grid, detector = Grid(8, 8, 4, 1.0, 1.0, 1.0), Detector(8, 4, 1.0, 1.0)
+    geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 6, endpoint=False), 30)
+    # Room for four of the five volumes (4 KiB each).
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 4 * 4 * 8 * 8 * 4)
+    with pytest.raises(MemoryError, match=r"five volumes .* fista, cgls and sirt"):
+        spdhg_tv(geometry, grid, detector, np.zeros((6, 4, 8), np.float32))
