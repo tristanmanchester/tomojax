@@ -22,7 +22,7 @@ def gaussian_probe(view_indices, detector_shape: tuple[int, int], *, weights=Non
 
 
 def probe_gradient_rms(
-    poses, grid, detector, backproject, *, batch_size, support=None, read_weights=None
+    poses, grid, detector, backproject, *, batch_size, shape=None, support=None, read_weights=None
 ):
     """RMS of one full-scan contrast-noise transpose through the solver's BP.
 
@@ -50,7 +50,7 @@ def probe_gradient_rms(
         0,
         (n + batch - 1) // batch,
         accumulate,
-        jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32),
+        jnp.zeros(shape or (grid.nz, grid.ny, grid.nx), jnp.float32),
     )
     if support is not None:
         gradient = gradient * support

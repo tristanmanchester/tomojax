@@ -218,9 +218,11 @@ measurements require independent calibration evidence and repair before `Rings`.
   on one GPU, the `tomojax` commands always use one, and the GPUs must belong
   to one process. [Large scans and several GPUs](large-scans.md) says which
   solvers stream projections from host memory and what each GPU holds.
-- SPDHG-TV keeps five volumes on the GPU (its iterate, three TV duals and its data
-  backprojection), so a volume must fit there five times: a 1014³ grid (3.9 GiB a
-  volume) does not on an 8 GB card. FISTA, CGLS and SIRT keep such a volume in host memory.
+- SPDHG-TV keeps the iterate, the accumulated data backprojection and a packed TV
+  dual on the device. Together these take about 4.28 FP32 volumes, plus batch and
+  slab workspace and any resident projections, support and warm start. A 1014³
+  volume still exceeds an 8 GB card's capacity for this solver. FISTA, CGLS and
+  SIRT can keep the volume in host memory.
 - `tj.align` keeps its motion prior's factor on the GPU, and that grows as the square of the
   views: on an 8 GB card about 6000 views fit beside a full-size level, and 8000 do not.
 - Alignment fixes an object's position only up to what the data can see. Cone translations

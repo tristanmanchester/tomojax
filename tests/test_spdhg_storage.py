@@ -1,4 +1,4 @@
-"""SPDHG's volume state is rewritten in place, so a full-size scan's solve fits beside it."""
+"""The compact TV field and the in-place SPDHG update retain FP32 accuracy."""
 
 from __future__ import annotations
 
@@ -11,68 +11,102 @@ import pytest
 
 from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon import SPDHGConfig
+from tomojax.recon._spdhg_flux import (
+    pack_flux,
+    unpack_flux,
+)  # check-public-imports: allow-private
 from tomojax.recon.spdhg_tv import (  # check-public-imports: allow-private
     _prepare_spdhg_runtime,
     _run_spdhg_scan,
-    _tv_dual_step,
-    _update_spdhg_tv_duals,
+    _sweep,
 )
 
 
+def test_packed_flux_rounds_within_one_ulp_of_each_group():
+    # Signed extrema immediately below a power of two round up at 24 bits.
+    # Include zero, a short final group and groups on different physical scales.
+    rng = np.random.default_rng(6)
+    values = rng.uniform(-1, 1, (3, 3, 1, 19)).astype(np.float32)
+    values[0, :, :, :2] = [np.nextafter(np.float32(2), np.float32(0)), -2]
+    values[:, 0, :, :8] = 0
+    values[:, :, :, 8:16] *= 1e-5
+    actual = np.stack(jax.jit(lambda p: unpack_flux(pack_flux(p)))(tuple(values)))
+    for start in range(0, 19, 8):
+        group = values[..., start : start + 8]
+        spacing = np.spacing(np.max(abs(group), axis=(0, 2, 3), keepdims=True))
+        assert np.all(abs(actual[..., start : start + 8] - group) <= spacing)
+
+
 @pytest.mark.parametrize("regularizer", ["tv", "huber_tv"])
-def test_slab_dual_update_gives_the_whole_volume_bits(regularizer):
-    # 512 x 512 planes make four-plane slabs: two slabs and a three-plane tail.
+def test_sweep_matches_whole_volume_update(regularizer):
+    # Four planes per slab, a partial tail, and a different spacing on each axis.
+    shape = (11, 255, 257)
     rng = np.random.default_rng(3)
-    x = jnp.asarray(rng.normal(size=(11, 512, 512)), jnp.float32)
-    p = [jnp.asarray(rng.normal(size=x.shape) * 0.02, jnp.float32) for _ in range(3)]
+    x, data = (jnp.asarray(rng.normal(size=shape), jnp.float32) for _ in range(2))
+    p = tuple(jnp.asarray(rng.normal(size=shape) * 0.02, jnp.float32) for _ in range(3))
+    p = (p[0].at[:, :, -1].set(0), p[1].at[:, -1, :].set(0), p[2].at[-1, :, :].set(0))
     scales, sigma, weight, delta = (0.7, 1.3, 0.9), 0.37, 0.05, 0.11
     runtime = SimpleNamespace(
-        step_sizes=SimpleNamespace(sigma_tv=sigma),
+        config=SPDHGConfig(iterations=2, tv_weight=weight, theta=0.8),
+        schedule=SimpleNamespace(selection_prob=0.25),
+        step_sizes=SimpleNamespace(sigma_tv=sigma, tau=0.3),
+        storage_scales=scales,
         metric=SimpleNamespace(gradient_scale_xyz=scales, weight=weight),
         regularizer=regularizer,
         huber_delta=delta,
     )
 
     @jax.jit
-    def slabs(x, p):
-        return _update_spdhg_tv_duals(SimpleNamespace(p1=p[0], p2=p[1], p3=p[2]), x, runtime)
+    def update(x, p, data):
+        return _sweep(SimpleNamespace(x=x, flux=p, s_data=data), runtime, jnp.int32(0))
 
-    @jax.jit
-    def whole(x, p):
-        # Neumann forward differences along x, y and z, over the whole volume at once.
-        def forward(axis):
-            edge = jnp.zeros_like(jax.lax.slice_in_dim(x, 0, 1, axis=axis))
-            return jnp.concatenate([jnp.diff(x, axis=axis), edge], axis=axis)
+    actual, partial = update(x, pack_flux(p), data)
+    gradients = tuple(
+        c * jnp.diff(x, axis=i, append=jnp.take(x, jnp.array([-1]), axis=i))
+        for i, c in zip((2, 1, 0), scales, strict=True)
+    )
+    q = jnp.stack([a + sigma * b for a, b in zip(p, gradients, strict=True)])
+    if regularizer == "huber_tv":
+        q *= weight / (weight + sigma * delta)
+    expected = q / jnp.maximum(1, jnp.linalg.norm(q, axis=0) / weight)
 
-        gradient = tuple(c * forward(axis) for c, axis in zip(scales, (2, 1, 0), strict=True))
-        return _tv_dual_step(tuple(p), gradient, runtime)
+    def divergence(q):
+        return sum(
+            c * jnp.diff(qj, axis=i, prepend=jnp.zeros_like(jnp.take(qj, jnp.array([0]), axis=i)))
+            for qj, i, c in zip(q, (2, 1, 0), scales, strict=True)
+        )
 
-    # Both compiled, as in the solve, so both contract the same multiply-adds.
-    for a, e in zip(slabs(x, p), whole(x, p), strict=True):
-        np.testing.assert_array_equal(a, e)
+    tv = -divergence(expected)
+    extrapolated = tv + 0.8 * (tv + divergence(p))
+    np.testing.assert_allclose(unpack_flux(actual), expected, rtol=0, atol=4e-8)
+    np.testing.assert_allclose(
+        partial, x - 0.3 * (extrapolated - 0.8 / 0.25 * data), rtol=1e-6, atol=5e-7
+    )
 
 
 @pytest.mark.gpu
-def test_the_solve_keeps_at_most_three_volumes_beside_its_donated_state():
+def test_compiled_solve_fits_in_four_and_a_half_volume_buffers():
     if jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
-    # Large planes, as on a full-size scan: a slab is two of them. Main kept four
-    # whole-volume copies here (the TV duals and the data backprojection), donating none.
-    grid, detector = Grid(1024, 1024, 8, 1.0, 1.0, 1.0), Detector(1024, 8, 1.0, 1.0)
+    grid, detector = Grid(256, 256, 257, 1.0, 1.0, 1.0), Detector(256, 257, 1.0, 1.0)
     geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 8, endpoint=False), 30)
-    data = np.random.default_rng(4).random((8, 8, 1024), dtype=np.float32)
-    config = SPDHGConfig(iterations=2, tv_weight=0.01, views_per_batch=4, stream=False)
+    data = np.random.default_rng(4).random((8, 257, 256), dtype=np.float32)
     runtime = _prepare_spdhg_runtime(
-        geometry, grid, detector, data, weights=None, init_x=None, config=config, det_grid=None
+        geometry,
+        grid,
+        detector,
+        data,
+        weights=None,
+        init_x=None,
+        config=SPDHGConfig(iterations=3, tv_weight=0.01, views_per_batch=4, stream=False),
+        det_grid=None,
     )
-    volumes = tuple(jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32) for _ in range(5))
-    memory = _run_spdhg_scan.lower(grid, detector, runtime, volumes).compile().memory_analysis()
+    mem = _run_spdhg_scan.lower(grid, detector, runtime).compile().memory_analysis()
     volume = 4 * grid.nx * grid.ny * grid.nz
-    assert memory.alias_size_in_bytes == 5 * volume
-    assert memory.temp_size_in_bytes <= 3 * volume
+    assert mem.temp_size_in_bytes + mem.output_size_in_bytes <= 4.5 * volume + data.nbytes
 
 
-def test_a_grid_whose_five_volumes_exceed_the_device_names_what_runs(monkeypatch):
+def test_insufficient_state_memory_names_host_solvers(monkeypatch):
     import importlib
 
     from tomojax.recon import spdhg_tv
@@ -80,7 +114,6 @@ def test_a_grid_whose_five_volumes_exceed_the_device_names_what_runs(monkeypatch
     module = importlib.import_module("tomojax.recon.spdhg_tv")
     grid, detector = Grid(8, 8, 4, 1.0, 1.0, 1.0), Detector(8, 4, 1.0, 1.0)
     geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 6, endpoint=False), 30)
-    # Room for four of the five volumes (4 KiB each).
     monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 4 * 4 * 8 * 8 * 4)
-    with pytest.raises(MemoryError, match=r"five volumes .* fista, cgls and sirt"):
+    with pytest.raises(MemoryError, match=r"volume state .* fista, cgls and sirt"):
         spdhg_tv(geometry, grid, detector, np.zeros((6, 4, 8), np.float32))
