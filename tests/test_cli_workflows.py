@@ -11,15 +11,13 @@ import numpy as np
 import pytest
 
 from tomojax.cli.main import main
-import tomojax.cli.simulate as simulate_cli
 from tomojax.io import load_dataset, save_dataset
 from tomojax.recon.quicklook import scale_to_uint8
 
 from ._helpers import (
     make_projection_dataset,
-    write_angle_csv,
     write_projection_dataset,
-    write_tiff_stack,
+    write_raw_nxtomo,
 )
 
 pytestmark = pytest.mark.surface
@@ -38,7 +36,7 @@ def test_recon_cli_defaults_defer_policy_and_report_limitations(monkeypatch, tmp
         return tj.Reconstruction(volume, scan.geometry, "fbp", {"automatic": automatic}, scan)
 
     monkeypatch.setattr(tj, "reconstruct", automatic_result)
-    assert main(["recon", str(path), "-o", str(output), "--manifest", str(manifest)]) == 0
+    assert main(["reconstruct", str(path), "-o", str(output), "--manifest", str(manifest)]) == 0
     assert load_dataset(output).volume is not None
     assert "Rotation axis metadata is missing" in caplog.text
     record = json.loads(manifest.read_text())["resolved_config"]
@@ -50,14 +48,14 @@ def test_recon_cli_requires_a_method_for_expert_settings(tmp_path, capsys):
     write_projection_dataset(path)
     config.write_text("views_per_batch = 2\n")
     with pytest.raises(SystemExit) as error:
-        main(["recon", str(path), "-o", str(output), "--config", str(config)])
+        main(["reconstruct", str(path), "-o", str(output), "--config", str(config)])
     assert error.value.code == 2
     assert "explicit --method" in capsys.readouterr().err
 
 
 def test_preprocess_rejects_unverified_vendor_hardening(capsys):
     with pytest.raises(SystemExit) as error:
-        main(["preprocess", "raw.nxs", "-o", "scan.nxs", "--beam-hardening", "recorded"])
+        main(["correct", "raw.nxs", "-o", "scan.nxs", "--beam-hardening", "recorded"])
     assert error.value.code == 2
     assert "unrecognized arguments: --beam-hardening recorded" in capsys.readouterr().err
 
@@ -75,7 +73,7 @@ def test_inspect_cli_describes_and_checks_a_dataset(
     assert payload["valid"] is True
     assert payload["issues"] == []
     assert payload["projection"]["shape"] == [2, 2, 4]
-    assert payload["angles"]["coverage_deg"] == 90.0
+    assert payload["angles"]["coverage"] == 90.0
     assert payload["volume"]["found"] is False
 
 
@@ -111,8 +109,8 @@ def test_inspection_angle_range_uses_degrees_of_sample_frames_only(
     report = json.loads(capsys.readouterr().out)
     assert report["issues"] == []
     assert report["angles"]["count"] == 4
-    assert report["angles"]["min_deg"] == pytest.approx(30.0, abs=1e-5)
-    assert report["angles"]["max_deg"] == pytest.approx(60.0, abs=1e-5)
+    assert report["angles"]["min"] == pytest.approx(30.0, abs=1e-5)
+    assert report["angles"]["max"] == pytest.approx(60.0, abs=1e-5)
 
 
 def test_inspect_cli_exits_1_for_an_invalid_dataset(
@@ -158,94 +156,22 @@ def test_inspect_cli_previews_a_reconstruction(tmp_path: Path) -> None:
     assert main(["inspect", str(path), "--preview", str(previews), "--force"]) == 0
 
 
-def test_import_cli_writes_standard_dataset_from_tiffs(tmp_path: Path) -> None:
-    stack = tmp_path / "stack"
-    angles = tmp_path / "angles.csv"
-    out_path = tmp_path / "imported.nxs"
-    write_tiff_stack(stack, [1.0, 2.0], shape=(2, 4))
-    write_angle_csv(angles, [0.0, 90.0])
-
-    config = tmp_path / "calibration.toml"
-    config.write_text('detector_center = [0.12, -0.3]\ngeometry = "parallel"\n')
-    args = [
-        "import",
-        str(stack),
-        "--angles",
-        str(angles),
-        "-o",
-        str(out_path),
-        "--config",
-        str(config),
-    ]
-    assert main([*args, "--pixel-size", "0.5", "0.75", "--name", "rock"]) == 0
-
-    dataset = load_dataset(out_path)
-    assert dataset.projections.shape == (2, 2, 4)
-    assert dataset.detector is not None
-    assert dataset.detector.du == pytest.approx(0.5)
-    assert dataset.detector.dv == pytest.approx(0.75)
-    assert dataset.detector.center == (0.12, -0.3)
-    assert dataset.sample_name == "rock"
-
-    with pytest.raises(SystemExit) as exc_info:
-        main(args)
-    assert exc_info.value.code == 2
-    with pytest.raises(SystemExit):
-        main([*args, "--force"])  # missing pixel size is not unit calibration
-    assert main([*args, "--force", "--pixel-size", "1"]) == 0
-    assert load_dataset(out_path).detector.du == pytest.approx(1.0)  # pyright: ignore[reportOptionalMemberAccess]
-
-
-def test_import_requires_explicit_detector_center_model_and_lamino_tilt(tmp_path, capsys):
-    write_tiff_stack(tmp_path / "views", [1.0, 2.0], shape=(2, 4))
-    write_angle_csv(tmp_path / "angles.csv", [0, 90])
-    config, output = tmp_path / "calibration.toml", tmp_path / "scan.nxs"
-    args = [
-        "import",
-        str(tmp_path / "views"),
-        "--angles",
-        str(tmp_path / "angles.csv"),
-        "--pixel-size",
-        ".5",
-        "--config",
-        str(config),
-        "-o",
-        str(output),
-    ]
-    for text, required in (
-        ("", "--geometry"),
-        ('geometry = "parallel"', "detector_center"),
-        ('geometry = "lamino"\ndetector_center = [0, 0]', "tilt"),
-    ):
-        config.write_text(text)
-        with pytest.raises(SystemExit):
-            main(args)
-        assert required in capsys.readouterr().err and not output.exists()
-    config.write_text(config.read_text() + "\ntilt = 47.0\n")
-    assert main(args) == 0
-    assert load_dataset(output).geometry_inputs()["tilt"] == 47
-
-    # The detector's roll reaches a parallel-family geometry; pitch and yaw are cone-only.
+def test_load_declares_a_geometry_the_file_does_not_record(tmp_path, capsys):
+    # tomojax load is tj.load then tj.save; its flags supply what the file lacks, the
+    # geometry included (item 40: a K11 scan's tilt is in no file).
     import tomojax as tj
 
-    config.write_text(config.read_text() + "detector_roll = 1.25\n")
-    assert main([*args, "--force"]) == 0
-    assert tj.load(output).geometry.detector_roll == 1.25
-    config.write_text(config.read_text() + "detector_pitch = 0.5\n")
-    with pytest.raises(SystemExit):
-        main([*args, "--force"])
-    assert "need --geometry cone" in capsys.readouterr().err
-
-
-def test_import_cli_needs_angles_for_tiffs(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    stack = tmp_path / "stack"
-    write_tiff_stack(stack, [1.0, 2.0], shape=(2, 4))
-    with pytest.raises(SystemExit) as exc_info:
-        main(["import", str(stack), "-o", str(tmp_path / "scan.nxs")])
-    assert exc_info.value.code == 2
-    assert "TIFF stacks need --angles" in capsys.readouterr().err
+    write_raw_nxtomo(tmp_path / "raw.nxs")
+    output = tmp_path / "scan.nxs"
+    args = ["load", str(tmp_path / "raw.nxs"), "-o", str(output), "--pixel-size", "0.5"]
+    assert main([*args, "--geometry", "lamino"]) == 1
+    assert "needs --tilt" in capsys.readouterr().err and not output.exists()
+    lamino = ["--geometry", "lamino", "--tilt", "47", "--detector-roll", "1.25"]
+    assert main([*args, *lamino, "--detector-center", "0.1", "0.0"]) == 0
+    geometry = tj.load(output).geometry
+    assert isinstance(geometry, tj.LaminographyGeometry) and geometry.tilt == 47
+    assert geometry.detector_roll == 1.25 and geometry.detector.center == (0.1, 0.0)
+    assert geometry.detector.du == 0.5
 
 
 def test_import_cli_converts_nxtomo_to_npz(tmp_path: Path) -> None:
@@ -253,7 +179,7 @@ def test_import_cli_converts_nxtomo_to_npz(tmp_path: Path) -> None:
     npz_path = tmp_path / "scan.npz"
     write_projection_dataset(nxs_path)
 
-    assert main(["import", str(nxs_path), "-o", str(npz_path)]) == 0
+    assert main(["load", str(nxs_path), "-o", str(npz_path)]) == 0
 
     dataset = load_dataset(npz_path)
     assert dataset.projections.shape == (2, 2, 4)
@@ -285,7 +211,7 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
     write_projection_dataset(scan)
     calls = _fake_reconstruct(monkeypatch)
 
-    args = ["recon", str(scan), "-o", str(recon), "--method", "cgls", "--region", "off"]
+    args = ["reconstruct", str(scan), "-o", str(recon), "--method", "cgls", "--region", "off"]
     assert main([*args, "--grid", "4", "4", "2", "--iterations", "7", "--warm-start"]) == 0
 
     assert calls.pop("method") == "cgls"
@@ -312,9 +238,9 @@ def test_main_formats_expected_subcommand_errors(
     write_projection_dataset(scan)
     _ = _fake_reconstruct(monkeypatch, ValueError("bad detector metadata"))
 
-    assert main(["recon", str(scan), "-o", str(recon)]) == 1
+    assert main(["reconstruct", str(scan), "-o", str(recon)]) == 1
     captured = capsys.readouterr()
-    assert captured.err == "tomojax recon: error: bad detector metadata\n"
+    assert captured.err == "tomojax reconstruct: error: bad detector metadata\n"
 
 
 def test_main_does_not_swallow_programmer_errors(
@@ -326,7 +252,7 @@ def test_main_does_not_swallow_programmer_errors(
     _ = _fake_reconstruct(monkeypatch, TypeError("wrong internal call shape"))
 
     with pytest.raises(TypeError, match="wrong internal call shape"):
-        main(["recon", str(scan), "-o", str(recon)])
+        main(["reconstruct", str(scan), "-o", str(recon)])
 
 
 def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> None:
@@ -338,7 +264,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     _ = config.write_text("scale = 0.5\n", encoding="utf-8")
 
     args = [
-        "recon",
+        "reconstruct",
         str(scan),
         "-o",
         str(recon),
@@ -395,7 +321,7 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
         "6",
         *(["--warm-start"] if warm_start else []),
     ]
-    command = ["recon", str(scan), "-o", str(recon), "--method", "cgls"]
+    command = ["reconstruct", str(scan), "-o", str(recon), "--method", "cgls"]
     assert main([*command, *args, "--manifest", str(manifest)]) == 0
     loaded = load_dataset(recon)
     assert loaded.volume is not None
@@ -424,7 +350,7 @@ def test_recon_cli_auto_roi_does_not_depend_on_physical_units(tmp_path: Path, sc
     scan_path, recon_path = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
     tj.save(scan_path, tj.Scan(np.zeros((2, 3, 9), np.float32), geometry))
 
-    args = ["recon", str(scan_path), "-o", str(recon_path), "--method", "cgls"]
+    args = ["reconstruct", str(scan_path), "-o", str(recon_path), "--method", "cgls"]
     assert main([*args, "--iterations", "0"]) == 0
 
     actual = tj.load_reconstruction(recon_path)
@@ -441,7 +367,7 @@ def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path
 
     scan_path, recon_path = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
     write_projection_dataset(scan_path)
-    command = ["recon", str(scan_path), "-o", str(recon_path), "--method", "fista"]
+    command = ["reconstruct", str(scan_path), "-o", str(recon_path), "--method", "fista"]
     assert main([*command, "--region", "cyl", "--iterations", "4"]) == 0
 
     scan = tj.load(scan_path)
@@ -471,7 +397,7 @@ def test_recon_cli_config_settings_are_fields_of_the_methods_configuration(
         'regularizer = "huber_tv"\nhuber_delta = 0.05\ntv_weight = 0.01\n', encoding="utf-8"
     )
 
-    args = ["recon", str(scan), "-o", str(tmp_path / "out.nxs"), "--method", "fista"]
+    args = ["reconstruct", str(scan), "-o", str(tmp_path / "out.nxs"), "--method", "fista"]
     assert main([*args, "--config", str(config), "--region", "off"]) == 0
 
     cfg = calls["config"]
@@ -505,7 +431,7 @@ def test_recon_cli_refuses_settings_the_method_does_not_take(
     write_projection_dataset(scan)
     _ = config.write_text(toml, encoding="utf-8")
 
-    args = ["recon", str(scan), "-o", str(tmp_path / "out.nxs"), "--config", str(config)]
+    args = ["reconstruct", str(scan), "-o", str(tmp_path / "out.nxs"), "--config", str(config)]
     with pytest.raises(SystemExit) as exc:
         main([*args, *options])
     assert exc.value.code == 2
@@ -546,7 +472,7 @@ def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path)
 def test_cli_reports_a_missing_input_as_a_usage_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for command in (["inspect"], ["recon", "-o", str(tmp_path / "r.nxs")]):
+    for command in (["inspect"], ["reconstruct", "-o", str(tmp_path / "r.nxs")]):
         with pytest.raises(SystemExit) as exc:
             main([*command, str(tmp_path / "missing.nxs")])
         assert exc.value.code == 2
@@ -561,22 +487,16 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
     out_path = tmp_path / "synthetic.nxs"
     captured: dict[str, object] = {}
 
-    def fake_simulate_to_file(config: object, out: str) -> str:
+    from tomojax import datasets
+
+    simulate = datasets.simulate
+
+    def recording(config):
         captured["shape"] = (config.nx, config.ny, config.nz, config.nu, config.nv, config.n_views)
         captured["expert"] = (config.single_rotate, config.artefacts.zinger_fraction)
-        dataset = make_projection_dataset(
-            projections=np.zeros(
-                (int(config.n_views), int(config.nv), int(config.nu)), dtype=np.float32
-            ),
-            angles=np.linspace(0.0, 180.0, int(config.n_views), endpoint=False, dtype=np.float32),
-        )
-        dataset.volume = np.zeros(
-            (int(config.nz), int(config.ny), int(config.nx)), dtype=np.float32
-        )
-        save_dataset(out, dataset)
-        return out
+        return simulate(config)
 
-    monkeypatch.setattr(simulate_cli, "simulate_to_file", fake_simulate_to_file)
+    monkeypatch.setattr(datasets, "simulate", recording)
     # Phantom details and detector artefacts are config-file settings.
     settings = tmp_path / "simulate.toml"
     _ = settings.write_text("single_rotate = false\nzinger_fraction = 0.25\n", encoding="utf-8")
@@ -648,7 +568,7 @@ def test_inspect_and_preview_share_raw_acquisition_discovery(tmp_path, capsys, l
     assert report["valid"] and report["issues"] == []
     assert report["projection"]["path"] == data_path
     assert report["angles"]["path"] == angles_path
-    assert report["angles"]["coverage_deg"] == pytest.approx(180)
+    assert report["angles"]["coverage"] == pytest.approx(180)
     assert report["flats_darks"]["sample_count"] == 2
     assert report["flats_darks"]["flat_count"] == report["flats_darks"]["dark_count"] == 1
     assert report["flats_darks"]["image_key_path"] == key_path
@@ -670,7 +590,10 @@ def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
     ).cropped(slice(6, 8), slice(None))
     src, out = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
     tj.save(src, scan)
-    assert main(["recon", str(src), "-o", str(out), "--grid", "6", "6", "2", "--region", roi]) == 0
+    assert (
+        main(["reconstruct", str(src), "-o", str(out), "--grid", "6", "6", "2", "--region", roi])
+        == 0
+    )
     result = tj.load_reconstruction(out)
     assert (result.grid.vx, result.grid.vy, result.grid.vz) == (2, 2, 5 if roi == "off" else 1)
     assert grid_volume_origin(result.grid)[2] == (-2.5 if roi == "off" else 1.5)
@@ -684,7 +607,14 @@ def test_recon_refuses_to_replace_an_existing_auxiliary_output(tmp_path: Path, a
     write_projection_dataset(scan)
     existing = tmp_path / ("preview.png" if auxiliary == "--preview" else "run.json")
     existing.write_text("keep")
-    command = ["recon", str(scan), "-o", str(tmp_path / "recon.nxs"), auxiliary, str(existing)]
+    command = [
+        "reconstruct",
+        str(scan),
+        "-o",
+        str(tmp_path / "recon.nxs"),
+        auxiliary,
+        str(existing),
+    ]
     with pytest.raises(SystemExit) as exit_info:
         main(command)
     assert exit_info.value.code == 2 and existing.read_text() == "keep"

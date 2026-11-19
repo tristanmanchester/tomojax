@@ -1,4 +1,4 @@
-"""``tomojax recon``: :func:`tomojax.reconstruct` on the command line.
+"""``tomojax reconstruct``: :func:`tomojax.reconstruct` on the command line.
 
 The command loads INPUT with its saved poses (unless ``--no-apply-poses``); chooses
 the grid (``--region``, ``--grid``); builds the method's configuration from a
@@ -75,16 +75,16 @@ _SETTINGS = (
 )
 _EPILOG = (
     "Examples:\n"
-    "  tomojax recon scan.nxs -o recon.nxs\n"
-    "  tomojax recon scan.nxs -o recon.nxs --method cgls --iterations 100\n"
-    "  tomojax recon scan.nxs -o recon.nxs --method fista --tv-weight 0.002 --nonnegative"
+    "  tomojax reconstruct scan.nxs -o recon.nxs\n"
+    "  tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 100\n"
+    "  tomojax reconstruct scan.nxs -o recon.nxs --method fista --tv-weight 0.002 --nonnegative"
 )
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The ``tomojax recon`` parser; its expert settings are the methods' configuration fields."""
+    """The ``tomojax reconstruct`` parser; expert settings are the methods' configuration fields."""
     p = argparse.ArgumentParser(
-        prog="tomojax recon",
+        prog="tomojax reconstruct",
         description=(
             "Reconstruct a volume from a scan, with the poses saved with it (by tomojax "
             "align) unless --no-apply-poses."
@@ -299,13 +299,13 @@ def _write_manifest(
         # The resolved configuration and the solver's record.
         "reconstruction": result.info,
     }
-    manifest = build_manifest("tomojax recon", list(sys.argv), args, payload)
+    manifest = build_manifest("tomojax reconstruct", list(sys.argv), args, payload)
     save_manifest(str(run.manifest), manifest)
     logging.info("Saved reproducibility manifest to %s", run.manifest)
 
 
 def main() -> None:
-    """Run ``tomojax recon``."""
+    """Run ``tomojax reconstruct``."""
     import tomojax as tj
     from tomojax.cli._runtime import report_automatic
     from tomojax.core import log_jax_env, setup_logging

@@ -10,7 +10,7 @@ calls are at the end.
 ## Import
 
 A Nikon (X-Tek) scan is an `.xtekct` parameter file beside its projection
-TIFFs. `tomojax preprocess` reads the source and detector distances, the detector
+TIFFs. `tomojax correct` reads the source and detector distances, the detector
 pixels and offsets, vendor reconstruction metadata, the white level and nominal
 angles from `InitialAngle` and `AngularStep`; `.ang` and `_ctdata.txt` sidecars
 are not used. `tomojax inspect` describes and checks the result.
@@ -21,7 +21,7 @@ calibration file explicitly. The examples choose zero dark level; use that
 only for already dark-corrected counts, otherwise supply measured darks:
 
 ```bash
-uv run --no-sync tomojax preprocess scan/part.xtekct --darks 0 -o scan.nxs
+uv run --no-sync tomojax correct scan/part.xtekct --darks 0 -o scan.nxs
 uv run --no-sync tomojax inspect scan.nxs
 ```
 
@@ -40,22 +40,22 @@ frame rather than the vendor's stage convention.
 Zeiss Xradia projection acquisitions can be corrected directly, without a TIFF
 export; see the [Zeiss preview](#zeiss-xradia-preview) below. For scanners without
 a reader, provide the measured `ConeGeometry` to `tj.load_frames(...,
-geometry=..., flats=..., darks=...)`. Already-corrected TIFF line integrals can
-be packaged on the command line; `calibration.toml` supplies the measured
-`detector_center = [u, v]` in physical length units:
+geometry=..., flats=..., darks=...)`, or declare it on the command line:
 
 ```bash
-uv run --no-sync tomojax import projections/ --angles angles.csv --geometry cone \
-  --source-to-axis 120.5 --source-to-detector 980.0 --pixel-size 0.2 \
-  --config calibration.toml -o scan.nxs
+uv run --no-sync tomojax load projections/ --flats flats/ --darks darks/ \
+  --angles angles.csv --geometry cone --source-to-axis 120.5 --source-to-detector 980.0 \
+  --pixel-size 0.2 --detector-center 0.0 0.0 -o scan.nxs
 ```
 
+Already-corrected TIFF line integrals are a scan already: read them with
+`tomojax.io.api.read_tiff_frames` and build `tj.Scan(projections, geometry)`.
 `--flats` and `--darks` take TIFF frames, or one level for every pixel
 (`--flats 60000 --darks 0`) when the scanner calibrates its flat field.
 Use one length unit throughout (the pixel size and both distances).
 `--pixel-size` takes one value for square pixels, or the u then v sizes.
 
-`tomojax preprocess` also corrects lab-CT artefacts.
+`tomojax correct` also corrects lab-CT artefacts.
 Beam-hardening correction uses an explicit polynomial or spectrum through the
 Python `BeamHardening` step; the
 [corrections reference](../src/tomojax/corrections/README.md#beam-hardening)
@@ -68,8 +68,8 @@ width that covers the defect. A faint offset on a steep gradient can remain.
 `--zingers` replaces bright specks.
 In Python these are steps of `tomojax.corrections` (`BeamHardening`,
 `Stripes`, `Zingers`) passed to `tj.load_frames(path).corrected(...)`.
-`tomojax import --axis-offset` and TOML keys `detector_roll`,
-`detector_pitch`, `detector_yaw` set the detector's orientation; pitch and
+`--axis-offset`, `--detector-roll`, `--detector-pitch` and `--detector-yaw` (of
+`tomojax load` and `correct`) set the detector's orientation; pitch and
 yaw apply to cone data only. They are
 right-handed rotations about the detector's own axes, the normal (pointing back
 towards the source), u and v, in that order: positive roll turns u towards v,
@@ -79,7 +79,7 @@ edge away from it. Scanners do not report these. Nikon's `ObjectRoll` and
 these keys. A TIFF import
 records no grid: cone datasets without one reconstruct one voxel per detector
 pixel at the axis, the pixel size divided by the magnification
-`source_to_detector / source_to_axis`, and `tomojax recon --grid NX NY NZ`
+`source_to_detector / source_to_axis`, and `tomojax reconstruct --grid NX NY NZ`
 sets the number of voxels while preserving the selected physical field of view
 (adjusting voxel sizes). For a small whole-volume preview, bin the detector
 with `preprocess` and use `recon --grid 64 64 64 --region off`. In Python the same
@@ -132,10 +132,9 @@ Replace `801` below with the acquisition's number of sample views; CLI ranges
 require both start and stop indices:
 
 ```bash
-printf 'binning = 16\n' > preview.toml
-uv run --no-sync tomojax preprocess scan.txrm --darks 0 -o corrected.nxs \
-  --views 0:801:8 --config preview.toml
-uv run --no-sync tomojax recon corrected.nxs -o preview.nxs \
+uv run --no-sync tomojax correct scan.txrm --darks 0 -o corrected.nxs \
+  --views 0:801:8 --binning 16
+uv run --no-sync tomojax reconstruct corrected.nxs -o preview.nxs \
   --method cgls --iterations 10 --grid 64 64 64 --region off
 uv run --no-sync tomojax inspect preview.nxs --preview previews
 ```
@@ -181,7 +180,7 @@ The default `--method auto` selects FDK for a single cone-beam arrangement;
 `--method fbp` selects it explicitly:
 
 ```bash
-uv run --no-sync tomojax recon calibrated.nxs -o fdk.nxs
+uv run --no-sync tomojax reconstruct calibrated.nxs -o fdk.nxs
 ```
 
 It weights full turns, offset-detector full turns (the axis projecting near
@@ -194,8 +193,8 @@ CGLS suits low-noise data, and FISTA with total variation suits noisy or
 sparse scans:
 
 ```bash
-uv run --no-sync tomojax recon calibrated.nxs -o cgls.nxs --method cgls --iterations 20
-uv run --no-sync tomojax recon calibrated.nxs -o tv.nxs --method fista --iterations 50 --tv-weight 0.002
+uv run --no-sync tomojax reconstruct calibrated.nxs -o cgls.nxs --method cgls --iterations 20
+uv run --no-sync tomojax reconstruct calibrated.nxs -o tv.nxs --method fista --iterations 50 --tv-weight 0.002
 ```
 
 Expert settings are fields of the explicitly selected method's configuration
@@ -237,11 +236,11 @@ changes magnification. Add per-view rotations when the data require them:
 
 ```bash
 uv run --no-sync tomojax align scan.nxs -o aligned.nxs --fit translations rotations
-uv run --no-sync tomojax recon aligned.nxs -o recon.nxs --method cgls
+uv run --no-sync tomojax reconstruct aligned.nxs -o recon.nxs --method cgls
 ```
 
 The corrections are fitted on top of any input poses, including imported and multi-orbit scans.
-`tomojax recon` applies the calibrated geometry and poses saved in `aligned.nxs`; `--no-apply-poses`
+`tomojax reconstruct` applies the calibrated geometry and poses saved in `aligned.nxs`; `--no-apply-poses`
 removes per-view corrections when loading. See [align a scan](align-a-scan.md) for parameter
 selection and gauges.
 
@@ -310,8 +309,8 @@ Its defaults keep every twentieth view of the middle orbit, bin the detector
 
 ```bash
 uv run --no-sync python examples/import_walnut.py ~/data/walnuts/Walnut1 -o orbit.nxs
-uv run --no-sync tomojax recon orbit.nxs -o fdk.nxs --method fbp --region off
-uv run --no-sync tomojax recon orbit.nxs -o cgls.nxs --method cgls --iterations 20 --region off
+uv run --no-sync tomojax reconstruct orbit.nxs -o fdk.nxs --method fbp --region off
+uv run --no-sync tomojax reconstruct orbit.nxs -o cgls.nxs --method cgls --iterations 20 --region off
 uv run --no-sync tomojax inspect cgls.nxs --preview walnut-previews
 ```
 

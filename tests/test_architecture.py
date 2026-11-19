@@ -100,7 +100,7 @@ _STANDARD_OPTIONS = {"-h", "--help", "-o", "--output", "--force", "--config", "-
 # Public CLI options and the Python keyword each one is, by command. An option
 # with no Python equivalent says why it is command-line only.
 _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
-    "recon": {
+    "reconstruct": {
         "--method": ("reconstruct", "method"),
         "--filter": ("reconstruct", "filter"),
         "--iterations": ("reconstruct", "iterations"),
@@ -130,10 +130,24 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--manifest": "file output",
         "--dry-run": "prints the selected parameters and grid without fitting",
     },
-    "preprocess": {
-        "--flats": ("load_frames", "flats"),
-        "--darks": ("load_frames", "darks"),
-        "--angles": ("load_frames", "angles"),
+    "load": {
+        "--flats": ("load", "flats"),
+        "--darks": ("load", "darks"),
+        "--angles": ("load", "angles"),
+        "--pixel-size": ("load", "pixel_size"),
+        "--geometry": ("load", "geometry"),
+        "--tilt": "a field of the geometry --geometry declares",
+        "--apply-poses": ("load", "apply_poses"),
+    },
+    "correct": {
+        "--flats": ("load", "flats"),
+        "--darks": ("load", "darks"),
+        "--angles": ("load", "angles"),
+        "--pixel-size": ("load", "pixel_size"),
+        "--geometry": ("load", "geometry"),
+        "--tilt": "a field of the geometry --geometry declares",
+        "--apply-poses": ("load", "apply_poses"),
+        "--binning": "Frames.corrected(binning=), or Scan.binned",
         "--views": "index ranges; Python calls Frames.selected",
         "--crop": "Y0:Y1,X0:X1; Python calls Frames.cropped",
         "--reject-views": "the RejectViews step",
@@ -149,7 +163,7 @@ _HELP_BUDGET = 16
 def _actions(command: str) -> list[argparse.Action]:
     from tomojax.cli._options import options  # check-public-imports: allow-private
 
-    module = {"import": "tomojax.cli.import_"}.get(command, f"tomojax.cli.{command}")
+    module = f"tomojax.cli.{command}"
     parser_module = importlib.import_module(module)
     build = getattr(parser_module, "build_parser", None) or parser_module._build_parser
     return options(build())
@@ -214,7 +228,7 @@ def _configuration_fields(command: str) -> set[str]:
     return {item.name for c in configs for item in fields(c) if item.init} - {"support", "devices"}
 
 
-@pytest.mark.parametrize("command", ["align", "recon"])
+@pytest.mark.parametrize("command", ["align", "reconstruct"])
 def test_options_are_stored_under_their_own_names(command: str) -> None:
     # A --config key is the option's dest, so it must be the option's name; the
     # file's other keys, its expert settings, are the configuration's fields.

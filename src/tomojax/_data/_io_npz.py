@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._io_helpers import replaced_when_complete, sizes_of
+from tomojax.core.files import replaced_when_complete
+
+from ._io_helpers import sizes_of
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata
 
 # The file's key for the view angles (``NXTomoMetadata.angles``); earlier

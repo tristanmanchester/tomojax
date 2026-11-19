@@ -26,9 +26,11 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from tomojax._files import export, inspect
     from tomojax._loading import Frames, load, load_frames
     from tomojax._region import RegionEstimate, estimate_region
     from tomojax._scan import Alignment, Reconstruction, Scan
+    from tomojax._simulate import simulate
     from tomojax._workflow import (
         align,
         backproject,
@@ -65,6 +67,9 @@ _SOURCES = {
     "align": "tomojax._workflow",
     "backproject": "tomojax._workflow",
     "estimate_region": "tomojax._region",
+    "export": "tomojax._files",
+    "inspect": "tomojax._files",
+    "simulate": "tomojax._simulate",
     "load": "tomojax._loading",
     "load_frames": "tomojax._loading",
     "load_reconstruction": "tomojax._workflow",
@@ -98,6 +103,8 @@ __all__ = [
     "align",
     "backproject",
     "estimate_region",
+    "export",
+    "inspect",
     "load",
     "load_frames",
     "load_reconstruction",
@@ -105,6 +112,7 @@ __all__ = [
     "reconstruct",
     "reconstruct_slabs",
     "save",
+    "simulate",
 ]
 
 

@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  tomojax align scan.nxs -o aligned.nxs\n"
             "  tomojax align scan.nxs -o aligned.nxs --fit center\n"
             "  tomojax align scan.nxs -o aligned.nxs --fit translations tilt roll\n"
-            "  tomojax recon aligned.nxs -o recon.nxs\n\n" + EXIT_STATUS
+            "  tomojax reconstruct aligned.nxs -o recon.nxs\n\n" + EXIT_STATUS
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

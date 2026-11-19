@@ -1,21 +1,22 @@
-"""``tomojax preprocess``: correct raw detector frames into a scan of line integrals.
+"""``tomojax correct``: the optional corrections, on raw frames or a saved scan.
 
-A thin layer over :func:`tomojax.load_frames`, :meth:`tomojax.Frames.selected`,
-:meth:`~tomojax.Frames.cropped` and :meth:`~tomojax.Frames.corrected` with
-steps from :mod:`tomojax.corrections`; the scan written records them.
+A thin layer over :func:`tomojax.load_frames` and :meth:`tomojax.Frames.corrected`
+for raw frames, and :func:`tomojax.load` and :meth:`tomojax.Scan.corrected` for a
+dataset of line integrals, with :meth:`~tomojax.Scan.selected`,
+:meth:`~tomojax.Scan.cropped` and binning; the scan written records each step.
 """
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from tomojax.cli._options import add_config, add_output, check_paths, fail, hide_expert
-from tomojax.cli.config import parse_args_with_config
-from tomojax.geometry import Detector
+from tomojax.cli._inputs import PUBLIC as INPUTS, add_inputs, declared, input_paths, load_keywords
+from tomojax.cli._options import add_output, check_paths, fail, hide_expert
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -23,55 +24,45 @@ if TYPE_CHECKING:
     from tomojax.corrections import Step
 
 _PUBLIC = (
-    "--flats",
-    "--darks",
-    "--angles",
+    *INPUTS,
     "--views",
     "--crop",
     "--reject-views",
     "--zingers",
     "--stripes",
     "--rings",
+    "--binning",
     "--preview",
 )
+# Steps on transmission, before the log: they need raw frames.
+_TRANSMISSION = ("zingers", "paganin")
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="tomojax preprocess",
+        prog="tomojax correct",
         description=(
-            "Correct raw detector frames into line integrals -log((I - D) / (F - D)) ready "
-            "to reconstruct, with each view's flat interpolated between the flat sets "
-            "around it. INPUT may be HDF5 with image_key calibration, or a Nikon, "
-            "SkyScan, Zeiss or ESRF acquisition with its own metadata. Generic TIFF "
-            "stacks need --angles, --flats and a detector in --config; "
-            "SkyScan exports need explicit white and dark levels. "
-            "The scan written records each correction."
+            "Apply the optional corrections and cut the scan down. On raw frames (HDF5 with "
+            "image_key, Nikon, SkyScan, Zeiss, ESRF, a TIFF stack) every step runs, with the "
+            "standard dark, flat and -log; on a dataset of line integrals, the steps that act "
+            "on them (--stripes, --rings, --reject-views). The scan written records each step."
         ),
         epilog=(
             "Examples:\n"
-            "  tomojax preprocess raw.nxs -o scan.nxs\n"
-            "  tomojax preprocess skyscan/ --flats WHITE --darks DARK -o scan.nxs\n"
-            "  tomojax preprocess raw.nxs -o scan.nxs --stripes 9 --zingers --reject-views\n"
-            "  tomojax preprocess frames/ --flats flats/ --darks darks/ --angles angles.csv "
-            "-o scan.nxs\n"
-            "  tomojax preprocess raw.nxs -o scan.nxs --crop 100:900,50:1950 "
-            "--views 0:1200:4"
+            "  tomojax correct raw.nxs -o scan.nxs --stripes 9 --zingers --reject-views\n"
+            "  tomojax correct skyscan/ --flats WHITE --darks DARK -o scan.nxs\n"
+            "  tomojax correct scan.nxs -o rings.nxs --rings\n"
+            "  tomojax correct raw.nxs -o scan.nxs --crop 100:900,50:1950 --views 0:1200:4 "
+            "--binning 2"
         ),
     )
     _ = parser.add_argument(
-        "data", metavar="INPUT", help="Acquisition file/folder (including SkyScan), or TIFF stack"
+        "data", metavar="INPUT", help="Raw acquisition, TIFF stack, or a dataset of line integrals"
     )
     add_output(parser, "Corrected scan to write (.nxs)")
-    add_config(parser, settings={"binning": 1, "detector": None})
+    add_inputs(parser)
     _ = parser.add_argument(
-        "--flats", metavar="PATH|LEVEL", help="Flat frames (HDF5, TIFF or XRM), or one level"
-    )
-    _ = parser.add_argument(
-        "--darks", metavar="PATH|LEVEL", help="Dark frames (HDF5, TIFF or XRM), or one level"
-    )
-    _ = parser.add_argument(
-        "--angles", metavar="FILE", help="Angles in degrees (.npy, or one per line)"
+        "--binning", type=int, default=1, help="Average BINNING x BINNING detector pixels into one"
     )
     _ = parser.add_argument(
         "--views",
@@ -123,9 +114,6 @@ def _build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--epsilon", type=float, default=1e-6, help="Floor of the flat field and transmission"
     )
-    _ = parser.add_argument("--data-path", help="HDF5 path of the stack of frames")
-    _ = parser.add_argument("--image-key-path", help="HDF5 path of the image_key")
-    _ = parser.add_argument("--angles-path", help="HDF5 path of the rotation angles")
     hide_expert(parser, _PUBLIC)
     return parser
 
@@ -171,25 +159,6 @@ def detector_block(text: str) -> tuple[slice, slice]:
     return slice(y0, y1), slice(x0, x1)
 
 
-def _level_or_path(value: str | None) -> float | str | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return value
-
-
-def _detector(settings: dict[str, object]) -> Detector | None:
-    """The same explicit detector override accepted by load_frames, from TOML."""
-    value = settings.get("detector")
-    if value is None:
-        return None
-    if not isinstance(value, dict) or not {"nu", "nv", "du", "dv", "det_center"} <= value.keys():
-        raise ValueError("detector in --config needs nu, nv, du, dv and det_center")
-    return Detector.from_dict(value)
-
-
 def _steps(args: argparse.Namespace) -> list[Step]:
     """The correction steps the options ask for, in the order they run."""
     from tomojax.corrections import Paganin, RejectViews, Stripes, Zingers
@@ -213,23 +182,18 @@ def _steps(args: argparse.Namespace) -> list[Step]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run ``tomojax preprocess``."""
+    """Run ``tomojax correct``."""
     import tomojax as tj
     from tomojax.core import setup_logging
-    from tomojax.io.api import load_angles, save_projection_quicklook
+    from tomojax.io.api import save_projection_quicklook
 
     parser = _build_parser()
-    args, config_meta = parse_args_with_config(parser, argv)
-    settings = cast("dict[str, object]", config_meta["settings"])
+    args = parser.parse_args(argv)
     source, output = cast("str", args.data), cast("str", args.out)
-    flats = _level_or_path(cast("str | None", args.flats))
-    darks = _level_or_path(cast("str | None", args.darks))
-    angles, preview = cast("str | None", args.angles), cast("str | None", args.preview)
-    select = cast("str | None", args.views)
-    crop = cast("str | None", args.crop)
+    preview = cast("str | None", args.preview)
     check_paths(
         parser,
-        inputs=[source, *(p for p in (flats, darks) if isinstance(p, str)), angles],
+        inputs=[source, *input_paths(args)],
         outputs=[output, preview],
         force=cast("bool", args.force),
     )
@@ -239,37 +203,71 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(str(exc))
     setup_logging()
     try:
-        frames = tj.load_frames(
-            source,
-            flats=flats,
-            darks=darks,
-            angles=None if angles is None else load_angles(Path(angles)),
-            detector=_detector(settings),
-            data_path=cast("str | None", args.data_path),
-            image_key_path=cast("str | None", args.image_key_path),
-            angles_path=cast("str | None", args.angles_path),
-        )
-        if select is not None:
-            frames = frames.selected(view_ranges(select, frames.views))
-        if crop is not None:
-            frames = frames.cropped(*detector_block(crop))
-        if args.rings:
-            from tomojax.corrections import Rings
-
-            # Fit the selected native views before rejection changes their geometry.
-            steps.insert(0, Rings(frames.geometry))
-        scan = frames.corrected(
-            *steps,
-            epsilon=cast("float", args.epsilon),
-            binning=cast("int", settings.get("binning", 1)),
-        )
+        scan = _corrected(tj, source, args, steps)
     except (KeyError, ValueError, OSError) as exc:
-        return fail("preprocess", str(exc).strip("'\""))
+        return fail("correct", str(exc).strip("'\""))
     tj.save(output, scan)
     if preview is not None:
         _ = save_projection_quicklook(Path(output), Path(preview))
     print(f"wrote {output}: {scan!r}")
     return 0
+
+
+def _corrected(tj: Any, source: str, args: argparse.Namespace, steps: list[Step]) -> Any:
+    """The scan: raw frames corrected with every step, or a dataset with its own."""
+    select, crop = cast("str | None", args.views), cast("str | None", args.crop)
+    binning = cast("int", args.binning)
+    keywords = load_keywords(args)
+    if not _raw(source, args):
+        named = [name for name in _TRANSMISSION if getattr(args, name) is not None]
+        if named:
+            raise ValueError(
+                f"--{named[0]} acts on transmission, before the log; {source} holds line "
+                "integrals. Run tomojax correct on the raw acquisition (with the same --flats/"
+                "--darks/--angles/--geometry flags as tomojax load) to apply it."
+            )
+        scan = tj.load(source, **keywords)
+        scan = replace(scan, geometry=declared(scan.geometry, args))
+        if select is not None:
+            scan = scan.selected(view_ranges(select, len(scan.angles)))
+        if crop is not None:
+            scan = scan.cropped(*detector_block(crop))
+        if args.rings:
+            from tomojax.corrections import Rings
+
+            steps.insert(0, Rings(scan.geometry))
+        scan = scan.corrected(*steps) if steps else scan
+        return scan.binned(binning)
+    keywords.pop("apply_poses")
+    frames = tj.load_frames(source, **keywords)
+    frames = replace(frames, geometry=declared(frames.geometry, args))
+    if select is not None:
+        frames = frames.selected(view_ranges(select, frames.views))
+    if crop is not None:
+        frames = frames.cropped(*detector_block(crop))
+    if args.rings:
+        from tomojax.corrections import Rings
+
+        # Fit the selected native views before rejection changes their geometry.
+        steps.insert(0, Rings(frames.geometry))
+    return frames.corrected(*steps, epsilon=cast("float", args.epsilon), binning=binning)
+
+
+def _raw(source: str, args: argparse.Namespace) -> bool:
+    """Whether ``source`` holds detector counts (with flats and darks), not line integrals."""
+    from tomojax.io.api import locate_frames, read_acquisition
+
+    path = Path(source)
+    if args.flats is not None or args.darks is not None or read_acquisition(path) is not None:
+        return True
+    if path.is_dir() or path.suffix.lower() in {".tif", ".tiff"}:
+        return True
+    if path.suffix.lower() == ".npz":
+        return False
+    located = locate_frames(source)
+    keys = located.image_key
+    labelled = keys is not None and bool(np.any(keys != 0))
+    return labelled or located.flats is not None or located.darks is not None
 
 
 if __name__ == "__main__":  # pragma: no cover

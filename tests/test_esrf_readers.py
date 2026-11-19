@@ -41,8 +41,8 @@ def _check_inspection(path, frames, previews, capsys, *, missing_angles=False):
     assert report["projection"]["stats"]["mean"] == pytest.approx(float(counts.mean()))
     assert report["detector_metadata"]["du"] == frames.source.detector.du
     assert report["flats_darks"]["flat_count"] == len(frames.flats)
-    if report["angles"]["coverage_deg"] is not None:
-        np.testing.assert_allclose(report["angles"]["coverage_deg"], np.ptp(frames.source.angles))
+    if report["angles"]["coverage"] is not None:
+        np.testing.assert_allclose(report["angles"]["coverage"], np.ptp(frames.source.angles))
     np.testing.assert_array_equal(
         iio.imread(previews / "projection.png"), scale_to_uint8(counts[len(counts) // 2])
     )

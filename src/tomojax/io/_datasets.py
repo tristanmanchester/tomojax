@@ -325,12 +325,12 @@ class ProjectionDataset:
         if detector is None:
             raise ValueError(
                 "Missing detector pixel sizes: pass pixel_size=..., detector=... or "
-                "geometry=..., or set detector in tomojax preprocess --config"
+                "geometry=..., or set detector in tomojax correct --config"
             )
         views = len(self.angles) if self.projections is None else self.projections.shape[0]
         if not views or self.angles.shape != (views,):
             raise ValueError(
-                "Missing view angles: pass angles=..., or use tomojax preprocess --angles"
+                "Missing view angles: pass angles=..., or use tomojax correct --angles"
             )
         payload: dict[str, Any] = {
             "detector": detector.to_dict(),
@@ -622,7 +622,7 @@ def _dataset_issues(input_path: Path) -> list[str]:
     if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
         return [
             "TIFF stacks require an angle sidecar or explicit angles; "
-            "import them with `tomojax import` or load_tiff_stack"
+            "pass them with tomojax load --angles, or tj.load(angles=...)"
         ]
     return [f"unsupported dataset format for {input_path}"]
 

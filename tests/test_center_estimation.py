@@ -176,7 +176,7 @@ def test_recon_says_when_the_file_recorded_no_center(tmp_path, caplog):
     tj.save(path, replace(scan, source=record))
     for method in ("auto", "fbp"):
         caplog.clear()
-        assert main(["recon", str(path), "-o", str(out), "--method", method, "--force"]) == 0
+        assert main(["reconstruct", str(path), "-o", str(out), "--method", method, "--force"]) == 0
         assert "records no rotation centre" in caplog.text
 
 

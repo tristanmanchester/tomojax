@@ -14,7 +14,7 @@
     "SimConfig": 31
   },
   "exported_names": {
-    "tomojax": 24,
+    "tomojax": 27,
     "tomojax.geometry": 13,
     "tomojax.evaluation": 2,
     "tomojax.recon": 24,
@@ -23,14 +23,14 @@
     "tomojax.datasets": 15,
     "tomojax.geometry.api": 12,
     "tomojax.recon.api": 6,
-    "tomojax.io.api": 25,
+    "tomojax.io.api": 26,
     "tomojax.alignment.api": 4
   },
   "cli_flags": {
     "inspect": 4,
-    "import": 12,
-    "preprocess": 20,
-    "recon": 19,
+    "load": 21,
+    "correct": 31,
+    "reconstruct": 19,
     "align": 17,
     "export": 6,
     "simulate": 19
@@ -55,26 +55,26 @@
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
   "code_lines": {
-    "(modules)": 3284,
-    "_data": 2151,
+    "(modules)": 3508,
+    "_data": 2104,
     "alignment": 4112,
     "backends": 460,
-    "cli": 2320,
-    "core": 13538,
+    "cli": 2264,
+    "core": 13595,
     "corrections": 2772,
     "datasets": 1120,
     "forward": 789,
     "geometry": 908,
-    "io": 3817,
-    "motion": 148,
+    "io": 3822,
+    "motion": 153,
     "nuisance": 232,
-    "recon": 13593
+    "recon": 13595
   },
   "cuda_kernels": 50,
   "cuda_switches": 36,
   "environment_reads": 25,
   "suppressions": {
-    "noqa": 4,
+    "noqa": 5,
     "type: ignore": 12,
     "pyright: ignore": 13
   },
@@ -89,12 +89,12 @@
     "src/tomojax/recon/spdhg_tv.py::C901::_run_spdhg_scan"
   ],
   "single_use_helpers": {
-    "tiny": 74,
+    "tiny": 76,
     "forwarders": 6,
     "chained": 4
   },
   "type_errors": {
-    "reportArgumentType": 92,
+    "reportArgumentType": 91,
     "reportAttributeAccessIssue": 17,
     "reportCallIssue": 2,
     "reportGeneralTypeIssues": 2,

@@ -63,9 +63,11 @@ def scale_to_uint8(
 
 
 def save_quicklook_png(path: PathLike, volume: np.ndarray | jax.Array) -> Path:
-    """Write a percentile-scaled central reconstruction slice as a PNG."""
+    """Write a percentile-scaled central reconstruction slice as a PNG, moved on once whole."""
+    from tomojax.core.files import replaced_when_complete
+
     out_path = Path(path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     image = scale_to_uint8(extract_central_slice(volume))
-    iio.imwrite(out_path, image)
+    with replaced_when_complete(out_path, "preview") as temporary:
+        iio.imwrite(temporary, image, extension=".png")
     return out_path

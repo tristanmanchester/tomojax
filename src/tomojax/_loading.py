@@ -739,7 +739,7 @@ def _hdf5_frames(
     else:
         raise ValueError(
             f"{file} records no rotation angles: pass angles=... (degrees), "
-            "or use tomojax preprocess --angles"
+            "or use tomojax correct --angles"
         )
     if view_angles.shape != (views,):
         raise ValueError(f"{file} has {views} sample frames but {view_angles.size} angles")
@@ -901,7 +901,7 @@ def _tiff_frames(
     if angles is None:
         raise ValueError(
             f"{file} is a TIFF stack, which holds no angles: pass angles=... (degrees), "
-            "or use tomojax preprocess --angles"
+            "or use tomojax correct --angles"
         )
     counts = read_tiff_frames(file, lazy=True)
     views, rows, cols = counts.shape

@@ -42,6 +42,33 @@ There are no aliases. Each old name is gone, and files saved before this release
 | `info["levels"][i]["budget"] = {outer, inner, init_iterations, lm_initial}` | `info["levels"][i]["iterations"]`, `["image_iterations"]`, `["initial_image_iterations"]` |
 | `info["report"]["levels"][i]["steps"]` (a count) | `info["report"]["levels"][i]["iterations"]` |
 | `Alignment(volume, grid, scan, poses, info)` | `Alignment(scan, info, image=None, grid=None)`, with `poses` a property |
+| `tomojax recon` | `tomojax reconstruct` |
+| `tomojax import` | `tomojax load`: `tj.load`, then `tj.save` |
+| `tomojax preprocess` | `tomojax correct` |
+| `preprocess --config` keys `binning` and `[detector]`; `import --config` keys `detector_center`, `tilt`, `tilt_about`, `detector_roll`, `detector_pitch`, `detector_yaw` | `--binning`, `--pixel-size`, `--detector-center`, `--tilt`, `--tilt-about`, `--detector-roll`, `--detector-pitch`, `--detector-yaw` |
+| `tomojax inspect --json` angle keys `min_deg`, `max_deg`, `coverage_deg` | `min`, `max`, `coverage` |
+
+### The commands use the API's verbs, and each has its API function
+
+- **`tomojax load INPUT -o OUTPUT`** is `tj.load` then `tj.save`, for every input
+  `tj.load` reads. Its flags supply what the file lacks under `tj.load`'s names, the
+  geometry included: `--geometry lamino --tilt 30`, for example, so a raw file that
+  records no geometry can be used from the command line.
+- **`tomojax correct`** applies the optional corrections and `--views`, `--crop`
+  and `--binning`, with the same input flags. On raw frames every step runs. On a
+  saved scan of line integrals only the steps that act on them run, and a step on
+  transmission is refused with what to run instead.
+- **New functions:**
+  - `tj.inspect(path)`: the report `tomojax inspect --json` prints, with `valid` and
+    `issues`;
+  - `tj.export(path, reconstruction, ...)`: TIFF slices or one raw file;
+  - `tj.simulate(...)`: the phantom as a reconstruction's volume, with its simulated
+    scan as `scan`.
+- **Writes moved on whole:** the export's files, the manifest, the motion table and
+  the preview PNGs are written beside their name and moved onto it whole, so a failure
+  leaves no partial file.
+- **TIFF line integrals:** a TIFF stack is read as raw frames. A stack of line
+  integrals, which `tomojax import` packaged, is built into a `tj.Scan` in Python.
 
 ### `tj.align` takes its settings
 

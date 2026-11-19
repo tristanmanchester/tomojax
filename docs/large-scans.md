@@ -109,7 +109,7 @@ laminography on an 8 GB GPU.
 
 ### Cone beam
 
-`tj.reconstruct(scan)` and `tomojax recon` (FDK, the default method on cone
+`tj.reconstruct(scan)` and `tomojax reconstruct` (FDK, the default method on cone
 data) switch to host z-slabs when the volume would take more than 40% of the
 free GPU memory. The volume then comes back as a NumPy array, and
 `Reconstruction.info["host_slabs"]` is true. Each slab filters only the
@@ -152,7 +152,7 @@ file until released. With explicit `out=`, the supplied array is preserved and
 work files are placed beside it if it is a memmap.
 
 
-`tj.reconstruct(scan, "fbp")` and `tomojax recon --method fbp` switch to host
+`tj.reconstruct(scan, "fbp")` and `tomojax reconstruct --method fbp` switch to host
 slabs when the volume would take more than 40% of the free device memory.
 `Reconstruction.info["host_slabs"]` records that choice. Passing `out=` forces
 host slabs even for a small volume and fills the supplied float32 storage

@@ -422,3 +422,18 @@ def test_a_saved_reconstruction_names_its_projections_and_keeps_them_only_when_a
         assert tj.load_reconstruction(tmp_path / "again.nxs").info["source"] == source
     with pytest.raises(ValueError, match="without its scan"):
         tj.save(tmp_path / "none.nxs", alone, include_scan=True)
+
+
+def test_the_commands_api_counterparts_simulate_inspect_and_export(tmp_path: Path) -> None:
+    truth = tj.simulate("sphere", size=8, n_views=6, seed=1)
+    assert truth.scan is not None and np.shape(truth.volume) == (8, 8, 8)
+    assert truth.scan.projections.shape == (6, 8, 8)
+    tj.save(tmp_path / "truth.nxs", truth, include_scan=True)
+    report = tj.inspect(tmp_path / "truth.nxs")
+    assert report["valid"] and report["issues"] == [] and report["angles"]["count"] == 6
+    assert report["volume"]["found"]
+    tj.export(tmp_path / "slices", truth)
+    assert len(list((tmp_path / "slices").glob("slice_*.tif"))) == 8
+    tj.export(tmp_path / "truth.raw", truth, dtype="uint16", range=(0.0, 1.0))
+    assert (tmp_path / "truth.raw").stat().st_size == 8 * 8 * 8 * 2
+    assert not list(tmp_path.glob(".*partial*"))  # each file moved on whole

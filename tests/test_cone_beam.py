@@ -363,17 +363,17 @@ def test_cone_geometry_round_trips_through_saved_datasets(tmp_path: Path):
     np.testing.assert_allclose(rebuilt.pose_matrices(), geometry.pose_matrices(), atol=1e-6)
 
 
-def test_import_records_cone_beam_geometry(tmp_path: Path):
+def test_load_records_a_declared_cone_beam_geometry(tmp_path: Path):
     from tomojax.cli.main import main
 
     from ._helpers import write_angle_csv, write_tiff_stack
 
     write_tiff_stack(tmp_path / "tiffs", [1.0, 2.0, 3.0, 4.0], shape=(4, 6))
     write_angle_csv(tmp_path / "angles.csv", [0.0, 90.0, 180.0, 270.0])
-    config = tmp_path / "calibration.toml"
-    config.write_text("detector_center = [0.0, 0.0]\ndetector_roll = 0.5\n")
-    args = ["import", str(tmp_path / "tiffs"), "-o", str(tmp_path / "scan.nxs"), "--force"]
-    args += ["--config", str(config), "--pixel-size", "1", "--angles"]
+    # The frames are counts of a flat of 10 and no dark; the file records no geometry.
+    args = ["load", str(tmp_path / "tiffs"), "-o", str(tmp_path / "scan.nxs"), "--force"]
+    args += ["--flats", "10", "--darks", "0", "--detector-center", "0", "0"]
+    args += ["--detector-roll", "0.5", "--pixel-size", "1", "--angles"]
     args += [str(tmp_path / "angles.csv"), "--geometry", "cone", "--source-to-axis", "50"]
     assert main([*args, "--source-to-detector", "80"]) == 0
     loaded = load_dataset(tmp_path / "scan.nxs")
@@ -386,8 +386,7 @@ def test_import_records_cone_beam_geometry(tmp_path: Path):
     )
     assert isinstance(shifted, ConeGeometry) and shifted.beam.axis_offset == 1.5
     np.testing.assert_allclose(shifted.pose_matrices()[:, :3, 3], [[1.5, 0.0, 0.0]] * 4)
-    with pytest.raises(SystemExit):
-        main([*args, "--source-to-detector", "40"])
+    assert main([*args, "--source-to-detector", "40"]) == 1  # the detector inside the source
 
 
 def test_cone_projection_is_continuous_as_a_view_turns_through_45_degrees():
@@ -439,7 +438,7 @@ def test_preprocess_reads_a_nikon_xtekct_scan(tmp_path: Path):
         f"VoxelSizeZ=0.05\nWhiteLevel={white}\nProjections={views}\nInitialAngle=180\n"
         "AngularStep=-6\nObjectOffsetX=-0.01\n"
     )
-    assert main(["preprocess", str(tmp_path / "part.xtekct"), "--darks", "0",
+    assert main(["correct", str(tmp_path / "part.xtekct"), "--darks", "0",
                  "-o", str(tmp_path / "part.nxs")]) == 0  # fmt: skip
     loaded = load_dataset(tmp_path / "part.nxs")
     _, _, ingested = build_geometry_from_dataset_metadata(loaded.geometry_inputs())

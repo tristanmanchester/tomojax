@@ -48,7 +48,7 @@ uv venv --python 3.12
 uv pip install --python .venv/bin/python "tomojax[cpu]"
 
 .venv/bin/tomojax simulate -o synthetic.nxs --size 32 --n-views 60
-.venv/bin/tomojax recon synthetic.nxs -o recon.nxs
+.venv/bin/tomojax reconstruct synthetic.nxs -o recon.nxs
 .venv/bin/tomojax inspect recon.nxs --preview previews
 ```
 
@@ -100,7 +100,7 @@ tj.save("recon.nxs", tj.reconstruct(result.scan))
 ```
 
 The command-line options use the same names: the CGLS line is
-`tomojax recon scan.nxs -o recon.nxs --method cgls --iterations 50`, and the
+`tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 50`, and the
 alignment `tomojax align scan.nxs -o aligned.nxs --fit translations rotations`.
 Expert settings are a configuration of the method's own class from
 `tomojax.recon`,

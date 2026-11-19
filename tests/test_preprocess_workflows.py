@@ -1,4 +1,4 @@
-"""``tomojax preprocess``: raw frames to a scan of line integrals, through tj.load_frames."""
+"""``tomojax correct``: raw frames to a scan of line integrals, through tj.load_frames."""
 
 from __future__ import annotations
 
@@ -14,7 +14,12 @@ import tomojax as tj
 from tomojax.cli.main import main
 from tomojax.io import load_dataset
 
-from ._helpers import write_angle_csv, write_raw_nxtomo, write_tiff_stack
+from ._helpers import (
+    write_angle_csv,
+    write_projection_dataset,
+    write_raw_nxtomo,
+    write_tiff_stack,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,7 +28,7 @@ pytestmark = pytest.mark.surface
 
 
 def _preprocess(*args: object) -> int:
-    return main(["preprocess", *(str(a) for a in args)])
+    return main(["correct", *(str(a) for a in args)])
 
 
 def _set_detector(
@@ -47,9 +52,8 @@ def _set_detector(
 @pytest.mark.parametrize("binning", [1, 2])
 def test_a_raw_nxtomo_file_becomes_a_scan_that_records_its_corrections(tmp_path, binning):
     write_raw_nxtomo(tmp_path / "raw.nxs")  # sample 5, flat 11, sample 9, dark 1
-    config = tmp_path / "small.toml"
-    config.write_text(f"binning = {binning}\n")
-    assert _preprocess(tmp_path / "raw.nxs", "-o", tmp_path / "scan.nxs", "--config", config) == 0
+    out = tmp_path / "scan.nxs"
+    assert _preprocess(tmp_path / "raw.nxs", "-o", out, "--binning", binning) == 0
     scan = tj.load(tmp_path / "scan.nxs")
     np.testing.assert_allclose(
         np.asarray(scan.projections)[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6
@@ -60,12 +64,8 @@ def test_a_raw_nxtomo_file_becomes_a_scan_that_records_its_corrections(tmp_path,
     assert scan.detector.nu == 2 // binning and scan.detector.nv == 2 // binning
 
 
-def _detector_config(tmp_path, *, nu=2, nv=2):
-    config = tmp_path / "geometry.toml"
-    config.write_text(
-        f"[detector]\nnu = {nu}\nnv = {nv}\ndu = 1.0\ndv = 1.0\ndet_center = [0.0, 0.0]\n"
-    )
-    return config
+# The detector of a file that records none: unit pixels, centred.
+DETECTOR = ("--pixel-size", 1, "--detector-center", 0, 0)
 
 
 def test_tiff_frames_with_flats_darks_and_angles(tmp_path: Path) -> None:
@@ -74,10 +74,8 @@ def test_tiff_frames_with_flats_darks_and_angles(tmp_path: Path) -> None:
     write_tiff_stack(tmp_path / "darks", [1.0])
     write_angle_csv(tmp_path / "angles.csv", [0.0, 90.0])
     out = tmp_path / "scan.nxs"
-    config = _detector_config(tmp_path)
     common = [
-        "--config",
-        config,
+        *DETECTOR,
         "--flats",
         tmp_path / "flats",
         "--angles",
@@ -89,7 +87,7 @@ def test_tiff_frames_with_flats_darks_and_angles(tmp_path: Path) -> None:
     )
     # Levels stand in for frames: a flat of 11 everywhere, darks of 1.
     assert _preprocess(tmp_path / "frames", "-o", out, "--force", "--flats", 11, "--darks", 1,
-                       "--angles", tmp_path / "angles.csv", "--config", config) == 0  # fmt: skip
+                       "--angles", tmp_path / "angles.csv", *DETECTOR) == 0  # fmt: skip
     np.testing.assert_allclose(
         load_dataset(out).projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6
     )
@@ -103,8 +101,7 @@ def test_tiff_frames_need_flats_and_angles(
     write_tiff_stack(tmp_path / "flats", [11.0])
     write_angle_csv(tmp_path / "angles.csv", [0.0, 90.0])
     args = [
-        "--config",
-        _detector_config(tmp_path),
+        *DETECTOR,
         "--flats",
         tmp_path / "flats",
         "--angles",
@@ -118,7 +115,7 @@ def test_tiff_frames_need_flats_and_angles(
 
 def test_detector_comes_from_the_record_or_an_explicit_override(tmp_path: Path) -> None:
     # Recorded pitches with no detector give those pitches and the middle; none give pixel
-    # units; --config replaces either.
+    # units; --pixel-size and --detector-center replace either.
     write_raw_nxtomo(tmp_path / "raw.nxs")
     for i, sizes in enumerate(((0.5, 0.75), None)):
         _set_detector(tmp_path / "raw.nxs", record=None, sizes=sizes)
@@ -131,7 +128,7 @@ def test_detector_comes_from_the_record_or_an_explicit_override(tmp_path: Path) 
         )
         out = tmp_path / f"configured{i}.nxs"
         assert (
-            _preprocess(tmp_path / "raw.nxs", "-o", out, "--config", _detector_config(tmp_path))
+            _preprocess(tmp_path / "raw.nxs", "-o", out, *DETECTOR)
             == 0
         )
         assert tj.load(out).detector == tj.Detector(2, 2, 1, 1)
@@ -165,7 +162,7 @@ def test_steps_from_the_command_line(tmp_path: Path, rings: bool) -> None:
     out = tmp_path / "scan.nxs"
     assert _preprocess(tmp_path / "frames", "-o", out, "--darks", 0, "--flats", 1000, "--angles", tmp_path / "angles.csv",
                        "--zingers", "--stripes", 9, *(["--rings"] if rings else []),
-                       "--reject-views", "--config", _detector_config(tmp_path, nu=nu, nv=nv)) == 0  # fmt: skip
+                       "--reject-views", *DETECTOR) == 0  # fmt: skip
     scan = tj.load(out)
     names = [c.name for c in scan.corrections]
     if rings:
@@ -173,6 +170,18 @@ def test_steps_from_the_command_line(tmp_path: Path, rings: bool) -> None:
         names.remove("rings")
     assert names == ["flat_dark", "zingers", "log", "reject_views", "stripes"]
     assert np.isfinite(np.asarray(scan.projections)).all()
+
+
+def test_correct_on_a_dataset_takes_only_its_line_integral_steps(tmp_path, capsys):
+    # A saved scan holds line integrals: steps on them apply, and a step on transmission,
+    # which must run before the log, is refused with what to run instead.
+    write_projection_dataset(tmp_path / "scan.nxs")
+    out = tmp_path / "corrected.nxs"
+    assert _preprocess(tmp_path / "scan.nxs", "-o", out, "--stripes", 3, "--views", "0:2") == 0
+    assert [c.name for c in tj.load(out).corrections][-2:] == ["selected", "stripes"]
+    assert _preprocess(tmp_path / "scan.nxs", "-o", tmp_path / "z.nxs", "--zingers") == 1
+    assert "acts on transmission" in capsys.readouterr().err
+    assert not (tmp_path / "z.nxs").exists()
 
 
 def test_inspect_lists_the_corrections(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

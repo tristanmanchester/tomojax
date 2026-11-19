@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 import h5py
 import numpy as np
 
+from tomojax.core.files import replaced_when_complete
 from tomojax.geometry.api import nominal_axis_unit_from_inputs
 
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees
@@ -26,7 +27,6 @@ from ._io_helpers import (
     _load_sample_metadata,
     _load_source_metadata,
     _write_string_attr,
-    replaced_when_complete,
     sizes_of,
 )
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata, ValidationReport

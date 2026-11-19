@@ -279,29 +279,25 @@ def _angles_report(file: h5py.File, located: LocatedFrames | None) -> AnglesRepo
             "path": None,
             "count": None,
             "units": None,
-            "min_deg": None,
-            "max_deg": None,
-            "coverage_deg": None,
+            "min": None,
+            "max": None,
+            "coverage": None,
         }
 
     # Discovery has already converted radians and known GDA command units.
     samples = np.ones(values.shape, dtype=bool) if keys is None else keys == 0
     finite = values[np.isfinite(values) & samples]
     units = _attr_to_str(dataset.attrs.get("units"))
-    if finite.size == 0:
-        min_deg = max_deg = coverage_deg = None
-    else:
-        min_deg = float(finite.min())
-        max_deg = float(finite.max())
-        coverage_deg = max_deg - min_deg
+    low = float(finite.min()) if finite.size else None
+    high = float(finite.max()) if finite.size else None
     return {
         "found": True,
         "path": path,
         "count": int(values.size),
         "units": units,
-        "min_deg": min_deg,
-        "max_deg": max_deg,
-        "coverage_deg": coverage_deg,
+        "min": low,
+        "max": high,
+        "coverage": None if low is None or high is None else high - low,
     }
 
 
@@ -569,9 +565,9 @@ def _acquisition_report(path: PathLike, raw: RawAcquisition) -> InspectionReport
             "path": acquisition.get("angles_path"),
             "count": len(angles),
             "units": "deg",
-            "min_deg": float(angles.min()) if len(angles) else None,
-            "max_deg": float(angles.max()) if len(angles) else None,
-            "coverage_deg": float(np.ptp(angles)) if len(angles) else None,
+            "min": float(angles.min()) if len(angles) else None,
+            "max": float(angles.max()) if len(angles) else None,
+            "coverage": float(np.ptp(angles)) if len(angles) else None,
         },
         "geometry": {
             "found": True,

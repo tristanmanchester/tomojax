@@ -18,8 +18,8 @@ Each method's settings are a configuration class: `FBPConfig` (FBP and FDK),
 `MLEMConfig`. Pass one as
 `tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv"))`;
 keywords such as `iterations=` replace the fields of the same name. The same
-fields are the keys of a `tomojax recon --config` TOML file
-(`tomojax recon --config-keys` lists them).
+fields are the keys of a `tomojax reconstruct --config` TOML file
+(`tomojax reconstruct --config-keys` lists them).
 
 CGLS, FISTA and SPDHG default to `data_term="absolute"`, fitting measured
 line integrals. Use `data_term="per_view_contrast"` when material lies outside

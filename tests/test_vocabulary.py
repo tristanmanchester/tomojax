@@ -3,10 +3,10 @@
 The surface is what a user types or reads back: every public name, parameter, field,
 property and method; the recon configs; every CLI command, flag and choice; the ``info``
 keys and string values of a small ``tj.align`` and ``tj.reconstruct``; the keys
-``tj.save`` writes; and the code blocks of the docs. Each rule names the replacement
-when it fails. ``ALLOWED`` holds the sites not yet renamed, each with the rename step
-(CHANGELOG) that removes it; a row that no longer occurs fails too, so the list only
-shrinks.
+``tj.save`` writes and ``tj.inspect`` reports; and the code blocks of the docs. Each rule
+names the replacement when it fails. ``ALLOWED`` holds sites allowed to break a rule, with
+the reason (empty since the v1 renames); a row that no longer occurs fails too, so the
+list only shrinks.
 """
 
 import argparse
@@ -90,40 +90,18 @@ SYNONYMS = {
 MIRRORS = {
     "align": ("align", {"scan", "config"}),
     "reconstruct": ("reconstruct", {"scan", "out", "config", "devices"}),
-    "load": ("load", {"path"}),
+    "load": ("load", {"path", "detector", "grid", "exposure_times", "flat_exposure_times"}),
     "export": ("export", {"path", "reconstruction"}),
     "inspect": ("inspect", {"path"}),
     "simulate": ("simulate", set()),
 }
-# The sites not yet renamed, by surface: (place, name) -> the rename step that removes them.
-ALLOWED: dict[str, dict[tuple[str, str], int]] = {
-    "api": {
-        ("cli", "import"): 5,
-        ("cli", "preprocess"): 5,
-        ("cli", "recon"): 5,
-    },
+# Sites allowed to break a rule, by surface: (place, name) -> the reason. Empty: the renames
+# of v1 are done.
+ALLOWED: dict[str, dict[tuple[str, str], str]] = {
+    "api": {},
     "results": {},
-    "docs": {
-        ("docs README.md", "tomojax recon"): 5,
-        ("docs docs/installation.md", "tomojax recon"): 5,
-        ("docs docs/lab-ct.md", "tomojax import"): 5,
-        ("docs docs/lab-ct.md", "tomojax preprocess"): 5,
-        ("docs docs/lab-ct.md", "tomojax recon"): 5,
-        ("docs docs/quickstart.md", "tomojax preprocess"): 5,
-        ("docs docs/quickstart.md", "tomojax recon"): 5,
-        ("docs docs/real-laminography.md", "tomojax import"): 5,
-        ("docs docs/real-laminography.md", "tomojax recon"): 5,
-        ("docs docs/synthetic-tomography.md", "tomojax recon"): 5,
-        ("docs src/tomojax/cli/README.md", "tomojax preprocess"): 5,
-        ("docs src/tomojax/cli/README.md", "tomojax recon"): 5,
-    },
-    "mirror": {
-        ("cli", "load"): 5,
-        ("cli", "reconstruct"): 5,
-        ("tomojax", "export"): 5,
-        ("tomojax", "inspect"): 5,
-        ("tomojax", "simulate"): 5,
-    },
+    "docs": {},
+    "mirror": {},
 }
 
 
@@ -274,6 +252,7 @@ def result_sites(tmp_path) -> Iterator[Site]:
     ):
         tj.save(tmp_path / f"{name}.nxs", item)
         yield from _saved(tmp_path / f"{name}.nxs")
+        yield from _info(f"inspect {name}", tj.inspect(tmp_path / f"{name}.nxs"))
 
 
 def docs_sites() -> Iterator[Site]:
@@ -328,9 +307,9 @@ def mirror_violations(monkeypatch) -> dict[tuple[str, str], str]:
 def _check(surface: str, found: dict[tuple[str, str], str]) -> None:
     allowed = ALLOWED[surface]
     new = sorted(f"{p}: {n!r} ({why})" for (p, n), why in found.items() if (p, n) not in allowed)
-    stale = sorted(f"{key} (step {step})" for key, step in allowed.items() if key not in found)
+    stale = sorted(f"{key} ({why})" for key, why in allowed.items() if key not in found)
     assert not new, "\n".join(new)
-    assert not stale, "renamed, so drop from ALLOWED:\n" + "\n".join(stale)
+    assert not stale, "no longer occurs, so drop from ALLOWED:\n" + "\n".join(stale)
 
 
 def test_the_api_and_cli_use_one_vocabulary(monkeypatch):

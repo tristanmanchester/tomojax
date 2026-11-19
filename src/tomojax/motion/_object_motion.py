@@ -75,8 +75,13 @@ def read_object_motion_csv(path: Path) -> ObjectMotionTrace:
 
 
 def write_object_motion_csv(path: Path, trace: ObjectMotionTrace) -> None:
-    """Write an object-frame motion sidecar."""
-    with Path(path).open("w", newline="", encoding="utf-8") as fh:
+    """Write an object-frame motion sidecar, moved onto ``path`` once whole."""
+    from tomojax.core.files import replaced_when_complete
+
+    with (
+        replaced_when_complete(path, "motion table") as temporary,
+        temporary.open("w", newline="", encoding="utf-8") as fh,
+    ):
         writer = csv.DictWriter(fh, fieldnames=OBJECT_MOTION_FIELDS)
         writer.writeheader()
         for idx in range(trace.n_views):

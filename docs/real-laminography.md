@@ -37,17 +37,23 @@ are rejected. Angles are not sorted automatically.
 
 ### Already-corrected absorption projections
 
-For a parallel scan, package an attenuation stack with explicit geometry:
+A stack of line integrals is a scan already: build it in Python with its measured
+geometry and save it. For a parallel scan:
 
-```bash
-uv run --no-sync tomojax import ./projections --angles angles.csv \
-  --pixel-size 0.65 --geometry parallel --config calibration.toml -o corrected.nxs
+```python
+import tomojax as tj
+from tomojax.io.api import load_angles, read_tiff_frames
+
+projections = read_tiff_frames("projections")
+nv, nu = projections.shape[1:]
+detector = tj.Detector(nu, nv, 0.65, 0.65, center=(0.0, 0.0))  # as measured
+grid = tj.Grid(nu, nu, nv, 0.65, 0.65, 0.65)
+scan = tj.Scan(projections, tj.ParallelGeometry(grid, detector, load_angles("angles.csv")))
+tj.save("corrected.nxs", scan)
 ```
 
-`calibration.toml` must contain `detector_center = [u, v]`, in physical
-length units. `import` does not apply flat/dark correction or a logarithm.
-It records the supplied detector and no grid. The grid is chosen at reconstruction, with
-voxels of the detector pitch by default. `tomojax recon --grid 256 256 128`
+Nothing applies flat/dark correction or a logarithm to them. The grid is chosen at
+reconstruction, with voxels of the detector pitch by default. `tomojax reconstruct --grid 256 256 128`
 resamples the selected field of view to 256 × 256 × 128 voxels; their spacing
 changes to preserve that physical extent. `tomojax align --fit center` estimates a
 centre-of-rotation offset. Detector and voxel pitch share a physical length
@@ -83,26 +89,12 @@ This writes line integrals, recording the correction. Use
 tomography. Do not pass already-log-transformed data into this raw-intensity
 path.
 
-For already-corrected laminography projections, the command-line import reads
-the measured tilt and centre from TOML. For example (replace all calibration
-values with those of the acquisition):
-
-```toml
-# calibration.toml
-geometry = "lamino"
-pixel_size = [0.65]
-detector_center = [0.0, 0.0]
-tilt = 30.0
-tilt_about = "x"
-```
-
-```bash
-uv run --no-sync tomojax import ./corrected-projections --angles angles.csv \
-  --config calibration.toml -o corrected-lamino.nxs
-```
-
+For already-corrected laminography projections, build the scan the same way with
+`tj.LaminographyGeometry(grid, detector, angles, tilt=30.0, tilt_about="x")`, the
+measured tilt and centre in place of these, and save it as `corrected-lamino.nxs`.
 Use the Python raw-intensity workflow above when the frames still need flat/dark
-correction. Missing tilt or centre is an error, not a default calibration.
+correction. For raw frames whose file records no geometry, `tomojax load` and
+`tomojax correct` declare one with `--geometry lamino --tilt 30 --pixel-size 0.65`.
 
 Replace 30° with the measured tilt. To check that it was kept, run
 `uv run --no-sync python -c "import tomojax as tj; print(tj.load('corrected-lamino.nxs').geometry.tilt)"`,
@@ -125,13 +117,13 @@ the new file with `tomojax inspect` before reconstructing it.
 ## Reconstruct with the recorded geometry
 
 The default reconstruction of a laminography scan is FBP, as for every
-geometry: `tj.reconstruct(scan)` or `tomojax recon corrected.nxs -o recon.nxs`.
+geometry: `tj.reconstruct(scan)` or `tomojax reconstruct corrected.nxs -o recon.nxs`.
 It takes seconds (5.5 s on a 1441-view K11 scan with a 704 × 704 × 234 grid).
 
 For a better image, ask for FISTA by name:
 
 ```bash
-uv run --no-sync tomojax recon corrected.nxs -o recon.nxs \
+uv run --no-sync tomojax reconstruct corrected.nxs -o recon.nxs \
   --method fista --iterations 100 --nonnegative --region off \
   --manifest recon-manifest.json
 uv run --no-sync tomojax inspect recon.nxs --preview previews

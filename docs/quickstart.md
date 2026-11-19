@@ -69,7 +69,7 @@ singleton detector-row axis.
 For an HDF5 scan containing sample, flat, dark frames and measured geometry:
 
 ```bash
-uv run --no-sync tomojax preprocess raw.nxs -o corrected.nxs
+uv run --no-sync tomojax correct raw.nxs -o corrected.nxs
 uv run --no-sync tomojax inspect corrected.nxs
 ```
 
@@ -145,12 +145,10 @@ features can also be changed. Missing information at dead pixels is not recovere
 `corrected(..., binning=2)` averages 2 x 2 detector blocks of the line integrals,
 as `scan.binned(2)` does. With only `Stripes` and the like after the log, it
 bins slabs of rows read straight from an uncompressed file, so the unbinned
-stack never reaches host memory. The CLI accepts the same factor as an expert
-config key:
+stack never reaches host memory. The CLI takes the same factor:
 
 ```bash
-printf 'binning = 4\n' > preview.toml
-uv run --no-sync tomojax preprocess raw.nxs -o binned.nxs --config preview.toml
+uv run --no-sync tomojax correct raw.nxs -o binned.nxs --binning 4
 ```
 
 Binning reduces detector sampling, not the reconstruction grid. In Python,
@@ -231,21 +229,22 @@ Put any `Zingers` step before both. Transmission steps run in the order
 supplied, and changing their order changes the result.
 
 On the command line, `--paganin` takes the same four values in that order:
-`tomojax preprocess raw.nxs -o phase.nxs --paganin 100,0.1,25,0.65e-6`. It is
+`tomojax correct raw.nxs -o phase.nxs --paganin 100,0.1,25,0.65e-6`. It is
 an expert option, so `--help` does not list it.
 `--crop` crops raw frames before correction.
 
 ### TIFF frames
 
 For TIFF frames, use the [TIFF and measured-geometry instructions](real-laminography.md#prepare-tiff-data).
-`tomojax import` packages a stack; it does not correct frames.
+`tomojax load` applies the standard dark, flat and `-log`; `tomojax correct` adds
+the optional corrections.
 
 ## Reconstruct and inspect slices
 
 Start with the same automatic policy as `tj.reconstruct(scan)`:
 
 ```bash
-uv run --no-sync tomojax recon corrected.nxs -o recon.nxs \
+uv run --no-sync tomojax reconstruct corrected.nxs -o recon.nxs \
   --manifest recon-manifest.json
 uv run --no-sync tomojax inspect recon.nxs --preview previews
 ```
@@ -335,13 +334,13 @@ accept `out`.
 Expert settings are fields of the method's configuration class
 (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig` or `SPDHGConfig`),
 set in a TOML file passed with `--config` alongside an explicit `--method`;
-`tomojax recon --config-keys` lists them. Each replaces that field of the class's
+`tomojax reconstruct --config-keys` lists them. Each replaces that field of the class's
 defaults, and a setting the method does not take fails with the ones it does. For FISTA with Huber total
 variation:
 
 ```bash
 printf 'regularizer = "huber_tv"\nhuber_delta = 0.01\n' > huber.toml
-uv run --no-sync tomojax recon corrected.nxs -o tv.nxs --method fista --config huber.toml
+uv run --no-sync tomojax reconstruct corrected.nxs -o tv.nxs --method fista --config huber.toml
 ```
 
 In Python this is

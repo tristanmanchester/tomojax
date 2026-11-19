@@ -123,12 +123,12 @@ measurements require independent calibration evidence and repair before `Rings`.
   geometry and calibration, as in the [walnut example](../examples/align_walnut_orbits.py).
   2DeteCT folders require explicit fan/cone geometry and flat/dark correction;
   the directory name does not supply that metadata to `load_frames`.
-- TIFF `import` packages data; it does not apply flat/dark correction or a log.
-  Reconstruction expects line integrals (log attenuation).
-- `tomojax preprocess` of generic TIFF frames requires a `detector` table in
-  `--config` (`nu`, `nv`, `du`, `dv`, `det_center`). For non-parallel geometry,
-  pass `geometry=` to `tj.load_frames`; see the
-  [real scan guide](real-laminography.md#prepare-tiff-data).
+- A TIFF stack is read as raw frames: `tomojax load` and `correct` need its
+  flats and darks. Already-corrected line integrals are built into a `tj.Scan` in
+  Python; reconstruction expects line integrals (log attenuation).
+- `tomojax correct` of generic TIFF frames requires `--pixel-size` and, unless the
+  middle, `--detector-center`; `--geometry` declares a non-parallel geometry. See
+  the [real scan guide](real-laminography.md#prepare-tiff-data).
 - Missing detector pixel sizes require `detector=` or `geometry=`. For axial
   acquisitions with recorded pitch, an absent rotation centre is not estimated
   at load: the scan has the centre at the detector middle and its record says

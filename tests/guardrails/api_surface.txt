@@ -195,6 +195,15 @@ def tomojax.backproject(
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'jax.Array'
 def tomojax.estimate_region(scan: 'Scan') -> 'RegionEstimate'
+def tomojax.export(
+        path: 'str | PathLike[str]',
+        reconstruction: 'Reconstruction',
+        *,
+        dtype: "Literal['float32', 'uint16']" = 'float32',
+        range: 'tuple[float, float] | None' = None,
+        prefix: 'str' = 'slice',
+    ) -> 'None'
+def tomojax.inspect(path: 'str | PathLike[str]') -> 'Inspection'
 def tomojax.load(
         path: 'str | PathLike[str]',
         *,
@@ -268,6 +277,22 @@ def tomojax.save(
         *,
         include_scan: 'bool' = False,
     ) -> 'None'
+def tomojax.simulate(
+        phantom: 'Phantom' = 'shepp',
+        *,
+        size: 'int' = 64,
+        n_views: 'int | None' = None,
+        geometry: 'GeometryName' = 'parallel',
+        rotation: 'float | None' = None,
+        tilt: 'float | None' = None,
+        source_to_axis: 'float | None' = None,
+        source_to_detector: 'float | None' = None,
+        poisson_scale: 'float' = 0.0,
+        grid: 'Grid | None' = None,
+        detector: 'Detector | None' = None,
+        seed: 'int' = 0,
+        config: 'SimConfig | None' = None,
+    ) -> 'Reconstruction'
 
 # tomojax.geometry
 class tomojax.geometry.ConeBeam(

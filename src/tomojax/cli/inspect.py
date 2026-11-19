@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 from tomojax.cli._options import add_force, check_paths
 from tomojax.cli._previews import preview_paths, write_previews
-from tomojax.io import validate_dataset
-from tomojax.io.api import format_inspection_report, inspect_dataset
+from tomojax.io.api import format_inspection_report
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,7 +47,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run ``tomojax inspect``."""
+    """Run ``tomojax inspect``: :func:`tomojax.inspect`, with optional previews."""
+    import tomojax as tj
+
     parser = _build_parser()
     args = parser.parse_args(argv)
     path = cast("str", args.data)
@@ -61,19 +62,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             force=cast("bool", args.force),
         )
 
-    report = inspect_dataset(path)
-    issues = validate_dataset(path)["issues"]
+    report = tj.inspect(path)
+    issues = report["issues"]
     previews = (
         {} if preview is None else {k: str(p) for k, p in write_previews(path, preview).items()}
     )
 
     if cast("bool", args.json):
-        payload: dict[str, object] = {
-            **report,
-            "valid": not issues,
-            "issues": issues,
-            "previews": previews,
-        }
+        payload: dict[str, object] = {**report, "previews": previews}
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(format_inspection_report(report))

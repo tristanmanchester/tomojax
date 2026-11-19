@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
-from pathlib import Path
 import platform
 import sys
 from typing import TYPE_CHECKING, Protocol, cast
@@ -135,10 +134,9 @@ def build_manifest(
 
 
 def save_manifest(path: str | os.PathLike[str], manifest: Mapping[str, object]) -> None:
-    """Write a manifest JSON sidecar, creating parent directories as needed."""
-    out_path = Path(path)
-    if out_path.parent != Path():
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", encoding="utf-8") as fh:
-        json.dump(_normalize_json(manifest), fh, indent=2, sort_keys=True, allow_nan=False)
-        _ = fh.write("\n")
+    """Write a manifest JSON sidecar, moved onto ``path`` once whole."""
+    from tomojax.core.files import replaced_when_complete
+
+    text = json.dumps(_normalize_json(manifest), indent=2, sort_keys=True, allow_nan=False)
+    with replaced_when_complete(path, "manifest") as temporary:
+        _ = temporary.write_text(text + "\n", encoding="utf-8")
