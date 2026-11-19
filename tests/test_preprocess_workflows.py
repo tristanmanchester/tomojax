@@ -127,10 +127,7 @@ def test_detector_comes_from_the_record_or_an_explicit_override(tmp_path: Path) 
             sizes is None
         )
         out = tmp_path / f"configured{i}.nxs"
-        assert (
-            _preprocess(tmp_path / "raw.nxs", "-o", out, *DETECTOR)
-            == 0
-        )
+        assert _preprocess(tmp_path / "raw.nxs", "-o", out, *DETECTOR) == 0
         assert tj.load(out).detector == tj.Detector(2, 2, 1, 1)
 
 

@@ -244,7 +244,9 @@ def test_config_files_name_the_valid_keys_for_an_unknown_one(
     config = tmp_path / "recon.toml"
     _ = config.write_text("iteration = 3\n", encoding="utf-8")
     with pytest.raises(SystemExit) as exc:
-        _ = main(["reconstruct", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
+        _ = main(
+            ["reconstruct", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)]
+        )
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "unknown config key(s)" in err
@@ -259,7 +261,9 @@ def test_config_files_name_the_new_key_for_a_retired_one(
     config = tmp_path / "recon.toml"
     _ = config.write_text("lambda_tv = 0.01\n", encoding="utf-8")
     with pytest.raises(SystemExit) as exc:
-        _ = main(["reconstruct", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
+        _ = main(
+            ["reconstruct", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)]
+        )
     assert exc.value.code == 2
     assert "config key 'lambda_tv'" in (err := capsys.readouterr().err)
     assert err.rstrip().endswith("was renamed 'tv_weight'")
