@@ -87,8 +87,7 @@ def project_joseph(
 
     Notes
     -----
-    The default linear discretization matches ``cgls(projector_model='joseph')``. It is distinct
-    from the default trilinear ray model. CUDA supports JIT, vmap, JVP, VJP,
+    The default linear discretization is the one the solvers use. CUDA supports JIT, vmap, JVP, VJP,
     jacfwd, jacrev and transposing a linearization, with first-order derivatives
     only. Use the JAX reference for higher derivatives. Derivatives follow the
     selected dominant-axis branch and interpolation cell, as in the reference.

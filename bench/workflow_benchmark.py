@@ -47,7 +47,6 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
             regularizer="huber_tv",
             lipschitz=None if args.auto_norm else lipschitz,
             views_per_batch=args.batch,
-            gather_dtype="fp32",
             nonnegative=True,
         )
 

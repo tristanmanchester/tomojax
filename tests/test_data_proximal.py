@@ -148,7 +148,6 @@ def test_weighted_data_masked_outliers_keep_dense_reconstruction_and_truth_error
             views_per_batch=2,
             tv_weight=0,
             log_every=2000,
-            projector_model="joseph",
             backend="jax",
             stream=stream,
         ),

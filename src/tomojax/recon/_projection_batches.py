@@ -14,7 +14,6 @@ import jax.numpy as jnp
 
 from tomojax.core.cone import ConeModel
 from tomojax.core.joseph import PrivateJoseph
-from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._volume_storage import Model, volume_shape
 
 if TYPE_CHECKING:
@@ -53,7 +52,7 @@ class ViewBatches:
             # Cone weights are non-negative, so |A|^T is the transpose itself.
             self.coefficients = model.coefficients(poses, grid)
             self.cone_backend = backend
-        elif model == "joseph":
+        else:
             from tomojax.core.joseph import plane_coefficients
 
             self.coefficients = plane_coefficients(poses, grid, detector, det_grid)
@@ -109,7 +108,7 @@ class ViewBatches:
                 detector=self.detector,
                 backend=self.cone_backend,
             )
-        if self.model == "joseph" and self.backend == "cuda":
+        if self.backend == "cuda":
             from tomojax.core.joseph import project_ones_native
 
             native = project_ones_native(self._coefficients(start), self.grid, self.detector)
@@ -127,34 +126,17 @@ class ViewBatches:
                 detector=detector,
                 backend=self.cone_backend,
             )
-        if self.model == "joseph":
-            from tomojax.core.joseph import forward_project_planes
+        from tomojax.core.joseph import forward_project_planes
 
-            return forward_project_planes(
-                self._coefficients(start, batch.shape[0]),
-                volume,
-                grid,
-                detector,
-                backend=self.backend,
-                interpolation=self.interpolation,
-                z_fast=self.z_fast,
-            )
-        if self.backend == "cuda":
-            from tomojax.core.cuda_projector.api import (
-                CudaProjectorOptions,
-                forward_project_views_T_cuda,
-            )
-
-            return forward_project_views_T_cuda(
-                batch,
-                grid,
-                detector,
-                volume,
-                options=CudaProjectorOptions(tile_shape=(16, 4), num_warps=1),
-            )
-        return jax.vmap(
-            lambda t: forward_project_view_T(t, grid, detector, volume, det_grid=self.det_grid)
-        )(batch)
+        return forward_project_planes(
+            self._coefficients(start, batch.shape[0]),
+            volume,
+            grid,
+            detector,
+            backend=self.backend,
+            interpolation=self.interpolation,
+            z_fast=self.z_fast,
+        )
 
     def projector(self, volume: jax.Array) -> Callable[[jax.Array, jax.Array], jax.Array]:
         """Bind a logical projection's volume, sharing preparation across its batches."""
@@ -164,6 +146,7 @@ class ViewBatches:
         self, images: jax.Array, start: jax.Array, batch: jax.Array, output: jax.Array
     ) -> jax.Array:
         """Return ``output`` plus the batch transpose; Joseph on CUDA adds in place."""
+        del batch  # the coefficients at ``start`` carry the batch's geometry
         grid, detector = self.grid, self.detector
         if isinstance(self.model, ConeModel):
             return self.model.backproject(
@@ -174,29 +157,19 @@ class ViewBatches:
                 backend=self.cone_backend,
                 accumulate=output,
             )
-        if self.model == "joseph":
-            from tomojax.core.joseph import sum_backproject_planes
+        from tomojax.core.joseph import sum_backproject_planes
 
-            return sum_backproject_planes(
-                self._coefficients(start),
-                images,
-                grid,
-                detector,
-                backend=self.backend,
-                interpolation=self.interpolation,
-                absolute_weights=self.absolute_weights,
-                accumulate=output,
-                z_fast=self.z_fast,
-            )
-        if self.backend == "cuda":
-            from tomojax.core.cuda_projector.api import sum_backproject_views_T_cuda
-
-            update = sum_backproject_views_T_cuda(
-                batch, grid, detector, images, tile_shape=(16, 4), num_warps=1
-            )
-        else:
-            update = sum_backproject_views_T(batch, grid, detector, images, det_grid=self.det_grid)
-        return output + update
+        return sum_backproject_planes(
+            self._coefficients(start),
+            images,
+            grid,
+            detector,
+            backend=self.backend,
+            interpolation=self.interpolation,
+            absolute_weights=self.absolute_weights,
+            accumulate=output,
+            z_fast=self.z_fast,
+        )
 
     def backproject_pair(self, images, start, batch, outputs):
         """Two exact transposes with common batch geometry and separate accumulators."""

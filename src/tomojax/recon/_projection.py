@@ -1,6 +1,6 @@
 """Batched matched projectors shared by iterative reconstruction solvers.
 
-Fixed-size view loops bound storage for parallel Joseph/ray and cone models.
+Fixed-size view loops bound storage for the parallel Joseph and cone models.
 Subsets preserve poses, source arrangements and padding weights; streamed
 measurements remain host resident.
 """
@@ -32,72 +32,51 @@ if TYPE_CHECKING:
 
     from .types import DataTerm
 
-type ProjectorModel = Literal["auto", "joseph", "ray"]
 type ProjectorBackend = Literal["auto", "jax", "cuda"]
 
 
 def resolve_projector(
-    model: str,
     backend: str,
     *,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
     detector: Detector | None = None,
     context: str,
 ) -> tuple[str, str]:
-    """Resolve ``auto`` choices; explicit choices must be supported, never replaced.
+    """Joseph plane sampling, and the backend: ``auto`` is CUDA on CUDA.
 
-    ``auto`` selects Joseph plane sampling, with CUDA kernels on CUDA, for the
-    canonical and for an affine detector grid such as a rolled one: the plane
-    coefficients carry the lattice. Any other grid needs the ray model, which
-    on CUDA needs the canonical grid.
+    The plane coefficients carry an affine detector grid, such as a rolled one, so
+    every grid the library makes projects with the one model.
     """
-    if model not in {"auto", "joseph", "ray"}:
-        raise ValueError(f"{context}: projector_model must be 'auto', 'joseph' or 'ray'")
     if backend not in {"auto", "jax", "cuda"}:
         raise ValueError(f"{context}: backend must be 'auto', 'jax' or 'cuda'")
-    affine = det_grid is None or (detector is not None and affine_grid(det_grid, detector))
-    if model == "auto":
-        model = "joseph" if affine else "ray"
-    if model == "joseph" and not affine:
-        raise ValueError(
-            f"{context}: Joseph sampling needs the canonical or an affine detector grid"
-        )
-    cuda, ray_grid = cuda_backend(), model == "ray" and det_grid is not None
+    if det_grid is not None and not (detector is not None and affine_grid(det_grid, detector)):
+        raise ValueError(f"{context}: needs an affine detector grid (a shifted, rolled lattice)")
+    cuda = cuda_backend()
     if backend == "auto":
-        backend = "cuda" if cuda and not ray_grid else "jax"
-    if backend == "cuda" and (not cuda or ray_grid):
-        raise ValueError(f"{context}: CUDA requires CUDA, and the ray model the canonical grid")
-    return model, backend
+        backend = "cuda" if cuda else "jax"
+    if backend == "cuda" and not cuda:
+        raise ValueError(f"{context}: backend='cuda' needs a CUDA device")
+    return "joseph", backend
 
 
 def resolve_geometry_projector(
     geometry: object,
-    model: str,
     backend: str,
     *,
     detector: Detector,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
     context: str,
 ) -> tuple[str | ConeModel, str]:
-    """Resolve the projector for a geometry: :class:`ConeModel` for cone beams.
+    """The projector for a geometry: :class:`ConeModel` for cone beams, else Joseph.
 
-    Cone beams use Joseph plane sampling (``model`` must be ``auto`` or
-    ``joseph``) and the canonical detector grid; ``detector`` is the one the
-    solver projects onto (a binned one, say). Their ``cuda`` backend is
-    the CUDA cone kernels, chosen by ``auto`` when CuPy and a CUDA device are
-    available.
+    Cone beams use the canonical detector grid; ``detector`` is the one the solver
+    projects onto (a binned one, say). Their ``cuda`` backend is the CUDA cone
+    kernels, chosen by ``auto`` when CuPy and a CUDA device are available.
     """
     if not is_cone_beam(geometry):
-        return resolve_projector(
-            model, backend, det_grid=det_grid, detector=detector, context=context
-        )
+        return resolve_projector(backend, det_grid=det_grid, detector=detector, context=context)
     if det_grid is not None:
         raise ValueError(f"{context}: cone-beam geometry needs the canonical detector grid")
-    if model not in {"auto", "joseph"}:
-        raise ValueError(
-            f"{context}: cone-beam geometry uses Joseph plane sampling; "
-            "projector_model must be 'auto' or 'joseph'"
-        )
     if backend not in {"auto", "jax", "cuda"}:
         raise ValueError(f"{context}: backend must be 'auto', 'jax' or 'cuda'")
     cuda = use_cuda_cone()
@@ -166,11 +145,13 @@ def chunk_operators(
     backend: str,
     batch_size: int,
     model: Model,
+    *,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
 ) -> tuple[
     Callable[[jax.Array, jax.Array, jax.Array], jax.Array],
     Callable[[jax.Array, jax.Array, jax.Array, jax.Array], jax.Array],
 ]:
-    """Matched canonical-detector block operators with full-scan coefficients.
+    """Matched block operators with full-scan coefficients, on ``det_grid`` if given.
 
     ``project(volume, start, poses)`` and ``backproject(images, start, poses,
     output)`` process one block. ``start`` is its offset in this full pose
@@ -178,7 +159,7 @@ def chunk_operators(
     arrangements stay attached to global view indices across segment boundaries.
     """
     ops = ViewBatches(
-        poses, grid, detector, None, backend, batch_size, model, "linear",
+        poses, grid, detector, det_grid, backend, batch_size, model, "linear",
         absolute_weights=False,
     )  # fmt: skip
     return ops.project, ops.backproject
@@ -191,7 +172,7 @@ def projection_operators(
     det_grid: tuple[jax.Array, jax.Array] | None,
     backend: str,
     batch_size: int,
-    model: Model = "ray",
+    model: Model = "joseph",
     interpolation: str = "linear",
     *,
     absolute_weights: bool = False,
@@ -411,12 +392,13 @@ def least_squares_operators(
     detector: Detector,
     backend: str,
     batch_size: int,
-    model: Model = "ray",
+    model: Model = "joseph",
     interpolation: str = "linear",
     *,
     data_term: DataTerm = "absolute",
     stream: bool = False,
     split: ViewSplit | None = None,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
 ) -> Callable[[jax.Array | None, jax.Array], tuple[jax.Array, jax.Array]]:
     """Return the value and gradient of ``0.5 ||A x - y||^2``, ``(x, y) -> (value, A^T r)``.
 
@@ -432,7 +414,7 @@ def least_squares_operators(
         poses,
         grid,
         detector,
-        None,
+        det_grid,
         backend,
         batch_size,
         model,
@@ -488,10 +470,11 @@ def normal_equation_operators(
     detector: Detector,
     backend: str,
     batch_size: int,
-    model: Model = "ray",
+    model: Model = "joseph",
     interpolation: str = "linear",
     *,
     data_term: DataTerm = "absolute",
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
 ) -> tuple[
     Callable[[jax.Array], tuple[jax.Array, jax.Array]],
     Callable[[jax.Array | None, jax.Array], tuple[jax.Array, jax.Array]],
@@ -510,7 +493,7 @@ def normal_equation_operators(
         poses,
         grid,
         detector,
-        None,
+        det_grid,
         backend,
         batch_size,
         model,

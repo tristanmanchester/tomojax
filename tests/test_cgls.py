@@ -11,9 +11,7 @@ import pytest
 
 # check-public-imports: allow-private
 from tomojax.core.geometry.views import stack_view_poses
-
-# check-public-imports: allow-private
-from tomojax.core.projector import forward_project_view_T
+from tomojax.forward import project_joseph
 from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon import CGLSConfig, cgls
 
@@ -23,18 +21,12 @@ from tomojax.recon._cgls_jax import _operators
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("warm_start", [False, True])
-@pytest.mark.parametrize(
-    ("model", "interpolation"), [("ray", "linear"), ("joseph", "linear"), ("joseph", "cubic")]
-)
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
-def test_underdetermined_cgls_preserves_initial_null_component(
-    warm_start, model, interpolation, backend
-):
+def test_underdetermined_cgls_preserves_initial_null_component(warm_start, interpolation, backend):
     """A small data residual must not hide a different unmeasured image component."""
     if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
-    from tomojax.forward import project_joseph
-
     shape = (2, 3, 3)
     grid = Grid(*shape[::-1], 0.8, 1.2, 1.4)
     detector = Detector(3, 2, 0.9, 1.3, (0.17, -0.23))
@@ -43,11 +35,9 @@ def test_underdetermined_cgls_preserves_initial_null_component(
 
     def project(flat):
         volume = flat.reshape(shape)
-        if model == "joseph":
-            return project_joseph(
-                volume, poses, grid, detector, backend="jax", interpolation=interpolation
-            ).ravel()
-        return jax.vmap(lambda t: forward_project_view_T(t, grid, detector, volume))(poses).ravel()
+        return project_joseph(
+            volume, poses, grid, detector, backend="jax", interpolation=interpolation
+        ).ravel()
 
     matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(np.prod(shape))), dtype=np.float64)
     _, singular, vt = np.linalg.svd(matrix, full_matrices=True)
@@ -72,7 +62,6 @@ def test_underdetermined_cgls_preserves_initial_null_component(
             tolerance=1e-7,
             views_per_batch=1,
             backend=backend,
-            projector_model=model,
             interpolation=interpolation,
         ),
     )
@@ -94,9 +83,7 @@ def small_problem(offset=0.0):
     poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
 
     def project(flat):
-        return jax.vmap(
-            lambda t: forward_project_view_T(t, grid, detector, flat.reshape((2, 2, 3)))
-        )(poses).ravel()
+        return project_joseph(flat.reshape((2, 2, 3)), poses, grid, detector).ravel()
 
     matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12))).astype(np.float64)
     return grid, detector, geometry, matrix
@@ -123,7 +110,6 @@ def test_cgls_matches_dense_lstsq_with_tail_batches(stream, damping, warm_start)
         data,
         init_x=initial,
         config=CGLSConfig(
-            projector_model="ray",
             iterations=60,
             tolerance=1e-7,
             damping=damping,
@@ -157,7 +143,6 @@ def test_unattainable_tolerance_stops_at_roundoff_without_diverging():
             detector,
             data,
             config=CGLSConfig(
-                projector_model="ray",
                 iterations=160,
                 tolerance=0,
                 damping=0.7,
@@ -204,7 +189,6 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
             detector,
             data,
             config=CGLSConfig(
-                projector_model="ray",
                 iterations=iterations,
                 views_per_batch=3,
                 backend="jax",
@@ -262,7 +246,6 @@ def test_cuda_cgls_matches_dense_damped_solution():
         detector,
         data,
         config=CGLSConfig(
-            projector_model="ray",
             iterations=60,
             tolerance=1e-7,
             damping=damping,
@@ -281,8 +264,7 @@ def test_cuda_cgls_matches_dense_damped_solution():
 
 
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
-@pytest.mark.parametrize("model", ["ray", "joseph"])
-def test_bright_region_does_not_hide_weak_region_updates(backend, model):
+def test_bright_region_does_not_hide_weak_region_updates(backend):
     if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     from tomojax.geometry import ParallelGeometry
@@ -297,7 +279,7 @@ def test_bright_region_does_not_hide_weak_region_updates(backend, model):
     truth[1] = 0.01 * np.arange(1, 13).reshape(4, 3).T
     # Each detector row sees only one axial slice. The bright slice is already
     # correct and cannot set the precision limit for the independent weak slice.
-    project = jax.jit(lambda t, x: _operators(t, grid, detector, None, backend, 5, model)[0](x))
+    project = jax.jit(lambda t, x: _operators(t, grid, detector, None, backend, 5, "joseph")[0](x))
     data = project(poses, jnp.asarray(truth))
     actual, info = cgls(
         geometry,
@@ -309,7 +291,6 @@ def test_bright_region_does_not_hide_weak_region_updates(backend, model):
             iterations=60,
             tolerance=1e-6,
             views_per_batch=5,
-            projector_model=model,
             backend=backend,
         ),
     )

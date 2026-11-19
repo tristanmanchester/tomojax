@@ -119,7 +119,7 @@ def solve(
             resources.callback(volume.close)
         info = solver.run()
     volume = problem.result(solver.x)
-    return volume, {**info, "projector_backend": backend, "projector_model": model}
+    return volume, {**info, "projector_backend": backend}
 
 
 class _HostCGLS:

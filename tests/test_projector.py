@@ -65,6 +65,35 @@ def test_rolled_detector_projects_as_the_alignment_folds_it(kind):
     np.testing.assert_allclose(tj.project(rolled, volume), expected, atol=3e-6, rtol=3e-6)
 
 
+@pytest.mark.parametrize("kind", ["parallel-rolled", "lamino-rolled"])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_explicit_rolled_detector_grid_is_a_matched_pair(kind, backend):
+    # FISTA and SPDHG pass the geometry's rolled lattice to the batched operators as a
+    # detector grid; that pair must be the matched one tj.project gives the rolled geometry.
+    if backend == "cuda" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    from tomojax.geometry import stack_view_poses
+    from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
+
+    # check-public-imports: allow-private
+    from tomojax.recon._projection import projection_operators
+
+    geometry = _geometry(kind)
+    det_grid = detector_grid_from_geometry_inputs(geometry.detector, geometry)
+    assert det_grid is not None
+    poses = stack_view_poses(geometry, len(geometry.angles))
+    forward, adjoint = projection_operators(
+        poses, geometry.grid, geometry.detector, det_grid, backend, 3
+    )
+    rng = np.random.default_rng(17)
+    x = jnp.asarray(rng.normal(size=(3, 5, 7)), jnp.float32)
+    y = jnp.asarray(rng.normal(size=(4, 5, 9)), jnp.float32)
+    projected, transposed = forward(x), adjoint(y)
+    np.testing.assert_allclose(projected, tj.project(geometry, x), atol=2e-5, rtol=2e-5)
+    np.testing.assert_allclose(jnp.vdot(projected, y), jnp.vdot(x, transposed), rtol=2e-5)
+    np.testing.assert_allclose(transposed, jax.vjp(forward, x)[1](y)[0], atol=1e-5, rtol=3e-5)
+
+
 def test_snapshot_grid_override_and_shape_checks():
     geometry = _geometry("parallel")
     grid = tj.Grid(5, 6, 2, 0.9, 1.0, 1.2)

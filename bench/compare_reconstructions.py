@@ -48,9 +48,6 @@ METHODS = (
     "tomojax_cgls_jax",
     "tomojax_cgls_cuda",
     "tomojax_multires_cgls_cuda",
-    "tomojax_joseph_cgls_jax",
-    "tomojax_joseph_cgls_cuda",
-    "tomojax_multires_joseph_cgls_cuda",
     "astra_cgls",
     "astra_sirt",
     "tigre_cgls",
@@ -189,7 +186,7 @@ def solve_tomojax(
             "regularizer": "none",
             "positivity": False,
         }
-    if method in {"tomojax_multires_cgls_cuda", "tomojax_multires_joseph_cgls_cuda"}:
+    if method == "tomojax_multires_cgls_cuda":
         from tomojax.recon import CGLSConfig, cgls_multires
 
         factors, budgets = multires_schedule((case.grid.nz, case.grid.ny, case.grid.nx), iterations)
@@ -204,11 +201,10 @@ def solve_tomojax(
                 tolerance=0.0,
                 views_per_batch=batch,
                 backend="cuda",
-                projector_model="joseph" if "joseph" in method else "ray",
             ),
         )
         return np.asarray(result), {**info, "regularizer": "none", "positivity": False}
-    if method.startswith(("tomojax_cgls_", "tomojax_joseph_cgls_", "tomojax_fbp_joseph_cgls_")):
+    if method.startswith(("tomojax_cgls_", "tomojax_fbp_joseph_cgls_")):
         from tomojax.recon import CGLSConfig, cgls
 
         if method == "tomojax_fbp_joseph_cgls_cuda":
@@ -238,7 +234,6 @@ def solve_tomojax(
                 tolerance=0.0,
                 views_per_batch=batch,
                 backend=method.rsplit("_", 1)[-1],
-                projector_model="joseph" if "joseph" in method else "ray",
             ),
         )
         return np.asarray(result), {
@@ -257,7 +252,6 @@ def solve_tomojax(
         regularizer="huber_tv",
         nonnegative=False,
         views_per_batch=batch,
-        gather_dtype="fp32",
     )
     result, info = fista_tv(
         geometry, case.grid, case.detector, jnp.asarray(case.analytic), config=config

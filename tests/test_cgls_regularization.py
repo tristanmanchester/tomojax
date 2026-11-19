@@ -7,8 +7,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-from tomojax.core.projector import forward_project_view_T
 from tomojax.forward import project_joseph
 from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon import CGLSConfig, cgls
@@ -60,12 +58,10 @@ def test_quadratic_gradient_matches_physical_edges_and_free_boundaries(shape):
 
 
 @pytest.mark.parametrize("backend", ["jax", "cuda"])
-@pytest.mark.parametrize(
-    ("model", "interpolation"), [("ray", "linear"), ("joseph", "linear"), ("joseph", "cubic")]
-)
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 @pytest.mark.parametrize("warm_start", [False, True])
 def test_gradient_regularized_cgls_matches_dense_augmented_system(
-    backend, model, interpolation, warm_start
+    backend, interpolation, warm_start
 ):
     if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
@@ -77,11 +73,9 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
 
     def forward(flat):
         volume = flat.reshape(shape)
-        if model == "joseph":
-            return project_joseph(
-                volume, poses, grid, detector, backend="jax", interpolation=interpolation
-            ).ravel()
-        return jax.vmap(lambda t: forward_project_view_T(t, grid, detector, volume))(poses).ravel()
+        return project_joseph(
+            volume, poses, grid, detector, backend="jax", interpolation=interpolation
+        ).ravel()
 
     matrix = np.asarray(jax.jacfwd(forward)(jnp.zeros(np.prod(shape))), np.float64)
     edges = edge_matrix(shape, spacing)
@@ -108,7 +102,6 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
             gradient_damping=gradient_damping,
             views_per_batch=3,
             backend=backend,
-            projector_model=model,
             interpolation=interpolation,
         ),
     )

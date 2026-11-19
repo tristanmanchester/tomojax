@@ -336,11 +336,7 @@ def _iterative_result(
         from tomojax.recon._axial_slabs import axial_slabs, independent_planes
 
         algebraic = cast("SIRTConfig | MLEMConfig", cfg)
-        if (
-            algebraic.projector_model in {"auto", "joseph"}
-            and det_grid is None
-            and independent_planes(geometry, grid, detector)
-        ):
+        if det_grid is None and independent_planes(geometry, grid, detector):
             support = algebraic.support
             if support is not None:
                 import numpy as np

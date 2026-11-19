@@ -79,7 +79,6 @@ def main() -> int:
                 json.dumps(
                     {
                         "cuda_driver": cuda_driver,
-                        "cuda_interpret": "not_run",
                         "cuda_real": "failed_cuda_driver",
                     },
                     indent=2,
@@ -89,33 +88,11 @@ def main() -> int:
 
     import jax
 
-    from tomojax.core import projector
-    from tomojax.core.cuda_projector import api as cuda_api
+    from tomojax.forward import project_joseph
 
     transform, grid, detector, volume = _tiny_projection_case()
-    expected = projector.forward_project_view_T(
-        transform,
-        grid,
-        detector,
-        volume,
-        backend="jax",
-    )
+    expected = project_joseph(volume, transform[None], grid, detector, backend="jax")
     _ = expected.block_until_ready()
-
-    interpret_options = cuda_api.CudaProjectorOptions(
-        interpret=True,
-        tile_shape=(1, 1),
-        num_warps=1,
-    )
-    interpreted = cuda_api.forward_project_view_T_cuda(
-        transform,
-        grid,
-        detector,
-        volume,
-        options=interpret_options,
-    )
-    _ = interpreted.block_until_ready()
-    _assert_close("CUDA interpret projector", interpreted, expected)
 
     backend = jax.default_backend()
     force_real = os.environ.get("TOMOJAX_FORCE_REAL_CUDA_SMOKE") == "1"
@@ -127,7 +104,6 @@ def main() -> int:
                     "backend": backend,
                     "devices": [str(device) for device in jax.devices()],
                     "cuda_driver": cuda_driver,
-                    "cuda_interpret": "passed",
                     "cuda_real": "failed_cpu_backend",
                 },
                 indent=2,
@@ -136,23 +112,7 @@ def main() -> int:
         return 1
 
     if backend != "cpu" or force_real:
-        real_options = cuda_api.CudaProjectorOptions(tile_shape=(1, 1), num_warps=1)
-        reason = cuda_api.cuda_projector_unsupported_reason(
-            transform,
-            grid,
-            detector,
-            volume,
-            options=real_options,
-        )
-        if reason is not None:
-            raise RuntimeError(f"real CUDA projector unsupported on backend {backend}: {reason}")
-        actual = cuda_api.forward_project_view_T_cuda(
-            transform,
-            grid,
-            detector,
-            volume,
-            options=real_options,
-        )
+        actual = project_joseph(volume, transform[None], grid, detector, backend="cuda")
         _ = actual.block_until_ready()
         _assert_close("Real CUDA projector", actual, expected)
         real_cuda_status = "passed"
@@ -163,7 +123,6 @@ def main() -> int:
                 "backend": backend,
                 "devices": [str(device) for device in jax.devices()],
                 "cuda_driver": cuda_driver,
-                "cuda_interpret": "passed",
                 "cuda_real": real_cuda_status,
             },
             indent=2,

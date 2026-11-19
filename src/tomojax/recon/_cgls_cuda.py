@@ -26,7 +26,6 @@ def available(geometry, projections, initial, cfg: CGLSConfig, det_grid) -> bool
         not isinstance(projections, np.ndarray)
         or (initial is not None and not isinstance(initial, np.ndarray))
         or cfg.backend == "jax"
-        or cfg.projector_model == "ray"
         or cfg.interpolation != "linear"
         or cfg.gradient_damping
         or cfg.devices is not None
@@ -198,7 +197,6 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         "normal_residual_tolerance": float(tolerance),
         "projector_backend": "cuda",
         "execution_backend": "cupy",
-        "projector_model": "joseph",
         "interpolation": "linear",
         "views_per_batch": ops.batch,
         "formulation": "cgls",

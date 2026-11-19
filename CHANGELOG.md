@@ -48,6 +48,28 @@ There are no aliases. Each old name is gone, and files saved before this release
 | `preprocess --config` keys `binning` and `[detector]`; `import --config` keys `detector_center`, `tilt`, `tilt_about`, `detector_roll`, `detector_pitch`, `detector_yaw` | `--binning`, `--pixel-size`, `--detector-center`, `--tilt`, `--tilt-about`, `--detector-roll`, `--detector-pitch`, `--detector-yaw` |
 | `tomojax inspect --json` angle keys `min_deg`, `max_deg`, `coverage_deg` | `min`, `max`, `coverage` |
 
+### One projector model
+
+Every solver, `tj.project` and the simulator project with the Joseph plane-sampling model
+(its cone-beam counterpart for cone beams), whose backprojector is its exact transpose. A
+rolled or shifted detector grid is carried in its plane coefficients, so FISTA and SPDHG on a
+rolled detector now use it too (they used the ray march). FISTA and SPDHG interpolate
+linearly: their cubic option was `ray_integrator="joseph_cubic"`. Simulated parallel and
+laminography data now come from `tj.project`, so they differ slightly from earlier releases.
+
+Removed, with no replacement:
+- the trilinear ray march (JAX and CUDA) and the exact trilinear path;
+- the config fields `projector_model`, `ray_integrator`, `gather_dtype`, `projector_unroll`,
+  `checkpoint_projector` and `grad_mode` (CGLS, SIRT, MLEM, FISTA and SPDHG), and
+  `info["projector_model"]`;
+- `tomojax.backends.estimate_views_per_batch`, `estimate_views_per_batch_info`,
+  `ViewsPerBatchEstimate`, `CudaModuleCapability`, `resolve_cuda_module` and
+  `resolve_cuda_callable`;
+- `tomojax.forward.project_parallel_reference_from_input`, `ProjectionArrayGeometryInput`,
+  `ProjectionOperatorName`, `PROJECTION_OPERATOR`, `CoreProjectionGeometry`,
+  `core_projection_geometry_from_input`, `core_projection_geometry_from_state` and
+  `nominal_axis_unit_from_geometry`.
+
 ### The commands use the API's verbs, and each has its API function
 
 - **`tomojax load INPUT -o OUTPUT`** is `tj.load` then `tj.save`, for every input

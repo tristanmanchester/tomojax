@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from typing import TYPE_CHECKING, Literal, TypedDict
 
 import jax
@@ -11,7 +10,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax._data import NXTomoMetadata, save_nxtomo
-from tomojax.core import progress_iter
 from tomojax.core.cone import cone_coefficients, cone_project
 from tomojax.core.geometry import (
     ConeBeam,
@@ -22,11 +20,6 @@ from tomojax.core.geometry import (
     ParallelGeometry,
 )
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.projector import (
-    forward_project_view,
-    forward_project_view_T,
-    get_detector_grid_device,
-)
 from tomojax.datasets._impl.artefacts import (
     ArtefactMetadata,
     SimulationArtefacts,
@@ -42,9 +35,10 @@ from tomojax.datasets._impl.phantoms import (
     shepp_logan_3d,
     sphere,
 )
+from tomojax.recon import project
 
 if TYPE_CHECKING:
-    from tomojax.core.geometry.base import DetectorDict, Geometry, GridDict
+    from tomojax.core.geometry.base import DetectorDict, GridDict, ScanGeometry
 
 
 class SimMetadata(TypedDict, total=False):
@@ -266,49 +260,18 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
     return jnp.asarray(vol, dtype=jnp.float32)
 
 
-def _project_phantom(
-    geom: Geometry, grid: Grid, det: Detector, vol: jax.Array, beam: ConeBeam | None, n_views: int
-) -> jax.Array:
+def _project_phantom(geom: ScanGeometry, vol: jax.Array, beam: ConeBeam | None) -> jax.Array:
     """Release projection workspaces before the caller allocates artefact buffers."""
-    # Fast path: build all poses and optionally vmapped/jitted projector
-    T_all = stack_view_poses(geom, n_views)
-    det_grid = get_detector_grid_device(det)
-
-    use_fast = (n_views >= 8) and (os.environ.get("TOMOJAX_PROGRESS", "0") != "1")
-    if beam is not None:
-        coefficients = cone_coefficients(T_all, grid, det, beam)
-        proj = jnp.concatenate(
-            [
-                cone_project(vol, coefficients[start : start + 32], grid, det)
-                for start in range(0, n_views, 32)
-            ]
-        )
-    elif use_fast:
-
-        @jax.jit
-        def project_all(vol_in: jnp.ndarray) -> jnp.ndarray:
-            def f(T: jnp.ndarray) -> jnp.ndarray:
-                return forward_project_view_T(
-                    T,
-                    grid,
-                    det,
-                    vol_in,
-                    use_checkpoint=True,
-                    det_grid=det_grid,
-                )
-
-            return jax.vmap(f, in_axes=0)(T_all)
-
-        proj = project_all(vol)
-    else:
-        # Fallback path with per-view progress logging
-        projs = []
-        for i in progress_iter(range(n_views), total=n_views, desc="Simulate: views"):
-            p = forward_project_view(geom, grid, det, vol, view_index=i)
-            projs.append(p)
-        proj = jnp.stack(projs, axis=0)
-
-    return proj
+    if beam is None:
+        return project(geom, vol)
+    grid, det, n_views = geom.grid, geom.detector, len(geom.angles)
+    coefficients = cone_coefficients(stack_view_poses(geom, n_views), grid, det, beam)
+    return jnp.concatenate(
+        [
+            cone_project(vol, coefficients[start : start + 32], grid, det)
+            for start in range(0, n_views, 32)
+        ]
+    )
 
 
 def simulate(cfg: SimConfig) -> SimulatedData:
@@ -376,7 +339,7 @@ def simulate(cfg: SimConfig) -> SimulatedData:
         raise ValueError("geometry must be 'parallel', 'lamino' or 'cone'")
 
     vol = make_phantom(cfg)
-    proj = _project_phantom(geom, grid, det, vol, beam, cfg.n_views)
+    proj = _project_phantom(geom, vol, beam)
 
     artefacts = normalise_simulation_artefacts(cfg.artefacts)
     artefact_metadata: ArtefactMetadata | None = None

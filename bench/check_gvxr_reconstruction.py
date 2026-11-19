@@ -37,7 +37,7 @@ class FixtureGeometry:
 
 
 def check_fixture(path: Path, iterations: int) -> dict:
-    """Compare two TomoJAX discretizations and ASTRA against one fixed dataset."""
+    """Compare TomoJAX and ASTRA CGLS against one fixed dataset."""
     with np.load(path, allow_pickle=False) as archive:
         data = {key: archive[key] for key in archive.files}
     metadata = json.loads(str(data["metadata"]))
@@ -46,7 +46,7 @@ def check_fixture(path: Path, iterations: int) -> dict:
     records = []
     for channel in ("mono_log", "poly_log", "poly_noisy_log"):
         case = Case(path.stem, grid, detector, data["poses"], data["angles"], truth, data[channel])
-        for method in ("ray", "joseph", "astra_cgls"):
+        for method in ("tomojax_cgls", "astra_cgls"):
             if method == "astra_cgls":
                 volume, info = solve_astra(case, iterations, method)
             else:
@@ -60,7 +60,6 @@ def check_fixture(path: Path, iterations: int) -> dict:
                         tolerance=0.0,
                         views_per_batch=len(data["poses"]),
                         backend="cuda",
-                        projector_model=method,
                     ),
                 )
             volume = np.asarray(volume, dtype=np.float64)

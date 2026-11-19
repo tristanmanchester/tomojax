@@ -17,10 +17,7 @@ from tomojax.recon._projection import projection_operators
 @pytest.mark.numerical
 @pytest.mark.parametrize("tilted", [False, True])
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
-@pytest.mark.parametrize("model", ["joseph", "ray"])
-def test_tv_solver_reduces_residual_and_recovers_phantom(
-    tilted: bool, solver: str, model: str
-) -> None:
+def test_tv_solver_reduces_residual_and_recovers_phantom(tilted: bool, solver: str) -> None:
     grid = Grid(12, 12, 5, 0.8, 1.1, 1.3)
     detector = Detector(16, 7, 0.8, 1.3)
     angles = np.linspace(0, 180, 16, endpoint=False)
@@ -34,7 +31,7 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
         jnp.arange(5) - 2, jnp.arange(12) - 5.5, jnp.arange(12) - 5.5, indexing="ij"
     )
     truth = jnp.exp(-((x / 2.3) ** 2 + (y / 1.7) ** 2 + (z / 1.5) ** 2) / 2)
-    project = jax.jit(projection_operators(poses, grid, detector, None, "jax", 16, model)[0])
+    project = jax.jit(projection_operators(poses, grid, detector, None, "jax", 16, "joseph")[0])
     # These data isolate optimizer convergence. Independent analytic projection
     # and reconstruction checks live in the benchmark and FBP accuracy tests.
     data = project(truth)
@@ -55,7 +52,6 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
                 nonnegative=True,
                 power_iterations=5,
                 views_per_batch=4,
-                projector_model=model,
                 backend="jax",
             ),
         )
@@ -72,7 +68,6 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
                 nonnegative=True,
                 views_per_batch=4,
                 seed=18,
-                projector_model=model,
                 backend="jax",
             ),
         )
@@ -106,7 +101,6 @@ def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regularize
             iterations=150,
             tv_prox_iterations=30,
             lipschitz=np.linalg.norm(matrix, 2) ** 2,
-            projector_model="joseph",
             backend="jax",
             stream=stream,
             regularizer=regularizer,
@@ -116,7 +110,6 @@ def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regularize
             iterations=1000,
             views_per_batch=3,
             log_every=0,
-            projector_model="joseph",
             backend="jax",
             stream=stream,
             regularizer=regularizer,

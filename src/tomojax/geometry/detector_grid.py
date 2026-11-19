@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 def zero_center_detector_grid(detector: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Return detector coordinates for the same detector shape with zero physical centre."""
-    from tomojax.core.projector import get_detector_grid_device
+    from tomojax.core.geometry.base import get_detector_grid_device
 
     zero_detector = dataclasses.replace(detector, center=(0.0, 0.0))
     return get_detector_grid_device(zero_detector)
@@ -109,8 +109,7 @@ def detector_grid_from_geometry_inputs(
 ) -> tuple[jnp.ndarray, jnp.ndarray] | None:
     """Return a replay detector grid when saved metadata contains a detector roll.
 
-    A zero roll returns None: the canonical grid is identical, and solvers use
-    their fast batched operators only without an explicit grid.
+    A zero roll returns None: the canonical grid is identical.
 
     Parameters
     ----------

@@ -123,15 +123,12 @@ def test_iterative_slabs_refuse_coupled_planes():
     grid = tj.Grid(9, 9, 3, 1, 1, 1)
     geometry = tj.ParallelGeometry(grid, tj.Detector(13, 3, 1, 1), np.linspace(0, 180, 9))
     frames = tj.Frames(np.full((9, 3, 13), 500, np.float32), geometry, white_level=1000)
-    for cfg, target in [
-        (SIRTConfig(projector_model="ray"), grid),
-        (SIRTConfig(), replace(grid, vz=0.5)),
-    ]:
-        with (
-            tj.reconstruct_slabs(frames, "sirt", config=cfg, grid=target) as slabs,
-            pytest.raises(ValueError, match="independent axial Joseph planes"),
-        ):
-            next(slabs)
+    target = replace(grid, vz=0.5)
+    with (
+        tj.reconstruct_slabs(frames, "sirt", config=SIRTConfig(), grid=target) as slabs,
+        pytest.raises(ValueError, match="independent axial Joseph planes"),
+    ):
+        next(slabs)
 
 
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])

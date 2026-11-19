@@ -16,9 +16,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.backend_policy import cuda_backend
-from tomojax.core.projector import project_views, sum_backproject_views_T
-
 from ._projection import chunk_operators
 from ._tv_ops import gradient_norm_squared
 
@@ -47,101 +44,30 @@ def make_spdhg_chunk_operators(
     grid: Grid,
     detector: Detector,
     poses: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
-    projector: tuple[str | ConeModel, str] | None,
+    projector: tuple[str | ConeModel, str],
     views_per_batch: int,
-    ray_settings: tuple[bool, int, str, str],
-    absolute_weights: bool = False,
 ) -> tuple[_SPDHGProjectChunk, _SPDHGBackprojectChunk]:
     """Slice full-scan coefficients along with poses, retaining each arrangement."""
-    checkpoint, unroll, gather_dtype, ray_integrator = ray_settings
-    if projector is not None:
-        model, backend = projector
-        return chunk_operators(poses, grid, detector, backend, views_per_batch, model)
-
-    if absolute_weights and ray_integrator == "joseph_cubic":
-        # Only the bound uses |A|. Preserve explicit detector coordinates and
-        # use absolute interpolation on BOTH sides, not only the transpose.
-        from tomojax.core.joseph import (
-            forward_project_planes,
-            plane_coefficients,
-            sum_backproject_planes,
-        )
-
-        coefficients = plane_coefficients(poses, grid, detector, det_grid)
-        backend = "cuda" if cuda_backend() else "jax"
-
-        def project_absolute(vol, start, chunk):
-            coeff = jax.lax.dynamic_slice_in_dim(coefficients, start, chunk.shape[0])
-            return forward_project_planes(
-                coeff,
-                vol,
-                grid,
-                detector,
-                backend=backend,
-                interpolation="cubic",
-                absolute_weights=True,
-            )
-
-        def backproject_absolute(images, start, chunk, total):
-            coeff = jax.lax.dynamic_slice_in_dim(coefficients, start, chunk.shape[0])
-            return sum_backproject_planes(
-                coeff,
-                images,
-                grid,
-                detector,
-                backend=backend,
-                interpolation="cubic",
-                absolute_weights=True,
-                accumulate=total,
-            )
-
-        return project_absolute, backproject_absolute
-
-    def project_chunk(vol: jnp.ndarray, _start: jnp.ndarray, T_chunk: jnp.ndarray) -> jnp.ndarray:
-        return project_views(
-            T_chunk,
-            grid,
-            detector,
-            vol,
-            use_checkpoint=checkpoint,
-            unroll=unroll,
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-            ray_integrator=ray_integrator,
-        )
-
-    def backproject_chunk(
-        images: jnp.ndarray, _start: jnp.ndarray, T_chunk: jnp.ndarray, total: jnp.ndarray
-    ) -> jnp.ndarray:
-        return total + sum_backproject_views_T(
-            T_chunk,
-            grid,
-            detector,
-            images,
-            unroll=unroll,
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-            ray_integrator=ray_integrator,
-        )
-
-    return project_chunk, backproject_chunk
+    model, backend = projector
+    return chunk_operators(
+        poses, grid, detector, backend, views_per_batch, model, det_grid=det_grid
+    )
 
 
 @functools.partial(
     jax.jit,
-    static_argnames=("grid", "detector", "projector", "views_per_batch", "ray_settings"),
+    static_argnames=("grid", "detector", "projector", "views_per_batch"),
 )
 def _block_row_column_bounds(
     poses: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
     grid: Grid,
     detector: Detector,
-    projector: tuple[str | ConeModel, str] | None,
+    projector: tuple[str | ConeModel, str],
     views_per_batch: int,
-    ray_settings: tuple[bool, int, str, str],
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     n = poses.shape[0]
     batch = min(views_per_batch, n)
@@ -152,8 +78,6 @@ def _block_row_column_bounds(
         det_grid,
         projector=projector,
         views_per_batch=batch,
-        ray_settings=ray_settings,
-        absolute_weights=True,
     )
     shape = (grid.nz, grid.ny, grid.nx)
     zero, one = jnp.zeros(shape, jnp.float32), jnp.ones(shape, jnp.float32)
@@ -181,8 +105,8 @@ def resolve_spdhg_step_sizes(
     detector: Detector,
     poses: jnp.ndarray,
     config: SPDHGConfig,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
-    projector: tuple[str | ConeModel, str] | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    projector: tuple[str | ConeModel, str],
     *,
     metric: TVMetric,
 ) -> SPDHGStepSizes:
@@ -204,12 +128,6 @@ def resolve_spdhg_step_sizes(
             detector=detector,
             projector=projector,
             views_per_batch=config.views_per_batch,
-            ray_settings=(
-                config.checkpoint_projector,
-                config.projector_unroll,
-                config.gather_dtype,
-                config.ray_integrator,
-            ),
         )
         row, column = float(row), float(column)
         batch = min(config.views_per_batch, poses.shape[0])

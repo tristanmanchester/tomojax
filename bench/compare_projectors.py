@@ -30,9 +30,8 @@ import jax
 import numpy as np
 from physical_case import Case
 
-from tomojax.core.cuda_projector import api as cuda
 from tomojax.core.geometry.base import grid_volume_origin
-from tomojax.core.projector import forward_project_view_T
+from tomojax.forward import project_joseph
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 
 if TYPE_CHECKING:
@@ -239,23 +238,18 @@ def cuda_sync() -> Callable[[Any], None]:
 
 
 def run_tomojax(case: Case, repeats: int) -> list[dict]:
-    """Time the JAX reference and actual Cuda stack kernel on identical inputs."""
+    """Time the JAX reference and the CUDA kernels of the Joseph projector on identical inputs."""
     poses, volume = jax.device_put((case.poses, case.volume))
     jax.block_until_ready((poses, volume))
-    reference = jax.jit(
-        lambda x: jax.vmap(lambda t: forward_project_view_T(t, case.grid, case.detector, x))(poses)
-    )
-    calls = {"jax": reference}
-    if jax.default_backend() == "gpu":
-        calls["cuda"] = jax.jit(
-            lambda x: cuda.forward_project_views_T_cuda(
-                poses,
-                case.grid,
-                case.detector,
-                x,
-                options=cuda.CudaProjectorOptions(tile_shape=(16, 4), num_warps=1),
+    backends = ["jax", "cuda"] if jax.default_backend() == "gpu" else ["jax"]
+    calls = {
+        backend: jax.jit(
+            lambda x, backend=backend: project_joseph(
+                x, poses, case.grid, case.detector, backend=backend
             )
         )
+        for backend in backends
+    }
     records = []
     ref_output = None
     for backend, call in calls.items():

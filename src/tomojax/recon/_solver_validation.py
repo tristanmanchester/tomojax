@@ -39,7 +39,7 @@ def validate_fista_config(cfg: FistaConfig) -> tuple[bool, float | None, float |
         raise ValueError(f"{context}: data_term must be absolute or per_view_contrast")
     for name in ("iterations", "patience"):
         _count(getattr(cfg, name), name, minimum=0, context=context)
-    for name in ("projector_unroll", "tv_prox_iterations", "power_iterations"):
+    for name in ("tv_prox_iterations", "power_iterations"):
         _count(getattr(cfg, name), name, minimum=1, context=context)
     if cfg.views_per_batch is not None:
         _count(cfg.views_per_batch, "views_per_batch", minimum=1, context=context)
@@ -49,8 +49,6 @@ def validate_fista_config(cfg: FistaConfig) -> tuple[bool, float | None, float |
         _weight(cfg.lipschitz, "lipschitz", positive=True, context=context)
     if cfg.tolerance is not None:
         _weight(cfg.tolerance, "tolerance", context=context)
-    if cfg.grad_mode not in {"auto", "batched", "stream"}:
-        raise ValueError(f"{context}: grad_mode must be 'auto', 'batched' or 'stream'")
 
     return _fista_constraints(cfg)
 
@@ -80,8 +78,7 @@ def validate_spdhg_config(cfg: SPDHGConfig) -> None:
         raise ValueError(f"{context}: data_term must be absolute or per_view_contrast")
     for name in ("iterations", "log_every"):
         _count(getattr(cfg, name), name, minimum=0, context=context)
-    for name in ("views_per_batch", "projector_unroll"):
-        _count(getattr(cfg, name), name, minimum=1, context=context)
+    _count(cfg.views_per_batch, "views_per_batch", minimum=1, context=context)
     if cfg.tv_weight is not None:
         _weight(cfg.tv_weight, "tv_weight", context=context)
     _weight(cfg.theta, "theta", context=context)

@@ -14,10 +14,10 @@ from ._pose_reference import pose_update
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("integrator", ["joseph", "joseph_cubic"])
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 @pytest.mark.parametrize("indices", [(3, 4), (0, 1, 2, 3, 4), (0, 1, 2, 3, 4, 5)])
 @pytest.mark.parametrize("private", [False, True])
-def test_parallel_pose_columns_match_reference(integrator, indices, private):
+def test_parallel_pose_columns_match_reference(interpolation, indices, private):
     if jax.default_backend() != "gpu":
         pytest.skip("CUDA required")
     grid = Grid(77, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.23, -0.17, 0.31))
@@ -28,7 +28,6 @@ def test_parallel_pose_columns_match_reference(integrator, indices, private):
     target = jnp.asarray(rng.normal(size=(7, 9)), jnp.float32)
     weight = jnp.asarray(rng.uniform(0.05, 0.99, target.shape), jnp.float32).at[0].set(0)
     params = jnp.asarray([0.012, -0.018, 0.031, 0.11, -0.07, 0.04], jnp.float32)
-    interpolation = "cubic" if integrator == "joseph_cubic" else "linear"
 
     def coefficients(p):
         pose = pose_update(nominal, p, translation_frame="detector")

@@ -125,7 +125,6 @@ uv run --no-sync python bench/compare_projectors.py \
   --geometries parallel,lamino,anisotropic --libraries tomojax,astra
 uv run --no-sync python bench/reconstruction_benchmark.py \
   --sizes 32,64,128,256 --views 180 --repeats 7
-uv run --no-sync python bench/adjoint_benchmark.py --sizes 16,64,128 --repeats 7
 ```
 
 The optional `benchmark` dependency group installs ASTRA 2.5 and CuPy 14.2
@@ -156,10 +155,10 @@ boundaries. Finite support and interpolation contribute to the reported error.
 
 The cases cover isotropic parallel scans, 30-degree laminography, and non-cubic
 anisotropic volumes with detector offsets and odd detector dimensions. All use
-60 uniformly spaced views over a half turn by default. TomoJAX uses FP32 gathers,
-its default integration step, `(16, 4)` detector tiles, one warp, automatic
-kernel selection, and inline traversal state. These are kernel measurements;
-they are not timings of a complete alignment or iterative reconstruction.
+60 uniformly spaced views over a half turn by default. TomoJAX projects with its
+Joseph plane-sampling model, the one every solver uses, on the JAX and CUDA
+backends. These are kernel measurements; they are not timings of a complete
+alignment or iterative reconstruction.
 
 ASTRA uses `parallel3d_vec`: ray, detector origin, and detector basis vectors are
 transformed from each TomoJAX pose. Volume bounds describe the same physical voxel
@@ -194,16 +193,12 @@ the filter/backprojection operation and the public `fbp()` call, with inputs
 already on the device. The public call includes geometry preparation and the
 final angular scaling. It compares TomoJAX backends, not ASTRA/TIGRE reconstructions.
 
-`adjoint_benchmark.py` checks the explicit backprojector against a JAX VJP using
-long oblique rays, anisotropic voxels, shifted detectors, and random signed data.
-It also reports the inner-product identity error. The matched discrete adjoint
-used by iterative solvers is a different operator from voxel-driven FBP.
 
 ## Accuracy gates and diagnostics
 
-All three scripts return a nonzero exit status on a failed accuracy gate.
-The default relative L2 limits are 6% for the small forward-phantom matrix,
-2% for FBP, and `2e-5` for the explicit adjoint versus autodiff. CUDA must also
+Both scripts return a nonzero exit status on a failed accuracy gate.
+The default relative L2 limits are 6% for the small forward-phantom matrix and
+2% for FBP. CUDA must also
 agree with the JAX reference within `5e-5`. Thresholds can be tightened with
 `--max-relative-error`. Coarse grids or too few reconstruction angles may fail
 legitimately. Requested but unavailable libraries and runtime failures fail the
@@ -216,17 +211,7 @@ just test-cuda
 XLA_PYTHON_CLIENT_PREALLOCATE=false compute-sanitizer \
   --tool memcheck --error-exitcode=99 \
   .venv/bin/python -m pytest -q -m gpu \
-  tests/test_cuda_numerics.py tests/test_projector_adjoint.py tests/test_fbp_accuracy.py
-```
-
-The batched adjoint memory and timing experiment is also reproducible without
-checking out an older implementation. It compares the current shared accumulator
-with `vmap` of the single-view adjoint followed by reduction:
-
-```bash
-uv run --no-sync python bench/adjoint_benchmark.py --stack \
-  --sizes 32,64,128 --batches 4,16 --repeats 5 \
-  --output bench/results/adjoint-stack.json
+  tests/test_joseph_projector.py tests/test_fbp_accuracy.py
 ```
 
 ## Public workflow measurements
@@ -328,16 +313,6 @@ The current serial worker ordering does not control laptop thermal drift.
 Independent noise seeds, dose-dependent noise, real data, direct external FBP
 baselines and interleaved comparisons remain required for broad claims.
 
-The CUDA adjoint shared-accumulator experiment is separately reproducible:
-
-```bash
-uv run --no-sync python bench/adjoint_benchmark.py --stack --backend cuda \
-  --sizes 32,64,128 --batches 4,16 --repeats 7
-```
-
-This compares the shared accumulation to a `vmap` of single-view kernels and
-reports compiler temporary bytes, which are distinct from process peak memory.
-
 ## References
 
 - [JAX benchmarking guidance](https://docs.jax.dev/en/latest/benchmarking.html)
@@ -349,25 +324,20 @@ reports compiler temporary bytes, which are distinct from process peak memory.
 
 ## Plane-sampled CGLS model
 
-`CGLSConfig(projector_model="joseph")` selects voxel-centre plane sampling with
-bilinear interpolation and a matched transpose. The CUDA transpose gathers
-contributions into each voxel without atomic writes. The default
-`projector_model="auto"` now selects it; `projector_model="ray"` selects the
-trilinear ray marcher. These are different discretizations. Compare analytic
-accuracy and complete reconstruction quality, not just kernel throughput:
+CGLS samples voxel-centre planes with bilinear interpolation and a matched
+transpose. The CUDA transpose gathers contributions into each voxel without
+atomic writes. Compare analytic accuracy and complete reconstruction quality,
+not just kernel throughput:
 
 ```bash
-uv run --no-sync python bench/operator_models.py --sizes 64 128 256 --repeats 9
 uv run --no-sync python bench/compare_reconstructions.py --sizes 64 128 \
   --batch 180 --repeats 7 --suite structured-v1 \
-  --methods tomojax_joseph_cgls_cuda tomojax_multires_joseph_cgls_cuda astra_cgls \
+  --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda astra_cgls \
   --output bench/results/joseph-structured-quality.json
 ```
 
-The resident operator comparison uses dynamic poses and includes coefficient
-preparation in every call. Complete solve comparisons retain the same frozen
-budgets and acceptance gates as the ray model. Repeat with `gaussian-v1` and
-`structured-noisy-v1`; failed gates remain failures.
+Complete solve comparisons keep frozen budgets and acceptance gates. Repeat
+with `gaussian-v1` and `structured-noisy-v1`; failed gates remain failures.
 
 ## Independent material projections with gVXR
 

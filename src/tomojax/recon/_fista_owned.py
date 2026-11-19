@@ -51,9 +51,10 @@ def _residual(grid, detector, data, z, runtime):
 
 @partial(jax.jit, static_argnames=("grid", "detector"), donate_argnums=(2,))
 def _apply(grid, detector, z, residual, limit, runtime):
-    assert runtime.projector is not None
     model, backend, batch = runtime.projector
-    adjoint = projection_operators(runtime.poses, grid, detector, None, backend, batch, model)[1]
+    adjoint = projection_operators(
+        runtime.poses, grid, detector, runtime.detector_grid, backend, batch, model
+    )[1]
     return jnp.maximum(adjoint(-(1 / limit) * residual, accumulate=z), 0)
 
 
@@ -79,14 +80,12 @@ def use_owned_fista(grid: Grid, projections, runtime: FistaRuntime) -> bool:
         and constraints.upper_bound is None
         and not runtime.stream
         and runtime.split is None
-        and runtime.projector is not None
         and runtime.projector[0] == "joseph"
     )
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
 def _zero_gradient(grid: Grid, detector: Detector, data, runtime: FistaRuntime):
-    assert runtime.projector is not None
     model, backend, batch = runtime.projector
     return least_squares_operators(
         runtime.poses,
@@ -96,23 +95,24 @@ def _zero_gradient(grid: Grid, detector: Detector, data, runtime: FistaRuntime):
         batch,
         model,
         data_term=runtime.config.data_term,
+        det_grid=runtime.detector_grid,
     )(None, data)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
 def _norm_forward(grid: Grid, detector: Detector, vector, runtime: FistaRuntime):
-    assert runtime.projector is not None
     model, backend, batch = runtime.projector
-    return projection_operators(runtime.poses, grid, detector, None, backend, batch, model)[0](
-        vector
-    )
+    return projection_operators(
+        runtime.poses, grid, detector, runtime.detector_grid, backend, batch, model
+    )[0](vector)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
 def _norm_adjoint(grid: Grid, detector: Detector, data, runtime: FistaRuntime):
-    assert runtime.projector is not None
     model, backend, batch = runtime.projector
-    return projection_operators(runtime.poses, grid, detector, None, backend, batch, model)[1](data)
+    return projection_operators(
+        runtime.poses, grid, detector, runtime.detector_grid, backend, batch, model
+    )[1](data)
 
 
 @jax.jit

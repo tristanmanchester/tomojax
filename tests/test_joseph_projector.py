@@ -404,12 +404,10 @@ def test_plane_cgls_matches_independent_damped_system_with_tail_batch(
             damping=damping,
             views_per_batch=4,
             backend=backend,
-            projector_model="joseph",
             interpolation=interpolation,
         ),
     )
     np.testing.assert_allclose(np.asarray(volume).ravel(), expected, atol=5e-5, rtol=3e-4)
-    assert info["projector_model"] == "joseph"
     assert info["interpolation"] == interpolation
     gradient = (
         reference.T @ (data.ravel() - reference @ np.asarray(volume).ravel())
@@ -430,7 +428,7 @@ def test_plane_model_rejects_a_detector_grid_that_is_not_a_lattice():
             grid,
             detector,
             jnp.zeros((6, 7, 9)),
-            config=CGLSConfig(projector_model="joseph"),
+            config=CGLSConfig(),
             det_grid=(jnp.asarray(scattered[0]), jnp.asarray(scattered[1])),
         )
 
@@ -516,7 +514,7 @@ def test_joseph_rejects_invalid_geometry_before_kernel_execution(bad):
             grid,
             detector,
             jnp.ones((6, 7, 9)),
-            config=CGLSConfig(projector_model="joseph", iterations=1),
+            config=CGLSConfig(iterations=1),
         )
 
 
@@ -977,7 +975,9 @@ def test_explicit_detector_grid_gives_the_canonical_lattice_on_a_wide_detector()
     from tomojax.core._plane_coefficients import (  # check-public-imports: allow-private
         coefficients,
     )
-    from tomojax.core.projector import get_detector_grid_device
+    from tomojax.core.geometry.base import (  # check-public-imports: allow-private
+        get_detector_grid_device,
+    )
 
     # FP32 neighbours 0.7 apart differ by 0.69995: 0.2 lengths of drift over 4097 columns.
     grid, detector = Grid(8, 8, 8, 1.0, 1.0, 1.0), Detector(4097, 3, 0.7, 0.7)

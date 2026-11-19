@@ -113,7 +113,7 @@ def _solve(
     backend: str,
     batch_size: int,
     zero_start: bool,
-    model: str = "ray",
+    model: str = "joseph",
     interpolation: str = "linear",
     gradient_damping: jax.Array | None = None,
     split: ViewSplit | None = None,
@@ -488,7 +488,7 @@ def cgls(
             raise ValueError(f"cgls: {name} must be finite and nonnegative")
     validate_model(cfg)
     model, backend = resolve_geometry_projector(
-        geometry, cfg.projector_model, cfg.backend,
+        geometry, cfg.backend,
         detector=detector, det_grid=det_grid, context="cgls",
     )  # fmt: skip
     if isinstance(model, ConeModel) and cfg.interpolation != "linear":
@@ -508,7 +508,6 @@ def cgls(
     )  # fmt: skip
     if hosted is not None:
         return hosted
-    public_model = model
     model = resident_model(model, backend)
     initial = None if init_x is None else _as_float32(init_x)
     if is_joseph(model):
@@ -572,7 +571,6 @@ def cgls(
         "initial_normal_residual_norm": float(first_norm),
         "normal_residual_tolerance": float(tolerance),
         "projector_backend": backend,
-        "projector_model": public_model,
         "interpolation": cfg.interpolation if is_joseph(model) else None,
         "views_per_batch": min(batch, n),
         "formulation": "streamed_normal_equations" if stream else "cgls",

@@ -124,3 +124,14 @@ def test_grid_resampling_preserves_cell_edges_and_placement(placement):
         np.array(grid_volume_origin(grid)) - old_pitch / 2,
     )
     assert grid.resampled((11, 8, 5)) is grid
+
+
+def test_detector_grid_is_flattened_row_by_row_about_the_centre() -> None:
+    from tomojax.geometry.detector_grid import zero_center_detector_grid
+
+    detector = Detector(nu=3, nv=2, du=2.0, dv=4.0, center=(10.0, -5.0))
+
+    u, v = zero_center_detector_grid(detector)
+
+    np.testing.assert_allclose(u, [-2.0, 0.0, 2.0, -2.0, 0.0, 2.0])
+    np.testing.assert_allclose(v, [-2.0, -2.0, -2.0, 2.0, 2.0, 2.0])

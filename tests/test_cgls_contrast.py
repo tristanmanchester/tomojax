@@ -37,7 +37,7 @@ def test_contrast_cgls_dense_reference_and_constant_invariance(
     poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
 
     model, backend = resolve_geometry_projector(
-        geometry, "joseph", backend, detector=detector, context="contrast dot test"
+        geometry, backend, detector=detector, context="contrast dot test"
     )
     fp, adjoint = projection_operators(
         poses, grid, detector, None, backend, 3, model, interpolation
@@ -64,7 +64,6 @@ def test_contrast_cgls_dense_reference_and_constant_invariance(
         tolerance=1e-6,
         views_per_batch=3,
         backend=backend,
-        projector_model="joseph",
         interpolation=interpolation,
         stream=stream,
         data_term="per_view_contrast",

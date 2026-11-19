@@ -235,28 +235,22 @@ file until released. Projections and a haloed TV tile still need device space;
 the exact halo grows with `tv_prox_iterations`. Host execution is not a
 differentiable layer.
 
-CGLS, FISTA-TV and SPDHG-TV share one projector choice. The default
-`projector_model="auto"` uses bilinear voxel-centre plane integration (Joseph)
-with CUDA kernels on CUDA; its matched CUDA transpose gathers into voxels
-without scattered atomic writes, and JAX provides an independently
-differentiated reference transpose. `projector_model="ray"` selects the
-trilinear ray marcher, which is also used automatically with explicit detector
-grids and, in FISTA and SPDHG, the exact ray integrator. Both models match
-analytic line integrals to the same accuracy; Joseph is several times faster on
-CUDA. Joseph requires rigid homogeneous poses, finite grid/detector placement
-and canonical detector coordinates. `info["projector_model"]` identifies the CGLS
-selection; multiresolution diagnostics retain it per level. The matching public
-forward API exposes first-order pose differentiation; the solvers return host
-diagnostics and are not differentiable layers. Alignment's FISTA
-reconstruction stages keep the ray model on parallel beams; its coupled pose
-solver samples with Joseph by default (`ray_integrator`).
+Every solver projects with one model: bilinear voxel-centre plane integration
+(Joseph) for parallel beams and laminography, with CUDA kernels on CUDA, and
+its cone-beam counterpart for cone beams. The matched CUDA transpose gathers
+into voxels without scattered atomic writes, and JAX provides an independently
+differentiated reference transpose. An explicit detector grid must be affine
+(a shifted, rolled lattice); its plane coefficients carry it. Poses must be
+rigid and homogeneous, with finite grid and detector placement. The matching
+public forward API exposes first-order pose differentiation; the solvers return
+host diagnostics and are not differentiable layers.
 
-Set `interpolation="cubic"` with that model to use Keys cubic convolution
+Set `interpolation="cubic"` to use Keys cubic convolution
 (a=-1/2) and its matched transpose on either backend. The default is `"linear"`.
 Cubic uses a 4-by-4 transverse stencil, including negative weights, and costs
 more than bilinear sampling. It matches `project_joseph(interpolation="cubic")`;
-select the same interpolation in a reconstruction and its pose objective. This
-option is rejected with `projector_model="ray"`. It also applies at every level
+select the same interpolation in a reconstruction and its pose objective. It
+also applies at every level
 of `cgls_multires`, with its value retained in each level's diagnostics.
 
 

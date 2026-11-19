@@ -26,7 +26,6 @@ from tomojax.recon._cone_slabs import RowReader, host_volumes
 from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
-    ProjectorModel,
     resolve_geometry_projector,
     subset_operators,
 )
@@ -89,9 +88,6 @@ class SIRTConfig:
     backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
-    projector_model : ProjectorModel, optional
-        Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
-        explicit detector grid requires rays. Default is 'auto'.
     """
 
     iterations: int = 50
@@ -103,7 +99,6 @@ class SIRTConfig:
     support: jax.Array | np.ndarray | None = None
     views_per_batch: int = 64
     backend: ProjectorBackend = "auto"
-    projector_model: ProjectorModel = "auto"
 
 
 def _inverse(value: jax.Array) -> jax.Array:
@@ -296,7 +291,6 @@ def _storage(
         not cache
         and free is not None
         and backend == "cuda"
-        and cfg.projector_model != "ray"
         and not axial
         and cfg.support is None
         and cfg.iterations > 1
@@ -462,7 +456,6 @@ class SIRTCall:
                 validate_volume(value, grid, context="sirt", name=name)
         model, backend = resolve_geometry_projector(
             geometry,
-            cfg.projector_model,
             cfg.backend,
             detector=detector,
             det_grid=det_grid,
@@ -488,7 +481,6 @@ class SIRTCall:
                 model=model, backend=backend, poses=stack_view_poses(geometry, n),
                 bounds=(lower, upper), out=out,
             )  # fmt: skip
-        public_model = model
         model = resident_model(model, backend)
         initial, stream, cache_columns = _storage(
             projections,
@@ -535,7 +527,6 @@ class SIRTCall:
             "termination": "iteration_limit",
             "stream": stream,
             "projector_backend": backend,
-            "projector_model": public_model,
         }
 
     def _host_columns(

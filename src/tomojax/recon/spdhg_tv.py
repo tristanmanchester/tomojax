@@ -19,11 +19,7 @@ from tomojax.backends.host_stream import (
     should_stream,
     write_block,
 )
-from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.projector import (
-    get_detector_grid_device,
-)
 from tomojax.core.validation import (
     validate_grid,
     validate_optional_broadcastable_shape,
@@ -35,9 +31,7 @@ from tomojax.core.validation import (
 from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
-    ProjectorModel,
     resolve_geometry_projector,
-    resolve_projector,
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
@@ -71,11 +65,8 @@ if TYPE_CHECKING:
 class SPDHGConfig:
     """Configuration for stochastic primal-dual TV reconstruction.
 
-    ``projector_model`` and ``backend`` choose the projection operator as
-    in :class:`FistaConfig`: ``"auto"`` uses Joseph plane sampling with CUDA on
-    CUDA unless an explicit detector grid or the exact ray integrator requires
-    the ray-model reference path. ``gather_dtype``, ``projector_unroll`` and
-    ``checkpoint_projector`` apply to the reference path only.
+    ``backend`` chooses where the projection runs, as in :class:`FistaConfig`:
+    ``"auto"`` is CUDA on CUDA.
 
     ``stream`` keeps NumPy or memmap projections, any weights and
     the sinogram-sized dual variable in host memory; each iteration reads and
@@ -87,8 +78,7 @@ class SPDHGConfig:
     data-dual and TV-dual step sizes. ``None`` estimates only that missing size;
     explicit sizes must be finite and positive. Automatic sizes bound every
     block's squared norm divided by its selection probability. One forward
-    and adjoint pass per block compute row/column-sum Schur bounds; signed
-    interpolation uses absolute weights only for those bounds. ``info["A_norm"]``
+    and adjoint pass per block compute row/column-sum Schur bounds. ``info["A_norm"]``
     is the square root of this probability-scaled bound, also bounding the
     full-scan operator norm.
     Supplying overrides makes the caller responsible for the combined step
@@ -134,20 +124,6 @@ class SPDHGConfig:
         Positive data-dual step size, or None to estimate it.
     sigma_tv : float | None, optional
         Positive TV-dual step size, or None to estimate it.
-    projector_unroll : int, optional
-        Loop unrolling for the explicit-grid or ray-reference projector. Default is
-        1.
-    checkpoint_projector : bool, optional
-        Recompute intermediate projector values during differentiation on the
-        reference path. Default is True.
-    gather_dtype : str, optional
-        Gather precision on the reference path: "auto", "fp32", "fp16" or "bf16". Default is 'fp32'.
-    ray_integrator : str, optional
-        Reference ray integration rule; "sampled" is the default, "exact" uses exact
-        integration, and "joseph" selects Joseph sampling. Default is 'sampled'.
-    projector_model : ProjectorModel, optional
-        Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
-        explicit detector grid requires rays. Default is 'auto'.
     backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
@@ -177,11 +153,6 @@ class SPDHGConfig:
     sigma_tv: float | None = None
 
     # projector / memory knobs
-    projector_unroll: int = 1
-    checkpoint_projector: bool = True
-    gather_dtype: str = "fp32"
-    ray_integrator: str = "sampled"
-    projector_model: ProjectorModel = "auto"
     backend: ProjectorBackend = "auto"
 
     # constraints
@@ -240,8 +211,8 @@ class _SPDHGRuntime:
     schedule: _SPDHGSchedule
     # None starts from zeros created inside the compiled solve.
     init_x: jnp.ndarray | None
-    # (model, backend) for batched operators, or None for the ray reference path.
-    projector: tuple[str | ConeModel, str] | None = field(metadata={"static": True})
+    # (model, backend) of the batched operators.
+    projector: tuple[str | ConeModel, str] = field(metadata={"static": True})
     data_shape: tuple[int, int, int] = field(metadata={"static": True})
     weighted: bool = field(default=False, metadata={"static": True})
     # Host keys (measured views, duals, weights) when streaming.
@@ -325,29 +296,13 @@ def _prox_fstar_l2(
 def _batched_projector(
     config: SPDHGConfig,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-    geometry: object = None,
-    detector: Detector | None = None,
-) -> tuple[str | ConeModel, str] | None:
-    """Choose batched operators, or None for the ray-model reference path."""
-    model, backend = config.projector_model, config.backend
-    if is_cone_beam(geometry):
-        if config.ray_integrator == "exact":
-            raise ValueError(
-                "spdhg_tv: cone-beam geometry uses Joseph sampling, not exact integration"
-            )
-        assert detector is not None
-        return resolve_geometry_projector(
-            geometry, model, backend, detector=detector, det_grid=det_grid, context="spdhg_tv"
-        )
-    if det_grid is not None or config.ray_integrator != "sampled":
-        if model == "joseph" or backend == "cuda":
-            raise ValueError(
-                "spdhg_tv: explicit detector grids and exact integration require "
-                "projector_model='ray' and backend='jax'"
-            )
-        return None
-    model, backend = resolve_projector(model, backend, context="spdhg_tv")
-    return None if (model, backend) == ("ray", "jax") else (model, backend)
+    geometry: object,
+    detector: Detector,
+) -> tuple[str | ConeModel, str]:
+    """The batched operators' model and backend."""
+    return resolve_geometry_projector(
+        geometry, config.backend, detector=detector, det_grid=det_grid, context="spdhg_tv"
+    )
 
 
 def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
@@ -395,20 +350,19 @@ def _initial_spdhg_state(
 
 @functools.partial(
     jax.jit,
-    static_argnames=("grid", "detector", "projector", "views_per_batch", "ray_settings"),
+    static_argnames=("grid", "detector", "projector", "views_per_batch"),
 )
 def _spdhg_noise_rms(
     grid: Grid,
     detector: Detector,
     poses: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     weights: jnp.ndarray | None,
     weights_key: jax.Array | None,
     support: jnp.ndarray | None,
     *,
-    projector: tuple[str | ConeModel, str] | None,
+    projector: tuple[str | ConeModel, str],
     views_per_batch: int,
-    ray_settings: tuple[bool, int, str, str],
 ) -> jnp.ndarray:
     """A bounded noise transpose through the same weighted data operator."""
     _, backproject = make_spdhg_chunk_operators(
@@ -418,7 +372,6 @@ def _spdhg_noise_rms(
         det_grid,
         projector=projector,
         views_per_batch=views_per_batch,
-        ray_settings=ray_settings,
     )
 
     def read_weight_block(start: jax.Array, size: int) -> jax.Array:
@@ -482,7 +435,6 @@ def _prepare_spdhg_runtime(
 
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="spdhg_tv geometry")
-    resolved_det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
     projector = _batched_projector(cfg, det_grid, geometry, detector)
     # Data, its dual and any weights; ~8 volumes of iterate, TV duals and scratch.
     reserve, copies = 32 * grid.nx * grid.ny * grid.nz, 2 + (weights is not None)
@@ -491,8 +443,6 @@ def _prepare_spdhg_runtime(
         if cfg.stream is not None
         else should_stream(projections, reserve_bytes=reserve, copies=copies)
     )
-    if stream and projector is None:
-        raise ValueError("spdhg_tv: stream requires the batched projection operators")
     y_meas = None if stream else jnp.asarray(projections, dtype=jnp.float32)
     weights_arr = None if weights is None or stream else jnp.asarray(weights, dtype=jnp.float32)
     metric = resolve_tv_metric(
@@ -520,18 +470,12 @@ def _prepare_spdhg_runtime(
                     grid,
                     detector,
                     poses,
-                    resolved_det_grid,
+                    det_grid,
                     weights_arr,
                     key,
                     support,
                     projector=projector,
                     views_per_batch=cfg.views_per_batch,
-                    ray_settings=(
-                        cfg.checkpoint_projector,
-                        cfg.projector_unroll,
-                        cfg.gather_dtype,
-                        cfg.ray_integrator,
-                    ),
                 ).block_until_ready()
             metric = raise_tv_weight(metric, noise * rms)
         resolved_tv_weight = 5e-5 * float(metric.weight_over_contrast) / (initial_factor or 1)
@@ -542,7 +486,7 @@ def _prepare_spdhg_runtime(
         detector,
         poses,
         cfg,
-        resolved_det_grid,
+        det_grid,
         projector,
         metric=metric,
     )
@@ -554,7 +498,7 @@ def _prepare_spdhg_runtime(
         y_meas=y_meas,
         weights=weights_arr,
         poses=poses,
-        detector_grid=resolved_det_grid,
+        detector_grid=det_grid,
         support=support,
         metric=metric,
         resolved_tv_weight=float(resolved_tv_weight),
@@ -687,12 +631,6 @@ def _run_spdhg_scan(  # noqa: PLR0915
         runtime.detector_grid,
         projector=runtime.projector,
         views_per_batch=schedule.views_per_batch,
-        ray_settings=(
-            cfg.checkpoint_projector,
-            cfg.projector_unroll,
-            cfg.gather_dtype,
-            cfg.ray_integrator,
-        ),
     )
 
     def load(state: _SPDHGScanState, start: jnp.ndarray) -> tuple:

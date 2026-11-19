@@ -12,10 +12,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.core.operator_norm import BOUND_GAP, estimate_normal_norm, normal_upper_bound
-
-# check-public-imports: allow-private
-from tomojax.core.projector import forward_project_view_T
+from tomojax.core.operator_norm import BOUND_GAP, normal_upper_bound
 from tomojax.geometry import (
     ConeBeam,
     ConeGeometry,
@@ -79,7 +76,6 @@ def test_spdhg_small_weights_preserve_the_dense_weighted_minimizer(stream, weigh
             sigma_data=0.2 * weight_scale,
             sigma_tv=0.1,
             log_every=2000,
-            projector_model="joseph",
             backend="jax",
             stream=stream,
         ),
@@ -129,7 +125,6 @@ def test_spdhg_zero_weight_mask_recovers_dense_weighted_solution(tilted, stream,
             views_per_batch=2,
             tv_weight=0,
             log_every=2000,
-            projector_model="joseph",
             backend="jax",
             stream=stream,
         ),
@@ -141,8 +136,7 @@ def test_spdhg_zero_weight_mask_recovers_dense_weighted_solution(tilted, stream,
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
-@pytest.mark.parametrize("model", ["ray", "joseph"])
-def test_repeated_solver_calls_use_new_arrays(solver, model):
+def test_repeated_solver_calls_use_new_arrays(solver):
     grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.9, 1.2, (0.17, 0.23))
     rng = np.random.default_rng(92)
@@ -153,7 +147,7 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
         data = jnp.asarray(rng.normal(size=(3, 3, 4)), dtype=jnp.float32)
         support = jnp.asarray(rng.uniform(0.3, 1.0, size=(2, 3, 2)), dtype=jnp.float32)
 
-        forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, model)
+        forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, "joseph")
 
         def project(flat, forward=forward):
             return forward(flat.reshape((2, 3, 2))).ravel()
@@ -167,7 +161,6 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
                 views_per_batch=2,
                 nonnegative=False,
                 support=support,
-                projector_model=model,
                 backend="jax",
             )
             actual, _ = fista_tv(geometry, grid, detector, data, config=cfg)
@@ -183,7 +176,6 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
                 views_per_batch=3,
                 nonnegative=False,
                 support=support,
-                projector_model=model,
                 backend="jax",
             )
             actual, _ = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
@@ -193,109 +185,6 @@ def test_repeated_solver_calls_use_new_arrays(solver, model):
         if previous is not None:
             assert not np.allclose(previous, actual)
         previous = np.asarray(actual)
-
-
-@pytest.mark.numerical
-@pytest.mark.parametrize("ray_integrator", ["sampled", "joseph", "joseph_cubic"])
-def test_shared_power_method_matches_dense_operator_with_tail_and_support(ray_integrator):
-    grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
-    detector = Detector(4, 3, 0.9, 1.2, (0.17, 0.23))
-    for offset in [0.0, 11.0]:
-        geometry = ParallelGeometry(grid, detector, np.asarray([17.0, 69.0, 137.0]) + offset)
-        poses = jnp.asarray([geometry.pose_matrix(i) for i in range(3)])
-        support = jnp.linspace(0.2, 1.0, 12).reshape((2, 3, 2))
-
-        def project(flat, poses=poses, support=support):
-            return jax.vmap(
-                lambda t: forward_project_view_T(
-                    t,
-                    grid,
-                    detector,
-                    flat.reshape((2, 3, 2)) * support,
-                    ray_integrator=ray_integrator,
-                )
-            )(poses).ravel()
-
-        matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12)))
-        expected = np.linalg.svd(matrix, compute_uv=False)[0] ** 2
-        actual = estimate_normal_norm(
-            poses,
-            jnp.ones((2, 3, 2)),
-            None,
-            support,
-            grid=grid,
-            detector=detector,
-            batch_size=2,
-            iterations=50,
-            unroll=1,
-            checkpoint=True,
-            gather_dtype="fp32",
-            ray_integrator=ray_integrator,
-        )
-        np.testing.assert_allclose(actual, expected, rtol=3e-5)
-
-
-@pytest.mark.numerical
-@pytest.mark.parametrize("masked", [False, True])
-@pytest.mark.parametrize("batch_size", [1, 2])
-@pytest.mark.parametrize("tilt", [False, True])
-@pytest.mark.parametrize("ray_integrator", ["sampled", "joseph", "joseph_cubic"])
-def test_positive_normal_bound_dominates_dense_spectrum_for_irregular_geometry(
-    tilt, ray_integrator, monkeypatch, batch_size, masked
-):
-    grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
-    detector = Detector(5, 3, 0.6, 1.2, (0.17, 0.23))
-    angles = np.array([13.0, 68.0, 142.0])
-    geometry = (
-        LaminographyGeometry(grid, detector, angles, tilt=30)
-        if tilt
-        else ParallelGeometry(grid, detector, angles)
-    )
-    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(3)])
-    support = jnp.linspace(-1.0, 0.7, 12).reshape((2, 3, 2)) if masked else None
-
-    def project(flat):
-        return jax.vmap(
-            lambda t: forward_project_view_T(
-                t,
-                grid,
-                detector,
-                flat.reshape((2, 3, 2)) * (1 if support is None else support),
-                ray_integrator=ray_integrator,
-            )
-        )(poses).ravel()
-
-    matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12))).astype(np.float64)
-    expected = np.max(np.abs(matrix).T @ np.abs(matrix) @ np.ones(12))
-    if jax.default_backend() == "gpu":
-        monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
-        from tomojax.core import joseph
-
-        def poisoned(model):
-            return lambda *a, **kw: model(*a, **kw) * jnp.nan
-
-        # The JAX model is traced as the off-GPU branch; running it poisons the bound.
-        for operation in ("forward_jax", "adjoint_jax"):
-            monkeypatch.setattr(joseph, operation, poisoned(getattr(joseph, operation)))
-    actual = float(
-        estimate_normal_norm(
-            poses,
-            jnp.zeros((2, 3, 2)),
-            None,
-            support,
-            grid=grid,
-            detector=detector,
-            batch_size=batch_size,
-            iterations=1,
-            unroll=1,
-            checkpoint=True,
-            gather_dtype="fp32",
-            upper_bound=True,
-            ray_integrator=ray_integrator,
-        )
-    )
-    np.testing.assert_allclose(actual, expected, rtol=3e-5)
-    assert actual >= np.linalg.svd(matrix, compute_uv=False)[0] ** 2 * (1 - 3e-5)
 
 
 @pytest.mark.numerical
@@ -313,7 +202,6 @@ def test_fista_streams_host_projections_like_device_projections(tmp_path, batch)
             iterations=4,
             tv_weight=0.01,
             nonnegative=True,
-            projector_model="joseph",
             backend="jax",
             views_per_batch=batch,
             stream=stream,
@@ -343,7 +231,6 @@ def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted, data
             data_term=data_term,
             tv_weight=0.01,
             views_per_batch=4,
-            projector_model="joseph",
             backend="jax",
             stream=stream,
         )
@@ -355,9 +242,8 @@ def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted, data
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("model", ["ray", "joseph"])
 @pytest.mark.parametrize("tilted", [False, True])
-def test_spdhg_partial_steps_match_dense_first_update_and_preserve_each_override(model, tilted):
+def test_spdhg_partial_steps_match_dense_first_update_and_preserve_each_override(tilted):
     grid = Grid(2, 3, 2, 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.9, 1.2, (0.17, -0.23))
     angles = np.array([13.0, 68.0, 142.0])
@@ -368,14 +254,13 @@ def test_spdhg_partial_steps_match_dense_first_update_and_preserve_each_override
     )
     data = np.random.default_rng(78).normal(size=(3, 3, 4)).astype(np.float32)
     poses = jnp.asarray([geometry.pose_matrix(i) for i in range(3)])
-    forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, model)
+    forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, "joseph")
     matrix = np.asarray(jax.jacfwd(lambda x: forward(x.reshape((2, 3, 2))).ravel())(jnp.zeros(12)))
     config = SPDHGConfig(
         iterations=2,
         tv_weight=0,
         views_per_batch=3,
         log_every=1,
-        projector_model=model,
         backend="jax",
     )
     weights = np.random.default_rng(91).uniform(0.5, 1.5, data.shape).astype(np.float32)
@@ -399,15 +284,14 @@ def test_spdhg_partial_steps_match_dense_first_update_and_preserve_each_override
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("model", ["ray", "joseph"])
 @pytest.mark.parametrize("regularizer", ["tv", "huber_tv"])
-def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regularizer):
+def test_spdhg_partial_tv_step_controls_dense_primal_update(regularizer):
     shape = (2, 3, 2)
     grid = Grid(*shape[::-1], 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.9, 1.2, (0.17, -0.23))
     geometry = LaminographyGeometry(grid, detector, [13.0, 68.0, 142.0], tilt=30)
     poses = jnp.asarray([geometry.pose_matrix(i) for i in range(3)])
-    forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, model)
+    forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, "joseph")
     matrix = np.asarray(jax.jacfwd(lambda x: forward(x.reshape(shape)).ravel())(jnp.zeros(12)))
     # Independent dense forward differences: each row's dual has three components.
     edges = np.zeros((3, 12, 12))
@@ -429,7 +313,6 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(model, regularizer):
         huber_delta=0.08,
         views_per_batch=3,
         log_every=1,
-        projector_model=model,
         backend="jax",
     )
     lam, delta, scales = _physical_tv_parameters(grid, detector, data, None, config)
@@ -528,7 +411,6 @@ def test_spdhg_masked_invalid_data_preserve_solution_and_diagnostics(stream, mis
         views_per_batch=2,
         tv_weight=0,
         log_every=10,
-        projector_model="joseph",
         backend="jax",
         stream=stream,
     )
@@ -591,10 +473,8 @@ def test_spdhg_streaming_still_rejects_unmasked_nonfinite_data(weighted, invalid
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize(
-    ("regularizer", "model", "stream"), [("tv", "ray", False), ("huber_tv", "joseph", True)]
-)
-def test_fista_disabled_tv_does_not_evaluate_regularizer(monkeypatch, regularizer, stream, model):
+@pytest.mark.parametrize(("regularizer", "stream"), [("tv", False), ("huber_tv", True)])
+def test_fista_disabled_tv_does_not_evaluate_regularizer(monkeypatch, regularizer, stream):
     import importlib
 
     module = importlib.import_module("tomojax.recon.fista_tv")
@@ -621,7 +501,6 @@ def test_fista_disabled_tv_does_not_evaluate_regularizer(monkeypatch, regularize
                 lipschitz=1.0,
                 tv_weight=0.0,
                 regularizer=regularizer,
-                projector_model=model,
                 backend="jax",
                 stream=stream,
             ),
@@ -726,7 +605,6 @@ def test_spdhg_automatic_steps_stay_stable_when_one_view_measures_the_volume():
             iterations=1500,
             tv_weight=0,
             views_per_batch=1,
-            projector_model="joseph",
             backend="jax",
             seed=8,
             log_every=0,
@@ -865,30 +743,12 @@ def test_spdhg_runs_with_global_x64_and_returns_fp32():
                 tv_weight=lam,
                 nonnegative=True,
                 views_per_batch=2,
-                projector_model="joseph",
                 backend="jax",
                 log_every=0,
             ),
         )
     assert actual.dtype == np.dtype("float32")
     np.testing.assert_allclose(np.asarray(actual).ravel(), expected, rtol=3e-5, atol=3e-6)
-
-
-@pytest.mark.numerical
-def test_fista_joseph_integrator_uses_the_matched_batched_operators():
-    grid = Grid(3, 4, 2, 0.8, 1.1, 1.3)
-    detector = Detector(6, 3, 0.9, 1.2, (0.17, -0.23))
-    geometry = ParallelGeometry(grid, detector, [13.0, 68.0, 142.0])
-    data = np.random.default_rng(78).normal(size=(3, 3, 6)).astype(np.float32)
-    config = FistaConfig(
-        iterations=4, lipschitz=100.0, tv_weight=0.001, ray_integrator="joseph", views_per_batch=2
-    )
-    actual, _ = fista_tv(geometry, grid, detector, data, config=config)
-    # Explicit ray model keeps the reference implementation; a fixed bound
-    # isolates the operators from their norm estimates.
-    reference = replace(config, projector_model="ray", backend="jax")
-    expected, _ = fista_tv(geometry, grid, detector, data, config=reference)
-    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)
 
 
 @pytest.mark.numerical
@@ -934,8 +794,9 @@ def test_spdhg_finite_iterates_covary_with_units_signal_and_weight(regularizer, 
 
 
 @pytest.mark.numerical
-def test_spdhg_signed_custom_grid_schur_bound_uses_absolute_interpolation():
-    from tomojax.core.projector import get_detector_grid_device, project_views
+def test_spdhg_custom_grid_schur_bound_and_noise_follow_the_shifted_lattice():
+    # check-public-imports: allow-private
+    from tomojax.core.geometry.base import get_detector_grid_device
 
     # check-public-imports: allow-private
     from tomojax.recon._spdhg_steps import _block_row_column_bounds
@@ -946,36 +807,23 @@ def test_spdhg_signed_custom_grid_schur_bound_uses_absolute_interpolation():
     poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
     u, v = get_detector_grid_device(detector)
     coordinates = (u + 0.31, v - 0.27)
+    forward, _ = projection_operators(poses, grid, detector, coordinates, "jax", 5, "joseph")
     matrix = np.stack(
-        [
-            np.asarray(
-                project_views(
-                    poses,
-                    grid,
-                    detector,
-                    jnp.asarray(basis.reshape(2, 2, 3)),
-                    det_grid=coordinates,
-                    ray_integrator="joseph_cubic",
-                )
-            ).ravel()
-            for basis in np.eye(12, dtype=np.float32)
-        ],
+        [np.asarray(forward(jnp.asarray(basis.reshape(2, 2, 3)))).ravel() for basis in np.eye(12)],
         axis=1,
     )
-    assert matrix.min() < -0.01
     row, column = _block_row_column_bounds(
         poses,
         coordinates,
         grid=grid,
         detector=detector,
-        projector=None,
+        projector=("joseph", "jax"),
         views_per_batch=2,
-        ray_settings=(True, 1, "fp32", "joseph_cubic"),
     )
     assert float(row) >= np.abs(matrix).sum(axis=1).max() * (1 - 2e-6)
     columns = [np.abs(matrix[first : first + 24]).sum(axis=0).max() for first in (0, 24, 48)]
     assert float(column) >= max(columns) * (1 - 2e-6)
-    # Automatic regularization must use signed A.T, not the bound's |A|.T.
+    # Automatic regularization uses A.T on the same lattice.
     from tomojax.recon.spdhg_tv import _spdhg_noise_rms
 
     weights = jnp.asarray(np.random.default_rng(717).uniform(0.2, 1.7, (5, 3, 4)), jnp.float32)
@@ -998,9 +846,8 @@ def test_spdhg_signed_custom_grid_schur_bound_uses_absolute_interpolation():
         weights,
         None,
         support,
-        projector=None,
+        projector=("joseph", "jax"),
         views_per_batch=2,
-        ray_settings=(True, 1, "fp32", "joseph_cubic"),
     )
     np.testing.assert_allclose(actual, expected, rtol=2e-5)
 

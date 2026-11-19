@@ -8,9 +8,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+import functools
 import math
 import operator
-from typing import Any, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+
+import numpy as np
+
+if TYPE_CHECKING:
+    import jax.numpy as jnp
 
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
@@ -299,6 +305,33 @@ class Detector:
             dv=float(data["dv"]),
             center=data["det_center"],
         )
+
+
+@functools.lru_cache(maxsize=8)
+def _detector_grid(
+    nu: int, nv: int, du: float, dv: float, cu: float, cv: float
+) -> tuple[np.ndarray, np.ndarray]:
+    # NumPy on the host, so the cache never holds a JAX tracer.
+    u = (np.arange(nu, dtype=np.float32) - (nu / 2.0 - 0.5)) * np.float32(du) + np.float32(cu)
+    v = (np.arange(nv, dtype=np.float32) - (nv / 2.0 - 0.5)) * np.float32(dv) + np.float32(cv)
+    u_grid, v_grid = np.tile(u, nv), np.repeat(v, nu)
+    u_grid.setflags(write=False)
+    v_grid.setflags(write=False)
+    return u_grid, v_grid
+
+
+def get_detector_grid_device(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """The detector's pixel-centre coordinates (u, v), flattened row by row.
+
+    Call it outside jit, grad or scan; the result can be cached and reused.
+    """
+    import jax.numpy as jnp
+
+    u, v = _detector_grid(
+        int(det.nu), int(det.nv), float(det.du), float(det.dv),
+        float(det.center[0]), float(det.center[1]),
+    )  # fmt: skip
+    return jnp.asarray(u, dtype=jnp.float32), jnp.asarray(v, dtype=jnp.float32)
 
 
 def _parallel_detector_rays(

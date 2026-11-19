@@ -60,7 +60,6 @@ def solve(
         "subset_updates": cfg.iterations * cfg.subsets,
         "termination": "iteration_limit",
         "projector_backend": backend,
-        "projector_model": model,
         "host_slabs": not problem.on_device,
         "slices_per_batch": problem.plan.depth,
         "bytes_to_device": problem.engine.traffic["to_device"],

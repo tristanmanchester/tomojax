@@ -53,14 +53,12 @@ class CGLSConfig:
     Both penalties default to zero. Their weights are independent of view count;
     the data term is an unnormalized sum of squared residuals.
 
-    ``projector_model="joseph"`` samples voxel-centre planes along the dominant
-    voxel direction, interpolates each plane and uses its matched transpose. On
-    CUDA that transpose gathers into voxels without atomic writes. Bilinear
-    interpolation is the default; ``interpolation="cubic"`` selects Keys
-    cubic convolution with a=-1/2 and a 4-by-4 stencil, including negative
-    weights. ``"ray"`` is the trilinear ray marcher. ``"auto"`` selects Joseph,
-    for a rolled (affine) ``det_grid`` too, whose plane coefficients carry the
-    grid; both models match analytic line integrals equally well, and Joseph is faster.
+    The projector samples voxel-centre planes along the dominant voxel
+    direction, interpolates each plane and uses its matched transpose; a rolled
+    (affine) ``det_grid`` is carried in the plane coefficients. On CUDA the
+    transpose gathers into voxels without atomic writes. Bilinear interpolation
+    is the default; ``interpolation="cubic"`` selects Keys cubic convolution
+    with a=-1/2 and a 4-by-4 stencil, including negative weights.
 
     ``stream`` solves the equivalent normal equations with NumPy or
     memmap projections read from host memory one view batch at a time, so only
@@ -96,12 +94,9 @@ class CGLSConfig:
     backend : Literal['auto', 'jax', 'cuda'], optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
-    projector_model : Literal['auto', 'ray', 'joseph'], optional
-        Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
-        explicit detector grid requires rays. Default is 'auto'.
     interpolation : Literal['linear', 'cubic'], optional
-        Joseph interpolation: "linear" or Keys "cubic" with a=-1/2. Cubic is not
-        supported by the ray model. Default is 'linear'.
+        Plane interpolation: "linear" or Keys "cubic" with a=-1/2. Default is
+        'linear'.
     gradient_damping : float, optional
         Nonnegative weight of the physical finite-difference penalty; squared in the
         objective. Default is 0.0.
@@ -120,7 +115,6 @@ class CGLSConfig:
     damping: float = 0.0
     views_per_batch: int = 64
     backend: Literal["auto", "jax", "cuda"] = "auto"
-    projector_model: Literal["auto", "ray", "joseph"] = "auto"
     interpolation: Literal["linear", "cubic"] = "linear"
     gradient_damping: float = 0.0
     stream: bool | None = None
@@ -152,8 +146,6 @@ def validate_model(cfg: CGLSConfig) -> None:
         raise ValueError("cgls: data_term must be absolute or per_view_contrast")
     if cfg.interpolation not in {"linear", "cubic"}:
         raise ValueError("cgls: interpolation must be 'linear' or 'cubic'")
-    if cfg.interpolation != "linear" and cfg.projector_model == "ray":
-        raise ValueError("cgls: cubic interpolation requires projector_model='joseph'")
 
 
 def cgls(
@@ -247,8 +239,6 @@ def cgls(
     validate_model(cfg)
     if cfg.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("cgls: backend must be 'auto', 'jax' or 'cuda'")
-    if cfg.projector_model not in {"auto", "ray", "joseph"}:
-        raise ValueError("cgls: projector_model must be 'auto', 'joseph' or 'ray'")
     from ._cgls_cuda import available, solve
 
     if out is None and available(geometry, projections, init_x, cfg, det_grid):

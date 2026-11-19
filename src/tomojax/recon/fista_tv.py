@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, replace
 import functools
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -12,40 +12,25 @@ import numpy as np
 
 from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.devices import ViewSplit, as_devices, refuse_streaming, view_split
-from tomojax.core.geometry.cone import is_cone_beam, require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.operator_norm import estimate_normal_norm
-from tomojax.core.projector import (
-    RAY_INTEGRATORS,
-    backproject_view_T,
-    forward_project_view_T,
-    get_detector_grid_device,
-    project_views,
-    sum_backproject_views_T,
-)
 from tomojax.core.validation import (
     validate_grid,
     validate_optional_broadcastable_shape,
     validate_pose_stack,
-    validate_projection_shape,
     validate_projection_stack,
     validate_volume,
 )
-from tomojax.core.view_chunks import chunk_schedule, chunk_size
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
-from ._data_term import project_residual
-from ._fista_initialization import first_gradient as estimate_first_gradient, power_start
+from ._fista_initialization import first_gradient as estimate_first_gradient
 from ._fista_owned import FistaScanState, run_owned_fista, use_owned_fista
 from ._noise import estimate_projection_noise
 from ._noise_probe import probe_gradient_rms
 from ._projection import (
     ConeModel,
     ProjectorBackend,
-    ProjectorModel,
     least_squares_operators,
     resolve_geometry_projector,
-    resolve_projector,
 )
 from ._projection_batches import ViewBatches
 from ._solver_validation import validate_fista_config
@@ -65,8 +50,6 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
     from .types import DataTerm, Regularizer
-
-GradMode = Literal["auto", "batched", "stream"]
 
 
 @functools.partial(
@@ -100,9 +83,8 @@ class FistaRuntime:
     lipschitz: jax.Array | float | None
     volume_mask: jnp.ndarray | None
     detector_grid: tuple[jnp.ndarray, jnp.ndarray] | None
-    # (model, backend, views per batch) for the batched operators, or None for
-    # the ray-model reference path.
-    projector: tuple[str | ConeModel, str, int] | None = field(metadata={"static": True})
+    # (model, backend, views per batch) for the batched operators.
+    projector: tuple[str | ConeModel, str, int] = field(metadata={"static": True})
     # The data argument is then a host_source key, read one batch at a time.
     stream: bool = field(default=False, metadata={"static": True})
     # The views shared among devices, the data placed accordingly; None for one.
@@ -113,11 +95,8 @@ class FistaRuntime:
 class FistaConfig:
     """Configuration for public FISTA/TV reconstruction.
 
-    ``projector_model``/``backend`` follow :class:`CGLSConfig`: ``"auto"``
-    uses batched Joseph (also for ``ray_integrator="joseph"``), with CUDA on CUDA.
-    Explicit grids/exact integration use the reference path, alone honouring
-    ``gather_dtype``, ``projector_unroll``, ``checkpoint_projector`` and ``grad_mode``.
-    ``views_per_batch=None`` batches 64 views, or one on the reference path.
+    ``backend`` follows :class:`CGLSConfig`: ``"auto"`` projects with CUDA on
+    CUDA. ``views_per_batch=None`` batches 64 views.
 
     ``stream`` reads NumPy or memmap projections from host memory
     one view batch at a time, so they never occupy the device whole. ``None``
@@ -178,19 +157,7 @@ class FistaConfig:
         Positive data-gradient Lipschitz constant, or None to estimate it by power
         iteration.
     views_per_batch : int | None, optional
-        View batch size. None uses 64 for batched operators or one on the reference
-        path.
-    projector_unroll : int, optional
-        Loop unrolling for the explicit-grid or ray-reference projector. Default is
-        1.
-    checkpoint_projector : bool, optional
-        Recompute intermediate projector values during differentiation on the
-        reference path. Default is True.
-    gather_dtype : str, optional
-        Gather precision on the reference path: "auto", "fp32", "fp16" or "bf16". Default is 'fp32'.
-    grad_mode : GradMode, optional
-        Reference gradient evaluation: "auto", "batched" or "stream". Default is
-        'auto'.
+        View batch size. None uses 64.
     tv_prox_iterations : int, optional
         Iterations of the TV or Huber-TV proximal solve per FISTA update. Default is 10.
     tolerance : float | None, optional
@@ -215,12 +182,6 @@ class FistaConfig:
         Lower voxel-value bound, or None for no explicit lower bound.
     upper_bound : float | None, optional
         Upper voxel-value bound, or None for no upper bound.
-    ray_integrator : str, optional
-        Reference ray integration rule; "sampled" is the default, "exact" uses exact
-        integration, and "joseph" selects Joseph sampling. Default is 'sampled'.
-    projector_model : ProjectorModel, optional
-        Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
-        explicit detector grid requires rays. Default is 'auto'.
     backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
@@ -239,10 +200,6 @@ class FistaConfig:
     huber_delta: float = 1e-2
     lipschitz: float | None = None
     views_per_batch: int | None = None
-    projector_unroll: int = 1
-    checkpoint_projector: bool = True
-    gather_dtype: str = "fp32"
-    grad_mode: GradMode = "auto"
     tv_prox_iterations: int = 10
     tolerance: float | None = None
     patience: int = 0
@@ -251,8 +208,6 @@ class FistaConfig:
     nonnegative: bool = False
     lower_bound: float | None = None
     upper_bound: float | None = None
-    ray_integrator: str = "sampled"
-    projector_model: ProjectorModel = "auto"
     backend: ProjectorBackend = "auto"
     stream: bool | None = None
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
@@ -268,229 +223,6 @@ jax.tree_util.register_dataclass(
 )
 
 
-def grad_data_term(  # noqa: PLR0915
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
-    x: jnp.ndarray,
-    *,
-    data_term: DataTerm = "absolute",
-    views_per_batch: int | None = None,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
-    grad_mode: GradMode = "auto",
-    ray_integrator: str = "sampled",
-    T_all: jnp.ndarray | None = None,
-    vol_mask: jnp.ndarray | None = None,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> tuple[jnp.ndarray, float]:
-    """Compute grad(1/2 sum_i ||A_i x - y_i||^2) and loss.
-
-    Two execution modes:
-    - batched: vmap over a chunk of views. Fast but higher peak memory.
-    - stream: process one view at a time via lax.scan and explicit adjoint. Low peak memory.
-
-    When grad_mode="auto", selects stream if the effective batch is 1, else batched.
-    """
-    require_parallel_beam(geometry, "grad_data_term")
-    validate_grid(grid, "grad_data_term grid")
-    n_views, nv, nu = validate_projection_stack(
-        projections,
-        detector,
-        geometry=geometry,
-        context="grad_data_term projections",
-    )
-    validate_volume(x, grid, context="grad_data_term", name="x")
-    validate_optional_broadcastable_shape(
-        vol_mask,
-        (grid.nz, grid.ny, grid.nx),
-        context="grad_data_term support",
-        name="vol_mask",
-        fix="use a volume mask broadcastable to shape (grid.nz, grid.ny, grid.nx).",
-    )
-    if T_all is None:
-        T_all = stack_view_poses(geometry, n_views)
-    validate_pose_stack(T_all, n_views, context="grad_data_term geometry")
-
-    det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
-    mask_arr = None if vol_mask is None else jnp.asarray(vol_mask, dtype=jnp.float32)
-
-    def adjoint(resid: jnp.ndarray, T_i: jnp.ndarray) -> jnp.ndarray:
-        grad_i = backproject_view_T(
-            T_i,
-            grid,
-            detector,
-            resid,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-            ray_integrator=ray_integrator,
-        )
-        return grad_i if mask_arr is None else grad_i * mask_arr
-
-    def batched_loss_and_grad(vol: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Loss/grad over views batched in chunks, using a scan to keep jaxpr compact.
-
-        We pad the last chunk to size ``b`` and mask it out in the reduction so the
-        compiled graph is a single-sized loop body regardless of the number of chunks.
-        """
-        masked_vol = vol * vol_mask if vol_mask is not None else vol
-        vm_project = functools.partial(
-            project_views,
-            grid=grid,
-            detector=detector,
-            use_checkpoint=checkpoint_projector,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-            ray_integrator=ray_integrator,
-        )
-        n = int(T_all.shape[0])
-        b = chunk_size(n, views_per_batch, default=1)
-        m = (n + b - 1) // b
-
-        def body(
-            carry: tuple[jnp.ndarray, jnp.ndarray],
-            i: jnp.ndarray,
-        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
-            loss_acc, grad_acc = carry
-            start_shifted, valid_mask, _view_idx = chunk_schedule(
-                i,
-                n_views=n,
-                chunk_size=b,
-            )
-            T_chunk = jax.lax.dynamic_slice_in_dim(T_all, start_shifted, b)
-            y_chunk = jax.lax.dynamic_slice_in_dim(projections, start_shifted, b)
-            pred = vm_project(T_chunk, volume=masked_vol)
-            mask = valid_mask[:, None, None]
-            resid = project_residual((pred - y_chunk).astype(jnp.float32), data_term) * mask
-            loss_batch = 0.5 * jnp.vdot(resid, resid).real
-            grad_batch = sum_backproject_views_T(
-                T_chunk,
-                grid,
-                detector,
-                resid,
-                unroll=int(projector_unroll),
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                ray_integrator=ray_integrator,
-            )
-            if mask_arr is not None:
-                grad_batch = grad_batch * mask_arr
-            return ((loss_acc + loss_batch, grad_acc + grad_batch), None)
-
-        init = (jnp.float32(0.0), jnp.zeros_like(vol))
-        (loss_tot, grad_tot), _ = jax.lax.scan(body, init, jnp.arange(m))
-        return loss_tot, grad_tot
-
-    def stream_loss_and_grad(vol: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        masked_vol = vol * vol_mask if vol_mask is not None else vol
-
-        def one_view(
-            carry: tuple[jnp.ndarray, jnp.ndarray],
-            i: jnp.ndarray,
-        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
-            loss_acc, g_acc = carry
-            T_i = jax.lax.dynamic_slice_in_dim(T_all, i, 1)[0]
-            y_i = jax.lax.dynamic_slice_in_dim(projections, i, 1)[0]
-            pred_i = forward_project_view_T(
-                T_i,
-                grid,
-                detector,
-                masked_vol,
-                use_checkpoint=checkpoint_projector,
-                unroll=int(projector_unroll),
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                ray_integrator=ray_integrator,
-            )
-            resid_i = project_residual((pred_i - y_i).astype(jnp.float32), data_term)
-            loss_i = 0.5 * jnp.vdot(resid_i, resid_i).real
-            g_i = adjoint(resid_i, T_i)
-            return (loss_acc + loss_i, g_acc + g_i), None
-
-        init = (jnp.float32(0.0), jnp.zeros_like(vol))
-        (loss_tot, g_tot), _ = jax.lax.scan(one_view, init, jnp.arange(T_all.shape[0]))
-        return loss_tot, g_tot
-
-    # Select execution mode
-    eff_b = (
-        int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else 1
-    )
-    mode = grad_mode
-    if grad_mode == "auto":
-        mode = "stream" if eff_b <= 1 else "batched"
-
-    if mode == "stream":
-        loss_val, grad = stream_loss_and_grad(x)
-        return grad, loss_val
-    loss_val, grad = batched_loss_and_grad(x)
-    return grad, loss_val
-
-
-def power_method_L(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections_shape: tuple[int, int, int],
-    *,
-    iterations: int = 10,
-    views_per_batch: int | None = None,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
-    grad_mode: GradMode = "auto",
-    ray_integrator: str = "sampled",
-    T_all: jnp.ndarray | None = None,
-    vol_mask: jnp.ndarray | None = None,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-    initial: jnp.ndarray | None = None,
-) -> float:
-    """Estimate the Lipschitz constant of the data gradient by power iteration.
-
-    ``initial`` is the start (default a constant volume); see :func:`power_start`.
-    """
-    require_parallel_beam(geometry, "power_method_L")
-    validate_grid(grid, "power_method_L grid")
-    n_views, _, _ = validate_projection_shape(
-        projections_shape,
-        detector,
-        geometry=geometry,
-        context="power_method_L projections_shape",
-    )
-    validate_optional_broadcastable_shape(
-        vol_mask,
-        (grid.nz, grid.ny, grid.nx),
-        context="power_method_L support",
-        name="vol_mask",
-        fix="use a volume mask broadcastable to shape (grid.nz, grid.ny, grid.nx).",
-    )
-    if T_all is None:
-        T_all = stack_view_poses(geometry, n_views)
-    validate_pose_stack(T_all, n_views, context="power_method_L geometry")
-    batch_size = 1 if grad_mode == "stream" else chunk_size(n_views, views_per_batch, default=1)
-    if initial is None:
-        initial = jnp.ones((grid.nz, grid.ny, grid.nx), dtype=jnp.float32)
-    return float(
-        estimate_normal_norm(
-            T_all,
-            initial,
-            det_grid,
-            vol_mask,
-            grid=grid,
-            detector=detector,
-            batch_size=batch_size,
-            iterations=int(iterations),
-            unroll=int(projector_unroll),
-            checkpoint=checkpoint_projector,
-            gather_dtype=gather_dtype,
-            ray_integrator=ray_integrator,
-        )
-    )
-
-
 def _prepare_fista_runtime(
     geometry: Geometry,
     grid: Grid,
@@ -503,8 +235,6 @@ def _prepare_fista_runtime(
 ) -> FistaRuntime:
     cfg = FistaConfig() if config is None else config
     nonnegative, lower_bound, upper_bound = validate_fista_config(cfg)
-    if cfg.ray_integrator not in RAY_INTEGRATORS:
-        raise ValueError("ray_integrator must be sampled or exact")
     volume_mask = None if cfg.support is None else jnp.asarray(cfg.support, jnp.float32)
     regularizer = validate_regularizer(
         cfg.regularizer,
@@ -539,8 +269,6 @@ def _prepare_fista_runtime(
     projector = _batched_projector(cfg, n_views, det_grid, geometry, detector)
     split = view_split(cfg.devices, n_views)
     refuse_streaming(split, cfg.stream, "fista_tv")
-    if split is not None and projector is None:
-        raise ValueError("fista_tv: devices requires the batched projection operators")
     stream = (
         split is None
         and not isinstance(projections, jax.Array)
@@ -550,8 +278,6 @@ def _prepare_fista_runtime(
             else should_stream(projections, reserve_bytes=32 * grid.nx * grid.ny * grid.nz)
         )
     )
-    if stream and projector is None:
-        raise ValueError("fista_tv: stream requires the batched projection operators")
 
     metric = (
         resolve_tv_metric(
@@ -565,33 +291,6 @@ def _prepare_fista_runtime(
         if cfg.tv_weight != 0
         else None
     )
-    lipschitz = cfg.lipschitz
-    if lipschitz is None and projector is None:
-        # The gradient at zero is minus the backprojected data: start from it.
-        at_zero, _ = grad_data_term(
-            geometry, grid, detector, projections, jnp.zeros((grid.nz, grid.ny, grid.nx)),
-            views_per_batch=cfg.views_per_batch, projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector, gather_dtype=cfg.gather_dtype,
-            grad_mode="stream", T_all=poses, vol_mask=volume_mask, det_grid=det_grid,
-            ray_integrator=cfg.ray_integrator, data_term=cfg.data_term,
-        )  # fmt: skip
-        lipschitz = power_method_L(
-            geometry,
-            grid,
-            detector,
-            projections.shape,
-            iterations=cfg.power_iterations,
-            initial=power_start(at_zero),
-            views_per_batch=cfg.views_per_batch,
-            projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            grad_mode="stream",
-            T_all=poses,
-            vol_mask=volume_mask,
-            det_grid=det_grid,
-            ray_integrator=cfg.ray_integrator,
-        )
     return FistaRuntime(
         config=cfg,
         regularizer=regularizer,
@@ -605,7 +304,7 @@ def _prepare_fista_runtime(
         constraints=constraints,
         x0=x0,
         poses=poses,
-        lipschitz=lipschitz,
+        lipschitz=cfg.lipschitz,
         volume_mask=volume_mask,
         detector_grid=det_grid,
         projector=projector,
@@ -618,34 +317,14 @@ def _batched_projector(
     cfg: FistaConfig,
     n_views: int,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-    geometry: object = None,
-    detector: Detector | None = None,
-) -> tuple[str | ConeModel, str, int] | None:
-    """Choose batched operators, or None for the ray-model reference path."""
-    model, backend = cfg.projector_model, cfg.backend
+    geometry: object,
+    detector: Detector,
+) -> tuple[str | ConeModel, str, int]:
+    """The batched operators' model, backend and views per batch."""
     requested = 64 if cfg.views_per_batch is None else int(cfg.views_per_batch)
-    if is_cone_beam(geometry):
-        if cfg.ray_integrator == "exact":
-            raise ValueError(
-                "fista_tv: cone-beam geometry uses Joseph sampling, not exact integration"
-            )
-        assert detector is not None
-        cone, backend = resolve_geometry_projector(
-            geometry, model, backend, detector=detector, det_grid=det_grid, context="fista_tv"
-        )
-        return cone, backend, max(1, min(requested, n_views))
-    if det_grid is None and cfg.ray_integrator == "joseph" and model == "auto":
-        model = "joseph"
-    elif det_grid is not None or cfg.ray_integrator != "sampled":
-        if model == "joseph" or backend == "cuda":
-            raise ValueError(
-                "fista_tv: explicit detector grids and exact integration require "
-                "projector_model='ray' and backend='jax'"
-            )
-        return None
-    model, backend = resolve_projector(model, backend, context="fista_tv")
-    if model == "ray" and backend == "jax":
-        return None
+    model, backend = resolve_geometry_projector(
+        geometry, cfg.backend, detector=detector, det_grid=det_grid, context="fista_tv"
+    )
     return model, backend, max(1, min(requested, n_views))
 
 
@@ -653,83 +332,39 @@ def _data_term(
     grid: Grid, detector: Detector, projections: jnp.ndarray, runtime: FistaRuntime
 ) -> Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]:
     """Return the data term's value-and-gradient function."""
-    cfg = runtime.config
     mask = None if runtime.volume_mask is None else jnp.asarray(runtime.volume_mask, jnp.float32)
-    if runtime.projector is not None:
-        model, backend, batch = runtime.projector
-        least_squares = least_squares_operators(
-            runtime.poses, grid, detector, backend, batch, model, stream=runtime.stream,
-            split=runtime.split, data_term=cfg.data_term,
-        )  # fmt: skip
+    model, backend, batch = runtime.projector
+    least_squares = least_squares_operators(
+        runtime.poses, grid, detector, backend, batch, model, stream=runtime.stream,
+        split=runtime.split, data_term=runtime.config.data_term, det_grid=runtime.detector_grid,
+    )  # fmt: skip
 
-        def batched_value_and_grad(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-            v, g = least_squares(z if mask is None else z * mask, projections)
-            return v, g if mask is None else g * mask
+    def value_and_grad(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        v, g = least_squares(z if mask is None else z * mask, projections)
+        return v, g if mask is None else g * mask
 
-        return batched_value_and_grad
-
-    def val_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        g, v = grad_data_term(
-            None,
-            grid,
-            detector,
-            projections,
-            z,
-            views_per_batch=cfg.views_per_batch,
-            projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            grad_mode=cfg.grad_mode,
-            T_all=runtime.poses,
-            vol_mask=runtime.volume_mask,
-            det_grid=runtime.detector_grid,
-            ray_integrator=cfg.ray_integrator,
-            data_term=cfg.data_term,
-        )
-        return v, g
-
-    return val_and_grad_fn
+    return value_and_grad
 
 
 def _automatic_metric(grid: Grid, detector: Detector, runtime: FistaRuntime) -> TVMetric:
     """Resolve automatic strength through the same configured data transpose."""
-    cfg = runtime.config
     assert runtime.metric is not None
     assert runtime.noise_scale is not None
     if detector.nv * detector.nu == 1:
         return runtime.metric
-    if runtime.projector is not None:
-        model, backend, batch = runtime.projector
-        ops = ViewBatches(
-            runtime.poses,
-            grid,
-            detector,
-            None,
-            backend,
-            batch,
-            model,
-            "linear",
-            absolute_weights=False,
-        )
-        backproject = ops.backproject
-    else:
-        batch = chunk_size(len(runtime.poses), cfg.views_per_batch, default=1)
-
-        def backproject(
-            images: jax.Array, start: jax.Array, batch: jax.Array, output: jax.Array
-        ) -> jax.Array:
-            del start
-            return output + sum_backproject_views_T(
-                batch,
-                grid,
-                detector,
-                images,
-                unroll=cfg.projector_unroll,
-                gather_dtype=cfg.gather_dtype,
-                det_grid=runtime.detector_grid,
-                ray_integrator=cfg.ray_integrator,
-            )
-
+    model, backend, batch = runtime.projector
+    ops = ViewBatches(
+        runtime.poses,
+        grid,
+        detector,
+        runtime.detector_grid,
+        backend,
+        batch,
+        model,
+        "linear",
+        absolute_weights=False,
+    )
+    backproject = ops.backproject
     rms = probe_gradient_rms(
         runtime.poses, grid, detector, backproject, batch_size=batch, support=runtime.volume_mask
     )

@@ -65,8 +65,6 @@ test-cuda: accelerator-smoke-cuda
 benchmark-smoke:
     JAX_PLATFORMS=cpu uv run --no-sync python bench/compare_projectors.py --libraries tomojax --sizes 32 --views 30 --repeats 1
     JAX_PLATFORMS=cpu uv run --no-sync python bench/reconstruction_benchmark.py --sizes 32 --views 60 --repeats 1
-    JAX_PLATFORMS=cpu uv run --no-sync python bench/adjoint_benchmark.py --sizes 16 --repeats 1
-    JAX_PLATFORMS=cpu uv run --no-sync python bench/adjoint_benchmark.py --stack --sizes 16 --batches 2 --repeats 1
     JAX_PLATFORMS=cpu uv run --no-sync python bench/workflow_benchmark.py --sizes 16 --geometries parallel --methods fista spdhg --repeats 1
 
 check: format lint typecheck imports test

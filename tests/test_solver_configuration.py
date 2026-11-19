@@ -26,7 +26,7 @@ def _problem(tilted=False):
 
 
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
-@pytest.mark.parametrize("field", ["iterations", "views_per_batch", "projector_unroll"])
+@pytest.mark.parametrize("field", ["iterations", "views_per_batch"])
 @pytest.mark.parametrize("value", [-1, 1.5, True])
 def test_solvers_reject_invalid_counts_before_building_geometry(monkeypatch, solver, field, value):
     grid, detector, geometry, data = _problem()
@@ -72,12 +72,10 @@ def test_solvers_reject_invalid_scalars_before_building_geometry(monkeypatch, so
     ("solver", "field"),
     [
         ("fista", "views_per_batch"),
-        ("fista", "projector_unroll"),
         ("fista", "lipschitz"),
         ("fista", "tv_prox_iterations"),
         ("fista", "power_iterations"),
         ("spdhg", "views_per_batch"),
-        ("spdhg", "projector_unroll"),
         ("spdhg", "tau"),
         ("spdhg", "sigma_data"),
         ("spdhg", "sigma_tv"),
@@ -237,12 +235,6 @@ def test_spdhg_rejects_extended_device_weight_formats_cleanly(monkeypatch, dtype
         spdhg_tv(geometry, grid, detector, data, weights=weights, config=SPDHGConfig(iterations=0))
 
 
-def test_fista_rejects_unknown_gradient_mode():
-    grid, detector, geometry, data = _problem()
-    with pytest.raises(ValueError, match="grad_mode"):
-        fista_tv(geometry, grid, detector, data, config=FistaConfig(grad_mode="unknown"))
-
-
 @pytest.mark.numerical
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
 def test_zero_iteration_budget_keeps_initial_volume_and_logs_nothing(solver):
@@ -268,9 +260,8 @@ def test_zero_iteration_budget_keeps_initial_volume_and_logs_nothing(solver):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("model", ["ray", "joseph"])
 @pytest.mark.parametrize("warm_start", [False, True])
-def test_fista_auto_step_is_finite_for_zero_operator(model, warm_start):
+def test_fista_auto_step_is_finite_for_zero_operator(warm_start):
     grid, detector, geometry, data = _problem()
     initial = np.random.default_rng(99).normal(size=(2, 3, 2)).astype(np.float32)
     volume, info = fista_tv(
@@ -283,7 +274,6 @@ def test_fista_auto_step_is_finite_for_zero_operator(model, warm_start):
             iterations=3,
             tv_weight=0,
             support=jnp.zeros((2, 3, 2)),
-            projector_model=model,
             backend="jax",
         ),
     )
