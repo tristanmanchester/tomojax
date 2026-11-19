@@ -92,6 +92,30 @@ extends beyond the field of view. A successful preview or centre estimate
 does not remove truncation artefacts or establish quantitative attenuation.
 This recipe does not establish support for every native SYRMEP layout.
 
+## PSI cSAXS ptychographic tomography
+
+The nanoporous-glass dataset of Odstrcil et al. (Opt. Express 2019; Zenodo
+3539513, file `porous_glass_dataset.mat`) is a MATLAB 7.3 file from the cSAXS
+tomography codes. Unlike the exports above it holds line integrals, not counts:
+the unwrapped, aligned phase of each ptychographic projection, with its angles
+and pixel size. `tj.load` reads them as they are:
+
+```python
+import math
+
+import tomojax as tj
+
+scan = tj.load("porous_glass_dataset.mat")  # 720 views of 416 x 1312, parallel
+recon = tj.reconstruct(scan)
+delta = recon.volume * scan.source.geometry_metadata["wavelength"] / (2 * math.pi)
+```
+
+The volume is the phase per millimetre, 2π/λ times the refractive index
+decrement δ; multiplying by λ/2π, with the wavelength the file records, gives δ.
+The file records no rotation centre; the detector middle is used, where the
+alignment that produced the sinogram puts the axis. The complex, unaligned
+`stack_object` the file also holds is not read.
+
 ## Correct, reconstruct and inspect
 
 Save one of the three `frames = ...` snippets above in `preview.py` and append

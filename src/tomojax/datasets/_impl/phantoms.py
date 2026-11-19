@@ -380,7 +380,7 @@ def random_cubes_spheres(
     max_size: int = 32,
     min_value: float = 0.1,
     max_value: float = 1.0,
-    max_rot_degrees: float = 180.0,
+    max_rotation: float = 180.0,
     use_inscribed_fov: bool = True,
     radial_exponent: float = 0.75,
     seed: int = 0,
@@ -399,7 +399,7 @@ def random_cubes_spheres(
         Bounds on cube sides and sphere diameters, in voxels.
     min_value, max_value : float, optional
         Bounds on randomly drawn object intensities.
-    max_rot_degrees : float, optional
+    max_rotation : float, optional
         Cube Euler angles are uniform between plus and minus this value, in degrees.
     use_inscribed_fov : bool, optional
         Restrict object support to the inscribed field of view; default is True.
@@ -443,7 +443,7 @@ def random_cubes_spheres(
             cy = float(rng.uniform(margin, ny - margin))
             cz = float(rng.uniform(margin, nz - margin))
         val = float(rng.uniform(min_value, max_value))
-        ang = np.deg2rad(rng.uniform(-max_rot_degrees, max_rot_degrees, size=3))
+        ang = np.deg2rad(rng.uniform(-max_rotation, max_rotation, size=3))
         _add_rotated_cube_soft(vol, (cx, cy, cz), size, val, ang)
 
     params = _sample_random_sphere_params(
@@ -477,7 +477,7 @@ def lamino_disk(
     max_size: int = 32,
     min_value: float = 0.1,
     max_value: float = 1.0,
-    max_rot_degrees: float = 180.0,
+    max_rotation: float = 180.0,
 ) -> np.ndarray:
     """Create random cubes and spheres cropped to a central axial slab.
 
@@ -499,7 +499,7 @@ def lamino_disk(
         Bounds on cube sides and sphere diameters, in voxels.
     min_value, max_value : float, optional
         Bounds on randomly drawn object intensities.
-    max_rot_degrees : float, optional
+    max_rotation : float, optional
         Cube Euler angles are uniform between plus and minus this value, in degrees.
 
     Returns
@@ -521,7 +521,7 @@ def lamino_disk(
         max_size=max_size,
         min_value=min_value,
         max_value=max_value,
-        max_rot_degrees=max_rot_degrees,
+        max_rotation=max_rotation,
         use_inscribed_fov=True,
         seed=seed,
     )

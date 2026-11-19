@@ -47,6 +47,10 @@ There are no aliases. Each old name is gone, and files saved before this release
 | `tomojax preprocess` | `tomojax correct` |
 | `preprocess --config` keys `binning` and `[detector]`; `import --config` keys `detector_center`, `tilt`, `tilt_about`, `detector_roll`, `detector_pitch`, `detector_yaw` | `--binning`, `--pixel-size`, `--detector-center`, `--tilt`, `--tilt-about`, `--detector-roll`, `--detector-pitch`, `--detector-yaw` |
 | `tomojax inspect --json` angle keys `min_deg`, `max_deg`, `coverage_deg` | `min`, `max`, `coverage` |
+| `Scan.poses`, `Scan.with_poses`, `Alignment.poses`: rotations (alpha, beta, phi) in radians | the same columns in degrees |
+| `info["lever_px_per_radian"]` (the alignment record) | `info["lever"]`, native pixels per degree |
+| `tomojax.datasets.SimConfig` `rotation_deg`, `max_rot_deg`; the phantoms' `max_rot_degrees` | `rotation`, `max_rotation`; and in `tomojax simulate --config` |
+| `result = tj.simulate(...)`, a `Reconstruction` (`result.scan`, `result.volume`) | `scan, phantom = tj.simulate(...)`; `tomojax simulate` saves both as before |
 
 ### One projector model
 

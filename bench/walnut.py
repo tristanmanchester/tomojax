@@ -321,7 +321,7 @@ def _geometry_summary(scan: tj.Scan) -> dict[str, Any]:
         "largest_pose_correction": None
         if scan.poses is None
         else {
-            "rotation_deg": float(np.rad2deg(np.abs(scan.poses[:, :3]).max())),
+            "rotation_deg": float(np.abs(scan.poses[:, :3]).max()),
             "shift_mm": float(np.abs(scan.poses[:, 3:]).max()),
         },
     }

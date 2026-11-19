@@ -484,6 +484,16 @@ JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/calibration/scale
 JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 uv run --no-sync python ../../shared/agent08/calibration/focal_reciprocity.py
 ```
 
+## PSI ptychographic tomography
+
+Measured 2026-11-19 on `cfc6f7d` with the PSI reader added, RTX 4070
+Laptop. `tj.load("porous_glass_dataset.mat")` (Odstrcil et al. 2019, Zenodo
+3539513: 720 aligned phase projections of 416 × 1312, 6.868 nm pixels) takes
+3.6 s, and the plain `tj.reconstruct(scan)` 1.6 s; it chooses the Fourier
+inverse on the 1312 × 1312 × 416 grid. Converted to δ by λ/2π, the middle slice
+agrees with the authors' own reconstruction in the same file (`tomogram_delta`):
+correlation 0.984, median ratio 0.997.
+
 ## Laminography: the default FBP against FISTA
 
 `tj.reconstruct(scan)` on a laminography scan runs FBP, as for every geometry.

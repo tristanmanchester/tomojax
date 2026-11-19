@@ -433,7 +433,7 @@ def fit_poses(
         "config": asdict(config),
         "working_grid": asdict(base),
         "detector_binning": dbin,
-        "lever_px_per_radian": lever,
+        "lever": lever * math.pi / 180,  # native pixels per degree
         "ray_geometry": "parallel" if frames is None else "cone",
         "pose_columns": [["alpha", "beta", "phi", "x", "z", "y"][i] for i in parameters.local],
         "image_preconditioner": ops.projection.diagonal_kind,

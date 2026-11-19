@@ -1,7 +1,7 @@
 """The public surface speaks one vocabulary.
 
 The surface is what a user types or reads back: every public name, parameter, field,
-property and method; the recon configs; every CLI command, flag and choice; the ``info``
+property and method; the recon configs and ``tomojax.datasets``; every CLI command, flag and choice; the ``info``
 keys and string values of a small ``tj.align`` and ``tj.reconstruct``; the keys
 ``tj.save`` writes and ``tj.inspect`` reports; and the code blocks of the docs. Each rule
 names the replacement when it fails. ``ALLOWED`` holds sites allowed to break a rule, with
@@ -22,7 +22,7 @@ import h5py
 import numpy as np
 
 import tomojax as tj
-from tomojax import recon
+from tomojax import datasets, recon
 from tomojax.cli.api import PRODUCT_COMMANDS
 from tomojax.cli.main import main as cli
 
@@ -82,7 +82,8 @@ BRITISH = {
     "initialis": "initializ",
     "analys": "analyz",
 }
-UNITS = ("_deg", "_rad", "_px")
+# Unit words, anywhere in a name: angles are in degrees and lengths in the geometry's unit.
+UNITS = {"deg", "degree", "degrees", "rad", "radian", "radians", "px"}
 SYNONYMS = {
     "rtol": "tolerance",
     "atol": "absolute_tolerance",
@@ -157,6 +158,13 @@ def api_sites() -> Iterator[Site]:
         value = getattr(recon, name)
         if inspect.isclass(value) and name.endswith("Config"):
             yield from _class(f"recon.{name}", value)
+    for name in datasets.__all__:
+        yield Site("tomojax.datasets", name)
+        value = getattr(datasets, name)
+        if inspect.isclass(value):
+            yield from _class(f"datasets.{name}", value)
+        elif callable(value):
+            yield from _parameters(f"datasets.{name}", value)
 
 
 class _Parsed(Exception):
@@ -282,8 +290,9 @@ def violations(sites) -> dict[tuple[str, str], str]:
         for british, american in BRITISH.items():
             if british in name.lower():
                 found[key] = f"American spelling: {american}"
-        if name.endswith(UNITS):
-            found[key] = "no unit suffix: angles are in degrees, said once in the docs"
+        # A ``units`` value names the unit a file records; it is meant to be one.
+        if UNITS & set(name.lower().split("_")) and not site.place.endswith("[units]"):
+            found[key] = "no unit in a name: angles are in degrees, said once in the docs"
         if name in SYNONYMS:
             found[key] = f"one concept, one word: {SYNONYMS[name]}"
     return found

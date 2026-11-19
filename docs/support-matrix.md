@@ -91,6 +91,7 @@ Real-file coverage includes ESRF NXtomo converted by nxtomomill (two public nabu
 exports), Data Exchange from APS (TomoBank 13-BM-D and 32-ID), TOMCAT and SYRMEP,
 Diamond I12 HDF5, K11 GDA and I13 NXtomo, Nikon TIFF acquisitions, Zeiss TXRM,
 SkyScan logs/TIFFs, Diamond I13 compressed TIFF folders with explicit calibration,
+the PSI cSAXS porous-glass ptychographic tomography (Zenodo 3539513),
 and TomoJAX NPZ/NXtomo round trips. ESRF SPEC EDF and PyHST `.par` inputs are
 covered by public test acquisitions taken with the beam off: they prove the file
 layout and metadata, not corrected values. The ESRF raw Bliss reader is covered by
@@ -118,6 +119,16 @@ without `CenterShift`, `detector=` supplies the centre the shifts are measured
 from; other missing calibration requires `geometry=` rather than zero image shifts.
 The embedded reference uses `ReferenceData/DataType`; separate XRM flat/dark
 files use their own `ImageInfo/DataType`. Both are read lazily.
+
+PSI cSAXS ptychographic tomography `.mat` files (MATLAB 7.3, as the cSAXS
+tomography codes save them) hold line integrals, not frames: `tj.load` reads
+`aligned_phase_sinogram` (the unwrapped, aligned phase in radians),
+`rotation_angle` in degrees and `pixel_size`, converted to millimetres. The
+volume is then the phase per millimetre, 2π/λ times the refractive index
+decrement δ; the record keeps `lambda` as `wavelength`. The file records no
+rotation centre, so the detector middle is used (the alignment that produced the
+sinogram centres the axis) and recorded as not recorded. A file holding only the
+complex, unaligned `stack_object` is refused with that reason.
 `MultiReferenceData/ImageN` references use their recorded exposure durations and
 timestamps; the same count-rate correction handles separate XRM references.
 

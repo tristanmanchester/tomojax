@@ -111,7 +111,7 @@ def _table(nominal: np.ndarray, true: np.ndarray) -> np.ndarray:
     """Return per-view corrections (alpha, beta, phi, dx, dz, dy) taking nominal to true poses."""
     local = np.einsum("nji,njk->nik", nominal[:, :3, :3], true[:, :3, :3])
     table = np.zeros((len(true), 6))
-    table[:, [1, 0, 2]] = Rotation.from_matrix(local).as_euler("YXZ")
+    table[:, [1, 0, 2]] = Rotation.from_matrix(local).as_euler("YXZ", degrees=True)
     table[:, [3, 5, 4]] = true[:, :3, 3] - nominal[:, :3, 3]
     return table
 

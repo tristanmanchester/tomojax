@@ -58,7 +58,7 @@ released in the same joint solver; it takes one or more of `center`, `translatio
   `--fit translations rotations` adds per-view sample rotations. `--grid` sets image sampling.
 - `export`: `tj.export`, writing a reconstruction as TIFF slices, or as one raw file when
   OUTPUT ends in `.raw`.
-- `simulate`: `tj.simulate`, writing a synthetic scan of a phantom and the phantom.
+- `simulate`: `tj.simulate`, writing a synthetic scan of a phantom with the phantom as its volume.
 
 ## A lab CT scan from start to finish
 

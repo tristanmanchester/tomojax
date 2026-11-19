@@ -11,7 +11,7 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from tomojax._scan import Reconstruction
+    from tomojax._scan import Scan
     from tomojax.datasets import SimConfig
     from tomojax.geometry import Detector, Grid
 
@@ -34,12 +34,12 @@ def simulate(
     detector: Detector | None = None,
     seed: int = 0,
     config: SimConfig | None = None,
-) -> Reconstruction:
+) -> tuple[Scan, np.ndarray]:
     """A synthetic scan of a phantom, and the phantom: data to try reconstruction on.
 
     Deterministic for a ``seed``. Lengths are in voxels unless ``grid`` gives a
-    voxel size. ``tj.save(path, result, include_scan=True)`` writes what
-    ``tomojax simulate`` writes: the scan, and the phantom as the volume.
+    voxel size. ``tomojax simulate`` saves both: the scan, with the phantom as
+    its volume.
 
     Parameters
     ----------
@@ -75,8 +75,10 @@ def simulate(
 
     Returns
     -------
-    Reconstruction
-        The phantom as ``volume``, with ``scan`` its simulated projections.
+    scan : Scan
+        The phantom's simulated projections, with their geometry.
+    phantom : numpy.ndarray
+        The phantom, ``(nz, ny, nx)`` on ``scan.geometry.grid``.
 
     Raises
     ------
@@ -86,11 +88,36 @@ def simulate(
     Examples
     --------
     >>> import tomojax as tj
-    >>> truth = tj.simulate("shepp", size=64, geometry="lamino")  # doctest: +SKIP
-    >>> recon = tj.reconstruct(truth.scan)  # doctest: +SKIP
+    >>> scan, phantom = tj.simulate("shepp", size=64, geometry="lamino")  # doctest: +SKIP
+    >>> recon = tj.reconstruct(scan)  # doctest: +SKIP
     """
+    scan, volume, _ = simulated(
+        phantom, size=size, n_views=n_views, geometry=geometry, rotation=rotation, tilt=tilt,
+        source_to_axis=source_to_axis, source_to_detector=source_to_detector,
+        poisson_scale=poisson_scale, grid=grid, detector=detector, seed=seed, config=config,
+    )  # fmt: skip
+    return scan, volume
+
+
+def simulated(
+    phantom: Phantom,
+    *,
+    size: int,
+    n_views: int | None,
+    geometry: GeometryName,
+    rotation: float | None,
+    tilt: float | None,
+    source_to_axis: float | None,
+    source_to_detector: float | None,
+    poisson_scale: float,
+    grid: Grid | None,
+    detector: Detector | None,
+    seed: int,
+    config: SimConfig | None,
+) -> tuple[Scan, np.ndarray, dict[str, object]]:
+    """:func:`simulate`'s scan and phantom, and the record ``tomojax simulate`` saves."""
     from tomojax._data import LoadedNXTomo, NXTomoMetadata
-    from tomojax._scan import Reconstruction, scan_from_record
+    from tomojax._scan import scan_from_record
     from tomojax.datasets import SimConfig, SimulationArtefacts, simulate as simulate_arrays
     from tomojax.io import ProjectionDataset
 
@@ -124,7 +151,7 @@ def simulate(
         tilt=(30.0 if geometry == "lamino" else 0.0) if tilt is None else tilt,
         source_to_axis=source_to_axis,
         source_to_detector=source_to_detector,
-        rotation_deg=rotation,
+        rotation=rotation,
         phantom=phantom,
         seed=seed,
         artefacts=artefacts if artefacts.has_enabled() else None,
@@ -138,7 +165,7 @@ def simulate(
     record = ProjectionDataset.from_nxtomo(LoadedNXTomo(projections, metadata))
     scan = scan_from_record(record, apply_poses=False)
     info = {"phantom": phantom, "seed": seed, "simulation": data["meta"]}
-    return Reconstruction(np.asarray(data["volume"]), scan.geometry, "simulate", info, scan)
+    return scan, np.asarray(data["volume"]), info
 
 
 def _cone_detector(size: int, source_to_axis: float, source_to_detector: float) -> int:

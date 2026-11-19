@@ -107,9 +107,10 @@ def publish_calibration(scan, fitted, corrections, *, native_pixel_size):
     """
     geometry = _calibrated_geometry(nominal_geometry(scan.geometry), corrections, native_pixel_size)
     calibration = _calibration_values(geometry, tuple(corrections))
-    table = np.array(fitted, np.float64, copy=True)
+    table = np.array(fitted, np.float64, copy=True)  # rotations in radians
     previous = scan.poses
     if previous is not None:
+        previous = np.concatenate([np.radians(previous[:, :3]), previous[:, 3:]], axis=1)
         table[:, 3:] += previous[:, 3:]
         if np.any(table[:, :3]):
             before = Rotation.from_euler("YXZ", previous[:, [1, 0, 2]])
@@ -117,4 +118,5 @@ def publish_calibration(scan, fitted, corrections, *, native_pixel_size):
             table[:, :3] = (before * update).as_euler("YXZ")[:, [1, 0, 2]]
         else:
             table[:, :3] = previous[:, :3]
+    table[:, :3] = np.degrees(table[:, :3])  # the public table's unit
     return replace(scan, geometry=geometry).with_poses(table), calibration

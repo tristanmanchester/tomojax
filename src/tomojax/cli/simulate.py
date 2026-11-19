@@ -159,7 +159,7 @@ _PHANTOM_SETTINGS = (
     "max_size",
     "min_value",
     "max_value",
-    "max_rot_deg",
+    "max_rotation",
     "lamino_thickness_ratio",
 )
 _ARTEFACT_SETTINGS = tuple(f.name for f in fields(SimulationArtefacts) if f.name != "poisson_scale")
@@ -177,6 +177,7 @@ def _settings() -> dict[str, object]:
 def main(argv: Sequence[str] | None = None) -> None:
     """Run ``tomojax simulate``: :func:`tomojax.simulate`, saved with its scan."""
     import tomojax as tj
+    from tomojax._simulate import simulated
 
     parser = _build_parser()
     args, metadata = parse_args_with_config(parser, argv)
@@ -199,7 +200,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
     try:
         with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
-            result = tj.simulate(
+            scan, phantom, info = simulated(
                 cast("PhantomName", args.phantom),
                 size=cast("int", args.size),
                 n_views=cast("int | None", args.n_views),
@@ -216,12 +217,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
     except ValueError as exc:
         parser.error(str(exc))
-    tj.save(out, result, include_scan=True)
-    assert result.scan is not None  # a simulation's scan
+    # The scan, with the phantom as its volume.
+    tj.save(
+        out, tj.Reconstruction(phantom, scan.geometry, "simulate", info, scan), include_scan=True
+    )
     print(
-        f"wrote {out}: {args.geometry} scan of a {'x'.join(map(str, result.volume.shape[::-1]))} "
-        f"{args.phantom} phantom, {len(result.scan.angles)} views on a "
-        f"{result.scan.detector.nu}x{result.scan.detector.nv} detector"
+        f"wrote {out}: {args.geometry} scan of a {'x'.join(map(str, phantom.shape[::-1]))} "
+        f"{args.phantom} phantom, {len(scan.angles)} views on a "
+        f"{scan.detector.nu}x{scan.detector.nv} detector"
     )
 
 

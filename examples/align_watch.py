@@ -152,7 +152,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
     true_table = np.zeros_like(params)
     true_table[:, :3] = Rotation.from_matrix(
         np.swapaxes(nominal[:, :3, :3], 1, 2) @ adjusted[:, :3, :3]
-    ).as_euler("YXZ")[:, [1, 0, 2]]
+    ).as_euler("YXZ", degrees=True)[:, [1, 0, 2]]
     true_table[:, 3:] = (adjusted[:, :3, 3] - nominal[:, :3, 3])[:, [0, 2, 1]]
     found = np.asarray(result.poses)
     rotation_difference = Rotation.from_matrix(

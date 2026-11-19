@@ -29,7 +29,8 @@ from tomojax._typed_arrays import (
     true_count,
     unique_int_count_map,
 )
-from tomojax.io._acquisition import RawAcquisition, read_acquisition
+from tomojax.io._acquisition import read_acquisition
+from tomojax.io._datasets import ProjectionDataset, load_dataset
 from tomojax.io._inspection_types import (
     AlignmentReport,
     AnglesReport,
@@ -542,17 +543,21 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
     return report
 
 
-def _acquisition_report(path: PathLike, raw: RawAcquisition) -> InspectionReport:
-    record = raw.record
-    counts = cast("_ProjectionStack", raw.counts)
-    projection = _projection_report(getattr(raw.counts, "dataset", str(path)), counts)
+def _record_report(
+    path: PathLike,
+    record: ProjectionDataset,
+    counts: _ProjectionStack,
+    *,
+    flat_count: int = 0,
+    dark_count: int = 0,
+) -> InspectionReport:
+    """A report on a record read whole: a vendor acquisition's frames, or line integrals."""
+    projection = _projection_report(getattr(counts, "dataset", str(path)), counts)
     n, nv, nu = counts.shape
     angles = record.angles
     detector = record.detector
     acquisition = record.geometry_metadata.get("acquisition", {})
     pitches = acquisition.get("detector_pixel_size", [None, None])
-    flat_count = len(raw.flats) if raw.flats is not None else int(raw.white_level is not None)
-    dark_count = 0 if raw.darks is None else len(raw.darks)
     grid_shape = (
         [nu, nu, nv] if record.grid is None else [record.grid.nx, record.grid.ny, record.grid.nz]
     )
@@ -622,8 +627,16 @@ def inspect_dataset(path: PathLike) -> InspectionReport:
     OSError
         If the input cannot be opened.
     """
+    if Path(path).suffix.lower() == ".mat":  # PSI cSAXS phase line integrals
+        record = load_dataset(path)
+        return _record_report(path, record, cast("_ProjectionStack", record.projections))
     raw = read_acquisition(path)
-    return inspect_nxtomo(Path(path)) if raw is None else _acquisition_report(path, raw)
+    if raw is None:
+        return inspect_nxtomo(Path(path))
+    flats = len(raw.flats) if raw.flats is not None else int(raw.white_level is not None)
+    darks = 0 if raw.darks is None else len(raw.darks)
+    counts = cast("_ProjectionStack", raw.counts)
+    return _record_report(path, raw.record, counts, flat_count=flats, dark_count=darks)
 
 
 __all__ = [

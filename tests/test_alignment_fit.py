@@ -426,7 +426,7 @@ def test_a_shared_tilt_or_roll_is_a_per_view_direction_the_fit_gauge_removes(nam
         moved = turn @ nominal
     local = np.einsum("nji,njk->nik", nominal[:, :3, :3], moved[:, :3, :3])
     table = np.zeros((n, 6))
-    table[:, [1, 0, 2]] = Rotation.from_matrix(local).as_euler("YXZ")
+    table[:, [1, 0, 2]] = Rotation.from_matrix(local).as_euler("YXZ", degrees=True)
     table[:, [3, 5, 4]] = moved[:, :3, 3] - nominal[:, :3, 3]
     volume = np.random.default_rng(3).random((6, 8, 8)).astype(np.float32)
     blank = tj.Scan(np.zeros((n, 9, 12), np.float32), tj.ParallelGeometry(grid, detector, angles))
@@ -434,7 +434,7 @@ def test_a_shared_tilt_or_roll_is_a_per_view_direction_the_fit_gauge_removes(nam
     by_shared = np.asarray(tj.project(shared, volume))
     # The degeneracy is real: per-view poses (with no spin) give the shared change's data.
     assert np.abs(by_poses - by_shared).max() < 1e-3 * np.abs(by_shared).max()
-    assert np.abs(table[:, 2]).max() < eps**2  # no spin to first order
+    assert np.abs(table[:, 2]).max() < np.degrees(eps**2)  # no spin to first order
     # In the fit's units (object-frame rotation vector over its scale, lab x and z over theirs),
     # the pattern lies in the fit's gauge to first order in eps.
     lever = 6.0

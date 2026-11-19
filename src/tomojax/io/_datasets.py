@@ -394,8 +394,9 @@ class ProjectionDataset:
 def load_dataset(path: PathLike) -> ProjectionDataset:
     """Load a standard TomoJAX projection dataset.
 
-    Supported direct inputs are NXtomo/HDF5 (`.nx`, `.nxs`, `.h5`, `.hdf`, `.hdf5`) and TomoJAX
-    `.npz` payloads. TIFF stacks need explicit angle metadata, so use
+    Supported direct inputs are NXtomo/HDF5 (`.nx`, `.nxs`, `.h5`, `.hdf`, `.hdf5`), TomoJAX
+    `.npz` payloads and PSI cSAXS ptychographic tomography `.mat` files (their aligned
+    phase projections). TIFF stacks need explicit angle metadata, so use
     :func:`load_tiff_stack`.
 
     Parameters
@@ -423,11 +424,35 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
         return ProjectionDataset.from_nxtomo(load_nxtomo(str(input_path)), source_path=input_path)
     if suffix == ".npz":
         return ProjectionDataset.from_nxtomo(load_npz(str(input_path)), source_path=input_path)
+    if suffix == ".mat":
+        return _psi_record(input_path)
     if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
         raise ValueError(
             "TIFF inputs require angle metadata; use load_tiff_stack(path, angles=...)"
         )
     raise ValueError(f"unsupported dataset format for {input_path}")
+
+
+def _psi_record(path: Path) -> ProjectionDataset:
+    """A PSI cSAXS ptychographic tomography file's phase line integrals, as a parallel scan."""
+    from tomojax.io._psi import read_psi_mat
+
+    projections, angles, pixel, wavelength, name = read_psi_mat(path)
+    record = ProjectionDataset(
+        projections=projections,
+        angles=angles,
+        geometry_type="parallel",
+        geometry_metadata={
+            "detector_pixel_size": [pixel, pixel],
+            "length_unit": "mm",
+            "quantity": "phase",
+            "wavelength": wavelength,
+        },
+        source_path=str(path),
+        source_format="psi_mat",
+        sample_name=name,
+    )
+    return record.with_parallel_detector()
 
 
 def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
@@ -603,8 +628,10 @@ def _dataset_issues(input_path: Path) -> list[str]:
             issues.insert(0, str(exc))
         return issues
     suffix = input_path.suffix.lower()
-    # An NPZ, or a reconstruction saved without its scan, is checked by reading it.
-    whole = suffix == ".npz" or (suffix in _HDF5_SUFFIXES and saved_without_frames(input_path))
+    # An NPZ, a PSI .mat, or a reconstruction saved without its scan, is checked by reading it.
+    whole = suffix in {".npz", ".mat"} or (
+        suffix in _HDF5_SUFFIXES and saved_without_frames(input_path)
+    )
     if whole:
         try:
             load_dataset(input_path)
