@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Alignment drift and acquisition gaps
+
+The per-view motion prior in `tj.align` now takes linear storage and work as
+the number of views grows. Across wide acquisition gaps it fits drift only
+in directions supported by the sampled spline. Previously, an empty or
+dependent spline column could make an additional motion direction penalty-free.
+
 ### One vocabulary across the API, the shell and saved files
 
 Every public name, flag, `info` key and saved-file key now uses one vocabulary:

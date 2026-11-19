@@ -125,16 +125,6 @@ def level_temporaries(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
     return {name: m["temp"] for name, m in memory.items()}
 
 
-# Known to grow faster than the views, with the growth order measured from 300 to 900 views:
-# the motion prior's factor, built from its dense spline design (local rows by about
-# views / 10 knots). Its temporaries and the innovation solve's grow the same way at more
-# views (5 to 6 copies of the design at 1000 to 4000), but a fixed part hides that at these
-# counts. Item 64 makes the prior linear; remove the entry then.
-SUPERLINEAR = {
-    "MotionPrior._factor": 1.9,  # its output, measured in FP64 as the fit runs
-}
-
-
 def _order(small, large, ratio):
     """The growth exponent between two view counts, or 0 for what is too small to grow."""
     if large <= 256 * 1024 or small <= 0:
@@ -147,8 +137,7 @@ def test_no_level_function_grows_faster_than_the_views(monkeypatch):
     # A reserve counted in volumes and a plan's prior term are only right if what each compiled
     # function holds grows no faster than the views. At 100, 300 and 900 views on one grid and
     # detector, each function's temporaries, outputs and captured constants are measured; the
-    # growth order from 300 to 900 must be at most 1.3 (linear, with fixed parts), except the
-    # motion prior's known quadratic functions, which must still need their exception.
+    # growth order from 300 to 900 must be at most 1.3 (linear, with fixed parts).
     counts = (100, 300, 900)
     profiles = [level_memory(views, monkeypatch) for views in counts]
     ratio = counts[2] / counts[1]
@@ -159,10 +148,7 @@ def test_no_level_function_grows_faster_than_the_views(monkeypatch):
             order = _order(small, memory[kind], ratio)
             if order > 1.3:
                 superlinear[name] = max(order, superlinear.get(name, 0.0))
-    unexpected = {name: order for name, order in superlinear.items() if name not in SUPERLINEAR}
-    assert not unexpected, f"growing faster than the views (order from 300 to 900): {unexpected}"
-    gone = set(SUPERLINEAR) - set(superlinear)
-    assert not gone, f"no longer superlinear, remove from SUPERLINEAR (item 64): {gone}"
+    assert not superlinear, f"growing faster than the views (order from 300 to 900): {superlinear}"
     # No function captures a volume or a stack as a compiled constant: held by the program for
     # its life, beside the level's own arrays (the start's FISTA once held the shared images).
     captured = {
@@ -217,8 +203,6 @@ def test_the_constants_check_sees_a_captured_volume():
 
 
 def test_a_prior_factor_with_no_device_block_raises_a_plain_memory_error(monkeypatch):
-    # The factor's temporaries grow as the views squared (one 1.93 GiB block at 8000 views):
-    # when the device has none, tj.align says what needs it and what runs instead.
     from tomojax.alignment._joint import _pose  # check-public-imports: allow-private
 
     built = _pose.MotionPrior.__init__

@@ -3,20 +3,21 @@
 The local normal matrix is F + R + Q K Q: per-view data blocks F, physical
 rotation precision R, and a difference Laplacian K, for translations outside
 the drift spline U (Q = I - U U.T) and for rotations on their own increments.
-Block cyclic reduction plus a spline Woodbury correction solves it with the
-rigid gauge fixed. Shared calibration columns
-form a small Schur border around that complete local system.
+The spline tree factors this system on contiguous view intervals. Systems with few knots
+use cyclic reduction with a small Woodbury border. Gauge constraints and
+shared calibration columns border either local factor.
 """
 
 import math
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import cho_solve, lu_factor, lu_solve
 import numpy as np
-from scipy.interpolate import BSpline, make_interp_spline
+from scipy import sparse
 
+from . import _spline, _spline_solve
 from ._stacks import temporaries
 
 # Standard deviation of the per-view rotation size prior.
@@ -49,14 +50,8 @@ def _inverse(blocks):
     return jnp.linalg.inv(blocks)
 
 
-def _pcr_factor(diag, off):
-    """Parallel cyclic reduction of an SPD block-tridiagonal matrix (k x k blocks)."""
-    upper = (
-        off[:, None, None] * jnp.eye(diag.shape[-1], dtype=jnp.float64)
-        if off.ndim == 1
-        else jax.vmap(jnp.diag)(off)
-    )
-    lower = _shift(upper, -1)
+def _pcr_factor(diag, upper, lower):
+    """Parallel cyclic reduction on the remaining short chain."""
     d, factors = diag, []
     for level in range(math.ceil(math.log2(len(diag)))):
         step = 1 << level
@@ -82,31 +77,79 @@ def _pcr_solve(factor, rhs):
     return result[..., 0] if vector else result
 
 
-def _tridiagonal(blocks, w):
-    """Factor F + K, K the first-difference Laplacian with (links, columns) weights ``w``."""
-    kdiag = jnp.pad(w, ((0, 1), (0, 0))) + jnp.pad(w, ((1, 0), (0, 0)))
-    diagonal = jax.vmap(jnp.diag)(kdiag)
-    return _pcr_factor(blocks + diagonal, -jnp.pad(w, ((0, 1), (0, 0))))
+class _Tridiagonal(NamedTuple):
+    levels: tuple
+    coarse: tuple
+
+    @classmethod
+    def build(cls, blocks, w) -> "_Tridiagonal":
+        """Eliminate alternate views until ordinary parallel reduction fits in 512 rows."""
+        kdiag = jnp.pad(w, ((0, 1), (0, 0))) + jnp.pad(w, ((1, 0), (0, 0)))
+        diag = blocks + jax.vmap(jnp.diag)(kdiag)
+        upper = jax.vmap(jnp.diag)(-jnp.pad(w, ((0, 1), (0, 0))))
+        levels = []
+        while len(diag) > 512:
+            odd = _inverse(diag[1::2])
+            left, right = upper[: 2 * len(odd) : 2], upper[1::2]
+            u, v = odd @ left.mT, odd @ right
+            even = diag[::2]
+            extra = len(even) - len(odd)
+            diag = even - jnp.pad(left @ u, ((0, extra), (0, 0), (0, 0)))
+            diag -= jnp.pad(right.mT @ v, ((1, 0), (0, 0), (0, 0)))[: len(even)]
+            upper = jnp.pad(-left @ v, ((0, extra), (0, 0), (0, 0)))
+            levels.append((odd, u, v))
+        lower = _shift(upper.mT if levels else upper, -1)
+        return cls(tuple(levels), _pcr_factor(diag, upper, lower))
+
+    def solve(self, rhs):
+        vector = rhs.ndim == 2
+        rhs = rhs[..., None] if vector else rhs
+        saved = []
+        for inv, u, v in self.levels:
+            even, odd = rhs[::2], rhs[1::2]
+            extra = len(even) - len(odd)
+            rhs = even - jnp.pad(u.mT @ odd, ((0, extra), (0, 0), (0, 0)))
+            rhs -= jnp.pad(v.mT @ odd, ((1, 0), (0, 0), (0, 0)))[: len(even)]
+            saved.append(inv @ odd)
+        x = _pcr_solve(self.coarse, rhs)
+        for (_, u, v), direct in zip(reversed(self.levels), reversed(saved), strict=True):
+            m = len(direct)
+            odd = direct - u @ x[:m] - v @ jnp.pad(x[1:], ((0, 1), (0, 0), (0, 0)))[:m]
+            pair = jnp.stack([x[:m], odd], axis=1)
+            x = jnp.concatenate([pair.reshape(2 * m, *x.shape[1:]), x[m:]])
+        return x[..., 0] if vector else x
 
 
-def _spline_design(steps, spacing):
-    """Cubic B-spline design matrix (views, knots) with a knot every ``spacing`` steps.
+class _Woodbury(NamedTuple):
+    tri: _Tridiagonal
+    b: jax.Array
+    solved: jax.Array
+    lu: tuple | None
 
-    ``steps`` are the views' distances from the first, in units of the regular
-    gap between views; consecutive views are one apart.
-    """
-    steps = np.asarray(steps, np.float64)
-    end = float(steps[-1])
-    # Integer steps land exactly on linspace's points, as consecutive views always have.
-    sites = np.linspace(-1, 1, math.ceil(end) + 1)
-    t = np.interp(steps, np.arange(len(sites)), sites)
-    knots = list(spacing * np.arange(math.floor(end / spacing) + 1))
-    if knots[-1] != end:
-        knots.append(end)
-    k = min(3, len(knots) - 1)
-    at = np.interp(np.asarray(knots, np.float64), np.arange(len(sites)), sites)
-    spline = make_interp_spline(at, np.zeros(len(knots)), k=k)
-    return BSpline.design_matrix(t, spline.t, k).toarray()
+    @classmethod
+    def build(cls, tri, u, ku) -> "_Woodbury":
+        b = jnp.concatenate([u, ku], axis=1)
+        k = u.shape[1]
+        if k:
+            zero, eye = jnp.zeros((k, k), jnp.float64), jnp.eye(k, dtype=jnp.float64)
+            small = jnp.block([[zero, -eye], [-eye, -u.T @ ku]])
+            local = tri.coarse[1].shape[-1]
+            ab = tri.solve(b.reshape(-1, local, b.shape[-1])).reshape(u.shape[0], -1)
+            small = small + b.T @ ab
+            fac = lu_factor((small + small.T) * 0.5)
+        else:
+            ab, fac = b, None
+        return cls(tri, b, ab, fac)
+
+    def solve(self, rhs):
+        k = self.tri.coarse[1].shape[-1]
+        n = len(rhs) // k
+        direct = self.tri.solve(rhs.reshape(n, k, *rhs.shape[1:])).reshape(rhs.shape)
+        return (
+            direct - self.solved @ lu_solve(self.lu, self.b.T @ direct)
+            if self.lu is not None
+            else direct
+        )
 
 
 class ViewOrder:
@@ -139,13 +182,37 @@ class ViewOrder:
         blocks = []
         for start, stop in self.segments:
             steps = np.r_[0.0, np.cumsum(self.steps[start : stop - 1])]
-            blocks.append(_spline_design(steps, spacing))
-        design = np.zeros((self.n, sum(b.shape[1] for b in blocks)))
-        row = column = 0
-        for block in blocks:
-            design[row : row + len(block), column : column + block.shape[1]] = block
-            row, column = row + len(block), column + block.shape[1]
-        return design
+            blocks.append(_spline.sampled(steps, spacing))
+        return blocks[0] if len(blocks) == 1 else sparse.block_diag(blocks, format="csr")
+
+    def drift(self, spacing, translated):
+        """The explicit basis for a narrow knot border or the interval decomposition."""
+        views, nlocal = self.n, len(spacing)
+        # A bounded knot border costs O(views), even for a long acquisition.
+        # Beyond this width keep just the modes that cross interval ends.
+        designs = {
+            s: self.spline_design(s) for s in {s for i, s in enumerate(spacing) if translated[i]}
+        }
+        axes = [(i, designs[s]) for i, s in enumerate(spacing) if translated[i]]
+        widths = [cast("tuple[int,int]", b.shape)[1] for _, b in axes]
+        empty = np.empty((views * nlocal, 0))
+        if not axes:
+            return empty, None
+        if sum(widths) <= 80 * nlocal:
+            sampled = np.zeros((views * nlocal, sum(widths)))
+            start = 0
+            for (axis, b), width in zip(axes, widths, strict=True):
+                sampled[axis::nlocal, start : start + width] = b.toarray()
+                start += width
+            u, r = np.linalg.qr(sampled, mode="reduced")
+            if np.any(
+                abs(r.diagonal())
+                <= max(sampled.shape) * np.finfo(float).eps * np.linalg.norm(r, ord=np.inf)
+            ):
+                u = _orthonormal_columns(sampled)
+            return u, None
+        columns = [sparse.kron(b, np.eye(nlocal)[:, [i]], format="csr") for i, b in axes]
+        return empty, _spline.Drift.build(sparse.hstack(columns, format="csr"), views, nlocal)
 
     @property
     def jump_scale(self):
@@ -171,6 +238,7 @@ def _orthonormal_columns(matrix):
 class PriorMatrices(NamedTuple):
     """The motion prior's fixed matrices, passed to its compiled functions as an argument."""
 
+    chain: _spline.Drift | None
     U: jax.Array
     G: jax.Array
     C: jax.Array
@@ -195,7 +263,7 @@ class MotionPrior:
     data loss's units. Shared centre and angle parameters are not penalised.
 
     ``blocks`` contains every view's local/global Gram block. The local system
-    is solved by block cyclic reduction and a spline Woodbury correction, with
+    is solved exactly on the orthogonal drift and innovation spaces, with
     rigid gauge constraints. A small Schur border then couples all views to the
     single copy of each global parameter. No view-wise global approximation is
     made. ``innovation_solve`` holds that border exactly fixed for refinement.
@@ -234,16 +302,7 @@ class MotionPrior:
         )
         self.translation_mask = jnp.asarray(translated, jnp.float64)
         self.rotation_mask = jnp.asarray(1 - translated, jnp.float64)
-        columns = [
-            np.kron(order.spline_design(step), np.eye(self.nlocal)[:, [i]])
-            for i, step in enumerate(spacing)
-            if translated[i]
-        ]
-        u = (
-            np.linalg.qr(np.concatenate(columns, axis=1), mode="reduced")[0]
-            if columns
-            else np.zeros((self.local_size, 0))
-        )
+        u, chain = order.drift(spacing, translated)
         gauge = np.asarray(gauge, np.float64)
         oblique = constraint is not None
         constraint = np.asarray(constraint, np.float64) if oblique else gauge
@@ -278,7 +337,12 @@ class MotionPrior:
             )
         else:
             gauge_step = jnp.asarray(tangents @ np.linalg.inv(cross))
-        outside = _orthonormal_columns(g - u @ (u.T @ g))
+        residual = (
+            chain.residual(g.reshape(views, self.nlocal, -1), np).reshape(g.shape)
+            if chain is not None and g.shape[1]
+            else g - u @ (u.T @ g)
+        )
+        outside = _orthonormal_columns(residual)
         rotation_precision = np.zeros((views, self.nlocal))
         if parameters is not None and "rotations" in parameters.fit:
             scales = np.broadcast_to(
@@ -288,8 +352,9 @@ class MotionPrior:
             rotation_precision = (float(noise_sigma) * scales / radians) ** 2 * (1 - translated)
         self.rotation_sigma_deg = float(rotation_sigma_deg)
         # Passed to the compiled functions as an argument, never captured: a captured array is
-        # a constant of each executable, once per function (U and C grow as views squared).
+        # a constant of each executable, once per function.
         self.matrices = PriorMatrices(
+            chain=jax.tree.map(jnp.asarray, chain),
             U=jnp.asarray(u),
             G=jnp.asarray(g),
             C=jnp.asarray(np.column_stack([u, outside])),
@@ -331,7 +396,7 @@ class MotionPrior:
 
     @property
     def U(self):
-        """The drift splines' orthonormal basis (local rows by knots)."""
+        """The Woodbury solver's explicit orthonormal drift columns."""
         return self.matrices.U
 
     @property
@@ -341,7 +406,7 @@ class MotionPrior:
 
     @property
     def C(self):
-        """The drift basis with the gauge rows it does not span."""
+        """The explicit innovation constraints. The tree fixes drift internally."""
         return self.matrices.C
 
     @property
@@ -367,8 +432,7 @@ class MotionPrior:
         Raises
         ------
         MemoryError
-            If the device has no block for the factor's temporaries, which grow as the
-            square of the views.
+            If the device cannot allocate the factor workspace.
         """
         try:
             return self._compiled["factor"](self.matrices, blocks, w, out)
@@ -378,9 +442,8 @@ class MotionPrior:
             gib = self.temporaries("factor") / 2**30
             raise MemoryError(
                 f"tj.align's motion prior needs one {gib:.2f} GiB block of device memory to "
-                f"factor its pose system at {self.n} views (it grows as the views squared), "
-                "and the device has none. Align fewer views (Scan.selected: every second view "
-                "needs a quarter of it) or use a GPU with more memory"
+                f"factor its pose system at {self.n} views "
+                "and the device has none. Align fewer views or use a GPU with more memory"
             ) from err
 
     def innovation_solve(self, blocks, w, rhs):
@@ -409,7 +472,9 @@ class MotionPrior:
         return jnp.concatenate([local, state[self.local_size :]])
 
     def _residual(self, m, p):
-        return p - m.U @ (m.U.T @ p)
+        if m.chain is None:
+            return p - m.U @ (m.U.T @ p)
+        return m.chain.residual(p.reshape(self.n, self.nlocal, 1)).reshape(-1)
 
     def _squared_jumps(self, m, p):
         residual = self._residual(m, p[: self.local_size]).reshape(self.n, self.nlocal)
@@ -448,41 +513,29 @@ class MotionPrior:
         jump = self._residual(m, self._laplacian(self._residual(m, local), w))
         return jnp.concatenate([jump + m.rotation_precision * local, jnp.zeros(self.nglobal)])
 
-    def _local_factor(self, m, blocks, w):
+    def _local_factor(self, m, blocks, w, *, innovation=False):
+        blocks = blocks[:, : self.nlocal, : self.nlocal]
         blocks = blocks + jax.vmap(jnp.diag)(m.rotation_precision.reshape(self.n, self.nlocal))
-        tri = _tridiagonal(blocks, w)
-        ku = self._laplacian(m.U, w)
-        b = jnp.concatenate([m.U, ku], axis=1)
-        k = m.U.shape[1]
-        if k:
-            zero, eye = jnp.zeros((k, k), jnp.float64), jnp.eye(k, dtype=jnp.float64)
-            small = jnp.block([[zero, -eye], [-eye, -m.U.T @ ku]])
-            ab = _pcr_solve(tri, b.reshape(self.n, self.nlocal, -1)).reshape(self.local_size, -1)
-            small = small + b.T @ ab
-            fac = lu_factor((small + small.T) * 0.5)
+        if m.chain is None:
+            u = m.U[:, :0] if innovation else m.U
+            tri = _Tridiagonal.build(blocks, w)
+            base = _Woodbury.build(tri, u, self._laplacian(u, w))
         else:
-            ab, fac = b, None
-        ag = _pcr_solve(tri, m.G.reshape(self.n, self.nlocal, -1)).reshape(m.G.shape)
-        hg = ag - ab @ lu_solve(fac, b.T @ ag) if k else ag
-        gauge = m.G.T @ hg
-        chol = jnp.linalg.cholesky((gauge + gauge.T) * 0.5) if m.G.shape[1] else None
-        return tri, b, ab, fac, hg, chol, m.G
+            base = _spline_solve.factor(m.chain, blocks, w, innovation)
+        g = m.C if innovation else m.G
+        hg = base.solve(g) if g.shape[1] else g
+        gram = g.T @ hg
+        chol = jnp.linalg.cholesky((gram + gram.T) * 0.5) if g.shape[1] else None
+        return base, hg, chol, g
 
     def _local_solve(self, factor, rhs):
-        tri, b, ab, fac, hg, chol, g = factor
-        ar = _pcr_solve(tri, rhs.reshape((self.n, self.nlocal, *rhs.shape[1:]))).reshape(rhs.shape)
-        result = ar - ab @ lu_solve(fac, b.T @ ar) if b.shape[1] else ar
-        if g.shape[1]:
-            result = result - hg @ cho_solve((chol, True), g.T @ result)
-        return result
+        base, hg, chol, g = factor
+        result = base.solve(rhs)
+        return result - hg @ cho_solve((chol, True), g.T @ result) if g.shape[1] else result
 
     def _factor(self, m, blocks, w, _out=None):
         """The factor, written into ``_out`` (donated, unread) when given."""
-        local = (
-            self._local_factor(m, blocks[:, : self.nlocal, : self.nlocal], w)
-            if self.nlocal
-            else None
-        )
+        local = self._local_factor(m, blocks, w) if self.nlocal else None
         border = blocks[:, : self.nlocal, self.nlocal :].reshape(self.local_size, self.nglobal)
         solved = self._local_solve(local, border) if self.nlocal and self.nglobal else border
         schur = jnp.sum(blocks[:, self.nlocal :, self.nlocal :], axis=0) - border.T @ solved
@@ -501,13 +554,6 @@ class MotionPrior:
         """Exact local innovation step with drift, rigid gauge and globals held."""
         if not self.nlocal:
             return jnp.zeros_like(rhs)
-        blocks = blocks[:, : self.nlocal, : self.nlocal]
-        blocks = blocks + jax.vmap(jnp.diag)(m.rotation_precision.reshape(self.n, self.nlocal))
-        tri = _tridiagonal(blocks, w)
-        ar = _pcr_solve(tri, rhs[: self.local_size].reshape(self.n, self.nlocal)).reshape(-1)
-        if m.C.shape[1]:
-            ac = _pcr_solve(tri, m.C.reshape(self.n, self.nlocal, -1)).reshape(m.C.shape)
-            small = m.C.T @ ac
-            chol = jnp.linalg.cholesky(0.5 * (small + small.T))
-            ar = ar - ac @ cho_solve((chol, True), m.C.T @ ar)
+        factor = self._local_factor(m, blocks, w, innovation=True)
+        ar = self._local_solve(factor, rhs[: self.local_size])
         return jnp.concatenate([ar, jnp.zeros(self.nglobal)])

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.alignment._joint._pose import MotionPrior
+from tomojax.alignment._joint._pose import MotionPrior, ViewOrder
 
 
 @pytest.mark.parametrize("dofs", [2, 5, 6])
@@ -123,3 +123,78 @@ def test_a_cubic_drift_is_free_and_a_step_is_not():
         step = drift.copy()
         step[views // 2 :, 0] += 0.3
         assert float(prior.value(jnp.asarray(step.reshape(-1)), strength)) > 1e-3
+
+
+@pytest.mark.parametrize("views", [80, 257])
+def test_projection_and_solve_use_only_drift_observed_at_the_views(views):
+    from scipy.interpolate import make_interp_spline
+    from scipy.linalg import block_diag, orth
+
+    # At 80 views the gap leaves three zero spline columns; reduced QR still
+    # returns one direction for each. The longer case also restarts at a repeat.
+    positions = np.arange(views, dtype=float)
+    positions[40:] += 60
+    if views > 80:
+        positions[180:] -= 1
+        positions[190::3] += 0.25
+    order = ViewOrder(views, positions)
+    spacing = 10 if views == 80 else 3
+    design = []
+    for start, stop in order.segments:
+        t = np.r_[0, np.cumsum(order.steps[start : stop - 1])]
+        sites = np.r_[np.arange(0, t[-1], spacing), t[-1]]
+        design.append(make_interp_spline(sites, np.eye(len(sites)), k=min(3, len(sites) - 1))(t))
+    basis = orth(block_diag(*design))
+    if views == 80:
+        assert basis.shape[1] == 12
+    q = np.eye(views) - basis @ basis.T
+    rng = np.random.default_rng(42)
+    rhs = rng.normal(size=views)
+    blocks = rng.uniform(0.5, 1.5, views)
+    w = order.edge_scale
+    d = np.diff(np.eye(views), axis=0)
+    lap = d.T @ (w[:, None] * d)
+    with jax.enable_x64(True):
+        prior = MotionPrior(
+            views, np.zeros((views, 0)), knot_spacing=(spacing,), delta=0.2, order=order
+        )
+        expected = np.linalg.solve(np.diag(blocks) + q @ lap @ q, rhs)
+        f = prior.factor(jnp.asarray(blocks[:, None, None]), jnp.asarray(w[:, None]))
+        np.testing.assert_allclose(
+            prior.solve(f, jnp.asarray(rhs)), expected, atol=2e-12, rtol=2e-12
+        )
+        jumps = (d @ q @ rhs) * order.jump_scale
+        np.testing.assert_allclose(
+            prior.value(rhs, 0.4), 0.08 * np.log1p((jumps / 0.2) ** 2).sum(), rtol=2e-12
+        )
+        system = np.block(
+            [[np.diag(blocks) + lap, basis], [basis.T, np.zeros((basis.shape[1],) * 2)]]
+        )
+        expected = np.linalg.solve(system, np.r_[rhs, np.zeros(basis.shape[1])])[:views]
+        np.testing.assert_allclose(
+            prior.innovation_solve(blocks[:, None, None], w[:, None], rhs),
+            expected,
+            atol=2e-12,
+            rtol=2e-12,
+        )
+
+
+@pytest.mark.parametrize("views", [1024, 1025])
+def test_long_chain_with_only_an_affine_drift_recovers_the_prescribed_solution(views):
+    rng = np.random.default_rng(51)
+    x = rng.normal(size=(views, 2))
+    b = np.column_stack([np.ones(views), np.linspace(-1, 1, views)])
+
+    def residual(values):
+        return values - b @ np.linalg.lstsq(b, values, rcond=None)[0]
+
+    f = rng.normal(size=(views, 2, 2))
+    f = f @ np.swapaxes(f, 1, 2) + np.eye(2)
+    w = rng.uniform(0.3, 4, size=(views - 1, 2))
+    differences = w * np.diff(residual(x), axis=0)
+    lap = np.pad(differences, ((1, 0), (0, 0))) - np.pad(differences, ((0, 1), (0, 0)))
+    rhs = (f @ x[..., None])[..., 0] + residual(lap)
+    with jax.enable_x64(True):
+        prior = MotionPrior(views, np.zeros((views * 2, 0)), knot_spacing=(views, views), delta=0.1)
+        got = prior.solve(prior.factor(f, w), rhs.ravel()).reshape(x.shape)
+        np.testing.assert_allclose(got, x, rtol=2e-12, atol=2e-12)
