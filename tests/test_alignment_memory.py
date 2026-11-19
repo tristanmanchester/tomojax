@@ -214,3 +214,32 @@ def test_the_constants_check_sees_a_captured_volume():
     assert jax.make_jaxpr(planted)(volume).consts == []  # what the guard used to read
     shapes = [tuple(c.shape) for c in captured_constants(planted, volume)]
     assert shapes == [(16, 24, 24)]
+
+
+def test_a_prior_factor_with_no_device_block_raises_a_plain_memory_error(monkeypatch):
+    # The factor's temporaries grow as the views squared (one 1.93 GiB block at 8000 views):
+    # when the device has none, tj.align says what needs it and what runs instead.
+    from tomojax.alignment._joint import _pose  # check-public-imports: allow-private
+
+    built = _pose.MotionPrior.__init__
+
+    def without_room(self, *args, **kwargs):
+        built(self, *args, **kwargs)
+        compiled = self._compiled["factor"]
+
+        class Exhausted:  # sized as the real one, but the allocation fails
+            lower = staticmethod(compiled.lower)
+
+            def __call__(self, *_):
+                raise jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: Out of memory allocating")
+
+        self._compiled["factor"] = Exhausted()
+
+    monkeypatch.setattr(_pose.MotionPrior, "__init__", without_room)
+    grid, detector = tj.Grid(16, 16, 8, 1, 1, 1), tj.Detector(20, 10, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 24, endpoint=False))
+    z, y, x = np.mgrid[:8, :16, :16]
+    volume = (((x - 7.5) ** 2 + (y - 8) ** 2 + (z - 3.5) ** 2) < 12).astype(np.float32)
+    scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
+    with pytest.raises(MemoryError, match=r"motion prior needs one .* block .* at 24 views"):
+        tj.align(scan)

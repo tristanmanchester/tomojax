@@ -362,8 +362,26 @@ class MotionPrior:
         return self._compiled["apply"](self.matrices, p, w)
 
     def factor(self, blocks, w, out=None):
-        """The pose normal system with the prior at weights ``w``, factored for ``solve``."""
-        return self._compiled["factor"](self.matrices, blocks, w, out)
+        """The pose normal system with the prior at weights ``w``, factored for ``solve``.
+
+        Raises
+        ------
+        MemoryError
+            If the device has no block for the factor's temporaries, which grow as the
+            square of the views.
+        """
+        try:
+            return self._compiled["factor"](self.matrices, blocks, w, out)
+        except jax.errors.JaxRuntimeError as err:
+            if "RESOURCE_EXHAUSTED" not in str(err):
+                raise
+            gib = self.temporaries("factor") / 2**30
+            raise MemoryError(
+                f"tj.align's motion prior needs one {gib:.2f} GiB block of device memory to "
+                f"factor its pose system at {self.n} views (it grows as the views squared), "
+                "and the device has none. Align fewer views (Scan.selected: every second view "
+                "needs a quarter of it) or use a GPU with more memory"
+            ) from err
 
     def innovation_solve(self, blocks, w, rhs):
         """The local innovation step with drift, gauge and globals held."""
