@@ -168,7 +168,7 @@ class FistaConfig:
         estimation. Correlated detector noise and object texture are not separated
         by this iid noise scale. The selected strength is fixed for differentiation;
         physical intensity/unit normalization retains its derivatives.
-    regulariser : Regulariser, optional
+    regularizer : Regularizer, optional
         Regularization model: "tv" or "huber_tv". Both use a constrained proximal
         solve after each data-gradient step. Default is 'tv'.
     huber_delta : float, optional

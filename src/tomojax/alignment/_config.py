@@ -107,6 +107,18 @@ class AlignConfig:
 
         Angular columns need smooth interpolation as sample points rotate through voxel
         cells; centre and translation fits, and cone rays, keep the cheaper linear basis.
+
+        Parameters
+        ----------
+        fit : tuple of str
+            The parameters fitted, as ``tj.align``'s ``fit``.
+        cone : bool
+            Whether the rays come from a point source.
+
+        Returns
+        -------
+        AlignConfig
+            This config, or a copy with ``interpolation`` chosen.
         """
         if self.interpolation is not None:
             return self

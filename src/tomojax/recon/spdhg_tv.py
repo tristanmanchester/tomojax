@@ -116,7 +116,7 @@ class SPDHGConfig:
         It discards each view's baseline and gives up the absolute density level.
         Keep absolute fitting for contained objects: removing their view means
         discards measured information and can worsen the reconstruction.
-    regulariser : Regulariser, optional
+    regularizer : Regularizer, optional
         Regularization model: "tv" or "huber_tv". Default is 'tv'.
     huber_delta : float, optional
         Positive dimensionless Huber transition scale when regulariser is "huber_tv". Default is

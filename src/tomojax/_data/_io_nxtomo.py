@@ -427,7 +427,18 @@ def _volume_in_internal_axes(
 
 
 def saved_without_frames(path: str | PathLike[str]) -> bool:
-    """Whether ``path`` is a reconstruction saved without its scan: a volume and no frames."""
+    """Whether ``path`` is a reconstruction saved without its scan: a volume and no frames.
+
+    Parameters
+    ----------
+    path : str or path-like
+        HDF5 file to look in.
+
+    Returns
+    -------
+    bool
+        True when the file holds a saved volume and no stack of frames.
+    """
     with h5py.File(os.fspath(path), "r") as file:
         return _without_frames(file)
 
