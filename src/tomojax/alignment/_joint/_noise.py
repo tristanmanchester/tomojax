@@ -16,6 +16,7 @@ from tomojax.core.robust import MAD_TO_SD
 MAX_SAMPLES = 65_536
 # Robust loss width in noise standard deviations, for the fit and its refinement.
 LOSS_WIDTH_SIGMAS = 2.5
+_NO_CONTRAST = "noise calibration needs an observed detector contrast"
 
 
 def estimate_noise(projections, *, precision=None, dtype=None):
@@ -34,42 +35,83 @@ def estimate_noise(projections, *, precision=None, dtype=None):
     or motion. No observable contrast raises ValueError. Correlated noise and
     unresolved object texture can still affect this measurement-only scale.
     """
-    n, nv, nu = projections.shape
     mask = None if precision is None else np.broadcast_to(precision, projections.shape)
+    for orders in _orders(projections.shape):
+        windows = Windows(projections.shape, orders)
+        windows.gather(projections, dtype)
+        sd = windows.sd(mask)
+        if sd is not None:
+            return sd
+    raise ValueError(_NO_CONTRAST)
+
+
+class Windows:
+    """The contrast windows sampled at one pair of (v, u) orders, chosen before any pixel is read.
+
+    ``views``, ``rows`` and ``columns`` place each window's first pixel, ``taps`` are its
+    pixels' offsets, v major, and ``values`` each tap's gathered values in FP64.
+    """
+
+    def __init__(self, shape, orders=None) -> None:
+        """``orders`` None takes the first orders ``estimate_noise`` tries."""
+        n, nv, nu = shape
+        orders = orders or next(_orders(shape), None)
+        if orders is None:
+            raise ValueError(_NO_CONTRAST)
+        self.orders = vorder, uorder = orders
+        rows, columns = nv - vorder, nu - uorder
+        population = n * rows * columns
+        selected = (
+            np.arange(population)
+            if population <= MAX_SAMPLES
+            else np.random.default_rng(0).integers(population, size=MAX_SAMPLES)
+        )
+        self.views, cells = np.divmod(selected, rows * columns)
+        self.rows, self.columns = np.divmod(cells, columns)
+        self.taps = [(v, u) for v in range(vorder + 1) for u in range(uorder + 1)]
+        self.values = [np.empty(len(selected)) for _ in self.taps]
+
+    def gather(self, projections, dtype=None, start=0):
+        """Keep the pixels of the windows in ``projections``, views ``start`` onward.
+
+        A stack read front to back in slabs passes each slab in turn, so nothing reads it at
+        random. ``dtype`` rounds the values as ``estimate_noise``'s does.
+        """
+        inside = np.flatnonzero((self.views >= start) & (self.views < start + projections.shape[0]))
+        views, rows, columns = self.views[inside] - start, self.rows[inside], self.columns[inside]
+        for (v, u), values in zip(self.taps, self.values, strict=True):
+            values[inside] = np.asarray(projections[views, rows + v, columns + u], dtype)
+
+    def sd(self, mask=None):
+        """The robust SD of the normalized contrasts, None when no window is wholly observed.
+
+        A pixel is observed where it is finite and ``mask``, if given, is positive.
+        """
+        vorder, uorder = self.orders
+        coefficients = np.zeros(len(self.views), np.float64)
+        valid = np.ones(len(self.views), bool)
+        normalizer = math.sqrt(math.comb(2 * vorder, vorder) * math.comb(2 * uorder, uorder))
+        for (v, u), values in zip(self.taps, self.values, strict=True):
+            observed = np.isfinite(values)
+            if mask is not None:
+                observed &= mask[self.views, self.rows + v, self.columns + u] > 0
+            valid &= observed
+            weight = (-1) ** (u + v) * math.comb(vorder, v) * math.comb(uorder, u)
+            coefficients += weight * np.where(observed, values, 0)
+        coefficients = coefficients[valid] / normalizer
+        if not coefficients.size:
+            return None
+        centered = coefficients - np.median(coefficients)
+        return float(np.median(np.abs(centered)) * MAD_TO_SD)
+
+
+def _orders(shape):
+    """The (v, u) contrast orders to try, highest first; a short axis lowers its order."""
+    _, nv, nu = shape
     tried = set()
     for requested in range(4, 0, -1):
         ov, ou = min(requested, nv - 1), min(requested, nu - 1)
         for orders in ((ov, ou), (0, ou), (ov, 0)):
-            if orders == (0, 0) or orders in tried:
-                continue
-            tried.add(orders)
-            vorder, uorder = orders
-            rows, columns = nv - vorder, nu - uorder
-            population = n * rows * columns
-            selected = (
-                np.arange(population)
-                if population <= MAX_SAMPLES
-                else np.random.default_rng(0).integers(population, size=MAX_SAMPLES)
-            )
-            views, cells = np.divmod(selected, rows * columns)
-            row, column = np.divmod(cells, columns)
-            coefficients = np.zeros(len(selected), np.float64)
-            valid = np.ones(len(selected), bool)
-            normalizer = math.sqrt(math.comb(2 * vorder, vorder) * math.comb(2 * uorder, uorder))
-            for v in range(vorder + 1):
-                for u in range(uorder + 1):
-                    indices = (views, row + v, column + u)
-                    values = np.asarray(projections[indices], dtype=dtype).astype(
-                        np.float64, copy=False
-                    )
-                    observed = np.isfinite(values)
-                    if mask is not None:
-                        observed &= mask[indices] > 0
-                    valid &= observed
-                    weight = (-1) ** (u + v) * math.comb(vorder, v) * math.comb(uorder, u)
-                    coefficients += weight * np.where(observed, values, 0)
-            coefficients = coefficients[valid] / normalizer
-            if coefficients.size:
-                centered = coefficients - np.median(coefficients)
-                return float(np.median(np.abs(centered)) * MAD_TO_SD)
-    raise ValueError("noise calibration needs an observed detector contrast")
+            if orders != (0, 0) and orders not in tried:
+                tried.add(orders)
+                yield orders

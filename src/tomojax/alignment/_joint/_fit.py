@@ -28,7 +28,7 @@ from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.joseph import validate_plane_geometry
 from tomojax.recon.fista_tv import resolve_tv_metric
 
-from ._noise import LOSS_WIDTH_SIGMAS, MAX_SAMPLES, estimate_noise
+from ._noise import LOSS_WIDTH_SIGMAS, MAX_SAMPLES, Windows, estimate_noise
 from ._operators import Operators
 from ._parameters import Parameters
 from ._pose import ROTATION_SIGMA_DEG, MotionPrior, ViewOrder
@@ -114,26 +114,44 @@ def _padded(grid, bins):
     return extended, cells
 
 
-def _coarsened(measured, b, batch_views=16):
-    """Block means over complete b x b pixel blocks, and the observed fraction.
+def _read(measured, bins, batch_views=16):
+    """What the levels take from the frames, in one front-to-back pass over them.
 
-    Each block mean uses only its finite pixels and its precision is their
-    fraction; precision is None when every pixel is finite. Input conversion
-    and finite-pixel checks use one view slab at a time, including memory maps.
+    Returns each binning's block means over complete b x b pixel blocks and observed
+    fraction, the power of two bringing the observations near one, and the native-pixel
+    noise SD (``estimate_noise``). Each slab of views is converted to FP32 once and gives
+    all of them: a block mean uses only its finite pixels and its precision is their
+    fraction, None when every pixel is finite; the scale comes from about 16 evenly spaced
+    views; the noise windows in the slab are kept from it. Nothing reads the frames at
+    random or twice: random page faults on a memory map stop the kernel reading ahead on
+    it for its lifetime, and a sweep after them reads a page per fault.
     """
     n, nv, nu = measured.shape
-    y = np.empty((n, nv // b, nu // b), np.float32)
-    w = np.ones_like(y)
+    means = [np.empty((n, nv // b, nu // b), np.float32) for b in bins]
+    weights = [np.ones_like(y) for y in means]
+    step = max(1, n // 16)
+    peak = np.float32(0)
+    noise = Windows(measured.shape)
     for s in range(0, n, batch_views):
         src = np.asarray(measured[s : s + batch_views], np.float32)
-        blocks = (len(src), nv // b, b, nu // b, b)
         finite = np.isfinite(src)
-        count = finite.reshape(blocks).sum((2, 4))
-        total = np.where(finite, src, 0).reshape(blocks).sum((2, 4), dtype=np.float64)
-        y[s : s + len(src)] = np.divide(total, count, out=np.zeros_like(total), where=count > 0)
-        w[s : s + len(src)] = count / (b * b)
-        del src  # release this converted slab before allocating the next one
-    return y, None if w.min() == 1 else w
+        filled = np.where(finite, src, 0)
+        for b, y, w in zip(bins, means, weights, strict=True):
+            blocks = (len(src), nv // b, b, nu // b, b)
+            count = finite.reshape(blocks).sum((2, 4))
+            total = filled.reshape(blocks).sum((2, 4), dtype=np.float64)
+            y[s : s + len(src)] = np.divide(total, count, out=np.zeros_like(total), where=count > 0)
+            w[s : s + len(src)] = count / (b * b)
+        sample = src[-s % step :: step]
+        peak = max(peak, np.max(np.abs(sample[np.isfinite(sample)]), initial=0.0))
+        noise.gather(src, start=s)
+        del src, finite, filled  # release this converted slab before reading the next one
+    scale = 2.0 ** -np.round(np.log2(peak)) if peak > 0 else 1.0
+    sd = noise.sd()
+    if sd is None:  # no first-order window wholly finite: lower orders, gathered directly
+        sd = estimate_noise(measured, dtype=np.float32)
+    binned = [(y, None if w.min() == 1 else w) for y, w in zip(means, weights, strict=True)]
+    return binned, scale, sd
 
 
 def _capped_contrast(y, rms, precision):
@@ -156,7 +174,9 @@ def _capped_contrast(y, rms, precision):
 
 
 def _level(
-    measured,
+    binned,
+    scale,
+    noise,
     poses,
     base,
     detector,
@@ -177,13 +197,11 @@ def _level(
     The observations are multiplied by a power of two bringing them near one,
     the same at every level: the fit is scale covariant and this is exact, and
     it keeps the step's FP16 storage clear of its subnormals. Fitted volumes
-    are in these units until divided by ``calibration["scale"]``.
+    are in these units until divided by ``calibration["scale"]``. ``binned`` is this
+    level's block means and observed fraction and ``noise`` the native-pixel noise SD
+    (``_read``).
     """
-    nv, nu = measured.shape[1:]
-    sample = np.asarray(measured[:: max(1, len(measured) // 16)], np.float32)
-    peak = np.max(np.abs(sample[np.isfinite(sample)]), initial=0.0)
-    scale = 2.0 ** -np.round(np.log2(peak)) if peak > 0 else 1.0
-    y, precision = _coarsened(measured, total_bin)
+    y, precision = binned
     y *= np.float32(scale)
     # The objective compares K A x with K y (residual_filter); the filtered data are known
     # only where every tap was measured. K acts within each view: filter on the host, a
@@ -193,8 +211,8 @@ def _level(
     precision = filtered_precision(precision)
     g = _resized(base, tuple(math.ceil(n / b) for n in (base.nx, base.ny, base.nz)))
     d = Detector(
-        nu // total_bin,
-        nv // total_bin,
+        y.shape[2],
+        y.shape[1],
         detector.du * total_bin,
         detector.dv * total_bin,
         center=center,
@@ -206,7 +224,7 @@ def _level(
     # Estimate on the supplied finest samples, before coarsening turns smooth
     # texture into apparent noise. With precision=count/b**2, sigma/b gives
     # the same independent-pixel noise model for partially observed blocks.
-    sigma = estimate_noise(measured, dtype=np.float32) * scale / total_bin
+    sigma = noise * scale / total_bin
     ops = Operators(
         g,
         d,
@@ -308,7 +326,7 @@ def fit_poses(
     """
     started = time.perf_counter()
     with jax.enable_x64(True):
-        y0 = np.asarray(projections)
+        y0 = np.asanyarray(projections)
         poses = np.asarray(nominal_poses, np.float32)
         if y0.ndim != 3 or y0.shape[1:] != (detector.nv, detector.nu):
             raise ValueError("projection shape does not match the detector")
@@ -349,9 +367,12 @@ def fit_poses(
         order = ViewOrder(len(y0), view_positions)
         prior = None
         levels = []
+        binned, scale, noise = _read(measured, [dbin * b for b in bins])
         for b, (_, outer) in zip(bins, _LEVELS, strict=True):
             y, precision, g, ops, cal = _level(
-                measured,
+                binned.pop(0),  # the level's arrays are its own from here
+                scale,
+                noise,
                 poses,
                 padded,
                 detector,
