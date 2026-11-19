@@ -218,6 +218,9 @@ measurements require independent calibration evidence and repair before `Rings`.
   on one GPU, the `tomojax` commands always use one, and the GPUs must belong
   to one process. [Large scans and several GPUs](large-scans.md) says which
   solvers stream projections from host memory and what each GPU holds.
+- SPDHG-TV keeps five volumes on the GPU (its iterate, three TV duals and its data
+  backprojection), so a volume must fit there five times: a 1014³ grid (3.9 GiB a
+  volume) does not on an 8 GB card. FISTA, CGLS and SIRT keep such a volume in host memory.
 - Alignment fixes an object's position only up to what the data can see. Cone translations
   include along-beam motion, but the common rigid gauge remains unobservable. Compare geometry
   after one rigid gauge and include detector-centre changes in detector-space scores.

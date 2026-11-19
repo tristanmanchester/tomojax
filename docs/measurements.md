@@ -1649,6 +1649,12 @@ SPDHG-TV eight volumes plus its dual sinogram. JAX's default allocator limit is
 75% of device memory, under which this CGLS case does not fit; the CLI raises
 the limit to 90%.
 
+SPDHG-TV now rewrites its five state volumes in place (2026-11-19, commit
+`596052b`): the plain `tj.reconstruct(scan, "spdhg")` on K11 54013 at full size
+(1441 views of 540 × 640, 704 × 704 × 234 grid, projections streamed from host
+memory) takes 137 s with a 3.2 GiB device peak on the RTX 4070 Laptop (8 GB),
+under the default 75% limit; before, it ran out of memory.
+
 ### Fourier inverse
 
 Measured 2026-10-04 on commit `776a8c9`, before later changes made the Fourier

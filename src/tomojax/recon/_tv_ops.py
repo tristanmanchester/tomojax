@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from .types import Regularizer
 
 
-def _forward_difference(u: jnp.ndarray, axis: int) -> jnp.ndarray:
+def forward_difference(u: jnp.ndarray, axis: int) -> jnp.ndarray:
     edge = list(u.shape)
     edge[axis] = 1
     return jnp.concatenate([jnp.diff(u, axis=axis), jnp.zeros(edge, u.dtype)], axis=axis)
@@ -36,9 +36,9 @@ def grad3(
     x, z = (0, 2) if z_fast else (2, 0)
     cx, cy, cz = gradient_scale_xyz
     return (
-        cx * _forward_difference(u, x),
-        cy * _forward_difference(u, 1),
-        cz * _forward_difference(u, z),
+        cx * forward_difference(u, x),
+        cy * forward_difference(u, 1),
+        cz * forward_difference(u, z),
     )
 
 
