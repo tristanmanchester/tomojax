@@ -50,7 +50,7 @@ def correct_frames(
     view_positions: np.ndarray | None = None,
     exposure_times: np.ndarray | float | None = None,
     flat_exposure_times: np.ndarray | float | None = None,
-    batch_views: int | None = None,
+    views_per_batch: int | None = None,
     binning: int = 1,
     dark_source: str | None = None,
     linear_limit: tuple[float, str] | None = None,
@@ -89,7 +89,7 @@ def correct_frames(
     flat_exposure_times : numpy.ndarray or float or None, optional
         Flat exposure durations in seconds. Supply both exposure arrays to compare
         dark-subtracted count rates rather than integrated counts.
-    batch_views : int or None, optional
+    views_per_batch : int or None, optional
         Positive view-batch size. None selects a memory-bounded size automatically.
     binning : int, optional
         Positive detector-block side length for mean binning of the corrected line
@@ -131,7 +131,7 @@ def correct_frames(
     >>> result.projections.shape
     (2, 3, 4)
     """
-    batch_views = _validated_batch_views(batch_views)
+    views_per_batch = _validated_views_per_batch(views_per_batch)
     epsilon = positive_finite(epsilon, "epsilon")
     if isinstance(binning, bool) or not isinstance(binning, int | np.integer) or binning < 1:
         raise ValueError(f"binning needs a whole factor of at least 1, not {binning!r}")
@@ -161,7 +161,7 @@ def correct_frames(
     transmission_head, transmission_tail = _split_at_break(list(transmission_steps))
     limit = np.float32(np.inf if linear_limit is None else linear_limit[0])
     settings = {"epsilon": float(epsilon), "factor": binning, "limit": limit}
-    slab = _row_slab(counts, ordered, batch_views, binning)
+    slab = _row_slab(counts, ordered, views_per_batch, binning)
     if slab is not None:
         out, tally = _correct_row_slabs(
             counts,
@@ -177,7 +177,7 @@ def correct_frames(
         # Binned on the device while the batches come back, unless the tail needs full frames.
         factor = 1 if tail or transmission_tail else binning
         out = host_array((views, rows // factor, cols // factor))
-        batch = batch_views or frame_batch_size(
+        batch = views_per_batch or frame_batch_size(
             views, rows, cols, (*counts_steps, *transmission_steps, *head)
         )
         tally = correct_view_batches(
@@ -187,13 +187,13 @@ def correct_frames(
             epsilon=float(epsilon), factor=factor, take_log=not transmission_tail, limit=limit,
         )  # fmt: skip
         if transmission_tail:
-            out, _, _ = apply_steps(out, transmission_tail, batch_views)
+            out, _, _ = apply_steps(out, transmission_tail, views_per_batch)
             above = tally[2]
-            out, tally = log_batches(out, tuple(head), epsilon, batch_views)
+            out, tally = log_batches(out, tuple(head), epsilon, views_per_batch)
             tally = np.append(tally, above)
-        out, kept, tail_records = apply_steps(out, tail, batch_views)
+        out, kept, tail_records = apply_steps(out, tail, views_per_batch)
         if (tail or transmission_tail) and binning > 1:
-            out = _binned(out, binning, batch_views)
+            out = _binned(out, binning, views_per_batch)
     if linear_limit is not None:
         report_linear_limit(
             field_record[0],
@@ -231,7 +231,7 @@ class Corrected(NamedTuple):
 
 
 def correct_projections(
-    projections: Any, steps: Sequence[Step], *, batch_views: int | None = None
+    projections: Any, steps: Sequence[Step], *, views_per_batch: int | None = None
 ) -> Corrected:
     """Correct a line-integral stack and record the steps applied.
 
@@ -241,7 +241,7 @@ def correct_projections(
         Line integrals with shape ``(views, rows, columns)``; copied to float32.
     steps : sequence of Step
         Corrections acting on line integrals, in the order to run them.
-    batch_views : int or None, optional
+    views_per_batch : int or None, optional
         Positive view-batch size. None selects a memory-bounded size automatically.
 
     Returns
@@ -252,7 +252,7 @@ def correct_projections(
     Raises
     ------
     ValueError
-        If a step does not act on line integrals or batch_views is invalid.
+        If a step does not act on line integrals or views_per_batch is invalid.
     TypeError
         If a correction is not a Step.
 
@@ -264,7 +264,7 @@ def correct_projections(
     >>> result.projections.shape
     (2, 3, 4)
     """
-    batch_views = _validated_batch_views(batch_views)
+    views_per_batch = _validated_views_per_batch(views_per_batch)
     ordered = ordered_steps(steps)
     if any(d != "line integrals" for d, _ in ordered):
         wrong = [type(s).__name__ for d, s in ordered if d != "line integrals"]
@@ -274,7 +274,7 @@ def correct_projections(
             "them to Frames.corrected"
         )
     out = np.array(projections, np.float32, copy=True)
-    out, kept, records = apply_steps(out, [s for _, s in ordered], batch_views)
+    out, kept, records = apply_steps(out, [s for _, s in ordered], views_per_batch)
     return Corrected(out, records, kept)
 
 
@@ -289,11 +289,11 @@ def frame_batch_size(views: int, rows: int, cols: int, steps: Sequence[Step]) ->
     return max(1, min(views, budget // (4 * pixels)))
 
 
-def _validated_batch_views(value: int | None) -> int | None:
+def _validated_views_per_batch(value: int | None) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int | np.integer) or value <= 0:
-        raise ValueError(f"batch_views must be a positive integer, not {value!r}")
+        raise ValueError(f"views_per_batch must be a positive integer, not {value!r}")
     return int(value)
 
 
@@ -663,11 +663,11 @@ def report_linear_limit(
 
 
 def log_batches(
-    out: np.ndarray, steps: tuple[Step, ...], epsilon: float, batch_views: int | None
+    out: np.ndarray, steps: tuple[Step, ...], epsilon: float, views_per_batch: int | None
 ) -> tuple[np.ndarray, np.ndarray]:
     """Replace a host transmission stack by line integrals, counting log findings."""
     views, rows, cols = out.shape
-    batch = batch_views or frame_batch_size(views, rows, cols, steps)
+    batch = views_per_batch or frame_batch_size(views, rows, cols, steps)
     tally = np.zeros(2, np.int64)
     for first in range(0, views, batch):
         done, nonpositive, bad = _log_transmission(
@@ -689,7 +689,7 @@ def reject_nonfinite(count: int, start: int, stop: int) -> None:
 
 
 def _row_slab(
-    counts: Any, ordered: Sequence[tuple[str, Step]], batch_views: int | None, factor: int
+    counts: Any, ordered: Sequence[tuple[str, Step]], views_per_batch: int | None, factor: int
 ) -> int | None:
     """Rows per slab to fuse raw-count correction with whole-row steps.
 
@@ -697,7 +697,7 @@ def _row_slab(
     without decoding whole frames. The slab is a multiple of ``factor`` rows
     when the corrected line integrals are also binned.
     """
-    if batch_views is not None or not ordered:
+    if views_per_batch is not None or not ordered:
         return None
     # At native sampling, per-view file opens can cost more than the saved
     # transfers. Keep the existing view path for sources without bulk reads.
@@ -788,10 +788,10 @@ def _correct_row_slabs(
     return out, tally
 
 
-def _binned(out: np.ndarray, factor: int, batch_views: int | None) -> np.ndarray:
+def _binned(out: np.ndarray, factor: int, views_per_batch: int | None) -> np.ndarray:
     """The detector block means of ``out``, a batch of views at a time."""
     views, rows, cols = out.shape
-    batch = batch_views or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
+    batch = views_per_batch or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
     binned = host_array((views, rows // factor, cols // factor))
     for start in range(0, views, batch):
         binned[start : start + batch] = mean_detector_pixels(out[start : start + batch], factor)
@@ -807,7 +807,7 @@ def _split_at_break(steps: list[Step]) -> tuple[list[Step], list[Step]]:
 
 
 def apply_steps(
-    out: np.ndarray, steps: Sequence[Step], batch_views: int | None
+    out: np.ndarray, steps: Sequence[Step], views_per_batch: int | None
 ) -> tuple[np.ndarray, np.ndarray, tuple[Correction, ...]]:
     """``steps`` over ``out``: whole-row steps on slabs of rows, the others on views.
 
@@ -825,7 +825,7 @@ def apply_steps(
             records.append(step.record())
             i += 1
         elif step.selects_views:
-            batch = batch_views or frame_batch_size(views, rows, cols, (step,))
+            batch = views_per_batch or frame_batch_size(views, rows, cols, (step,))
             stats = np.concatenate([
                 np.asarray(_statistic(step, jnp.asarray(out[v0 : v0 + batch])))
                 for v0 in range(0, views, batch)
@@ -845,7 +845,7 @@ def apply_steps(
             while j < len(steps) and not (steps[j].whole_rows or steps[j].selects_views):
                 j += 1
             run = tuple(steps[i:j])
-            batch = batch_views or frame_batch_size(views, rows, cols, run)
+            batch = views_per_batch or frame_batch_size(views, rows, cols, run)
             for v0 in range(0, views, batch):
                 out[v0 : v0 + batch] = np.asarray(_apply(run, jnp.asarray(out[v0 : v0 + batch])))
             records.extend(s.record() for s in run)

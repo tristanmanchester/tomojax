@@ -127,7 +127,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--flats": ("load_frames", "flats"),
         "--darks": ("load_frames", "darks"),
         "--angles": ("load_frames", "angles"),
-        "--select-views": "index ranges; Python calls Frames.selected",
+        "--views": "index ranges; Python calls Frames.selected",
         "--crop": "Y0:Y1,X0:X1; Python calls Frames.cropped",
         "--reject-views": "the RejectViews step",
         "--zingers": "the Zingers step",

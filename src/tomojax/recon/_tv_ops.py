@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 if TYPE_CHECKING:
-    from .types import Regulariser
+    from .types import Regularizer
 
 
 def _forward_difference(u: jnp.ndarray, axis: int) -> jnp.ndarray:
@@ -90,21 +90,21 @@ def div3(
     )
 
 
-def validate_regulariser(
-    regulariser: str,
+def validate_regularizer(
+    regularizer: str,
     huber_delta: float,
     *,
     context: str,
-) -> Regulariser:
+) -> Regularizer:
     """Validate a regulariser config and return its normalized name."""
-    reg = str(regulariser).lower()
+    reg = str(regularizer).lower()
     if reg not in ("tv", "huber_tv"):
-        raise ValueError(f"{context}: regulariser must be 'tv' or 'huber_tv'; got {regulariser!r}")
+        raise ValueError(f"{context}: regularizer must be 'tv' or 'huber_tv'; got {regularizer!r}")
     if reg == "huber_tv":
         delta = float(huber_delta)
         if not math.isfinite(delta) or delta <= 0.0:
             raise ValueError(f"{context}: huber_delta must be positive for huber_tv")
-    return cast("Regulariser", reg)
+    return cast("Regularizer", reg)
 
 
 def _gradient_norm_sq(

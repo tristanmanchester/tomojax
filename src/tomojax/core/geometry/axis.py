@@ -62,7 +62,7 @@ class RotationAxisGeometry:
         View rotation angles in degrees, in acquisition order.
     axis_unit_lab : sequence of float
         Nonzero finite lab-frame rotation-axis vector, normalized on construction.
-    detector_roll_deg : float, optional
+    detector_roll : float, optional
         Roll about the detector normal, in degrees; positive turns u towards v.
 
     Raises
@@ -75,7 +75,7 @@ class RotationAxisGeometry:
     detector: Detector
     angles: Sequence[float]
     axis_unit_lab: Sequence[float]
-    detector_roll_deg: float = 0.0
+    detector_roll: float = 0.0
 
     def __post_init__(self) -> None:
         self.axis_unit_lab = normalize_axis_unit(self.axis_unit_lab)
@@ -83,7 +83,7 @@ class RotationAxisGeometry:
     def _axis_unit(self) -> np.ndarray:
         return np.asarray(normalize_axis_unit(self.axis_unit_lab), dtype=np.float64)
 
-    def pose_for_view(self, i: int) -> PoseMatrix:
+    def pose_matrix(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose for one view.
 
         Degree conversion uses host precision for lists and saved FP32 arrays alike.
@@ -127,4 +127,4 @@ class RotationAxisGeometry:
             Origin and unit-direction callbacks taking detector pixel indices (u, v).
         """
         del i
-        return _parallel_detector_rays(self.grid, self.detector, self.detector_roll_deg)
+        return _parallel_detector_rays(self.grid, self.detector, self.detector_roll)

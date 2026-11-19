@@ -127,7 +127,7 @@ def test_host_cgls_matches_streamed_normal_equations(host, depth):
             DETECTOR,
             data,
             init_x=initial,
-            config=replace(config, stream_projections=True),
+            config=replace(config, stream=True),
         )  # fmt: skip
         for config, initial in cases
     ]

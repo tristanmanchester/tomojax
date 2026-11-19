@@ -73,15 +73,15 @@ def _geometry(fields: dict[str, str], count: int) -> tuple[Detector, Grid, np.nd
         ]
     )
     shape = ends - starts
-    centre = (starts + (shape - 1) / 2 - [axis, axis, (nv - 1) / 2]) * [du, du, dv]
+    center = (starts + (shape - 1) / 2 - [axis, axis, (nv - 1) / 2]) * [du, du, dv]
     options: dict[str, Any] = ast.literal_eval(fields.get("OPTIONS", "{}"))
-    centred = options.get(
+    centered = options.get(
         "axis_to_the_center", "Y" if _yes(fields, "AXIS_TO_THE_CENTER", default=True) else "N"
     )
-    if str(centred).upper() == "Y":
-        centre[:2] = 0
+    if str(centered).upper() == "Y":
+        center[:2] = 0
     nx, ny, nz = (int(n) for n in shape)
-    cx, cy, cz = (float(v) for v in centre)
+    cx, cy, cz = (float(v) for v in center)
     grid = Grid(nx, ny, nz, du, du, dv, vol_center=(cx, cy, cz))
     angles = float(fields.get("ANGLE_OFFSET", "0")) + float(
         fields["ANGLE_BETWEEN_PROJECTIONS"]

@@ -56,7 +56,7 @@ including its flats/darks and recorded angular positions. Select among several
 sequences with `data_path="1.1"`. Effective sample pixels and recorded distances
 are retained in millimetres. Neither format records the rotation centre: the scan
 has the detector middle and its record says so; find the centre with
-`tj.align(scan, fit="centre")`. Missing virtual detector pixels
+`tj.align(scan, fit="center")`. Missing virtual detector pixels
 and mismatched EDF dimensions are errors. Helical and multi-volume Bliss
 sequences are not yet supported.
 
@@ -82,7 +82,7 @@ names; `--data-path`,
 `--image-key-path` and `--angles-path` (expert settings, `--config-keys`) name
 them otherwise. Options add corrections: `--zingers`, `--stripes 9`
 (rings), `--reject-views` (views that jump from their neighbours, such as a
-closed shutter); `--select-views` and `--crop` keep
+closed shutter); `--views` and `--crop` keep
 part of the scan. Already-corrected data should skip this
 step; applying the logarithm again changes the data.
 
@@ -114,7 +114,7 @@ select first to read less. `np.asarray(frames.counts)` reads
 the current selection into memory.
 
 The views are corrected on the GPU a batch at a time, read from the file as
-they are needed. `batch_views` must be a positive integer and `epsilon` finite
+they are needed. `views_per_batch` must be a positive integer and `epsilon` finite
 and positive. `frames.selected(...)` and `scan.selected(...)` keep a nonempty
 selection in acquisition order: a forward slice, increasing integer indices,
 or a Boolean mask. Selection keeps each view's geometry and its original
@@ -190,7 +190,7 @@ A file written by TomoJAX carries its geometry. External NXtomo and Data Exchang
 use their format-defined axial parallel-beam model and recorded angles. Without a
 recorded pitch they load in pixel units, and `pixel_size=` gives the physical one.
 Without a recorded rotation centre the centre is the detector middle and the record
-says so; `tj.align(scan, fit="centre")` estimates it. The vertical origin is the
+says so; `tj.align(scan, fit="center")` estimates it. The vertical origin is the
 axial detector midplane.
 
 An explicit `detector=tj.Detector(nu, nv, du, dv, center=(u, v))` or full
@@ -337,12 +337,12 @@ defaults, and a setting the method does not take fails with the ones it does. Fo
 variation:
 
 ```bash
-printf 'regulariser = "huber_tv"\nhuber_delta = 0.01\n' > huber.toml
+printf 'regularizer = "huber_tv"\nhuber_delta = 0.01\n' > huber.toml
 uv run --no-sync tomojax recon corrected.nxs -o tv.nxs --method fista --config huber.toml
 ```
 
 In Python this is
-`tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv", huber_delta=0.01))`,
+`tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv", huber_delta=0.01))`,
 with `from tomojax.recon import FistaConfig`.
 The keywords, like the command's options, replace the config's fields of the
 same names: `iterations=100` wins over the config's `iterations`.
@@ -358,7 +358,7 @@ estimate to raise an empirical dimensionless minimum of `5e-5`. Set a positive
 weight explicitly to bypass estimation, or `0` to disable TV. Weights are
 physically normalized; do not change them when switching length units.
 
-`tomojax align --fit centre` estimates the detector centre (the centre of
+`tomojax align --fit center` estimates the detector centre (the centre of
 rotation). To compare trial centres by eye instead, shift the detector in
 Python; the centre is in the geometry's length unit, so pixels times `du`:
 
@@ -369,10 +369,10 @@ import tomojax as tj
 
 scan = tj.load("corrected.nxs", poses=False)
 d = scan.detector
-for u_px in (-4, -2, 0, 2, 4):
-    detector = replace(d, center=(u_px * d.du, d.center[1]))
+for shift in (-4, -2, 0, 2, 4):
+    detector = replace(d, center=(shift * d.du, d.center[1]))
     trial = replace(scan, geometry=replace(scan.geometry, detector=detector))
-    tj.save(f"cor{u_px:+d}.nxs", tj.reconstruct(trial))
+    tj.save(f"cor{shift:+d}.nxs", tj.reconstruct(trial))
 ```
 
 If the projections or the volume are larger than GPU memory, see

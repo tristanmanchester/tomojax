@@ -38,7 +38,7 @@ def test_calibration_and_local_poses_replay_the_fitted_physical_geometry(kind):
     axis /= np.linalg.norm(axis)
     cone = kind in {"cone", "segments"}
     if cone:
-        beam = ConeBeam(40, 65, detector_roll_deg=4, detector_pitch_deg=-3, source_height=0.4)
+        beam = ConeBeam(40, 65, detector_roll=4, detector_pitch=-3, source_height=0.4)
         geometry = ConeGeometry(grid, detector, angles, beam, axis_unit=tuple(axis))
         if kind == "segments":
             geometry = ConeSegments(
@@ -48,23 +48,23 @@ def test_calibration_and_local_poses_replay_the_fitted_physical_geometry(kind):
                         geometry,
                         angles=angles[30:],
                         detector=replace(detector, center=(0.7, -0.1)),
-                        beam=replace(beam, source_height=1.3, detector_roll_deg=-2),
+                        beam=replace(beam, source_height=1.3, detector_roll=-2),
                     ),
                 )
             )
     else:
         geometry = (
-            ParallelGeometry(grid, detector, angles, detector_roll_deg=3.2)
+            ParallelGeometry(grid, detector, angles, detector_roll=3.2)
             if kind == "parallel"
-            else LaminographyGeometry(grid, detector, angles, tilt_deg=31, detector_roll_deg=3.2)
+            else LaminographyGeometry(grid, detector, angles, tilt=31, detector_roll=3.2)
             if kind == "lamino"
-            else RotationAxisGeometry(grid, detector, angles, axis, detector_roll_deg=3.2)
+            else RotationAxisGeometry(grid, detector, angles, axis, detector_roll=3.2)
         )
     rng = np.random.default_rng(1152)
     previous = rng.normal(size=(n, 6)) * [0.002, 0.001, 0.003, 0.03, 0.04, 0.02]
     fitted = rng.normal(size=(n, 6)) * [0.001, 0.002, 0.001, 0.02, 0.03, 0.01]
     scan = Scan(np.zeros((n, 48, 48), np.float32), geometry).with_poses(previous)
-    corrections = {"centre": (0.6, -0.4) if cone else 0.6, "tilt": 0.4, "roll": 0.75}
+    corrections = {"center": (0.6, -0.4) if cone else 0.6, "tilt": 0.4, "roll": 0.75}
     corrected, calibration = publish_calibration(
         scan, fitted, corrections, native_pixel_size=(0.35, 0.45)
     )
@@ -77,21 +77,21 @@ def test_calibration_and_local_poses_replay_the_fitted_physical_geometry(kind):
     np.testing.assert_allclose(stack_view_poses(corrected.geometry, n), expected, atol=6e-7)
     assert corrected.projections is scan.projections
     assert set(calibration) == set(corrections)
-    expected_centre = np.array(detector.center) + np.array([0.6 * 0.35, -0.4 * 0.45 if cone else 0])
-    np.testing.assert_allclose(corrected.detector.center, expected_centre, atol=1e-14)
+    expected_center = np.array(detector.center) + np.array([0.6 * 0.35, -0.4 * 0.45 if cone else 0])
+    np.testing.assert_allclose(corrected.detector.center, expected_center, atol=1e-14)
     if cone:
         for (_, old_beam, _), (_, new_beam, _) in zip(
             cone_parts(scan.geometry), cone_parts(corrected.geometry), strict=True
         ):
             np.testing.assert_array_equal(old_beam.source(), new_beam.source())
             assert old_beam.source_to_detector == new_beam.source_to_detector
-            assert new_beam.detector_roll_deg == old_beam.detector_roll_deg + 0.75
+            assert new_beam.detector_roll == old_beam.detector_roll + 0.75
     else:
-        assert describe(corrected.geometry)[1]["detector_roll_deg"] == 3.95
+        assert describe(corrected.geometry)[1]["detector_roll"] == 3.95
         # A tilted parallel or laminography axis stays in the y-z plane.
         tilted = RotationAxisGeometry if kind == "axis" else LaminographyGeometry
         assert type(nominal_geometry(corrected.geometry)) is tilted
-        assert calibration["centre"] == pytest.approx(expected_centre[0])
+        assert calibration["center"] == pytest.approx(expected_center[0])
         assert calibration["roll"] == 3.95
     replay = scan_from_record(record_of(corrected), poses=True)
     np.testing.assert_allclose(stack_view_poses(replay.geometry, n), expected, atol=8e-7)

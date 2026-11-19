@@ -6,7 +6,7 @@ The rotation axis projects 5.3 pixels off the detector centre, and every view
 has its own pose: a slow wobble of the sample plus jitter, up to 0.25° in each
 rotation and 2.4 pixels across and 1.5 pixels along the axis. gVXR traces the
 projections through the movement's meshes at those poses. ``tj.align`` fits
-``("centre", "translations", "rotations")`` jointly with the volume; nominal
+``("center", "translations", "rotations")`` jointly with the volume; nominal
 and aligned scans are reconstructed with the same FISTA-TV settings.
 
 A shared rigid movement of the object and its poses cannot be distinguished by
@@ -41,7 +41,7 @@ from tomojax.geometry import grid_volume_origin, stack_view_poses
 
 SIZE, LAYERS, FIELD, MIDDLE = 384, 82, 29.6, 3.0  # voxels, z layers, field (mm), centre z
 VIEWS, PHOTONS = 400, 2e4
-CENTRE_PX, ROTATION_DEG = 5.3, 0.25
+CENTER_PX, ROTATION_DEG = 5.3, 0.25
 RECONSTRUCTION = {"iterations": 100, "tv_weight": 0.01, "nonnegative": True, "warm_start": True}
 ZOOM = 140  # voxels on a side of the balance close-up
 
@@ -71,9 +71,9 @@ def comparison(
     """Register one rigid object gauge, scoring actual detector coordinates in pixels."""
     pitch = np.array([grid.vx, grid.vy, grid.vz])
     extent = pitch * [grid.nx, grid.ny, grid.nz]
-    centre = np.asarray(grid_volume_origin(grid)) + (extent - pitch) / 2
+    center = np.asarray(grid_volume_origin(grid)) + (extent - pitch) / 2
     marks = np.stack(np.meshgrid(*[np.linspace(-0.3, 0.3, 3)] * 3, indexing="ij"), -1)
-    marks = marks.reshape(-1, 3) * extent + centre
+    marks = marks.reshape(-1, 3) * extent + center
 
     def pixels(poses: np.ndarray, points: np.ndarray, current: tj.Detector) -> np.ndarray:
         lab = np.einsum("nij,kj->nki", poses[:, :3, :3], points) + poses[:, None, :3, 3]
@@ -124,27 +124,27 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
         poses[:, :3, :3] @ Rotation.from_euler("YXZ", params[:, [1, 0, 2]]).as_matrix()
     )
     poses[:, :3, 3] += params[:, [3, 5, 4]]
-    centre = CENTRE_PX * voxel
+    center = CENTER_PX * voxel
     light = _watch.transmission(
         meshes,
         np.asarray(poses, np.float64),
         (detector.nv, detector.nu),
         voxel,
-        centre=(centre, MIDDLE),
+        center=(center, MIDDLE),
         gvxr_python=args.gvxr_python,
     )
     scan = tj.Scan(_watch.measure(light, PHOTONS, seed=2), geometry)
     truth = _watch.truth(meshes, (LAYERS, SIZE, SIZE), voxel, (0.0, 0.0, MIDDLE))
 
     start = time.perf_counter()
-    fit = ("centre", "translations", "rotations")
+    fit = ("center", "translations", "rotations")
     result = tj.align(scan, fit=fit)
     align_seconds = time.perf_counter() - start
     before = np.asarray(tj.reconstruct(scan, "fista", **RECONSTRUCTION).volume)
     after = np.asarray(tj.reconstruct(result.scan, "fista", **RECONSTRUCTION).volume)
 
     estimated = np.asarray(stack_view_poses(result.scan.geometry, VIEWS), np.float64)
-    true_detector = dataclasses.replace(detector, center=(centre, MIDDLE))
+    true_detector = dataclasses.replace(detector, center=(center, MIDDLE))
     adjusted, gauge, detector_error = comparison(
         estimated, poses, result.scan.detector, true_detector, grid
     )
@@ -188,7 +188,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
         "voxel_mm": voxel,
         "grid": [SIZE, SIZE, LAYERS],
         "slice_z_mm": _watch.levels(meshes)["balance"],
-        "true_axis_offset_px": CENTRE_PX,
+        "true_axis_offset_px": CENTER_PX,
         "motion": "wobble and jitter, up to 0.25 deg per rotation, 2.4 px dx, 1.5 px dz",
         "fit": list(fit),
         "align_seconds": align_seconds,
@@ -198,7 +198,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
         "relative_l2_true_poses": error(np.asarray(ideal.volume), moved),
         "comparison_rigid_transform": gauge.tolist(),
         "detector_landmark_rmse_px": detector_error,
-        "fitted_centre_px": result.scan.detector.center[0] / voxel,
+        "fitted_center_px": result.scan.detector.center[0] / voxel,
         "rotation_rmse_deg": np.rad2deg(np.sqrt(np.mean(rotation_difference**2, 0))).tolist(),
         "shift_rmse_px": (np.sqrt(np.mean(shift_difference**2, 0)) / voxel).tolist(),
         "device": str(__import__("jax").devices()[0]),
@@ -232,8 +232,8 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
         MUTED,
     )
     voxel = float(metrics["voxel_mm"])
-    centre = (np.array([-4.98, -6.918]) + FIELD / 2) / voxel - 0.5
-    lo = np.round(centre - ZOOM / 2).astype(int)
+    center = (np.array([-4.98, -6.918]) + FIELD / 2) / voxel - 0.5
+    lo = np.round(center - ZOOM / 2).astype(int)
     window = (slice(lo[1], lo[1] + ZOOM), slice(lo[0], lo[0] + ZOOM))
     columns = (
         ("before", "Nominal geometry", f"error {metrics['relative_l2_nominal']:.3f}"),

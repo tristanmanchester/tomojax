@@ -112,6 +112,6 @@ def test_spdhg_one_iteration_smoke_is_finite_and_positive() -> None:
     assert float(jnp.min(volume)) >= 0.0
     assert info["loss"] == [4.0]
     assert info["A_norm"] is None
-    assert info["regulariser"] == "tv"
+    assert info["regularizer"] == "tv"
     assert info["views_per_batch"] == 1
     assert info["num_blocks"] == 2

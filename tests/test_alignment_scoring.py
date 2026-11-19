@@ -40,7 +40,7 @@ def test_one_common_rigid_gauge_has_zero_detector_error(example):
     np.testing.assert_allclose(adjusted, estimated, atol=2e-10)
 
 
-def test_detector_centre_counts_and_matches_its_equivalent_translation(example):
+def test_detector_center_counts_and_matches_its_equivalent_translation(example):
     grid, detector, truth = arrangement()
     true_detector = tj.Detector(48, 48, 1.0, 1.0, center=(2.3, 0.0))
     equivalent = truth.copy()

@@ -252,7 +252,7 @@ def _edf_scan(path: Path) -> Path:
 
 
 @pytest.mark.parametrize("kind", ["bliss", "edf"])
-def test_a_file_without_a_recorded_centre_loads_it_at_the_middle(kind, tmp_path, monkeypatch):
+def test_a_file_without_a_recorded_center_loads_it_at_the_middle(kind, tmp_path, monkeypatch):
     # Recorded pixel sizes and no centre: the scan loads with the centre at the middle of
     # the detector and says the file recorded none; nothing estimates it.
     from tomojax.alignment import api as alignment

@@ -26,7 +26,7 @@ _PUBLIC = (
     "--flats",
     "--darks",
     "--angles",
-    "--select-views",
+    "--views",
     "--crop",
     "--reject-views",
     "--zingers",
@@ -56,7 +56,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  tomojax preprocess frames/ --flats flats/ --darks darks/ --angles angles.csv "
             "-o scan.nxs\n"
             "  tomojax preprocess raw.nxs -o scan.nxs --crop 100:900,50:1950 "
-            "--select-views 0:1200:4"
+            "--views 0:1200:4"
         ),
     )
     _ = parser.add_argument(
@@ -74,7 +74,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--angles", metavar="FILE", help="Angles in degrees (.npy, or one per line)"
     )
     _ = parser.add_argument(
-        "--select-views",
+        "--views",
         metavar="RANGES",
         help="Keep only these views, as indices and ranges (for example 0:90,120:180:2)",
     )
@@ -225,7 +225,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     flats = _level_or_path(cast("str | None", args.flats))
     darks = _level_or_path(cast("str | None", args.darks))
     angles, preview = cast("str | None", args.angles), cast("str | None", args.preview)
-    select = cast("str | None", args.select_views)
+    select = cast("str | None", args.views)
     crop = cast("str | None", args.crop)
     check_paths(
         parser,

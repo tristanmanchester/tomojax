@@ -19,8 +19,8 @@ from tomojax.geometry import Detector, Grid, LaminographyGeometry
 def scan() -> tuple[Grid, Detector, jnp.ndarray]:
     grid = Grid(7, 6, 5, 0.8, 1.1, 1.3)
     detector = Detector(9, 6, 0.9, 1.2, (0.17, -0.21))
-    geometry = LaminographyGeometry(grid, detector, [11.0, 64.0, 157.0], tilt_deg=25)
-    return grid, detector, jnp.asarray([geometry.pose_for_view(i) for i in range(3)])
+    geometry = LaminographyGeometry(grid, detector, [11.0, 64.0, 157.0], tilt=25)
+    return grid, detector, jnp.asarray([geometry.pose_matrix(i) for i in range(3)])
 
 
 @pytest.mark.parametrize(

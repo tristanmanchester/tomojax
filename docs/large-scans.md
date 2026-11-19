@@ -55,7 +55,7 @@ set `TMPDIR` to a directory on a fast local disk before loading a large scan.
 | FISTA-TV | Streamed under the same rule; host-volume sweeps keep a detector-row ring | CUDA Joseph moves unmasked ordinary-TV state to host slabs when it does not fit |
 | SPDHG-TV | Streamed under the same rule, with its sinogram-sized dual and any weights also kept in host memory | On the GPU, with about eight volumes |
 
-`stream_projections = true` or `false` in the method's configuration (a
+`stream = true` or `false` in the method's configuration (a
 `--config` key) overrides the 40% rule. Streaming needs the batched projection
 operators: CGLS streams only with the canonical detector grid, and FISTA-TV and
 SPDHG-TV not with an explicit detector grid or the exact ray integrator. SPDHG's
@@ -238,7 +238,7 @@ or view rejection; keep the raw and calibration inputs unchanged in the context.
 
 When the detector samples the rotation axis more finely than the voxels (the
 pixel pitch, divided by the magnification in a cone beam, is smaller than a
-voxel), the projectors do work the volume cannot use. `scan.binned(factor)`
+voxel), the projectors do work the volume cannot use. `scan.binned(binning)`
 averages `factor × factor` pixels, which cuts projection cost by `factor²`.
 Pixels that do not fill a block at the edges are dropped, and the detector
 centre moves to match. Iterative `tj.reconstruct` warns, with the

@@ -23,7 +23,7 @@ def problem(request):
     grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 4, 0.7, 1.2, (0.17, -0.23))
     angles = [83, 13, 161, 49, 122]
-    geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=23)
+    geometry = LaminographyGeometry(grid, detector, angles, tilt=23)
     if request.param == "cone":
         geometry = ConeSegments(
             (
@@ -305,7 +305,7 @@ def test_mlem_matches_dense_updates_for_ray_model_and_explicit_detector(model, s
     grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 4, 0.7, 1.2, (0.17, -0.23))
     angles = [83, 13, 161, 49, 122]
-    geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=23)
+    geometry = LaminographyGeometry(grid, detector, angles, tilt=23)
     det_grid = None
     if shifted:  # the lattice moved a third of a pixel along u
         u, v = get_detector_grid_device(detector)

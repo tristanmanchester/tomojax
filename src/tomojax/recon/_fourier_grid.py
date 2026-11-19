@@ -152,15 +152,15 @@ def sample_rolled_rows(
     _, nv, nu = projections.shape
     angle = np.deg2rad(roll_deg)
     c, s = np.cos(angle), np.sin(angle)
-    centre_u, centre_v = (nu - 1) / 2, (nv - 1) / 2
-    x = np.arange(nu, dtype=np.float64) - centre_u
-    z = np.asarray(positions, dtype=np.float64) - centre_v
+    center_u, center_v = (nu - 1) / 2, (nv - 1) / 2
+    x = np.arange(nu, dtype=np.float64) - center_u
+    z = np.asarray(positions, dtype=np.float64) - center_v
     z = z[:, :, None] if z.ndim == 2 else z[:, None, None]
     result = np.zeros((len(positions), len(order), nu), dtype=np.float32)
     # Read the band of measured rows the slab touches once, for all views.
-    reach = np.abs(s) * centre_u / pitch_ratio + 1
-    lowest = np.floor(np.nanmin(c * z) + centre_v - reach)
-    highest = np.ceil(np.nanmax(c * z) + centre_v + reach)
+    reach = np.abs(s) * center_u / pitch_ratio + 1
+    lowest = np.floor(np.nanmin(c * z) + center_v - reach)
+    highest = np.ceil(np.nanmax(c * z) + center_v + reach)
     first, last = int(max(0, lowest)), int(min(nv - 1, highest))
     if not np.isfinite(z).all() or last < first:
         return result
@@ -170,8 +170,8 @@ def sample_rolled_rows(
     views = np.arange(len(order))[:, None]
     for row, height in enumerate(z):
         source_u, source_v = np.broadcast_arrays(
-            centre_u + c * x + s * height * pitch_ratio,
-            centre_v - s * x / pitch_ratio + c * height,
+            center_u + c * x + s * height * pitch_ratio,
+            center_v - s * x / pitch_ratio + c * height,
         )
         lower_u, lower_v = np.floor(source_u), np.floor(source_v)
         frac_u = (source_u - lower_u).astype(np.float32)

@@ -24,10 +24,10 @@ def _scan(grid, detector, geometry=None):
 
 
 def _scaled(grid: Grid, detector: Detector, scale: float) -> tuple[Grid, Detector]:
-    centre = None if grid.vol_center is None else tuple(v * scale for v in grid.vol_center)
+    center = None if grid.vol_center is None else tuple(v * scale for v in grid.vol_center)
     return (
         replace(
-            grid, vx=grid.vx * scale, vy=grid.vy * scale, vz=grid.vz * scale, vol_center=centre
+            grid, vx=grid.vx * scale, vy=grid.vy * scale, vz=grid.vz * scale, vol_center=center
         ),
         replace(
             detector,
@@ -48,12 +48,12 @@ def test_roi_cropping_gives_the_same_dimensions_at_any_unit(scale, roi) -> None:
 
 
 @pytest.mark.parametrize("scale", [1e-6, 1.0, 1e6])
-@pytest.mark.parametrize("centre", [(0.0, 0.0, 0.0), (5.0, -1.0, 0.0)])
-def test_cylinder_matches_independent_world_coordinates_at_any_unit(scale, centre) -> None:
-    grid = Grid(nx=11, ny=13, nz=3, vx=1.0, vy=0.75, vz=1.0, vol_center=centre)
+@pytest.mark.parametrize("center", [(0.0, 0.0, 0.0), (5.0, -1.0, 0.0)])
+def test_cylinder_matches_independent_world_coordinates_at_any_unit(scale, center) -> None:
+    grid = Grid(nx=11, ny=13, nz=3, vx=1.0, vy=0.75, vz=1.0, vol_center=center)
     detector = Detector(nu=9, nv=11, du=0.8, dv=1.0, center=(0.2, 0.0))
-    x = np.arange(grid.nx) - (grid.nx - 1) / 2 + centre[0]
-    y = (np.arange(grid.ny) - (grid.ny - 1) / 2) * grid.vy + centre[1]
+    x = np.arange(grid.nx) - (grid.nx - 1) / 2 + center[0]
+    y = (np.arange(grid.ny) - (grid.ny - 1) / 2) * grid.vy + center[1]
     radius = (detector.nu - 1) * detector.du / 2 - abs(detector.center[0])
     expected = np.hypot(x[None, :], y[:, None]) <= radius
     grid, detector = _scaled(grid, detector, scale)
@@ -95,7 +95,7 @@ def test_roi_keeps_placement_only_when_shape_is_unchanged():
     assert cropped.nx < grid.nx
 
 
-def test_axial_roi_follows_off_centre_detector_rows():
+def test_axial_roi_follows_off_center_detector_rows():
     grid = Grid(12, 12, 10, 1, 1, 1, vol_center=(0, 0, 1))
     detector = Detector(12, 2, 1, 1, center=(0, 2))
     result, _ = region_grid(_scan(grid, detector), roi="bbox", grid=None)
@@ -132,7 +132,7 @@ def test_laminography_roi_keeps_voxels_the_tilted_rays_measure():
 
     grid, detector = Grid(9, 9, 21, 1, 1, 1), Detector(30, 10, 1, 1)
     angles = np.linspace(0, 360, 90, endpoint=False)
-    scan = _scan(grid, detector, LaminographyGeometry(grid, detector, angles, tilt_deg=60))
+    scan = _scan(grid, detector, LaminographyGeometry(grid, detector, angles, tilt=60))
     cropped, _ = region_grid(scan, roi="bbox", grid=None)
     # The axis point at height 8 projects to detector v = 4, inside the 10 rows.
     top = grid_volume_origin(cropped)[2] + (cropped.nz - 1) * cropped.vz

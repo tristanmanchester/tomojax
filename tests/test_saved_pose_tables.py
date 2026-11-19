@@ -16,8 +16,8 @@ def _metadata(columns: int, frame: str, segmented: bool) -> dict:
     grid = tj.Grid(6, 5, 4, 1.0, 0.8, 1.2)
     detector = tj.Detector(9, 7, 0.9, 1.1, (0.2, -0.3))
     beams = [
-        tj.ConeBeam(18.0, 30.0, axis_offset=0.4, detector_roll_deg=7.0),
-        tj.ConeBeam(22.0, 35.0, detector_pitch_deg=-5.0, axis_offset=-0.2),
+        tj.ConeBeam(18.0, 30.0, axis_offset=0.4, detector_roll=7.0),
+        tj.ConeBeam(22.0, 35.0, detector_pitch=-5.0, axis_offset=-0.2),
     ]
     angles = np.asarray([0.0, 55.0, 130.0, 185.0, 250.0, 310.0], np.float32)
     # Distinct rows in the posed first orbit, so a swapped view shows; the
@@ -78,7 +78,7 @@ def test_saved_pose_tables_have_six_coordinates_and_independent_frames(
     original = meta["align_params"].copy()
     scan = _scan(meta)
     assert scan.poses is not None and scan.poses.shape == (6, 6)
-    actual = [scan.geometry.pose_for_view(i) for i in range(6)]
+    actual = [scan.geometry.pose_matrix(i) for i in range(6)]
     np.testing.assert_allclose(actual, _expected_poses(meta), rtol=2e-6, atol=1e-7)
     np.testing.assert_array_equal(meta["align_params"], original)
     # An unposed orbit remains exactly unposed, including its optional dy.
@@ -102,7 +102,7 @@ def test_posed_and_unposed_orbits_combine_and_round_trip(segmented: bool, tmp_pa
     tj.save(path, combined)
     restored = tj.load(path)
     np.testing.assert_allclose(
-        [restored.geometry.pose_for_view(i) for i in range(12)],
+        [restored.geometry.pose_matrix(i) for i in range(12)],
         expected,
         rtol=2e-6,
         atol=1e-7,
@@ -139,7 +139,7 @@ def test_omitted_saved_pose_frame_keeps_its_existing_meaning(segmented: bool) ->
     del meta["align_gauge"]
     scan = _scan(meta)
     np.testing.assert_allclose(
-        [scan.geometry.pose_for_view(i) for i in range(6)],
+        [scan.geometry.pose_matrix(i) for i in range(6)],
         _expected_poses(meta),
         rtol=2e-6,
         atol=1e-7,

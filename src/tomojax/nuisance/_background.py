@@ -81,10 +81,10 @@ def estimate_background_offset(
     safe_sum_w = jnp.where(sum_w > 0.0, sum_w, 1.0)
     ramp_mean = jnp.sum(weights * ramp, axis=(1, 2)) / safe_sum_w
     residual_mean = jnp.sum(weights * residual, axis=(1, 2)) / safe_sum_w
-    centred_ramp = ramp - ramp_mean[:, None, None]
-    centred_residual = jnp.where(included, residual - residual_mean[:, None, None], 0.0)
-    variance = jnp.sum(weights * centred_ramp**2, axis=(1, 2))
-    covariance = jnp.sum(weights * centred_ramp * centred_residual, axis=(1, 2))
+    centered_ramp = ramp - ramp_mean[:, None, None]
+    centered_residual = jnp.where(included, residual - residual_mean[:, None, None], 0.0)
+    variance = jnp.sum(weights * centered_ramp**2, axis=(1, 2))
+    covariance = jnp.sum(weights * centered_ramp * centered_residual, axis=(1, 2))
     ridge_value = jnp.asarray(max(float(ridge), 0.0), dtype=jnp.float32)
     shrink = sum_w / jnp.where(sum_w + ridge_value > 0.0, sum_w + ridge_value, 1.0)
     # Eliminate the intercept using centered moments. Unlike a 2x2 determinant,

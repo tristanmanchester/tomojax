@@ -31,7 +31,7 @@ class FixtureGeometry:
 
     poses: np.ndarray
 
-    def pose_for_view(self, index: int) -> np.ndarray:
+    def pose_matrix(self, index: int) -> np.ndarray:
         """Return the exact world-from-object matrix used during rendering."""
         return self.poses[index]
 

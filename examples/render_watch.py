@@ -91,7 +91,7 @@ def run(args: argparse.Namespace) -> tuple[np.ndarray, dict[str, object]]:
         np.asarray(stack_view_poses(geometry, VIEWS)),
         (LAYERS, SIZE),
         voxel,
-        centre=(0.0, MIDDLE),
+        center=(0.0, MIDDLE),
         gvxr_python=args.gvxr_python,
     )
     scan = tj.Scan(_watch.measure(light, PHOTONS, seed=4), geometry)

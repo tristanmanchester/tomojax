@@ -98,7 +98,7 @@ measurements require independent calibration evidence and repair before `Rings`.
 - `tomojax inspect` checks storage and missing calibration in recognized raw
   acquisitions. A file that records no axial centre loads with the centre at the
   middle of the detector; estimate it with `tj.estimate_center` or
-  `tj.align(fit="centre")`. A valid report does not certify physical geometry or
+  `tj.align(fit="center")`. A valid report does not certify physical geometry or
   reconstruction readiness.
 - External HDF5 links require readable backing files at their recorded paths.
   The loader reports missing detector sources; it does not repair damaged files
@@ -133,7 +133,7 @@ measurements require independent calibration evidence and repair before `Rings`.
   acquisitions with recorded pitch, an absent rotation centre is not estimated
   at load: the scan has the centre at the detector middle and its record says
   "not_recorded"; `tj.reconstruct` reports that status. Supply `detector=` or
-  fit it with `tj.align(scan, fit="centre")`. Missing angles require `angles=`. See the
+  fit it with `tj.align(scan, fit="center")`. Missing angles require `angles=`. See the
   [quickstart](quickstart.md#correct-raw-detector-frames).
 - Content-discovered external acquisitions remain detector counts even when
   stored as floats. Missing flat/dark calibration requires `flats=` (frames or
@@ -170,7 +170,7 @@ measurements require independent calibration evidence and repair before `Rings`.
   conjugate-panel coverage, and Parker-weighted short scans, whose weights an
   offset detector shares only between rays that were both measured. The
   iterative solvers model any per-view poses exactly. Cone-beam
-  projection needs the canonical detector grid (no `detector_roll_deg`
+  projection needs the canonical detector grid (no `detector_roll`
   replay grid; detector roll is part of `ConeBeam`). The CUDA kernels need
   CuPy; without it the JAX reference runs, about ten times slower. On CUDA
   the matched transpose is slower than ASTRA's approximate backprojector (see

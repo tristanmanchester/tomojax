@@ -96,7 +96,7 @@ def inputs():
 def test_transmission_row_stage_preserves_domain_and_within_domain_order(batch):
     raw, t, calibration = inputs()
     steps = (PhaseRows(), Offset(0.03), NormalizeRows(), CountsOffset(2), Offset(0.07))
-    done = correct_frames(raw - 2, **calibration, steps=steps, batch_views=batch)
+    done = correct_frames(raw - 2, **calibration, steps=steps, views_per_batch=batch)
     expected = -2 * np.log((t + 0.03) / (t + 0.03).mean(0) + 0.07)
     np.testing.assert_allclose(done.projections, expected, atol=1e-6)
     assert [r.name for r in done.records] == [
@@ -119,7 +119,7 @@ def test_row_transmission_and_phase_are_binned_after_log(factor, batch):
         raw,
         **calibration,
         steps=(PhaseRows(), NormalizeRows()),
-        batch_views=batch,
+        views_per_batch=batch,
         binning=factor,
     )
     expected = -2 * np.log(t / t.mean(0))

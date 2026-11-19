@@ -6,14 +6,14 @@ Run it in the gVXR environment (``.artifacts/gvxr-env``, with ``gvxr``)::
 
 ``PLAN.npz`` holds ``meshes`` (a directory), ``names`` and ``mu_mm`` (one
 linear attenuation coefficient per ``NAME.stl``, in mm^-1), the detector
-``shape`` ``(nv, nu)``, ``pixel_mm``, ``centre_mm`` ``(u, v)``, ``supersample``
+``shape`` ``(nv, nu)``, ``pixel_mm``, ``center_mm`` ``(u, v)``, ``supersample``
 and ``poses``, TomoJAX world-from-object transforms ``(views, 4, 4)``.
 Optional ``source_to_axis_mm`` and ``source_to_detector_mm`` select cone beam:
 the source is at ``(0, -source_to_axis_mm, 0)`` and the detector at
-``(centre_u, source_to_detector_mm - source_to_axis_mm, centre_v)`` with fixed
+``(center_u, source_to_detector_mm - source_to_axis_mm, center_v)`` with fixed
 world x/z column/row directions. Without these keys the beam is parallel +y.
 Detector coordinates follow TomoJAX:
-``x = (u - nu/2 + 1/2) * pixel + centre_u`` (and likewise z for v).
+``x = (u - nu/2 + 1/2) * pixel + center_u`` (and likewise z for v).
 
 gVXR traces each mesh's path length on a detector ``supersample`` times finer
 in both directions. Each pixel is the mean of ``exp(-sum(mu * length))`` over
@@ -69,7 +69,7 @@ def render(plan: dict[str, np.ndarray]) -> dict[str, np.ndarray | str]:
     mu, fractions = _spectrum(plan)
     nv, nu = (int(n) for n in plan["shape"])
     pixel = float(plan["pixel_mm"])
-    centre_u, centre_v = (float(c) for c in plan["centre_mm"])
+    center_u, center_v = (float(c) for c in plan["center_mm"])
     s = int(plan["supersample"])
     refinement = int(plan.get("raster_refinement", 1))
     if refinement < 1 or refinement % 2 == 0:
@@ -92,11 +92,11 @@ def render(plan: dict[str, np.ndarray]) -> dict[str, np.ndarray | str]:
                 )
             gvxr.usePointSource()
             source = np.array([0.0, -sod, 0.0])
-            screen = np.array([centre_u, sdd - sod, centre_v])
+            screen = np.array([center_u, sdd - sod, center_v])
         else:
             gvxr.useParallelBeam()
-            source = np.array([centre_u, -100.0, centre_v])
-            screen = np.array([centre_u, 100.0, centre_v])
+            source = np.array([center_u, -100.0, center_v])
+            screen = np.array([center_u, 100.0, center_v])
         gvxr.setDetectorNumberOfPixels(nu * s * refinement, nv * s * refinement)
         gvxr.setDetectorPixelSize(pixel / (s * refinement), pixel / (s * refinement), "mm")
         for name in names:

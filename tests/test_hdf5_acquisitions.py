@@ -10,7 +10,7 @@ from tomojax.io.api import locate_frames, read_acquisition
 
 @pytest.mark.parametrize("recorded", [False, True])
 @pytest.mark.parametrize("single_row", [False, True])
-def test_data_exchange_preserves_syrmep_units_and_leaves_an_unrecorded_centre_at_the_middle(
+def test_data_exchange_preserves_syrmep_units_and_leaves_an_unrecorded_center_at_the_middle(
     tmp_path, recorded, single_row
 ):
     path = tmp_path / "renamed.bin"

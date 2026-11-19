@@ -42,7 +42,7 @@ def scan_geometry(angles: np.ndarray, binning: int) -> tj.LaminographyGeometry:
         sampling_grid(binning),
         tj.Detector(640, 540, PITCH_UM, PITCH_UM),
         angles,
-        tilt_deg=35.0,
+        tilt=35.0,
     )
 
 

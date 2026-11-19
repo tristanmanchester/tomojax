@@ -24,7 +24,7 @@ def transform_detector_grid(
     *,
     det_u_px: object = 0.0,
     det_v_px: object = 0.0,
-    detector_roll_deg: object = 0.0,
+    detector_roll: object = 0.0,
     native_du: float,
     native_dv: float,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -41,7 +41,7 @@ def transform_detector_grid(
     import jax.numpy as jnp
 
     Xr, Zr = base_grid
-    roll_rad = jnp.deg2rad(jnp.asarray(detector_roll_deg, dtype=jnp.float32))
+    roll_rad = jnp.deg2rad(jnp.asarray(detector_roll, dtype=jnp.float32))
     cos_r = jnp.cos(roll_rad)
     sin_r = jnp.sin(roll_rad)
     Xrot = cos_r * Xr - sin_r * Zr
@@ -56,7 +56,7 @@ def detector_grid_from_calibration(
     *,
     det_u_px: object = 0.0,
     det_v_px: object = 0.0,
-    detector_roll_deg: object = 0.0,
+    detector_roll: object = 0.0,
     native_du: float | None = None,
     native_dv: float | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -68,7 +68,7 @@ def detector_grid_from_calibration(
         Detector dimensions and sampling; its centre is replaced by calibration offsets.
     det_u_px, det_v_px : array-like, optional
         Scalar detector-centre offsets in native pixels, after rotation.
-    detector_roll_deg : array-like, optional
+    detector_roll : array-like, optional
         Scalar detector-plane roll in degrees.
     native_du, native_dv : float or None, optional
         Native pixel pitches converting offsets to physical lengths; default to detector pitches.
@@ -83,7 +83,7 @@ def detector_grid_from_calibration(
         zero_center_detector_grid(detector),
         det_u_px=det_u_px,
         det_v_px=det_v_px,
-        detector_roll_deg=detector_roll_deg,
+        detector_roll=detector_roll,
         native_du=float(detector.du) if native_du is None else float(native_du),
         native_dv=float(detector.dv) if native_dv is None else float(native_dv),
     )
@@ -92,14 +92,14 @@ def detector_grid_from_calibration(
 def detector_grid_from_detector_roll(
     detector: Detector,
     *,
-    detector_roll_deg: object,
+    detector_roll: object,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Build a rolled detector grid preserving the detector's physical centre."""
     return detector_grid_from_calibration(
         detector,
         det_u_px=float(detector.center[0]) / float(detector.du),
         det_v_px=float(detector.center[1]) / float(detector.dv),
-        detector_roll_deg=detector_roll_deg,
+        detector_roll=detector_roll,
     )
 
 
@@ -117,7 +117,7 @@ def detector_grid_from_geometry_inputs(
     detector : Detector
         Detector geometry with physical centre offsets.
     geometry_inputs : mapping or object
-        Metadata with optional detector_roll_deg.
+        Metadata with optional detector_roll.
 
     Returns
     -------
@@ -126,9 +126,9 @@ def detector_grid_from_geometry_inputs(
     """
     roll = None
     if isinstance(geometry_inputs, dict):
-        roll = geometry_inputs.get("detector_roll_deg")
+        roll = geometry_inputs.get("detector_roll")
     else:
-        roll = getattr(geometry_inputs, "detector_roll_deg", None)
+        roll = getattr(geometry_inputs, "detector_roll", None)
     if roll is None or float(cast("float", roll)) == 0.0:
         return None
-    return detector_grid_from_detector_roll(detector, detector_roll_deg=roll)
+    return detector_grid_from_detector_roll(detector, detector_roll=roll)

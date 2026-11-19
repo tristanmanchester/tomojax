@@ -25,11 +25,11 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
     detector = Detector(16, 7, 0.8, 1.3)
     angles = np.linspace(0, 180, 16, endpoint=False)
     geometry = (
-        LaminographyGeometry(grid, detector, angles, tilt_deg=25)
+        LaminographyGeometry(grid, detector, angles, tilt=25)
         if tilted
         else ParallelGeometry(grid, detector, angles)
     )
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(16)], dtype=jnp.float32)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(16)], dtype=jnp.float32)
     z, y, x = jnp.meshgrid(
         jnp.arange(5) - 2, jnp.arange(12) - 5.5, jnp.arange(12) - 5.5, indexing="ij"
     )
@@ -84,14 +84,14 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(
 
 @pytest.mark.numerical
 @pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
+@pytest.mark.parametrize("regularizer", ["tv", "huber_tv"])
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
-def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regulariser, solver):
+def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regularizer, solver):
     shape = (1, 1, 2)
     grid = Grid(*shape[::-1], 0.8, 1.1, 1.3)
     detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
     geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=jnp.float32)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(3)], dtype=jnp.float32)
     forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, "joseph")
     matrix = np.asarray(jax.jacfwd(lambda x: forward(x.reshape(shape)).ravel())(jnp.zeros(2)))
     matrix = matrix.astype(np.float64)
@@ -108,8 +108,8 @@ def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regularise
             lipschitz=np.linalg.norm(matrix, 2) ** 2,
             projector_model="joseph",
             backend="jax",
-            stream_projections=stream,
-            regulariser=regulariser,
+            stream=stream,
+            regularizer=regularizer,
         )
     else:
         config = SPDHGConfig(
@@ -118,8 +118,8 @@ def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regularise
             log_every=0,
             projector_model="joseph",
             backend="jax",
-            stream_projections=stream,
-            regulariser=regulariser,
+            stream=stream,
+            regularizer=regularizer,
         )
     measured = data.reshape(3, 3, 4)
     contrast = np.sqrt(np.mean((measured - measured.mean((-2, -1), keepdims=True)) ** 2))

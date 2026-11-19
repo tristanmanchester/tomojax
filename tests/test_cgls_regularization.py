@@ -72,8 +72,8 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
     shape, spacing = (3, 2, 2), (0.8, 1.2, 0.7)
     grid = Grid(*shape[::-1], *spacing)
     detector = Detector(5, 4, 0.7, 1.1, (0.13, -0.29))
-    geometry = LaminographyGeometry(grid, detector, [13, 49, 83, 122, 161], tilt_deg=23)
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    geometry = LaminographyGeometry(grid, detector, [13, 49, 83, 122, 161], tilt=23)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
 
     def forward(flat):
         volume = flat.reshape(shape)
@@ -109,7 +109,7 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
             views_per_batch=3,
             backend=backend,
             projector_model=model,
-            joseph_interpolation=interpolation,
+            interpolation=interpolation,
         ),
     )
     np.testing.assert_allclose(np.asarray(actual).ravel(), expected, rtol=3e-4, atol=3e-5)
@@ -126,7 +126,7 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
 @pytest.mark.parametrize("value", [-1.0, np.inf, np.nan])
 def test_gradient_damping_rejects_invalid_weights(value):
     grid, detector = Grid(2, 2, 2, 1.0, 1.0, 1.0), Detector(3, 3, 1.0, 1.0)
-    geometry = LaminographyGeometry(grid, detector, [0, 45, 90], tilt_deg=23)
+    geometry = LaminographyGeometry(grid, detector, [0, 45, 90], tilt=23)
     with pytest.raises(ValueError, match="gradient_damping"):
         cgls(
             geometry,

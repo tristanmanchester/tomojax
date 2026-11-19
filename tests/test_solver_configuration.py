@@ -17,7 +17,7 @@ def _problem(tilted=False):
     detector = Detector(4, 3, 0.9, 1.2, (0.17, -0.23))
     angles = np.array([13.0, 68.0, 142.0])
     geometry = (
-        LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+        LaminographyGeometry(grid, detector, angles, tilt=30)
         if tilted
         else ParallelGeometry(grid, detector, angles)
     )
@@ -47,7 +47,7 @@ def test_solvers_reject_invalid_counts_before_building_geometry(monkeypatch, sol
     [
         ("fista", "tv_weight"),
         ("fista", "lipschitz"),
-        ("fista", "recon_rel_tol"),
+        ("fista", "tolerance"),
         ("spdhg", "tv_weight"),
         ("spdhg", "theta"),
         ("spdhg", "tau"),
@@ -90,7 +90,7 @@ def test_solvers_reject_zero_sizes_and_steps(solver, field):
         (fista_tv if solver == "fista" else spdhg_tv)(geometry, grid, detector, data, config=config)
 
 
-@pytest.mark.parametrize("field", ["tv_prox_iterations", "power_iterations", "recon_patience"])
+@pytest.mark.parametrize("field", ["tv_prox_iterations", "power_iterations", "patience"])
 @pytest.mark.parametrize("value", [-1, 1.5])
 def test_fista_rejects_invalid_internal_iteration_counts(field, value):
     grid, detector, geometry, data = _problem()
@@ -128,7 +128,7 @@ def test_spdhg_rejects_invalid_weight_tail_before_geometry(
         mapped = np.memmap(tmp_path / "weights", mode="w+", dtype=dtype, shape=data.shape)
         mapped[:] = weights
         weights = mapped
-    config = SPDHGConfig(iterations=iterations, views_per_batch=2, stream_projections=stream)
+    config = SPDHGConfig(iterations=iterations, views_per_batch=2, stream=stream)
     with pytest.raises(ValueError, match="weights must be real, finite in FP32 and nonnegative"):
         spdhg_tv(geometry, grid, detector, data, weights=weights, config=config)
 
@@ -249,7 +249,7 @@ def test_zero_iteration_budget_keeps_initial_volume_and_logs_nothing(solver):
     grid, detector, geometry, data = _problem()
     initial = np.random.default_rng(99).normal(size=(2, 3, 2)).astype(np.float32)
     if solver == "fista":
-        config = FistaConfig(iterations=0, tv_weight=0, lipschitz=10, recon_rel_tol=0)
+        config = FistaConfig(iterations=0, tv_weight=0, lipschitz=10, tolerance=0)
     else:
         config = SPDHGConfig(iterations=0, tv_weight=0, tau=0.1, sigma_data=0.1, log_every=0)
     calls = []

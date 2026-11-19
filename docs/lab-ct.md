@@ -68,8 +68,8 @@ width that covers the defect. A faint offset on a steep gradient can remain.
 `--zingers` replaces bright specks.
 In Python these are steps of `tomojax.corrections` (`BeamHardening`,
 `Stripes`, `Zingers`) passed to `tj.load_frames(path).corrected(...)`.
-`tomojax import --axis-offset` and TOML keys `detector_roll_deg`,
-`detector_pitch_deg`, `detector_yaw_deg` set the detector's orientation; pitch and
+`tomojax import --axis-offset` and TOML keys `detector_roll`,
+`detector_pitch`, `detector_yaw` set the detector's orientation; pitch and
 yaw apply to cone data only. They are
 right-handed rotations about the detector's own axes, the normal (pointing back
 towards the source), u and v, in that order: positive roll turns u towards v,
@@ -94,7 +94,7 @@ shifts (`alignment/x-shifts`, `y-shifts`) become per-view detector centres, so
 the measured pixels are never resampled. They are measured from the centre that
 a Zeiss reconstruction setup records as `AutoRecon/CenterShift`. A raw scan without
 it loads with the centre at the middle of the detector, the shifts added to it, and
-`detector_center_status` "not_recorded": include `"centre"` in `tj.align`'s `fit=`, or
+`detector_center_status` "not_recorded": include `"center"` in `tj.align`'s `fit=`, or
 pass `detector=tj.Detector(nu, nv, pitch, pitch, (u, 0))` for a known centre, with
 `pitch` the recorded pixel size times the magnification. An explicit `geometry=` is used as given,
 without the shifts, and the loader warns how many views it dropped. Because the
@@ -134,7 +134,7 @@ require both start and stop indices:
 ```bash
 printf 'binning = 16\n' > preview.toml
 uv run --no-sync tomojax preprocess scan.txrm --darks 0 -o corrected.nxs \
-  --select-views 0:801:8 --config preview.toml
+  --views 0:801:8 --config preview.toml
 uv run --no-sync tomojax recon corrected.nxs -o preview.nxs \
   --method cgls --iterations 10 --grid 64 64 64 --roi off
 uv run --no-sync tomojax inspect preview.nxs --preview previews
@@ -165,10 +165,10 @@ still need correction. A wrong centre doubles or blurs features; roll leaves a h
 error. Fit both shared corrections with:
 
 ```bash
-uv run --no-sync tomojax align scan.nxs -o calibrated.nxs --fit centre roll
+uv run --no-sync tomojax align scan.nxs -o calibrated.nxs --fit center roll
 ```
 
-For a cone beam, `"centre"` fits detector-u and detector-v offsets in the detector frame.
+For a cone beam, `"center"` fits detector-u and detector-v offsets in the detector frame.
 These are not object translations or a replacement for the recorded `ConeBeam.axis_offset`.
 `"roll"` fits one detector angle; add `"tilt"` if the nominal rotation-axis direction is wrong.
 The returned scan carries the calibrated geometry. Source distances, detector pitch and yaw
@@ -200,7 +200,7 @@ uv run --no-sync tomojax recon calibrated.nxs -o tv.nxs --method fista --iterati
 
 Expert settings are fields of the explicitly selected method's configuration
 class in a `--config` TOML file: `views_per_batch = 16`, say, or FISTA's
-`regulariser = "huber_tv"` (see the
+`regularizer = "huber_tv"` (see the
 [quickstart](quickstart.md#reconstruct-and-inspect-slices)); in Python, pass
 the class, `tj.reconstruct(scan, "fista", config=FistaConfig(...))`.
 
@@ -260,7 +260,7 @@ errors, device-resident times and the 1024³ FDK.
 import tomojax as tj
 
 scan = tj.load_frames("scan/part.xtekct", darks=0).corrected()
-calibrated = tj.align(scan, fit=("centre", "roll")).scan
+calibrated = tj.align(scan, fit=("center", "roll")).scan
 recon = tj.reconstruct(calibrated, "cgls")
 tj.save("part-recon.nxs", recon)
 ```

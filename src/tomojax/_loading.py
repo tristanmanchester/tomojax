@@ -295,7 +295,11 @@ class Frames:
         return int(self.counts.shape[0])
 
     def corrected(
-        self, *steps: Step, epsilon: float = 1e-6, batch_views: int | None = None, binning: int = 1
+        self,
+        *steps: Step,
+        epsilon: float = 1e-6,
+        views_per_batch: int | None = None,
+        binning: int = 1,
     ) -> Scan:
         """Correct detector counts to line integrals with the requested steps.
 
@@ -303,7 +307,7 @@ class Frames:
         and dark fields, transmission steps, the log, and line-integral steps,
         each in the order given (see :mod:`tomojax.corrections`). ``epsilon``
         must be finite and positive; it bounds the flat field and transmission
-        below. Views are corrected on the device in batches of ``batch_views``,
+        below. Views are corrected on the device in batches of ``views_per_batch``,
         a positive integer. Automatic view batches target 32 MiB for simple
         pipelines, or 256 MiB including additional workspace such as the padded
         FFT arrays needed for Paganin phase retrieval.
@@ -322,7 +326,7 @@ class Frames:
             Corrections applied in domain order, then in the order supplied.
         epsilon : float, optional
             Positive finite lower bound for flat field and transmission.
-        batch_views : int or None, optional
+        views_per_batch : int or None, optional
             Positive views per device batch; None selects a workspace-based size.
         binning : int, optional
             Positive factor for averaging detector blocks after correction.
@@ -352,7 +356,7 @@ class Frames:
             white_level=self.white_level,
             steps=steps,
             epsilon=epsilon,
-            batch_views=batch_views,
+            views_per_batch=views_per_batch,
             binning=binning,
         )
         everything = len(done.kept) == self.views

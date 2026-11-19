@@ -27,7 +27,7 @@ it is never supplied to the solver. Use a timeout for a bounded CPU check:
 
 ```bash
 PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s \
-  .venv/bin/python bench/fit_alignment.py --case centre
+  .venv/bin/python bench/fit_alignment.py --case center
 PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s \
   .venv/bin/python bench/fit_alignment.py --case translations --geometry lamino
 PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s \
@@ -38,7 +38,7 @@ PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s \
   .venv/bin/python bench/fit_alignment.py --case rotations --geometry lamino
 ```
 
-`--case setup` fits translations, tilt and roll together. `--case centre --geometry cone`
+`--case setup` fits translations, tilt and roll together. `--case center --geometry cone`
 checks both cone detector-centre coordinates. `--fit translations` on a roll or tilt case gives a
 comparison with a model that cannot represent the injected angle. `--case clean` checks false
 motion. `--size 64 --views 90 --grid-size 32` is a somewhat finer small check; the working grid
@@ -443,7 +443,7 @@ uv run --no-sync python bench/beam_hardening/run.py simulation --split dev --met
 exact transpose and FDK against ASTRA (`cone_vec`, `FDK_CUDA`) and TIGRE (`Ax`,
 `Atb`, `fdk`) on one circular scan of five ellipsoids, with errors against
 exact analytic line integrals and the voxelised phantom, and times both
-projectors again with the rotation axis tilted by `--tilt-deg` (default 0.5°),
+projectors again with the rotation axis tilted by `--tilt` (default 0.5°),
 which TomoJAX handles with its general-geometry kernels. TIGRE runs in a child
 process, since it refuses a GPU on which JAX holds memory.
 

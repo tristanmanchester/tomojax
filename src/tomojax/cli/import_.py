@@ -51,11 +51,11 @@ def _build_parser() -> argparse.ArgumentParser:
         parser,
         settings={
             "detector_center": None,
-            "tilt_deg": None,
+            "tilt": None,
             "tilt_about": "x",
-            "detector_roll_deg": 0.0,
-            "detector_pitch_deg": 0.0,
-            "detector_yaw_deg": 0.0,
+            "detector_roll": 0.0,
+            "detector_pitch": 0.0,
+            "detector_yaw": 0.0,
         },
     )
     tiff = parser.add_argument_group("TIFF stacks")
@@ -96,16 +96,16 @@ def _geometry_metadata(
         "detector_center_status": "provided",
     }
     if geometry == "lamino":
-        if settings.get("tilt_deg") is None:
-            parser.error("Laminography needs tilt_deg in --config")
+        if settings.get("tilt") is None:
+            parser.error("Laminography needs tilt in --config")
         metadata.update(
-            tilt_deg=float(cast("float", settings["tilt_deg"])),
+            tilt=float(cast("float", settings["tilt"])),
             tilt_about=str(settings.get("tilt_about", "x")),
         )
     if geometry != "cone":
-        if settings.get("detector_pitch_deg") or settings.get("detector_yaw_deg"):
-            parser.error("detector_pitch_deg and detector_yaw_deg need --geometry cone")
-        metadata["detector_roll_deg"] = float(cast("float", settings.get("detector_roll_deg", 0.0)))
+        if settings.get("detector_pitch") or settings.get("detector_yaw"):
+            parser.error("detector_pitch and detector_yaw need --geometry cone")
+        metadata["detector_roll"] = float(cast("float", settings.get("detector_roll", 0.0)))
     if geometry == "cone":
         sod = cast("float | None", args.source_to_axis)
         sdd = cast("float | None", args.source_to_detector)
@@ -115,9 +115,9 @@ def _geometry_metadata(
             beam = ConeBeam(
                 sod,
                 sdd,
-                detector_roll_deg=float(cast("float", settings.get("detector_roll_deg", 0.0))),
-                detector_pitch_deg=float(cast("float", settings.get("detector_pitch_deg", 0.0))),
-                detector_yaw_deg=float(cast("float", settings.get("detector_yaw_deg", 0.0))),
+                detector_roll=float(cast("float", settings.get("detector_roll", 0.0))),
+                detector_pitch=float(cast("float", settings.get("detector_pitch", 0.0))),
+                detector_yaw=float(cast("float", settings.get("detector_yaw", 0.0))),
                 axis_offset=cast("float", args.axis_offset),
             )
         except ValueError as exc:

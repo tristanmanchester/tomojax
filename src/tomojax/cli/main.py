@@ -57,7 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "A lab CT scan from start to finish:\n"
             "  tomojax import scan/scan.xtekct -o scan.nxs\n"
             "  tomojax inspect scan.nxs\n"
-            "  tomojax align scan.nxs -o aligned.nxs --fit centre roll\n"
+            "  tomojax align scan.nxs -o aligned.nxs --fit center roll\n"
             "  tomojax recon aligned.nxs -o recon.nxs\n"
             "  tomojax inspect recon.nxs --preview previews\n"
             "  tomojax export recon.nxs -o slices/"

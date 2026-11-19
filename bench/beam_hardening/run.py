@@ -65,9 +65,7 @@ def tomojax_geometry(case: dict) -> object:
     if g["beam"] == "cone":
         beam = tj.ConeBeam(g["source_to_axis"], g["source_to_detector"])
         return tj.ConeGeometry(grid=grid, detector=detector, angles=angles, beam=beam)
-    return tj.LaminographyGeometry(
-        grid=grid, detector=detector, angles=angles, tilt_deg=case["tilt_deg"]
-    )
+    return tj.LaminographyGeometry(grid=grid, detector=detector, angles=angles, tilt=case["tilt"])
 
 
 def recorded(spectrum: dict, material: str) -> dict:
@@ -138,11 +136,11 @@ def score_case(arrays: dict, info: dict, names: list[str], figures: Path | None 
         truth = sum(f * relative[s["material"]] for f, s in zip(fractions, shapes, strict=True))
         g = cases.GEOMETRIES[case["geometry"]]
         outer = max(shapes, key=lambda s: s["radius"])
-        centre = tuple(c / g["voxel"] + (g["grid"] - 1) / 2 for c in outer["centre"])
+        center = tuple(c / g["voxel"] + (g["grid"] - 1) / 2 for c in outer["center"])
         title = f"{case['name']}: {case['spectrum']['kv']:.0f} kV, in units of {level}"
         figures.mkdir(parents=True, exist_ok=True)
         path = figures / f"{case['name']}.png"
-        plots.save(path, truth, images, centre, g["voxel"], title, window=(0.0, 1.5))
+        plots.save(path, truth, images, center, g["voxel"], title, window=(0.0, 1.5))
     return record
 
 

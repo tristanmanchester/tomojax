@@ -48,7 +48,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
         np.asarray(stack_view_poses(geometry, VIEWS)),
         (SLAB, SIZE),
         voxel,
-        centre=(0.0, z),
+        center=(0.0, z),
         gvxr_python=args.gvxr_python,
     )
     scan = tj.Scan(_watch.measure(light, PHOTONS, seed=1), geometry)
@@ -109,8 +109,8 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
         MUTED,
     )
     voxel = float(metrics["voxel_mm"])
-    centre = (np.array([-4.98, -6.918]) + FIELD / 2) / voxel - 0.5  # the balance
-    lo = np.round(centre - ZOOM / 2).astype(int)
+    center = (np.array([-4.98, -6.918]) + FIELD / 2) / voxel - 0.5  # the balance
+    lo = np.round(center - ZOOM / 2).astype(int)
     window = (slice(lo[1], lo[1] + ZOOM), slice(lo[0], lo[0] + ZOOM))
     columns = (
         ("truth", "Ground truth", ""),

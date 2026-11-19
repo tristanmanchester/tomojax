@@ -35,7 +35,7 @@ class ViewBatches:
         backend: str,
         batch_size: int,
         model: Model,
-        joseph_interpolation: str,
+        interpolation: str,
         *,
         absolute_weights: bool,
     ) -> None:
@@ -48,7 +48,7 @@ class ViewBatches:
         self.counts: jax.Array | None = None  # on a device's share: which views count
         self.coefficients: jax.Array | None = None
         self.backend, self.model = backend, model
-        self.interpolation, self.absolute_weights = joseph_interpolation, absolute_weights
+        self.interpolation, self.absolute_weights = interpolation, absolute_weights
         if isinstance(model, ConeModel):
             # Cone weights are non-negative, so |A|^T is the transpose itself.
             self.coefficients = model.coefficients(poses, grid)

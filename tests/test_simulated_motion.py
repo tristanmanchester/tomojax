@@ -43,12 +43,12 @@ def test_a_slip_is_an_object_frame_step_that_turns_with_the_sample():
     np.testing.assert_allclose(moved[30:, 1], 5e-3 * np.sin(theta), atol=1e-12)
 
 
-def test_a_tip_turns_the_sample_about_its_centre():
-    centre = np.array([0.2, -0.1, 0.4])
+def test_a_tip_turns_the_sample_about_its_center():
+    center = np.array([0.2, -0.1, 0.4])
     tip = motion.Slip(0, (0.0, 0.0, 0.0), tip_rad=1e-3, tip_axis=(0.0, 1.0, 0.0))
-    transform = tip.transform(centre)
-    np.testing.assert_allclose(transform[:3, :3] @ centre + transform[:3, 3], centre, atol=1e-15)
-    edge = centre + np.array([0.0, 0.0, 0.5])
+    transform = tip.transform(center)
+    np.testing.assert_allclose(transform[:3, :3] @ center + transform[:3, 3], center, atol=1e-15)
+    edge = center + np.array([0.0, 0.0, 0.5])
     moved = transform[:3, :3] @ edge + transform[:3, 3] - edge
     np.testing.assert_allclose(np.linalg.norm(moved), 0.5e-3, rtol=1e-6)
 
@@ -66,8 +66,8 @@ def test_stage_tilt_reaches_the_sample_as_tilt_times_height():
 def test_recorded_components_compose_to_the_poses():
     nominal = axial_nominal(ANGLES)
     ranges = {
-        "centre_um": [1, 5],
-        "axis_tilt_deg": [0.1, 0.5],
+        "center_um": [1, 5],
+        "axis_tilt": [0.1, 0.5],
         "axis_roll_deg": [0.0, 0.2],
         "harmonics": 3,
         "radial_um": [0.5, 2],
@@ -151,7 +151,7 @@ def _landmark_px(poses, true):
 def test_gauge_free_truth_has_no_component_along_the_fits_rigid_translations():
     nominal = axial_nominal(ANGLES)
     m = motion.Motion(
-        centre_offset_um=300.0,
+        center_offset_um=300.0,
         radial_um=((400.0,), (300.0,)),
         radial_phase=((0.3,), (1.1,)),
         axial_um=(250.0,),
@@ -187,7 +187,7 @@ def _exact_tier_ends(labels=("raw", "gauge-free")):
         np.abs(y - 2) < 4
     ) * (np.abs(z) < 6)
     m = motion.Motion(
-        centre_offset_um=300.0,
+        center_offset_um=300.0,
         radial_um=((0.0, 400.0), (0.0, 300.0)),
         radial_phase=((0.0, 0.3), (0.0, 1.1)),
         axial_um=(250.0,),

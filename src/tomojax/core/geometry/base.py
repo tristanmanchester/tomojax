@@ -304,17 +304,17 @@ class Detector:
 def _parallel_detector_rays(
     grid: Grid,
     detector: Detector,
-    detector_roll_deg: float = 0.0,
+    detector_roll: float = 0.0,
 ) -> RayPair:
     """Return the standard detector-plane ray model used by parallel-beam setups.
 
-    The pixel lattice turns by ``detector_roll_deg`` about the detector centre,
+    The pixel lattice turns by ``detector_roll`` about the detector centre,
     from u towards v.
     """
     nu, nv = int(detector.nu), int(detector.nv)
     du, dv = float(detector.du), float(detector.dv)
     cx, cz = float(detector.center[0]), float(detector.center[1])
-    angle = math.radians(float(detector_roll_deg))
+    angle = math.radians(float(detector_roll))
     c, s = math.cos(angle), math.sin(angle)
 
     y0 = grid_volume_origin(grid)[1]
@@ -333,7 +333,7 @@ def _parallel_detector_rays(
 class Geometry(Protocol):
     """Common pose interface for projector-compatible geometries.
 
-    Projector contract: ``pose_for_view(i)`` returns a 4x4 world_from_object
+    Projector contract: ``pose_matrix(i)`` returns a 4x4 world_from_object
     transform. The core projector combines that pose with the supplied
     ``Grid``/``Detector`` to construct the standard parallel-beam detector
     rays; it does not consume custom per-pixel ray callbacks.
@@ -343,7 +343,7 @@ class Geometry(Protocol):
     contract and custom rays are not supported by the projectors.
     """
 
-    def pose_for_view(self, i: int) -> PoseMatrix:
+    def pose_matrix(self, i: int) -> PoseMatrix:
         """Return a row-major world-from-object homogeneous transform.
 
         Parameters

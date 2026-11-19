@@ -23,7 +23,7 @@ def test_parallel_slab_sum_and_transpose_keep_global_weights(monkeypatch, tilt):
     grid = tj.Grid(9, 7, 11, 1.1, 0.8, 1.3, vol_center=(0.3, -0.7, 0.9))
     detector = tj.Detector(17, 15, 1.2, 1.0, (0.2, -0.4))
     geometry = tj.LaminographyGeometry(grid, detector, np.arange(0, 180, 23), tilt)
-    poses = np.asarray([geometry.pose_for_view(i) for i in range(8)], np.float32)
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(8)], np.float32)
     rng = np.random.default_rng(913)
     x = rng.normal(size=(11, 7, 9)).astype(np.float32)
     y = rng.normal(size=(8, 15, 17)).astype(np.float32)
@@ -70,7 +70,7 @@ def test_parallel_host_cgls_matches_resident_with_penalties(monkeypatch, initial
         gradient_damping=0.1,
         views_per_batch=3,
         backend="cuda",
-        stream_projections=True,
+        stream=True,
     )
     expected, _ = cgls(geometry, grid, detector, data, init_x=start, config=cfg)
     monkeypatch.setattr(slabs, "slab_depth", lambda *args: 4)

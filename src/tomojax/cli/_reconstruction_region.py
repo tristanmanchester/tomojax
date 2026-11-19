@@ -144,12 +144,12 @@ def _pixel_coordinates(scan: Scan, views: np.ndarray, points: np.ndarray):
     geometry, detector = scan.geometry, scan.detector
     if is_cone_beam(geometry):
         frames = view_frames(geometry)[views]
-        for source, centre, u, v in frames.reshape(len(views), 4, 3):
+        for source, center, u, v in frames.reshape(len(views), 4, 3):
             normal = np.cross(u, v)
             ray = points - source
             with np.errstate(divide="ignore", invalid="ignore"):
-                t = (normal @ (centre - source)) / (ray @ normal)
-            hit = source + t[:, None] * ray - centre
+                t = (normal @ (center - source)) / (ray @ normal)
+            hit = source + t[:, None] * ray - center
             # Solve hit = a u + b v in the detector plane.
             basis = np.array([[u @ u, u @ v], [u @ v, v @ v]])
             a, b = np.linalg.solve(basis, np.stack([hit @ u, hit @ v]))
@@ -159,10 +159,10 @@ def _pixel_coordinates(scan: Scan, views: np.ndarray, points: np.ndarray):
                 np.where(behind, -1.0, b + detector.nv / 2 - 0.5),
             )
         return
-    roll = np.deg2rad(float(getattr(geometry, "detector_roll_deg", 0.0) or 0.0))
+    roll = np.deg2rad(float(getattr(geometry, "detector_roll", 0.0) or 0.0))
     c, s = np.cos(roll), np.sin(roll)
     for view in views:
-        pose = np.asarray(cast("Any", geometry).pose_for_view(int(view)), np.float64)
+        pose = np.asarray(cast("Any", geometry).pose_matrix(int(view)), np.float64)
         lab = points @ pose[:3, :3].T + pose[:3, 3]
         x, z = lab[:, 0] - detector.center[0], lab[:, 2] - detector.center[1]
         # The rolled lattice sits at R(roll) @ (x', z') from the detector centre.

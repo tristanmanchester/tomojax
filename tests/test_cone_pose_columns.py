@@ -32,7 +32,7 @@ def test_cuda_forward_pose_and_volume_ad_match_reference(distance):
     grid = Grid(7, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.23, -0.17, 0.31))
     detector = Detector(9, 7, 1.3, 0.8, (0.17, -0.13))
     geometry = ConeGeometry(
-        grid, detector, [13.7, 78.1, 147.3], ConeBeam(distance, 2 * distance), tilt_deg=53
+        grid, detector, [13.7, 78.1, 147.3], ConeBeam(distance, 2 * distance), tilt=53
     )
     nominal = stack_view_poses(geometry, 3)
     rng = np.random.default_rng(892)
@@ -162,7 +162,7 @@ def test_cone_column_batching_keeps_independent_volumes_and_view_order(shared):
     if not cone.use_cuda_cone():
         pytest.skip("requires CUDA cone kernels")
     grid, detector = Grid(7, 6, 5, 0.7, 1.1, 0.9), Detector(9, 7, 1.3, 0.8)
-    geometry = ConeGeometry(grid, detector, [13.7, 78.1, 147.3], ConeBeam(80, 160), tilt_deg=53)
+    geometry = ConeGeometry(grid, detector, [13.7, 78.1, 147.3], ConeBeam(80, 160), tilt=53)
     coeff = cone.cone_coefficients(stack_view_poses(geometry, 3), grid, detector, geometry.beam)
     rng = np.random.default_rng(19)
     volume = jnp.asarray(rng.uniform(size=(2, 5, 6, 7)), jnp.float32)

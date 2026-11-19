@@ -41,13 +41,13 @@ def _copy_array_metadata(value: object) -> np.ndarray | None:
 
 # Geometry metadata keys copied into geometry inputs, with their conversions.
 _GEOMETRY_PASSTHROUGH: dict[str, Callable[[Any], Any]] = {
-    "tilt_deg": float,
+    "tilt": float,
     "tilt_about": str,
     "cone_beam": lambda value: value,
     "cone_segments": lambda value: value,
     "trajectory_lengths": lambda value: value,
     "axis_unit_lab": lambda value: value,
-    "detector_roll_deg": float,
+    "detector_roll": float,
 }
 
 

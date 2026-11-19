@@ -189,11 +189,11 @@ def cone_parameter_scales(nominal, frames, grid, native):
         -1, 3
     )
     lab = np.einsum("nij,kj->nki", poses[:, :3, :3], corners) + poses[:, None, :3, 3]
-    centre, u, v, source = (frames[:, k] for k in range(4))
+    center, u, v, source = (frames[:, k] for k in range(4))
     normal = np.cross(u, v)
     ray = lab - source[:, None]
     denominator = np.einsum("nki,ni->nk", ray, normal)
-    distance = np.einsum("ni,ni->n", centre - source, normal)
+    distance = np.einsum("ni,ni->n", center - source, normal)
     if np.any(denominator * distance[:, None] <= 0):
         raise ValueError("cone pose scaling requires the volume support in front of the source")
     ray_derivative = (distance[:, None] / denominator)[..., None, None] * (

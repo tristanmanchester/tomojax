@@ -16,7 +16,7 @@
 Each method's settings are a configuration class: `FBPConfig` (FBP and FDK),
 `FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig`, `SIRTConfig` and
 `MLEMConfig`. Pass one as
-`tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`;
+`tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv"))`;
 keywords such as `iterations=` replace the fields of the same name. The same
 fields are the keys of a `tomojax recon --config` TOML file
 (`tomojax recon --config-keys` lists them).
@@ -251,7 +251,7 @@ diagnostics and are not differentiable layers. Alignment's FISTA
 reconstruction stages keep the ray model on parallel beams; its coupled pose
 solver samples with Joseph by default (`ray_integrator`).
 
-Set `joseph_interpolation="cubic"` with that model to use Keys cubic convolution
+Set `interpolation="cubic"` with that model to use Keys cubic convolution
 (a=-1/2) and its matched transpose on either backend. The default is `"linear"`.
 Cubic uses a 4-by-4 transverse stencil, including negative weights, and costs
 more than bilinear sampling. It matches `project_joseph(interpolation="cubic")`;

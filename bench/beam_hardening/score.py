@@ -47,7 +47,7 @@ def _owned(case: dict, x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """Index of the innermost shape containing each point, or -1."""
     owner = np.full(x.shape, -1)
     for i, shape in enumerate(case["shapes"]):  # parents precede their children
-        inside = np.hypot(x - shape["centre"][0], y - shape["centre"][1]) <= shape["radius"]
+        inside = np.hypot(x - shape["center"][0], y - shape["center"][1]) <= shape["radius"]
         owner[inside] = i
     return owner
 
@@ -90,12 +90,12 @@ def gauge_mu(materials: list[str], arrays: dict, gauge: tuple) -> dict[str, floa
 def _distance_to_edges(case: dict, i: int, x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """Distance from each point to the boundary of shape ``i``'s own region."""
     shape = case["shapes"][i]
-    d = np.abs(np.hypot(x - shape["centre"][0], y - shape["centre"][1]) - shape["radius"])
+    d = np.abs(np.hypot(x - shape["center"][0], y - shape["center"][1]) - shape["radius"])
     for child in case["shapes"]:
         if child.get("parent") == i:
             d = np.minimum(
                 d,
-                np.abs(np.hypot(x - child["centre"][0], y - child["centre"][1]) - child["radius"]),
+                np.abs(np.hypot(x - child["center"][0], y - child["center"][1]) - child["radius"]),
             )
     return d
 
@@ -109,13 +109,13 @@ def _interior(case: dict, i: int, owner: np.ndarray, x: np.ndarray, y: np.ndarra
 def _radius(image: np.ndarray, case: dict, i: int, x: np.ndarray, y: np.ndarray) -> float | None:
     """Median over clean angular sectors of the local mid-level edge radius, minus truth."""
     shape, voxel = case["shapes"][i], GEOMETRIES[case.get("geometry", "cone")]["voxel"]
-    rho = np.hypot(x - shape["centre"][0], y - shape["centre"][1])
-    phi = np.arctan2(y - shape["centre"][1], x - shape["centre"][0])
+    rho = np.hypot(x - shape["center"][0], y - shape["center"][1])
+    phi = np.arctan2(y - shape["center"][1], x - shape["center"][0])
     near = np.abs(rho - shape["radius"]) <= 6 * voxel
     others = [s for k, s in enumerate(case["shapes"]) if k != i]
     clash = np.zeros(x.shape, bool)
     for s in others:
-        clash |= np.abs(np.hypot(x - s["centre"][0], y - s["centre"][1]) - s["radius"]) <= 7 * voxel
+        clash |= np.abs(np.hypot(x - s["center"][0], y - s["center"][1]) - s["radius"]) <= 7 * voxel
     sectors = int(np.clip(2 * np.pi * shape["radius"] / 1.0, 4, 24))
     which = np.floor((phi + np.pi) / (2 * np.pi) * sectors).astype(int) % sectors
     found = []
@@ -130,7 +130,7 @@ def _radius(image: np.ndarray, case: dict, i: int, x: np.ndarray, y: np.ndarray)
         counts = np.histogram(r, edges)[0]
         if counts.min() == 0:
             continue
-        centres = 0.5 * (edges[1:] + edges[:-1])
+        centers = 0.5 * (edges[1:] + edges[:-1])
         profile = np.histogram(r, edges, weights=values)[0] / counts
         side = np.sign(profile - 0.5 * (inner + outer)) * np.sign(inner - outer)
         crossing = np.nonzero((side[:-1] > 0) & (side[1:] <= 0))[0]
@@ -138,7 +138,7 @@ def _radius(image: np.ndarray, case: dict, i: int, x: np.ndarray, y: np.ndarray)
             j = crossing[0]
             level = 0.5 * (inner + outer)
             t = (profile[j] - level) / (profile[j] - profile[j + 1])
-            found.append(centres[j] + t * (centres[j + 1] - centres[j]))
+            found.append(centers[j] + t * (centers[j + 1] - centers[j]))
     return float(np.median(found)) if found else None
 
 
@@ -187,24 +187,24 @@ def _matrix(image: np.ndarray, case: dict, big: int, owner: np.ndarray) -> dict:
     """
     x, y = coordinates(case)
     matrix = case["shapes"][big]
-    rho = np.hypot(x - matrix["centre"][0], y - matrix["centre"][1])
+    rho = np.hypot(x - matrix["center"][0], y - matrix["center"][1])
     region = _interior(case, big, owner, x, y)
     rods = [s for s in case["shapes"] if s.get("parent") == big]
     for rod in rods:
-        region &= np.hypot(x - rod["centre"][0], y - rod["centre"][1]) > 1.5 * rod["radius"] + 0.5
+        region &= np.hypot(x - rod["center"][0], y - rod["center"][1]) > 1.5 * rod["radius"] + 0.5
     result = {}
     own = image[region].mean()
     radius = matrix["radius"]
-    centre, rim = (
+    center, rim = (
         region & (rho < 0.3 * radius),
         region & (rho > 0.7 * radius) & (rho < 0.9 * radius),
     )
-    if centre.sum() > 20 and rim.sum() > 20:
-        result["cupping"] = float((image[rim].mean() - image[centre].mean()) / own)
+    if center.sum() > 20 and rim.sum() > 20:
+        result["cupping"] = float((image[rim].mean() - image[center].mean()) / own)
     dense = [r for r in rods if r["material"] != "air"]
     reference = region.copy()
     for r in dense:
-        reference &= np.hypot(x - r["centre"][0], y - r["centre"][1]) > 2 * r["radius"] + 0.5
+        reference &= np.hypot(x - r["center"][0], y - r["center"][1]) > 2 * r["radius"] + 0.5
     bins = np.floor(rho / 0.5).astype(int)
     bands = []
     for a, rod in enumerate(dense):
@@ -225,7 +225,7 @@ def _matrix(image: np.ndarray, case: dict, big: int, owner: np.ndarray) -> dict:
 
 def _segment_band(x: np.ndarray, y: np.ndarray, a: dict, b: dict) -> np.ndarray:
     """Points within half the smaller rod radius of the segment joining two rods, between them."""
-    p, q = np.asarray(a["centre"]), np.asarray(b["centre"])
+    p, q = np.asarray(a["center"]), np.asarray(b["center"])
     d = q - p
     t = ((x - p[0]) * d[0] + (y - p[1]) * d[1]) / (d @ d)
     distance = np.hypot(x - p[0] - t * d[0], y - p[1] - t * d[1])

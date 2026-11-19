@@ -37,7 +37,7 @@ def test_native_cone_projection_and_subset_batching(tilt):
         detector,
         np.linspace(0, 360, 65, endpoint=False),
         tj.ConeBeam(100, 200),
-        tilt_deg=tilt,
+        tilt=tilt,
     )
     rng = np.random.default_rng(58)
     volume = jnp.asarray(rng.normal(size=(17, 19, 23)), jnp.float32)
@@ -52,7 +52,7 @@ def test_native_cone_projection_and_subset_batching(tilt):
     updated = sirt(geometry, grid, detector, images, config=config)[0]
 
     def direct(x):
-        coeff = cone.cone_coefficients(geometry.poses(), grid, detector, geometry.beam)
+        coeff = cone.cone_coefficients(geometry.pose_matrices(), grid, detector, geometry.beam)
         return cone.cone_project(x, coeff, grid, detector, backend="cuda")
 
     expected = jax.jit(direct)(volume)

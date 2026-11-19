@@ -524,7 +524,7 @@ def _detector_grid_for_roll(
     roll = jnp.asarray(detector_roll_rad, dtype=jnp.float32)
     return detector_grid_from_calibration(
         detector,
-        detector_roll_deg=roll * jnp.asarray(180.0 / math.pi, dtype=jnp.float32),
+        detector_roll=roll * jnp.asarray(180.0 / math.pi, dtype=jnp.float32),
     )
 
 

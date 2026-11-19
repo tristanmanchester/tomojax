@@ -112,7 +112,7 @@ class SimConfig:
         and 360 for laminography or cone geometry.
     geometry : {'parallel', 'lamino', 'cone'}, optional
         Acquisition geometry; default is 'parallel'.
-    tilt_deg : float, optional
+    tilt : float, optional
         Laminography or cone rotation-axis tilt in degrees; default is 30.
     tilt_about : {'x', 'y'}, optional
         Axis about which the nominal rotation axis is tilted; default is 'x'.
@@ -161,7 +161,7 @@ class SimConfig:
     vz: float = 1.0
     rotation_deg: float | None = None  # total rotation range; defaults by geometry
     geometry: str = "parallel"  # "lamino" or "cone"
-    tilt_deg: float = 30.0  # lamino; a cone scan's axis tilt
+    tilt: float = 30.0  # lamino; a cone scan's axis tilt
     tilt_about: str = "x"
     source_to_axis: float | None = None  # cone: default 3x the largest volume extent
     source_to_detector: float | None = None  # cone: default 1.5x source_to_axis
@@ -349,11 +349,11 @@ def simulate(cfg: SimConfig) -> SimulatedData:
             grid=grid,
             detector=det,
             angles=thetas,
-            tilt_deg=cfg.tilt_deg,
+            tilt=cfg.tilt,
             tilt_about=cfg.tilt_about,
         )
         geometry_meta = {
-            "tilt_deg": float(cfg.tilt_deg),
+            "tilt": float(cfg.tilt),
             "tilt_about": str(cfg.tilt_about),
         }
     elif cfg.geometry == "cone":
@@ -367,7 +367,7 @@ def simulate(cfg: SimConfig) -> SimulatedData:
             detector=det,
             angles=thetas,
             beam=beam,
-            tilt_deg=cfg.tilt_deg,
+            tilt=cfg.tilt,
             tilt_about=cfg.tilt_about,
         )
         geom = cone

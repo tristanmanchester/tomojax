@@ -23,7 +23,7 @@ The options match the Python API's keywords: `tomojax recon --method cgls
 `tj.align(scan, fit=("translations", "roll"))`.
 
 With no `--fit`, alignment estimates per-view translations. `--fit` names the parameter blocks
-released in the same joint solver; it takes one or more of `centre`, `translations`, `tilt`,
+released in the same joint solver; it takes one or more of `center`, `translations`, `tilt`,
 `roll` and `rotations`. Reconstruction without `--method` selects its method from the geometry.
 
 ## Commands
@@ -44,7 +44,7 @@ released in the same joint solver; it takes one or more of `centre`, `translatio
   `tj.reconstruct(config=...)` takes them; `--roi cyl` zeroes the volume
   outside the cylinder every view sees.
 - `align`: jointly estimate the image and the named geometry corrections with `tj.align`, on
-  top of the poses saved in the input unless `--no-poses`. `--fit centre` fits one shared centre
+  top of the poses saved in the input unless `--no-poses`. `--fit center` fits one shared centre
   (two for cone data); `--fit translations tilt roll` adds shared setup angles to per-view shifts.
   `--fit translations rotations` adds per-view sample rotations. `--grid` sets image sampling.
 - `export`: write a reconstruction as TIFF slices, or as one raw file when
@@ -56,7 +56,7 @@ released in the same joint solver; it takes one or more of `centre`, `translatio
 ```bash
 tomojax preprocess scan/scan.xtekct --darks dark.tif -o scan.nxs
 tomojax inspect scan.nxs
-tomojax align scan.nxs -o aligned.nxs --fit centre roll
+tomojax align scan.nxs -o aligned.nxs --fit center roll
 tomojax recon aligned.nxs -o recon.nxs
 tomojax inspect recon.nxs --preview previews
 tomojax export recon.nxs -o slices/
@@ -67,12 +67,12 @@ NXtomo or Data Exchange, ESRF Bliss or EDF) loads with the centre at the middle
 of the detector, and `recon` says so. Fit the centre first:
 
 ```bash
-tomojax align scan.h5 -o aligned.nxs --fit centre
+tomojax align scan.h5 -o aligned.nxs --fit center
 tomojax recon aligned.nxs -o recon.nxs
 ```
 
 Nikon scans record no dark field: `--darks` takes a dark image or one level,
 and `--darks 0` suits only counts that are already dark-corrected.
-`align --fit centre roll` estimates the cone detector's centre and roll,
+`align --fit center roll` estimates the cone detector's centre and roll,
 and `recon` uses them. `previews/` then holds `projection.png`, `slice_z.png`,
 `slice_y.png` and `slice_x.png`. See the [lab cone-beam CT guide](../../../docs/lab-ct.md).

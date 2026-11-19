@@ -38,8 +38,8 @@ _PUBLIC = (
     "--n-views",
     "--geometry",
     "--phantom",
-    "--rotation-deg",
-    "--tilt-deg",
+    "--rotation",
+    "--tilt",
     "--source-to-axis",
     "--source-to-detector",
     "--poisson-scale",
@@ -60,7 +60,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  tomojax simulate -o phantom.nxs\n"
             "  tomojax simulate -o cone.nxs --geometry cone --size 128 --n-views 360\n"
-            "  tomojax simulate -o lamino.nxs --geometry lamino --tilt-deg 30 --poisson-scale 1000"
+            "  tomojax simulate -o lamino.nxs --geometry lamino --tilt 30 --poisson-scale 1000"
         ),
     )
     add_output(parser, "Dataset to write (.nxs)")
@@ -88,14 +88,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="shepp",
     )
     _ = parser.add_argument(
-        "--rotation-deg",
+        "--rotation",
         type=float,
         default=None,
         metavar="DEG",
         help="Rotation range (default 180 for parallel, 360 otherwise)",
     )
     _ = parser.add_argument(
-        "--tilt-deg",
+        "--tilt",
         type=float,
         default=None,
         metavar="DEG",
@@ -205,9 +205,9 @@ def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
         SimulationArtefacts(poisson_scale=cast("float", args.poisson_scale)),
         **{name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings},
     )
-    rotation_deg = cast("float | None", args.rotation_deg)
+    rotation_deg = cast("float | None", args.rotation)
     geometry = cast("GeometryName", args.geometry)
-    tilt_deg = cast("float | None", args.tilt_deg)
+    tilt = cast("float | None", args.tilt)
     size = cast("int", args.size)
     nx, ny, nz = cast("list[int] | None", args.grid) or (size, size, size)
     sod = cast("float | None", args.source_to_axis)
@@ -235,7 +235,7 @@ def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
         nv=int(nv),
         n_views=int(n_views),
         geometry=geometry,
-        tilt_deg=tilt_deg if tilt_deg is not None else (30.0 if geometry == "lamino" else 0.0),
+        tilt=tilt if tilt is not None else (30.0 if geometry == "lamino" else 0.0),
         source_to_axis=sod,
         source_to_detector=sdd,
         rotation_deg=rotation_deg,

@@ -29,7 +29,7 @@ and reads its sample angles, image keys, flat/dark fields and unit-labelled
 pixel pitches. If the axial centre is absent, loading places it at the middle
 of the detector and records that it was not recorded; nothing is estimated.
 Supply a calibrated `detector=`, or fit the centre with
-`tj.align(scan, fit="centre")`.
+`tj.align(scan, fit="center")`.
 
 Continue with the [one-row preview](#correct-reconstruct-and-inspect) below.
 An ESRF NXtomo export is not a raw Bliss master or an EDF folder. Those have

@@ -533,7 +533,7 @@ class SIRTCall:
             "effective_iterations": iterations,
             "subset_updates": iterations * subsets,
             "termination": "iteration_limit",
-            "stream_projections": stream,
+            "stream": stream,
             "projector_backend": backend,
             "projector_model": public_model,
         }

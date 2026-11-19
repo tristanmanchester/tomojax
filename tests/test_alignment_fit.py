@@ -31,7 +31,7 @@ from tomojax.geometry import Detector
 
 @pytest.mark.parametrize("cone", [False, True])
 @pytest.mark.parametrize(
-    "fit", ["centre", "translations", "rotations", ("translations", "tilt", "roll")]
+    "fit", ["center", "translations", "rotations", ("translations", "tilt", "roll")]
 )
 def test_held_parameters_have_no_state_and_are_exactly_zero_in_the_output(fit, cone):
     parameters = Parameters(60, fit, cone=cone, lever=17)
@@ -42,7 +42,7 @@ def test_held_parameters_have_no_state_and_are_exactly_zero_in_the_output(fit, c
     expected_local = (2 if "rotations" in selected else 0) + (
         (3 if cone else 2) if "translations" in selected else 0
     )
-    expected_shared = ((2 if cone else 1) if "centre" in selected else 0) + sum(
+    expected_shared = ((2 if cone else 1) if "center" in selected else 0) + sum(
         name in selected for name in ("tilt", "roll")
     )
     assert parameters.size == 60 * expected_local + expected_shared
@@ -57,7 +57,7 @@ def test_held_parameters_have_no_state_and_are_exactly_zero_in_the_output(fit, c
 
 
 def test_shared_columns_broadcast_once_and_scores_sum_over_views():
-    parameters = Parameters(60, ("translations", "centre", "tilt", "roll"), lever=12)
+    parameters = Parameters(60, ("translations", "center", "tilt", "roll"), lever=12)
     rng = np.random.default_rng(29)
     with jax.enable_x64(True):
         state = jnp.asarray(rng.normal(size=parameters.size))
@@ -72,9 +72,9 @@ def test_shared_columns_broadcast_once_and_scores_sum_over_views():
 @pytest.mark.parametrize(
     ("fit", "cone"),
     [
-        ("centre", False),
-        (("translations", "centre", "tilt", "roll"), False),
-        (("translations", "rotations", "centre", "tilt", "roll"), True),
+        ("center", False),
+        (("translations", "center", "tilt", "roll"), False),
+        (("translations", "rotations", "center", "tilt", "roll"), True),
     ],
 )
 def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit, cone):
@@ -125,8 +125,8 @@ def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit,
         np.testing.assert_allclose(actual, expected, rtol=2e-10, atol=2e-11)
 
 
-def test_centre_and_translation_share_one_identifiable_parallel_offset():
-    parameters = Parameters(60, ("centre", "translations"))
+def test_center_and_translation_share_one_identifiable_parallel_offset():
+    parameters = Parameters(60, ("center", "translations"))
     with jax.enable_x64(True):
         prior = MotionPrior(
             60,
@@ -167,7 +167,7 @@ def test_rotations_pay_the_same_physical_size_prior_at_different_numeric_scales(
 
 
 def test_innovation_refinement_holds_global_parameters_exactly():
-    parameters = Parameters(60, ("translations", "centre", "roll"))
+    parameters = Parameters(60, ("translations", "center", "roll"))
     rng = np.random.default_rng(914)
     with jax.enable_x64(True):
         prior = MotionPrior(
@@ -190,12 +190,12 @@ def test_innovation_refinement_holds_global_parameters_exactly():
 def test_global_geometry_matches_independent_physical_landmarks(cone):
     n = 60
     detector = Detector(48, 48, 0.7, 1.1, center=(0.4, -0.3))
-    parameters = Parameters(n, ("centre", "tilt", "roll"), cone=cone, lever=20)
+    parameters = Parameters(n, ("center", "tilt", "roll"), cone=cone, lever=20)
     angles = np.linspace(0, 360, n, endpoint=False)
     nominal = np.tile(np.eye(4), (n, 1, 1))
     nominal[:, :3, :3] = Rotation.from_euler("z", angles[:, None], degrees=True).as_matrix()
     nominal[:, :3, 3] = [0.2, -0.1, 0.7]
-    corrections = {"centre_u": 0.6, "centre_v": -0.4, "tilt": 0.3, "roll": 0.25}
+    corrections = {"center_u": 0.6, "center_v": -0.4, "tilt": 0.3, "roll": 0.25}
     state = np.array([corrections[name] for name in parameters.globals])
     frame = np.tile([[0.4, 12, -0.3], [1, 0, 0], [0, 0, 1], [0, -20, 0.7]], (n, 1, 1))
     with jax.enable_x64(True):
@@ -210,14 +210,14 @@ def test_global_geometry_matches_independent_physical_landmarks(cone):
     tilt, roll = corrections["tilt"] / parameters.lever, corrections["roll"] / parameters.lever
     tilted = nominal.copy()
     tilted[:, :3, :3] = Rotation.from_rotvec([-tilt, 0, 0]).as_matrix() @ nominal[:, :3, :3]
-    centre = np.array([detector.center[0] + 0.6 * detector.du, 0, detector.center[1]])
+    center = np.array([detector.center[0] + 0.6 * detector.du, 0, detector.center[1]])
     if cone:
-        centre[2] -= 0.4 * detector.dv
+        center[2] -= 0.4 * detector.dv
         np.testing.assert_allclose(fitted, tilted, atol=1e-14)
         np.testing.assert_array_equal(np.asarray(fitted_frames)[:, 3], frame[:, 3])
         np.testing.assert_allclose(
             np.asarray(fitted_frames)[:, 0] - frame[:, 0],
-            np.tile(centre - [detector.center[0], 0, detector.center[1]], (n, 1)),
+            np.tile(center - [detector.center[0], 0, detector.center[1]], (n, 1)),
             atol=1e-14,
         )
         expected_u = [np.cos(roll), 0, np.sin(roll)]
@@ -232,7 +232,7 @@ def test_global_geometry_matches_independent_physical_landmarks(cone):
         points = np.array([[0, 0, 0], [7, -3, 11], [-9, 4, -8]], np.float64)
         lab = np.einsum("nij,kj->nki", tilted[:, :3, :3], points) + tilted[:, None, :3, 3]
         # Physical projection onto a rolled detector basis, not the solver's pose transform.
-        displacement = lab - centre
+        displacement = lab - center
         expected = np.stack(
             [
                 displacement @ np.array([np.cos(roll), 0, np.sin(roll)]) / detector.du,
@@ -258,23 +258,23 @@ def test_analytic_fixture_integrates_density_independently_of_a_voxel_projector(
 
 def test_solid_fixture_integrates_ellipsoid_chords_independently():
     # Riemann sum of each ellipsoid's inside test along a ray through one centre.
-    centres, shape, densities = solid_phantom()
-    origin = centres[:1] + np.array([[0.3, -0.2, 0.1]])
+    centers, shape, densities = solid_phantom()
+    origin = centers[:1] + np.array([[0.3, -0.2, 0.1]])
     direction = np.array([[0.4, 0.8, 0.2]])
     direction /= np.linalg.norm(direction)
     t = np.arange(-80, 80, 1e-4)
     points = origin + t[:, None] * direction
     inside = [
         value * (np.einsum("ni,ij,nj->n", points - c, m, points - c) <= 1)
-        for c, m, value in zip(centres, shape, densities, strict=True)
+        for c, m, value in zip(centers, shape, densities, strict=True)
     ]
     expected = np.sum(inside) * 1e-4
     assert expected > 0.05
     np.testing.assert_allclose(solid_line_integrals(origin, direction), expected, atol=2e-5)
 
 
-def test_detector_space_score_counts_centre_and_roll_before_a_rigid_gauge():
-    scan, truth, _, _ = make_case("centre")
+def test_detector_space_score_counts_center_and_roll_before_a_rigid_gauge():
+    scan, truth, _, _ = make_case("center")
     error, _, _ = score(scan_rays(scan), truth)
     np.testing.assert_allclose(error, 2.0, atol=1e-7)
     scan, truth, _, _ = make_case("roll")
@@ -312,9 +312,9 @@ def test_rotation_increments_gradient_is_the_weighted_apply(fit, cone):
         )
 
 
-@pytest.mark.parametrize("tilt_deg", [0.0, -30.0])
+@pytest.mark.parametrize("tilt", [0.0, -30.0])
 @pytest.mark.parametrize(("name", "sign"), [("tilt", -1.0), ("roll", 1.0)])
-def test_a_shared_tilt_or_roll_is_its_per_view_pattern_to_first_order(tilt_deg, name, sign):
+def test_a_shared_tilt_or_roll_is_its_per_view_pattern_to_first_order(tilt, name, sign):
     # The poses a small shared tilt (a lab Rx(-t)) or parallel roll (about the beam through
     # the detector centre) produce are the ones its per-view pattern produces: the tangent
     # comes from the geometry, not from a copy of its formula.
@@ -323,7 +323,7 @@ def test_a_shared_tilt_or_roll_is_its_per_view_pattern_to_first_order(tilt_deg, 
 
     grid = tj.Grid(8, 8, 6, 1.0, 1.0, 1.0, vol_center=(0.4, -0.3, 1.5))
     detector = Detector(12, 9, 1.0, 1.0, (0.7, -0.4))
-    geometry = tj.LaminographyGeometry(grid, detector, np.arange(0, 360, 40.0), tilt_deg=tilt_deg)
+    geometry = tj.LaminographyGeometry(grid, detector, np.arange(0, 360, 40.0), tilt=tilt)
     nominal = np.asarray(stack_view_poses(geometry, 9), np.float64)
     fit = ("translations", "rotations", name)
     parameters = Parameters(9, fit, lever=6.0)
@@ -349,7 +349,7 @@ def test_a_shared_tilt_or_roll_is_its_per_view_pattern_to_first_order(tilt_deg, 
     # object rotation, which is the rigid gauge: none for a tilt or an axial roll.
     spin = pattern[:, 2]
     assert np.ptp(spin) < 1e-12
-    if name == "tilt" or tilt_deg == 0:
+    if name == "tilt" or tilt == 0:
         assert np.abs(spin).max() < 1e-12
 
 
@@ -415,7 +415,7 @@ def test_a_shared_tilt_or_roll_is_a_per_view_direction_the_fit_gauge_removes(nam
         moved = np.asarray(stack_view_poses(shared, n), np.float64)
     else:
         shared = RotationAxisGeometry(
-            grid, detector, angles, (0, 0, 1), detector_roll_deg=np.rad2deg(eps)
+            grid, detector, angles, (0, 0, 1), detector_roll=np.rad2deg(eps)
         )
         pivot = np.array([detector.center[0], 0.0, detector.center[1]])
         turn = np.eye(4)

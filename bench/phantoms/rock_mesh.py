@@ -64,14 +64,14 @@ def material_mesh(labels: np.ndarray, label: int, spacing: float) -> trimesh.Tri
             points = np.array(
                 [0.501 * a + 0.499 * b for a in corners[inside] for b in corners[~inside]]
             )
-            centre = points.mean(axis=0)
+            center = points.mean(axis=0)
             outward = corners[~inside].mean(axis=0) - corners[inside].mean(axis=0)
             normal = np.cross(points[1] - points[0], points[2] - points[0])
             normal *= np.sign(normal @ outward)
             normal /= np.linalg.norm(normal)
-            u = points[0] - centre
+            u = points[0] - center
             v = np.cross(normal, u)
-            angle = np.arctan2((points - centre) @ v, (points - centre) @ u)
+            angle = np.arctan2((points - center) @ v, (points - center) @ u)
             points = points[np.argsort(angle)]
             for j in range(1, len(points) - 1):
                 tri = cells[:, None, :] + points[[0, j, j + 1]]

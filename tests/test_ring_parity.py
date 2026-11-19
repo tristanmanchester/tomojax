@@ -66,7 +66,7 @@ def test_feasible_negative_response_is_unchanged() -> None:
     np.testing.assert_array_less(error, 2e-6 + 2 * np.finfo(np.float32).eps * np.abs(slope))
 
 
-def test_regularised_response_is_refit_before_inversion() -> None:
+def test_regularized_response_is_refit_before_inversion() -> None:
     # Similar to a coarse real-scan fit: the original law has no real root
     # for its lowest observations, despite all inputs being finite.
     observed = jnp.linspace(0.08, 1.45, 121)[:, None]

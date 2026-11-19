@@ -55,13 +55,13 @@ class CGLSConfig:
     ``projector_model="joseph"`` samples voxel-centre planes along the dominant
     voxel direction, interpolates each plane and uses its matched transpose. On
     CUDA that transpose gathers into voxels without atomic writes. Bilinear
-    interpolation is the default; ``joseph_interpolation="cubic"`` selects Keys
+    interpolation is the default; ``interpolation="cubic"`` selects Keys
     cubic convolution with a=-1/2 and a 4-by-4 stencil, including negative
     weights. ``"ray"`` is the trilinear ray marcher. ``"auto"`` selects Joseph,
     for a rolled (affine) ``det_grid`` too, whose plane coefficients carry the
     grid; both models match analytic line integrals equally well, and Joseph is faster.
 
-    ``stream_projections`` solves the equivalent normal equations with NumPy or
+    ``stream`` solves the equivalent normal equations with NumPy or
     memmap projections read from host memory one view batch at a time, so only
     volume-sized arrays occupy the device; ``None`` reserves space for the
     resident solver state and verification scratch, streaming when they would
@@ -98,13 +98,13 @@ class CGLSConfig:
     projector_model : Literal['auto', 'ray', 'joseph'], optional
         Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
         explicit detector grid requires rays. Default is 'auto'.
-    joseph_interpolation : Literal['linear', 'cubic'], optional
+    interpolation : Literal['linear', 'cubic'], optional
         Joseph interpolation: "linear" or Keys "cubic" with a=-1/2. Cubic is not
         supported by the ray model. Default is 'linear'.
     gradient_damping : float, optional
         Nonnegative weight of the physical finite-difference penalty; squared in the
         objective. Default is 0.0.
-    stream_projections : bool | None, optional
+    stream : bool | None, optional
         Read host projections one view batch at a time. None selects streaming from
         available device memory; False keeps them resident.
     devices : jax.Device or sequence of jax.Device or None, optional
@@ -120,9 +120,9 @@ class CGLSConfig:
     views_per_batch: int = 64
     backend: Literal["auto", "jax", "cuda"] = "auto"
     projector_model: Literal["auto", "ray", "joseph"] = "auto"
-    joseph_interpolation: Literal["linear", "cubic"] = "linear"
+    interpolation: Literal["linear", "cubic"] = "linear"
     gradient_damping: float = 0.0
-    stream_projections: bool | None = None
+    stream: bool | None = None
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
@@ -149,9 +149,9 @@ def validate_model(cfg: CGLSConfig) -> None:
     """Validate interpolation independently of the chosen execution runtime."""
     if cfg.data_term not in {"absolute", "per_view_contrast"}:
         raise ValueError("cgls: data_term must be absolute or per_view_contrast")
-    if cfg.joseph_interpolation not in {"linear", "cubic"}:
-        raise ValueError("cgls: joseph_interpolation must be 'linear' or 'cubic'")
-    if cfg.joseph_interpolation != "linear" and cfg.projector_model == "ray":
+    if cfg.interpolation not in {"linear", "cubic"}:
+        raise ValueError("cgls: interpolation must be 'linear' or 'cubic'")
+    if cfg.interpolation != "linear" and cfg.projector_model == "ray":
         raise ValueError("cgls: cubic interpolation requires projector_model='joseph'")
 
 

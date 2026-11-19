@@ -356,8 +356,8 @@ def test_cuda_gather_errors_keep_backend_context(precision) -> None:
 @pytest.mark.parametrize("step_size", [None, 0.3, 1.7])
 def test_stack_traversal_metadata_matches_longest_view(step_size) -> None:
     grid, detector = Grid(19, 13, 11, 0.8, 1.1, 0.7), Detector(25, 17, 0.9, 0.8)
-    geometry = LaminographyGeometry(grid, detector, [0, 37, 91], tilt_deg=37)
-    poses = np.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=np.float32)
+    geometry = LaminographyGeometry(grid, detector, [0, 37, 91], tilt=37)
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(3)], dtype=np.float32)
     single = [
         cuda_api.cuda_projector_traversal_metadata(t, grid, step_size=step_size) for t in poses
     ]

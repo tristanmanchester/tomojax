@@ -122,7 +122,7 @@ def test_streamed_fbp_matches_whole_stack_with_partial_batches(
     grid = Grid(7, 6, 3, 0.8, 1.2, 0.7)
     detector = Detector(13, 9, 0.9, 1.0, (0.17, 0.21))
     geometry = ParallelGeometry(grid, detector, [0.0, 31.0, 78.0, 117.0, 161.0])
-    poses = jnp.array([geometry.pose_for_view(i) for i in range(5)], dtype=jnp.float32)
+    poses = jnp.array([geometry.pose_matrix(i) for i in range(5)], dtype=jnp.float32)
     rng = np.random.default_rng(384)
     rows = jnp.array(rng.normal(size=(5, 5, 9)), dtype=jnp.float32)
     scale = jnp.array(rng.uniform(0.5, 1.5, size=5), dtype=jnp.float32)
@@ -196,7 +196,7 @@ def test_voxel_cuda_fbp_matches_jax_on_partial_blocks(z_mode: str, n_views: int)
         else np.linspace(13, 187, n_views, endpoint=False)
     )
     geometry = ParallelGeometry(grid, detector, angles)
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(n_views)], dtype=jnp.float32)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(n_views)], dtype=jnp.float32)
     if z_mode == "fixed":
         poses = poses.at[:, 2, 3].set(0.375)
     projections = jnp.asarray(
@@ -230,7 +230,7 @@ def test_integer_slice_tiles_mask_both_axes_and_accumulate(first_row):
     grid = Grid(17, 9, 19, 0.8, 1.2, 1.0, vol_origin=(-8.1, -4.2, first_row))
     detector = Detector(11, 20, 0.9, 1.0, (0.17, 9.5))
     geometry = ParallelGeometry(grid, detector, [0.0, 31.0, 78.0, 117.0, 161.0])
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)], dtype=jnp.float32)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)], dtype=jnp.float32)
     rng = np.random.default_rng(18)
     filtered = jnp.asarray(rng.normal(size=(5, 20, 11)), dtype=jnp.float32)
     expected = jax.jit(
@@ -255,7 +255,7 @@ def test_fixed_rows_preserve_a_common_nonbinary_translation() -> None:
     grid = Grid(7, 6, 3, 0.8, 1.2, 0.7)
     detector = Detector(9, 5, 0.9, 1.0, (0.17, 0.21))
     geometry = ParallelGeometry(grid, detector, np.linspace(13, 187, 129, endpoint=False))
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(129)], dtype=jnp.float32)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(129)], dtype=jnp.float32)
     poses = poses.at[:, 2, 3].set(0.31)
     rows = jnp.asarray(np.random.default_rng(18).normal(size=(129, 5, 9)), dtype=jnp.float32)
     filtered = fft_filter_rows(rows, rfft_filter_array("ramp", 9, detector.du, jnp.float32))
@@ -273,7 +273,7 @@ def test_explicit_cuda_fbp_requires_cuda_arrays() -> None:
         pytest.skip("checks the CPU rejection")
     grid = Grid(4, 4, 3, 1.0, 1.0, 1.0)
     detector = Detector(6, 3, 1.0, 1.0)
-    geometry = LaminographyGeometry(grid, detector, [0.0, 90.0], tilt_deg=30)
+    geometry = LaminographyGeometry(grid, detector, [0.0, 90.0], tilt=30)
     with pytest.raises(ValueError, match="requires CUDA"):
         fbp(
             geometry,
@@ -329,7 +329,7 @@ def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
         pytest.skip("requires CUDA")
     nu, nv = shape
     # Dyadic grid positions isolate interpolation from coordinate-grid rounding.
-    centre_z = (0.5 if nv % 2 == 0 else 0.0) if z_mode == "integer" else 0.125
+    center_z = (0.5 if nv % 2 == 0 else 0.0) if z_mode == "integer" else 0.125
     grid = Grid(
         13,
         11,
@@ -337,22 +337,22 @@ def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
         0.5,
         1.25,
         1.0 if z_mode == "integer" else 0.75,
-        vol_center=(0.25, -0.125, centre_z),
+        vol_center=(0.25, -0.125, center_z),
     )
     detector = Detector(nu, nv, 0.875, 1.0, (0.375, 0.0 if z_mode == "integer" else 0.125))
     angles = [7.0, 31.0, 78.0, 117.0, 161.0]
     geometry = (
         ParallelGeometry(grid, detector, angles)
         if z_mode != "general"
-        else LaminographyGeometry(grid, detector, angles, tilt_deg=17.0)
+        else LaminographyGeometry(grid, detector, angles, tilt=17.0)
     )
-    poses = np.asarray([geometry.pose_for_view(i) for i in range(5)], np.float32)
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(5)], np.float32)
     if z_mode == "fixed":
         poses[:, 2, 3] = 0.375
     filtered = np.random.default_rng(739).normal(size=(5, nv, nu)).astype(np.float32)
     coordinates = [
-        (np.arange(n) - (n - 1) / 2) * spacing + centre
-        for n, spacing, centre in zip(
+        (np.arange(n) - (n - 1) / 2) * spacing + center
+        for n, spacing, center in zip(
             (grid.nx, grid.ny, grid.nz), (grid.vx, grid.vy, grid.vz), grid.vol_center, strict=True
         )
     ]
@@ -410,7 +410,7 @@ def test_cuda_fbp_partial_blocks_and_accumulation(mode, run, nz, first_row):
     grid = Grid(17, 9, nz, 0.8, 1.2, 1.0, vol_origin=(-8.1, -4.2, first_row))
     detector = Detector(11, 20, 0.9, 1.0, (0.17, 9.5))
     geometry = ParallelGeometry(grid, detector, np.linspace(7, 187, 129, endpoint=False))
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(129)], dtype=jnp.float32)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(129)], dtype=jnp.float32)
     if mode == "fixed":
         poses = poses.at[:, 2, 3].set(0.31)
     elif mode == "general":
@@ -450,13 +450,13 @@ def test_fbp_of_a_rolled_detector_matches_its_unrolled_equivalent(arc: str) -> N
         zr = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
         u = detector.center[0] + np.cos(roll) * xr[None, :] - np.sin(roll) * zr[:, None]
         v = detector.center[1] + np.sin(roll) * xr[None, :] + np.cos(roll) * zr[:, None]
-        centre_u = 1.2 * np.cos(theta) + 2.0 * np.sin(theta)
+        center_u = 1.2 * np.cos(theta) + 2.0 * np.sin(theta)
         data = (
             np.sqrt(2 * np.pi)
             * sigma
-            * np.exp(-0.5 * ((u - centre_u[:, None, None]) ** 2 + (v - 0.7) ** 2) / sigma**2)
+            * np.exp(-0.5 * ((u - center_u[:, None, None]) ** 2 + (v - 0.7) ** 2) / sigma**2)
         )
-        geometry = ParallelGeometry(grid, detector, angles, detector_roll_deg=roll_deg)
+        geometry = ParallelGeometry(grid, detector, angles, detector_roll=roll_deg)
         scan = tj.Scan(data.astype(np.float32), geometry)
         volumes.append(np.asarray(tj.reconstruct(scan, "fbp").volume))
     scale = np.linalg.norm(volumes[0])

@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### One vocabulary across the API, the shell and saved files
+
+Every public name, flag, `info` key and saved-file key now uses one vocabulary:
+- American spelling in identifiers (prose stays British);
+- no unit suffix on angles, which are all in degrees;
+- one word for each concept.
+
+There are no aliases. Each old name is gone, and files saved before this release do not load
+(the reader reads only the new keys). `tests/test_vocabulary.py` keeps the vocabulary.
+
+| Old | New |
+|---|---|
+| `fit="centre"`, `--fit centre`, `info["calibration"]["centre"]` | `fit="center"`, `--fit center`, `info["calibration"]["center"]` |
+| `regulariser=` (FISTA, SPDHG) | `regularizer=` |
+| `tilt_deg` (geometries, saved files), `--tilt-deg` | `tilt`, `--tilt` |
+| `detector_roll_deg`, `detector_pitch_deg`, `detector_yaw_deg` | `detector_roll`, `detector_pitch`, `detector_yaw` |
+| `info["rotation_prior_sigma_deg"]` | `info["rotation_prior_sigma"]` |
+| `tomojax simulate --rotation-deg` | `--rotation` |
+| `Scan.corrected(batch_views=)`, `Frames.corrected(batch_views=)` | `views_per_batch=` |
+| `tomojax preprocess --select-views` | `--views` |
+| `Scan.positions()` | `Scan.view_positions` |
+| `Scan.binned(factor)` | `Scan.binned(binning)` |
+| `stream_projections=` (FISTA, SPDHG and CGLS configs), SIRT's `info["stream_projections"]` | `stream=`, `info["stream"]` |
+| `CGLSConfig(joseph_interpolation=)` | `interpolation=` |
+| `FistaConfig(recon_rel_tol=, recon_patience=)` | `tolerance=`, `patience=` |
+| `geometry.pose_for_view(i)` | `geometry.pose_matrix(i)` |
+| `ConeGeometry.poses()` | `ConeGeometry.pose_matrices()` |
+
 ### `tj.align` fits full-size synchrotron scans on an 8 GB card
 
 The alignment made its stack-sized arrays (the data, the residual, the IRLS weights, the pose

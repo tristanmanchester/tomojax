@@ -20,8 +20,8 @@ from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
 def test_parallel_ray_inspection_matches_the_projectors_rolled_detector_grid(roll):
     grid = Grid(24, 24, 24, 2, 2, 2, vol_origin=(-23, -19, -21))
     detector = Detector(48, 48, 1.3, 0.7, center=(2.2, -0.9))
-    base = LaminographyGeometry(grid, detector, np.linspace(0, 360, 60), tilt_deg=25)
-    geometry = replace(base, detector_roll_deg=roll)
+    base = LaminographyGeometry(grid, detector, np.linspace(0, 360, 60), tilt=25)
+    geometry = replace(base, detector_roll=roll)
     origin, direction = geometry.rays_for_view(17)
     points = np.array([origin(u, v) for v in range(48) for u in range(48)])
     lattice = detector_grid_from_geometry_inputs(detector, geometry)
@@ -33,18 +33,18 @@ def test_parallel_ray_inspection_matches_the_projectors_rolled_detector_grid(rol
         np.testing.assert_allclose(points[:, [0, 2]], np.stack(lattice, axis=-1), atol=3e-6)
     np.testing.assert_array_equal(points[:, 1], -19)
     assert direction(0, 0) == direction(47, 47) == (0.0, 1.0, 0.0)
-    np.testing.assert_array_equal(geometry.pose_for_view(17), base.pose_for_view(17))
+    np.testing.assert_array_equal(geometry.pose_matrix(17), base.pose_matrix(17))
 
 
 def test_cone_inspection_retains_its_source_and_beam_detector_frame():
     grid = Grid(24, 24, 24, 2, 2, 2)
     detector = Detector(48, 48, 1.3, 0.7, center=(2.2, -0.9))
-    beam = ConeBeam(192, 288, detector_roll_deg=-0.75, detector_pitch_deg=1, source_height=3)
+    beam = ConeBeam(192, 288, detector_roll=-0.75, detector_pitch=1, source_height=3)
     geometry = ConeGeometry(grid, detector, np.linspace(0, 360, 60), beam)
     origin, direction = geometry.rays_for_view(17)
-    centre, u_axis, v_axis = beam.detector_frame(detector)
+    center, u_axis, v_axis = beam.detector_frame(detector)
     for u, v in ((0, 0), (24, 24), (47, 47)):
-        pixel = centre + (u - 23.5) * detector.du * u_axis + (v - 23.5) * detector.dv * v_axis
+        pixel = center + (u - 23.5) * detector.du * u_axis + (v - 23.5) * detector.dv * v_axis
         expected = pixel - beam.source()
         expected /= np.linalg.norm(expected)
         np.testing.assert_array_equal(origin(u, v), beam.source())
@@ -61,8 +61,8 @@ def test_parallel_and_cone_roll_the_detector_the_same_way(roll):
     grid, detector = Grid(33, 33, 33, 1.0, 1.0, 1.0), Detector(65, 65, 1.0, 1.0)
     volume = np.zeros((33, 33, 33), np.float32)
     volume[16 + 12, 16, 16] = 1.0  # (z, y, x): 12 voxels above the centre
-    parallel = ParallelGeometry(grid, detector, [0.0], detector_roll_deg=roll)
-    cone = ConeGeometry(grid, detector, [0.0], ConeBeam(100.0, 150.0, detector_roll_deg=roll))
+    parallel = ParallelGeometry(grid, detector, [0.0], detector_roll=roll)
+    cone = ConeGeometry(grid, detector, [0.0], ConeBeam(100.0, 150.0, detector_roll=roll))
     columns = np.arange(65) - 32
     for geometry in (parallel, cone):
         image = np.asarray(tj.project(geometry, volume))[0]
@@ -89,7 +89,7 @@ def test_cone_pitch_and_yaw_move_the_detector_edges_as_documented(angle, voxel, 
     offset = np.arange(65) - 32
 
     def outward(degrees):
-        beam = ConeBeam(100.0, 150.0, **{f"detector_{angle}_deg": degrees})
+        beam = ConeBeam(100.0, 150.0, **{f"detector_{angle}": degrees})
         image = np.asarray(tj.project(ConeGeometry(grid, detector, [0.0], beam), volume))[0]
         profile = image.sum(1 - axis)  # along v (rows) for pitch, along u for yaw
         return float(np.sum(profile * offset) / profile.sum())
@@ -108,14 +108,14 @@ def test_a_rolled_parallel_scan_saves_its_roll_and_a_cone_one_keeps_it_in_the_be
     from tomojax._scan import record_of, scan_from_record
 
     grid, detector = Grid(4, 4, 3, 1.0, 1.0, 1.0), Detector(5, 3, 1.0, 1.0)
-    rolled = LaminographyGeometry(grid, detector, [0.0, 90.0], tilt_deg=20, detector_roll_deg=1.5)
+    rolled = LaminographyGeometry(grid, detector, [0.0, 90.0], tilt=20, detector_roll=1.5)
     record = record_of(tj.Scan(np.ones((2, 3, 5), np.float32), rolled))
     loaded = scan_from_record(record, poses=False).geometry
     assert type(loaded) is LaminographyGeometry
-    assert (loaded.tilt_deg, loaded.detector_roll_deg) == (20, 1.5)
+    assert (loaded.tilt, loaded.detector_roll) == (20, 1.5)
 
     cone = ConeGeometry(grid, detector, [0.0, 90.0], ConeBeam(40, 60))
     record = record_of(tj.Scan(np.ones((2, 3, 5), np.float32), cone))
-    record.geometry_metadata["detector_roll_deg"] = 1.5
+    record.geometry_metadata["detector_roll"] = 1.5
     with pytest.raises(ValueError, match="belongs in cone_beam"):
         scan_from_record(record, poses=False)

@@ -43,7 +43,7 @@ coordinate derivatives and includes negative weights. It is more expensive and
 can overshoot nonnegative data. Both models have matching CUDA volume/pose
 derivatives and a matched volume transpose; dominant-axis switches remain
 nonsmooth. To reconstruct with the cubic model, use
-`CGLSConfig(projector_model="joseph", joseph_interpolation="cubic")`.
+`CGLSConfig(projector_model="joseph", interpolation="cubic")`.
 By default it samples voxel-centre planes along the dominant ray direction,
 bilinearly interpolates the other two coordinates with zero extension, and multiplies by
 physical path length between planes. This differs from the default trilinear

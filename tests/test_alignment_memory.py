@@ -23,7 +23,7 @@ from tomojax.geometry import stack_view_poses
 def _scan(views, nu=96, nv=64, n=24, nz=16):
     grid, detector = tj.Grid(n, n, nz, 1, 1, 1), tj.Detector(nu, nv, 1, 1)
     angles = np.linspace(0, 360, views, endpoint=False)
-    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=-30)
     rng = np.random.default_rng(3)
     volume = rng.uniform(0, 1, (nz, n, n)).astype(np.float32)
     projections = np.array(tj.project(geometry, volume))

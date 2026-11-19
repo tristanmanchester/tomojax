@@ -25,7 +25,7 @@ def _scan():
     """A small laminography scan with a slip, a wobble and unmeasured pixels (so a precision)."""
     grid, detector, views = tj.Grid(20, 20, 14, 1.0, 1.0, 1.0), tj.Detector(28, 22, 1.0, 1.0), 48
     angles = np.linspace(0, 360, views, endpoint=False)
-    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=-30)
     z, y, x = np.mgrid[:14, :20, :20]
     volume = np.zeros((14, 20, 20), np.float32)
     for cz, cy, cx, r, mu in ((7, 7, 6, 4, 1.0), (6, 12, 13, 3, 0.6), (9, 13, 6, 2, 1.4)):
@@ -266,7 +266,7 @@ def test_nothing_a_level_holds_beyond_its_arrays_grows_during_it(monkeypatch):
 def test_align_reports_each_levels_placement_and_time():
     projections, _, grid, detector = _scan()
     geometry = tj.LaminographyGeometry(
-        grid, detector, np.linspace(0, 360, len(projections), endpoint=False), tilt_deg=-30
+        grid, detector, np.linspace(0, 360, len(projections), endpoint=False), tilt=-30
     )
     info = tj.align(tj.Scan(projections, geometry)).info
     for level in [*info["levels"], info["refinement"]]:
@@ -336,7 +336,7 @@ angles = np.linspace(0, 360, views, endpoint=False)
 if cone:  # a circular orbit, magnification 1.5, the volume filling the beam
     geometry = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(3 * n, 4.5 * n))
 else:
-    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=-30)
 rng = np.random.default_rng(1)
 volume = rng.uniform(0, 1, (nz, n, n)).astype(np.float32)
 with jax.default_device(jax.devices("cpu")[0]):

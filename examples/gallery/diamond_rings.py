@@ -44,8 +44,8 @@ def main() -> None:
     cleaned = replace(frames.corrected(*steps), geometry=plain.geometry)
     reference = tifffile.imread(args.reference).astype(np.float32)
     n = reference.shape[0]
-    centres = np.arange(n) - n / 2 + 0.5
-    inside = np.hypot(*np.meshgrid(centres, centres, indexing="ij")) < 0.42 * n
+    centers = np.arange(n) - n / 2 + 0.5
+    inside = np.hypot(*np.meshgrid(centers, centers, indexing="ij")) < 0.42 * n
 
     def correlation(image: np.ndarray) -> float:
         return float(np.corrcoef(image[inside], reference[inside])[0, 1])

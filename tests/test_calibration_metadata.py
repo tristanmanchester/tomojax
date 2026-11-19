@@ -135,7 +135,7 @@ def test_cone_roll_calibration_rolls_the_beam_like_the_parallel_lattice(segmente
     state = CalibrationState(
         detector=(
             CalibrationVariable(
-                name="detector_roll_deg",
+                name="detector_roll",
                 value=5.0,
                 unit="deg",
                 status="estimated",
@@ -149,7 +149,7 @@ def test_cone_roll_calibration_rolls_the_beam_like_the_parallel_lattice(segmente
         geometry_meta=meta,
     )["geometry_meta"]
     # The parallel-only replay field would leave the cone rays unrolled.
-    assert "detector_roll_deg" not in patch
+    assert "detector_roll" not in patch
     beams = [e["cone_beam"] for e in patch["cone_segments"]] if segmented else [patch["cone_beam"]]
     for rolled in beams:
         _, u_dir, _ = ConeBeam.from_dict(rolled).detector_frame(Detector(4, 4, 1.0, 1.0))

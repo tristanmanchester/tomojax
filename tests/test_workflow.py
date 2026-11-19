@@ -63,7 +63,7 @@ def _geometries(
     return {
         "parallel": tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 40, endpoint=False)),
         "lamino": tj.LaminographyGeometry(
-            grid, detector, np.linspace(0, 360, 40, endpoint=False), tilt_deg=30
+            grid, detector, np.linspace(0, 360, 40, endpoint=False), tilt=30
         ),
         "cone": tj.ConeGeometry(
             grid, detector, np.linspace(0, 360, 60, endpoint=False), tj.ConeBeam(3 * n, 4.5 * n)
@@ -126,9 +126,9 @@ def test_reconstruct_takes_the_methods_configuration_under_its_keywords() -> Non
 
     geometry = _geometries(16)["parallel"]
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(16))), geometry)
-    config = FistaConfig(regulariser="huber_tv", huber_delta=0.05, tv_weight=1e-3, iterations=4)
+    config = FistaConfig(regularizer="huber_tv", huber_delta=0.05, tv_weight=1e-3, iterations=4)
     recon = tj.reconstruct(scan, "fista", config=config)
-    assert recon.info["config"] == config and recon.info["regulariser"] == "huber_tv"
+    assert recon.info["config"] == config and recon.info["regularizer"] == "huber_tv"
     # A keyword replaces its field; the config's others stay.
     recon = tj.reconstruct(scan, "fista", config=config, iterations=6, nonnegative=True)
     expected = replace(config, iterations=6, nonnegative=True)
@@ -169,7 +169,7 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     if isinstance(geometry, tj.ConeGeometry):
         geometry = tj.ConeGeometry(
             geometry.grid, geometry.detector, geometry.angles,
-            tj.ConeBeam(24, 36, detector_roll_deg=0.4, axis_offset=0.7),
+            tj.ConeBeam(24, 36, detector_roll=0.4, axis_offset=0.7),
         )  # fmt: skip
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(8))), geometry, name="part")
     tj.save(tmp_path / "scan.nxs", scan)

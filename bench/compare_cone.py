@@ -5,7 +5,7 @@ The phantom is five ellipsoids voxelised at 2x2x2 sub-samples; errors compare
 forward projections with exact analytic line integrals and FDK volumes with the
 voxelised phantom. TomoJAX and ASTRA run in this process; TIGRE runs in a child
 process because it refuses a GPU on which JAX holds memory. A second scan with
-the rotation axis tilted by ``--tilt-deg`` times the general-geometry kernels.
+the rotation axis tilted by ``--tilt`` times the general-geometry kernels.
 Times are the best of ``--repeats`` warm calls, each library taking and
 returning host arrays; TomoJAX's device-resident times are reported separately.
 
@@ -38,21 +38,21 @@ ELLIPSOIDS = [  # amplitude, centre and radii as fractions of the volume width, 
 def shapes(extent: float) -> list[tuple[float, np.ndarray, np.ndarray]]:
     """Return (amplitude, centre, metric) ellipsoids scaled to the volume width."""
     out = []
-    for amp, centre, radii, angle in ELLIPSOIDS:
+    for amp, center, radii, angle in ELLIPSOIDS:
         c, s = np.cos(np.deg2rad(angle)), np.sin(np.deg2rad(angle))
         rotation = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
         metric = rotation @ np.diag(1 / (extent * np.asarray(radii)) ** 2) @ rotation.T
-        out.append((amp, extent * np.asarray(centre), metric))
+        out.append((amp, extent * np.asarray(center), metric))
     return out
 
 
-def setup(size: int, views: int, tilt_deg: float = 0.5) -> dict[str, Any]:
+def setup(size: int, views: int, tilt: float = 0.5) -> dict[str, Any]:
     """Return the scan description shared by every library."""
     sod = 3.0 * size
     return {
         "size": size,
         "views": views,
-        "tilt_deg": tilt_deg,
+        "tilt": tilt,
         "nu": int(1.5 * size),
         "nv": int(1.5 * size),
         "sod": sod,
@@ -93,8 +93,8 @@ def make_case(case: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
         src, pix = rot.T @ source, pixels @ rot
         direction = pix - src
         total = np.zeros((nv, nu))
-        for amp, centre, m in ellipsoids:
-            delta = src - centre
+        for amp, center, m in ellipsoids:
+            delta = src - center
             a = np.einsum("...i,ij,...j->...", direction, m, direction)
             b = np.einsum("...i,ij,j->...", direction, m, delta)
             cc = delta @ m @ delta - 1
@@ -143,7 +143,7 @@ def run_tomojax(
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
     det = Detector(case["nu"], case["nv"], 1.0, 1.0)
     geometry = ConeGeometry(grid, det, case["angles"], ConeBeam(case["sod"], case["sdd"]))
-    coeff = cone_coefficients(jnp.asarray(geometry.poses(), jnp.float32), grid, det, geometry.beam)
+    coeff = cone_coefficients(jnp.asarray(geometry.pose_matrices(), jnp.float32), grid, det, geometry.beam)
     dvol, ddata = jnp.asarray(volume), jnp.asarray(data)
     forward = jax.jit(lambda x: cone_project(x, coeff, grid, det))
     adjoint = jax.jit(lambda y: cone_backproject(y, coeff, grid, det))
@@ -158,14 +158,14 @@ def run_tomojax(
     _, r_fdk = best(lambda: fdk(geometry, grid, det, ddata), repeats, sync)
     # A tilted rotation axis takes the general (non-separable) kernels.
     tilted = ConeGeometry(
-        grid, det, case["angles"], ConeBeam(case["sod"], case["sdd"]), tilt_deg=case["tilt_deg"]
+        grid, det, case["angles"], ConeBeam(case["sod"], case["sdd"]), tilt=case["tilt"]
     )
-    coeff_t = cone_coefficients(jnp.asarray(tilted.poses(), jnp.float32), grid, det, tilted.beam)
+    coeff_t = cone_coefficients(jnp.asarray(tilted.pose_matrices(), jnp.float32), grid, det, tilted.beam)
     forward_t = jax.jit(lambda x: cone_project(x, coeff_t, grid, det))
     adjoint_t = jax.jit(lambda y: cone_backproject(y, coeff_t, grid, det))
     _, t_fp_t = best(lambda: np.asarray(forward_t(jnp.asarray(volume))), repeats)
     _, t_bp_t = best(lambda: np.asarray(adjoint_t(jnp.asarray(data))), repeats)
-    tilt = f"axis tilted {case['tilt_deg']:g} deg"
+    tilt = f"axis tilted {case['tilt']:g} deg"
     return [
         {
             "library": "tomojax",
@@ -233,14 +233,14 @@ def tigre_geometry(case: dict[str, Any]) -> tuple[Any, np.ndarray]:
 
 
 def tilted_scan(case: dict[str, Any]) -> Any:
-    """The benchmark scan with its rotation axis tilted by ``tilt_deg``, without data."""
+    """The benchmark scan with its rotation axis tilted by ``tilt``, without data."""
     import tomojax as tj
 
     n = case["size"]
     grid = tj.Grid(n, n, n, 1.0, 1.0, 1.0)
     det = tj.Detector(case["nu"], case["nv"], 1.0, 1.0)
     beam = tj.ConeBeam(case["sod"], case["sdd"])
-    geometry = tj.ConeGeometry(grid, det, case["angles"], beam, tilt_deg=case["tilt_deg"])
+    geometry = tj.ConeGeometry(grid, det, case["angles"], beam, tilt=case["tilt"])
     return tj.Scan(np.zeros((case["views"], case["nv"], case["nu"]), np.float32), geometry)
 
 
@@ -307,12 +307,12 @@ def run_astra(
         },
         {
             "library": "astra",
-            "operation": f"forward, axis tilted {case['tilt_deg']:g} deg",
+            "operation": f"forward, axis tilted {case['tilt']:g} deg",
             "seconds": t_fp_t,
         },
         {
             "library": "astra",
-            "operation": f"backproject, axis tilted {case['tilt_deg']:g} deg",
+            "operation": f"backproject, axis tilted {case['tilt']:g} deg",
             "seconds": t_bp_t,
         },
     ]
@@ -358,11 +358,11 @@ def main() -> int:
     parser.add_argument("--size", type=int, default=256)
     parser.add_argument("--views", type=int, default=360)
     parser.add_argument("--repeats", type=int, default=3)
-    parser.add_argument("--tilt-deg", type=float, default=0.5)
+    parser.add_argument("--tilt", type=float, default=0.5)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--worker", choices=["tigre"], help=argparse.SUPPRESS)
     args = parser.parse_args()
-    case = setup(args.size, args.views, args.tilt_deg)
+    case = setup(args.size, args.views, args.tilt)
     cache = args.output.with_suffix(".case.npz")
     if cache.exists():
         stored = np.load(cache)

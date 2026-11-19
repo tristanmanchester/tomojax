@@ -15,7 +15,7 @@ uv run --no-sync tomojax inspect scan.nxs
 The report ends with `Valid: yes`, or lists the issues that would stop a
 reconstruction. Confirm the number and order of views, angles in degrees, detector dimensions
 and pitch, volume grid and pitch, and the geometry type. For laminography, check
-`tilt_deg` and `tilt_about` in geometry metadata. `tilt_deg` is a departure from
+`tilt` and `tilt_about` in geometry metadata. `tilt` is a departure from
 the nominal tomography axis, not an angle to the beam. Missing laminography
 tilt requires an explicit `geometry=` with the measured tilt or axis; no 30°
 default is inserted.
@@ -49,7 +49,7 @@ length units. `import` does not apply flat/dark correction or a logarithm.
 It records the supplied detector and no grid. The grid is chosen at reconstruction, with
 voxels of the detector pitch by default. `tomojax recon --grid 256 256 128`
 resamples the selected field of view to 256 × 256 × 128 voxels; their spacing
-changes to preserve that physical extent. `tomojax align --fit centre` estimates a
+changes to preserve that physical extent. `tomojax align --fit center` estimates a
 centre-of-rotation offset. Detector and voxel pitch share a physical length
 unit; Python's `Detector.center` also uses physical lengths, so an offset
 of 2 pixels at pitch 0.65 is a `center` of 1.3.
@@ -69,7 +69,7 @@ geometry = tj.LaminographyGeometry(
     tj.Grid(nx=256, ny=256, nz=128, vx=0.65, vy=0.65, vz=0.65),
     tj.Detector(nu=256, nv=128, du=0.65, dv=0.65),
     angles,
-    tilt_deg=30.0,
+    tilt=30.0,
     tilt_about="x",
 )
 frames = tj.load_frames("projections", flats="flats", darks="darks", geometry=geometry)
@@ -92,7 +92,7 @@ values with those of the acquisition):
 geometry = "lamino"
 pixel_size = [0.65]
 detector_center = [0.0, 0.0]
-tilt_deg = 30.0
+tilt = 30.0
 tilt_about = "x"
 ```
 
@@ -105,7 +105,7 @@ Use the Python raw-intensity workflow above when the frames still need flat/dark
 correction. Missing tilt or centre is an error, not a default calibration.
 
 Replace 30° with the measured tilt. To check that it was kept, run
-`uv run --no-sync python -c "import tomojax as tj; print(tj.load('corrected-lamino.nxs').geometry.tilt_deg)"`,
+`uv run --no-sync python -c "import tomojax as tj; print(tj.load('corrected-lamino.nxs').geometry.tilt)"`,
 which prints the tilt in degrees.
 
 For an already-corrected dataset that needs explicit laminography metadata:
@@ -115,7 +115,7 @@ from tomojax.io import load_dataset, save_dataset
 
 scan = load_dataset("corrected.nxs")
 scan.geometry_type = "lamino"
-scan.geometry_metadata.update(tilt_deg=30.0, tilt_about="x")
+scan.geometry_metadata.update(tilt=30.0, tilt_about="x")
 save_dataset("corrected-lamino.nxs", scan)
 ```
 
@@ -179,7 +179,7 @@ declared geometry, so declare it before fitting, as the
 [laminography example](../examples/align_laminography.py) does:
 
 ```python
-geometry = tj.LaminographyGeometry(grid, tj.Detector(nu, nv, pitch, pitch), angles, tilt_deg=35)
+geometry = tj.LaminographyGeometry(grid, tj.Detector(nu, nv, pitch, pitch), angles, tilt=35)
 scan = tj.load("scan.nxs", geometry=geometry)
 result = tj.align(scan, fit=("translations", "tilt", "roll"))
 tj.save("aligned.nxs", result)

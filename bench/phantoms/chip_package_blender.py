@@ -191,14 +191,14 @@ def solder_balls() -> Obj:
     balls, voids = [], []
     for i, x in enumerate((-0.6, -0.2, 0.2, 0.6)):
         for j, y in enumerate((-0.6, -0.2, 0.2, 0.6)):
-            centre = (x, y, z_bottom - BALL_DIAMETER / 2 + 0.02)
-            ball = sphere(f"ball{i}{j}", BALL_DIAMETER / 2, centre)
+            center = (x, y, z_bottom - BALL_DIAMETER / 2 + 0.02)
+            ball = sphere(f"ball{i}{j}", BALL_DIAMETER / 2, center)
             cut = box(f"cut{i}{j}", (0.3, 0.3, 0.1), (x, y, z_bottom + 0.05))
             boolean(ball, cut)
             remove(cut)
             balls.append(ball)
             if (i, j) in VOIDED_BALLS:
-                voids.append((ball, sphere(f"void{i}{j}", 0.025, (x + 0.02, y, centre[2]))))
+                voids.append((ball, sphere(f"void{i}{j}", 0.025, (x + 0.02, y, center[2]))))
     for ball, void in voids:
         boolean(ball, void)
         remove(void)

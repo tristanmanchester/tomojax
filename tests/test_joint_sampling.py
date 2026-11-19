@@ -21,8 +21,8 @@ def test_coarsening_memory_map_matches_dense_fp32(tmp_path, missing):
     source[:] = np.random.default_rng(81).normal(size=source.shape)
     if missing:
         source[1, 2, 3] = np.nan
-    (actual, *_), *rest = _fit._read(source, [2], batch_views=1)
-    (expected, *_), *expected_rest = _fit._read(source.astype(np.float32), [2], batch_views=3)
+    (actual, *_), *rest = _fit._read(source, [2], views_per_batch=1)
+    (expected, *_), *expected_rest = _fit._read(source.astype(np.float32), [2], views_per_batch=3)
     assert (actual[1] is None) is not missing
     for a, b in zip(actual, expected, strict=True):
         np.testing.assert_array_equal(a, b)
@@ -48,9 +48,9 @@ def test_one_pass_gives_each_binning_the_scale_and_the_noise_of_separate_reads(m
     values = np.random.default_rng(83).normal(1.0, 0.1, size=(40, 52, 56))
     if missing_columns:
         values[:, :, ::4] = np.nan
-    binned, scale, sd = _fit._read(values, [2, 4], batch_views=3)
+    binned, scale, sd = _fit._read(values, [2, 4], views_per_batch=3)
     for b, (y, precision) in zip([2, 4], binned, strict=True):
-        [(alone, alone_precision)], _, _ = _fit._read(values, [b], batch_views=7)
+        [(alone, alone_precision)], _, _ = _fit._read(values, [b], views_per_batch=7)
         np.testing.assert_array_equal(y, alone)
         assert (precision is None) is (alone_precision is None) is not missing_columns
     sample = values[:: len(values) // 16].astype(np.float32)
@@ -77,8 +77,8 @@ def test_coarsening_reads_one_view_batch_at_a_time():
             raise AssertionError("the whole stack must not be converted at once")
 
     source = Source()
-    [(actual, _)], _, _ = _fit._read(source, [2], batch_views=2)
-    [(expected, _)], _, _ = _fit._read(values.astype(np.float32), [2], batch_views=5)
+    [(actual, _)], _, _ = _fit._read(source, [2], views_per_batch=2)
+    [(expected, _)], _, _ = _fit._read(values.astype(np.float32), [2], views_per_batch=5)
     np.testing.assert_array_equal(actual, expected)
     assert source.reads == [2, 2, 1]  # a partial last batch, never more than two views
 

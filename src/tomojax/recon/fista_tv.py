@@ -55,7 +55,7 @@ from ._tv_ops import (
     isotropic_tv_value,
     project_box,
     tv_proximal,
-    validate_regulariser,
+    validate_regularizer,
 )
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from tomojax._typed_arrays import Device
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
-    from .types import DataTerm, Regulariser
+    from .types import DataTerm, Regularizer
 
 GradMode = Literal["auto", "batched", "stream"]
 
@@ -87,7 +87,7 @@ class FistaRuntime:
     """Resolved solver state shared with the initialization module."""
 
     config: FistaConfig
-    regulariser: Regulariser = field(metadata={"static": True})
+    regularizer: Regularizer = field(metadata={"static": True})
     metric: TVMetric | None
     noise_scale: jax.Array | float | None
     huber_delta: jax.Array | float
@@ -119,7 +119,7 @@ class FistaConfig:
     ``gather_dtype``, ``projector_unroll``, ``checkpoint_projector`` and ``grad_mode``.
     ``views_per_batch=None`` batches 64 views, or one on the reference path.
 
-    ``stream_projections`` reads NumPy or memmap projections from host memory
+    ``stream`` reads NumPy or memmap projections from host memory
     one view batch at a time, so they never occupy the device whole. ``None``
     streams when they would take more than 40% of free device memory; ``True``
     always streams host arrays. Streaming needs the batched operators and can
@@ -193,10 +193,10 @@ class FistaConfig:
         'auto'.
     tv_prox_iterations : int, optional
         Iterations of the TV or Huber-TV proximal solve per FISTA update. Default is 10.
-    recon_rel_tol : float | None, optional
+    tolerance : float | None, optional
         Relative objective-change tolerance for stopping reconstruction early; None disables
         it.
-    recon_patience : int, optional
+    patience : int, optional
         Number of successive small-change iterations required for early stopping.
         Default is 0.
     power_iterations : int, optional
@@ -224,7 +224,7 @@ class FistaConfig:
     backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
-    stream_projections : bool | None, optional
+    stream : bool | None, optional
         Read host projections one view batch at a time. None selects streaming from
         available device memory; False keeps them resident.
     devices : jax.Device or sequence of jax.Device or None, optional
@@ -235,7 +235,7 @@ class FistaConfig:
     iterations: int = 50
     data_term: DataTerm = "absolute"
     tv_weight: float | None = None
-    regulariser: Regulariser = "tv"
+    regularizer: Regularizer = "tv"
     huber_delta: float = 1e-2
     lipschitz: float | None = None
     views_per_batch: int | None = None
@@ -244,8 +244,8 @@ class FistaConfig:
     gather_dtype: str = "fp32"
     grad_mode: GradMode = "auto"
     tv_prox_iterations: int = 10
-    recon_rel_tol: float | None = None
-    recon_patience: int = 0
+    tolerance: float | None = None
+    patience: int = 0
     power_iterations: int = 3
     support: jnp.ndarray | None = None
     nonnegative: bool = False
@@ -254,7 +254,7 @@ class FistaConfig:
     ray_integrator: str = "sampled"
     projector_model: ProjectorModel = "auto"
     backend: ProjectorBackend = "auto"
-    stream_projections: bool | None = None
+    stream: bool | None = None
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
@@ -506,8 +506,8 @@ def _prepare_fista_runtime(
     if cfg.ray_integrator not in RAY_INTEGRATORS:
         raise ValueError("ray_integrator must be sampled or exact")
     volume_mask = None if cfg.support is None else jnp.asarray(cfg.support, jnp.float32)
-    regulariser = validate_regulariser(
-        cfg.regulariser,
+    regularizer = validate_regularizer(
+        cfg.regularizer,
         cfg.huber_delta,
         context="fista_tv config",
     )
@@ -538,20 +538,20 @@ def _prepare_fista_runtime(
     validate_pose_stack(poses, n_views, context="fista_tv geometry")
     projector = _batched_projector(cfg, n_views, det_grid, geometry, detector)
     split = view_split(cfg.devices, n_views)
-    refuse_streaming(split, cfg.stream_projections, "fista_tv")
+    refuse_streaming(split, cfg.stream, "fista_tv")
     if split is not None and projector is None:
         raise ValueError("fista_tv: devices requires the batched projection operators")
     stream = (
         split is None
         and not isinstance(projections, jax.Array)
         and (
-            bool(cfg.stream_projections)
-            if cfg.stream_projections is not None  # ~8 volumes of iterates, TV duals, scratch
+            bool(cfg.stream)
+            if cfg.stream is not None  # ~8 volumes of iterates, TV duals, scratch
             else should_stream(projections, reserve_bytes=32 * grid.nx * grid.ny * grid.nz)
         )
     )
     if stream and projector is None:
-        raise ValueError("fista_tv: stream_projections requires the batched projection operators")
+        raise ValueError("fista_tv: stream requires the batched projection operators")
 
     metric = (
         resolve_tv_metric(
@@ -560,7 +560,7 @@ def _prepare_fista_runtime(
             detector,
             projections,
             tv_weight=5e-5 if cfg.tv_weight is None else cfg.tv_weight,
-            huber_delta=cfg.huber_delta if regulariser == "huber_tv" else 1.0,
+            huber_delta=cfg.huber_delta if regularizer == "huber_tv" else 1.0,
         )
         if cfg.tv_weight != 0
         else None
@@ -594,7 +594,7 @@ def _prepare_fista_runtime(
         )
     return FistaRuntime(
         config=cfg,
-        regulariser=regulariser,
+        regularizer=regularizer,
         metric=metric,
         noise_scale=(
             estimate_projection_noise(projections) if detector.nv * detector.nu > 1 else 0.0
@@ -783,7 +783,7 @@ def _fista_proximal(
     return functools.partial(
         tv_proximal,
         lam_over_L=runtime.metric.weight / lipschitz,
-        huber_delta=runtime.huber_delta if runtime.regulariser == "huber_tv" else None,
+        huber_delta=runtime.huber_delta if runtime.regularizer == "huber_tv" else None,
         # Support must constrain every inner primal update, not only the output:
         # projecting an unconstrained TV minimizer does not solve the joint prox.
         support=runtime.volume_mask,
@@ -804,7 +804,7 @@ def _run_fista_scan(
 ) -> tuple[FistaScanState, jax.Array, TVMetric | None]:
     """Return the final state, Lipschitz constant and resolved regularization metric."""
     cfg = runtime.config
-    regulariser = runtime.regulariser
+    regularizer = runtime.regularizer
     huber_delta = runtime.huber_delta
     runtime = replace(
         runtime,
@@ -824,21 +824,19 @@ def _run_fista_scan(
     val_and_grad = jax.jit(val_and_grad_fn)
     proximal = _fista_proximal(runtime, L)
 
-    def regulariser_value_fn(x: jnp.ndarray) -> jnp.ndarray:
+    def regularizer_value_fn(x: jnp.ndarray) -> jnp.ndarray:
         assert runtime.metric is not None
-        if regulariser == "huber_tv":
+        if regularizer == "huber_tv":
             return huber_tv_value(
                 x, huber_delta, gradient_scale_xyz=runtime.metric.gradient_scale_xyz
             )
         return isotropic_tv_value(x, gradient_scale_xyz=runtime.metric.gradient_scale_xyz)
 
     use_early_stop = (
-        (cfg.recon_rel_tol is not None)
-        and float(cfg.recon_rel_tol) > 0.0
-        and int(cfg.recon_patience) > 0
+        (cfg.tolerance is not None) and float(cfg.tolerance) > 0.0 and int(cfg.patience) > 0
     )
-    tol = jnp.float32(float(cfg.recon_rel_tol) if use_early_stop else 0.0)
-    patience = jnp.int32(int(cfg.recon_patience) if use_early_stop else 0)
+    tol = jnp.float32(float(cfg.tolerance) if use_early_stop else 0.0)
+    patience = jnp.int32(int(cfg.patience) if use_early_stop else 0)
     early_flag = jnp.bool_(use_early_stop)
 
     def step(
@@ -852,7 +850,7 @@ def _run_fista_scan(
             data_loss_val, g = (
                 val_and_grad(active_state.z) if initial_data is None else initial_data
             )
-            reg_value = 0.0 if cfg.tv_weight == 0 else regulariser_value_fn(active_state.z)
+            reg_value = 0.0 if cfg.tv_weight == 0 else regularizer_value_fn(active_state.z)
             y = active_state.z - (1.0 / L) * g
             x_new = proximal(y)
             t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * active_state.t * active_state.t))
@@ -1027,7 +1025,7 @@ def fista_tv(
             "lipschitz": float(lipschitz),
             "effective_iterations": count,
             "early_stop": bool(final.done),
-            "regulariser": runtime.regulariser,
+            "regularizer": runtime.regularizer,
             "huber_delta": runtime.huber_delta,
         }
     else:
@@ -1051,7 +1049,7 @@ def fista_tv(
             "resolved_tv_weight": resolved_weight,
             "huber_delta": (
                 float(runtime.metric.delta)
-                if runtime.metric is not None and runtime.regulariser == "huber_tv"
+                if runtime.metric is not None and runtime.regularizer == "huber_tv"
                 else None
             ),
             "contrast_scale": None

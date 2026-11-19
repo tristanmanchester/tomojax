@@ -105,10 +105,10 @@ def compare(image: np.ndarray, reference: np.ndarray, segmentation: np.ndarray) 
     rho, phi = np.hypot(x - cx, y - cy), np.arctan2(y - cy, x - cx)
     inner = np.percentile(rho[wall], 1)
     fill = masks["filler"]
-    centre, rim = fill & (rho < 0.3 * inner), fill & (rho > 0.7 * inner) & (rho < 0.9 * inner)
-    result["filler_cupping"] = float((ratio[rim].mean() - ratio[centre].mean()) / filler)
+    center, rim = fill & (rho < 0.3 * inner), fill & (rho > 0.7 * inner) & (rho < 0.9 * inner)
+    result["filler_cupping"] = float((ratio[rim].mean() - ratio[center].mean()) / filler)
     result["reference_cupping"] = float(
-        (reference[rim].mean() - reference[centre].mean()) / reference[fill].mean()
+        (reference[rim].mean() - reference[center].mean()) / reference[fill].mean()
     )
     sector = np.floor((phi + np.pi) / (2 * np.pi) * 36).astype(int) % 36
     w = masks["wall"]

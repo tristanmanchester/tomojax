@@ -19,14 +19,14 @@ from . import _joint_stacks as js
 pytestmark = pytest.mark.numerical
 
 
-@pytest.mark.parametrize("fit", ["centre", "translations", ("centre", "translations")])
+@pytest.mark.parametrize("fit", ["center", "translations", ("center", "translations")])
 def test_affine_parallel_cache_matches_physical_coefficients_and_active_tangents(fit):
     grid = Grid(16, 15, 12, 0.7, 0.8, 1.1)
     detector = Detector(48, 48, 0.7, 0.9, center=(0.3, -0.2))
     nominal = np.asarray(
         stack_view_poses(
             LaminographyGeometry(
-                grid, detector, np.linspace(0.3, 360.3, 60, endpoint=False), tilt_deg=25
+                grid, detector, np.linspace(0.3, 360.3, 60, endpoint=False), tilt=25
             ),
             60,
         )
@@ -40,7 +40,7 @@ def test_affine_parallel_cache_matches_physical_coefficients_and_active_tangents
         lever=16,
         native=(0.35, 0.45),
         parameters=parameters,
-        detector_roll_deg=11,
+        detector_roll=11,
         detector_pivot=(0.65, 0.25),
     )
     assert ops.affine is not None
@@ -70,13 +70,13 @@ def test_global_coefficient_tangents_match_calibration_of_the_original_detector(
     nominal = np.asarray(
         stack_view_poses(
             LaminographyGeometry(
-                grid, original, np.linspace(0.37, 360.37, n, endpoint=False), tilt_deg=25
+                grid, original, np.linspace(0.37, 360.37, n, endpoint=False), tilt=25
             ),
             n,
         )
     )
-    parameters = Parameters(n, ("centre", "tilt", "roll"), cone=cone, lever=17)
-    beam = ConeBeam(40, 65, detector_roll_deg=4, detector_pitch_deg=-3, detector_yaw_deg=2)
+    parameters = Parameters(n, ("center", "tilt", "roll"), cone=cone, lever=17)
+    beam = ConeBeam(40, 65, detector_roll=4, detector_pitch=-3, detector_yaw=2)
     original_frame = beam_frame(beam, original).astype(np.float64)
     cropped = original_frame.copy()
     cropped[0] -= 0.5 * (original.du * cropped[1] + original.dv * cropped[2])
@@ -89,10 +89,10 @@ def test_global_coefficient_tangents_match_calibration_of_the_original_detector(
         native=(original.du, original.dv),
         parameters=parameters,
         frames=frames if cone else None,
-        detector_roll_deg=3 if not cone else 0,
+        detector_roll=3 if not cone else 0,
         detector_pivot=original.center,
     )
-    values = {"centre_u": 0.6, "centre_v": -0.4, "tilt": 0.2, "roll": 0.25}
+    values = {"center_u": 0.6, "center_v": -0.4, "tilt": 0.2, "roll": 0.25}
     state = np.array([values[name] for name in parameters.globals])
 
     def reference(p):
@@ -106,7 +106,7 @@ def test_global_coefficient_tangents_match_calibration_of_the_original_detector(
             frame = original_frame.copy()
             frame[1] = np.cos(roll) * original_frame[1] + np.sin(roll) * original_frame[2]
             frame[2] = -np.sin(roll) * original_frame[1] + np.cos(roll) * original_frame[2]
-            frame[0] += [g["centre_u"] * original.du, 0, g["centre_v"] * original.dv]
+            frame[0] += [g["center_u"] * original.du, 0, g["center_v"] * original.dv]
             frame[0] -= 0.5 * (original.du * frame[1] + original.dv * frame[2])
             return np.asarray(frame_coefficients(jnp.asarray(poses), frame, grid, detector))[:, :12]
         roll += np.deg2rad(3)
@@ -114,7 +114,7 @@ def test_global_coefficient_tangents_match_calibration_of_the_original_detector(
             (np.arange(48) - 24) * original.du,
             (np.arange(48) - 24) * original.dv,
         )
-        x = np.cos(roll) * u - np.sin(roll) * v + original.center[0] + g["centre_u"] * original.du
+        x = np.cos(roll) * u - np.sin(roll) * v + original.center[0] + g["center_u"] * original.du
         z = np.sin(roll) * u + np.cos(roll) * v + original.center[1]
         return np.asarray(plane_coefficients(jnp.asarray(poses), grid, detector, (x, z)))
 
@@ -149,12 +149,12 @@ def test_shared_global_image_pose_cross_block_has_its_exact_transpose():
     nominal = np.asarray(
         stack_view_poses(
             LaminographyGeometry(
-                grid, detector, np.linspace(0.31, 360.31, n, endpoint=False), tilt_deg=23
+                grid, detector, np.linspace(0.31, 360.31, n, endpoint=False), tilt=23
             ),
             n,
         )
     )
-    parameters = Parameters(n, ("translations", "centre", "roll"), lever=16)
+    parameters = Parameters(n, ("translations", "center", "roll"), lever=16)
     rng = np.random.default_rng(1129)
     with jax.enable_x64(True):
         ops = Operators(

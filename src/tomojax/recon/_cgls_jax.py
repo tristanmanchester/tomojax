@@ -93,7 +93,7 @@ def _checked_inputs(
         "batch_size",
         "zero_start",
         "model",
-        "joseph_interpolation",
+        "interpolation",
         "split",
         "data_term",
     ),
@@ -114,7 +114,7 @@ def _solve(
     batch_size: int,
     zero_start: bool,
     model: str = "ray",
-    joseph_interpolation: str = "linear",
+    interpolation: str = "linear",
     gradient_damping: jax.Array | None = None,
     split: ViewSplit | None = None,
     data_term: DataTerm = "absolute",
@@ -122,11 +122,11 @@ def _solve(
     # Iteration budgets and changing data/poses are dynamic: budget sweeps and
     # repeated scans reuse the same compiled executable.
     forward, adjoint = _operators(
-        poses, grid, detector, det_grid, backend, batch_size, model, joseph_interpolation,
+        poses, grid, detector, det_grid, backend, batch_size, model, interpolation,
         split=split,
     )  # fmt: skip
     magnitude_adjoint = adjoint
-    if is_joseph(model) and joseph_interpolation == "cubic":
+    if is_joseph(model) and interpolation == "cubic":
         # Cubic convolution has negative lobes. A.T @ abs(residual) is not
         # a cancellation bound: the roundoff estimate needs abs(A).T instead.
         _, magnitude_adjoint = _operators(
@@ -137,7 +137,7 @@ def _solve(
             backend,
             batch_size,
             model,
-            joseph_interpolation,
+            interpolation,
             absolute_weights=True,
             split=split,
         )
@@ -277,7 +277,7 @@ def _solve(
         "backend",
         "batch_size",
         "model",
-        "joseph_interpolation",
+        "interpolation",
         "data_term",
     ),
 )
@@ -295,7 +295,7 @@ def _solve_streamed(
     backend: str,
     batch_size: int,
     model: str,
-    joseph_interpolation: str,
+    interpolation: str,
     gradient_damping: jax.Array | None = None,
     data_term: DataTerm = "absolute",
 ) -> tuple[_State, jax.Array, jax.Array, jax.Array]:
@@ -314,7 +314,7 @@ def _solve_streamed(
         backend,
         batch_size,
         model,
-        joseph_interpolation,
+        interpolation,
         data_term=data_term,
     )
     initial, x0 = initialize_volume(initial, model, grid)
@@ -430,13 +430,13 @@ def _placement(
 ) -> tuple[ViewSplit | None, bool]:
     """How the projections are held: shared among devices, or streamed from the host."""
     split = view_split(cfg.devices, n)
-    refuse_streaming(split, cfg.stream_projections, "cgls")
+    refuse_streaming(split, cfg.stream, "cgls")
     if split is not None:
         return split, False  # each device holds its share
     if isinstance(projections, jax.Array) or det_grid is not None:
         return None, False
-    if cfg.stream_projections is not None:
-        return None, bool(cfg.stream_projections)
+    if cfg.stream is not None:
+        return None, bool(cfg.stream)
     if jax.default_backend() != "gpu":
         return None, False
     from tomojax.backends import device_free_memory_bytes
@@ -491,8 +491,8 @@ def cgls(
         geometry, cfg.projector_model, cfg.backend,
         detector=detector, det_grid=det_grid, context="cgls",
     )  # fmt: skip
-    if isinstance(model, ConeModel) and cfg.joseph_interpolation != "linear":
-        raise ValueError("cgls: cone-beam geometry supports joseph_interpolation='linear' only")
+    if isinstance(model, ConeModel) and cfg.interpolation != "linear":
+        raise ValueError("cgls: cone-beam geometry supports interpolation='linear' only")
     _ = validate_grid(grid, "cgls grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="cgls")
     validate_detector_grid(det_grid, detector, context="cgls")
@@ -522,7 +522,7 @@ def cgls(
         "backend": backend,
         "batch_size": batch,
         "model": model,
-        "joseph_interpolation": cfg.joseph_interpolation,
+        "interpolation": cfg.interpolation,
         "gradient_damping": jnp.float32(cfg.gradient_damping) if cfg.gradient_damping else None,
         "data_term": cfg.data_term,
     }
@@ -569,7 +569,7 @@ def cgls(
         "normal_residual_tolerance": float(tolerance),
         "projector_backend": backend,
         "projector_model": public_model,
-        "joseph_interpolation": cfg.joseph_interpolation if is_joseph(model) else None,
+        "interpolation": cfg.interpolation if is_joseph(model) else None,
         "views_per_batch": min(batch, n),
         "formulation": "streamed_normal_equations" if stream else "cgls",
         "data_term": cfg.data_term,

@@ -77,7 +77,7 @@ _CONFLICT_RULES: tuple[GaugeConflict, ...] = (
     ),
     GaugeConflict(
         code="axis_unit_lab_tilt_pair",
-        variables=("axis_unit_lab", "axis_tilt_deg"),
+        variables=("axis_unit_lab", "axis_tilt"),
         message="Estimate axis unit vector or tilt/azimuth parameterization, not both.",
     ),
     GaugeConflict(
@@ -87,12 +87,12 @@ _CONFLICT_RULES: tuple[GaugeConflict, ...] = (
     ),
     GaugeConflict(
         code="detector_roll_object_orientation",
-        variables=("detector_roll_deg", "object_in_plane_orientation"),
+        variables=("detector_roll", "object_in_plane_orientation"),
         message="Estimate detector roll or global object in-plane orientation, not both.",
     ),
     GaugeConflict(
         code="detector_roll_object_phi_mean",
-        variables=("detector_roll_deg", "object_phi_mean"),
+        variables=("detector_roll", "object_phi_mean"),
         message="Estimate detector roll or mean object phi, not both.",
     ),
     GaugeConflict(

@@ -160,7 +160,7 @@ def winding_fractions(grid: Grid) -> list[np.ndarray]:
     pixel projected onto the radial direction); along it, layer ends ramp over
     the pixel footprint.
     """
-    c = grid.centres()
+    c = grid.centers()
     y, x = np.meshgrid(c, c, indexing="ij")
     r, phi = _polar(x, y)
     cos, sin = np.abs(np.cos(phi)), np.abs(np.sin(phi))
@@ -206,7 +206,7 @@ def layer_at(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.n
 
 
 def _z_fraction(grid: Grid, top: float) -> np.ndarray:
-    z = grid.centres()
+    z = grid.centers()
     return np.clip((top - (z - grid.voxel / 2)) / grid.voxel, 0, 1) - np.clip(
         (BOTTOM - (z - grid.voxel / 2)) / grid.voxel, 0, 1
     )
@@ -360,7 +360,7 @@ def hardware(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, n
     return labels, margin
 
 
-def _inclusion_centre() -> np.ndarray:
+def _inclusion_center() -> np.ndarray:
     phi = 2 * np.pi - 0.45
     turn = 6 + phi / (2 * np.pi)
     r = R0 + PITCH * turn + 0.16
@@ -382,7 +382,7 @@ class Defects:
     def __init__(self, seed: int) -> None:
         """Draw the particle's shape from ``seed``."""
         rng = np.random.default_rng([seed, 2])
-        self.centre = _inclusion_centre()
+        self.center = _inclusion_center()
         self.semi = np.array([0.065, 0.05, 0.055])
         self.noise = WaveNoise.make(rng, 0.05, waves=6)
 
@@ -391,7 +391,7 @@ class Defects:
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return labels (KEEP outside the defects) and margins."""
         labels = np.full(x.shape, KEEP, np.int16)
-        p = np.stack([x, y, z], -1) - self.centre
+        p = np.stack([x, y, z], -1) - self.center
         rho = np.linalg.norm(p / self.semi, axis=1)
         sdf = (rho - 1 - 0.12 * self.noise(x, y, z)) * 0.05
         labels[sdf < 0] = STAINLESS
@@ -439,7 +439,7 @@ def battery(n: int = 256, *, seed: int = 0) -> tuple[np.ndarray, dict[str, Any]]
     volume += ((mu[NMC] - mu[CATHODE]) * coating * particle_fraction(grid, seed)).astype(np.float32)
 
     voxelise(hardware, grid, mu, fine=4, under=volume)
-    c = _inclusion_centre()
+    c = _inclusion_center()
     defects = Defects(seed)
     voxelise(
         defects,

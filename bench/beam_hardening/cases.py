@@ -103,9 +103,9 @@ def _place(rng: np.random.Generator, radius: float, inside: float, taken: list) 
     for _ in range(200):
         r = np.sqrt(rng.uniform()) * (inside - radius - 0.6)
         angle = rng.uniform(0, 2 * np.pi)
-        centre = [float(r * np.cos(angle)), float(r * np.sin(angle))]
-        if all(np.hypot(centre[0] - x, centre[1] - y) > radius + q + 0.6 for x, y, q in taken):
-            return centre
+        center = [float(r * np.cos(angle)), float(r * np.sin(angle))]
+        if all(np.hypot(center[0] - x, center[1] - y) > radius + q + 0.6 for x, y, q in taken):
+            return center
     return None
 
 
@@ -174,7 +174,7 @@ def _plate(rng: np.random.Generator, family: str, split: str) -> dict | None:
     depth = np.exp(rng.uniform(np.log(0.5), np.log(5.0)))
     half = float(np.clip(depth * np.sin(np.radians(tilt)) / _mu(material, kv) / 2, 0.5, 2.0))
     radius = float(rng.uniform(4.0, 8.0))
-    shapes = [{"material": material, "centre": [0.0, 0.0], "radius": radius, "half_height": half}]
+    shapes = [{"material": material, "center": [0.0, 0.0], "radius": radius, "half_height": half}]
     if family == "plate-rods":
         rods = [
             m
@@ -186,14 +186,14 @@ def _plate(rng: np.random.Generator, family: str, split: str) -> dict | None:
         rod_material, taken = str(rng.choice(rods)), []
         for _ in range(int(rng.integers(2, 5))):
             rod = float(rng.uniform(0.3, 1.2))
-            centre = _place(rng, rod, radius, taken)
-            if centre is None:
+            center = _place(rng, rod, radius, taken)
+            if center is None:
                 return None
-            taken.append((*centre, rod))
+            taken.append((*center, rod))
             shapes.append(
                 {
                     "material": rod_material,
-                    "centre": centre,
+                    "center": center,
                     "radius": rod,
                     "parent": 0,
                     "half_height": half,
@@ -202,7 +202,7 @@ def _plate(rng: np.random.Generator, family: str, split: str) -> dict | None:
     return {
         "family": family,
         "shapes": shapes,
-        "tilt_deg": tilt,
+        "tilt": tilt,
         "spectrum": _spectrum(rng, kv),
         "flat_quanta": float(np.exp(rng.uniform(np.log(5e3), np.log(5e4)))),
         "blur_px": float(rng.uniform(0.0, 0.7)),
@@ -218,25 +218,25 @@ def _draw(rng: np.random.Generator, family: str, split: str) -> dict | None:
         material = str(rng.choice([*LOW_Z, *dense] if len(dense) > 1 else dense))
         radius = _radius(rng, material, kv, 1.5, FIELD_RADIUS)
         offset = rng.uniform(0, FIELD_RADIUS - radius)
-        shapes = [{"material": material, "centre": [float(offset), 0.0], "radius": radius}]
+        shapes = [{"material": material, "center": [float(offset), 0.0], "radius": radius}]
     elif family == "inclusions":
         if not rods:
             return None
         radius = float(rng.uniform(8.0, FIELD_RADIUS))
-        shapes = [{"material": str(rng.choice(LOW_Z)), "centre": [0.0, 0.0], "radius": radius}]
+        shapes = [{"material": str(rng.choice(LOW_Z)), "center": [0.0, 0.0], "radius": radius}]
         rod_material = str(rng.choice(rods))
         taken: list = []
         for _ in range(int(rng.integers(2, 5))):
             rod = _radius(rng, rod_material, kv, 0.6, 3.0)
-            centre = _place(rng, rod, radius, taken)
-            if centre is None:
+            center = _place(rng, rod, radius, taken)
+            if center is None:
                 return None
-            taken.append((*centre, rod))
-            shapes.append({"material": rod_material, "centre": centre, "radius": rod, "parent": 0})
+            taken.append((*center, rod))
+            shapes.append({"material": rod_material, "center": center, "radius": rod, "parent": 0})
         void = float(rng.uniform(0.6, 2.5))
-        centre = _place(rng, void, radius, taken)
-        if centre is not None and rng.uniform() < 0.5:
-            shapes.append({"material": "air", "centre": centre, "radius": void, "parent": 0})
+        center = _place(rng, void, radius, taken)
+        if center is not None and rng.uniform() < 0.5:
+            shapes.append({"material": "air", "center": center, "radius": void, "parent": 0})
     else:
         radius = float(rng.uniform(6.0, FIELD_RADIUS))
         # A tube wall of a given thickness; its tangent path is about 2 sqrt(2 R wall).
@@ -250,20 +250,20 @@ def _draw(rng: np.random.Generator, family: str, split: str) -> dict | None:
         wall_material = str(rng.choice(walls))
         wall = float(rng.uniform(0.4, 2.0)) if wall_material in ("pmma", "glass") else 0.4
         shapes = [
-            {"material": wall_material, "centre": [0.0, 0.0], "radius": radius},
+            {"material": wall_material, "center": [0.0, 0.0], "radius": radius},
             {
                 "material": str(rng.choice(LOW_Z)),
-                "centre": [0.0, 0.0],
+                "center": [0.0, 0.0],
                 "radius": radius - wall,
                 "parent": 0,
             },
         ]
         rod = _radius(rng, rods[0], kv, 0.6, 3.0)
-        centre = _place(rng, rod, radius - wall, [])
-        if centre is None:
+        center = _place(rng, rod, radius - wall, [])
+        if center is None:
             return None
         shapes.append(
-            {"material": str(rng.choice(rods)), "centre": centre, "radius": rod, "parent": 1}
+            {"material": str(rng.choice(rods)), "center": center, "radius": rod, "parent": 1}
         )
     return {
         "family": family,

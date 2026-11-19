@@ -39,7 +39,7 @@ def align_poses(
             fit=fit,
             keep_grid=grid is not None,
             frames=cone_frames(scan.geometry),
-            detector_roll_deg=float(cast("float", metadata.get("detector_roll_deg", 0.0))),
+            detector_roll=float(cast("float", metadata.get("detector_roll", 0.0))),
             view_positions=scan.view_positions,
             declared_poses=np.asarray(stack_view_poses(scan.with_poses(None).geometry, views)),
         )

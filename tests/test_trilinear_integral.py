@@ -138,7 +138,7 @@ def test_exact_fista_matches_dense_projected_steps(problem):
     params = np.column_stack([alpha, beta, phi, pose[:, 0, 3], pose[:, 2, 3], pose[:, 1, 3]])
     base = ParallelGeometry(grid, detector, np.zeros(3))
     geometry = AugmentedGeometry(base, params.astype(np.float32))
-    np.testing.assert_allclose([geometry.pose_for_view(i) for i in range(3)], pose, atol=1e-6)
+    np.testing.assert_allclose([geometry.pose_matrix(i) for i in range(3)], pose, atol=1e-6)
     result, _ = fista_tv(geometry, grid, detector, target.astype(np.float32), config=config)
     result = np.asarray(result)
     x, z, momentum = np.zeros(volume.size), np.zeros(volume.size), 1.0

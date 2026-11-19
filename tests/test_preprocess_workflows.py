@@ -141,23 +141,20 @@ def test_views_and_a_detector_block(tmp_path: Path) -> None:
     record = {"nu": 2, "nv": 2, "du": 2.0, "dv": 3.0, "det_center": [10.0, 20.0]}
     _set_detector(tmp_path / "raw.nxs", record=record, sizes=(2.0, 3.0))
     out = tmp_path / "part.nxs"
-    assert (
-        _preprocess(tmp_path / "raw.nxs", "-o", out, "--select-views", "1", "--crop", "0:1,0:1")
-        == 0
-    )
+    assert _preprocess(tmp_path / "raw.nxs", "-o", out, "--views", "1", "--crop", "0:1,0:1") == 0
     scan = tj.load(out)
     np.testing.assert_allclose(np.asarray(scan.projections), [[[-np.log(0.8)]]], rtol=1e-6)
     np.testing.assert_allclose(scan.angles, [90.0])
     assert (scan.detector.nu, scan.detector.nv, scan.detector.center) == (1, 1, (9.0, 18.5))
-    assert _preprocess(tmp_path / "raw.nxs", "-o", out, "--force", "--select-views", "0:3") == 1
+    assert _preprocess(tmp_path / "raw.nxs", "-o", out, "--force", "--views", "0:3") == 1
 
 
 @pytest.mark.parametrize("rings", [False, True])
 def test_steps_from_the_command_line(tmp_path: Path, rings: bool) -> None:
     views, nv, nu = 40, 3, 64
     u = np.arange(nu)[None, None, :]
-    centre = 32 + 12 * np.sin(np.linspace(0, 2 * np.pi, views))[:, None, None]
-    truth = 2.0 * np.maximum(0.0, 1.0 - ((u - centre) / 18.0) ** 2) * np.ones((1, nv, 1))
+    center = 32 + 12 * np.sin(np.linspace(0, 2 * np.pi, views))[:, None, None]
+    truth = 2.0 * np.maximum(0.0, 1.0 - ((u - center) / 18.0) ** 2) * np.ones((1, nv, 1))
     gain = np.ones(nu)
     gain[[10, 31]] = [0.97, 1.03]  # pixels the flats do not describe
     (tmp_path / "frames").mkdir()

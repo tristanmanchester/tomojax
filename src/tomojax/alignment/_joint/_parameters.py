@@ -12,7 +12,7 @@ import numpy as np
 
 from ._projection import posed
 
-_NAMES = ("centre", "tilt", "roll", "translations", "rotations")
+_NAMES = ("center", "tilt", "roll", "translations", "rotations")
 
 
 def parse_fit(fit):
@@ -22,7 +22,7 @@ def parse_fit(fit):
         raise ValueError("fit must be a name or a nonempty tuple of parameter names")
     if len(set(names)) != len(names) or any(n not in _NAMES for n in names):
         raise ValueError(
-            "fit names are centre, tilt, roll, translations and rotations; no duplicates"
+            "fit names are center, tilt, roll, translations and rotations; no duplicates"
         )
     return tuple(n for n in _NAMES if n in names)
 
@@ -46,7 +46,7 @@ class Parameters:
             tuple(range(3, self.full_dofs)) if "translations" in self.fit else ()
         )
         self.globals = (
-            (("centre_u", "centre_v") if cone else ("centre_u",)) if "centre" in self.fit else ()
+            (("center_u", "center_v") if cone else ("center_u",)) if "center" in self.fit else ()
         ) + tuple(name for name in ("tilt", "roll") if name in self.fit)
         self.nlocal, self.nglobal = len(self.local), len(self.globals)
         self.k = self.nlocal + self.nglobal
@@ -78,11 +78,11 @@ class Parameters:
             )
         shared = dict(zip(self.globals, state[self.local_size :], strict=True))
         corrections = {}
-        if "centre_u" in shared:
-            corrections["centre"] = (
-                (float(shared["centre_u"]), float(shared["centre_v"]))
+        if "center_u" in shared:
+            corrections["center"] = (
+                (float(shared["center_u"]), float(shared["center_v"]))
                 if self.cone
-                else float(shared["centre_u"])
+                else float(shared["center_u"])
             )
         for name in ("tilt", "roll"):
             if name in shared:
@@ -98,7 +98,7 @@ class Parameters:
         detector,
         native,
         frames=None,
-        detector_roll_deg=0.0,
+        detector_roll=0.0,
         detector_pivot=None,
     ):
         """Map parameter rows to physical poses and detector frames.
@@ -127,12 +127,12 @@ class Parameters:
                 jnp.matmul(rx, nominal[:, :3, :3], precision=jax.lax.Precision.HIGHEST)
             )
         poses = posed(nominal, full, scales)
-        centre_u = shared.get("centre_u", zero) * native[0]
-        centre_v = shared.get("centre_v", zero) * native[1]
+        center_u = shared.get("center_u", zero) * native[0]
+        center_v = shared.get("center_v", zero) * native[1]
         angle = shared.get("roll", zero) / self.lever
         pivot = detector.center if detector_pivot is None else detector_pivot
-        if not any(name in shared for name in ("centre_u", "centre_v", "roll")) and (
-            frames is not None or detector_roll_deg == 0
+        if not any(name in shared for name in ("center_u", "center_v", "roll")) and (
+            frames is not None or detector_roll == 0
         ):
             return poses, frames
         if frames is not None:
@@ -141,19 +141,19 @@ class Parameters:
             c, s = jnp.cos(angle)[:, None], jnp.sin(angle)[:, None]
             new_u, new_v = c * u + s * v, -s * u + c * v
             offset_u, offset_v = detector.center[0] - pivot[0], detector.center[1] - pivot[1]
-            centre = frame[:, 0] + (new_u - u) * offset_u + (new_v - v) * offset_v
-            centre += jnp.stack([centre_u, zero, centre_v], axis=-1)
-            return poses, frame.at[:, 0].set(centre).at[:, 1].set(new_u).at[:, 2].set(new_v)
-        angle += jnp.deg2rad(jnp.asarray(detector_roll_deg, rows.dtype))
+            center = frame[:, 0] + (new_u - u) * offset_u + (new_v - v) * offset_v
+            center += jnp.stack([center_u, zero, center_v], axis=-1)
+            return poses, frame.at[:, 0].set(center).at[:, 1].set(new_u).at[:, 2].set(new_v)
+        angle += jnp.deg2rad(jnp.asarray(detector_roll, rows.dtype))
         c, s, one = jnp.cos(angle), jnp.sin(angle), jnp.ones_like(angle)
         inverse_roll = jnp.stack([c, zero, s, zero, one, zero, -s, zero, c], axis=-1).reshape(
             -1, 3, 3
         )
-        centre = jnp.stack([pivot[0] + centre_u, zero, pivot[1] + centre_v], axis=-1)
+        center = jnp.stack([pivot[0] + center_u, zero, pivot[1] + center_v], axis=-1)
         translation = jnp.einsum(
             "nij,nj->ni",
             inverse_roll,
-            poses[:, :3, 3] - centre,
+            poses[:, :3, 3] - center,
             precision=jax.lax.Precision.HIGHEST,
         ) + jnp.asarray([pivot[0], 0.0, pivot[1]], rows.dtype)
         poses = poses.at[:, :3, :3].set(

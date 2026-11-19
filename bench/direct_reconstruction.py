@@ -159,7 +159,7 @@ def astra_fbp3d(case: Any, *, filter_batch: int | None = None) -> tuple[np.ndarr
         "detector_zero_padding_each_side": padding,
         "filter_views_per_batch": filter_batch,
         "angular_scale": "pi/n_views",
-        "regulariser": "none",
+        "regularizer": "none",
         "positivity": False,
         "approximate_for_tilted_scans": True,
     }
@@ -208,6 +208,6 @@ def astra_fbp2d(case: Any) -> tuple[np.ndarray, dict]:
         "filter": "ram-lak",
         "filter_support": "volume",
         "detector_zero_padding_each_side": padding,
-        "regulariser": "none",
+        "regularizer": "none",
         "positivity": False,
     }

@@ -99,7 +99,7 @@ def test_resaved_reconstruction_uses_edited_volume_and_keeps_known_image(tmp_pat
     geometry = (
         tj.ParallelGeometry(grid, detector, angles)
         if kind == "parallel"
-        else tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(20, 34), tilt_deg=27)
+        else tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(20, 34), tilt=27)
     )
     truth = np.random.default_rng(7).uniform(0.1, 1, (3, 5, 4)).astype(np.float32)
     data = tj.project(geometry, truth)

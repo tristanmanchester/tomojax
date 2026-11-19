@@ -20,17 +20,17 @@ def _problem(rotations, structure):
     beam = tj.ConeBeam(
         18.0,
         30.0,
-        detector_roll_deg=rotations[0],
-        detector_pitch_deg=rotations[1],
-        detector_yaw_deg=rotations[2],
+        detector_roll=rotations[0],
+        detector_pitch=rotations[1],
+        detector_yaw=rotations[2],
         axis_offset=0.17,
     )
-    first = tj.ConeGeometry(grid, detector, [13, 53, 97, 149, 217, 293], beam, tilt_deg=19)
+    first = tj.ConeGeometry(grid, detector, [13, 53, 97, 149, 217, 293], beam, tilt=19)
     if structure == "segmented":
         second = replace(
             first,
             detector=replace(detector, center=(-0.31, 0.27)),
-            beam=replace(beam, source_to_axis=20, source_to_detector=33, detector_roll_deg=-24),
+            beam=replace(beam, source_to_axis=20, source_to_detector=33, detector_roll=-24),
         )
         geometry = ConeSegments((first, second))
     elif structure == "posed":
@@ -60,17 +60,17 @@ def _reference_frames(scan, row_offset, col_offset, rows, cols, factor):
         # Independent Euler matrices, not ConeBeam.detector_frame or window helpers.
         # Positive roll turns u towards v (+z): the opposite of a right-handed turn about y.
         rotation = (
-            Rotation.from_euler("z", beam.detector_yaw_deg, degrees=True).as_matrix()
-            @ Rotation.from_euler("x", beam.detector_pitch_deg, degrees=True).as_matrix()
-            @ Rotation.from_euler("y", -beam.detector_roll_deg, degrees=True).as_matrix()
+            Rotation.from_euler("z", beam.detector_yaw, degrees=True).as_matrix()
+            @ Rotation.from_euler("x", beam.detector_pitch, degrees=True).as_matrix()
+            @ Rotation.from_euler("y", -beam.detector_roll, degrees=True).as_matrix()
         )
         u = rotation[:, 0] * detector.du
         v = rotation[:, 2] * detector.dv
-        centre = np.array(
+        center = np.array(
             [detector.center[0], beam.source_to_detector - beam.source_to_axis, detector.center[1]]
         )
-        centre += (col_offset + (factor * cols - detector.nu) / 2) * u
-        centre += (row_offset + (factor * rows - detector.nv) / 2) * v
+        center += (col_offset + (factor * cols - detector.nu) / 2) * u
+        center += (row_offset + (factor * rows - detector.nv) / 2) * v
         source = np.array([0, -beam.source_to_axis, 0])
         poses = np.asarray(stack_view_poses(part, len(part.angles)), np.float64)
         for pose in poses:
@@ -79,7 +79,7 @@ def _reference_frames(scan, row_offset, col_offset, rows, cols, factor):
                 np.concatenate(
                     [
                         turn.T @ (source - shift),
-                        turn.T @ (centre - shift),
+                        turn.T @ (center - shift),
                         turn.T @ (u * factor),
                         turn.T @ (v * factor),
                     ]
@@ -159,7 +159,7 @@ def test_pitched_detector_asymmetric_row_window_retains_lab_y(operation):
 def test_rolled_parallel_windows_retain_physical_pixel_positions(posed, operation):
     grid = tj.Grid(8, 8, 8, 1, 1, 1)
     detector = tj.Detector(11, 9, 0.43, 0.57, (0.21, -0.19))
-    geometry = tj.ParallelGeometry(grid, detector, [0, 40, 90], detector_roll_deg=7.5)
+    geometry = tj.ParallelGeometry(grid, detector, [0, 40, 90], detector_roll=7.5)
     scan = tj.Scan(np.zeros((3, 9, 11), np.float32), geometry)
     if posed:
         scan = scan.with_poses(np.full((3, 6), 0.01))

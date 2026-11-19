@@ -26,18 +26,18 @@ def geometry(vectors: np.ndarray, *, grid: Grid, detector: Detector) -> tuple[An
     from tomojax.geometry import grid_volume_origin
 
     vectors = np.asarray(vectors, np.float64)
-    source, centre, u, v = (vectors[:, 3 * k : 3 * k + 3] for k in range(4))
+    source, center, u, v = (vectors[:, 3 * k : 3 * k + 3] for k in range(4))
     u = u / np.linalg.norm(u, axis=1, keepdims=True)
     v = v / np.linalg.norm(v, axis=1, keepdims=True)
     rotation = np.stack([np.cross(u, v), u, v], axis=2)
     source_local = np.einsum("nji,nj->ni", rotation, source)
-    centre_local = np.einsum("nji,nj->ni", rotation, centre)
+    center_local = np.einsum("nji,nj->ni", rotation, center)
     offset = source_local.copy()
     offset[:, 0] = 0
-    centre_local -= offset
+    center_local -= offset
     geo = tigre.geometry(mode="cone", default=False)
     geo.DSO = source_local[:, 0]
-    geo.DSD = geo.DSO - centre_local[:, 0]
+    geo.DSD = geo.DSO - center_local[:, 0]
     geo.nDetector = np.array([detector.nv, detector.nu])
     geo.dDetector = np.array([detector.dv, detector.du])
     geo.sDetector = geo.nDetector * geo.dDetector
@@ -45,9 +45,9 @@ def geometry(vectors: np.ndarray, *, grid: Grid, detector: Detector) -> tuple[An
     geo.dVoxel = np.array([grid.vz, grid.vy, grid.vx])
     geo.sVoxel = geo.nVoxel * geo.dVoxel
     # Offsets are translations, not rotations of the reconstruction array.
-    centre = np.array(grid_volume_origin(grid)) + (geo.nVoxel[::-1] - 1) * geo.dVoxel[::-1] / 2
-    geo.offOrigin = (centre - np.einsum("nij,nj->ni", rotation, offset))[:, ::-1]
-    geo.offDetector = centre_local[:, [2, 1]]
+    center = np.array(grid_volume_origin(grid)) + (geo.nVoxel[::-1] - 1) * geo.dVoxel[::-1] / 2
+    geo.offOrigin = (center - np.einsum("nij,nj->ni", rotation, offset))[:, ::-1]
+    geo.offDetector = center_local[:, [2, 1]]
     geo.rotDetector = np.zeros((len(source), 3))
     geo.accuracy = 0.5
     with warnings.catch_warnings(action="ignore", category=UserWarning):

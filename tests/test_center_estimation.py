@@ -38,7 +38,7 @@ def _scan(*, pitch=0.8, views=180, span=180):
     )
 
 
-def test_encoder_variations_do_not_concentrate_centre_pairs_in_one_sector():
+def test_encoder_variations_do_not_concentrate_center_pairs_in_one_sector():
     from tomojax.alignment.api import estimate_center
 
     scan, true_u, _ = _scan(views=360, span=360)
@@ -59,7 +59,7 @@ def test_encoder_variations_do_not_concentrate_centre_pairs_in_one_sector():
     assert abs(result.detector.center[0] - true_u) < 0.3 * scan.detector.du
 
 
-def test_estimate_center_returns_the_scan_with_its_physical_centre():
+def test_estimate_center_returns_the_scan_with_its_physical_center():
     scan, true_u, truth = _scan()
     result = tj.estimate_center(scan)
     assert result.projections is scan.projections
@@ -116,7 +116,7 @@ def test_estimate_center_rejects_scans_without_usable_axial_pairs(kind):
         tj.estimate_center(scan)
 
 
-def test_loading_keeps_an_unrecorded_centre_at_the_middle(tmp_path, monkeypatch):
+def test_loading_keeps_an_unrecorded_center_at_the_middle(tmp_path, monkeypatch):
     # A file with pixel pitches and no centre loads with the centre at the middle and says the
     # file recorded none; nothing estimates it until asked.
     import h5py
@@ -160,7 +160,7 @@ def test_loading_keeps_an_unrecorded_centre_at_the_middle(tmp_path, monkeypatch)
     assert abs(tj.estimate_center(loaded).detector.center[0] - true_u) <= 0.3 * scan.detector.du
 
 
-def test_recon_says_when_the_file_recorded_no_centre(tmp_path, caplog):
+def test_recon_says_when_the_file_recorded_no_center(tmp_path, caplog):
     from tomojax.cli.main import main
     from tomojax.io import ProjectionDataset
 

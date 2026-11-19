@@ -103,7 +103,7 @@ The command-line options use the same names: the CGLS line is
 alignment `tomojax align scan.nxs -o aligned.nxs --fit translations rotations`.
 Expert settings are a configuration of the method's own class from
 `tomojax.recon`,
-`tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`,
+`tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv"))`,
 or the same fields in a TOML file given to `--config`. Alignment has one model
 argument, `fit=`, plus an optional `grid=`.
 

@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             "  tomojax align scan.nxs -o aligned.nxs\n"
-            "  tomojax align scan.nxs -o aligned.nxs --fit centre\n"
+            "  tomojax align scan.nxs -o aligned.nxs --fit center\n"
             "  tomojax align scan.nxs -o aligned.nxs --fit translations tilt roll\n"
             "  tomojax recon aligned.nxs -o recon.nxs\n\n" + EXIT_STATUS
         ),
@@ -57,11 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--fit",
         nargs="+",
-        choices=("centre", "tilt", "roll", "translations", "rotations"),
+        choices=("center", "tilt", "roll", "translations", "rotations"),
         default=["translations"],
         metavar="NAME",
         help=(
-            "Parameters to fit: centre, tilt, roll, translations, rotations (the axis's wobble; "
+            "Parameters to fit: center, tilt, roll, translations, rotations (the axis's wobble; "
             "view angles as recorded) (default translations). All other parameters stay fixed."
         ),
     )

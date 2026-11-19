@@ -55,7 +55,7 @@ def test_render_integrates_energy_then_pixels_and_sets_fixed_detector_frame(
         photon_fractions=[1, 3],
         shape=[1, 1],
         pixel_mm=0.3,
-        centre_mm=[0.17, -0.23],
+        center_mm=[0.17, -0.23],
         supersample=2,
         raster_refinement=refinement,
         save_energy_transmission=cone,

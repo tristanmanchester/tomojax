@@ -214,7 +214,7 @@ def generate(size: int, views: int, tilt: float, photons: float, seed: int) -> t
         "renderer": "EGL",
         "shape": [size, size, size],
         "views": views,
-        "tilt_deg": tilt,
+        "tilt": tilt,
         "grid": {"nx": size, "ny": size, "nz": size, "vx": spacing, "vy": spacing, "vz": spacing},
         "detector": {
             "nu": nu,

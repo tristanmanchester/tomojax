@@ -17,13 +17,13 @@ def _geometry(kind):
     detector = tj.Detector(9, 5, 0.9, 1.2, (0.17, -0.23))
     args = grid, detector, np.array([0.0, 31.0, 91.0, 179.0])
     if kind == "cone":
-        return tj.ConeGeometry(*args, tj.ConeBeam(30.0, 50.0), tilt_deg=3)
+        return tj.ConeGeometry(*args, tj.ConeBeam(30.0, 50.0), tilt=3)
     if kind == "lamino":
-        return tj.LaminographyGeometry(*args, tilt_deg=31)
+        return tj.LaminographyGeometry(*args, tilt=31)
     if kind == "lamino-rolled":
-        return tj.LaminographyGeometry(*args, tilt_deg=31, detector_roll_deg=7.0)
+        return tj.LaminographyGeometry(*args, tilt=31, detector_roll=7.0)
     if kind == "parallel-rolled":
-        return tj.ParallelGeometry(*args, detector_roll_deg=7.0)
+        return tj.ParallelGeometry(*args, detector_roll=7.0)
     return tj.ParallelGeometry(*args)
 
 
@@ -125,7 +125,7 @@ class _LastViewTilted(tj.ParallelGeometry):
     @staticmethod
     def stack_poses(geometry, n_views, dtype):
         plain = tj.ParallelGeometry(geometry.grid, geometry.detector, geometry.angles)
-        poses = np.array([plain.pose_for_view(i) for i in range(n_views)], np.float64)
+        poses = np.array([plain.pose_matrix(i) for i in range(n_views)], np.float64)
         c, s = np.cos(1e-3), np.sin(1e-3)
         poses[-1] = np.array([[1, 0, 0, 0], [0, c, -s, 0], [0, s, c, 0], [0, 0, 0, 1]]) @ poses[-1]
         return jnp.asarray(poses.astype(dtype))

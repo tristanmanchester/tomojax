@@ -14,23 +14,23 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-def laminography_tilt_matrix(tilt_deg: float, tilt_about: str) -> np.ndarray:
+def laminography_tilt_matrix(tilt: float, tilt_about: str) -> np.ndarray:
     """Return the fixed rotation that tilts the nominal tomography axis."""
-    tilt = float(np.deg2rad(tilt_deg))
-    if abs(tilt) < 1e-12:
+    radians = float(np.deg2rad(tilt))
+    if abs(radians) < 1e-12:
         return np.eye(3, dtype=np.float64)
     if tilt_about == "x":
-        c, s = np.cos(tilt), np.sin(tilt)
+        c, s = np.cos(radians), np.sin(radians)
         return np.array([[1.0, 0.0, 0.0], [0.0, c, s], [0.0, -s, c]], dtype=np.float64)
     if tilt_about == "z":
-        c, s = np.cos(tilt), np.sin(tilt)
+        c, s = np.cos(radians), np.sin(radians)
         return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]], dtype=np.float64)
     raise ValueError("tilt_about must be 'x' or 'z'")
 
 
-def laminography_axis_unit(tilt_deg: float, tilt_about: str) -> np.ndarray:
+def laminography_axis_unit(tilt: float, tilt_about: str) -> np.ndarray:
     """Return the unit rotation axis implied by the laminography tilt."""
-    R_tilt = laminography_tilt_matrix(tilt_deg, tilt_about)
+    R_tilt = laminography_tilt_matrix(tilt, tilt_about)
     ax = R_tilt @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
     return ax / (np.linalg.norm(ax) + 1e-12)
 
@@ -40,14 +40,14 @@ class LaminographyGeometry:
     """Laminography geometry with tilted rotation axis (parallel-ray model).
 
     - Beam direction is fixed along +y (as in ParallelGeometry).
-    - Rotation axis is tilted away from +z by `tilt_deg` within a chosen plane.
+    - Rotation axis is tilted away from +z by `tilt` within a chosen plane.
       With `tilt_about='x'` the axis leans towards +y (beam-aligned laminography);
       with `tilt_about='z'` the axis leans towards +x. Each view rotates the
       object around this axis by `angles[i]`, in degrees.
 
     Frame convention:
 
-    - pose_for_view(i) returns T_world_from_obj for the sample frame, where the
+    - pose_matrix(i) returns T_world_from_obj for the sample frame, where the
       object's +z axis equals the nominal rotation axis. At theta=0, T is the
       fixed alignment S (generally not identity) that maps e_z -> axis.
 
@@ -59,20 +59,20 @@ class LaminographyGeometry:
         Detector dimensions, pitches and physical centre.
     angles : sequence of float
         View rotation angles in degrees, in acquisition order.
-    tilt_deg : float, optional
+    tilt : float, optional
         Axis tilt away from +z, in degrees; defaults to 30.
     tilt_about : {'x', 'z'}
         Tilt convention: x leans towards +y; z leans towards +x.
-    detector_roll_deg : float, optional
+    detector_roll : float, optional
         Roll about the detector normal, in degrees; positive turns u towards v.
     """
 
     grid: Grid
     detector: Detector
     angles: Sequence[float]
-    tilt_deg: float = 30.0
+    tilt: float = 30.0
     tilt_about: str = "x"  # or "z"
-    detector_roll_deg: float = 0.0
+    detector_roll: float = 0.0
 
     @property
     def axis_unit_lab(self) -> np.ndarray:
@@ -88,9 +88,9 @@ class LaminographyGeometry:
         ValueError
             If tilt_about is unsupported for a nonzero tilt.
         """
-        return laminography_axis_unit(self.tilt_deg, self.tilt_about)
+        return laminography_axis_unit(self.tilt, self.tilt_about)
 
-    def pose_for_view(self, i: int) -> PoseMatrix:
+    def pose_matrix(self, i: int) -> PoseMatrix:
         """World-from-object pose in sample frame; rotation about object +z.
 
         We align the object's +z axis to the laminography axis once via S, then
@@ -137,4 +137,4 @@ class LaminographyGeometry:
         """
         del i
         # Use the same detector plane and beam direction as parallel CT.
-        return _parallel_detector_rays(self.grid, self.detector, self.detector_roll_deg)
+        return _parallel_detector_rays(self.grid, self.detector, self.detector_roll)

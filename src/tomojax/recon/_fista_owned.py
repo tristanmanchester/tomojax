@@ -164,8 +164,8 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
     z = jnp.array(x, copy=True)
     t = jnp.float32(1) if first_value is None else 0.5 * (1 + jnp.sqrt(jnp.float32(5)))
     losses = [] if first_value is None else [first_value]
-    tolerance = float(cfg.recon_rel_tol) if cfg.recon_rel_tol is not None else 0.0
-    early = tolerance > 0 and cfg.recon_patience > 0
+    tolerance = float(cfg.tolerance) if cfg.tolerance is not None else 0.0
+    early = tolerance > 0 and cfg.patience > 0
     streak, done = 0, False
     previous = float(first_value) if early and first_value is not None else None
     value = jnp.float32(0) if first_value is None else first_value
@@ -186,7 +186,7 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
             )
             streak = streak + 1 if small else 0
             previous = objective
-            done = streak >= cfg.recon_patience
+            done = streak >= cfg.patience
             if done:
                 break
     jax.block_until_ready((x, z, t))

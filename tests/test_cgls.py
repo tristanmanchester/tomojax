@@ -38,8 +38,8 @@ def test_underdetermined_cgls_preserves_initial_null_component(
     shape = (2, 3, 3)
     grid = Grid(*shape[::-1], 0.8, 1.2, 1.4)
     detector = Detector(3, 2, 0.9, 1.3, (0.17, -0.23))
-    geometry = LaminographyGeometry(grid, detector, [13, 83], tilt_deg=23)
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(2)])
+    geometry = LaminographyGeometry(grid, detector, [13, 83], tilt=23)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(2)])
 
     def project(flat):
         volume = flat.reshape(shape)
@@ -73,7 +73,7 @@ def test_underdetermined_cgls_preserves_initial_null_component(
             views_per_batch=1,
             backend=backend,
             projector_model=model,
-            joseph_interpolation=interpolation,
+            interpolation=interpolation,
         ),
     )
     actual = np.asarray(volume).ravel()
@@ -89,9 +89,9 @@ def small_problem(offset=0.0):
     grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 4, 0.7, 1.2, (0.17, -0.23))
     geometry = LaminographyGeometry(
-        grid, detector, np.asarray([13, 49, 83, 122, 161]) + offset, tilt_deg=23
+        grid, detector, np.asarray([13, 49, 83, 122, 161]) + offset, tilt=23
     )
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
 
     def project(flat):
         return jax.vmap(
@@ -129,7 +129,7 @@ def test_cgls_matches_dense_lstsq_with_tail_batches(stream, damping, warm_start)
             damping=damping,
             views_per_batch=3,
             backend="jax",
-            stream_projections=stream,
+            stream=stream,
         ),
     )
     np.testing.assert_allclose(volume.ravel(), expected, rtol=2e-4, atol=3e-5)
@@ -363,9 +363,7 @@ def test_streamed_cgls_solves_the_same_least_squares_problem(tmp_path, damping):
     stored[:] = data
     results = {}
     for stream, projections in [(False, jnp.asarray(data)), (True, stored)]:
-        config = CGLSConfig(
-            iterations=300, damping=damping, views_per_batch=7, stream_projections=stream
-        )
+        config = CGLSConfig(iterations=300, damping=damping, views_per_batch=7, stream=stream)
         results[stream] = cgls(geometry, grid, detector, projections, config=config)
     assert results[True][1]["formulation"] == "streamed_normal_equations"
     assert results[True][1]["converged"] and results[False][1]["converged"]
@@ -394,7 +392,7 @@ def test_auto_streaming_reserves_volume_state(monkeypatch):
             grid,
             detector,
             data,
-            config=replace(config, stream_projections=False),
+            config=replace(config, stream=False),
         )
         assert info["formulation"] == "cgls"
         np.testing.assert_allclose(automatic, resident, rtol=2e-5, atol=2e-6)
@@ -406,10 +404,10 @@ def test_streamed_cgls_rejects_nonfinite_views():
     data = np.ones((8, 6, 8), np.float32)
     data[3, 2, 2] = np.nan
     with pytest.raises(Exception, match="finite"):
-        cgls(geometry, grid, detector, data, config=CGLSConfig(stream_projections=True))
+        cgls(geometry, grid, detector, data, config=CGLSConfig(stream=True))
     # Replace the failed callback token before JAX's process-exit barrier.
     data[3, 2, 2] = 1
-    result, _ = cgls(geometry, grid, detector, data, config=CGLSConfig(stream_projections=True))
+    result, _ = cgls(geometry, grid, detector, data, config=CGLSConfig(stream=True))
     np.testing.assert_array_equal(np.isfinite(result), True)
     jax.effects_barrier()
 
@@ -428,7 +426,7 @@ import tomojax as tj
 from tomojax.geometry import Grid, Detector, LaminographyGeometry
 from tomojax.recon import CGLSConfig, cgls
 g, d = Grid(4, 4, 3, 1, 1, 1), Detector(9, 7, 1, 1)
-geometry = LaminographyGeometry(g, d, np.linspace(0, 180, 7, endpoint=False), tilt_deg=23)
+geometry = LaminographyGeometry(g, d, np.linspace(0, 180, 7, endpoint=False), tilt=23)
 x, info = cgls(geometry, g, d, np.zeros((7, 7, 9), np.float32),
     init_x=np.ones((3, 4, 4), np.float32),
     config=CGLSConfig(iterations=2, backend='cuda', views_per_batch=3, data_term='{data_term}'))
@@ -454,8 +452,8 @@ def test_native_cuda_cgls_matches_independent_damped_system(tilt):
     from tomojax.forward import project_joseph
 
     g, d = Grid(5, 4, 3, 0.8, 1.1, 1.3), Detector(7, 5, 0.9, 1.0, (0.2, -0.3))
-    geometry = LaminographyGeometry(g, d, [13, 49, 83, 122, 161], tilt_deg=tilt)
-    poses = np.asarray([geometry.pose_for_view(i) for i in range(5)], np.float32)
+    geometry = LaminographyGeometry(g, d, [13, 49, 83, 122, 161], tilt=tilt)
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(5)], np.float32)
     rng = np.random.default_rng(761)
     data = rng.normal(size=(5, 5, 7)).astype(np.float32)
     matrix = np.asarray(
@@ -496,7 +494,7 @@ def test_native_cuda_clipped_planes_keep_the_matched_pair(narrow):
     detector = Detector(23, 19, 0.7, 1.1, (0.1, -0.4))
     angles = np.r_[[0, 0.000001, 31, 89.99999, 90, 153], np.linspace(0, 180, 61)]
     geometry = LaminographyGeometry(grid, detector, angles, 51)
-    poses = np.asarray([geometry.pose_for_view(i) for i in range(len(angles))], np.float32)
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(len(angles))], np.float32)
     rng = np.random.default_rng(719)
     x = rng.normal(size=(11, 13, 17)).astype(np.float32)
     y = rng.normal(size=(len(angles), 19, 23)).astype(np.float32)
@@ -528,7 +526,7 @@ def test_native_cuda_inverse_support_keeps_rounded_boundary_weights():
 
     grid, detector = Grid(256, 256, 256, 1, 1, 1), Detector(256, 256, 1, 1)
     geometry = LaminographyGeometry(grid, detector, [21.0], 30.0)
-    poses = np.asarray([geometry.pose_for_view(0)], np.float32)
+    poses = np.asarray([geometry.pose_matrix(0)], np.float32)
     operators = JosephCUDA(poses, grid, detector, views_per_batch=1)
     volume, images = cp.zeros((256,) * 3, cp.float32), cp.zeros((1, 256, 256), cp.float32)
     volume[165, 251, 230], images[0, 84, 178] = 1, 1

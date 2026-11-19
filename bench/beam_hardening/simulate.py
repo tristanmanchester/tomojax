@@ -63,13 +63,13 @@ def spectrum(spec: dict) -> tuple[np.ndarray, np.ndarray]:
 def cylinder_chords(
     start: np.ndarray,
     end: np.ndarray,
-    centre: list[float],
+    center: list[float],
     radius: float,
     half_height: float | None,
 ) -> np.ndarray:
     """Exact chord (mm) of each ray segment through a z-aligned cylinder, finite or not."""
     d = end - start
-    rel = start[..., :2] - np.asarray(centre)
+    rel = start[..., :2] - np.asarray(center)
     a = d[..., 0] ** 2 + d[..., 1] ** 2
     b = 2 * (d[..., 0] * rel[..., 0] + d[..., 1] * rel[..., 1])
     c = (rel**2).sum(-1) - radius**2
@@ -97,7 +97,7 @@ def _pose(case: dict, angle: float) -> np.ndarray:
     """World-from-object rotation of one view: about z, then the laminography tilt."""
     c, s = np.cos(np.deg2rad(angle)), np.sin(np.deg2rad(angle))
     turn = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-    t = np.deg2rad(case.get("tilt_deg", 0.0))  # the axis leans from +z towards the beam (+y)
+    t = np.deg2rad(case.get("tilt", 0.0))  # the axis leans from +z towards the beam (+y)
     tilt = np.array([[1, 0, 0], [0, np.cos(t), np.sin(t)], [0, -np.sin(t), np.cos(t)]])
     return tilt @ turn
 
@@ -129,14 +129,14 @@ def _scene(gvxr: Any, case: dict, energies: np.ndarray, fluence: np.ndarray) -> 
     _place_beam(gvxr, case, 0.0)
     # gVXR's open beam falls off towards the detector edges; checks compare transmission.
     # It renders only with a mesh in the scene, so one sits far outside the beam.
-    shapes = [{"material": "air", "centre": [0.0, 0.0], "radius": 0.1}, *case["shapes"]]
+    shapes = [{"material": "air", "center": [0.0, 0.0], "radius": 0.1}, *case["shapes"]]
     for i, shape in enumerate(shapes):
         label = f"s{i - 1}"
         if i:
             height = 2 * shape["half_height"] if "half_height" in shape else 60.0
             gvxr.makeCylinder(label, 1000, height, shape["radius"], "mm")
             # Node transforms compose locally: this turns the axis from y to z, then moves it.
-            gvxr.translateNode(label, *shape["centre"], 0.0, "mm")
+            gvxr.translateNode(label, *shape["center"], 0.0, "mm")
             gvxr.rotateNode(label, 0, 0, 90)
         else:
             gvxr.makeSphere(label, 4, 4, 0.1, "mm")
@@ -175,7 +175,7 @@ def _lengths(gvxr: Any, case: dict, angle: float, checks: dict) -> tuple[list, l
     for i, shape in enumerate(case["shapes"]):
         length = 10 * np.array(gvxr.computeLBuffer(f"s{i}"), np.float64)
         chord = cylinder_chords(
-            start, end, shape["centre"], shape["radius"], shape.get("half_height")
+            start, end, shape["center"], shape["radius"], shape.get("half_height")
         )
         error = length - chord
         # gVXR occasionally rasterises one column beyond a silhouette; take the chord there.

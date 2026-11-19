@@ -41,10 +41,10 @@ GEOMETRY_KEYS = frozenset(
         "cone_beam",
         "cone_segments",
         "trajectory_lengths",
-        "tilt_deg",
+        "tilt",
         "tilt_about",
         "axis_unit_lab",
-        "detector_roll_deg",
+        "detector_roll",
     }
 )
 
@@ -115,7 +115,7 @@ class Scan:
             text += ", corrections: " + ", ".join(str(c) for c in self.corrections)
         return text + ")"
 
-    def corrected(self, *steps: Step, batch_views: int | None = None) -> Scan:
+    def corrected(self, *steps: Step, views_per_batch: int | None = None) -> Scan:
         """The scan with line-integral ``steps`` applied (see :mod:`tomojax.corrections`).
 
         Steps on counts or transmission need the frames: use :func:`load_frames`
@@ -125,7 +125,7 @@ class Scan:
         ----------
         *steps : Step
             Line-integral correction steps, applied in order.
-        batch_views : int or None, optional
+        views_per_batch : int or None, optional
             Positive views per batch; None chooses automatically.
 
         Returns
@@ -140,14 +140,14 @@ class Scan:
         """
         from tomojax.corrections import correct_projections
 
-        done = correct_projections(self.projections, steps, batch_views=batch_views)
+        done = correct_projections(self.projections, steps, views_per_batch=views_per_batch)
         everything = len(done.kept) == self.projections.shape[0]
         return replace(
             self,
             projections=done.projections,
             geometry=self.geometry if everything else views_of(self.geometry, done.kept),
             corrections=(*self.corrections, *done.records),
-            view_positions=self.view_positions if everything else self.positions()[done.kept],
+            view_positions=self.view_positions if everything else _positions(self)[done.kept],
         )
 
     def cropped(self, rows: slice, cols: slice) -> Scan:
@@ -200,20 +200,8 @@ class Scan:
             self,
             projections=np.asarray(self.projections)[kept],
             geometry=views_of(self.geometry, kept),
-            view_positions=self.positions()[kept],
+            view_positions=_positions(self)[kept],
         )
-
-    def positions(self) -> np.ndarray:
-        """Each view's place in acquisition time: :attr:`view_positions`, or i + 1/2.
-
-        Returns
-        -------
-        numpy.ndarray
-            One float64 position per view.
-        """
-        if self.view_positions is None:
-            return np.arange(self.projections.shape[0]) + 0.5
-        return self.view_positions
 
     def __post_init__(self) -> None:
         if self.projections.ndim == 2:
@@ -412,7 +400,7 @@ class Scan:
         projections = np.concatenate([np.asarray(s.projections) for s in scans])
         geometry = ConeSegments(tuple(parts), trajectory_lengths=tuple(trajectories))
         # Each scan keeps its own acquisition times; a restart marks the break.
-        positions = np.concatenate([s.positions() for s in scans])
+        positions = np.concatenate([_positions(s) for s in scans])
         return cls(
             projections,
             geometry,
@@ -421,10 +409,10 @@ class Scan:
             view_positions=positions,
         )
 
-    def binned(self, factor: int) -> Scan:
-        """The scan with ``factor x factor`` detector pixels averaged into one.
+    def binned(self, binning: int) -> Scan:
+        """The scan with ``binning x binning`` detector pixels averaged into one.
 
-        Projection cost falls by ``factor**2``. Pixels that do not fill a block
+        Projection cost falls by ``binning**2``. Pixels that do not fill a block
         at the detector's edges are dropped, and the detector centre moves to
         match. A grid the library derived from the detector follows it, as with
         ``Frames.corrected(binning=)``; a grid the file or the caller stated is
@@ -433,7 +421,7 @@ class Scan:
 
         Parameters
         ----------
-        factor : int
+        binning : int
             Positive detector-block side length, in pixels.
 
         Returns
@@ -444,15 +432,15 @@ class Scan:
         Raises
         ------
         ValueError
-            If factor is less than one or leaves no complete detector block.
+            If binning is less than one or leaves no complete detector block.
         """
-        if factor < 1:
-            raise ValueError(f"binned needs a factor of at least 1, not {factor}")
-        if factor == 1:
+        if binning < 1:
+            raise ValueError(f"binned needs a binning of at least 1, not {binning}")
+        if binning == 1:
             return self
-        binned = mean_detector_pixels(np.asarray(self.projections, np.float32), factor)
+        binned = mean_detector_pixels(np.asarray(self.projections, np.float32), binning)
         geometry = frame_output_grid(
-            binned_geometry(self.geometry, factor), self.source, binning=factor
+            binned_geometry(self.geometry, binning), self.source, binning=binning
         )
         return replace(self, projections=binned, geometry=geometry)
 
@@ -573,7 +561,7 @@ def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]
         kind, meta = "cone", geometry.geometry_metadata()
     elif isinstance(geometry, LaminographyGeometry):
         kind = "lamino"
-        meta = {"tilt_deg": float(geometry.tilt_deg), "tilt_about": str(geometry.tilt_about)}
+        meta = {"tilt": float(geometry.tilt), "tilt_about": str(geometry.tilt_about)}
     elif isinstance(geometry, RotationAxisGeometry):
         kind = "lamino"
         meta["axis_unit_lab"] = [float(x) for x in geometry.axis_unit_lab]
@@ -581,8 +569,8 @@ def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]
         kind = "parallel"
     else:
         raise TypeError(f"cannot describe a {type(geometry).__name__} geometry")
-    if not isinstance(geometry, ConeGeometry) and geometry.detector_roll_deg:
-        meta["detector_roll_deg"] = float(geometry.detector_roll_deg)
+    if not isinstance(geometry, ConeGeometry) and geometry.detector_roll:
+        meta["detector_roll"] = float(geometry.detector_roll)
     return kind, meta, None, geometry
 
 
@@ -696,7 +684,7 @@ def rebuild(
         if isinstance(geometry, ConeGeometry):
             mapped, beam = _windowed_cone_detector(geometry, mapped)
             changes["beam"] = beam
-        elif roll := getattr(geometry, "detector_roll_deg", 0.0):
+        elif roll := getattr(geometry, "detector_roll", 0.0):
             mapped = _rolled_window(geometry.detector, mapped, roll)
         changes["detector"] = mapped
     return replace(geometry, **changes)
@@ -708,15 +696,15 @@ def _rolled_window(original: Detector, window: Detector, roll_deg: float) -> Det
     c, s = np.cos(angle), np.sin(angle)
     du = window.center[0] - original.center[0]
     dv = window.center[1] - original.center[1]
-    centre = (original.center[0] + c * du - s * dv, original.center[1] + s * du + c * dv)
-    return replace(window, center=(float(centre[0]), float(centre[1])))
+    center = (original.center[0] + c * du - s * dv, original.center[1] + s * du + c * dv)
+    return replace(window, center=(float(center[0]), float(center[1])))
 
 
 def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[Detector, ConeBeam]:
     """Move a cropped/binned cone detector along its own pixel axes, not lab x/z."""
     detector, beam = geometry.detector, geometry.beam
     if mapped.center == detector.center or not any(
-        (beam.detector_roll_deg, beam.detector_pitch_deg, beam.detector_yaw_deg)
+        (beam.detector_roll, beam.detector_pitch, beam.detector_yaw)
     ):
         return mapped, beam
     du = mapped.center[0] - detector.center[0]
@@ -872,3 +860,10 @@ class Alignment:
 
 
 __all__ = ["Alignment", "Reconstruction", "Scan"]
+
+
+def _positions(scan: Scan) -> np.ndarray:
+    """Each view's place in acquisition time: ``scan.view_positions``, or i + 1/2."""
+    if scan.view_positions is None:
+        return np.arange(scan.projections.shape[0]) + 0.5
+    return scan.view_positions

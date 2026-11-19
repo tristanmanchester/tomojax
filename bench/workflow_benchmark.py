@@ -34,7 +34,7 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
     case = make_case(size, args.views, kind)
     grid, detector = case.grid, case.detector
     geometry = (
-        LaminographyGeometry(grid, detector, case.angles, tilt_deg=30)
+        LaminographyGeometry(grid, detector, case.angles, tilt=30)
         if kind == "lamino"
         else ParallelGeometry(grid, detector, case.angles)
     )
@@ -44,7 +44,7 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
     if method == "fista":
         config = FistaConfig(
             iterations=args.recon_iters,
-            regulariser="huber_tv",
+            regularizer="huber_tv",
             lipschitz=None if args.auto_norm else lipschitz,
             views_per_batch=args.batch,
             gather_dtype="fp32",

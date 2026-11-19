@@ -48,7 +48,7 @@ def test_calibration_means_match_independent_host_interpolation(
     )
     actual = tj.Frames(
         counts, geometry, flats=flats, darks=darks, flat_positions=where if several_sets else None
-    ).corrected(batch_views=3)
+    ).corrected(views_per_batch=3)
     np.testing.assert_allclose(actual.projections, expected, rtol=2e-6, atol=2e-7)
     assert actual.corrections[0].settings["flat_sets"] == len(positions)
     assert actual.corrections[0].found == {"pixels_without_light": 5}
@@ -75,8 +75,8 @@ def test_float32_calibration_accumulates_small_frames_in_float64() -> None:
     assert actual.corrections[-1].found == {"nonpositive_transmission": 0}
 
 
-@pytest.mark.parametrize("batch_views", [None, 1])
-def test_nonfinite_counts_are_rejected_not_read_as_zero_absorption(batch_views) -> None:
+@pytest.mark.parametrize("views_per_batch", [None, 1])
+def test_nonfinite_counts_are_rejected_not_read_as_zero_absorption(views_per_batch) -> None:
     counts = np.full((3, 2, 3), 50.0, np.float32)
     counts[2, 1, 1] = np.nan
     geometry = tj.ParallelGeometry(
@@ -89,4 +89,4 @@ def test_nonfinite_counts_are_rejected_not_read_as_zero_absorption(batch_views) 
         darks=np.zeros((1, 2, 3), np.float32),
     )
     with pytest.raises(ValueError, match="not finite"):
-        frames.corrected(batch_views=batch_views)
+        frames.corrected(views_per_batch=views_per_batch)

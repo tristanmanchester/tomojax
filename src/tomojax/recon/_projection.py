@@ -192,7 +192,7 @@ def projection_operators(
     backend: str,
     batch_size: int,
     model: Model = "ray",
-    joseph_interpolation: str = "linear",
+    interpolation: str = "linear",
     *,
     absolute_weights: bool = False,
     split: ViewSplit | None = None,
@@ -215,7 +215,7 @@ def projection_operators(
         backend,
         batch_size,
         model,
-        joseph_interpolation,
+        interpolation,
         absolute_weights=absolute_weights,
     )
 
@@ -412,7 +412,7 @@ def least_squares_operators(
     backend: str,
     batch_size: int,
     model: Model = "ray",
-    joseph_interpolation: str = "linear",
+    interpolation: str = "linear",
     *,
     data_term: DataTerm = "absolute",
     stream: bool = False,
@@ -436,7 +436,7 @@ def least_squares_operators(
         backend,
         batch_size,
         model,
-        joseph_interpolation,
+        interpolation,
         absolute_weights=False,
     )
 
@@ -489,7 +489,7 @@ def normal_equation_operators(
     backend: str,
     batch_size: int,
     model: Model = "ray",
-    joseph_interpolation: str = "linear",
+    interpolation: str = "linear",
     *,
     data_term: DataTerm = "absolute",
 ) -> tuple[
@@ -514,7 +514,7 @@ def normal_equation_operators(
         backend,
         batch_size,
         model,
-        joseph_interpolation,
+        interpolation,
         absolute_weights=False,
     )
     magnitude = (
@@ -526,10 +526,10 @@ def normal_equation_operators(
             backend,
             batch_size,
             model,
-            joseph_interpolation,
+            interpolation,
             absolute_weights=True,
         )
-        if is_joseph(model) and joseph_interpolation == "cubic"
+        if is_joseph(model) and interpolation == "cubic"
         else ops
     )
     shape = (ops.size, detector.nv, detector.nu)

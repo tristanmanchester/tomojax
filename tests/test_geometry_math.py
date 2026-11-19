@@ -30,9 +30,9 @@ def test_align_u_to_v_handles_exact_antiparallel_vectors() -> None:
     assert np.linalg.det(rotation) == pytest.approx(1.0)
 
 
-@pytest.mark.parametrize("tilt_deg", [0.05, 0.09, 1.0, 5.0])
-def test_align_ez_to_axis_preserves_near_minus_z_tilt(tilt_deg: float) -> None:
-    tilt_rad = np.deg2rad(tilt_deg)
+@pytest.mark.parametrize("tilt", [0.05, 0.09, 1.0, 5.0])
+def test_align_ez_to_axis_preserves_near_minus_z_tilt(tilt: float) -> None:
+    tilt_rad = np.deg2rad(tilt)
     axis = np.asarray([np.sin(tilt_rad), 0.0, -np.cos(tilt_rad)], dtype=np.float32)
 
     rotation = np.asarray(_align_ez_to_axis(axis))
@@ -61,9 +61,9 @@ def test_exact_reversed_axis_uses_the_same_half_turn_as_host_geometry():
     grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(7, 5, 1, 1)
     angles = np.asarray([0, 17, 90], dtype=np.float32)
     geometry = RotationAxisGeometry(grid, detector, angles, (0, 0, -1))
-    expected = np.asarray([geometry.pose_for_view(i) for i in range(len(angles))])
+    expected = np.asarray([geometry.pose_matrix(i) for i in range(len(angles))])
     listed = RotationAxisGeometry(grid, detector, angles.tolist(), (0, 0, -1))
-    np.testing.assert_array_equal(expected, [listed.pose_for_view(i) for i in range(len(angles))])
+    np.testing.assert_array_equal(expected, [listed.pose_matrix(i) for i in range(len(angles))])
     actual = jax.jit(axis_pose_stack)(angles, np.asarray([0, 0, -1]))
     np.testing.assert_allclose(actual, expected, atol=2e-7)
 

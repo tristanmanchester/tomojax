@@ -45,10 +45,10 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
 
     grid: GridDict
     geometry_type: str
-    tilt_deg: float
+    tilt: float
     tilt_about: str
     axis_unit_lab: Sequence[float]
-    detector_roll_deg: float
+    detector_roll: float
     angle_offset_deg: np.ndarray
     misalign_spec: dict[str, JsonValue]
     align_params: np.ndarray
@@ -105,9 +105,9 @@ class _WrappedGeometry:
         """The base geometry's view angles."""
         return self.base.angles
 
-    def pose_for_view(self, i: int) -> PoseMatrix:
+    def pose_matrix(self, i: int) -> PoseMatrix:
         """Return the wrapped geometry pose."""
-        return self.base.pose_for_view(i)
+        return self.base.pose_matrix(i)
 
     def rays_for_view(self, i: int) -> RayPair:
         """Return ray callbacks from the wrapped base geometry."""
@@ -131,9 +131,9 @@ class AugmentedGeometry(_WrappedGeometry):
     align_params: np.ndarray
     translation_frame: str = "object"
 
-    def pose_for_view(self, i: int) -> PoseMatrix:
+    def pose_matrix(self, i: int) -> PoseMatrix:
         """Return nominal pose with saved pose correction applied."""
-        T_nom = np.asarray(self.base.pose_for_view(i), dtype=np.float32)
+        T_nom = np.asarray(self.base.pose_matrix(i), dtype=np.float32)
         T_delta = _se3_from_pose_params_np(self.align_params[i])
         T = T_nom @ T_delta
         if self.translation_frame == "detector":
@@ -263,14 +263,14 @@ def _base_geometry(
     angles: Sequence[float],
 ) -> ScanGeometry:
     gtype = normalize_geometry_type(meta.get("geometry_type"))
-    roll = float(meta.get("detector_roll_deg", 0.0))
+    roll = float(meta.get("detector_roll", 0.0))
     if gtype == "cone":
         if roll:
             # Only a private wrapper could write this; a cone roll lives in its beam.
             raise ValueError(
                 "A cone scan's detector roll belongs in cone_beam; this file has a "
-                "top-level detector_roll_deg: pass geometry=... with "
-                "ConeBeam(detector_roll_deg=...)"
+                "top-level detector_roll: pass geometry=... with "
+                "ConeBeam(detector_roll=...)"
             )
         beam_meta = meta.get("cone_beam")
         if not isinstance(beam_meta, dict):
@@ -281,7 +281,7 @@ def _base_geometry(
             detector=detector,
             angles=angles,
             beam=ConeBeam.from_dict(beam_meta),
-            tilt_deg=float(meta.get("tilt_deg", 0.0)),
+            tilt=float(meta.get("tilt", 0.0)),
             tilt_about=str(meta.get("tilt_about", "x")),
             axis_unit=None if axis is None else tuple(float(x) for x in axis),  # type: ignore[arg-type]
         )
@@ -291,25 +291,22 @@ def _base_geometry(
         # canonical model: this has no laminographic missing cone and supports
         # the same axial inverses as a scan without redundant axis metadata.
         if axis == (0.0, 0.0, 1.0):
-            return ParallelGeometry(grid, detector, angles, detector_roll_deg=roll)
-        return RotationAxisGeometry(grid, detector, angles, axis, detector_roll_deg=roll)
+            return ParallelGeometry(grid, detector, angles, detector_roll=roll)
+        return RotationAxisGeometry(grid, detector, angles, axis, detector_roll=roll)
 
     if gtype == "parallel":
-        return ParallelGeometry(grid, detector, angles, detector_roll_deg=roll)
+        return ParallelGeometry(grid, detector, angles, detector_roll=roll)
 
-    if "tilt_deg" not in meta:
+    if "tilt" not in meta:
         raise ValueError(
-            "Missing laminography tilt: pass geometry=... with an explicit tilt_deg "
-            "or axis_unit_lab"
+            "Missing laminography tilt: pass geometry=... with an explicit tilt or axis_unit_lab"
         )
-    tilt_deg = float(meta["tilt_deg"])
+    tilt = float(meta["tilt"])
     # An explicit zero tilt also has the canonical axial poses.
-    if tilt_deg == 0.0:
-        return ParallelGeometry(grid, detector, angles, detector_roll_deg=roll)
+    if tilt == 0.0:
+        return ParallelGeometry(grid, detector, angles, detector_roll=roll)
     tilt_about = str(meta.get("tilt_about", "x"))
-    return LaminographyGeometry(
-        grid, detector, angles, tilt_deg, tilt_about, detector_roll_deg=roll
-    )
+    return LaminographyGeometry(grid, detector, angles, tilt, tilt_about, detector_roll=roll)
 
 
 def _segments_from_meta(

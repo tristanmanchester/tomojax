@@ -36,7 +36,7 @@
   },
   "long_files": {
     "src/tomojax/core/cone.py": 826,
-    "src/tomojax/recon/fista_tv.py": 850
+    "src/tomojax/recon/fista_tv.py": 848
   },
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 160,
@@ -48,18 +48,18 @@
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 120,
     "src/tomojax/recon/_cgls_jax.py::cgls": 113,
     "src/tomojax/recon/fista_tv.py::_prepare_fista_runtime": 121,
-    "src/tomojax/recon/fista_tv.py::_run_fista_scan": 114,
+    "src/tomojax/recon/fista_tv.py::_run_fista_scan": 112,
     "src/tomojax/recon/fista_tv.py::grad_data_term": 147,
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 127,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 125
   },
   "code_lines": {
-    "(modules)": 2911,
-    "_data": 2130,
-    "alignment": 4025,
+    "(modules)": 2916,
+    "_data": 2127,
+    "alignment": 4023,
     "backends": 460,
     "cli": 2396,
-    "core": 13542,
+    "core": 13538,
     "corrections": 2766,
     "datasets": 1120,
     "forward": 789,
@@ -67,7 +67,7 @@
     "io": 3800,
     "motion": 148,
     "nuisance": 232,
-    "recon": 13591
+    "recon": 13589
   },
   "cuda_kernels": 50,
   "cuda_switches": 36,

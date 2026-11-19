@@ -31,7 +31,7 @@ cuda = pytest.param("cuda", marks=pytest.mark.gpu)
 
 def _ellipsoids(extent: float) -> list[tuple[float, np.ndarray, np.ndarray]]:
     shapes = []
-    for amp, centre, radii, angle in [
+    for amp, center, radii, angle in [
         (1.0, (0.0, 0.0, 0.0), (0.28, 0.26, 0.30), 0.0),
         (-0.55, (-0.10, 0.04, 0.03), (0.09, 0.12, 0.10), 23.0),
         (0.75, (0.12, -0.08, -0.09), (0.065, 0.055, 0.08), -17.0),
@@ -39,7 +39,7 @@ def _ellipsoids(extent: float) -> list[tuple[float, np.ndarray, np.ndarray]]:
         c, s = np.cos(np.deg2rad(angle)), np.sin(np.deg2rad(angle))
         rotation = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
         metric = rotation @ np.diag(1 / (extent * np.asarray(radii)) ** 2) @ rotation.T
-        shapes.append((amp, extent * np.asarray(centre), metric))
+        shapes.append((amp, extent * np.asarray(center), metric))
     return shapes
 
 
@@ -63,12 +63,12 @@ def _voxelise(grid: Grid, shapes: list, supersample: int = 3) -> np.ndarray:
 def _analytic(shapes: list, geometry: ConeGeometry) -> np.ndarray:
     """Exact line integrals from the source through each pixel centre."""
     beam, det = geometry.beam, geometry.detector
-    centre, u_dir, v_dir = beam.detector_frame(det)
+    center, u_dir, v_dir = beam.detector_frame(det)
     u = (np.arange(det.nu) - (det.nu - 1) / 2) * det.du
     v = (np.arange(det.nv) - (det.nv - 1) / 2) * det.dv
-    pixels = centre + u[None, :, None] * u_dir + v[:, None, None] * v_dir
+    pixels = center + u[None, :, None] * u_dir + v[:, None, None] * v_dir
     out = []
-    for pose in geometry.poses():
+    for pose in geometry.pose_matrices():
         rot, trans = pose[:3, :3], pose[:3, 3]
         source = rot.T @ (beam.source() - trans)
         direction = (pixels - trans) @ rot - source
@@ -92,13 +92,13 @@ def _scan(
     angles = np.linspace(0.0, 360.0, views, endpoint=False)
     if kind == "tilted":
         beam = ConeBeam(2.5 * n, 4.0 * n, 1.5, -2.0, 0.7)
-        geometry = ConeGeometry(grid, detector, angles, beam, tilt_deg=20.0)
+        geometry = ConeGeometry(grid, detector, angles, beam, tilt=20.0)
     elif kind == "steep":
         # Rays steeper than 45 degrees in z, sampled along z.
-        geometry = ConeGeometry(grid, detector, angles, ConeBeam(3.0 * n, 4.5 * n), tilt_deg=60.0)
+        geometry = ConeGeometry(grid, detector, angles, ConeBeam(3.0 * n, 4.5 * n), tilt=60.0)
     else:
         geometry = ConeGeometry(grid, detector, angles, ConeBeam(3.0 * n, 4.5 * n))
-    poses = geometry.poses()
+    poses = geometry.pose_matrices()
     if kind == "perturbed":
         rng = np.random.default_rng(1)
         for pose in poses:
@@ -163,7 +163,7 @@ def test_cone_projection_matches_analytic_line_integrals(backend):
     )
     shapes = _ellipsoids(float(n))
     coeff = cone_coefficients(
-        jnp.asarray(geometry.poses(), jnp.float32), grid, detector, geometry.beam
+        jnp.asarray(geometry.pose_matrices(), jnp.float32), grid, detector, geometry.beam
     )
     projected = np.asarray(
         cone_project(_voxelise(grid, shapes), coeff, grid, detector, backend=backend)
@@ -199,7 +199,7 @@ def test_cgls_solves_a_cone_beam_scan(backend):
     )
     truth = _voxelise(grid, _ellipsoids(float(n)))
     coeff = cone_coefficients(
-        jnp.asarray(geometry.poses(), jnp.float32), grid, detector, geometry.beam
+        jnp.asarray(geometry.pose_matrices(), jnp.float32), grid, detector, geometry.beam
     )
     data = cone_project(truth, coeff, grid, detector, backend="jax")
     config = CGLSConfig(iterations=60, backend=backend)
@@ -250,8 +250,8 @@ def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend, offset):
 
 
 @pytest.mark.parametrize("backend", ["jax", cuda])
-@pytest.mark.parametrize(("columns", "centre", "amplitude"), [(48, 0.2, 3.0), (32, 10.0, 2.0)])
-def test_fdk_changing_panels_recover_independent_ellipsoids(backend, columns, centre, amplitude):
+@pytest.mark.parametrize(("columns", "center", "amplitude"), [(48, 0.2, 3.0), (32, 10.0, 2.0)])
+def test_fdk_changing_panels_recover_independent_ellipsoids(backend, columns, center, amplitude):
     from tomojax.geometry import ConeSegments
 
     grid, beam = Grid(32, 32, 32, 1, 1, 1), ConeBeam(96, 144)
@@ -259,7 +259,7 @@ def test_fdk_changing_panels_recover_independent_ellipsoids(backend, columns, ce
     parts = tuple(
         ConeGeometry(
             grid,
-            Detector(columns, 48, 1, 1, (centre + amplitude * np.sin(3 * np.deg2rad(a)), 0)),
+            Detector(columns, 48, 1, 1, (center + amplitude * np.sin(3 * np.deg2rad(a)), 0)),
             [a],
             beam,
         )
@@ -314,7 +314,7 @@ def test_fdk_host_reconstructs_in_slabs_into_a_memmap(backend, tmp_path: Path):
     angles = np.linspace(0.0, 360.0, 48, endpoint=False)
     data = np.random.default_rng(0).random((48, detector.nv, detector.nu)).astype(np.float32)
     config = FDKConfig(backend=backend, views_per_batch=20)
-    for beam in (ConeBeam(72, 108), ConeBeam(72, 108, detector_roll_deg=1.0)):
+    for beam in (ConeBeam(72, 108), ConeBeam(72, 108, detector_roll=1.0)):
         geometry = ConeGeometry(grid, detector, angles, beam)
         expected = np.asarray(fdk(geometry, grid, detector, data, config=config))
         # A slab's detector window shifts the coordinates, and CUDA's texture unit
@@ -360,7 +360,7 @@ def test_cone_geometry_round_trips_through_saved_datasets(tmp_path: Path):
     _, _, rebuilt = build_geometry_from_dataset_metadata(loaded.geometry_inputs())
     assert isinstance(rebuilt, ConeGeometry)
     assert rebuilt.beam == geometry.beam
-    np.testing.assert_allclose(rebuilt.poses(), geometry.poses(), atol=1e-6)
+    np.testing.assert_allclose(rebuilt.pose_matrices(), geometry.pose_matrices(), atol=1e-6)
 
 
 def test_import_records_cone_beam_geometry(tmp_path: Path):
@@ -371,7 +371,7 @@ def test_import_records_cone_beam_geometry(tmp_path: Path):
     write_tiff_stack(tmp_path / "tiffs", [1.0, 2.0, 3.0, 4.0], shape=(4, 6))
     write_angle_csv(tmp_path / "angles.csv", [0.0, 90.0, 180.0, 270.0])
     config = tmp_path / "calibration.toml"
-    config.write_text("detector_center = [0.0, 0.0]\ndetector_roll_deg = 0.5\n")
+    config.write_text("detector_center = [0.0, 0.0]\ndetector_roll = 0.5\n")
     args = ["import", str(tmp_path / "tiffs"), "-o", str(tmp_path / "scan.nxs"), "--force"]
     args += ["--config", str(config), "--pixel-size", "1", "--angles"]
     args += [str(tmp_path / "angles.csv"), "--geometry", "cone", "--source-to-axis", "50"]
@@ -379,13 +379,13 @@ def test_import_records_cone_beam_geometry(tmp_path: Path):
     loaded = load_dataset(tmp_path / "scan.nxs")
     _, _, geometry = build_geometry_from_dataset_metadata(loaded.geometry_inputs())
     assert isinstance(geometry, ConeGeometry)
-    assert geometry.beam == ConeBeam(50.0, 80.0, detector_roll_deg=0.5)
+    assert geometry.beam == ConeBeam(50.0, 80.0, detector_roll=0.5)
     assert main([*args, "--source-to-detector", "80", "--axis-offset", "1.5"]) == 0
     _, _, shifted = build_geometry_from_dataset_metadata(
         load_dataset(tmp_path / "scan.nxs").geometry_inputs()
     )
     assert isinstance(shifted, ConeGeometry) and shifted.beam.axis_offset == 1.5
-    np.testing.assert_allclose(shifted.poses()[:, :3, 3], [[1.5, 0.0, 0.0]] * 4)
+    np.testing.assert_allclose(shifted.pose_matrices()[:, :3, 3], [[1.5, 0.0, 0.0]] * 4)
     with pytest.raises(SystemExit):
         main([*args, "--source-to-detector", "40"])
 
@@ -398,7 +398,7 @@ def test_cone_projection_is_continuous_as_a_view_turns_through_45_degrees():
     x = jnp.asarray(_voxelise(grid, _ellipsoids(float(n)), supersample=2))
 
     def project(deg: float) -> jax.Array:
-        pose = ConeGeometry(grid, detector, [deg], beam).poses()
+        pose = ConeGeometry(grid, detector, [deg], beam).pose_matrices()
         coeff = cone_coefficients(jnp.asarray(pose, jnp.float32), grid, detector, beam)
         return cone_project(x, coeff, grid, detector, backend="jax")[0]
 
@@ -466,7 +466,7 @@ def test_pose_wrappers_stack_their_own_poses():
         .with_poses(params)
         .geometry
     )
-    per_view = np.stack([np.asarray(adjusted.pose_for_view(i), np.float32) for i in range(7)])
+    per_view = np.stack([np.asarray(adjusted.pose_matrix(i), np.float32) for i in range(7)])
     np.testing.assert_allclose(stack_view_poses(adjusted, 7), per_view, atol=1e-6)
 
 
@@ -565,10 +565,10 @@ def test_cuda_cone_transpose_handles_volumes_smaller_than_a_tile(n, nz, tilt):
     detector = Detector(int(1.5 * n), int(1.5 * max(n, nz)), 1.0, 1.0)
     geometry = ConeGeometry(
         grid, detector, np.linspace(0, 360, 60, endpoint=False), ConeBeam(3 * n, 4.5 * n),
-        tilt_deg=tilt,
+        tilt=tilt,
     )  # fmt: skip
     coeff = cone_coefficients(
-        jnp.asarray(geometry.poses(), jnp.float32), grid, detector, geometry.beam
+        jnp.asarray(geometry.pose_matrices(), jnp.float32), grid, detector, geometry.beam
     )
     y = jnp.asarray(np.random.default_rng(0).random((60, detector.nv, detector.nu)), jnp.float32)
     expected = cone_backproject(y, coeff, grid, detector, backend="jax")
@@ -581,8 +581,8 @@ def test_cuda_cone_entry_can_lower_and_differentiate_on_cpu(monkeypatch):
     monkeypatch.setattr("tomojax.core.cone.use_cuda_cone", lambda: True)
     with jax.default_device(jax.devices("cpu")[0]):
         grid, detector = Grid(5, 4, 3, 0.7, 1.1, 0.9), Detector(7, 5, 1.3, 0.8)
-        geometry = ConeGeometry(grid, detector, [0, 31], ConeBeam(30, 50), tilt_deg=37)
-        coeff = cone_coefficients(geometry.poses(), grid, detector, geometry.beam)
+        geometry = ConeGeometry(grid, detector, [0, 31], ConeBeam(30, 50), tilt=37)
+        coeff = cone_coefficients(geometry.pose_matrices(), grid, detector, geometry.beam)
         volume = jnp.arange(60, dtype=jnp.float32).reshape(3, 4, 5) / 60
 
         def project(c, x, backend):
@@ -635,7 +635,7 @@ def test_nikon_flat_and_dark_tiffs_take_the_projection_panel_orientation(tmp_pat
 
 @pytest.mark.parametrize("backend", ["jax", cuda])
 @pytest.mark.parametrize("offset", [4.0, 6.0])
-def test_fdk_short_scan_on_an_offset_detector_matches_a_centred_one(backend, offset):
+def test_fdk_short_scan_on_an_offset_detector_matches_a_centered_one(backend, offset):
     # The phantom lies within the short side's field, so every line is measured;
     # rays whose conjugates fall off the panel must keep their whole weight.
     n = 32
@@ -644,8 +644,8 @@ def test_fdk_short_scan_on_an_offset_detector_matches_a_centred_one(backend, off
     truth = _voxelise(grid, shapes)
     angles = np.linspace(0.0, 230.0, 115, endpoint=False)
     errors = []
-    centred = Detector(48, 48, 1.0, 1.0)
-    for detector in (centred, Detector(48 - 2 * int(offset), 48, 1.0, 1.0, (offset, 0.0))):
+    centered = Detector(48, 48, 1.0, 1.0)
+    for detector in (centered, Detector(48 - 2 * int(offset), 48, 1.0, 1.0, (offset, 0.0))):
         geometry = ConeGeometry(grid, detector, angles, ConeBeam(96, 144))
         config = FDKConfig(backend=backend)
         volume = fdk(geometry, grid, detector, _analytic(shapes, geometry), config=config)
@@ -677,14 +677,14 @@ def test_a_saved_cone_beam_round_trips_and_an_old_rolled_one_is_refused():
     from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
     from tomojax.geometry import ConeBeam
 
-    beam = ConeBeam(40.0, 60.0, detector_roll_deg=1.5, detector_pitch_deg=-0.5)
+    beam = ConeBeam(40.0, 60.0, detector_roll=1.5, detector_pitch=-0.5)
     assert ConeBeam.from_dict(beam.to_dict()) == beam
     old = {k: v for k, v in beam.to_dict().items() if k != ROLL_CONVENTION_KEY}
-    with pytest.raises(ValueError, match=r"TomoJAX 0\.3 or earlier.*detector_roll_deg=-1\.5"):
+    with pytest.raises(ValueError, match=r"TomoJAX 0\.3 or earlier.*detector_roll=-1\.5"):
         ConeBeam.from_dict(old)
     # Without a roll the two conventions agree, so an old file loads as it was.
-    unrolled = {**old, "detector_roll_deg": 0.0}
-    assert ConeBeam.from_dict(unrolled) == ConeBeam(40.0, 60.0, detector_pitch_deg=-0.5)
+    unrolled = {**old, "detector_roll": 0.0}
+    assert ConeBeam.from_dict(unrolled) == ConeBeam(40.0, 60.0, detector_pitch=-0.5)
 
 
 def test_a_rolled_cone_scan_saves_and_loads_to_the_same_detector_frame(tmp_path):
@@ -697,7 +697,7 @@ def test_a_rolled_cone_scan_saves_and_loads_to_the_same_detector_frame(tmp_path)
 
     path = tmp_path / "rolled.nxs"
     grid, detector = tj.Grid(3, 3, 2, 0.8, 1.1, 0.9), tj.Detector(3, 2, 0.9, 1.0)
-    beam = tj.ConeBeam(40, 60, detector_roll_deg=2.0)
+    beam = tj.ConeBeam(40, 60, detector_roll=2.0)
     geometry = tj.ConeGeometry(grid, detector, [0.0, 90.0], beam)
     tj.save(path, tj.Scan(np.ones((2, 2, 3), np.float32), geometry))
     loaded = tj.load(path).geometry

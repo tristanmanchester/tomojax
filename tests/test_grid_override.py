@@ -22,12 +22,12 @@ def _geometry(kind: str, posed: bool = False):
     if kind == "parallel":
         geometry = tj.ParallelGeometry(grid, detector, angles)
     elif kind == "lamino":
-        geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=27.0)
+        geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=27.0)
     elif kind == "axis":
         geometry = tj.geometry.RotationAxisGeometry(grid, detector, angles, (0.2, -0.3, 0.93))
     else:
         geometry = tj.ConeGeometry(
-            grid, detector, angles, tj.ConeBeam(18.0, 30.0, detector_roll_deg=7.0, axis_offset=0.4)
+            grid, detector, angles, tj.ConeBeam(18.0, 30.0, detector_roll=7.0, axis_offset=0.4)
         )
     if kind == "segments":
         geometry = tj.geometry.ConeSegments(
@@ -56,7 +56,7 @@ def _geometry(kind: str, posed: bool = False):
     else:
         meta = {"geometry_type": kind}
         if kind == "lamino":
-            meta |= {"tilt_deg": 27.0, "tilt_about": "x"}
+            meta |= {"tilt": 27.0, "tilt_about": "x"}
     table = np.zeros((6, 6), np.float32)
     table[:, :5] = [0.01, -0.02, 0.03, 0.2, -0.1]
     meta |= {
@@ -80,7 +80,7 @@ def test_grid_override_keeps_original_angles_poses_and_projection_storage(kind, 
     )
     scan = tj.Scan(projections, geometry, name="original", source=source)
     original_angles = scan.angles.copy()
-    original_poses = np.asarray([geometry.pose_for_view(i) for i in range(6)])
+    original_poses = np.asarray([geometry.pose_matrix(i) for i in range(6)])
     region = tj.Grid(5, 4, 3, 1.1, 0.9, 1.3)
     result = tj.reconstruct(scan, "cgls", iterations=0, grid=region)
     assert result.scan.projections is projections
@@ -88,7 +88,7 @@ def test_grid_override_keeps_original_angles_poses_and_projection_storage(kind, 
     assert result.grid == region and result.scan.geometry.detector == geometry.detector
     np.testing.assert_array_equal(result.scan.angles, original_angles)
     np.testing.assert_array_equal(
-        [result.scan.geometry.pose_for_view(i) for i in range(6)], original_poses
+        [result.scan.geometry.pose_matrix(i) for i in range(6)], original_poses
     )
     assert scan.grid == geometry.grid and scan.projections is projections
     np.testing.assert_array_equal(result.volume, np.zeros((3, 4, 5), np.float32))

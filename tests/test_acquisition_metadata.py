@@ -251,7 +251,7 @@ def test_radian_file_recovers_the_same_volume_and_pose_geometry(tmp_path):
     loaded = tj.load(path)
     for view in range(len(angles)):
         np.testing.assert_allclose(
-            loaded.geometry.pose_for_view(view), geometry.pose_for_view(view), atol=3e-7
+            loaded.geometry.pose_matrix(view), geometry.pose_matrix(view), atol=3e-7
         )
     direct = np.asarray(tj.reconstruct(scan, "cgls", iterations=40).volume)
     actual = np.asarray(tj.reconstruct(loaded, "cgls", iterations=40).volume)
@@ -372,12 +372,10 @@ def test_missing_laminography_tilt_requires_geometry_before_materialisation(tmp_
     with h5py.File(path, "a") as handle:
         handle["entry/geometry"].attrs["type"] = "lamino"
     for read in (tj.load, tj.load_frames):
-        with pytest.raises(ValueError, match="geometry=.*tilt_deg"):
+        with pytest.raises(ValueError, match="geometry=.*tilt"):
             read(path)
     detector = tj.Detector(2 if raw else 4, 2, 0.7, 0.8, (1.2, -0.3))
-    geometry = tj.LaminographyGeometry(
-        tj.Grid(4, 4, 2, 0.7, 0.7, 0.8), detector, [0, 90], tilt_deg=57
-    )
+    geometry = tj.LaminographyGeometry(tj.Grid(4, 4, 2, 0.7, 0.7, 0.8), detector, [0, 90], tilt=57)
     frames = tj.load_frames(path, geometry=geometry, **({} if raw else {"flats": 100, "darks": 0}))
     assert frames.geometry is geometry
 

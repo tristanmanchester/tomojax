@@ -22,8 +22,8 @@ def problem() -> tuple[Grid, Detector, LaminographyGeometry, np.ndarray]:
     """Assemble the forward matrix independently of the iterative algorithm."""
     grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 4, 0.7, 1.2, (0.17, -0.23))
-    geometry = LaminographyGeometry(grid, detector, [13, 49, 83, 122, 161], tilt_deg=23)
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    geometry = LaminographyGeometry(grid, detector, [13, 49, 83, 122, 161], tilt=23)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
 
     def project(flat: jax.Array) -> jax.Array:
         return jax.vmap(

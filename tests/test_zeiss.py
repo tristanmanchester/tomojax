@@ -418,7 +418,7 @@ def test_multireferences_use_recorded_times_and_exposures(tmp_path):
 
 
 @pytest.mark.parametrize("cone", [True, False])
-def test_a_supplied_centre_keeps_the_recorded_shifts_as_a_written_one_does(tmp_path, cone):
+def test_a_supplied_center_keeps_the_recorded_shifts_as_a_written_one_does(tmp_path, cone):
     # A raw scan has per-view shifts but no CenterShift (only a reconstruction setup
     # writes it). detector= supplies the centre the shifts are measured from:
     # -pitch x CenterShift for the file that records it.
@@ -484,17 +484,17 @@ def test_zeiss_vendor_shifts_follow_the_poses_switch(tmp_path, cone):
         }
         if cone:
             moved = isinstance(scan.geometry, tj.geometry.ConeSegments)
-            centres = [s.detector.center for s in scan.geometry.segments] if moved else []
+            centers = [s.detector.center for s in scan.geometry.segments] if moved else []
             assert moved is poses
             assert poses or scan.detector.center == (0.0, 0.0)
-            assert not poses or len({c[0] for c in centres}) == 3
+            assert not poses or len({c[0] for c in centers}) == 3
         else:
             shifts = np.asarray(stack_view_poses(scan.geometry, 3))[:, 0, 3]
             assert bool(np.ptp(shifts) > 0) is poses
             assert bool(scan.detector.center[0] != 0) is poses
 
 
-def test_a_cone_scan_without_a_centre_shift_loads_with_the_middle_as_its_centre(tmp_path):
+def test_a_cone_scan_without_a_center_shift_loads_with_the_middle_as_its_center(tmp_path):
     # Only a reconstruction setup writes AutoRecon/CenterShift, so a raw scan (CuO_2 tomo-A)
     # lacks it; the detector was then never built and tj.load asked for the pixel size the
     # file records. As for every format: the middle is the centre, said, nothing estimated.
@@ -611,8 +611,8 @@ def test_an_interrupted_scan_loads_its_stored_views_with_their_shifts(tmp_path):
     assert (zeiss["declared_view_count"], zeiss["stored_view_count"]) == (10, 3)
     assert frames.views == 3
     np.testing.assert_array_equal(frames.geometry.angles, [0, 90, 180])
-    centres = [s.detector.center for s in frames.geometry.segments]  # pitch 0.015, shift 0.125
-    np.testing.assert_allclose([c[0] for c in centres], [0.001875, 0.005625, -0.005625])
+    centers = [s.detector.center for s in frames.geometry.segments]  # pitch 0.015, shift 0.125
+    np.testing.assert_allclose([c[0] for c in centers], [0.001875, 0.005625, -0.005625])
     # A shift table of any other length is not the planned one: say what the file holds.
     streams["alignment/x-shifts"] = planned[:5].tobytes()
     write_ole(tmp_path / "scan.txrm", streams)

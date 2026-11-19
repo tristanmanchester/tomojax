@@ -215,23 +215,23 @@ def test_import_requires_explicit_detector_center_model_and_lamino_tilt(tmp_path
     for text, required in (
         ("", "--geometry"),
         ('geometry = "parallel"', "detector_center"),
-        ('geometry = "lamino"\ndetector_center = [0, 0]', "tilt_deg"),
+        ('geometry = "lamino"\ndetector_center = [0, 0]', "tilt"),
     ):
         config.write_text(text)
         with pytest.raises(SystemExit):
             main(args)
         assert required in capsys.readouterr().err and not output.exists()
-    config.write_text(config.read_text() + "\ntilt_deg = 47.0\n")
+    config.write_text(config.read_text() + "\ntilt = 47.0\n")
     assert main(args) == 0
-    assert load_dataset(output).geometry_inputs()["tilt_deg"] == 47
+    assert load_dataset(output).geometry_inputs()["tilt"] == 47
 
     # The detector's roll reaches a parallel-family geometry; pitch and yaw are cone-only.
     import tomojax as tj
 
-    config.write_text(config.read_text() + "detector_roll_deg = 1.25\n")
+    config.write_text(config.read_text() + "detector_roll = 1.25\n")
     assert main([*args, "--force"]) == 0
-    assert tj.load(output).geometry.detector_roll_deg == 1.25
-    config.write_text(config.read_text() + "detector_pitch_deg = 0.5\n")
+    assert tj.load(output).geometry.detector_roll == 1.25
+    config.write_text(config.read_text() + "detector_pitch = 0.5\n")
     with pytest.raises(SystemExit):
         main([*args, "--force"])
     assert "need --geometry cone" in capsys.readouterr().err
@@ -468,14 +468,14 @@ def test_recon_cli_config_settings_are_fields_of_the_methods_configuration(
     write_projection_dataset(scan)
     calls = _fake_reconstruct(monkeypatch)
     _ = config.write_text(
-        'regulariser = "huber_tv"\nhuber_delta = 0.05\ntv_weight = 0.01\n', encoding="utf-8"
+        'regularizer = "huber_tv"\nhuber_delta = 0.05\ntv_weight = 0.01\n', encoding="utf-8"
     )
 
     args = ["recon", str(scan), "-o", str(tmp_path / "out.nxs"), "--method", "fista"]
     assert main([*args, "--config", str(config), "--roi", "off"]) == 0
 
     cfg = calls["config"]
-    assert (cfg.regulariser, cfg.huber_delta, cfg.iterations) == ("huber_tv", 0.05, 50)
+    assert (cfg.regularizer, cfg.huber_delta, cfg.iterations) == ("huber_tv", 0.05, 50)
     # A key that is an option is passed as the keyword, which tj.reconstruct applies.
     assert calls["tv_weight"] == 0.01
 

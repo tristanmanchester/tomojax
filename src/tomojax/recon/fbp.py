@@ -584,14 +584,14 @@ def _lattice_motion(
         raise ValueError(
             "fbp: det_grid must be the detector lattice rotated and shifted in its plane"
         )
-    centre = np.asarray(detector.center, np.float64)
+    center = np.asarray(detector.center, np.float64)
     if np.allclose(rotation, np.eye(2), atol=1e-7) and np.allclose(
-        origin, centre, atol=1e-6 * extent
+        origin, center, atol=1e-6 * extent
     ):
         return None
     motion = np.eye(4)
     motion[np.ix_([0, 2], [0, 2])] = rotation.T
-    motion[[0, 2], 3] = centre - rotation.T @ origin
+    motion[[0, 2], 3] = center - rotation.T @ origin
     return motion.astype(np.float32)
 
 

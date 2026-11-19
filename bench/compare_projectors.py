@@ -106,11 +106,11 @@ def make_geometry(
     )
     angles = np.linspace(0, 180, n_views, endpoint=False, dtype=np.float32)
     geometry = (
-        LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+        LaminographyGeometry(grid, detector, angles, tilt=30)
         if kind == "lamino"
         else ParallelGeometry(grid, detector, angles)
     )
-    poses = np.asarray([geometry.pose_for_view(i) for i in range(n_views)], dtype=np.float32)
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(n_views)], dtype=np.float32)
     return grid, detector, poses, angles
 
 

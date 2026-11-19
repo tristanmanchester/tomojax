@@ -55,26 +55,26 @@ def test_alignment_has_one_fit_argument_and_an_optional_grid():
     assert parameters["grid"].default is None
 
 
-@pytest.mark.parametrize("fit", [(), [], "unknown", ("roll", "roll"), ("centre", 1)])
+@pytest.mark.parametrize("fit", [(), [], "unknown", ("roll", "roll"), ("center", 1)])
 def test_invalid_fit_fails_before_a_solve(fit):
     with pytest.raises(ValueError, match="fit"):
         tj.align(_scan(), fit=fit)
 
 
 @pytest.mark.parametrize("cone", [False, True])
-@pytest.mark.parametrize("name", ["centre", "tilt", "roll"])
+@pytest.mark.parametrize("name", ["center", "tilt", "roll"])
 def test_global_fits_publish_the_named_calibration_and_hold_local_poses(monkeypatch, cone, name):
     scan = _scan(cone)
-    correction = {"centre": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}[name]
+    correction = {"center": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}[name]
     calls = _fitter(monkeypatch, corrections={name: correction})
     result = tj.align(scan, fit=name)
     assert calls[0][4]["fit"] == name
     assert result.scan.projections is scan.projections
     assert set(result.info["calibration"]) == {name}
     np.testing.assert_array_equal(result.poses, 0)
-    expected = {"centre": (1.45, -1.05) if cone else 1.45, "tilt": 0.5, "roll": 0.75}[name]
+    expected = {"center": (1.45, -1.05) if cone else 1.45, "tilt": 0.5, "roll": 0.75}[name]
     np.testing.assert_allclose(result.info["calibration"][name], expected, atol=2e-6)
-    if name != "centre":
+    if name != "center":
         assert result.scan.detector.center == scan.detector.center
 
 
@@ -102,9 +102,9 @@ def test_default_fit_preserves_existing_rotations_and_uses_the_requested_grid(mo
 def test_fitted_global_geometry_round_trips_with_held_local_poses(
     monkeypatch, tmp_path, cone, suffix
 ):
-    corrections = {"centre": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}
+    corrections = {"center": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}
     _fitter(monkeypatch, corrections=corrections)
-    result = tj.align(_scan(cone), fit=("centre", "tilt", "roll"))
+    result = tj.align(_scan(cone), fit=("center", "tilt", "roll"))
     target = tmp_path / f"aligned{suffix}"
     tj.save(target, result)
     loaded = tj.load(target)
@@ -153,9 +153,9 @@ def test_cli_dry_run_reports_the_selection_without_fitting(monkeypatch, tmp_path
     scan, output = tmp_path / "scan.nxs", tmp_path / "aligned.nxs"
     tj.save(scan, _scan())
     calls = _fitter(monkeypatch)
-    assert main(["align", str(scan), "-o", str(output), "--fit", "centre", "--dry-run"]) == 0
+    assert main(["align", str(scan), "-o", str(output), "--fit", "center", "--dry-run"]) == 0
     record = json.loads(capsys.readouterr().out)
-    assert record["fit"] == ["centre"] and record["bounded_working_grid"]
+    assert record["fit"] == ["center"] and record["bounded_working_grid"]
     assert not calls and not output.exists()
 
 

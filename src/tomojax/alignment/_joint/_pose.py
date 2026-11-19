@@ -258,7 +258,7 @@ class MotionPrior:
             # detector-u centre shift. Fix its local mean and let centre own it.
             # Cone centre and object translation differ with depth, so imposing
             # the same constraint there would remove a measurable motion.
-            if not parameters.cone and "centre_u" in parameters.globals and 3 in local:
+            if not parameters.cone and "center_u" in parameters.globals and 3 in local:
                 constant = np.zeros((views, self.nlocal))
                 constant[:, local.index(3)] = 1
                 gauge = np.column_stack([gauge, constant.reshape(-1)])

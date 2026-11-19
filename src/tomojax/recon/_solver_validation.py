@@ -37,7 +37,7 @@ def validate_fista_config(cfg: FistaConfig) -> tuple[bool, float | None, float |
     context = "fista_tv config"
     if cfg.data_term not in {"absolute", "per_view_contrast"}:
         raise ValueError(f"{context}: data_term must be absolute or per_view_contrast")
-    for name in ("iterations", "recon_patience"):
+    for name in ("iterations", "patience"):
         _count(getattr(cfg, name), name, minimum=0, context=context)
     for name in ("projector_unroll", "tv_prox_iterations", "power_iterations"):
         _count(getattr(cfg, name), name, minimum=1, context=context)
@@ -47,8 +47,8 @@ def validate_fista_config(cfg: FistaConfig) -> tuple[bool, float | None, float |
         _weight(cfg.tv_weight, "tv_weight", context=context)
     if cfg.lipschitz is not None:
         _weight(cfg.lipschitz, "lipschitz", positive=True, context=context)
-    if cfg.recon_rel_tol is not None:
-        _weight(cfg.recon_rel_tol, "recon_rel_tol", context=context)
+    if cfg.tolerance is not None:
+        _weight(cfg.tolerance, "tolerance", context=context)
     if cfg.grad_mode not in {"auto", "batched", "stream"}:
         raise ValueError(f"{context}: grad_mode must be 'auto', 'batched' or 'stream'")
 

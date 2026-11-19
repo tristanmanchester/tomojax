@@ -38,7 +38,7 @@ Validation of recognized raw acquisitions reports missing detector/axis metadata
 and flat/dark references, using the same requirements as frame loading. A file
 that records the pitches but not the axial centre loads with the centre at the
 middle of the detector and `detector_center_status` "not_recorded"; nothing
-estimates it unless asked (`tj.estimate_center`, `tj.align(fit="centre")`). CLI errors
+estimates it unless asked (`tj.estimate_center`, `tj.align(fit="center")`). CLI errors
 name `preprocess --config`, `--flats`, `--darks` or `--angles` where those options
 can supply the missing input. Storage validation of other datasets is not a
 geometry-calibration or reconstruction-quality certificate.
@@ -79,7 +79,7 @@ raise `ValueError`. The caller checks that angle count matches projection count.
 
 `tomojax import` requires a detector centre in its TOML configuration
 (`detector_center = [u, v]`), plus explicit geometry family and pixel size.
-Laminography requires `tilt_deg`; optional cone detector roll/pitch/yaw also
+Laminography requires `tilt`; optional cone detector roll/pitch/yaw also
 belong in the configuration. Python `Detector.center` stores physical lengths, so an
 offset in pixels is multiplied by `du`/`dv`. See the
 [real scan guide](../../../docs/real-laminography.md) for measured geometry and

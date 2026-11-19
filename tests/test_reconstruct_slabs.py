@@ -158,7 +158,7 @@ def test_cone_raw_slabs_preserve_acquisition_weights_and_owned_rows(backend):
         grid,
         detector,
         np.linspace(0, 360, 16, endpoint=False),
-        tj.ConeBeam(30, 45, detector_roll_deg=1.5),
+        tj.ConeBeam(30, 45, detector_roll=1.5),
     )
     geometry = ConeSegments(
         (

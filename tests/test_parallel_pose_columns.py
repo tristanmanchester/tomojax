@@ -22,7 +22,7 @@ def test_parallel_pose_columns_match_reference(integrator, indices, private):
         pytest.skip("CUDA required")
     grid = Grid(77, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.23, -0.17, 0.31))
     detector = Detector(9, 7, 0.8, 1.3, (0.15, -0.21))
-    nominal = stack_view_poses(LaminographyGeometry(grid, detector, [47], tilt_deg=31), 1)[0]
+    nominal = stack_view_poses(LaminographyGeometry(grid, detector, [47], tilt=31), 1)[0]
     rng = np.random.default_rng(543)
     volume = jnp.asarray(rng.uniform(-0.1, 1.1, (5, 6, 77)), jnp.float32)
     target = jnp.asarray(rng.normal(size=(7, 9)), jnp.float32)

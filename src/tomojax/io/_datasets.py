@@ -647,10 +647,10 @@ def _merge_geometry_metadata_dict(
     geometry_metadata: Mapping[str, Any],
 ) -> None:
     for key in (
-        "tilt_deg",
+        "tilt",
         "tilt_about",
         "axis_unit_lab",
-        "detector_roll_deg",
+        "detector_roll",
         "cone_beam",
         "cone_segments",
         "trajectory_lengths",

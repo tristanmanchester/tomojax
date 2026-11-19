@@ -104,9 +104,7 @@ def test_fista_contrast_matches_profiled_gradient_and_offset_invariance(model, b
         )
         np.testing.assert_allclose(x, -gradient / 100, rtol=1e-6, atol=2e-8)
     else:
-        streamed, _ = fista_tv(
-            geometry, grid, detector, y, config=replace(cfg, stream_projections=True)
-        )
+        streamed, _ = fista_tv(geometry, grid, detector, y, config=replace(cfg, stream=True))
         np.testing.assert_allclose(x, streamed, rtol=1e-6, atol=2e-8)
 
 
@@ -134,11 +132,11 @@ def test_metric_cone_segments_and_pose_wrappers_use_object_plane_area():
             assert metric.weight_over_contrast > 0
 
 
-@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
+@pytest.mark.parametrize("regularizer", ["tv", "huber_tv"])
 @pytest.mark.parametrize("weight", [0, 0.001, None])
 @pytest.mark.parametrize("support", [None, np.asarray([0.5, 0, 0.7, 1], np.float32)])
 def test_public_fista_physical_metric_covaries_with_units_and_amplitude(
-    regulariser, weight, support
+    regularizer, weight, support
 ):
     from tomojax.recon import FistaConfig, fista_tv
 
@@ -148,7 +146,7 @@ def test_public_fista_physical_metric_covaries_with_units_and_amplitude(
     cfg = FistaConfig(
         iterations=5,
         tv_weight=weight,
-        regulariser=regulariser,
+        regularizer=regularizer,
         support=support,
         backend="jax",
         data_term="per_view_contrast",

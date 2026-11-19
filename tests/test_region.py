@@ -43,7 +43,7 @@ def _layer_scan(layers: tuple[float, ...]) -> tuple[tj.Scan, list[tuple[np.ndarr
             )
         data.append(image)
     geometry = tj.LaminographyGeometry(
-        tj.Grid(32, 32, 32, 1, 1, 1), tj.Detector(32, 32, 1, 1), angles, tilt_deg=35
+        tj.Grid(32, 32, 32, 1, 1, 1), tj.Detector(32, 32, 1, 1), angles, tilt=35
     )
     return tj.Scan(np.array(data, np.float32), geometry, name="analytic layers"), components
 
@@ -111,8 +111,8 @@ def test_uninformative_region_is_broad_and_does_not_recalibrate() -> None:
             "detector": detector.to_dict(),
             "angles": scan.angles,
             "geometry_type": "lamino",
-            "tilt_deg": 35,
-            "detector_roll_deg": 7,
+            "tilt": 35,
+            "detector_roll": 7,
             "align_params": poses,
         },
         poses=True,
@@ -128,7 +128,7 @@ def test_uninformative_region_is_broad_and_does_not_recalibrate() -> None:
         np.asarray(stack_view_poses(estimate.scan.geometry, len(scan.angles))),
         np.asarray(stack_view_poses(scan.geometry, len(scan.angles))),
     )
-    assert estimate.scan.geometry.detector_roll_deg == 7
+    assert estimate.scan.geometry.detector_roll == 7
     assert estimate.scan.detector == detector
     parallel = replace(scan, geometry=tj.ParallelGeometry(scan.grid, scan.detector, scan.angles))
     with pytest.raises(ValueError, match="laminography"):
@@ -141,7 +141,7 @@ def test_shallow_region_coarsens_a_fixed_physical_survey(monkeypatch) -> None:
     scan = replace(
         scan,
         projections=np.zeros_like(scan.projections),
-        geometry=replace(scan.geometry, tilt_deg=0.1),
+        geometry=replace(scan.geometry, tilt=0.1),
     )
     monkeypatch.setattr("tomojax._region.device_free_memory_bytes", lambda **kw: 2**20)
     monkeypatch.setattr(
@@ -163,7 +163,7 @@ def test_support_scoring_stays_on_the_budgeted_preview_grid(monkeypatch) -> None
     # it to its padded depth (8 x 16) used to rebuild a 24 x 24 x 8 scoring grid.
     angles = np.linspace(0, 360, 16, endpoint=False)
     geometry = tj.LaminographyGeometry(
-        tj.Grid(32, 32, 32, 1, 1, 1), tj.Detector(32, 32, 1, 1), angles, tilt_deg=35
+        tj.Grid(32, 32, 32, 1, 1, 1), tj.Detector(32, 32, 1, 1), angles, tilt=35
     )
     scan = tj.Scan(np.zeros((16, 32, 32), np.float32), geometry)
     preview = tj.Grid(16, 16, 8, 16, 16, 16)

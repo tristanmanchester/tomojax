@@ -738,7 +738,7 @@ def align(
 ) -> Alignment:
     """Fit selected geometry parameters jointly with a reconstruction.
 
-    ``fit`` is one name or a tuple of names: ``centre``, ``tilt``, ``roll``,
+    ``fit`` is one name or a tuple of names: ``center``, ``tilt``, ``roll``,
     ``translations`` and ``rotations``. Centre, tilt and roll are shared by all
     views. Translations and rotations are per view; every unselected parameter
     is held at its declared value. Translations have two components for parallel

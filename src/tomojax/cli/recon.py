@@ -346,7 +346,7 @@ def main() -> None:
     ):
         logging.warning(
             "%s records no rotation centre; the detector middle was used. "
-            "Fit one with tomojax align --fit centre before recon.",
+            "Fit one with tomojax align --fit center before recon.",
             run.data,
         )
     tj.save(run.out, result)

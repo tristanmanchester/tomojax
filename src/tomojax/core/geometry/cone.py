@@ -51,11 +51,11 @@ class ConeBeam:
         Source-to-axis distance in physical units; strictly positive.
     source_to_detector : float
         Source-to-detector distance, greater than source_to_axis.
-    detector_roll_deg : float, optional
+    detector_roll : float, optional
         Roll about the detector normal, in degrees; positive turns u towards v.
-    detector_pitch_deg : float, optional
+    detector_pitch : float, optional
         Pitch about detector u, in degrees; positive tilts the +v edge towards the source.
-    detector_yaw_deg : float, optional
+    detector_yaw : float, optional
         Yaw about detector v, in degrees; positive swings the +u edge away from the source.
     axis_offset : float, optional
         Lateral x displacement of the rotation axis, in physical units.
@@ -70,9 +70,9 @@ class ConeBeam:
 
     source_to_axis: float
     source_to_detector: float
-    detector_roll_deg: float = 0.0
-    detector_pitch_deg: float = 0.0
-    detector_yaw_deg: float = 0.0
+    detector_roll: float = 0.0
+    detector_pitch: float = 0.0
+    detector_yaw: float = 0.0
     axis_offset: float = 0.0
     source_height: float = field(default=0.0, kw_only=True)
 
@@ -118,19 +118,17 @@ class ConeBeam:
         v_dir : numpy.ndarray
             Lab-frame unit direction of increasing detector rows.
         """
-        roll, pitch, yaw = np.deg2rad(
-            [self.detector_roll_deg, self.detector_pitch_deg, self.detector_yaw_deg]
-        )
+        roll, pitch, yaw = np.deg2rad([self.detector_roll, self.detector_pitch, self.detector_yaw])
         # A right-handed turn about +y takes +x towards -z: roll is its opposite.
         rotation = _rotation("z", yaw) @ _rotation("x", pitch) @ _rotation("y", -roll)
-        centre = np.array(
+        center = np.array(
             [
                 float(detector.center[0]),
                 float(self.source_to_detector) - float(self.source_to_axis),
                 float(self.source_height) + float(detector.center[1]),
             ]
         )
-        return centre, rotation @ np.array([1.0, 0.0, 0.0]), rotation @ np.array([0.0, 0.0, 1.0])
+        return center, rotation @ np.array([1.0, 0.0, 0.0]), rotation @ np.array([0.0, 0.0, 1.0])
 
     @classmethod
     def from_dict(cls, saved: Mapping[str, float]) -> ConeBeam:
@@ -153,13 +151,13 @@ class ConeBeam:
             turned detector u towards v (TomoJAX 0.3 or earlier).
         """
         values = {str(k): float(v) for k, v in saved.items() if k != ROLL_CONVENTION_KEY}
-        if ROLL_CONVENTION_KEY not in saved and values.get("detector_roll_deg", 0.0) != 0.0:
+        if ROLL_CONVENTION_KEY not in saved and values.get("detector_roll", 0.0) != 0.0:
             raise ValueError(
                 "This file stores a cone-beam detector roll saved by TomoJAX 0.3 or earlier, "
                 "when positive roll turned detector u away from v. Positive roll now turns u "
                 "towards v, as for parallel beam and as tj.align reports it. Load the file "
-                "with geometry=... and ConeBeam(detector_roll_deg="
-                f"{-values['detector_roll_deg']:g}, ...) to keep its physical geometry."
+                "with geometry=... and ConeBeam(detector_roll="
+                f"{-values['detector_roll']:g}, ...) to keep its physical geometry."
             )
         return cls(**values)
 
@@ -174,11 +172,11 @@ class ConeBeam:
         return {
             "source_to_axis": float(self.source_to_axis),
             "source_to_detector": float(self.source_to_detector),
-            "detector_roll_deg": float(self.detector_roll_deg),
+            "detector_roll": float(self.detector_roll),
             # Saved files before this convention stored the opposite sign.
             ROLL_CONVENTION_KEY: 1.0,
-            "detector_pitch_deg": float(self.detector_pitch_deg),
-            "detector_yaw_deg": float(self.detector_yaw_deg),
+            "detector_pitch": float(self.detector_pitch),
+            "detector_yaw": float(self.detector_yaw),
             "axis_offset": float(self.axis_offset),
             "source_height": float(self.source_height),
         }
@@ -197,8 +195,8 @@ def _rotation(axis: str, angle: float) -> np.ndarray:
 class ConeGeometry:
     """Cone-beam scan of a sample rotating about +z, or a tilted axis.
 
-    Poses follow ``ParallelGeometry`` (``tilt_deg == 0``) or
-    ``LaminographyGeometry``: ``pose_for_view`` returns world_from_object, and
+    Poses follow ``ParallelGeometry`` (``tilt == 0``) or
+    ``LaminographyGeometry``: ``pose_matrix`` returns world_from_object, and
     the object's +z axis is the rotation axis, turned by ``angles[i]`` degrees
     at view ``i``. ``axis_unit``, a lab-frame unit
     vector, replaces the tilt for an arbitrary calibrated axis. The beam is
@@ -215,7 +213,7 @@ class ConeGeometry:
         View rotation angles in degrees, in acquisition order.
     beam : ConeBeam
         Source and detector placement in the lab frame.
-    tilt_deg : float, optional
+    tilt : float, optional
         Axis tilt away from +z, in degrees; defaults to zero.
     tilt_about : {'x', 'z'}
         Tilt convention used when axis_unit is absent.
@@ -227,11 +225,11 @@ class ConeGeometry:
     detector: Detector
     angles: Sequence[float]
     beam: ConeBeam
-    tilt_deg: float = 0.0
+    tilt: float = 0.0
     tilt_about: str = "x"
     axis_unit: tuple[float, float, float] | None = None
 
-    def pose_for_view(self, i: int) -> PoseMatrix:
+    def pose_matrix(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose for one view.
 
         Parameters
@@ -249,9 +247,9 @@ class ConeGeometry:
         IndexError
             If the view index is outside the angle sequence.
         """
-        return tuple(map(tuple, self.poses(angles=np.asarray([self.angles[i]]))[0]))
+        return tuple(map(tuple, self.pose_matrices(angles=np.asarray([self.angles[i]]))[0]))
 
-    def poses(self, *, angles: np.ndarray | None = None) -> np.ndarray:
+    def pose_matrices(self, *, angles: np.ndarray | None = None) -> np.ndarray:
         """Return every view's world-from-object pose as an ``(n, 4, 4)`` FP64 array.
 
         ``angles``, in degrees, replaces the geometry's own view angles.
@@ -299,7 +297,7 @@ class ConeGeometry:
         if self.axis_unit is not None:
             axis = np.asarray(self.axis_unit, dtype=np.float64)
             return axis / np.linalg.norm(axis)
-        return laminography_tilt_matrix(self.tilt_deg, self.tilt_about) @ np.array([0.0, 0.0, 1.0])
+        return laminography_tilt_matrix(self.tilt, self.tilt_about) @ np.array([0.0, 0.0, 1.0])
 
     def geometry_metadata(self) -> dict[str, object]:
         """Return the metadata that reconstructs this geometry from a saved dataset.
@@ -312,8 +310,8 @@ class ConeGeometry:
         meta: dict[str, object] = {"cone_beam": self.beam.to_dict()}
         if self.axis_unit is not None:
             meta["axis_unit_lab"] = [float(x) for x in self.rotation_axis()]
-        elif abs(float(self.tilt_deg)) > 1e-12:
-            meta["tilt_deg"] = float(self.tilt_deg)
+        elif abs(float(self.tilt)) > 1e-12:
+            meta["tilt"] = float(self.tilt)
             meta["tilt_about"] = str(self.tilt_about)
         return meta
 
@@ -332,7 +330,7 @@ class ConeGeometry:
         """
         del i
         source = self.beam.source()
-        centre, u_dir, v_dir = self.beam.detector_frame(self.detector)
+        center, u_dir, v_dir = self.beam.detector_frame(self.detector)
         nu, nv = int(self.detector.nu), int(self.detector.nv)
         du, dv = float(self.detector.du), float(self.detector.dv)
 
@@ -340,7 +338,7 @@ class ConeGeometry:
             return float(source[0]), float(source[1]), float(source[2])
 
         def dir_fn(u: int, v: int) -> tuple[float, float, float]:
-            pixel = centre + (u - (nu - 1) / 2) * du * u_dir + (v - (nv - 1) / 2) * dv * v_dir
+            pixel = center + (u - (nu - 1) / 2) * du * u_dir + (v - (nv - 1) / 2) * dv * v_dir
             ray = pixel - source
             ray = ray / np.linalg.norm(ray)
             return float(ray[0]), float(ray[1]), float(ray[2])
@@ -452,7 +450,7 @@ class ConeSegments:
             i -= count
         raise IndexError("view index out of range")
 
-    def pose_for_view(self, i: int) -> PoseMatrix:
+    def pose_matrix(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose of view ``i`` in its segment.
 
         Parameters
@@ -471,7 +469,7 @@ class ConeSegments:
             If the view index lies beyond the last segment.
         """
         segment, j = self._locate(i)
-        return segment.pose_for_view(j)
+        return segment.pose_matrix(j)
 
     def rays_for_view(self, i: int) -> RayPair:
         """Return the ray callbacks of view ``i`` in its segment.
@@ -592,12 +590,12 @@ def cone_parts(
     parts = []
     for segment in segments.segments:
         own = segment.detector
-        centre = (
+        center = (
             scan.center[0] + own.center[0] - reference.center[0],
             scan.center[1] + own.center[1] - reference.center[1],
         )
         beam = cast("ConeBeam", beam_of(segment))
-        parts.append((len(segment.angles), beam, replace(scan, center=centre)))
+        parts.append((len(segment.angles), beam, replace(scan, center=center)))
     return tuple(parts)
 
 
@@ -613,7 +611,7 @@ def require_parallel_beam(geometry: object, context: str) -> None:
 def view_frames(geometry: ScanGeometry) -> np.ndarray:
     """Return source, detector centre and pixel steps for each cone-beam view.
 
-    Rows are ``[source, centre, u * du, v * dv]`` (ASTRA's ``cone_vec`` order):
+    Rows are ``[source, center, u * du, v * dv]`` (ASTRA's ``cone_vec`` order):
     pixel ``(row r, column c)`` of view i lies at ``centre + (c - nu / 2 + 1/2) u
     + (r - nv / 2 + 1/2) v``. Every segment of a :class:`ConeSegments`, in order,
     with the corrections of any pose wrapper around it.
@@ -641,7 +639,7 @@ def view_frames(geometry: ScanGeometry) -> np.ndarray:
     n_views = len(cast("Any", geometry).angles)
     poses = host_view_poses(geometry, n_views)
     if poses is None:
-        poses = np.asarray([geometry.pose_for_view(i) for i in range(n_views)], np.float32)
+        poses = np.asarray([geometry.pose_matrix(i) for i in range(n_views)], np.float32)
     # Geometry export stays on the host, with the same rounded physical poses
     # used by the projector's coefficient preparation.
     poses = poses.astype(np.float64)
@@ -649,13 +647,13 @@ def view_frames(geometry: ScanGeometry) -> np.ndarray:
     for count, beam, detector in parts:
         stop = start + (n_views if count is None else count)
         rotation, translation = poses[start:stop, :3, :3], poses[start:stop, :3, 3]
-        centre, e_u, e_v = beam.detector_frame(detector)
+        center, e_u, e_v = beam.detector_frame(detector)
 
         rows.append(
             np.concatenate(
                 [
                     np.einsum("nji,nj->ni", rotation, beam.source()[None, :] - translation),
-                    np.einsum("nji,nj->ni", rotation, centre[None, :] - translation),
+                    np.einsum("nji,nj->ni", rotation, center[None, :] - translation),
                     np.einsum("nji,j->ni", rotation, e_u * detector.du),
                     np.einsum("nji,j->ni", rotation, e_v * detector.dv),
                 ],

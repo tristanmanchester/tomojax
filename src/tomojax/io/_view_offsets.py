@@ -50,23 +50,23 @@ def with_view_offsets(record: ProjectionDataset, detector: Detector) -> Projecti
     if OFFSETS_KEY not in meta:
         return replace(record, detector=detector)
     offsets = np.asarray(meta[OFFSETS_KEY], np.float64) * (detector.du, detector.dv)
-    centres = np.asarray(detector.center, np.float64) + offsets
+    centers = np.asarray(detector.center, np.float64) + offsets
     for key in ("cone_segments", "trajectory_lengths", "cone_beam"):
         meta.pop(key, None)
     poses = None
     if DISTANCES_KEY in meta:
         distances = np.asarray(meta[DISTANCES_KEY], np.float64)
-        entries = _cone_segments(np.column_stack((distances, centres)), detector)
+        entries = _cone_segments(np.column_stack((distances, centers)), detector)
         if len(entries) > 1:
-            meta.update(cone_segments=entries, trajectory_lengths=[len(centres)])
+            meta.update(cone_segments=entries, trajectory_lengths=[len(centers)])
         else:
             meta["cone_beam"] = entries[0]["cone_beam"]
             detector = Detector.from_dict(entries[0]["detector"])
-    elif np.any(centres != centres[0]):
-        poses = np.zeros((len(centres), 6), np.float32)
+    elif np.any(centers != centers[0]):
+        poses = np.zeros((len(centers), 6), np.float32)
         poses[:, 3:5] = -offsets
     else:
-        detector = replace(detector, center=(float(centres[0, 0]), float(centres[0, 1])))
+        detector = replace(detector, center=(float(centers[0, 0]), float(centers[0, 1])))
     return replace(
         record,
         detector=detector,

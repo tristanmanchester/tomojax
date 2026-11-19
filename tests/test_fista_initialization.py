@@ -18,7 +18,7 @@ def test_owned_zero_start_preserves_norm_first_step_and_stopping(steps, early):
 
     module = importlib.import_module("tomojax.recon.fista_tv")
     grid, detector = Grid(16, 16, 8, 1, 1, 1), Detector(8, 6, 1, 1)
-    geometry = LaminographyGeometry(grid, detector, np.linspace(180, 0, 31), tilt_deg=27)
+    geometry = LaminographyGeometry(grid, detector, np.linspace(180, 0, 31), tilt=27)
     data = jnp.asarray(np.random.default_rng(1732).uniform(size=(31, 6, 8)), jnp.float32)
     before = np.asarray(data).copy()
     config = FistaConfig(
@@ -26,8 +26,8 @@ def test_owned_zero_start_preserves_norm_first_step_and_stopping(steps, early):
         tv_weight=0,
         nonnegative=True,
         lipschitz=1000 if early else None,
-        recon_rel_tol=1e5 if early else None,
-        recon_patience=1,
+        tolerance=1e5 if early else None,
+        patience=1,
     )
     runtime = module._prepare_fista_runtime(
         geometry, grid, detector, data, init_x=None, config=config, det_grid=None
@@ -52,7 +52,7 @@ def test_owned_zero_start_does_not_change_other_objectives(changes):
 
     module = importlib.import_module("tomojax.recon.fista_tv")
     grid, detector = Grid(4, 4, 4, 1, 1, 1), Detector(2, 2, 1, 1)
-    geometry = LaminographyGeometry(grid, detector, [0, 90], tilt_deg=27)
+    geometry = LaminographyGeometry(grid, detector, [0, 90], tilt=27)
     data = jnp.ones((2, 2, 2))
     config = FistaConfig(iterations=1, tv_weight=0, nonnegative=True)
     runtime = module._prepare_fista_runtime(
@@ -71,14 +71,14 @@ def test_owned_zero_start_does_not_change_other_objectives(changes):
 @pytest.mark.parametrize(("iterations", "tolerance"), [(0, 0), (1, 0), (4, 0), (10, 0.99)])
 def test_cached_first_step_matches_uncached_recurrence(iterations, tolerance):
     grid, detector = Grid(4, 3, 2, 0.8, 1.1, 1.2), Detector(5, 3, 0.7, 1.1)
-    geometry = LaminographyGeometry(grid, detector, np.linspace(0, 180, 7), tilt_deg=23)
+    geometry = LaminographyGeometry(grid, detector, np.linspace(0, 180, 7), tilt=23)
     data = np.random.default_rng(8).random((7, 3, 5), dtype=np.float32)
     cfg = FistaConfig(
         iterations=iterations,
         tv_weight=0.005,
         views_per_batch=3,
-        recon_rel_tol=tolerance,
-        recon_patience=1,
+        tolerance=tolerance,
+        patience=1,
         projector_model="joseph",
     )
     cached, info = fista_tv(geometry, grid, detector, data, config=cfg)

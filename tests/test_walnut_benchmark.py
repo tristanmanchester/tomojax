@@ -37,7 +37,7 @@ def test_alignment_scores_calibrated_heights_and_fixes_one_global_gauge(walnut, 
         parts = []
         for height, offset in zip((-3, 0, 3), offsets, strict=True):
             beam = tj.ConeBeam(80, 120, source_height=height + offset)
-            geometry = tj.ConeGeometry(grid, detector, [0, 41, 133], beam, tilt_deg=tilt)
+            geometry = tj.ConeGeometry(grid, detector, [0, 41, 133], beam, tilt=tilt)
             parts.append(tj.Scan(np.zeros((3, 4, 5), np.float32), geometry))
         return tj.Scan.combine(parts)
 
@@ -89,7 +89,7 @@ def test_orbit_load_keeps_view_order_orientation_and_correction(
 
 
 @pytest.mark.parametrize("shape", [(6, 6, 6), (7, 5, 3)])
-def test_quality_samples_the_same_voxel_centres_at_integer_and_fractional_densities(walnut, shape):
+def test_quality_samples_the_same_voxel_centers_at_integer_and_fractional_densities(walnut, shape):
     reference = _linear_field((11, 11, 11))
     actual = _linear_field(shape)
     with np.errstate(divide="ignore"):
@@ -116,7 +116,7 @@ def test_quality_preserves_the_matching_resolution_path_exactly(walnut):
 
 
 @pytest.mark.parametrize("density", [1, 3, 10])
-def test_volume_geometries_share_the_published_reference_voxel_centre_extent(walnut, density):
+def test_volume_geometries_share_the_published_reference_voxel_center_extent(walnut, density):
     geometry = walnut.volume_geometry(density)
     for axis, count_name in [("X", "GridColCount"), ("Y", "GridRowCount"), ("Z", "GridSliceCount")]:
         lower = geometry["option"][f"WindowMin{axis}"]
@@ -175,13 +175,13 @@ def test_projection_cache_cannot_silently_replace_a_different_requested_scan(
     assert cache.read_bytes() == before
 
 
-def test_orbit_prebinning_preserves_calibrated_pixel_centres(walnut, monkeypatch, tmp_path):
+def test_orbit_prebinning_preserves_calibrated_pixel_centers(walnut, monkeypatch, tmp_path):
     tj = walnut.tj
     geometry = tj.ConeGeometry(
         tj.Grid(3, 3, 3, 1, 1, 1),
         tj.Detector(7, 5, 0.8, 0.7),
         np.array([0.0, 37.0]),
-        tj.ConeBeam(40.0, 64.0, detector_roll_deg=11.0, detector_pitch_deg=3.0),
+        tj.ConeBeam(40.0, 64.0, detector_roll=11.0, detector_pitch=3.0),
     )
     scan = tj.Scan(np.arange(70, dtype=np.float32).reshape(2, 5, 7), geometry)
     data, pg, _ = scan.to_astra()

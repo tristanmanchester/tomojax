@@ -55,13 +55,13 @@ from ._tv_ops import (
     isotropic_tv_value,
     project_tv_duals,
     prox_huber_tv_conj,
-    validate_regulariser,
+    validate_regularizer,
 )
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
-    from .types import DataTerm, Regulariser
+    from .types import DataTerm, Regularizer
 
 
 # --------- config ----------
@@ -77,7 +77,7 @@ class SPDHGConfig:
     the ray-model reference path. ``gather_dtype``, ``projector_unroll`` and
     ``checkpoint_projector`` apply to the reference path only.
 
-    ``stream_projections`` keeps NumPy or memmap projections, any weights and
+    ``stream`` keeps NumPy or memmap projections, any weights and
     the sinogram-sized dual variable in host memory; each iteration reads and
     writes only its block of views. ``None`` streams when the projections would
     take more than 40% of free device memory. Streaming needs the batched
@@ -157,7 +157,7 @@ class SPDHGConfig:
         Binary (0/1) volume support mask. Excluded voxels remain zero; None uses the entire grid.
     log_every : int, optional
         Number of iterations between logged objective samples. Default is 10.
-    stream_projections : bool | None, optional
+    stream : bool | None, optional
         Read host projections one view batch at a time. None selects streaming from
         available device memory; False keeps them resident.
     """
@@ -165,7 +165,7 @@ class SPDHGConfig:
     iterations: int = 600
     tv_weight: float | None = None
     data_term: DataTerm = "absolute"
-    regulariser: Regulariser = "tv"
+    regularizer: Regularizer = "tv"
     huber_delta: float = 1e-2
     theta: float = 1.0  # extrapolation of the dual gradient
     views_per_batch: int = 16  # size of a stochastic block
@@ -191,7 +191,7 @@ class SPDHGConfig:
     # logging
     log_every: int = 10  # sampled objective at the current primal every k steps
 
-    stream_projections: bool | None = None
+    stream: bool | None = None
 
 
 jax.tree_util.register_dataclass(
@@ -225,7 +225,7 @@ class _SPDHGSchedule:
 @dataclass(frozen=True)
 class _SPDHGRuntime:
     config: SPDHGConfig
-    regulariser: Regulariser = field(metadata={"static": True})
+    regularizer: Regularizer = field(metadata={"static": True})
     huber_delta: float
     # None when streaming: data, weights and duals then live in host memory.
     y_meas: jnp.ndarray | None
@@ -254,7 +254,7 @@ class _SPDHGResult:
     losses: jnp.ndarray
     step_sizes: SPDHGStepSizes
     schedule: _SPDHGSchedule
-    regulariser: Regulariser = field(metadata={"static": True})
+    regularizer: Regularizer = field(metadata={"static": True})
     huber_delta: float
     tv_weight: float | None
     resolved_tv_weight: float
@@ -276,7 +276,7 @@ class _SPDHGResult:
             "A_norm": (float(step_sizes.data_norm) if step_sizes.data_norm is not None else None),
             "grad_norm": float(step_sizes.grad_norm),
             "selection_prob": float(schedule.selection_prob),
-            "regulariser": self.regulariser,
+            "regularizer": self.regularizer,
             "huber_delta": float(self.huber_delta),
         }
 
@@ -451,7 +451,7 @@ def _prepare_spdhg_runtime(
 ) -> _SPDHGRuntime:
     cfg = SPDHGConfig() if config is None else config
     validate_spdhg_config(cfg)
-    regulariser = validate_regulariser(cfg.regulariser, cfg.huber_delta, context="spdhg_tv config")
+    regularizer = validate_regularizer(cfg.regularizer, cfg.huber_delta, context="spdhg_tv config")
     huber_delta = float(cfg.huber_delta)
 
     validate_grid(grid, "spdhg_tv grid")
@@ -487,12 +487,12 @@ def _prepare_spdhg_runtime(
     # Data, its dual and any weights; ~8 volumes of iterate, TV duals and scratch.
     reserve, copies = 32 * grid.nx * grid.ny * grid.nz, 2 + (weights is not None)
     stream = not isinstance(projections, jax.Array) and (
-        bool(cfg.stream_projections)
-        if cfg.stream_projections is not None
+        bool(cfg.stream)
+        if cfg.stream is not None
         else should_stream(projections, reserve_bytes=reserve, copies=copies)
     )
     if stream and projector is None:
-        raise ValueError("spdhg_tv: stream_projections requires the batched projection operators")
+        raise ValueError("spdhg_tv: stream requires the batched projection operators")
     y_meas = None if stream else jnp.asarray(projections, dtype=jnp.float32)
     weights_arr = None if weights is None or stream else jnp.asarray(weights, dtype=jnp.float32)
     metric = resolve_tv_metric(
@@ -549,7 +549,7 @@ def _prepare_spdhg_runtime(
 
     return _SPDHGRuntime(
         config=cfg,
-        regulariser=regulariser,
+        regularizer=regularizer,
         huber_delta=huber_delta,
         y_meas=y_meas,
         weights=weights_arr,
@@ -616,7 +616,7 @@ def _update_spdhg_tv_duals(
     p1_u = state.p1 + step_sizes.sigma_tv * gx
     p2_u = state.p2 + step_sizes.sigma_tv * gy
     p3_u = state.p3 + step_sizes.sigma_tv * gz
-    if runtime.regulariser == "huber_tv":
+    if runtime.regularizer == "huber_tv":
         p1_new, p2_new, p3_new = prox_huber_tv_conj(
             p1_u,
             p2_u,
@@ -765,7 +765,7 @@ def _run_spdhg_scan(  # noqa: PLR0915
             data_est = 0.5 * jnp.vdot(resid, resid).real / schedule.selection_prob
             objective = data_est
             if cfg.tv_weight != 0:
-                if runtime.regulariser == "huber_tv":
+                if runtime.regularizer == "huber_tv":
                     reg_value = huber_tv_value(
                         state.x,
                         runtime.huber_delta,
@@ -914,7 +914,7 @@ def spdhg_tv(
         losses=final.losses,
         step_sizes=runtime.step_sizes,
         schedule=runtime.schedule,
-        regulariser=runtime.regulariser,
+        regularizer=runtime.regularizer,
         huber_delta=runtime.huber_delta,
         tv_weight=None if config is None else config.tv_weight,
         resolved_tv_weight=runtime.resolved_tv_weight,

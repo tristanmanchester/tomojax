@@ -15,16 +15,16 @@ _BAD_OFFSETS = [np.zeros(3), np.zeros((4, 1)), np.asarray([0.0, np.nan, 0.0, 0.0
 
 def _dataset(kind, offsets):
     beam = tj.ConeBeam(24, 40, axis_offset=0.2)
-    metadata = {} if kind == "parallel" else {"tilt_deg": 27.0, "tilt_about": "x"}
+    metadata = {} if kind == "parallel" else {"tilt": 27.0, "tilt_about": "x"}
     if kind in {"cone", "segments"}:
         metadata["cone_beam"] = beam.to_dict()
     if kind == "segments":
         metadata["cone_segments"] = [
-            {"views": 2, "cone_beam": beam.to_dict(), "tilt_deg": 27.0},
+            {"views": 2, "cone_beam": beam.to_dict(), "tilt": 27.0},
             {
                 "views": 2,
                 "cone_beam": tj.ConeBeam(26, 42, axis_offset=0.4).to_dict(),
-                "tilt_deg": 27.0,
+                "tilt": 27.0,
             },
         ]
     if kind == "segments":
@@ -107,7 +107,7 @@ def test_finite_offsets_even_below_allclose_tolerance_match_independent_poses(ki
     if kind == "segments":
         expected[2:, 0, 3] = 0.4
     np.testing.assert_allclose(
-        [geometry.pose_for_view(i) for i in range(4)], expected, rtol=0, atol=1e-6
+        [geometry.pose_matrix(i) for i in range(4)], expected, rtol=0, atol=1e-6
     )
     np.testing.assert_array_equal(dataset.angles, original)
 

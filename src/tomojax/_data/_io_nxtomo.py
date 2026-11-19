@@ -192,7 +192,7 @@ def _write_sample_section(entry: h5py.Group, meta: NXTomoMetadata, *, n_views: i
     inputs = dict(meta.geometry_meta or {})
     gtype = normalize_geometry_type(meta.geometry_type)
     inputs["geometry_type"] = "lamino" if gtype == "cone" else gtype
-    if gtype == "parallel" or "tilt_deg" in inputs or "axis_unit_lab" in inputs:
+    if gtype == "parallel" or "tilt" in inputs or "axis_unit_lab" in inputs:
         axis = nominal_axis_unit_from_inputs(inputs)
         trans.create_dataset("rotation_axis", data=np.asarray(axis, dtype=np.float32))
     _write_string_attr(trans, "depends_on", "rotation_angle")

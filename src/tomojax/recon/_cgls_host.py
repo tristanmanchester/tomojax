@@ -69,7 +69,7 @@ def solve_on_host(
     parallel = (
         model == "joseph"
         and backend == "cuda"
-        and cfg.joseph_interpolation == "linear"
+        and cfg.interpolation == "linear"
         and det_grid is None
     )
     supported = not shared and (cone or parallel)
@@ -149,18 +149,18 @@ class _HostCGLS:
             ViewStatistics(problem, self.views) if cfg.data_term == "per_view_contrast" else None
         )
 
-    def _block(self, k: int, centre: Any, halo: Callable[[int], Any], *, below: bool) -> Any:
+    def _block(self, k: int, center: Any, halo: Callable[[int], Any], *, below: bool) -> Any:
         """Slab ``k`` with the next plane above (and, with ``below``, the one below)."""
         (z0, z1), nz = self.plan.planes(k), self.plan.grid.nz
         parts = [halo(z0 - 1)] if below and z0 > 0 else []
-        parts += [centre[: z1 - z0, :, :]] + ([halo(z1)] if z1 < nz else [])
+        parts += [center[: z1 - z0, :, :]] + ([halo(z1)] if z1 < nz else [])
         return self.xp.concatenate(parts, axis=0)
 
     def smoothing(
-        self, k: int, centre: Any, halo: Callable[[int], Any], *, absolute: bool = False
+        self, k: int, center: Any, halo: Callable[[int], Any], *, absolute: bool = False
     ) -> Any:
         """``gradient_damping^2 D^T D`` (or its absolute weights) on slab ``k``'s planes."""
-        block = self._block(k, centre, halo, below=True)
+        block = self._block(k, center, halo, below=True)
         if absolute:
             block = self.xp.abs(block)
         spacing = (self.plan.grid.vx, self.plan.grid.vy, self.plan.grid.vz)
@@ -169,16 +169,16 @@ class _HostCGLS:
         low = int(z0 > 0)
         return self.smooth2 * applied[low : low + z1 - z0, :, :]
 
-    def edges(self, k: int, centre: Any, halo: Callable[[int], Any]) -> float:
+    def edges(self, k: int, center: Any, halo: Callable[[int], Any]) -> float:
         """``||D d||²`` over the edges from slab ``k``'s planes, the z edge above included."""
         grid, (z0, z1) = self.plan.grid, self.plan.planes(k)
-        planes = centre[: z1 - z0, :, :]
+        planes = center[: z1 - z0, :, :]
         total = sum(
             self.total(self.xp.diff(planes, axis=axis) / step)
             for axis, step in ((2, grid.vx), (1, grid.vy))
             if planes.shape[axis] > 1
         )
-        block = self._block(k, centre, halo, below=False)
+        block = self._block(k, center, halo, below=False)
         if block.shape[0] > 1:
             total += self.total(self.xp.diff(block, axis=0) / grid.vz)
         return total
@@ -453,7 +453,7 @@ class _HostCGLS:
             "residual_recomputations": recomputations,
             "initial_normal_residual_norm": initial_norm,
             "normal_residual_tolerance": float(threshold),
-            "joseph_interpolation": "linear",
+            "interpolation": "linear",
             "views_per_batch": self.sweep.batch,
             "formulation": "host_normal_equations",
             "data_term": self.cfg.data_term,

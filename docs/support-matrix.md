@@ -23,9 +23,9 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Nikon (X-Tek) scan import, including its calibrated rotation axis | Supported | `tj.load_frames("scan/part.xtekct", darks=0).corrected()`, or `tomojax preprocess scan/part.xtekct --darks 0 -o scan.nxs` |
 | Zeiss Xradia projection acquisitions | Supported | `tj.load("scan.txrm")`, or `tj.load_frames("scan.txrm").corrected(...)`; separate reference images use `flats="reference_Front.xrm"`; [CPU preview](lab-ct.md#zeiss-xradia-preview) |
 | Multi-orbit cone-beam scans (`ConeSegments`): iterative reconstruction and pose alignment | Supported; alignment experimental | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then `tj.reconstruct(scan, "cgls")` and `tj.align(scan)` |
-| Shared detector centre and roll, including cone data | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --fit centre roll` |
-| Detector-centre/COR alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --fit centre` |
-| Detector-centre offset with per-view motion | Experimental; shared offset uses an explicit gauge | `tomojax align corrected.nxs -o aligned.nxs --fit centre translations` |
+| Shared detector centre and roll, including cone data | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --fit center roll` |
+| Detector-centre/COR alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --fit center` |
+| Detector-centre offset with per-view motion | Experimental; shared offset uses an explicit gauge | `tomojax align corrected.nxs -o aligned.nxs --fit center translations` |
 | Shared setup angles with per-view motion | Experimental; one joint solve | `tomojax align corrected.nxs -o aligned.nxs --fit translations tilt roll` |
 | Deterministic synthetic dataset generation | Supported | `tomojax simulate -o synthetic_scan.nxs --size 64 --geometry parallel\|lamino\|cone` |
 | Python API reconstruction | Supported | `tj.reconstruct(scan, method, config=...)`, `tj.project`, `tj.backproject`; building blocks in `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` |
@@ -45,7 +45,7 @@ use their format-defined axial parallel model. If the pitch is recorded but the
 rotation centre is absent, loading places the centre at the middle of the
 detector and records `detector_center_status` "not_recorded"; nothing is
 estimated. The centre comes from the file, from `detector=`, or from
-`tj.align(scan, fit="centre")`. Vertical zero defines the free axial origin. Laminography requires a recorded tilt/axis or
+`tj.align(scan, fit="center")`. Vertical zero defines the free axial origin. Laminography requires a recorded tilt/axis or
 `geometry=`. Nikon files lacking dark calibration require `darks=`; zero is
 only an explicit choice for already corrected counts. A Zeiss file that records
 `AcquisitionSettings/CameraStaticBackground` = 1 (the camera subtracted its dark
@@ -54,7 +54,7 @@ requires `flats=` (frames or one level) rather than deriving it from bit depth.
 Compressed TIFF crops decode only their intersecting strips/tiles. In folders,
 TIFF-suffixed entries are image storage, not acquisition text sidecars.
 TIFF line-integral import requires explicit `--geometry`, `--pixel-size` and
-`detector_center = [u, v]` in `--config`; laminography also needs `tilt_deg`.
+`detector_center = [u, v]` in `--config`; laminography also needs `tilt`.
 For raw frames without an explicit grid, detector binning also reduces output
 resolution. Axial-parallel crops follow the measured row window; other models
 retain their output box. File/caller-supplied grids and `Scan.binned()` retain
@@ -146,7 +146,7 @@ an explicit `angles=` schedule must be in TomoJAX's object-angle frame.
 | Joseph pose normal equations (Python API) | `joseph_pose_normal_equations`: per-view raw loss, directional gradient, Gauss-Newton matrix and residual; 1–16 caller-supplied pose directions; CUDA avoids a full projection Jacobian; caller chooses damping, priors and gauges |
 | Coarse-to-fine CGLS (Python API) | Optional `cgls_multires` with explicit budgets and a final full-data solve; tested on odd/shifted grids and sharp/noisy phantoms, with known performance regressions |
 | Internal differentiable FISTA core | JAX and explicit CUDA forward/adjoint variants for reconstruction |
-| Parallel-beam geometry | `ParallelGeometry`, `LaminographyGeometry(tilt_deg=...)` or `RotationAxisGeometry(axis_unit_lab=...)` for an axial, tilted or arbitrary axis; a detector centre offset and roll (`detector_roll_deg`); any per-view poses |
+| Parallel-beam geometry | `ParallelGeometry`, `LaminographyGeometry(tilt=...)` or `RotationAxisGeometry(axis_unit_lab=...)` for an axial, tilted or arbitrary axis; a detector centre offset and roll (`detector_roll`); any per-view poses |
 | Cone-beam geometry | `ConeGeometry`: point source and flat detector with offsets, roll, pitch and yaw, a laterally offset (`axis_offset`), tilted or arbitrary axis, any per-view poses; Joseph sampling of diverging rays with a matched transpose; JAX reference (differentiable in volume and poses) and CUDA kernels (CuPy); CGLS, FISTA-TV, SPDHG-TV and FDK (full turns, offset-detector full turns, Parker-weighted short scans on centred or offset detectors); `tomojax simulate`, `tomojax import` and saved datasets. Fan beam is a one-row cone detector |
 | Real GPU validation | CUDA on RTX 4070 Laptop (Ada); CPU reference mode is tested separately |
 

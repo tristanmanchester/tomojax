@@ -19,7 +19,7 @@ from tomojax.recon import CGLSConfig, cgls, cgls_multires
 def problem():
     grid = Grid(5, 3, 3, 0.8, 1.1, 1.3, vol_origin=(-1.7, -0.9, -1.1))
     detector = Detector(9, 7, 0.7, 1.2, (0.17, -0.23))
-    geometry = LaminographyGeometry(grid, detector, np.asarray([13, 49, 83, 122, 161]), tilt_deg=23)
+    geometry = LaminographyGeometry(grid, detector, np.asarray([13, 49, 83, 122, 161]), tilt=23)
     truth = np.random.default_rng(12).uniform(-0.3, 1.7, size=(3, 3, 5)).astype(np.float32)
     return grid, detector, geometry, truth
 
@@ -39,7 +39,7 @@ def test_multires_recovers_original_fine_system(explicit_coordinates, backend):
         # A slightly nonuniform detector exercises coordinates outside the
         # canonical metadata, with exactly the same subset on coarse levels.
         coordinates = (jnp.asarray(u + 0.04 * np.sin(v)).ravel(), jnp.asarray(v).ravel())
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
     data = jax.vmap(
         lambda t: forward_project_view_T(t, grid, detector, truth, det_grid=coordinates)
     )(poses)
@@ -100,7 +100,7 @@ def test_multires_gradient_penalty_solves_the_same_physical_fine_objective():
     )
     expected, _ = cgls(geometry, grid, detector, data, config=config)
     basis = np.eye(45).reshape(3, 3, 5, 45)
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
     matrix = (
         np.asarray(
             jax.vmap(
@@ -182,7 +182,7 @@ def test_breakdown_at_coarse_level_cannot_be_hidden_by_fine_solve(monkeypatch):
 @pytest.mark.parametrize("storage", ["array", "memmap"])
 def test_host_pyramid_stays_on_the_host_and_streams(storage, tmp_path):
     grid, detector, geometry, truth = problem()
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
     data = np.asarray(jax.vmap(lambda t: forward_project_view_T(t, grid, detector, truth))(poses))
     if storage == "memmap":
         mapped = np.memmap(tmp_path / "views.dat", mode="w+", dtype=np.float32, shape=data.shape)
@@ -198,7 +198,7 @@ def test_host_pyramid_stays_on_the_host_and_streams(storage, tmp_path):
         config=CGLSConfig(
             projector_model="ray",
             backend="jax",
-            stream_projections=True,
+            stream=True,
             views_per_batch=3,
             rtol=1e-7,
         ),

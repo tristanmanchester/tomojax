@@ -114,7 +114,7 @@ def _padded(grid, bins):
     return extended, cells
 
 
-def _read(measured, bins, batch_views=16):
+def _read(measured, bins, views_per_batch=16):
     """What the levels take from the frames, in one front-to-back pass over them.
 
     Returns each binning's block means over complete b x b pixel blocks and observed
@@ -132,8 +132,8 @@ def _read(measured, bins, batch_views=16):
     step = max(1, n // 16)
     peak = np.float32(0)
     noise = Windows(measured.shape)
-    for s in range(0, n, batch_views):
-        src = np.asarray(measured[s : s + batch_views], np.float32)
+    for s in range(0, n, views_per_batch):
+        src = np.asarray(measured[s : s + views_per_batch], np.float32)
         finite = np.isfinite(src)
         filled = np.where(finite, src, 0)
         for b, y, w in zip(bins, means, weights, strict=True):
@@ -189,7 +189,7 @@ def _level(
     frames=None,
     scales=None,
     parameters=None,
-    detector_roll_deg=0.0,
+    detector_roll=0.0,
     interpolation="linear",
 ):
     """Observations, grid, operators and calibration at one binning.
@@ -235,7 +235,7 @@ def _level(
         scales=scales,
         interpolation=interpolation,
         parameters=parameters,
-        detector_roll_deg=detector_roll_deg,
+        detector_roll=detector_roll,
         detector_pivot=detector.center,
     )
     h = (g.vx * g.vy * g.vz) ** (1 / 3)
@@ -293,7 +293,7 @@ def fit_poses(
     fit=("translations",),
     keep_grid=False,
     frames=None,
-    detector_roll_deg=0.0,
+    detector_roll=0.0,
     view_positions=None,
     declared_poses=None,
     placement=None,
@@ -308,7 +308,7 @@ def fit_poses(
     ``frames`` supplies cone lab frames (views, 4, 3), with rows detector centre,
     unit u, unit v, source; None selects parallel rays. A shared (4, 3) frame is
     also accepted. ``fit`` selects shared centre/tilt/roll and local translation/
-    rotation blocks. ``detector_roll_deg`` supplies an existing parallel detector
+    rotation blocks. ``detector_roll`` supplies an existing parallel detector
     roll, which is absent from the object pose matrices. Cone frames already
     contain any existing roll. ``view_positions`` place the views in acquisition
     time (see :class:`ViewOrder`); the motion prior and the report's neighbour
@@ -384,7 +384,7 @@ def fit_poses(
                 frames=frames,
                 scales=pose_scales,
                 parameters=parameters,
-                detector_roll_deg=detector_roll_deg,
+                detector_roll=detector_roll,
                 interpolation=interpolation,
             )
             # Only the angular size prior depends on the level's noise scale.
@@ -433,7 +433,7 @@ def fit_poses(
     record = {
         "fit": list(parameters.fit),
         "corrections": corrections,
-        "rotation_prior_sigma_deg": ROTATION_SIGMA_DEG if "rotations" in parameters.fit else None,
+        "rotation_prior_sigma": ROTATION_SIGMA_DEG if "rotations" in parameters.fit else None,
         "working_grid": asdict(base),
         "detector_binning": dbin,
         "lever_px_per_radian": lever,

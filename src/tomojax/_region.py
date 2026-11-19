@@ -76,7 +76,7 @@ class _Score:
 
 def _detector_corners(scan: Scan) -> np.ndarray:
     d = scan.detector
-    roll = np.deg2rad(float(getattr(scan.geometry, "detector_roll_deg", 0.0)))
+    roll = np.deg2rad(float(getattr(scan.geometry, "detector_roll", 0.0)))
     c, s = np.cos(roll), np.sin(roll)
     offsets = np.array(
         [

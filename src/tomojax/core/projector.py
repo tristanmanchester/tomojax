@@ -35,7 +35,7 @@ from .validation import (
 )
 
 # Frame conventions:
-# - geometry.pose_for_view(i) must return a 4x4 transform T_world_from_obj that maps
+# - geometry.pose_matrix(i) must return a 4x4 transform T_world_from_obj that maps
 #   object (sample) coordinates into world (lab) coordinates for view i.
 # - Rays are defined in the world frame with directions along +y (parallel beam).
 # - We compute object_from_world = inv(T_world_from_obj) and sample the volume in the
@@ -783,7 +783,7 @@ def forward_project_view(
     Cone-beam geometries use the cone Joseph projector, whose only options are
     the defaults.
     """
-    T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
+    T = jnp.asarray(geometry.pose_matrix(view_index), dtype=jnp.float32)
     frames = _view_frame(geometry, detector, view_index)
     if frames is not None:
         if det_grid is not None or ray_integrator == "exact":

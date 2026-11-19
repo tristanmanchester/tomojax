@@ -9,7 +9,7 @@ from tomojax.corrections import Stripes, correct_projections
 
 
 @pytest.mark.parametrize("width", [15, 16])
-def test_varying_response_preserves_centred_absorption(width: int) -> None:
+def test_varying_response_preserves_centered_absorption(width: int) -> None:
     rng = np.random.default_rng(14)
     theta = np.linspace(0, 2 * np.pi, 721, endpoint=False)[:, None, None]
     u = np.arange(161)[None, None, :] - 80

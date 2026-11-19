@@ -73,7 +73,7 @@ def prepare(config: dict, out: Path) -> None:
     if detector.du != detector.dv:
         raise ValueError("the corpus renderer requires square detector pixels")
     angles = np.asarray(geometry["angles_deg"], np.float64)
-    options = {key: geometry[key] for key in ("tilt_deg", "tilt_about") if key in geometry}
+    options = {key: geometry[key] for key in ("tilt", "tilt_about") if key in geometry}
     if geometry["kind"] == "cone":
         unsupported = set(geometry["beam"]) - {"source_to_axis", "source_to_detector"}
         if any(geometry["beam"][key] != 0 for key in unsupported):
@@ -131,7 +131,7 @@ def prepare(config: dict, out: Path) -> None:
             mu_mm=coefficients,
             shape=(detector.nv, detector.nu),
             pixel_mm=detector.du,
-            centre_mm=detector.center,
+            center_mm=detector.center,
             supersample=config.get("supersample", 2),
             raster_refinement=config.get("raster_refinement", 1),
             save_energy_transmission=config.get("save_energy_transmission", False),

@@ -49,7 +49,7 @@ class Grid:
         """Voxel edge in mm."""
         return self.fov / self.n
 
-    def centres(self) -> np.ndarray:
+    def centers(self) -> np.ndarray:
         """Voxel-centre coordinates along one axis in mm."""
         return ((np.arange(self.n) + 0.5) * self.voxel - self.fov / 2).astype(np.float64)
 
@@ -72,20 +72,20 @@ def _sub_offsets(fine: int, voxel: float) -> np.ndarray:
 
 def sample_voxels(
     sample: Sampler,
-    centres: np.ndarray,
+    centers: np.ndarray,
     voxel: float,
     mu: np.ndarray,
     *,
     fine: int,
     reach: float = 1.2,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return mean attenuation and kept fraction of voxels at ``centres``.
+    """Return mean attenuation and kept fraction of voxels at ``centers``.
 
-    ``centres`` is ``(m, 3)`` in mm. Voxels whose centre margin is below
+    ``centers`` is ``(m, 3)`` in mm. Voxels whose centre margin is below
     ``reach`` voxels are resampled with ``fine**3`` sub-voxel points.
     """
     table = np.append(np.asarray(mu, np.float64), 0.0)
-    labels, margin = sample(centres[:, 0], centres[:, 1], centres[:, 2])
+    labels, margin = sample(centers[:, 0], centers[:, 1], centers[:, 2])
     labels = np.asarray(labels)
     value = table[labels]
     keep = (labels == KEEP).astype(np.float64)
@@ -96,7 +96,7 @@ def sample_voxels(
     batch = max(1, (1 << 20) // offsets.shape[0])
     for start in range(0, refine.size, batch):
         index = refine[start : start + batch]
-        points = (centres[index, None, :] + offsets[None]).reshape(-1, 3)
+        points = (centers[index, None, :] + offsets[None]).reshape(-1, 3)
         sub, _ = sample(points[:, 0], points[:, 1], points[:, 2])
         sub = np.asarray(sub).reshape(index.size, -1)
         value[index] = table[sub].mean(axis=1)
@@ -120,7 +120,7 @@ def voxelise(
     voxel keeps ``under`` in proportion to its :data:`KEEP` samples.
     """
     n = grid.n
-    c = grid.centres()
+    c = grid.centers()
     ranges = [(0, n)] * 3 if box is None else [grid.index_range(lo, hi) for lo, hi in box]
     (i0, i1), (j0, j1), (k0, k1) = ranges
     out = np.zeros((n, n, n), np.float32) if under is None else under
@@ -132,8 +132,8 @@ def voxelise(
     def slab(k: int) -> None:
         zs = c[k : min(k + planes, k1)]
         z, y, x = np.meshgrid(zs, ys, xs, indexing="ij")
-        centres = np.stack([x.ravel(), y.ravel(), z.ravel()], -1)
-        value, keep = sample_voxels(sample, centres, grid.voxel, mu, fine=fine, reach=reach)
+        centers = np.stack([x.ravel(), y.ravel(), z.ravel()], -1)
+        value, keep = sample_voxels(sample, centers, grid.voxel, mu, fine=fine, reach=reach)
         shape = (zs.size, ys.size, xs.size)
         region = (slice(k, k + zs.size), slice(j0, j1), slice(i0, i1))
         value = value.reshape(shape)
@@ -161,7 +161,7 @@ def sample_where(
     order of ``np.flatnonzero(mask)``.
     """
     index = np.flatnonzero(mask)
-    c = grid.centres()
+    c = grid.centers()
     k, j, i = np.unravel_index(index, mask.shape)
     value = np.zeros(index.size)
     keep = np.zeros(index.size)
@@ -169,9 +169,9 @@ def sample_where(
 
     def run(start: int) -> None:
         part = slice(start, start + step)
-        centres = np.stack([c[i[part]], c[j[part]], c[k[part]]], -1)
+        centers = np.stack([c[i[part]], c[j[part]], c[k[part]]], -1)
         value[part], keep[part] = sample_voxels(
-            sample, centres, grid.voxel, mu, fine=fine, reach=reach
+            sample, centers, grid.voxel, mu, fine=fine, reach=reach
         )
 
     with ThreadPoolExecutor(workers()) as pool:
@@ -212,7 +212,7 @@ def slab_fraction(
 ) -> np.ndarray:
     """Return the fraction of a voxel cube inside a planar slab.
 
-    The slab is ``low <= normal . (p - centre) + offset <= high``: ``offset`` is
+    The slab is ``low <= normal . (p - center) + offset <= high``: ``offset`` is
     the voxel centre's coordinate across the slab and ``normal`` the unit slab
     normal, ``(..., 3)``. Exact for a plane; for curved layers it is exact to
     the curvature over one voxel.

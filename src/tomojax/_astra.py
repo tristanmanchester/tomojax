@@ -82,13 +82,13 @@ def _detector_axes(
     vectors: np.ndarray, data: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Unit detector u, v and beam direction per view, and data in TomoJAX column order."""
-    source, centre, u, v = (vectors[:, 3 * k : 3 * k + 3] for k in range(4))
+    source, center, u, v = (vectors[:, 3 * k : 3 * k + 3] for k in range(4))
     e_u = u / np.linalg.norm(u, axis=1, keepdims=True)
     e_v = v / np.linalg.norm(v, axis=1, keepdims=True)
     if np.max(np.abs(np.sum(e_u * e_v, axis=1))) > 1e-6:
         raise ValueError("from_astra needs rectangular detector pixels (u perpendicular to v)")
     beam = np.cross(e_v, e_u)
-    if np.median(np.sum((centre - source) * beam, axis=1)) < 0:
+    if np.median(np.sum((center - source) * beam, axis=1)) < 0:
         # ASTRA's columns run the other way to TomoJAX's u for this detector.
         return -e_u, e_v, -beam, data[:, :, ::-1]
     return e_u, e_v, beam, data
@@ -176,14 +176,14 @@ def _segment(
     cone = ConeBeam(sod, sdd, axis_offset=float(np.mean(translation[:, 0])), source_height=height)
     axis_unit = (float(axis[0]), float(axis[1]), float(axis[2]))
     # ConeGeometry aligns +z to the axis, then turns by theta about it.
-    aligned = ConeGeometry(grid, detector, [0.0], cone, axis_unit=axis_unit).poses()[0]
+    aligned = ConeGeometry(grid, detector, [0.0], cone, axis_unit=axis_unit).pose_matrices()[0]
     offset_turn = aligned[:3, :3].T @ turn
     gamma = float(np.arctan2(offset_turn[1, 0], offset_turn[0, 0]))
     angles = [float(t) for t in np.rad2deg(theta + gamma)]
     geometry = ConeGeometry(grid, detector, angles, cone, axis_unit=axis_unit)
     # What the circle leaves, as detector-frame corrections: rotation N^T R,
     # translation t - n. Pose angles compose R_y(beta) R_x(alpha) R_z(phi).
-    nominal = geometry.poses()
+    nominal = geometry.pose_matrices()
     residual = np.einsum("nji,njk->nik", nominal[:, :3, :3], rotation)
     beta, alpha, phi = Rotation.from_matrix(residual).as_euler("YXZ").T
     shifts = translation - nominal[:, :3, 3]

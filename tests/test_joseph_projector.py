@@ -380,7 +380,7 @@ def test_plane_cgls_matches_independent_damped_system_with_tail_batch(
     reference = matrix(poses, grid, detector, interpolation)
 
     class PosedGeometry:
-        def pose_for_view(self, index):
+        def pose_matrix(self, index):
             return poses[index]
 
     rng = np.random.default_rng(14)
@@ -405,12 +405,12 @@ def test_plane_cgls_matches_independent_damped_system_with_tail_batch(
             views_per_batch=4,
             backend=backend,
             projector_model="joseph",
-            joseph_interpolation=interpolation,
+            interpolation=interpolation,
         ),
     )
     np.testing.assert_allclose(np.asarray(volume).ravel(), expected, atol=5e-5, rtol=3e-4)
     assert info["projector_model"] == "joseph"
-    assert info["joseph_interpolation"] == interpolation
+    assert info["interpolation"] == interpolation
     gradient = (
         reference.T @ (data.ravel() - reference @ np.asarray(volume).ravel())
         - damping**2 * np.asarray(volume).ravel()
@@ -507,7 +507,7 @@ def test_joseph_rejects_invalid_geometry_before_kernel_execution(bad):
         poses[0, 3, 0] = 1
 
     class PosedGeometry:
-        def pose_for_view(self, i):
+        def pose_matrix(self, i):
             return poses[i]
 
     with pytest.raises(ValueError, match="finite|rigid homogeneous"):
@@ -790,7 +790,7 @@ def test_axial_cuda_pair_matches_physical_matrix_near_axis(
 def test_axial_cuda_keeps_positive_footprint_edge(angle, point, monkeypatch):
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
     grid, detector = Grid(256, 256, 8, 1, 1, 1), Detector(256, 8, 1, 1)
-    pose = ParallelGeometry(grid, detector, [angle]).pose_for_view(0)
+    pose = ParallelGeometry(grid, detector, [angle]).pose_matrix(0)
     coeff = plane_coefficients(jnp.asarray([pose]), grid, detector)
     ray = (0, 0, 188 if angle == 8 else 190)
     x = jnp.zeros((8, 256, 256), jnp.float32).at[point[::-1]].set(1)
@@ -956,7 +956,7 @@ def test_eager_coefficient_device_roundoff_is_bounded():
         rng.normal(size=(views, shape[0], shape[2] + 2))
     grid, detector = Grid(9, 7, 8, 1.1, 1.3, 1.7), Detector(11, 8, 1.1, 1.7)
     geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, 33, endpoint=False))
-    poses = np.asarray([geometry.pose_for_view(i) for i in range(33)], np.float32)
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(33)], np.float32)
     cpu = jax.devices("cpu")[0]
     value = jax.device_put(volume, cpu)
     outputs = []

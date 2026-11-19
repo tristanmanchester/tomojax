@@ -88,19 +88,19 @@ def build_calibrated_geometry_metadata_patch(
         det_center[1] = det_center[1] + _real(det_v.value, field="det_v_px") * detector_patch["dv"]
     detector_patch["det_center"] = det_center
 
-    roll = variables.get("detector_roll_deg")
+    roll = variables.get("detector_roll")
     if roll is not None:
-        value = _real(roll.value, field="detector_roll_deg")
+        value = _real(roll.value, field="detector_roll")
         segments = cast("list[dict[str, Any]]", geometry_meta_patch.get("cone_segments") or [])
         beams = [geometry_meta_patch.get("cone_beam")] + [e.get("cone_beam") for e in segments]
         beams = [beam for beam in beams if isinstance(beam, dict)]
         if beams:
             # A cone detector rolls in its beam, in the parallel roll's sense.
             for beam in beams:
-                beam["detector_roll_deg"] = value
+                beam["detector_roll"] = value
                 beam[ROLL_CONVENTION_KEY] = 1.0
         else:
-            geometry_meta_patch["detector_roll_deg"] = value
+            geometry_meta_patch["detector_roll"] = value
 
     axis_unit = variables.get("axis_unit_lab")
     if axis_unit is not None and isinstance(axis_unit.value, list):

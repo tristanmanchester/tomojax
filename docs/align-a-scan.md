@@ -18,7 +18,7 @@ that you have an image to compare with.
 
 | What you see | Likely error | Fit |
 | --- | --- | --- |
-| Point-like features drawn as rings or arcs, the same in every slice | The rotation centre | `fit="centre"` |
+| Point-like features drawn as rings or arcs, the same in every slice | The rotation centre | `fit="center"` |
 | Doubled or smeared edges that vary from feature to feature | Drift or sudden slips of the sample between views | `fit="translations"` (the default) |
 | Sharp slices at the detector's centre row, with haloes and doubled edges that grow towards the top and bottom of the volume | The rotation axis or the detector rolled about the beam | `fit=("translations", "roll")` |
 | In laminography, doubling that remains after translations, worst far from the rotation axis | The laminography tilt | `fit=("translations", "tilt")` |
@@ -29,7 +29,7 @@ import tomojax as tj
 
 scan = tj.load("corrected.nxs")
 result = tj.align(scan)                                  # translations
-result = tj.align(scan, fit="centre")                    # the rotation centre only
+result = tj.align(scan, fit="center")                    # the rotation center only
 result = tj.align(scan, fit=("translations", "roll"))    # add the axis roll
 tj.save("aligned.nxs", result)
 recon = tj.reconstruct(result.scan, "cgls")              # result.scan carries the corrections
@@ -51,7 +51,7 @@ selected parameters, for parallel, laminography and cone data.
 
 | Name | Fitted parameters | Units and frame |
 | --- | --- | --- |
-| `centre` | One detector-u centre, plus detector-v for cone data | Physical detector-centre lengths, in the same units as `Detector.center` |
+| `center` | One detector-u centre, plus detector-v for cone data | Physical detector-centre lengths, in the same units as `Detector.center` |
 | `tilt` | One axis or laminography tilt correction shared by every view | Degrees; positive tilt leans the rotation axis towards the beam |
 | `roll` | One detector roll correction shared by every view | Degrees, right-handed about the detector normal: positive turns u towards v, so a point above the centre projects towards +u |
 | `translations` | Two translations per view; three for cone data | Physical lab-frame lengths: across the beam and vertically, plus along the beam for cone |
@@ -67,12 +67,12 @@ out. The numbers under each panel are the pose error in detector pixels and the 
 A wrong rotation centre turns every small, bright feature into a ring. The rings are the same size
 everywhere in the slice, because every view is displaced by the same amount.
 
-![The balance wheel with a 6-pixel centre error: each screw is drawn as a ring. After fit="centre" the screws are points again, matching the true geometry.](images/alignment-ladder-centre.png)
+![The balance wheel with a 6-pixel centre error: each screw is drawn as a ring. After fit="center" the screws are points again, matching the true geometry.](images/alignment-ladder-centre.png)
 
-`fit="centre"` estimates one number for parallel and laminography data and is the fastest fit:
+`fit="center"` estimates one number for parallel and laminography data and is the fastest fit:
 13 s here. Fit the centre first on a new instrument or after any change to the detector or stage.
 
-For cone data, `"centre"` also estimates the detector-v centre. The data determine it only weakly:
+For cone data, `"center"` also estimates the detector-v centre. The data determine it only weakly:
 a vertical detector offset looks almost the same as moving the image vertically, so the fit may
 leave the v centre near its starting value and move the image instead. The reconstruction is
 still consistent with the data; do not read the fitted v centre as an instrument calibration.
@@ -96,7 +96,7 @@ short where the scale is large.
 
 The default, `fit="translations"`, removes the drift and slips in this example to 0.008 px in
 21 s. It also absorbs a centre error in parallel and laminography scans, so you do not need to fit
-the centre separately first. If you request `"centre"` and `"translations"` together, the
+the centre separately first. If you request `"center"` and `"translations"` together, the
 translations are given zero mean: a common translation and a centre offset describe the same
 parallel-ray geometry, and the data cannot tell them apart.
 
@@ -186,9 +186,9 @@ translation fit.
 
    | Value | Parallel or laminography data | Cone data |
    | --- | --- | --- |
-   | `centre` | `Detector(..., center=(centre, v))` | `Detector(..., center=centre)` |
-   | `roll` | `ParallelGeometry(..., detector_roll_deg=roll)`, or the same keyword on `LaminographyGeometry` | `ConeBeam(..., detector_roll_deg=roll)` |
-   | `tilt` | `LaminographyGeometry(..., tilt_deg=tilt)`: a tilted parallel scan is a laminography scan | `ConeGeometry(..., axis_unit=(0, sin(tilt), cos(tilt)))` |
+   | `center` | `Detector(..., center=(center, v))` | `Detector(..., center=center)` |
+   | `roll` | `ParallelGeometry(..., detector_roll=roll)`, or the same keyword on `LaminographyGeometry` | `ConeBeam(..., detector_roll=roll)` |
+   | `tilt` | `LaminographyGeometry(..., tilt=tilt)`: a tilted parallel scan is a laminography scan | `ConeGeometry(..., axis_unit=(0, sin(tilt), cos(tilt)))` |
 
 3. Check that the global values are physically plausible: a tilt correction of several degrees, or
    per-view rotations of more than a fraction of a degree, usually means the model is wrong rather
@@ -238,7 +238,7 @@ translation fit.
    print(held_out_error(np.zeros((len(index), 6))), held_out_error(poses))
    ```
 
-`calibration` reports final global values: `centre` is a scalar for parallel data and a `(u, v)`
+`calibration` reports final global values: `center` is a scalar for parallel data and a `(u, v)`
 pair for cone data; `tilt` is the signed lab inclination `atan2(axis_y, axis_z)` in degrees; `roll`
 is the detector angle from u towards v in degrees. Only requested globals appear. For a segmented
 cone scan whose starting calibrations differ, their final values are listed in segment order.

@@ -85,7 +85,7 @@ OVERLAP = 0.8  # centres may approach to this fraction of the radius sum
 class Grains:
     """Packed grains: centres, shapes and minerals."""
 
-    centre: np.ndarray  # (g, 3) mm
+    center: np.ndarray  # (g, 3) mm
     shape: np.ndarray  # (g, 3, 3): maps p - centre to the unit-ellipsoid frame
     quad: np.ndarray  # (g, 6) upper triangle of shape.T @ shape
     facet: np.ndarray  # (g, F, 3) facet normals over their offsets
@@ -96,7 +96,7 @@ class Grains:
     mineral: np.ndarray  # (g,)
     dissolved: np.ndarray  # (g,) bool: partially dissolved feldspar
     cleavage: np.ndarray  # (g, 2, 3) cleavage-plane normals
-    hole_centre: np.ndarray  # (g, 3) centre of the dissolved region
+    hole_center: np.ndarray  # (g, 3) centre of the dissolved region
     hole_radius: np.ndarray  # (g,)
 
 
@@ -109,7 +109,7 @@ def _pack(rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     draws = np.clip(0.055 * np.exp(0.33 * rng.normal(size=20000)), 0.02, 0.11)
     count = np.searchsorted(np.cumsum(4 / 3 * np.pi * draws**3), FILL * volume)
     radii = np.sort(draws[:count])[::-1]
-    centres = np.zeros((radii.size, 3))
+    centers = np.zeros((radii.size, 3))
     kept = np.zeros(radii.size)
     placed = 0
     for r in radii:
@@ -119,20 +119,20 @@ def _pack(rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
             cand = np.stack(
                 [rr * np.cos(ph), rr * np.sin(ph), rng.uniform(-half_height, half_height, 128)], -1
             )
-            gap = np.linalg.norm(cand[:, None] - centres[None, :placed], axis=-1)
+            gap = np.linalg.norm(cand[:, None] - centers[None, :placed], axis=-1)
             gap -= OVERLAP * (r + kept[None, :placed])
             ok = np.flatnonzero(gap.min(axis=1, initial=np.inf) >= 0)
             if ok.size:
-                centres[placed] = cand[ok[0]]
+                centers[placed] = cand[ok[0]]
                 kept[placed] = r
                 placed += 1
                 break
-    return centres[:placed], kept[:placed]
+    return centers[:placed], kept[:placed]
 
 
 def _grains(rng: np.random.Generator) -> Grains:
-    centre, radius = _pack(rng)
-    g = centre.shape[0]
+    center, radius = _pack(rng)
+    g = center.shape[0]
     rot = random_rotations(rng, g)
     aspect = np.stack([np.ones(g), rng.uniform(0.75, 0.95, g), rng.uniform(0.6, 0.85, g)], -1)
     aspect /= np.cbrt(aspect.prod(axis=1, keepdims=True))
@@ -157,7 +157,7 @@ def _grains(rng: np.random.Generator) -> Grains:
     hole_dir = rng.normal(size=(g, 3))
     hole_dir /= np.linalg.norm(hole_dir, axis=1, keepdims=True)
     return Grains(
-        centre=centre,
+        center=center,
         shape=shape,
         quad=quad,
         facet=facet,
@@ -168,7 +168,7 @@ def _grains(rng: np.random.Generator) -> Grains:
         mineral=mineral,
         dissolved=dissolved,
         cleavage=np.stack([first, second], 1),
-        hole_centre=centre + 0.5 * radius[:, None] * hole_dir,
+        hole_center=center + 0.5 * radius[:, None] * hole_dir,
         hole_radius=radius * rng.uniform(0.55, 0.85, g),
     )
 
@@ -177,14 +177,14 @@ def _grains(rng: np.random.Generator) -> Grains:
 class Sphere:
     """Spherical regions with a noisy radius."""
 
-    centre: np.ndarray  # (m, 3)
+    center: np.ndarray  # (m, 3)
     radius: np.ndarray  # (m,)
 
     def distance(self, p: np.ndarray, noise: WaveNoise, relief: float) -> np.ndarray:
         """Signed distance, approximately, to the nearest region; negative inside."""
         if self.radius.size == 0:
             return np.full(p.shape[0], np.inf)
-        d = np.linalg.norm(p[:, None] - self.centre[None], axis=-1) - self.radius[None]
+        d = np.linalg.norm(p[:, None] - self.center[None], axis=-1) - self.radius[None]
         return d.min(axis=1) - relief * noise(p[:, 0], p[:, 1], p[:, 2])
 
 
@@ -192,14 +192,14 @@ class Sphere:
 class Cubes:
     """Rotated cubes (euhedral pyrite)."""
 
-    centre: np.ndarray
+    center: np.ndarray
     rot: np.ndarray
     half: np.ndarray
 
     def distance(self, p: np.ndarray) -> np.ndarray:
         """Signed distance to the nearest cube; negative inside."""
         best = np.full(p.shape[0], np.inf)
-        for c, r, h in zip(self.centre, self.rot, self.half, strict=True):
+        for c, r, h in zip(self.center, self.rot, self.half, strict=True):
             q = np.abs((p - c) @ r) - h
             outside = np.linalg.norm(np.maximum(q, 0), axis=1)
             best = np.minimum(best, outside + np.minimum(q.max(axis=1), 0))
@@ -213,22 +213,22 @@ class RockSampler:
         """Draw every random feature of the core from ``seed``."""
         rng = np.random.default_rng(seed)
         self.grains = _grains(rng)
-        self.tree = cKDTree(self.grains.centre)
+        self.tree = cKDTree(self.grains.center)
         self.seed = seed
         g = self.grains
-        inside = np.flatnonzero(np.hypot(g.centre[:, 0], g.centre[:, 1]) < CORE_RADIUS_MM - 0.08)
+        inside = np.flatnonzero(np.hypot(g.center[:, 0], g.center[:, 1]) < CORE_RADIUS_MM - 0.08)
         self.noise = WaveNoise.make(rng, 0.06)
         self.calcite = Sphere(np.array([[-0.2, 0.17, 0.03]]), np.array([0.11]))
         self.clay = Sphere(
             np.concatenate(
-                [g.centre[rng.choice(inside, 5, replace=False)] + rng.normal(0, 0.06, (5, 3))]
+                [g.center[rng.choice(inside, 5, replace=False)] + rng.normal(0, 0.06, (5, 3))]
             ),
             rng.uniform(0.04, 0.07, 5),
         )
         # Pyrite framboids sit on grain surfaces; one is kept near z = 0 for the preview.
         hosts = rng.choice(inside, 5, replace=False)
         hosts[0] = inside[
-            np.argmin(np.abs(g.centre[inside, 2]) + 0.3 * np.abs(g.centre[inside, 0] - 0.25))
+            np.argmin(np.abs(g.center[inside, 2]) + 0.3 * np.abs(g.center[inside, 0] - 0.25))
         ]
         direction = rng.normal(size=(5, 3))
         direction[0] = [0.0, -1.0, 0.05]
@@ -251,7 +251,7 @@ class RockSampler:
     def _surface_point(self, grains: np.ndarray, direction: np.ndarray) -> np.ndarray:
         g = self.grains
         q = np.einsum("gij,gj->gi", g.shape[grains], direction)
-        return g.centre[grains] + direction / np.linalg.norm(q, axis=1, keepdims=True)
+        return g.center[grains] + direction / np.linalg.norm(q, axis=1, keepdims=True)
 
     def _shape(self, grain: np.ndarray, q: np.ndarray) -> np.ndarray:
         """Shape function of ``grain`` at frame coordinates ``q``: below 1 inside."""
@@ -282,7 +282,7 @@ class RockSampler:
         m = p.shape[0]
         rows = np.arange(m)
         _, near = self.tree.query(p, NEIGHBOURS)
-        d = p[:, None, :] - g.centre[near]
+        d = p[:, None, :] - g.center[near]
         a = g.quad[near]
         ellipse = (
             a[..., 0] * d[..., 0] ** 2
@@ -298,9 +298,9 @@ class RockSampler:
         span = np.empty((m, 2))
         for j in range(2):
             grain = pair[:, j]
-            q = np.einsum("pij,pj->pi", g.shape[grain], p - g.centre[grain])
+            q = np.einsum("pij,pj->pi", g.shape[grain], p - g.center[grain])
             rho[:, j] = self._shape(grain, q)
-            span[:, j] = np.linalg.norm(p - g.centre[grain], axis=1) / np.maximum(rho[:, j], 1e-9)
+            span[:, j] = np.linalg.norm(p - g.center[grain], axis=1) / np.maximum(rho[:, j], 1e-9)
         swap = rho[:, 1] < rho[:, 0]
         rho[swap] = rho[swap, ::-1]
         span[swap] = span[swap, ::-1]
@@ -353,14 +353,14 @@ class RockSampler:
             return
         grain = first[where]
         q = p[where]
-        hole = np.linalg.norm(q - g.hole_centre[grain], axis=1) - g.hole_radius[grain]
+        hole = np.linalg.norm(q - g.hole_center[grain], axis=1) - g.hole_radius[grain]
         hole -= 0.012 * self.noise(q[:, 0], q[:, 1], q[:, 2])
         slot = np.zeros(where.size, bool)
         edge = np.full(where.size, np.inf)
         third = np.cross(g.cleavage[grain, 0], g.cleavage[grain, 1])
         # The dominant cleavage opens more often than the second one.
         for k, (period, chance) in enumerate([(0.010, 0.5), (0.014, 0.25)]):
-            r = q - g.centre[grain]
+            r = q - g.center[grain]
             s = np.einsum("pi,pi->p", r, g.cleavage[grain, k])
             along = np.einsum("pi,pi->p", r, g.cleavage[grain, 1 - k])
             depth = np.einsum("pi,pi->p", r, third)
@@ -384,7 +384,7 @@ class RockSampler:
         labels[cube < 0] = PYRITE
         margins.append(np.abs(cube))
         f = self.framboids
-        d = np.linalg.norm(p[:, None] - f.centre[None], axis=-1) - f.radius[None]
+        d = np.linalg.norm(p[:, None] - f.center[None], axis=-1) - f.radius[None]
         inside = np.flatnonzero(d.min(axis=1) < 0)
         if inside.size:
             # Microcrystals: one sphere per 4 µm cell, jittered by a hash.
@@ -401,7 +401,7 @@ class RockSampler:
 class Crack:
     """Penny-shaped crack with an elliptical opening profile."""
 
-    centre: np.ndarray
+    center: np.ndarray
     normal: np.ndarray
     radius: float
     aperture: float
@@ -410,11 +410,11 @@ class Crack:
     def open(self, volume: np.ndarray, grid: Grid) -> None:
         """Remove the crack's share of each voxel it crosses, in place."""
         reach = self.radius + self.waviness + grid.voxel
-        ranges = [grid.index_range(c - reach, c + reach) for c in self.centre]
-        c = grid.centres()
+        ranges = [grid.index_range(c - reach, c + reach) for c in self.center]
+        c = grid.centers()
         axes = [c[i0:i1] for i0, i1 in ranges]
         z, y, x = np.meshgrid(*axes[::-1], indexing="ij")
-        p = np.stack([x, y, z], -1) - self.centre
+        p = np.stack([x, y, z], -1) - self.center
         across = p @ self.normal
         in_plane = p - across[..., None] * self.normal
         tangent = np.cross(self.normal, [0.0, 0.0, 1.0])
@@ -435,17 +435,17 @@ def _cracks(sampler: RockSampler, seed: int) -> list[Crack]:
     rng = np.random.default_rng([seed, 1])
     g = sampler.grains
     quartz = np.flatnonzero(
-        (g.mineral == QUARTZ) & (np.hypot(g.centre[:, 0], g.centre[:, 1]) < CORE_RADIUS_MM - 0.1)
+        (g.mineral == QUARTZ) & (np.hypot(g.center[:, 0], g.center[:, 1]) < CORE_RADIUS_MM - 0.1)
     )
     picks = rng.choice(quartz, 5, replace=False)
-    picks[0] = quartz[np.argmin(np.abs(g.centre[quartz, 2]))]
+    picks[0] = quartz[np.argmin(np.abs(g.center[quartz, 2]))]
     cracks = []
     for grain in picks:
         normal = rng.normal(size=3)
         normal[2] *= 0.3
         normal /= np.linalg.norm(normal)
         size = 1 / np.linalg.norm(g.shape[grain], ord=2)
-        cracks.append(Crack(g.centre[grain], normal, 1.3 * size, rng.uniform(0.002, 0.003), 0.0))
+        cracks.append(Crack(g.center[grain], normal, 1.3 * size, rng.uniform(0.002, 0.003), 0.0))
     normal = np.array([np.cos(0.5), np.sin(0.5), 0.12])
     cracks.append(
         Crack(np.array([0.18, -0.12, 0.0]), normal / np.linalg.norm(normal), 0.36, 0.0035, 0.004)
@@ -478,7 +478,7 @@ def porous_rock(n: int = 256, *, seed: int = 0) -> tuple[np.ndarray, dict[str, A
         "energy_keV": ENERGY_KEV,
         "materials": dict(MATERIALS),
         "seed": seed,
-        "grains": int(sampler.grains.centre.shape[0]),
+        "grains": int(sampler.grains.center.shape[0]),
         "geometry": "parallel beam; core axis along z",
     }
     return volume, meta
