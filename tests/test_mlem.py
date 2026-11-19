@@ -23,7 +23,7 @@ def problem(request):
     grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 4, 0.7, 1.2, (0.17, -0.23))
     angles = [83, 13, 161, 49, 122]
-    geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=23)
+    geometry = LaminographyGeometry(grid, detector, angles, tilt=23)
     if request.param == "cone":
         geometry = ConeSegments(
             (
@@ -291,12 +291,12 @@ def test_host_cone_warm_start_fills_out_before_em(monkeypatch, tmp_path):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize(("model", "shifted"), [("ray", False), ("ray", True)])
-def test_mlem_matches_dense_updates_for_ray_model_and_explicit_detector(model, shifted):
+@pytest.mark.parametrize("shifted", [False, True])
+def test_mlem_matches_dense_updates_with_an_explicit_detector_grid(shifted):
     import jax.numpy as jnp
 
     # check-public-imports: allow-private
-    from tomojax.core.projector import get_detector_grid_device
+    from tomojax.core.geometry.base import get_detector_grid_device
     from tomojax.geometry import stack_view_poses
 
     # check-public-imports: allow-private
@@ -305,13 +305,13 @@ def test_mlem_matches_dense_updates_for_ray_model_and_explicit_detector(model, s
     grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 4, 0.7, 1.2, (0.17, -0.23))
     angles = [83, 13, 161, 49, 122]
-    geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=23)
+    geometry = LaminographyGeometry(grid, detector, angles, tilt=23)
     det_grid = None
     if shifted:  # the lattice moved a third of a pixel along u
         u, v = get_detector_grid_device(detector)
         det_grid = (u + 0.7 / 3, v)
     poses = stack_view_poses(geometry, 5)
-    forward, _ = projection_operators(poses, grid, detector, det_grid, "jax", 5, model)
+    forward, _ = projection_operators(poses, grid, detector, det_grid, "jax", 5, "joseph")
     basis = np.eye(12, dtype=np.float32).reshape(12, 2, 2, 3)
     matrix = np.stack([np.asarray(forward(jnp.asarray(x))).ravel() for x in basis], axis=1)
     matrix = matrix.astype(np.float64)
@@ -327,7 +327,7 @@ def test_mlem_matches_dense_updates_for_ray_model_and_explicit_detector(model, s
             ratio = np.divide(data[rows], den, out=np.zeros_like(den), where=den > 0)
             sensitivity = a.sum(axis=0)
             expected *= np.divide(a.T @ ratio, sensitivity, out=np.ones(12), where=sensitivity > 0)
-    config = MLEMConfig(iterations=3, subsets=2, projector_model=model, backend="jax")
+    config = MLEMConfig(iterations=3, subsets=2, backend="jax")
     volume, _ = mlem(
         geometry, grid, detector, data.reshape(5, 4, 5).astype(np.float32),
         init_x=np.full((2, 2, 3), 0.7, np.float32), config=config, det_grid=det_grid,

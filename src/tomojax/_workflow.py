@@ -18,6 +18,7 @@ from contextlib import closing, contextmanager
 from dataclasses import is_dataclass, replace
 import json
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Literal, cast
 import warnings
 
@@ -28,24 +29,33 @@ from tomojax._scan import (
     Alignment,
     Reconstruction,
     Scan,
+    cropped_record,
+    geometry_of,
+    geometry_record,
+    rebuild,
     record_of,
+    source_of,
     with_grid,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
     from os import PathLike
 
     import jax
 
     from tomojax._loading import Frames
+    from tomojax._region import RegionEstimate
     from tomojax._typed_arrays import Device
+    from tomojax.alignment import AlignConfig
     from tomojax.corrections import Step
     from tomojax.geometry import Detector, Geometry, Grid, ScanGeometry
     from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig
     from tomojax.recon.api import MethodConfig
 
 type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
+type Region = Literal["auto", "bbox", "cube", "cyl"] | RegionEstimate
+type AlignMethod = Literal["joint", "opposite-views"]
 LOG = logging.getLogger(__name__)
 
 
@@ -53,7 +63,12 @@ LOG = logging.getLogger(__name__)
 
 
 def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
-    """Load a reconstruction saved by :func:`save` or ``tomojax recon``.
+    """Load a reconstruction or alignment saved by :func:`save` or the ``tomojax`` commands.
+
+    The reconstruction has its scan when the file holds the projections (saved with
+    ``include_scan=True``, or an alignment). A file saved without them gives a
+    reconstruction whose ``scan`` is None, and says so; ``info["source"]`` names
+    the projections it came from. Nothing looks for them.
 
     Parameters
     ----------
@@ -63,7 +78,7 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     Returns
     -------
     Reconstruction
-        Volume, source scan and stored reconstruction settings.
+        Volume, geometry, stored settings and, when saved with them, the scan.
 
     Raises
     ------
@@ -77,31 +92,49 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     >>> import tomojax as tj
     >>> recon = tj.load_reconstruction("recon.nxs")  # doctest: +SKIP
     """
-    scan = load(path)
-    record = scan.source
-    if record is None or record.volume is None:
+    from tomojax.io import load_dataset
+
+    record = load_dataset(os.fspath(path))
+    if record.volume is None:
         raise ValueError(f"{path} holds no reconstructed volume")
+    scan = None if record.projections is None else load(path)
+    if scan is None:
+        warnings.warn(
+            f"{path} holds the reconstruction without its scan (saved without "
+            "include_scan=True): its scan is None, and info['source'] names the projections",
+            stacklevel=2,
+        )
+    geometry = geometry_of(record, apply_poses=True) if scan is None else scan.geometry
     meta = record.geometry_metadata
     info = meta.get("reconstruction_info", meta.get("alignment_info"))
     aligned = "reconstruction_method" not in meta and "alignment_info" in meta
     if aligned and isinstance(info, dict) and isinstance(info.get("working_grid"), dict):
         from tomojax.geometry import Grid
 
-        scan = with_grid(scan, Grid(**info["working_grid"]))  # the alignment image's grid
+        geometry = rebuild(geometry, grid=Grid(**info["working_grid"]))  # the image's grid
+        scan = None if scan is None else replace(scan, geometry=geometry)
     return Reconstruction(
         volume=np.asarray(record.volume),
-        scan=scan,
+        geometry=geometry,
         method="align" if aligned else str(meta.get("reconstruction_method", "unknown")),
         info=dict(info) if isinstance(info, dict) else {},
+        scan=scan,
     )
 
 
-def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> None:
+def save(
+    path: str | PathLike[str],
+    item: Scan | Reconstruction | Alignment,
+    *,
+    include_scan: bool = False,
+) -> None:
     """Save a scan, reconstruction or alignment as a TomoJAX dataset.
 
-    Reconstructions and alignments are saved with their scan (projections,
-    geometry and any pose corrections), so the file reloads with :func:`load`
-    and :func:`load_reconstruction`.
+    A reconstruction is saved with its volume, geometry and full record, and names
+    the projections it came from (``info["source"]``: their path, shape, size and a
+    hash of three views); ``include_scan=True`` saves the scan too, so the file also
+    reloads with :func:`load`. An alignment is saved as its corrected scan with its
+    poses and working image.
 
     Parameters
     ----------
@@ -109,6 +142,8 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
         Output dataset path; an existing file is overwritten.
     item : Scan, Reconstruction or Alignment
         Scan or result to save with its geometry and metadata.
+    include_scan : bool, optional
+        Also save a reconstruction's scan. Default is False.
 
     Returns
     -------
@@ -120,7 +155,8 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
     TypeError
         If item is not a scan, reconstruction or alignment.
     ValueError
-        If the output format is unsupported.
+        If the output format is unsupported, or ``include_scan`` is asked of a
+        reconstruction loaded without its scan.
 
     Examples
     --------
@@ -133,28 +169,57 @@ def save(path: str | PathLike[str], item: Scan | Reconstruction | Alignment) -> 
     if isinstance(item, Scan):
         record = record_of(item)
     elif isinstance(item, Reconstruction):
-        record = record_of(item.scan)
+        if item.scan is None and include_scan:
+            raise ValueError(
+                "this reconstruction was loaded without its scan: there is none to save"
+            )
+        if item.scan is None:
+            record = geometry_record(item.geometry)
+            source = item.info.get("source")
+        else:
+            record = record_of(item.scan, grid=item.grid)
+            source = source_of(item.scan)
+            if not include_scan:
+                record = replace(record, projections=None)
         record.volume = item.volume
         record.geometry_metadata["reconstruction_method"] = item.method
         # As JSON, which the file's metadata is: a configuration as its fields, and
         # what else JSON cannot hold as text.
         record.geometry_metadata["reconstruction_info"] = json.loads(
-            json.dumps(dict(item.info), default=_json_value)
+            json.dumps({**item.info, "source": source}, default=_json_value)
         )
     elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
         record = record_of(item.scan)
-        record.volume = item.volume
+        record.volume = item.image
         # The alignment made this volume: an earlier reconstruction's method
         # and settings no longer describe it.
         record.geometry_metadata.pop("reconstruction_method", None)
         record.geometry_metadata.pop("reconstruction_info", None)
         # The image's grid, which need not be the scan's: load_reconstruction reads it back.
+        info = {**item.info} if item.grid is None else {**item.info, "working_grid": item.grid}
         record.geometry_metadata["alignment_info"] = json.loads(
-            json.dumps({**item.info, "working_grid": item.grid}, default=_json_value)
+            json.dumps(info, default=_json_value)
         )
     else:
         raise TypeError(f"save takes a Scan, Reconstruction or Alignment, not {type(item)}")
     save_dataset(path, record)
+
+
+def _in_region(
+    run: Callable[[Grid], Reconstruction], scan: Scan, grid: Grid | None, region: Region
+) -> Reconstruction:
+    """``run`` on the grid ``region`` chooses, zeroed outside a ``"cyl"`` region's cylinder."""
+    from tomojax._field_of_view import region_grid, zero_outside_cylinder
+
+    if grid is not None:
+        raise ValueError("pass grid= or region=, not both")
+    chosen, cylinder = region_grid(scan, region)
+    result = run(chosen)
+    if cylinder is not None:
+        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
+    return replace(
+        result, info={**result.info, "region": (region if isinstance(region, str) else "estimate")}
+    )
 
 
 def _json_value(value: object) -> object:
@@ -256,6 +321,7 @@ def reconstruct(
     method: Method = "auto",
     *,
     grid: Grid | None = None,
+    region: Region | None = None,
     out: np.ndarray | None = None,
     config: MethodConfig | None = None,
     filter: str | None = None,
@@ -338,6 +404,12 @@ def reconstruct(
         One of auto, fbp, fourier, cgls, fista, spdhg, sirt or mlem.
     grid : Grid or None, optional
         Output grid; None retains the scan's grid.
+    region : {"auto", "bbox", "cube", "cyl"}, RegionEstimate or None, optional
+        The part of the scan's grid to reconstruct, in place of ``grid``: the box
+        every view sees ("auto" and "bbox"; "auto" keeps the scan's grid, with a
+        warning, when there is none), its largest cube, or its largest cylinder
+        about the axis ("cyl", which also zeroes the volume outside it); a
+        :class:`RegionEstimate` gives its own grid. None keeps the scan's grid.
     out : numpy.ndarray or None, optional
         Writable float32 output or memmap for fbp/fourier, CUDA Joseph fista,
         host-slab cgls, and cone sirt/mlem;
@@ -377,6 +449,17 @@ def reconstruct(
     """
     from tomojax.recon.api import method_config, reconstruct_arrays
 
+    if region is not None:
+        keywords = {"filter": filter, "iterations": iterations, "tv_weight": tv_weight}
+        keywords |= {"nonnegative": nonnegative, "warm_start": warm_start, "seed": seed}
+        return _in_region(
+            lambda grid: reconstruct(
+                scan, method, grid=grid, out=out, config=config, devices=devices, **keywords
+            ),
+            scan,
+            grid,
+            region,
+        )
     given = {
         name: value
         for name, value in {
@@ -414,7 +497,7 @@ def reconstruct(
         info = {**info, "temporary_file": str(directory)}
         LOG.info("The %.1f GiB volume is held in a temporary file in %s, as more than half of "
                  "host memory", volume.nbytes / 2**30, directory)  # fmt: skip
-    return Reconstruction(volume=volume, scan=scan, method=method, info=info)
+    return Reconstruction(volume, scan.geometry, method, info, scan)
 
 
 def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstruction:
@@ -629,11 +712,12 @@ def reconstruct_slabs(
                         grid=block,
                         detector=detector_window(slab.rows, slice(None), frames.geometry.detector),
                     )
+                    cropped = cropped_record(slab.rows, slice(None), frames.geometry.detector)
                     scan = Scan(
                         slab.projections,
                         geometry,
                         frames.name,
-                        slab.context.records,
+                        (*frames.corrections, cropped, *slab.context.records),
                         frames.source,
                         view_positions=frames.view_positions,
                     )
@@ -645,7 +729,7 @@ def reconstruct_slabs(
                     }
                     yield (
                         slice(slab.start, slab.stop),
-                        Reconstruction(slab.volume, scan, method, info),
+                        Reconstruction(slab.volume, scan.geometry, method, info, scan),
                     )
                     del slab, scan  # Do not retain device rows while preparing the next slab.
 
@@ -653,61 +737,16 @@ def reconstruct_slabs(
                 yield output
 
 
-def estimate_center(scan: Scan, *, views: slice | Sequence[int] | np.ndarray | None = None) -> Scan:
-    """Estimate a parallel scan's rotation centre without reconstructing a volume.
+def _estimate_center(scan: Scan) -> tuple[Scan, dict[str, object]]:
+    """The scan with its centre from near-opposite views, and the estimate's record.
 
-    Returns the scan with its effective detector-u placement set in physical units, as
-    ``result.detector.center[0]``; no pixels are shifted. For a cropped or binned
-    preview, add ``result.detector.center[0] - preview.detector.center[0]`` to the
-    full scan's centre rather than copying the preview's. Needs corrected
-    projections of an unposed axial :class:`ParallelGeometry` with usable
-    near-opposite views (within two degrees). The estimate uses row-wise
-    gradient correlations and can be ambiguous for repetitive structure. Source
-    metadata, when present, records pair offsets, conditional uncertainty,
-    alternative matches and row trends without changing the input. The reported
-    centre fixes the median sampled-pair mean shift to zero, not the mean motion
-    over all views. Metadata exposes this gauge and correlated pair-mean shift
-    constraints, not recovered per-view motion. Physical centre and common sample
-    motion remain unresolved; conditional matching intervals do not cover motion.
-
-    Parameters
-    ----------
-    scan : Scan
-        Unposed axial parallel projections with near-opposite views.
-    views : slice, sequence of int, numpy.ndarray or None, optional
-        Eligible original acquisition views: forward slice, increasing indices or
-        boolean mask. None uses all views. Pair interpolation never reads excluded
-        views; the returned scan still contains every original view. Calibration
-        metadata records the eligible subset and original pair contributor indices.
-        Earlier fitted corrections must also exclude validation observations.
-
-    Returns
-    -------
-    Scan
-        Scan with the effective detector-u placement in physical units;
-        pixels are unchanged and the physical centre still aliases sample motion.
-
-    Raises
-    ------
-    ValueError
-        If geometry is unsupported or no usable near-opposite views exist.
-
-    Examples
-    --------
-    >>> import tomojax as tj
-    >>> scan = tj.estimate_center(tj.load("scan.nxs"))  # doctest: +SKIP
-    >>> recon = tj.reconstruct(scan)  # doctest: +SKIP
+    Pixels are unchanged; the record gives the pair diagnostics, input and output.
+    The centre fixes the median sampled-pair mean shift to zero, so it aliases
+    common sample motion.
     """
-    return _estimate_center(scan, views=views)[0]
-
-
-def _estimate_center(
-    scan: Scan, *, views: slice | Sequence[int] | np.ndarray | None = None
-) -> tuple[Scan, dict[str, object]]:
-    """Share bounded centre estimation and its report without copying a scan."""
     from tomojax.alignment.api import estimate_center_report
 
-    report = estimate_center_report(cast("Geometry", scan.geometry), scan.projections, views=views)
+    report = estimate_center_report(cast("Geometry", scan.geometry), scan.projections)
     geometry = report.geometry
     calibration: dict[str, object] = {
         "status": "estimated",
@@ -735,10 +774,18 @@ def align(
     *,
     fit: str | tuple[str, ...] = "translations",
     grid: Grid | None = None,
+    region: Region | None = None,
+    method: AlignMethod | None = None,
+    iterations: int | None = None,
+    image_iterations: int | None = None,
+    tolerance: float | None = None,
+    interpolation: Literal["linear", "cubic"] | None = None,
+    resolution: int | None = None,
+    config: AlignConfig | None = None,
 ) -> Alignment:
     """Fit selected geometry parameters jointly with a reconstruction.
 
-    ``fit`` is one name or a tuple of names: ``centre``, ``tilt``, ``roll``,
+    ``fit`` is one name or a tuple of names: ``center``, ``tilt``, ``roll``,
     ``translations`` and ``rotations``. Centre, tilt and roll are shared by all
     views. Translations and rotations are per view; every unselected parameter
     is held at its declared value. Translations have two components for parallel
@@ -748,10 +795,15 @@ def align(
     default fits drift and slips. Per-view rotations have a prior on their
     physical size.
 
-    The same solver handles parallel, laminography and cone-beam scans. Existing
+    ``method`` "joint" (the default) fits an image and the parameters together;
+    the same solver handles parallel, laminography and cone-beam scans. Existing
     poses are preserved and the fitted correction is composed with them. The
     returned scan carries both calibrated global geometry and local poses, so
-    reconstructing or saving it preserves the fitted ray geometry.
+    reconstructing or saving it preserves the fitted ray geometry. "opposite-views"
+    fits ``fit="center"`` alone, without an image, from near-opposite views of an
+    unposed axial parallel scan (within two degrees): a quick estimate from
+    row-wise gradient correlations, which can be ambiguous for repetitive
+    structure and records its pair diagnostics in ``info``.
 
     Parameters
     ----------
@@ -762,24 +814,37 @@ def align(
     grid : Grid or None, optional
         Reconstruction region and sampling. None uses a bounded working grid
         with the scan's physical field of view; an explicit grid is kept.
+    region : {"auto", "bbox", "cube", "cyl"}, RegionEstimate or None, optional
+        The part of the scan's grid to fit on, in place of ``grid``, as for
+        :func:`reconstruct`.
+    method : {"joint", "opposite-views"} or None, optional
+        How the parameters are estimated; None is "joint".
+    iterations, image_iterations, tolerance, interpolation, resolution : optional
+        The everyday settings, replacing the fields of the same name in ``config``
+        (see :class:`AlignConfig`); None keeps its value.
+    config : AlignConfig or None, optional
+        Every setting of the joint fit; None uses the defaults.
 
     Returns
     -------
     Alignment
-        Volume, corrected scan, composed per-view poses and solver record.
-        Fitted globals appear under their names in ``info["calibration"]``:
-        centre in geometry length units (u, or u/v for cone beams), and angles
-        in degrees. Tilt is the signed inclination ``atan2(axis_y, axis_z)``;
-        positive roll turns detector u towards v (right-handed about the detector
-        normal, which points back towards the source), so a point above the
-        detector centre projects towards +u. Cone segments with different
-        calibrated values report them in segment order.
+        Corrected scan, its per-view poses, the record and the joint fit's working image.
+        ``info["config"]`` holds the settings used.
+        Each fitted global appears under its name in ``info["calibration"]`` as
+        ``{"value": ..., "change": ...}``: the final value, the centre in geometry
+        length units (u, or u/v for cone beams) and angles in degrees, and the
+        fitted change, the centre in detector pixels and angles in degrees. Tilt
+        is the signed inclination ``atan2(axis_y, axis_z)``; positive roll turns
+        detector u towards v (right-handed about the detector normal, which points
+        back towards the source), so a point above the detector centre projects
+        towards +u. Cone segments with different calibrated values report them in
+        segment order.
 
     Raises
     ------
     ValueError
-        If the fit selection is empty, repeated or unknown, or the geometry
-        has not been declared.
+        If the fit selection is empty, repeated or unknown, the method does not
+        fit it, or the geometry has not been declared.
 
     Examples
     --------
@@ -788,14 +853,61 @@ def align(
     >>> result = tj.align(scan, fit=("translations", "roll"))  # doctest: +SKIP
     >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP
     """
+    from tomojax.alignment import AlignConfig
+
+    settings = {
+        "iterations": iterations,
+        "image_iterations": image_iterations,
+        "tolerance": tolerance,
+        "interpolation": interpolation,
+        "resolution": resolution,
+    }
+    config = replace(
+        AlignConfig() if config is None else config,
+        **{name: value for name, value in settings.items() if value is not None},
+    )
+    if method == "opposite-views":
+        return _opposite_views(scan, fit, grid, region)
+    if method not in (None, "joint"):
+        raise ValueError(f"method is 'joint' or 'opposite-views', not {method!r}")
+    if region is not None:
+        from tomojax._field_of_view import region_grid
+
+        if grid is not None:
+            raise ValueError("pass grid= or region=, not both")
+        grid = region_grid(scan, region)[0]
     from tomojax._smooth_alignment import align_poses
 
-    result = align_poses(scan, fit=fit, grid=grid)
-    poses = result.scan.poses
-    assert poses is not None
+    result = align_poses(scan, fit=fit, grid=grid, config=config)
+    assert result.scan is not None  # the alignment's corrected scan
     # The fit's working grid belongs to its image; the scan keeps the caller's grid.
     corrected = with_grid(result.scan, scan.grid if grid is None else grid)
-    return Alignment(result.volume, result.scan.grid, corrected, np.asarray(poses), result.info)
+    info = (
+        result.info
+        if region is None
+        else {**result.info, "region": (region if isinstance(region, str) else "estimate")}
+    )
+    return Alignment(corrected, info, result.volume, result.grid)
+
+
+def _opposite_views(
+    scan: Scan, fit: str | tuple[str, ...], grid: Grid | None, region: Region | None
+) -> Alignment:
+    """``fit="center"`` from near-opposite views, without an image."""
+    if fit not in ("center", ("center",)):
+        raise ValueError(f'method="opposite-views" fits fit="center" alone, not {fit!r}')
+    if grid is not None or region is not None:
+        raise ValueError('method="opposite-views" fits no image: it takes no grid= or region=')
+    centered, record = _estimate_center(scan)
+    before, after = scan.detector.center[0], centered.detector.center[0]
+    center = {"value": float(after), "change": float((after - before) / scan.detector.du)}
+    info = {
+        "method": "opposite_views",
+        "fit": ["center"],
+        "calibration": {"center": center},
+        "diagnostics": record["diagnostics"],
+    }
+    return Alignment(centered, info)
 
 
 def _oversampling(scan: Scan) -> float:
@@ -849,7 +961,6 @@ __all__ = [
     "Scan",
     "align",
     "backproject",
-    "estimate_center",
     "load",
     "load_reconstruction",
     "project",

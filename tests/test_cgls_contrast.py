@@ -31,13 +31,13 @@ def test_contrast_cgls_dense_reference_and_constant_invariance(
         pytest.skip("cone supports linear interpolation")
     grid = Grid(3, 3, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 4, 0.9, 1.2, (0.17, -0.23))
-    geometry = LaminographyGeometry(grid, detector, [13, 47, 83, 127, 163], tilt_deg=23)
+    geometry = LaminographyGeometry(grid, detector, [13, 47, 83, 127, 163], tilt=23)
     if cone:
-        geometry = ConeGeometry(grid, detector, geometry.angles, ConeBeam(20, 35), tilt_deg=17)
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+        geometry = ConeGeometry(grid, detector, geometry.angles, ConeBeam(20, 35), tilt=17)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
 
     model, backend = resolve_geometry_projector(
-        geometry, "joseph", backend, detector=detector, context="contrast dot test"
+        geometry, backend, detector=detector, context="contrast dot test"
     )
     fp, adjoint = projection_operators(
         poses, grid, detector, None, backend, 3, model, interpolation
@@ -61,12 +61,11 @@ def test_contrast_cgls_dense_reference_and_constant_invariance(
     config = CGLSConfig(
         iterations=150,
         damping=0.2,
-        rtol=1e-6,
+        tolerance=1e-6,
         views_per_batch=3,
         backend=backend,
-        projector_model="joseph",
-        joseph_interpolation=interpolation,
-        stream_projections=stream,
+        interpolation=interpolation,
+        stream=stream,
         data_term="per_view_contrast",
     )
     results = []

@@ -194,6 +194,25 @@ def test_corrections_are_saved_with_the_scan(tmp_path: Path) -> None:
     np.testing.assert_allclose(np.asarray(again.projections), np.asarray(scan.projections))
 
 
+def test_a_scan_records_how_it_was_cut_down(tmp_path: Path) -> None:
+    write_raw_nxtomo(tmp_path / "raw.nxs")
+    frames = tj.load_frames(tmp_path / "raw.nxs")
+    nv, nu = frames.geometry.detector.nv, frames.geometry.detector.nu
+    rows, cols = slice(0, nv - nv % 2), slice(0, nu - nu % 2)
+    scan = frames.selected([1]).cropped(rows, cols).corrected(binning=2)
+    names = [c.name for c in scan.corrections]
+    assert names[:2] == ["selected", "cropped"] and names[-1] == "binned"
+    assert scan.corrections[0].settings == {"views": [1]}
+    assert scan.corrections[1].settings == {"rows": [0, rows.stop], "cols": [0, cols.stop]}
+    assert scan.corrections[-1].settings == {"binning": 2}
+
+    again = tj.load(tmp_path / "raw.nxs").selected(slice(1, None)).cropped(rows, cols).binned(2)
+    assert [c.name for c in again.corrections][-3:] == ["selected", "cropped", "binned"]
+    assert again.corrections[-3].settings["views"][0] == 1
+    tj.save(tmp_path / "cut.nxs", again)
+    assert tj.load(tmp_path / "cut.nxs").corrections == again.corrections
+
+
 def test_a_processed_file_loads_as_it_is(tmp_path: Path) -> None:
     dataset = write_projection_dataset(tmp_path / "scan.nxs")
     scan = tj.load(tmp_path / "scan.nxs")
@@ -210,7 +229,7 @@ def test_batches_give_the_same_result(tmp_path: Path) -> None:
     _write_frames(tmp_path / "scan.nxs", stack, [1, 1, *[0] * 7, 1], list(range(10)))
     frames = tj.load_frames(tmp_path / "scan.nxs", darks=0)
     whole = frames.corrected(HARD)
-    batched = frames.corrected(HARD, batch_views=2)
+    batched = frames.corrected(HARD, views_per_batch=2)
     np.testing.assert_allclose(
         np.asarray(batched.projections), np.asarray(whole.projections), rtol=1e-6
     )
@@ -329,7 +348,7 @@ def test_big_endian_counts_are_corrected_like_native_ones() -> None:
     counts = (300 + np.arange(2 * 3 * 4).reshape(2, 3, 4) * 3).astype(">u2")
     geometry = tj.ParallelGeometry(tiny_grid(), tj.Detector(4, 3, 1.0, 1.0), [0, 90])
     flats, darks = np.full((1, 3, 4), 950, ">u2"), np.full((1, 3, 4), 20, ">u2")
-    scan = tj.Frames(counts, geometry, flats=flats, darks=darks).corrected(batch_views=1)
+    scan = tj.Frames(counts, geometry, flats=flats, darks=darks).corrected(views_per_batch=1)
     expected = -np.log((counts.astype(np.float64) - 20) / (950 - 20))
     np.testing.assert_allclose(scan.projections, expected, rtol=2e-6)
 
@@ -337,8 +356,8 @@ def test_big_endian_counts_are_corrected_like_native_ones() -> None:
 def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
     views, nv, nu = 40, 3, 64
     u = np.arange(nu)[None, None, :]
-    centre = 32 + 12 * np.sin(np.linspace(0, 2 * np.pi, views))[:, None, None]
-    truth = 2.0 * np.maximum(0.0, 1.0 - ((u - centre) / 18.0) ** 2) * np.ones((1, nv, 1))
+    center = 32 + 12 * np.sin(np.linspace(0, 2 * np.pi, views))[:, None, None]
+    truth = 2.0 * np.maximum(0.0, 1.0 - ((u - center) / 18.0) ** 2) * np.ones((1, nv, 1))
     gain = np.ones(nu)
     gain[[10, 31, 45]] = [0.97, 1.03, 0.98]  # pixels the flats do not describe
     stack = tmp_path / "views"
@@ -362,7 +381,7 @@ def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
     assert np.delete(error, [10, 31, 45]).max() < 2e-3
     assert cleaned.corrections[-1] == Correction("stripes", {"width": 9, "varying": False})
     # A step after a whole-row step runs on its result.
-    both = frames.corrected(Stripes(9), HARD, batch_views=7)
+    both = frames.corrected(Stripes(9), HARD, views_per_batch=7)
     p = np.asarray(cleaned.projections)
     np.testing.assert_allclose(np.asarray(both.projections), HARD.inverse(p), rtol=1e-5, atol=1e-6)
     with pytest.raises(ValueError, match=">= 3"):
@@ -639,7 +658,7 @@ def test_tiff_frames_take_a_measured_geometry(tmp_path: Path) -> None:
         tiny_grid(nx=3, ny=3, nz=2),
         tj.Detector(nu=3, nv=2, du=0.65, dv=0.65),
         [0.0, 120.0, 240.0],
-        tilt_deg=30.0,
+        tilt=30.0,
     )
     scan = tj.load_frames(tmp_path, flats=100, darks=0, geometry=geometry).corrected()
     assert scan.geometry is geometry and scan.detector.du == 0.65
@@ -698,11 +717,11 @@ def test_pixels_without_a_resolved_flat_take_no_absorption() -> None:
     assert scan.corrections[0].found == {"pixels_without_light": 2 * rows}
 
 
-@pytest.mark.parametrize("batch_views", [None, 1])
+@pytest.mark.parametrize("views_per_batch", [None, 1])
 @pytest.mark.parametrize("factor", [1, 2])
 @pytest.mark.parametrize("steps", [(), (Stripes(3),)])
 def test_unmeasured_interior_pixels_keep_interpolated_angular_variation(
-    batch_views: int | None, factor: int, steps: tuple[Step, ...]
+    views_per_batch: int | None, factor: int, steps: tuple[Step, ...]
 ) -> None:
     transmission = np.broadcast_to(
         0.2 + 0.1 * np.arange(3)[:, None, None] + 0.02 * np.arange(8), (3, 4, 8)
@@ -719,7 +738,7 @@ def test_unmeasured_interior_pixels_keep_interpolated_angular_variation(
         flats=(10 + light)[None],
         darks=np.full((1, 4, 8), 10.0),
     )
-    scan = frames.corrected(*steps, batch_views=batch_views, binning=factor)
+    scan = frames.corrected(*steps, views_per_batch=views_per_batch, binning=factor)
     transmission[:, 1, :2] = transmission[:, 2] = 1.0
     expected = tj.Scan(-np.log(transmission), geometry).corrected(*steps).projections
     expected = expected.reshape(3, 4 // factor, factor, 8 // factor, factor).mean((2, 4))
@@ -748,7 +767,7 @@ def test_row_slabs_match_view_batches_and_optional_binning(
     elif source == "tiff":
         tifffile.imwrite(tmp_path / "counts.tif", counts, photometric="minisblack")
         frames = replace(frames, counts=read_tiff_frames(tmp_path / "counts.tif", lazy=True))
-    expected = frames.corrected(*steps, batch_views=3).binned(factor)
+    expected = frames.corrected(*steps, views_per_batch=3).binned(factor)
 
     # A small budget makes the row-by-row path take several slabs where it applies.
     engine = importlib.import_module("tomojax.corrections._engine")
@@ -877,7 +896,7 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
         source = geometry.beam.source()
         for detector_height, expected_cor in [(1.0, 1.0), (-1.0, -0.5)]:
             z = detector_height / (2 * axis[2])
-            point = np.asarray(geometry.pose_for_view(0)) @ [0, 0, z, 1]
+            point = np.asarray(geometry.pose_matrix(0)) @ [0, 0, z, 1]
             hit = source + 2 * (point[:3] - source)
             np.testing.assert_allclose(hit[[0, 2]], [-expected_cor, detector_height], atol=1e-12)
 
@@ -937,7 +956,7 @@ def test_only_detector_derived_output_grids_follow_crop_and_bin(tmp_path, explic
         if tilted:
             geometry = handle.require_group("entry/geometry")
             geometry.attrs["type"] = "lamino"
-            geometry.attrs["geometry_meta_json"] = '{"tilt_deg": 47}'
+            geometry.attrs["geometry_meta_json"] = '{"tilt": 47}'
     frames = tj.load_frames(path, flats=1000, darks=0)
     scan = frames.cropped(slice(2, 6), slice(1, 7)).corrected(binning=2)
     assert scan.projections.shape == (3, 2, 3)

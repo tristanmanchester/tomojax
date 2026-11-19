@@ -56,8 +56,8 @@ def main() -> None:
 
     style()
     # Errors are over the part's bounding cylinder, not the air round it.
-    centres = (np.arange(N) - N / 2 + 0.5) / N * float(meta["fov_mm"])
-    x, y, z = np.meshgrid(centres, centres, centres, indexing="ij")
+    centers = (np.arange(N) - N / 2 + 0.5) / N * float(meta["fov_mm"])
+    x, y, z = np.meshgrid(centers, centers, centers, indexing="ij")
     mask = (np.hypot(x, y) < 5.2) & (np.abs(z) < 5.2)
     rows = (("xz through the axis", np.s_[:, N // 2, :]), ("xy in the top skin", None))
     top = 0.16

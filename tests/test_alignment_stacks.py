@@ -25,7 +25,7 @@ def _scan():
     """A small laminography scan with a slip, a wobble and unmeasured pixels (so a precision)."""
     grid, detector, views = tj.Grid(20, 20, 14, 1.0, 1.0, 1.0), tj.Detector(28, 22, 1.0, 1.0), 48
     angles = np.linspace(0, 360, views, endpoint=False)
-    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=-30)
     z, y, x = np.mgrid[:14, :20, :20]
     volume = np.zeros((14, 20, 20), np.float32)
     for cz, cy, cx, r, mu in ((7, 7, 6, 4, 1.0), (6, 12, 13, 3, 0.6), (9, 13, 6, 2, 1.4)):
@@ -67,33 +67,70 @@ def test_every_placement_gives_the_same_result_bit_for_bit(fit):
         assert stage == {n: placement[n] for n in ("y", "precision")}
 
 
-@pytest.mark.slow
-def test_a_level_with_little_device_room_plans_the_cold_stacks_onto_the_host(monkeypatch):
-    # Room for the three stacks the matvec reads (sw, r, j) and the level's other arrays,
-    # not for the data: the plan keeps the hot three and holds y, precision and residual
-    # on the host, and the result is the one a device with room gives.
-    expected_volume, _, expected, _ = _aligned(("translations",), DEVICE)
-    plans = []
-    original = _stacks.LevelStacks._plan
+def _stacks_under(monkeypatch, *, limit, pool, largest_free, transient):
+    """Five small stacks placed under supplied allocator figures, and the allocations tried.
 
-    def room_for_the_hot_three(self, room, reserve, forced):
-        hot = sum(self.sizes[n] for n in ("sw", "r", "j") if n in self.sizes)
-        plans.append(original(self, hot + reserve, reserve, forced))
-        return plans[-1]
+    The pool's largest free block is ``largest_free`` less what its device stacks hold.
+    """
+    tried, held = [], []
+    device = _stacks.LevelStacks._device
 
-    monkeypatch.setattr(_stacks.LevelStacks, "_plan", room_for_the_hot_three)
-    volume, _, table, record = _aligned(("translations",))
-    np.testing.assert_array_equal(table, expected)
-    np.testing.assert_array_equal(np.asarray(volume), np.asarray(expected_volume))
-    assert plans[0] == {**dict.fromkeys(("sw", "r", "j"), "device"), **COLD}
-    assert record["levels"][0]["stacks"]["mispredicted"] == []
+    def allocate(shape, dtype, value):
+        tried.append(shape)
+        held.append(device(shape, dtype, value))
+        return held[-1]
+
+    def figures():
+        taken = sum(a.nbytes for a in held if not a.is_deleted())
+        free = largest_free - taken
+        return {
+            "bytes_limit": limit,
+            "pool_bytes": pool,
+            "largest_free_block_bytes": free,
+            "bytes_in_use": taken,
+        }
+
+    monkeypatch.setattr(_stacks.LevelStacks, "_device", staticmethod(allocate))
+    monkeypatch.setattr(_stacks, "_device_stats", figures)
+    specs = dict.fromkeys(("sw", "r", "j", "y", "residual"), ((4, 2, 3), np.float32))  # 96 B
+    stacks = _stacks.LevelStacks(specs, 4, data={}, room=None, reserve={"transient": transient})
+    return stacks, tried
+
+
+def test_a_stack_no_free_block_holds_goes_to_the_host_untried(monkeypatch):
+    # The pool at its limit never returns a free region, so a stack larger than its largest
+    # free block cannot be had however much is free in all: it is not tried (a refused
+    # allocation waits 10 s in the allocator's retry), and it and every stack after it go to
+    # the host.
+    stacks, tried = _stacks_under(monkeypatch, limit=1000, pool=1000, largest_free=50, transient=0)
+    assert tried == [] and set(stacks.placed.values()) == {"host"}
+    stacks.close()
+
+
+def test_a_stack_that_takes_the_transients_block_goes_to_the_host(monkeypatch):
+    # The first stack fits, but once allocated no block is left for the level's largest
+    # transient (one block too): it is released and it and every stack after it go to the host.
+    stacks, tried = _stacks_under(
+        monkeypatch, limit=1000, pool=1000, largest_free=150, transient=100
+    )
+    assert len(tried) == 1 and set(stacks.placed.values()) == {"host"}
+    assert stacks.record()["raised"] == []
+    stacks.close()
+
+
+def test_a_pool_below_its_limit_can_grow_a_block_for_a_stack(monkeypatch):
+    # Below its limit the pool can add a region: a stack larger than its largest free block
+    # is tried, and here it is had.
+    stacks, tried = _stacks_under(monkeypatch, limit=1000, pool=500, largest_free=10, transient=0)
+    assert len(tried) == 5 and set(stacks.placed.values()) == {"device"}
+    stacks.close()
 
 
 @pytest.mark.slow
 def test_a_stack_the_device_refuses_goes_to_the_host_with_every_stack_after_it(monkeypatch):
-    # The plan is a prediction from the total room; the allocator is the judge. A refused
-    # allocation is a misprediction: that stack and the ones after it in device order go to
-    # the host, the level says so, and nothing else changes.
+    # The allocator is the judge of a stack that fits by its figures: a refused allocation
+    # sends that stack and the ones after it in device order to the host, the level names it,
+    # and nothing else changes.
     expected_volume, _, expected, _ = _aligned(("translations",), DEVICE)
     device = _stacks.LevelStacks._device
 
@@ -112,7 +149,7 @@ def test_a_stack_the_device_refuses_goes_to_the_host_with_every_stack_after_it(m
         "r": "device",
         **dict.fromkeys(("j", "y", "precision", "residual"), "host"),
     }
-    assert stacks["mispredicted"] == ["j", "y", "precision", "residual"]
+    assert stacks["raised"] == ["j"]
 
 
 @pytest.mark.parametrize("where", ["linearize", "schur"])
@@ -187,6 +224,33 @@ def test_a_levels_volumes_stay_where_its_setup_put_them(monkeypatch):
         assert level._schur._cache_size() == 1
 
 
+def test_at_a_schur_solve_the_volumes_alive_are_the_levels_own(monkeypatch):
+    # The second level starts from the first's volume and upsamples it into its own start
+    # volume: at every Schur solve the live arrays of a level's volume shape are exactly the
+    # volumes it owns. A copy resized outside the level and held beside them would be one no
+    # plan owns. Arrays alive before the call (another test's) are held, so none of their
+    # buffers is reused, and left out.
+    extras = []
+    schur = _solver._Level.schur
+    before = [a for a in jax.live_arrays() if not a.is_deleted()]
+
+    def solving(self, *args):
+        jax.block_until_ready(args)
+
+        def pointers(arrays):
+            same = (a for a in arrays if a.shape == self.ops.shape and a.dtype == np.float32)
+            return {a.unsafe_buffer_pointer() for a in same if not a.is_deleted()}
+
+        owned = pointers(jax.tree.leaves(self.stacks.volumes))
+        extras.append((self.ops.shape, pointers(jax.live_arrays()) - owned - pointers(before)))
+        return schur(self, *args)
+
+    monkeypatch.setattr(_solver._Level, "schur", solving)
+    _aligned(("translations",), DEVICE)
+    assert len({shape for shape, _ in extras}) == 2
+    assert all(not extra for _, extra in extras), extras
+
+
 @pytest.mark.gpu
 def test_nothing_a_level_holds_beyond_its_arrays_grows_during_it(monkeypatch):
     # What the device holds that no array does (the allocator's rounding of its chunks) is
@@ -202,13 +266,13 @@ def test_nothing_a_level_holds_beyond_its_arrays_grows_during_it(monkeypatch):
 def test_align_reports_each_levels_placement_and_time():
     projections, _, grid, detector = _scan()
     geometry = tj.LaminographyGeometry(
-        grid, detector, np.linspace(0, 360, len(projections), endpoint=False), tilt_deg=-30
+        grid, detector, np.linspace(0, 360, len(projections), endpoint=False), tilt=-30
     )
     info = tj.align(tj.Scan(projections, geometry)).info
     for level in [*info["levels"], info["refinement"]]:
         stacks = level["stacks"]
         assert set(stacks["placement"].values()) <= {"device", "host"}
-        assert stacks["planned"].keys() == stacks["placement"].keys()
+        assert stacks["raised"] == []
         assert level["seconds"] > 0
 
 
@@ -222,7 +286,9 @@ from tomojax.geometry import stack_view_poses
 
 n, nz, nu, nv, views = (int(a) for a in sys.argv[1:6])
 cone, stage = sys.argv[6] == "cone", sys.argv[7]
-_fit._LEVELS = ((1, 8),)  # one level: the process's peak is the level's
+# One level, so the process's peak is the level's; for "fine", a short coarse level first,
+# whose volume the fine level (measured, being the last and larger) starts from.
+config = tj.AlignConfig(levels=(2, 1), coarse_iterations=2) if stage == "fine" else tj.AlignConfig(levels=(1,))
 dev, seen = jax.devices()[0], {}
 solve, refine = _solver.solve, _fit.refine
 
@@ -261,7 +327,7 @@ def refinement(*args, **kwargs):
     sys.exit(0)
 
 
-if stage == "level":
+if stage in ("level", "fine"):
     _solver.solve = _fit.solve = level
 else:
     _fit.solve, _fit.refine = stand_in, refinement
@@ -270,7 +336,7 @@ angles = np.linspace(0, 360, views, endpoint=False)
 if cone:  # a circular orbit, magnification 1.5, the volume filling the beam
     geometry = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(3 * n, 4.5 * n))
 else:
-    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=-30)
 rng = np.random.default_rng(1)
 volume = rng.uniform(0, 1, (nz, n, n)).astype(np.float32)
 with jax.default_device(jax.devices("cpu")[0]):
@@ -279,7 +345,7 @@ projections += rng.normal(0, 0.01, projections.shape).astype(np.float32)
 nominal = np.asarray(stack_view_poses(geometry, views))
 frames = cone_frames(geometry)
 seen["cone"] = frames is not None
-_fit.fit_poses(projections, nominal, grid, detector, keep_grid=True, frames=frames)
+_fit.fit_poses(projections, nominal, grid, detector, keep_grid=True, frames=frames, config=config)
 print(json.dumps(seen))
 """
 
@@ -287,7 +353,8 @@ print(json.dumps(seen))
 def _level_peak(*shape, geometry="laminography", stage="level"):
     """A one-level fit's own device peak and its plan, in a fresh process on the GPU.
 
-    ``stage`` "refinement" measures the pose refinement after a level that holds nothing.
+    ``stage`` "fine" measures the second of two levels, started from the first's volume;
+    "refinement", the pose refinement after a level that holds nothing.
     """
     import json
     import os
@@ -333,6 +400,17 @@ def test_the_plan_takes_the_larger_transient_where_the_prior_dominates():
     # 67208's fine level sent j to the host for nothing, +10%).
     m = _level_peak(48, 32, 64, 48, 3000)
     assert max(m["transients"], key=m["transients"].get) == "prior"
+    _assert_the_plan_is_the_peak(m)
+
+
+@pytest.mark.gpu
+@pytest.mark.fresh_gpu
+def test_a_level_started_from_a_coarser_levels_volume_plans_its_peak_the_same_way():
+    # The level upsamples the coarser level's volume into its own start volume, a program
+    # compiled into it whose temporaries the plan counts; the coarse volume is the caller's
+    # and alive throughout, so nothing the setup measured is freed before the peak.
+    m = _level_peak(192, 128, 256, 160, 480, stage="fine")
+    assert m["transients"]["start"] > 0
     _assert_the_plan_is_the_peak(m)
 
 

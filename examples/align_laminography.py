@@ -35,7 +35,7 @@ def main() -> None:
         "--fit",
         nargs="+",
         default=["translations", "tilt", "roll"],
-        choices=["centre", "tilt", "roll", "translations", "rotations"],
+        choices=["center", "tilt", "roll", "translations", "rotations"],
         help="Parameters fitted jointly with the image (default: translations tilt roll)",
     )
     parser.add_argument("-o", "--output", type=Path, help="Save alignment and volume (.nxs)")
@@ -56,7 +56,7 @@ def main() -> None:
         tj.Grid(cols, cols, rows, pitch, pitch, pitch),
         tj.Detector(cols, rows, pitch, pitch),
         angles,
-        tilt_deg=args.tilt,
+        tilt=args.tilt,
     )
     frames = tj.load_frames(args.input, geometry=geometry, **paths)
     scan = frames.corrected(binning=args.binning)

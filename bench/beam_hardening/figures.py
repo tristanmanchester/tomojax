@@ -14,14 +14,14 @@ def save(
     path: Path,
     reference: np.ndarray,
     images: dict[str, np.ndarray],
-    centre: tuple[float, float],
+    center: tuple[float, float],
     pitch: float,
     title: str,
     window: tuple[float, float] | None = None,
 ) -> None:
     """Write ``reference`` and ``images`` (``[y, x]``, same units) and their radial profiles.
 
-    ``centre`` is in physical x, y pixel indices, ``pitch`` the pixel size in mm and ``window``
+    ``center`` is in physical x, y pixel indices, ``pitch`` the pixel size in mm and ``window``
     the grey range (by default the reference's 0.5th to 99.5th percentile).
     """
     import matplotlib
@@ -37,7 +37,7 @@ def save(
         ax.set_title(name, fontsize=9)
         ax.set_axis_off()
     y, x = np.meshgrid(*(np.arange(n) for n in reference.shape), indexing="ij")
-    ring = np.floor(np.hypot(x - centre[0], y - centre[1])).astype(int)
+    ring = np.floor(np.hypot(x - center[0], y - center[1])).astype(int)
     count = np.maximum(np.bincount(ring.ravel()), 1)
     radius = np.arange(count.size) * pitch
     for name, image in panels.items():

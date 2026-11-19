@@ -21,7 +21,7 @@ def scan(*, z_center=0.0, nz=7, roll=0.0):
         grid,
         detector,
         np.linspace(0, 360, 8, endpoint=False),
-        ConeBeam(30, 45, detector_roll_deg=roll),
+        ConeBeam(30, 45, detector_roll=roll),
     )
     data = np.random.default_rng(132).normal(size=(8, detector.nv, detector.nu)).astype(np.float32)
     return geometry, grid, detector, data
@@ -162,14 +162,14 @@ def test_host_slabs_recover_independent_gaussian_attenuation(backend, length_sca
     sigma = 3.0 * length_scale
     grid = Grid(n, n, nz, 0.8 * length_scale, 0.9 * length_scale, length_scale)
     detector = Detector(40, 40, length_scale, length_scale)
-    beam = ConeBeam(72 * length_scale, 108 * length_scale, detector_roll_deg=1.0)
+    beam = ConeBeam(72 * length_scale, 108 * length_scale, detector_roll=1.0)
     geometry = ConeGeometry(grid, detector, np.linspace(0, 360, views, endpoint=False), beam)
     center, u_dir, v_dir = beam.detector_frame(detector)
     u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
     v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
     pixels = center + u[None, :, None] * u_dir + v[:, None, None] * v_dir
     data = []
-    for pose in geometry.poses():
+    for pose in geometry.pose_matrices():
         source = pose[:3, :3].T @ (beam.source() - pose[:3, 3])
         rays = (pixels - pose[:3, 3]) @ pose[:3, :3] - source
         squared_distance = np.sum(source**2) - (rays @ source) ** 2 / np.sum(rays**2, axis=-1)
@@ -257,7 +257,7 @@ def test_cuda_fdk_waits_for_queued_kernel_when_event_record_fails(monkeypatch):
 
     geometry, grid, detector, data = scan()
     coeff = cp.asarray(
-        np.asarray(cone.cone_coefficients(geometry.poses(), grid, detector, geometry.beam))
+        np.asarray(cone.cone_coefficients(geometry.pose_matrices(), grid, detector, geometry.beam))
     )
     target = cp.zeros((grid.nz, grid.ny, grid.nx), cp.float32)
     images = cp.asarray(np.swapaxes(data, 1, 2))
@@ -297,11 +297,11 @@ def test_cuda_fdk_waits_for_queued_kernel_when_event_record_fails(monkeypatch):
 def test_host_slabs_match_full_fdk_with_nonseparable_geometry(backend, kind):
     geometry, grid, detector, data = scan(nz=17, z_center=1.2, roll=1.0)
     if kind == "tilted_axis":
-        geometry = replace(geometry, tilt_deg=30.0)
+        geometry = replace(geometry, tilt=30.0)
     else:
         field = {
-            "pitched_detector": "detector_pitch_deg",
-            "yawed_detector": "detector_yaw_deg",
+            "pitched_detector": "detector_pitch",
+            "yawed_detector": "detector_yaw",
             "axis_offset": "axis_offset",
         }[kind]
         value = 0.6 if kind == "axis_offset" else 2.0
@@ -424,9 +424,9 @@ def test_per_view_arrangements_use_global_quadrature_and_physical_cosines(backen
         beam = ConeBeam(
             30 + index,
             45 + 2 * index,
-            detector_roll_deg=2 * index,
-            detector_yaw_deg=index,
-            detector_pitch_deg=-index,
+            detector_roll=2 * index,
+            detector_yaw=index,
+            detector_pitch=-index,
         )
         segment = replace(geometry, detector=own, beam=beam, angles=[angle])
         parts.append(segment)
@@ -482,7 +482,7 @@ def test_pitched_detector_slabs_read_bounded_physical_row_windows(monkeypatch, b
     data = np.random.default_rng(132).normal(size=(8, rows, detector.nu)).astype(np.float32)
     geometry = replace(
         geometry, detector=detector,
-        beam=replace(geometry.beam, detector_yaw_deg=13, detector_pitch_deg=9),
+        beam=replace(geometry.beam, detector_yaw=13, detector_pitch=9),
     )  # fmt: skip
     module = import_module("tomojax.recon.fdk")
     read, heights = module._RowView.__getitem__, []

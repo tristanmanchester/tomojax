@@ -313,7 +313,7 @@ def _geometry_summary(scan: tj.Scan) -> dict[str, Any]:
             {
                 "source_to_axis_mm": segment.beam.source_to_axis,
                 "source_to_detector_mm": segment.beam.source_to_detector,
-                "detector_centre_mm": list(segment.detector.center),
+                "detector_center_mm": list(segment.detector.center),
                 "pixel_mm": [segment.detector.du, segment.detector.dv],
             }
             for segment in getattr(scan.geometry, "segments", (scan.geometry,))

@@ -27,14 +27,14 @@ cheaply (NumPy, uncompressed TIFF, unfiltered HDF5), it corrects slabs of rows
 read straight from the source; otherwise the steps that need full frames run
 unbinned first.
 
-`tomojax preprocess` is a thin layer over these: its options build the same
+`tomojax correct` is a thin layer over these: its options build the same
 steps.
 
 ## Public API
 
 Steps, each a frozen dataclass of its settings:
 
-| Step | Acts on | Settings | `tomojax preprocess` option |
+| Step | Acts on | Settings | `tomojax correct` option |
 | --- | --- | --- | --- |
 | `Zingers(threshold=0.1, size=3)` | transmission | specks brighter than their neighbours' median by `threshold` (a fraction of the open beam) | `--zingers [THRESHOLD]` |
 | `RadialDistortion(center, coefficients)` | transmission | calibrated backward radial polynomial in zero-based `(column, row)` pixels, as in Algotom; bilinear, on normalised transmission before the log | Python only |

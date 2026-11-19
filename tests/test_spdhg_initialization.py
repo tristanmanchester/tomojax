@@ -60,7 +60,6 @@ def test_spdhg_initial_feasibility_and_first_step_match_dense(iterations, theta)
             views_per_batch=3,
             nonnegative=True,
             support=support,
-            projector_model="joseph",
         ),
     )
     np.testing.assert_allclose(volume, expected, rtol=2e-5, atol=2e-6)

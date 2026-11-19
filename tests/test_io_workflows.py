@@ -43,9 +43,9 @@ def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Pat
         detector=detector,
         grid=grid,
         geometry_type=gtype,
-        geometry_metadata={"tilt_deg": 55.0, "tilt_about": "x", "detector_roll_deg": 1.25},
+        geometry_metadata={"tilt": 55.0, "tilt_about": "x", "detector_roll": 1.25},
     )
-    dataset.angle_offset_deg = np.asarray([1.0, 2.0], dtype=np.float32)
+    dataset.angle_offset = np.asarray([1.0, 2.0], dtype=np.float32)
     dataset.align_params = align_params
     dataset.align_gauge = {"mode": "mean_zero"}
 
@@ -62,10 +62,10 @@ def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Pat
     assert loaded.grid == grid
     geometry_inputs = loaded.geometry_inputs()
     assert geometry_inputs["geometry_type"] == "lamino"
-    assert geometry_inputs["tilt_deg"] == pytest.approx(55.0)
+    assert geometry_inputs["tilt"] == pytest.approx(55.0)
     assert geometry_inputs["tilt_about"] == "x"
-    assert geometry_inputs["detector_roll_deg"] == pytest.approx(1.25)
-    np.testing.assert_allclose(geometry_inputs["angle_offset_deg"], [1.0, 2.0])
+    assert geometry_inputs["detector_roll"] == pytest.approx(1.25)
+    np.testing.assert_allclose(geometry_inputs["angle_offset"], [1.0, 2.0])
     np.testing.assert_allclose(geometry_inputs["align_params"], align_params)
     assert geometry_inputs["align_gauge"] == {"mode": "mean_zero"}
 
@@ -112,7 +112,7 @@ def test_dataset_roundtrips_npz_and_converts_to_nxtomo(tmp_path: Path) -> None:
     assert validate_dataset(nxs_path)["issues"] == []
 
 
-def test_files_keep_their_angle_and_detector_centre_keys(tmp_path: Path) -> None:
+def test_files_keep_their_angle_and_detector_center_keys(tmp_path: Path) -> None:
     # An .npz in the layout earlier versions wrote: angles under `thetas_deg`
     # and the detector centre under `det_center`.
     old_path = tmp_path / "old.npz"
@@ -184,7 +184,7 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     dataset = make_projection_dataset()
     dataset.volume = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
     dataset.align_params = np.ones((2, 5), dtype=np.float32)
-    dataset.angle_offset_deg = np.asarray([0.25, -0.25], dtype=np.float32)
+    dataset.angle_offset = np.asarray([0.25, -0.25], dtype=np.float32)
 
     direct_copy = dataset.copy_metadata()
     assert not np.shares_memory(direct_copy.angles, dataset.angles)
@@ -192,8 +192,8 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     assert not np.shares_memory(direct_copy.volume, dataset.volume)
     assert direct_copy.align_params is not None
     assert not np.shares_memory(direct_copy.align_params, dataset.align_params)
-    assert direct_copy.angle_offset_deg is not None
-    assert not np.shares_memory(direct_copy.angle_offset_deg, dataset.angle_offset_deg)
+    assert direct_copy.angle_offset is not None
+    assert not np.shares_memory(direct_copy.angle_offset, dataset.angle_offset)
 
     save_dataset(path, dataset)
     loaded = load_nxtomo(str(path))
@@ -210,9 +210,9 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     assert loaded_copy.align_params is not None
     assert loaded.metadata.align_params is not None
     assert not np.shares_memory(loaded_copy.align_params, loaded.metadata.align_params)
-    assert loaded_copy.angle_offset_deg is not None
-    assert loaded.metadata.angle_offset_deg is not None
-    assert not np.shares_memory(loaded_copy.angle_offset_deg, loaded.metadata.angle_offset_deg)
+    assert loaded_copy.angle_offset is not None
+    assert loaded.metadata.angle_offset is not None
+    assert not np.shares_memory(loaded_copy.angle_offset, loaded.metadata.angle_offset)
 
 
 @pytest.mark.parametrize("single_row", [False, True])
@@ -341,8 +341,8 @@ def test_projection_stats_keep_exact_stats_when_percentile_sample_has_no_finite_
 def test_only_a_nonzero_saved_detector_roll_builds_an_explicit_grid() -> None:
     detector = Detector(4, 3, 1.0, 1.0, (0.5, 0.0))
     assert detector_grid_from_geometry_inputs(detector, {}) is None
-    assert detector_grid_from_geometry_inputs(detector, {"detector_roll_deg": 0.0}) is None
-    assert detector_grid_from_geometry_inputs(detector, {"detector_roll_deg": 0.5}) is not None
+    assert detector_grid_from_geometry_inputs(detector, {"detector_roll": 0.0}) is None
+    assert detector_grid_from_geometry_inputs(detector, {"detector_roll": 0.5}) is not None
 
 
 def test_a_volume_is_written_in_tiles_without_a_transposed_copy(

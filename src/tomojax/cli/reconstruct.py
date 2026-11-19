@@ -1,7 +1,7 @@
-"""``tomojax recon``: :func:`tomojax.reconstruct` on the command line.
+"""``tomojax reconstruct``: :func:`tomojax.reconstruct` on the command line.
 
-The command loads INPUT with its saved poses (unless ``--no-poses``); chooses
-the grid (``--roi``, ``--grid``); builds the method's configuration from a
+The command loads INPUT with its saved poses (unless ``--no-apply-poses``); chooses
+the grid (``--region``, ``--grid``); builds the method's configuration from a
 ``--config`` file's expert settings, which are fields of that configuration
 class; reconstructs with :func:`tomojax.reconstruct`, whose keywords the other
 options are; and saves the result with :func:`tomojax.save`.
@@ -18,14 +18,14 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
-from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
-from tomojax.cli._reconstruction_region import (
-    ROI_CHOICES,
-    ROI_HELP,
+from tomojax._field_of_view import (
+    REGION_CHOICES,
+    REGION_HELP,
     cylinder_support,
     region_grid,
     zero_outside_cylinder,
 )
+from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -58,8 +58,9 @@ _PUBLIC = (
     "--warm-start",
     "--seed",
     "--grid",
-    "--roi",
-    "--poses",
+    "--region",
+    "--apply-poses",
+    "--include-scan",
     "--preview",
     "--manifest",
     "--progress",
@@ -74,19 +75,19 @@ _SETTINGS = (
 )
 _EPILOG = (
     "Examples:\n"
-    "  tomojax recon scan.nxs -o recon.nxs\n"
-    "  tomojax recon scan.nxs -o recon.nxs --method cgls --iterations 100\n"
-    "  tomojax recon scan.nxs -o recon.nxs --method fista --tv-weight 0.002 --nonnegative"
+    "  tomojax reconstruct scan.nxs -o recon.nxs\n"
+    "  tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 100\n"
+    "  tomojax reconstruct scan.nxs -o recon.nxs --method fista --tv-weight 0.002 --nonnegative"
 )
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The ``tomojax recon`` parser; its expert settings are the methods' configuration fields."""
+    """The ``tomojax reconstruct`` parser; expert settings are the methods' configuration fields."""
     p = argparse.ArgumentParser(
-        prog="tomojax recon",
+        prog="tomojax reconstruct",
         description=(
             "Reconstruct a volume from a scan, with the poses saved with it (by tomojax "
-            "align) unless --no-poses."
+            "align) unless --no-apply-poses."
         ),
         epilog=_EPILOG,
     )
@@ -147,12 +148,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Resample the selected field of view to NX x NY x NZ voxels",
     )
-    _ = p.add_argument("--roi", choices=ROI_CHOICES, default="auto", help=ROI_HELP)
+    _ = p.add_argument("--region", choices=REGION_CHOICES, default="auto", help=REGION_HELP)
     _ = p.add_argument(
-        "--poses",
+        "--apply-poses",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Apply the per-view corrections saved in INPUT (--no-poses: the nominal geometry)",
+        help="Apply the per-view corrections saved in INPUT (--no-apply-poses: nominal geometry)",
+    )
+    _ = p.add_argument(
+        "--include-scan",
+        action="store_true",
+        help="Also save the scan in OUTPUT, so it reloads as a scan too",
     )
     _ = p.add_argument(
         "--preview", metavar="PNG", default=None, help="Also write a PNG of the central x-y slice"
@@ -204,8 +210,9 @@ class _Run:
     warm_start: bool | None
     seed: int | None
     grid: tuple[int, int, int] | None
-    roi: str
-    poses: bool
+    region: str
+    apply_poses: bool
+    include_scan: bool
     preview: str | None
     manifest: str | None
 
@@ -224,8 +231,9 @@ class _Run:
             warm_start=cast("bool | None", args.warm_start),
             seed=cast("int | None", args.seed),
             grid=None if grid is None else (grid[0], grid[1], grid[2]),
-            roi=cast("str", args.roi),
-            poses=cast("bool", args.poses),
+            region=cast("str", args.region),
+            apply_poses=cast("bool", args.apply_poses),
+            include_scan=cast("bool", args.include_scan),
             preview=cast("str | None", args.preview),
             manifest=cast("str | None", args.manifest),
         )
@@ -280,24 +288,24 @@ def _write_manifest(
         "method": result.method,
         "input_projection_shape": list(np.shape(scan.projections)),
         "input_poses": scan.poses is not None,
-        "roi": {
-            "requested": run.roi,
+        "region": {
+            "requested": run.region,
             "grid_changed": result.grid != scan.grid,
             "cylindrical_output_mask": masked,
         },
         "reconstruction_grid": result.grid.to_dict(),
-        "detector": result.scan.detector.to_dict(),
+        "detector": result.geometry.detector.to_dict(),
         "volume_shape": list(np.shape(result.volume)),
         # The resolved configuration and the solver's record.
         "reconstruction": result.info,
     }
-    manifest = build_manifest("tomojax recon", list(sys.argv), args, payload)
+    manifest = build_manifest("tomojax reconstruct", list(sys.argv), args, payload)
     save_manifest(str(run.manifest), manifest)
     logging.info("Saved reproducibility manifest to %s", run.manifest)
 
 
 def main() -> None:
-    """Run ``tomojax recon``."""
+    """Run ``tomojax reconstruct``."""
     import tomojax as tj
     from tomojax.cli._runtime import report_automatic
     from tomojax.core import log_jax_env, setup_logging
@@ -316,10 +324,11 @@ def main() -> None:
     if cast("bool", args.progress):
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
-    scan = tj.load(run.data, poses=run.poses)
+    scan = tj.load(run.data, apply_poses=run.apply_poses)
     grid, cylinder = (None, None)
-    if run.method != "auto" or run.grid is not None or run.roi != "auto":
-        grid, cylinder = region_grid(scan, roi=run.roi, grid=run.grid)
+    if run.method != "auto" or run.grid is not None or run.region != "auto":
+        region = None if run.region == "off" else run.region
+        grid, cylinder = region_grid(scan, region, shape=run.grid)
     if cylinder is not None and config is not None and hasattr(config, "support"):
         assert grid is not None
         # The solvers that take a support constrain the solve to the cylinder.
@@ -339,17 +348,17 @@ def main() -> None:
     if cylinder is not None:
         result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
     report_automatic(result.info)
-    source = result.scan.source
+    source = scan.source
     if (
         source is not None
         and source.geometry_metadata.get("detector_center_status") == "not_recorded"
     ):
         logging.warning(
             "%s records no rotation centre; the detector middle was used. "
-            "Fit one with tomojax align --fit centre before recon.",
+            "Fit one with tomojax align --fit center before recon.",
             run.data,
         )
-    tj.save(run.out, result)
+    tj.save(run.out, result, include_scan=run.include_scan)
     logging.info("Saved reconstruction to %s", run.out)
     if run.preview is not None:
         from tomojax.recon.quicklook import save_quicklook_png

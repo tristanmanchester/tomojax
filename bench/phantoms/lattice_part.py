@@ -145,17 +145,17 @@ class Part:
         candidates = candidates[np.hypot(candidates[:, 0], candidates[:, 1]) < RADIUS]
         radius = rng.uniform(0.015, 0.06, candidates.shape[0])
         inside = self.base(candidates) < -(radius + 0.04)
-        centre, radius = candidates[inside][:60], radius[inside][:60]
+        center, radius = candidates[inside][:60], radius[inside][:60]
         phi = rng.uniform(0, 2 * np.pi, 14)
         phi[0] = 0.3
         contour_z = rng.uniform(-0.5, 0.5, 14)
         contour_z[0] = 0.0
         depth = RADIUS - 0.12
         contour = np.stack([depth * np.cos(phi), depth * np.sin(phi), contour_z], -1)
-        self.pore_centre = np.vstack([centre, contour])
+        self.pore_center = np.vstack([center, contour])
         self.pore_radius = np.concatenate([radius, rng.uniform(0.03, 0.05, 14)])
-        stretch = np.ones((self.pore_centre.shape[0], 3))
-        stretch[: centre.shape[0] // 3, 2] = 1.8  # keyhole pores, elongated along the build
+        stretch = np.ones((self.pore_center.shape[0], 3))
+        stretch[: center.shape[0] // 3, 2] = 1.8  # keyhole pores, elongated along the build
         self.pore_stretch = stretch
 
     def _particles(self, rng: np.random.Generator) -> None:
@@ -179,9 +179,9 @@ class Part:
         surface, normal = surface[accept], normal[accept]
         radius = np.clip(0.016 * np.exp(0.3 * rng.normal(size=surface.shape[0])), 0.008, 0.025)
         sink = rng.uniform(0.2, 0.8, surface.shape[0])
-        self.particle_centre = surface + normal * (sink * radius)[:, None]
+        self.particle_center = surface + normal * (sink * radius)[:, None]
         self.particle_radius = radius
-        self.particle_tree = cKDTree(self.particle_centre)
+        self.particle_tree = cKDTree(self.particle_center)
 
     def _powder(
         self, p: np.ndarray, cell: float, low: float, high: float, chance: float, salt: int
@@ -193,8 +193,8 @@ class Part:
             key = np.floor(q)
             h = [hash_uniform(*key.T, salt=salt + 13 * int(2 * shift) + k) for k in range(5)]
             radius = (low + (high - low) * h[3]) / cell
-            centre = key + radius[:, None] + (1 - 2 * radius[:, None]) * np.stack(h[:3], -1)
-            d = (np.linalg.norm(q - centre, axis=1) - radius) * cell
+            center = key + radius[:, None] + (1 - 2 * radius[:, None]) * np.stack(h[:3], -1)
+            d = (np.linalg.norm(q - center, axis=1) - radius) * cell
             best = np.minimum(best, np.where(h[4] < chance, d, np.inf))
         return best
 
@@ -225,7 +225,7 @@ class Part:
         margins.append(np.abs(gap))
 
         # Gas, keyhole and contour pores.
-        d = (p[:, None] - self.pore_centre[None]) / self.pore_stretch[None]
+        d = (p[:, None] - self.pore_center[None]) / self.pore_stretch[None]
         pore = (np.linalg.norm(d, axis=-1) - self.pore_radius[None]).min(axis=1)
         solid = np.maximum(solid, -pore)
         margins.append(np.abs(pore))

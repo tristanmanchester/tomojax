@@ -16,10 +16,10 @@
 Each method's settings are a configuration class: `FBPConfig` (FBP and FDK),
 `FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig`, `SIRTConfig` and
 `MLEMConfig`. Pass one as
-`tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`;
+`tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv"))`;
 keywords such as `iterations=` replace the fields of the same name. The same
-fields are the keys of a `tomojax recon --config` TOML file
-(`tomojax recon --config-keys` lists them).
+fields are the keys of a `tomojax reconstruct --config` TOML file
+(`tomojax reconstruct --config-keys` lists them).
 
 CGLS, FISTA and SPDHG default to `data_term="absolute"`, fitting measured
 line integrals. Use `data_term="per_view_contrast"` when material lies outside
@@ -166,7 +166,7 @@ from tomojax.recon import CGLSConfig, cgls
 
 volume, info = cgls(
     geometry, grid, detector, projections,
-    config=CGLSConfig(iterations=50, rtol=1e-6, damping=0.0),
+    config=CGLSConfig(iterations=50, tolerance=1e-6, damping=0.0),
 )
 ```
 
@@ -210,7 +210,7 @@ from tomojax.recon import cgls_multires
 volume, info = cgls_multires(
     geometry, grid, detector, projections,
     factors=(4, 2, 1), iterations_per_level=(40, 20, 20),
-    config=CGLSConfig(rtol=1e-6),
+    config=CGLSConfig(tolerance=1e-6),
 )
 ```
 
@@ -235,28 +235,22 @@ file until released. Projections and a haloed TV tile still need device space;
 the exact halo grows with `tv_prox_iterations`. Host execution is not a
 differentiable layer.
 
-CGLS, FISTA-TV and SPDHG-TV share one projector choice. The default
-`projector_model="auto"` uses bilinear voxel-centre plane integration (Joseph)
-with CUDA kernels on CUDA; its matched CUDA transpose gathers into voxels
-without scattered atomic writes, and JAX provides an independently
-differentiated reference transpose. `projector_model="ray"` selects the
-trilinear ray marcher, which is also used automatically with explicit detector
-grids and, in FISTA and SPDHG, the exact ray integrator. Both models match
-analytic line integrals to the same accuracy; Joseph is several times faster on
-CUDA. Joseph requires rigid homogeneous poses, finite grid/detector placement
-and canonical detector coordinates. `info["projector_model"]` identifies the CGLS
-selection; multiresolution diagnostics retain it per level. The matching public
-forward API exposes first-order pose differentiation; the solvers return host
-diagnostics and are not differentiable layers. Alignment's FISTA
-reconstruction stages keep the ray model on parallel beams; its coupled pose
-solver samples with Joseph by default (`ray_integrator`).
+Every solver projects with one model: bilinear voxel-centre plane integration
+(Joseph) for parallel beams and laminography, with CUDA kernels on CUDA, and
+its cone-beam counterpart for cone beams. The matched CUDA transpose gathers
+into voxels without scattered atomic writes, and JAX provides an independently
+differentiated reference transpose. An explicit detector grid must be affine
+(a shifted, rolled lattice); its plane coefficients carry it. Poses must be
+rigid and homogeneous, with finite grid and detector placement. The matching
+public forward API exposes first-order pose differentiation; the solvers return
+host diagnostics and are not differentiable layers.
 
-Set `joseph_interpolation="cubic"` with that model to use Keys cubic convolution
+Set `interpolation="cubic"` to use Keys cubic convolution
 (a=-1/2) and its matched transpose on either backend. The default is `"linear"`.
 Cubic uses a 4-by-4 transverse stencil, including negative weights, and costs
 more than bilinear sampling. It matches `project_joseph(interpolation="cubic")`;
-select the same interpolation in a reconstruction and its pose objective. This
-option is rejected with `projector_model="ray"`. It also applies at every level
+select the same interpolation in a reconstruction and its pose objective. It
+also applies at every level
 of `cgls_multires`, with its value retained in each level's diagnostics.
 
 
@@ -270,7 +264,7 @@ for nonnegative linear weights `abs(A)` is `A`. Cubic uses an explicit
 absolute-weight transpose so its negative lobes cannot cancel this bound.
 With quadratic smoothness, the estimate also includes
 `8 * eps32 * gradient_damping**2 * abs(D.T @ D) @ abs(x)`;
-it diagnoses numerical stagnation without relaxing `rtol` or `atol`. A residual
+it diagnoses numerical stagnation without relaxing `tolerance` or `absolute_tolerance`. A residual
 replacement resets the conjugate direction. These checks add operator work near
 stopping, while ordinary fixed-budget updates retain the existing operator pair.
 Near the FP32 noise floor, checks also run every 16 iterations: an atomic JAX

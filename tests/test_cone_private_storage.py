@@ -26,7 +26,7 @@ def fixture(request):
         detector,
         np.linspace(0, 360, 11, endpoint=False),
         tj.ConeBeam(50, 100),
-        tilt_deg=request.param,
+        tilt=request.param,
     )
     rng = np.random.default_rng(12017)
     initial = rng.uniform(0.1, 1, size=(3, 5, 7)).astype(np.float32)
@@ -60,7 +60,7 @@ def test_private_model_forward_and_pose_volume_pullbacks(fixture, projector_devi
     geometry, grid, detector, initial, images = fixture
     model = cone.cone_model(geometry)
     private = replace(model, _z_fast=True)
-    coeff = model.coefficients(geometry.poses(), grid)
+    coeff = model.coefficients(geometry.pose_matrices(), grid)
     x, y = jnp.asarray(initial), jnp.asarray(images)
 
     def project(c, value, layout):

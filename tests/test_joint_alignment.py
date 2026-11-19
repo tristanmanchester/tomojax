@@ -28,7 +28,7 @@ def _laminography(*, nx=5, ny=4, nz=3, nu=7, nv=6, views=4, tilt=-30.0):
     grid = tj.Grid(nx, ny, nz, 1.0, 1.1, 0.9)
     detector = tj.Detector(nu, nv, 1.0, 1.0)
     angles = np.linspace(0, 360, views, endpoint=False)
-    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=tilt)
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=tilt)
     return grid, detector, geometry, angles
 
 
@@ -305,9 +305,9 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
 
     grid, detector, _, angles = _laminography(views=5)
     calibrated = (
-        tj.ParallelGeometry(grid, detector, angles, detector_roll_deg=0.3)
+        tj.ParallelGeometry(grid, detector, angles, detector_roll=0.3)
         if tilt == 0
-        else tj.LaminographyGeometry(grid, detector, angles, tilt_deg=tilt, detector_roll_deg=0.3)
+        else tj.LaminographyGeometry(grid, detector, angles, tilt=tilt, detector_roll=0.3)
     )
     rng = np.random.default_rng(123)
     inner, outer, increment = (
@@ -326,7 +326,7 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
     expected[:, :3, 3] += increment[:, [3, 5, 4]]
     record = {
         "fit": ["translations", "rotations"],
-        "corrections": {},
+        "calibration": {},
         "detector_binning": 1,
         "levels": [{"status": "step_budget_reached"}],
         "refinement": {"status": "pose_steps_below_tolerance"},
@@ -342,12 +342,13 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         fit,
         keep_grid,
         frames,
-        detector_roll_deg,
+        detector_roll,
+        config=None,
         view_positions,
         declared_poses,
     ):
         assert fit == ("translations", "rotations")
-        assert frames is None and detector_roll_deg == 0.3 and view_positions is None
+        assert frames is None and detector_roll == 0.3 and view_positions is None
         assert projections is scan.projections
         assert working == grid and current_detector == detector and keep_grid is False
         np.testing.assert_allclose(nominal, before, atol=5e-7)
@@ -372,7 +373,7 @@ def _moving_scan(slip=0.0, wobble_deg=0.0):
     detector = tj.Detector(40, 32, 1.0, 1.0)
     views = 90
     angles = np.linspace(0, 360, views, endpoint=False)
-    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=-30)
     z, y, x = np.mgrid[:20, :28, :28]
     volume = np.zeros((20, 28, 28), np.float32)
     for cz, cy, cx, r, mu in ((10, 10, 9, 5, 1.0), (8, 17, 18, 4, 0.6), (13, 19, 8, 3, 1.4)):
@@ -452,7 +453,7 @@ def test_pose_fit_is_exactly_covariant_with_the_data_scale():
 def test_pose_fit_recovers_per_view_rotations():
     projections, nominal, grid, detector, truth = _moving_scan(wobble_deg=1.0)
     geometry = tj.LaminographyGeometry(
-        grid, detector, np.linspace(0, 360, len(nominal), endpoint=False), tilt_deg=-30
+        grid, detector, np.linspace(0, 360, len(nominal), endpoint=False), tilt=-30
     )
     empty = tj.Scan(np.zeros_like(projections), geometry)
     _, _, table, _ = fit_poses(
@@ -517,7 +518,7 @@ def test_tilt_roll_and_rotations_together_keep_the_shared_angles():
         tj.Detector(f, f, 0.5, 0.5),
         angles,
         (0.0, np.sin(tilt), np.cos(tilt)),
-        detector_roll_deg=0.25,
+        detector_roll=0.25,
     )
     t = np.deg2rad(angles)
     table = np.zeros((views, 6))
@@ -532,8 +533,8 @@ def test_tilt_roll_and_rotations_together_keep_the_shared_angles():
     declared = tj.ParallelGeometry(tj.Grid(n, n, n, 1, 1, 1), tj.Detector(n, n, 1, 1), angles)
     result = tj.align(tj.Scan(data, declared), fit=("translations", "tilt", "roll", "rotations"))
     calibration = result.info["calibration"]
-    assert abs(float(np.ravel(calibration["roll"])[0]) - 0.25) < 0.1
-    assert abs(float(np.ravel(calibration["tilt"])[0]) + 0.35) < 0.1
+    assert abs(float(np.ravel(calibration["roll"]["value"])[0]) - 0.25) < 0.1
+    assert abs(float(np.ravel(calibration["tilt"]["value"])[0]) + 0.35) < 0.1
 
 
 @pytest.mark.numerical
@@ -589,4 +590,4 @@ def test_a_half_turn_of_a_flat_sharp_object_recovers_its_motion_without_a_pedest
     assert abs(error @ motion / (motion @ motion)) < 0.1
     truth = fine.reshape(n, 4, n, 4, n, 4).mean((1, 3, 5))
     empty = truth.sum((1, 2)) == 0
-    assert np.asarray(result.volume)[empty].sum() < 0.05 * truth.sum()
+    assert np.asarray(result.image)[empty].sum() < 0.05 * truth.sum()

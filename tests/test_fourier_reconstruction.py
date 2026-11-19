@@ -692,7 +692,7 @@ def test_invalid_inputs_rejected_before_output_written(invalid):
         angles[1] = np.nan
         geometry = ParallelGeometry(grid, detector, angles)
     elif invalid == "tilted":
-        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
+        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt=30)
     elif invalid == "complex":
         data = data.astype(np.complex64)
     elif invalid == "shape":

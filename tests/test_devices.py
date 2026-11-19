@@ -33,7 +33,7 @@ def _geometry(kind: str) -> tj.geometry.ScanGeometry:
     if kind == "parallel":
         return tj.ParallelGeometry(grid, detector, angles / 2)
     if kind == "lamino":
-        return tj.LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+        return tj.LaminographyGeometry(grid, detector, angles, tilt=30)
     if kind == "orbits":  # two circular orbits, the second higher, on one detector
         low = tj.ConeGeometry(grid, detector, angles[:20], tj.ConeBeam(48.0, 72.0))
         high = tj.ConeGeometry(
@@ -174,7 +174,7 @@ def test_shared_projections_are_not_streamed(solver):
     geometry = _geometry("parallel")
     data = np.zeros((VIEWS, 20, 24), np.float32)
     run, config = (cgls, CGLSConfig) if solver == "cgls" else (fista_tv, FistaConfig)
-    settings = config(stream_projections=True, devices=jax.devices())
+    settings = config(stream=True, devices=jax.devices())
     with pytest.raises(ValueError, match="cannot be streamed"):
         run(geometry, geometry.grid, geometry.detector, data, config=settings)
 

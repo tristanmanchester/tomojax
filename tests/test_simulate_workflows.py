@@ -85,7 +85,7 @@ def test_simulate_lamino_records_tilt_metadata(monkeypatch: pytest.MonkeyPatch) 
         nv=2,
         n_views=2,
         geometry="lamino",
-        tilt_deg=35.0,
+        tilt=35.0,
         tilt_about="x",
         phantom="sphere",
         single_rotate=False,
@@ -95,7 +95,7 @@ def test_simulate_lamino_records_tilt_metadata(monkeypatch: pytest.MonkeyPatch) 
 
     assert tuple(data["projections"].shape) == (2, 2, 2)
     assert data["geometry_type"] == "lamino"
-    assert data["geometry_meta"] == {"tilt_deg": 35.0, "tilt_about": "x"}
+    assert data["geometry_meta"] == {"tilt": 35.0, "tilt_about": "x"}
 
 
 def test_simulation_artefact_metadata_exists_and_is_deterministic(

@@ -85,9 +85,9 @@ class AnglesReport(TypedDict):
     path: str | None
     count: int | None
     units: str | None
-    min_deg: float | None
-    max_deg: float | None
-    coverage_deg: float | None
+    min: float | None
+    max: float | None
+    coverage: float | None
 
 
 class GeometryReport(TypedDict):
@@ -170,6 +170,21 @@ class InspectionReport(TypedDict):
     volume: VolumeReport
 
 
+class Inspection(InspectionReport):
+    """A dataset's inspection report and its check (:func:`tomojax.inspect`).
+
+    Attributes
+    ----------
+    valid : bool
+        Whether the check found no issue.
+    issues : list of str
+        What the check found: missing calibration, angles or frames.
+    """
+
+    valid: bool
+    issues: list[str]
+
+
 __all__ = [
     "AlignmentReport",
     "AnglesReport",
@@ -177,6 +192,7 @@ __all__ = [
     "DetectorShapeReport",
     "FlatsDarksReport",
     "GeometryReport",
+    "Inspection",
     "InspectionReport",
     "MemoryEstimatesReport",
     "NonfiniteReport",

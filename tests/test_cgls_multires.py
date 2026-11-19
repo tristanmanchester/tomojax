@@ -10,16 +10,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-from tomojax.core.projector import forward_project_view_T
+from tomojax.forward import project_joseph
 from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon import CGLSConfig, cgls, cgls_multires
+
+# check-public-imports: allow-private
+from tomojax.recon._cgls_jax import _operators
 
 
 def problem():
     grid = Grid(5, 3, 3, 0.8, 1.1, 1.3, vol_origin=(-1.7, -0.9, -1.1))
     detector = Detector(9, 7, 0.7, 1.2, (0.17, -0.23))
-    geometry = LaminographyGeometry(grid, detector, np.asarray([13, 49, 83, 122, 161]), tilt_deg=23)
+    geometry = LaminographyGeometry(grid, detector, np.asarray([13, 49, 83, 122, 161]), tilt=23)
     truth = np.random.default_rng(12).uniform(-0.3, 1.7, size=(3, 3, 5)).astype(np.float32)
     return grid, detector, geometry, truth
 
@@ -32,17 +34,17 @@ def test_multires_recovers_original_fine_system(explicit_coordinates, backend):
     grid, detector, geometry, truth = problem()
     coordinates = None
     if explicit_coordinates:
-        u, v = np.meshgrid(
-            (np.arange(9) - 4) * 0.7 + 0.17,
-            (np.arange(7) - 3) * 1.2 - 0.23,
+        u, v = np.meshgrid((np.arange(9) - 4) * 0.7, (np.arange(7) - 3) * 1.2)
+        # A rolled lattice exercises coordinates outside the canonical metadata,
+        # with exactly the same subset on coarse levels.
+        c, s = np.cos(np.deg2rad(3.0)), np.sin(np.deg2rad(3.0))
+        coordinates = (
+            jnp.asarray(c * u - s * v + 0.17, jnp.float32).ravel(),
+            jnp.asarray(s * u + c * v - 0.23, jnp.float32).ravel(),
         )
-        # A slightly nonuniform detector exercises coordinates outside the
-        # canonical metadata, with exactly the same subset on coarse levels.
-        coordinates = (jnp.asarray(u + 0.04 * np.sin(v)).ravel(), jnp.asarray(v).ravel())
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
-    data = jax.vmap(
-        lambda t: forward_project_view_T(t, grid, detector, truth, det_grid=coordinates)
-    )(poses)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
+    project = _operators(poses, grid, detector, coordinates, "jax", 5, "joseph")[0]
+    data = project(jnp.asarray(truth))
     result, info = cgls_multires(
         geometry,
         grid,
@@ -51,7 +53,7 @@ def test_multires_recovers_original_fine_system(explicit_coordinates, backend):
         factors=(3, 2, 1),
         iterations_per_level=(4, 6, 90),
         init_x=jnp.ones_like(truth) * 0.5,
-        config=CGLSConfig(projector_model="ray", rtol=1e-7, views_per_batch=3, backend=backend),
+        config=CGLSConfig(tolerance=1e-7, views_per_batch=3, backend=backend),
         det_grid=coordinates,
     )
     np.testing.assert_allclose(result, truth, rtol=3e-4, atol=5e-5)
@@ -67,7 +69,7 @@ def test_multires_recovers_original_fine_system(explicit_coordinates, backend):
 def test_single_level_is_the_unmodified_public_solver():
     grid, detector, geometry, initial = problem()
     data = jnp.ones((5, 7, 9))
-    config = CGLSConfig(projector_model="ray", iterations=4, backend="jax")
+    config = CGLSConfig(iterations=4, backend="jax")
     direct, direct_info = cgls(geometry, grid, detector, data, init_x=initial, config=config)
     result, info = cgls_multires(
         geometry,
@@ -91,21 +93,20 @@ def test_multires_gradient_penalty_solves_the_same_physical_fine_objective():
     grid, detector, geometry, initial = problem()
     data = jnp.asarray(np.random.default_rng(82).normal(size=(5, 7, 9)), jnp.float32)
     config = CGLSConfig(
-        projector_model="ray",
         iterations=100,
-        rtol=1e-7,
+        tolerance=1e-7,
         damping=0.2,
         gradient_damping=0.7,
         backend="jax",
     )
     expected, _ = cgls(geometry, grid, detector, data, config=config)
     basis = np.eye(45).reshape(3, 3, 5, 45)
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
     matrix = (
         np.asarray(
-            jax.vmap(
-                lambda x: jax.vmap(lambda t: forward_project_view_T(t, grid, detector, x))(poses)
-            )(jnp.asarray(np.moveaxis(basis, -1, 0), jnp.float32))
+            jax.vmap(lambda x: project_joseph(x, poses, grid, detector))(
+                jnp.asarray(np.moveaxis(basis, -1, 0), jnp.float32)
+            )
         )
         .reshape(45, -1)
         .T
@@ -182,8 +183,8 @@ def test_breakdown_at_coarse_level_cannot_be_hidden_by_fine_solve(monkeypatch):
 @pytest.mark.parametrize("storage", ["array", "memmap"])
 def test_host_pyramid_stays_on_the_host_and_streams(storage, tmp_path):
     grid, detector, geometry, truth = problem()
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
-    data = np.asarray(jax.vmap(lambda t: forward_project_view_T(t, grid, detector, truth))(poses))
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
+    data = np.asarray(project_joseph(jnp.asarray(truth), poses, grid, detector))
     if storage == "memmap":
         mapped = np.memmap(tmp_path / "views.dat", mode="w+", dtype=np.float32, shape=data.shape)
         mapped[:] = data
@@ -196,11 +197,10 @@ def test_host_pyramid_stays_on_the_host_and_streams(storage, tmp_path):
         factors=(3, 1),
         iterations_per_level=(6, 120),
         config=CGLSConfig(
-            projector_model="ray",
             backend="jax",
-            stream_projections=True,
+            stream=True,
             views_per_batch=3,
-            rtol=1e-7,
+            tolerance=1e-7,
         ),
     )
     np.testing.assert_allclose(result, truth, rtol=3e-4, atol=5e-5)
@@ -224,7 +224,7 @@ grid, det = Grid(9, 7, 5, .8, 1.2, 1.1), Detector(13, 11, .7, .9, (.2, -.1))
 geom = LaminographyGeometry(grid, det, [13, 39, 77, 111, 153], 31)
 data = rng.normal(size=(5, 11, 13)).astype(np.float32)
 kwargs = dict(factors=(3, 1), iterations_per_level=(4, 7),
-              config=CGLSConfig(rtol=0, damping=.1, backend='cuda'))
+              config=CGLSConfig(tolerance=0, damping=.1, backend='cuda'))
 host, info = cgls_multires(geom, grid, det, data, **kwargs)
 assert 'jax' not in sys.modules and 'cupyx.scipy.sparse' not in sys.modules
 assert isinstance(host, np.ndarray) and info['execution_backend'] == 'cupy'

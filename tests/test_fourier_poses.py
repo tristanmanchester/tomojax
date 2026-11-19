@@ -25,14 +25,14 @@ def test_fourier_translation_poses_recover_analytic_gaussian(backend, nx, angle_
     u = (np.arange(detector.nu) - (detector.nu - 1) / 2) + detector.center[0]
     v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv + detector.center[1]
     sigma = 3.1
-    centre_u = 1.2 * np.cos(theta) + 2.0 * np.sin(theta)
+    center_u = 1.2 * np.cos(theta) + 2.0 * np.sin(theta)
     data = (
         np.sqrt(2 * np.pi)
         * sigma
         * np.exp(
             -0.5
             * (
-                (u[None, None, :] - centre_u[:, None, None] - poses[:, 3, None, None]) ** 2
+                (u[None, None, :] - center_u[:, None, None] - poses[:, 3, None, None]) ** 2
                 + (v[None, :, None] - 0.7 - poses[:, 4, None, None]) ** 2
             )
             / sigma**2
@@ -69,13 +69,13 @@ def test_fourier_resamples_a_rolled_parallel_detector(backend):
     u = detector.center[0] + np.cos(roll) * xr[None, :] - np.sin(roll) * zr[:, None]
     v = detector.center[1] + np.sin(roll) * xr[None, :] + np.cos(roll) * zr[:, None]
     sigma = 3.1
-    centre_u = 1.2 * np.cos(theta) + 2.0 * np.sin(theta)
+    center_u = 1.2 * np.cos(theta) + 2.0 * np.sin(theta)
     data = (
         np.sqrt(2 * np.pi)
         * sigma
-        * np.exp(-0.5 * ((u - centre_u[:, None, None]) ** 2 + (v - 0.7) ** 2) / sigma**2)
+        * np.exp(-0.5 * ((u - center_u[:, None, None]) ** 2 + (v - 0.7) ** 2) / sigma**2)
     ).astype(np.float32)
-    geometry = tj.ParallelGeometry(grid, detector, angles, detector_roll_deg=4.0)
+    geometry = tj.ParallelGeometry(grid, detector, angles, detector_roll=4.0)
     result = tj.reconstruct(
         tj.Scan(data, geometry),
         "fourier",

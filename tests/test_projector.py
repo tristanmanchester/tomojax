@@ -17,13 +17,13 @@ def _geometry(kind):
     detector = tj.Detector(9, 5, 0.9, 1.2, (0.17, -0.23))
     args = grid, detector, np.array([0.0, 31.0, 91.0, 179.0])
     if kind == "cone":
-        return tj.ConeGeometry(*args, tj.ConeBeam(30.0, 50.0), tilt_deg=3)
+        return tj.ConeGeometry(*args, tj.ConeBeam(30.0, 50.0), tilt=3)
     if kind == "lamino":
-        return tj.LaminographyGeometry(*args, tilt_deg=31)
+        return tj.LaminographyGeometry(*args, tilt=31)
     if kind == "lamino-rolled":
-        return tj.LaminographyGeometry(*args, tilt_deg=31, detector_roll_deg=7.0)
+        return tj.LaminographyGeometry(*args, tilt=31, detector_roll=7.0)
     if kind == "parallel-rolled":
-        return tj.ParallelGeometry(*args, detector_roll_deg=7.0)
+        return tj.ParallelGeometry(*args, detector_roll=7.0)
     return tj.ParallelGeometry(*args)
 
 
@@ -63,6 +63,35 @@ def test_rolled_detector_projects_as_the_alignment_folds_it(kind):
     volume = jnp.asarray(np.random.default_rng(11).normal(size=(3, 5, 7)), jnp.float32)
     expected = project_joseph(volume, jnp.asarray(folded, jnp.float32), flat.grid, flat.detector)
     np.testing.assert_allclose(tj.project(rolled, volume), expected, atol=3e-6, rtol=3e-6)
+
+
+@pytest.mark.parametrize("kind", ["parallel-rolled", "lamino-rolled"])
+@pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_explicit_rolled_detector_grid_is_a_matched_pair(kind, backend):
+    # FISTA and SPDHG pass the geometry's rolled lattice to the batched operators as a
+    # detector grid; that pair must be the matched one tj.project gives the rolled geometry.
+    if backend == "cuda" and jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    from tomojax.geometry import stack_view_poses
+    from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
+
+    # check-public-imports: allow-private
+    from tomojax.recon._projection import projection_operators
+
+    geometry = _geometry(kind)
+    det_grid = detector_grid_from_geometry_inputs(geometry.detector, geometry)
+    assert det_grid is not None
+    poses = stack_view_poses(geometry, len(geometry.angles))
+    forward, adjoint = projection_operators(
+        poses, geometry.grid, geometry.detector, det_grid, backend, 3
+    )
+    rng = np.random.default_rng(17)
+    x = jnp.asarray(rng.normal(size=(3, 5, 7)), jnp.float32)
+    y = jnp.asarray(rng.normal(size=(4, 5, 9)), jnp.float32)
+    projected, transposed = forward(x), adjoint(y)
+    np.testing.assert_allclose(projected, tj.project(geometry, x), atol=2e-5, rtol=2e-5)
+    np.testing.assert_allclose(jnp.vdot(projected, y), jnp.vdot(x, transposed), rtol=2e-5)
+    np.testing.assert_allclose(transposed, jax.vjp(forward, x)[1](y)[0], atol=1e-5, rtol=3e-5)
 
 
 def test_snapshot_grid_override_and_shape_checks():
@@ -125,7 +154,7 @@ class _LastViewTilted(tj.ParallelGeometry):
     @staticmethod
     def stack_poses(geometry, n_views, dtype):
         plain = tj.ParallelGeometry(geometry.grid, geometry.detector, geometry.angles)
-        poses = np.array([plain.pose_for_view(i) for i in range(n_views)], np.float64)
+        poses = np.array([plain.pose_matrix(i) for i in range(n_views)], np.float64)
         c, s = np.cos(1e-3), np.sin(1e-3)
         poses[-1] = np.array([[1, 0, 0, 0], [0, c, -s, 0], [0, s, c, 0], [0, 0, 0, 1]]) @ poses[-1]
         return jnp.asarray(poses.astype(dtype))

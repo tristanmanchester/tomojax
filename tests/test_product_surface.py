@@ -37,7 +37,7 @@ def test_cli_imports_do_not_configure_jax_allocator(monkeypatch: pytest.MonkeyPa
 
     for module_name in (
         "tomojax.cli.main",
-        "tomojax.cli.recon",
+        "tomojax.cli.reconstruct",
         "tomojax.cli.simulate",
         "tomojax.cli.align",
     ):
@@ -66,7 +66,7 @@ options = generate_pjrt_gpu_plugin_options()
 assert options['preallocate'] == {bool(explicit)!r}
 assert options.get('memory_fraction') == {0.6 if explicit else None!r}
 from tomojax.cli.main import main
-for command in ('recon', 'align', 'simulate'):
+for command in ('reconstruct', 'align', 'simulate'):
     try: main([command, '--help'])
     except SystemExit: pass
     assert generate_pjrt_gpu_plugin_options().get('memory_fraction') == {0.6 if explicit else None!r}
@@ -97,9 +97,9 @@ def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None
 
     assert product_command_names() == (
         "inspect",
-        "import",
-        "preprocess",
-        "recon",
+        "load",
+        "correct",
+        "reconstruct",
         "align",
         "export",
         "simulate",
@@ -108,7 +108,7 @@ def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None
     assert main(["--help"]) == 0
     captured = capsys.readouterr()
     assert "tomojax inspect scan.nxs" in captured.out
-    assert "tomojax recon aligned.nxs -o recon.nxs" in captured.out
+    assert "tomojax reconstruct aligned.nxs -o recon.nxs" in captured.out
     assert "dev" not in captured.out.lower()
     assert "benchmark" not in captured.out.lower()
 
@@ -153,11 +153,11 @@ def test_cli_lists_expert_settings_as_config_keys(capsys: pytest.CaptureFixture[
     from tomojax.cli.main import main
 
     with pytest.raises(SystemExit) as exc_info:
-        main(["recon", "--help"])
+        main(["reconstruct", "--help"])
     assert exc_info.value.code == 0
     assert "--views-per-batch" not in capsys.readouterr().out
     with pytest.raises(SystemExit) as exc_info:
-        main(["recon", "--config-keys"])
+        main(["reconstruct", "--config-keys"])
     assert exc_info.value.code == 0
     keys = capsys.readouterr().out
     assert "views_per_batch = " in keys
@@ -225,14 +225,14 @@ def test_private_import_guard_passes_on_product_tree() -> None:
 
 def test_config_files_set_on_off_flags_and_expert_settings(tmp_path: Path) -> None:
     from tomojax.cli.config import parse_args_with_config
-    from tomojax.cli.recon import build_parser
+    from tomojax.cli.reconstruct import build_parser
 
     config = tmp_path / "recon.toml"
-    _ = config.write_text("poses = false\nviews_per_batch = 7\n", encoding="utf-8")
+    _ = config.write_text("apply_poses = false\nviews_per_batch = 7\n", encoding="utf-8")
     args, metadata = parse_args_with_config(
         build_parser(), ["scan.nxs", "-o", "out.nxs", "--config", str(config)]
     )
-    assert args.poses is False
+    assert args.apply_poses is False
     assert metadata["settings"] == {"views_per_batch": 7}
 
 
@@ -244,7 +244,9 @@ def test_config_files_name_the_valid_keys_for_an_unknown_one(
     config = tmp_path / "recon.toml"
     _ = config.write_text("iteration = 3\n", encoding="utf-8")
     with pytest.raises(SystemExit) as exc:
-        _ = main(["recon", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
+        _ = main(
+            ["reconstruct", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)]
+        )
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "unknown config key(s)" in err
@@ -259,14 +261,16 @@ def test_config_files_name_the_new_key_for_a_retired_one(
     config = tmp_path / "recon.toml"
     _ = config.write_text("lambda_tv = 0.01\n", encoding="utf-8")
     with pytest.raises(SystemExit) as exc:
-        _ = main(["recon", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)])
+        _ = main(
+            ["reconstruct", "scan.nxs", "-o", str(tmp_path / "out.nxs"), "--config", str(config)]
+        )
     assert exc.value.code == 2
     assert "config key 'lambda_tv'" in (err := capsys.readouterr().err)
     assert err.rstrip().endswith("was renamed 'tv_weight'")
 
 
 def test_recon_parser_defers_loading_expert_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    import tomojax.cli.recon as recon_cli
+    import tomojax.cli.reconstruct as recon_cli
 
     calls = []
 
@@ -292,7 +296,7 @@ def test_recon_help_does_not_import_jax() -> None:
             "-c",
             "import sys; from tomojax.cli.main import main; "
             "import atexit; atexit.register(lambda: print('JAX_IMPORTED', 'jax' in sys.modules)); "
-            "main(['recon', '--help'])",
+            "main(['reconstruct', '--help'])",
         ],
         capture_output=True,
         text=True,

@@ -14,7 +14,7 @@ from tomojax.recon._fbp_weights import fbp_weights
 
 
 def poses_for(geometry: ParallelGeometry | LaminographyGeometry, n: int) -> np.ndarray:
-    return np.asarray([geometry.pose_for_view(i) for i in range(n)])
+    return np.asarray([geometry.pose_matrix(i) for i in range(n)])
 
 
 def parallel(angles: np.ndarray) -> np.ndarray:
@@ -46,7 +46,7 @@ def test_offset_short_arcs_have_positive_physical_midpoint_quadrature(start, spa
     geometry = (
         ParallelGeometry(grid, detector, angles)
         if tilt == 0
-        else LaminographyGeometry(grid, detector, angles, tilt_deg=tilt)
+        else LaminographyGeometry(grid, detector, angles, tilt=tilt)
     )
     weights = fbp_weights(poses_for(geometry, len(angles)))
     assert not weights.full_turn
@@ -131,7 +131,7 @@ def test_repeated_directions_share_weights_without_changing_the_acquired_arc(
     geometry = (
         ParallelGeometry(grid, detector, angles)
         if tilt == 0
-        else LaminographyGeometry(grid, detector, angles, tilt_deg=tilt)
+        else LaminographyGeometry(grid, detector, angles, tilt=tilt)
     )
     original = fbp_weights(poses_for(geometry, len(angles)))
     poses = np.repeat(poses_for(geometry, len(angles)), repeats, axis=0)
@@ -182,16 +182,12 @@ def test_unequal_repeated_directions_share_independent_midpoint_quadrature(order
 def test_tilted_scans_scale_ramp_by_ray_axis_sine() -> None:
     grid = Grid(4, 4, 4, 1.0, 1.0, 1.0)
     detector = Detector(4, 4, 1.0, 1.0)
-    full = LaminographyGeometry(
-        grid, detector, np.linspace(0, 360, 60, endpoint=False), tilt_deg=30
-    )
+    full = LaminographyGeometry(grid, detector, np.linspace(0, 360, 60, endpoint=False), tilt=30)
     weights = fbp_weights(poses_for(full, 60))
     # Rays along +y meet an axis tilted 30 degrees from z towards y at 60 degrees.
     assert weights.separable
     np.testing.assert_allclose(weights.view_scale, np.sin(np.deg2rad(60)) * np.pi / 60, rtol=1e-5)
-    half = LaminographyGeometry(
-        grid, detector, np.linspace(0, 180, 60, endpoint=False), tilt_deg=30
-    )
+    half = LaminographyGeometry(grid, detector, np.linspace(0, 180, 60, endpoint=False), tilt=30)
     assert not fbp_weights(poses_for(half, 60)).separable
 
 
@@ -204,11 +200,11 @@ def test_degenerate_scans_are_rejected() -> None:
 
 def gaussian_case(span: float, n_views: int, start: float = 0.0) -> tuple:
     """Analytic projections of an off-centre Gaussian in a 30-degree laminography scan."""
-    n, sigma, centre = 40, 3.0, np.array([2.0, -3.0, 1.5])
+    n, sigma, center = 40, 3.0, np.array([2.0, -3.0, 1.5])
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
     detector = Detector(64, 64, 1.0, 1.0)
     angles = start + np.linspace(0, span, n_views, endpoint=False)
-    geometry = LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+    geometry = LaminographyGeometry(grid, detector, angles, tilt=30)
     poses = poses_for(geometry, n_views)
     u = np.arange(detector.nu) - (detector.nu - 1) / 2
     v = np.arange(detector.nv) - (detector.nv - 1) / 2
@@ -217,14 +213,14 @@ def gaussian_case(span: float, n_views: int, start: float = 0.0) -> tuple:
     for i, pose in enumerate(poses):
         rotation, translation = pose[:3, :3], pose[:3, 3]
         points = (world.reshape(-1, 3) - translation) @ rotation
-        offset = points - centre
+        offset = points - center
         along = offset @ rotation[1]
         distance2 = np.sum(offset**2, axis=1) - along**2
         line = np.sqrt(2 * np.pi) * sigma * np.exp(-distance2 / (2 * sigma**2))
         projections[i] = line.reshape(detector.nu, detector.nv).T
     axes = [np.arange(n) - (n - 1) / 2] * 3
     zz, yy, xx = np.meshgrid(*axes, indexing="ij")
-    truth = np.exp(-((xx - centre[0]) ** 2 + (yy - centre[1]) ** 2 + (zz - centre[2]) ** 2) / 18)
+    truth = np.exp(-((xx - center[0]) ** 2 + (yy - center[1]) ** 2 + (zz - center[2]) ** 2) / 18)
     return geometry, grid, detector, poses, projections, truth
 
 
@@ -281,7 +277,7 @@ def test_repeated_laminography_exposures_equal_their_mean_and_preserve_physical_
     repeated = repeated.reshape((-1, detector.nv, detector.nu))
     order = np.random.default_rng(432).permutation(len(repeated))
     repeated_geometry = LaminographyGeometry(
-        grid, detector, np.repeat(geometry.angles, 3)[order], tilt_deg=30
+        grid, detector, np.repeat(geometry.angles, 3)[order], tilt=30
     )
     cfg = FBPConfig(backend=backend)
     expected = np.asarray(fbp(geometry, grid, detector, averaged, config=cfg))

@@ -32,10 +32,6 @@ PUBLIC_MODULES = (
 # Immutable values and typing aliases cannot own docstrings. Their reference
 # entries live here so every export is covered by either numpydoc or this prose.
 PUBLIC_DATA = {
-    "tomojax.forward.api.PROJECTION_OPERATOR": "Reference projection operator name, "
-    "core_trilinear_ray.",
-    "tomojax.forward.api.ProjectionOperatorName": "Literal name of the reference projection "
-    "operator.",
     "tomojax.forward.api.ResidualFilterKind": "Residual filter: raw, lowpass_gaussian or "
     "bandpass_difference_of_gaussians.",
     "tomojax.forward.api.ResidualLossMode": "Residual loss: l2 or pseudo_huber.",
@@ -74,7 +70,6 @@ MAIN_ENTRY_POINTS = frozenset(
         "reconstruct",
         "reconstruct_slabs",
         "align",
-        "estimate_center",
         "estimate_region",
     )
 )

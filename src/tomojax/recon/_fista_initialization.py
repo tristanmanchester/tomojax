@@ -43,7 +43,6 @@ def first_gradient(
     its own, and it starts the power iteration (see :func:`power_start`).
     """
     cfg = runtime.config
-    assert runtime.projector is not None
     model, backend, batch = runtime.projector
     mask = None if runtime.volume_mask is None else jnp.asarray(runtime.volume_mask, jnp.float32)
     split = runtime.split
@@ -57,15 +56,18 @@ def first_gradient(
         stream=runtime.stream,
         split=split,
         data_term=cfg.data_term,
+        det_grid=runtime.detector_grid,
     )(None, projections)
     if split is None:
-        normal, _ = normal_equation_operators(runtime.poses, grid, detector, backend, batch, model)
+        normal, _ = normal_equation_operators(
+            runtime.poses, grid, detector, backend, batch, model, det_grid=runtime.detector_grid
+        )
 
         def apply_normal(x):
             return normal(x)[1]
     else:
         forward, adjoint = projection_operators(
-            runtime.poses, grid, detector, None, backend, batch, model, split=split
+            runtime.poses, grid, detector, runtime.detector_grid, backend, batch, model, split=split
         )
 
         def apply_normal(x):

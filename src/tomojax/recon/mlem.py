@@ -28,7 +28,6 @@ from tomojax.recon._host_arrays import validate_host_views
 from tomojax.recon._projection import (
     ConeModel,
     ProjectorBackend,
-    ProjectorModel,
     poisson_operators,
     resolve_geometry_projector,
 )
@@ -111,9 +110,6 @@ class MLEMConfig:
     backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
-    projector_model : ProjectorModel, optional
-        Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
-        explicit detector grid requires rays. Default is 'auto'.
     """
 
     iterations: int = 50
@@ -121,7 +117,6 @@ class MLEMConfig:
     support: jax.Array | np.ndarray | None = None
     views_per_batch: int = 32
     backend: ProjectorBackend = "auto"
-    projector_model: ProjectorModel = "auto"
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend", "batch_size", "model", "axial"))
@@ -426,7 +421,7 @@ def run_mlem(
     if init_x is not None:
         validate_volume(init_x, grid, context="mlem", name="init_x")
     model, backend = resolve_geometry_projector(
-        geometry, cfg.projector_model, cfg.backend, detector=detector,
+        geometry, cfg.backend, detector=detector,
         det_grid=det_grid, context="mlem",
     )  # fmt: skip
     storage, rows = {}, isinstance(projections, RowReader)
@@ -469,6 +464,5 @@ def run_mlem(
         "subset_updates": iterations * subsets,
         "termination": "iteration_limit",
         "projector_backend": backend,
-        "projector_model": model,
         **storage,
     }

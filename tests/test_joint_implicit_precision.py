@@ -18,7 +18,7 @@ def test_implicit_precision_matches_explicit_ones_in_joint_and_edge_objectives(c
     grid = Grid(5, 4, 3, 0.7, 0.9, 1.1)
     detector = Detector(7, 6, 0.8, 0.9, center=(0.12, -0.17))
     nominal = np.asarray(
-        stack_view_poses(LaminographyGeometry(grid, detector, [17, 91, 231], tilt_deg=-29), 3)
+        stack_view_poses(LaminographyGeometry(grid, detector, [17, 91, 231], tilt=-29), 3)
     )
     frames = np.broadcast_to(beam_frame(ConeBeam(31, 47), detector), (3, 4, 3))
     rng = np.random.default_rng(851)
@@ -50,7 +50,7 @@ def test_implicit_precision_matches_explicit_ones_in_joint_and_edge_objectives(c
             right = function(q, x, y, explicit, 0.8)
             for a, b in zip(jax.tree.leaves(left), jax.tree.leaves(right), strict=True):
                 np.testing.assert_allclose(a, b, rtol=2e-6, atol=2e-6)
-        edge = _EdgeObjective(ops)
+        edge = _EdgeObjective(ops, smoothing=8.0)
         y, explicit = js.stack(ops, y), js.stack(ops, explicit)
         for function in (edge.stats, edge.value):
             for a, b in zip(

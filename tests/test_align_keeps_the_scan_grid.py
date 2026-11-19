@@ -17,7 +17,7 @@ GEOMETRIES = {
         GRID, tj.Detector(NU, NV, 1.5, 1.5), ANGLES, tj.ConeBeam(4 * NU, 6 * NU)
     ),
     "laminography": lambda: tj.LaminographyGeometry(
-        GRID, tj.Detector(NU, NV, 1, 1), ANGLES, tilt_deg=30
+        GRID, tj.Detector(NU, NV, 1, 1), ANGLES, tilt=30
     ),
 }
 
@@ -25,8 +25,8 @@ GEOMETRIES = {
 def _scan(kind: str) -> tj.Scan:
     geometry = GEOMETRIES[kind]()
     z, y, x = np.mgrid[:NV, :NU, :NU].astype(np.float32)
-    centre = (NU - 1) / 2
-    volume = np.exp(-((x - centre - 20) ** 2 + (y - centre) ** 2) / 5e3).astype(np.float32)
+    center = (NU - 1) / 2
+    volume = np.exp(-((x - center - 20) ** 2 + (y - center) ** 2) / 5e3).astype(np.float32)
     return tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
 
 
@@ -39,7 +39,7 @@ def test_reconstructing_an_aligned_scan_keeps_the_scan_grid(kind):
     scan = _scan(kind)
     result = tj.align(scan)
     assert result.grid != scan.grid  # the fit worked at a binned scale
-    assert np.shape(result.volume) == _shape(result.grid)
+    assert np.shape(result.image) == _shape(result.grid)
     assert result.scan.grid == scan.grid
     assert np.shape(tj.reconstruct(result.scan).volume) == _shape(scan.grid)
 
@@ -62,4 +62,4 @@ def test_a_saved_alignment_reloads_on_the_scan_grid(tmp_path: Path):
     # The saved alignment image comes back with the grid it is on.
     image = tj.load_reconstruction(tmp_path / "aligned.nxs")
     assert image.grid == result.grid
-    np.testing.assert_array_equal(image.volume, result.volume)
+    np.testing.assert_array_equal(image.volume, result.image)

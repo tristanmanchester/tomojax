@@ -148,7 +148,7 @@ class Operators:
         scales=None,
         interpolation="linear",
         parameters=None,
-        detector_roll_deg=0.0,
+        detector_roll=0.0,
         detector_pivot=None,
     ) -> None:
         self.grid, self.detector = grid, detector
@@ -157,7 +157,7 @@ class Operators:
         self.parameters = parameters or Parameters(
             self.n, ("translations", "rotations"), cone=frames is not None, lever=lever
         )
-        self.detector_roll_deg = float(detector_roll_deg)
+        self.detector_roll = float(detector_roll)
         self.detector_pivot = detector.center if detector_pivot is None else tuple(detector_pivot)
         self.projection = Projection(
             grid,
@@ -282,7 +282,7 @@ class Operators:
         q = jnp.zeros((self.padded_n, self.dofs), jnp.float32)
         cf = self.coefficients(nominal, q, self.valid, scales).rays
         tangent = jnp.zeros((self.padded_n, self.dofs, 14), jnp.float32)
-        angle = jnp.deg2rad(jnp.float32(self.detector_roll_deg))
+        angle = jnp.deg2rad(jnp.float32(self.detector_roll))
         c, s = jnp.cos(angle), jnp.sin(angle)
         d = self.detector
         # A lab translation projected onto the fixed detector u/v basis moves
@@ -343,7 +343,7 @@ class Operators:
             detector=self.detector,
             native=self.native,
             frames=frames,
-            detector_roll_deg=self.detector_roll_deg,
+            detector_roll=self.detector_roll,
             detector_pivot=self.detector_pivot,
         )
         return self.projection.coefficients(poses, valid, frames)

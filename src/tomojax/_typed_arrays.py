@@ -54,10 +54,16 @@ def object_mapping(value: object) -> dict[str, object]:
 
 
 def write_image(path: object, image: object) -> None:
-    """Write an image through a typed boundary for imageio's broad overloads."""
+    """Write an image through a typed boundary for imageio's overloads, moved on once whole."""
+    from pathlib import Path
+
     import imageio.v3 as iio
 
-    iio.imwrite(path, image)
+    from tomojax.core.files import replaced_when_complete
+
+    target = Path(cast("str", path))
+    with replaced_when_complete(target, "image") as temporary:
+        iio.imwrite(temporary, image, extension=target.suffix or ".png")
 
 
 def scalar_int(value: object) -> int:

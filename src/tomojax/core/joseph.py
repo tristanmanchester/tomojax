@@ -3,8 +3,7 @@
 Choose the fastest ray direction in voxel coordinates. Sample its voxel-centre
 planes, interpolating the other two coordinates with zero padding. Bilinear
 interpolation is the default; cubic convolution is an explicit alternative.
-Multiply by the physical distance between planes. The resulting linear operator
-differs from the ray-entry-phased trilinear sampler in ``projector.py``.
+Multiply by the physical distance between planes.
 """
 
 from __future__ import annotations

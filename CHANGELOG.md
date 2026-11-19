@@ -2,6 +2,134 @@
 
 ## Unreleased
 
+### One vocabulary across the API, the shell and saved files
+
+Every public name, flag, `info` key and saved-file key now uses one vocabulary:
+- American spelling in identifiers (prose stays British);
+- no unit suffix on angles, which are all in degrees;
+- one word for each concept.
+
+There are no aliases. Each old name is gone, and files saved before this release do not load
+(the reader reads only the new keys). `tests/test_vocabulary.py` keeps the vocabulary.
+
+| Old | New |
+|---|---|
+| `fit="centre"`, `--fit centre`, `info["calibration"]["centre"]` | `fit="center"`, `--fit center`, `info["calibration"]["center"]` |
+| `regulariser=` (FISTA, SPDHG) | `regularizer=` |
+| `tilt_deg` (geometries, saved files), `--tilt-deg` | `tilt`, `--tilt` |
+| `detector_roll_deg`, `detector_pitch_deg`, `detector_yaw_deg` | `detector_roll`, `detector_pitch`, `detector_yaw` |
+| `info["rotation_prior_sigma_deg"]` | `info["rotation_prior_sigma"]` |
+| `tomojax simulate --rotation-deg` | `--rotation` |
+| `Scan.corrected(batch_views=)`, `Frames.corrected(batch_views=)` | `views_per_batch=` |
+| `tomojax preprocess --select-views` | `--views` |
+| `Scan.positions()` | `Scan.view_positions` |
+| `Scan.binned(factor)` | `Scan.binned(binning)` |
+| `stream_projections=` (FISTA, SPDHG and CGLS configs), SIRT's `info["stream_projections"]` | `stream=`, `info["stream"]` |
+| `CGLSConfig(joseph_interpolation=)` | `interpolation=` |
+| `FistaConfig(recon_rel_tol=, recon_patience=)` | `tolerance=`, `patience=` |
+| `geometry.pose_for_view(i)` | `geometry.pose_matrix(i)` |
+| `ConeGeometry.poses()` | `ConeGeometry.pose_matrices()` |
+| `Alignment.volume` (the fit's working image) | `Alignment.image` |
+| `tj.load(poses=)`, `--poses` / `--no-poses` | `apply_poses=`, `--apply-poses` / `--no-apply-poses` |
+| `CGLSConfig(rtol=, atol=)` | `tolerance=`, `absolute_tolerance=` |
+| `info["calibration"][name]` (the value) and `info["corrections"][name]` (the change) | `info["calibration"][name] = {"value": ..., "change": ...}` |
+| `info["report"]["corrections"] = {"global": ..., "per_view": ...}` | `info["report"]["calibration"]`, `info["report"]["poses"]` |
+| `info["pose_dofs"]`, columns `dx`, `dz`, `dy` (also the report's and saved table's) | `info["pose_columns"]`, columns `x`, `z`, `y` |
+| saved `angle_offset_deg` | `angle_offset` |
+| `Reconstruction(volume, scan, method, info)` | `Reconstruction(volume, geometry, method, info, scan=None)` |
+| `tj.estimate_center(scan)` | `tj.align(scan, fit="center", method="opposite-views").scan` |
+| `--roi` (`recon`, `align`) | `--region`, and `region=` on `tj.reconstruct` and `tj.align` |
+| `info["levels"][i]["budget"] = {outer, inner, init_iterations, lm_initial}` | `info["levels"][i]["iterations"]`, `["image_iterations"]`, `["initial_image_iterations"]` |
+| `info["report"]["levels"][i]["steps"]` (a count) | `info["report"]["levels"][i]["iterations"]` |
+| `Alignment(volume, grid, scan, poses, info)` | `Alignment(scan, info, image=None, grid=None)`, with `poses` a property |
+| `tomojax recon` | `tomojax reconstruct` |
+| `tomojax import` | `tomojax load`: `tj.load`, then `tj.save` |
+| `tomojax preprocess` | `tomojax correct` |
+| `preprocess --config` keys `binning` and `[detector]`; `import --config` keys `detector_center`, `tilt`, `tilt_about`, `detector_roll`, `detector_pitch`, `detector_yaw` | `--binning`, `--pixel-size`, `--detector-center`, `--tilt`, `--tilt-about`, `--detector-roll`, `--detector-pitch`, `--detector-yaw` |
+| `tomojax inspect --json` angle keys `min_deg`, `max_deg`, `coverage_deg` | `min`, `max`, `coverage` |
+
+### One projector model
+
+Every solver, `tj.project` and the simulator project with the Joseph plane-sampling model
+(its cone-beam counterpart for cone beams), whose backprojector is its exact transpose. A
+rolled or shifted detector grid is carried in its plane coefficients, so FISTA and SPDHG on a
+rolled detector now use it too (they used the ray march). FISTA and SPDHG interpolate
+linearly: their cubic option was `ray_integrator="joseph_cubic"`. Simulated parallel and
+laminography data now come from `tj.project`, so they differ slightly from earlier releases.
+
+Removed, with no replacement:
+- the trilinear ray march (JAX and CUDA) and the exact trilinear path;
+- the config fields `projector_model`, `ray_integrator`, `gather_dtype`, `projector_unroll`,
+  `checkpoint_projector` and `grad_mode` (CGLS, SIRT, MLEM, FISTA and SPDHG), and
+  `info["projector_model"]`;
+- `tomojax.backends.estimate_views_per_batch`, `estimate_views_per_batch_info`,
+  `ViewsPerBatchEstimate`, `CudaModuleCapability`, `resolve_cuda_module` and
+  `resolve_cuda_callable`;
+- `tomojax.forward.project_parallel_reference_from_input`, `ProjectionArrayGeometryInput`,
+  `ProjectionOperatorName`, `PROJECTION_OPERATOR`, `CoreProjectionGeometry`,
+  `core_projection_geometry_from_input`, `core_projection_geometry_from_state` and
+  `nominal_axis_unit_from_geometry`.
+
+### The commands use the API's verbs, and each has its API function
+
+- **`tomojax load INPUT -o OUTPUT`** is `tj.load` then `tj.save`, for every input
+  `tj.load` reads. Its flags supply what the file lacks under `tj.load`'s names, the
+  geometry included: `--geometry lamino --tilt 30`, for example, so a raw file that
+  records no geometry can be used from the command line.
+- **`tomojax correct`** applies the optional corrections and `--views`, `--crop`
+  and `--binning`, with the same input flags. On raw frames every step runs. On a
+  saved scan of line integrals only the steps that act on them run, and a step on
+  transmission is refused with what to run instead.
+- **New functions:**
+  - `tj.inspect(path)`: the report `tomojax inspect --json` prints, with `valid` and
+    `issues`;
+  - `tj.export(path, reconstruction, ...)`: TIFF slices or one raw file;
+  - `tj.simulate(...)`: the phantom as a reconstruction's volume, with its simulated
+    scan as `scan`.
+- **Writes moved on whole:** the export's files, the manifest, the motion table and
+  the preview PNGs are written beside their name and moved onto it whole, so a failure
+  leaves no partial file.
+- **TIFF line integrals:** a TIFF stack is read as raw frames. A stack of line
+  integrals, which `tomojax import` packaged, is built into a `tj.Scan` in Python.
+
+### `tj.align` takes its settings
+
+`tj.align(scan, fit=..., *, grid, region, method, iterations, image_iterations, tolerance,
+interpolation, resolution, config)`. The five settings most runs change are keywords;
+`tj.AlignConfig` holds every setting with its default, all numbers the fit used to fix in
+code: levels, iteration counts, stopping rule, working resolution, the motion prior's scales,
+the robust loss and the refinement. A keyword replaces the config's field, and
+`info["config"]` records what a call used. `tomojax align` takes the same keywords as flags
+and the rest from `--config`. `method="opposite-views"` replaces `tj.estimate_center`. It fits
+`fit="center"` alone, from near-opposite views and without an image, so its `Alignment` has
+`image` None. `region=` is new on both `tj.align` and `tj.reconstruct`. The defaults give
+the same results as before.
+
+### A saved reconstruction names its projections instead of holding them
+
+`tj.save` used to write a reconstruction with its whole scan, so every file held its
+projections. Now it holds the volume, its geometry and the full record, and
+`info["source"]` names the projections it came from: their path, shape, size and a hash
+of three views. `tj.save(path, recon, include_scan=True)` (or
+`tomojax reconstruct --include-scan`) keeps the scan as well.
+
+`tj.load_reconstruction` reattaches the scan when the file holds it. Otherwise it returns
+the reconstruction with `scan` None and warns that the scan is missing; it does not look
+for the projections. `tj.load` refuses such a file and names `tj.load_reconstruction`.
+`tomojax inspect --preview` shows the volume's central slices when a file has no
+projections. A saved alignment is still its corrected scan with its poses.
+
+### A scan records how it was cut down
+
+`selected`, `cropped` and binning (`Scan.binned`, `Frames.corrected(binning=)`) now each
+leave a record in `scan.corrections`, saved with the scan:
+- `selected` records `views`, the views kept;
+- `cropped` records `rows` and `cols`, the window as `[start, stop)`;
+- binning records `binning`.
+
+Before, two scans from one file could differ in views, field and resolution with nothing
+saying so.
+
 ### `tj.align` fits full-size synchrotron scans on an 8 GB card
 
 The alignment made its stack-sized arrays (the data, the residual, the IRLS weights, the pose

@@ -127,7 +127,7 @@ def rounded_bar(p: np.ndarray, q: np.ndarray, w: float) -> np.ndarray:
 
 
 def _fillet_line_circle(
-    centre: np.ndarray,
+    center: np.ndarray,
     radius: float,
     *,
     inside: bool,
@@ -145,14 +145,14 @@ def _fillet_line_circle(
     offset = line_c + rho
     reach = radius - rho if inside else radius + rho
     # Points on the offset line n @ p = offset at distance ``reach`` from centre.
-    foot = centre + (offset - line_n @ centre) * line_n
+    foot = center + (offset - line_n @ center) * line_n
     along = np.array([-line_n[1], line_n[0]])
-    half = math.sqrt(max(reach**2 - np.sum((foot - centre) ** 2), 0.0))
+    half = math.sqrt(max(reach**2 - np.sum((foot - center) ** 2), 0.0))
     options = [foot + half * along, foot - half * along]
     f = min(options, key=lambda p: np.linalg.norm(p - near))
     on_line = f - rho * line_n
-    radial = (f - centre) / np.linalg.norm(f - centre)
-    on_circle = centre + radius * radial
+    radial = (f - center) / np.linalg.norm(f - center)
+    on_circle = center + radius * radial
     return f, on_line, on_circle
 
 
@@ -375,9 +375,9 @@ class Field:
             if len(edges) == 2:
                 link(*edges)
             elif len(edges) == 4:  # saddle: decide by the cell centre
-                centre = f[j, i] + f[j, i + 1] + f[j + 1, i] + f[j + 1, i + 1]
+                center = f[j, i] + f[j, i + 1] + f[j + 1, i] + f[j + 1, i + 1]
                 b0 = inside[j, i]
-                if (centre < 0) == b0:
+                if (center < 0) == b0:
                     link(edges[0], edges[1])
                     link(edges[2], edges[3])
                 else:
@@ -517,9 +517,9 @@ def tube(r0: float, r1: float, z0: float, z1: float, xy: tuple | np.ndarray = (0
     return lathe([(r0, z0), (r1, z0), (r1, z1), (r0, z1)]).moved(xy)
 
 
-def strip(centre: np.ndarray, thickness: float, z0: float, z1: float) -> Solid:
-    """A strip of rectangular section along the planar polyline ``centre``."""
-    c = np.asarray(centre, float)
+def strip(center: np.ndarray, thickness: float, z0: float, z1: float) -> Solid:
+    """A strip of rectangular section along the planar polyline ``center``."""
+    c = np.asarray(center, float)
     t = np.gradient(c, axis=0)
     t /= np.linalg.norm(t, axis=1, keepdims=True)
     n = np.c_[-t[:, 1], t[:, 0]]
@@ -656,8 +656,8 @@ COCK = (3.45, 4.45)
 PALLET_BRIDGE = (2.10, 2.38)
 
 BARREL = d(math.pi / 2) * 5.76  # barrel 84 teeth, m 0.12, drives the 12-leaf centre pinion
-CENTRE = np.zeros(2)
-THIRD = CENTRE + 4.05 * d(math.radians(-45))  # centre 80 teeth, m 0.09; third pinion 10
+CENTER = np.zeros(2)
+THIRD = CENTER + 4.05 * d(math.radians(-45))  # centre 80 teeth, m 0.09; third pinion 10
 FOURTH = THIRD + 3.40 * d(math.radians(-75))  # third 75 teeth, m 0.08; fourth pinion 10
 ESCAPE = FOURTH + 2.975 * d(math.radians(-165))  # fourth 75 teeth, m 0.07; escape pinion 10
 PALLET = ESCAPE + 2.55 * d(math.pi)
@@ -820,7 +820,7 @@ def _rim(angle_deg: float) -> np.ndarray:
 
 
 PLATE_ARMS = (  # from, to, bow, half-widths at either end
-    (CENTRE, THIRD, 0.12, 0.55, None),
+    (CENTER, THIRD, 0.12, 0.55, None),
     (THIRD, FOURTH, -0.10, 0.5, None),
     (FOURTH, ESCAPE, 0.10, 0.48, None),
     (ESCAPE, PALLET, 0.0, 0.45, None),
@@ -829,8 +829,8 @@ PLATE_ARMS = (  # from, to, bow, half-widths at either end
     (BALANCE, COCK_POST, -0.2, 0.5, None),
     (COCK_POST, _rim(160), 0.15, 0.55, 0.75),
     (BARREL_POSTS[2], COCK_POST, -0.25, 0.5, None),
-    (CENTRE, BARREL_POSTS[2], -0.2, 0.5, None),
-    (TRAIN_POSTS[0], CENTRE, 0.2, 0.5, None),
+    (CENTER, BARREL_POSTS[2], -0.2, 0.5, None),
+    (TRAIN_POSTS[0], CENTER, 0.2, 0.5, None),
     (TRAIN_POSTS[0], TRAIN_POSTS[1], -0.15, 0.48, None),
     (TRAIN_POSTS[1], _rim(-5), 0.1, 0.55, 0.75),
     (THIRD, TRAIN_POSTS[1], 0.1, 0.45, None),
@@ -854,7 +854,7 @@ def main_plate() -> Obj:
     shape = np.maximum(rho - RADIUS, 13.25 - rho)
     bosses = [
         (BARREL, 5.6),
-        (CENTRE, 1.45),
+        (CENTER, 1.45),
         (THIRD, 1.2),
         (FOURTH, 1.15),
         (ESCAPE, 1.05),
@@ -898,7 +898,7 @@ def main_plate() -> Obj:
     for q in BANKING:
         part("banking pin", "steel", cylinder(0.09, 1.05, 2.05, q))
     lower = {
-        "centre": (CENTRE, 0.60, 0.10),
+        "center": (CENTER, 0.60, 0.10),
         "third": (THIRD, 0.55, 0.09),
         "fourth": (FOURTH, 0.50, 0.08),
         "escape": (ESCAPE, 0.48, 0.07),
@@ -950,13 +950,13 @@ def train_bridge() -> Obj:
     """Curved arms joining the centre, third, fourth and escape bearings to four posts."""
     field = Field((-1.6, -11.4), (9.0, 3.5))
     shape = np.full(field.X.shape, 1e3)
-    bosses = [(CENTRE, 1.05), (THIRD, 0.95), (FOURTH, 0.9), (ESCAPE, 0.85)]
+    bosses = [(CENTER, 1.05), (THIRD, 0.95), (FOURTH, 0.9), (ESCAPE, 0.85)]
     for q, r in bosses + [(q, 0.95) for q in TRAIN_POSTS]:
         shape = smooth_union(shape, field.disc(q, r), 0.5)
     posts = TRAIN_POSTS
     for q0, q1, bend, w in (
-        (posts[0], CENTRE, 0.15, 0.55),
-        (CENTRE, THIRD, -0.1, 0.55),
+        (posts[0], CENTER, 0.15, 0.55),
+        (CENTER, THIRD, -0.1, 0.55),
         (THIRD, posts[1], 0.12, 0.5),
         (THIRD, FOURTH, 0.12, 0.52),
         (FOURTH, posts[2], -0.1, 0.5),
@@ -1001,7 +1001,7 @@ def bridges(plate: Obj) -> dict[str, Obj]:
     for bridge in made.values():
         chamfer(bridge, 0.06)
     upper = {
-        "centre": (CENTRE, 0.60, 0.12),
+        "center": (CENTER, 0.60, 0.12),
         "third": (THIRD, 0.55, 0.09),
         "fourth": (FOURTH, 0.50, 0.08),
         "escape": (ESCAPE, 0.48, 0.07),
@@ -1073,7 +1073,7 @@ def barrel() -> None:
             [(0.70, 0.90), (4.85, 0.90), (4.85, 3.50), (4.55, 3.50), (4.55, 1.12), (0.70, 1.12)]
         ).moved(b),
     )
-    teeth = at(prism(watch_teeth(84, 0.12), 3.05, 3.50), b, mesh_angle(b, CENTRE))
+    teeth = at(prism(watch_teeth(84, 0.12), 3.05, 3.50), b, mesh_angle(b, CENTER))
     fuse("barrel drum", [drum, cut(as_object("barrel teeth", teeth), cylinder(4.60, 2.9, 3.6, b))])
     part("barrel lid", "brass", tube(0.70, 4.55, 3.20, 3.42, b))
     # Coils packed on the arbor and against the wall, spread between: part wound.
@@ -1105,7 +1105,7 @@ def going_train() -> None:
     """Centre, third and fourth wheels with their pinions and arbors."""
     shaft(
         "centre arbor",
-        CENTRE,
+        CENTER,
         [
             (1.10, 0.10),
             (1.45, 0.10),
@@ -1119,14 +1119,14 @@ def going_train() -> None:
             (4.46, 0.12),
         ],
     )
-    pinion("centre pinion", CENTRE, (3.00, 3.55), 12, 0.12, gap_angle(CENTRE, BARREL, 12))
+    pinion("centre pinion", CENTER, (3.00, 3.55), 12, 0.12, gap_angle(CENTER, BARREL, 12))
     gear(
         "centre wheel",
         "brass",
-        CENTRE,
+        CENTER,
         (3.75, 3.95),
         watch_teeth(80, 0.09),
-        angle=mesh_angle(CENTRE, THIRD),
+        angle=mesh_angle(CENTER, THIRD),
         bore=0.35,
         holes=crossings(4, 0.78, 3.12, 0.40, 0.26, 0.3, curve=0.18),
     )
@@ -1138,7 +1138,7 @@ def going_train() -> None:
             ((3.70, 4.00), 10, 0.09),
             (0.09, 0.25),
             FOURTH,
-            CENTRE,
+            CENTER,
             (5, 0.62, 2.58, 0.32, 0.20),
         ),
         (
@@ -1366,7 +1366,7 @@ def build() -> dict[str, Any]:
     keyless(made["barrel"])
     named = {
         "barrel": BARREL,
-        "centre": CENTRE,
+        "center": CENTER,
         "third": THIRD,
         "fourth": FOURTH,
         "escape": ESCAPE,

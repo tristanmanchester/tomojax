@@ -26,8 +26,8 @@ def test_box_fills_each_voxel_by_its_overlap(shape):
     # Four sub-columns a voxel across x and y; the overlap along z is exact.
     across = []
     for a, length in enumerate(shape[:0:-1]):
-        centres = (np.arange(4 * length) + 0.5) / 4 - 0.5
-        across.append(((centres >= lo[a]) & (centres <= hi[a])).reshape(length, 4).mean(1))
+        centers = (np.arange(4 * length) + 0.5) / 4 - 0.5
+        across.append(((centers >= lo[a]) & (centers <= hi[a])).reshape(length, 4).mean(1))
     edges = np.arange(shape[0] + 1) - 0.5
     along = np.clip(np.minimum(hi[2], edges[1:]) - np.maximum(lo[2], edges[:-1]), 0, None)
     np.testing.assert_allclose(filled, np.einsum("i,j,k->kji", *across, along), atol=1e-12)

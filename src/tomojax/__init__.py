@@ -26,19 +26,21 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from tomojax._files import export, inspect
     from tomojax._loading import Frames, load, load_frames
     from tomojax._region import RegionEstimate, estimate_region
     from tomojax._scan import Alignment, Reconstruction, Scan
+    from tomojax._simulate import simulate
     from tomojax._workflow import (
         align,
         backproject,
-        estimate_center,
         load_reconstruction,
         project,
         reconstruct,
         reconstruct_slabs,
         save,
     )
+    from tomojax.alignment import AlignConfig
     from tomojax.geometry import (
         ConeBeam,
         ConeGeometry,
@@ -55,6 +57,7 @@ from tomojax._version import __version__
 _configure_jax_allocator_defaults()
 
 _SOURCES = {
+    "AlignConfig": "tomojax.alignment",
     "Projector": "tomojax.recon",
     "Alignment": "tomojax._scan",
     "Frames": "tomojax._loading",
@@ -63,8 +66,10 @@ _SOURCES = {
     "Scan": "tomojax._scan",
     "align": "tomojax._workflow",
     "backproject": "tomojax._workflow",
-    "estimate_center": "tomojax._workflow",
     "estimate_region": "tomojax._region",
+    "export": "tomojax._files",
+    "inspect": "tomojax._files",
+    "simulate": "tomojax._simulate",
     "load": "tomojax._loading",
     "load_frames": "tomojax._loading",
     "load_reconstruction": "tomojax._workflow",
@@ -81,6 +86,7 @@ _SOURCES = {
 }
 
 __all__ = [
+    "AlignConfig",
     "Alignment",
     "ConeBeam",
     "ConeGeometry",
@@ -96,8 +102,9 @@ __all__ = [
     "__version__",
     "align",
     "backproject",
-    "estimate_center",
     "estimate_region",
+    "export",
+    "inspect",
     "load",
     "load_frames",
     "load_reconstruction",
@@ -105,6 +112,7 @@ __all__ = [
     "reconstruct",
     "reconstruct_slabs",
     "save",
+    "simulate",
 ]
 
 

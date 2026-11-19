@@ -56,7 +56,7 @@ EXPERT_MODULES = (
     "tomojax.io.api",
     "tomojax.alignment.api",
 )
-CLI_COMMANDS = ("inspect", "import", "preprocess", "recon", "align", "export", "simulate")
+CLI_COMMANDS = ("inspect", "load", "correct", "reconstruct", "align", "export", "simulate")
 # Files and functions longer than these are recorded with their length, which
 # may only fall: debt inside an already long one counts too.
 LONG_FILE_LINES = 800
@@ -66,7 +66,7 @@ TINY_HELPER_LINES = 5
 # Single-use helpers this many single-use callers deep are one function in pieces.
 HELPER_CHAIN_DEPTH = 2
 # Public functions whose leading optional argument is deliberately positional.
-POSITIONAL_OPTIONS_ALLOWED = {"tomojax.reconstruct": ("method",)}
+POSITIONAL_OPTIONS_ALLOWED = {"tomojax.reconstruct": ("method",), "tomojax.simulate": ("phantom",)}
 # Preprocessor conditionals in kernel source; Python comments carry a space.
 CUDA_SWITCH = re.compile(r"^\s*#if(?:n?def)?\b", re.MULTILINE)
 
@@ -436,8 +436,7 @@ def _cli_flags() -> dict[str, int]:
 
     counts = {}
     for command in CLI_COMMANDS:
-        module_name = {"import": "import_"}.get(command, command)
-        module = importlib.import_module(f"tomojax.cli.{module_name}")
+        module = importlib.import_module(f"tomojax.cli.{command}")
         build = getattr(module, "build_parser", None) or module._build_parser  # noqa: SLF001
         counts[command] = sum(1 for action in options(build()) if action.option_strings)
     return counts

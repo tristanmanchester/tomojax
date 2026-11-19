@@ -27,25 +27,25 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-CASES = ("clean", "centre", "translations", "background", "tilt", "roll", "rotations", "setup")
+CASES = ("clean", "center", "translations", "background", "tilt", "roll", "rotations", "setup")
 
 
 def phantom() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return centres, precision matrices and amplitudes of fixed smooth ellipsoids."""
     rng = np.random.default_rng(9361)
-    centres = rng.uniform(-12, 12, (12, 3))
+    centers = rng.uniform(-12, 12, (12, 3))
     radii = rng.uniform(2.0, 4.0, (12, 3))
     orientation = Rotation.random(12, random_state=rng).as_matrix()
     precision = np.einsum("nij,nj,nkj->nik", orientation, radii**-2, orientation)
-    return centres, precision, rng.uniform(0.02, 0.06, 12)
+    return centers, precision, rng.uniform(0.02, 0.06, 12)
 
 
 def density(points: np.ndarray) -> np.ndarray:
     """Evaluate the continuous phantom in physical xyz coordinates."""
-    centres, precision, amplitudes = phantom()
+    centers, precision, amplitudes = phantom()
     output = np.zeros(points.shape[:-1], np.float64)
-    for centre, matrix, amplitude in zip(centres, precision, amplitudes, strict=True):
-        offset = points - centre
+    for center, matrix, amplitude in zip(centers, precision, amplitudes, strict=True):
+        offset = points - center
         exponent = np.einsum("...i,ij,...j->...", offset, matrix, offset)
         output += amplitude * np.exp(-0.5 * exponent)
     return output
@@ -53,10 +53,10 @@ def density(points: np.ndarray) -> np.ndarray:
 
 def line_integrals(origins: np.ndarray, directions: np.ndarray) -> np.ndarray:
     """Integrate the continuous phantom along unit-direction infinite rays."""
-    centres, precision, amplitudes = phantom()
+    centers, precision, amplitudes = phantom()
     output = np.zeros(origins.shape[:-1], np.float64)
-    for centre, matrix, amplitude in zip(centres, precision, amplitudes, strict=True):
-        offset = origins - centre
+    for center, matrix, amplitude in zip(centers, precision, amplitudes, strict=True):
+        offset = origins - center
         a = np.einsum("...i,ij,...j->...", directions, matrix, directions)
         b = np.einsum("...i,ij,...j->...", directions, matrix, offset)
         c = np.einsum("...i,ij,...j->...", offset, matrix, offset)
@@ -70,19 +70,19 @@ def solid_phantom() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     A point p lies inside ellipsoid k when (p - c_k)' M_k (p - c_k) <= 1.
     """
     rng = np.random.default_rng(4417)
-    centres = rng.uniform(-11, 11, (10, 3))
+    centers = rng.uniform(-11, 11, (10, 3))
     radii = rng.uniform(2.0, 4.5, (10, 3))
     orientation = Rotation.random(10, random_state=rng).as_matrix()
     shape = np.einsum("nij,nj,nkj->nik", orientation, radii**-2, orientation)
-    return centres, shape, rng.uniform(0.02, 0.06, 10)
+    return centers, shape, rng.uniform(0.02, 0.06, 10)
 
 
 def solid_line_integrals(origins: np.ndarray, directions: np.ndarray) -> np.ndarray:
     """Exact chord lengths times density through the solid phantom along unit-direction rays."""
-    centres, shape, densities = solid_phantom()
+    centers, shape, densities = solid_phantom()
     output = np.zeros(origins.shape[:-1], np.float64)
-    for centre, matrix, value in zip(centres, shape, densities, strict=True):
-        offset = origins - centre
+    for center, matrix, value in zip(centers, shape, densities, strict=True):
+        offset = origins - center
         a = np.einsum("...i,ij,...j->...", directions, matrix, directions)
         b = np.einsum("...i,ij,...j->...", directions, matrix, offset)
         c = np.einsum("...i,ij,...j->...", offset, matrix, offset) - 1
@@ -94,7 +94,7 @@ def solid_line_integrals(origins: np.ndarray, directions: np.ndarray) -> np.ndar
 class Rays:
     """Object-frame detector centre, pixel steps and beam direction or source."""
 
-    centre: np.ndarray
+    center: np.ndarray
     u: np.ndarray
     v: np.ndarray
     beam: np.ndarray
@@ -102,14 +102,14 @@ class Rays:
 
     def pixels(self, points: np.ndarray) -> np.ndarray:
         """Project object landmarks onto detector coordinates, including its centre."""
-        points = np.broadcast_to(points, (len(self.centre), *points.shape))
+        points = np.broadcast_to(points, (len(self.center), *points.shape))
         if self.cone:
             normal = np.cross(self.u, self.v)
             direction = points - self.beam[:, None]
-            distance = np.einsum("ni,ni->n", normal, self.centre - self.beam)
+            distance = np.einsum("ni,ni->n", normal, self.center - self.beam)
             scale = distance[:, None] / np.einsum("ni,nki->nk", normal, direction)
             points = self.beam[:, None] + scale[..., None] * direction
-        difference = points - self.centre[:, None]
+        difference = points - self.center[:, None]
         return np.stack(
             [
                 np.einsum("nki,ni->nk", difference, step) / (step * step).sum(1)[:, None]
@@ -123,8 +123,8 @@ class Rays:
         integrate = solid_line_integrals if solid else line_integrals
         u, v = np.meshgrid(np.arange(size) - (size - 1) / 2, np.arange(size) - (size - 1) / 2)
         output = []
-        for centre, us, vs, beam in zip(self.centre, self.u, self.v, self.beam, strict=True):
-            origins = centre + u[..., None] * us + v[..., None] * vs
+        for center, us, vs, beam in zip(self.center, self.u, self.v, self.beam, strict=True):
+            origins = center + u[..., None] * us + v[..., None] * vs
             if self.cone:
                 directions = origins - beam
                 directions /= np.linalg.norm(directions, axis=-1, keepdims=True)
@@ -142,17 +142,17 @@ def physical_rays(
     radians = np.deg2rad(roll)
     u = detector.du * np.array([np.cos(radians), 0, np.sin(radians)])
     v = detector.dv * np.array([-np.sin(radians), 0, np.cos(radians)])
-    centre = np.array([detector.center[0], 96 if cone else 0, detector.center[1]])
+    center = np.array([detector.center[0], 96 if cone else 0, detector.center[1]])
     rotation, shift = poses[:, :3, :3], poses[:, :3, 3]
     inverse = np.swapaxes(rotation, 1, 2)
-    centres = np.einsum("nij,nj->ni", inverse, centre - shift)
+    centers = np.einsum("nij,nj->ni", inverse, center - shift)
     us, vs = (np.einsum("nij,j->ni", inverse, step) for step in (u, v))
     beam = (
         np.einsum("nij,nj->ni", inverse, np.array([0, -192, 0]) - shift)
         if cone
         else inverse[:, :, 1]
     )
-    return Rays(centres, us, vs, beam, cone)
+    return Rays(centers, us, vs, beam, cone)
 
 
 def scan_rays(scan: tj.Scan) -> Rays:
@@ -160,9 +160,9 @@ def scan_rays(scan: tj.Scan) -> Rays:
     if is_cone_beam(scan.geometry):
         frames = view_frames(scan.geometry).reshape(-1, 4, 3)
         return Rays(frames[:, 1], frames[:, 2], frames[:, 3], frames[:, 0], True)
-    poses = np.asarray([scan.geometry.pose_for_view(i) for i in range(len(scan.angles))])
+    poses = np.asarray([scan.geometry.pose_matrix(i) for i in range(len(scan.angles))])
     return physical_rays(
-        poses, scan.detector, roll=float(getattr(scan.geometry, "detector_roll_deg", 0))
+        poses, scan.detector, roll=float(getattr(scan.geometry, "detector_roll", 0))
     )
 
 
@@ -221,7 +221,7 @@ def make_case(
     if geometry == "cone":
         declared = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(192, 288))
     elif geometry == "lamino":
-        declared = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=tilt)
+        declared = tj.LaminographyGeometry(grid, detector, angles, tilt=tilt)
     else:
         declared = tj.ParallelGeometry(grid, detector, angles)
     poses = np.tile(np.eye(4), (views, 1, 1))
@@ -230,8 +230,8 @@ def make_case(
         Rotation.from_euler("z", angles[:, None], degrees=True).as_matrix()
     )
     roll = 0.75 if case in {"roll", "setup"} else 0.0
-    centre = (2 * pitch, -pitch if geometry == "cone" else 0) if case == "centre" else (0, 0)
-    true_detector = tj.Detector(size, size, pitch, pitch, centre)
+    center = (2 * pitch, -pitch if geometry == "cone" else 0) if case == "center" else (0, 0)
+    true_detector = tj.Detector(size, size, pitch, pitch, center)
     if case in {"translations", "background", "setup"}:
         shifts = _drift(views, seed)
         shifts[:, 1] *= geometry == "cone"
@@ -250,7 +250,7 @@ def make_case(
     truth = physical_rays(poses, true_detector, roll=roll, cone=geometry == "cone")
     fit = {
         "clean": ("translations",),
-        "centre": ("centre",),
+        "center": ("center",),
         "translations": ("translations",),
         "background": ("translations",),
         "tilt": ("tilt",),
@@ -271,24 +271,22 @@ def make_case(
     # roll on the detector and every pose difference as per-view corrections: a fit
     # started there must stay.
     if geometry == "cone":
-        beam = tj.ConeBeam(192, 288, detector_roll_deg=roll)
+        beam = tj.ConeBeam(192, 288, detector_roll=roll)
         exact = tj.ConeGeometry(grid, true_detector, angles, beam)
     else:
         exact = (
-            tj.LaminographyGeometry(
-                grid, true_detector, angles, tilt_deg=tilt, detector_roll_deg=roll
-            )
+            tj.LaminographyGeometry(grid, true_detector, angles, tilt=tilt, detector_roll=roll)
             if geometry == "lamino"
-            else tj.ParallelGeometry(grid, true_detector, angles, detector_roll_deg=roll)
+            else tj.ParallelGeometry(grid, true_detector, angles, detector_roll=roll)
         )
     true_scan = tj.Scan(projections, exact, name=f"analytic {case}, true geometry")
-    start = np.asarray([true_scan.geometry.pose_for_view(i) for i in range(views)])
+    start = np.asarray([true_scan.geometry.pose_matrix(i) for i in range(views)])
     local = np.einsum("nji,njk->nik", start[:, :3, :3], poses[:, :3, :3])
     table = np.zeros((views, 6))
     table[:, [1, 0, 2]] = Rotation.from_matrix(local).as_euler("YXZ")
     table[:, [3, 5, 4]] = poses[:, :3, 3] - start[:, :3, 3]
     metadata = {
-        "centre_physical": centre,
+        "center_physical": center,
         "tilt_correction_deg": extra_tilt,
         "roll_deg": roll,
         "true_scan": true_scan.with_poses(table),
@@ -329,7 +327,7 @@ def run_case(
     before, _, _ = score(scan_rays(scan), truth)
     start = time.perf_counter()
     result = tj.align(scan, fit=matching if fit is None else fit, grid=scan.grid)
-    volume = np.asarray(result.volume)
+    volume = np.asarray(result.image)
     elapsed = time.perf_counter() - start
     after, worst, gauge = score(scan_rays(result.scan), truth)
     grid = result.grid
@@ -367,7 +365,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--views", type=int, default=60)
     parser.add_argument("--grid-size", type=int, default=24)
     parser.add_argument(
-        "--fit", nargs="+", choices=("centre", "translations", "tilt", "roll", "rotations")
+        "--fit", nargs="+", choices=("center", "translations", "tilt", "roll", "rotations")
     )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)

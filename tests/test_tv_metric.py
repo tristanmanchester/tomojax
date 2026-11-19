@@ -70,10 +70,10 @@ def test_profiled_residual_is_weighted_nuisance_minimum(weighted):
     )
 
 
-@pytest.mark.parametrize(("model", "batch"), [("joseph", 3), ("ray", 1), ("ray", 3)])
-def test_fista_contrast_matches_profiled_gradient_and_offset_invariance(model, batch):
+@pytest.mark.parametrize("batch", [1, 3])
+def test_fista_contrast_matches_profiled_gradient_and_offset_invariance(batch):
+    from tomojax.forward import project_joseph
     from tomojax.recon import FistaConfig, fista_tv
-    from tomojax.recon.fista_tv import grad_data_term
 
     grid, detector = Grid(4, 3, 2, 0.7, 0.8, 0.9), Detector(5, 4, 0.6, 0.7)
     geometry = ParallelGeometry(grid, detector, np.linspace(0, 170, 7))
@@ -83,7 +83,6 @@ def test_fista_contrast_matches_profiled_gradient_and_offset_invariance(model, b
         tv_weight=0,
         lipschitz=100,
         backend="jax",
-        projector_model=model,
         views_per_batch=batch,
         data_term="per_view_contrast",
     )
@@ -92,22 +91,13 @@ def test_fista_contrast_matches_profiled_gradient_and_offset_invariance(model, b
     shifted, _ = fista_tv(geometry, grid, detector, y + offset, config=cfg)
     np.testing.assert_allclose(x, shifted, rtol=3e-5, atol=2e-8)
     assert info["background_profiled"] and info["effective_tv_weight"] == 0
-    if model == "ray":
-        gradient, _ = grad_data_term(
-            geometry,
-            grid,
-            detector,
-            jnp.asarray(y),
-            jnp.zeros_like(x),
-            data_term="per_view_contrast",
-            views_per_batch=batch,
-        )
-        np.testing.assert_allclose(x, -gradient / 100, rtol=1e-6, atol=2e-8)
-    else:
-        streamed, _ = fista_tv(
-            geometry, grid, detector, y, config=replace(cfg, stream_projections=True)
-        )
-        np.testing.assert_allclose(x, streamed, rtol=1e-6, atol=2e-8)
+    # From zero, one step of 1/L moves along A^T of the data less each view's mean.
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(7)])
+    _, transpose = jax.vjp(lambda v: project_joseph(v, poses, grid, detector), jnp.zeros_like(x))
+    centred = y - y.mean(axis=(1, 2), keepdims=True)
+    np.testing.assert_allclose(x, transpose(jnp.asarray(centred))[0] / 100, rtol=1e-5, atol=2e-8)
+    streamed, _ = fista_tv(geometry, grid, detector, y, config=replace(cfg, stream=True))
+    np.testing.assert_allclose(x, streamed, rtol=1e-6, atol=2e-8)
 
 
 def test_metric_cone_segments_and_pose_wrappers_use_object_plane_area():
@@ -134,11 +124,11 @@ def test_metric_cone_segments_and_pose_wrappers_use_object_plane_area():
             assert metric.weight_over_contrast > 0
 
 
-@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
+@pytest.mark.parametrize("regularizer", ["tv", "huber_tv"])
 @pytest.mark.parametrize("weight", [0, 0.001, None])
 @pytest.mark.parametrize("support", [None, np.asarray([0.5, 0, 0.7, 1], np.float32)])
 def test_public_fista_physical_metric_covaries_with_units_and_amplitude(
-    regulariser, weight, support
+    regularizer, weight, support
 ):
     from tomojax.recon import FistaConfig, fista_tv
 
@@ -148,7 +138,7 @@ def test_public_fista_physical_metric_covaries_with_units_and_amplitude(
     cfg = FistaConfig(
         iterations=5,
         tv_weight=weight,
-        regulariser=regulariser,
+        regularizer=regularizer,
         support=support,
         backend="jax",
         data_term="per_view_contrast",

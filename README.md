@@ -48,7 +48,7 @@ uv venv --python 3.12
 uv pip install --python .venv/bin/python "tomojax[cpu]"
 
 .venv/bin/tomojax simulate -o synthetic.nxs --size 32 --n-views 60
-.venv/bin/tomojax recon synthetic.nxs -o recon.nxs
+.venv/bin/tomojax reconstruct synthetic.nxs -o recon.nxs
 .venv/bin/tomojax inspect recon.nxs --preview previews
 ```
 
@@ -58,8 +58,9 @@ instead of installing from the package index, then run the same three commands.
 
 `inspect` describes the file, checks it and ends with `Valid: yes`. Open
 `previews/slice_x.png`, `slice_y.png`, and `slice_z.png`, the volume's central
-slices (`projection.png` is the central projection). `recon.nxs` contains the
-projections, volume, and geometry metadata. The PNGs are display-scaled
+slices. `recon.nxs` contains the volume, its geometry and the reconstruction's
+record, and names the projections it came from (`--include-scan` keeps them too).
+The PNGs are display-scaled
 previews; use the stored volume for quantitative analysis. This CLI example
 automatically selects Fourier inversion for its axial parallel geometry.
 
@@ -99,11 +100,11 @@ tj.save("recon.nxs", tj.reconstruct(result.scan))
 ```
 
 The command-line options use the same names: the CGLS line is
-`tomojax recon scan.nxs -o recon.nxs --method cgls --iterations 50`, and the
+`tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 50`, and the
 alignment `tomojax align scan.nxs -o aligned.nxs --fit translations rotations`.
 Expert settings are a configuration of the method's own class from
 `tomojax.recon`,
-`tj.reconstruct(scan, "fista", config=FistaConfig(regulariser="huber_tv"))`,
+`tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv"))`,
 or the same fields in a TOML file given to `--config`. Alignment has one model
 argument, `fit=`, plus an optional `grid=`.
 

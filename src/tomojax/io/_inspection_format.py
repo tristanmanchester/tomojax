@@ -83,9 +83,9 @@ def _angles_line(angles: Mapping[str, Any]) -> str:
         return "Angle coverage: not found"
     return (
         "Angle coverage: "
-        f"{_fmt_value(angles['coverage_deg'])} deg "
-        f"(min={_fmt_value(angles['min_deg'])}, "
-        f"max={_fmt_value(angles['max_deg'])}, "
+        f"{_fmt_value(angles['coverage'])} deg "
+        f"(min={_fmt_value(angles['min'])}, "
+        f"max={_fmt_value(angles['max'])}, "
         f"count={angles['count']}, "
         f"units={_fmt_value(angles['units'])})"
     )

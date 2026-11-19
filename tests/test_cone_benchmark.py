@@ -119,7 +119,7 @@ def test_bounded_cgls_matches_native_astra(iterations, resident):
     assert cp.get_default_memory_pool().total_bytes() == pool_bytes
 
 
-def test_centred_tigre_geometry_preserves_physical_rays():
+def test_centered_tigre_geometry_preserves_physical_rays():
     pytest.importorskip("tigre")
     from compare_cone import astra_vectors, setup, tigre_geometry
     from scipy.spatial.transform import Rotation
@@ -133,7 +133,7 @@ def test_centred_tigre_geometry_preserves_physical_rays():
 
 
 @pytest.mark.gpu
-def test_centred_tigre_fdk_accepts_benchmark_geometry():
+def test_centered_tigre_fdk_accepts_benchmark_geometry():
     pytest.importorskip("tigre")
     from compare_cone import make_case, run_tigre, setup
 

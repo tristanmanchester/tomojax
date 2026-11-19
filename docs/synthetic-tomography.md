@@ -8,7 +8,7 @@ first; all commands below run from the checkout root.
 
 ```bash
 uv run --no-sync tomojax simulate -o synthetic.nxs --size 32 --n-views 60
-uv run --no-sync tomojax recon synthetic.nxs -o recon.nxs
+uv run --no-sync tomojax reconstruct synthetic.nxs -o recon.nxs
 uv run --no-sync tomojax inspect recon.nxs --preview previews
 ```
 
@@ -25,10 +25,10 @@ shapes (`grid`, `detector`), are keys of a `--config` TOML file;
 ## Try tilted geometry
 
 ```bash
-uv run --no-sync tomojax simulate -o tilted.nxs --geometry lamino --tilt-deg 30 \
+uv run --no-sync tomojax simulate -o tilted.nxs --geometry lamino --tilt 30 \
   --size 32 --n-views 60
-uv run --no-sync tomojax recon tilted.nxs -o tilted-recon.nxs \
-  --method fista --iterations 50 --tv-weight 0.005 --nonnegative --roi off
+uv run --no-sync tomojax reconstruct tilted.nxs -o tilted-recon.nxs \
+  --method fista --iterations 50 --tv-weight 0.005 --nonnegative --region off
 uv run --no-sync tomojax inspect tilted-recon.nxs --preview tilted-previews
 ```
 
@@ -58,7 +58,7 @@ scan = tj.Scan(tj.project(geometry, shepp_logan_3d(32, 32, 32)), geometry)
 volume = tj.reconstruct(scan, "cgls", iterations=24).volume
 ```
 
-The method and keywords of `tj.reconstruct` match the `tomojax recon` options:
+The method and keywords of `tj.reconstruct` match the `tomojax reconstruct` options:
 `"cgls"`, `iterations=`, `tv_weight=` and `nonnegative=` are `--method cgls`,
 `--iterations`, `--tv-weight` and `--nonnegative`.
 

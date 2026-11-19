@@ -25,12 +25,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("meshes", type=Path)
     parser.add_argument("out", type=Path)
-    parser.add_argument("--centre", type=float, nargs=3, required=True)
+    parser.add_argument("--center", type=float, nargs=3, required=True)
     parser.add_argument("--extent", type=float, nargs=3, required=True)
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
-    bpy.ops.mesh.primitive_cube_add(size=1, location=args.centre)
+    bpy.ops.mesh.primitive_cube_add(size=1, location=args.center)
     box = bpy.context.object
     box.dimensions = args.extent
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
@@ -53,7 +53,7 @@ def main() -> None:
                 bpy.ops.wm.stl_export(filepath=str(out / path.name), export_selected_objects=True)
             bpy.data.objects.remove(obj, do_unlink=True)
     (args.out / "partition.json").write_text(
-        json.dumps({"centre_mm": args.centre, "extent_mm": args.extent, "faces": records}, indent=2)
+        json.dumps({"center_mm": args.center, "extent_mm": args.extent, "faces": records}, indent=2)
         + "\n"
     )
 

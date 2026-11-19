@@ -18,10 +18,10 @@ def test_laminography_bulk_poses_match_scalar(tilt, axis):
     grid = Grid(5, 4, 3, 1.0, 1.0, 1.0)
     detector = Detector(7, 5, 1.0, 1.0)
     geometry = LaminographyGeometry(
-        grid, detector, [-180, 0, 1e-7, 12.3, 137.2, 359.9], tilt_deg=tilt, tilt_about=axis
+        grid, detector, [-180, 0, 1e-7, 12.3, 137.2, 359.9], tilt=tilt, tilt_about=axis
     )
     for count in (1, 6):
-        expected = np.asarray([geometry.pose_for_view(i) for i in range(count)], dtype=np.float32)
+        expected = np.asarray([geometry.pose_matrix(i) for i in range(count)], dtype=np.float32)
         np.testing.assert_allclose(
             stack_view_poses(geometry, count), expected, rtol=2e-6, atol=1e-7
         )
@@ -36,8 +36,8 @@ def test_parallel_subclass_pose_override_and_traced_parameters_are_preserved():
             super().__init__(grid, detector, [13.0, 78.0])
             self.shift = shift
 
-        def pose_for_view(self, i):
-            return jnp.asarray(super().pose_for_view(i)).at[0, 3].set(self.shift)
+        def pose_matrix(self, i):
+            return jnp.asarray(super().pose_matrix(i)).at[0, 3].set(self.shift)
 
     def poses(shift):
         return stack_view_poses(ShiftedParallel(shift), 2)
@@ -62,14 +62,14 @@ def test_geometry_wrappers_survive_pickling():
             [[0.01, -0.02, 0.03, 0.4, -0.3, 0.2], [-0.02, 0.01, 0.05, -0.1, 0.25, 0.0]],
             np.float32,
         ),
-        "detector_roll_deg": 0.5,
+        "detector_roll": 0.5,
     }
-    _, _, wrapped = build_geometry_from_dataset_metadata(meta, poses=True)
+    _, _, wrapped = build_geometry_from_dataset_metadata(meta, apply_poses=True)
     again = pickle.loads(pickle.dumps(wrapped))  # as for a worker process
     assert type(again) is type(wrapped) and list(np.asarray(again.angles)) == [0.0, 90.0]
     # The corrected poses and the rolled detector lattice survive, not just the wrapper.
     for view in range(2):
-        np.testing.assert_array_equal(again.pose_for_view(view), wrapped.pose_for_view(view))
+        np.testing.assert_array_equal(again.pose_matrix(view), wrapped.pose_matrix(view))
         before, after = wrapped.rays_for_view(view)[0], again.rays_for_view(view)[0]
         assert after(3, 1) == before(3, 1) and after(0, 2) == before(0, 2)
-    assert not np.allclose(wrapped.pose_for_view(1), np.eye(4))
+    assert not np.allclose(wrapped.pose_matrix(1), np.eye(4))

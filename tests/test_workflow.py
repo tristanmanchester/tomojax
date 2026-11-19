@@ -63,7 +63,7 @@ def _geometries(
     return {
         "parallel": tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 40, endpoint=False)),
         "lamino": tj.LaminographyGeometry(
-            grid, detector, np.linspace(0, 360, 40, endpoint=False), tilt_deg=30
+            grid, detector, np.linspace(0, 360, 40, endpoint=False), tilt=30
         ),
         "cone": tj.ConeGeometry(
             grid, detector, np.linspace(0, 360, 60, endpoint=False), tj.ConeBeam(3 * n, 4.5 * n)
@@ -126,9 +126,9 @@ def test_reconstruct_takes_the_methods_configuration_under_its_keywords() -> Non
 
     geometry = _geometries(16)["parallel"]
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(16))), geometry)
-    config = FistaConfig(regulariser="huber_tv", huber_delta=0.05, tv_weight=1e-3, iterations=4)
+    config = FistaConfig(regularizer="huber_tv", huber_delta=0.05, tv_weight=1e-3, iterations=4)
     recon = tj.reconstruct(scan, "fista", config=config)
-    assert recon.info["config"] == config and recon.info["regulariser"] == "huber_tv"
+    assert recon.info["config"] == config and recon.info["regularizer"] == "huber_tv"
     # A keyword replaces its field; the config's others stay.
     recon = tj.reconstruct(scan, "fista", config=config, iterations=6, nonnegative=True)
     expected = replace(config, iterations=6, nonnegative=True)
@@ -169,7 +169,7 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     if isinstance(geometry, tj.ConeGeometry):
         geometry = tj.ConeGeometry(
             geometry.grid, geometry.detector, geometry.angles,
-            tj.ConeBeam(24, 36, detector_roll_deg=0.4, axis_offset=0.7),
+            tj.ConeBeam(24, 36, detector_roll=0.4, axis_offset=0.7),
         )  # fmt: skip
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(8))), geometry, name="part")
     tj.save(tmp_path / "scan.nxs", scan)
@@ -184,10 +184,14 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     tj.save(tmp_path / "recon.nxs", recon)
     with h5py.File(tmp_path / "recon.nxs") as handle:
         assert handle["entry/processing/tomojax/volume"].attrs["long_name"] == "volume"
-    back = tj.load_reconstruction(tmp_path / "recon.nxs")
+    with pytest.warns(UserWarning, match="without its scan"):
+        back = tj.load_reconstruction(tmp_path / "recon.nxs")
     np.testing.assert_allclose(back.volume, np.asarray(recon.volume), rtol=1e-6, atol=1e-6)
     assert back.method == "fbp" and back.grid == recon.grid
-    assert back.info == {"config": asdict(recon.info["config"])}  # the configuration's fields
+    # The configuration's fields, and what names the projections the volume came from.
+    assert back.info.keys() == {"config", "source"}
+    assert back.info["config"] == asdict(recon.info["config"])
+    assert back.info["source"]["shape"] == list(np.shape(loaded.projections))
     with pytest.raises(FileNotFoundError, match="no such file"):
         tj.load(tmp_path / "missing.nxs")
 
@@ -314,15 +318,10 @@ def test_single_slice_operator_output_feeds_scan_and_reconstruction():
 def test_a_saved_alignment_is_not_labelled_with_an_earlier_reconstruction(tmp_path: Path) -> None:
     geometry = _geometries(8)["parallel"]
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(8))), geometry)
-    tj.save(tmp_path / "cgls.nxs", tj.reconstruct(scan, "cgls", iterations=2))
+    tj.save(tmp_path / "cgls.nxs", tj.reconstruct(scan, "cgls", iterations=2), include_scan=True)
     loaded = tj.load(tmp_path / "cgls.nxs")
-    poses = np.zeros((len(loaded.angles), 6), np.float32)
     aligned = tj.Alignment(
-        volume=np.ones((8, 8, 8), np.float32),
-        grid=loaded.grid,
-        scan=loaded,
-        poses=poses,
-        info={"levels": []},
+        loaded, {"levels": []}, image=np.ones((8, 8, 8), np.float32), grid=loaded.grid
     )
     tj.save(tmp_path / "aligned.nxs", aligned)
     back = tj.load_reconstruction(tmp_path / "aligned.nxs")
@@ -391,3 +390,50 @@ def test_following_each_loading_error_loads_the_scan(tmp_path: Path) -> None:
     assert named(caught) == {"geometry"} and "tomojax.load" in str(caught.value)
     result = tj.reconstruct(tj.load(gda, geometry=geometry))
     assert np.isfinite(np.asarray(result.volume)).all()
+
+
+def test_a_saved_reconstruction_names_its_projections_and_keeps_them_only_when_asked(
+    tmp_path: Path,
+) -> None:
+    grid, detector = tj.Grid(8, 8, 4, 1, 1, 1), tj.Detector(10, 6, 1, 1)
+    geometry = tj.LaminographyGeometry(grid, detector, np.linspace(0, 360, 6, endpoint=False), 30)
+    projections = np.random.default_rng(3).random((6, 6, 10)).astype(np.float32)
+    recon = tj.reconstruct(tj.Scan(projections, geometry), "cgls", iterations=2)
+    tj.save(tmp_path / "recon.nxs", recon)
+    tj.save(tmp_path / "with-scan.nxs", recon, include_scan=True)
+    with h5py.File(tmp_path / "recon.nxs") as file:
+        assert "/entry/instrument/detector/data" not in file
+
+    with pytest.warns(UserWarning, match="without its scan"):
+        alone = tj.load_reconstruction(tmp_path / "recon.nxs")
+    assert alone.scan is None and alone.grid == recon.grid and alone.method == "cgls"
+    np.testing.assert_array_equal(alone.volume, np.asarray(recon.volume))
+    source = alone.info["source"]
+    assert source["shape"] == [6, 6, 10] and source["bytes"] == projections.nbytes
+    with pytest.raises(ValueError, match="load_reconstruction"):
+        tj.load(tmp_path / "recon.nxs")
+
+    whole = tj.load_reconstruction(tmp_path / "with-scan.nxs")
+    assert whole.scan is not None and whole.info["source"] == source
+    np.testing.assert_array_equal(np.asarray(whole.scan.projections), projections)
+    # A reconstruction loaded without its scan saves again, still naming its projections.
+    tj.save(tmp_path / "again.nxs", alone)
+    with pytest.warns(UserWarning, match="without its scan"):
+        assert tj.load_reconstruction(tmp_path / "again.nxs").info["source"] == source
+    with pytest.raises(ValueError, match="without its scan"):
+        tj.save(tmp_path / "none.nxs", alone, include_scan=True)
+
+
+def test_the_commands_api_counterparts_simulate_inspect_and_export(tmp_path: Path) -> None:
+    truth = tj.simulate("sphere", size=8, n_views=6, seed=1)
+    assert truth.scan is not None and np.shape(truth.volume) == (8, 8, 8)
+    assert truth.scan.projections.shape == (6, 8, 8)
+    tj.save(tmp_path / "truth.nxs", truth, include_scan=True)
+    report = tj.inspect(tmp_path / "truth.nxs")
+    assert report["valid"] and report["issues"] == [] and report["angles"]["count"] == 6
+    assert report["volume"]["found"]
+    tj.export(tmp_path / "slices", truth)
+    assert len(list((tmp_path / "slices").glob("slice_*.tif"))) == 8
+    tj.export(tmp_path / "truth.raw", truth, dtype="uint16", range=(0.0, 1.0))
+    assert (tmp_path / "truth.raw").stat().st_size == 8 * 8 * 8 * 2
+    assert not list(tmp_path.glob(".*partial*"))  # each file moved on whole

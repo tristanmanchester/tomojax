@@ -208,12 +208,12 @@ def _distinct_view_weights(
 
 def _cosine_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
     """``(nv, nu)`` cosine of each pixel's ray to the detector normal."""
-    centre, u_dir, v_dir = beam.detector_frame(detector)
+    center, u_dir, v_dir = beam.detector_frame(detector)
     normal = np.cross(u_dir, v_dir)
     normal /= np.linalg.norm(normal)
     u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
     v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
-    pixel = centre + u[None, :, None] * u_dir + v[:, None, None] * v_dir
+    pixel = center + u[None, :, None] * u_dir + v[:, None, None] * v_dir
     ray = pixel - beam.source()
     return np.abs(ray @ normal) / np.linalg.norm(ray, axis=-1)
 
@@ -224,8 +224,8 @@ def _cosines(parts: tuple[tuple[int | None, ConeBeam, Detector], ...], n_views: 
         return np.asarray(_cosine_weights(parts[0][1], parts[0][2]), np.float32)
     values = []
     for count, beam, detector in parts:
-        centre, u, v = beam.detector_frame(detector)
-        ray = centre - beam.source()
+        center, u, v = beam.detector_frame(detector)
+        ray = center - beam.source()
         coordinates = np.array([ray @ u, ray @ v, abs(ray @ np.cross(u, v))], np.float32)
         values.append(np.broadcast_to(coordinates, (n_views if count is None else count, 3)))
     return np.concatenate(values)[..., None]
@@ -636,12 +636,12 @@ def _slab_rows(
     low, high, start = math.inf, -math.inf, 0
     for count, beam, own in parts:
         stop = len(poses) if count is None else start + count
-        centre, u_dir, v_dir = beam.detector_frame(own)
+        center, u_dir, v_dir = beam.detector_frame(own)
         normal = np.cross(u_dir, v_dir)
         source = beam.source()
         ray = world[start:stop] - source
-        hit = source + ray * (((centre - source) @ normal) / (ray @ normal))[..., None]
-        rows = ((hit - centre) @ v_dir) / own.dv + (own.nv - 1) / 2
+        hit = source + ray * (((center - source) @ normal) / (ray @ normal))[..., None]
+        rows = ((hit - center) @ v_dir) / own.dv + (own.nv - 1) / 2
         low, high, start = min(low, float(rows.min())), max(high, float(rows.max())), stop
     # Keep one measured border row even when the slab is entirely outside.
     # Backprojection still samples zero beyond that row, as with the full
@@ -653,7 +653,7 @@ def _slab_rows(
 
 def _windowable(beam: ConeBeam) -> bool:
     """Whether a band of detector rows is itself a detector of ``beam`` (no pitch or yaw)."""
-    return float(beam.detector_pitch_deg) == 0.0 and float(beam.detector_yaw_deg) == 0.0
+    return float(beam.detector_pitch) == 0.0 and float(beam.detector_yaw) == 0.0
 
 
 def _slab_grid(grid: Grid, z0: int, z1: int) -> Grid:

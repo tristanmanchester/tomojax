@@ -64,7 +64,6 @@ def test_strict_cuda_preflight_fails_before_importing_jax(
     payload = cast("dict[str, object]", json.loads(capsys.readouterr().out))
     assert payload == {
         "cuda_driver": preflight,
-        "cuda_interpret": "not_run",
         "cuda_real": "failed_cuda_driver",
     }
 
@@ -92,5 +91,4 @@ def test_strict_cuda_fails_when_jax_reports_cpu_backend(
         "library": "libcuda.so.1",
         "cuInit": 0,
     }
-    assert payload["cuda_interpret"] == "passed"
     assert payload["cuda_real"] == "failed_cpu_backend"

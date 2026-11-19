@@ -296,7 +296,7 @@ def test_host_slabs_reconstruct_laminography_like_fbp(depth, backend):
         pytest.skip("requires CUDA")
     grid, detector, geometry, data = scan()
     angles = np.linspace(0.0, 360.0, 5, endpoint=False) + 7.0
-    tilted = LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+    tilted = LaminographyGeometry(grid, detector, angles, tilt=30)
     reference = np.asarray(fbp(tilted, grid, detector, data, config=FBPConfig(backend="jax")))
     actual = fbp_host(
         tilted,
@@ -313,7 +313,7 @@ def test_host_slabs_reconstruct_laminography_like_fbp(depth, backend):
 def test_host_slabs_reject_nonfinite_samples(tilted):
     grid, detector, geometry, data = scan()
     if tilted:
-        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
+        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt=30)
     data[0, 4, 2] = np.nan
     with pytest.raises(ValueError, match="finite"):
         fbp_host(geometry, grid, detector, data)
@@ -340,7 +340,7 @@ def test_host_slabs_reject_incompatible_storage(invalid):
 def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted, backend, order):
     grid, detector, geometry, data = scan(kind)
     if tilted:
-        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=30)
+        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt=30)
     config = FBPHostConfig(slices_per_batch=4, views_per_batch=3, backend=backend)
     expected = fbp_host(geometry, grid, detector, data, config=config)
     module = importlib.import_module("tomojax.recon.fbp_host")
@@ -412,15 +412,15 @@ def test_fbp_only_hoists_rows_for_the_exact_builtin_parallel_geometry(
     grid, detector, geometry, data = scan("integer" if kind == "integer" else "fractional")
 
     class Translated(ParallelGeometry):
-        def pose_for_view(self, i):
-            pose = np.asarray(super().pose_for_view(i))
+        def pose_matrix(self, i):
+            pose = np.asarray(super().pose_matrix(i))
             pose[2, 3] = 0.23 * i
             return tuple(map(tuple, pose))
 
     if kind == "translated":
         geometry = Translated(grid, detector, geometry.angles)
     elif kind == "lamino":
-        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt_deg=17)
+        geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt=17)
     reference = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend="jax")))
     plan = module._plan
     modes = []
@@ -443,7 +443,7 @@ def test_general_slabs_release_outputs_and_retry_only_unfinished_slab(monkeypatc
 
     module = importlib.import_module("tomojax.recon.fbp_host")
     grid, detector, base, data = scan()
-    geometry = LaminographyGeometry(grid, detector, base.angles, tilt_deg=30)
+    geometry = LaminographyGeometry(grid, detector, base.angles, tilt=30)
     cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=4)
     expected = fbp_host(geometry, grid, detector, data, config=cfg)
     original, calls, previous = module._fbp_from_host, [], [lambda: None]

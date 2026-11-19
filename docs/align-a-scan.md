@@ -18,7 +18,7 @@ that you have an image to compare with.
 
 | What you see | Likely error | Fit |
 | --- | --- | --- |
-| Point-like features drawn as rings or arcs, the same in every slice | The rotation centre | `fit="centre"` |
+| Point-like features drawn as rings or arcs, the same in every slice | The rotation centre | `fit="center"` |
 | Doubled or smeared edges that vary from feature to feature | Drift or sudden slips of the sample between views | `fit="translations"` (the default) |
 | Sharp slices at the detector's centre row, with haloes and doubled edges that grow towards the top and bottom of the volume | The rotation axis or the detector rolled about the beam | `fit=("translations", "roll")` |
 | In laminography, doubling that remains after translations, worst far from the rotation axis | The laminography tilt | `fit=("translations", "tilt")` |
@@ -29,7 +29,7 @@ import tomojax as tj
 
 scan = tj.load("corrected.nxs")
 result = tj.align(scan)                                  # translations
-result = tj.align(scan, fit="centre")                    # the rotation centre only
+result = tj.align(scan, fit="center")                    # the rotation center only
 result = tj.align(scan, fit=("translations", "roll"))    # add the axis roll
 tj.save("aligned.nxs", result)
 recon = tj.reconstruct(result.scan, "cgls")              # result.scan carries the corrections
@@ -51,7 +51,7 @@ selected parameters, for parallel, laminography and cone data.
 
 | Name | Fitted parameters | Units and frame |
 | --- | --- | --- |
-| `centre` | One detector-u centre, plus detector-v for cone data | Physical detector-centre lengths, in the same units as `Detector.center` |
+| `center` | One detector-u centre, plus detector-v for cone data | Physical detector-centre lengths, in the same units as `Detector.center` |
 | `tilt` | One axis or laminography tilt correction shared by every view | Degrees; positive tilt leans the rotation axis towards the beam |
 | `roll` | One detector roll correction shared by every view | Degrees, right-handed about the detector normal: positive turns u towards v, so a point above the centre projects towards +u |
 | `translations` | Two translations per view; three for cone data | Physical lab-frame lengths: across the beam and vertically, plus along the beam for cone |
@@ -67,18 +67,19 @@ out. The numbers under each panel are the pose error in detector pixels and the 
 A wrong rotation centre turns every small, bright feature into a ring. The rings are the same size
 everywhere in the slice, because every view is displaced by the same amount.
 
-![The balance wheel with a 6-pixel centre error: each screw is drawn as a ring. After fit="centre" the screws are points again, matching the true geometry.](images/alignment-ladder-centre.png)
+![The balance wheel with a 6-pixel centre error: each screw is drawn as a ring. After fit="center" the screws are points again, matching the true geometry.](images/alignment-ladder-centre.png)
 
-`fit="centre"` estimates one number for parallel and laminography data and is the fastest fit:
+`fit="center"` estimates one number for parallel and laminography data and is the fastest fit:
 13 s here. Fit the centre first on a new instrument or after any change to the detector or stage.
 
-For cone data, `"centre"` also estimates the detector-v centre. The data determine it only weakly:
+For cone data, `"center"` also estimates the detector-v centre. The data determine it only weakly:
 a vertical detector offset looks almost the same as moving the image vertically, so the fit may
 leave the v centre near its starting value and move the image instead. The reconstruction is
 still consistent with the data; do not read the fitted v centre as an instrument calibration.
 
-`tj.estimate_center(scan)` is also available as a projection-only preview for axial parallel scans
-with opposing views. It does not reconstruct, and it estimates neither tilt, roll nor drift.
+`tj.align(scan, fit="center", method="opposite-views")` estimates the centre from near-opposite
+views of an axial parallel scan, without an image: a quick estimate that does not reconstruct, and
+estimates neither tilt, roll nor drift. Its result has no `image`.
 
 ## Drift and slips
 
@@ -96,7 +97,7 @@ short where the scale is large.
 
 The default, `fit="translations"`, removes the drift and slips in this example to 0.008 px in
 21 s. It also absorbs a centre error in parallel and laminography scans, so you do not need to fit
-the centre separately first. If you request `"centre"` and `"translations"` together, the
+the centre separately first. If you request `"center"` and `"translations"` together, the
 translations are given zero mean: a common translation and a centre offset describe the same
 parallel-ray geometry, and the data cannot tell them apart.
 
@@ -179,16 +180,17 @@ translation fit.
 
 1. Compare the aligned reconstruction with your unaligned one and with the previous setting's
    result. An extra parameter should remove a visible artefact; if it does not, use the simpler fit.
-2. Inspect the estimated values. `result.info["calibration"]` holds the fitted global values under
-   the names used in `fit=`, and `result.poses` holds the per-view correction table. The returned
-   `result.scan` carries both, so use it for reconstruction and saving. Each global value is the
-   final setting, not a change, and passes straight to a constructor in another script:
+2. Inspect the estimated values. `result.info["calibration"]` holds each fitted global under the
+   name used in `fit=`, and `result.poses` holds the per-view correction table. The returned
+   `result.scan` carries both, so use it for reconstruction and saving. Each global's `"value"` is
+   the final setting and passes straight to a constructor in another script; its `"change"` is how
+   far the fit moved it:
 
    | Value | Parallel or laminography data | Cone data |
    | --- | --- | --- |
-   | `centre` | `Detector(..., center=(centre, v))` | `Detector(..., center=centre)` |
-   | `roll` | `ParallelGeometry(..., detector_roll_deg=roll)`, or the same keyword on `LaminographyGeometry` | `ConeBeam(..., detector_roll_deg=roll)` |
-   | `tilt` | `LaminographyGeometry(..., tilt_deg=tilt)`: a tilted parallel scan is a laminography scan | `ConeGeometry(..., axis_unit=(0, sin(tilt), cos(tilt)))` |
+   | `center` | `Detector(..., center=(center, v))` | `Detector(..., center=center)` |
+   | `roll` | `ParallelGeometry(..., detector_roll=roll)`, or the same keyword on `LaminographyGeometry` | `ConeBeam(..., detector_roll=roll)` |
+   | `tilt` | `LaminographyGeometry(..., tilt=tilt)`: a tilted parallel scan is a laminography scan | `ConeGeometry(..., axis_unit=(0, sin(tilt), cos(tilt)))` |
 
 3. Check that the global values are physically plausible: a tilt correction of several degrees, or
    per-view rotations of more than a fraction of a degree, usually means the model is wrong rather
@@ -238,13 +240,14 @@ translation fit.
    print(held_out_error(np.zeros((len(index), 6))), held_out_error(poses))
    ```
 
-`calibration` reports final global values: `centre` is a scalar for parallel data and a `(u, v)`
-pair for cone data; `tilt` is the signed lab inclination `atan2(axis_y, axis_z)` in degrees; `roll`
-is the detector angle from u towards v in degrees. Only requested globals appear. For a segmented
-cone scan whose starting calibrations differ, their final values are listed in segment order.
-`info["corrections"]` records the fitted increments, with centre increments in detector pixels and
-angular increments in degrees. Per-view tables use `(alpha, beta, phi, x, z, y)`; rotations are in
-radians and translations in physical lengths.
+`calibration` has one entry for each requested global, `{"value": ..., "change": ...}`. The value
+is final: `center` is a scalar for parallel data and a `(u, v)` pair for cone data; `tilt` is the
+signed lab inclination `atan2(axis_y, axis_z)` in degrees; `roll` is the detector angle from u
+towards v in degrees. For a segmented cone scan whose starting calibrations differ, the final values
+are listed in segment order. The change is the fitted increment, in detector pixels for the centre
+and degrees for the angles. Per-view tables use `(alpha, beta, phi, x, z, y)`; rotations are in
+radians and translations in physical lengths. `info["report"]` gives the same split:
+`"calibration"` for the globals' changes and `"poses"` for the size of the per-view corrections.
 
 The fit works on a bounded grid of at most 16 million voxels and a detector of at most 320 pixels a
 side, binned so that each working pixel is no wider than a voxel at the object. Supplying `grid=`
@@ -258,11 +261,55 @@ cannot explain, and the data are never modified. The shared level itself stays w
 an image can produce it (a faint disc, brightest at its rim, whose every view is one constant),
 so removing it too would let the fit invent that disc and drag the views toward their nominal
 positions. `info["offsets"]` reports each view's fitted pair relative to the shared level. `result.scan` keeps the scan's grid, so
-reconstructing it gives the full-resolution image; `result.volume` is the fit's own image, on the
+reconstructing it gives the full-resolution image; `result.image` is the fit's own image, on the
 bounded working grid `result.grid`, not a final-resolution reconstruction. The fit compares model
 and data through [1, 2, 1] / 4 along the detector's rows and columns, because at the Nyquist
 frequency a sampled model cannot be right; nothing then constrains that band, so the fit's image
 carries texture at the grid's finest scale that the object does not have.
+
+## Settings
+
+`tj.align` takes the five settings most runs change as keywords, `iterations`,
+`image_iterations`, `tolerance`, `interpolation` and `resolution`, and every setting through
+`config=tj.AlignConfig(...)`. A keyword replaces the field of the same name.
+`result.info["config"]` records the values a call used, with the ones that depend on the scan
+resolved. On the command line, `tomojax align` takes the five as `--iterations`,
+`--image-iterations`, `--tolerance`, `--interpolation` and `--resolution`, and the rest as keys of a
+`--config` TOML file under the same names; `--config-keys` lists them, and `--dry-run` prints the
+resolved settings.
+
+```python
+config = tj.AlignConfig(levels=(1,), refine_iterations=0)
+result = tj.align(scan, fit="translations", iterations=12, config=config)
+```
+
+| Setting | Default | What it decides | When to change it |
+| --- | --- | --- | --- |
+| `iterations` | 8 | Gauss-Newton iterations at the working resolution | Raise it when `info["levels"][-1]["status"]` is `step_budget_reached`; each one costs a linearisation and an image solve |
+| `coarse_iterations` | 12 | Iterations at each coarser level | The same trade at the coarse level |
+| `levels` | `(2, 1)` | Each level's binning of the working detector, coarsest first | `(1,)` for little motion; a coarser start, such as `(4, 2, 1)`, for large motion |
+| `image_iterations` | 16 | Image-solve iterations per Gauss-Newton iteration | Fewer for speed on a translations fit, more for angles: on exact data 8 leaves 0.00044 px after 100 iterations, 16 under 0.0002 px |
+| `image_tolerance` | 0.03 | When an image solve may stop before its count | Lower for a tighter solve |
+| `tolerance` | 0.01 working pixels | A level stops when two successive pose proposals move the views less than this | 0 runs every level to its iterations; larger stops sooner |
+| `min_iterations` | 4 | The fewest iterations before `tolerance` may stop a level | With `tolerance`, against an early stop |
+| `resolution` | 320 pixels | The working detector's longest side | Finer for small motion on a large detector; coarser for speed |
+| `max_voxels` | 16 000 000 | The working grid's size | Memory against resolution |
+| `interpolation` | cubic with an angle on parallel rays, else linear | The projector's in-plane kernel in the fit | Cubic for sharp objects and the best accuracy, at about three times the time (a K11 laminography scan: 287 s linear, 876 s cubic) |
+| `refine_iterations` | 5 | The final per-view refinement with the image held | 0 turns it off, for speed or to see the joint fit alone |
+| `initial_image_iterations` | 5 | FISTA iterations for the first image | More for a better start on a hard scan |
+| `innovation_scale` | 0.02 native pixels | How large a view-to-view step counts as an event | The motion's physical scale |
+| `knot_spacing` | 10 views | How stiff the smooth drift is | Drift faster or slower than ten views |
+| `rotation_sigma` | 0.5 degrees | The per-view rotations' size prior | A stage's wobble scale |
+| `loss_width` | 2.5 noise deviations | Where the robust loss turns from quadratic to linear | Outliers such as zingers or diffraction |
+| `loss_contrast_floor` | 0.5 of the contrast | The least loss width, on low-noise data | With `loss_width` |
+| `image_tv_weight`, `image_tv_huber` | 0, 1.0 | Total variation on the fit's image | A regularised working image on very noisy data |
+| `margin` | 1/16 of the height | How far the fit's image extends past each end of the grid | Material entering the field from above or below |
+| `refine_smoothing`, `refine_neighbors` | 8 native pixels, 5 views | The refinement's edge filter and its neighbourhood | Rarely |
+
+`region=` chooses the part of the grid to fit on, as for `tj.reconstruct`: `"auto"` or `"bbox"`
+for the box every view sees, `"cube"`, `"cyl"`, or a `RegionEstimate`. Each level's record,
+`info["levels"][i]`, gives the `iterations`, `image_iterations` and `initial_image_iterations` it
+was given, its `steps` and the `status` it ended with.
 
 ## How the figures were made
 

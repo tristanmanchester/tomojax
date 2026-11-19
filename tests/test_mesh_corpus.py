@@ -63,7 +63,7 @@ def test_prepare_and_pack_preserve_truth_geometry_and_noise(tmp_path, kind):
             grid=grid.to_dict(),
             detector=detector.to_dict(),
             angles_deg=[0, 60, 120],
-            tilt_deg=-35,
+            tilt=-35,
         ),
         meshes=str(tmp_path),
         interior_meshes=str(tmp_path),
@@ -80,7 +80,7 @@ def test_prepare_and_pack_preserve_truth_geometry_and_noise(tmp_path, kind):
     plan = np.load(out / "clean-plan.npz")
     np.testing.assert_array_equal(plan["shape"], [2, 3])
     assert not plan["save_energy_transmission"]
-    np.testing.assert_allclose(plan["centre_mm"], [0.2, -0.3])
+    np.testing.assert_allclose(plan["center_mm"], [0.2, -0.3])
     assert json.loads((out / "config.json").read_text())["held_out_indices"] == [2]
     for name in ("clean", "clean-motion", "exterior", "motion", "exterior-only", "moving-exterior"):
         tr = np.full((3, 2, 3), 0.8, dtype=np.float32)
@@ -123,7 +123,7 @@ def test_blender_partition_preserves_physical_mass(tmp_path):
             "--",
             str(source),
             str(out),
-            "--centre",
+            "--center",
             "0.5",
             "0",
             "0",

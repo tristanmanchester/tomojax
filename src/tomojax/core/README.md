@@ -27,10 +27,12 @@ from the root:
 - `tomojax.core.geometry`: canonical geometry dataclasses, transforms, axis
   utilities, view construction, and shared grid-origin helpers. Public geometry
   packages build on these contracts.
-- `tomojax.core.projector`: reference JAX projection and adjoint operators used
-  by forward, reconstruction, simulation, and alignment workflows.
-- `tomojax.core.cuda_projector`: optional CUDA fast paths and their support checks.
-  They are performance implementations, not a separate public domain API.
+- `tomojax.core.joseph` and `tomojax.core.cone`: the plane-sampled projector and
+  its exact transpose, the JAX reference for parallel beams, laminography and
+  cone beams.
+- `tomojax.core.cuda_projector`: the CUDA kernels of the Joseph projector and
+  their JAX bindings. They are performance implementations, not a separate
+  public domain API.
 - `tomojax.core.validation`: shape, dtype, and geometry validation shared across
   numerical modules.
 - `tomojax.core.backend_policy`: backend normalization and provenance helpers.

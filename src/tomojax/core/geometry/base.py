@@ -8,9 +8,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+import functools
 import math
 import operator
-from typing import Any, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+
+import numpy as np
+
+if TYPE_CHECKING:
+    import jax.numpy as jnp
 
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
@@ -301,20 +307,47 @@ class Detector:
         )
 
 
+@functools.lru_cache(maxsize=8)
+def _detector_grid(
+    nu: int, nv: int, du: float, dv: float, cu: float, cv: float
+) -> tuple[np.ndarray, np.ndarray]:
+    # NumPy on the host, so the cache never holds a JAX tracer.
+    u = (np.arange(nu, dtype=np.float32) - (nu / 2.0 - 0.5)) * np.float32(du) + np.float32(cu)
+    v = (np.arange(nv, dtype=np.float32) - (nv / 2.0 - 0.5)) * np.float32(dv) + np.float32(cv)
+    u_grid, v_grid = np.tile(u, nv), np.repeat(v, nu)
+    u_grid.setflags(write=False)
+    v_grid.setflags(write=False)
+    return u_grid, v_grid
+
+
+def get_detector_grid_device(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """The detector's pixel-centre coordinates (u, v), flattened row by row.
+
+    Call it outside jit, grad or scan; the result can be cached and reused.
+    """
+    import jax.numpy as jnp
+
+    u, v = _detector_grid(
+        int(det.nu), int(det.nv), float(det.du), float(det.dv),
+        float(det.center[0]), float(det.center[1]),
+    )  # fmt: skip
+    return jnp.asarray(u, dtype=jnp.float32), jnp.asarray(v, dtype=jnp.float32)
+
+
 def _parallel_detector_rays(
     grid: Grid,
     detector: Detector,
-    detector_roll_deg: float = 0.0,
+    detector_roll: float = 0.0,
 ) -> RayPair:
     """Return the standard detector-plane ray model used by parallel-beam setups.
 
-    The pixel lattice turns by ``detector_roll_deg`` about the detector centre,
+    The pixel lattice turns by ``detector_roll`` about the detector centre,
     from u towards v.
     """
     nu, nv = int(detector.nu), int(detector.nv)
     du, dv = float(detector.du), float(detector.dv)
     cx, cz = float(detector.center[0]), float(detector.center[1])
-    angle = math.radians(float(detector_roll_deg))
+    angle = math.radians(float(detector_roll))
     c, s = math.cos(angle), math.sin(angle)
 
     y0 = grid_volume_origin(grid)[1]
@@ -333,7 +366,7 @@ def _parallel_detector_rays(
 class Geometry(Protocol):
     """Common pose interface for projector-compatible geometries.
 
-    Projector contract: ``pose_for_view(i)`` returns a 4x4 world_from_object
+    Projector contract: ``pose_matrix(i)`` returns a 4x4 world_from_object
     transform. The core projector combines that pose with the supplied
     ``Grid``/``Detector`` to construct the standard parallel-beam detector
     rays; it does not consume custom per-pixel ray callbacks.
@@ -343,7 +376,7 @@ class Geometry(Protocol):
     contract and custom rays are not supported by the projectors.
     """
 
-    def pose_for_view(self, i: int) -> PoseMatrix:
+    def pose_matrix(self, i: int) -> PoseMatrix:
         """Return a row-major world-from-object homogeneous transform.
 
         Parameters

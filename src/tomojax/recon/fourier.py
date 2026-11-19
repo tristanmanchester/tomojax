@@ -80,7 +80,7 @@ def fourier_reconstruct(
     with uniform or nonuniform spacing. Redundant half-turn directions are
     averaged in physical Fourier coordinates after detector phase/orientation.
     Per-view translations are honored in either detector or object coordinates.
-    A parallel detector roll (``detector_roll_deg``) is resampled bilinearly onto the
+    A parallel detector roll (``detector_roll``) is resampled bilinearly onto the
     unrolled detector lattice. Rotational pose corrections and tilted axes are
     not supported.
     Detector offsets, anisotropic voxels, shifted/cropped grids and fractional
@@ -159,7 +159,7 @@ def fourier_reconstruct(
     output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
 
-    roll = float(getattr(geometry, "detector_roll_deg", 0.0) or 0.0)
+    roll = float(getattr(geometry, "detector_roll", 0.0) or 0.0)
     rolled = None if not roll else (roll, detector.dv / detector.du)
 
     def prepare(start: int) -> np.ndarray | ProjectionRows:
@@ -242,7 +242,7 @@ def _detector_translations(geometry: ScanGeometry, nviews: int) -> np.ndarray | 
     if type(geometry) is ParallelGeometry:
         return None
     angles = np.deg2rad(np.asarray(geometry.angles, dtype=np.float64))
-    poses = np.asarray([geometry.pose_for_view(i) for i in range(nviews)])
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(nviews)])
     expected = np.zeros((nviews, 3, 3))
     expected[:, 0, 0] = expected[:, 1, 1] = np.cos(angles)
     expected[:, 1, 0] = np.sin(angles)

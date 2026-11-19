@@ -38,11 +38,7 @@ def iterative_slabs[T](
     retain them, or discard each to keep total storage bounded. No TV/CGLS solve
     is split: their regularizer or global step lengths couple the planes.
     """
-    if (
-        method not in {"sirt", "mlem"}
-        or config.projector_model == "ray"
-        or not independent_planes(geometry, grid, detector)
-    ):
+    if method not in {"sirt", "mlem"} or not independent_planes(geometry, grid, detector):
         raise ValueError(
             "iterative slabs require independent axial Joseph planes "
             "(matching grid and detector rows)"

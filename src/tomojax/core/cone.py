@@ -60,8 +60,8 @@ def cone_coefficients(
 
 def beam_frame(beam: ConeBeam, detector: Detector) -> np.ndarray:
     """``(4, 3)`` lab detector centre, unit u and v directions and source of ``beam``."""
-    centre, u_dir, v_dir = beam.detector_frame(detector)
-    return np.stack([centre, u_dir, v_dir, beam.source()]).astype(np.float32)
+    center, u_dir, v_dir = beam.detector_frame(detector)
+    return np.stack([center, u_dir, v_dir, beam.source()]).astype(np.float32)
 
 
 def frame_coefficients(
@@ -204,9 +204,9 @@ def _coefficients(
     """:func:`frame_coefficients`: ``frames`` are ``(views, 4, 3)``."""
     rot, trans = poses[:, :3, :3], poses[:, :3, 3]
     spacing = jnp.asarray([grid.vx, grid.vy, grid.vz], jnp.float32)
-    centre, u_dir, v_dir, source = frames[:, 0], frames[:, 1], frames[:, 2], frames[:, 3]
+    center, u_dir, v_dir, source = frames[:, 0], frames[:, 1], frames[:, 2], frames[:, 3]
     corner = (
-        centre
+        center
         - (detector.nu - 1) / 2 * float(detector.du) * u_dir
         - (detector.nv - 1) / 2 * float(detector.dv) * v_dir
     )

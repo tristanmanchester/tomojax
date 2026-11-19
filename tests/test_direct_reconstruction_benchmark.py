@@ -42,7 +42,7 @@ def gaussian_case(scale, width=55):
     detector = Detector(width, 5, 0.7 * scale, 0.7 * scale)
     angles = np.linspace(0, 180, 60, endpoint=False, dtype=np.float32)
     geometry = ParallelGeometry(grid, detector, angles)
-    poses = np.array([geometry.pose_for_view(i) for i in range(60)], np.float32)
+    poses = np.array([geometry.pose_matrix(i) for i in range(60)], np.float32)
     x, y, z = [(np.arange(n) - (n - 1) / 2) * 0.7 for n in [33, 35, 5]]
     zz, yy, xx = np.meshgrid(z, y, x, indexing="ij")
     truth = np.exp(

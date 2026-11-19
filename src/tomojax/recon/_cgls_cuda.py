@@ -26,11 +26,10 @@ def available(geometry, projections, initial, cfg: CGLSConfig, det_grid) -> bool
         not isinstance(projections, np.ndarray)
         or (initial is not None and not isinstance(initial, np.ndarray))
         or cfg.backend == "jax"
-        or cfg.projector_model == "ray"
-        or cfg.joseph_interpolation != "linear"
+        or cfg.interpolation != "linear"
         or cfg.gradient_damping
         or cfg.devices is not None
-        or cfg.stream_projections
+        or cfg.stream
         or det_grid is not None
         or type(geometry) not in {ParallelGeometry, LaminographyGeometry}
         or os.environ.get("TOMOJAX_CUDA_KERNELS") == "0"
@@ -86,7 +85,7 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
     if not cp.cuda.is_available():
         return None
     with _device(cp):
-        if cfg.stream_projections is None:
+        if cfg.stream is None:
             free, _total = cp.cuda.runtime.memGetInfo()
             # Freed arrays stay in CuPy's pool, not in the driver's free count.
             # A repeated solve can reuse them without falling back to JAX.
@@ -128,7 +127,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp)) - cp.multiply(damp2, x)
     gamma = cp.sum(gradient * gradient)
     initial_norm = float(cp.sqrt(gamma))
-    tolerance = np.float32(cfg.atol + cfg.rtol * initial_norm)
+    tolerance = np.float32(cfg.absolute_tolerance + cfg.tolerance * initial_norm)
     direction = gradient
     count, recomputations = 0, 0
     failed = not np.isfinite(initial_norm)
@@ -198,8 +197,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         "normal_residual_tolerance": float(tolerance),
         "projector_backend": "cuda",
         "execution_backend": "cupy",
-        "projector_model": "joseph",
-        "joseph_interpolation": "linear",
+        "interpolation": "linear",
         "views_per_batch": ops.batch,
         "formulation": "cgls",
         "data_term": cfg.data_term,

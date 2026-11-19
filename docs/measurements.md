@@ -515,65 +515,81 @@ grid): FBP 5.5 s; `fista` 614 s at 50 iterations, so about 20 minutes at 100
 
 ## Reconstruction against ASTRA
 
-Measured 2026-10-05 on commit `6fa1585`. The matrix has 27 cells: Gaussian,
+Measured 2026-11-19 on commit `40330cf`. The matrix has 27 cells: Gaussian,
 sharp (structured) and noisy structured objects, each scanned in parallel,
 shifted anisotropic and 30° laminography geometry on 64³, 128³ and 256³ grids,
 all with 180 views. Each method runs at budgets of 1, 2, 4, … 256 iterations
 until its full-volume relative L2 error passes the cell's fixed gate, without
 fitted amplitudes or clipping. Each side contributes its fastest accepted
-workflow by cold time. Cold time runs through the first accepted budget,
-including the failed lower budgets; warm time is the median of three repeats
-of that budget. ASTRA was measured in the same session. TIGRE was not rerun,
-because it was the fastest external method in no cell of the earlier
-matrices.
+workflow by cold time, from TomoJAX's Fourier inverse, FBP, CGLS, FBP-started
+CGLS and coarse-to-fine CGLS, and ASTRA's `fbp2d`, `fbp3d` (CuPy), CGLS and
+FBP-started CGLS. Cold time runs through the first accepted budget, including
+the failed lower budgets; warm time is the median of three repeats of that
+budget. Both libraries were measured in the same session, each suite from a
+cool GPU. TIGRE was not rerun, because it was the fastest external method in
+no cell of the earlier matrices.
 
 | Speedup (ASTRA time / TomoJAX time), 26 paired cells | Cold | Warm |
 |---|---:|---:|
-| Geometric mean | 1.00 | 2.78 |
-| Range | 0.44–2.81 | 0.59–20.4 |
+| Geometric mean | 1.20 | 2.35 |
+| Range | 0.65–3.80 | 0.78–14.5 |
 
-The sharp anisotropic 64³ cell has no accepted result on either side. In the
+The sharp anisotropic 64³ cell has no accepted result on either side. In most
 parallel and anisotropic cells TomoJAX's fastest method is the opt-in Fourier
-inverse on CUDA (`fourier_reconstruct` with CuPy), not the default FBP. In
-laminography it is Joseph CGLS: plain, FBP-started or coarse-to-fine. Small
-laminography scans are slower from a fresh process (0.44–0.59). There, JAX's
-import and device setup (about 0.4 s) and tracing the solver (about 0.2 s)
-outweigh solves of 30–180 ms.
+inverse on CUDA (`fourier_reconstruct` with CuPy), not the default FBP; in the
+smallest parallel cells CGLS reaches the gate first. In laminography it is
+Joseph CGLS: plain, FBP-started or coarse-to-fine. ASTRA is faster in the
+sharp and noisy laminography 256³ cells (0.65–0.93): there both CGLS solvers
+pass the gate at the same budget, and ASTRA's iteration is faster (warm 739
+against 956 ms at 8 iterations on the sharp object, 480 against 614 ms at 4
+on the noisy one).
 
 | Object | Cell | TomoJAX fastest accepted, cold / warm ms | ASTRA fastest accepted, cold / warm ms | Cold speedup | Warm speedup |
 |---|---|---|---|---:|---:|
-| Gaussian | parallel 64 | Fourier: 368 / 3.0 | fbp2d: 334 / 24.6 | 0.91 | 8.18 |
-| Gaussian | anisotropic 64 | Fourier: 372 / 1.5 | CGLS: 383 / 30.1 | 1.03 | 20.41 |
-| Gaussian | laminography 64 | coarse-to-fine CGLS: 1777 / 239.0 | CGLS: 1728 / 676.4 | 0.97 | 2.83 |
-| Gaussian | parallel 128 | Fourier: 417 / 11.2 | fbp2d: 391 / 59.8 | 0.94 | 5.32 |
-| Gaussian | anisotropic 128 | Fourier: 394 / 8.1 | fbp3d (CuPy): 454 / 10.4 | 1.15 | 1.29 |
-| Gaussian | laminography 128 | coarse-to-fine CGLS: 2942 / 763.5 | CGLS: 7066 / 3200.5 | 2.40 | 4.19 |
-| Gaussian | parallel 256 | Fourier: 593 / 74.6 | fbp2d: 697 / 297.5 | 1.17 | 3.99 |
-| Gaussian | anisotropic 256 | Fourier: 507 / 39.0 | fbp3d (CuPy): 539 / 77.5 | 1.06 | 1.99 |
-| Gaussian | laminography 256 | coarse-to-fine CGLS: 14077 / 5572.4 | CGLS: 39612 / 18048.9 | 2.81 | 3.24 |
-| Sharp | parallel 64 | Fourier: 422 / 3.6 | fbp2d: 367 / 28.4 | 0.87 | 7.85 |
+| Gaussian | parallel 64 | coarse-to-fine CGLS: 358 / 10.5 | CGLS: 397 / 26.0 | 1.11 | 2.48 |
+| Gaussian | anisotropic 64 | Fourier: 364 / 2.0 | CGLS: 396 / 29.5 | 1.09 | 14.48 |
+| Gaussian | laminography 64 | coarse-to-fine CGLS: 835 / 269.8 | CGLS: 1740 / 681.2 | 2.08 | 2.52 |
+| Gaussian | parallel 128 | Fourier: 349 / 11.4 | fbp2d: 404 / 73.9 | 1.16 | 6.51 |
+| Gaussian | anisotropic 128 | Fourier: 379 / 7.2 | fbp3d (CuPy): 434 / 7.9 | 1.15 | 1.10 |
+| Gaussian | laminography 128 | coarse-to-fine CGLS: 1810 / 609.6 | FBP-started CGLS: 6885 / 3092.3 | 3.80 | 5.07 |
+| Gaussian | parallel 256 | Fourier: 560 / 51.5 | fbp2d: 585 / 215.3 | 1.04 | 4.18 |
+| Gaussian | anisotropic 256 | Fourier: 478 / 32.3 | fbp3d (CuPy): 510 / 45.9 | 1.07 | 1.42 |
+| Gaussian | laminography 256 | coarse-to-fine CGLS: 10942 / 3532.5 | FBP-started CGLS: 34900 / 16530.2 | 3.19 | 4.68 |
+| Sharp | parallel 64 | CGLS: 381 / 18.1 | fbp2d: 368 / 31.5 | 0.97 | 1.74 |
 | Sharp | anisotropic 64 | none accepted | none accepted | — | — |
-| Sharp | laminography 64 | CGLS: 912 / 28.7 | CGLS: 405 / 29.2 | 0.44 | 1.02 |
-| Sharp | parallel 128 | Fourier: 513 / 12.0 | fbp2d: 439 / 61.8 | 0.86 | 5.14 |
-| Sharp | anisotropic 128 | Fourier: 416 / 8.0 | fbp3d (CuPy): 474 / 10.6 | 1.14 | 1.33 |
-| Sharp | laminography 128 | CGLS: 1197 / 178.4 | FBP-started CGLS: 711 / 105.8 | 0.59 | 0.59 |
-| Sharp | parallel 256 | Fourier: 614 / 69.5 | fbp2d: 678 / 308.0 | 1.10 | 4.43 |
-| Sharp | anisotropic 256 | Fourier: 533 / 39.6 | fbp3d (CuPy): 555 / 76.5 | 1.04 | 1.93 |
-| Sharp | laminography 256 | FBP-started CGLS: 2108 / 647.4 | CGLS: 3225 / 982.5 | 1.53 | 1.52 |
-| Noisy | parallel 64 | Fourier: 404 / 3.3 | fbp2d: 394 / 26.2 | 0.98 | 7.99 |
-| Noisy | anisotropic 64 | Fourier: 391 / 1.6 | FBP-started CGLS: 448 / 8.5 | 1.15 | 5.29 |
-| Noisy | laminography 64 | CGLS: 861 / 29.2 | CGLS: 407 / 29.3 | 0.47 | 1.00 |
-| Noisy | parallel 128 | Fourier: 504 / 11.4 | fbp2d: 396 / 62.2 | 0.79 | 5.46 |
-| Noisy | anisotropic 128 | Fourier: 406 / 8.1 | fbp3d (CuPy): 450 / 10.0 | 1.11 | 1.24 |
-| Noisy | laminography 128 | CGLS: 1043 / 104.2 | CGLS: 588 / 98.6 | 0.56 | 0.95 |
-| Noisy | parallel 256 | Fourier: 593 / 70.4 | fbp2d: 678 / 298.7 | 1.14 | 4.24 |
-| Noisy | anisotropic 256 | Fourier: 545 / 41.7 | fbp3d (CuPy): 532 / 77.9 | 0.98 | 1.87 |
-| Noisy | laminography 256 | FBP-started CGLS: 2099 / 645.0 | CGLS: 2277 / 736.3 | 1.08 | 1.14 |
+| Sharp | laminography 64 | coarse-to-fine CGLS: 369 / 10.0 | CGLS: 413 / 29.1 | 1.12 | 2.91 |
+| Sharp | parallel 128 | Fourier: 465 / 11.9 | fbp2d: 420 / 73.7 | 0.90 | 6.19 |
+| Sharp | anisotropic 128 | Fourier: 327 / 7.8 | fbp3d (CuPy): 437 / 7.6 | 1.34 | 0.98 |
+| Sharp | laminography 128 | coarse-to-fine CGLS: 521 / 51.8 | FBP-started CGLS: 614 / 83.9 | 1.18 | 1.62 |
+| Sharp | parallel 256 | Fourier: 498 / 58.5 | fbp3d (CuPy): 581 / 91.8 | 1.17 | 1.57 |
+| Sharp | anisotropic 256 | Fourier: 456 / 31.2 | fbp3d (CuPy): 485 / 44.5 | 1.06 | 1.42 |
+| Sharp | laminography 256 | FBP-started CGLS: 2295 / 484.8 | FBP-started CGLS: 1501 / 450.2 | 0.65 | 0.93 |
+| Noisy | parallel 64 | CGLS: 367 / 17.8 | fbp2d: 360 / 34.9 | 0.98 | 1.95 |
+| Noisy | anisotropic 64 | Fourier: 319 / 1.9 | FBP-started CGLS: 426 / 7.8 | 1.34 | 4.03 |
+| Noisy | laminography 64 | CGLS: 372 / 16.3 | CGLS: 404 / 27.8 | 1.09 | 1.71 |
+| Noisy | parallel 128 | Fourier: 421 / 11.9 | fbp2d: 434 / 72.4 | 1.03 | 6.10 |
+| Noisy | anisotropic 128 | Fourier: 342 / 7.7 | fbp3d (CuPy): 450 / 7.7 | 1.32 | 1.00 |
+| Noisy | laminography 128 | CGLS: 482 / 61.6 | CGLS: 537 / 82.8 | 1.11 | 1.34 |
+| Noisy | parallel 256 | Fourier: 534 / 54.0 | fbp2d: 575 / 214.0 | 1.08 | 3.96 |
+| Noisy | anisotropic 256 | Fourier: 457 / 31.9 | fbp3d (CuPy): 491 / 44.0 | 1.08 | 1.38 |
+| Noisy | laminography 256 | CGLS: 1792 / 613.6 | CGLS: 1507 / 479.8 | 0.84 | 0.78 |
+
+```bash
+for suite in gaussian-v1 structured-v1 structured-noisy-v1; do
+  uv run --no-sync python bench/compare_reconstructions.py --suite $suite \
+    --sizes 64 128 256 --views 180 --repeats 3 \
+    --methods tomojax_fourier_cupy tomojax_fbp_cuda tomojax_cgls_cuda \
+      tomojax_fbp_joseph_cgls_cuda tomojax_multires_cgls_cuda \
+      astra_fbp2d astra_fbp3d_cupy astra_cgls astra_fbp_cgls \
+    --output OUTPUT/$suite.json
+done
+```
 
 ## TV-regularised reconstruction against TIGRE
 
-Measured 2026-11-11 on commit `d545a8d` with
-[`bench/compare_tv.py`](../bench/compare_tv.py). A 128³ structured parallel
+Measured 2026-11-19 on commit `40330cf` with
+[`bench/compare_tv.py`](../bench/compare_tv.py) (`compare_tv.py 128 tomojax`,
+then `compare_tv.py 128 tigre`, each from a cool GPU). A 128³ structured parallel
 phantom is scanned with 180 views and 3% noise. Each library runs 50
 iterations over its own grid of regularisation weights, and the best relative
 L2 error is reported with its warm time. Both libraries are warmed by an
@@ -582,7 +598,7 @@ and device.
 
 | Method | Best relative L2 error | Warm time |
 |---|---:|---:|
-| TomoJAX FISTA-TV | 0.075 (automatic weight: 0.077) | 0.35 s |
+| TomoJAX FISTA-TV | 0.075 (automatic weight: 0.077) | 0.34 s |
 | TIGRE FISTA | 0.101 | 9.1 s |
 | TIGRE ASD-POCS | 0.146 | 5.4 s |
 
@@ -591,8 +607,8 @@ Larger TIGRE FISTA weights diverge. Unregularised CGLS reaches 0.138 at best
 
 ## Cone-beam projection and FDK
 
-Measured 2026-11-11 on commit `e84b296` with
-[`bench/compare_cone.py`](../bench/compare_cone.py): five voxelised ellipsoids
+Measured 2026-11-19 on commit `40330cf` with
+[`bench/compare_cone.py`](../bench/compare_cone.py) (`--size 256 --views 360`): five voxelised ellipsoids
 (256³, 2×2×2 sub-samples) on a circular 360-view scan with a 384² detector at
 1.5× magnification. Forward projections are compared with exact analytic line
 integrals and FDK volumes with the phantom. Times are the best of three warm
@@ -601,14 +617,14 @@ moving a 64 MiB volume and 202.5 MiB of projections.
 
 | Operation | TomoJAX | ASTRA 2.5 | TIGRE |
 |---|---:|---:|---:|
-| Forward projection | 0.132 s (error 0.0060) | 0.168 s (0.0060) | 0.471 s interpolated (0.0062), 1.23 s Siddon (0.0068) |
-| Backprojection | 0.121 s, exact transpose | 0.073 s, approximate transpose | 0.087 s, "matched" |
-| FDK | 0.092 s (error 0.0581) | 0.257 s (0.0581) | 0.499 s (0.0581) |
-| Forward, axis tilted 0.5° | 0.132 s | 0.168 s | |
+| Forward projection | 0.132 s (error 0.0060) | 0.168 s (0.0060) | 0.470 s interpolated (0.0062), 1.23 s Siddon (0.0068) |
+| Backprojection | 0.120 s, exact transpose | 0.073 s, approximate transpose | 0.087 s, "matched" |
+| FDK | 0.090 s (error 0.0581) | 0.214 s (0.0581) | 0.484 s (0.0581) |
+| Forward, axis tilted 0.5° | 0.131 s | 0.168 s | |
 | Backprojection, axis tilted 0.5° | 0.104 s, exact transpose | 0.073 s, approximate transpose | |
 
 Iterative solvers keep their arrays on the device. There TomoJAX's forward
-projection takes 0.096 s, its exact transpose 0.082 s and FDK 0.048 s; ASTRA's
+projection takes 0.095 s, its exact transpose 0.082 s and FDK 0.050 s; ASTRA's
 and TIGRE's device-resident times are not measured here.
 
 TomoJAX's backprojection is the exact transpose of its forward projector,
@@ -780,7 +796,7 @@ these are image diagnostics, not reconstruction errors.
 
 ### Full-view CGLS
 
-The Walnut rows were refreshed 2026-10-31 on `c4682913`, and Nikon and
+The Walnut rows were refreshed 2026-11-19 on `40330cf`, and Nikon and
 Zeiss on `22571a59`, with ASTRA 2.5.0, CuPy 14.2.0 and one OpenBLAS/OMP
 thread per process.
 Walnut uses all 1200 views of orbit 2, detector binning 2 × 2 and a 501³ grid
@@ -793,8 +809,8 @@ with GPU residuals, host search projections and 128-view batches.
 
 | Scan | Library | Cold / warm (s) | Full / support reference disagreement, or common-projector fit | Volume difference to ASTRA |
 |---|---|---:|---:|---:|
-| Walnut, one orbit | TomoJAX | 20.83 / 13.57 | 0.184222 / 0.087821 | 0.013025 |
-| Walnut, one orbit | ASTRA | 17.43 / 13.78 | 0.182273 / 0.086669 | — |
+| Walnut, one orbit | TomoJAX | 19.76 / 11.31 | 0.184222 / 0.087821 | 0.013025 |
+| Walnut, one orbit | ASTRA | 18.34 / 13.86 | 0.182273 / 0.086669 | — |
 | Nikon | TomoJAX | 27.99 / 22.83 | 0.034928 | 0.027397 |
 | Nikon | ASTRA | 35.41 / 31.60 | 0.029934 | — |
 | Zeiss | TomoJAX | 15.30 / 10.15 | 0.163861 | 0.042137 |
@@ -814,12 +830,11 @@ all original corrected log projections are scored with one common calibrated
 ASTRA forward projector. Full-volume differences use no alignment or intensity
 fit. Historical orthogonal-section comparisons showed the same structures,
 with differences in smooth backgrounds, support boundaries, edges and streaks.
-On the refreshed Walnut pair, TomoJAX's mean warm time is 1.5% lower, but
-cold time is 19.5% higher and support disagreement is 1.33% higher. This is
-**not a matched-error speed win**. Sampled total-device GPU peaks are 4308 / 5064 MiB
-(TomoJAX / ASTRA, 20 ms sampling); prescoring host RSS peaks are 5.619 GB for
-both. A separate 100 ms whole-job trace including scoring peaks at 5064 MiB.
-The temporary comparison volume was deleted after scoring.
+On the refreshed Walnut pair, TomoJAX's mean warm time is 18.4% lower, but
+cold time is 7.7% higher and support disagreement is 1.33% higher. This is
+**not a matched-error speed win**. Sampled total-device GPU peaks are 4309 / 5065 MiB
+(TomoJAX / ASTRA, 20 ms sampling); prescoring host RSS peaks are 5.53 GB for
+both. The temporary comparison volume was deleted after scoring.
 
 On the refreshed Nikon pair, TomoJAX's observed warm time is 27.7% lower,
 but its common-projector residual is 16.7% higher: again **not a matched-error

@@ -18,7 +18,7 @@ from tomojax.recon import SIRTConfig, sirt
 def test_two_transposes_match_dense_basis_with_mixed_views_and_chunk_tail(backend):
     grid, detector = tj.Grid(5, 4, 3, 0.7, 1.1, 0.9), tj.Detector(7, 5, 1.3, 0.8, (0.2, -0.3))
     geometry = tj.ConeGeometry(grid, detector, np.linspace(0, 360, 33), tj.ConeBeam(30, 50))
-    poses = np.asarray(geometry.poses(), np.float32).copy()
+    poses = np.asarray(geometry.pose_matrices(), np.float32).copy()
     angle = np.float32(0.71)
     rotation = np.eye(4, dtype=np.float32)
     rotation[1:3, 1:3] = [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]
@@ -49,9 +49,7 @@ def test_two_transposes_match_dense_basis_with_mixed_views_and_chunk_tail(backen
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_uncached_sirt_preserves_masked_subset_updates(monkeypatch, backend):
     grid, detector = tj.Grid(5, 4, 3, 0.7, 1.1, 0.9), tj.Detector(7, 5, 1.3, 0.8)
-    geometry = tj.ConeGeometry(
-        grid, detector, np.linspace(0, 180, 7), tj.ConeBeam(30, 50), tilt_deg=23
-    )
+    geometry = tj.ConeGeometry(grid, detector, np.linspace(0, 180, 7), tj.ConeBeam(30, 50), tilt=23)
     truth = np.random.default_rng(46).uniform(size=(3, 4, 5)).astype(np.float32)
     data = np.asarray(tj.project(geometry, truth))
     cfg = SIRTConfig(

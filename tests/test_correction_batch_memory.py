@@ -37,7 +37,9 @@ def test_phase_retrieval_limits_automatic_reads_and_preserves_explicit_batches(
         tj.Grid(8, 8, 2, 1.0, 1.0, 1.0), tj.Detector(cols, rows, 1.0, 1.0), np.arange(65)
     )
     steps = [Paganin(300.0, 0.001, 20.0, 1e-6)] if phase else []
-    actual = tj.Frames(counts, geometry, white_level=1000.0).corrected(*steps, batch_views=batch)
+    actual = tj.Frames(counts, geometry, white_level=1000.0).corrected(
+        *steps, views_per_batch=batch
+    )
 
     if batch is not None:
         assert max(counts.requests) == batch

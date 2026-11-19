@@ -17,20 +17,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.alignment._config import AlignConfig
 from tomojax.core.robust import MAD_TO_SD
 
-from ._noise import LOSS_WIDTH_SIGMAS
 from ._operators import column_gram, column_score, robust_batch, robust_value
 from ._stacks import Stack, level_stacks, temporaries, transient_reserve, unplaced
 
-_SMOOTH_NATIVE_PX = 8.0
-_ITERATIONS = 5
 # A smaller proposed step is converged: it cannot change the pose error, and
 # its decrease is below what the FP32 objective resolves, so backtracking on it
 # only spends objective evaluations.
 _FP32_STEP_PX = 1e-4
 _LM_INITIAL = 0.01
-_NEIGHBOURS = 5
 
 
 def _kernel(sigma):
@@ -47,9 +44,10 @@ class EdgeFilter:
     the smoothed precision avoids artificial edges at masks and borders.
     """
 
-    def __init__(self, ratios) -> None:
-        self.ku = _kernel(_SMOOTH_NATIVE_PX * ratios[0])
-        self.kv = _kernel(_SMOOTH_NATIVE_PX * ratios[1])
+    def __init__(self, ratios, smoothing=8.0) -> None:
+        """``smoothing`` is the local mean's width in native pixels; ``ratios`` scale it."""
+        self.ku = _kernel(smoothing * ratios[0])
+        self.kv = _kernel(smoothing * ratios[1])
 
     def smooth(self, a):
         """Zero-extended separable Gaussian; symmetric, so its own transpose."""
@@ -88,11 +86,14 @@ class EdgeFilter:
         return jnp.where(m, q - p * jnp.sum(q, axis=-1, keepdims=True) / rows, 0)
 
 
-def relative_precision(energy, sigma):
-    """2 (B + s^2) / (B + E + 2 s^2), B the median energy of the ten neighbouring views."""
+def relative_precision(energy, sigma, neighbors=5):
+    """2 (B + s^2) / (B + E + 2 s^2), B the median energy of the neighbouring views.
+
+    ``neighbors`` views on each side make B.
+    """
     n = len(energy)
     neighbours = []
-    for offset in range(-_NEIGHBOURS, _NEIGHBOURS + 1):
+    for offset in range(-neighbors, neighbors + 1):
         if offset:
             index = jnp.arange(n) + offset
             inside = (index >= 0) & (index < n)
@@ -105,9 +106,9 @@ def relative_precision(energy, sigma):
 class _EdgeObjective:
     """Batch-wise filtered residuals and columns; only per-view summaries survive."""
 
-    def __init__(self, ops) -> None:
+    def __init__(self, ops, smoothing) -> None:
         self.ops = ops
-        self.filter = EdgeFilter(ops.ratios)
+        self.filter = EdgeFilter(ops.ratios, smoothing)
         self.stats = jax.jit(self._stats)
         self.value = jax.jit(self._value)
         self.consistency = jax.jit(self._consistency)
@@ -193,7 +194,9 @@ class _EdgeObjective:
 class _Refinement:
     """The fixed-volume edge objective, its anchored prior and one damped step."""
 
-    def __init__(self, x, y, precision, prior, objective, ops, sigma, c0) -> None:
+    def __init__(
+        self, x, y, precision, prior, objective, ops, sigma, c0, *, loss_width, neighbors
+    ) -> None:
         self.x, self.y, self.precision = x, y, precision
         self.prior, self.ops, self.c0 = prior, ops, c0
         self.objective = objective
@@ -201,14 +204,14 @@ class _Refinement:
         model_sigma = float(self.objective.scale(q, x, y, precision))
         if not np.isfinite(model_sigma):
             raise ValueError("no finite residual scale for the pose refinement")
-        self.delta = max(LOSS_WIDTH_SIGMAS * float(sigma), LOSS_WIDTH_SIGMAS * model_sigma, 1e-8)
+        self.delta = max(loss_width * float(sigma), loss_width * model_sigma, 1e-8)
         self.first = self.objective.stats(q, x, y, precision, self.delta)
         gram = self.first[1]
         fisher = jnp.median(jnp.trace(gram, axis1=1, axis2=2))
         self.photon_weight = float(sigma * jnp.sqrt(fisher) * np.sqrt(2 * np.log(ops.n)))
         self.weight: float | tuple[float, float] = self.photon_weight
         energy = self.objective.consistency(q, x, y, precision)
-        self.anchor = relative_precision(energy, float(sigma))[:, None, None] * gram
+        self.anchor = relative_precision(energy, float(sigma), neighbors)[:, None, None] * gram
 
     def penalty(self, c):
         """Motion prior plus the anchor towards the joint fit's poses."""
@@ -258,8 +261,25 @@ def _rms(steps):
     return float(jnp.sqrt(jnp.mean(jnp.sum(steps**2, axis=1))))
 
 
-def refine(x, p, y, precision, prior, *, ops, sigma, last=None, placement=None):
+def refine(
+    x,
+    p,
+    y,
+    precision,
+    prior,
+    *,
+    ops,
+    sigma,
+    last=None,
+    placement=None,
+    config=None,
+):
     """Refine local innovations; the jointly fitted global values stay fixed.
+
+    ``config`` (an ``AlignConfig``; None: its defaults) gives the steps at most
+    (``refine_iterations``, 0 skipping them), the edge filter's width
+    (``refine_smoothing``), the views setting a view's expected residual
+    (``refine_neighbors``) and the robust loss's width (``loss_width``).
 
     The translations' prior weight takes the ``last`` level's error scale (its
     ``translation_noise`` in place of the photon standard error, with its ``pose_fisher``):
@@ -270,18 +290,23 @@ def refine(x, p, y, precision, prior, *, ops, sigma, last=None, placement=None):
     offset and ramp and residual energy at the result (``Operators.view_summary``).
     """
     start = time.perf_counter()
-    objective = _EdgeObjective(ops)
+    config = AlignConfig() if config is None else config
+    iterations = config.refine_iterations
+    objective = _EdgeObjective(ops, config.refine_smoothing)
     transients = _transients(objective, x, prior, ops, precision)
     reserve = transient_reserve(transients)
     names = ("y", "precision")
     stacks = level_stacks(ops, y, precision, reserve=reserve, names=names, placement=placement)
     try:
         y, precision = stacks["y"], stacks.get("precision")
-        if prior.nlocal == 0:
-            c, record = p, {"status": "no_local_parameters", "steps": []}
+        if prior.nlocal == 0 or iterations == 0:
+            status = "no_local_parameters" if prior.nlocal == 0 else "off"
+            c, record = p, {"status": status, "steps": []}
         else:
+            settings = {"iterations": iterations, "neighbors": config.refine_neighbors}
+            settings["loss_width"] = config.loss_width
             c, record = _refine(
-                x, p, y, precision, prior, objective, ops=ops, sigma=sigma, last=last
+                x, p, y, precision, prior, objective, ops=ops, sigma=sigma, last=last, **settings
             )
         summary = ops.view_summary(ops.pad_poses(c), x, y, precision)
         summary = tuple(np.asarray(a) for a in summary)
@@ -315,9 +340,13 @@ def _transients(objective, x, prior, ops, precision):
     return out
 
 
-def _refine(x, p, y, precision, prior, objective, *, ops, sigma, last):
+def _refine(
+    x, p, y, precision, prior, objective, *, ops, sigma, last, iterations, neighbors, loss_width
+):
     c = prior.project_gauge(jnp.asarray(p, jnp.float64).reshape(-1))
-    problem = _Refinement(x, y, precision, prior, objective, ops, sigma, c)
+    problem = _Refinement(
+        x, y, precision, prior, objective, ops, sigma, c, loss_width=loss_width, neighbors=neighbors
+    )
     if last is not None and last["translation_noise"] is not None:
         fisher = float(jnp.median(jnp.trace(problem.first[1], axis1=1, axis2=2)))
         scale = float(np.sqrt(fisher * last["pose_fisher"] * 2 * np.log(ops.n)))
@@ -329,7 +358,7 @@ def _refine(x, p, y, precision, prior, objective, *, ops, sigma, last):
         "step_budget_reached",
         [],
     )
-    for it in range(_ITERATIONS):
+    for it in range(iterations):
         if it:
             stats = problem.objective.stats(ops.pad_poses(c), x, y, precision, problem.delta)
         result = problem.step(c, stats, f, lm)

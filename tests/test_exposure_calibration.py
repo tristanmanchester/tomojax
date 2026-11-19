@@ -26,7 +26,7 @@ def test_exposure_dark_and_temporal_interpolation_match_physical_counts():
         steps=(),
         epsilon=1e-6,
     )
-    eager = correct_frames(counts, batch_views=1, **settings)
+    eager = correct_frames(counts, views_per_batch=1, **settings)
     np.testing.assert_allclose(eager.projections, truth, atol=2e-7)
     with corrected_row_source(counts, **settings) as source:
         np.testing.assert_allclose(source(1, 3).projections, truth[:, 1:3], atol=2e-7)

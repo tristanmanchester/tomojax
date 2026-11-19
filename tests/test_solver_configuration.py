@@ -17,7 +17,7 @@ def _problem(tilted=False):
     detector = Detector(4, 3, 0.9, 1.2, (0.17, -0.23))
     angles = np.array([13.0, 68.0, 142.0])
     geometry = (
-        LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+        LaminographyGeometry(grid, detector, angles, tilt=30)
         if tilted
         else ParallelGeometry(grid, detector, angles)
     )
@@ -26,7 +26,7 @@ def _problem(tilted=False):
 
 
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
-@pytest.mark.parametrize("field", ["iterations", "views_per_batch", "projector_unroll"])
+@pytest.mark.parametrize("field", ["iterations", "views_per_batch"])
 @pytest.mark.parametrize("value", [-1, 1.5, True])
 def test_solvers_reject_invalid_counts_before_building_geometry(monkeypatch, solver, field, value):
     grid, detector, geometry, data = _problem()
@@ -47,7 +47,7 @@ def test_solvers_reject_invalid_counts_before_building_geometry(monkeypatch, sol
     [
         ("fista", "tv_weight"),
         ("fista", "lipschitz"),
-        ("fista", "recon_rel_tol"),
+        ("fista", "tolerance"),
         ("spdhg", "tv_weight"),
         ("spdhg", "theta"),
         ("spdhg", "tau"),
@@ -72,12 +72,10 @@ def test_solvers_reject_invalid_scalars_before_building_geometry(monkeypatch, so
     ("solver", "field"),
     [
         ("fista", "views_per_batch"),
-        ("fista", "projector_unroll"),
         ("fista", "lipschitz"),
         ("fista", "tv_prox_iterations"),
         ("fista", "power_iterations"),
         ("spdhg", "views_per_batch"),
-        ("spdhg", "projector_unroll"),
         ("spdhg", "tau"),
         ("spdhg", "sigma_data"),
         ("spdhg", "sigma_tv"),
@@ -90,7 +88,7 @@ def test_solvers_reject_zero_sizes_and_steps(solver, field):
         (fista_tv if solver == "fista" else spdhg_tv)(geometry, grid, detector, data, config=config)
 
 
-@pytest.mark.parametrize("field", ["tv_prox_iterations", "power_iterations", "recon_patience"])
+@pytest.mark.parametrize("field", ["tv_prox_iterations", "power_iterations", "patience"])
 @pytest.mark.parametrize("value", [-1, 1.5])
 def test_fista_rejects_invalid_internal_iteration_counts(field, value):
     grid, detector, geometry, data = _problem()
@@ -128,7 +126,7 @@ def test_spdhg_rejects_invalid_weight_tail_before_geometry(
         mapped = np.memmap(tmp_path / "weights", mode="w+", dtype=dtype, shape=data.shape)
         mapped[:] = weights
         weights = mapped
-    config = SPDHGConfig(iterations=iterations, views_per_batch=2, stream_projections=stream)
+    config = SPDHGConfig(iterations=iterations, views_per_batch=2, stream=stream)
     with pytest.raises(ValueError, match="weights must be real, finite in FP32 and nonnegative"):
         spdhg_tv(geometry, grid, detector, data, weights=weights, config=config)
 
@@ -237,19 +235,13 @@ def test_spdhg_rejects_extended_device_weight_formats_cleanly(monkeypatch, dtype
         spdhg_tv(geometry, grid, detector, data, weights=weights, config=SPDHGConfig(iterations=0))
 
 
-def test_fista_rejects_unknown_gradient_mode():
-    grid, detector, geometry, data = _problem()
-    with pytest.raises(ValueError, match="grad_mode"):
-        fista_tv(geometry, grid, detector, data, config=FistaConfig(grad_mode="unknown"))
-
-
 @pytest.mark.numerical
 @pytest.mark.parametrize("solver", ["fista", "spdhg"])
 def test_zero_iteration_budget_keeps_initial_volume_and_logs_nothing(solver):
     grid, detector, geometry, data = _problem()
     initial = np.random.default_rng(99).normal(size=(2, 3, 2)).astype(np.float32)
     if solver == "fista":
-        config = FistaConfig(iterations=0, tv_weight=0, lipschitz=10, recon_rel_tol=0)
+        config = FistaConfig(iterations=0, tv_weight=0, lipschitz=10, tolerance=0)
     else:
         config = SPDHGConfig(iterations=0, tv_weight=0, tau=0.1, sigma_data=0.1, log_every=0)
     calls = []
@@ -268,9 +260,8 @@ def test_zero_iteration_budget_keeps_initial_volume_and_logs_nothing(solver):
 
 
 @pytest.mark.numerical
-@pytest.mark.parametrize("model", ["ray", "joseph"])
 @pytest.mark.parametrize("warm_start", [False, True])
-def test_fista_auto_step_is_finite_for_zero_operator(model, warm_start):
+def test_fista_auto_step_is_finite_for_zero_operator(warm_start):
     grid, detector, geometry, data = _problem()
     initial = np.random.default_rng(99).normal(size=(2, 3, 2)).astype(np.float32)
     volume, info = fista_tv(
@@ -283,7 +274,6 @@ def test_fista_auto_step_is_finite_for_zero_operator(model, warm_start):
             iterations=3,
             tv_weight=0,
             support=jnp.zeros((2, 3, 2)),
-            projector_model=model,
             backend="jax",
         ),
     )

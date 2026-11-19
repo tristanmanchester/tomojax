@@ -41,10 +41,10 @@ GEOMETRY_KEYS = frozenset(
         "cone_beam",
         "cone_segments",
         "trajectory_lengths",
-        "tilt_deg",
+        "tilt",
         "tilt_about",
         "axis_unit_lab",
-        "detector_roll_deg",
+        "detector_roll",
     }
 )
 
@@ -115,7 +115,7 @@ class Scan:
             text += ", corrections: " + ", ".join(str(c) for c in self.corrections)
         return text + ")"
 
-    def corrected(self, *steps: Step, batch_views: int | None = None) -> Scan:
+    def corrected(self, *steps: Step, views_per_batch: int | None = None) -> Scan:
         """The scan with line-integral ``steps`` applied (see :mod:`tomojax.corrections`).
 
         Steps on counts or transmission need the frames: use :func:`load_frames`
@@ -125,7 +125,7 @@ class Scan:
         ----------
         *steps : Step
             Line-integral correction steps, applied in order.
-        batch_views : int or None, optional
+        views_per_batch : int or None, optional
             Positive views per batch; None chooses automatically.
 
         Returns
@@ -140,14 +140,14 @@ class Scan:
         """
         from tomojax.corrections import correct_projections
 
-        done = correct_projections(self.projections, steps, batch_views=batch_views)
+        done = correct_projections(self.projections, steps, views_per_batch=views_per_batch)
         everything = len(done.kept) == self.projections.shape[0]
         return replace(
             self,
             projections=done.projections,
             geometry=self.geometry if everything else views_of(self.geometry, done.kept),
             corrections=(*self.corrections, *done.records),
-            view_positions=self.view_positions if everything else self.positions()[done.kept],
+            view_positions=self.view_positions if everything else _positions(self)[done.kept],
         )
 
     def cropped(self, rows: slice, cols: slice) -> Scan:
@@ -175,6 +175,7 @@ class Scan:
             self,
             projections=np.asarray(self.projections)[:, rows, cols],
             geometry=rebuild(self.geometry, detector=window),
+            corrections=(*self.corrections, cropped_record(rows, cols, self.detector)),
         )
 
     def selected(self, views: slice | Sequence[int] | np.ndarray) -> Scan:
@@ -200,20 +201,9 @@ class Scan:
             self,
             projections=np.asarray(self.projections)[kept],
             geometry=views_of(self.geometry, kept),
-            view_positions=self.positions()[kept],
+            view_positions=_positions(self)[kept],
+            corrections=(*self.corrections, cut("selected", views=kept.tolist())),
         )
-
-    def positions(self) -> np.ndarray:
-        """Each view's place in acquisition time: :attr:`view_positions`, or i + 1/2.
-
-        Returns
-        -------
-        numpy.ndarray
-            One float64 position per view.
-        """
-        if self.view_positions is None:
-            return np.arange(self.projections.shape[0]) + 0.5
-        return self.view_positions
 
     def __post_init__(self) -> None:
         if self.projections.ndim == 2:
@@ -260,7 +250,7 @@ class Scan:
 
     @property
     def poses(self) -> np.ndarray | None:
-        """Per-view pose corrections, ``(views, 6)`` as alpha, beta, phi, dx, dz, dy.
+        """Per-view pose corrections, ``(views, 6)`` as alpha, beta, phi, x, z, y.
 
         Rotations in radians, translations in the geometry's length unit, in
         the detector frame. None when the scan carries no corrections.
@@ -412,7 +402,7 @@ class Scan:
         projections = np.concatenate([np.asarray(s.projections) for s in scans])
         geometry = ConeSegments(tuple(parts), trajectory_lengths=tuple(trajectories))
         # Each scan keeps its own acquisition times; a restart marks the break.
-        positions = np.concatenate([s.positions() for s in scans])
+        positions = np.concatenate([_positions(s) for s in scans])
         return cls(
             projections,
             geometry,
@@ -421,10 +411,10 @@ class Scan:
             view_positions=positions,
         )
 
-    def binned(self, factor: int) -> Scan:
-        """The scan with ``factor x factor`` detector pixels averaged into one.
+    def binned(self, binning: int) -> Scan:
+        """The scan with ``binning x binning`` detector pixels averaged into one.
 
-        Projection cost falls by ``factor**2``. Pixels that do not fill a block
+        Projection cost falls by ``binning**2``. Pixels that do not fill a block
         at the detector's edges are dropped, and the detector centre moves to
         match. A grid the library derived from the detector follows it, as with
         ``Frames.corrected(binning=)``; a grid the file or the caller stated is
@@ -433,7 +423,7 @@ class Scan:
 
         Parameters
         ----------
-        factor : int
+        binning : int
             Positive detector-block side length, in pixels.
 
         Returns
@@ -444,17 +434,18 @@ class Scan:
         Raises
         ------
         ValueError
-            If factor is less than one or leaves no complete detector block.
+            If binning is less than one or leaves no complete detector block.
         """
-        if factor < 1:
-            raise ValueError(f"binned needs a factor of at least 1, not {factor}")
-        if factor == 1:
+        if binning < 1:
+            raise ValueError(f"binned needs a binning of at least 1, not {binning}")
+        if binning == 1:
             return self
-        binned = mean_detector_pixels(np.asarray(self.projections, np.float32), factor)
+        binned = mean_detector_pixels(np.asarray(self.projections, np.float32), binning)
         geometry = frame_output_grid(
-            binned_geometry(self.geometry, factor), self.source, binning=factor
+            binned_geometry(self.geometry, binning), self.source, binning=binning
         )
-        return replace(self, projections=binned, geometry=geometry)
+        corrections = (*self.corrections, cut("binned", binning=binning))
+        return replace(self, projections=binned, geometry=geometry, corrections=corrections)
 
     def to_astra(self) -> tuple[np.ndarray, dict[str, Any], dict[str, Any]]:
         """Export projections and cone-beam geometry for ASTRA.
@@ -573,7 +564,7 @@ def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]
         kind, meta = "cone", geometry.geometry_metadata()
     elif isinstance(geometry, LaminographyGeometry):
         kind = "lamino"
-        meta = {"tilt_deg": float(geometry.tilt_deg), "tilt_about": str(geometry.tilt_about)}
+        meta = {"tilt": float(geometry.tilt), "tilt_about": str(geometry.tilt_about)}
     elif isinstance(geometry, RotationAxisGeometry):
         kind = "lamino"
         meta["axis_unit_lab"] = [float(x) for x in geometry.axis_unit_lab]
@@ -581,8 +572,8 @@ def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]
         kind = "parallel"
     else:
         raise TypeError(f"cannot describe a {type(geometry).__name__} geometry")
-    if not isinstance(geometry, ConeGeometry) and geometry.detector_roll_deg:
-        meta["detector_roll_deg"] = float(geometry.detector_roll_deg)
+    if not isinstance(geometry, ConeGeometry) and geometry.detector_roll:
+        meta["detector_roll"] = float(geometry.detector_roll)
     return kind, meta, None, geometry
 
 
@@ -608,10 +599,54 @@ def _describe_segments(
 
 def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
     """A dataset record for ``scan``: its geometry, keeping the source's provenance."""
+    record = geometry_record(scan.geometry, name=scan.name, source=scan.source, grid=grid)
+    meta = record.geometry_metadata
+    if scan.corrections:
+        meta["corrections"] = [c.to_dict() for c in scan.corrections]
+    if scan.view_positions is not None:
+        meta["view_positions"] = scan.view_positions.tolist()
+    record = replace(record, projections=np.asarray(scan.projections))
+    if scan.source is None:
+        return record
+    # A Scan holds only sample-view line integrals, not the acquisition's raw
+    # frame labels. Keep the other provenance without reusing a stale view axis.
+    metadata = record.copy_metadata()
+    metadata.image_key = None
+    return replace(record, _metadata=metadata)
+
+
+def source_of(scan: Scan) -> dict[str, Any]:
+    """What names ``scan``'s projections: path, shape, size and a hash of three views.
+
+    The hash covers the first, middle and last views as FP32, enough to tell
+    whether a file holds the same projections without reading them all.
+    """
+    import hashlib
+
+    projections = scan.projections
+    n = projections.shape[0]
+    digest = hashlib.sha256()
+    for view in sorted({0, n // 2, n - 1}):
+        digest.update(np.ascontiguousarray(np.asarray(projections[view], np.float32)).tobytes())
+    return {
+        "path": None if scan.source is None else scan.source.source_path,
+        "shape": [int(d) for d in projections.shape],
+        "bytes": int(np.prod(projections.shape)) * np.dtype(projections.dtype).itemsize,
+        "views_sha256": digest.hexdigest(),
+    }
+
+
+def geometry_record(
+    geometry: ScanGeometry,
+    *,
+    name: str = "sample",
+    source: ProjectionDataset | None = None,
+    grid: Grid | None = None,
+) -> ProjectionDataset:
+    """A dataset record of ``geometry`` alone, keeping ``source``'s provenance."""
     from tomojax.io import ProjectionDataset
 
-    geometry_type, meta, poses, _ = describe(scan.geometry)
-    source = scan.source
+    geometry_type, meta, poses, _ = describe(geometry)
     kept = (
         {}
         if source is None
@@ -622,41 +657,31 @@ def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
         }
     )
     fields: dict[str, Any] = {
-        "projections": np.asarray(scan.projections),
-        "angles": scan.angles.astype(np.float32),
+        "projections": None,
+        "angles": np.asarray(geometry.angles, np.float32),  # pyright: ignore[reportAttributeAccessIssue]
         "volume": None,
-        "detector": scan.detector,
-        "grid": scan.grid if grid is None else grid,
+        "detector": geometry.detector,
+        "grid": geometry.grid if grid is None else grid,
         "geometry_type": geometry_type,
         "geometry_metadata": {**kept, **meta},
         # Angle offsets are already in the geometry's angles.
-        "angle_offset_deg": None,
+        "angle_offset": None,
         "align_params": None if poses is None else poses[0],
         "align_gauge": None if poses is None else {"pose_translation_frame": poses[1]},
-        "sample_name": scan.name,
+        "sample_name": name,
     }
-    if scan.corrections:
-        fields["geometry_metadata"]["corrections"] = [c.to_dict() for c in scan.corrections]
-    if scan.view_positions is not None:
-        fields["geometry_metadata"]["view_positions"] = scan.view_positions.tolist()
-    if source is None:
-        return ProjectionDataset(**fields)
-    # A Scan holds only sample-view line integrals, not the acquisition's raw
-    # frame labels. Keep the other provenance without reusing a stale view axis.
-    record = replace(source, **fields)
-    metadata = record.copy_metadata()
-    metadata.image_key = None
-    return replace(record, _metadata=metadata)
+    return ProjectionDataset(**fields) if source is None else replace(source, **fields)
 
 
-def scan_from_record(record: ProjectionDataset, *, poses: bool) -> Scan:
+def scan_from_record(record: ProjectionDataset, *, apply_poses: bool) -> Scan:
     from tomojax.corrections import Correction
 
     saved = record.geometry_metadata.get("corrections") or ()
     positions = record.geometry_metadata.get("view_positions")
+    assert record.projections is not None  # tj.load refuses a file without them
     return Scan(
         projections=record.projections,
-        geometry=geometry_of(record, poses=poses),
+        geometry=geometry_of(record, apply_poses=apply_poses),
         name=record.sample_name or "sample",
         corrections=tuple(Correction.from_dict(c) for c in saved),
         source=record,
@@ -664,10 +689,12 @@ def scan_from_record(record: ProjectionDataset, *, poses: bool) -> Scan:
     )
 
 
-def geometry_of(record: ProjectionDataset, *, poses: bool) -> ScanGeometry:
+def geometry_of(record: ProjectionDataset, *, apply_poses: bool) -> ScanGeometry:
     from tomojax.io import build_geometry_from_dataset_metadata
 
-    _, _, geometry = build_geometry_from_dataset_metadata(record.geometry_inputs(), poses=poses)
+    _, _, geometry = build_geometry_from_dataset_metadata(
+        record.geometry_inputs(), apply_poses=apply_poses
+    )
     return geometry
 
 
@@ -696,7 +723,7 @@ def rebuild(
         if isinstance(geometry, ConeGeometry):
             mapped, beam = _windowed_cone_detector(geometry, mapped)
             changes["beam"] = beam
-        elif roll := getattr(geometry, "detector_roll_deg", 0.0):
+        elif roll := getattr(geometry, "detector_roll", 0.0):
             mapped = _rolled_window(geometry.detector, mapped, roll)
         changes["detector"] = mapped
     return replace(geometry, **changes)
@@ -708,15 +735,15 @@ def _rolled_window(original: Detector, window: Detector, roll_deg: float) -> Det
     c, s = np.cos(angle), np.sin(angle)
     du = window.center[0] - original.center[0]
     dv = window.center[1] - original.center[1]
-    centre = (original.center[0] + c * du - s * dv, original.center[1] + s * du + c * dv)
-    return replace(window, center=(float(centre[0]), float(centre[1])))
+    center = (original.center[0] + c * du - s * dv, original.center[1] + s * du + c * dv)
+    return replace(window, center=(float(center[0]), float(center[1])))
 
 
 def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[Detector, ConeBeam]:
     """Move a cropped/binned cone detector along its own pixel axes, not lab x/z."""
     detector, beam = geometry.detector, geometry.beam
     if mapped.center == detector.center or not any(
-        (beam.detector_roll_deg, beam.detector_pitch_deg, beam.detector_yaw_deg)
+        (beam.detector_roll, beam.detector_pitch, beam.detector_yaw)
     ):
         return mapped, beam
     du = mapped.center[0] - detector.center[0]
@@ -732,6 +759,19 @@ def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[D
         ),
         replace(beam, source_to_detector=float(beam.source_to_detector + shift[1])),
     )
+
+
+def cut(name: str, **settings: Any) -> Correction:
+    """The record of a scan or its frames cut down: which views, which window, which binning."""
+    from tomojax.corrections import Correction  # imports JAX: only when needed
+
+    return Correction(name, settings)
+
+
+def cropped_record(rows: slice, cols: slice, detector: Detector) -> Correction:
+    """The record of a crop to detector ``rows`` and ``cols``, as [start, stop) pixel bounds."""
+    r, c = range(*rows.indices(detector.nv)), range(*cols.indices(detector.nu))
+    return cut("cropped", rows=[r.start, r.stop], cols=[c.start, c.stop])
 
 
 def _combined(scans: Sequence[Scan]) -> tuple[Correction, ...]:
@@ -799,76 +839,98 @@ def with_grid(scan: Scan, grid: Grid) -> Scan:
 
 @dataclass(frozen=True)
 class Reconstruction:
-    """A reconstructed volume, the scan it came from and how it was made.
+    """A reconstructed volume, its geometry, how it was made and the scan it came from.
 
     ``volume`` is ``(nz, ny, nx)`` on :attr:`grid`, in the reciprocal of the
     geometry's length unit: attenuation per pixel when the scan's record says
     ``length_unit`` "pixel" (a file without a pixel size), and then poses, the centre
     and the grid are in pixels too (a NumPy or JAX array; ``np.asarray`` gives NumPy).
-    ``info`` records the method's settings.
+    ``info`` records the method's settings. ``scan`` is None for a reconstruction
+    loaded from a file saved without it; ``info["source"]`` then names the
+    projections it came from.
 
     Parameters
     ----------
     volume : numpy.ndarray or jax.Array
         Volume in (z, y, x) order and reciprocal geometry-length units.
-    scan : Scan
-        Input scan, including the output grid and any inferred geometry.
+    geometry : ScanGeometry
+        Geometry of the reconstruction, whose grid the volume is on.
     method : str
         Reconstruction method used.
     info : mapping
         Resolved method settings and solver records.
+    scan : Scan or None, optional
+        Input scan, including the output grid and any inferred geometry.
     """
 
     volume: np.ndarray | jax.Array
-    scan: Scan
+    geometry: ScanGeometry
     method: str
     info: Mapping[str, object]
+    scan: Scan | None = None
 
     @property
     def grid(self) -> Grid:
-        """The grid the volume is on, the scan's.
+        """The grid the volume is on.
 
         Returns
         -------
         Grid
-            Reconstruction grid carried by the scan.
+            Reconstruction grid of :attr:`geometry`.
         """
-        return self.scan.grid
+        return self.geometry.grid
 
 
 @dataclass(frozen=True)
 class Alignment:
     """The result of :func:`align`.
 
-    ``volume`` is the image the alignment converged with, on ``grid``: the fit's
-    bounded working grid, unless :func:`align` was given one. It is the fit's
-    working image, not a reconstruction: the fit compares model and data through a
-    filter that ignores the grid's finest scale, so the image carries texture there
-    that the object does not have. Reconstruct ``scan`` for the volume. ``scan``
-    is the input scan, on its own grid, with the estimated geometry and per-view
-    poses applied: reconstruct it, align it again or save it. ``poses`` are its
-    ``(views, 6)`` poses (see :attr:`Scan.poses`), always a table, zero where
-    nothing moved; ``info`` is the solver's record.
+    ``scan`` is the input scan, on its own grid, with the estimated geometry and
+    per-view poses applied: reconstruct it, align it again or save it.
+    :attr:`poses` are its ``(views, 6)`` poses (see :attr:`Scan.poses`), always a
+    table, zero where nothing moved; ``info`` is the method's record. ``image`` is
+    the image the joint fit converged with, on ``grid``: the fit's bounded working
+    grid, unless :func:`align` was given one. It is the fit's working image, not a
+    reconstruction: the fit compares model and data through a filter that ignores
+    the grid's finest scale, so the image carries texture there that the object
+    does not have. Reconstruct ``scan`` for the volume. A method that fits no image
+    leaves ``image`` and ``grid`` None.
 
     Parameters
     ----------
-    volume : numpy.ndarray or jax.Array
-        The alignment's working image, in (z, y, x) order, on ``grid``.
-    grid : Grid
-        The grid ``volume`` is on.
     scan : Scan
         Scan with estimated geometry and per-view corrections applied.
-    poses : numpy.ndarray
-        Complete (views, 6) correction table, zero where nothing moved.
     info : mapping
-        Solver record and resolved alignment settings.
+        The method's record and resolved settings.
+    image : numpy.ndarray, jax.Array or None, optional
+        The joint fit's working image, in (z, y, x) order, on ``grid``.
+    grid : Grid or None, optional
+        The grid ``image`` is on.
     """
 
-    volume: np.ndarray | jax.Array
-    grid: Grid
     scan: Scan
-    poses: np.ndarray
     info: Mapping[str, object]
+    image: np.ndarray | jax.Array | None = None
+    grid: Grid | None = None
+
+    @property
+    def poses(self) -> np.ndarray:
+        """The scan's ``(views, 6)`` poses, zero where nothing moved.
+
+        Returns
+        -------
+        numpy.ndarray
+            Complete correction table, as :attr:`Scan.poses` names its columns.
+        """
+        poses = self.scan.poses
+        return np.zeros((len(self.scan.angles), 6), np.float32) if poses is None else poses
 
 
 __all__ = ["Alignment", "Reconstruction", "Scan"]
+
+
+def _positions(scan: Scan) -> np.ndarray:
+    """Each view's place in acquisition time: ``scan.view_positions``, or i + 1/2."""
+    if scan.view_positions is None:
+        return np.arange(scan.projections.shape[0]) + 0.5
+    return scan.view_positions

@@ -15,16 +15,16 @@ _BAD_OFFSETS = [np.zeros(3), np.zeros((4, 1)), np.asarray([0.0, np.nan, 0.0, 0.0
 
 def _dataset(kind, offsets):
     beam = tj.ConeBeam(24, 40, axis_offset=0.2)
-    metadata = {} if kind == "parallel" else {"tilt_deg": 27.0, "tilt_about": "x"}
+    metadata = {} if kind == "parallel" else {"tilt": 27.0, "tilt_about": "x"}
     if kind in {"cone", "segments"}:
         metadata["cone_beam"] = beam.to_dict()
     if kind == "segments":
         metadata["cone_segments"] = [
-            {"views": 2, "cone_beam": beam.to_dict(), "tilt_deg": 27.0},
+            {"views": 2, "cone_beam": beam.to_dict(), "tilt": 27.0},
             {
                 "views": 2,
                 "cone_beam": tj.ConeBeam(26, 42, axis_offset=0.4).to_dict(),
-                "tilt_deg": 27.0,
+                "tilt": 27.0,
             },
         ]
     if kind == "segments":
@@ -37,7 +37,7 @@ def _dataset(kind, offsets):
         detector=tj.Detector(5, 3, 0.8, 0.85),
         geometry_type="cone" if kind == "segments" else kind,
         geometry_metadata=metadata,
-        angle_offset_deg=offsets,
+        angle_offset=offsets,
     )
 
 
@@ -49,11 +49,11 @@ def test_invalid_requested_offsets_are_reported_but_nominal_geometry_can_be_load
 ):
     dataset = _dataset(kind, offsets)
     if poses:
-        with pytest.raises(ValueError, match="angle_offset_deg"):
-            build_geometry_from_dataset_metadata(dataset.geometry_inputs(), poses=True)
+        with pytest.raises(ValueError, match="angle_offset"):
+            build_geometry_from_dataset_metadata(dataset.geometry_inputs(), apply_poses=True)
     else:
         _, _, geometry = build_geometry_from_dataset_metadata(
-            dataset.geometry_inputs(), poses=False
+            dataset.geometry_inputs(), apply_poses=False
         )
         np.testing.assert_allclose(geometry.angles, dataset.angles, rtol=1e-6)
 
@@ -70,19 +70,21 @@ def test_public_scan_load_does_not_hide_malformed_saved_angle_offsets(
     # Inject malformed metadata without asking the writer to compress a scalar.
     if suffix == ".nxs":
         with h5py.File(path, "r+") as handle:
-            key = "/entry/processing/tomojax/align/angle_offset_deg"
+            key = "/entry/processing/tomojax/align/angle_offset"
             del handle[key]
             handle.create_dataset(key, data=offsets)
     else:
         with np.load(path, allow_pickle=True) as saved:
             arrays = {key: saved[key] for key in saved.files}
-        arrays["angle_offset_deg"] = offsets
+        arrays["angle_offset"] = offsets
         np.savez_compressed(path, **arrays)
     if poses:
-        with pytest.raises(ValueError, match="angle_offset_deg"):
-            tj.load(path, poses=True)
+        with pytest.raises(ValueError, match="angle_offset"):
+            tj.load(path, apply_poses=True)
     else:
-        np.testing.assert_allclose(tj.load(path, poses=False).angles, dataset.angles, rtol=1e-6)
+        np.testing.assert_allclose(
+            tj.load(path, apply_poses=False).angles, dataset.angles, rtol=1e-6
+        )
 
 
 @pytest.mark.parametrize("kind", ["parallel", "lamino", "cone", "segments"])
@@ -91,7 +93,9 @@ def test_public_scan_load_does_not_hide_malformed_saved_angle_offsets(
 def test_finite_offsets_even_below_allclose_tolerance_match_independent_poses(kind, offsets):
     dataset = _dataset(kind, offsets)
     original = dataset.angles.copy()
-    _, _, geometry = build_geometry_from_dataset_metadata(dataset.geometry_inputs(), poses=True)
+    _, _, geometry = build_geometry_from_dataset_metadata(
+        dataset.geometry_inputs(), apply_poses=True
+    )
     expected_angles = original + offsets
     applied = np.asarray(geometry.angles, np.float64) - np.asarray(original, np.float64)
     np.testing.assert_allclose(applied, offsets, rtol=0, atol=2e-5)
@@ -107,7 +111,7 @@ def test_finite_offsets_even_below_allclose_tolerance_match_independent_poses(ki
     if kind == "segments":
         expected[2:, 0, 3] = 0.4
     np.testing.assert_allclose(
-        [geometry.pose_for_view(i) for i in range(4)], expected, rtol=0, atol=1e-6
+        [geometry.pose_matrix(i) for i in range(4)], expected, rtol=0, atol=1e-6
     )
     np.testing.assert_array_equal(dataset.angles, original)
 
@@ -115,6 +119,8 @@ def test_finite_offsets_even_below_allclose_tolerance_match_independent_poses(ki
 @pytest.mark.parametrize("offsets", [*_BAD_OFFSETS, np.full(4, 0.123456789)])
 def test_baked_misalignment_schedule_is_provenance_not_a_second_correction(offsets):
     dataset = _dataset("parallel", offsets)
-    dataset.misalign_spec = {"angle_offset_deg": "already baked into angles"}
-    _, _, geometry = build_geometry_from_dataset_metadata(dataset.geometry_inputs(), poses=True)
+    dataset.misalign_spec = {"angle_offset": "already baked into angles"}
+    _, _, geometry = build_geometry_from_dataset_metadata(
+        dataset.geometry_inputs(), apply_poses=True
+    )
     np.testing.assert_allclose(geometry.angles, dataset.angles, rtol=1e-6)

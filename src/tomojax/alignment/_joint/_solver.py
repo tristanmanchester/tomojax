@@ -11,7 +11,7 @@ chooses the volume step length and the fraction of the pose step. Only scalar
 decisions leave the device.
 """
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from functools import partial
 import time
 from typing import Any, NamedTuple
@@ -28,18 +28,30 @@ from ._stacks import Stack, level_stacks, temporaries, transient_reserve, unplac
 
 @dataclass(frozen=True)
 class Budget:
-    """Internal work limits for one level; convergence can stop sooner."""
+    """One level's work limits and stopping rule (``AlignConfig``'s words)."""
 
-    outer: int
-    inner: int
-    init_iterations: int = 5
+    iterations: int
+    image_iterations: int
+    initial_image_iterations: int = 5
     lm_initial: float = 0.001
+    image_tolerance: float = 0.03
+    tolerance: float = 0.01
+    min_iterations: int = 4
+
+    @classmethod
+    def of(cls, config, iterations) -> "Budget":
+        """A level of ``iterations`` Gauss-Newton iterations under ``AlignConfig`` ``config``."""
+        return cls(
+            iterations,
+            config.image_iterations,
+            config.initial_image_iterations,
+            image_tolerance=config.image_tolerance,
+            tolerance=config.tolerance,
+            min_iterations=config.min_iterations,
+        )
 
 
-_CG_RTOL = 0.03
 _LM_MIN = 1e-8
-_POSE_TOL_PX = 0.01
-_MIN_OUTER = 4
 
 # The level writes each volume it holds into a buffer it owns (``level_volumes``), donated
 # as the first argument; one the program does not read must still be kept to receive the
@@ -72,9 +84,15 @@ def _by_slice(update):
 class _Volumes:
     """Elementwise updates of a level's volumes, each compiled into the volume passed first."""
 
-    start = _into(  # zero, or the start x0 clipped at zero
-        lambda x, x0: jnp.broadcast_to(jnp.maximum(jnp.asarray(x0, jnp.float32), 0), x.shape)
-    )
+    @staticmethod
+    @_into
+    def start(x: jax.Array, x0: Any) -> jax.Array:
+        """Zero, or ``x0`` clipped at zero: a coarser level's volume, upsampled first."""
+        x0 = jnp.asarray(x0, jnp.float32)
+        if x0.shape not in ((), x.shape):
+            x0 = jax.image.resize(x0, x.shape, method="linear", antialias=False)
+        return jnp.broadcast_to(jnp.maximum(x0, 0), x.shape)
+
     observed_only = _into(lambda x, observed: jnp.where(observed, x, 0))
     damping = _into(lambda _out, dd: jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4))
     free = _into(lambda _out, x, gx: (x > 0) | (gx < 0))
@@ -197,8 +215,10 @@ class _Level:
         scales,
         delta,
         inner,
+        image_tolerance=0.03,
     ) -> None:
         self.ops, self.prior, self.lam, self.delta = ops, prior, lam, delta
+        self.image_tolerance = image_tolerance
         self._made = None
         self.tv_value = jax.jit(lambda x: tv.energy(x, eps, scales))
         self.conduct = _into(lambda _out, x: tv.conductance(x, eps, scales))
@@ -268,27 +288,28 @@ class _Level:
                 out = out + (jnp.float32(lm) * damp) * v
                 return out * free, r
 
-            return krylov_solve(matvec, rhs, invdiag, inner, rtol=_CG_RTOL, work=r)
+            return krylov_solve(matvec, rhs, invdiag, inner, rtol=image_tolerance, work=r)
 
         self._schur = schur
 
-    def place(self, y, precision, placement=None, *, start=False):
+    def place(self, y, precision, placement=None, *, x0=None):
         """Allocate the level's volumes and place and allocate its stacks (``_stacks``).
 
         Beside them the plan keeps the largest transient free: the temporaries of the Schur
-        solve, of the motion prior's factor, or, when the level starts from zero
-        (``start``), of the start's Gram of the shared images, each from its compile here
-        (the calls later reuse it); and the one chunk it lands in, which the allocator can
-        hand out whole up to twice the request when that wastes under 128 MiB. Returns the
-        level's storage, which the caller closes.
+        solve, of the motion prior's factor, and of the start (with ``x0`` None, the Gram of
+        the shared images FISTA starts from; otherwise ``x0`` brought to the level's shape),
+        each from its compile here (the calls later reuse it); and the one chunk it lands
+        in, which the allocator can hand out whole up to twice the request when that wastes
+        under 128 MiB. Returns the level's storage, which the caller closes.
         """
         ops, prior = self.ops, self.prior
         specs = ops.stack_specs(precision)
         shapes = self._schur_shapes(specs, precision is not None)
         self.transients = {"schur": temporaries(self._schur, *shapes), "prior": prior.temporaries()}
-        if start:
-            images = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
-            self.transients["start"] = temporaries(_shared_gram, images)
+        start = (_shared_gram, jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32))
+        if x0 is not None:  # a coarser level's volume, brought to this level's shape
+            start = (_Volumes.start, jax.ShapeDtypeStruct(ops.shape, jnp.float32), x0)
+        self.transients["start"] = temporaries(*start)
         reserve = transient_reserve(self.transients)
         volumes = level_volumes(ops, prior, self.lam)
         self.stacks = level_stacks(
@@ -371,7 +392,7 @@ class _Level:
         return self._write("x", run, *args)
 
     def start(self, c, x0, iterations):
-        """The level's first volume, from ``x0`` (None: FISTA from zero) at poses ``c``."""
+        """The level's first volume at poses ``c``, from ``x0`` (None: FISTA from zero)."""
         q = self.ops.pad_poses(c)
         lipschitz, observed = self.ops.sensitivity(q, self.stacks["free"])
         self.stacks.update([("free", observed)])
@@ -557,7 +578,7 @@ class _Level:
                 "proposed_pose_step_rms": float(jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1)))),
                 "cg_residual_kind": "explicit" if explicit else "recursive",
                 "cg_status": "converged"
-                if explicit and float(cg_residual) <= _CG_RTOL
+                if explicit and float(cg_residual) <= self.image_tolerance
                 else "budget_exhausted",
                 "cg_matvecs": int(linear_step.matvecs),
             }
@@ -586,7 +607,7 @@ def _undamped_proposal(level, step, x, c, linear, budget, pose_weight):
     damping itself does not: clipping the image step at x >= 0 can keep it high
     long after the poses have settled.
     """
-    if step["proposed_pose_step_rms"] >= _POSE_TOL_PX:
+    if step["proposed_pose_step_rms"] >= budget.tolerance:
         return None
     if step["lm"] <= budget.lm_initial:
         return step["proposed_pose_step_rms"]
@@ -672,8 +693,17 @@ def solve(
         if p0 is None
         else prior.project_gauge(jnp.asarray(p0, jnp.float64).reshape(-1))
     )
-    level = _Level(ops, prior, lam=weight, eps=eps, scales=scales, delta=delta, inner=budget.inner)
-    stacks = level.place(y, precision, placement, start=x0 is None)
+    level = _Level(
+        ops,
+        prior,
+        lam=weight,
+        eps=eps,
+        scales=scales,
+        delta=delta,
+        inner=budget.image_iterations,
+        image_tolerance=budget.image_tolerance,
+    )
+    stacks = level.place(y, precision, placement, x0=x0)
     try:
         _, c, record = _descend(level, c, x0, budget, pose_sigma, weight)
         x = stacks.take("x")  # the caller's now: the level's other storage is released
@@ -689,14 +719,14 @@ def solve(
 def _descend(level, c, x0, budget, pose_sigma, weight):
     """The level's damped Gauss-Newton steps from poses ``c`` and volume ``x0`` (None: FISTA)."""
     prior = level.prior
-    x = level.start(c, x0, budget.init_iterations)
+    x = level.start(c, x0, budget.initial_image_iterations)
     gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
     linear = (gx0, dd, sw, j, gr, gram, residual, common)
     pose_weight, noise, fisher = _pose_weight(level, linear, pose_sigma)
     f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
     initial_objective = f
     history, lm, stable, status = [], budget.lm_initial, 0, "step_budget_reached"
-    for it in range(budget.outer):
+    for it in range(budget.iterations):
         if it:
             # Release the previous weights and columns first: two stack-sized sets
             # would not fit beside each other on a small device.
@@ -737,8 +767,8 @@ def _descend(level, c, x0, budget, pose_sigma, weight):
             lm = min(lm * 3, 1e6)
         undamped = _undamped_proposal(level, history[-1], x0, c0, linear, budget, pose_weight)
         history[-1]["undamped_proposed_pose_step_rms"] = undamped
-        stable = stable + 1 if undamped is not None and undamped < _POSE_TOL_PX else 0
-        if stable >= 2 and it + 1 >= _MIN_OUTER:
+        stable = stable + 1 if undamped is not None and undamped < budget.tolerance else 0
+        if stable >= 2 and it + 1 >= budget.min_iterations:
             status = "pose_steps_below_tolerance"
             break
     final_prior = float(prior.value(c, pose_weight))
@@ -756,6 +786,8 @@ def _descend(level, c, x0, budget, pose_sigma, weight):
         "final_data_objective": f - final_prior - final_image_prior,
         "final_pose_prior": final_prior,
         "final_image_prior": final_image_prior,
-        "budget": asdict(budget),
+        "iterations": budget.iterations,
+        "image_iterations": budget.image_iterations,
+        "initial_image_iterations": budget.initial_image_iterations,
     }
     return x, c, record

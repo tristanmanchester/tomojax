@@ -9,7 +9,7 @@ import jax
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.backends import _memory, estimate_views_per_batch_info
+from tomojax.backends import _memory
 from tomojax.core import host_volume
 
 
@@ -97,40 +97,8 @@ def test_unknown_accelerator_memory_does_not_use_host(monkeypatch, platform) -> 
     assert _memory.device_free_memory_bytes(device=device) is None
 
 
-def test_invalid_views_per_batch_env_logs_selected_default(
-    caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("TOMOJAX_MAX_VIEWS_PER_BATCH", "not-an-int")
-
-    with caplog.at_level(logging.DEBUG, logger="tomojax.backends._memory"):
-        estimate = estimate_views_per_batch_info(
-            n_views=16,
-            grid_nxyz=(4, 4, 4),
-            det_nuv=(4, 4),
-            free_bytes_override=1_000_000_000,
-            fallback_batch=8,
-        )
-
-    assert estimate.views_per_batch == 8
-    assert estimate.fallback_used is False
-    assert "Ignoring invalid TOMOJAX_MAX_VIEWS_PER_BATCH value" in caplog.text
-
-
 @pytest.mark.parametrize(("info", "expected"), [("MemAvailable: 512 kB", 524288), ("", 4096)])
 def test_host_capacity_includes_reclaimable_page_cache(monkeypatch, info, expected):
     monkeypatch.setattr(host_volume.Path, "read_text", lambda _: info)
     monkeypatch.setattr(host_volume.os, "sysconf", lambda _: 64)
     assert host_volume.host_available_memory_bytes() == expected
-
-
-@pytest.mark.parametrize("free", [None, -1, 0, 1])
-def test_known_empty_memory_budget_is_not_unknown(monkeypatch, free):
-    monkeypatch.setattr(_memory, "device_free_memory_bytes", lambda: free)
-    result = estimate_views_per_batch_info(
-        n_views=100, grid_nxyz=(16, 16, 16), det_nuv=(16, 16), fallback_batch=8
-    )
-    unknown = free is None or free < 0
-    assert result.views_per_batch == (8 if unknown else 1)
-    assert result.fallback_used is unknown
-    assert result.free_bytes == free

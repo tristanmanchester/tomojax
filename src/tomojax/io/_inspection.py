@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 from numpy.typing import NDArray
 
-from tomojax._data import LocatedFrames, locate_frames
+from tomojax._data import ROTATION_ANGLE_PATHS, LocatedFrames, locate_frames, saved_without_frames
 from tomojax._typed_arrays import (
     any_true,
     finite_values_float64,
@@ -264,41 +264,40 @@ def _projection_report(path: str | None, dataset: _ProjectionStack | None) -> Pr
     }
 
 
-def _angles_report(file: h5py.File, located: LocatedFrames) -> AnglesReport:
-    path = located.angles_path
-    dataset = None if path is None else _dataset_at(file, path)
-    if dataset is None or located.angles is None:
+def _angles_report(file: h5py.File, located: LocatedFrames | None) -> AnglesReport:
+    if located is None:  # a reconstruction without its frames: the geometry's angles
+        path = next((p for p in ROTATION_ANGLE_PATHS if p in file), None)
+        dataset = None if path is None else _dataset_at(file, path)
+        values = None if dataset is None else np.asarray(dataset[...], np.float64)
+        keys = None
+    else:
+        path, values, keys = located.angles_path, located.angles, located.image_key
+        dataset = None if path is None else _dataset_at(file, path)
+    if dataset is None or values is None:
         return {
             "found": False,
             "path": None,
             "count": None,
             "units": None,
-            "min_deg": None,
-            "max_deg": None,
-            "coverage_deg": None,
+            "min": None,
+            "max": None,
+            "coverage": None,
         }
 
     # Discovery has already converted radians and known GDA command units.
-    values = located.angles
-    samples = (
-        np.ones(values.shape, dtype=bool) if located.image_key is None else located.image_key == 0
-    )
+    samples = np.ones(values.shape, dtype=bool) if keys is None else keys == 0
     finite = values[np.isfinite(values) & samples]
     units = _attr_to_str(dataset.attrs.get("units"))
-    if finite.size == 0:
-        min_deg = max_deg = coverage_deg = None
-    else:
-        min_deg = float(finite.min())
-        max_deg = float(finite.max())
-        coverage_deg = max_deg - min_deg
+    low = float(finite.min()) if finite.size else None
+    high = float(finite.max()) if finite.size else None
     return {
         "found": True,
         "path": path,
         "count": int(values.size),
         "units": units,
-        "min_deg": min_deg,
-        "max_deg": max_deg,
-        "coverage_deg": coverage_deg,
+        "min": low,
+        "max": high,
+        "coverage": None if low is None or high is None else high - low,
     }
 
 
@@ -364,7 +363,18 @@ def _detector_metadata_report(file: h5py.File) -> DetectorMetadataReport:
     }
 
 
-def _flats_darks_report(located: LocatedFrames) -> FlatsDarksReport:
+def _flats_darks_report(located: LocatedFrames | None) -> FlatsDarksReport:
+    if located is None:
+        return {
+            "image_key_found": False,
+            "image_key_path": None,
+            "image_key_counts": {},
+            "sample_count": 0,
+            "flats_present": False,
+            "darks_present": False,
+            "flat_count": 0,
+            "dark_count": 0,
+        }
     keys = located.image_key
     count_map = {} if keys is None else unique_int_count_map(keys)
     sample_count = located.stack.shape[0] if keys is None else int(count_map.get("0", 0))
@@ -414,7 +424,7 @@ def _alignment_report(file: h5py.File | None) -> AlignmentReport:
             "gauge_fix_found": False,
         }
     params = align.get("thetas")
-    angle_offset = align.get("angle_offset_deg")
+    angle_offset = align.get("angle_offset")
     misalign_spec = _json_attr_to_mapping(align.attrs.get("misalign_spec_json"))
     gauge_fix = _json_attr_to_mapping(align.attrs.get("gauge_fix_json"))
     params_found = isinstance(params, h5py.Dataset)
@@ -503,12 +513,17 @@ def _memory_estimates(
 
 
 def inspect_nxtomo(path: PathLike) -> InspectionReport:
-    """Inspect an HDF5/NXtomo file without materializing TomoJAX/JAX objects."""
+    """Inspect an HDF5/NXtomo file without materializing TomoJAX/JAX objects.
+
+    A reconstruction saved without its scan holds no frames: its report has no
+    projections, flats or darks, and its angles are the geometry's.
+    """
     input_path = Path(path)
-    located = locate_frames(str(input_path))
+    located = None if saved_without_frames(input_path) else locate_frames(str(input_path))
     with h5py.File(input_path, "r") as file:
-        projection_path = located.stack.dataset
-        projection = _projection_report(projection_path, _dataset_at(file, projection_path))
+        projection_path = None if located is None else located.stack.dataset
+        dataset = None if projection_path is None else _dataset_at(file, projection_path)
+        projection = _projection_report(projection_path, dataset)
         report: InspectionReport = {
             "schema_version": 1,
             "input_path": str(input_path),
@@ -550,9 +565,9 @@ def _acquisition_report(path: PathLike, raw: RawAcquisition) -> InspectionReport
             "path": acquisition.get("angles_path"),
             "count": len(angles),
             "units": "deg",
-            "min_deg": float(angles.min()) if len(angles) else None,
-            "max_deg": float(angles.max()) if len(angles) else None,
-            "coverage_deg": float(np.ptp(angles)) if len(angles) else None,
+            "min": float(angles.min()) if len(angles) else None,
+            "max": float(angles.max()) if len(angles) else None,
+            "coverage": float(np.ptp(angles)) if len(angles) else None,
         },
         "geometry": {
             "found": True,

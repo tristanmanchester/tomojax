@@ -3,8 +3,8 @@
 Run from the checkout root; the result is ready for Python or CLI reconstruction:
 
     python examples/import_walnut.py ~/data/walnuts/Walnut1 -o orbit.nxs
-    tomojax recon orbit.nxs -o fdk.nxs --method fbp
-    tomojax recon orbit.nxs -o cgls.nxs --method cgls --iterations 20
+    tomojax reconstruct orbit.nxs -o fdk.nxs --method fbp
+    tomojax reconstruct orbit.nxs -o cgls.nxs --method cgls --iterations 20
 
 The default selects the middle orbit, every twentieth view, 12 x 12 detector
 binning and a 64-cubed grid over the authors' 50.1 mm cube. Smaller binning,

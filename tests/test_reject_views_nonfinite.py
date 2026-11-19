@@ -40,9 +40,9 @@ def test_nonfinite_statistic_is_rejected_without_poisoning_good_views(value, bad
         projections[bad_view] = value
     scan = _scan(projections)
     valid = np.arange(13) != bad_view
-    expected = scan.selected(valid).corrected(RejectViews(), batch_views=4)
+    expected = scan.selected(valid).corrected(RejectViews(), views_per_batch=4)
     with warnings.catch_warnings(record=True) as emitted:
-        actual = scan.corrected(RejectViews(), batch_views=4)
+        actual = scan.corrected(RejectViews(), views_per_batch=4)
     assert not emitted
     np.testing.assert_array_equal(actual.angles, expected.angles)
     np.testing.assert_array_equal(actual.projections, expected.projections)
@@ -61,7 +61,7 @@ def test_consecutive_missing_views_keep_original_indices_and_saved_record(tmp_pa
     valid = np.ones(13, bool)
     valid[invalid] = False
     expected = scan.selected(valid).corrected(RejectViews())
-    actual = scan.corrected(RejectViews(), batch_views=3)
+    actual = scan.corrected(RejectViews(), views_per_batch=3)
     np.testing.assert_array_equal(actual.angles, expected.angles)
     np.testing.assert_array_equal(actual.projections, expected.projections)
     assert actual.corrections[-1].found == {
@@ -79,7 +79,7 @@ def test_one_finite_view_is_retained_without_a_nonfinite_step_limit() -> None:
     projections = np.full((9, 3, 7), np.nan, np.float32)
     projections[4] = 0.7
     with warnings.catch_warnings(record=True) as emitted:
-        actual = _scan(projections).corrected(RejectViews(), batch_views=3)
+        actual = _scan(projections).corrected(RejectViews(), views_per_batch=3)
     assert not emitted
     np.testing.assert_array_equal(actual.projections, projections[4:5])
     np.testing.assert_array_equal(actual.angles, [80.0])
@@ -98,5 +98,5 @@ def test_all_invalid_views_raise_without_nan_mad_warnings(value) -> None:
         warnings.catch_warnings(record=True) as emitted,
         pytest.raises(ValueError, match="RejectViews would reject every view"),
     ):
-        scan.corrected(RejectViews(), batch_views=3)
+        scan.corrected(RejectViews(), views_per_batch=3)
     assert not emitted

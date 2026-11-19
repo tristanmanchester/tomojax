@@ -97,8 +97,8 @@ measurements require independent calibration evidence and repair before `Rings`.
   a disagreement test.
 - `tomojax inspect` checks storage and missing calibration in recognized raw
   acquisitions. A file that records no axial centre loads with the centre at the
-  middle of the detector; estimate it with `tj.estimate_center` or
-  `tj.align(fit="centre")`. A valid report does not certify physical geometry or
+  middle of the detector; estimate it with `tj.align(fit="center")`, or quickly with
+  `method="opposite-views"`. A valid report does not certify physical geometry or
   reconstruction readiness.
 - External HDF5 links require readable backing files at their recorded paths.
   The loader reports missing detector sources; it does not repair damaged files
@@ -123,17 +123,17 @@ measurements require independent calibration evidence and repair before `Rings`.
   geometry and calibration, as in the [walnut example](../examples/align_walnut_orbits.py).
   2DeteCT folders require explicit fan/cone geometry and flat/dark correction;
   the directory name does not supply that metadata to `load_frames`.
-- TIFF `import` packages data; it does not apply flat/dark correction or a log.
-  Reconstruction expects line integrals (log attenuation).
-- `tomojax preprocess` of generic TIFF frames requires a `detector` table in
-  `--config` (`nu`, `nv`, `du`, `dv`, `det_center`). For non-parallel geometry,
-  pass `geometry=` to `tj.load_frames`; see the
-  [real scan guide](real-laminography.md#prepare-tiff-data).
+- A TIFF stack is read as raw frames: `tomojax load` and `correct` need its
+  flats and darks. Already-corrected line integrals are built into a `tj.Scan` in
+  Python; reconstruction expects line integrals (log attenuation).
+- `tomojax correct` of generic TIFF frames requires `--pixel-size` and, unless the
+  middle, `--detector-center`; `--geometry` declares a non-parallel geometry. See
+  the [real scan guide](real-laminography.md#prepare-tiff-data).
 - Missing detector pixel sizes require `detector=` or `geometry=`. For axial
   acquisitions with recorded pitch, an absent rotation centre is not estimated
   at load: the scan has the centre at the detector middle and its record says
   "not_recorded"; `tj.reconstruct` reports that status. Supply `detector=` or
-  fit it with `tj.align(scan, fit="centre")`. Missing angles require `angles=`. See the
+  fit it with `tj.align(scan, fit="center")`. Missing angles require `angles=`. See the
   [quickstart](quickstart.md#correct-raw-detector-frames).
 - Content-discovered external acquisitions remain detector counts even when
   stored as floats. Missing flat/dark calibration requires `flats=` (frames or
@@ -170,7 +170,7 @@ measurements require independent calibration evidence and repair before `Rings`.
   conjugate-panel coverage, and Parker-weighted short scans, whose weights an
   offset detector shares only between rays that were both measured. The
   iterative solvers model any per-view poses exactly. Cone-beam
-  projection needs the canonical detector grid (no `detector_roll_deg`
+  projection needs the canonical detector grid (no `detector_roll`
   replay grid; detector roll is part of `ConeBeam`). The CUDA kernels need
   CuPy; without it the JAX reference runs, about ten times slower. On CUDA
   the matched transpose is slower than ASTRA's approximate backprojector (see

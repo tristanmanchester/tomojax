@@ -109,7 +109,7 @@ def prepare(path: Path, *, binning: int, every: int, center_px: float | None) ->
         raise ValueError("This slice-wise example requires an axial parallel-beam scan")
     if center_px is None:
         # Geometry calibration only; denoiser optimization never sees test views.
-        scan = tj.estimate_center(scan)
+        scan = tj.align(scan, fit="center", method="opposite-views").scan
     else:
         # A native-pixel offset; binned pixels are ``binning`` native ones wide.
         center = center_px * scan.detector.du / binning

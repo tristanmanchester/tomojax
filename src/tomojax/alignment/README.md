@@ -2,7 +2,7 @@
 
 Use `tj.align(scan, fit=..., grid=...)`. The [alignment guide](../../../docs/align-a-scan.md)
 explains how to choose the parameters and check the result. The default fits per-view
-translations; `"centre"`, `"tilt"`, `"roll"` and `"rotations"` name the additional parameter
+translations; `"center"`, `"tilt"`, `"roll"` and `"rotations"` name the additional parameter
 blocks. All geometries use one private joint solver in `_joint`.
 
 The solver estimates the image and the requested geometry corrections together. Per-view

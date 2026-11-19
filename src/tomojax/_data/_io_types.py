@@ -41,13 +41,13 @@ def _copy_array_metadata(value: object) -> np.ndarray | None:
 
 # Geometry metadata keys copied into geometry inputs, with their conversions.
 _GEOMETRY_PASSTHROUGH: dict[str, Callable[[Any], Any]] = {
-    "tilt_deg": float,
+    "tilt": float,
     "tilt_about": str,
     "cone_beam": lambda value: value,
     "cone_segments": lambda value: value,
     "trajectory_lengths": lambda value: value,
     "axis_unit_lab": lambda value: value,
-    "detector_roll_deg": float,
+    "detector_roll": float,
 }
 
 
@@ -77,7 +77,7 @@ class NXTomoMetadata:
         Gauge and frame conventions for alignment parameters.
     geometry_calibration : dict or None, optional
         Calibration state and provenance.
-    angle_offset_deg : numpy.ndarray or None, optional
+    angle_offset : numpy.ndarray or None, optional
         Saved per-view angle corrections in degrees.
     misalign_spec : dict or None, optional
         Simulation misalignment metadata.
@@ -105,7 +105,7 @@ class NXTomoMetadata:
     align_params: np.ndarray | None = None
     align_gauge: JsonObject | None = None
     geometry_calibration: JsonObject | None = None
-    angle_offset_deg: np.ndarray | None = None
+    angle_offset: np.ndarray | None = None
     misalign_spec: JsonObject | None = None
     simulation_artefacts: JsonObject | None = None
     frame: str | None = None
@@ -152,7 +152,7 @@ class NXTomoMetadata:
             align_params=_copy_array_metadata(data.get("align_params")),
             align_gauge=data.get("align_gauge"),
             geometry_calibration=data.get("geometry_calibration"),
-            angle_offset_deg=_copy_array_metadata(data.get("angle_offset_deg")),
+            angle_offset=_copy_array_metadata(data.get("angle_offset")),
             misalign_spec=data.get("misalign_spec"),
             simulation_artefacts=data.get("simulation_artefacts"),
             frame=None if data.get("frame") is None else str(data.get("frame")),
@@ -182,7 +182,7 @@ class LoadedNXTomo:
         Original on-disk volume axis order.
     """
 
-    projections: np.ndarray | Hdf5Frames
+    projections: np.ndarray | Hdf5Frames | None
     metadata: NXTomoMetadata
     source: SourceInfo | None = None
     disk_volume_axes_order: str | None = None
@@ -208,7 +208,9 @@ class LoadedNXTomo:
         """
         source_info = data.get("source")
         return cls(
-            projections=_frames_or_array(data["projections"]),
+            projections=None
+            if data.get("projections") is None
+            else _frames_or_array(data["projections"]),
             metadata=NXTomoMetadata.from_dataset(data),
             source=source_info if isinstance(source_info, dict) else None,
             disk_volume_axes_order=(
@@ -275,7 +277,9 @@ class LoadedNXTomo:
         dict
             Dataset mapping with projections materialized and typed geometry converted to mappings.
         """
-        data: LoadedDataset = {"projections": np.asarray(self.projections)}
+        data: LoadedDataset = {}
+        if self.projections is not None:  # none in a reconstruction saved without its scan
+            data["projections"] = np.asarray(self.projections)
         for field_name in _NXTOMO_METADATA_FIELDS:
             value = getattr(self.metadata, field_name)
             if value is None:
@@ -328,8 +332,8 @@ class LoadedNXTomo:
         grid = self.metadata.grid
         if grid is not None:
             payload["grid"] = grid.to_dict() if isinstance(grid, Grid) else grid
-        if self.metadata.angle_offset_deg is not None:
-            payload["angle_offset_deg"] = np.asarray(self.metadata.angle_offset_deg)
+        if self.metadata.angle_offset is not None:
+            payload["angle_offset"] = np.asarray(self.metadata.angle_offset)
         if self.metadata.misalign_spec is not None:
             payload["misalign_spec"] = self.metadata.misalign_spec
         if self.metadata.align_params is not None:

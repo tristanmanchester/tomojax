@@ -78,7 +78,7 @@ def matched_operators(
     detector = geometry.detector
     det_grid = detector_grid_from_geometry_inputs(detector, geometry)
     model, backend = resolve_geometry_projector(
-        geometry, "auto", "auto", detector=detector, det_grid=det_grid, context=context
+        geometry, "auto", detector=detector, det_grid=det_grid, context=context
     )
     n_views = len(geometry.angles)
     poses = stack_view_poses(geometry, n_views)

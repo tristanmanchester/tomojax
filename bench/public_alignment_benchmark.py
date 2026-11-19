@@ -143,11 +143,11 @@ def generate_fixture(
     rng = np.random.default_rng(SEED)
     angles = np.arange(views) * 180 / views + rng.uniform(-0.3, 0.3, views)
     geometry = (
-        LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+        LaminographyGeometry(grid, detector, angles, tilt=30)
         if kind == "lamino"
         else ParallelGeometry(grid, detector, angles)
     )
-    nominal = np.asarray([geometry.pose_for_view(i) for i in range(views)])
+    nominal = np.asarray([geometry.pose_matrix(i) for i in range(views)])
     shape = (grid.nz, grid.ny, grid.nx)
     field = np.empty(shape, np.float64)
     for x in range(grid.nx):
@@ -200,9 +200,9 @@ def generate_analytic_fixture(
 ) -> None:
     """Write a scan of continuous Gaussian blobs with analytic line integrals.
 
-    The voxel-basis pilot integrates the same trilinear basis as the solver's
-    exact integrator, an inverse crime. These data match no discretisation, so
-    pose errors include the model-mismatch floor real data would show.
+    Unlike the voxel-basis pilot's trilinear integrals, these data match no
+    discretisation, so pose errors include the model-mismatch floor real data
+    would show.
     """
     from compare_projectors import _sample_volume
 
@@ -228,11 +228,11 @@ def generate_analytic_fixture(
     rng = np.random.default_rng(SEED)
     angles = np.arange(views) * 180 / views + rng.uniform(-0.3, 0.3, views)
     geometry = (
-        LaminographyGeometry(grid, detector, angles, tilt_deg=30)
+        LaminographyGeometry(grid, detector, angles, tilt=30)
         if kind == "lamino"
         else ParallelGeometry(grid, detector, angles)
     )
-    nominal = np.asarray([geometry.pose_for_view(i) for i in range(views)])
+    nominal = np.asarray([geometry.pose_matrix(i) for i in range(views)])
     extent = np.array([grid.nx * grid.vx, grid.ny * grid.vy, grid.nz * grid.vz])
     blobs = [
         (
@@ -261,8 +261,8 @@ def generate_analytic_fixture(
     for i, pose in enumerate(poses):
         base, direction = (world - pose[:3, 3]) @ pose[:3, :3], pose[1, :3]
         values = np.zeros(world.shape[:2])
-        for amplitude, centre, inv_var in blobs:
-            diff = base - centre
+        for amplitude, center, inv_var in blobs:
+            diff = base - center
             a = np.sum(direction**2 * inv_var)
             b = np.sum(diff * direction * inv_var, -1)
             c = np.sum(diff**2 * inv_var, -1)
@@ -307,12 +307,12 @@ def one_run(path: Path, *, fit: tuple[str, ...] = ("translations", "rotations"))
     fixture = load_fixture(path)
     grid, detector = fixture["grid"], fixture["detector"]
     geometry = (
-        LaminographyGeometry(grid, detector, fixture["angles"], tilt_deg=30)
+        LaminographyGeometry(grid, detector, fixture["angles"], tilt=30)
         if fixture["kind"] == "lamino"
         else ParallelGeometry(grid, detector, fixture["angles"])
     )
     result = tj.align(tj.Scan(fixture["data"], geometry), fit=fit, grid=grid)
-    volume, parameters = jax.device_get((result.volume, result.poses))
+    volume, parameters = jax.device_get((result.image, result.poses))
     quality = verify(volume, parameters, fixture)
     return {
         "verified_ms": (time.perf_counter() - start) * 1000,
@@ -384,7 +384,7 @@ def main() -> None:
         default=["translations", "rotations"],
     )
     parser.add_argument("--views", type=int, default=VIEWS)
-    parser.add_argument("--rotation-deg", type=float, default=0.25, help="Uniform motion bound")
+    parser.add_argument("--rotation", type=float, default=0.25, help="Uniform motion bound")
     parser.add_argument("--shift-px", type=float, default=0.5, help="Uniform motion bound")
     parser.add_argument("--noise", type=float, default=0.001, help="Noise std / data RMS")
     parser.add_argument("--cells", nargs="+", help="Subset such as lamino-noisy; default all six")

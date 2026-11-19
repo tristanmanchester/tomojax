@@ -79,10 +79,10 @@ def estimate_gain_offset(
     y_mean = sum_y / safe_sum_w
     # Center before forming products: subtracting raw second moments loses
     # detector variation when the projection has a large constant background.
-    centred_x = jnp.where(included, pred_flat - x_mean[:, None], 0.0)
-    centred_y = jnp.where(included, obs_flat - y_mean[:, None], 0.0)
-    covariance = jnp.sum(weights_flat * centred_x * centred_y, axis=1)
-    variance = jnp.sum(weights_flat * centred_x * centred_x, axis=1)
+    centered_x = jnp.where(included, pred_flat - x_mean[:, None], 0.0)
+    centered_y = jnp.where(included, obs_flat - y_mean[:, None], 0.0)
+    covariance = jnp.sum(weights_flat * centered_x * centered_y, axis=1)
+    variance = jnp.sum(weights_flat * centered_x * centered_x, axis=1)
     ridge_value = jnp.asarray(max(float(ridge), 0.0), dtype=jnp.float32)
     denominator = variance + ridge_value
     gain = covariance / jnp.where(denominator > 0.0, denominator, 1.0)

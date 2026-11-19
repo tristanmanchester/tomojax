@@ -76,7 +76,7 @@ def transmission(
     shape: tuple[int, int],
     pixel: float,
     *,
-    centre: tuple[float, float] = (0.0, 0.0),
+    center: tuple[float, float] = (0.0, 0.0),
     supersample: int = 2,
     gvxr_python: Path = GVXR_PYTHON,
 ) -> np.ndarray:
@@ -87,7 +87,7 @@ def transmission(
         "mu_mm": np.array(list(present(mesh_dir).values())),
         "shape": np.array(shape),
         "pixel_mm": pixel,
-        "centre_mm": np.array(centre, np.float64),
+        "center_mm": np.array(center, np.float64),
         "supersample": supersample,
         "poses": np.asarray(poses, np.float64),
     }
@@ -115,15 +115,15 @@ def truth(
     mesh_dir: Path,
     shape: tuple[int, int, int],
     voxel: float,
-    centre: tuple[float, float, float],
+    center: tuple[float, float, float],
     *,
     supersample: int = 4,
 ) -> np.ndarray:
-    """Mean attenuation (mm^-1) on a ZYX grid; ``centre`` is physical xyz in mm."""
+    """Mean attenuation (mm^-1) on a ZYX grid; ``center`` is physical xyz in mm."""
     sys.path.insert(0, str(PHANTOMS))
     from mesh_voxels import occupancy, read_stl
 
-    origin = tuple(c - (n / 2 - 0.5) * voxel for c, n in zip(centre, shape[::-1], strict=True))
+    origin = tuple(c - (n / 2 - 0.5) * voxel for c, n in zip(center, shape[::-1], strict=True))
     volume = np.zeros(shape, np.float32)
     for name, mu in present(mesh_dir).items():
         triangles = read_stl(mesh_dir / f"{name}.stl")

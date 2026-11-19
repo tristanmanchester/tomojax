@@ -56,7 +56,7 @@ def _scan(kind, nz=19):
     angles = np.linspace(0, 180, 13, endpoint=False)
     geometry = tj.ParallelGeometry(grid, detector, angles)
     if kind == "lamino":
-        geometry = tj.LaminographyGeometry(grid, detector, angles * 2, tilt_deg=25)
+        geometry = tj.LaminographyGeometry(grid, detector, angles * 2, tilt=25)
     elif kind == "cone":
         geometry = tj.ConeGeometry(grid, detector, angles * 2, tj.ConeBeam(30, 45))
     data = np.random.default_rng(132).normal(size=(13, 20, 11)).astype(np.float32)
@@ -91,7 +91,7 @@ def test_the_default_reconstructs_a_posed_laminography_scan_whose_volume_is_on_t
     n, views = 16, 48
     grid = tj.Grid(n, n, n, 1, 1, 1)
     angles = np.linspace(0, 360, views, endpoint=False)
-    geometry = tj.LaminographyGeometry(grid, tj.Detector(24, 24, 1, 1), angles, tilt_deg=30)
+    geometry = tj.LaminographyGeometry(grid, tj.Detector(24, 24, 1, 1), angles, tilt=30)
     z, y, x = np.indices((n, n, n))
     volume = np.exp(-((x - 7.5) ** 2 + (y - 8.5) ** 2 + (z - 7) ** 2) / 12).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)

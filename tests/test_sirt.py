@@ -147,7 +147,7 @@ def test_sirt_dense_updates_with_bounds_support_and_tail(
     )
     np.testing.assert_allclose(np.asarray(volume).ravel(), expected, atol=3e-6, rtol=3e-5)
     assert info["subset_updates"] == 4 * subsets
-    assert info["stream_projections"] is stream
+    assert info["stream"] is stream
 
 
 @pytest.mark.numerical

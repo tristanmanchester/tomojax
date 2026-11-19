@@ -51,7 +51,7 @@ def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
 def test_explicit_method_bypasses_automatic_geometry_policy():
     grid = tj.Grid(4, 4, 2, 1, 1, 1)
     detector = tj.Detector(8, 3, 1, 1)
-    geometry = tj.LaminographyGeometry(grid, detector, np.arange(0, 360, 30), tilt_deg=30)
+    geometry = tj.LaminographyGeometry(grid, detector, np.arange(0, 360, 30), tilt=30)
     scan = tj.Scan(np.ones((12, 3, 8), np.float32), geometry)
     result = tj.reconstruct(scan, "fbp", config=FBPConfig())
     assert "automatic" not in result.info and result.scan is scan
@@ -60,7 +60,7 @@ def test_explicit_method_bypasses_automatic_geometry_policy():
 
 
 @pytest.mark.parametrize("status", [None, "recorded", "provided", "inferred", "not_recorded"])
-def test_automatic_reconstruction_never_estimates_a_centre(status, monkeypatch):
+def test_automatic_reconstruction_never_estimates_a_center(status, monkeypatch):
     # tj.reconstruct reconstructs with the centre it is given, whatever the file recorded.
     def no_estimate(*_args, **_kwargs):
         raise AssertionError("tj.reconstruct estimated a centre")
@@ -102,8 +102,8 @@ def test_automatic_segmented_cone_preserves_calibration():
 def _phantom(n=16):
     # An off-centre Gaussian, so a wrong centre or ignored poses move it visibly.
     xyz = np.indices((n, n, n)).astype(float)
-    centre = np.array([7.5, 6.5, 8.5])[:, None, None, None]
-    return np.exp(-np.sum((xyz - centre) ** 2, axis=0) / 10).astype(np.float32)
+    center = np.array([7.5, 6.5, 8.5])[:, None, None, None]
+    return np.exp(-np.sum((xyz - center) ** 2, axis=0) / 10).astype(np.float32)
 
 
 def _error(result, volume):
@@ -176,7 +176,7 @@ def test_automatic_route_reconstructs_an_unposed_oblique_scan_with_its_declared_
     monkeypatch.setattr(_smooth_alignment, "fit_poses", no_fit)
     volume = _phantom()
     geometry = (
-        tj.LaminographyGeometry(_GRID, tj.Detector(24, 24, 1, 1), _ANGLES, tilt_deg=30)
+        tj.LaminographyGeometry(_GRID, tj.Detector(24, 24, 1, 1), _ANGLES, tilt=30)
         if kind == "laminography"
         else _ROUTES["axis"]()
     )

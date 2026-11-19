@@ -9,7 +9,7 @@ Zeiss Xradia acquisitions are recognised by OLE content, with lazy raw counts,
 embedded or explicitly selected XRM reference images and physical calibration;
 fractional image shifts stay in the geometry rather than resampling the data. Per-view cone arrangements use
 matched CGLS under automatic reconstruction, not single-arrangement FDK.
-Use `tomojax preprocess scan.txrm --darks 0 -o scan.nxs`, or
+Use `tomojax correct scan.txrm --darks 0 -o scan.nxs`, or
 `tj.load_frames("scan.txrm", darks=0).corrected(...)`; the
 [lab-CT guide](../../../docs/lab-ct.md#zeiss-xradia-preview) gives a binned CPU preview.
 Pass separate flat or dark images with `flats="reference_Front.xrm"` or `darks=...`.
@@ -38,7 +38,7 @@ Validation of recognized raw acquisitions reports missing detector/axis metadata
 and flat/dark references, using the same requirements as frame loading. A file
 that records the pitches but not the axial centre loads with the centre at the
 middle of the detector and `detector_center_status` "not_recorded"; nothing
-estimates it unless asked (`tj.estimate_center`, `tj.align(fit="centre")`). CLI errors
+estimates it unless asked (`tj.align(fit="center")`). CLI errors
 name `preprocess --config`, `--flats`, `--darks` or `--angles` where those options
 can supply the missing input. Storage validation of other datasets is not a
 geometry-calibration or reconstruction-quality certificate.
@@ -62,7 +62,7 @@ not treated as absent. Ambiguous candidates require an explicit metadata path.
 other than sample views. Saving a scan retains every pose update, including an
 update around a cone-segmented acquisition whose segments have their own;
 `Scan.poses` is their complete composition in the detector translation frame,
-and loading with `poses=False` removes all of them.
+and loading with `apply_poses=False` removes all of them.
 
 ## TIFF angle sidecars
 
@@ -77,10 +77,10 @@ preprocessing use this same parser. It accepts leading headers, blank lines,
 and comments; empty/nonfinite data and malformed rows after numeric data starts
 raise `ValueError`. The caller checks that angle count matches projection count.
 
-`tomojax import` requires a detector centre in its TOML configuration
-(`detector_center = [u, v]`), plus explicit geometry family and pixel size.
-Laminography requires `tilt_deg`; optional cone detector roll/pitch/yaw also
-belong in the configuration. Python `Detector.center` stores physical lengths, so an
+`tomojax load` and `tomojax correct` take what a file lacks as flags under
+`tj.load`'s names: `--pixel-size`, `--detector-center U V`, `--geometry` with
+`--tilt` for laminography, and `--source-to-axis`, `--source-to-detector` and the
+detector's `--detector-roll`, `--detector-pitch` and `--detector-yaw` for cone data. Python `Detector.center` stores physical lengths, so an
 offset in pixels is multiplied by `du`/`dv`. See the
 [real scan guide](../../../docs/real-laminography.md) for measured geometry and
 for the distinction between raw intensities and corrected absorption.
@@ -119,9 +119,9 @@ Alternatively, the equivalent CLI workflow writes the corrected scan, then the
 volume and a central-slice preview (use fresh output names):
 
 ```sh
-# preview.toml includes binning = 4 and a calibrated [detector] table
-tomojax preprocess skyscan/ --flats 65536 --darks 0 --config preview.toml -o grains.nxs
-tomojax recon grains.nxs --method fbp --roi off --grid 256 256 256 \
+tomojax correct skyscan/ --flats 65536 --darks 0 --binning 4 --pixel-size ... \
+  --detector-center U V -o grains.nxs
+tomojax reconstruct grains.nxs --method fbp --region off --grid 256 256 256 \
   -o grains-recon.nxs --preview grains.png
 ```
 

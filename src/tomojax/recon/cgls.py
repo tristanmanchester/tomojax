@@ -27,7 +27,8 @@ class CGLSConfig:
     using the discrete matched adjoint. ``C`` is the identity for absolute data
     and subtracts each full detector view's mean for per-view contrast.
     Stop when the normal-residual norm falls below
-    ``atol + rtol * initial_normal_residual_norm`` or after ``iterations`` updates.
+    ``absolute_tolerance + tolerance * initial_normal_residual_norm`` or after
+    ``iterations`` updates.
     ``roundoff_limit`` indicates voxelwise update stagnation or a normal gradient
     stagnating within an FP32 cancellation estimate, without claiming the requested tolerance.
     Before reporting convergence or roundoff, recompute the data and normal
@@ -52,16 +53,14 @@ class CGLSConfig:
     Both penalties default to zero. Their weights are independent of view count;
     the data term is an unnormalized sum of squared residuals.
 
-    ``projector_model="joseph"`` samples voxel-centre planes along the dominant
-    voxel direction, interpolates each plane and uses its matched transpose. On
-    CUDA that transpose gathers into voxels without atomic writes. Bilinear
-    interpolation is the default; ``joseph_interpolation="cubic"`` selects Keys
-    cubic convolution with a=-1/2 and a 4-by-4 stencil, including negative
-    weights. ``"ray"`` is the trilinear ray marcher. ``"auto"`` selects Joseph,
-    for a rolled (affine) ``det_grid`` too, whose plane coefficients carry the
-    grid; both models match analytic line integrals equally well, and Joseph is faster.
+    The projector samples voxel-centre planes along the dominant voxel
+    direction, interpolates each plane and uses its matched transpose; a rolled
+    (affine) ``det_grid`` is carried in the plane coefficients. On CUDA the
+    transpose gathers into voxels without atomic writes. Bilinear interpolation
+    is the default; ``interpolation="cubic"`` selects Keys cubic convolution
+    with a=-1/2 and a 4-by-4 stencil, including negative weights.
 
-    ``stream_projections`` solves the equivalent normal equations with NumPy or
+    ``stream`` solves the equivalent normal equations with NumPy or
     memmap projections read from host memory one view batch at a time, so only
     volume-sized arrays occupy the device; ``None`` reserves space for the
     resident solver state and verification scratch, streaming when they would
@@ -81,10 +80,10 @@ class CGLSConfig:
     iterations : int, optional
         Maximum number of solver updates. For SIRT and MLEM, an update is a complete
         subset sweep. Default is 50.
-    rtol : float, optional
+    tolerance : float, optional
         Nonnegative relative tolerance on the normal-residual norm. Default is
         1e-06.
-    atol : float, optional
+    absolute_tolerance : float, optional
         Nonnegative absolute tolerance on the normal-residual norm. Default is 0.0.
     damping : float, optional
         Nonnegative weight of the volume-norm penalty; squared in the objective.
@@ -95,16 +94,13 @@ class CGLSConfig:
     backend : Literal['auto', 'jax', 'cuda'], optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
-    projector_model : Literal['auto', 'ray', 'joseph'], optional
-        Projection model: "auto", "ray" or "joseph". Auto selects Joseph unless an
-        explicit detector grid requires rays. Default is 'auto'.
-    joseph_interpolation : Literal['linear', 'cubic'], optional
-        Joseph interpolation: "linear" or Keys "cubic" with a=-1/2. Cubic is not
-        supported by the ray model. Default is 'linear'.
+    interpolation : Literal['linear', 'cubic'], optional
+        Plane interpolation: "linear" or Keys "cubic" with a=-1/2. Default is
+        'linear'.
     gradient_damping : float, optional
         Nonnegative weight of the physical finite-difference penalty; squared in the
         objective. Default is 0.0.
-    stream_projections : bool | None, optional
+    stream : bool | None, optional
         Read host projections one view batch at a time. None selects streaming from
         available device memory; False keeps them resident.
     devices : jax.Device or sequence of jax.Device or None, optional
@@ -114,15 +110,14 @@ class CGLSConfig:
 
     data_term: DataTerm = "absolute"
     iterations: int = 50
-    rtol: float = 1e-6
-    atol: float = 0.0
+    tolerance: float = 1e-6
+    absolute_tolerance: float = 0.0
     damping: float = 0.0
     views_per_batch: int = 64
     backend: Literal["auto", "jax", "cuda"] = "auto"
-    projector_model: Literal["auto", "ray", "joseph"] = "auto"
-    joseph_interpolation: Literal["linear", "cubic"] = "linear"
+    interpolation: Literal["linear", "cubic"] = "linear"
     gradient_damping: float = 0.0
-    stream_projections: bool | None = None
+    stream: bool | None = None
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
@@ -149,10 +144,8 @@ def validate_model(cfg: CGLSConfig) -> None:
     """Validate interpolation independently of the chosen execution runtime."""
     if cfg.data_term not in {"absolute", "per_view_contrast"}:
         raise ValueError("cgls: data_term must be absolute or per_view_contrast")
-    if cfg.joseph_interpolation not in {"linear", "cubic"}:
-        raise ValueError("cgls: joseph_interpolation must be 'linear' or 'cubic'")
-    if cfg.joseph_interpolation != "linear" and cfg.projector_model == "ray":
-        raise ValueError("cgls: cubic interpolation requires projector_model='joseph'")
+    if cfg.interpolation not in {"linear", "cubic"}:
+        raise ValueError("cgls: interpolation must be 'linear' or 'cubic'")
 
 
 def cgls(
@@ -239,15 +232,13 @@ def cgls(
     iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)
     if iterations < 0 or batch < 1:
         raise ValueError("cgls: iterations must be nonnegative and views_per_batch positive")
-    for name in ("rtol", "atol", "damping", "gradient_damping"):
+    for name in ("tolerance", "absolute_tolerance", "damping", "gradient_damping"):
         value = float(getattr(cfg, name))
         if not math.isfinite(value) or value < 0:
             raise ValueError(f"cgls: {name} must be finite and nonnegative")
     validate_model(cfg)
     if cfg.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("cgls: backend must be 'auto', 'jax' or 'cuda'")
-    if cfg.projector_model not in {"auto", "ray", "joseph"}:
-        raise ValueError("cgls: projector_model must be 'auto', 'joseph' or 'ray'")
     from ._cgls_cuda import available, solve
 
     if out is None and available(geometry, projections, init_x, cfg, det_grid):

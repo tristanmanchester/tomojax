@@ -69,9 +69,9 @@ def landmarks(grid: tj.Grid, extent: float = 0.3) -> np.ndarray:
     """Return 27 points over the central +-extent of the grid box, in object coordinates."""
     shape = np.array([grid.nx, grid.ny, grid.nz])
     pitch = np.array([grid.vx, grid.vy, grid.vz])
-    centre = np.asarray(grid_volume_origin(grid)) + (shape - 1) * pitch / 2
+    center = np.asarray(grid_volume_origin(grid)) + (shape - 1) * pitch / 2
     unit = np.stack(np.meshgrid(*[np.linspace(-extent, extent, 3)] * 3, indexing="ij"), -1)
-    return unit.reshape(-1, 3) * shape * pitch + centre
+    return unit.reshape(-1, 3) * shape * pitch + center
 
 
 BANDS = ((0, 3), (4, 40), (41, None))  # harmonics of the view index
@@ -134,23 +134,23 @@ def _rebuilt(scan: tj.Scan, kind: str, tilt: float = 0.0) -> Callable[[dict[str,
     def rebuild(calibration: dict[str, Any]) -> tj.Scan:
         ((name, value),) = calibration.items()
         grid, det, angles = scan.grid, scan.detector, np.asarray(scan.angles)
-        if name == "centre":
-            centre = tuple(value) if isinstance(value, list | tuple) else (value, det.center[1])
-            det = tj.Detector(det.nu, det.nv, det.du, det.dv, centre)
+        if name == "center":
+            center = tuple(value) if isinstance(value, list | tuple) else (value, det.center[1])
+            det = tj.Detector(det.nu, det.nv, det.du, det.dv, center)
         roll = value if name == "roll" else 0.0
         if kind == "cone":
-            beam = tj.ConeBeam(192, 288, detector_roll_deg=roll)
+            beam = tj.ConeBeam(192, 288, detector_roll=roll)
             geometry = tj.ConeGeometry(grid, det, angles, beam)
         elif name == "tilt" or tilt:
             geometry = tj.LaminographyGeometry(
                 grid,
                 det,
                 angles,
-                tilt_deg=value if name == "tilt" else tilt,
-                detector_roll_deg=roll,
+                tilt=value if name == "tilt" else tilt,
+                detector_roll=roll,
             )
         else:
-            geometry = tj.ParallelGeometry(grid, det, angles, detector_roll_deg=roll)
+            geometry = tj.ParallelGeometry(grid, det, angles, detector_roll=roll)
         return tj.Scan(scan.projections, geometry)
 
     return rebuild
@@ -165,7 +165,7 @@ def analytic_row(case: str, geometry: str, size: str) -> Row:
     rebuild = (
         _rebuilt(scan, geometry, 25.0 if geometry == "lamino" else 0.0)
         if len(fit) == 1
-        and fit[0] in {"centre", "tilt", "roll"}
+        and fit[0] in {"center", "tilt", "roll"}
         and not (geometry == "cone" and fit[0] == "tilt")
         else None
     )
@@ -191,10 +191,10 @@ def watch_row(case: str) -> Row:
     detector = tj.Detector(d["nu"], d["nv"], d["du"], d["dv"], center=tuple(d["center"]))
     views = len(data["projections"])
     geometry = tj.LaminographyGeometry(
-        grid, detector, np.linspace(0, 360, views, endpoint=False), tilt_deg=-35
+        grid, detector, np.linspace(0, 360, views, endpoint=False), tilt=-35
     )
     scan = tj.Scan(np.asarray(data["projections"], np.float32), geometry, name=f"watch {case}")
-    nominal = np.asarray([geometry.pose_for_view(i) for i in range(views)])
+    nominal = np.asarray([geometry.pose_matrix(i) for i in range(views)])
     if np.abs(nominal - data["nominal_poses"]).max() > 1e-5:
         raise ValueError("the declared watch geometry does not reproduce its nominal poses")
     true = np.asarray(data["true_poses"], np.float64)
@@ -209,24 +209,24 @@ def watch_row(case: str) -> Row:
     )
 
 
-def plug_row(name: str, fit: tuple[str, ...], centre_px: float = 0.0) -> Row:
+def plug_row(name: str, fit: tuple[str, ...], center_px: float = 0.0) -> Row:
     """Build a gVXR spark-plug case (parallel, 720 views of 384^2); roll and tilt are in its poses.
 
-    ``centre_px`` declares the detector centre that many pixels off the true one.
+    ``center_px`` declares the detector centre that many pixels off the true one.
     """
     data = np.load(str(PLUG).format(name))
     meta = json.loads(str(data["geometry_json"]))
     g, d = meta["grid"], meta["detector"]
     grid = tj.Grid(g["nx"], g["ny"], g["nz"], g["vx"], g["vy"], g["vz"], vol_center=g["vol_center"])
-    centre = tuple(d["det_center"])
-    true_detector = tj.Detector(d["nu"], d["nv"], d["du"], d["dv"], center=centre)
-    shifted = (centre[0] + centre_px * d["du"], centre[1])
+    center = tuple(d["det_center"])
+    true_detector = tj.Detector(d["nu"], d["nv"], d["du"], d["dv"], center=center)
+    shifted = (center[0] + center_px * d["du"], center[1])
     declared = tj.Detector(d["nu"], d["nv"], d["du"], d["dv"], center=shifted)
     angles = np.asarray(data["angles_deg"])
     projections = np.asarray(data["projections"], np.float32)
     scan = tj.Scan(projections, tj.ParallelGeometry(grid, declared, angles), name=f"plug {name}")
     exact = tj.Scan(projections, tj.ParallelGeometry(grid, true_detector, angles))
-    nominal = np.asarray([exact.geometry.pose_for_view(i) for i in range(len(angles))])
+    nominal = np.asarray([exact.geometry.pose_matrix(i) for i in range(len(angles))])
     true = np.asarray(data["poses"], np.float64)
     truth = analytic.physical_rays(true, true_detector)
     return Row(
@@ -272,7 +272,7 @@ ROWS: dict[str, tuple[Callable[..., Row], tuple[Any, ...]]] = {
     "watch/drift-slips": (watch_row, ("drift-slips",)),
     "plug/roll": (plug_row, ("plug2-roll0.75", ("roll",))),
     "plug/tilt": (plug_row, ("plug2-tilt1.5", ("tilt",))),
-    "plug/centre": (plug_row, ("plug2-roll0", ("centre",), 2.0)),
+    "plug/center": (plug_row, ("plug2-roll0", ("center",), 2.0)),
     "walnut/1": (walnut_row, (1,)),
 }
 
@@ -283,10 +283,10 @@ def run(name: str, start: str) -> dict[str, Any]:
     row = build(*args)
     scan = row.scan if start == "nominal" else row.true_scan
     nominal_error = score(analytic.scan_rays(row.scan), row.truth, row.points, row.pixel)[0]
-    start_poses = np.asarray([scan.geometry.pose_for_view(i) for i in range(len(scan.angles))])
+    start_poses = np.asarray([scan.geometry.pose_matrix(i) for i in range(len(scan.angles))])
     # Per-step poses compose like the final table; global calibrations are not replayed.
-    per_step = not set(row.fit) & {"centre", "tilt", "roll"} and not analytic.scan_rays(scan).cone
-    roll = float(getattr(scan.geometry, "detector_roll_deg", 0))
+    per_step = not set(row.fit) & {"center", "tilt", "roll"} and not analytic.scan_rays(scan).cone
+    roll = float(getattr(scan.geometry, "detector_roll", 0))
     steps: list[float] = []
     level = _solver._Level  # noqa: SLF001  (the harness records each outer step's poses)
     original = level.step
@@ -305,14 +305,14 @@ def run(name: str, start: str) -> dict[str, Any]:
     level.step = step
     t = time.perf_counter()
     result = tj.align(scan, fit=row.fit, grid=row.grid)
-    np.asarray(result.volume)
+    np.asarray(result.image)
     seconds = time.perf_counter() - t
     fitted, worst, bands = score_bands(
         analytic.scan_rays(result.scan), row.truth, row.points, row.pixel
     )
     stats = jax.devices()[0].memory_stats() or {}
     levels = result.info.get("levels", [])
-    calibration = result.info.get("calibration", {})
+    calibration = {k: v["value"] for k, v in result.info.get("calibration", {}).items()}
     round_trip = (
         score(analytic.scan_rays(row.rebuild(calibration)), row.truth, row.points, row.pixel)[0]
         if row.rebuild and start == "nominal" and len(calibration) == 1

@@ -30,8 +30,8 @@ def _geometry():
     grid = Grid(7, 6, 5, 0.7, 0.9, 1.1, vol_center=(0.13, -0.19, 0.23))
     detector = Detector(9, 7, 1.2, 0.8, center=(0.17, -0.11))
     # The frame these contracts were written against (roll turns u towards v).
-    beam = ConeBeam(20, 33, detector_roll_deg=-4, detector_pitch_deg=2, axis_offset=0.1)
-    geometry = ConeGeometry(grid, detector, [13.7, 71.3, 119.1], beam, tilt_deg=27)
+    beam = ConeBeam(20, 33, detector_roll=-4, detector_pitch=2, axis_offset=0.1)
+    geometry = ConeGeometry(grid, detector, [13.7, 71.3, 119.1], beam, tilt=27)
     nominal = np.asarray(stack_view_poses(geometry, 3))
     frames = np.repeat(beam_frame(beam, detector)[None], 3, axis=0)
     return grid, detector, nominal, frames
@@ -126,7 +126,7 @@ def test_rigid_gauge_cancels_common_object_coordinates_in_six_dofs():
 def test_cone_row_sum_is_a_normal_majorizer_not_an_approximate_adjoint():
     grid = Grid(3, 3, 2, 0.7, 0.8, 1.1)
     detector = Detector(4, 3, 0.9, 0.8)
-    beam = ConeBeam(10, 17, detector_roll_deg=3)
+    beam = ConeBeam(10, 17, detector_roll=3)
     nominal = jnp.asarray(stack_view_poses(ConeGeometry(grid, detector, [17, 81], beam), 2))
     frames = jnp.repeat(jnp.asarray(beam_frame(beam, detector))[None], 2, axis=0)
     model = Projection(grid, detector, cone=True, backend="jax")
@@ -223,25 +223,25 @@ def test_cone_parameter_units_include_magnification_and_depth():
     assert scales[0, 5] > 5 * max(scales[0, 3:5])
 
 
-def test_odd_cone_detector_binning_keeps_native_pixel_centres():
+def test_odd_cone_detector_binning_keeps_native_pixel_centers():
     detector = Detector(11, 9, 0.7, 1.1, center=(0.17, -0.23))
-    beam = ConeBeam(30, 52, detector_roll_deg=21, detector_pitch_deg=-7, detector_yaw_deg=11)
+    beam = ConeBeam(30, 52, detector_roll=21, detector_pitch=-7, detector_yaw=11)
     frame = beam_frame(beam, detector).astype(np.float64)
     cropped = cropped_frames(frame, detector, high_u=1, high_v=1)
 
-    def centre_at(f, nu, nv, du, dv, u, v):
+    def center_at(f, nu, nv, du, dv, u, v):
         return f[0] + (u - (nu - 1) / 2) * du * f[1] + (v - (nv - 1) / 2) * dv * f[2]
 
     for u, v in ((0, 0), (4, 3), (2, 1)):
         expected = np.mean(
             [
-                centre_at(frame, 11, 9, 0.7, 1.1, 2 * u + i, 2 * v + j)
+                center_at(frame, 11, 9, 0.7, 1.1, 2 * u + i, 2 * v + j)
                 for i in (0, 1)
                 for j in (0, 1)
             ],
             axis=0,
         )
-        actual = centre_at(cropped, 5, 4, 1.4, 2.2, u, v)
+        actual = center_at(cropped, 5, 4, 1.4, 2.2, u, v)
         np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-12)
     np.testing.assert_array_equal(frame, beam_frame(beam, detector))
 
@@ -254,7 +254,7 @@ def test_cone_similarity_gauge_preserves_continuous_gaussian_line_integrals():
     assert gauge.shape == (18, 7)
     assert np.linalg.matrix_rank(gauge) == 7
     factor = 1.07
-    centres = np.asarray([[0.13, -0.17, 0.21], [-0.41, 0.23, 0.19]])
+    centers = np.asarray([[0.13, -0.17, 0.21], [-0.41, 0.23, 0.19]])
     widths = np.asarray([[0.7, 0.9, 1.1], [1.1, 0.5, 0.8]])
     u, v = np.meshgrid(np.arange(detector.nu), np.arange(detector.nv))
     pixels = (
@@ -265,22 +265,22 @@ def test_cone_similarity_gauge_preserves_continuous_gaussian_line_integrals():
     ray = pixels - frames[:, None, None, 3]
     ray /= np.linalg.norm(ray, axis=-1, keepdims=True)
 
-    def line_integral(poses, centres, widths, amplitude):
+    def line_integral(poses, centers, widths, amplitude):
         directions = np.einsum("n...i,nij->n...j", ray, poses[:, :3, :3])
         origin = np.einsum("ni,nij->nj", frames[:, 3] - poses[:, :3, 3], poses[:, :3, :3])
         out = np.zeros((len(poses), detector.nv, detector.nu))
-        for centre, width in zip(centres, widths, strict=True):
-            delta = origin - centre
+        for center, width in zip(centers, widths, strict=True):
+            delta = origin - center
             a = np.sum((directions / width) ** 2, axis=-1)
             b = np.sum(directions * delta[:, None, None] / width**2, axis=-1)
             c = np.sum((delta / width) ** 2, axis=-1)
             out += amplitude * np.sqrt(2 * np.pi / a) * np.exp(-0.5 * (c[:, None, None] - b**2 / a))
         return out
 
-    expected = line_integral(nominal, centres, widths, 1.0)
+    expected = line_integral(nominal, centers, widths, 1.0)
     changed = nominal.copy()
     changed[:, :3, 3] = factor * nominal[:, :3, 3] + (1 - factor) * frames[:, 3]
-    actual = line_integral(changed, factor * centres, factor * widths, 1 / factor)
+    actual = line_integral(changed, factor * centers, factor * widths, 1 / factor)
     np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-12)
     # The analytic gauge direction reproduces exactly this translation change.
     with jax.enable_x64(True):

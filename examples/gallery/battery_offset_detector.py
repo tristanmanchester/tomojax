@@ -65,8 +65,8 @@ def main() -> None:
     truth = downsample(truth, N)
 
     style()
-    centres = (np.arange(N) - N / 2 + 0.5) * fov / N
-    x, y = np.meshgrid(centres, centres, indexing="ij")
+    centers = (np.arange(N) - N / 2 + 0.5) * fov / N
+    x, y = np.meshgrid(centers, centers, indexing="ij")
     mask = np.broadcast_to((np.hypot(x, y) < 4.3)[None], truth.shape)
     z, top = N // 2 - N // 8, 0.3
     fig, axes = plt.subplots(2, 3, figsize=(7.2, 5.2))

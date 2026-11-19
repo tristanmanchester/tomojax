@@ -198,10 +198,12 @@ def test_cuda_cone_cgls_recovers_an_image_across_wide_tiles(tilt):
     grid = Grid(129, 67, 131, 0.7, 0.9, 1.1, vol_center=(0.3, -0.2, 0.1))
     detector = Detector(193, 191, 1.0, 1.2, center=(0.2, -0.1))
     geometry = ConeGeometry(
-        grid, detector, np.linspace(0, 360, 65, endpoint=False), ConeBeam(387, 580.5), tilt_deg=tilt
+        grid, detector, np.linspace(0, 360, 65, endpoint=False), ConeBeam(387, 580.5), tilt=tilt
     )
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (65, 4, 3))
-    coeff = frame_coefficients(jnp.asarray(geometry.poses(), jnp.float32), frames, grid, detector)
+    coeff = frame_coefficients(
+        jnp.asarray(geometry.pose_matrices(), jnp.float32), frames, grid, detector
+    )
     z, y, x = np.ogrid[-65:66, -33:34, -64:65]
     truth = (
         np.exp(-((x / 27) ** 2 + (y / 15) ** 2 + (z / 28) ** 2))
@@ -224,10 +226,12 @@ def test_cuda_cone_dense_transpose_on_separable_turntable_views(yaw):
     grid = Grid(7, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
     detector = Detector(9, 7, 1.3, 0.8, center=(0.3, -0.4))
     geometry = ConeGeometry(
-        grid, detector, np.arange(0, 360, 30), ConeBeam(40, 60, detector_yaw_deg=yaw)
+        grid, detector, np.arange(0, 360, 30), ConeBeam(40, 60, detector_yaw=yaw)
     )
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (12, 4, 3))
-    _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+    _check_dense_transpose(
+        grid, detector, frames, jnp.asarray(geometry.pose_matrices(), jnp.float32)
+    )
 
 
 @pytest.mark.gpu
@@ -261,7 +265,9 @@ def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
 
     monkeypatch.setattr(cone, "cuda_module", Kernels)
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (33, 4, 3))
-    _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+    _check_dense_transpose(
+        grid, detector, frames, jnp.asarray(geometry.pose_matrices(), jnp.float32)
+    )
     assert kernel in calls
     expected = "sep_adjoint" if nz == 3 and pitch < 1 else "sep_adjoint_cached"
     assert selected and set(selected) == {expected + "_thin" * (nz == 3)}
@@ -272,7 +278,7 @@ def test_cuda_separable_transpose_kernels_with_wide_support_and_view_tail(
     grid, detector = Grid(64, 64, 64, 1, 1, 1), Detector(64, 64, 2, 2.3)
     geometry = ConeGeometry(grid, detector, [74.5], ConeBeam(256, 512))
     coeff = frame_coefficients(
-        jnp.asarray(geometry.poses(), jnp.float32),
+        jnp.asarray(geometry.pose_matrices(), jnp.float32),
         np.asarray([beam_frame(geometry.beam, detector)]),
         grid,
         detector,
@@ -296,10 +302,12 @@ def test_cuda_cone_dense_transpose_when_a_footprint_crosses_infinity(yaw, tilt):
     grid = Grid(5, 4, 3, 1.16, 1.46, 1.26)
     detector = Detector(9, 7, 1.29, 0.52, center=(-0.77, -1.05))
     geometry = ConeGeometry(
-        grid, detector, [45.0], ConeBeam(7.0, 10.4, detector_yaw_deg=yaw), tilt_deg=tilt
+        grid, detector, [45.0], ConeBeam(7.0, 10.4, detector_yaw=yaw), tilt=tilt
     )
     frames = np.asarray([beam_frame(geometry.beam, detector)])
-    _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+    _check_dense_transpose(
+        grid, detector, frames, jnp.asarray(geometry.pose_matrices(), jnp.float32)
+    )
 
 
 @pytest.mark.gpu
@@ -311,10 +319,10 @@ def test_cuda_cone_cgls_recovers_the_image_with_unbounded_footprints(tilt):
         grid,
         detector,
         np.arange(0, 360, 15),
-        ConeBeam(7.0, 10.4, detector_yaw_deg=70),
-        tilt_deg=tilt,
+        ConeBeam(7.0, 10.4, detector_yaw=70),
+        tilt=tilt,
     )
-    poses = jnp.asarray(geometry.poses(), jnp.float32)
+    poses = jnp.asarray(geometry.pose_matrices(), jnp.float32)
     frames = np.broadcast_to(beam_frame(geometry.beam, detector), (24, 4, 3))
     coeff = frame_coefficients(poses, frames, grid, detector)
     truth = np.random.default_rng(43).uniform(0.1, 1.0, (3, 4, 5)).astype(np.float32)
@@ -342,9 +350,11 @@ def test_cuda_cone_dense_transpose_with_footprint_bounds_beyond_int32(pitch, til
     # int32 although the actual image has only nine by seven pixels.
     grid = Grid(5, 4, 3, 1.16, 1.46, 1.26)
     detector = Detector(9, 7, *pitch, center=(-0.77, -1.05))
-    geometry = ConeGeometry(grid, detector, [45.0], ConeBeam(7.0, 10.4), tilt_deg=tilt)
+    geometry = ConeGeometry(grid, detector, [45.0], ConeBeam(7.0, 10.4), tilt=tilt)
     frames = np.asarray([beam_frame(geometry.beam, detector)])
-    _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+    _check_dense_transpose(
+        grid, detector, frames, jnp.asarray(geometry.pose_matrices(), jnp.float32)
+    )
 
 
 @pytest.mark.gpu
@@ -356,9 +366,11 @@ def test_cuda_cone_dense_transpose_with_reversed_separable_row_steps(yaw, angle)
     # samples those lines, so their transpose must enumerate negative steps too.
     grid = Grid(5, 4, 3, 1.16, 1.46, 1.26)
     detector = Detector(9, 9, 8.0, 0.52, center=(-0.77, 0.0))
-    geometry = ConeGeometry(grid, detector, [angle], ConeBeam(7.0, 10.4, detector_yaw_deg=yaw))
+    geometry = ConeGeometry(grid, detector, [angle], ConeBeam(7.0, 10.4, detector_yaw=yaw))
     frames = np.asarray([beam_frame(geometry.beam, detector)])
-    _check_dense_transpose(grid, detector, frames, jnp.asarray(geometry.poses(), jnp.float32))
+    _check_dense_transpose(
+        grid, detector, frames, jnp.asarray(geometry.pose_matrices(), jnp.float32)
+    )
 
 
 @pytest.mark.gpu
@@ -433,7 +445,7 @@ def test_cuda_cone_dense_transpose_across_sparse_image_tile_seams(reverse_v):
 def test_cuda_cone_rounds_inverse_corner_bounds_outward():
     grid, detector = Grid(1, 1, 1, 1, 1, 1), Detector(256, 256, 2, 2)
     geometry = ConeGeometry(grid, detector, [45], ConeBeam(1024, 2048))
-    poses = geometry.poses().astype(np.float32)
+    poses = geometry.pose_matrices().astype(np.float32)
     poses[0, :3, :3] @= np.array([[1, 0, 0], [0, 1, -1e-6], [0, 1e-6, 1]], np.float32)
     poses[0, :3, 3] = [75.462677, -215.025162, 33.546272]
     frames = [beam_frame(geometry.beam, detector)]

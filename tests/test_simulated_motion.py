@@ -11,7 +11,6 @@ import exact_tier
 import motion
 
 # check-public-imports: allow-private
-from tomojax.alignment._joint import _fit, _solver
 
 ANGLES = np.linspace(0.0, 360.0, 72, endpoint=False)
 
@@ -43,12 +42,12 @@ def test_a_slip_is_an_object_frame_step_that_turns_with_the_sample():
     np.testing.assert_allclose(moved[30:, 1], 5e-3 * np.sin(theta), atol=1e-12)
 
 
-def test_a_tip_turns_the_sample_about_its_centre():
-    centre = np.array([0.2, -0.1, 0.4])
+def test_a_tip_turns_the_sample_about_its_center():
+    center = np.array([0.2, -0.1, 0.4])
     tip = motion.Slip(0, (0.0, 0.0, 0.0), tip_rad=1e-3, tip_axis=(0.0, 1.0, 0.0))
-    transform = tip.transform(centre)
-    np.testing.assert_allclose(transform[:3, :3] @ centre + transform[:3, 3], centre, atol=1e-15)
-    edge = centre + np.array([0.0, 0.0, 0.5])
+    transform = tip.transform(center)
+    np.testing.assert_allclose(transform[:3, :3] @ center + transform[:3, 3], center, atol=1e-15)
+    edge = center + np.array([0.0, 0.0, 0.5])
     moved = transform[:3, :3] @ edge + transform[:3, 3] - edge
     np.testing.assert_allclose(np.linalg.norm(moved), 0.5e-3, rtol=1e-6)
 
@@ -66,8 +65,8 @@ def test_stage_tilt_reaches_the_sample_as_tilt_times_height():
 def test_recorded_components_compose_to_the_poses():
     nominal = axial_nominal(ANGLES)
     ranges = {
-        "centre_um": [1, 5],
-        "axis_tilt_deg": [0.1, 0.5],
+        "center_um": [1, 5],
+        "axis_tilt": [0.1, 0.5],
         "axis_roll_deg": [0.0, 0.2],
         "harmonics": 3,
         "radial_um": [0.5, 2],
@@ -151,7 +150,7 @@ def _landmark_px(poses, true):
 def test_gauge_free_truth_has_no_component_along_the_fits_rigid_translations():
     nominal = axial_nominal(ANGLES)
     m = motion.Motion(
-        centre_offset_um=300.0,
+        center_offset_um=300.0,
         radial_um=((400.0,), (300.0,)),
         radial_phase=((0.3,), (1.1,)),
         axial_um=(250.0,),
@@ -173,7 +172,7 @@ def test_gauge_free_truth_has_no_component_along_the_fits_rigid_translations():
     assert _landmark_px(free, raw) < 1e-9
 
 
-def _exact_tier_ends(labels=("raw", "gauge-free")):
+def _exact_tier_ends(labels=("raw", "gauge-free"), config=None):
     """Landmark error of tj.align from nominal against the raw and the gauge-free truth."""
     import tomojax as tj
     from tomojax.geometry import stack_view_poses
@@ -187,7 +186,7 @@ def _exact_tier_ends(labels=("raw", "gauge-free")):
         np.abs(y - 2) < 4
     ) * (np.abs(z) < 6)
     m = motion.Motion(
-        centre_offset_um=300.0,
+        center_offset_um=300.0,
         radial_um=((0.0, 400.0), (0.0, 300.0)),
         radial_phase=((0.0, 0.3), (0.0, 1.1)),
         axial_um=(250.0,),
@@ -203,7 +202,7 @@ def _exact_tier_ends(labels=("raw", "gauge-free")):
     for label in labels:
         true = truths[label]
         scan = tj.Scan(exact_tier.projections(grid, detector, truth, true), geometry)
-        result = tj.align(scan, fit="translations")
+        result = tj.align(scan, fit="translations", config=config)
         ends[label] = _landmark_px(
             np.asarray(stack_view_poses(result.scan.geometry, len(ANGLES)), np.float64), true
         )
@@ -218,9 +217,9 @@ def test_the_exact_tiers_objective_has_its_minimum_at_the_gauge_free_truth(monke
     # 0.5 px start; a truth held at another sub-voxel position than the fit's gauge cannot be
     # reached, which is what this tier must exclude. Anything that moves the minimum (a
     # pedestal, a filter's free band) fails here.
-    monkeypatch.setattr(_fit, "_LEVELS", ((2, 12), (1, 100)))
-    monkeypatch.setattr(_solver, "_POSE_TOL_PX", -1.0)
-    ends = _exact_tier_ends()
+    import tomojax as tj
+
+    ends = _exact_tier_ends(config=tj.AlignConfig(iterations=100, tolerance=-1.0))
     assert ends["gauge-free"] < 2e-4
     assert ends["raw"] > 5e-3
 
@@ -229,7 +228,9 @@ def test_the_exact_tiers_objective_has_its_minimum_at_the_gauge_free_truth(monke
 def test_the_default_call_on_exact_data_ends_within_the_stop_rules_tolerance():
     # The stop rule ends a level once two successive pose proposals are under its tolerance;
     # on exact data the default call's remaining error must be under that same tolerance.
-    assert _exact_tier_ends(("gauge-free",))["gauge-free"] < _solver._POSE_TOL_PX
+    from tomojax import AlignConfig
+
+    assert _exact_tier_ends(("gauge-free",))["gauge-free"] < AlignConfig().tolerance
 
 
 @pytest.mark.numerical

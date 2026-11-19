@@ -48,9 +48,6 @@ METHODS = (
     "tomojax_cgls_jax",
     "tomojax_cgls_cuda",
     "tomojax_multires_cgls_cuda",
-    "tomojax_joseph_cgls_jax",
-    "tomojax_joseph_cgls_cuda",
-    "tomojax_multires_joseph_cgls_cuda",
     "astra_cgls",
     "astra_sirt",
     "tigre_cgls",
@@ -128,7 +125,7 @@ def solve_tomojax(
     from tomojax.geometry import LaminographyGeometry, ParallelGeometry
 
     geometry = (
-        LaminographyGeometry(case.grid, case.detector, case.angles, tilt_deg=30)
+        LaminographyGeometry(case.grid, case.detector, case.angles, tilt=30)
         if case.name.startswith("lamino-")
         else ParallelGeometry(case.grid, case.detector, case.angles)
     )
@@ -148,7 +145,7 @@ def solve_tomojax(
             "angular_interpolation": "linear",
             "frequency_cutoff": "detector_nyquist_disk",
             "slices_per_batch": fourier_slices,
-            "regulariser": "none",
+            "regularizer": "none",
             "positivity": False,
         }
     if method == "tomojax_fbp_host_cuda":
@@ -167,7 +164,7 @@ def solve_tomojax(
             "filter_support": "volume",
             "slices_per_batch": 16,
             "views_per_batch": min(32, len(case.poses)),
-            "regulariser": "none",
+            "regularizer": "none",
             "positivity": False,
         }
     if method == "tomojax_fbp_cuda":
@@ -186,10 +183,10 @@ def solve_tomojax(
             "backend": "Cuda_FBP",
             "filter": "ramp",
             "filter_support": "volume",
-            "regulariser": "none",
+            "regularizer": "none",
             "positivity": False,
         }
-    if method in {"tomojax_multires_cgls_cuda", "tomojax_multires_joseph_cgls_cuda"}:
+    if method == "tomojax_multires_cgls_cuda":
         from tomojax.recon import CGLSConfig, cgls_multires
 
         factors, budgets = multires_schedule((case.grid.nz, case.grid.ny, case.grid.nx), iterations)
@@ -201,14 +198,13 @@ def solve_tomojax(
             factors=factors,
             iterations_per_level=budgets,
             config=CGLSConfig(
-                rtol=0.0,
+                tolerance=0.0,
                 views_per_batch=batch,
                 backend="cuda",
-                projector_model="joseph" if "joseph" in method else "ray",
             ),
         )
-        return np.asarray(result), {**info, "regulariser": "none", "positivity": False}
-    if method.startswith(("tomojax_cgls_", "tomojax_joseph_cgls_", "tomojax_fbp_joseph_cgls_")):
+        return np.asarray(result), {**info, "regularizer": "none", "positivity": False}
+    if method.startswith(("tomojax_cgls_", "tomojax_fbp_joseph_cgls_")):
         from tomojax.recon import CGLSConfig, cgls
 
         if method == "tomojax_fbp_joseph_cgls_cuda":
@@ -235,15 +231,14 @@ def solve_tomojax(
             init_x=initial,
             config=CGLSConfig(
                 iterations=iterations,
-                rtol=0.0,
+                tolerance=0.0,
                 views_per_batch=batch,
                 backend=method.rsplit("_", 1)[-1],
-                projector_model="joseph" if "joseph" in method else "ray",
             ),
         )
         return np.asarray(result), {
             **info,
-            "regulariser": "none",
+            "regularizer": "none",
             "positivity": False,
             "initialization": "fbp" if initial is not None else "zero",
         }
@@ -254,10 +249,9 @@ def solve_tomojax(
     config = FistaConfig(
         iterations=iterations,
         tv_weight=0,
-        regulariser="huber_tv",
+        regularizer="huber_tv",
         nonnegative=False,
         views_per_batch=batch,
-        gather_dtype="fp32",
     )
     result, info = fista_tv(
         geometry, case.grid, case.detector, jnp.asarray(case.analytic), config=config
@@ -267,7 +261,7 @@ def solve_tomojax(
         "effective_iters": info["effective_iterations"],
         "lipschitz": info["lipschitz"],
         "views_per_batch": batch,
-        "regulariser": "none",
+        "regularizer": "none",
         "positivity": False,
     }
 
@@ -310,7 +304,7 @@ def solve_astra(case: Any, iterations: int, method: str) -> tuple[Any, dict]:
         volume = np.ascontiguousarray(astra.data3d.get(volume_id))
         return volume, {
             "backend": algorithm,
-            "regulariser": "none",
+            "regularizer": "none",
             "positivity": False,
             "initialization": "fbp" if method == "astra_fbp_cgls" else "zero",
         }
@@ -347,7 +341,7 @@ def solve_tigre(case: Any, iterations: int, method: str = "tigre_cgls") -> tuple
     )
     return np.ascontiguousarray(result), {
         "backend": "TIGRE_FBP" if method == "tigre_fbp" else "CGLS_Siddon_matched",
-        "regulariser": "none",
+        "regularizer": "none",
         "positivity": False,
         **(
             {"filter_support": "volume", "detector_zero_padding_each_side": padding}

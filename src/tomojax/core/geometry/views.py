@@ -50,7 +50,7 @@ def stack_view_poses(
     if host is not None:
         return jnp.asarray(host)
 
-    views = [geometry.pose_for_view(i) for i in range(int(n_views))]
+    views = [geometry.pose_matrix(i) for i in range(int(n_views))]
     if any(isinstance(pose, jax.Array) for pose in views):  # traced or device poses
         return jnp.stack([jnp.asarray(pose, dtype=np.dtype(dtype)) for pose in views])
     # Host poses: stack on the host and transfer once, not one array per view.
@@ -71,9 +71,9 @@ def host_view_poses(
 
     if type(geometry) is ConeGeometry:
         thetas = np.asarray(geometry.angles[: int(n_views)], dtype=np.float64)
-        return geometry.poses(angles=thetas).astype(dtype)
+        return geometry.pose_matrices(angles=thetas).astype(dtype)
 
-    # Subclasses may override pose_for_view (for example to add calibrated
+    # Subclasses may override pose_matrix (for example to add calibrated
     # shifts). Only specialize the exact built-in implementation.
     if type(geometry) is ParallelGeometry:
         # Round the pose once, not the encoder angles and radians along the way.

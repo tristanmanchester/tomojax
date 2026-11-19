@@ -61,7 +61,7 @@ if which == "tomojax":
         dt = time.perf_counter() - t
         results.append(("tomojax fista_tv", lam, err(x), dt))
     for it in [5, 10, 20]:
-        cfg = CGLSConfig(iterations=it, rtol=0)
+        cfg = CGLSConfig(iterations=it, tolerance=0)
         solve(cgls, cfg)
         t = time.perf_counter()
         x = solve(cgls, cfg)

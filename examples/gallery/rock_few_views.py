@@ -66,8 +66,8 @@ def main() -> None:
     }
 
     style()
-    centres = np.arange(N) - N / 2 + 0.5
-    core = np.hypot(*np.meshgrid(centres, centres, indexing="ij")) < 0.44 * N
+    centers = np.arange(N) - N / 2 + 0.5
+    core = np.hypot(*np.meshgrid(centers, centers, indexing="ij")) < 0.44 * N
     mask = np.broadcast_to(core[None], truth.shape)
     z, top = N // 2, 0.55
     zoom = (slice(N // 2 - 70, N // 2 + 10), slice(N // 2, N // 2 + 80))

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._io_helpers import replaced_when_complete, sizes_of
+from tomojax.core.files import replaced_when_complete
+
+from ._io_helpers import sizes_of
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata
 
 # The file's key for the view angles (``NXTomoMetadata.angles``); earlier
@@ -13,16 +15,17 @@ _AXES_KEY = "volume_axes_order"
 
 def save_npz(
     path: str,
-    projections: np.ndarray,
+    projections: np.ndarray | None,
     *,
     metadata: NXTomoMetadata,
 ) -> None:
     """Write a typed TomoJAX payload to compressed NPZ.
 
-    ``metadata`` mirrors the required ``save_nxtomo`` persistence contract.
+    ``metadata`` mirrors the required ``save_nxtomo`` persistence contract; None
+    projections save a reconstruction without its scan.
     """
     payload: LoadedDataset = LoadedNXTomo(
-        projections=np.asarray(projections),
+        projections=None if projections is None else np.asarray(projections),
         metadata=metadata,
     ).to_dataset_dict()
     if "angles" in payload:

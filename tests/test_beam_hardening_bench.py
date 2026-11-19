@@ -35,7 +35,7 @@ def test_split_is_deterministic_and_holds_out_titanium_and_high_voltage(bench):
                 for shape in case["shapes"]:
                     if "parent" in shape:  # rods lie inside their parent
                         parent = case["shapes"][shape["parent"]]
-                        gap = np.hypot(*np.subtract(shape["centre"], parent["centre"]))
+                        gap = np.hypot(*np.subtract(shape["center"], parent["center"]))
                         assert gap + shape["radius"] < parent["radius"]
 
 
@@ -64,9 +64,9 @@ def test_cylinder_chords_match_the_disc_geometry(bench):
 def _phantom(bench, values, rod=2.0):
     case = {
         "shapes": [
-            {"material": "water", "centre": [0.0, 0.0], "radius": 12.0},
-            {"material": "iron", "centre": [-5.0, 0.0], "radius": rod, "parent": 0},
-            {"material": "iron", "centre": [5.0, 0.0], "radius": rod, "parent": 0},
+            {"material": "water", "center": [0.0, 0.0], "radius": 12.0},
+            {"material": "iron", "center": [-5.0, 0.0], "radius": rod, "parent": 0},
+            {"material": "iron", "center": [5.0, 0.0], "radius": rod, "parent": 0},
         ]
     }
     fractions = bench["score"].fractions(case)
@@ -110,10 +110,10 @@ def test_line_integral_bias_ignores_noise(bench):
 def test_curve_finds_nonlinearity(bench, tmp_path):
     q = np.linspace(0.0, 3.0, 10000)
     assert np.abs(bench["donoharm"].curve(q, 2 * q)[1]).max() < 1e-12
-    centres, deviation, _ = bench["donoharm"].curve(q, q + 0.1 * q**2)
+    centers, deviation, _ = bench["donoharm"].curve(q, q + 0.1 * q**2)
     assert np.abs(deviation).max() > 0.02
     pytest.importorskip("matplotlib")
-    bench["donoharm"].plots.curves(tmp_path / "c.png", {"all": (centres, deviation)}, 0.005, "t")
+    bench["donoharm"].plots.curves(tmp_path / "c.png", {"all": (centers, deviation)}, 0.005, "t")
     assert (tmp_path / "c.png").stat().st_size > 0
 
 

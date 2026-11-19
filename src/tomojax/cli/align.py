@@ -3,21 +3,22 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 import logging
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from tomojax.cli._options import EXIT_STATUS, add_output, check_paths
-from tomojax.cli._reconstruction_region import (
-    ROI_CHOICES,
-    ROI_HELP,
+from tomojax._field_of_view import (
+    REGION_CHOICES,
+    REGION_HELP,
     region_grid,
     zero_outside_cylinder,
 )
+from tomojax.cli._options import EXIT_STATUS, add_config, add_output, check_paths
+from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
     from tomojax import Alignment, Scan
@@ -28,11 +29,21 @@ class _Args(argparse.Namespace):
     out: str
     force: bool
     fit: list[str]
-    roi: str
+    method: str
+    iterations: int | None
+    image_iterations: int | None
+    tolerance: float | None
+    interpolation: str | None
+    resolution: int | None
+    region: str
     grid: list[int] | None
-    poses: bool
+    apply_poses: bool
     manifest: str | None
     dry_run: bool
+
+
+# The everyday settings: tj.align's keywords, each a field of AlignConfig.
+_SETTINGS = ("iterations", "image_iterations", "tolerance", "interpolation", "resolution")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,9 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             "  tomojax align scan.nxs -o aligned.nxs\n"
-            "  tomojax align scan.nxs -o aligned.nxs --fit centre\n"
+            "  tomojax align scan.nxs -o aligned.nxs --fit center\n"
             "  tomojax align scan.nxs -o aligned.nxs --fit translations tilt roll\n"
-            "  tomojax recon aligned.nxs -o recon.nxs\n\n" + EXIT_STATUS
+            "  tomojax reconstruct aligned.nxs -o recon.nxs\n\n" + EXIT_STATUS
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -57,15 +68,45 @@ def build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--fit",
         nargs="+",
-        choices=("centre", "tilt", "roll", "translations", "rotations"),
+        choices=("center", "tilt", "roll", "translations", "rotations"),
         default=["translations"],
         metavar="NAME",
         help=(
-            "Parameters to fit: centre, tilt, roll, translations, rotations (the axis's wobble; "
+            "Parameters to fit: center, tilt, roll, translations, rotations (the axis's wobble; "
             "view angles as recorded) (default translations). All other parameters stay fixed."
         ),
     )
-    _ = parser.add_argument("--roi", choices=ROI_CHOICES, default="auto", help=ROI_HELP)
+    _ = parser.add_argument(
+        "--method",
+        choices=("joint", "opposite-views"),
+        default="joint",
+        help="joint (default): fit an image with the parameters; opposite-views: --fit "
+        "center alone from near-opposite views of an axial parallel scan, without an image",
+    )
+    _ = parser.add_argument(
+        "--iterations", type=int, help="Gauss-Newton iterations at the working resolution (8)"
+    )
+    _ = parser.add_argument(
+        "--image-iterations",
+        type=int,
+        help="Image-solve iterations per Gauss-Newton iteration (16)",
+    )
+    _ = parser.add_argument(
+        "--tolerance",
+        type=float,
+        help="A level stops when two pose proposals move views less than this, in working "
+        "pixels (0.01); 0 runs to the iteration limit",
+    )
+    _ = parser.add_argument(
+        "--interpolation",
+        choices=("linear", "cubic"),
+        help="The fit's projector interpolation (cubic with an angle on parallel rays, "
+        "else linear)",
+    )
+    _ = parser.add_argument(
+        "--resolution", type=int, help="The working detector's longest side, in pixels (320)"
+    )
+    _ = parser.add_argument("--region", choices=REGION_CHOICES, default="auto", help=REGION_HELP)
     _ = parser.add_argument(
         "--grid",
         type=int,
@@ -75,18 +116,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resample the selected field of view to NX x NY x NZ voxels",
     )
     _ = parser.add_argument(
-        "--poses",
+        "--apply-poses",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Correct on top of saved poses (--no-poses uses the nominal geometry)",
+        help="Correct on top of saved poses (--no-apply-poses uses the nominal geometry)",
     )
     _ = parser.add_argument("--manifest", metavar="JSON", help="Also save a JSON record of the run")
+    add_config(parser, settings=_config_settings)
     _ = parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the fit selection and grid as JSON without aligning",
     )
     return parser
+
+
+def _config_settings() -> dict[str, object]:
+    """A config file's settings: every AlignConfig field the flags do not set."""
+    from tomojax import AlignConfig
+
+    return {k: v for k, v in asdict(AlignConfig()).items() if k not in _SETTINGS}
 
 
 def _write_manifest(args: _Args, scan: Scan, result: Alignment, *, masked: bool) -> None:
@@ -99,15 +148,15 @@ def _write_manifest(args: _Args, scan: Scan, result: Alignment, *, masked: bool)
         "input_projection_shape": list(np.shape(scan.projections)),
         "input_poses": scan.poses is not None,
         "fit": result.info["fit"],
-        "roi": {
-            "requested": args.roi,
+        "region": {
+            "requested": args.region,
             "grid_changed": result.grid != scan.grid,
             "cylindrical_output_mask": masked,
         },
-        "reconstruction_grid": result.grid.to_dict(),
+        "reconstruction_grid": None if result.grid is None else result.grid.to_dict(),
         "detector": result.scan.detector.to_dict(),
         "poses_shape": list(result.poses.shape),
-        "volume_shape": list(np.shape(result.volume)),
+        "image_shape": None if result.image is None else list(np.shape(result.image)),
         "alignment": result.info,
     }
     save_manifest(
@@ -123,7 +172,9 @@ def main() -> None:
     from tomojax.core import log_jax_env, setup_logging
 
     parser = build_parser()
-    args = cast("_Args", parser.parse_args())
+    namespace, metadata = parse_args_with_config(parser)
+    args = cast("_Args", namespace)
+    settings = cast("dict[str, Any]", metadata["settings"])
     if len(args.fit) != len(set(args.fit)):
         parser.error("--fit names must not repeat")
     check_paths(
@@ -132,12 +183,17 @@ def main() -> None:
         outputs=[args.out, args.manifest],
         force=args.force,
     )
-    scan = tj.load(args.data, poses=args.poses)
+    scan = tj.load(args.data, apply_poses=args.apply_poses)
     grid, cylinder = (None, None)
-    if args.grid is not None or args.roi != "auto":
+    if args.grid is not None or args.region != "auto":
         shape = None if args.grid is None else (args.grid[0], args.grid[1], args.grid[2])
-        grid, cylinder = region_grid(scan, roi=args.roi, grid=shape)
+        region = None if args.region == "off" else args.region
+        grid, cylinder = region_grid(scan, region, shape=shape)
     fit = tuple(args.fit)
+    given = {name: getattr(args, name) for name in _SETTINGS if getattr(args, name) is not None}
+    if "levels" in settings:  # a TOML array
+        settings["levels"] = tuple(settings["levels"])
+    config = replace(tj.AlignConfig(**settings), **given)
     if args.dry_run:
         print(
             json.dumps(
@@ -145,6 +201,8 @@ def main() -> None:
                     "input_path": args.data,
                     "output_path": args.out,
                     "fit": list(fit),
+                    "method": args.method,
+                    "config": asdict(config),
                     "grid": (scan.grid if grid is None else grid).to_dict(),
                     "bounded_working_grid": grid is None,
                 },
@@ -155,9 +213,12 @@ def main() -> None:
         return
     setup_logging()
     log_jax_env()
-    result = tj.align(scan, fit=fit, grid=grid)
-    if cylinder is not None:
-        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
+    if args.method == "opposite-views":
+        result = tj.align(scan, fit=fit, method="opposite-views")
+    else:
+        result = tj.align(scan, fit=fit, grid=grid, config=config)
+    if cylinder is not None and result.image is not None and result.grid is not None:
+        result = replace(result, image=zero_outside_cylinder(result.image, result.grid, cylinder))
     tj.save(args.out, result)
     logging.info("Saved alignment results to %s", args.out)
     if args.manifest is not None:

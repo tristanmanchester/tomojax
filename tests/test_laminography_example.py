@@ -37,7 +37,7 @@ def test_working_scale_is_bounded_and_keeps_the_support(shape, detector_shape):
 def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monkeypatch):
     grid = tj.Grid(40, 36, 20, 0.7, 1.1, 0.9, vol_origin=(1.2, -4, 0.5))
     detector = tj.Detector(23, 7, 1.5, 0.5)
-    geometry = tj.LaminographyGeometry(grid, detector, np.arange(25), tilt_deg=30)
+    geometry = tj.LaminographyGeometry(grid, detector, np.arange(25), tilt=30)
     scan = tj.Scan(np.ones((25, 7, 23), np.float32), geometry)
     supplied = tj.Grid(7, 9, 5, 0.7, 1.1, 0.9) if explicit else None
     shifts = np.stack([np.sin(scan.angles), np.cos(scan.angles)], 1)
@@ -54,17 +54,18 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         fit,
         keep_grid,
         frames,
-        detector_roll_deg,
+        detector_roll,
         view_positions,
         declared_poses,
+        config=None,
     ):
         assert projections is scan.projections and d == detector and keep_grid == explicit
         assert view_positions is None
         assert g == (supplied or grid) and nominal.shape == (25, 4, 4)
-        assert fit == "translations" and frames is None and detector_roll_deg == 0
+        assert fit == "translations" and frames is None and detector_roll == 0
         volume = np.zeros((g.nz, g.ny, g.nx), np.float32)
         report = {"isolated_views": [], "unusual_views": [], "advisories": []}
-        return volume, g, table, {"fit": ["translations"], "corrections": {}, "report": report}
+        return volume, g, table, {"fit": ["translations"], "calibration": {}, "report": report}
 
     monkeypatch.setattr(automatic, "fit_poses", fit)
     result = automatic.align_poses(scan, grid=supplied)
@@ -93,12 +94,12 @@ def test_saved_alignment_reuse(tmp_path):
     # declared geometry gives.
     grid = tj.Grid(8, 8, 8, 1, 1, 1)
     angles = np.linspace(0, 360, 128, endpoint=False)
-    geometry = tj.LaminographyGeometry(grid, tj.Detector(12, 12, 1, 1), angles, tilt_deg=30)
+    geometry = tj.LaminographyGeometry(grid, tj.Detector(12, 12, 1, 1), angles, tilt=30)
     xyz = np.indices((8, 8, 8)).astype(float)
     volume = np.exp(-np.sum((xyz - 3.5) ** 2, axis=0) / 3).astype(np.float32)
     scan = tj.Scan(np.asarray(tj.project(geometry, volume)), geometry)
     result = tj.align(scan)
-    assert np.isfinite(result.volume).all()
+    assert np.isfinite(result.image).all()
     assert result.scan.projections is scan.projections
     assert result.info["fit"] == ["translations"]
     tj.save(tmp_path / "alignment.nxs", result)
@@ -120,7 +121,7 @@ def test_a_posed_laminography_scan_reconstructs_with_its_poses():
     grid, detector = tj.Grid(16, 16, 16, 1, 1, 1), tj.Detector(24, 24, 1, 1)
     views = 128
     geometry = tj.LaminographyGeometry(
-        grid, detector, np.linspace(0, 360, views, endpoint=False), tilt_deg=30
+        grid, detector, np.linspace(0, 360, views, endpoint=False), tilt=30
     )
     xyz = np.indices((16, 16, 16)).astype(float)
     volume = np.exp(-np.sum((xyz - 7.5) ** 2, axis=0) / 8).astype(np.float32)

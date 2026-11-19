@@ -24,7 +24,7 @@ def geometry(kind):
     if kind == "cone":
         return tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(15.0, 25.0))
     if kind == "lamino":
-        return tj.LaminographyGeometry(grid, detector, angles, tilt_deg=25)
+        return tj.LaminographyGeometry(grid, detector, angles, tilt=25)
     return tj.ParallelGeometry(grid, detector, angles)
 
 

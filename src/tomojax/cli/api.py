@@ -15,9 +15,9 @@ class CliCommand:
 
 PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand("inspect", "Describe and check a dataset; preview it as PNGs."),
-    CliCommand("import", "Make a dataset from a Nikon scan, TIFF stack or .npz."),
-    CliCommand("preprocess", "Correct raw detector frames into line integrals."),
-    CliCommand("recon", "Reconstruct a volume."),
+    CliCommand("load", "Load a scan or raw acquisition and save it as a dataset."),
+    CliCommand("correct", "Apply corrections, and cut a scan down by views, window or binning."),
+    CliCommand("reconstruct", "Reconstruct a volume."),
     CliCommand("align", "Fit a scan's geometry and per-view motion."),
     CliCommand("export", "Write a reconstruction as TIFF slices or a raw file."),
     CliCommand("simulate", "Write a synthetic scan of a phantom."),

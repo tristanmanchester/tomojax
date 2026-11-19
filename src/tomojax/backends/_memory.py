@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 import logging
-import math
-import os
 from typing import TYPE_CHECKING, cast
 
 from tomojax.core.host_volume import host_available_memory_bytes
@@ -21,38 +18,6 @@ def is_oom_error(exc: Exception) -> bool:
     # cuFFT reports exhausted scratch memory as an INTERNAL plan-creation error.
     cufft_scratch = "fft_plan != nullptr" in msg and "cufft batched plan with scratch" in msg
     return "resource_exhausted" in msg or "out of memory" in msg or cufft_scratch
-
-
-@dataclass(frozen=True)
-class ViewsPerBatchEstimate:
-    """Memory-estimator result for callers that need fallback diagnostics."""
-
-    views_per_batch: int
-    free_bytes: int | None
-    fallback_used: bool
-    fallback_reason: str | None = None
-
-
-def _bytes_per(dtype: str) -> int:
-    d = str(dtype).lower()
-    if d in ("fp16", "float16", "half"):  # no int here; only used for gather
-        return 2
-    if d in ("bf16", "bfloat16"):
-        return 2
-    if d in ("fp64", "float64", "double"):
-        return 8
-    return 4  # default fp32
-
-
-def _normalized_safety_fraction(safety_frac: float) -> float:
-    """Clamp memory budgeting to an honest (0, 1] fraction."""
-    try:
-        frac = float(safety_frac)
-    except (TypeError, ValueError):
-        frac = 0.75
-    if not math.isfinite(frac):
-        frac = 0.75
-    return min(max(frac, 1e-6), 1.0)
 
 
 def _free_bytes_from_memory_info(info: object) -> int | None:
@@ -99,9 +64,9 @@ def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
     Under XLA's pool this is the pool's limit less the bytes in use, the total room. It
     cannot see fragmentation: an array needs one contiguous block, and once use is spread
     over the pool's regions the largest block can be far smaller (K11 67208's alignment
-    failed a 1.29 GiB allocation with 2.95 GiB "free" and a 1.0 GiB largest block). Nor do
-    the allocator's statistics give the true room, because the pool returns wholly free
-    regions to the driver and retries; only an allocation says whether an array fits.
+    failed a 1.29 GiB allocation with 2.95 GiB "free" and a 1.0 GiB largest block). The pool
+    never returns a free region to the driver: an array fits only in its largest free block
+    or in what it may still grow by under its limit (``memory_stats``).
 
     - ``device`` defaults to ``jax.default_device``, else the first GPU.
     - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
@@ -135,143 +100,3 @@ def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
     if device is not None and not isinstance(device, str) and device.platform != "cpu":
         return _cuda_free_memory_bytes(device) if device.platform == "gpu" else None
     return host_available_memory_bytes()
-
-
-def estimate_views_per_batch(
-    *,
-    n_views: int,
-    grid_nxyz: tuple[int, int, int],
-    det_nuv: tuple[int, int],
-    gather_dtype: str = "fp32",
-    projection_dtype: str = "fp32",
-    volume_dtype: str = "fp32",
-    checkpoint_projector: bool = True,
-    algo: str = "fbp",
-    safety_frac: float = 0.75,
-    free_bytes_override: int | None = None,
-) -> int:
-    """Estimate a safe views_per_batch for FBP/FISTA based on memory.
-
-    Heuristic upper bound that accounts for per-view projection storage (nv*nu) and
-    a transient per-view volume contribution (nx*ny*nz) that may appear in batched VJP.
-
-    Returns at least 1 and at most n_views. Falls back to a conservative default (8 or all)
-    if free memory cannot be determined.
-    """
-    estimate = estimate_views_per_batch_info(
-        n_views=n_views,
-        grid_nxyz=grid_nxyz,
-        det_nuv=det_nuv,
-        gather_dtype=gather_dtype,
-        projection_dtype=projection_dtype,
-        volume_dtype=volume_dtype,
-        checkpoint_projector=checkpoint_projector,
-        algo=algo,
-        safety_frac=safety_frac,
-        free_bytes_override=free_bytes_override,
-        fallback_batch=8,
-    )
-    return estimate.views_per_batch
-
-
-def estimate_views_per_batch_info(
-    *,
-    n_views: int,
-    grid_nxyz: tuple[int, int, int],
-    det_nuv: tuple[int, int],
-    gather_dtype: str = "fp32",
-    projection_dtype: str = "fp32",
-    volume_dtype: str = "fp32",
-    checkpoint_projector: bool = True,
-    algo: str = "fbp",
-    safety_frac: float = 0.75,
-    free_bytes_override: int | None = None,
-    fallback_batch: int = 8,
-) -> ViewsPerBatchEstimate:
-    """Estimate views-per-batch and report whether a fallback was required.
-
-    ``fallback_batch`` lets user-facing CLIs choose a stricter fallback while the
-    integer estimate keeps a conservative small-batch default.
-    """
-    n_views_i = max(1, int(n_views))
-    nx, ny, nz = map(int, grid_nxyz)
-    nv, nu = map(int, det_nuv)
-    rays = nv * nu
-    vox = nx * ny * nz
-
-    # Base dtypes: projections and volumes default to fp32; gather can be reduced.
-    proj_bytes = _bytes_per(projection_dtype)
-    vol_bytes = _bytes_per(volume_dtype)
-    gather_bytes = _bytes_per(gather_dtype)
-
-    # Per-view footprint (rough upper bound)
-    # - input view (nv*nu*fp32)
-    # - VJP intermediate returning (nx*ny*nz*fp32) before reduction across batch
-    # - gather buffer is not explicitly materialized across the full batch in Python,
-    #   but account a term to keep the bound conservative.
-    per_view = proj_bytes * rays + vol_bytes * vox + gather_bytes * rays
-
-    # Static accumulator and small constants. FISTA holds extra TV dual
-    # variables (about 3 volumes) during proximal steps.
-    static_bytes = vol_bytes * vox if algo.lower() == "fbp" else vol_bytes * vox * 4
-
-    # Algorithm factor: FISTA uses both fwd and VJP per batch; FBP uses only VJP
-    algo_factor = 1.5 if algo.lower() == "fbp" else 2.0
-
-    # Empirical overhead fudge to cover extra buffers, remat, etc.
-    fudge = 2.0 if algo.lower() == "fbp" else 4.0
-    if not checkpoint_projector:
-        fudge *= 1.25
-
-    free_bytes = free_bytes_override
-    if free_bytes is None:
-        free_bytes = device_free_memory_bytes()
-
-    if free_bytes is None or free_bytes < 0:
-        # Fallback heuristics: pick a small-but-reasonable batch
-        fallback = max(1, min(n_views_i, int(fallback_batch)))
-        return ViewsPerBatchEstimate(
-            views_per_batch=fallback,
-            free_bytes=free_bytes,
-            fallback_used=True,
-            fallback_reason="available memory could not be determined",
-        )
-
-    budget = int(_normalized_safety_fraction(safety_frac) * free_bytes)
-    if budget <= static_bytes:
-        return ViewsPerBatchEstimate(
-            views_per_batch=1,
-            free_bytes=int(free_bytes),
-            fallback_used=False,
-            fallback_reason=None,
-        )
-
-    # Largest b such that per_batch(b) <= budget
-    b_est = (budget - static_bytes) / float(algo_factor * fudge * per_view)
-    b = int(max(1, math.floor(b_est)))
-    # Apply a conservative soft cap to avoid oversized vectorization; override via env
-    # Default clamp to keep auto-batching conservative on diverse GPUs
-    cap_default = 8
-    try:
-        cap_env = int(os.getenv("TOMOJAX_MAX_VIEWS_PER_BATCH", str(cap_default)))
-    except Exception as exc:
-        LOG.debug(
-            "Ignoring invalid TOMOJAX_MAX_VIEWS_PER_BATCH value %r; using %d: %s",
-            os.getenv("TOMOJAX_MAX_VIEWS_PER_BATCH"),
-            cap_default,
-            exc,
-        )
-        cap_env = cap_default
-    # Additional dynamic caps for very large volumes
-    if vox >= 512**3:
-        cap_env = 1
-    elif vox >= 256**3:
-        cap_env = min(cap_env, 2)
-    cap = max(1, cap_env)
-    batch = max(1, min(n_views_i, cap, b))
-    return ViewsPerBatchEstimate(
-        views_per_batch=batch,
-        free_bytes=int(free_bytes),
-        fallback_used=False,
-        fallback_reason=None,
-    )

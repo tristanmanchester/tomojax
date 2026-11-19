@@ -79,7 +79,7 @@ def test_host_fista_matches_resident_with_mapped_state(
     )
 
     grid, det = Grid(9, 7, 5, 0.8, 1.1, 1.3), Detector(11, 31 if cone else 9, 0.9, 1.2)
-    geometry = LaminographyGeometry(grid, det, np.linspace(0, 270, 17), tilt_deg=53)
+    geometry = LaminographyGeometry(grid, det, np.linspace(0, 270, 17), tilt=53)
     if cone:
         geometry = ConeGeometry(grid, det, geometry.angles, ConeBeam(15, 20))
     rng = np.random.default_rng(20261101)
@@ -93,8 +93,8 @@ def test_host_fista_matches_resident_with_mapped_state(
         nonnegative=True,
         upper_bound=0.7,
         lipschitz=limit,
-        recon_rel_tol=tolerance,
-        recon_patience=1,
+        tolerance=tolerance,
+        patience=1,
         views_per_batch=6,
     )
     expected, reference = fista_tv(geometry, grid, det, data, init_x=initial, config=cfg)
@@ -150,9 +150,9 @@ def test_cuda_tv_workspace_budget_matches_both_allocation_branches(monkeypatch):
 
 
 @pytest.mark.parametrize("weight", [None, 0.0, 0.005])
-@pytest.mark.parametrize("regulariser", ["tv", "huber_tv"])
+@pytest.mark.parametrize("regularizer", ["tv", "huber_tv"])
 @pytest.mark.parametrize("shape", [(), (8, 1, 1), (8, 8, 8)])
-def test_fista_host_selection_counts_proximal_workspace(monkeypatch, weight, regulariser, shape):
+def test_fista_host_selection_counts_proximal_workspace(monkeypatch, weight, regularizer, shape):
     from tomojax.recon._fista_host import solve_on_host  # check-public-imports: allow-private
 
     grid, detector = Grid(8, 8, 8, 1, 1, 1), Detector(1, 1, 1, 1)
@@ -162,7 +162,7 @@ def test_fista_host_selection_counts_proximal_workspace(monkeypatch, weight, reg
         split=None,
         stream=True,
         constraints=None,
-        config=FistaConfig(tv_weight=weight, regulariser=regulariser, support=np.ones(shape)),
+        config=FistaConfig(tv_weight=weight, regularizer=regularizer, support=np.ones(shape)),
     )
     data = np.zeros((1, 1, 1), np.float32)
     # Four outer volumes, four reference-TV fields and four one-pixel batches.

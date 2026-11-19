@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     import numpy as np
 
 DataTerm = Literal["absolute", "per_view_contrast"]
-Regulariser = Literal["tv", "huber_tv"]
+Regularizer = Literal["tv", "huber_tv"]
 
 
 @dataclass
@@ -42,4 +42,4 @@ class ReconstructionSlab[T]:
     info: dict[str, object] = field(default_factory=dict)
 
 
-__all__ = ["DataTerm", "ReconstructionSlab", "Regulariser"]
+__all__ = ["DataTerm", "ReconstructionSlab", "Regularizer"]

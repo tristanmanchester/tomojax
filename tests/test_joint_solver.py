@@ -75,7 +75,7 @@ def test_initial_support_and_optional_tv_work(monkeypatch, weight, interpolation
             weight,
             0.01,
             ops=ops,
-            budget=Budget(outer=1, inner=3),
+            budget=Budget(iterations=1, image_iterations=3),
             x0=0.7 * image,
             p0=None,
             pose_sigma=0.001,
@@ -123,7 +123,7 @@ def test_each_views_offset_and_ramp_are_eliminated_relative_to_the_level_the_vie
             0.0,
             0.01,
             ops=ops,
-            budget=Budget(outer=2, inner=3),
+            budget=Budget(iterations=2, image_iterations=3),
             x0=image,
             p0=None,
             pose_sigma=0.001,
@@ -147,7 +147,7 @@ def _linearized(half):
     # Non-uniform precision makes the profile oblique; outliers put pixels in the
     # loss tail, where the robust weights differ from the precision.
     grid, detector = tj.Grid(6, 6, 4, 0.7, 0.7, 0.7), tj.Detector(8, 6, 0.7, 0.7)
-    geometry = tj.LaminographyGeometry(grid, detector, np.arange(10) * 36.0, tilt_deg=20)
+    geometry = tj.LaminographyGeometry(grid, detector, np.arange(10) * 36.0, tilt=20)
     rng = np.random.default_rng(12)
     nominal = np.asarray(stack_view_poses(geometry, 10))
     # Cubic sampling: linear interpolation's pose derivative has kinks at
@@ -218,7 +218,7 @@ def test_fp16_step_storage_stays_within_its_rounding_of_fp32():
 
 def test_initializer_does_not_capture_observations(monkeypatch):
     grid, detector = tj.Grid(2, 2, 2, 1, 1, 1), tj.Detector(2, 2, 1, 1)
-    geometry = tj.LaminographyGeometry(grid, detector, np.arange(8) * 45.0, tilt_deg=-30)
+    geometry = tj.LaminographyGeometry(grid, detector, np.arange(8) * 45.0, tilt=-30)
     with jax.enable_x64(True):
         nominal = np.asarray(stack_view_poses(geometry, 8))
         ops = Operators(

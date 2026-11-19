@@ -8,24 +8,24 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 |---|---|---|
 | Dataset inspection and validation | Supported | `tomojax inspect scan.nxs` (`--json` for a JSON report; exit status 1 when invalid) |
 | Preview PNGs (central projection and central volume slices) | Supported | `tomojax inspect recon.nxs --preview previews` |
-| TIFF stack import | Supported | `tomojax import ./tiffs --angles angles.csv --pixel-size ... --geometry parallel --config calibration.toml -o scan.nxs` |
-| Dataset container conversion (`.npz`, `.nxs`, `.h5`) | Supported | `tomojax import scan.npz -o scan.nxs` |
-| HDF5 flat/dark correction (NXtomo `image_key`, or APS Data Exchange `data_white`/`data_dark`; flat sets before and after interpolated) | Supported | `tomojax preprocess raw.nxs -o corrected.nxs`, or `tj.load("raw.nxs")` |
+| TIFF stacks of raw frames | Supported | `tomojax load ./tiffs --flats ./flats --darks ./darks --angles angles.csv --pixel-size ... --geometry parallel -o scan.nxs`; already-corrected line integrals build `tj.Scan(read_tiff_frames(path), geometry)` in Python |
+| Dataset container conversion (`.npz`, `.nxs`, `.h5`) | Supported | `tomojax load scan.npz -o scan.nxs` |
+| HDF5 flat/dark correction (NXtomo `image_key`, or APS Data Exchange `data_white`/`data_dark`; flat sets before and after interpolated) | Supported | `tomojax correct raw.nxs -o corrected.nxs`, or `tj.load("raw.nxs")` |
 | Frame corrections in Python (crop, select views, correction steps) | Supported | `tj.load_frames(path).cropped(...).selected(...).corrected(*steps)`; `Scan.corrected(*steps)` for line-integral steps |
-| TIFF flat/dark preprocessing | Supported | `tomojax preprocess ./projections -o corrected.nxs --flats ./flats --darks ./darks --angles angles.csv --config calibration.toml`, whose `[detector]` table gives `nu`, `nv`, `du`, `dv` and `det_center` |
-| FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fbp\|cgls\|fista\|spdhg` |
-| Fourier-slice inverse of supported parallel scans | Supported | `tomojax recon corrected.nxs -o recon.nxs --method fourier`; matching available CUDA or NumPy, with explicit backend configuration |
-| Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax import ./tiffs --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv --config calibration.toml -o scan.nxs`, then `tomojax recon` (automatic FDK for one arrangement; `--method fbp` selects it explicitly) |
+| TIFF flat/dark preprocessing | Supported | `tomojax correct ./projections -o corrected.nxs --flats ./flats --darks ./darks --angles angles.csv --pixel-size ... --detector-center U V` |
+| FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax reconstruct corrected.nxs -o recon.nxs --method fbp\|cgls\|fista\|spdhg` |
+| Fourier-slice inverse of supported parallel scans | Supported | `tomojax reconstruct corrected.nxs -o recon.nxs --method fourier`; matching available CUDA or NumPy, with explicit backend configuration |
+| Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax load ./tiffs --flats ... --darks ... --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv -o scan.nxs`, then `tomojax reconstruct` (automatic FDK for one arrangement; `--method fbp` selects it explicitly) |
 | Per-view translations and optional rotations | Experimental | `tomojax align corrected.nxs -o aligned.nxs --fit translations rotations` |
 | Cone-beam motion (includes along-beam translation) | Experimental | `tomojax align cone_scan.nxs -o aligned.nxs --fit translations rotations` |
-| Ring (stripe), zinger, outlier-view and beam-hardening corrections; Paganin phase retrieval | Supported | `tomojax preprocess raw.nxs -o scan.nxs --stripes 9 --zingers --reject-views` (and the expert `--paganin`); beam hardening uses explicit `tomojax.corrections.BeamHardening` curves |
+| Ring (stripe), zinger, outlier-view and beam-hardening corrections; Paganin phase retrieval | Supported | `tomojax correct raw.nxs -o scan.nxs --stripes 9 --zingers --reject-views` (and the expert `--paganin`); beam hardening uses explicit `tomojax.corrections.BeamHardening` curves |
 | Volume export as TIFF slices or raw (`uint16` or `float32`) | Supported | `tomojax export recon.nxs -o slices/`; `tomojax export recon.nxs -o recon.raw --dtype uint16` |
-| Nikon (X-Tek) scan import, including its calibrated rotation axis | Supported | `tj.load_frames("scan/part.xtekct", darks=0).corrected()`, or `tomojax preprocess scan/part.xtekct --darks 0 -o scan.nxs` |
+| Nikon (X-Tek) scan import, including its calibrated rotation axis | Supported | `tj.load_frames("scan/part.xtekct", darks=0).corrected()`, or `tomojax correct scan/part.xtekct --darks 0 -o scan.nxs` |
 | Zeiss Xradia projection acquisitions | Supported | `tj.load("scan.txrm")`, or `tj.load_frames("scan.txrm").corrected(...)`; separate reference images use `flats="reference_Front.xrm"`; [CPU preview](lab-ct.md#zeiss-xradia-preview) |
 | Multi-orbit cone-beam scans (`ConeSegments`): iterative reconstruction and pose alignment | Supported; alignment experimental | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then `tj.reconstruct(scan, "cgls")` and `tj.align(scan)` |
-| Shared detector centre and roll, including cone data | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --fit centre roll` |
-| Detector-centre/COR alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --fit centre` |
-| Detector-centre offset with per-view motion | Experimental; shared offset uses an explicit gauge | `tomojax align corrected.nxs -o aligned.nxs --fit centre translations` |
+| Shared detector centre and roll, including cone data | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --fit center roll` |
+| Detector-centre/COR alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --fit center` |
+| Detector-centre offset with per-view motion | Experimental; shared offset uses an explicit gauge | `tomojax align corrected.nxs -o aligned.nxs --fit center translations` |
 | Shared setup angles with per-view motion | Experimental; one joint solve | `tomojax align corrected.nxs -o aligned.nxs --fit translations tilt roll` |
 | Deterministic synthetic dataset generation | Supported | `tomojax simulate -o synthetic_scan.nxs --size 64 --geometry parallel\|lamino\|cone` |
 | Python API reconstruction | Supported | `tj.reconstruct(scan, method, config=...)`, `tj.project`, `tj.backproject`; building blocks in `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` |
@@ -34,7 +34,7 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Several GPUs in one process | Supported (Python only) | `devices=` on `tj.project`, `tj.backproject`, `tj.reconstruct` (`fbp`, `cgls`, `fista`) ([large scans](large-scans.md#use-several-gpus)) |
 
 No-flag `tomojax align` fits translations with the same joint solver used by every `fit` setting.
-`tomojax recon` selects its image method from the geometry. Reported limitations are not accuracy
+`tomojax reconstruct` selects its image method from the geometry. Reported limitations are not accuracy
 certificates; check recovered geometry and reconstructed images.
 
 ## Scope
@@ -45,7 +45,7 @@ use their format-defined axial parallel model. If the pitch is recorded but the
 rotation centre is absent, loading places the centre at the middle of the
 detector and records `detector_center_status` "not_recorded"; nothing is
 estimated. The centre comes from the file, from `detector=`, or from
-`tj.align(scan, fit="centre")`. Vertical zero defines the free axial origin. Laminography requires a recorded tilt/axis or
+`tj.align(scan, fit="center")`. Vertical zero defines the free axial origin. Laminography requires a recorded tilt/axis or
 `geometry=`. Nikon files lacking dark calibration require `darks=`; zero is
 only an explicit choice for already corrected counts. A Zeiss file that records
 `AcquisitionSettings/CameraStaticBackground` = 1 (the camera subtracted its dark
@@ -54,7 +54,7 @@ requires `flats=` (frames or one level) rather than deriving it from bit depth.
 Compressed TIFF crops decode only their intersecting strips/tiles. In folders,
 TIFF-suffixed entries are image storage, not acquisition text sidecars.
 TIFF line-integral import requires explicit `--geometry`, `--pixel-size` and
-`detector_center = [u, v]` in `--config`; laminography also needs `tilt_deg`.
+`detector_center = [u, v]` in `--config`; laminography also needs `tilt`.
 For raw frames without an explicit grid, detector binning also reduces output
 resolution. Axial-parallel crops follow the measured row window; other models
 retain their output box. File/caller-supplied grids and `Scan.binned()` retain
@@ -140,14 +140,14 @@ an explicit `angles=` schedule must be in TomoJAX's object-angle frame.
 | Fourier-slice inverse (Python API) | `fourier_reconstruct`: uniform/nonuniform half-turn parallel scans, including redundant/opposing exposures, offsets/anisotropic spacing/cropped grids; NumPy reference or optional CuPy CUDA; host arrays/memmaps and axial slabs; not differentiable |
 | General posed/laminography filtered adjoint | JAX; approximate initialisation for incomplete-angle data |
 | Public FISTA-TV and SPDHG-TV | JAX with matched discrete adjoints; convergence regressions for parallel and tilted scans; NumPy/memmap projections stream from host memory when large (SPDHG-TV also keeps its dual and weights there) |
-| Public CGLS (Python API and `tomojax recon --method cgls`) | Matched FP32 JAX/CUDA operators, scalar damping, optional squared physical voxel differences, nonzero starts; CUDA selected automatically on CUDA with canonical detector grids; large NumPy/memmap projections stream from host memory through the equivalent normal equations |
+| Public CGLS (Python API and `tomojax reconstruct --method cgls`) | Matched FP32 JAX/CUDA operators, scalar damping, optional squared physical voxel differences, nonzero starts; CUDA selected automatically on CUDA with canonical detector grids; large NumPy/memmap projections stream from host memory through the equivalent normal equations |
 | Joseph plane model (Python API) | `project_joseph` and the default discretisation of CGLS, FISTA-TV and SPDHG-TV; explicit bilinear or Keys cubic interpolation; JAX reference and matched CUDA gather transpose; CUDA first-order volume/pose AD, JVP/VJP and batching; rigid poses and canonical detector grids required |
 | Fused Joseph least squares (Python API) | `joseph_l2_value_and_grad`: raw half squared error plus volume/matrix-pose gradients; CUDA retains residuals and tile reductions without a ray-by-plane tape; not called by the alignment pipeline |
 | Joseph pose normal equations (Python API) | `joseph_pose_normal_equations`: per-view raw loss, directional gradient, Gauss-Newton matrix and residual; 1–16 caller-supplied pose directions; CUDA avoids a full projection Jacobian; caller chooses damping, priors and gauges |
 | Coarse-to-fine CGLS (Python API) | Optional `cgls_multires` with explicit budgets and a final full-data solve; tested on odd/shifted grids and sharp/noisy phantoms, with known performance regressions |
 | Internal differentiable FISTA core | JAX and explicit CUDA forward/adjoint variants for reconstruction |
-| Parallel-beam geometry | `ParallelGeometry`, `LaminographyGeometry(tilt_deg=...)` or `RotationAxisGeometry(axis_unit_lab=...)` for an axial, tilted or arbitrary axis; a detector centre offset and roll (`detector_roll_deg`); any per-view poses |
-| Cone-beam geometry | `ConeGeometry`: point source and flat detector with offsets, roll, pitch and yaw, a laterally offset (`axis_offset`), tilted or arbitrary axis, any per-view poses; Joseph sampling of diverging rays with a matched transpose; JAX reference (differentiable in volume and poses) and CUDA kernels (CuPy); CGLS, FISTA-TV, SPDHG-TV and FDK (full turns, offset-detector full turns, Parker-weighted short scans on centred or offset detectors); `tomojax simulate`, `tomojax import` and saved datasets. Fan beam is a one-row cone detector |
+| Parallel-beam geometry | `ParallelGeometry`, `LaminographyGeometry(tilt=...)` or `RotationAxisGeometry(axis_unit_lab=...)` for an axial, tilted or arbitrary axis; a detector centre offset and roll (`detector_roll`); any per-view poses |
+| Cone-beam geometry | `ConeGeometry`: point source and flat detector with offsets, roll, pitch and yaw, a laterally offset (`axis_offset`), tilted or arbitrary axis, any per-view poses; Joseph sampling of diverging rays with a matched transpose; JAX reference (differentiable in volume and poses) and CUDA kernels (CuPy); CGLS, FISTA-TV, SPDHG-TV and FDK (full turns, offset-detector full turns, Parker-weighted short scans on centred or offset detectors); `tomojax simulate`, `tomojax load` and saved datasets. Fan beam is a one-row cone detector |
 | Real GPU validation | CUDA on RTX 4070 Laptop (Ada); CPU reference mode is tested separately |
 
 Volumes use `(z, y, x)` array order and projections use `(view, v, u)`. Voxel and

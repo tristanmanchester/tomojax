@@ -16,8 +16,8 @@ def _metadata(columns: int, frame: str, segmented: bool) -> dict:
     grid = tj.Grid(6, 5, 4, 1.0, 0.8, 1.2)
     detector = tj.Detector(9, 7, 0.9, 1.1, (0.2, -0.3))
     beams = [
-        tj.ConeBeam(18.0, 30.0, axis_offset=0.4, detector_roll_deg=7.0),
-        tj.ConeBeam(22.0, 35.0, detector_pitch_deg=-5.0, axis_offset=-0.2),
+        tj.ConeBeam(18.0, 30.0, axis_offset=0.4, detector_roll=7.0),
+        tj.ConeBeam(22.0, 35.0, detector_pitch=-5.0, axis_offset=-0.2),
     ]
     angles = np.asarray([0.0, 55.0, 130.0, 185.0, 250.0, 310.0], np.float32)
     # Distinct rows in the posed first orbit, so a swapped view shows; the
@@ -44,8 +44,8 @@ def _metadata(columns: int, frame: str, segmented: bool) -> dict:
     return meta
 
 
-def _scan(meta: dict, *, poses: bool = True) -> tj.Scan:
-    _, detector, geometry = build_geometry_from_dataset_metadata(meta, poses=poses)
+def _scan(meta: dict, *, apply_poses: bool = True) -> tj.Scan:
+    _, detector, geometry = build_geometry_from_dataset_metadata(meta, apply_poses=apply_poses)
     data = np.zeros((len(meta["angles"]), detector.nv, detector.nu), np.float32)
     return tj.Scan(data, geometry)
 
@@ -78,7 +78,7 @@ def test_saved_pose_tables_have_six_coordinates_and_independent_frames(
     original = meta["align_params"].copy()
     scan = _scan(meta)
     assert scan.poses is not None and scan.poses.shape == (6, 6)
-    actual = [scan.geometry.pose_for_view(i) for i in range(6)]
+    actual = [scan.geometry.pose_matrix(i) for i in range(6)]
     np.testing.assert_allclose(actual, _expected_poses(meta), rtol=2e-6, atol=1e-7)
     np.testing.assert_array_equal(meta["align_params"], original)
     # An unposed orbit remains exactly unposed, including its optional dy.
@@ -88,7 +88,7 @@ def test_saved_pose_tables_have_six_coordinates_and_independent_frames(
 @pytest.mark.parametrize("segmented", [False, True])
 def test_posed_and_unposed_orbits_combine_and_round_trip(segmented: bool, tmp_path: Path) -> None:
     meta = _metadata(6, "object", segmented)
-    posed, plain = _scan(meta), _scan(meta, poses=False)
+    posed, plain = _scan(meta), _scan(meta, apply_poses=False)
     combined = tj.Scan.combine([posed, plain])
     assert combined.poses is not None and combined.poses.shape == (12, 6)
     np.testing.assert_array_equal(combined.poses[6:], np.zeros((6, 6), np.float32))
@@ -102,13 +102,13 @@ def test_posed_and_unposed_orbits_combine_and_round_trip(segmented: bool, tmp_pa
     tj.save(path, combined)
     restored = tj.load(path)
     np.testing.assert_allclose(
-        [restored.geometry.pose_for_view(i) for i in range(12)],
+        [restored.geometry.pose_matrix(i) for i in range(12)],
         expected,
         rtol=2e-6,
         atol=1e-7,
     )
     np.testing.assert_allclose(restored.poses, combined.poses, atol=1e-7)
-    assert tj.load(path, poses=False).poses is None
+    assert tj.load(path, apply_poses=False).poses is None
 
 
 @pytest.mark.parametrize("segmented", [False, True])
@@ -130,7 +130,7 @@ def test_saved_pose_validation_is_the_same_for_one_and_several_orbits(
     meta["align_params"] = table
     with pytest.raises(ValueError, match=message):
         _scan(meta)
-    assert _scan(meta, poses=False).poses is None
+    assert _scan(meta, apply_poses=False).poses is None
 
 
 @pytest.mark.parametrize("segmented", [False, True])
@@ -139,7 +139,7 @@ def test_omitted_saved_pose_frame_keeps_its_existing_meaning(segmented: bool) ->
     del meta["align_gauge"]
     scan = _scan(meta)
     np.testing.assert_allclose(
-        [scan.geometry.pose_for_view(i) for i in range(6)],
+        [scan.geometry.pose_matrix(i) for i in range(6)],
         _expected_poses(meta),
         rtol=2e-6,
         atol=1e-7,
@@ -151,7 +151,7 @@ def test_loading_five_column_pose_files_rejects_legacy_shape(
     extension: str, tmp_path: Path
 ) -> None:
     meta = _metadata(5, "detector", segmented=True)
-    nominal = _scan(meta, poses=False)
+    nominal = _scan(meta, apply_poses=False)
     dataset = ProjectionDataset(
         projections=nominal.projections,
         angles=meta["angles"],

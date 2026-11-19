@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, fields, replace
-import math
+from dataclasses import fields, replace
 import os
 from typing import TYPE_CHECKING, Literal, cast
 
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
 from tomojax.cli.config import parse_args_with_config
 from tomojax.core import log_jax_env, setup_logging
-from tomojax.datasets import SimConfig, SimulationArtefacts, simulate_to_file
+from tomojax.datasets import SimConfig, SimulationArtefacts
 
 from ._runtime import transfer_guard_context
 
@@ -23,23 +22,13 @@ PhantomName = Literal["shepp", "cube", "sphere", "blobs", "random_shapes", "lami
 TransferGuardName = Literal["off", "log", "disallow"]
 
 
-@dataclass(frozen=True)
-class SimulateCommand:
-    """Typed command plan for synthetic dataset simulation."""
-
-    out: str
-    config: SimConfig
-    transfer_guard: TransferGuardName
-    progress: bool
-
-
 _PUBLIC = (
     "--size",
     "--n-views",
     "--geometry",
     "--phantom",
-    "--rotation-deg",
-    "--tilt-deg",
+    "--rotation",
+    "--tilt",
     "--source-to-axis",
     "--source-to-detector",
     "--poisson-scale",
@@ -60,7 +49,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  tomojax simulate -o phantom.nxs\n"
             "  tomojax simulate -o cone.nxs --geometry cone --size 128 --n-views 360\n"
-            "  tomojax simulate -o lamino.nxs --geometry lamino --tilt-deg 30 --poisson-scale 1000"
+            "  tomojax simulate -o lamino.nxs --geometry lamino --tilt 30 --poisson-scale 1000"
         ),
     )
     add_output(parser, "Dataset to write (.nxs)")
@@ -88,14 +77,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="shepp",
     )
     _ = parser.add_argument(
-        "--rotation-deg",
+        "--rotation",
         type=float,
         default=None,
         metavar="DEG",
         help="Rotation range (default 180 for parallel, 360 otherwise)",
     )
     _ = parser.add_argument(
-        "--tilt-deg",
+        "--tilt",
         type=float,
         default=None,
         metavar="DEG",
@@ -185,90 +174,54 @@ def _settings() -> dict[str, object]:
     }
 
 
-def _cone_detector(size: int, source_to_axis: float, source_to_detector: float) -> int:
-    """Detector pixels that see a ``size``-voxel cube from ``source_to_axis``."""
-    radius = size / math.sqrt(2.0)
-    if source_to_axis <= radius:
-        raise ValueError("the source must be outside the volume: increase --source-to-axis")
-    across = radius * source_to_detector / math.sqrt(source_to_axis**2 - radius**2)
-    up = 0.5 * size * source_to_detector / (source_to_axis - radius)
-    return 2 * math.ceil(max(across, up))
+def main(argv: Sequence[str] | None = None) -> None:
+    """Run ``tomojax simulate``: :func:`tomojax.simulate`, saved with its scan."""
+    import tomojax as tj
 
-
-def _parse_command(argv: Sequence[str] | None) -> SimulateCommand:
-    """Parse CLI arguments into a typed simulation command plan."""
     parser = _build_parser()
     args, metadata = parse_args_with_config(parser, argv)
     settings = cast("dict[str, object]", metadata["settings"])
-    check_paths(parser, outputs=[cast("str", args.out)], force=cast("bool", args.force))
+    out = cast("str", args.out)
+    check_paths(parser, outputs=[out], force=cast("bool", args.force))
     artefacts = replace(
-        SimulationArtefacts(poisson_scale=cast("float", args.poisson_scale)),
+        SimulationArtefacts(),
         **{name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings},
     )
-    rotation_deg = cast("float | None", args.rotation_deg)
-    geometry = cast("GeometryName", args.geometry)
-    tilt_deg = cast("float | None", args.tilt_deg)
-    size = cast("int", args.size)
-    nx, ny, nz = cast("list[int] | None", args.grid) or (size, size, size)
-    sod = cast("float | None", args.source_to_axis)
-    sdd = cast("float | None", args.source_to_detector)
-    detector = cast("list[int] | None", args.detector)
-    if detector is not None:
-        nu, nv = detector
-    elif geometry == "cone":
-        sod_default = 3.0 * max(nx, ny, nz) if sod is None else sod
-        try:
-            n = _cone_detector(
-                max(nx, ny, nz), sod_default, 1.5 * sod_default if sdd is None else sdd
-            )
-        except ValueError as exc:
-            parser.error(str(exc))
-        nu = nv = n
-    else:
-        nu, nv = max(nx, ny), nz
-    n_views = cast("int | None", args.n_views) or 2 * size
-    config = SimConfig(
-        nx=int(nx),
-        ny=int(ny),
-        nz=int(nz),
-        nu=int(nu),
-        nv=int(nv),
-        n_views=int(n_views),
-        geometry=geometry,
-        tilt_deg=tilt_deg if tilt_deg is not None else (30.0 if geometry == "lamino" else 0.0),
-        source_to_axis=sod,
-        source_to_detector=sdd,
-        rotation_deg=rotation_deg,
-        phantom=cast("PhantomName", args.phantom),
-        seed=cast("int", args.seed),
-        artefacts=artefacts if artefacts.has_enabled() else None,
-    )
     config = replace(
-        config, **{name: settings[name] for name in _PHANTOM_SETTINGS if name in settings}
+        SimConfig(nx=1, ny=1, nz=1, nu=1, nv=1, n_views=1, artefacts=artefacts),
+        **{name: settings[name] for name in _PHANTOM_SETTINGS if name in settings},
     )
-    return SimulateCommand(
-        out=cast("str", args.out),
-        config=config,
-        transfer_guard=cast("TransferGuardName", args.transfer_guard),
-        progress=cast("bool", args.progress),
-    )
-
-
-def main(argv: Sequence[str] | None = None) -> None:
-    """Run the synthetic dataset simulation command."""
-    command = _parse_command(argv)
-
+    shape = cast("list[int] | None", args.grid)
+    pixels = cast("list[int] | None", args.detector)
     setup_logging()
     log_jax_env()
-    if command.progress:
+    if cast("bool", args.progress):
         os.environ["TOMOJAX_PROGRESS"] = "1"
-
-    with transfer_guard_context(command.transfer_guard):
-        out = simulate_to_file(command.config, command.out)
-    cfg = command.config
+    try:
+        with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
+            result = tj.simulate(
+                cast("PhantomName", args.phantom),
+                size=cast("int", args.size),
+                n_views=cast("int | None", args.n_views),
+                geometry=cast("GeometryName", args.geometry),
+                rotation=cast("float | None", args.rotation),
+                tilt=cast("float | None", args.tilt),
+                source_to_axis=cast("float | None", args.source_to_axis),
+                source_to_detector=cast("float | None", args.source_to_detector),
+                poisson_scale=cast("float", args.poisson_scale),
+                grid=None if shape is None else tj.Grid(shape[0], shape[1], shape[2], 1, 1, 1),
+                detector=None if pixels is None else tj.Detector(pixels[0], pixels[1], 1, 1),
+                seed=cast("int", args.seed),
+                config=config,
+            )
+    except ValueError as exc:
+        parser.error(str(exc))
+    tj.save(out, result, include_scan=True)
+    assert result.scan is not None  # a simulation's scan
     print(
-        f"wrote {out}: {cfg.geometry} scan of a {cfg.nx}x{cfg.ny}x{cfg.nz} {cfg.phantom} "
-        f"phantom, {cfg.n_views} views on a {cfg.nu}x{cfg.nv} detector"
+        f"wrote {out}: {args.geometry} scan of a {'x'.join(map(str, result.volume.shape[::-1]))} "
+        f"{args.phantom} phantom, {len(result.scan.angles)} views on a "
+        f"{result.scan.detector.nu}x{result.scan.detector.nv} detector"
     )
 
 

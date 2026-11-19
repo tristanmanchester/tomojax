@@ -13,7 +13,7 @@ from tomojax.cli.api import PRODUCT_COMMANDS
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
 
-_MODULES = {c.name: c.name for c in PRODUCT_COMMANDS} | {"import": "import_"}
+_MODULES = {c.name: c.name for c in PRODUCT_COMMANDS}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -55,10 +55,10 @@ def _build_parser() -> argparse.ArgumentParser:
             "output without --force; `tomojax <command> --help` describes it. Exit status: "
             "0 success, 1 failure, 2 usage error.\n\n"
             "A lab CT scan from start to finish:\n"
-            "  tomojax import scan/scan.xtekct -o scan.nxs\n"
+            "  tomojax load scan/scan.xtekct -o scan.nxs --darks 0\n"
             "  tomojax inspect scan.nxs\n"
-            "  tomojax align scan.nxs -o aligned.nxs --fit centre roll\n"
-            "  tomojax recon aligned.nxs -o recon.nxs\n"
+            "  tomojax align scan.nxs -o aligned.nxs --fit center roll\n"
+            "  tomojax reconstruct aligned.nxs -o recon.nxs\n"
             "  tomojax inspect recon.nxs --preview previews\n"
             "  tomojax export recon.nxs -o slices/"
         ),

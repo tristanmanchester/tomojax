@@ -29,7 +29,7 @@ and reads its sample angles, image keys, flat/dark fields and unit-labelled
 pixel pitches. If the axial centre is absent, loading places it at the middle
 of the detector and records that it was not recorded; nothing is estimated.
 Supply a calibrated `detector=`, or fit the centre with
-`tj.align(scan, fit="centre")`.
+`tj.align(scan, fit="center")`.
 
 Continue with the [one-row preview](#correct-reconstruct-and-inspect) below.
 An ESRF NXtomo export is not a raw Bliss master or an EDF folder. Those have
@@ -112,13 +112,14 @@ python preview.py
 tomojax inspect preview.nxs --preview preview-images
 ```
 
-The saved file retains the calibrated geometry, corrected projections and
-volume. The PNGs are display-scaled previews; use the floating-point data for
-quantitative work. The Python round trip is:
+The saved file holds the volume, its calibrated geometry and the reconstruction's
+record, and names the corrected projections it came from; pass `include_scan=True`
+to `tj.save` to keep them in the file too. The PNGs are display-scaled previews;
+use the floating-point data for quantitative work. The Python round trip is:
 
 ```python
 restored = tj.load_reconstruction("preview.nxs")
-print(restored.volume.shape, restored.scan.grid, restored.scan.detector)
+print(restored.volume.shape, restored.grid, restored.geometry.detector)
 ```
 
 For rings, phase retrieval, larger row windows and explicit reconstruction

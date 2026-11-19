@@ -15,11 +15,16 @@ from tomojax.geometry import stack_view_poses
 
 if TYPE_CHECKING:
     from tomojax._scan import Scan
+    from tomojax.alignment import AlignConfig
     from tomojax.geometry import Grid
 
 
 def align_poses(
-    scan: Scan, *, fit: str | tuple[str, ...] = "translations", grid: Grid | None = None
+    scan: Scan,
+    *,
+    fit: str | tuple[str, ...] = "translations",
+    grid: Grid | None = None,
+    config: AlignConfig | None = None,
 ) -> Reconstruction:
     """Jointly fit one image and the selected global and per-view parameters."""
     from tomojax.alignment._calibration import publish_calibration
@@ -39,9 +44,10 @@ def align_poses(
             fit=fit,
             keep_grid=grid is not None,
             frames=cone_frames(scan.geometry),
-            detector_roll_deg=float(cast("float", metadata.get("detector_roll_deg", 0.0))),
+            detector_roll=float(cast("float", metadata.get("detector_roll", 0.0))),
             view_positions=scan.view_positions,
             declared_poses=np.asarray(stack_view_poses(scan.with_poses(None).geometry, views)),
+            config=config,
         )
     except Exception as exc:
         if grid is None or not is_oom_error(exc):
@@ -51,16 +57,16 @@ def align_poses(
             "was given: an explicit grid= is used as given, at its full resolution. Omit grid= "
             "to let the fit bound its own working scale."
         ) from exc
-    corrected, calibration = publish_calibration(
-        scan, fitted, record["corrections"], native_pixel_size=native
-    )
+    changes = record["calibration"]
+    corrected, values = publish_calibration(scan, fitted, changes, native_pixel_size=native)
     corrected = with_grid(corrected, working)
+    calibration = {name: {"value": values[name], "change": changes[name]} for name in changes}
     info = {**record, "method": "joint_volume_pose", "calibration": calibration}
     _warn_about_views(record["report"])
     source = record_of(corrected)
     source.geometry_metadata["alignment_info"] = info
     corrected = replace(corrected, source=source)
-    return Reconstruction(volume, corrected, "joint_volume_pose", info)
+    return Reconstruction(volume, corrected.geometry, "joint_volume_pose", info, corrected)
 
 
 def _warn_about_views(report: dict) -> None:

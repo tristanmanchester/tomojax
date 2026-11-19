@@ -42,7 +42,7 @@ def scan_geometry(angles: np.ndarray, binning: int) -> tj.LaminographyGeometry:
         sampling_grid(binning),
         tj.Detector(640, 540, PITCH_UM, PITCH_UM),
         angles,
-        tilt_deg=35.0,
+        tilt=35.0,
     )
 
 
@@ -120,7 +120,7 @@ def main() -> None:
     print(f"load/correct/align: {time.perf_counter() - start:.1f} s")
     print("Final level:", result.info["levels"][-1]["status"])
     print("Reconstruction grid:", result.grid)
-    slice_figure(result.volume, result.grid, args.output)
+    slice_figure(result.image, result.grid, args.output)
 
 
 if __name__ == "__main__":

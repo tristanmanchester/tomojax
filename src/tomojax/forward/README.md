@@ -5,20 +5,8 @@
 `tomojax.forward` provides differentiable projection, projection-domain
 residuals, and geometry-parameter reductions.
 
-The projector adapts `GeometryState` to core `Grid`, `Detector`, detector
-grids, and per-view 4x4 `T_all`, then projects with
-`tomojax.core.projector.forward_project_view_T`.
-
 ## Public API
 
-- `project_parallel_reference_from_input`
-- `ProjectionArrayGeometryInput`
-- `ProjectionOperatorName`
-- `core_projection_geometry_from_state`
-- `core_projection_geometry_from_input`
-- `nominal_axis_unit_from_geometry`
-- `CoreProjectionGeometry`
-- `PROJECTION_OPERATOR`
 - `project_joseph`
 - `joseph_l2_value_and_grad`
 - `joseph_pose_normal_equations`
@@ -35,19 +23,18 @@ grids, and per-view 4x4 `T_all`, then projects with
 
 ## Plane-sampled projection
 
-`project_joseph(volume, poses, grid, detector, backend="jax")` exposes the same
-default linear Joseph discretization the reconstruction solvers use by default.
+`project_joseph(volume, poses, grid, detector, backend="jax")` exposes the
+linear Joseph discretization the reconstruction solvers use.
 Set `interpolation="cubic"` on either Joseph function for Keys cubic convolution
 with parameter -1/2. The 4-by-4 transverse stencil has continuous first
 coordinate derivatives and includes negative weights. It is more expensive and
 can overshoot nonnegative data. Both models have matching CUDA volume/pose
 derivatives and a matched volume transpose; dominant-axis switches remain
 nonsmooth. To reconstruct with the cubic model, use
-`CGLSConfig(projector_model="joseph", joseph_interpolation="cubic")`.
+`CGLSConfig(interpolation="cubic")`.
 By default it samples voxel-centre planes along the dominant ray direction,
 bilinearly interpolates the other two coordinates with zero extension, and multiplies by
-physical path length between planes. This differs from the default trilinear
-ray operator. Supply finite rigid world-from-object matrices `(views, 4, 4)`;
+physical path length between planes. Supply finite rigid world-from-object matrices `(views, 4, 4)`;
 voxel origins and detector centres retain their physical units.
 
 The explicit `backend="cuda"` runs on NVIDIA CUDA and supports first-order
@@ -82,8 +69,7 @@ masking, or fitted scale. To optimize rigid pose parameters, pull `matrix_grad`
 through the function that builds your pose matrices; matrix entries themselves
 are not unconstrained rigid-pose parameters. Other differentiable losses can
 compose `project_joseph` with ordinary JAX operations. The alignment pipeline
-samples with the same linear Joseph model by default (its `ray_integrator`
-setting) but does not call these fused functions.
+samples with the same linear Joseph model but does not call these fused functions.
 
 
 `joseph_pose_normal_equations(volume, poses, pose_directions, data, grid, detector,
@@ -130,8 +116,6 @@ orchestration, CUDA fast paths without JAX-reference equivalence tests.
 
 ## Tests
 
-- `tests/test_numerical_engines.py` verifies the public grouped-input projection
-  path and core numerical invariants used by reconstruction.
 - `tests/test_product_surface.py` verifies the public module import surface.
 - `tests/test_joseph_forward.py`, `tests/test_joseph_derivatives.py` and
   `tests/test_joseph_projector.py` cover the public plane model, independent

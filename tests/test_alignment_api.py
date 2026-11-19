@@ -27,7 +27,7 @@ def _scan(cone=False):
     return tj.Scan(np.zeros((60, 48, 48), np.float32), geometry)
 
 
-def _fitter(monkeypatch, *, corrections=None, poses=None):
+def _fitter(monkeypatch, *, changes=None, poses=None):
     calls = []
 
     def fit(projections, nominal, grid, detector, **options):
@@ -37,7 +37,7 @@ def _fitter(monkeypatch, *, corrections=None, poses=None):
         table = np.zeros((len(nominal), 6)) if poses is None else poses
         record = {
             "fit": list(names),
-            "corrections": corrections or {},
+            "calibration": changes or {},
             "report": {"isolated_views": [], "unusual_views": [], "advisories": []},
             "seconds": 0.0,
         }
@@ -49,32 +49,41 @@ def _fitter(monkeypatch, *, corrections=None, poses=None):
 
 def test_alignment_has_one_fit_argument_and_an_optional_grid():
     parameters = inspect.signature(tj.align).parameters
-    assert tuple(parameters) == ("scan", "fit", "grid")
+    assert tuple(parameters) == (
+        "scan",
+        "fit",
+        "grid",
+        "region",
+        "method",
+        *("iterations", "image_iterations", "tolerance", "interpolation", "resolution"),
+        "config",
+    )
     assert parameters["fit"].default == "translations"
     assert parameters["fit"].kind == inspect.Parameter.KEYWORD_ONLY
     assert parameters["grid"].default is None
 
 
-@pytest.mark.parametrize("fit", [(), [], "unknown", ("roll", "roll"), ("centre", 1)])
+@pytest.mark.parametrize("fit", [(), [], "unknown", ("roll", "roll"), ("center", 1)])
 def test_invalid_fit_fails_before_a_solve(fit):
     with pytest.raises(ValueError, match="fit"):
         tj.align(_scan(), fit=fit)
 
 
 @pytest.mark.parametrize("cone", [False, True])
-@pytest.mark.parametrize("name", ["centre", "tilt", "roll"])
+@pytest.mark.parametrize("name", ["center", "tilt", "roll"])
 def test_global_fits_publish_the_named_calibration_and_hold_local_poses(monkeypatch, cone, name):
     scan = _scan(cone)
-    correction = {"centre": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}[name]
-    calls = _fitter(monkeypatch, corrections={name: correction})
+    correction = {"center": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}[name]
+    calls = _fitter(monkeypatch, changes={name: correction})
     result = tj.align(scan, fit=name)
     assert calls[0][4]["fit"] == name
     assert result.scan.projections is scan.projections
     assert set(result.info["calibration"]) == {name}
     np.testing.assert_array_equal(result.poses, 0)
-    expected = {"centre": (1.45, -1.05) if cone else 1.45, "tilt": 0.5, "roll": 0.75}[name]
-    np.testing.assert_allclose(result.info["calibration"][name], expected, atol=2e-6)
-    if name != "centre":
+    expected = {"center": (1.45, -1.05) if cone else 1.45, "tilt": 0.5, "roll": 0.75}[name]
+    np.testing.assert_allclose(result.info["calibration"][name]["value"], expected, atol=2e-6)
+    assert result.info["calibration"][name]["change"] == correction
+    if name != "center":
         assert result.scan.detector.center == scan.detector.center
 
 
@@ -91,7 +100,7 @@ def test_default_fit_preserves_existing_rotations_and_uses_the_requested_grid(mo
     result = tj.align(scan, grid=grid)
     np.testing.assert_allclose(calls[0][1], stack_view_poses(scan.geometry, 60), atol=1e-7)
     assert calls[0][4]["fit"] == "translations" and calls[0][4]["keep_grid"]
-    assert result.scan.grid == grid and result.volume.shape == (16, 18, 20)
+    assert result.scan.grid == grid and result.image.shape == (16, 18, 20)
     np.testing.assert_array_equal(result.poses[:, :3], scan.poses[:, :3])
     np.testing.assert_allclose(result.poses[:, 3:], previous[:, 3:] + correction[:, 3:], atol=1e-7)
     assert result.info["calibration"] == {}
@@ -102,9 +111,9 @@ def test_default_fit_preserves_existing_rotations_and_uses_the_requested_grid(mo
 def test_fitted_global_geometry_round_trips_with_held_local_poses(
     monkeypatch, tmp_path, cone, suffix
 ):
-    corrections = {"centre": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}
-    _fitter(monkeypatch, corrections=corrections)
-    result = tj.align(_scan(cone), fit=("centre", "tilt", "roll"))
+    changes = {"center": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}
+    _fitter(monkeypatch, changes=changes)
+    result = tj.align(_scan(cone), fit=("center", "tilt", "roll"))
     target = tmp_path / f"aligned{suffix}"
     tj.save(target, result)
     loaded = tj.load(target)
@@ -124,7 +133,7 @@ def test_fitted_global_geometry_round_trips_with_held_local_poses(
 def test_cli_fit_forwards_one_selection_and_saves_its_calibration(monkeypatch, tmp_path):
     scan, output, manifest = tmp_path / "scan.nxs", tmp_path / "aligned.nxs", tmp_path / "run.json"
     tj.save(scan, _scan())
-    calls = _fitter(monkeypatch, corrections={"tilt": 0.5, "roll": 0.75})
+    calls = _fitter(monkeypatch, changes={"tilt": 0.5, "roll": 0.75})
     assert (
         main(
             [
@@ -145,7 +154,8 @@ def test_cli_fit_forwards_one_selection_and_saves_its_calibration(monkeypatch, t
     assert calls[0][4]["fit"] == ("translations", "tilt", "roll")
     saved = json.loads(manifest.read_text())["resolved_config"]
     assert saved["fit"] == ["translations", "tilt", "roll"]
-    assert saved["alignment"]["calibration"] == pytest.approx({"tilt": 0.5, "roll": 0.75})
+    values = {name: entry["value"] for name, entry in saved["alignment"]["calibration"].items()}
+    assert values == pytest.approx({"tilt": 0.5, "roll": 0.75})
     np.testing.assert_array_equal(tj.load(output).poses, 0)
 
 
@@ -153,9 +163,9 @@ def test_cli_dry_run_reports_the_selection_without_fitting(monkeypatch, tmp_path
     scan, output = tmp_path / "scan.nxs", tmp_path / "aligned.nxs"
     tj.save(scan, _scan())
     calls = _fitter(monkeypatch)
-    assert main(["align", str(scan), "-o", str(output), "--fit", "centre", "--dry-run"]) == 0
+    assert main(["align", str(scan), "-o", str(output), "--fit", "center", "--dry-run"]) == 0
     record = json.loads(capsys.readouterr().out)
-    assert record["fit"] == ["centre"] and record["bounded_working_grid"]
+    assert record["fit"] == ["center"] and record["bounded_working_grid"]
     assert not calls and not output.exists()
 
 

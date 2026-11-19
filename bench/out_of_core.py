@@ -130,10 +130,10 @@ def _cuo(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
 def _spheres(size: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Centres, radii and attenuations (voxel units) of 24 spheres inside a larger one."""
     rng = np.random.default_rng(seed)
-    centres = np.vstack([np.zeros((1, 3)), rng.uniform(-0.6, 0.6, (24, 3)) * size / 2])
+    centers = np.vstack([np.zeros((1, 3)), rng.uniform(-0.6, 0.6, (24, 3)) * size / 2])
     radii = np.concatenate([[0.8 * size / 2], rng.uniform(0.04, 0.18, 24) * size / 2])
     values = np.concatenate([[0.1], rng.uniform(0.2, 1.0, 24)])
-    return centres, radii, values
+    return centers, radii, values
 
 
 def _sphere_planes(size: int, z0: int, z1: int) -> np.ndarray:
@@ -141,14 +141,14 @@ def _sphere_planes(size: int, z0: int, z1: int) -> np.ndarray:
     axis = np.arange(size, dtype=np.float32) - (size - 1) / 2
     z = np.arange(z0, z1, dtype=np.float32) - (size - 1) / 2
     out = np.zeros((z1 - z0, size, size), np.float32)
-    for centre, radius, value in zip(*_spheres(size), strict=True):
-        lo = np.searchsorted(axis, centre - radius)
-        hi = np.searchsorted(axis, centre + radius, side="right")
-        zl, zh = np.searchsorted(z, centre[2] - radius), np.searchsorted(z, centre[2] + radius)
+    for center, radius, value in zip(*_spheres(size), strict=True):
+        lo = np.searchsorted(axis, center - radius)
+        hi = np.searchsorted(axis, center + radius, side="right")
+        zl, zh = np.searchsorted(z, center[2] - radius), np.searchsorted(z, center[2] + radius)
         inside = (
-            (axis[None, None, lo[0] : hi[0]] - centre[0]) ** 2
-            + (axis[None, lo[1] : hi[1], None] - centre[1]) ** 2
-            + (z[zl:zh, None, None] - centre[2]) ** 2
+            (axis[None, None, lo[0] : hi[0]] - center[0]) ** 2
+            + (axis[None, lo[1] : hi[1], None] - center[1]) ** 2
+            + (z[zl:zh, None, None] - center[2]) ** 2
         ) < radius**2
         out[zl:zh, lo[1] : hi[1], lo[0] : hi[0]] += np.float32(value) * inside
     return out
@@ -157,13 +157,13 @@ def _sphere_planes(size: int, z0: int, z1: int) -> np.ndarray:
 def _sphere_projections(geometry: ConeGeometry) -> np.ndarray:
     """Exact cone-beam line integrals of the spheres: chord lengths times attenuation."""
     detector, beam = geometry.detector, geometry.beam
-    centre, u_dir, v_dir = beam.detector_frame(detector)
+    center, u_dir, v_dir = beam.detector_frame(detector)
     u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
     v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
     source = beam.source()
-    rays = centre + u[None, :, None] * u_dir + v[:, None, None] * v_dir - source
+    rays = center + u[None, :, None] * u_dir + v[:, None, None] * v_dir - source
     rays /= np.linalg.norm(rays, axis=-1, keepdims=True)
-    poses = geometry.poses()
+    poses = geometry.pose_matrices()
     data = np.zeros((len(poses), detector.nv, detector.nu), np.float32)
     for view, pose in enumerate(poses):
         for c, radius, value in zip(*_spheres(detector.nu), strict=True):
@@ -193,7 +193,7 @@ def _synthetic(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
     try:
         start, disk = time.perf_counter(), _disk()
         if args.method == "cgls":
-            config = CGLSConfig(iterations=args.iterations, rtol=0)
+            config = CGLSConfig(iterations=args.iterations, tolerance=0)
             volume, info = cgls(geometry, grid, detector, data, config=config, out=out)
         else:
             config = SIRTConfig(iterations=args.iterations)

@@ -344,8 +344,8 @@ def _offsets(container: Any, count: int) -> tuple[np.ndarray | None, float | Non
             )
         columns.append(np.broadcast_to(values, (count,)))
     shifts = np.column_stack(columns).astype(np.float64)
-    centre = "AutoRecon/CenterShift"
-    return shifts, _scalar(container, centre, "<f4") if container.exists(centre) else None
+    center = "AutoRecon/CenterShift"
+    return shifts, _scalar(container, center, "<f4") if container.exists(center) else None
 
 
 def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> ProjectionDataset:
@@ -361,7 +361,7 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         if container.exists("ImageInfo/Angles")
         else np.empty(0, np.float32)
     )
-    shifts, centre_shift = _offsets(container, count)
+    shifts, center_shift = _offsets(container, count)
     cone = (
         _scalar(container, "ImageInfo/XrayGeometry") == 1
         if container.exists("ImageInfo/XrayGeometry")
@@ -390,11 +390,13 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         for name, value in (
             ("alignment/x-shifts", shifts),
             ("alignment/y-shifts", shifts),
-            ("AutoRecon/CenterShift", centre_shift),
+            ("AutoRecon/CenterShift", center_shift),
         )
         if value is not None
     ]
-    if fields:  # the vendor's own corrections, applied with the poses (tj.load poses=False omits)
+    if (
+        fields
+    ):  # the vendor's own corrections, applied with the poses (tj.load apply_poses=False omits)
         metadata["vendor_corrections"] = {"source": "zeiss", "fields": fields, "applied": True}
     if pixel is not None:  # stated by the file; the grid's shape comes from the detector
         metadata["grid_status"] = "derived"
@@ -403,7 +405,7 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         "path": str(path),
         "declared_view_count": int(_scalar(container, "ImageInfo/NoOfImages")),
         "stored_view_count": count,
-        "center_shift_pixels": centre_shift,
+        "center_shift_pixels": center_shift,
     }
     hardening = _beam_hardening(container, path)
     if hardening is not None:
@@ -421,9 +423,9 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
     if pitch is not None and shifts is not None and cone is not None:
         # The shifts are measured from the recorded centre; a raw scan with no
         # reconstruction setup records none, and its shifts are measured from the middle.
-        centre = (-pitch * (centre_shift or 0.0), 0.0)
-        record = with_view_offsets(record, Detector(cols, rows, pitch, pitch, center=centre))
-    known = record.detector is not None and centre_shift is not None
+        center = (-pitch * (center_shift or 0.0), 0.0)
+        record = with_view_offsets(record, Detector(cols, rows, pitch, pitch, center=center))
+    known = record.detector is not None and center_shift is not None
     record.geometry_metadata["detector_center_status"] = "recorded" if known else "not_recorded"
     if (
         record.detector is None and pitch is not None

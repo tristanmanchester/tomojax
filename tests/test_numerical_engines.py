@@ -3,7 +3,6 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.forward import ProjectionArrayGeometryInput, project_parallel_reference_from_input
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import SPDHGConfig, spdhg_tv
 
@@ -14,25 +13,6 @@ from tomojax.recon._tv_ops import (
     isotropic_tv_value,
     prox_huber_tv_conj,
 )
-
-
-def test_forward_projector_preserves_constant_view_symmetry() -> None:
-    volume = jnp.ones((2, 2, 2), dtype=jnp.float32)
-
-    projections = project_parallel_reference_from_input(
-        volume,
-        ProjectionArrayGeometryInput(
-            theta_rad=jnp.asarray([0.0, jnp.pi / 2.0], dtype=jnp.float32),
-            dx_px=jnp.zeros((2,), dtype=jnp.float32),
-            dz_px=jnp.zeros((2,), dtype=jnp.float32),
-            detector_shape=(2, 2),
-        ),
-    )
-
-    assert projections.shape == (2, 2, 2)
-    assert bool(jnp.all(jnp.isfinite(projections)))
-    np.testing.assert_allclose(np.asarray(projections[0]), np.asarray(projections[1]))
-    np.testing.assert_allclose(np.asarray(projections), np.full((2, 2, 2), 2.0))
 
 
 def test_tv_operators_preserve_adjoint_and_prox_invariants() -> None:
@@ -101,7 +81,6 @@ def test_spdhg_one_iteration_smoke_is_finite_and_positive() -> None:
             tau=0.1,
             sigma_data=0.1,
             sigma_tv=0.1,
-            checkpoint_projector=False,
             nonnegative=True,
             log_every=1,
         ),
@@ -112,6 +91,6 @@ def test_spdhg_one_iteration_smoke_is_finite_and_positive() -> None:
     assert float(jnp.min(volume)) >= 0.0
     assert info["loss"] == [4.0]
     assert info["A_norm"] is None
-    assert info["regulariser"] == "tv"
+    assert info["regularizer"] == "tv"
     assert info["views_per_batch"] == 1
     assert info["num_blocks"] == 2

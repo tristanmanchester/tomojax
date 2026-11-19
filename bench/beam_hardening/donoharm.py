@@ -106,9 +106,9 @@ def walnut(names: list[str], figures: Path | None = None) -> list[dict]:
     if figures is not None:
         figures.mkdir(parents=True, exist_ok=True)
         middle = truth[truth.shape[0] // 2]
-        centre = ((middle.shape[1] - 1) / 2, (middle.shape[0] - 1) / 2)
+        center = ((middle.shape[1] - 1) / 2, (middle.shape[0] - 1) / 2)
         title = "Walnut 1, central slice; each image times its best scale to the reference"
-        plots.save(figures / "walnut1.png", middle, images, centre, 0.1, title)
+        plots.save(figures / "walnut1.png", middle, images, center, 0.1, title)
     return [record]
 
 
@@ -129,8 +129,8 @@ def curve(
     which = np.minimum(((q - low) / (high - low) * bins).astype(int), bins - 1)
     count = np.maximum(np.bincount(which, minlength=bins), 1)
     deviation = (np.bincount(which, p - slope * q, bins) / count) / (slope * high)
-    centres = np.bincount(which, q, bins) / count
-    return centres, deviation, float(slope)
+    centers = np.bincount(which, q, bins) / count
+    return centers, deviation, float(slope)
 
 
 def mono(names: list[str], figures: Path | None = None) -> list[dict]:

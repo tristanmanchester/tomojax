@@ -137,9 +137,9 @@ def test_raw_load_can_ignore_saved_poses_and_angle_offsets(tmp_path):
     with h5py.File(path, "a") as handle:
         align = handle.create_group("entry/processing/tomojax/align")
         align.create_dataset("thetas", data=params)
-        align.create_dataset("angle_offset_deg", data=[3, -7])
+        align.create_dataset("angle_offset", data=[3, -7])
         align.attrs["gauge_fix_json"] = '{"pose_translation_frame": "detector"}'
-    nominal = tj.load(path, poses=False)
+    nominal = tj.load(path, apply_poses=False)
     assert nominal.poses is None
     np.testing.assert_array_equal(nominal.angles, [0, 90])
     corrected = tj.load(path)
@@ -164,9 +164,9 @@ def test_processed_load_keeps_only_sample_frames_and_their_saved_poses(tmp_path,
         handle["entry/sample/transformations/rotation_angle"][[0, 2]] = np.nan
         align = handle.create_group("entry/processing/tomojax/align")
         align.create_dataset("thetas", data=params)
-        align.create_dataset("angle_offset_deg", data=[0, 3, 0, -7])
+        align.create_dataset("angle_offset", data=[0, 3, 0, -7])
         align.attrs["gauge_fix_json"] = '{"pose_translation_frame": "detector"}'
-    loaded = tj.load(path, poses=poses)
+    loaded = tj.load(path, apply_poses=poses)
     np.testing.assert_array_equal(loaded.projections, values[[1, 3]])
     np.testing.assert_array_equal(loaded.angles, [-34.0, 106.0] if poses else [-37.0, 113.0])
     assert (loaded.poses is not None) == poses
@@ -251,7 +251,7 @@ def test_radian_file_recovers_the_same_volume_and_pose_geometry(tmp_path):
     loaded = tj.load(path)
     for view in range(len(angles)):
         np.testing.assert_allclose(
-            loaded.geometry.pose_for_view(view), geometry.pose_for_view(view), atol=3e-7
+            loaded.geometry.pose_matrix(view), geometry.pose_matrix(view), atol=3e-7
         )
     direct = np.asarray(tj.reconstruct(scan, "cgls", iterations=40).volume)
     actual = np.asarray(tj.reconstruct(loaded, "cgls", iterations=40).volume)
@@ -372,12 +372,10 @@ def test_missing_laminography_tilt_requires_geometry_before_materialisation(tmp_
     with h5py.File(path, "a") as handle:
         handle["entry/geometry"].attrs["type"] = "lamino"
     for read in (tj.load, tj.load_frames):
-        with pytest.raises(ValueError, match="geometry=.*tilt_deg"):
+        with pytest.raises(ValueError, match="geometry=.*tilt"):
             read(path)
     detector = tj.Detector(2 if raw else 4, 2, 0.7, 0.8, (1.2, -0.3))
-    geometry = tj.LaminographyGeometry(
-        tj.Grid(4, 4, 2, 0.7, 0.7, 0.8), detector, [0, 90], tilt_deg=57
-    )
+    geometry = tj.LaminographyGeometry(tj.Grid(4, 4, 2, 0.7, 0.7, 0.8), detector, [0, 90], tilt=57)
     frames = tj.load_frames(path, geometry=geometry, **({} if raw else {"flats": 100, "darks": 0}))
     assert frames.geometry is geometry
 

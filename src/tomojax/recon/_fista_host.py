@@ -259,13 +259,13 @@ class HostFista:
                 )
                 tn = np.float32((1 + np.sqrt(1 + 4 * t * t)) / 2)
                 self.update(limit, np.float32((t - 1) / tn), gradient=gradient)
-                if cfg.recon_rel_tol and cfg.recon_patience:
+                if cfg.tolerance and cfg.patience:
                     small = (
                         bool(losses)
-                        and abs(loss - losses[-1]) / max(abs(losses[-1]), 1e-6) <= cfg.recon_rel_tol
+                        and abs(loss - losses[-1]) / max(abs(losses[-1]), 1e-6) <= cfg.tolerance
                     )
                     streak = streak + 1 if small else 0
-                    done = streak >= cfg.recon_patience
+                    done = streak >= cfg.patience
                 losses.append(loss)
                 t = tn
                 if done:
@@ -277,7 +277,7 @@ class HostFista:
                 "lipschitz": limit,
                 "effective_iterations": count,
                 "early_stop": done,
-                "regulariser": cfg.regulariser,
+                "regularizer": cfg.regularizer,
                 "huber_delta": cfg.huber_delta,
                 "host_slabs": True,
             }
@@ -324,7 +324,7 @@ def solve_on_host(
         need += 4 * 4 * grid.nx * grid.ny * grid.nz if scratch is None else scratch
     if out is None and (free is None or need <= 0.85 * free):
         return None
-    if cfg.support is not None or cfg.regulariser != "tv":
+    if cfg.support is not None or cfg.regularizer != "tv":
         raise ValueError("fista_tv: host volumes require TV and no support mask")
     from ._parallel_slabs import parallel_problem
 

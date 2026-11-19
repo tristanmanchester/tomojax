@@ -1,37 +1,39 @@
 """Joint image, global-geometry and per-view motion fitting.
 
-Two bounded working scales preserve the physical field of view. Only parameters
-selected by ``fit`` have columns or unknowns; shared centre, tilt and roll form a
-small exact Schur border. Local motion uses a drift spline and robust jumps;
-sample rotations additionally have a Gaussian prior in physical radians.
+Bounded working scales (``AlignConfig.levels``) preserve the physical field of view.
+Only parameters selected by ``fit`` have columns or unknowns; shared centre, tilt and
+roll form a small exact Schur border. Local motion uses a drift spline and robust
+jumps; sample rotations additionally have a Gaussian prior in physical radians.
 
-Linear interpolation serves centre/translation fits and cubic interpolation
-angular fits for parallel rays; every fit's image steps use the same CG
-iteration count. These are internal discretization/work choices for the
-requested model, never data-dependent route selection. Each
-working pixel is one ray through its centre; a block with missing input pixels
-is the mean of its finite ones, weighted by their fraction. Model and data are
-compared through ``residual_filter`` (K = [1, 2, 1] / 4 along u and v) at every
-level, so the objective does not ask the sampled model to be right at Nyquist.
-Image TV is disabled to avoid imposing a shape preference on weak geometry modes.
+By default linear interpolation serves centre/translation fits and cubic interpolation
+angular fits for parallel rays; every fit's image steps use the same CG iteration
+count. These are discretization/work choices for the requested model, never
+data-dependent route selection. Each working pixel is one ray through its centre; a
+block with missing input pixels is the mean of its finite ones, weighted by their
+fraction. Model and data are compared through ``residual_filter`` (K = [1, 2, 1] / 4
+along u and v) at every level, so the objective does not ask the sampled model to be
+right at Nyquist. Image TV is off by default, so the fit imposes no shape preference
+on weak geometry modes.
 """
 
 from dataclasses import asdict
 import math
 import time
+from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.alignment._config import AlignConfig
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.joseph import validate_plane_geometry
 from tomojax.recon.fista_tv import resolve_tv_metric
 
-from ._noise import LOSS_WIDTH_SIGMAS, MAX_SAMPLES, estimate_noise
+from ._noise import MAX_SAMPLES, Windows, estimate_noise
 from ._operators import Operators
 from ._parameters import Parameters
-from ._pose import ROTATION_SIGMA_DEG, MotionPrior, ViewOrder
+from ._pose import MotionPrior, ViewOrder
 from ._projection import (
     cone_parameter_scales,
     cropped_frames,
@@ -43,24 +45,8 @@ from ._refine import refine
 from ._report import axial as axial_geometry, build as build_report
 from ._solver import Budget, solve
 
-_MAX_VOXELS = 16_000_000
-_MAX_DETECTOR = 320
-# Image CG iterations per step, for every fit: the profiled system needs them to
-# resolve the smooth image content an offset and ramp cannot explain.
-_CG_ITERATIONS = 16
-# (binning, maximum Gauss-Newton steps). The active model is the same at both
-# scales; held coordinates have neither unknowns nor derivative columns.
-_LEVELS = ((2, 12), (1, 8))
-_LOSS_CONTRAST = 0.5
-_TV_WEIGHT = 0.0
-_TV_HUBER = 1.0
-# Views between spline knots for each active local coordinate.
-_KNOT_SPACING = 10
-# Scale of the view-to-view innovations, native px: the Student-t width for translations and
-# the curvature of the rotations' Gaussian increments.
-_INNOVATION_SCALE_PX = 0.02
-# The fitted image extends 1/_Z_MARGIN of the working grid's height past each end.
-_Z_MARGIN = 16
+# Every number a user may set is a field of AlignConfig. The active model is the same at
+# every level; held coordinates have neither unknowns nor derivative columns.
 
 
 def _resized(grid, shape_xyz):
@@ -89,17 +75,17 @@ def _magnification(poses, frames):
     return float(np.min(distance / depth))
 
 
-def _padded(grid, bins):
+def _padded(grid, bins, margin):
     """``grid`` extended along z past each end, and the cells added at each end.
 
     Moving views bring material from above and below the field into the outer
     rows; the extension gives it somewhere to be, and is cropped from the
     returned volume. Cells no ray reaches stay out of the fit. Whole
     coarse-level cells keep every level's voxel centres where they were
-    relative to the detector rows.
+    relative to the detector rows. ``margin`` is the extension's share of the height.
     """
     step = math.lcm(*bins)
-    cells = step * math.ceil(grid.nz / (_Z_MARGIN * step)) if grid.nz > 1 else 0
+    cells = step * math.ceil(grid.nz * margin / step) if grid.nz > 1 else 0
     x, y, z = grid_volume_origin(grid)
     extended = Grid(
         grid.nx,
@@ -114,26 +100,44 @@ def _padded(grid, bins):
     return extended, cells
 
 
-def _coarsened(measured, b, batch_views=16):
-    """Block means over complete b x b pixel blocks, and the observed fraction.
+def _read(measured, bins, views_per_batch=16):
+    """What the levels take from the frames, in one front-to-back pass over them.
 
-    Each block mean uses only its finite pixels and its precision is their
-    fraction; precision is None when every pixel is finite. Input conversion
-    and finite-pixel checks use one view slab at a time, including memory maps.
+    Returns each binning's block means over complete b x b pixel blocks and observed
+    fraction, the power of two bringing the observations near one, and the native-pixel
+    noise SD (``estimate_noise``). Each slab of views is converted to FP32 once and gives
+    all of them: a block mean uses only its finite pixels and its precision is their
+    fraction, None when every pixel is finite; the scale comes from about 16 evenly spaced
+    views; the noise windows in the slab are kept from it. Nothing reads the frames at
+    random or twice: random page faults on a memory map stop the kernel reading ahead on
+    it for its lifetime, and a sweep after them reads a page per fault.
     """
     n, nv, nu = measured.shape
-    y = np.empty((n, nv // b, nu // b), np.float32)
-    w = np.ones_like(y)
-    for s in range(0, n, batch_views):
-        src = np.asarray(measured[s : s + batch_views], np.float32)
-        blocks = (len(src), nv // b, b, nu // b, b)
+    means = [np.empty((n, nv // b, nu // b), np.float32) for b in bins]
+    weights = [np.ones_like(y) for y in means]
+    step = max(1, n // 16)
+    peak = np.float32(0)
+    noise = Windows(measured.shape)
+    for s in range(0, n, views_per_batch):
+        src = np.asarray(measured[s : s + views_per_batch], np.float32)
         finite = np.isfinite(src)
-        count = finite.reshape(blocks).sum((2, 4))
-        total = np.where(finite, src, 0).reshape(blocks).sum((2, 4), dtype=np.float64)
-        y[s : s + len(src)] = np.divide(total, count, out=np.zeros_like(total), where=count > 0)
-        w[s : s + len(src)] = count / (b * b)
-        del src  # release this converted slab before allocating the next one
-    return y, None if w.min() == 1 else w
+        filled = np.where(finite, src, 0)
+        for b, y, w in zip(bins, means, weights, strict=True):
+            blocks = (len(src), nv // b, b, nu // b, b)
+            count = finite.reshape(blocks).sum((2, 4))
+            total = filled.reshape(blocks).sum((2, 4), dtype=np.float64)
+            y[s : s + len(src)] = np.divide(total, count, out=np.zeros_like(total), where=count > 0)
+            w[s : s + len(src)] = count / (b * b)
+        sample = src[-s % step :: step]
+        peak = max(peak, np.max(np.abs(sample[np.isfinite(sample)]), initial=0.0))
+        noise.gather(src, start=s)
+        del src, finite, filled  # release this converted slab before reading the next one
+    scale = 2.0 ** -np.round(np.log2(peak)) if peak > 0 else 1.0
+    sd = noise.sd()
+    if sd is None:  # no first-order window wholly finite: lower orders, gathered directly
+        sd = estimate_noise(measured, dtype=np.float32)
+    binned = [(y, None if w.min() == 1 else w) for y, w in zip(means, weights, strict=True)]
+    return binned, scale, sd
 
 
 def _capped_contrast(y, rms, precision):
@@ -156,7 +160,9 @@ def _capped_contrast(y, rms, precision):
 
 
 def _level(
-    measured,
+    binned,
+    scale,
+    noise,
     poses,
     base,
     detector,
@@ -169,21 +175,19 @@ def _level(
     frames=None,
     scales=None,
     parameters=None,
-    detector_roll_deg=0.0,
-    interpolation="linear",
+    detector_roll=0.0,
+    config,
 ):
     """Observations, grid, operators and calibration at one binning.
 
     The observations are multiplied by a power of two bringing them near one,
     the same at every level: the fit is scale covariant and this is exact, and
     it keeps the step's FP16 storage clear of its subnormals. Fitted volumes
-    are in these units until divided by ``calibration["scale"]``.
+    are in these units until divided by ``calibration["scale"]``. ``binned`` is this
+    level's block means and observed fraction and ``noise`` the native-pixel noise SD
+    (``_read``).
     """
-    nv, nu = measured.shape[1:]
-    sample = np.asarray(measured[:: max(1, len(measured) // 16)], np.float32)
-    peak = np.max(np.abs(sample[np.isfinite(sample)]), initial=0.0)
-    scale = 2.0 ** -np.round(np.log2(peak)) if peak > 0 else 1.0
-    y, precision = _coarsened(measured, total_bin)
+    y, precision = binned
     y *= np.float32(scale)
     # The objective compares K A x with K y (residual_filter); the filtered data are known
     # only where every tap was measured. K acts within each view: filter on the host, a
@@ -193,20 +197,26 @@ def _level(
     precision = filtered_precision(precision)
     g = _resized(base, tuple(math.ceil(n / b) for n in (base.nx, base.ny, base.nz)))
     d = Detector(
-        nu // total_bin,
-        nv // total_bin,
+        y.shape[2],
+        y.shape[1],
         detector.du * total_bin,
         detector.dv * total_bin,
         center=center,
     )
     metric = resolve_tv_metric(
-        None, g, d, y, weights=precision, tv_weight=_TV_WEIGHT, huber_delta=_TV_HUBER
+        None,
+        g,
+        d,
+        y,
+        weights=precision,
+        tv_weight=config.image_tv_weight,
+        huber_delta=config.image_tv_huber,
     )
     contrast = _capped_contrast(y, float(metric.contrast_scale), precision)
     # Estimate on the supplied finest samples, before coarsening turns smooth
     # texture into apparent noise. With precision=count/b**2, sigma/b gives
     # the same independent-pixel noise model for partially observed blocks.
-    sigma = estimate_noise(measured, dtype=np.float32) * scale / total_bin
+    sigma = noise * scale / total_bin
     ops = Operators(
         g,
         d,
@@ -215,16 +225,16 @@ def _level(
         native=native,
         frames=frames,
         scales=scales,
-        interpolation=interpolation,
+        interpolation=cast("str", config.interpolation),  # resolved by fit_poses
         parameters=parameters,
-        detector_roll_deg=detector_roll_deg,
+        detector_roll=detector_roll,
         detector_pivot=detector.center,
     )
     h = (g.vx * g.vy * g.vz) ** (1 / 3)
     calibration = {
         "tv_weight": float(metric.weight_over_contrast) * contrast,
-        "eps": max(1e-8, _TV_HUBER * contrast * h / float(metric.length_scale) ** 2),
-        "delta": max(LOSS_WIDTH_SIGMAS * sigma, _LOSS_CONTRAST * contrast, 1e-8),
+        "eps": max(1e-8, config.image_tv_huber * contrast * h / float(metric.length_scale) ** 2),
+        "delta": max(config.loss_width * sigma, config.loss_contrast_floor * contrast, 1e-8),
         "sigma": sigma,
         "scale": scale,
         "scales": (1.0, 1.0, 1.0) if g.vx == g.vy == g.vz else (h / g.vz, h / g.vy, h / g.vx),
@@ -238,11 +248,12 @@ def _finest(grid):
     return min((h for n, h in pitches if n > 1), default=math.inf)
 
 
-def working_scale(grid, detector, *, keep_grid=False, magnification=1.0):
+def working_scale(grid, detector, *, keep_grid=False, magnification=1.0, config=None):
     """The bounded working grid, the detector binning and each level's binning.
 
-    The grid keeps its six cell faces and has at most 16 M cells, unless
-    ``keep_grid``; the binned detector has at most 320 pixels a side. Each
+    The grid keeps its six cell faces and has at most ``config.max_voxels`` cells,
+    unless ``keep_grid``; the binned detector has at most ``config.resolution``
+    pixels a side (``AlignConfig``'s defaults when None). Each
     working pixel is one ray, so its footprint at the object (its pitch over
     ``magnification``) must not exceed a voxel: otherwise voxels between the
     rays are unobserved and the image can trade them for pose. The grid is
@@ -250,19 +261,20 @@ def working_scale(grid, detector, *, keep_grid=False, magnification=1.0):
     binning. No binning goes below one pixel, so a thin detector keeps its
     short axis and its levels share one scale.
     """
+    config = AlignConfig() if config is None else config
     short = min(detector.nu, detector.nv)
-    dbin = min(short, max(1, math.ceil(max(detector.nu, detector.nv) / _MAX_DETECTOR)))
+    dbin = min(short, max(1, math.ceil(max(detector.nu, detector.nv) / config.resolution)))
     # One detector pixel's footprint at the object, against the finest voxel.
     pixel = max(detector.du, detector.dv) / magnification
     if keep_grid:
         dbin = max(1, min(dbin, math.floor(_finest(grid) / pixel * (1 + 1e-9))))
     gbin, base = 1, grid
     while not keep_grid and (
-        base.nx * base.ny * base.nz > _MAX_VOXELS or _finest(base) * (1 + 1e-9) < dbin * pixel
+        base.nx * base.ny * base.nz > config.max_voxels or _finest(base) * (1 + 1e-9) < dbin * pixel
     ):
         gbin += 1
         base = _resized(grid, tuple(math.ceil(n / gbin) for n in (grid.nx, grid.ny, grid.nz)))
-    bins = tuple(max(1, min(level[0], short // dbin)) for level in _LEVELS)
+    bins = tuple(max(1, min(level, short // dbin)) for level in config.levels)
     return base, dbin, bins
 
 
@@ -275,10 +287,11 @@ def fit_poses(
     fit=("translations",),
     keep_grid=False,
     frames=None,
-    detector_roll_deg=0.0,
+    detector_roll=0.0,
     view_positions=None,
     declared_poses=None,
     placement=None,
+    config=None,
 ):
     """Fit a volume and the selected geometry parameters to line-integral projections.
 
@@ -290,7 +303,7 @@ def fit_poses(
     ``frames`` supplies cone lab frames (views, 4, 3), with rows detector centre,
     unit u, unit v, source; None selects parallel rays. A shared (4, 3) frame is
     also accepted. ``fit`` selects shared centre/tilt/roll and local translation/
-    rotation blocks. ``detector_roll_deg`` supplies an existing parallel detector
+    rotation blocks. ``detector_roll`` supplies an existing parallel detector
     roll, which is absent from the object pose matrices. Cone frames already
     contain any existing roll. ``view_positions`` place the views in acquisition
     time (see :class:`ViewOrder`); the motion prior and the report's neighbour
@@ -300,15 +313,18 @@ def fit_poses(
     start or restart from a different pose table fits on the same grid. None uses
     ``nominal_poses``, which are the declared ones when no corrections are attached.
     ``placement`` forces the levels' stacks to "device" or "host" by name
-    (``_stacks.ORDER``); None plans each level from the device's room.
+    (``_stacks.ORDER``); None plans each level from the device's room. ``config`` is
+    the ``AlignConfig`` (None: its defaults).
     Returns the working-scale volume (nz, ny, nx), its grid, the (views, 6)
     pose table (alpha, beta, phi in radians; dx, dz, dy along lab x, z, y,
     in the grid's length unit; dy is zero only for parallel rays) and a
-    record containing the global corrections in native pixels and degrees.
+    record with the change in each fitted global, in native pixels and degrees, under
+    ``calibration``.
     """
     started = time.perf_counter()
+    config = AlignConfig() if config is None else config
     with jax.enable_x64(True):
-        y0 = np.asarray(projections)
+        y0 = np.asanyarray(projections)
         poses = np.asarray(nominal_poses, np.float32)
         if y0.ndim != 3 or y0.shape[1:] != (detector.nv, detector.nu):
             raise ValueError("projection shape does not match the detector")
@@ -328,8 +344,10 @@ def fit_poses(
                 raise ValueError("cone fitting needs finite (views, 4, 3) lab frames")
             pose_scales = cone_parameter_scales(poses, frames, grid, native)
         mag = _magnification(poses if declared_poses is None else declared_poses, frames)
-        base, dbin, bins = working_scale(grid, detector, keep_grid=keep_grid, magnification=mag)
-        padded, margin = _padded(base, bins)
+        base, dbin, bins = working_scale(
+            grid, detector, keep_grid=keep_grid, magnification=mag, config=config
+        )
+        padded, margin = _padded(base, bins, config.margin)
         multiple = dbin * math.lcm(*bins)
         drop_v, drop_u = detector.nv % multiple, detector.nu % multiple
         measured = y0[:, : detector.nv - drop_v, : detector.nu - drop_u]
@@ -340,18 +358,18 @@ def fit_poses(
         if frames is not None:
             frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
         gauge, constraint = fit_gauge(poses, pose_scales, parameters.fit, detector.center, frames)
-        # Angular columns need smooth interpolation as sample points rotate
-        # through voxel cells. Centre/translation fits retain the cheaper linear
-        # basis.
-        angular = any(name in parameters.fit for name in ("tilt", "roll", "rotations"))
-        interpolation = "cubic" if angular and frames is None else "linear"
+        config = config.resolved(parameters.fit, cone=frames is not None)
         x = p = None
         order = ViewOrder(len(y0), view_positions)
         prior = None
         levels = []
-        for b, (_, outer) in zip(bins, _LEVELS, strict=True):
+        binned, scale, noise = _read(measured, [dbin * b for b in bins])
+        iterations = (config.coarse_iterations,) * (len(bins) - 1) + (config.iterations,)
+        for b, outer in zip(bins, iterations, strict=True):
             y, precision, g, ops, cal = _level(
-                measured,
+                binned.pop(0),  # the level's arrays are its own from here
+                scale,
+                noise,
                 poses,
                 padded,
                 detector,
@@ -363,8 +381,8 @@ def fit_poses(
                 frames=frames,
                 scales=pose_scales,
                 parameters=parameters,
-                detector_roll_deg=detector_roll_deg,
-                interpolation=interpolation,
+                detector_roll=detector_roll,
+                config=config,
             )
             # Only the angular size prior depends on the level's noise scale.
             # Reuse the same physical translation prior and its compiled solves
@@ -374,17 +392,13 @@ def fit_poses(
                     len(y0),
                     gauge,
                     constraint=constraint,
-                    knot_spacing=(_KNOT_SPACING,) * pose_scales.shape[-1],
-                    delta=_INNOVATION_SCALE_PX,
+                    knot_spacing=(config.knot_spacing,) * pose_scales.shape[-1],
+                    delta=config.innovation_scale,
                     parameters=parameters,
                     rotation_scales=pose_scales,
-                    rotation_sigma_deg=ROTATION_SIGMA_DEG,
+                    rotation_sigma_deg=config.rotation_sigma,
                     noise_sigma=cal["sigma"],
                     order=order,
-                )
-            if x is not None and x.shape != ops.shape:
-                x = jax.image.resize(x, ops.shape, method="linear", antialias=False).astype(
-                    jnp.float32
                 )
             x, p, y, record = solve(
                 y,
@@ -393,7 +407,7 @@ def fit_poses(
                 cal["tv_weight"],
                 cal["eps"],
                 ops=ops,
-                budget=Budget(outer, _CG_ITERATIONS),
+                budget=Budget.of(config, outer),
                 x0=x,
                 p0=p,
                 pose_sigma=cal["sigma"],
@@ -410,20 +424,19 @@ def fit_poses(
             )
         assert x is not None  # every schedule has at least one level
         stage = {"ops": ops, "sigma": cal["sigma"], "last": levels[-1], "placement": placement}
-        p, refinement, (offsets, energy) = refine(x, p, y, precision, prior, **stage)
-        table, corrections = parameters.physical(np.asarray(p, np.float64), pose_scales)
+        p, refinement, (offsets, energy) = refine(x, p, y, precision, prior, **stage, config=config)
+        table, changes = parameters.physical(np.asarray(p, np.float64), pose_scales)
         x = x[margin : margin + base.nz] / np.float32(cal["scale"])
     record = {
         "fit": list(parameters.fit),
-        "corrections": corrections,
-        "rotation_prior_sigma_deg": ROTATION_SIGMA_DEG if "rotations" in parameters.fit else None,
+        "calibration": changes,
+        "config": asdict(config),
         "working_grid": asdict(base),
         "detector_binning": dbin,
         "lever_px_per_radian": lever,
         "ray_geometry": "parallel" if frames is None else "cone",
-        "pose_dofs": [["alpha", "beta", "phi", "dx", "dz", "dy"][i] for i in parameters.local],
+        "pose_columns": [["alpha", "beta", "phi", "x", "z", "y"][i] for i in parameters.local],
         "image_preconditioner": ops.projection.diagonal_kind,
-        "interpolation": ops.projection.interpolation,
         "noise_estimator": "normalized_fourth_difference_mad",
         "motion_penalty": "group_student_t_innovations",
         "gauge": "rigid" if frames is None else "rigid_and_scale",
@@ -440,14 +453,14 @@ def fit_poses(
             axial=axial_geometry(
                 poses, (0.0, 1.0, 0.0) if frames is None else frames[0, 0] - frames[0, 3]
             ),
-            corrections=corrections,
+            calibration=changes,
             native=native,
             binning=dbin,
             levels=levels,
             refinement=refinement,
             offsets=offsets / cal["scale"],
             energy=energy,
-            spacing=_KNOT_SPACING,
+            spacing=config.knot_spacing,
             order=order,
         ),
         "seconds": time.perf_counter() - started,

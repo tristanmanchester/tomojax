@@ -8,7 +8,7 @@ that centre from calibrated pixels before returning it to the caller.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 import warnings
 
 import numpy as np
@@ -44,7 +44,7 @@ def frame_geometry(
     detector: Detector | None = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
-    poses: bool = True,
+    apply_poses: bool = True,
     pixel_size: float | tuple[float, float] | None = None,
 ) -> tuple[ProjectionDataset, ScanGeometry]:
     """Resolve caller metadata before constructing any geometry from a file.
@@ -60,11 +60,11 @@ def frame_geometry(
         )
     if geometry is not None and (message := dropped_offsets_message(record)):
         warnings.warn(message, stacklevel=4)
-    record = _vendor_corrections(record, applied=poses and geometry is None)
+    record = _vendor_corrections(record, applied=apply_poses and geometry is None)
     meta = dict(record.geometry_metadata)
     if pixel_size is not None:  # the shape from the frames, the centre from the file or the middle
         du, dv = np.broadcast_to(np.asarray(pixel_size, np.float64), (2,)).tolist()
-        _, nv, nu = record.projections.shape
+        _, nv, nu = cast("np.ndarray", record.projections).shape  # frames: always present
         center = (0.0, 0.0) if record.detector is None else record.detector.center
         detector = Detector(nu, nv, du, dv, center)
         meta["detector_pixel_size_status"] = "provided"
@@ -89,5 +89,5 @@ def frame_geometry(
     if geometry is None and detector is not None:
         record = with_view_offsets(record, detector)
     record = record.with_parallel_detector() if geometry is None else record
-    resolved = geometry if geometry is not None else geometry_of(record, poses=poses)
+    resolved = geometry if geometry is not None else geometry_of(record, apply_poses=apply_poses)
     return record, frame_output_grid(resolved, record)

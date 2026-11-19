@@ -17,7 +17,7 @@ import tomojax as tj
 def _fitted(case, geometry, name):
     scan, _, _, _ = make_case(case, geometry=geometry, size=24, views=30, grid_size=12)
     result = tj.align(scan, fit=(name,), grid=scan.grid)
-    return scan, result.scan, result.info["calibration"][name]
+    return scan, result.scan, result.info["calibration"][name]["value"]
 
 
 def _same_projections(a, b):
@@ -32,15 +32,15 @@ def _same_projections(a, b):
 
 
 @pytest.mark.parametrize("geometry", ["parallel", "lamino", "cone"])
-def test_a_reported_centre_rebuilds_the_fitted_geometry(geometry):
-    scan, fitted, centre = _fitted("centre", geometry, "centre")
-    centre = tuple(centre) if geometry == "cone" else (centre, scan.detector.center[1])
+def test_a_reported_center_rebuilds_the_fitted_geometry(geometry):
+    scan, fitted, center = _fitted("center", geometry, "center")
+    center = tuple(center) if geometry == "cone" else (center, scan.detector.center[1])
     d = scan.detector
-    detector = tj.Detector(d.nu, d.nv, d.du, d.dv, centre)
+    detector = tj.Detector(d.nu, d.nv, d.du, d.dv, center)
     if geometry == "cone":
         rebuilt = tj.ConeGeometry(scan.grid, detector, scan.angles, scan.geometry.beam)
     elif geometry == "lamino":
-        rebuilt = tj.LaminographyGeometry(scan.grid, detector, scan.angles, tilt_deg=25.0)
+        rebuilt = tj.LaminographyGeometry(scan.grid, detector, scan.angles, tilt=25.0)
     else:
         rebuilt = tj.ParallelGeometry(scan.grid, detector, scan.angles)
     _same_projections(fitted, tj.Scan(scan.projections, rebuilt))
@@ -50,14 +50,14 @@ def test_a_reported_centre_rebuilds_the_fitted_geometry(geometry):
 def test_a_reported_roll_rebuilds_the_fitted_geometry(geometry):
     scan, fitted, roll = _fitted("roll", geometry, "roll")
     if geometry == "cone":
-        beam = tj.ConeBeam(192, 288, detector_roll_deg=roll)
+        beam = tj.ConeBeam(192, 288, detector_roll=roll)
         rebuilt = tj.ConeGeometry(scan.grid, scan.detector, scan.angles, beam)
     elif geometry == "lamino":
         rebuilt = tj.LaminographyGeometry(
-            scan.grid, scan.detector, scan.angles, tilt_deg=25.0, detector_roll_deg=roll
+            scan.grid, scan.detector, scan.angles, tilt=25.0, detector_roll=roll
         )
     else:
-        rebuilt = tj.ParallelGeometry(scan.grid, scan.detector, scan.angles, detector_roll_deg=roll)
+        rebuilt = tj.ParallelGeometry(scan.grid, scan.detector, scan.angles, detector_roll=roll)
     _same_projections(fitted, tj.Scan(scan.projections, rebuilt))
 
 
@@ -72,5 +72,5 @@ def test_a_reported_tilt_rebuilds_the_fitted_geometry(geometry):
             scan.grid, scan.detector, scan.angles, scan.geometry.beam, axis_unit=axis
         )
     else:
-        rebuilt = tj.LaminographyGeometry(scan.grid, scan.detector, scan.angles, tilt_deg=tilt)
+        rebuilt = tj.LaminographyGeometry(scan.grid, scan.detector, scan.angles, tilt=tilt)
     _same_projections(fitted, tj.Scan(scan.projections, rebuilt))

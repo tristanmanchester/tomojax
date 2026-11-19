@@ -77,7 +77,7 @@ def test_valid_selections_keep_the_same_views_and_orbits(selection):
     np.testing.assert_array_equal(selected.angles, scan.angles[kept])
     for new, old in enumerate(kept):
         np.testing.assert_allclose(
-            selected.geometry.pose_for_view(new), scan.geometry.pose_for_view(old)
+            selected.geometry.pose_matrix(new), scan.geometry.pose_matrix(old)
         )
         before, after = scan.geometry.rays_for_view(old), selected.geometry.rays_for_view(new)
         for ray_before, ray_after in zip(before, after, strict=True):
@@ -88,10 +88,10 @@ def test_valid_selections_keep_the_same_views_and_orbits(selection):
 def test_invalid_batch_sizes_fail_before_reading_counts(batch):
     scan = _scan()
     frames = tj.Frames(_UnreadFrames(), scan.geometry, white_level=8.0)
-    with pytest.raises(ValueError, match="batch_views"):
-        frames.corrected(batch_views=batch)
-    with pytest.raises(ValueError, match="batch_views"):
-        scan.corrected(BeamHardening(), batch_views=batch)
+    with pytest.raises(ValueError, match="views_per_batch"):
+        frames.corrected(views_per_batch=batch)
+    with pytest.raises(ValueError, match="views_per_batch"):
+        scan.corrected(BeamHardening(), views_per_batch=batch)
 
 
 @pytest.mark.parametrize("epsilon", [0.0, -1.0, np.nan, np.inf, -np.inf])
@@ -224,7 +224,7 @@ def test_valid_corrections_match_independent_flat_interpolation_and_log(batch):
         view_positions=views,
     )
     step = BeamHardening(rates=(0.5, 2.0), weights=(0.5, 0.5))
-    corrected = frames.corrected(step, batch_views=batch)
+    corrected = frames.corrected(step, views_per_batch=batch)
     p = step.inverse(-np.log(transmission))
     reference = np.broadcast_to(p[:, None, None], (6, 4, 4))
     np.testing.assert_allclose(corrected.projections, reference, rtol=2e-6)

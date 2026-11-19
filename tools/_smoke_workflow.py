@@ -13,20 +13,17 @@ def workflow_steps(root: Path) -> list[list[str]]:
     scan, recon = root / "synthetic.nxs", root / "recon.nxs"
     return [
         ["simulate", "-o", str(scan), "--size", "32", "--n-views", "60"],
-        ["recon", str(scan), "-o", str(recon)],
+        ["reconstruct", str(scan), "-o", str(recon)],
         ["inspect", str(recon), "--preview", str(root / "previews")],
     ]
 
 
 def verify_workflow_outputs(root: Path) -> None:
-    """Require both datasets and the projection and three slice previews."""
+    """Require both datasets and the three slice previews (the reconstruction holds no scan)."""
     expected = [
         root / "synthetic.nxs",
         root / "recon.nxs",
-        *(
-            root / "previews" / f"{name}.png"
-            for name in ("projection", "slice_x", "slice_y", "slice_z")
-        ),
+        *(root / "previews" / f"{name}.png" for name in ("slice_x", "slice_y", "slice_z")),
     ]
     missing = [str(path) for path in expected if not path.is_file() or not path.stat().st_size]
     if missing:

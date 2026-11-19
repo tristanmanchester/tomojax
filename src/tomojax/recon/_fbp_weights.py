@@ -63,8 +63,8 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
     if rotation.shape[0] < 3:
         raise ValueError("FBP weights need at least three views")
     detector_u, ray, detector_v = rotation[:, 0, :], rotation[:, 1, :], rotation[:, 2, :]
-    centred = ray - ray.mean(axis=0)
-    eigenvalues, eigenvectors = np.linalg.eigh(centred.T @ centred)
+    centered = ray - ray.mean(axis=0)
+    eigenvalues, eigenvectors = np.linalg.eigh(centered.T @ centered)
     if eigenvalues[1] <= 1e-12 * max(eigenvalues[2], 1e-300):
         raise ValueError("FBP weights need views that rotate about an axis")
     axis = eigenvectors[:, 0]

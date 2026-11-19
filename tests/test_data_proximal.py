@@ -114,11 +114,11 @@ def test_weighted_data_masked_outliers_keep_dense_reconstruction_and_truth_error
     detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
     angles = [13.0, 71.0, 127.0]
     geometry = (
-        LaminographyGeometry(grid, detector, angles, tilt_deg=25)
+        LaminographyGeometry(grid, detector, angles, tilt=25)
         if tilted
         else ParallelGeometry(grid, detector, angles)
     )
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(3)], dtype=jnp.float32)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(3)], dtype=jnp.float32)
 
     def project(flat):
         return project_joseph(
@@ -148,9 +148,8 @@ def test_weighted_data_masked_outliers_keep_dense_reconstruction_and_truth_error
             views_per_batch=2,
             tv_weight=0,
             log_every=2000,
-            projector_model="joseph",
             backend="jax",
-            stream_projections=stream,
+            stream=stream,
         ),
     )
     assert np.isfinite(info["loss"]).all()

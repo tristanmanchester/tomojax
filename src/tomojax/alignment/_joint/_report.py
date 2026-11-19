@@ -25,7 +25,7 @@ _UNUSUAL_RMS_FACTOR = 3.0
 _ISOLATED_MIN_WORKING_PX = 0.1
 # A rotation axis within this angle of perpendicular to the beam is axial.
 _AXIAL_TILT_DEG = 5.0
-_NAMES = ("alpha", "beta", "phi", "dx", "dz", "dy")
+_NAMES = ("alpha", "beta", "phi", "x", "z", "y")
 # Measured in docs/measurements.md ("Per-view pose recovery"); stated where it applies.
 _AXIAL_ROTATIONS = (
     "per-view rotations were fitted with the rotation axis perpendicular to the beam, where "
@@ -115,7 +115,7 @@ def build(
     local,
     fit,
     axial,
-    corrections,
+    calibration,
     native,
     binning,
     levels,
@@ -149,9 +149,10 @@ def build(
     isolated = isolated_views(values[:, detector] / binning, order) if local and detector else []
     offsets = np.asarray(offsets, np.float64)
     return {
-        "levels": [{"steps": len(lv["steps"]), "ended": lv["status"]} for lv in levels],
+        "levels": [{"iterations": len(lv["steps"]), "ended": lv["status"]} for lv in levels],
         "refinement": refinement.get("status"),
-        "corrections": {"global": corrections, "per_view": per_view},
+        "calibration": calibration,
+        "poses": per_view,
         "offsets": {
             "offset_range": [float(offsets[:, 0].min()), float(offsets[:, 0].max())],
             "ramp_range": [float(offsets[:, 1].min()), float(offsets[:, 1].max())],

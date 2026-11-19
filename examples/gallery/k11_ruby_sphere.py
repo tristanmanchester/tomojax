@@ -40,14 +40,14 @@ def slice_figure(volume: np.ndarray | Array, grid: tj.Grid, output: Path) -> Non
     pitch = np.array((grid.vx, grid.vy, grid.vz))
     origin = np.asarray(grid_volume_origin(grid))
     # Display bounds, not forward-model support. Keep original voxel samples.
-    centre = np.array((-332.64, -60.48, 0))
-    lower = centre - 345.6
-    upper = centre + 345.6
+    center = np.array((-332.64, -60.48, 0))
+    lower = center - 345.6
+    upper = center + 345.6
     first = np.ceil((lower - origin) / pitch).astype(int)
     stop = np.ceil((upper - origin) / pitch).astype(int)
     lower = origin + (first - 0.5) * pitch
     upper = origin + (stop - 0.5) * pitch
-    indices = np.rint((centre - origin) / pitch).astype(int)
+    indices = np.rint((center - origin) / pitch).astype(int)
     cuts = []
     for axis in (2, 1, 0):
         selection = [slice(int(a), int(b)) for a, b in zip(first, stop, strict=True)]
@@ -92,7 +92,7 @@ def main() -> None:
         sampling_grid(args.binning),
         tj.Detector(640, 540, PITCH_UM, PITCH_UM),
         angles,
-        tilt_deg=-35.0,
+        tilt=-35.0,
     )
     start = time.perf_counter()
     scan = tj.load_frames(args.input, geometry=geometry).corrected(binning=args.binning)
@@ -100,7 +100,7 @@ def main() -> None:
     print(f"load/correct/align: {time.perf_counter() - start:.1f} s")
     print("Final level:", result.info["levels"][-1]["status"])
     print("Reconstruction grid:", result.grid)
-    slice_figure(result.volume, result.grid, args.output)
+    slice_figure(result.image, result.grid, args.output)
 
 
 if __name__ == "__main__":

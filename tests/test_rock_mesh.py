@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench" / "phantoms
 pytest.importorskip("trimesh")
 
 
-def test_material_mesh_preserves_xyz_centres_and_hollow_orientation(tmp_path):
+def test_material_mesh_preserves_xyz_centers_and_hollow_orientation(tmp_path):
     from mesh_voxels import check_closed, occupancy, read_stl
     from rock_mesh import material_mesh
 

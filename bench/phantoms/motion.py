@@ -77,12 +77,12 @@ class Slip:
     tip_rad: float = 0.0
     tip_axis: tuple[float, float, float] = (1.0, 0.0, 0.0)
 
-    def transform(self, centre_mm: np.ndarray) -> np.ndarray:
+    def transform(self, center_mm: np.ndarray) -> np.ndarray:
         """The 4x4 object-frame transform: tip about the centre, then shift."""
         out = np.eye(4)
         rotation = _axis_angle(np.asarray(self.tip_axis), self.tip_rad)
         out[:3, :3] = rotation
-        out[:3, 3] = centre_mm - rotation @ centre_mm + np.asarray(self.shift_um) * _UM
+        out[:3, 3] = center_mm - rotation @ center_mm + np.asarray(self.shift_um) * _UM
         return out
 
 
@@ -97,8 +97,8 @@ class Motion:
     tilt error is about lab x and y.
     """
 
-    centre_offset_um: float = 0.0
-    axis_tilt_deg: float = 0.0  # about lab x, TomoJAX's tilt sign: lab Rx(-tilt)
+    center_offset_um: float = 0.0
+    axis_tilt: float = 0.0  # about lab x, TomoJAX's tilt sign: lab Rx(-tilt)
     axis_roll_deg: float = 0.0  # about lab y, the beam
     radial_um: tuple[tuple[float, ...], tuple[float, ...]] = ((), ())
     radial_phase: tuple[tuple[float, ...], tuple[float, ...]] = ((), ())
@@ -171,19 +171,19 @@ def components(motion: Motion, angles_deg: np.ndarray) -> dict[str, np.ndarray]:
 
 
 def poses(
-    motion: Motion, nominal: np.ndarray, angles_deg: np.ndarray, centre_mm: np.ndarray
+    motion: Motion, nominal: np.ndarray, angles_deg: np.ndarray, center_mm: np.ndarray
 ) -> dict[str, np.ndarray]:
     """True world-from-object poses and the stage and sample parts that compose them.
 
-    ``centre_mm`` is the sample centre in the object frame: the point slips tip about.
+    ``center_mm`` is the sample centre in the object frame: the point slips tip about.
     Returns ``poses`` and ``stage`` (the lab-frame transforms A), ``sample`` (the slip
     products S) and ``encoder_rad``, plus every entry of :func:`components`.
     """
     nominal = np.asarray(nominal, np.float64)
     n = len(nominal)
     parts = components(motion, angles_deg)
-    centre = np.asarray(centre_mm, np.float64)
-    setup = _ry(np.deg2rad(motion.axis_roll_deg)) @ _rx(-np.deg2rad(motion.axis_tilt_deg))
+    center = np.asarray(center_mm, np.float64)
+    setup = _ry(np.deg2rad(motion.axis_roll_deg)) @ _rx(-np.deg2rad(motion.axis_tilt))
     bearing = np.array([0.0, 0.0, -motion.sample_height_mm])
     stage = np.tile(np.eye(4), (n, 1, 1))
     sample = np.tile(np.eye(4), (n, 1, 1))
@@ -194,7 +194,7 @@ def poses(
         error = _ry(tilt[1]) @ _rx(tilt[0])
         rotation = error @ setup
         shift = (
-            np.array([motion.centre_offset_um * _UM, 0.0, 0.0])
+            np.array([motion.center_offset_um * _UM, 0.0, 0.0])
             + parts["drift_mm"][i]
             + parts["asynchronous_mm"][i]
             + np.array([parts["radial_mm"][i, 0], parts["radial_mm"][i, 1], parts["axial_mm"][i]])
@@ -204,7 +204,7 @@ def poses(
         stage[i, :3, :3], stage[i, :3, 3] = rotation, shift
         for slip in slips:
             if slip.view == i:
-                current = current @ slip.transform(centre)
+                current = current @ slip.transform(center)
         sample[i] = current
     encoder = np.tile(np.eye(4), (n, 1, 1))
     encoder[:, :3, :3] = np.stack([_rz(a) for a in parts["encoder_rad"]])
@@ -221,7 +221,7 @@ def draw(rng: np.random.Generator, ranges: dict, *, views: int, sample_size_mm: 
     """One motion drawn uniformly from ``ranges``, a dict of [low, high] bounds.
 
     Keys:
-    - ``centre_um``, ``axis_tilt_deg``, ``axis_roll_deg``: setup;
+    - ``center_um``, ``axis_tilt``, ``axis_roll_deg``: setup;
     - ``harmonics`` (an int);
     - ``radial_um``, ``axial_um``, ``tilt_urad``: each harmonic's peak amplitude;
     - ``asynchronous_fraction``: asynchronous RMS over the synchronous amplitude;
@@ -287,8 +287,8 @@ def draw(rng: np.random.Generator, ranges: dict, *, views: int, sample_size_mm: 
             )
         )
     return Motion(
-        centre_offset_um=signed("centre_um"),
-        axis_tilt_deg=signed("axis_tilt_deg"),
+        center_offset_um=signed("center_um"),
+        axis_tilt=signed("axis_tilt"),
         axis_roll_deg=signed("axis_roll_deg"),
         radial_um=radial,
         radial_phase=(phases(len(radial[0])), phases(len(radial[1]))),

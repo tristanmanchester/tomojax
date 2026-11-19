@@ -112,13 +112,13 @@ class _CorrectedGeometry:
     base: object
     poses: np.ndarray
     frame: str
-    detector_roll_deg: float = 0.0
+    detector_roll: float = 0.0
 
     def __getattr__(self, name):
         return getattr(self.base, name)
 
-    def pose_for_view(self, i):
-        nominal = np.asarray(self.base.pose_for_view(i), dtype=np.float64)
+    def pose_matrix(self, i):
+        nominal = np.asarray(self.base.pose_matrix(i), dtype=np.float64)
         update = np.eye(4)
         update[:3, :3] = Rotation.from_rotvec(self.poses[i, :3]).as_matrix()
         update[:3, 3] = self.poses[i, 3:]
@@ -140,7 +140,7 @@ def _segments(counts=(4, 7)):
             grid,
             second,
             np.linspace(13, 373, counts[1], endpoint=False),
-            tj.ConeBeam(26, 45, detector_roll_deg=2.0),
+            tj.ConeBeam(26, 45, detector_roll=2.0),
         ),
     )
     return tj.geometry.ConeSegments(parts)
@@ -241,7 +241,7 @@ def test_segmented_warm_start_rejects_invalid_scans(monkeypatch, case, views, me
             tuple(replace(segment, angles=[0, 30, 60, 90]) for segment in geometry.segments)
         )
     elif case == "rolled":
-        geometry = _CorrectedGeometry(geometry, np.zeros((11, 6)), "object", detector_roll_deg=1.0)
+        geometry = _CorrectedGeometry(geometry, np.zeros((11, 6)), "object", detector_roll=1.0)
     else:
 
         def unexpected_filter(*_args, **_kwargs):

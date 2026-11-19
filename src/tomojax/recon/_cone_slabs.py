@@ -70,18 +70,18 @@ def slab_windows(
         [[(x, y, h) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for h in pair] for pair in z]
     )
     frames = np.asarray(frames, np.float64)
-    centre, u_dir, v_dir, source = (frames[:, i] for i in range(4))
+    center, u_dir, v_dir, source = (frames[:, i] for i in range(4))
     normal = np.cross(u_dir, v_dir)
     world = np.einsum("nij,kcj->nkci", poses[:, :3, :3], boxes) + poses[:, None, None, :3, 3]
     ray = world - source[:, None, None]
     depth_along = np.einsum("nkci,ni->nkc", ray, normal)
-    scale = np.einsum("ni,ni->n", centre - source, normal)[:, None, None]
+    scale = np.einsum("ni,ni->n", center - source, normal)[:, None, None]
     behind = np.any(depth_along * scale <= 0, axis=(0, 2))
     hit = (
         source[:, None, None]
         + ray * (scale / np.where(depth_along == 0, 1, depth_along))[..., None]
     )
-    rows = np.einsum("nkci,ni->nkc", hit - centre[:, None, None], v_dir) / detector.dv
+    rows = np.einsum("nkci,ni->nkc", hit - center[:, None, None], v_dir) / detector.dv
     rows += (detector.nv - 1) / 2
     windows = []
     for low, high, unbounded in zip(

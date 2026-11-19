@@ -69,7 +69,7 @@ def _defaults(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--energy-kev", type=float, default=25.0)
     parser.add_argument("--voxel-mm", type=float, default=0.008)
     parser.add_argument("--views", type=int, default=720)
-    parser.add_argument("--tilt-deg", type=float, default=30.0)
+    parser.add_argument("--tilt", type=float, default=30.0)
     parser.add_argument("--propagation-mm", type=float, default=50.0)
     parser.add_argument("--psf-px", type=float, default=0.7, help="Gaussian PSF sigma, pixels")
     parser.add_argument("--photons", type=float, default=2e4, help="flat-field counts per pixel")
@@ -77,7 +77,7 @@ def _defaults(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--gain-percent", type=float, default=1.0)
     parser.add_argument("--cor-px", type=float, default=3.2, help="true detector-u offset")
     parser.add_argument("--shift-px", type=float, default=2.0, help="sample wobble amplitude")
-    parser.add_argument("--rotation-deg", type=float, default=0.1, help="sample tilt jitter")
+    parser.add_argument("--rotation", type=float, default=0.1, help="sample tilt jitter")
     parser.add_argument("--seed", type=int, default=20261006)
 
 
@@ -96,7 +96,7 @@ def plan(args: argparse.Namespace) -> None:
     angles = np.linspace(0.0, 360.0, args.views, endpoint=False)
     probe = Detector(1, 1, v, v)
     poses = np.asarray(
-        stack_view_poses(LaminographyGeometry(grid, probe, angles, args.tilt_deg), args.views)
+        stack_view_poses(LaminographyGeometry(grid, probe, angles, args.tilt), args.views)
     )
     corners = (
         np.array(np.meshgrid([-0.9, 0.9], [-0.9, 0.9], [-0.37, 0.31], indexing="ij"))
@@ -108,7 +108,7 @@ def plan(args: argparse.Namespace) -> None:
     nu = 2 * (int(np.ceil(np.abs(world[..., 0]).max() / v)) + margin)
     nv = 2 * (int(np.ceil(np.abs(world[..., 2]).max() / v)) + margin)
     nominal = Detector(nu, nv, v, v)
-    geometry = LaminographyGeometry(grid, nominal, angles, args.tilt_deg)
+    geometry = LaminographyGeometry(grid, nominal, angles, args.tilt)
     nominal_poses = stack_view_poses(geometry, args.views)
     rng = np.random.default_rng(args.seed)
     theta = np.deg2rad(angles)
@@ -134,7 +134,7 @@ def plan(args: argparse.Namespace) -> None:
         grid=json.dumps(grid.to_dict()),
         detector=json.dumps(nominal.to_dict()),
         angles_deg=angles,  # the plan file's key
-        tilt_deg=args.tilt_deg,
+        tilt=args.tilt,
         nominal_poses=np.asarray(nominal_poses, np.float64),
         true_poses=true_poses,
         static_poses=np.asarray(nominal_poses, np.float64),
@@ -232,13 +232,13 @@ def render(args: argparse.Namespace) -> None:
             gvxr.setDensity(name, 1.0, "g/cm3")
             gvxr.addPolygonMeshAsInnerSurface(name)
         gvxr.setMonoChromatic(args.energy_kev, "keV", 1)
-        for key, centre_u in (("static", 0.0), ("moving", float(data["cor_mm"]))):
+        for key, center_u in (("static", 0.0), ("moving", float(data["cor_mm"]))):
             poses = data["static_poses" if key == "static" else "true_poses"]
             ideal, measured = [], []
             for pose in poses:
                 r, t = pose[:3, :3], pose[:3, 3]
-                source = np.array([centre_u, -100.0, 0.0])
-                screen = np.array([centre_u, 100.0, 0.0])
+                source = np.array([center_u, -100.0, 0.0])
+                screen = np.array([center_u, 100.0, 0.0])
                 gvxr.setSourcePosition(*(r.T @ (source - t)), "mm")
                 gvxr.setDetectorPosition(*(r.T @ (screen - t)), "mm")
                 gvxr.setDetectorUpVector(*(r.T @ [0, 0, 1]))
@@ -324,7 +324,7 @@ def finish(args: argparse.Namespace) -> None:
         grid=grid.to_dict(),
         detector=nominal.to_dict(),
         geometry_type="lamino",
-        geometry_meta={"tilt_deg": float(data["tilt_deg"]), "tilt_about": "x"},
+        geometry_meta={"tilt": float(data["tilt"]), "tilt_about": "x"},
     )
     for key in ("static", "moving"):
         save_nxtomo(

@@ -23,7 +23,7 @@ from tomojax.geometry import stack_view_poses
 def _scan(views, nu=96, nv=64, n=24, nz=16):
     grid, detector = tj.Grid(n, n, nz, 1, 1, 1), tj.Detector(nu, nv, 1, 1)
     angles = np.linspace(0, 360, views, endpoint=False)
-    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt_deg=-30)
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=-30)
     rng = np.random.default_rng(3)
     volume = rng.uniform(0, 1, (nz, n, n)).astype(np.float32)
     projections = np.array(tj.project(geometry, volume))
@@ -92,9 +92,9 @@ def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
 
     monkeypatch.setattr(jax, "jit", recording)
     monkeypatch.setattr(_fit, "Operators", made)
-    monkeypatch.setattr(_fit, "_LEVELS", ((1, 2),))
     projections, nominal, grid, detector = _scan(views, nu, nv, n, nz)
-    _fit.fit_poses(projections, nominal, grid, detector, keep_grid=True)
+    config = tj.AlignConfig(levels=(1,), iterations=2)
+    _fit.fit_poses(projections, nominal, grid, detector, keep_grid=True, config=config)
     monkeypatch.setattr(jax, "jit", jit)
     monkeypatch.setattr(_fit, "Operators", operators)
     volume, image = shapes[-1]

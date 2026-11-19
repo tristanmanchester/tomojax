@@ -7,8 +7,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-from tomojax.core.projector import forward_project_view_T
 from tomojax.forward import project_joseph
 from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon import CGLSConfig, cgls
@@ -60,28 +58,24 @@ def test_quadratic_gradient_matches_physical_edges_and_free_boundaries(shape):
 
 
 @pytest.mark.parametrize("backend", ["jax", "cuda"])
-@pytest.mark.parametrize(
-    ("model", "interpolation"), [("ray", "linear"), ("joseph", "linear"), ("joseph", "cubic")]
-)
+@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 @pytest.mark.parametrize("warm_start", [False, True])
 def test_gradient_regularized_cgls_matches_dense_augmented_system(
-    backend, model, interpolation, warm_start
+    backend, interpolation, warm_start
 ):
     if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
     shape, spacing = (3, 2, 2), (0.8, 1.2, 0.7)
     grid = Grid(*shape[::-1], *spacing)
     detector = Detector(5, 4, 0.7, 1.1, (0.13, -0.29))
-    geometry = LaminographyGeometry(grid, detector, [13, 49, 83, 122, 161], tilt_deg=23)
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    geometry = LaminographyGeometry(grid, detector, [13, 49, 83, 122, 161], tilt=23)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
 
     def forward(flat):
         volume = flat.reshape(shape)
-        if model == "joseph":
-            return project_joseph(
-                volume, poses, grid, detector, backend="jax", interpolation=interpolation
-            ).ravel()
-        return jax.vmap(lambda t: forward_project_view_T(t, grid, detector, volume))(poses).ravel()
+        return project_joseph(
+            volume, poses, grid, detector, backend="jax", interpolation=interpolation
+        ).ravel()
 
     matrix = np.asarray(jax.jacfwd(forward)(jnp.zeros(np.prod(shape))), np.float64)
     edges = edge_matrix(shape, spacing)
@@ -103,13 +97,12 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
         init_x=initial,
         config=CGLSConfig(
             iterations=80,
-            rtol=1e-7,
+            tolerance=1e-7,
             damping=damping,
             gradient_damping=gradient_damping,
             views_per_batch=3,
             backend=backend,
-            projector_model=model,
-            joseph_interpolation=interpolation,
+            interpolation=interpolation,
         ),
     )
     np.testing.assert_allclose(np.asarray(actual).ravel(), expected, rtol=3e-4, atol=3e-5)
@@ -126,7 +119,7 @@ def test_gradient_regularized_cgls_matches_dense_augmented_system(
 @pytest.mark.parametrize("value", [-1.0, np.inf, np.nan])
 def test_gradient_damping_rejects_invalid_weights(value):
     grid, detector = Grid(2, 2, 2, 1.0, 1.0, 1.0), Detector(3, 3, 1.0, 1.0)
-    geometry = LaminographyGeometry(grid, detector, [0, 45, 90], tilt_deg=23)
+    geometry = LaminographyGeometry(grid, detector, [0, 45, 90], tilt=23)
     with pytest.raises(ValueError, match="gradient_damping"):
         cgls(
             geometry,

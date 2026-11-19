@@ -41,8 +41,8 @@ def _check_inspection(path, frames, previews, capsys, *, missing_angles=False):
     assert report["projection"]["stats"]["mean"] == pytest.approx(float(counts.mean()))
     assert report["detector_metadata"]["du"] == frames.source.detector.du
     assert report["flats_darks"]["flat_count"] == len(frames.flats)
-    if report["angles"]["coverage_deg"] is not None:
-        np.testing.assert_allclose(report["angles"]["coverage_deg"], np.ptp(frames.source.angles))
+    if report["angles"]["coverage"] is not None:
+        np.testing.assert_allclose(report["angles"]["coverage"], np.ptp(frames.source.angles))
     np.testing.assert_array_equal(
         iio.imread(previews / "projection.png"), scale_to_uint8(counts[len(counts) // 2])
     )
@@ -252,7 +252,7 @@ def _edf_scan(path: Path) -> Path:
 
 
 @pytest.mark.parametrize("kind", ["bliss", "edf"])
-def test_a_file_without_a_recorded_centre_loads_it_at_the_middle(kind, tmp_path, monkeypatch):
+def test_a_file_without_a_recorded_center_loads_it_at_the_middle(kind, tmp_path, monkeypatch):
     # Recorded pixel sizes and no centre: the scan loads with the centre at the middle of
     # the detector and says the file recorded none; nothing estimates it.
     from tomojax.alignment import api as alignment

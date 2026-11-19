@@ -17,7 +17,7 @@ from . import _joint_stacks as js
 def test_frozen_geometry_preserves_batched_normal_and_cross_actions(cone, batch_size):
     grid = Grid(5, 4, 3, 0.7, 0.9, 1.1, vol_center=(0.2, -0.1, 0.3))
     detector = Detector(6, 5, 0.8, 0.9, center=(0.12, -0.17))
-    geometry = LaminographyGeometry(grid, detector, [13, 79, 211], tilt_deg=-31)
+    geometry = LaminographyGeometry(grid, detector, [13, 79, 211], tilt=-31)
     nominal = np.asarray(stack_view_poses(geometry, 3))
     frames = np.broadcast_to(beam_frame(ConeBeam(31, 47), detector), (3, 4, 3))
     rng = np.random.default_rng(850)

@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.projector import forward_project_view_T
+from tomojax.forward import project_joseph
 from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon import CGLSConfig, cgls
 
@@ -22,15 +22,11 @@ def problem() -> tuple[Grid, Detector, LaminographyGeometry, np.ndarray]:
     """Assemble the forward matrix independently of the iterative algorithm."""
     grid = Grid(3, 2, 2, 0.8, 1.1, 1.3)
     detector = Detector(5, 4, 0.7, 1.2, (0.17, -0.23))
-    geometry = LaminographyGeometry(grid, detector, [13, 49, 83, 122, 161], tilt_deg=23)
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(5)])
+    geometry = LaminographyGeometry(grid, detector, [13, 49, 83, 122, 161], tilt=23)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(5)])
 
     def project(flat: jax.Array) -> jax.Array:
-        return jax.vmap(
-            lambda t: forward_project_view_T(
-                t, grid, detector, flat.reshape((2, 2, 3)), ray_integrator="joseph"
-            )
-        )(poses).ravel()
+        return project_joseph(flat.reshape((2, 2, 3)), poses, grid, detector).ravel()
 
     matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12))).astype(np.float64)
     return grid, detector, geometry, matrix
@@ -59,10 +55,9 @@ def run(backends: list[str], seeds: int) -> list[dict[str, Any]]:
                     data,
                     config=CGLSConfig(
                         iterations=100,
-                        rtol=1e-7,
+                        tolerance=1e-7,
                         damping=damping,
                         views_per_batch=3,
-                        projector_model="joseph",
                         backend=backend,
                     ),
                 )

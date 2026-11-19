@@ -33,8 +33,8 @@ class Correction:
     found: dict[str, Json] = field(default_factory=dict)
 
     def __str__(self) -> str:
-        parts = [f"{k}={v}" for k, v in self.settings.items()]
-        parts += [f"{k}: {v}" for k, v in self.found.items() if v]
+        parts = [f"{k}={_short(v)}" for k, v in self.settings.items()]
+        parts += [f"{k}: {_short(v)}" for k, v in self.found.items() if v]
         return f"{self.name}({', '.join(parts)})" if parts else self.name
 
     def to_dict(self) -> dict[str, Json]:
@@ -69,3 +69,10 @@ class Correction:
         return cls(
             str(value["name"]), dict(value.get("settings") or {}), dict(value.get("found") or {})
         )
+
+
+def _short(value: Json) -> str:
+    """A long list as its ends and length, so a record of many views stays one line."""
+    if isinstance(value, list) and len(value) > 6:
+        return f"[{', '.join(map(str, value[:3]))}, ..., {value[-1]}] ({len(value)})"
+    return str(value)

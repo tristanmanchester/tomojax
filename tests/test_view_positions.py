@@ -63,7 +63,6 @@ def test_positions_survive_selection_rejection_combining_and_saving(tmp_path):
     projections[9] *= 0.2  # a beam drop RejectViews removes
     scan = tj.Scan(projections, geometry)
     assert scan.view_positions is None
-    np.testing.assert_array_equal(scan.positions(), np.arange(24) + 0.5)
 
     corrected = scan.corrected(RejectViews())
     assert corrected.corrections[-1].found["rejected"] == [9]

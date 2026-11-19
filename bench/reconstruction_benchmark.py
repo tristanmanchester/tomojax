@@ -34,7 +34,7 @@ def run_case(size: int, n_views: int, repeats: int) -> dict:
     nu = int(np.ceil(np.sqrt(2.0) * size))
     detector = Detector(nu, size, 1.0, 1.0)
     geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, n_views, endpoint=False))
-    poses = jnp.asarray([geometry.pose_for_view(i) for i in range(n_views)], dtype=jnp.float32)
+    poses = jnp.asarray([geometry.pose_matrix(i) for i in range(n_views)], dtype=jnp.float32)
     sigma = size / 8.0
     u = np.arange(nu) - (nu - 1) / 2
     x = np.arange(size) - (size - 1) / 2

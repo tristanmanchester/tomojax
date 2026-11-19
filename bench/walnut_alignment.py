@@ -197,7 +197,7 @@ def main() -> None:
     parser.add_argument(
         "--fit",
         nargs="+",
-        choices=("centre", "tilt", "roll", "translations", "rotations"),
+        choices=("center", "tilt", "roll", "translations", "rotations"),
         default=["translations"],
     )
     parser.add_argument("--iterations", type=int, default=20)
