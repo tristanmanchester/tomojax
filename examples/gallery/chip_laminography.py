@@ -32,7 +32,7 @@ import numpy as np
 import tomojax as tj
 
 # Total variation keeps the metal's streaks down at laminography's limited angles.
-RECONSTRUCTION = {"iterations": 100, "tv_weight": 5e-3, "nonnegative": True}
+RECONSTRUCTION = {"iterations": 100, "nonnegative": True}
 
 
 def without_rigid_motion(values: np.ndarray, angles: np.ndarray) -> np.ndarray:

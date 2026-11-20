@@ -42,7 +42,7 @@ from tomojax.geometry import grid_volume_origin, stack_view_poses
 SIZE, LAYERS, FIELD, MIDDLE = 384, 82, 29.6, 3.0  # voxels, z layers, field (mm), centre z
 VIEWS, PHOTONS = 400, 2e4
 CENTER_PX, ROTATION_DEG = 5.3, 0.25
-RECONSTRUCTION = {"iterations": 100, "tv_weight": 0.01, "nonnegative": True, "warm_start": True}
+RECONSTRUCTION = {"iterations": 100, "nonnegative": True, "warm_start": True}
 ZOOM = 140  # voxels on a side of the balance close-up
 
 

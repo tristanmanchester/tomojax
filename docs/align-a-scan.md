@@ -101,7 +101,7 @@ the centre separately first. If you request `"center"` and `"translations"` toge
 translations are given zero mean: a common translation and a centre offset describe the same
 parallel-ray geometry, and the data cannot tell them apart.
 
-![A simulated sandstone plug sliced near its base and through its middle, as loaded and after tj.align(scan), each with an enlarged region. As loaded, the grains are doubled and smeared; after the call their edges are sharp.](images/alignment-rock.png)
+![A simulated sandstone plug sliced near its base and halfway up, as loaded and after tj.align(scan), each with an enlarged region. As loaded, the grains are doubled and smeared; after the call their edges are sharp.](images/alignment-rock.png)
 
 A simulated sandstone plug, 384 voxels across, drifts by up to four and a half voxels during a
 parallel-beam half turn and slips by six voxels a third of the way through. The plain

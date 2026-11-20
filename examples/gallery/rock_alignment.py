@@ -4,12 +4,13 @@ The sandstone core (``bench/phantoms/porous_rock.py``), voxelised 1.5 times fine
 384-voxel reconstruction grid, is scanned in parallel beam over a half turn without noise while
 it drifts smoothly by up to 4.5 voxels and slips by 6 voxels a third of the way through. The
 scan is reconstructed as loaded, with the nominal geometry, and after ``tj.align(scan)``; both use
-``tj.reconstruct``'s default method. Two slices through the sample, each with one enlarged
-region, share one grey range.
+``tj.reconstruct``'s default method. Two slices through the sample, clear of its calcite,
+pyrite and zircon grains, each with one enlarged region, share one grey range.
 
     uv run python examples/gallery/rock_alignment.py alignment-rock.png
 
-It takes about nine minutes on an 8 GB laptop GPU; ``--size 64`` makes a quick small version.
+The first run builds and caches the 576-voxel phantom, about nine minutes on the CPU; later
+runs take about 20 s on an 8 GB laptop GPU. ``--size 64`` makes a quick small version.
 """
 
 from __future__ import annotations
@@ -95,8 +96,19 @@ def main() -> None:
     core = radius < 0.33 * size  # crops on the sample's grains, not its outer edge
     filled = np.flatnonzero(truth.reshape(truth.shape[0], -1).mean(axis=1) > 0.5 * truth.mean())
     bottom = int(filled[0] * size / truth.shape[0]) + size // 32
-    heights = (("Lowest slice through the sample", bottom), ("Middle slice", size // 2))
-    top = float(np.percentile(aligned[size // 2][inside], 99.5))
+    # The second slice: the one nearest the middle with no grain denser than feldspar (calcite,
+    # pyrite, zircon) within two slices, whose streaks would hide the grains, and a quarter of
+    # the sample above the first.
+    ratio = truth.shape[0] / size
+    dense = truth.reshape(truth.shape[0], -1).max(axis=1) > 0.4
+    clear = [
+        z
+        for z in range(bottom + size // 4, int(filled[-1] / ratio) - size // 16)
+        if not dense[int((z - 2) * ratio) : int((z + 3) * ratio)].any()
+    ]
+    second = min(clear, key=lambda z: abs(z - size // 2))
+    heights = (("Lowest slice through the sample", bottom), ("A slice higher up", second))
+    top = float(np.percentile(aligned[second][inside], 99.5))
 
     side = CROP * size // N
     style()

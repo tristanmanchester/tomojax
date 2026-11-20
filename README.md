@@ -34,8 +34,7 @@ average of the meshes, and FISTA-TV 0.125, in 15 s.
 
 `tomojax align` and `tj.align` solve the image and the requested geometry corrections together.
 The default fits per-view translations; add `"tilt"` and `"roll"` for shared setup angles,
-or `"rotations"` for per-view wobble. The figure above comes from an earlier alignment
-implementation. See [align a scan](https://tomojax.dev/align-a-scan/) for parameter selection and result checks.
+or `"rotations"` for per-view wobble. See [align a scan](https://tomojax.dev/align-a-scan/) for parameter selection and result checks.
 
 ## First reconstruction
 
