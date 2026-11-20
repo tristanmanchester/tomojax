@@ -113,6 +113,6 @@ the CUDA wheel check with `--python 3.14`.
 cache, using dependency wheels from that directory and an already available
 interpreter. An sdist install also needs the build backend there. Without that option, dependencies come from the package
 index. The CI workflow runs lint, types and the numerical CPU suite on Python 3.12
-for pull requests to main, on demand and on release tags, and uncached wheel/sdist
-jobs on Python 3.12–3.14 on demand and on release tags.
+for pull requests to main and on demand, and uncached wheel/sdist jobs on
+Python 3.12–3.14 on demand. A release runs both before it publishes.
 CUDA checks run separately on NVIDIA hardware.

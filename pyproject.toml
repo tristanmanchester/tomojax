@@ -58,7 +58,8 @@ tomojax = "tomojax.cli.main:main"
 
 [project.urls]
 Repository = "https://github.com/tristanmanchester/tomojax"
-Documentation = "https://github.com/tristanmanchester/tomojax/tree/main/docs"
+Documentation = "https://tomojax.dev"
+Changelog = "https://github.com/tristanmanchester/tomojax/blob/main/CHANGELOG.md"
 Issues = "https://github.com/tristanmanchester/tomojax/issues"
 
 [dependency-groups]

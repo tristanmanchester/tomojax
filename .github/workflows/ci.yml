@@ -1,14 +1,14 @@
 name: CI
 
 # `just ci` and `just test-cuda` run locally before each push. Here the CPU gate
-# (product-spine) runs on pull requests to main, on demand (`gh workflow run CI`)
-# and on release tags; the installed-package matrix runs on demand and on tags.
+# (product-spine) runs on pull requests to main and on demand (`gh workflow run CI`);
+# the release workflow calls this one first, so a release runs the CPU gate and the
+# installed-package matrix before anything is published.
 on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-  push:
-    tags: ["v*"]
+  workflow_call:
 
 permissions:
   contents: read
@@ -26,10 +26,12 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -97,10 +99,12 @@ jobs:
         python: ["3.12", "3.13", "3.14"]
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup uv and Python
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           python-version: ${{ matrix.python }}
           enable-cache: false
