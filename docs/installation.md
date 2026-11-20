@@ -112,6 +112,7 @@ the CUDA wheel check with `--python 3.14`.
 `--find-links /path/to/wheelhouse` runs without network access or a package
 cache, using dependency wheels from that directory and an already available
 interpreter. An sdist install also needs the build backend there. Without that option, dependencies come from the package
-index. The pull-request workflow runs lint, types and the numerical CPU suite
-on Python 3.12, plus separate uncached wheel/sdist jobs on Python 3.12–3.14.
+index. The CI workflow, run on demand and on release tags, runs lint, types and
+the numerical CPU suite on Python 3.12, plus separate uncached wheel/sdist jobs on
+Python 3.12–3.14.
 CUDA checks run separately on NVIDIA hardware.

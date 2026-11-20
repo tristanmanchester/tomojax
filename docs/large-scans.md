@@ -242,7 +242,7 @@ averages `binning × binning` pixels, which cuts projection cost by `binning²`.
 Pixels that do not fill a block at the edges are dropped, and the detector
 centre moves to match. Iterative `tj.reconstruct` warns, with the
 factor to use, when the detector is at least twice as fine as the grid.
-Binning is a Python step; the commands have no binning option. On the FIPS
+On the command line, `tomojax correct --binning` bins the detector. On the FIPS
 walnut, binning 2 × 2 made least squares
 [3.5 times faster for no loss of accuracy](measurements.md#fips-walnuts-real-lab-cone-beam-ct).
 

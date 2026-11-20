@@ -35,6 +35,7 @@ created by PyTorch is made contiguous for the backward projector. Do not modify
 an input concurrently with projection. Each direction compiles on its first
 call and reuses that executable thereafter.
 
-JAX and PyTorch share GPU memory. When a training process needs most of the
-GPU, set `XLA_PYTHON_CLIENT_PREALLOCATE=false` before importing JAX or TomoJAX
-so JAX does not reserve memory needed by the network.
+JAX and PyTorch share GPU memory. Importing TomoJAX sets
+`XLA_PYTHON_CLIENT_PREALLOCATE=false` unless it is already set, so JAX grows its
+pool as needed instead of reserving 75% of the GPU. Import TomoJAX before JAX runs
+its first operation; after that the setting no longer applies.

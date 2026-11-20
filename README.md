@@ -104,8 +104,9 @@ alignment `tomojax align scan.nxs -o aligned.nxs --fit translations rotations`.
 Expert settings are a configuration of the method's own class from
 `tomojax.recon`,
 `tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv"))`,
-or the same fields in a TOML file given to `--config`. Alignment has one model
-argument, `fit=`, plus an optional `grid=`.
+or the same fields in a TOML file given to `--config`. `tj.align` chooses what to fit
+with `fit=`; its other keywords (`grid=`, `region=`, `method=`, `config=` and five common
+settings) are listed in [align a scan](https://tomojax.dev/align-a-scan/#settings).
 
 `tj.Scan(projections, geometry)` builds a scan from arrays, and
 `tj.project(geometry, volume)` simulates one for any geometry. Volumes use

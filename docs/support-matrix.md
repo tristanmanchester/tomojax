@@ -52,8 +52,9 @@ before writing the counts) needs none, and the correction record says so. SkySca
 requires `flats=` (frames or one level) rather than deriving it from bit depth.
 Compressed TIFF crops decode only their intersecting strips/tiles. In folders,
 TIFF-suffixed entries are image storage, not acquisition text sidecars.
-TIFF line-integral import requires explicit `--geometry`, `--pixel-size` and
-`detector_center = [u, v]` in `--config`; laminography also needs `tilt`.
+The command line reads a TIFF stack as raw frames. TIFF line integrals are
+read in Python, `tj.Scan(read_tiff_frames(path), geometry)`, with the whole
+geometry given, including the tilt for laminography.
 For raw frames without an explicit grid, detector binning also reduces output
 resolution. Axial-parallel crops follow the measured row window; other models
 retain their output box. File/caller-supplied grids and `Scan.binned()` retain

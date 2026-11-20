@@ -241,9 +241,7 @@ measurements require independent calibration evidence and repair before `Rings`.
   including detector offsets and per-view rotations; comparisons must retain
   those calibrations rather than substituting a circular centred scan.
 
-## Next steps
-
-See [align a scan](align-a-scan.md) to choose the alignment parameters.
+## Raw ESRF, HDF5 and Nikon inputs
 
 ESRF raw Bliss and SPEC EDF metadata do not establish a calibrated detector
 centre: it must be estimated from data or supplied. SPEC scan range alone also
