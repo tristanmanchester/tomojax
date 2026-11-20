@@ -65,19 +65,19 @@ from it. Over the whole slab the relative L2 error is 0.357 for FBP and
 400 views over a half turn and 2 × 10⁴ photons per pixel. The rotation axis
 projects 5.3 px off the detector centre, and every view has its own pose: a
 slow wobble plus jitter of up to 0.25° in each rotation, 2.4 px across the axis
-and 1.5 px along it. The earlier implementation used for the published figure took 300 s. It
-recovered the rotations to 0.06° RMS or better and the shifts to 0.07 px
-(across) and 0.04 px (along) RMS, and the error of a FISTA-TV reconstruction
-falls from 0.928 with the nominal geometry to 0.235. The script takes about
-6 minutes. Those measurements need requalification with the consolidated
-`fit=("translations", "rotations")` solver.
+and 1.5 px along it. `tj.align(scan, fit=("center", "translations", "rotations"))`
+takes 36 s. It recovers the rotations to 0.06° RMS or better and the shifts to
+0.47 px (across) and 0.29 px (along) RMS: it follows the slow wobble and leaves
+the view-to-view jitter. The error of a FISTA-TV reconstruction (automatic TV
+weight) falls from 0.876 with the nominal geometry to 0.168, against 0.199 with
+the true poses. The script takes about 4 minutes.
 
 Moving the whole movement rigidly, with every pose moved back, predicts the
 same data, as does trading the detector centre against a shift of every view,
 so `tj.align` reports the estimate with the least per-view motion. The truth,
 its poses and its centre are moved to that estimate before they are compared
 (see [where the aligned volume sits](../docs/align-a-scan.md#check-the-result));
-there the centre is found at 3.26 px against 3.31 px.
+there the centre is found at 3.08 px.
 
 ### Volume-render a reconstruction
 

@@ -55,9 +55,9 @@ uv run python examples/gallery/k11_glass_layer.py k11-54286.nxs k11-glass-layer.
 A DIAD-like scan at 25 keV and 30° tilt, rendered by gVXR from the meshes of a
 chip package with phase contrast, detector blur, Poisson noise and flat
 fields. The detector is 3.2 pixels off the axis and the sample wobbles and
-jitters by about two pixels and 0.1° between views. The figure comes from an
-earlier alignment implementation, which found the centre to 0.02 pixels and the
-per-view shifts to 0.03 and 0.08 pixels in under two minutes; the voids in the
+jitters by about two pixels and 0.1° between views. `tj.align` finds the centre
+to 0.02 pixels in 39 s and follows the per-view shifts to 0.33 pixels across the
+axis and 0.22 pixels along it, leaving the jitter across it; the voids in the
 solder balls reappear.
 The shifts are compared after removing a rigid motion of the whole
 sample, which no reconstruction can detect; the errors that remain are
