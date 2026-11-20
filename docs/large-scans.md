@@ -151,7 +151,6 @@ the standard `TMPDIR` environment variable. The returned NumPy memmap owns its
 file until released. With explicit `out=`, the supplied array is preserved and
 work files are placed beside it if it is a memmap.
 
-
 `tj.reconstruct(scan, "fbp")` and `tomojax reconstruct --method fbp` switch to host
 slabs when the volume would take more than 40% of the free device memory.
 `Reconstruction.info["host_slabs"]` records that choice. Passing `out=` forces
@@ -227,7 +226,7 @@ with tj.reconstruct_slabs(frames, "fbp", corrections=[Stripes(), Stripes(51, var
 volume.flush()
 ```
 
-Each block retains its global physical grid, genuinely corrected source rows
+Each block retains its global physical grid, corrected source rows
 (including interpolation neighbors), and correction records. Blocks remain
 valid after iteration or context exit, but collecting them retains both their
 volumes and projections. The context drains pending work on early exit or
@@ -239,7 +238,7 @@ or view rejection; keep the raw and calibration inputs unchanged in the context.
 When the detector samples the rotation axis more finely than the voxels (the
 pixel pitch, divided by the magnification in a cone beam, is smaller than a
 voxel), the projectors do work the volume cannot use. `scan.binned(binning)`
-averages `factor × factor` pixels, which cuts projection cost by `factor²`.
+averages `binning × binning` pixels, which cuts projection cost by `binning²`.
 Pixels that do not fill a block at the edges are dropped, and the detector
 centre moves to match. Iterative `tj.reconstruct` warns, with the
 factor to use, when the detector is at least twice as fine as the grid.
