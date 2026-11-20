@@ -23,8 +23,7 @@ default is inserted.
 For raw NXtomo or Data Exchange frames with flats and darks, follow
 [preprocessing](quickstart.md#correct-raw-detector-frames). Nonstandard HDF5
 layouts can name their datasets with `--data-path`, `--angles-path` and
-`--image-key-path` (or `data_path=`... in `tj.load_frames`). Structural
-validation does not establish correct physical geometry.
+`--image-key-path` (or `data_path=`... in `tj.load_frames`).
 
 ## Prepare TIFF data
 
@@ -159,9 +158,8 @@ how to share a scan among GPUs.
 
 If a geometry-checked, corrected scan still shows motion artefacts, follow the
 [alignment guide](align-a-scan.md). Save an unaligned reconstruction for
-comparison. Check residuals, multiple slice planes, and recovered parameters;
-image sharpness alone cannot establish physical calibration. Recovery remains
-data-dependent, especially for truncated or periodic objects; a lower training residual alone does not establish correct alignment.
+comparison. Check residuals, multiple slice planes, and recovered parameters.
+Recovery depends on the data, especially for truncated or periodic objects.
 
 ## Automatic NeXus laminography
 
@@ -195,8 +193,7 @@ Pass an explicit `grid=` to `tj.align` or `tj.reconstruct` to fix the physical
 region and output sampling. Explicit grids are not coarsened automatically, so
 choose a grid that fits the device.
 
-Inspect several slices and the recovered motion: smoothness and lower projection
-error do not establish physical pose truth. Reserve held-out views before calling
+Inspect several slices and the recovered motion. Reserve held-out views before calling
 the workflow for independent evaluation. `fit=` names the geometry parameters being estimated;
 reconstruction `method` chooses the image solver. Automatic reconstruction of a posed scan
 preserves its grid and corrections.
