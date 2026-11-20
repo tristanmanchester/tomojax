@@ -17,7 +17,7 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     level = object.__new__(_solver._Level)
     level.lam, level.precision, level.image_tolerance = 0, None, 0.03
     # The level's volumes as one-voxel arrays; the step holds the solution the Schur solve wrote.
-    level.stacks = {name: jnp.ones(1) for name in ("damp", "rhs", "invdiag", "step")}
+    level.stacks = {name: jnp.ones(1) for name in ("invdiag", "step")}
     level.stacks |= {"r": None, "factor": None, "free": jnp.ones(1, bool)}
     level.ops = SimpleNamespace(
         prepare=lambda value: value,
@@ -145,7 +145,9 @@ def test_stopping_requires_two_small_proposals_at_the_initial_damping(
         pad_images=lambda value: value,
         pad_precision=lambda value: value,
         pad_poses=lambda value: value,
-        parameters=SimpleNamespace(local=()),  # no per-view columns: the photon scale stands
+        parameters=SimpleNamespace(
+            local=(), translation_columns=()
+        ),  # no per-view columns: the photon scale stands
         linearize=lambda *_: (
             jnp.zeros(1),
             jnp.ones(1),

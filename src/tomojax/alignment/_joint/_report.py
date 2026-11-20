@@ -104,9 +104,12 @@ def unusual_views(energy, order=None):
 def _split(columns, spacing, order=None):
     """The part of each column the prior's drift spline explains, and the rest."""
     order = ViewOrder(len(columns)) if order is None else order
-    design = order.spline_design(spacing)
-    smooth = design @ np.linalg.lstsq(design, columns, rcond=None)[0]
-    return smooth, columns - smooth
+    basis, tree = order.drift((spacing,), (True,))
+    if tree is None:
+        smooth = basis @ (basis.T @ columns)
+        return smooth, columns - smooth
+    rough = tree.residual(columns[:, None, :], np)[:, 0]
+    return columns - rough, rough
 
 
 def build(

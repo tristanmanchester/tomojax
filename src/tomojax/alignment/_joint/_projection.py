@@ -335,8 +335,8 @@ class Projection:
         )(nominal, q, scales, frames)
         return jnp.swapaxes(columns, 1, 2)
 
-    def project(self, cf, x, *, absolute=False):
-        """Apply A, or |A| for bounds, to the valid views."""
+    def project(self, cf, x, *, absolute=False, z_fast=False):
+        """Apply A, or |A| for bounds. A z-fast plane volume has shape (nx, ny, nz)."""
         if self.cone:
             image = cone_project(x, cf.rays, self.grid, self.detector, backend=self.backend)
         else:
@@ -348,6 +348,7 @@ class Projection:
                 backend=self.backend,
                 interpolation=self.interpolation,
                 absolute_weights=absolute,
+                z_fast=z_fast,
             )
         return residual_filter(image) * cf.valid[:, None, None]
 

@@ -51,10 +51,10 @@
   "code_lines": {
     "(modules)": 3541,
     "_data": 2104,
-    "alignment": 4125,
+    "alignment": 4424,
     "backends": 260,
     "cli": 2267,
-    "core": 9525,
+    "core": 9523,
     "corrections": 2772,
     "datasets": 1083,
     "forward": 404,

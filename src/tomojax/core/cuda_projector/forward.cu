@@ -74,6 +74,8 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
     __syncthreads();
     first=starts[0];stop=stops[0];
     for(int w=1;w<BLOCK/32;w++){first=min(first,starts[w]);stop=max(stop,stops[w]);}
+    const INDEX_TYPE sx=VOXEL(INDEX_TYPE,1,0,0), sy=VOXEL(INDEX_TYPE,0,1,0), sz=Z_STRIDE;
+    const INDEX_TYPE sa=a==0?sx:(a==1?sy:sz), sb=a==0?sy:(a==1?sz:sx), sc=a==0?sz:(a==1?sx:sy);
     for(int k=first;k<stop;k++) {
         if(!valid) continue;
         float qb=pb+(c[3]*k+c[4]),qc=pc+(c[7]*k+c[8]);
@@ -101,12 +103,23 @@ extern "C" __global__ void forward(const float* coeff, const float* x, float* ou
 #if BAND
         int iz=a==0?ic:(a==1?ib:k);
         if (iz<zlo || iz>=zhi) continue;
+        const bool interior = false;
+#else
+        const bool interior = (unsigned)ib < (unsigned)(nb-1) && (unsigned)ic < (unsigned)(nc-1);
 #endif
+        float f00, f01, f10, f11;
+        if (interior) {
+            const float* p = x + k*sa + ib*sb + ic*sc;
+            f00=p[0];  f01=p[sc];
+            f10=p[sb]; f11=p[sb+sc];
+        } else {
+            f00=sample(x,a,k,ib,ic,nx,ny,zs,nb,nc);
+            f01=sample(x,a,k,ib,ic+1,nx,ny,zs,nb,nc);
+            f10=sample(x,a,k,ib+1,ic,nx,ny,zs,nb,nc);
+            f11=sample(x,a,k,ib+1,ic+1,nx,ny,zs,nb,nc);
+        }
         float wb=qb-ib,wc=qc-ic;
-        val=(sample(x,a,k,ib,ic,nx,ny,zs,nb,nc)*(1-wc)
-             +sample(x,a,k,ib,ic+1,nx,ny,zs,nb,nc)*wc)*(1-wb)
-            +(sample(x,a,k,ib+1,ic,nx,ny,zs,nb,nc)*(1-wc)
-             +sample(x,a,k,ib+1,ic+1,nx,ny,zs,nb,nc)*wc)*wb;
+        val=(f00*(1-wc)+f01*wc)*(1-wb)+(f10*(1-wc)+f11*wc)*wb;
 #endif
         // Keep the original sequential additions, even for uniform support.
         total+=val*c[9];

@@ -38,7 +38,7 @@ def test_initial_support_and_optional_tv_work(monkeypatch, weight, interpolation
 
         return checked
 
-    names = ("energy", "conductance", "diffusion", "inverse_diagonal")
+    names = ("energy", "conductance", "diffusion", "diagonal")
     for name in names:
         monkeypatch.setattr(_tv, name, spy(name, getattr(_tv, name)))
     grid, detector = tj.Grid(4, 3, 3, 0.7, 0.8, 0.9), tj.Detector(6, 1, 0.7, 0.9)
@@ -200,6 +200,43 @@ def test_linearization_is_the_gradient_of_the_profiled_robust_objective():
             plus = objective(*(h * d for d in direction))
             minus = objective(*(-h * d for d in direction))
             assert (plus - minus) / (2 * h) == pytest.approx(analytic, rel=1e-3)
+
+
+def test_translation_prior_scores_use_the_stored_columns_and_weights():
+    with jax.enable_x64(True):
+        ops, _, _, _, precision, _, out, _ = _linearized(half=True)
+        weights, columns, residual = out[2], out[3], out[-2]
+        scores = ops.translation_scores(
+            *(js.stack(ops, a) for a in (weights, columns, residual, precision))
+        )
+        weighted = weights.astype(jnp.float32) * profiled_residual(residual, precision)
+        selected = columns[:, ops.parameters.translation_columns].astype(jnp.float32)
+        expected = jnp.einsum("vkij,vij->vk", selected, weighted)[: ops.n]
+        np.testing.assert_allclose(scores, expected, rtol=2e-6, atol=1e-7)
+
+
+def test_translation_scale_preserves_the_fp32_dot_in_full_and_partial_batches():
+    # Opposite pixel pairs have exactly zero offset and row ramp. Thus only the
+    # accumulation of the many signed FP32 products can change this score.
+    grid, detector = tj.Grid(8, 8, 8, 1, 1, 1), tj.Detector(256, 128, 1, 1)
+    n = 11
+    geometry = tj.ParallelGeometry(grid, detector, np.arange(n) * (360 / n))
+    ops = Operators(grid, detector, stack_view_poses(geometry, n), lever=4, native=(1, 1))
+    shape = (ops.padded_n, detector.nv, detector.nu)
+    rng = np.random.default_rng(17)
+    pairs = rng.normal(size=(*shape[:2], detector.nu // 2)).astype(np.float32)
+    residual = jnp.asarray(np.stack((pairs, -pairs), axis=-1).reshape(shape))
+    weights = jnp.asarray(rng.uniform(0.1, 1, shape), jnp.float16)
+    columns = jnp.asarray(rng.normal(size=(shape[0], ops.dofs, *shape[1:])), jnp.float16)
+    with jax.enable_x64(True):
+        scores = ops.translation_scores(*(ops.stack(a) for a in (weights, columns, residual)), None)
+        expected = []
+        for start in range(0, n, ops.batch):
+            views = slice(start, min(start + ops.batch, n))
+            selected = columns[views][:, ops.parameters.translation_columns].astype(jnp.float32)
+            res = weights[views].astype(jnp.float32) * residual[views]
+            expected.append(jnp.einsum("vkij,vij->vk", selected, res))
+        np.testing.assert_array_equal(scores, jnp.concatenate(expected))
 
 
 def test_fp16_step_storage_stays_within_its_rounding_of_fp32():
@@ -493,8 +530,7 @@ def test_the_shared_terms_and_the_prior_scale_are_formed_one_view_batch_at_a_tim
         out = level.linearize(jnp.zeros(prior.size), jnp.zeros(ops.shape, jnp.float32))
         sw, residual, common = out[2], out[8], out[9]
         level.held(residual, residual, sw, level.precision, jnp.float32(0.5), common.moments)
-        linear = (out[0], out[1], sw, out[3], out[4], out[5], residual, common)
-        _solver._pose_weight(level, linear, 0.01)
+        _solver._pose_weight(level, (*out[:6], residual, common), 0.01)
     assert ops.batch == 4 and ops.padded_n == 12
     assert seen and max(seen) <= ops.batch, seen
 

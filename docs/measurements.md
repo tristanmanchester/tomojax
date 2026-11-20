@@ -1397,6 +1397,36 @@ the initial image and the refinement differ by 1.2 s. The 0.11 GiB is the shared
 level's two image-sized arrays (127 MiB); the rest of `aa6cec52`'s peak over
 `29836aaa` (3.51 against 2.31 GiB) came on main before the branch.
 
+The full scans at the declared 704 × 704 × 234 grid (6.48 µm voxels, all views,
+native 640 × 540 detector at 2.16 µm), `tj.align(scan)` with nothing set, one process,
+measured 2026-11-19 and 2026-11-20 on the RTX 4070 Laptop:
+
+| Scan | Views | `f58a6f7a` | `dc736fb3` | GPU, `f58a6f7a` → `dc736fb3` |
+|---|---:|---:|---:|---:|
+| K11 54013, tilt −35° | 1441 | 354 s | 281 s | 3.31 → 3.19 GiB |
+| K11 54286, tilt +35° | 1441 | 352 s | 279 s | 3.31 → 3.19 GiB |
+| K11 67208, tilt +30.9° | 4000 | 1304 s | 1039 s | 4.73 → 4.63 GiB |
+
+Both commits return byte-identical poses and images on all three. On 54013, undoing one
+change at a time costs 45 s for converting the CG search direction to z-contiguous
+storage once per product, 15 s for forming the motion scale's scores on the device,
+14 s for the forward kernel's fixed-stride interior reads and 8 s for the gather's
+native launcher.
+
+The motion prior now takes linear storage and work in the views (commit `3aae66e`).
+Its factor and solve alone, two translations and the centre fitted, knots every
+10 views, FP64, one fresh process per row (2026-11-20):
+
+| Views | Held, before → after | Peak, before → after | Factor, before → after | Solve, before → after |
+|---:|---:|---:|---:|---:|
+| 1000 | 20.7 → 6.4 MiB | 90 → 14 MiB | 9.2 → 2.8 ms | 0.83 → 0.71 ms |
+| 4000 | 318 → 26 MiB | 906 → 41 MiB | 263 → 5.0 ms | 2.6 → 0.84 ms |
+| 16000 | 5023 → 105 MiB | out of memory → 163 MiB | — → 13.8 ms | — → 1.9 ms |
+
+On K11 54013 the plain call takes 282 s, as before. Its poses move by up to 0.30 px
+(6.6% of the image), the same as reordering the old prior's columns, and moving one
+pixel of the data by one unit in the last place moves them by 0.22 px (7.0%).
+
 ### Detector centre
 
 The projection-only estimator uses a one-pixel derivative bandwidth and a

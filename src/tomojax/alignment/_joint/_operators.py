@@ -23,6 +23,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.volume_layout import transpose_volume
+
 from . import _common
 from ._parameters import Parameters
 from ._projection import (
@@ -33,10 +35,10 @@ from ._projection import (
 
 
 class AffineGeometry(NamedTuple):
-    """Fixed parallel-ray coefficients and exact centre/translation tangents."""
+    """Fixed parallel-ray coefficients and tangents of the two changing offsets."""
 
     rays: jax.Array
-    tangent: jax.Array
+    offsets: jax.Array
 
 
 def robust_value(residual, precision, delta):
@@ -165,6 +167,8 @@ class Operators:
             cone=frames is not None,
             interpolation=interpolation,
         )
+        self.z_fast = self.projection.backend == "cuda" and not self.projection.cone
+        self.project, self.back = self.projection.project, self.projection.back
         self.backend, self.dofs = self.projection.backend, self.parameters.k
         # Bound the temporary value/pose columns to about 32 MiB when more
         # than one view fits.
@@ -206,6 +210,7 @@ class Operators:
         owned = partial(jax.jit, keep_unused=True)
         self.sensitivity = owned(self._sensitivity, donate_argnums=(1,))
         self._initial_gradient = jax.jit(self._initial_gradient)
+        self._score_inputs = jax.jit(self._score_inputs)
         self.linearize = owned(self._linearize, donate_argnums=(5,))
         self.objective = jax.jit(self._objective)
         self.common_images = owned(self._common_images, donate_argnums=(2,))
@@ -281,7 +286,7 @@ class Operators:
     def _affine_geometry(self, nominal, scales):
         q = jnp.zeros((self.padded_n, self.dofs), jnp.float32)
         cf = self.coefficients(nominal, q, self.valid, scales).rays
-        tangent = jnp.zeros((self.padded_n, self.dofs, 14), jnp.float32)
+        tangent = jnp.zeros((self.padded_n, self.dofs, 2), jnp.float32)
         angle = jnp.deg2rad(jnp.float32(self.detector_roll))
         c, s = jnp.cos(angle), jnp.sin(angle)
         d = self.detector
@@ -291,13 +296,13 @@ class Operators:
             physical = scales[:, coordinate]
             u = physical * (c if coordinate == 3 else s) / d.du
             v = physical * (-s if coordinate == 3 else c) / d.dv
-            tangent = tangent.at[:, column, 4].set(-cf[:, 1] * u - cf[:, 2] * v)
-            tangent = tangent.at[:, column, 8].set(-cf[:, 5] * u - cf[:, 6] * v)
+            tangent = tangent.at[:, column, 0].set(-cf[:, 1] * u - cf[:, 2] * v)
+            tangent = tangent.at[:, column, 1].set(-cf[:, 5] * u - cf[:, 6] * v)
         if self.parameters.nglobal:
             # Parallel centre u is a positive lab-x detector displacement.
             u, v = c * self.native[0] / d.du, -s * self.native[0] / d.dv
-            tangent = tangent.at[:, -1, 4].set(cf[:, 1] * u + cf[:, 2] * v)
-            tangent = tangent.at[:, -1, 8].set(cf[:, 5] * u + cf[:, 6] * v)
+            tangent = tangent.at[:, -1, 0].set(cf[:, 1] * u + cf[:, 2] * v)
+            tangent = tangent.at[:, -1, 1].set(cf[:, 5] * u + cf[:, 6] * v)
         return AffineGeometry(cf, tangent)
 
     def initial_gradient(self, q, x, y, precision, delta):
@@ -330,7 +335,7 @@ class Operators:
             offsets = jnp.einsum(
                 "nk,nkj->nj",
                 q,
-                nominal.tangent[:, :, jnp.asarray([4, 8])],
+                nominal.offsets,
                 precision=jax.lax.Precision.HIGHEST,
             )
             rays = nominal.rays.at[:, 4].add(offsets[:, 0]).at[:, 8].add(offsets[:, 1])
@@ -351,15 +356,14 @@ class Operators:
     def _tangent(self, nominal, q, valid, scales=None, frames=None):
         del valid  # the coefficient packet masks predictions and columns together
         if isinstance(nominal, AffineGeometry):
-            # Preserve the affine map's structural zeros inside the compiled
-            # derivative. Treating the cached full array as dense dynamic data
-            # needlessly differentiates ray slopes and integration weights.
-            tangent = jnp.zeros_like(nominal.tangent)
+            # Only the two offsets vary. Keep zeros explicit in the compiled
+            # derivative of the ray slopes and integration weights.
+            tangent = jnp.zeros((*nominal.offsets.shape[:2], 14), jnp.float32)
             return (
                 tangent.at[:, :, 4]
-                .set(nominal.tangent[:, :, 4])
+                .set(nominal.offsets[:, :, 0])
                 .at[:, :, 8]
-                .set(nominal.tangent[:, :, 8])
+                .set(nominal.offsets[:, :, 1])
             )
         scales = self.default_scales if scales is None else scales
         scales = jnp.broadcast_to(scales, (len(q), self.parameters.full_dofs))
@@ -374,19 +378,11 @@ class Operators:
         )(nominal, q, scales, frames)
         return jnp.swapaxes(tangent, 1, 2)
 
-    def project(self, cf, x):
-        """Projections of one coefficient batch."""
-        return self.projection.project(cf, x)
-
     def columns(self, nominal, q, valid, x, *, scales=None, frames=None):
         """Projections and pose derivatives, (view, 1 + dofs, v, u)."""
         cf = self.coefficients(nominal, q, valid, scales, frames)
         tangent = self._tangent(nominal, q, valid, scales, frames)
         return self.projection.columns(cf, x, tangent)
-
-    def back(self, accumulate, cf, y):
-        """Add the matched transpose of one batch to ``accumulate``."""
-        return self.projection.back(accumulate, cf, y)
 
     def _zeros(self):
         return jnp.zeros(self.shape, jnp.float32)
@@ -499,6 +495,26 @@ class Operators:
             jnp.stack([self.parameters.reduce_score(moved[..., i]) for i in range(2)]),
         )
 
+    def _score_inputs(self, sw, j, residual, precision, i):
+        """Gather and whiten one batch of translation-score operands where the stacks live."""
+        w = self.batch_precision(self.batch_of(precision, i), self.batches(self.valid)[i])
+        res = sw.read(i).astype(jnp.float32) * profiled_residual(residual.read(i), w)
+        return j.read(i)[:, self.parameters.translation_columns].astype(jnp.float32), res
+
+    def translation_scores(self, sw, j, residual, precision):
+        """Per-view scores for the motion scale, including the unpadded final batch.
+
+        Keep the FP32 dot as a separate reduction. Fusing it with the whitening
+        lets the GPU compiler change its accumulation order, enough to change
+        the fitted motion on a poorly conditioned scan.
+        """
+        scores = []
+        for i in range(self.nb):
+            columns, res = self._score_inputs(sw, j, residual, precision, i)
+            count = min(self.n - i * self.batch, self.batch)
+            scores.append(jnp.einsum("vkij,vij->vk", columns[:count], res[:count]))
+        return jnp.concatenate(scores)
+
     def _shared_data(self, y, precision):
         """G and the data's shared moments over the profiled views, accumulated batch by batch."""
 
@@ -588,11 +604,19 @@ class Operators:
         return s0 * profile(rho * image, s0)
 
     def _weighted_forward(self, q, x, sw, j, precision, r):
+        """Project one image through all batches, storing its weighted rays and pose scores.
+
+        The CUDA plane kernels read adjacent detector rows along z. One conversion to
+        z-contiguous storage serves all the batches in this product.
+        """
+        x = transpose_volume(x) if self.z_fast else x
+
         def step(r, z):
             i, cf = z
             s, jb, wb = sw.read(i), j.read(i), self.batch_of(precision, i)
             s0, rho = self._split(s, wb, cf.valid)
-            out = jax.lax.optimization_barrier(rho * profile(self.project(cf, x) * s0, s0))
+            image = self.project(cf, x, z_fast=self.z_fast)
+            out = jax.lax.optimization_barrier(rho * profile(image * s0, s0))
             return r.write(i, out), column_score(jb, out)
 
         r, p = jax.lax.scan(step, r, (jnp.arange(self.nb), self.batches(q)))

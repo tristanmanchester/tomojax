@@ -70,23 +70,26 @@ def test_shared_columns_broadcast_once_and_scores_sum_over_views():
 
 
 @pytest.mark.parametrize(
-    ("fit", "cone"),
+    ("fit", "cone", "n"),
     [
-        ("center", False),
-        (("translations", "center", "tilt", "roll"), False),
-        (("translations", "rotations", "center", "tilt", "roll"), True),
+        ("center", False, 9),
+        (("translations", "center", "tilt", "roll"), False, 9),
+        (("translations", "rotations", "center", "tilt", "roll"), True, 9),
+        (("translations", "rotations", "center", "tilt", "roll"), True, 241),
     ],
 )
-def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit, cone):
-    n = 9
+def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit, cone, n):
+    from scipy.interpolate import make_interp_spline
+
     parameters = Parameters(n, fit, cone=cone, lever=17)
     rng = np.random.default_rng(294)
     with jax.enable_x64(True):
         gauge = rng.normal(size=(n * parameters.full_dofs, 2))
+        spacing = (5,) * parameters.full_dofs if n == 9 else (5, 5, 5, 1, 2, 4)
         prior = MotionPrior(
             n,
             gauge,
-            knot_spacing=(5,) * parameters.full_dofs,
+            knot_spacing=spacing,
             delta=0.03,
             parameters=parameters,
             rotation_scales=np.full(parameters.full_dofs, 0.05),
@@ -110,8 +113,15 @@ def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit,
             # rotation columns, so Q leaves those as they are.
             d = np.kron(np.diff(np.eye(n), axis=0), np.eye(parameters.nlocal))
             laplacian = d.T @ np.diag(weights.reshape(-1)) @ d
-            u = np.asarray(prior.U)
-            q = np.eye(parameters.local_size) - u @ u.T
+            q = np.eye(parameters.local_size)
+            for i, column in enumerate(parameters.local):
+                if column >= 3:
+                    sites = np.r_[np.arange(0, n - 1, spacing[column]), n - 1]
+                    b = make_interp_spline(sites, np.eye(len(sites)), k=min(3, len(sites) - 1))(
+                        np.arange(n)
+                    )
+                    basis = np.linalg.qr(b)[0]
+                    q[i :: parameters.nlocal, i :: parameters.nlocal] -= basis @ basis.T
             hessian[: parameters.local_size, : parameters.local_size] += (
                 q @ laplacian @ q + np.diag(prior.rotation_precision)
             )

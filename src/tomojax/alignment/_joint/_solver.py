@@ -94,7 +94,6 @@ class _Volumes:
         return jnp.broadcast_to(jnp.maximum(x0, 0), x.shape)
 
     observed_only = _into(lambda x, observed: jnp.where(observed, x, 0))
-    damping = _into(lambda _out, dd: jnp.maximum(dd, jnp.maximum(dd.max(), 1e-8) * 1e-4))
     free = _into(lambda _out, x, gx: (x > 0) | (gx < 0))
     # The step to max(x + solution, 0) on the free voxels, in the solution's buffer.
     clipped = _into(lambda s, free, x: jnp.maximum(jnp.where(free, x + s, x), 0) - x)
@@ -128,12 +127,12 @@ def level_volumes(ops, prior, lam) -> dict[str, Any]:
 
     The volume ``x`` and ``other`` (the line search's trial; once a step is accepted, the
     previous volume), the linearisation's gradient ``gx0`` and diagonal ``dd``, the shared
-    images (``_common``), the damping, the free-voxel mask, the Schur solve's right-hand
-    side, preconditioner and ``step`` (its solution, then the clipped step), with TV the
+    images (``_common``), the free-voxel mask, the Schur preconditioner and ``step``
+    (right-hand side, then solution, then clipped step), with TV the
     stepped gradient ``gx`` and conductance ``d``, and the motion prior's ``factor``.
     """
     volume = jax.ShapeDtypeStruct(ops.shape, jnp.float32)
-    names = ("x", "other", "gx0", "dd", "damp", "rhs", "invdiag", "step")
+    names = ("x", "other", "gx0", "dd", "invdiag", "step")
     shapes: dict[str, Any] = dict.fromkeys(names + (("gx", "d") if lam else ()), volume)
     shapes["images"] = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
     shapes["free"] = jax.ShapeDtypeStruct(ops.shape, jnp.bool_)
@@ -173,7 +172,10 @@ def _line_search(trial, f, gx_dx, gp_dc):
 
 
 class _StepContext(NamedTuple):
-    """What every step from one linearisation shares, whatever its damping."""
+    """What every step from one linearisation shares, whatever its damping.
+
+    The LM damping diagonal is max(dd, damping_floor), recovered from dd at its two uses.
+    """
 
     q: Any
     dd: Any
@@ -182,7 +184,7 @@ class _StepContext(NamedTuple):
     gram: Any
     residual: Any
     common: Any
-    damp: Any
+    damping_floor: Any
     d: Any
     gx: Any
     wpose: Any
@@ -226,11 +228,15 @@ class _Level:
         self.gradient = _into(
             lambda _out, gx, x, d: gx + jnp.float32(lam) * tv.diffusion(x, d, scales)
         )
-        self.inverse = _into(
-            lambda _out, d, damp, dd, lm: tv.inverse_diagonal(d, damp, dd, lam, lm, scales)
-            if lam
-            else 1 / jnp.maximum(dd + jnp.float32(lm) * damp, jnp.float32(1e-8))
-        )
+
+        @_into
+        def inverse(_out, d, dd, floor, lm):
+            value = dd + jnp.float32(lm) * jnp.maximum(dd, floor)
+            if lam:
+                value = value + jnp.float32(lam) * tv.diagonal(d, scales)
+            return 1 / jnp.maximum(value, jnp.float32(1e-8))
+
+        self.inverse = inverse
 
         # At unchanged poses the prediction is linear in the image: the residual
         # plus a times the step's projection (returned scaled by sw, zero only
@@ -267,11 +273,9 @@ class _Level:
             )
         )
 
-        # r is donated: the matvec rewrites the level's one weighted-projection stack. So is
-        # the step volume, unread: the solution is written into it.
-        @partial(jax.jit, donate_argnums=(13, 14), keep_unused=True)
+        @partial(jax.jit, donate_argnums=(8, 13))
         def schur(
-            q, sw, j, factor, free, d, damp, lm, rhs, invdiag, precision, common, poses, r, _out
+            q, sw, j, factor, free, d, damping, lm, rhs, invdiag, precision, common, poses, r
         ):
             # Fixed voxels' transpose is discarded: the gather may skip them.
             active = ops.projection.active(free)
@@ -285,7 +289,8 @@ class _Level:
                 out = out + common.image(common.inverse @ (bv - common.poses @ p))
                 if lam:
                     out = out + jnp.float32(lam) * tv.diffusion(v, d, scales)
-                out = out + (jnp.float32(lm) * damp) * v
+                diagonal, floor = damping
+                out = out + (jnp.float32(lm) * jnp.maximum(diagonal, floor)) * v
                 return out * free, r
 
             return krylov_solve(matvec, rhs, invdiag, inner, rtol=image_tolerance, work=r)
@@ -338,8 +343,9 @@ class _Level:
         free = jax.ShapeDtypeStruct(ops.shape, jnp.bool_)
         d = volume if self.lam else None
         precision = stack("precision") if weighted else None
-        head = (q, stack("sw"), stack("j"), factor, free, d, volume, 1.0, volume, volume)
-        return (*head, precision, common, poses, stack("r"), volume)
+        damping = (volume, jax.ShapeDtypeStruct((), jnp.float32))
+        head = (q, stack("sw"), stack("j"), factor, free, d, damping, 1.0, volume, volume)
+        return (*head, precision, common, poses, stack("r"))
 
     def _write(self, name, fun, *args: Any) -> Any:
         """``fun`` run into the level's volume ``name``, its donated first argument; held."""
@@ -348,11 +354,12 @@ class _Level:
         return out
 
     def schur(self, *args: Any) -> Any:
-        """The Schur volume solve, into the level's step volume, rewriting ``r`` in place.
+        """Solve into the donated right-hand side and weighted-projection stack.
 
-        The result's solution is the step volume, until the clipped step replaces it.
+        The step volume holds the right-hand side on entry, the solution on return
+        and the clipped step when the caller imposes nonnegativity.
         """
-        result, r = self._schur(*args, self.stacks["r"], self.stacks["step"])
+        result, r = self._schur(*args, self.stacks["r"])
         self.stacks.update([("r", r), ("step", result.solution)])
         return result
 
@@ -471,7 +478,7 @@ class _Level:
             gram=gram,
             residual=residual,
             common=common,
-            damp=self._write("damp", _Volumes.damping, dd),
+            damping_floor=jnp.maximum(dd.max(), 1e-8) * 1e-4,
             d=d,
             gx=gx,
             wpose=wpose,
@@ -491,8 +498,10 @@ class _Level:
         self.stacks.update([("factor", factor)])
         poses = _common.PoseSolve.build(prior.solve, factor, common)
         sp = poses(prior.solve, factor, common, k.gp)
-        rhs = self._write("rhs", self.rhs, k.q, k.sw, k.j, sp, k.gx, k.free, self.precision, common)
-        invdiag = self._write("invdiag", self.inverse, k.d, k.damp, k.dd, lm)
+        rhs = self._write(
+            "step", self.rhs, k.q, k.sw, k.j, sp, k.gx, k.free, self.precision, common
+        )
+        invdiag = self._write("invdiag", self.inverse, k.d, k.dd, k.damping_floor, lm)
         linear_step = self.schur(
             k.q,
             k.sw,
@@ -500,7 +509,7 @@ class _Level:
             factor,
             k.free,
             k.d,
-            k.damp,
+            (k.dd, k.damping_floor),
             lm,
             rhs,
             invdiag,
@@ -633,26 +642,14 @@ def _pose_weight(level, linear, sigma):
     without translation columns) and F.
     """
     ops = level.ops
-    gram = linear[5]
+    _, _, sw, j, _, gram, residual, _ = linear
     n, local = ops.n, ops.parameters.local
     fisher = float(jnp.median(jnp.trace(gram, axis1=1, axis2=2)))
     photon = float(sigma * np.sqrt(fisher) * np.sqrt(2 * np.log(n)))
-    translations = [i for i, dof in enumerate(local) if dof >= 3]
+    translations = ops.parameters.translation_columns
     if not translations or n < 3:
         return photon, None, fisher
-    columns = jnp.asarray(translations)
-    scores = []
-    stacks = level.stacks
-    for start in range(0, n, ops.batch):  # a view slab at a time: the columns are stack-sized
-        stop = min(start + ops.batch, n)
-        held = None if level.precision is None else stacks.rows("precision", start, stop)
-        w = ops.batch_precision(held, ops.valid[start:stop])
-        res = jnp.asarray(stacks.rows("sw", start, stop), jnp.float32) * profiled_residual(
-            stacks.rows("residual", start, stop), w
-        )
-        jb = jnp.asarray(stacks.rows("j", start, stop)[:, columns], jnp.float32)
-        scores.append(jnp.einsum("vkij,vij->vk", jb, res, preferred_element_type=jnp.float32))
-    g = np.asarray(jnp.concatenate(scores), np.float64)
+    g = np.asarray(ops.translation_scores(sw, j, residual, level.precision), np.float64)
     diagonal = np.diagonal(np.asarray(gram, np.float64), axis1=1, axis2=2)[:, translations]
     d = g / np.where(diagonal > 0, diagonal, np.inf)
     second = d[2:] - 2 * d[1:-1] + d[:-2]

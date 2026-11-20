@@ -191,7 +191,6 @@ class LevelStacks:
         self.stacks: dict[str, Stack] = {}
         self.placed: dict[str, Place] = {}
         self.raised: list[str] = []
-        self._host: dict[str, np.ndarray] = {}
         self._keys = ExitStack()
         self.room, self.setup_waste = room, 0
         try:
@@ -238,7 +237,6 @@ class LevelStacks:
             array = host_array(shape, dtype=dtype, copies=beside / max(1, self.sizes[name]))
             if name in data:
                 array[...] = data[name]
-            self._host[name] = array
             key = self._keys.enter_context(host_source(array))
             self.stacks[name] = Stack(key, host=True, shape=shape, dtype=dtype, batch=self.batch)
             self.placed[name] = "host"
@@ -285,12 +283,6 @@ class LevelStacks:
         """Hand a volume to the caller: it is no longer the level's, and outlives it."""
         return self.volumes.pop(name)
 
-    def rows(self, name: str, start: int, stop: int) -> jax.Array:
-        """Views ``start`` to ``stop`` of a stack, on the device, outside compiled code."""
-        if self.placed[name] == "host":
-            return jnp.asarray(self._host[name][start:stop])
-        return self.stacks[name].data[start:stop]
-
     def record(self) -> dict[str, Any]:
         """What ``info`` reports: each stack's placement and size, and the plan it came from."""
         return {
@@ -315,7 +307,6 @@ class LevelStacks:
         self.stacks.clear()
         self.volumes.clear()
         self._keys.close()
-        self._host.clear()
 
 
 # The most the allocator wastes on a chunk: it hands a free chunk out whole when it is under
