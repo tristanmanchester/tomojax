@@ -93,6 +93,11 @@ view and is not motion, such as the model error of a real scan, raises that scal
 does not turn it into motion. A slip much larger than the scale is still followed, a little
 short where the scale is large.
 
+A stage that jitters from view to view is motion of that kind, and the default leaves it. Raise
+`innovation_scale` for such a stage: on the README's watch scan, with up to 0.8 px of jitter in
+every view, the default recovers the shifts to 0.47 px RMS and
+`config=tj.AlignConfig(innovation_scale=100)` to 0.07 px.
+
 ![The balance wheel with drift and five slips between views: the screws are doubled. After fit="translations" the image matches the true geometry.](images/alignment-ladder-drift.png)
 
 The default, `fit="translations"`, removes the drift and slips in this example to 0.008 px in

@@ -6,8 +6,9 @@ The rotation axis projects 5.3 pixels off the detector centre, and every view
 has its own pose: a slow wobble of the sample plus jitter, up to 0.25° in each
 rotation and 2.4 pixels across and 1.5 pixels along the axis. gVXR traces the
 projections through the movement's meshes at those poses. ``tj.align`` fits
-``("center", "translations", "rotations")`` jointly with the volume; nominal
-and aligned scans are reconstructed with the same FISTA-TV settings.
+``("center", "translations", "rotations")`` jointly with the volume, with
+``AlignConfig(innovation_scale=100)`` because the stage jitters from view to view; nominal
+and aligned scans are reconstructed with the same FISTA-TV settings (TV weight 1e-5).
 
 A shared rigid movement of the object and its poses cannot be distinguished by
 projection data. After fitting, an independent SciPy registration compares 27
@@ -42,7 +43,10 @@ from tomojax.geometry import grid_volume_origin, stack_view_poses
 SIZE, LAYERS, FIELD, MIDDLE = 384, 82, 29.6, 3.0  # voxels, z layers, field (mm), centre z
 VIEWS, PHOTONS = 400, 2e4
 CENTER_PX, ROTATION_DEG = 5.3, 0.25
-RECONSTRUCTION = {"iterations": 100, "nonnegative": True, "warm_start": True}
+# A TV weight of 1e-5 keeps the hairspring; the automatic weight smooths it away.
+RECONSTRUCTION = {"iterations": 100, "tv_weight": 1e-5, "nonnegative": True, "warm_start": True}
+# The stage jitters from view to view, so the motion prior counts much larger steps as motion.
+ALIGNMENT = {"innovation_scale": 100.0}
 ZOOM = 140  # voxels on a side of the balance close-up
 
 
@@ -138,7 +142,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
 
     start = time.perf_counter()
     fit = ("center", "translations", "rotations")
-    result = tj.align(scan, fit=fit)
+    result = tj.align(scan, fit=fit, config=tj.AlignConfig(**ALIGNMENT))
     align_seconds = time.perf_counter() - start
     before = np.asarray(tj.reconstruct(scan, "fista", **RECONSTRUCTION).volume)
     after = np.asarray(tj.reconstruct(result.scan, "fista", **RECONSTRUCTION).volume)
@@ -191,6 +195,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
         "true_axis_offset_px": CENTER_PX,
         "motion": "wobble and jitter, up to 0.25 deg per rotation, 2.4 px dx, 1.5 px dz",
         "fit": list(fit),
+        "alignment_config": ALIGNMENT,
         "align_seconds": align_seconds,
         "reconstruction": {"method": "fista", **RECONSTRUCTION, "warm_start": "fbp"},
         "relative_l2_nominal": error(before, truth),
@@ -227,7 +232,7 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
         f"{metrics['views']} views over 180°  ·  axis "
         f"{metrics['true_axis_offset_px']:g} px off centre  ·  every view tilted up to "
         f"{ROTATION_DEG:g}° and shifted up to 2.4 px  ·  "
-        "joint centre, translations and rotations",
+        "joint centre, translations and rotations, innovation_scale 100",
         21,
         MUTED,
     )
