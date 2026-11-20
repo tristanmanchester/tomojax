@@ -439,14 +439,15 @@ def _placement(
         return None, bool(cfg.stream)
     if jax.default_backend() != "gpu":
         return None, False
-    from tomojax.backends import device_block_available, device_free_memory_bytes
+    from tomojax.backends import device_free_memory_bytes
+    from tomojax.core.devices import block_available
 
     free = device_free_memory_bytes()
     if free is None:
         return None, False
     # The resident solve's arrays come from one block that holds them all, or the data streams.
     needed = resident_bytes(grid, np.shape(projections))
-    return None, needed > free or not device_block_available(needed)
+    return None, needed > free or not block_available(needed)
 
 
 def _laid_out(

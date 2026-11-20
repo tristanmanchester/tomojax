@@ -541,6 +541,8 @@ geometry = tj.ConeGeometry(
     grid, detector, np.linspace(0, 360, views, endpoint=False), tj.ConeBeam(3 * n, 4.5 * n)
 )
 data = np.random.default_rng(0).random((views, n, 192), dtype=np.float32)
+import sys
+print("RECONSTRUCT", file=sys.stderr, flush=True)
 reconstruction = tj.reconstruct(tj.Scan(data, geometry), "cgls", iterations=3)
 print(reconstruction.info["formulation"], bool(np.isfinite(np.asarray(reconstruction.volume)).all()))
 """
@@ -563,3 +565,6 @@ def test_a_scattered_pool_streams_the_data_rather_than_running_out():
     )
     assert run.returncode == 0, run.stderr[-2000:]
     assert run.stdout.split()[-2:] == ["streamed_normal_equations", "True"]
+    # The pool's own figures rule the block out: no allocation is tried, so the allocator
+    # neither retries nor reports running out.
+    assert "bfc_allocator" not in run.stderr.split("RECONSTRUCT")[-1]

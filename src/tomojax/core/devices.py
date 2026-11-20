@@ -6,11 +6,15 @@ of that sum differs from one device. So that the shares are equal, the views are
 padded with copies of the last one that count for nothing. Compiled solvers run
 the shares in one ``shard_map``; FBP and FDK, host-driven loops, run each share
 in a thread of its own (:meth:`ViewSplit.summed`).
+
+Whether one block of a size can be had on the GPU, from the allocator's figures or by
+allocating it, is answered here once for every layer (:func:`block_fits`,
+:func:`block_available`).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -194,9 +198,56 @@ __all__ = [
     "VIEWS",
     "ViewSplit",
     "as_devices",
+    "block_available",
+    "block_fits",
     "pad_views",
+    "pool_stats",
     "refuse_streaming",
     "shared_devices",
     "sharing",
     "view_split",
 ]
+
+
+def pool_stats() -> dict[str, int] | None:
+    """The default GPU allocator's statistics; None off a GPU or without them."""
+    if jax.default_backend() != "gpu":
+        return None
+    return jax.local_devices()[0].memory_stats()
+
+
+def block_fits(size: int, stats: Mapping[str, int] | None) -> bool:
+    """Whether a pool with allocator figures ``stats`` could hand out one block of ``size`` bytes.
+
+    That is its largest free block, or what it may still grow by under its limit: the pool
+    never returns a free region to the driver, so a request larger than both raises after the
+    allocator's retry, however much is free in all. ``None`` (off a GPU) always fits.
+    """
+    if not stats:
+        return True
+    return size <= max(
+        stats["largest_free_block_bytes"], stats["bytes_limit"] - stats["pool_bytes"]
+    )
+
+
+def block_available(size: int) -> bool:
+    """Whether one block of ``size`` bytes can be had now, confirmed by allocating it.
+
+    A block the pool's figures rule out (:func:`block_fits`) is refused without an
+    allocation, so a certain no costs neither the allocator's retry nor its report. Otherwise
+    the block is allocated and freed: its region stays in the pool, free, for the arrays that
+    follow.
+    """
+    if not block_fits(size, pool_stats()):
+        return False
+    if jax.default_backend() != "gpu":
+        return True
+    try:
+        block = jnp.zeros((-(-size // 4),), jnp.float32)
+        block.block_until_ready()
+    except Exception as exc:
+        if "resource_exhausted" in str(exc).lower():
+            return False
+        raise
+    block.delete()
+    return True

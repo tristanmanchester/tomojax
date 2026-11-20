@@ -51,10 +51,10 @@
   "code_lines": {
     "(modules)": 3541,
     "_data": 2104,
-    "alignment": 4424,
-    "backends": 281,
+    "alignment": 4418,
+    "backends": 260,
     "cli": 2271,
-    "core": 9523,
+    "core": 9556,
     "corrections": 2772,
     "datasets": 1083,
     "forward": 404,
@@ -62,7 +62,7 @@
     "io": 3920,
     "motion": 153,
     "nuisance": 232,
-    "recon": 13116
+    "recon": 13117
   },
   "cuda_kernels": 48,
   "cuda_switches": 34,

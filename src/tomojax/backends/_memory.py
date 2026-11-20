@@ -100,37 +100,3 @@ def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
     if device is not None and not isinstance(device, str) and device.platform != "cpu":
         return _cuda_free_memory_bytes(device) if device.platform == "gpu" else None
     return host_available_memory_bytes()
-
-
-def device_block_available(size: int) -> bool:
-    """Return whether one contiguous block of ``size`` bytes can be had on the default device.
-
-    The device pool grows by regions and never returns one to the driver, so the bytes left
-    under its limit can be spread over regions none of which holds a program's working set.
-    Allocating the block decides it; the region it took stays in the pool, free, for the
-    arrays that follow.
-
-    Parameters
-    ----------
-    size : int
-        Bytes wanted in one block.
-
-    Returns
-    -------
-    bool
-        True when the block could be allocated, and always off a GPU.
-    """
-    import jax
-    import jax.numpy as jnp
-
-    if jax.default_backend() != "gpu":
-        return True
-    try:
-        block = jnp.zeros((-(-size // 4),), jnp.float32)
-        block.block_until_ready()
-    except Exception as exc:
-        if is_oom_error(exc):
-            return False
-        raise
-    block.delete()
-    return True
