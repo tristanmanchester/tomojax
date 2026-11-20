@@ -31,7 +31,7 @@ from tomojax.geometry import stack_view_poses
 
 SIZE, SLAB, FIELD = 768, 32, 29.6  # voxels across, slab thickness in voxels, field in mm
 VIEWS, PHOTONS = 200, 1e4
-FILTER, TV_WEIGHT, ITERATIONS = "hann", 0.01, 200
+FILTER, TV_WEIGHT, ITERATIONS = "hann", 1e-5, 200
 ZOOM = 280  # voxels on a side of the balance close-up
 
 

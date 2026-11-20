@@ -15,8 +15,8 @@ loaded automatically on the project page.
 ![A simulated mechanical watch movement reconstructed by TomoJAX and drawn by direct volume rendering.](watch-render.png)
 
 [watch-render.png](watch-render.png) comes from
-[render_watch.py](../examples/render_watch.py): a FISTA-TV reconstruction of
-600 noisy views on 38.5 µm voxels, drawn by ray casting through the volume with
+[render_watch.py](../examples/render_watch.py): a FISTA-TV reconstruction (weight
+1e-5) of 600 noisy views on 38.5 µm voxels, drawn by ray casting through the volume with
 a transfer function of the reconstructed attenuation. Colour and opacity are
 display choices recorded in [watch-render.json](watch-render.json); the shapes
 are the reconstruction's.
@@ -28,7 +28,7 @@ are the reconstruction's.
 [reconstruction-example.png](reconstruction-example.png) comes from
 [reconstruct_watch.py](../examples/reconstruct_watch.py): 200 views with
 10⁴ photons per pixel, a 32-slice slab on 38.5 µm voxels, FBP with a Hann
-filter and FISTA-TV. Every panel shares one grey scale, 0 to 0.36 mm⁻¹, so
+filter and FISTA-TV (weight 1e-5). Every panel shares one grey scale, 0 to 0.36 mm⁻¹, so
 steel and brass saturate. Errors are relative L2 over the whole slab against
 the exact voxel average of the meshes, recorded in
 [reconstruction-example.json](reconstruction-example.json).

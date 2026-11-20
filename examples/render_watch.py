@@ -32,7 +32,7 @@ from tomojax.geometry import stack_view_poses
 
 SIZE, LAYERS, FIELD, MIDDLE = 768, 164, 29.6, 3.0
 VIEWS, PHOTONS = 600, 3e4
-RECONSTRUCTION = {"iterations": 60, "tv_weight": 0.01, "nonnegative": True, "warm_start": True}
+RECONSTRUCTION = {"iterations": 60, "tv_weight": 1e-5, "nonnegative": True, "warm_start": True}
 TRANSFER = _volume_render.Transfer(  # attenuation in mm^-1 at 120 keV
     stops=(
         0.0,

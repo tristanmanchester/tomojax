@@ -19,7 +19,7 @@ before choosing it for an experiment. The documentation is at
 
 A 29 mm mechanical watch movement, scanned in simulation with 600 views of a
 120 keV parallel beam, reconstructed with FISTA-TV on 38.5 µm voxels in
-55 s on a laptop GPU and drawn by direct volume rendering. The
+50 s on a laptop GPU and drawn by direct volume rendering. The
 projections are traced through the movement's Blender meshes by gVXR, not made
 by TomoJAX's projector. [Reproduce it](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#volume-render-a-reconstruction).
 
@@ -27,7 +27,7 @@ by TomoJAX's projector. [Reproduce it](https://github.com/tristanmanchester/tomo
 
 From 200 views with 10⁴ photons per pixel, filtered backprojection of a slab
 through the hairspring has relative error 0.357 against the exact voxel
-average of the meshes, and FISTA-TV 0.125, in 15 s.
+average of the meshes, and FISTA-TV 0.124, in 17 s.
 [Reproduce the figure](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#reconstruct-a-few-view-noisy-scan).
 
 ![Nominal-geometry, aligned and true slices of the watch movement, close-ups of the balance, and recovered against true shifts for every view.](https://github.com/tristanmanchester/tomojax/raw/main/images/alignment-example.png)
