@@ -16,8 +16,7 @@ geometry type. Recognised Nikon, Zeiss and ESRF acquisitions use the same
 readers as loading; inspection reports their raw detector values without applying
 corrections. Raw NXtomo, APS Data Exchange and recognised Diamond/GDA layouts
 also use loading's acquisition discovery; optional NXtomo labels are not required. `inspect` also checks the acquisition metadata: it ends with
-`Valid: yes`, or lists the issues and exits with status 1. That check cannot
-prove that metadata matches the instrument. `--json` prints the report as JSON
+`Valid: yes`, or lists the issues and exits with status 1. `--json` prints the report as JSON
 instead. It also lists the corrections that made the projections from
 detector frames, when the file records them.
 
@@ -34,7 +33,6 @@ when the counts are already dark-corrected.
 
 For executable first-slice recipes for ESRF NXtomo, TOMCAT/SYRMEP Data Exchange
 and the mixed I13 TIFF folder, start with [beamline exports](beamline-exports.md).
-The examples distinguish file metadata from explicitly supplied calibration.
 
 ### Raw ESRF acquisitions
 
@@ -58,7 +56,7 @@ are retained in millimetres. Neither format records the rotation centre: the sca
 has the detector middle and its record says so; find the centre with
 `tj.align(scan, fit="center")`. Missing virtual detector pixels
 and mismatched EDF dimensions are errors. Helical and multi-volume Bliss
-sequences are not yet supported.
+sequences are not supported.
 
 `tj.load_frames` keeps HDF5 single-row sinograms stored as `(view, u)` lazy,
 presenting them as `(view, 1, u)`. Corrected `Scan` projections retain that
@@ -79,7 +77,7 @@ records the correction. The frames, `image_key` and angles are found at their
 NXtomo paths, at the Data Exchange paths (`/exchange/data` with `data_white`,
 `data_dark` and `theta` beside it), or as the file's only datasets of those
 names; `--data-path`,
-`--image-key-path` and `--angles-path` (expert settings, `--config-keys`) name
+`--image-key-path` and `--angles-path` (expert options) name
 them otherwise. Options add corrections: `--zingers`, `--stripes 9`
 (rings), `--reject-views` (views that jump from their neighbours, such as a
 closed shutter); `--views` and `--crop` keep
@@ -88,8 +86,8 @@ step; applying the logarithm again changes the data.
 
 A parallel-beam file that records no pixel size loads in pixel units (its record
 says `length_unit: "pixel"`); give the pixel size with `pixel_size=`, or a whole
-`detector=`, or a `[detector]` table in the preprocessing TOML config with `nu`,
-`nv`, `du`, `dv` and `det_center = [u, v]`. A cone-beam file needs its pixel size,
+`detector=`, or `--pixel-size` and `--detector-center U V` on the command line.
+A cone-beam file needs its pixel size,
 since its distances fix the unit. A rotation centre the file does not record is the
 detector middle. Missing view angles require `angles=`; missing laminography tilt
 requires a complete `geometry=`. A 30° tilt is not assumed.
@@ -309,7 +307,7 @@ Fourier is an approximate inverse with its own frequency cutoff, not an FBP
 filter selection. It requires built-in parallel geometry without per-view poses;
 cone beams and laminography are unsupported. It does not check angular coverage
 or correct detector truncation. It refuses `filter`,
-iterative-solver options and `warm_start` rather than silently ignoring them.
+iterative-solver options and `warm_start`.
 
 For FBP, FDK and Fourier volumes larger than host RAM, provide a writable
 float32 memory map. The returned volume is that same array, written in bounded
@@ -323,7 +321,7 @@ out = np.memmap(
     "volume.dat", mode="w+", dtype=np.float32, shape=(g.nz, g.ny, g.nx), order="C"
 )
 recon = tj.reconstruct(scan, "fbp", out=out)
-out.flush()  # Include this in timings that promise persisted output.
+out.flush()
 ```
 
 C order keeps axial slices together for parallel FBP, FDK and Fourier,
@@ -384,5 +382,4 @@ For laminography and tilted-axis data the default is FBP; the
 [real scan guide](real-laminography.md#reconstruct-with-the-recorded-geometry)
 shows when and how to ask for FISTA instead.
 If motion remains plausible, use the [alignment guide](align-a-scan.md) after
-checking geometry and preprocessing. A visually sharper aligned image does not
-by itself establish accurate recovered poses.
+checking geometry and preprocessing.
