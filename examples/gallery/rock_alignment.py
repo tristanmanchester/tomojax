@@ -1,12 +1,15 @@
 """A moving sandstone plug before and after the plain ``tj.align`` call.
 
-The sandstone core (``bench/phantoms/porous_rock.py``) is scanned in parallel beam over a
-half turn while it drifts smoothly by about a voxel and a half and slips by two voxels a third
-of the way through. The scan is reconstructed as loaded, with the nominal geometry, and after
-``tj.align(scan)``; both use ``tj.reconstruct``'s default method. Two slices through the
-sample, each with one enlarged region, share one grey range.
+The sandstone core (``bench/phantoms/porous_rock.py``), voxelised 1.5 times finer than the
+384-voxel reconstruction grid, is scanned in parallel beam over a half turn without noise while
+it drifts smoothly by up to 4.5 voxels and slips by 6 voxels a third of the way through. The
+scan is reconstructed as loaded, with the nominal geometry, and after ``tj.align(scan)``; both use
+``tj.reconstruct``'s default method. Two slices through the sample, each with one enlarged
+region, share one grey range.
 
     uv run python examples/gallery/rock_alignment.py alignment-rock.png
+
+It takes about nine minutes on an 8 GB laptop GPU; ``--size 64`` makes a quick small version.
 """
 
 from __future__ import annotations
@@ -14,35 +17,37 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from _common import counts, panel, phantom, save, style
+from _common import panel, phantom, save, style
 import matplotlib.pyplot as plt
 import numpy as np
 
 import tomojax as tj
 
-N = 128
-TRUTH_N = 192
+N = 384
+TRUTH_N = 576
 VIEWS = 180
-PHOTONS = 1e5
-CROP = 48
+CROP = 128
 
 
-def motion(views: int, voxel: float, seed: int) -> np.ndarray:
-    """A per-view table (alpha, beta, phi, x, z, y): smooth drift and one slip, no rotation."""
+def motion(views: int, unit: float, seed: int) -> np.ndarray:
+    """A per-view table (alpha, beta, phi, x, z, y): smooth drift and one slip, no rotation.
+
+    ``unit`` is 1/128 of the field of view: the drift reaches about 1.5 units, the slip 2.
+    """
     rng = np.random.default_rng(seed)
     t = np.linspace(0.0, 1.0, views)
     table = np.zeros((views, 6))
     for column in (3, 4):
         phase = rng.uniform(0, 2 * np.pi, 2)
         drift = 0.9 * np.sin(2 * np.pi * t + phase[0]) + 0.6 * np.sin(4 * np.pi * t + phase[1])
-        table[:, column] = voxel * (
+        table[:, column] = unit * (
             drift + 2.0 * (np.arange(views) >= views // 3) * rng.choice((-1, 1))
         )
     return table
 
 
 def simulate(seed: int = 0, size: int = N) -> tuple[tj.Scan, np.ndarray, float]:
-    """The moving scan as loaded (nominal geometry), the truth on its grid, and the voxel size."""
+    """The moving scan as loaded (nominal geometry), the finer truth, and the voxel size."""
     fine_n = size * TRUTH_N // N
     truth, meta = phantom("porous_rock", fine_n)
     fov = float(meta["fov_mm"])
@@ -52,26 +57,25 @@ def simulate(seed: int = 0, size: int = N) -> tuple[tj.Scan, np.ndarray, float]:
     detector = tj.Detector(size, size, voxel, voxel)
     geometry = tj.ParallelGeometry(grid, detector, np.linspace(0.0, 180.0, VIEWS, endpoint=False))
     moved = tj.Scan(np.zeros((VIEWS, size, size), np.float32), geometry).with_poses(
-        motion(VIEWS, voxel, seed)
+        motion(VIEWS, fov / 128, seed)
     )
-    line_integrals = np.asarray(tj.project(moved.geometry, truth, grid=fine))
-    rng = np.random.default_rng(seed + 1)
-    measured = -np.log(np.maximum(counts(line_integrals, PHOTONS, rng), 1.0) / PHOTONS)
-    return tj.Scan(measured.astype(np.float32), geometry), truth, voxel
+    line_integrals = np.asarray(tj.project(moved.geometry, truth, grid=fine), np.float32)
+    return tj.Scan(line_integrals, geometry), truth, voxel
 
 
-def sharpest(image: np.ndarray, inside: np.ndarray) -> tuple[slice, slice]:
-    """The CROP-square window inside the sample with the strongest edges."""
+def sharpest(image: np.ndarray, inside: np.ndarray, crop: int) -> tuple[slice, slice]:
+    """The ``crop``-square window inside the sample with the strongest edges."""
     gy, gx = np.gradient(image)
     edges = np.hypot(gx, gy) * inside
     best, where = -1.0, (0, 0)
-    for row in range(0, image.shape[0] - CROP, 4):
-        for column in range(0, image.shape[1] - CROP, 4):
-            if inside[row : row + CROP, column : column + CROP].all():
-                score = edges[row : row + CROP, column : column + CROP].sum()
+    step = max(1, crop // 8)
+    for row in range(0, image.shape[0] - crop, step):
+        for column in range(0, image.shape[1] - crop, step):
+            if inside[row : row + crop, column : column + crop].all():
+                score = edges[row : row + crop, column : column + crop].sum()
                 if score > best:
                     best, where = score, (row, column)
-    return slice(where[0], where[0] + CROP), slice(where[1], where[1] + CROP)
+    return slice(where[0], where[0] + crop), slice(where[1], where[1] + crop)
 
 
 def main() -> None:
@@ -90,14 +94,15 @@ def main() -> None:
     inside = radius < 0.42 * size
     core = radius < 0.33 * size  # crops on the sample's grains, not its outer edge
     filled = np.flatnonzero(truth.reshape(truth.shape[0], -1).mean(axis=1) > 0.5 * truth.mean())
-    bottom = int(filled[0] * size / truth.shape[0]) + 4
+    bottom = int(filled[0] * size / truth.shape[0]) + size // 32
     heights = (("Lowest slice through the sample", bottom), ("Middle slice", size // 2))
     top = float(np.percentile(aligned[size // 2][inside], 99.5))
 
+    side = CROP * size // N
     style()
     fig, axes = plt.subplots(2, 4, figsize=(9.0, 4.9))
     for (label, z), row in zip(heights, axes, strict=True):
-        crop = sharpest(aligned[z], core)
+        crop = sharpest(aligned[z], core, side)
         for (title, volume), (whole, zoom) in zip(
             (("As loaded", loaded), ("After tj.align(scan)", aligned)),
             ((row[0], row[1]), (row[2], row[3])),
@@ -107,8 +112,8 @@ def main() -> None:
             whole.add_patch(
                 plt.Rectangle(
                     (crop[1].start, crop[0].start),
-                    CROP,
-                    CROP,
+                    side,
+                    side,
                     fill=False,
                     color="tab:orange",
                     lw=0.8,
