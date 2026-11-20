@@ -792,9 +792,10 @@ def align(
     is held at its declared value. Translations have two components for parallel
     rays and three for cone beams. Rotations are the per-view wobble of the
     rotation axis, two components; each view's angle about the axis is taken as
-    recorded, since stage encoders give it and errors in it are rare. The
-    default fits drift and slips. Per-view rotations have a prior on their
-    physical size.
+    recorded, since stage encoders give it and errors in it are rare. By
+    default each view's corrections are free of its neighbours';
+    ``motion="smooth"`` fits drift and slips instead. Per-view rotations have a
+    prior on their physical size.
 
     ``method`` "joint" (the default) fits an image and the parameters together;
     the same solver handles parallel, laminography and cone-beam scans. Existing

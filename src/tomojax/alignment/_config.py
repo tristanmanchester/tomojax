@@ -65,7 +65,7 @@ class AlignConfig:
         towards the neighbours is strongest; larger steps are followed as slips, and the
         rotations' tie to their neighbours is inversely proportional to it. Default is 0.02.
     knot_spacing : int, optional
-        Views between the smooth drift's spline knots. Default is 10.
+        Under ``motion="smooth"``, views between the drift's spline knots. Default is 10.
     rotation_sigma : float, optional
         The per-view rotations' size prior, in degrees. Default is 0.5.
     loss_width : float, optional

@@ -61,6 +61,7 @@ The figures below show each error on simulated scans, before and after the match
 movement in laminography, and a spark plug in parallel-beam tomography. The lower row of each
 figure is the image minus the image made with the true geometry, so any remaining error stands
 out. The numbers under each panel are the pose error in detector pixels and the time to fit.
+These figures were made with `motion="smooth"`, and their numbers are that setting's.
 
 ## The rotation centre
 
@@ -87,21 +88,34 @@ When the sample moves between views, features are doubled or smeared by differen
 depending on when each view was taken. The translation fit follows smooth drift and sudden slips
 of the sample together.
 
-How far a view may move from its neighbours is read from the scan itself: from how much each
-view's own best position scatters from one view to the next. Error that differs from view to
-view and is not motion, such as the model error of a real scan, raises that scale, so the fit
-does not turn it into motion. A slip much larger than the scale is still followed, a little
-short where the scale is large.
+### Independent or smooth motion
 
-A stage that jitters from view to view is motion of that kind, and the default leaves it. Raise
-`innovation_scale` for such a stage: on the README's watch scan, with up to 0.8 px of jitter in
-every view, the default recovers the shifts to 0.47 px RMS and
-`config=tj.AlignConfig(innovation_scale=100)` to 0.07 px.
+`motion=` says how a view's corrections may differ from its neighbours'. With the default,
+`motion="independent"`, nothing ties a view to its neighbours: drift, slips and a stage that
+jitters from view to view are all followed. With `motion="smooth"`, the translations drift
+freely along a spline and step from one view to the next only where the data call for a slip,
+and each view's rotations are tied to its neighbours'. How far a view may then move from its
+neighbours is read from the scan itself: from how much each view's own best position scatters
+from one view to the next. Error that differs from view to view and is not motion, such as the
+model error of a real scan, raises that scale, so the fit does not turn it into motion. A slip
+much larger than the scale is still followed, a little short where the scale is large.
+
+```python
+result = tj.align(scan)                    # motion="independent"
+result = tj.align(scan, motion="smooth")   # a steady stage
+```
+
+On the README's watch scan, with up to 0.8 px of jitter in every view, the default recovers the
+shifts to 0.07 / 0.05 px RMS across and along the axis, and `motion="smooth"` to 0.47 / 0.29 px,
+leaving the jitter. On K11 54013, a steady stage, the slices look the same either way, but the
+ruby sphere's track, an independent record of the motion, is left 0.30 / 0.19 px unexplained by
+the default against 0.20 / 0.18 px by `motion="smooth"`. Use `motion="smooth"` for a stage you
+know to be steady.
 
 ![The balance wheel with drift and five slips between views: the screws are doubled. After fit="translations" the image matches the true geometry.](images/alignment-ladder-drift.png)
 
-The default, `fit="translations"`, removes the drift and slips in this example to 0.008 px in
-21 s. It also absorbs a centre error in parallel and laminography scans, so you do not need to fit
+With `motion="smooth"`, `fit="translations"` removes the drift and slips in this example to
+0.008 px in 21 s. It also absorbs a centre error in parallel and laminography scans, so you do not need to fit
 the centre separately first. If you request `"center"` and `"translations"` together, the
 translations are given zero mean: a common translation and a centre offset describe the same
 parallel-ray geometry, and the data cannot tell them apart.
@@ -294,11 +308,11 @@ carries texture at the grid's finest scale that the object does not have.
 
 ## Settings
 
-`tj.align` takes the five settings most runs change as keywords, `iterations`,
+`tj.align` takes the six settings most runs change as keywords, `motion`, `iterations`,
 `image_iterations`, `tolerance`, `interpolation` and `resolution`, and every setting through
 `config=tj.AlignConfig(...)`. A keyword replaces the field of the same name.
 `result.info["config"]` records the values a call used, with the ones that depend on the scan
-resolved. On the command line, `tomojax align` takes the five as `--iterations`,
+resolved. On the command line, `tomojax align` takes the six as `--motion`, `--iterations`,
 `--image-iterations`, `--tolerance`, `--interpolation` and `--resolution`, and the rest as keys of a
 `--config` TOML file under the same names; `--config-keys` lists them, and `--dry-run` prints the
 resolved settings.
@@ -310,6 +324,7 @@ result = tj.align(scan, fit="translations", iterations=12, config=config)
 
 | Setting | Default | What it decides | When to change it |
 | --- | --- | --- | --- |
+| `motion` | `"independent"` | Whether each view moves on its own (`"independent"`) or as smooth drift with occasional slips (`"smooth"`) | `"smooth"` for a stage you know to be steady |
 | `iterations` | 8 | Gauss-Newton iterations at the working resolution | Raise it when `info["levels"][-1]["status"]` is `step_budget_reached`; each one costs a linearisation and an image solve |
 | `coarse_iterations` | 12 | Iterations at each coarser level | The same trade at the coarse level |
 | `levels` | `(2, 1)` | Each level's binning of the working detector, coarsest first | `(1,)` for little motion; a coarser start, such as `(4, 2, 1)`, for large motion |
@@ -322,8 +337,8 @@ result = tj.align(scan, fit="translations", iterations=12, config=config)
 | `interpolation` | cubic with an angle on parallel rays, else linear | The projector's in-plane kernel in the fit | Cubic for sharp objects and the best accuracy, at about three times the time (a K11 laminography scan: 287 s linear, 876 s cubic) |
 | `refine_iterations` | 5 | The final per-view refinement with the image held | 0 turns it off, for speed or to see the joint fit alone |
 | `initial_image_iterations` | 5 | FISTA iterations for the first image | More for a better start on a hard scan |
-| `innovation_scale` | 0.02 native pixels | How large a view-to-view step counts as an event | The motion's physical scale |
-| `knot_spacing` | 10 views | How stiff the smooth drift is | Drift faster or slower than ten views |
+| `slip_scale` | 0.02 native pixels | Under `motion="smooth"`, the view-to-view step at which the pull towards the neighbours is strongest; larger steps are followed as slips | Rarely |
+| `knot_spacing` | 10 views | Under `motion="smooth"`, how stiff the drift is | Drift faster or slower than ten views |
 | `rotation_sigma` | 0.5 degrees | The per-view rotations' size prior | A stage's wobble scale |
 | `loss_width` | 2.5 noise deviations | Where the robust loss turns from quadratic to linear | Outliers such as zingers or diffraction |
 | `loss_contrast_floor` | 0.5 of the contrast | The least loss width, on low-noise data | With `loss_width` |

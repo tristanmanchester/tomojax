@@ -1397,15 +1397,17 @@ level's two image-sized arrays (127 MiB); the rest of `aa6cec52`'s peak over
 
 The full scans at the declared 704 × 704 × 234 grid (6.48 µm voxels, all views,
 native 640 × 540 detector at 2.16 µm), `tj.align(scan)` with nothing set, one process,
-measured 2026-11-19 and 2026-11-20 on the RTX 4070 Laptop:
+measured 2026-11-19 and 2026-11-20 on the RTX 4070 Laptop. On `f58a6f7a` and `dc736fb3`
+the plain call's motion prior is what is now `motion="smooth"`; the last time column is
+today's default, `motion="independent"` (commit `dd8f2cd`):
 
-| Scan | Views | `f58a6f7a` | `dc736fb3` | GPU, `f58a6f7a` → `dc736fb3` |
-|---|---:|---:|---:|---:|
-| K11 54013, tilt −35° | 1441 | 354 s | 281 s | 3.31 → 3.19 GiB |
-| K11 54286, tilt +35° | 1441 | 352 s | 279 s | 3.31 → 3.19 GiB |
-| K11 67208, tilt +30.9° | 4000 | 1304 s | 1039 s | 4.73 → 4.63 GiB |
+| Scan | Views | `f58a6f7a` | `dc736fb3` | `dd8f2cd`, independent | GPU, `f58a6f7a` → `dc736fb3` |
+|---|---:|---:|---:|---:|---:|
+| K11 54013, tilt −35° | 1441 | 354 s | 281 s | 281 s | 3.31 → 3.19 GiB |
+| K11 54286, tilt +35° | 1441 | 352 s | 279 s | 278 s | 3.31 → 3.19 GiB |
+| K11 67208, tilt +30.9° | 4000 | 1304 s | 1039 s | 1111 s | 4.73 → 4.63 GiB |
 
-Both commits return byte-identical poses and images on all three. On 54013, undoing one
+`f58a6f7a` and `dc736fb3` return byte-identical poses and images on all three. On 54013, undoing one
 change at a time costs 45 s for converting the CG search direction to z-contiguous
 storage once per product, 15 s for forming the motion scale's scores on the device,
 14 s for the forward kernel's fixed-stride interior reads and 8 s for the gather's
@@ -1421,9 +1423,22 @@ Its factor and solve alone, two translations and the centre fitted, knots every
 | 4000 | 318 → 26 MiB | 906 → 41 MiB | 263 → 5.0 ms | 2.6 → 0.84 ms |
 | 16000 | 5023 → 105 MiB | out of memory → 163 MiB | — → 13.8 ms | — → 1.9 ms |
 
-On K11 54013 the plain call takes 282 s. Its poses move by up to 0.30 px
+On K11 54013 the call with `motion="smooth"` takes 282 s. Its poses move by up to 0.30 px
 (6.6% of the image), the same as reordering the old prior's columns, and moving one
 pixel of the data by one unit in the last place moves them by 0.22 px (7.0%).
+
+The default `motion="independent"` (commit `dd8f2cd`, 2026-11-20) leaves each view free of
+its neighbours; `motion="smooth"` is the previous default, byte-identical to it on the small
+alignment scans and on K11 54013. Each pair below is smooth / independent, one process each:
+
+| Scan | Smooth | Independent |
+|---|---|---|
+| README watch scan (`examples/align_watch.py`), shifts RMS across / along | 0.47 / 0.29 px, 35 s | 0.07 / 0.05 px, 36 s |
+| K11 54013, the ruby sphere's track left unexplained, u / v | 0.20 / 0.18 px, 281 s | 0.30 / 0.19 px, 281 s |
+| Slip rock (120 views, 0.95 px slip), pose RMS; slip followed | 0.095 px; 0.80 px, 10 s | 0.095 px; 0.88 px, 6 s |
+| Half-turn rock, `fit=("translations", "tilt")`, landmarks; tilt (true −0.35°) | 0.148 px; −0.764°, 16 s | 0.148 px; −0.764°, 15 s |
+| FIPS walnut, three orbits (`examples/align_walnut_orbits.py`), orbit heights | 0, −0.385, −0.753 mm, 101 s | the same, 100 s |
+| Zeiss CuO_2 tomo-A, binned 4 | 88 s | 75 s; volumes differ by 1.0% |
 
 ### Detector centre
 
