@@ -1,9 +1,11 @@
 name: CI
 
-# Pre-release, `just ci` and `just test-cuda` run locally before each push;
-# this runs on demand (`gh workflow run CI`) and on release tags. Restore
-# push and pull_request triggers when the project takes outside changes.
+# `just ci` and `just test-cuda` run locally before each push. Here the CPU gate
+# (product-spine) runs on pull requests to main, on demand (`gh workflow run CI`)
+# and on release tags; the installed-package matrix runs on demand and on tags.
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
   push:
     tags: ["v*"]
@@ -21,6 +23,7 @@ env:
 jobs:
   product-spine:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
 
     steps:
       - uses: actions/checkout@v5
@@ -86,6 +89,7 @@ jobs:
           uv run --no-sync python bench/workflow_benchmark.py --sizes 16 --geometries parallel --methods fista spdhg --repeats 1
 
   installed-package:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

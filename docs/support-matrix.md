@@ -1,7 +1,7 @@
 # TomoJAX support matrix
 
 Available workflows and their entrypoints. “Supported” means implemented and
-tested. Alignment is experimental. See [installation](installation.md) and [measurement scope](measurements.md).
+tested. See [installation](installation.md) and [measurement scope](measurements.md).
 
 | Workflow | Status | Supported entrypoint |
 |---|---|---|
@@ -15,20 +15,20 @@ tested. Alignment is experimental. See [installation](installation.md) and [meas
 | FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax reconstruct corrected.nxs -o recon.nxs --method fbp\|cgls\|fista\|spdhg` |
 | Fourier-slice inverse of supported parallel scans | Supported | `tomojax reconstruct corrected.nxs -o recon.nxs --method fourier`; matching available CUDA or NumPy, with explicit backend configuration |
 | Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax load ./tiffs --flats ... --darks ... --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv -o scan.nxs`, then `tomojax reconstruct` (automatic FDK for one arrangement; `--method fbp` selects it explicitly) |
-| Per-view translations and optional rotations | Experimental | `tomojax align corrected.nxs -o aligned.nxs --fit translations rotations` |
-| Cone-beam motion (includes along-beam translation) | Experimental | `tomojax align cone_scan.nxs -o aligned.nxs --fit translations rotations` |
+| Per-view translations and optional rotations | Supported | `tomojax align corrected.nxs -o aligned.nxs --fit translations rotations` |
+| Cone-beam motion (includes along-beam translation) | Supported | `tomojax align cone_scan.nxs -o aligned.nxs --fit translations rotations` |
 | Ring (stripe), zinger, outlier-view and beam-hardening corrections; Paganin phase retrieval | Supported | `tomojax correct raw.nxs -o scan.nxs --stripes 9 --zingers --reject-views` (and the expert `--paganin`); beam hardening uses explicit `tomojax.corrections.BeamHardening` curves |
 | Volume export as TIFF slices or raw (`uint16` or `float32`) | Supported | `tomojax export recon.nxs -o slices/`; `tomojax export recon.nxs -o recon.raw --dtype uint16` |
 | Nikon (X-Tek) scan import, including its calibrated rotation axis | Supported | `tj.load_frames("scan/part.xtekct", darks=0).corrected()`, or `tomojax correct scan/part.xtekct --darks 0 -o scan.nxs` |
 | Zeiss Xradia projection acquisitions | Supported | `tj.load("scan.txrm")`, or `tj.load_frames("scan.txrm").corrected(...)`; separate reference images use `flats="reference_Front.xrm"`; [CPU preview](lab-ct.md#zeiss-xradia-preview) |
-| Multi-orbit cone-beam scans (`ConeSegments`): iterative reconstruction and pose alignment | Supported; alignment experimental | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then `tj.reconstruct(scan, "cgls")` and `tj.align(scan)` |
-| Shared detector centre and roll, including cone data | Experimental | `tomojax align cone_scan.nxs -o calibrated.nxs --fit center roll` |
-| Detector-centre/COR alignment | Experimental | `tomojax align corrected.nxs -o aligned.nxs --fit center` |
-| Detector-centre offset with per-view motion | Experimental; shared offset uses an explicit gauge | `tomojax align corrected.nxs -o aligned.nxs --fit center translations` |
-| Shared setup angles with per-view motion | Experimental; one joint solve | `tomojax align corrected.nxs -o aligned.nxs --fit translations tilt roll` |
+| Multi-orbit cone-beam scans (`ConeSegments`): iterative reconstruction and pose alignment | Supported | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then `tj.reconstruct(scan, "cgls")` and `tj.align(scan)` |
+| Shared detector centre and roll, including cone data | Supported | `tomojax align cone_scan.nxs -o calibrated.nxs --fit center roll` |
+| Detector-centre/COR alignment | Supported | `tomojax align corrected.nxs -o aligned.nxs --fit center` |
+| Detector-centre offset with per-view motion | Supported; the shared offset uses an explicit gauge | `tomojax align corrected.nxs -o aligned.nxs --fit center translations` |
+| Shared setup angles with per-view motion | Supported; one joint solve | `tomojax align corrected.nxs -o aligned.nxs --fit translations tilt roll` |
 | Deterministic synthetic dataset generation | Supported | `tomojax simulate -o synthetic_scan.nxs --size 64 --geometry parallel\|lamino\|cone` |
 | Python API reconstruction | Supported | `tj.reconstruct(scan, method, config=...)`, `tj.project`, `tj.backproject`; building blocks in `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` |
-| Python API alignment | Experimental | `tj.align(scan, fit=..., grid=...)` |
+| Python API alignment | Supported | `tj.align(scan, fit=..., grid=...)` |
 | Volumes larger than the GPU | Supported | FBP and FDK switch to host slabs automatically; `fbp_host` and `fdk_host` in Python ([large scans](large-scans.md)) |
 | Several GPUs in one process | Supported (Python only) | `devices=` on `tj.project`, `tj.backproject`, `tj.reconstruct` (`fbp`, `cgls`, `fista`) ([large scans](large-scans.md#use-several-gpus)) |
 

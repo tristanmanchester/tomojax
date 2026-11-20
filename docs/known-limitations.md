@@ -20,7 +20,7 @@ TV penalty.
 
 ## Alignment limitations
 
-Alignment is experimental and needs scan-specific review. Use the
+Alignment needs scan-specific review. Use the
 [alignment guide](align-a-scan.md#check-the-result) to choose parameters and check the result.
 
 - `fit="translations"` is the default for every geometry. It cannot correct a missing global

@@ -78,7 +78,7 @@ For CUDA installation, wheel installation, and device checks, see
 | Supply measured geometry for parallel or laminography data, including TIFF stacks | [Real scan guide](https://tomojax.dev/real-laminography/) |
 | Import, calibrate and reconstruct a lab cone-beam CT scan, including multi-orbit scans | [Lab cone-beam CT](https://tomojax.dev/lab-ct/) |
 | Simulate data or use the Python API | [Synthetic workflow](https://tomojax.dev/synthetic-tomography/), [runnable examples](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md) |
-| Correct per-view motion or the centre of rotation | [Alignment guide](https://tomojax.dev/align-a-scan/) (experimental; check the recovered geometry) |
+| Correct per-view motion or the centre of rotation | [Alignment guide](https://tomojax.dev/align-a-scan/) (check the recovered geometry) |
 | Reconstruct scans larger than the GPU, or use several GPUs | [Large scans and several GPUs](https://tomojax.dev/large-scans/) |
 | Check supported models and limitations | [Support matrix](https://tomojax.dev/support-matrix/), [known limitations](https://tomojax.dev/known-limitations/) |
 

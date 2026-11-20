@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.0rc1 (2026-11-20)
 
 ### Alignment follows each view's own motion by default
 

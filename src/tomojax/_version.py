@@ -1,3 +1,3 @@
 """The TomoJAX version, importable without the rest of the package."""
 
-__version__ = "0.3.0"
+__version__ = "1.0.0rc1"

@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use TomoJAX, please cite it as below."
+title: "TomoJAX"
+abstract: "Tomography in JAX: parallel-beam, cone-beam and laminography projection, reconstruction and alignment."
+type: software
+authors:
+  - family-names: "Manchester"
+    given-names: "Tristan"
+version: "1.0.0rc1"
+date-released: "2026-11-20"
+license: GPL-3.0-only
+repository-code: "https://github.com/tristanmanchester/tomojax"
+url: "https://tomojax.dev"
