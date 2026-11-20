@@ -1,6 +1,7 @@
 """The fixed joint fit avoids absent-prior work without changing its objective."""
 
 from functools import partial
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
@@ -429,6 +430,31 @@ def test_refinement_stops_on_a_proposal_below_the_pose_tolerance(monkeypatch, sh
     assert bool(record["steps"]) == bool(evaluated) == moves
     if not moves:
         assert record["status"] == "pose_steps_below_tolerance"
+
+
+@pytest.mark.parametrize(("promised", "stops"), [(1e-9, True), (1e-3, False)])
+def test_refinement_stops_when_no_trial_lowers_a_proposal_below_the_rounding(promised, stops):
+    # At converged poses no trial passes the Armijo test, and what the step promises is below
+    # the objective's FP32 rounding; raised damping would only promise less. The step reports
+    # convergence after one line search (K11 67208 spent up to 30 trials a step there). A
+    # promise above the rounding keeps raising the damping, as before.
+    views, k = 6, 2
+    gp = np.full(views * k, np.sqrt(promised / (views * k)))
+    prior = SimpleNamespace(
+        weights=lambda c, w: None,
+        reduce_score=lambda v: np.zeros(views * k),
+        apply=lambda c, w: np.zeros(views * k),
+        expand=lambda v: np.reshape(v, (views, k)),
+        innovation_solve=lambda damped, w, g: g,
+    )
+    problem = object.__new__(_refine._Refinement)
+    problem.prior, problem.anchor, problem.c0 = prior, np.zeros((views, k, k)), np.zeros(views * k)
+    problem.weight, evaluated = 1.0, []
+    problem.value = lambda c: evaluated.append(c) or 1.0  # flat: no trial lowers it
+    stats = (gp, np.broadcast_to(np.eye(k), (views, k, k)), None)
+    result = problem.step(np.zeros(views * k), stats, 1.0, 1.0)  # damping already raised
+    assert result == ("pose_steps_below_tolerance" if stops else "line_search_stalled")
+    assert len(evaluated) == (8 if stops else 32)
 
 
 def _replicated_tent(n):
