@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Alignment follows each view's own motion by default
+
+`tj.align` takes `motion="independent"` (the default) or `motion="smooth"`, also as an
+`AlignConfig` field and `tomojax align --motion`. Independent leaves every view free of its
+neighbours, so a stage that jitters from view to view is followed: on the README's watch
+scan the shifts come out at 0.07 / 0.05 px RMS against 0.47 / 0.29 px before. Smooth is the
+previous default, unchanged, for a steady stage, where per-view error that is not motion
+should not be followed. `AlignConfig(innovation_scale=)` is now `slip_scale=` and applies
+under `motion="smooth"` only.
+
 ### Alignment drift and acquisition gaps
 
 The per-view motion prior in `tj.align` now takes linear storage and work as
@@ -44,6 +54,7 @@ There are no aliases. Each old name is gone, and files saved before this release
 | `info["pose_dofs"]`, columns `dx`, `dz`, `dy` (also the report's and saved table's) | `info["pose_columns"]`, columns `x`, `z`, `y` |
 | saved `angle_offset_deg` | `angle_offset` |
 | `Reconstruction(volume, scan, method, info)` | `Reconstruction(volume, geometry, method, info, scan=None)` |
+| `AlignConfig(innovation_scale=)` | `motion=` (`"independent"` by default, or `"smooth"`), and `slip_scale=` under `motion="smooth"` |
 | `tj.estimate_center(scan)` | `tj.align(scan, fit="center", method="opposite-views").scan` |
 | `--roi` (`recon`, `align`) | `--region`, and `region=` on `tj.reconstruct` and `tj.align` |
 | `info["levels"][i]["budget"] = {outer, inner, init_iterations, lm_initial}` | `info["levels"][i]["iterations"]`, `["image_iterations"]`, `["initial_image_iterations"]` |

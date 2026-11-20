@@ -45,6 +45,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.backends.host_stream import host_source, read_block, write_block
+from tomojax.core.devices import block_fits, pool_stats
 from tomojax.core.host_volume import host_array
 
 if TYPE_CHECKING:
@@ -116,11 +117,9 @@ def _exhausted(err: Exception) -> bool:
     return "RESOURCE_EXHAUSTED" in str(err)
 
 
-def _device_stats() -> Mapping[str, int] | None:
+def _device_stats() -> dict[str, int] | None:
     """The device allocator's statistics; None off the GPU."""
-    if jax.default_backend() != "gpu":
-        return None
-    return jax.local_devices()[0].memory_stats()
+    return pool_stats()
 
 
 def _in_use() -> int | None:
@@ -130,18 +129,8 @@ def _in_use() -> int | None:
 
 
 def fits(size: int) -> bool:
-    """Whether one block of ``size`` bytes can be had on the device (always, off the GPU).
-
-    That is the pool's largest free block, or what the pool may still grow by under its
-    limit: it never returns a free region to the driver, so a request larger than both
-    raises after the allocator's retry, however much is free in all.
-    """
-    stats = _device_stats()
-    if stats is None:
-        return True
-    return size <= max(
-        stats["largest_free_block_bytes"], stats["bytes_limit"] - stats["pool_bytes"]
-    )
+    """Whether one block of ``size`` bytes can be had on the device (always, off the GPU)."""
+    return block_fits(size, _device_stats())
 
 
 class LevelStacks:

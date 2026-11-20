@@ -1,8 +1,9 @@
-"""The motion prior's weight takes its error scale from the views' own scatter.
+"""Under ``motion="smooth"`` the prior's weight takes its error scale from the views' own scatter.
 
 Each view of these scans is multiplied by its own smooth fringe (random orientation
 and phase, half a cycle to a cycle and a half across the detector): error that differs
-from view to view and is not motion. The fit must not turn it into motion.
+from view to view and is not motion. The fit with ``motion="smooth"``, the choice for a
+steady stage, must not turn it into motion; the default follows every view.
 """
 
 import numpy as np
@@ -43,7 +44,7 @@ def _scan(fringe, step):
         )
         data[k] *= 1 + fringe * wave
     data += np.random.default_rng(7).normal(0, 0.01, data.shape)
-    return tj.align(tj.Scan(data.astype(np.float32), geometry), fit="translations")
+    return tj.align(tj.Scan(data.astype(np.float32), geometry), fit="translations", motion="smooth")
 
 
 def _invented_jumps(result):

@@ -40,8 +40,8 @@ the exact voxel average of the meshes, recorded in
 [alignment-example.png](alignment-example.png) comes from
 [align_watch.py](../examples/align_watch.py): 400 views on 77 µm voxels with
 the axis 5.3 px off centre and per-view wobble and jitter, aligned with
-`tj.align(scan, fit=("center", "translations", "rotations"))`. Both volumes
-are FISTA-TV reconstructions with the same settings and every panel shares one grey scale.
+`tj.align(scan, fit=("center", "translations", "rotations"))`. Both volumes are
+FISTA-TV reconstructions with TV weight 1e-5, which keeps the hairspring, and every panel shares one grey scale.
 The truth, its poses and its centre are compared in the least-motion frame
 `tj.align` reports; [alignment-example.json](alignment-example.json) records
 the gauge removed and every error.

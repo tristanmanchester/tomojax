@@ -31,8 +31,9 @@ Alignment is experimental and needs scan-specific review. Use the
   determined: the fit may leave it, and the reconstruction is unaffected.
 - On a half-turn parallel scan, `fit=("translations", "tilt")` can overshoot the tilt by a few
   tenths of a degree: on a synthetic sandstone scan it fitted −0.76° for a true −0.35°.
-- A sudden slip of about a pixel between neighbouring views is followed about 16% short: on a
-  synthetic sandstone scan the fit moved 0.80 px for a 0.95 px slip.
+- A sudden slip of about a pixel between neighbouring views is followed about 8% short: on a
+  synthetic sandstone scan the fit moved 0.88 px for a 0.95 px slip, and 0.80 px with
+  `motion="smooth"`.
 - When the sample extends past the detector, the outermost slices are unreliable, aligned or
   not: reconstructed with the true poses they are as far from the truth.
 - The image and geometry are jointly estimated. Common rigid object motion is a gauge, and a

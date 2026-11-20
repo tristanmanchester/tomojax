@@ -124,6 +124,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--iterations": ("align", "iterations"),
         "--image-iterations": ("align", "image_iterations"),
         "--tolerance": ("align", "tolerance"),
+        "--motion": ("align", "motion"),
         "--interpolation": ("align", "interpolation"),
         "--resolution": ("align", "resolution"),
         "--apply-poses": ("load", "apply_poses"),
@@ -213,7 +214,14 @@ def _configuration_fields(command: str) -> set[str]:
     if command == "align":  # every AlignConfig field but the everyday ones, which are options
         from tomojax import AlignConfig
 
-        everyday = {"iterations", "image_iterations", "tolerance", "interpolation", "resolution"}
+        everyday = {
+            "motion",
+            "iterations",
+            "image_iterations",
+            "tolerance",
+            "interpolation",
+            "resolution",
+        }
         return {item.name for item in fields(AlignConfig)} - everyday
     configs = (
         FBPConfig,

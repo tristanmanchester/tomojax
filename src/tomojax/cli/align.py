@@ -30,6 +30,7 @@ class _Args(argparse.Namespace):
     force: bool
     fit: list[str]
     method: str
+    motion: str | None
     iterations: int | None
     image_iterations: int | None
     tolerance: float | None
@@ -43,7 +44,7 @@ class _Args(argparse.Namespace):
 
 
 # The everyday settings: tj.align's keywords, each a field of AlignConfig.
-_SETTINGS = ("iterations", "image_iterations", "tolerance", "interpolation", "resolution")
+_SETTINGS = ("motion", "iterations", "image_iterations", "tolerance", "interpolation", "resolution")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,6 +83,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="joint",
         help="joint (default): fit an image with the parameters; opposite-views: --fit "
         "center alone from near-opposite views of an axial parallel scan, without an image",
+    )
+    _ = parser.add_argument(
+        "--motion",
+        choices=("independent", "smooth"),
+        help="independent (default): each view may differ from its neighbours; smooth: drift "
+        "and occasional slips, for a steady stage",
     )
     _ = parser.add_argument(
         "--iterations", type=int, help="Gauss-Newton iterations at the working resolution (8)"

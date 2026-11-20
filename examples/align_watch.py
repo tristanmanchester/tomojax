@@ -7,7 +7,7 @@ has its own pose: a slow wobble of the sample plus jitter, up to 0.25° in each
 rotation and 2.4 pixels across and 1.5 pixels along the axis. gVXR traces the
 projections through the movement's meshes at those poses. ``tj.align`` fits
 ``("center", "translations", "rotations")`` jointly with the volume; nominal
-and aligned scans are reconstructed with the same FISTA-TV settings.
+and aligned scans are reconstructed with the same FISTA-TV settings (TV weight 1e-5).
 
 A shared rigid movement of the object and its poses cannot be distinguished by
 projection data. After fitting, an independent SciPy registration compares 27
@@ -42,7 +42,8 @@ from tomojax.geometry import grid_volume_origin, stack_view_poses
 SIZE, LAYERS, FIELD, MIDDLE = 384, 82, 29.6, 3.0  # voxels, z layers, field (mm), centre z
 VIEWS, PHOTONS = 400, 2e4
 CENTER_PX, ROTATION_DEG = 5.3, 0.25
-RECONSTRUCTION = {"iterations": 100, "nonnegative": True, "warm_start": True}
+# A TV weight of 1e-5 keeps the hairspring; the automatic weight smooths it away.
+RECONSTRUCTION = {"iterations": 100, "tv_weight": 1e-5, "nonnegative": True, "warm_start": True}
 ZOOM = 140  # voxels on a side of the balance close-up
 
 

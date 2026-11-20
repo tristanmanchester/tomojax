@@ -55,6 +55,7 @@ def test_alignment_has_one_fit_argument_and_an_optional_grid():
         "grid",
         "region",
         "method",
+        "motion",
         *("iterations", "image_iterations", "tolerance", "interpolation", "resolution"),
         "config",
     )

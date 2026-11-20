@@ -518,3 +518,53 @@ def test_native_cuda_inverse_support_keeps_rounded_boundary_weights():
     backprojected = float(operators.adjoint(images)[165, 251, 230])
     assert projected > 1e-6
     np.testing.assert_allclose(backprojected, projected, rtol=2e-6, atol=2e-10)
+
+
+_SCATTERED_POOL = r"""
+import jax, jax.numpy as jnp, numpy as np
+import tomojax as tj
+
+# Fill the capped pool with 32 MiB blocks, then free every other one: half the pool is free,
+# but no free block holds the data, let alone the solve's working set.
+held = []
+while True:
+    try:
+        held.append(jnp.zeros((2**23,), jnp.float32).block_until_ready())
+    except Exception:
+        break
+for block in held[::2]:
+    block.delete()
+n, views = 48, 1440
+grid = tj.Grid(n, n, n, 1, 1, 1)
+detector = tj.Detector(192, n, 1, 1)
+geometry = tj.ConeGeometry(
+    grid, detector, np.linspace(0, 360, views, endpoint=False), tj.ConeBeam(3 * n, 4.5 * n)
+)
+data = np.random.default_rng(0).random((views, n, 192), dtype=np.float32)
+import sys
+print("RECONSTRUCT", file=sys.stderr, flush=True)
+reconstruction = tj.reconstruct(tj.Scan(data, geometry), "cgls", iterations=3)
+print(reconstruction.info["formulation"], bool(np.isfinite(np.asarray(reconstruction.volume)).all()))
+"""
+
+
+@pytest.mark.gpu
+@pytest.mark.fresh_gpu
+def test_a_scattered_pool_streams_the_data_rather_than_running_out():
+    # The free bytes in all exceed the resident solve's need, but no one block holds it.
+    import subprocess
+    import sys
+
+    env = {**os.environ, "JAX_PLATFORMS": "cuda,cpu", "XLA_CLIENT_MEM_FRACTION": "0.12"}
+    run = subprocess.run(
+        [sys.executable, "-c", _SCATTERED_POOL],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert run.returncode == 0, run.stderr[-2000:]
+    assert run.stdout.split()[-2:] == ["streamed_normal_equations", "True"]
+    # The pool's own figures rule the block out: no allocation is tried, so the allocator
+    # neither retries nor reports running out.
+    assert "bfc_allocator" not in run.stderr.split("RECONSTRUCT")[-1]

@@ -776,6 +776,7 @@ def align(
     grid: Grid | None = None,
     region: Region | None = None,
     method: AlignMethod | None = None,
+    motion: Literal["independent", "smooth"] | None = None,
     iterations: int | None = None,
     image_iterations: int | None = None,
     tolerance: float | None = None,
@@ -791,9 +792,10 @@ def align(
     is held at its declared value. Translations have two components for parallel
     rays and three for cone beams. Rotations are the per-view wobble of the
     rotation axis, two components; each view's angle about the axis is taken as
-    recorded, since stage encoders give it and errors in it are rare. The
-    default fits drift and slips. Per-view rotations have a prior on their
-    physical size.
+    recorded, since stage encoders give it and errors in it are rare. By
+    default each view's corrections are free of its neighbours';
+    ``motion="smooth"`` fits drift and slips instead. Per-view rotations have a
+    prior on their physical size.
 
     ``method`` "joint" (the default) fits an image and the parameters together;
     the same solver handles parallel, laminography and cone-beam scans. Existing
@@ -819,6 +821,10 @@ def align(
         :func:`reconstruct`.
     method : {"joint", "opposite-views"} or None, optional
         How the parameters are estimated; None is "joint".
+    motion : {"independent", "smooth"} or None, optional
+        Whether each view moves independently of its neighbours (the default) or the
+        motion is smooth drift with occasional slips, for a steady stage (see
+        :class:`AlignConfig`); None keeps ``config``'s value.
     iterations, image_iterations, tolerance, interpolation, resolution : optional
         The everyday settings, replacing the fields of the same name in ``config``
         (see :class:`AlignConfig`); None keeps its value.
@@ -856,6 +862,7 @@ def align(
     from tomojax.alignment import AlignConfig
 
     settings = {
+        "motion": motion,
         "iterations": iterations,
         "image_iterations": image_iterations,
         "tolerance": tolerance,

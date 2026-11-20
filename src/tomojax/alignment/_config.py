@@ -6,20 +6,29 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 type Interpolation = Literal["linear", "cubic"]
+type Motion = Literal["independent", "smooth"]
 
 
 @dataclass(frozen=True, kw_only=True)
 class AlignConfig:
     """The settings of :func:`tomojax.align`.
 
-    ``tj.align``'s keywords ``iterations``, ``image_iterations``, ``tolerance``,
-    ``interpolation`` and ``resolution`` replace the fields of the same name; the
+    ``tj.align``'s keywords ``motion``, ``iterations``, ``image_iterations``,
+    ``tolerance``, ``interpolation`` and ``resolution`` replace the fields of the same name; the
     rest are set here. ``info["config"]`` records the values a call used, with
     the ones that depend on the scan resolved. Lengths in pixels are in the
     working detector's pixels unless a field says native; angles are in degrees.
 
     Parameters
     ----------
+    motion : {"independent", "smooth"}, optional
+        How each view's corrections may differ from its neighbours'. "independent" (the
+        default) leaves every view free: no term ties a view's translations or rotations to
+        its neighbours', and only the rotations' size prior remains. "smooth" lets the
+        translations drift freely along a spline and step from one view to the next only
+        where the data call for a slip, and ties each view's rotations to its neighbours';
+        use it for a steady stage, where per-view error that is not motion should not be
+        followed.
     iterations : int, optional
         Gauss-Newton iterations at the working resolution. Default is 8.
     coarse_iterations : int, optional
@@ -51,11 +60,12 @@ class AlignConfig:
         it off. Default is 5.
     initial_image_iterations : int, optional
         FISTA iterations for the first level's starting image. Default is 5.
-    innovation_scale : float, optional
-        The size of a view-to-view step the motion prior counts as an event, in
-        native pixels. Default is 0.02.
+    slip_scale : float, optional
+        Under ``motion="smooth"``, the view-to-view step, in native pixels, at which the pull
+        towards the neighbours is strongest; larger steps are followed as slips, and the
+        rotations' tie to their neighbours is inversely proportional to it. Default is 0.02.
     knot_spacing : int, optional
-        Views between the smooth drift's spline knots. Default is 10.
+        Under ``motion="smooth"``, views between the drift's spline knots. Default is 10.
     rotation_sigma : float, optional
         The per-view rotations' size prior, in degrees. Default is 0.5.
     loss_width : float, optional
@@ -79,6 +89,7 @@ class AlignConfig:
         refinement. Default is 5.
     """
 
+    motion: Motion = "independent"
     iterations: int = 8
     coarse_iterations: int = 12
     levels: tuple[int, ...] = (2, 1)
@@ -91,7 +102,7 @@ class AlignConfig:
     interpolation: Interpolation | None = None
     refine_iterations: int = 5
     initial_image_iterations: int = 5
-    innovation_scale: float = 0.02
+    slip_scale: float = 0.02
     knot_spacing: int = 10
     rotation_sigma: float = 0.5
     loss_width: float = 2.5
@@ -126,6 +137,8 @@ class AlignConfig:
         return replace(self, interpolation="cubic" if angular and not cone else "linear")
 
     def __post_init__(self) -> None:
+        if self.motion not in ("independent", "smooth"):
+            raise ValueError(f'motion is "independent" or "smooth", not {self.motion!r}')
         if not self.levels or self.levels[-1] != 1 or any(b < 1 for b in self.levels):
             raise ValueError(f"levels are binnings of at least 1 ending at 1, not {self.levels}")
         if self.interpolation not in (None, "linear", "cubic"):

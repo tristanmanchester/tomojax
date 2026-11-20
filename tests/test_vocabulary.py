@@ -36,6 +36,7 @@ DOCS = [
 # Names retired at a site, with what replaces them. A site's place is matched with fnmatch.
 RETIRED = {
     ("*", "batch_views"): "views_per_batch",
+    ("*", "innovation_scale"): 'motion="independent" (the default) or slip_scale',
     ("*", "select_views"): "views",
     ("*", "stream_projections"): "stream",
     ("*", "joseph_interpolation"): "interpolation",
