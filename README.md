@@ -34,8 +34,7 @@ average of the meshes, and FISTA-TV 0.125, in 15 s.
 
 `tomojax align` and `tj.align` solve the image and the requested geometry corrections together.
 The default fits per-view translations; add `"tilt"` and `"roll"` for shared setup angles,
-or `"rotations"` for per-view wobble. The figure above was made with an earlier alignment
-implementation and is awaiting requalification with the consolidated solver. See
+or `"rotations"` for per-view wobble. See
 [align a scan](https://tomojax.dev/align-a-scan/) for parameter selection and result checks.
 
 ## First reconstruction
@@ -129,7 +128,7 @@ of 2160 × 2560 pixels into a 56.6 GB volume, ran on an 8 GB laptop GPU with
 ## Development and license
 
 See [CONTRIBUTING.md](https://github.com/tristanmanchester/tomojax/blob/main/CONTRIBUTING.md) for environment setup, engineering
-conventions, tests, and package checks. Changes on this branch are recorded in
-the [changelog](https://github.com/tristanmanchester/tomojax/blob/main/CHANGELOG.md).
+conventions, tests, and package checks. Changes are recorded in the
+[changelog](https://github.com/tristanmanchester/tomojax/blob/main/CHANGELOG.md).
 
 TomoJAX is licensed under [GPL-3.0-only](https://github.com/tristanmanchester/tomojax/blob/main/LICENSE).
