@@ -74,8 +74,8 @@ everywhere in the slice, because every view is displaced by the same amount.
 
 For cone data, `"center"` also estimates the detector-v centre. The data determine it only weakly:
 a vertical detector offset looks almost the same as moving the image vertically, so the fit may
-leave the v centre near its starting value and move the image instead. The reconstruction is
-still consistent with the data; do not read the fitted v centre as an instrument calibration.
+leave the v centre near its starting value and move the image instead, so do not read the
+fitted v centre as an instrument calibration.
 
 `tj.align(scan, fit="center", method="opposite-views")` estimates the centre from near-opposite
 views of an axial parallel scan, without an image: a quick estimate that does not reconstruct, and
@@ -214,8 +214,7 @@ translation fit.
 
 3. Check that the global values are physically plausible: a tilt correction of several degrees, or
    per-view rotations of more than a fraction of a degree, usually means the model is wrong rather
-   than the instrument. A sharper image or a lower residual alone does not establish accurate
-   poses.
+   than the instrument.
 4. Compare poses only after removing one common rigid motion of the object. Moving the whole
    object and moving every pose back predicts the same data.
 5. Read `result.info["report"]`. It states how each level ended ("pose_steps_below_tolerance"
@@ -227,8 +226,8 @@ translation fit.
    - `unusual_views`: views whose residual is at least three times their neighbours', such as a
      broken frame or a crystal diffracting. These need not have moved, so look at the frames.
    Look at those views before trusting their corrections, and drop broken frames, or correct
-   with `RejectViews()` and align again. The report is
-   advisory: a view below its thresholds can still be wrong. `info["report"]["advisories"]` also
+   with `RejectViews()` and align again. A view below the thresholds can still be wrong.
+   `info["report"]["advisories"]` also
    states measured limits that apply to the fit, such as per-view rotations fitted with the
    rotation axis perpendicular to the beam, where they are weakly determined and can end worse
    than translations alone.
