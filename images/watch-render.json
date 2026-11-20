@@ -12,10 +12,10 @@
   "reconstruction": {
     "method": "fista",
     "iterations": 60,
-    "tv_weight": 0.01,
+    "tv_weight": 1e-05,
     "nonnegative": true,
     "warm_start": "fbp",
-    "seconds": 55.18066600599559
+    "seconds": 50.44585887901485
   },
   "transfer_function": {
     "stops_mm": [
@@ -135,7 +135,7 @@
     "elevation_deg": 48,
     "fov_deg": 24
   },
-  "render_seconds": 20.481711599000846,
+  "render_seconds": 18.82990162493661,
   "renderer": "direct volume rendering, examples/_volume_render.py",
   "device": "cuda:0",
   "versions": {
@@ -144,5 +144,5 @@
     "numpy": "2.4.5",
     "matplotlib": "3.11.2"
   },
-  "total_seconds": 184.40282126799866
+  "total_seconds": 179.03276903089136
 }

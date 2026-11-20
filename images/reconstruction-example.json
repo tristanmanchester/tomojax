@@ -16,16 +16,16 @@
   "slice_z_mm": 2.965,
   "fbp": {
     "filter": "hann",
-    "relative_l2": 0.35711902379989624,
-    "seconds": 0.2829280860023573
+    "relative_l2": 0.35707443952560425,
+    "seconds": 0.29430388705804944
   },
   "fista_tv": {
-    "tv_weight": 0.01,
+    "tv_weight": 1e-05,
     "iterations": 200,
     "nonnegative": true,
     "warm_start": "fbp",
-    "relative_l2": 0.12479984015226364,
-    "seconds": 15.433243392006261
+    "relative_l2": 0.12424617260694504,
+    "seconds": 17.429623645963147
   },
   "error_region": "the whole reconstructed slab",
   "attenuation_mm": {
@@ -37,7 +37,12 @@
     "glucydur": 0.2604,
     "gold": 4.0475,
     "nivarox": 0.2297,
-    "nivaflex": 0.345
+    "nivaflex": 0.345,
+    "steel316": 0.2236,
+    "sapphire": 0.0597,
+    "dial": 0.3323,
+    "lume": 0.114,
+    "rubber": 0.0156
   },
   "device": "cuda:0",
   "versions": {
@@ -46,5 +51,5 @@
     "numpy": "2.4.5",
     "matplotlib": "3.11.2"
   },
-  "total_seconds": 70.698507891997
+  "total_seconds": 67.6928212409839
 }

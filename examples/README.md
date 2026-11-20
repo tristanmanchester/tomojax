@@ -55,9 +55,9 @@ about 40 s. Times are on an RTX 4070 Laptop GPU.
 [reconstruct_watch.py](reconstruct_watch.py) scans the movement with 200 views
 over a half turn and 10⁴ photons per pixel, and reconstructs a 32-slice slab
 through the hairspring on 38.5 µm voxels with filtered backprojection (Hann
-filter) and with 200 iterations of non-negative FISTA-TV (weight 0.01) started
-from it. Over the whole slab the relative L2 error is 0.357 for FBP and
-0.125 for FISTA-TV, which takes 15 s. The script takes about a minute.
+filter) and with 200 iterations of non-negative FISTA-TV (weight 1e-5, which keeps
+the hairspring) started from it. Over the whole slab the relative L2 error is 0.357
+for FBP and 0.124 for FISTA-TV, which takes 17 s. The script takes about a minute.
 
 ### Align a scan with per-view motion
 
@@ -83,7 +83,7 @@ there the centre is found at 3.19 px.
 
 [render_watch.py](render_watch.py) scans the whole movement with 600 views and
 3 × 10⁴ photons per pixel, reconstructs it on a 768 × 768 × 164 grid of 38.5 µm
-voxels with 60 FISTA-TV iterations (55 s), and draws the reconstruction
+voxels with 60 FISTA-TV iterations (weight 1e-5, 50 s), and draws the reconstruction
 by direct volume rendering in JAX ([_volume_render.py](_volume_render.py)).
 Rays march through the volume, and a transfer function of the reconstructed
 attenuation sets colour and opacity: steel white, brass and the balance gold,
