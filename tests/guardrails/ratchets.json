@@ -52,7 +52,7 @@
     "(modules)": 3541,
     "_data": 2104,
     "alignment": 4424,
-    "backends": 260,
+    "backends": 281,
     "cli": 2271,
     "core": 9523,
     "corrections": 2772,
@@ -62,7 +62,7 @@
     "io": 3920,
     "motion": 153,
     "nuisance": 232,
-    "recon": 13112
+    "recon": 13116
   },
   "cuda_kernels": 48,
   "cuda_switches": 34,
