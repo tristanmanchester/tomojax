@@ -115,8 +115,10 @@ the new file with `tomojax inspect` before reconstructing it.
 
 ## Reconstruct with the recorded geometry
 
-The default reconstruction of a laminography scan is FBP, as for every
-geometry: `tj.reconstruct(scan)` or `tomojax reconstruct corrected.nxs -o recon.nxs`.
+The default reconstruction of a laminography scan is FBP: `tj.reconstruct(scan)` or
+`tomojax reconstruct corrected.nxs -o recon.nxs`. (Axial parallel scans with
+well-covered angles default to the Fourier inverse, and cone scans of several
+arrangements to CGLS.)
 It takes seconds (5.5 s on a 1441-view K11 scan with a 704 × 704 × 234 grid).
 
 For a better image, ask for FISTA by name:

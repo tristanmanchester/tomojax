@@ -495,7 +495,7 @@ correlation 0.984, median ratio 0.997.
 
 ## Laminography: the default FBP against FISTA
 
-`tj.reconstruct(scan)` on a laminography scan runs FBP, as for every geometry.
+`tj.reconstruct(scan)` on a laminography scan runs FBP.
 Two simulated laminography scans with an independent truth: a rock (120 views,
 -35° tilt) and a watch (360 views, -15° tilt), 96³ grids. The data are the
 meshes' fine truth (4× finer, at a sub-voxel offset) projected at the true
@@ -1683,8 +1683,8 @@ either can be split by rows by hand for this geometry.
 
 CGLS keeps about five volumes and three sinograms, FISTA-TV seven volumes, and
 SPDHG-TV eight volumes plus its dual sinogram. JAX's default allocator limit is
-75% of device memory, under which this CGLS case does not fit; the CLI raises
-the limit to 90%.
+75% of device memory, and TomoJAX keeps it for the CLI and Python alike; under
+it this CGLS case does not fit.
 
 SPDHG-TV first rewrote its five state volumes in place (2026-11-19, commit
 `596052b`): the plain `tj.reconstruct(scan, "spdhg")` on K11 54013 at full size
@@ -1738,9 +1738,9 @@ machine, so these numbers are not a comparison with them.
 
 ## Images
 
-The README's [synthetic figure](../images/README.md#reproducible-synthetic-reconstruction)
-uses the same model to simulate and reconstruct: it shows the API, not
-accuracy. The [historical DIAD laminography images](../images/README.md#historical-real-data-illustrations)
+[images/README.md](../images/README.md) says how each README figure was made:
+the synthetic ones are traced by gVXR from meshes, not simulated with TomoJAX's
+own projector. The [historical DIAD laminography images](../images/README.md#historical-real-data-illustrations)
 show qualitative use on real data; their raw scan and configuration are not
 bundled, so they cannot be reproduced.
 
