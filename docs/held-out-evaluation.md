@@ -125,7 +125,6 @@ can invalidate an independent-noise interpretation of view cross-validation.
 Use image or known-truth checks alongside prediction scores; TomoJAX does not
 adopt these failed MSE selectors as automatic stopping rules.
 
-
 ### Discrete image-space validation
 
 On 2DeteCT 00001 at 64², the criterion
@@ -178,10 +177,9 @@ updates were powers of two from 1 through 1024, without acceleration, using
 Measured 2026-10-28 on `20fe1a9c` with `stopping_sirt_family.py` and
 `stopping_sirt_supplement.py`. Selected-candidate first/repeat times were
 11.173/11.169 and 11.130/11.129 s. Completed-candidate times sum to 357.80 s;
-this is not end-to-end wall time. Peak sampled GPU memory was 164 MiB.
-The initial process timed out after 21 of 22 configurations, losing its host
-peak measurement; the final configuration completed separately with host RSS
-829 MiB. That host peak does not characterize the complete candidate sweep.
+this is not end-to-end wall time. Peak sampled GPU memory was 164 MiB. Host RSS
+was 829 MiB for the last of the 22 configurations alone; the sweep's host peak
+over the other 21 was not recorded.
 
 ### Fine-grid image validation
 
