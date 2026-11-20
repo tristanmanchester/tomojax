@@ -1399,13 +1399,14 @@ The full scans at the declared 704 × 704 × 234 grid (6.48 µm voxels, all view
 native 640 × 540 detector at 2.16 µm), `tj.align(scan)` with nothing set, one process,
 measured 2026-11-19 and 2026-11-20 on the RTX 4070 Laptop. On `f58a6f7a` and `dc736fb3`
 the plain call's motion prior is what is now `motion="smooth"`; the last time column is
-today's default, `motion="independent"` (commit `dd8f2cd`):
+today's default, `motion="independent"` (commit `dd8f2cd`; K11 67208 on `18c7703`, after the
+refinement learned to stop at convergence, 1111 s before):
 
 | Scan | Views | `f58a6f7a` | `dc736fb3` | `dd8f2cd`, independent | GPU, `f58a6f7a` → `dc736fb3` |
 |---|---:|---:|---:|---:|---:|
 | K11 54013, tilt −35° | 1441 | 354 s | 281 s | 281 s | 3.31 → 3.19 GiB |
 | K11 54286, tilt +35° | 1441 | 352 s | 279 s | 278 s | 3.31 → 3.19 GiB |
-| K11 67208, tilt +30.9° | 4000 | 1304 s | 1039 s | 1111 s | 4.73 → 4.63 GiB |
+| K11 67208, tilt +30.9° | 4000 | 1304 s | 1039 s | 1009 s | 4.73 → 4.63 GiB |
 
 `f58a6f7a` and `dc736fb3` return byte-identical poses and images on all three. On 54013, undoing one
 change at a time costs 45 s for converting the CG search direction to z-contiguous
