@@ -227,8 +227,6 @@ measurements require independent calibration evidence and repair before `Rings`.
 - SPDHG-TV keeps five volumes on the GPU (its iterate, its accumulated data backprojection
   and the three TV duals), so a volume must fit there five times: a 1014³ grid (3.9 GiB a
   volume) does not on an 8 GB card. FISTA, CGLS and SIRT keep such a volume in host memory.
-- `tj.align` keeps its motion prior's factor on the GPU, and that grows as the square of the
-  views: on an 8 GB card about 6000 views fit beside a full-size level, and 8000 do not.
 - Alignment fixes an object's position only up to what the data can see. Cone translations
   include along-beam motion, but the common rigid gauge remains unobservable. Compare geometry
   after one rigid gauge and include detector-centre changes in detector-space scores.
