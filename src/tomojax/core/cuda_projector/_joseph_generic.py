@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from functools import cache
 import math
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -12,22 +10,12 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core._joseph_cuda_kernels import source
 from tomojax.core.cuda import broadcast_offset, launch_kernel
 from tomojax.core.volume_layout import swap_last_axes
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
-
-
-@cache
-def source(name: str, **constants: int | str) -> str:
-    """Specialize a kernel's layout, retaining runtime volume/detector dimensions."""
-    text = Path(__file__).with_name(name + ".cu").read_text()
-    for header_name in ("joseph_sampling.cuh", "joseph_gather.cuh", "joseph_tile.cuh"):
-        if f'#include "{header_name}"' in text:
-            header = Path(__file__).parents[1].joinpath(header_name).read_text()
-            text = text.replace(f'#include "{header_name}"', header)
-    return "\n".join(f"#define {key} {value}" for key, value in constants.items()) + "\n" + text
 
 
 def storage_tile(detector: Detector, *, z_fast: bool) -> int:

@@ -233,11 +233,12 @@ def _launch_uniform(context: Any, out: Any, coeff: Any, *, grid: Grid, detector:
         tiles = -(-detector.nu // 128) * detector.nv
         for start in range(0, coeff.shape[0], 64):
             stop = min(start + 64, coeff.shape[0])
+            dims = (*shape, detector.nu, detector.nv, stop - start, 0, grid.nz, grid.nz, 0)
             # The uniform specialization never dereferences its volume argument.
             kernel(
                 (tiles * (stop - start),), (THREADS,),
                 (geometry[start:stop], geometry, target[start:stop],
-                 *map(np.int32, (*shape, detector.nu, detector.nv, stop - start, 0, grid.nz))),
+                 *map(np.int32, dims)),
             )  # fmt: skip
 
 

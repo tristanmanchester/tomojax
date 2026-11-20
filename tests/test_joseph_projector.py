@@ -155,6 +155,28 @@ def test_uniform_cuda_projection_keeps_rounded_boundary_and_plane_sums(nz):
     np.testing.assert_array_equal(np.asarray(actual) == 0, np.asarray(expected) == 0)
 
 
+@pytest.mark.gpu
+def test_uniform_ray_preserves_the_sequential_sum_across_both_box_edges():
+    if not cuda.cuda_gather_available():
+        pytest.skip("requires CUDA and CuPy")
+    grid, detector = Grid(513, 8, 3, 1, 1, 1), Detector(3, 1, 1, 1)
+    coeff = np.zeros((3, 14), np.float32)
+    coeff[:, 1] = coeff[:, 6] = 1
+    coeff[:, 3] = [1 / 32, -1 / 32, 0]
+    coeff[:, 4] = [-2.25, 10.25, 1.5]
+    coeff[:, 8] = 1
+    coeff[:, 9] = 1.3
+    expected = np.empty((3, 1, 3), np.float32)
+    for view, c in enumerate(coeff):
+        planes = c[3] * np.arange(grid.nx, dtype=np.float32) + c[4]
+        for u in range(detector.nu):
+            y = planes + u
+            covered = np.clip(np.minimum(y + 1, grid.ny - y), 0, 1)
+            expected[view, 0, u] = np.add.accumulate(covered * c[9])[-1]
+    actual = cuda.project_ones_cuda(jnp.asarray(coeff), grid, detector)
+    np.testing.assert_array_equal(actual, expected)
+
+
 @pytest.mark.parametrize(
     ("voxel", "spacing"),
     [((0.8, 1.1, 1.3), (0.7, 1.2)), ((2.0, 0.4, 1.3), (0.3, 0.5)), ((0.5, 0.6, 0.7), (1.4, 1.8))],
@@ -914,6 +936,22 @@ def test_z_fast_storage_projects_and_transposes_the_same_bits(
                 fresh = np.asarray(call(coeff[:count], data[:count], None))
                 initialized = np.asarray(call(coeff[:count], data[:count], zero))
                 np.testing.assert_array_equal(fresh.view(np.uint32), initialized.view(np.uint32))
+
+
+@pytest.mark.gpu
+def test_vertical_scratch_bands_add_to_columns_of_the_full_private_volume():
+    if not cuda.cuda_gather_available():
+        pytest.skip("requires CUDA and CuPy")
+    grid, detector = Grid(7, 4, 93, 1, 1, 1), Detector(16, 98, 1, 1)
+    poses = jnp.tile(jnp.eye(4, dtype=jnp.float32), (8, 1, 1))
+    coeff = plane_coefficients(poses, grid, detector)
+    rng = np.random.default_rng(10)
+    images = jnp.asarray(rng.normal(size=(8, 98, 16)), jnp.float32)
+    initial = jnp.asarray(rng.normal(size=(93, 4, 7)), jnp.float32)
+    add = partial(axial.transpose_axial_vu_cuda, grid=grid, interpolation="linear")
+    public = add(coeff, images, initial)
+    private = add(coeff, images, initial.T, z_fast=True)
+    np.testing.assert_array_equal(private.T, public)
 
 
 @pytest.mark.parametrize(

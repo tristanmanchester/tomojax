@@ -66,6 +66,8 @@ class JosephCUDA:
                     np.int32(stop - first),
                     np.int32(0),
                     self.args[2],
+                    self.args[2],
+                    np.int32(0),
                 ),
             )
         return out
@@ -113,7 +115,7 @@ def slab_forward(volume: Any, coeff: Any, *, grid: Grid, detector: Detector, z0:
             coeff,
             volume,
             out,
-            *map(np.int32, (grid.nx, grid.ny, grid.nz, nu, nv, n, z0, depth)),
+            *map(np.int32, (grid.nx, grid.ny, grid.nz, nu, nv, n, z0, depth, grid.nz, 0)),
         ),
     )
     return out

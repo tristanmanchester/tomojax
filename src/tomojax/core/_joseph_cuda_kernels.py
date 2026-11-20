@@ -9,9 +9,20 @@ _VIEWS_PER_STAGE = 32
 THREADS = 128
 
 _GATHER_SOURCE = r"""
+// A unit tent on the two plane coordinates maps to a fixed parallelogram
+// on the detector. Its centre moves affinely along a z run. Translate this
+// per-view bounding box to the first voxel instead of inverting every voxel.
+__device__ float2 footprint_axis(float ib, float ic, float db, float dc, float eb, float ec) {
+    float end = (RUN - 1) * (ib * db + ic * dc);
+    float radius = fabsf(ib) + fabsf(ic);
+    // Enclose both the rounded forward samples and the rounded inverse centre.
+    radius += 16 * 1.1920928955078125e-7f * (fabsf(ib)*eb + fabsf(ic)*ec + radius + 1);
+    return make_float2(fminf(end, 0.f) - radius, fmaxf(end, 0.f) + radius);
+}
+
 template<int A, int R>
 __device__ __forceinline__ void gather_view(
-    const float* c, const float* image, int ix, int iy, int iz0,
+    const float* c, const float2* box, const float* image, int ix, int iy, int iz0,
     int nu, int nv, float (&total)[R]) {
     const int a = A;
     float ub = c[1], vb = c[2], kb = c[3], cb = c[4];
@@ -23,7 +34,6 @@ __device__ __forceinline__ void gather_view(
     // Step of the run's voxel index along the plane coordinates.
     int dk = a == 2, db = a == 1, dc = a == 0;
     float hb[R], hc[R], tb[R], tc[R];
-    float lo_u = 3.4e38f, hi_u = -3.4e38f, lo_v = 3.4e38f, hi_v = -3.4e38f;
     #pragma unroll
     for (int j = 0; j < R; ++j) {
         float k = (float)(k0 + j * dk);
@@ -31,21 +41,13 @@ __device__ __forceinline__ void gather_view(
         hc[j] = __fadd_rn(__fmul_rn(kc, k), cc);
         tb[j] = (float)(b0 + j * db);
         tc[j] = (float)(c0 + j * dc);
-        float cu = iub * (tb[j] - hb[j]) + iuc * (tc[j] - hc[j]);
-        float cv = ivb * (tb[j] - hb[j]) + ivc * (tc[j] - hc[j]);
-        lo_u = fminf(lo_u, cu); hi_u = fmaxf(hi_u, cu);
-        lo_v = fminf(lo_v, cv); hi_v = fmaxf(hi_v, cv);
     }
-    float ru = fabsf(iub) + fabsf(iuc), rv = fabsf(ivb) + fabsf(ivc);
-    // Bound inverse-coordinate roundoff without expanding the physical weights.
-    float eb = fmaxf(fabsf(tb[0]), fabsf(tb[R-1])) + fmaxf(fabsf(hb[0]), fabsf(hb[R-1]));
-    float ec = fmaxf(fabsf(tc[0]), fabsf(tc[R-1])) + fmaxf(fabsf(hc[0]), fabsf(hc[R-1]));
-    float mu = 8*1.1920928955078125e-7f*(fabsf(iub)*eb + fabsf(iuc)*ec + ru + 1);
-    float mv = 8*1.1920928955078125e-7f*(fabsf(ivb)*eb + fabsf(ivc)*ec + rv + 1);
-    int u_start = max((int)floorf(lo_u - ru - mu) + 1, 0);
-    int u_stop = min((int)ceilf(hi_u + ru + mu), nu);
-    int v_start = max((int)floorf(lo_v - rv - mv) + 1, 0);
-    int v_stop = min((int)ceilf(hi_v + rv + mv), nv);
+    float cu = iub * (tb[0] - hb[0]) + iuc * (tc[0] - hc[0]);
+    float cv = ivb * (tb[0] - hb[0]) + ivc * (tc[0] - hc[0]);
+    int u_start = max((int)floorf(cu + box[0].x) + 1, 0);
+    int u_stop = min((int)ceilf(cu + box[0].y), nu);
+    int v_start = max((int)floorf(cv + box[1].x) + 1, 0);
+    int v_stop = min((int)ceilf(cv + box[1].y), nv);
     for (int u = u_start; u < u_stop; ++u) {
         for (int v = v_start; v < v_stop; ++v) {
             float value = image[(long)u * nv + v] * weight;
@@ -56,8 +58,8 @@ __device__ __forceinline__ void gather_view(
             #pragma unroll
             for (int j = 0; j < R; ++j) {
                 float qb = __fadd_rn(pb, hb[j]), qc = __fadd_rn(pc, hc[j]);
-                total[j] += value * (fmaxf(1.f - fabsf(qb - tb[j]), 0.f)
-                                     * fmaxf(1.f - fabsf(qc - tc[j]), 0.f));
+                total[j] += value * (__saturatef(1.f - fabsf(qb - tb[j]))
+                                     * __saturatef(1.f - fabsf(qc - tc[j])));
             }
         }
     }
@@ -70,6 +72,7 @@ __device__ __forceinline__ void gather_run(
     // Volume planes z0 to z0 + nz: geometry at global z, storage local.
     const int R = RUN, VB = VIEWS;
     __shared__ float cf[VB * 14];
+    __shared__ float2 boxes[VB * 2];
     int ix = 0, iy = 0, iz0 = 0;
     if (valid) FIRST_VOXEL(run, R, ix, iy, iz0);
     float total[R];
@@ -81,13 +84,26 @@ __device__ __forceinline__ void gather_run(
             cf[i] = first * 14 + i < nviews * 14 ? coeff[first * 14 + i] : 0.f;
         __syncthreads();
         int count = min(VB, nviews - first);
+        if (threadIdx.x < count) {
+            const float* c = cf + threadIdx.x * 14;
+            int a = (int)c[0], na = a == 0 ? nx : (a == 1 ? ny : z0 + nz);
+            float eb = (a == 0 ? ny : (a == 1 ? z0+nz : nx)) + fabsf(c[4]) + fabsf(c[3])*na
+                       + fabsf(c[1])*nu + fabsf(c[2])*nv + R;
+            float ec = (a == 0 ? z0+nz : (a == 1 ? nx : ny)) + fabsf(c[8]) + fabsf(c[7])*na
+                       + fabsf(c[5])*nu + fabsf(c[6])*nv + R;
+            float db = a == 2 ? -c[3] : (float)(a == 1), dc = a == 2 ? -c[7] : (float)(a == 0);
+            boxes[2*threadIdx.x]   = footprint_axis(c[10], c[11], db, dc, eb, ec);
+            boxes[2*threadIdx.x+1] = footprint_axis(c[12], c[13], db, dc, eb, ec);
+        }
+        __syncthreads();
         for (int view = 0; view < count; ++view) {
             const float* c = cf + view * 14;
             const float* image = images + (long)(first + view) * nu * nv;
+            const float2* box = boxes + 2*view;
             switch ((int)c[0]) {
-                case 0: gather_view<0,R>(c, image, ix, iy, z0 + iz0, nu, nv, total); break;
-                case 1: gather_view<1,R>(c, image, ix, iy, z0 + iz0, nu, nv, total); break;
-                case 2: gather_view<2,R>(c, image, ix, iy, z0 + iz0, nu, nv, total); break;
+                case 0: gather_view<0,R>(c, box, image, ix, iy, z0 + iz0, nu, nv, total); break;
+                case 1: gather_view<1,R>(c, box, image, ix, iy, z0 + iz0, nu, nv, total); break;
+                case 2: gather_view<2,R>(c, box, image, ix, iy, z0 + iz0, nu, nv, total); break;
             }
         }
     }
@@ -136,79 +152,18 @@ def gather_kernel(*, z_fast: bool = False) -> Any:
     return cp.RawModule(code=gather_source(z_fast=z_fast)).get_function("joseph_gather")
 
 
-_FORWARD_SOURCE = r"""
-__device__ float sample(const float* x, int a, int k, int b, int c,
-                       int nx, int ny, int nz, int nb, int nc, int z0, int depth) {
-    if (b<0 || b>=nb || c<0 || c>=nc) return 0.f;
-    int ix=a==0?k:(a==1?c:b), iy=a==0?b:(a==1?k:c), iz=a==0?c:(a==1?b:k);
-    if (SLAB) {
-        iz -= z0;
-        if (iz < 0 || iz >= depth) return 0.f;
-        nz = depth;
-    }
-    if (UNIFORM) return 1.f;
-    return x[VOXEL(INDEX, ix, iy, iz)];
-}
-extern "C" __global__ void forward(const float* coeff, const float* x, float* out,
-        int nx,int ny,int nz,int nu,int nv,int nviews,int z0,int depth) {
-    // TILE_V lanes follow v, contiguous in the volume's z when Z_FAST.
-    int tiles_v=(nv+TILE_V-1)/TILE_V;
-    int tile=blockIdx.x/nviews, view=blockIdx.x%nviews;
-    int u=(tile/tiles_v)*(128/TILE_V)+threadIdx.x/TILE_V;
-    int v=(tile%tiles_v)*TILE_V+threadIdx.x%TILE_V;
-    bool valid=(u<nu && v<nv);
-    const float* c=coeff+14*view;
-    int a=(int)c[0];
-    int na=a==0?nx:(a==1?ny:nz),nb=a==0?ny:(a==1?nz:nx),nc=a==0?nz:(a==1?nx:ny);
-    float pb=c[1]*u+c[2]*v,pc=c[5]*u+c[6]*v;
-    float total=0.f;
-    float low=SLAB && a==2?z0:0.f, high=SLAB && a==2?z0+depth-1.f:na-1.f;
-    for (int d=0;d<2;d++) {
-        float p=d?pc:pb, slope=d?c[7]:c[3], offset=d?c[8]:c[4];
-        float size=d?nc:nb, start=p+offset;
-        bool z_axis=SLAB && ((d==0 && a==1) || (d==1 && a==0));
-        float lower=z_axis?z0:0.f, upper=z_axis?z0+depth:size;
-        // Bound coordinate roundoff before computing a support interval.
-        float margin=8*1.1920928955078125e-7f*(fabsf(p)+fabsf(offset)+fabsf(slope)*na+1.f);
-        if (slope==0.f) {
-            if (start < lower-1.f-margin || start > upper+margin) { low=na; high=-1.f; }
-        } else {
-            float a=(lower-1.f-margin-start)/slope, b=(upper+margin-start)/slope;
-            low=fmaxf(low,fminf(a,b)); high=fminf(high,fmaxf(a,b));
-        }
-    }
-    int first=(int)fminf((float)na,fmaxf(0.f,floorf(low)-1.f));
-    int stop=(int)fminf((float)na,fmaxf(0.f,ceilf(high)+2.f));
-    if (!valid) { first=na; stop=0; }
-    int lane=threadIdx.x%32, warp=threadIdx.x/32;
-    for(int delta=16;delta>0;delta/=2) {
-        first=min(first,__shfl_down_sync(0xffffffff,first,delta));
-        stop=max(stop,__shfl_down_sync(0xffffffff,stop,delta));
-    }
-    __shared__ int starts[4], stops[4];
-    if(lane==0) { starts[warp]=first; stops[warp]=stop; }
-    __syncthreads();
-    first=min(min(starts[0],starts[1]),min(starts[2],starts[3]));
-    stop=max(max(stops[0],stops[1]),max(stops[2],stops[3]));
-    for(int k=first;k<stop;k++) {
-        if(!valid) continue;
-        float qb=pb+(c[3]*k+c[4]),qc=pc+(c[7]*k+c[8]);
-        float val;
-        if (UNIFORM && !SLAB && qb>=0.f && qb<(float)(nb-1) && qc>=0.f && qc<(float)(nc-1)) {
-            val=1.f;
-        } else {
-            int ib=(int)floorf(qb),ic=(int)floorf(qc);
-            float wb=qb-ib,wc=qc-ic;
-            val=(sample(x,a,k,ib,ic,nx,ny,nz,nb,nc,z0,depth)*(1-wc)
-                  +sample(x,a,k,ib,ic+1,nx,ny,nz,nb,nc,z0,depth)*wc)*(1-wb)
-                 +(sample(x,a,k,ib+1,ic,nx,ny,nz,nb,nc,z0,depth)*(1-wc)+sample(x,a,k,ib+1,ic+1,nx,ny,nz,nb,nc,z0,depth)*wc)*wb;
-        }
-        // Keep the original sequential additions, even for uniform support.
-        total+=val*c[9];
-    }
-    if(valid) out[((long)view*nv+v)*nu+u]=total;
-}
-"""
+@cache
+def source(name: str, **constants: int | str) -> str:
+    """Specialize a kernel's layout, retaining runtime volume/detector dimensions."""
+    root = Path(__file__).parent
+    text = (root / "cuda_projector" / (name + ".cu")).read_text()
+    if name == "forward":
+        constants = {"UNIFORM": 0, "SLAB": 0, **constants}
+    for header_name in ("joseph_sampling.cuh", "joseph_gather.cuh", "joseph_tile.cuh"):
+        if f'#include "{header_name}"' in text:
+            header = root.joinpath(header_name).read_text()
+            text = text.replace(f'#include "{header_name}"', header)
+    return "\n".join(f"#define {key} {value}" for key, value in constants.items()) + "\n" + text
 
 
 @cache
@@ -217,10 +172,15 @@ def forward_kernel(
 ) -> Any:
     import cupy as cp
 
-    source = (
-        _FORWARD_SOURCE.replace("INDEX", "int" if narrow else "long")
-        .replace("UNIFORM", str(int(uniform)))
-        .replace("SLAB", str(int(slab)))
+    text = source(
+        "forward",
+        INDEX_TYPE="int" if narrow else "long",
+        Z_FAST=int(z_fast),
+        TILE_V=16 if z_fast else 1,
+        BLOCK=THREADS,
+        CUBIC=0,
+        ABSOLUTE=0,
+        UNIFORM=int(uniform),
+        SLAB=int(slab),
     )
-    source = storage_source(z_fast=z_fast) + source.replace("TILE_V", "16" if z_fast else "1")
-    return cp.RawModule(code=source, options=("--fmad=false",)).get_function("forward")
+    return cp.RawModule(code=text, options=("--fmad=false",)).get_function("forward")
