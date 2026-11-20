@@ -20,10 +20,10 @@ uv pip install --python .venv/bin/python "tomojax[cpu]"
 .venv/bin/tomojax --help
 ```
 
-These commands select a published package-index release, not unreleased source.
-To test changes that have not been published, use the local wheel instructions
-below instead. You can also use `python -m venv .venv` followed by
-`.venv/bin/python -m pip install "tomojax[cpu]"` with an existing Python.
+These commands install a published release. To install unreleased changes, use
+the local wheel instructions below. You can also use `python -m venv .venv`
+followed by `.venv/bin/python -m pip install "tomojax[cpu]"` with an existing
+Python.
 
 ## Use CUDA 12
 
@@ -36,9 +36,8 @@ uv pip install --python .venv/bin/python "tomojax[cuda12]"
 JAX_PLATFORMS=cuda .venv/bin/python -c "import jax; print(jax.devices()); assert jax.default_backend() == 'gpu'"
 ```
 
-`JAX_PLATFORMS=cuda` fails if CUDA cannot initialise; a CPU fallback is not a
-successful CUDA installation. Keep it set when verifying your first
-reconstruction. The CUDA 12 extra includes JAX's CUDA dependencies and CuPy.
+`JAX_PLATFORMS=cuda` fails if CUDA cannot initialise. Keep it set when
+verifying your first reconstruction. The CUDA 12 extra includes JAX's CUDA dependencies and CuPy.
 It also supplies NVIDIA's CUDA runtime and NVRTC wheels for kernel compilation;
 these wheels do not replace the system NVIDIA driver.
 TomoJAX's CUDA C kernels compile at first use and are cached on disk. Published
@@ -68,11 +67,10 @@ uv pip install --python .venv/bin/python "/absolute/path/to/tomojax/dist/tomojax
 .venv/bin/tomojax --help
 ```
 
-Replace the absolute path with your build's path. For CUDA, replace `[cpu]`
-with `[cuda12]`. Installing the generated `.tar.gz` instead of the wheel builds
+For CUDA, replace `[cpu]` with `[cuda12]`. Installing the generated `.tar.gz` instead of the wheel builds
 a wheel in an isolated build environment. Both distributions include the GPL
-licence; the wheel includes the CUDA source and typing marker. Development
-setup remains separate: see [contributing](../CONTRIBUTING.md).
+licence; the wheel includes the CUDA source and typing marker. For development
+setup, see [contributing](../CONTRIBUTING.md).
 
 ## Verify a useful result
 

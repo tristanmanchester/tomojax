@@ -34,8 +34,8 @@ uv run --no-sync tomojax inspect tilted-recon.nxs --preview tilted-previews
 
 The tilt is measured away from the nominal tomography rotation axis. Laminography
 has incomplete angular information; changing the solver does not restore that
-missing information. Iteration count and TV weight above are starting settings,
-not validated choices for every object or noise level.
+missing information. The iteration count and TV weight above are starting
+settings.
 
 ## Use the Python API
 
@@ -66,7 +66,7 @@ Python volumes use `(z, y, x)` and projections `(view, v, u)`. All spacings use
 one consistent physical length unit; projected values integrate attenuation
 over that length. Saved volumes use the same `(z, y, x)` order.
 
-This example deliberately uses matched simulation and reconstruction models.
-For independent analytic fixtures and failure-inclusive comparisons, see the
+This example uses matched simulation and reconstruction models. For
+independent analytic fixtures and failure-inclusive comparisons, see the
 [measurement guide](measurements.md). For the README figure and its settings,
 see [example reproduction](../examples/README.md).
