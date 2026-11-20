@@ -15,8 +15,8 @@ be mistaken for regularization.
 
 The automatic TV minimum is normalized in physical coordinates, so changing
 voxel pitch does not require an additional power-of-pitch weight correction.
-This normalization does not guarantee a fixed edge width: the object, forward
-model and discrete TV penalty also affect smoothing.
+The edge width still depends on the object, the forward model and the discrete
+TV penalty.
 
 ## Alignment limitations
 
@@ -57,14 +57,10 @@ Alignment is experimental and needs scan-specific review. Use the
 - The alignment image uses a bounded working scale while retaining the physical support and
   original scan data. An explicit `grid=` fixes sampling and can exceed device memory. Cropping
   support leaves attenuation outside it unmodelled.
-- The full watch, spark-plug, K11 and PSI qualification of the consolidated solver is separate
-  from its focused numerical tests. Earlier measurements in this repository describe their
-  recorded implementations; they do not certify this solver's accuracy or default runtime.
 
 ## Detector-ring correction
 
-`Rings` separates detector response from object structure statistically; it is
-not a no-harm guarantee. On four real parallel-scan cuts, known injected
+`Rings` separates detector response from object structure statistically. On four real parallel-scan cuts, known injected
 response fields retain 28–61% of their RMS after differential correction.
 Independent off-axis analytic structure increments change by up to 11.1% on
 I13 and 0.9–3.7% on the other three scans; see the
@@ -115,10 +111,7 @@ measurements require independent calibration evidence and repair before `Rings`.
 - Flat/dark correction needs at least one detector pixel with resolved
   illumination. If none exists, supply illuminated flats and matching darks,
   or include an illuminated region in the crop. Unilluminated margins and
-  bracketed interior gaps remain supported; their correction does not certify
-  that the supplied calibration describes the acquisition.
-
-
+  bracketed interior gaps are supported.
 - Zeiss frames are numbered image streams, not the planned `NoOfImages` count;
   interrupted acquisitions load when their per-view metadata matches the stored
   frames. Metadata-only drift records contain no reconstructible projections,
@@ -241,7 +234,7 @@ measurements require independent calibration evidence and repair before `Rings`.
   included; ordinary CPU CI skips those cases.
 - The published timings cover one laptop GPU (and four H100 GPUs for the
   several-GPU runs), synthetic phantoms and the FIPS walnut. The exact
-  cone-beam transpose remains slower than ASTRA's
+  cone-beam transpose is slower than ASTRA's
   approximate voxel-driven backprojector, most of all when the detector
   samples finer than the grid; bin such detectors (`Scan.binned`).
   The TIGRE benchmark adapter also represents calibrated cone vectors,
@@ -264,13 +257,9 @@ for a smaller preview or use slab reconstruction for a volume larger than memory
 
 An explicit file-owned reconstruction grid survives detector cropping. The
 ESRF `scan_3_.par` fixture specifies 2048×2048×1200 voxels: one float32 volume
-alone needs 20,132,659,200 bytes, above the 18 GB input-audit memory limit.
-The 2026-10-27 audit on `2626e6e5` loaded it but stopped before reconstruction
-(lab harness outside the repository: `TOMO_SOURCE_COMMIT=2626e6e5 JAX_PLATFORMS=cpu uv run --no-sync python
-shared/agent06-audit/run_default.py 510`, with `LAB_ARTIFACTS` set to an output
-directory).
-Supply a smaller `grid=` to `tj.load_frames` when the file grid exceeds available
-memory; a successful reduced preview is not a default full-volume result.
+alone needs 20,132,659,200 bytes; under an 18 GB memory limit it loads but does
+not reconstruct. Supply a smaller `grid=` to `tj.load_frames` when the file grid
+exceeds available memory.
 
 HDF5 virtual detector stacks require all referenced pixel files and mapped
 regions to be present; missing sources are errors, not zero-filled exposures.

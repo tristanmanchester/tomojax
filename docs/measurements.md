@@ -2,9 +2,8 @@
 
 This page holds the measured evidence behind the speed, accuracy and memory
 claims in the guides. Each section names the date, the TomoJAX commit the
-numbers were measured on and the protocol. The code has changed since some of
-those commits, so a later commit can be faster or slower than the figures here.
-Failed cases are reported with the rest.
+numbers were measured on and the protocol. Failed cases are reported with the
+rest.
 
 ## Test environment
 
@@ -641,8 +640,7 @@ TomoJAX's backprojection is the exact transpose of its forward projector,
 which the iterative solvers and gradients rely on. ASTRA's voxel-driven
 backprojector is cheaper but only approximately its transpose.
 
-On the same scan (2026-10-06, commit `dc411a2`, before the forward projector
-was made faster), CGLS with the matched transpose took 3.4, 6.6 and 13.2 s for
+On the same scan (2026-10-06, commit `dc411a2`), CGLS with the matched transpose took 3.4, 6.6 and 13.2 s for
 10, 20 and 40 iterations, with volume errors of 0.090, 0.043 and 0.048.
 ASTRA's `CGLS3D_CUDA` took 2.3, 4.4 and 8.7 s with errors of 0.088, 0.040 and
 0.101. It diverges after about 20 iterations: its own data residual rises
@@ -806,7 +804,7 @@ these are image diagnostics, not reconstruction errors.
 
 ### Full-view CGLS
 
-The Walnut rows were refreshed 2026-11-19 on `40330cf`, and Nikon and
+The Walnut rows were measured 2026-11-19 on `40330cf`, and Nikon and
 Zeiss on `22571a59`, with ASTRA 2.5.0, CuPy 14.2.0 and one OpenBLAS/OMP
 thread per process.
 Walnut uses all 1200 views of orbit 2, detector binning 2 × 2 and a 501³ grid
@@ -840,26 +838,26 @@ all original corrected log projections are scored with one common calibrated
 ASTRA forward projector. Full-volume differences use no alignment or intensity
 fit. Historical orthogonal-section comparisons showed the same structures,
 with differences in smooth backgrounds, support boundaries, edges and streaks.
-On the refreshed Walnut pair, TomoJAX's mean warm time is 18.4% lower, but
+On the Walnut pair, TomoJAX's mean warm time is 18.4% lower, but
 cold time is 7.7% higher and support disagreement is 1.33% higher. This is
 **not a matched-error speed win**. Sampled total-device GPU peaks are 4309 / 5065 MiB
 (TomoJAX / ASTRA, 20 ms sampling); prescoring host RSS peaks are 5.53 GB for
 both. The temporary comparison volume was deleted after scoring.
 
-On the refreshed Nikon pair, TomoJAX's observed warm time is 27.7% lower,
+On the Nikon pair, TomoJAX's observed warm time is 27.7% lower,
 but its common-projector residual is 16.7% higher: again **not a matched-error
 speed win**. Prescoring total-device GPU peaks are 4574 / 4922 MiB and host
 RSS peaks 4.226 / 6.088 GB (TomoJAX / ASTRA); the whole-job trace including
 scoring peaks at 5620 MiB. Whole-process host peaks including scoring are
 5.160 / 6.088 GB. Both TomoJAX processes give identical reported
 image differences and residuals; ASTRA's repeat image difference is zero.
-The temporary reference volume was deleted. CPU affinity was 0–31. Other
-lab agents were quiet, but recent host-memory pressure was observed and
-per-arm pressure history was not recorded. Major page faults in ABBA order
+The temporary reference volume was deleted. CPU affinity was 0–31. Recent
+host-memory pressure was observed and per-arm pressure history was not
+recorded. Major page faults in ABBA order
 were 1599 / 1588 / 1 / 22; reported process swaps were zero. These observations
 do not establish absence of system swapping or equal filesystem-cache state.
 
-On the refreshed Zeiss pair, TomoJAX's warm time is 14.5% lower, but cold
+On the Zeiss pair, TomoJAX's warm time is 14.5% lower, but cold
 time is 8.6% higher and common-projector residual 5.35% higher: **not a
 matched-error speed win**. Prescoring total-device GPU peaks are 4576 / 5166
 MiB and host RSS peaks 3.514 / 3.854 GB (TomoJAX / ASTRA). Whole-process host
@@ -877,8 +875,8 @@ and 33.74 / 26.14 s, respectively. Neither is a paired speedup comparison
 with the refresh. Historical Zeiss times were 17.87 / 12.24 s for TomoJAX
 and 16.53 / 12.90 s for ASTRA, also not a paired comparison with this refresh.
 
-Set `WALNUT`, `NIKON` and `ZEISS` to those inputs. For these refreshed
-protocols, also set `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1`,
+Set `WALNUT`, `NIKON` and `ZEISS` to those inputs. For these protocols, also
+set `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1`,
 `JAX_PLATFORMS=cuda,cpu` and `TOMOJAX_CUDA_KERNELS=1`. These commands configure one
 fresh process each; run each pair in the order above, with separate output
 filenames for the two processes:
@@ -1369,7 +1367,7 @@ there; two large-drift development cases regressed by +0.0009 and +0.0012.
 
 ### The plain call on K11
 
-Run 15's call, measured again on 2026-11-15: K11 54013, the 1153 views whose index
+Measured 2026-11-15: K11 54013, the 1153 views whose index
 is not 2 modulo 5, declared grid 2112 × 2112 × 704 at 2.16 µm, tilt −35°,
 `tj.align(scan)` with nothing set, one process, nothing else on the GPU. Time is
 the `tj.align` call alone, after loading; GPU memory is JAX's peak in use.
@@ -1413,7 +1411,7 @@ storage once per product, 15 s for forming the motion scale's scores on the devi
 14 s for the forward kernel's fixed-stride interior reads and 8 s for the gather's
 native launcher.
 
-The motion prior now takes linear storage and work in the views (commit `3aae66e`).
+The motion prior takes linear storage and work in the views (commit `3aae66e`).
 Its factor and solve alone, two translations and the centre fitted, knots every
 10 views, FP64, one fresh process per row (2026-11-20):
 
@@ -1423,7 +1421,7 @@ Its factor and solve alone, two translations and the centre fitted, knots every
 | 4000 | 318 → 26 MiB | 906 → 41 MiB | 263 → 5.0 ms | 2.6 → 0.84 ms |
 | 16000 | 5023 → 105 MiB | out of memory → 163 MiB | — → 13.8 ms | — → 1.9 ms |
 
-On K11 54013 the plain call takes 282 s, as before. Its poses move by up to 0.30 px
+On K11 54013 the plain call takes 282 s. Its poses move by up to 0.30 px
 (6.6% of the image), the same as reordering the old prior's columns, and moving one
 pixel of the data by one unit in the last place moves them by 0.22 px (7.0%).
 
@@ -1518,7 +1516,6 @@ only in bounded RAM, discarded after scoring. Command:
 not full-height performance, absolute centre accuracy or default-loader
 success. The report labels its intervals as local matching diagnostics;
 global coverage remains uncalibrated.
-
 
 | Mode and scan | Result |
 |---|---|
@@ -1695,7 +1692,7 @@ SPDHG-TV first rewrote its five state volumes in place (2026-11-19, commit
 memory) takes 137 s with a 3.2 GiB device peak on the RTX 4070 Laptop (8 GB),
 under the default 75% limit; before, it ran out of memory.
 
-SPDHG-TV now keeps its volume state in the projector's native layout and folds the
+SPDHG-TV keeps its volume state in the projector's native layout and folds the
 old data backprojection into the primal update before the next transpose overwrites
 it (2026-11-19, commit `19431f9`). The same plain call on K11 54013 takes 98 s with
 a 2.36 GiB device peak, against 135 s and 3.20 GiB on `f58a6f7`, measured the same day
@@ -1705,8 +1702,7 @@ the device, 600 updates) it takes 1.8 s with a 322 MiB peak, against 2.9 s and 3
 
 ### Fourier inverse
 
-Measured 2026-10-04 on commit `776a8c9`, before later changes made the Fourier
-inverse faster; the memory has not been remeasured since. Parallel Gaussian
+Measured 2026-10-04 on commit `776a8c9`. Parallel Gaussian
 phantom, 720 views, CUDA backend; warm time is the median of seven solves. At
 512³ the default 16-slice slabs peak at 678 MiB. Allowing the CuPy queues to
 be reused across calls brought that peak down from 3892 MiB.

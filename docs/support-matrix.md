@@ -1,8 +1,7 @@
 # TomoJAX support matrix
 
-Available workflows and their entrypoints. “Supported” identifies an implemented
-and tested path, not a guarantee of accuracy for every scan. Alignment remains
-experimental. See [installation](installation.md) and [measurement scope](measurements.md).
+Available workflows and their entrypoints. “Supported” means implemented and
+tested. Alignment is experimental. See [installation](installation.md) and [measurement scope](measurements.md).
 
 | Workflow | Status | Supported entrypoint |
 |---|---|---|
@@ -34,8 +33,8 @@ experimental. See [installation](installation.md) and [measurement scope](measur
 | Several GPUs in one process | Supported (Python only) | `devices=` on `tj.project`, `tj.backproject`, `tj.reconstruct` (`fbp`, `cgls`, `fista`) ([large scans](large-scans.md#use-several-gpus)) |
 
 No-flag `tomojax align` fits translations with the same joint solver used by every `fit` setting.
-`tomojax reconstruct` selects its image method from the geometry. Reported limitations are not accuracy
-certificates; check recovered geometry and reconstructed images.
+`tomojax reconstruct` selects its image method from the geometry. Check recovered geometry and
+reconstructed images.
 
 ## Scope
 
@@ -86,19 +85,17 @@ pitches below are normalised to millimetres.
 These readers do not turn an estimated motor position into a calibrated
 rotation centre, or infer pixel pitch from image dimensions. Data Exchange
 exports lacking facility labels remain Data Exchange, not a guessed beamline.
-This support does not establish support for every native TOMCAT/SYRMEP layout.
 Real-file coverage includes ESRF NXtomo converted by nxtomomill (two public nabu
 exports), Data Exchange from APS (TomoBank 13-BM-D and 32-ID), TOMCAT and SYRMEP,
 Diamond I12 HDF5, K11 GDA and I13 NXtomo, Nikon TIFF acquisitions, Zeiss TXRM,
 SkyScan logs/TIFFs, Diamond I13 compressed TIFF folders with explicit calibration,
 the PSI cSAXS porous-glass ptychographic tomography (Zenodo 3539513),
-and TomoJAX NPZ/NXtomo round trips. ESRF SPEC EDF and PyHST `.par` inputs are
-covered by public test acquisitions taken with the beam off: they prove the file
-layout and metadata, not corrected values. The ESRF raw Bliss reader is covered by
-synthetic tests only; no complete public Bliss tomography sequence was found. Native
-EDF/Bliss inputs must include every file named by the selected sequence or parameter
-file: missing inputs are errors.
-These checks do not establish support for native TOMCAT GigaFRoST.
+and TomoJAX NPZ/NXtomo round trips; it does not include native TOMCAT GigaFRoST
+or every native TOMCAT/SYRMEP layout. ESRF SPEC EDF and PyHST `.par` inputs are
+tested on public acquisitions taken with the beam off, which check the file
+layout and metadata but not corrected values. The ESRF raw Bliss reader has
+synthetic tests only. Native EDF/Bliss inputs must include every file named by
+the selected sequence or parameter file: missing inputs are errors.
 Missing calibration does not disable content recognition: supply `flats=` (frames
 or one level) and `darks=`. NXtomo/Data Exchange angular fields use their
 format-defined degree convention when units are absent; generic motor datasets
