@@ -1,6 +1,7 @@
 # tomojax
 class tomojax.AlignConfig(
         *,
+        motion: 'Motion' = 'independent',
         iterations: 'int' = 8,
         coarse_iterations: 'int' = 12,
         levels: 'tuple[int, ...]' = (2, 1),
@@ -13,7 +14,7 @@ class tomojax.AlignConfig(
         interpolation: 'Interpolation | None' = None,
         refine_iterations: 'int' = 5,
         initial_image_iterations: 'int' = 5,
-        innovation_scale: 'float' = 0.02,
+        slip_scale: 'float' = 0.02,
         knot_spacing: 'int' = 10,
         rotation_sigma: 'float' = 0.5,
         loss_width: 'float' = 2.5,
@@ -180,6 +181,7 @@ def tomojax.align(
         grid: 'Grid | None' = None,
         region: 'Region | None' = None,
         method: 'AlignMethod | None' = None,
+        motion: "Literal['independent', 'smooth'] | None" = None,
         iterations: 'int | None' = None,
         image_iterations: 'int | None' = None,
         tolerance: 'float | None' = None,
@@ -745,6 +747,7 @@ def tomojax.io.validate_dataset(path: 'PathLike') -> 'ValidationReport'
 # tomojax.alignment
 class tomojax.alignment.AlignConfig(
         *,
+        motion: 'Motion' = 'independent',
         iterations: 'int' = 8,
         coarse_iterations: 'int' = 12,
         levels: 'tuple[int, ...]' = (2, 1),
@@ -757,7 +760,7 @@ class tomojax.alignment.AlignConfig(
         interpolation: 'Interpolation | None' = None,
         refine_iterations: 'int' = 5,
         initial_image_iterations: 'int' = 5,
-        innovation_scale: 'float' = 0.02,
+        slip_scale: 'float' = 0.02,
         knot_spacing: 'int' = 10,
         rotation_sigma: 'float' = 0.5,
         loss_width: 'float' = 2.5,

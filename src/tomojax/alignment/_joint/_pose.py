@@ -281,6 +281,7 @@ class MotionPrior:
         constraint: np.ndarray | None = None,
         knot_spacing: tuple[int, ...],
         delta: float,
+        independent: bool = False,
         parameters=None,
         rotation_scales=None,
         noise_sigma=0.0,
@@ -293,6 +294,7 @@ class MotionPrior:
         self.nglobal = 0 if parameters is None else parameters.nglobal
         self.k, self.size = self.nlocal + self.nglobal, views * self.nlocal + self.nglobal
         self.local_size, self.delta = views * self.nlocal, float(delta)
+        self.independent = independent
         local = tuple(range(self.nlocal)) if parameters is None else parameters.local
         spacing = tuple(knot_spacing[i] for i in local)
         translated = (
@@ -483,6 +485,8 @@ class MotionPrior:
 
     def _weights(self, m, p, weight):
         """Per link and local column: robust for translations, constant for rotations."""
+        if self.independent:  # no term ties a view to its neighbours
+            return jnp.zeros_like(jnp.asarray(self.order.edge_scale)[:, None] * self.rotation_mask)
         weight, turn_weight = weight if isinstance(weight, tuple) else (weight, weight)
         edge = jnp.asarray(self.order.edge_scale)[:, None]
         robust = (2 * weight * self.delta / (self.delta**2 + self._squared_jumps(m, p)))[:, None]
@@ -490,6 +494,8 @@ class MotionPrior:
         return edge * (robust * self.translation_mask + rotation)
 
     def _value(self, m, p, weight):
+        if self.independent:  # the rotations' size prior alone
+            return 0.5 * jnp.sum(m.rotation_precision * p[: self.local_size] ** 2)
         weight, turn_weight = weight if isinstance(weight, tuple) else (weight, weight)
         jumps = weight * self.delta * jnp.sum(jnp.log1p(self._squared_jumps(m, p) / self.delta**2))
         local = p[: self.local_size].reshape(self.n, self.nlocal)

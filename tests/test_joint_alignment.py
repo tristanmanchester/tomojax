@@ -368,7 +368,7 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
     np.testing.assert_allclose(stack_view_poses(loaded.geometry, len(angles)), expected, atol=2e-6)
 
 
-def _moving_scan(slip=0.0, wobble_deg=0.0):
+def _moving_scan(slip=0.0, wobble_deg=0.0, jitter=0.0):
     grid = tj.Grid(28, 28, 20, 1.0, 1.0, 1.0)
     detector = tj.Detector(40, 32, 1.0, 1.0)
     views = 90
@@ -383,6 +383,8 @@ def _moving_scan(slip=0.0, wobble_deg=0.0):
     phase = np.deg2rad(angles)
     table[:, 0] = wobble_deg * np.sin(3 * phase)  # the public table is in degrees
     table[:, 1] = wobble_deg * np.cos(2 * phase + 0.5)
+    if jitter:  # each view's own shift, independent of its neighbours'
+        table[:, 3:5] += np.random.default_rng(11).uniform(-jitter, jitter, (views, 2))
     empty = tj.Scan(np.zeros((views, 32, 40), np.float32), geometry)
     projections = np.array(tj.project(empty.with_poses(table).geometry, volume))
     projections += np.random.default_rng(7).normal(0, 0.01, projections.shape).astype(np.float32)
@@ -434,6 +436,28 @@ def test_pose_fit_recovers_a_slip_and_keeps_a_clean_scan_still():
     lever = record["lever"]  # native pixels per degree; the table's rotations are radians
     assert np.sqrt(np.mean(table[:, 3:5] ** 2)) < 0.05
     assert np.sqrt(np.mean((lever * np.degrees(table[:, :3])) ** 2)) < 0.05
+
+
+@pytest.mark.numerical
+@pytest.mark.slow
+def test_independent_motion_follows_per_view_jitter_and_smooth_motion_does_not():
+    # Up to 0.6 px of independent shift in every view: the default follows it, while
+    # motion="smooth" treats it as error that is not motion and leaves it.
+    projections, nominal, grid, detector, truth = _moving_scan(jitter=0.6)
+    geometry = tj.LaminographyGeometry(
+        grid, detector, np.linspace(0, 360, len(nominal), endpoint=False), tilt=-30
+    )
+    empty = tj.Scan(np.zeros_like(projections), geometry)
+    before = _landmark_error(nominal, truth, grid)
+    errors = {}
+    for motion in ("independent", "smooth"):
+        config = tj.AlignConfig(motion=motion)
+        _, _, table, _ = fit_poses(projections, nominal, grid, detector, config=config)
+        public = np.c_[np.degrees(table[:, :3]), table[:, 3:]]
+        estimated = np.asarray(stack_view_poses(empty.with_poses(public).geometry, len(nominal)))
+        errors[motion] = _landmark_error(estimated, truth, grid)
+    assert errors["independent"] < 0.1 * before, (before, errors)
+    assert errors["smooth"] > 0.5 * before, (before, errors)
 
 
 @pytest.mark.numerical
