@@ -2,8 +2,9 @@
 
 Commands read ``INPUT`` (positional) and write ``-o/--output``, which must not
 exist unless ``--force`` is given. ``--help`` lists the options most runs
-need; expert settings stay out of it and go in the TOML file passed with
-``--config``, whose keys ``--config-keys`` prints. Exit status is 0 on
+need; expert settings stay out of it. A command with ``--config`` takes them in
+that TOML file, whose keys ``--config-keys`` prints; the others take them as
+options that ``--help`` does not list. Exit status is 0 on
 success, 1 when the run fails and 2 for a usage error (including a missing
 input or an existing output).
 """
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 EXPERT_EPILOG = (
     "Expert settings are TOML keys for --config; --config-keys lists them with their defaults."
 )
+HIDDEN_EPILOG = "Expert options are accepted but not listed here; the documentation describes them."
 EXIT_STATUS = "Exit status: 0 success, 1 failure, 2 usage error."
 
 
@@ -46,13 +48,17 @@ def options(parser: argparse.ArgumentParser) -> list[argparse.Action]:
 
 
 def hide_expert(
-    parser: argparse.ArgumentParser, public: Iterable[str], *, settings: str = EXPERT_EPILOG
+    parser: argparse.ArgumentParser, public: Iterable[str], *, settings: str | None = None
 ) -> None:
     """Keep only ``public`` options (and positionals) in ``--help``; record the others' help.
 
     The help ends with ``settings``, what the expert settings are (a command with
-    its own kind of settings says so), and the exit statuses.
+    its own kind of settings says so; by default ``--config`` where the command has
+    it, else the hidden options), and the exit statuses.
     """
+    if settings is None:
+        has_config = any("--config" in action.option_strings for action in options(parser))
+        settings = EXPERT_EPILOG if has_config else HIDDEN_EPILOG
     keep = set(public) | {"-h", "--help", "--config", "--config-keys", "-o", "--output", "--force"}
     for action in options(parser):
         if action.option_strings and set(action.option_strings).isdisjoint(keep):

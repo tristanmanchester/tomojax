@@ -141,6 +141,20 @@ def test_product_command_help_has_no_dev_story(capsys: pytest.CaptureFixture[str
         assert "--force" in usage
 
 
+def test_help_names_only_the_settings_route_a_command_has(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from tomojax.cli.main import main
+
+    for command, has_config in (("load", False), ("correct", False), ("simulate", True)):
+        with pytest.raises(SystemExit) as exc_info:
+            main([command, "--help"])
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert ("--config" in out) == has_config, command
+        assert ("--config-keys" in out) == has_config, command
+
+
 def test_cli_prints_its_version(capsys: pytest.CaptureFixture[str]) -> None:
     from tomojax import __version__
     from tomojax.cli.main import main
