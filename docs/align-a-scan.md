@@ -101,6 +101,15 @@ the centre separately first. If you request `"center"` and `"translations"` toge
 translations are given zero mean: a common translation and a centre offset describe the same
 parallel-ray geometry, and the data cannot tell them apart.
 
+![A simulated sandstone plug sliced near its base and through its middle, as loaded and after tj.align(scan), each with an enlarged region. As loaded, the grains are doubled and smeared; after the call their edges are sharp.](images/alignment-rock.png)
+
+A simulated sandstone plug drifts by about a voxel and a half during a parallel-beam half turn
+and slips by two voxels a third of the way through. The plain `tj.align(scan)` removes both.
+
+```bash
+uv run python examples/gallery/rock_alignment.py alignment-rock.png
+```
+
 ![Two slices through Diamond K11 laminography scan 54013 at 2.16 µm, through a ruby sphere's equator and 78 µm lower, as loaded and after tj.align(scan), each with an enlarged region where a large bubble meets the sphere. As loaded, the edges of the sphere and the bubble are doubled; after the call each is one line.](images/alignment-k11-sphere.png)
 
 On a real scan the motion is not known, so the check is the slices. In Diamond K11 laminography
