@@ -45,6 +45,7 @@ class Parameters:
         self.local = ((0, 1) if "rotations" in self.fit else ()) + (
             tuple(range(3, self.full_dofs)) if "translations" in self.fit else ()
         )
+        self.translation_columns = tuple(i for i, dof in enumerate(self.local) if dof >= 3)
         self.globals = (
             (("center_u", "center_v") if cone else ("center_u",)) if "center" in self.fit else ()
         ) + tuple(name for name in ("tilt", "roll") if name in self.fit)

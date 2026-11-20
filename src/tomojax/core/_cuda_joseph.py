@@ -3,10 +3,10 @@
 Each thread owns ``RUN`` consecutive z voxels and loops once over the union of
 their detector footprints, so every detector load and loop step serves several
 voxels. Weights use the same arithmetic as the forward projection. The kernel
-is compiled at run time with CuPy and launched on XLA's stream through
+is compiled at run time and launched on XLA's stream through
 ``buffer_callback``, inside compiled solver loops. Automatic dispatch uses it
-from 2**21 voxels, or 2**19 for separable axial batches. Smaller volumes retain
-the allocator-free CUDA transpose to avoid CuPy initialization overhead.
+from 2**21 voxels, or 2**19 for separable axial batches. Smaller volumes use
+the allocator-free CUDA transpose.
 Axial batches use a bounded separable vertical prepass; other views
 retain this gather. Runs without CuPy and ``TOMOJAX_CUDA_KERNELS=0`` also use
 that allocator-free path; the environment override can force either implementation.
@@ -26,20 +26,14 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core._joseph_cuda_kernels import (
-    RUN,
-    THREADS,
-    forward_kernel,
-    gather_kernel,
-    gather_source,
-)
+from tomojax.core._joseph_cuda_kernels import RUN, THREADS, forward_kernel, gather_source
 from tomojax.core.backend_policy import cuda_backend
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Grid
 
-# Keep tiny grids on the allocator-free path: CuPy import, kernel loading and the callback
-# program incur a fixed cost that the persistent compile cache cannot reuse.
+# Keep tiny grids on the allocator-free path. Kernel loading and callback setup
+# have a fixed per-process cost.
 # Medium grids already amortize that setup over ordinary solver iterations;
 # requiring a full-resolution volume would exclude useful multiresolution work.
 # This is a size-only crossover, independent of scan identity and geometry.
@@ -49,7 +43,7 @@ _MIN_AXIAL_VOXELS = 2**19
 
 
 def use_cuda_gather(grid: Grid, *, axial: bool = False) -> bool:
-    """Return whether to use the CuPy gather for this volume.
+    """Return whether to use the run-based CUDA gather for this volume.
 
     ``TOMOJAX_CUDA_KERNELS=1`` uses it for every size, ``0`` never.
     ``axial=True`` allows the lower separable-kernel threshold; the caller must
@@ -64,7 +58,7 @@ def use_cuda_gather(grid: Grid, *, axial: bool = False) -> bool:
 
 @cache
 def cuda_gather_available() -> bool:
-    """Return whether the CuPy gather can run on JAX's default CUDA device."""
+    """Return whether the optional CUDA projector kernels are available."""
     if not cuda_backend(jax.default_backend()):
         return False
     return importlib.util.find_spec("cupy") is not None
@@ -96,44 +90,26 @@ def xla_stream(context: Any, buffer: Any) -> Iterator[Any]:
             yield stream
 
 
-def _launch(
-    context: Any,
-    out: Any,
-    coeff: Any,
-    images: Any,
-    accumulate: Any,
-    *listed: Any,
-    shape: tuple[int, int, int],
-    z_fast: bool,
-) -> None:
-    import cupy as cp
+def _launch_gather(kernel, stream, coeff, images, out, listed, shape, detector, views, z0):
+    """Accumulate into a run list or a whole band using the same Joseph weights."""
+    from tomojax.core.cuda import launch_kernel
 
     nx, ny, nz = shape
-    views, nu, nv = images.shape
-    with xla_stream(context, out):
-        target, initial = cp.asarray(out), cp.asarray(accumulate)
-        if target.data.ptr != initial.data.ptr:
-            target[...] = initial
-        runs = nx * ny * -(-nz // RUN)
-        coeff = cp.asarray(coeff)
-        gather_kernel(z_fast=z_fast)(
-            (-(-runs // THREADS),),
-            (THREADS,),
-            (
-                coeff,
-                cp.asarray(images),
-                target,
-                *(map(cp.asarray, listed) if listed else (coeff, coeff)),
-                np.int32(bool(listed)),
-                np.int32(views),
-                np.int32(nx),
-                np.int32(ny),
-                np.int32(nz),
-                np.int32(nu),
-                np.int32(nv),
-                np.int32(0),
-            ),
-        )
+    runs = nx * ny * -(-nz // RUN)
+    launch_kernel(
+        kernel,
+        "joseph_gather",
+        stream=stream,
+        grid=(-(-runs // THREADS),),
+        block=(THREADS,),
+        arguments=(
+            coeff,
+            images,
+            out,
+            *(listed or (coeff, coeff)),
+            *map(np.int32, (bool(listed), views, nx, ny, nz, *detector, z0)),
+        ),
+    )
 
 
 def gather_transpose_cuda(
@@ -152,8 +128,19 @@ def gather_transpose_cuda(
     ``active`` runs (``active_runs``) limit the gather to them; others keep
     ``accumulate``.
     """
-    del detector  # Detector sizes come from the image array.
+    from tomojax.core.cuda import initialize_buffer
+
     shape = (grid.nx, grid.ny, grid.nz)
+    kernel = gather_source(z_fast=z_fast)
+    del detector  # Detector sizes come from the image batch.
+    views, nu, nv = images_uv.shape
+
+    def launch(context: Any, out: Any, coeff: Any, images: Any, initial: Any, *listed: Any) -> None:
+        initialize_buffer(out, stream=context.stream, source=initial)
+        _launch_gather(
+            kernel, context.stream, coeff, images, out, listed, shape, (nu, nv), views, 0
+        )
+
     count = grid.nx * grid.ny * grid.nz
     initial = (
         jnp.zeros((count,), jnp.float32)
@@ -161,8 +148,9 @@ def gather_transpose_cuda(
         else accumulate.astype(jnp.float32).reshape(count)
     )
     call = buffer_callback(
-        partial(_launch, shape=shape, z_fast=z_fast),
+        launch,
         jax.ShapeDtypeStruct((count,), jnp.float32),
+        command_buffer_compatible=True,
         input_output_aliases={2: 0},
         vmap_method="sequential",
     )
@@ -191,7 +179,7 @@ def gather_bands_cuda(coeff: jax.Array, images: jax.Array, grid: Grid, *, batch:
     the same batch sums in the same order as from z-fast storage. A band and
     one batch of ``(view, u, v)`` images are the workspace.
     """
-    from tomojax.core.cuda import Offset, initialize_buffer, launch_kernel
+    from tomojax.core.cuda import Offset, initialize_buffer
     from tomojax.core.volume_layout import reverse_axes, swap_last_axes
 
     views, nv, nu = images.shape
@@ -205,23 +193,20 @@ def gather_bands_cuda(coeff: jax.Array, images: jax.Array, grid: Grid, *, batch:
         for z0 in range(0, nz, depth):
             planes = min(depth, nz - z0)
             initialize_buffer(band, stream=stream)
-            runs = nx * ny * -(-planes // RUN)
             for first in range(0, views, size):
                 count = min(size, views - first)
                 swap_last_axes(Offset(y, first * nv * nu), swapped, (count, nv, nu), stream=stream)
-                launch_kernel(
+                _launch_gather(
                     gather,
-                    "joseph_gather",
-                    stream=stream,
-                    grid=(-(-runs // THREADS),),
-                    block=(THREADS,),
-                    arguments=(
-                        Offset(c, 14 * first),
-                        swapped,
-                        band,
-                        *(c, c, np.int32(0)),  # no run list
-                        *map(np.int32, (count, nx, ny, planes, nu, nv, z0)),
-                    ),
+                    stream,
+                    Offset(c, 14 * first),
+                    swapped,
+                    band,
+                    (),
+                    (nx, ny, planes),
+                    (nu, nv),
+                    count,
+                    z0,
                 )
             reverse_axes(band, Offset(out, z0 * ny * nx), (nx, ny, planes), stream=stream, depth=nx)
 

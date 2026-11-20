@@ -54,15 +54,14 @@ def diffusion(x, d, scales):
     return out.astype(F32)
 
 
-def inverse_diagonal(d, damp, data_diag, lam, lm, scales):
-    """Jacobi inverse of data diagonal + lm * damping + lam * TV diagonal."""
+def diagonal(d, scales):
+    """The FP32 diagonal of lagged TV diffusion, accumulated over incident faces in FP64."""
     tv = jnp.zeros_like(d, dtype=F64)
     for a in range(3):
         last = jnp.arange(d.shape[a]).reshape([-1 if i == a else 1 for i in range(3)])
         positive = jnp.where(last < d.shape[a] - 1, d, 0) * jnp.asarray(scales[a] ** 2, F32)
         tv = tv + positive.astype(F64) + _behind(positive, a).astype(F64)
-    v = data_diag + F32(lm) * damp + F32(lam) * tv.astype(F32)
-    return 1 / jnp.maximum(v, F32(1e-8))
+    return tv.astype(F32)
 
 
 def dot(a, b):

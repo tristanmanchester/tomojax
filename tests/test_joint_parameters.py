@@ -50,7 +50,7 @@ def test_affine_parallel_cache_matches_physical_coefficients_and_active_tangents
     direct = ops.coefficients(ops.nominal, q, ops.valid, ops.scales)
     np.testing.assert_allclose(cached.rays, direct.rays, rtol=1e-6, atol=5e-6)
     derivative = jax.jit(ops._tangent)(ops.nominal, q, ops.valid, ops.scales)
-    np.testing.assert_allclose(ops.affine.tangent, derivative, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(ops.affine.offsets, derivative[:, :, [4, 8]], rtol=1e-6, atol=1e-6)
     cached_derivative = jax.jit(ops._tangent)(ops.affine, q, ops.valid, ops.scales)
     np.testing.assert_allclose(cached_derivative, derivative, rtol=1e-6, atol=1e-6)
 

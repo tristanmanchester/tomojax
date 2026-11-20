@@ -121,6 +121,7 @@ def storage_source(*, z_fast: bool) -> str:
     return f"#define Z_FAST {int(z_fast)}\n{header}\n"
 
 
+@cache
 def gather_source(*, z_fast: bool) -> str:
     """Source of the ``joseph_gather`` kernel for one volume storage."""
     source = _GATHER_SOURCE.replace("RUN", str(RUN)).replace("VIEWS", str(_VIEWS_PER_STAGE))
