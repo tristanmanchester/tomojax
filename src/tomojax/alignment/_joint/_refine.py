@@ -227,6 +227,10 @@ class _Refinement:
     def step(self, c, stats, f, lm):
         """Constrained Gauss-Newton with Armijo backtracking; damping x10 up to four times.
 
+        A proposal no trial along which lowers the objective, and whose predicted decrease is
+        below the objective's FP32 rounding, has converged: the step says so rather than
+        raising the damping.
+
         Returns (parameters, objective, step length, step, damping), or a status
         string when no descent step exists or none is accepted.
         """
@@ -253,6 +257,11 @@ class _Refinement:
                 fn = self.value(c + alpha * dc)
                 if fn <= f + 1e-4 * alpha * slope:
                     return c + alpha * dc, fn, alpha, dc, lm
+            # No point along the proposal lowers the objective, and the most it promises is below
+            # the objective's FP32 rounding: the poses have converged, and more damping would only
+            # promise less.
+            if -slope <= np.finfo(np.float32).eps * abs(f):
+                return "pose_steps_below_tolerance"
             lm *= 10
         return "line_search_stalled"
 
