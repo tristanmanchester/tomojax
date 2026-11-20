@@ -34,7 +34,7 @@ rotation axis is read from `ObjectOffsetX`, `ObjectRoll` and `ObjectTilt`, or
 the older `CentreOfRotationTop/Bottom` detector-plane offsets. The declared
 view count excludes an extra closing frame on a full turn, with a warning.
 Supply a measured schedule through explicit `angles=` in `load_frames`
-(or `--angles` in preprocessing), already expressed in TomoJAX's object-angle
+(or `--angles` on the command line), already expressed in TomoJAX's object-angle
 frame rather than the vendor's stage convention.
 
 Zeiss Xradia projection acquisitions can be corrected directly, without a TIFF
@@ -76,13 +76,13 @@ towards the source), u and v, in that order: positive roll turns u towards v,
 positive pitch tilts the +v edge towards the source and positive yaw swings the +u
 edge away from it. Scanners do not report these. Nikon's `ObjectRoll` and
 `ObjectTilt` describe the rotation axis and are read by the loader, not typed into
-these keys. A TIFF import
+these options. A TIFF import
 records no grid: cone datasets without one reconstruct one voxel per detector
 pixel at the axis, the pixel size divided by the magnification
 `source_to_detector / source_to_axis`, and `tomojax reconstruct --grid NX NY NZ`
 sets the number of voxels while preserving the selected physical field of view
 (adjusting voxel sizes). For a small whole-volume preview, bin the detector
-with `preprocess` and use `recon --grid 64 64 64 --region off`. In Python the same
+with `tomojax correct --binning` and use `tomojax reconstruct --grid 64 64 64 --region off`. In Python the same
 grid is `scan.grid.resampled((64, 64, 64))`, passed as `grid=` to reconstruction.
 
 ### Zeiss Xradia preview
@@ -155,7 +155,6 @@ reconstruction then selects matched CGLS, not the single-arrangement FDK path.
 Binning changes the detector sampling, **not** the recorded reconstruction grid;
 keep the explicit grid for a small preview. Inspect all three slice planes and
 increase view sampling, resolution and iterations for a final reconstruction.
-A finite volume or lower residual alone does not establish its accuracy.
 
 ## Calibrate the detector centre and setup angles
 
@@ -171,8 +170,7 @@ For a cone beam, `"center"` fits detector-u and detector-v offsets in the detect
 These are not object translations or a replacement for the recorded `ConeBeam.axis_offset`.
 `"roll"` fits one detector angle; add `"tilt"` if the nominal rotation-axis direction is wrong.
 The returned scan carries the calibrated geometry. Source distances, detector pitch and yaw
-remain as declared. Inspect multiple heights and compare with an unaligned reconstruction;
-a low residual alone does not establish physical calibration.
+remain as declared. Inspect multiple heights and compare with an unaligned reconstruction.
 
 ## Reconstruct
 
@@ -351,8 +349,7 @@ which needs every segment to cover an arc FDK accepts.
 Recorded orbit heights are often slightly wrong, which doubles and blurs
 edges. `tj.align(scan)` fits their translations jointly as one scan. Only the orbits'
 heights relative to one another are observable, so the whole object can sit away from where
-the record puts it. The earlier FIPS walnut comparison found a 0.38 mm displacement;
-that is a historical gauge observation, not a qualification of the new solver.
+the record puts it.
 
 [`examples/align_walnut_orbits.py`](../examples/align_walnut_orbits.py) runs
 the whole workflow on a FIPS walnut, three orbits recorded with the
