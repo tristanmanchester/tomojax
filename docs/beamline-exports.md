@@ -15,8 +15,7 @@ otherwise recognised file can still need `detector=` or `angles=`.
 
 For the bamboo scan exported from Bliss by nxtomomill, use nabu's
 [public test file](http://www.silx.org/pub/nabu/data/bamboo_reduced_bliss.nx).
-This server currently has an invalid TLS certificate; the supplied link is HTTP.
-Do not disable certificate verification for other downloads.
+This server has an invalid TLS certificate, so the link is HTTP.
 
 ```python
 import tomojax as tj
@@ -34,8 +33,7 @@ Supply a calibrated `detector=`, or fit the centre with
 Continue with the [one-row preview](#correct-reconstruct-and-inspect) below.
 An ESRF NXtomo export is not a raw Bliss master or an EDF folder. Those have
 [different metadata requirements](quickstart.md#raw-esrf-acquisitions);
-complete real-scan validation currently covers the NXtomo exports, not every
-native ESRF layout.
+real-scan tests cover the NXtomo exports, not every native ESRF layout.
 
 ## PSI TOMCAT Data Exchange export
 
@@ -88,9 +86,8 @@ frames = tj.load_frames(
 
 The reader uses the recorded `/exchange/theta` array, not the inconsistent
 `angular_step` summary in this export. This is local tomography: the sample
-extends beyond the field of view. A successful preview or centre estimate
-does not remove truncation artefacts or establish quantitative attenuation.
-This recipe does not establish support for every native SYRMEP layout.
+extends beyond the field of view, so the preview keeps truncation artefacts and
+its attenuation is not quantitative.
 
 ## PSI cSAXS ptychographic tomography
 
