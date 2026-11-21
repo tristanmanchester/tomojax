@@ -321,9 +321,10 @@ def read_zeiss_images(path: Path) -> _ZeissFrames | None:
 def _offsets(container: Any, count: int) -> tuple[np.ndarray | None, float | None]:
     """Recorded per-view image shifts in detector pixels, and the centre shift if calibrated.
 
-    ``AutoRecon/CenterShift`` subtracts from the horizontal image shifts. Its
-    sign and recorded-pixel convention were checked against the supplied Zeiss
-    reconstruction; acquisition binning is already in the pixel calibration.
+    ``AutoRecon/CenterShift`` adds to the horizontal image shifts. Its sign was
+    checked against the vendor's own reconstruction of a scan that records it:
+    the other sign doubles every small feature into a ring. Acquisition binning
+    is already in the pixel calibration.
     Only a reconstruction setup writes it, so a raw scan may lack it. An interrupted
     acquisition records its shift tables at the planned length (``NoOfImages``), the
     stored views first, while its angles and exposures cover the stored views only.
@@ -423,7 +424,7 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
     if pitch is not None and shifts is not None and cone is not None:
         # The shifts are measured from the recorded centre; a raw scan with no
         # reconstruction setup records none, and its shifts are measured from the middle.
-        center = (-pitch * (center_shift or 0.0), 0.0)
+        center = (pitch * (center_shift or 0.0), 0.0)
         record = with_view_offsets(record, Detector(cols, rows, pitch, pitch, center=center))
     known = record.detector is not None and center_shift is not None
     record.geometry_metadata["detector_center_status"] = "recorded" if known else "not_recorded"

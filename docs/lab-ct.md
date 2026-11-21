@@ -17,7 +17,9 @@ are not used. `tomojax inspect` describes and checks the result.
 Only TIFFs named `<Name>` plus the input separator and a number are
 projections; flat fields, thumbnails and reconstructions sharing the prefix are
 skipped. If a directory holds several parameter files, name the intended
-calibration file explicitly. The examples choose zero dark level; use that
+calibration file explicitly. Nikon's reconstructor writes the centre it finds to
+`<name>_recon.xtekct`; an acquisition file with `AutomaticCentreOfRotation=1`
+records none and loads with the axis through the detector middle. The examples choose zero dark level; use that
 only for already dark-corrected counts, otherwise supply measured darks:
 
 ```bash

@@ -220,7 +220,8 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     np.testing.assert_array_equal(scan.angles, [0, 90, 180])
     assert scan.grid.vx == pytest.approx(0.01)
     assert scan.detector.du == pytest.approx(0.015)
-    np.testing.assert_allclose(scan.detector.center, [0.001875, -0.0075])
+    # The view's centre is pitch x (x-shift + CenterShift): 0.015 x (0.25 + 0.125).
+    np.testing.assert_allclose(scan.detector.center, [0.005625, -0.0075])
     assert scan.geometry.beam.source_to_axis == 40
     assert scan.geometry.beam.source_to_detector == 60
     streams["alignment/x-shifts"] = np.array([0.25, 0.5, -0.25], "<f4").tobytes()
@@ -229,18 +230,18 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     assert geometry.trajectory_lengths == (3,)
     segments = geometry.segments
     np.testing.assert_allclose(
-        [s.detector.center[0] for s in segments], [0.001875, 0.005625, -0.005625]
+        [s.detector.center[0] for s in segments], [0.005625, 0.009375, -0.001875]
     )
     streams["ImageInfo/XrayGeometry"] = np.array([0], "<u4").tobytes()
     write_ole(path, streams)
     parallel = tj.load_frames(path, darks=0).corrected()
     transforms = np.asarray(stack_view_poses(parallel.geometry, 3))
     # The recorded centre stays on the detector and each view's shift is a pose:
-    # together they move the image by -(x-shift - CenterShift) pixels, as for cone.
-    assert parallel.detector.center[0] == pytest.approx(-0.00125)
+    # together they move the image by -(x-shift + CenterShift) pixels, as for cone.
+    assert parallel.detector.center[0] == pytest.approx(0.00125)
     np.testing.assert_allclose(transforms[:, 0, 3], [-0.0025, -0.005, 0.0025], atol=1e-8)
     np.testing.assert_allclose(
-        transforms[:, 0, 3] - parallel.detector.center[0], [-0.00125, -0.00375, 0.00375], atol=1e-8
+        transforms[:, 0, 3] - parallel.detector.center[0], [-0.00375, -0.00625, 0.00125], atol=1e-8
     )
     np.testing.assert_allclose(transforms[:, 2, 3], 0.005, atol=1e-8)
     streams["ImageInfo/AcquisitionMode"] = np.array([1], "<u4").tobytes()
@@ -421,7 +422,7 @@ def test_multireferences_use_recorded_times_and_exposures(tmp_path):
 def test_a_supplied_center_keeps_the_recorded_shifts_as_a_written_one_does(tmp_path, cone):
     # A raw scan has per-view shifts but no CenterShift (only a reconstruction setup
     # writes it). detector= supplies the centre the shifts are measured from:
-    # -pitch x CenterShift for the file that records it.
+    # pitch x CenterShift for the file that records it.
     counts = (500 + np.arange(4 * 8 * 12)).astype("<u2").reshape(4, 8, 12)
     fields = {
         "ImageInfo/NoOfImages": ("<u4", [4]),
@@ -448,7 +449,7 @@ def test_a_supplied_center_keeps_the_recorded_shifts_as_a_written_one_does(tmp_p
     pitch = 0.015 if cone else 0.01
     recorded = tj.load_frames(written, darks=0).corrected()
     supplied = tj.load_frames(
-        raw, detector=tj.Detector(12, 8, pitch, pitch, (-pitch * 1.25, 0.0)), darks=0
+        raw, detector=tj.Detector(12, 8, pitch, pitch, (pitch * 1.25, 0.0)), darks=0
     ).corrected()
     assert type(supplied.geometry) is type(recorded.geometry)
     assert supplied.grid == recorded.grid
@@ -513,7 +514,7 @@ def test_a_cone_scan_without_a_center_shift_loads_with_the_middle_as_its_center(
     np.testing.assert_allclose(scan.detector.center, [0.00375, -0.0075])
     # The centre shift (0.125 px) moves the centre by its pitch and changes nothing else.
     np.testing.assert_allclose(
-        np.subtract(recorded.detector.center, scan.detector.center), [-0.125 * 0.015, 0]
+        np.subtract(recorded.detector.center, scan.detector.center), [0.125 * 0.015, 0]
     )
     np.testing.assert_array_equal(scan.projections, recorded.projections)
     np.testing.assert_array_equal(scan.angles, recorded.angles)
@@ -612,7 +613,7 @@ def test_an_interrupted_scan_loads_its_stored_views_with_their_shifts(tmp_path):
     assert frames.views == 3
     np.testing.assert_array_equal(frames.geometry.angles, [0, 90, 180])
     centers = [s.detector.center for s in frames.geometry.segments]  # pitch 0.015, shift 0.125
-    np.testing.assert_allclose([c[0] for c in centers], [0.001875, 0.005625, -0.005625])
+    np.testing.assert_allclose([c[0] for c in centers], [0.005625, 0.009375, -0.001875])
     # A shift table of any other length is not the planned one: say what the file holds.
     streams["alignment/x-shifts"] = planned[:5].tobytes()
     write_ole(tmp_path / "scan.txrm", streams)

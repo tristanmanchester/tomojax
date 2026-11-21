@@ -80,6 +80,10 @@ def _beam_hardening(file: Path, params: dict[str, str]) -> dict[str, object] | N
     return record if len(record) > 1 else None
 
 
+CENTRE_KEYS = ("ObjectOffsetX", "ObjectRoll", "ObjectTilt", "CentreOfRotationTop",
+               "CentreOfRotationBottom")  # fmt: skip
+
+
 def _number(params: dict[str, str], key: str, default: float | None = None) -> float:
     value = params.get(key)
     if value is None or not value.strip():
@@ -263,6 +267,15 @@ def _nikon_record(
     }
     metadata: dict[str, object] = {
         "axis_status": "recorded" if axis is not None else "not_recorded",
+        # With AutomaticCentreOfRotation=1 Nikon's reconstructor finds the centre and writes
+        # it to the _recon.xtekct beside the file; zero centre fields here calibrate nothing.
+        "detector_center_status": "not_recorded"
+        if axis is None
+        or (
+            _number(params, "AutomaticCentreOfRotation", 0.0)
+            and not any(_number(params, k, 0.0) for k in CENTRE_KEYS)
+        )
+        else "recorded",
         "grid_status": "derived",
         "ingest_source": "nikon_xtekct",
         "nikon_xtekct": {

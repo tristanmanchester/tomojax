@@ -632,6 +632,34 @@ def test_nikon_flat_and_dark_tiffs_take_the_projection_panel_orientation(tmp_pat
     np.testing.assert_allclose(np.asarray(scan.projections), data, atol=1e-5)
 
 
+@pytest.mark.parametrize("automatic", [0, 1])
+def test_a_nikon_centre_left_to_the_reconstructor_is_not_recorded(tmp_path: Path, automatic):
+    # An acquisition file with AutomaticCentreOfRotation=1 leaves the centre to Nikon's
+    # reconstructor: its zero centre fields calibrate nothing. The seeds scan of the
+    # docs is one; its _recon.xtekct records the centre the reconstructor found.
+    import imageio.v3 as iio
+
+    import tomojax as tj
+
+    views, nv, nu = 4, 6, 8
+    for i in range(views):
+        iio.imwrite(tmp_path / f"part_{i + 1:04d}.tif", np.full((nv, nu), 900, np.float32))
+    (tmp_path / "part.xtekct").write_text(
+        "[XTekCT]\nName=part\nInputSeparator=_\nSrcToObject=12.0\nSrcToDetector=18.0\n"
+        f"DetectorPixelsX={nu}\nDetectorPixelsY={nv}\nDetectorPixelSizeX=0.075\n"
+        "DetectorPixelSizeY=0.075\nDetectorOffsetX=0\nDetectorOffsetY=0\n"
+        "CentreOfRotationTop=0.0\nCentreOfRotationBottom=0.0\nWhiteLevel=1000\n"
+        f"AutomaticCentreOfRotation={automatic}\n"
+        "VoxelsX=8\nVoxelsY=8\nVoxelsZ=6\nVoxelSizeX=0.05\nVoxelSizeY=0.05\nVoxelSizeZ=0.05\n"
+        f"Projections={views}\nInitialAngle=0\nAngularStep=90\n"
+    )
+    frames = tj.load_frames(tmp_path / "part.xtekct", darks=0)
+    status = frames.source.geometry_metadata["detector_center_status"]
+    assert status == ("not_recorded" if automatic else "recorded")
+    # Either way the axis passes through the detector middle.
+    assert frames.geometry.beam.axis_offset == 0.0
+
+
 @pytest.mark.parametrize("backend", ["jax", cuda])
 @pytest.mark.parametrize("offset", [4.0, 6.0])
 def test_fdk_short_scan_on_an_offset_detector_matches_a_centered_one(backend, offset):
