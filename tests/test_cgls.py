@@ -595,6 +595,9 @@ def test_cuda_cgls_holds_no_volume_temporaries_beside_its_state():
     grid, detector = Grid(n, n, n, 1.0, 1.0, 1.0), Detector(n, n, 1.0, 1.0)
     geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, views, endpoint=False))
     data = np.random.default_rng(88).normal(size=(views, n, n)).astype(np.float32)
+    pool = cp.get_default_memory_pool()
+    pool.free_all_blocks()
+    held = pool.total_bytes()  # other tests' live arrays in this process
     live = Live()
     with live:
         _, info = cgls(
@@ -603,5 +606,5 @@ def test_cuda_cgls_holds_no_volume_temporaries_beside_its_state():
         )  # fmt: skip
     assert info["execution_backend"] == "cupy"
     assert live.peak <= 4 * (5 * n**3 + 4 * data.size)
-    # Nothing is left cached in CuPy's pool for JAX to run short of afterwards.
-    assert cp.get_default_memory_pool().free_bytes() == 0
+    # The solve's blocks go back to the driver, not into CuPy's cache beside JAX.
+    assert pool.total_bytes() <= held
