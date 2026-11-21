@@ -133,7 +133,7 @@ def _kernels(cp):
     The solve's device memory is then the iterate, the direction and two
     gradients (the old one until the new one replaces it), within
     ``resident_bytes``, whatever memory another allocator holds. Inner
-    products use cuBLAS on flat views; an all-elements test clears a flag.
+    products reduce flat views; an all-elements test clears a flag.
     """
     return {
         "axpy": cp.ElementwiseKernel("T a, T d", "T x", "x += a * d", "cgls_axpy"),
