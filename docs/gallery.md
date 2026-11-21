@@ -10,12 +10,14 @@ dependency group (`uv sync --group examples`).
 
 ## Ruby sphere in a real laminography scan
 
-![Three orthogonal slices through a ruby sphere.](../images/gallery/k11-ruby-sphere.png)
+![Three orthogonal planes through a ruby sphere at 2.16 µm. In the in-plane slice the sphere is round; in the two vertical planes it is lens-shaped, pointed at the top and bottom.](../images/gallery/k11-ruby-sphere.png)
 
-A ruby sphere in Diamond K11 laminography scan 54013. The stored 2.16 µm
-pixels are binned 4 × 4 to reconstruct 8.64 µm voxels with the default
-`tj.align` workflow. Slices through the sphere centre share one
-grayscale range; scale bars are 200 µm. Missing-cone artefacts remain.
+A ruby sphere in Diamond K11 laminography scan 54013, aligned with the plain
+`tj.align(scan)` and reconstructed by FBP at the detector's 2.16 µm pitch in
+three planes through the sphere's centre. The planes share one grey range;
+scale bars are 200 µm. The sphere is lens-shaped in the vertical planes
+because laminography measures no frequencies in a cone about the rotation
+axis.
 
 ```bash
 uv run python examples/gallery/k11_ruby_sphere.py k11-54013.nxs k11-ruby-sphere.png
@@ -36,13 +38,14 @@ uv run python examples/gallery/k11_sphere_alignment.py k11-54013.nxs alignment-k
 
 ## Glass spheres between PEKK plates
 
-![An in-plane view of the glass-sphere layer and two enlarged cross-sections between PEKK plates.](../images/gallery/k11-glass-layer.png)
+![An in-plane slice through a layer of glass spheres, beside two vertical sections through the PEKK plates in which each sphere is lens-shaped.](../images/gallery/k11-glass-layer.png)
 
-Glass spheres between PEKK plates in Diamond K11 laminography scan 54286.
-The stored 2.16 µm pixels are binned 4 × 4 to reconstruct 8.64 µm voxels with
-the default `tj.align` workflow. An in-plane slice through the layer is shown
-beside two enlarged cross-sections; scale bars are 200 µm. Missing-cone
-artefacts remain.
+Glass spheres between PEKK plates in Diamond K11 laminography scan 54286,
+aligned with the plain `tj.align(scan)` and reconstructed by FBP at the
+detector's 2.16 µm pitch: an in-plane slice through the sphere layer beside
+two vertical sections through the plates. The planes share one grey range;
+scale bars are 200 µm. Each sphere is lens-shaped in the vertical sections,
+as in the ruby sphere above.
 
 ```bash
 uv run python examples/gallery/k11_glass_layer.py k11-54286.nxs k11-glass-layer.png
@@ -81,10 +84,10 @@ The Diamond I12 scan of Vo et al. (Zenodo 3339629), 1801 views on a
 `Stripes()` removes the tight rings round the axis and
 `Stripes(51, varying=True)` the large ring from an intensity-dependent column,
 leaving the rock's structure as it was. Correlation with the authors' Savu
-slice rises from 0.854 to 0.861.
+slice rises from 0.863 to 0.870.
 
 ```bash
-uv run python examples/gallery/diamond_rings.py full_rows1048-1111.nxs rec_01050.tif diamond-rings.png
+uv run python examples/gallery/diamond_rings.py full_rows1048-1111.nxs Before_correction/rec_01050.tif diamond-rings.png
 ```
 
 ## Few-view micro-CT of sandstone

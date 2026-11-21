@@ -26,6 +26,17 @@ mask includes guard observations. The JSON `split.specification` and SHA256
 frame IDs, geometry, corrections and the fitting command. The fingerprint is
 not a data checksum. Freeze the split before inspecting its scores.
 
+![One detector row of K11 scan 54013 drawn three times as a sinogram of view angle against detector column. Held-out observations are orange: every sixth view, a 30° block of angles, and 32-column blocks in every view. Guards are grey.](images/held-out-splits.png)
+
+The three splits on one corrected detector row of Diamond K11 scan 54013:
+held-out observations orange, guards grey, training observations unchanged.
+`Split.interleaved` holds out whole views, `Split.angular` a block of angles,
+and `Split.detector` the same column blocks in every view.
+
+```bash
+uv run python examples/gallery/held_out_splits.py k11-54013.nxs held-out-splits.png
+```
+
 ## Prevent leakage
 
 Every fitted operation must exclude test and guard observations: reconstruction,

@@ -79,12 +79,18 @@ def transmission(
     center: tuple[float, float] = (0.0, 0.0),
     supersample: int = 2,
     gvxr_python: Path = GVXR_PYTHON,
+    mu: dict[str, float] | None = None,
 ) -> np.ndarray:
-    """Pixel-averaged transmission ``(views, nv, nu)`` for TomoJAX ``poses``."""
+    """Pixel-averaged transmission ``(views, nv, nu)`` for TomoJAX ``poses``.
+
+    ``mu`` maps each mesh name in ``mesh_dir`` to its attenuation in mm^-1; by default
+    the watch's materials that ``mesh_dir`` holds.
+    """
+    mu = present(mesh_dir) if mu is None else mu
     plan = {
         "meshes": str(mesh_dir),
-        "names": np.array(list(present(mesh_dir))),
-        "mu_mm": np.array(list(present(mesh_dir).values())),
+        "names": np.array(list(mu)),
+        "mu_mm": np.array(list(mu.values())),
         "shape": np.array(shape),
         "pixel_mm": pixel,
         "center_mm": np.array(center, np.float64),

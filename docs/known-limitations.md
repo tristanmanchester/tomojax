@@ -190,6 +190,18 @@ measurements require independent calibration evidence and repair before `Rings`.
   measured: laminography's missing cone reconstructs as zero, so FBP gives
   elongated features along the rotation axis. Iterative solvers can recover
   part of the cone only through a bounded volume or a prior.
+
+  ![A sandstone slab in laminography: in-plane slices and vertical sections of the truth, FBP and FISTA-TV. In the FBP section the grains are smeared along the axis and the slab has no top or bottom; FISTA-TV restores the slab's faces but blurs the grains.](images/rock-missing-cone.png)
+
+  A 0.28 mm sandstone slab with a known truth, simulated in 35° laminography
+  with 720 views. FBP leaves the cone empty: its relative error inside the slab
+  is 0.555. FISTA-TV with nonnegativity and its automatic weight recovers the
+  slab's faces from the volume's bounds and its prior, error 0.210, and blurs
+  the finest detail in the slice.
+
+  ```bash
+  uv run python examples/gallery/rock_missing_cone.py rock-missing-cone.png
+  ```
 - FBP retains filtered tails across the full volume, assuming zero raw
   attenuation outside the measured detector. This does not recover missing
   measurements of a truncated object. Explicit detector coordinates

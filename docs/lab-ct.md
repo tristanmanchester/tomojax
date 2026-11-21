@@ -188,6 +188,21 @@ one edge of the detector, which widens the field of view) and short scans of
 at least 180° plus the fan angle (Parker weights). Like every FDK, it is exact
 only in the orbit plane, with cone artefacts growing away from it.
 
+![FDK central slices of three lab scans, each above an enlarged region: a copper oxide specimen from a Zeiss Xradia at 1.13 µm, a box of seeds from a Nikon X-Tek at 94 µm and grains in a SkyScan 1172 at 14.1 µm.](images/lab-cone-slices.png)
+
+The orbit plane of three lab scans, each loaded from the vendor's own files and
+reconstructed by FDK at one voxel per detector pixel at the rotation axis, with
+no alignment: the Zeiss Xradia CuO_2 tomo-B scan (3201 views, its
+`AutoRecon/CenterShift` and per-view image shifts), the Nikon X-Tek seeds scan
+(1571 views, the centre in its `_recon.xtekct`) and a SkyScan 1172 scan of
+grains (996 views over 199°; its log records no horizontal centre, so the axis
+is the detector middle).
+
+```bash
+uv run python examples/gallery/lab_cone_slices.py CuO_2_tomo-B.txrm \
+  "47209 testscan korn01_recon.xtekct" jyvat.log lab-cone-slices.png
+```
+
 The iterative solvers model the cone beam exactly, with any per-view poses.
 CGLS suits low-noise data, and FISTA with total variation suits noisy or
 sparse scans:

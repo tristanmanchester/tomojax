@@ -804,6 +804,15 @@ fixed Zeiss vendor region, intensity-affine NRMSE is 0.353989 for TomoJAX,
 0.351702 for ASTRA and 0.343797 for TIGRE; this is an image diagnostic,
 not an acceptance gate.
 
+![Warm SIRT times of TomoJAX, ASTRA and TIGRE on the walnut with one and three orbits, the Nikon seeds and the Zeiss CuO_2 scan, each with its common-projector residual.](images/sirt-times.png)
+
+The two SIRT tables above, drawn from their numbers: warm time and, after it,
+the common-projector relative residual.
+
+```bash
+uv run python examples/gallery/sirt_times.py sirt-times.png
+```
+
 ### CuO FDK at fourfold binning
 
 Measured 2026-10-20 on `75435039`. Both Zeiss CuO scans use all 3201 views

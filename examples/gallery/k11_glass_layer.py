@@ -2,104 +2,59 @@
 
     uv run python examples/gallery/k11_glass_layer.py k11-54286.nxs k11-glass-layer.png
 
-The default workflow aligns 1441 views with 4x4 detector binning: 2.16 micrometre
-pixels become 8.64 micrometre voxels. The figure shows the sphere layer in-plane
-and two cross-sections through the plates.
-The rotation axis leans towards the beam by +35 degrees in TomoJAX's convention.
+The 1441 views are aligned with the plain ``tj.align(scan)`` on a 6.48 micrometre
+grid, then reconstructed by FBP at the detector's 2.16 micrometre pitch: one
+in-plane slice through the sphere layer and two vertical sections through the
+plates. The rotation axis leans towards the beam by +35 degrees in TomoJAX's
+convention. The three planes share one grey range.
 """
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import time
-from typing import TYPE_CHECKING
 
 from _common import save, style
-import h5py
+from _k11 import PITCH_UM, load, plane
 import matplotlib.patheffects as effects
 import matplotlib.pyplot as plt
 import numpy as np
 
 import tomojax as tj
-from tomojax.geometry import grid_volume_origin
 
-if TYPE_CHECKING:
-    from jax import Array
-
-PITCH_UM = 2.16
+LAYER_UM = 12.96  # height of the in-plane slice through the sphere layer
+ACROSS = 704  # in-plane slice pixels, 1.52 mm
+WIDE, TALL = 926, 200  # vertical sections, 2.0 mm by 0.43 mm
 
 
-def sampling_grid(binning: int) -> tj.Grid:
-    """Initial sampling; automatic alignment bounds resolution, preserving the region."""
-    pitch = PITCH_UM * binning
-    return tj.Grid(640 // binning, 640 // binning, 540 // binning, pitch, pitch, pitch)
+def planes(scan: tj.Scan) -> list[tuple[str, np.ndarray]]:
+    """The in-plane slice and the vertical sections at y = 0 and x = 0."""
+    return [
+        (f"xy · z = {LAYER_UM:.0f} µm", plane(scan, (0, 0, LAYER_UM), (ACROSS, ACROSS, 1))),
+        ("xz · y = 0", plane(scan, (0, 0, 15.0), (WIDE, 1, TALL))),
+        ("yz · x = 0", plane(scan, (0, 0, 15.0), (1, WIDE, TALL))),
+    ]
 
 
-def scan_geometry(angles: np.ndarray, binning: int) -> tj.LaminographyGeometry:
-    """Declared K11 54286 geometry, retaining the native detector sampling."""
-    return tj.LaminographyGeometry(
-        sampling_grid(binning),
-        tj.Detector(640, 540, PITCH_UM, PITCH_UM),
-        angles,
-        tilt=35.0,
-    )
-
-
-def slice_figure(volume: np.ndarray | Array, grid: tj.Grid, output: Path) -> None:
-    """An in-plane overview and two enlarged cross-sections, with physical scale bars."""
-    pitch = np.array((grid.vx, grid.vy, grid.vz))
-    origin = np.asarray(grid_volume_origin(grid))
-    shape = np.array((grid.nx, grid.ny, grid.nz))
-    indices = np.rint((np.array((0, 0, 12.96)) - origin) / pitch).astype(int)
-    cuts, extents = [], []
-    for axis in (2, 1, 0):
-        first, stop = np.zeros(3, dtype=int), shape.copy()
-        if axis != 2:
-            # Enlarge the central plate cross-sections without changing reconstruction.
-            first = np.maximum(first, np.ceil(((-1000, -1000, -200) - origin) / pitch).astype(int))
-            stop = np.minimum(stop, np.ceil(((1000, 1000, 230) - origin) / pitch).astype(int))
-        selection = [slice(int(a), int(b)) for a, b in zip(first, stop, strict=True)]
-        selection[axis] = int(indices[axis])
-        cuts.append(np.asarray(volume[tuple(selection[::-1])]))
-        horizontal, vertical = [k for k in range(3) if k != axis]
-        lower = origin + (first - 0.5) * pitch
-        upper = origin + (stop - 0.5) * pitch
-        extents.append([lower[horizontal], upper[horizontal], lower[vertical], upper[vertical]])
-    low, high = np.percentile(np.concatenate([cut.ravel() for cut in cuts]), (1, 99.5))
+def figure(cuts: list[tuple[str, np.ndarray]], output: Path) -> None:
+    """The in-plane slice beside the two sections, with 200 um scale bars."""
+    low, high = np.percentile(np.concatenate([cut.ravel() for _, cut in cuts]), (1, 99.5))
     style()
     fig = plt.figure(figsize=(11, 5), layout="constrained")
-    panels = fig.add_gridspec(2, 2)
-    axes = [
-        fig.add_subplot(panels[:, 0]),
-        fig.add_subplot(panels[0, 1]),
-        fig.add_subplot(panels[1, 1]),
-    ]
-    for ax, cut, extent, axis in zip(axes, cuts, extents, (2, 1, 0), strict=True):
-        horizontal, vertical = [k for k in range(3) if k != axis]
-        plane = "xyz"[horizontal] + "xyz"[vertical]
-        coordinate = origin[axis] + indices[axis] * pitch[axis]
-        ax.imshow(cut, origin="lower", extent=extent, vmin=low, vmax=high)
-        ax.set_title(f"{plane} · {'xyz'[axis]} = {coordinate:.1f} µm")
-        x = extent[0] + 0.06 * (extent[1] - extent[0])
-        y = extent[2] + 0.09 * (extent[3] - extent[2])
-        stroke = [effects.withStroke(linewidth=3, foreground="black")]
-        ax.plot([x, x + 200], [y, y], color="white", lw=2, path_effects=stroke)
-        ax.text(
-            x + 100,
-            y + 0.03 * (extent[3] - extent[2]),
-            "200 µm",
-            color="white",
-            ha="center",
-            path_effects=stroke,
-        )
+    grid = fig.add_gridspec(2, 2, width_ratios=(1, 1.3))
+    axes = [fig.add_subplot(grid[:, 0]), fig.add_subplot(grid[0, 1]), fig.add_subplot(grid[1, 1])]
+    stroke = [effects.withStroke(linewidth=3, foreground="black")]
+    bar = 200 / PITCH_UM
+    for ax, (title, cut) in zip(axes, cuts, strict=True):
+        ax.imshow(cut, origin="lower", vmin=low, vmax=high)
+        x0, y0 = 0.05 * cut.shape[1], 0.1 * cut.shape[0]
+        ax.plot([x0, x0 + bar], [y0, y0], color="white", lw=2, path_effects=stroke)
+        ax.text(x0 + bar / 2, y0 + 0.04 * cut.shape[0], "200 µm", color="white", ha="center",
+                path_effects=stroke)  # fmt: skip
+        ax.set_title(title)
         ax.set_axis_off()
-    fig.suptitle("Glass spheres between PEKK plates · K11 laminography · scan 54286")
-    binning = grid.vx / PITCH_UM
-    fig.supxlabel(
-        f"{PITCH_UM:g} µm pixels · {binning:g}x{binning:g} binning · {grid.vx:.2f} µm voxels\n"
-        "In-plane slice and enlarged cross-sections · missing-cone artefacts remain",
-        fontsize=8,
+    fig.suptitle(
+        "Glass spheres between PEKK plates · K11 laminography · scan 54286 · 2.16 µm voxels"
     )
     save(fig, output)
 
@@ -108,19 +63,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("input", type=Path, help="the raw k11-54286.nxs acquisition")
     parser.add_argument("output", type=Path)
-    parser.add_argument("--binning", type=int, choices=(1, 2, 4), default=4)
+    parser.add_argument("--aligned", type=Path, help="reuse a scan saved from tj.align")
     args = parser.parse_args()
-    with h5py.File(args.input) as source:
-        sample = np.asarray(source["entry/instrument/EtherCAT/image_key"]) == 0
-        angles = np.asarray(source["entry/imaging_sum/smaract_zrot"], np.float32)[sample]
-    geometry = scan_geometry(angles, args.binning)
-    start = time.perf_counter()
-    scan = tj.load_frames(args.input, geometry=geometry).corrected(binning=args.binning)
-    result = tj.align(scan)
-    print(f"load/correct/align: {time.perf_counter() - start:.1f} s")
-    print("Final level:", result.info["levels"][-1]["status"])
-    print("Reconstruction grid:", result.grid)
-    slice_figure(result.image, result.grid, args.output)
+    scan = tj.load(args.aligned) if args.aligned else tj.align(load(args.input, 35.0)).scan
+    figure(planes(scan), args.output)
 
 
 if __name__ == "__main__":

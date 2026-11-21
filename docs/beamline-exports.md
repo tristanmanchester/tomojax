@@ -11,6 +11,19 @@ scan, use its own recorded calibration; do not copy a plausible pixel size or
 rotation centre. File recognition and physical calibration are separate: an
 otherwise recognised file can still need `detector=` or `angles=`.
 
+![Five slices, one from each recipe on this page, each above an enlarged region: ESRF bamboo, a PSI TOMCAT skin sample, an Elettra polystyrene foam, the PSI cSAXS porous glass and the Diamond I13 pellet.](images/beamline-first-slices.png)
+
+One native detector row from each recipe below, corrected and reconstructed by
+the default `tj.reconstruct`. At one row the ESRF and TOMCAT slices are noisy.
+The Elettra sample extends past the field of view, so its slice is local
+tomography. The cSAXS slice is phase, not attenuation. The ESRF and I13 rows are
+corrected with `corrected(Stripes(9), Stripes(51, varying=True))` for their
+rings; the I13 slice keeps broad rings that this correction does not remove.
+
+```bash
+uv run python examples/gallery/beamline_first_slices.py DATA beamline-first-slices.png
+```
+
 ## ESRF NXtomo export
 
 For the bamboo scan exported from Bliss by nxtomomill, use nabu's
