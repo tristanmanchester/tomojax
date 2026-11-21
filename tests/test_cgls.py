@@ -12,7 +12,7 @@ import pytest
 # check-public-imports: allow-private
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.forward import project_joseph
-from tomojax.geometry import Detector, Grid, LaminographyGeometry
+from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.recon import CGLSConfig, cgls
 
 # check-public-imports: allow-private
@@ -568,3 +568,40 @@ def test_a_scattered_pool_streams_the_data_rather_than_running_out():
     # The pool's own figures rule the block out: no allocation is tried, so the allocator
     # neither retries nor reports running out.
     assert "bfc_allocator" not in run.stderr.split("RECONSTRUCT")[-1]
+
+
+@pytest.mark.gpu
+def test_cuda_cgls_holds_no_volume_temporaries_beside_its_state():
+    # Iterate, direction and two gradients, or the verification's bound and exact
+    # gradient: at most five volumes and four sinograms are live at once, so the
+    # solve fits where its resident bound is admitted beside another allocator.
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    import cupy as cp
+
+    class Live(cp.cuda.MemoryHook):
+        name = "live"
+
+        def __init__(self) -> None:
+            self.now = self.peak = 0
+
+        def malloc_postprocess(self, device_id, size, mem_size, mem_ptr, pmem_id) -> None:
+            self.now += mem_size
+            self.peak = max(self.peak, self.now)
+
+        def free_postprocess(self, device_id, mem_size, mem_ptr, pmem_id) -> None:
+            self.now -= mem_size
+
+    # Few views, so the volumes dominate: before, the solve held about six of them.
+    n, views = 128, 16
+    grid, detector = Grid(n, n, n, 1.0, 1.0, 1.0), Detector(n, n, 1.0, 1.0)
+    geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, views, endpoint=False))
+    data = np.random.default_rng(88).normal(size=(views, n, n)).astype(np.float32)
+    live = Live()
+    with live:
+        _, info = cgls(
+            geometry, grid, detector, data,
+            config=CGLSConfig(iterations=20, tolerance=0, backend="cuda"),
+        )  # fmt: skip
+    assert info["execution_backend"] == "cupy"
+    assert live.peak <= 4 * (5 * n**3 + 4 * data.size)
