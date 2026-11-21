@@ -60,8 +60,9 @@ selected parameters, for parallel, laminography and cone data.
 The figures below show each error on simulated scans, before and after the matching fit: a watch
 movement in laminography, and a spark plug in parallel-beam tomography. The lower row of each
 figure is the image minus the image made with the true geometry, so any remaining error stands
-out. The numbers under each panel are the pose error in detector pixels and the time to fit.
-These figures were made with `motion="smooth"`, and their numbers are that setting's.
+out. The numbers above each panel are the pose error in detector pixels and the time to fit.
+These figures were made with the default `motion="independent"`; [How the figures were
+made](#how-the-figures-were-made) gives the command.
 
 ## The rotation centre
 
@@ -71,7 +72,7 @@ everywhere in the slice, because every view is displaced by the same amount.
 ![The balance wheel with a 6-pixel centre error: each screw is drawn as a ring. After fit="center" the screws are points again, matching the true geometry.](images/alignment-ladder-centre.png)
 
 `fit="center"` estimates one number for parallel and laminography data and is the fastest fit:
-13 s here. Fit the centre first on a new instrument or after any change to the detector or stage.
+23 s here. Fit the centre first on a new instrument or after any change to the detector or stage.
 
 For cone data, `"center"` also estimates the detector-v centre. The data determine it only weakly:
 a vertical detector offset looks almost the same as moving the image vertically, so the fit may
@@ -114,8 +115,7 @@ know to be steady.
 
 ![The balance wheel with drift and five slips between views: the screws are doubled. After fit="translations" the image matches the true geometry.](images/alignment-ladder-drift.png)
 
-With `motion="smooth"`, `fit="translations"` removes the drift and slips in this example to
-0.008 px in 21 s. It also absorbs a centre error in parallel and laminography scans, so you do not need to fit
+`fit="translations"` removes the drift and slips in this example to 0.012 px in 36 s. It also absorbs a centre error in parallel and laminography scans, so you do not need to fit
 the centre separately first. If you request `"center"` and `"translations"` together, the
 translations are given zero mean: a common translation and a centre offset describe the same
 parallel-ray geometry, and the data cannot tell them apart.
@@ -161,8 +161,8 @@ Slices at four heights show what the error does to the features themselves:
 ![The spark plug sliced at four heights. 19 mm above the centre row the terminal nut has a halo; at the centre row the hex is sharp; 11 mm below, a 0.25 mm bubble in the glass seal is blurred away; 22 mm below, the platinum pad on the ground electrode is smeared. fit="translations" does not remove any of these. After fit=("translations", "roll") all four slices match the true geometry.](images/alignment-ladder-roll.png)
 
 Adding `"roll"` estimates one angle for the whole scan. In this example it recovers the 0.75° roll
-as 0.71°, and every slice then matches the true-geometry image to within 1.3% of its grey range.
-It takes 234 s, against 47 s for translations alone. The roll matters most where it is easiest to
+as 0.756°, and every slice then matches the true-geometry image to within 0.3% (relative L2).
+It takes 77 s, against 50 s for translations alone. The roll matters most where it is easiest to
 miss: away from the centre row it blurs away small defects, such as the bubble in the glass seal.
 On a parallel-beam instrument, roll is the setup error to look for first: a fraction of a degree is
 enough to blur the top and bottom of a tall sample.
@@ -179,9 +179,10 @@ own centre.
 
 Here the plug is mounted 9 mm off the axis so that its features sweep wide circles; a sample
 centred on the axis and symmetric about it is barely affected by a tilt at all. A 3° tilt, larger
-than a typical setup error, leaves the section 5.1% from the true-geometry image, and translations
-bring it to 1.8%. At 1° the figures are 2.8% and 1.1%. In parallel-beam tomography the roll matters
-far more than the tilt.
+than a typical setup error, leaves the section 49% from the true-geometry image (relative L2), and
+translations bring it to 10%. The pose error does not fall with them, 4.9 px before and 5.5 px
+after, because translations cannot express a tilt: what they correct is the image. In parallel-beam
+tomography the roll matters far more than the tilt.
 
 In laminography a wrong tilt changes the projections much more, and the fit can separate it from
 translations: `fit=("translations", "tilt")` recovers a 2° laminography tilt error in the watch
@@ -354,11 +355,21 @@ was given, its `steps` and the `status` it ended with.
 ## How the figures were made
 
 Both phantoms are meshes simulated with gVXR at 120 keV with 10⁴ photons per pixel and
-reconstructed with FBP. The watch is scanned in 35° laminography with 360 of 720 views on
-192 × 192 detector pixels of 0.27 mm and a 192³ grid. The spark plug (steel, nickel, copper,
-alumina, glass, a carbon resistor and an iridium tip) is scanned in parallel beam with 720 views on
-384 × 384 pixels of 0.135 mm and a 384³ grid. The errors were applied to the declared geometry
-(centre, tilt) or rendered into the data (drift, slips, rotations, roll). Pose errors are detector
-landmark RMS in 0.135 mm pixels after one rigid gauge. Times are for one RTX 4070 Laptop GPU.
+reconstructed with FBP. The watch is scanned in 35° laminography with 720 views on 384 × 384
+detector pixels of 0.135 mm and a 384³ grid. The spark plug (steel, nickel, copper, alumina,
+conductive glass, talc, a carbon resistor, an iridium tip and a platinum pad) is scanned in
+parallel beam with 720 views on 384 × 384 pixels of 0.135 mm and a 384³ grid. The centre error
+is in the declared geometry; drift, slips, rotations, roll and tilt are rendered into the data.
+Each difference is taken against the same data reconstructed with the true poses, moved by the
+fit's one rigid motion of the whole object, which no data can determine. Pose errors are
+detector landmark RMS in 0.135 mm pixels after that motion. Times are for one RTX 4070 Laptop
+GPU.
+
+```bash
+uv run --no-project --with numpy --with scipy --with scikit-image \
+    python bench/phantoms/spark_plug.py PLUG_MESHES
+uv run python examples/gallery/alignment_ladder.py PLUG_MESHES docs/images
+```
+
 Numerical checks of each `fit=`
 setting are described in [the benchmark guide](../bench/README.md#alignment-fit-settings).

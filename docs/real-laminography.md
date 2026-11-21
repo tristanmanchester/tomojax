@@ -149,6 +149,20 @@ FBP reconstructs every measured frequency exactly and leaves the cone empty, whi
 elongates features along the axis. Iterative reconstruction can fill part of the
 cone only from the volume bounds or the object prior.
 
+![Diamond K11 scan 54286 reconstructed by FBP and by FISTA-TV: in-plane slices through a layer of glass spheres, enlarged regions and vertical sections. The FISTA-TV slice has sharper sphere edges and a clean background, and its vertical section is dark around the layer where FBP's is grey.](images/k11-fbp-fista.png)
+
+K11 scan 54286, aligned with `tj.align(scan)` and reconstructed on its
+704 × 704 × 234 grid of 6.48 µm voxels: FBP above, FISTA-TV with 100
+iterations, nonnegativity and the automatic TV weight below. FBP took 7 s and
+FISTA-TV 651 s. FISTA-TV sharpens the spheres and, in the vertical section,
+removes the grey fog that FBP leaves above and below the layer, part of the
+missing cone. Iterative reconstruction needs the whole sample in its grid; at
+the detector's 2.16 µm that grid does not fit on an 8 GB GPU.
+
+```bash
+uv run python examples/gallery/k11_fbp_fista.py k11-54286.nxs k11-fbp-fista.png
+```
+
 ## Reconstruct scans larger than GPU memory
 
 FBP streams projections from host memory and automatically reconstructs in

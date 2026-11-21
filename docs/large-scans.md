@@ -226,6 +226,17 @@ with tj.reconstruct_slabs(frames, "fbp", corrections=[Stripes(), Stripes(51, var
 volume.flush()
 ```
 
+![The central axial slice and a vertical slice through the axis of a copper oxide specimen at 1.13 µm, each with an enlarged region.](images/zeiss-full-volume.png)
+
+The full Zeiss CuO_2 tomo-B scan, 3201 views of 2028 × 2028 pixels, reconstructed
+this way into a 2028³ volume of 1.13 µm voxels, 31 GiB written to a memmap. Its
+corrected projections alone would take 52 GB. It took 987 s on the RTX 4070
+Laptop GPU (8 GB) in a machine with 30 GB of memory.
+
+```bash
+uv run python examples/gallery/zeiss_full_volume.py CuO_2_tomo-B.txrm VOLUME.npy OUT.png
+```
+
 Each block retains its global physical grid, corrected source rows
 (including interpolation neighbors), and correction records. Blocks remain
 valid after iteration or context exit, but collecting them retains both their

@@ -140,6 +140,19 @@ The widths are detector columns, not reconstructed-ring radii. Increase the
 ordinary width for wider stripes, and compare images: stationary centred object
 features can also be changed. Missing information at dead pixels is not recovered.
 
+![A raw detector frame of a dense pellet with a band of 16 rows marked, the corrected sinogram of one row, its FBP slice and an enlarged region of the slice.](images/i13-first-slice.png)
+
+Diamond I13 scan 159815, 3001 views over a full turn, through these steps: one
+raw frame with the 16 cropped rows marked, the corrected sinogram of the middle
+row after `Stripes(9)` and `Stripes(51, varying=True)`, and its FBP slice with
+the centre from `tj.align(fit="center", method="opposite-views")`. The pellet
+absorbs almost all of the beam, so its slice is noisy and streaked where the
+rays cross it longest.
+
+```bash
+uv run python examples/gallery/first_slice.py 159815.nxs i13-first-slice.png
+```
+
 `corrected(..., binning=2)` averages 2 x 2 detector blocks of the line integrals,
 as `scan.binned(2)` does. With only `Stripes` and the like after the log, it
 bins slabs of rows read straight from an uncompressed file, so the unbinned

@@ -37,6 +37,17 @@ has incomplete angular information; changing the solver does not restore that
 missing information. The iteration count and TV weight above are starting
 settings.
 
+![Two rows, parallel beam and 30° laminography: the phantom's central slice, its first projection, the sinogram of the central detector row, and the reconstruction across and along the rotation axis. The laminography reconstruction is blurred along the axis.](images/synthetic-scans.png)
+
+Both command sequences above at `--size 128`, the tilted one with FISTA's
+automatic TV weight in place of 0.005, which is set for 32³. The laminography
+reconstruction is blurred along the rotation axis, where its views measure
+nothing.
+
+```bash
+uv run python examples/gallery/synthetic_scans.py synthetic-scans.png
+```
+
 ## Use the Python API
 
 ```bash
