@@ -183,28 +183,17 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     roundoff, verified = False, True
     norm2 = float(gamma)
     eps = np.finfo(np.float32).eps
-    tiny = np.finfo(np.float32).tiny
     direction = gradient.copy()
     while count < cfg.iterations and norm2 > tolerance**2 and not failed and not roundoff:
         previous = norm2, verified
-        projected = project_residual(ops.forward(direction), cfg.data_term, xp=cp)
-        direction_norm2 = _dot(cp, direction, direction)
-        denominator = _dot(cp, projected, projected) + cp.multiply(damp2, direction_norm2)
-        value = float(denominator)
-        if not np.isfinite(value) or value <= 0:
+        gradient = None  # release the previous gradient before the transpose allocates the next
+        step = _step(cp, ops, x, direction, residual, gamma, damp2, cfg.data_term)
+        if step is None:
             failed = True
             break
-        alpha = gamma / denominator
-        k["axpy"](alpha, direction, x)
-        k["axpy"](cp.negative(alpha), projected, residual)
-        del projected
-        gradient = None  # release the previous gradient before the transpose allocates the next
-        gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp))
-        k["negaxpy"](damp2, x, gradient)
-        gamma_new = _dot(cp, gradient, gradient)
+        gradient, gamma_new, roundoff, small_update = step
+        del step  # hold the gradient only through ``gradient``
         count += 1
-        roundoff = _all(cp, k["tiny_step"], alpha, direction, x, eps, tiny)
-        small_update = cp.square(alpha) * direction_norm2 <= cp.multiply(eps**2, _dot(cp, x, x))
         stats = cp.asnumpy(cp.stack((gamma_new, roundoff, small_update)))
         norm2, roundoff, small_update = float(stats[0]), bool(stats[1]), bool(stats[2])
         failed = not np.isfinite(norm2)
@@ -258,6 +247,31 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         "gradient_damping": 0.0,
     }
     return x, info
+
+
+def _step(cp, ops, x, direction, residual, gamma, damp2, data_term):
+    """Advance ``x`` and ``residual`` along ``direction`` in place.
+
+    Returns the new gradient, its squared norm and the two round-off tests as
+    device values, or None when the step length breaks down.
+    """
+    k = _kernels(cp)
+    eps, tiny = np.finfo(np.float32).eps, np.finfo(np.float32).tiny
+    projected = project_residual(ops.forward(direction), data_term, xp=cp)
+    direction_norm2 = _dot(cp, direction, direction)
+    denominator = _dot(cp, projected, projected) + cp.multiply(damp2, direction_norm2)
+    value = float(denominator)
+    if not np.isfinite(value) or value <= 0:
+        return None
+    alpha = gamma / denominator
+    k["axpy"](alpha, direction, x)
+    k["axpy"](cp.negative(alpha), projected, residual)
+    del projected
+    gradient = ops.adjoint(project_residual(residual, data_term, xp=cp))
+    k["negaxpy"](damp2, x, gradient)
+    roundoff = _all(cp, k["tiny_step"], alpha, direction, x, eps, tiny)
+    small_update = cp.square(alpha) * direction_norm2 <= cp.multiply(eps**2, _dot(cp, x, x))
+    return gradient, _dot(cp, gradient, gradient), roundoff, small_update
 
 
 def _verify(
