@@ -202,8 +202,9 @@ def test_wide_stripe_windows_need_no_more_device_memory_than_narrow_ones() -> No
 
 def test_varying_stripe_memory_does_not_grow_with_the_window() -> None:
     shape = (1001, 2, 2048)
-    narrow = _compiled_temporaries(Stripes(51, varying=True), shape)
-    assert _compiled_temporaries(Stripes(151, varying=True), shape) <= 1.25 * narrow + (64 << 20)
+    # Windows this wide are taken in blocks of rows, so doubling one does not double the memory.
+    wide = _compiled_temporaries(Stripes(101, varying=True), shape)
+    assert _compiled_temporaries(Stripes(201, varying=True), shape) <= 1.25 * wide
 
 
 def test_wide_windows_remove_a_broad_offset_under_moving_features() -> None:
