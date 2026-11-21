@@ -594,9 +594,70 @@ for suite in gaussian-v1 structured-v1 structured-noisy-v1; do
 done
 ```
 
+The 256³ parallel and laminography cells were rerun on 2026-11-21 on commit
+`58a30e0` with the CGLS workflows only (TomoJAX plain, FBP-started and
+coarse-to-fine; ASTRA plain and FBP-started), the same gates and three repeats.
+Times are cold / warm ms for each side's fastest accepted CGLS workflow:
+
+| Object | Cell | TomoJAX | ASTRA | Cold speedup | Warm speedup |
+|---|---|---|---|---:|---:|
+| Gaussian | parallel 256 | FBP-started CGLS: 2275 / 157 | FBP-started CGLS: 850 / 237 | 0.37 | 1.51 |
+| Gaussian | laminography 256 | coarse-to-fine CGLS: 10385 / 3287 | FBP-started CGLS: 34839 / 16519 | 3.35 | 5.03 |
+| Sharp | parallel 256 | FBP-started CGLS: 1355 / 154 | FBP-started CGLS: 704 / 235 | 0.52 | 1.53 |
+| Sharp | laminography 256 | FBP-started CGLS: 2165 / 435 | FBP-started CGLS: 1522 / 452 | 0.70 | 1.04 |
+
+Plain CGLS from zero is slower per iteration in TomoJAX than in ASTRA in these
+cells (warm 1038 against 654 ms for 8 iterations on the Gaussian parallel cell,
+893 against 736 ms on the sharp laminography cell). On the Gaussian
+laminography cell TomoJAX's plain and FBP-started CGLS miss the 0.10 gate after
+256 iterations (0.1096 and 0.1094) where ASTRA's pass (0.0971 and 0.0972);
+TomoJAX's coarse-to-fine CGLS passes (0.0922).
+
+```bash
+for suite in gaussian-v1 structured-v1; do
+  uv run --no-sync python bench/compare_reconstructions.py --suite $suite \
+    --sizes 256 --geometries parallel lamino --views 180 --repeats 3 \
+    --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda tomojax_fbp_joseph_cgls_cuda \
+      astra_cgls astra_fbp_cgls \
+    --output OUTPUT/$suite.json
+done
+```
+
+## Parallel beam on a real scan against ASTRA, TomoPy and tomocupy
+
+Measured 2026-11-21 on commit `58a30e0` with
+[`bench/compare_parallel.py`](../bench/compare_parallel.py), TomoPy 1.15.2 and
+tomocupy 1.1.0. The scan is the Diamond I12 cut of Vo et al. (Zenodo 3339629): 1801
+views over 180° of 64 full-width rows, 2560 pixels each, raw counts with 50 flats
+and 20 darks, the axis at column 1417.5. Every tool reconstructs every row on a
+2560 × 2560 slice from the same corrected line integrals, each in a fresh process.
+
+| From line integrals in host memory to a volume in host memory | Cold | Warm | Agreement |
+|---|---:|---:|---:|
+| TomoJAX, the default `tj.reconstruct(scan)` (Fourier-slice inverse) | 2.53 s | 0.81 s | 0.9997 |
+| TomoJAX FBP | 4.75 s | 3.35 s | reference |
+| ASTRA `FBP_CUDA`, slice by slice | 8.41 s | 7.64 s | 0.99998 |
+| TomoPy gridrec, on the CPU (32 threads) | 3.69 s | 2.90 s | 0.988 |
+
+Agreement is the correlation of the middle slice with TomoJAX FBP's after a
+2-pixel Gaussian blur. Unblurred, TomoPy's is 0.77: gridrec keeps more of the
+noise.
+
+From raw counts on disk to a volume on disk, five interleaved fresh processes
+with `sync` before each: TomoJAX's default 11.2 s median (4.3–11.9 s), TomoJAX FBP
+10.7 s (6.8–16.6 s) and `tomocupy recon` with its Fourier method 10.4 s (8.8–35.8 s).
+Writing the 1.6 GiB volume dominates and varies from run to run, so this
+comparison does not separate the three. tomocupy's volume agrees with TomoJAX
+FBP's to 0.991 by the same measure.
+
+```bash
+uv run --no-sync python bench/compare_parallel.py full_rows1048-1111.nxs WORK \
+  --axis 1417.5 --baselines-python BASELINES/bin/python
+```
+
 ## TV-regularised reconstruction against TIGRE
 
-Measured 2026-11-19 on commit `40330cf` with
+Measured 2026-11-21 on commit `58a30e0` with
 [`bench/compare_tv.py`](../bench/compare_tv.py) (`compare_tv.py 128 tomojax`,
 then `compare_tv.py 128 tigre`, each from a cool GPU). A 128³ structured parallel
 phantom is scanned with 180 views and 3% noise. Each library runs 50
@@ -607,16 +668,16 @@ and device.
 
 | Method | Best relative L2 error | Warm time |
 |---|---:|---:|
-| TomoJAX FISTA-TV | 0.075 (automatic weight: 0.077) | 0.34 s |
+| TomoJAX FISTA-TV | 0.075 (automatic weight: 0.077) | 0.32 s |
 | TIGRE FISTA | 0.101 | 9.1 s |
-| TIGRE ASD-POCS | 0.146 | 5.4 s |
+| TIGRE ASD-POCS | 0.146 | 5.6 s |
 
 Larger TIGRE FISTA weights diverge. Unregularised CGLS reaches 0.138 at best
 (10 iterations). This is one phantom at one noise level, not a general ranking.
 
 ## Cone-beam projection and FDK
 
-Measured 2026-11-19 on commit `40330cf` with
+Measured 2026-11-21 on commit `58a30e0` with
 [`bench/compare_cone.py`](../bench/compare_cone.py) (`--size 256 --views 360`): five voxelised ellipsoids
 (256³, 2×2×2 sub-samples) on a circular 360-view scan with a 384² detector at
 1.5× magnification. Forward projections are compared with exact analytic line
@@ -626,14 +687,19 @@ moving a 64 MiB volume and 202.5 MiB of projections.
 
 | Operation | TomoJAX | ASTRA 2.5 | TIGRE |
 |---|---:|---:|---:|
-| Forward projection | 0.132 s (error 0.0060) | 0.168 s (0.0060) | 0.470 s interpolated (0.0062), 1.23 s Siddon (0.0068) |
-| Backprojection | 0.120 s, exact transpose | 0.073 s, approximate transpose | 0.087 s, "matched" |
-| FDK | 0.090 s (error 0.0581) | 0.214 s (0.0581) | 0.484 s (0.0581) |
-| Forward, axis tilted 0.5° | 0.131 s | 0.168 s | |
-| Backprojection, axis tilted 0.5° | 0.104 s, exact transpose | 0.073 s, approximate transpose | |
+| Forward projection | 0.137 s (error 0.0060) | 0.168 s (0.0060) | 0.479 s interpolated (0.0062), 1.24 s Siddon (0.0068) |
+| Backprojection | 0.122 s, exact transpose | 0.073 s, approximate transpose | 0.094 s, "matched" |
+| FDK | 0.103 s (error 0.0581) | 0.288 s (0.0581) | 0.543 s (0.0581) |
+| Forward, axis tilted 0.5° | 0.138 s | 0.168 s | |
+| Backprojection, axis tilted 0.5° | 0.106 s, exact transpose | 0.073 s, approximate transpose | |
+
+On 2026-11-19 (`40330cf`) the host-to-host FDK times were 0.090, 0.214 and 0.484 s.
+All three libraries were slower on 2026-11-21, while TomoJAX's device-resident FDK
+was not (0.050 against 0.049 s), so the change is in moving the arrays, not the
+reconstruction.
 
 Iterative solvers keep their arrays on the device. There TomoJAX's forward
-projection takes 0.095 s, its exact transpose 0.082 s and FDK 0.050 s; ASTRA's
+projection takes 0.096 s, its exact transpose 0.082 s and FDK 0.049 s; ASTRA's
 and TIGRE's device-resident times are not measured here.
 
 TomoJAX's backprojection is the exact transpose of its forward projector,
@@ -1143,6 +1209,12 @@ three orbits, 501³ voxels of 0.1 mm. Walnut 1 was measured on 2026-10-07
 | FDK, detector binned 2 × 2 | 1.23 s on the first call, 1.05 s after; error 0.091 | 1.43 s; 0.091 |
 | Non-negative least squares, three orbits, every 4th view, 20 iterations | 304 s; error 0.152 | 217 s (the reference's own solver); 0.147 |
 | The same, detector binned 2 × 2 | 86 s; error 0.154 | 91 s; 0.152 |
+
+On 2026-11-21 (`58a30e0`), orbit 2's 1200 views binned 2 × 2 onto the 501³ grid
+gave FDK in 1.02 s warm against ASTRA's 1.71 s, with errors in the walnut of 0.0912
+and 0.0911, and CGLS from zero, 10 iterations, in 28.2 s against ASTRA's 26.8 s,
+with errors of 0.184 and 0.197 (`bench/walnut.py ~/data/walnuts/Walnut1 --orbits 2
+--bin 2 --method fbp|cgls --iterations 10 --libraries tomojax astra --repeats 3`).
 
 Times start with the projections in host memory and end with the volume
 there. JAX's GPU start-up (about 2 s, once per process) is not included. FDK
