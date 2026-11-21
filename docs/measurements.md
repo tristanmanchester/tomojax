@@ -771,8 +771,9 @@ Both image errors use the authors' reference, without intensity fitting.
 
 ### Full-view Nikon and Zeiss SIRT
 
-Measured 2026-10-19 on `272684c7` (TomoJAX and Zeiss ASTRA) and `35f4055f`
-(Nikon ASTRA), with TIGRE on `e3bc2f63` (Nikon) and `6149357d` (Zeiss).
+The Nikon rows were measured 2026-10-19 on `272684c7` (TomoJAX), `35f4055f`
+(ASTRA) and `e3bc2f63` (TIGRE). The Zeiss rows were measured 2026-11-21 on
+`1c94b346`, with the Zeiss centre shift loaded with its recorded sign.
 Nikon uses all 1571 views and a 500³ grid with 0.1880371266 mm
 voxels; Zeiss uses all 801 views and a 512³ grid with 0.0833853988647461 mm
 voxels. The input is
@@ -780,8 +781,9 @@ voxels. The input is
 is the Nikon seeds XTekCT file or the Zeiss HDtomo `tomo-A.txrm` file and
 `grid` is `tj.Grid(n, n, n, pitch, pitch, pitch)` with those dimensions.
 Each solve starts from its library's FDK. TomoJAX uses the same 12-iteration
-accelerated SIRT call above; ASTRA uses 24 nonnegative iterations with its
-forward/backprojectors in 512-view batches. TIGRE uses
+accelerated SIRT call above; ASTRA uses 24 nonnegative iterations, with its
+forward/backprojectors in 512-view batches for Nikon and `SIRT3D_CUDA` with
+`MinConstraint` 0 for Zeiss. TIGRE uses
 `tigre.algorithms.sirt(data, geo, angles, 24, init=initial, verbose=False)`,
 with `initial = tigre.algorithms.fdk(data, geo, angles, dowang=False)`.
 
@@ -790,21 +792,22 @@ with `initial = tigre.algorithms.fdk(data, geo, angles, dowang=False)`.
 | Nikon | TomoJAX | 95.52 / 89.63 | 0.028788 | 0.013977 |
 | Nikon | ASTRA | 135.89 / 125.78 | 0.030057 | — |
 | Nikon | TIGRE | 504.23 / 493.43 | 0.056112 | 0.102748 |
-| Zeiss | TomoJAX | 43.86 / 36.15 | 0.187915 | 0.025439 |
-| Zeiss | ASTRA | 69.11 / 62.76 | 0.189497 | — |
-| Zeiss | TIGRE | 291.57 / 290.02 | 0.207728 | 0.137740 |
+| Zeiss | TomoJAX | 33.32 / 26.32 | 0.183740 | 0.025155 |
+| Zeiss | ASTRA | 55.51 / 51.85 | 0.185370 | — |
+| Zeiss | TIGRE | 309.66 / 308.06 | 0.204008 | 0.136161 |
 
 Cold includes imports, loading and the first host volume with fresh compilation
 caches; warm repeats the solve. Filesystem caches are not cleared. Loading took
 3.03 / 10.04 / 3.02 s for Nikon TomoJAX / ASTRA / TIGRE, and
-4.99 / 5.77 / 2.05 s for Zeiss.
+3.63 / 3.73 / 3.88 s for Zeiss.
 The same calibrated ASTRA forward projector scores all three libraries. Volume
-differences are full-volume relative L2, without intensity fitting. On the
-fixed Zeiss vendor region, intensity-affine NRMSE is 0.353989 for TomoJAX,
-0.351702 for ASTRA and 0.343797 for TIGRE; this is an image diagnostic,
-not an acceptance gate.
+differences are full-volume relative L2, without intensity fitting. Against
+the vendor's reconstruction, averaged over 2 × 2 × 2 blocks onto the same grid
+and compared as in the CuO FDK section below, NRMSE is 0.321365 for TomoJAX,
+0.319123 for ASTRA and 0.311827 for TIGRE; this is an image diagnostic, not an
+acceptance gate.
 
-![Warm SIRT times of TomoJAX, ASTRA and TIGRE on the walnut with one and three orbits, the Nikon seeds and the Zeiss CuO_2 scan, each with its common-projector residual.](images/sirt-times.png)
+![Warm SIRT times of TomoJAX, ASTRA and TIGRE on the walnut with one and three orbits, the Nikon seeds and the Zeiss HDtomo scan, each with its common-projector residual.](images/sirt-times.png)
 
 The two SIRT tables above, drawn from their numbers: warm time and, after it,
 the common-projector relative residual.
@@ -815,7 +818,8 @@ uv run python examples/gallery/sirt_times.py sirt-times.png
 
 ### CuO FDK at fourfold binning
 
-Measured 2026-10-20 on `75435039`. Both Zeiss CuO scans use all 3201 views
+Measured 2026-11-21 on `d8758ca5`, with the Zeiss centre shift loaded with its
+recorded sign (before, both scans loaded with the wrong centre). Both Zeiss CuO scans use all 3201 views
 with 4 × 4 detector binning: spl1 has a 509³ grid and CuO2 a 507³ grid.
 Load `frames = tj.load_frames(path, darks=0)`, then
 `scan = frames.corrected(binning=4)` and call
@@ -826,30 +830,35 @@ geometry. No library changes its geometry or input to match another image.
 
 | Scan | Library | Cold / warm (s) | Common-projector relative residual | Full-volume difference to ASTRA |
 |---|---|---:|---:|---:|
-| spl1 | TomoJAX | 33.52 / 3.76 | 0.057908 | 0.126512 |
-| spl1 | ASTRA | 32.78 / 4.74 | 0.104623 | — |
-| spl1 | TIGRE | 38.01 / 11.59 | 0.104608 | 0.000039 |
-| CuO2 | TomoJAX | 39.70 / 4.12 | 0.078255 | 0.126404 |
-| CuO2 | ASTRA | 53.71 / 10.31 | 0.120631 | — |
-| CuO2 | TIGRE | 50.14 / 12.38 | 0.120616 | 0.000039 |
+| spl1 | TomoJAX | 32.48 / 3.44 | 0.056577 | 0.125739 |
+| spl1 | ASTRA | 32.13 / 5.33 | 0.103854 | — |
+| spl1 | TIGRE | 37.75 / 10.38 | 0.103839 | 0.000038 |
+| CuO2 | TomoJAX | 30.73 / 3.43 | 0.063343 | 0.122384 |
+| CuO2 | ASTRA | 29.19 / 5.22 | 0.112359 | — |
+| CuO2 | TIGRE | 35.56 / 10.08 | 0.112342 | 0.000039 |
 
 Cold includes loading and the first host image in a fresh process with fresh
 compilation caches; warm repeats the solve. Filesystem caches are not cleared.
-Loading and setup take 25.13 / 27.49 / 23.25 s for spl1 TomoJAX / ASTRA / TIGRE,
-and 30.13 / 44.41 / 29.63 s for CuO2. TomoJAX's spl1 cold workflow is slower
-than ASTRA's despite its faster warm solve.
+Loading and setup take 24.05 / 24.74 / 24.42 s for spl1 TomoJAX / ASTRA / TIGRE,
+and 23.08 / 22.48 / 24.11 s for CuO2. TomoJAX's cold workflow is slightly slower
+than ASTRA's on both scans despite its faster warm solve.
 
 All views use the same calibrated ASTRA residual. Full-volume differences are
 relative L2 without intensity fitting, not physical error. On spl1, differences
 in virtual padding, filter discretization and full-turn coverage weights account
-for the difference between TomoJAX and ASTRA. The fixed vendor comparison uses
-501 complete four-plane blocks, covering 2004 native planes, and one global
-affine intensity fit: NRMSE 0.154591 / 0.154654 / 0.154651 for TomoJAX / ASTRA /
-TIGRE. This is an image diagnostic, not ground truth. CuO2 has no vendor volume.
-On the full spl1 grid, TomoJAX–ASTRA relative L2 is 0.005718 within the
-vendor-defined sample mask, 0.007387 inside the horizontal cylinder seen by
-all views and 0.619622 outside it; 99.67% of the squared difference is outside.
-The sample mask includes pores and is independent of both library images.
+for the difference between TomoJAX and ASTRA. The vendor comparison averages
+the vendor's reconstruction over 4 × 4 × 4 blocks (501 four-plane blocks,
+covering 2004 native planes), registers it once to TomoJAX's volume (a fixed
+flip and an integer shift, by phase correlation of high-passed volumes) and fits
+one affine intensity map over the voxels inside the vendor's reconstructed field
+(above half the vendor volume's median). NRMSE, the fitted residual's RMS over
+the vendor's standard deviation there, is 0.109446 / 0.109836 / 0.109839 for
+TomoJAX / ASTRA / TIGRE. This is an image diagnostic, not ground truth. CuO2 has
+no vendor volume. On the full spl1 grid, TomoJAX–ASTRA relative L2 is 0.006836
+inside the vendor's field and 0.617055 outside it; 99.72% of the squared
+difference is outside. The field comes from the vendor's volume, independent of
+both library images. The TomoJAX and ASTRA rows are
+`bench/cone_matrix.py cuo PATH --library tomojax|astra --method fdk --repeats 1`.
 
 ### Full-view Nikon OSEM
 
@@ -879,9 +888,10 @@ these are image diagnostics, not reconstruction errors.
 
 ### Full-view CGLS
 
-The Walnut rows were measured 2026-11-19 on `40330cf`, and Nikon and
-Zeiss on `22571a59`, with ASTRA 2.5.0, CuPy 14.2.0 and one OpenBLAS/OMP
-thread per process.
+The Walnut rows were measured 2026-11-19 on `40330cf`, Nikon on `22571a59`
+and Zeiss 2026-11-21 on `1c94b346` (with the Zeiss centre shift loaded with its
+recorded sign), with ASTRA 2.5.0, CuPy 14.2.0 and one OpenBLAS/OMP thread per
+process.
 Walnut uses all 1200 views of orbit 2, detector binning 2 × 2 and a 501³ grid
 of 0.1 mm voxels. Nikon and Zeiss use the full-view inputs and physical grids
 above; the Nikon input is
@@ -896,8 +906,8 @@ with GPU residuals, host search projections and 128-view batches.
 | Walnut, one orbit | ASTRA | 18.34 / 13.86 | 0.182273 / 0.086669 | — |
 | Nikon | TomoJAX | 27.99 / 22.83 | 0.034928 | 0.027397 |
 | Nikon | ASTRA | 35.41 / 31.60 | 0.029934 | — |
-| Zeiss | TomoJAX | 15.30 / 10.15 | 0.163861 | 0.042137 |
-| Zeiss | ASTRA | 14.10 / 11.87 | 0.155535 | — |
+| Zeiss | TomoJAX | 16.29 / 9.20 | 0.158260 | 0.041474 |
+| Zeiss | ASTRA | 15.59 / 12.00 | 0.149628 | — |
 
 Each pair uses two fresh processes per library in ASTRA–TomoJAX–TomoJAX–ASTRA
 order, with two warm solves per process. The table averages all four warm
@@ -932,17 +942,11 @@ recorded. Major page faults in ABBA order
 were 1599 / 1588 / 1 / 22; reported process swaps were zero. These observations
 do not establish absence of system swapping or equal filesystem-cache state.
 
-On the Zeiss pair, TomoJAX's warm time is 14.5% lower, but cold
-time is 8.6% higher and common-projector residual 5.35% higher: **not a
-matched-error speed win**. Prescoring total-device GPU peaks are 4576 / 5166
-MiB and host RSS peaks 3.514 / 3.854 GB (TomoJAX / ASTRA). Whole-process host
-peaks including scoring are 4.478 / 3.854 GB; the whole-job GPU trace peaks
-at 5666 MiB. The temporary reference volume was deleted. CPU affinity was
-0–7. Each process recorded cumulative full-memory PSI stalls at its start
-and end. Total stalls per arm, divided conservatively by that arm's shortest
-reported solve time, are at most 0.00740%, below the 1% exclusion threshold.
-All four arms qualify; none was discarded. This bounds pressure within the
-solve timers without assuming that the whole-process average applies to each.
+On the Zeiss pair, TomoJAX's warm time is 23.3% lower, but cold time is 4.5%
+higher and its common-projector residual 5.8% higher: **not a matched-error
+speed win**. Prescoring total-device GPU peaks are 4577 / 5167 MiB and host RSS
+peaks 3.494 / 3.733 GB (TomoJAX / ASTRA). The temporary reference volume was
+deleted.
 
 The historical Walnut times on `e2cd2101` were 27.48 / 18.84 s for TomoJAX
 and 22.28 / 16.30 s for ASTRA. Historical Nikon times were 31.74 / 26.74 s
@@ -995,24 +999,26 @@ ASTRA uses its bounded device-residual recurrence with 128-view batches.
 |---|---|---:|---:|---:|
 | Walnut, three orbits, `3ba80328` | TomoJAX, 3 | 79.06 / 59.25 | 0.149590 / 0.061075 | 0.010133 |
 | Same | ASTRA, 4 | 74.56 / 60.26 | 0.146930 / 0.058154 | — |
-| CuO-spl1, `ed9641e7` | TomoJAX, 3 | 74.87 / 44.94 | 0.028927 | 0.073933 |
-| Same | ASTRA, 5 | 91.56 / 65.42 | 0.028078 | — |
-| CuO2, `ed9641e7` | TomoJAX, 3 | 80.78 / 48.60 | 0.061258 | 0.074565 |
-| Same | ASTRA, 5 | 95.80 / 66.05 | 0.060670 | — |
+| CuO-spl1, `d8758ca5` | TomoJAX, 3 | 65.67 / 34.64 | 0.026172 | 0.073441 |
+| Same | ASTRA, 5 | 94.67 / 72.43 | 0.025219 | — |
+| CuO2, `d8758ca5` | TomoJAX, 3 | 64.16 / 34.23 | 0.041269 | 0.069022 |
+| Same | ASTRA, 5 | 91.26 / 69.18 | 0.040453 | — |
 
 Walnut warm times are effectively tied: ASTRA's two samples are 58.98 and
 61.54 s; TomoJAX's are 59.257 and 59.252 s. Mean loading/setup and first solve
 take 17.26 + 61.79 s for TomoJAX and 16.07 + 58.49 s for ASTRA.
-At the fixed CuO fit targets, TomoJAX is 31.3% faster warm on spl1 and 26.4%
-on CuO2. These are data-fit comparisons, not physical image-error comparisons.
+The CuO rows were measured 2026-11-21, with the Zeiss centre shift loaded with
+its recorded sign. TomoJAX is 52.2% faster warm on spl1 and 50.5% on CuO2; at
+these iteration counts its common-projector fit is 3.8% and 2.0% higher than
+ASTRA's. These are data-fit comparisons, not physical image-error comparisons.
 Fixed orthogonal sections retain the specimen shapes and pores; their largest
 differences are smooth fields and acquisition-support boundaries.
 
 | Input | Peak solver GPU MiB, TomoJAX / ASTRA | Peak solver host GB, TomoJAX / ASTRA |
 |---|---:|---:|
 | Walnut, three orbits | 4404 / 5720 | 7.398 / 8.074 |
-| CuO-spl1 | 4704 / 6776 | 6.071 / 9.593 |
-| CuO2 | 4704 / 6694 | 6.048 / 9.528 |
+| CuO-spl1 | 4577 / 6777 | 5.477 / 7.406 |
+| CuO2 | 4577 / 6695 | 5.489 / 7.667 |
 
 Set `CUO_SPL1` to `Tristan Manchester_Copper_oxyde_spl1.txrm` and `CUO2`
 to `CuO_2_tomo-B.txrm`. Run each pair in ASTRA–TomoJAX–TomoJAX–ASTRA order
@@ -1110,8 +1116,9 @@ python bench/cone_matrix.py walnut1 "$WALNUT" --library tomojax \
 
 ### Full-view Nikon and Zeiss ordered subsets
 
-Measured 2026-10-20 UTC on `ed9641e7`, using the full-view inputs and grids
-above, one sweep from FDK, and ASTRA recomputed column normalization.
+The Nikon rows were measured 2026-10-20 UTC on `ed9641e7` and the Zeiss rows
+2026-11-21 on `1c94b346`, with the Zeiss centre shift loaded with its recorded
+sign, using the full-view inputs and grids above, one sweep from FDK, and ASTRA recomputed column normalization.
 Two fresh processes per library run in ASTRA–TomoJAX–TomoJAX–ASTRA order,
 with one warm repeat per process. Cold and warm use the CGLS timing boundaries.
 All rows meet their fixed common-projector fit target: 0.0354 for Nikon OS,
@@ -1121,12 +1128,13 @@ All rows meet their fixed common-projector fit target: 0.0354 for Nikon OS,
 |---|---|---:|---:|---:|
 | Nikon OS | TomoJAX, 13 | 18.63 / 13.08 | 0.034627 | 0.005683 |
 | Same | ASTRA, 12 | 16.08 / 12.34 | 0.035392 | — |
-| Zeiss OS | TomoJAX, 13 | 13.98 / 7.72 | 0.196145 | 0.022196 |
-| Same | ASTRA, 16 | 10.68 / 7.29 | 0.193721 | — |
-| Zeiss OSEM | TomoJAX, 1 | 12.19 / 5.48 | 0.217301 | 0.122820 |
-| Same | ASTRA, 2 | 8.76 / 5.04 | 0.209633 | — |
+| Zeiss OS | TomoJAX, 13 | 13.06 / 6.21 | 0.192199 | 0.021831 |
+| Same | ASTRA, 16 | 11.67 / 7.36 | 0.189707 | — |
+| Zeiss OSEM | TomoJAX, 1 | 11.84 / 4.51 | 0.213754 | 0.122147 |
+| Same | ASTRA, 2 | 9.86 / 5.22 | 0.206000 | — |
 
-TomoJAX's warm gaps are 6.0%, 5.9% and 8.7%, respectively. The fixed sections
+TomoJAX's warm time is 6.0% longer than ASTRA's on Nikon OS, and 15.6% and
+13.6% shorter on Zeiss OS and OSEM. The fixed sections
 retain the same objects. OS differences include edges, background and streaks;
 the larger OSEM difference is mainly object contrast, with TomoJAX's one-subset
 result dimmer than ASTRA's two-subset result. These target-fit comparisons
@@ -1137,7 +1145,8 @@ Nikon ASTRA at 16 subsets also passes, with probe warm time 12.27 s versus
 12.11 s at 12; their throughput difference is small. Zeiss ASTRA at 16 OS
 subsets is faster than 13. For Zeiss OSEM, two subsets beat one; TomoJAX's
 two-subset probe has fit 0.209491 and warm time 5.58 s, versus 5.49 s at one.
-Single-subset TomoJAX OSEM uses 4738 MiB peak GPU and 4.782 GB peak host
+These probes ran on `ed9641e7`, before the Zeiss centre-shift fix.
+Single-subset TomoJAX OSEM uses 4547 MiB peak GPU and 4.785 GB peak host
 memory in the paired runs.
 
 ```bash
@@ -1681,8 +1690,8 @@ All on the 8 GB laptop GPU:
 | SIRT from raw frames with `tj.reconstruct_slabs`, the whole Diamond I12 scan below: 1801 views of 2160 × 2560 pixels (39.8 GB corrected), a 2560² × 2160 volume (56.6 GB) | 1436 s of solving, 1.41 GB peak GPU memory and 3.7 GB host memory; 1.13 times the per-voxel time of an 8-row reconstruction that fits | 2026-10-17, `440cc563` |
 | `tj.reconstruct` of 352 rows of the same scan, returned as one 9.23 GB array | 211 s, 0.78 GB peak GPU memory, 17 GB host memory; 1.04 times the per-voxel time of 8 rows | 2026-10-17, `440cc563` |
 | OSEM of the FIPS walnut at full resolution: all 3600 views of 972 × 768 pixels, a 1001³ volume, 4 subsets × 1 iteration from FDK | First / repeat solve 230.65 / 241.81 s in 128-plane host slabs; loading 7.52 s; peak GPU 5798 MiB, host 15.57 GB anonymous; full / walnut-support relative L2 error 0.124385 / 0.094026 | 2026-10-21, `30f9f1df` |
-| FDK from raw CuO-spl1 frames: all 3201 views of 2036² pixels, a 2036³ volume, 32-plane output slabs | First / repeat correction and reconstruction 847.16 / 786.11 s; imports and loading 15.78 s; peak GPU 6056 MiB, host 12.634 GB, including scoring | 2026-10-20, `9be6e5ad` |
-| ASTRA FDK on the same raw CuO-spl1 frames and output slabs | First / repeat correction and reconstruction 847.16 / 838.56 s; imports and loading 13.67 s; peak GPU 3036 MiB, host 13.193 GB, including scoring | 2026-10-20, `76a1f412` |
+| FDK from raw CuO-spl1 frames: all 3201 views of 2036² pixels, a 2036³ volume, 32-plane output slabs | Correction and reconstruction 900.47 s; imports and loading 1.63 s; peak host 9.86 GB | 2026-11-21, `d8758ca5` |
+| ASTRA FDK on the same raw CuO-spl1 frames and output slabs, before the Zeiss centre-shift fix | First / repeat correction and reconstruction 847.16 / 838.56 s; imports and loading 13.67 s; peak GPU 3036 MiB, host 13.193 GB, including scoring | 2026-10-20, `76a1f412` |
 | FDK from raw CuO2 frames: all 3201 views of 2028² pixels, a 2028³ volume, 32-plane output slabs | First correction and reconstruction 1053.93 s; imports and loading 16.17 s; peak GPU 4494 MiB, host 14.240 GB, including scoring | 2026-10-20, `75435039` |
 | OS-SART of CuO-spl1 at twofold binning: all 3201 views of 1018² pixels corrected into memory (13.3 GB), a 1018³ volume kept on the GPU, 3 iterations × 8 subsets from zero | 441 s solving, 30 s correcting; peak GPU 7484 MiB, host 13.78 GB while solving (15.40 GB with scoring); relative residual 0.0319 on every eighth view | 2026-10-20, `30f9f1df` |
 | SIRT of a synthetic 1300³ volume (8.79 GB, more than the GPU) in host memory: 180 cone views of 1300² pixels, 3 iterations | 62.8 s solving in 128-plane slabs; peak GPU 6160 MiB, host 11.47 GB | 2026-10-20, `5cf50e6b` |
@@ -1699,29 +1708,26 @@ releasing the first volume.
 The CuO call is `tj.load_frames("Tristan Manchester_Copper_oxyde_spl1.txrm",
 darks=0)`, followed by `tj.reconstruct_slabs(frames, "fbp")`. Consume and
 release each block before advancing the iterator; no whole volume is retained.
-The grid uses the recorded 1.12756 µm sampling without binning. The first
-process uses fresh compilation caches and `XLA_PYTHON_CLIENT_PREALLOCATE=false`.
-Times sum the correction and reconstruction stages between scoring operations.
-Including interleaved scoring, the first / repeat passes take 1455.72 / 1365.08 s,
-with imports and loading additional to the first pass.
+The grid uses the recorded 1.12756 µm sampling without binning. The process
+uses fresh compilation caches and `XLA_PYTHON_CLIENT_PREALLOCATE=false`. The
+time sums the correction and reconstruction stages; writing each slab into a
+memory-mapped volume for scoring is outside it.
 
-CuO's relative projection residual is 0.0586312 on 256 fixed, evenly spaced
+CuO's relative projection residual is 0.0570821 on 256 fixed, evenly spaced
 views, using the full detector and an ASTRA forward projection summed over
-the physical output slabs. Reconstruction uses all 3201 views. The vendor
-comparison covers all 2005 planes with one fixed spatial registration and one
-whole-volume affine intensity fit: normalized RMSE 0.209660. It is a diagnostic,
-not physical ground truth; the reconstructed pores are visibly less sharp
-than the vendor's. Both metrics and the six retained native cuts agree exactly
-between repeats.
+the physical output slabs. Reconstruction uses all 3201 views. Against the
+vendor's reconstruction, averaged over 4 × 4 × 4 blocks and compared as in the
+CuO FDK section, NRMSE is 0.109866. It is a diagnostic, not physical ground
+truth.
 
+The ASTRA run and the comparisons below were measured before the Zeiss
+centre-shift fix, when both libraries loaded spl1 with a centre 5.1 pixels out.
 ASTRA uses `FDK_CUDA` in 256-view batches on the same 32-plane output slabs,
 preserving the complete acquisition's preweighting and angular scale. Its
 first / repeat scored passes take 1304.22 / 1314.98 s, with imports and loading
 additional to the first pass. Its projection residual is 0.1171325 and vendor
-NRMSE 0.209232, both repeatable. First correction and reconstruction times are
-roughly equal; TomoJAX's repeated reconstruction is 6.3% shorter, but ASTRA's
-scored passes are shorter. The lower TomoJAX projection residual does not
-establish better physical image accuracy.
+NRMSE 0.209232 by that run's comparison, both repeatable. The lower TomoJAX
+projection residual does not establish better physical image accuracy.
 On six native axial cuts, the relative difference between the images is 0.143371
 across the cuts and 0.008441 within an independently vendor-defined sample mask.
 99.41% of their squared difference lies outside the horizontal cylinder seen

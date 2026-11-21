@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Zeiss and SkyScan scans load with the geometry they record
+
+Before this release, a Zeiss scan that records a centre shift (`AutoRecon/CenterShift`)
+loaded with the wrong centre, off by twice the recorded shift, and a SkyScan scan recorded
+with counter-clockwise rotation loaded with its rotation reversed. The Zeiss numbers on the
+measurements page are remeasured with the corrected centre.
+
 ### Wide ring corrections run on an 8 GB card
 
 `Stripes(width)` takes windows wider than nine columns coarse to fine, so a wide window
