@@ -118,6 +118,29 @@ jobs:
             echo "CHANGELOG.md has no section headed '## ${version}'." >&2
             exit 1
           fi
+          # GitHub refuses release notes over 125,000 characters. Keep the whole
+          # subsections that fit and link to the changelog for the rest.
+          limit=110000
+          if [ "$(wc -c < notes.md)" -gt "$limit" ]; then
+            awk -v limit="$limit" '
+              function flush() {
+                if (!full && total + length(section) <= limit) {
+                  printf "%s", section
+                  total += length(section)
+                } else {
+                  full = 1
+                }
+                section = ""
+              }
+              /^### / { flush() }
+              { section = section $0 "\n" }
+              END { flush() }
+            ' notes.md > fitted.md
+            printf '\nThe rest of this release is in [CHANGELOG.md](%s).\n' \
+              "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md" \
+              >> fitted.md
+            mv fitted.md notes.md
+          fi
           prerelease=()
           case "$version" in
             *a* | *b* | *rc* | *dev*) prerelease=(--prerelease) ;;
