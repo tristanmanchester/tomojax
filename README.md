@@ -118,8 +118,22 @@ browse the [documentation index](https://tomojax.dev/).
 
 ## Evidence
 
-Measured speed, accuracy and memory against ASTRA and TIGRE, failed cases
-included, are in the [measurements](https://tomojax.dev/measurements/). Volumes larger than
+| Case | TomoJAX | Other tools |
+|---|---|---|
+| Parallel beam, real: Diamond I12, 1801 views of 64 × 2560 pixels | 0.81 s default, 3.35 s FBP | ASTRA FBP 7.64 s, TomoPy gridrec 2.90 s (CPU) |
+| Cone FDK, real: FIPS walnut, 1200 views, 501³ | 1.02 s | ASTRA 1.71 s |
+| Cone CGLS, real: the same walnut, 10 iterations | 28.2 s, error 0.184 | ASTRA 26.8 s, error 0.197 |
+| Laminography CGLS to a fixed error, 256³ synthetic, smooth / sharp object | 3.29 / 0.435 s | ASTRA 16.5 / 0.452 s |
+| TV reconstruction, 128³ synthetic, 3% noise | 0.32 s, error 0.075 | TIGRE 9.1 s, best error 0.101 |
+
+Warm times on one 8 GB laptop GPU, measured 2026-11-21, every tool given the same
+corrected data, geometry and output grid. ASTRA is faster per CGLS iteration on
+the walnut, though TomoJAX's error is lower at the same count. The
+[headline comparison](https://tomojax.dev/measurements/#headline-comparison) has the full table, the commands and where each
+other tool wins.
+
+Accuracy and memory, failed cases included, are in the
+[measurements](https://tomojax.dev/measurements/) too. Volumes larger than
 the GPU stream through it in slabs: SIRT of a whole Diamond I12 scan, 1801 views
 of 2160 × 2560 pixels into a 56.6 GB volume, ran on an 8 GB laptop GPU with
 1.4 GB of GPU memory at 1.13 times the per-voxel time of a scan that fits

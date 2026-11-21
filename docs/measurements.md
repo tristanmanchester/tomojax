@@ -27,6 +27,44 @@ repository; each result names the command, commit and date. Commands under
 kept outside the repository with the run evidence: they record the protocol but
 cannot be rerun from a checkout.
 
+## Headline comparison
+
+Measured 2026-11-21 on `58a30e0` on the laptop GPU above, with ASTRA 2.5.0,
+TIGRE 3.1.3, TomoPy 1.15.2 and tomocupy 1.1.0. Every tool gets the same
+corrected data, calibrated geometry and output grid. Iterative methods are
+compared at a fixed reconstruction error, except the walnut CGLS row, which uses
+the same iteration count and shows both errors. Times are warm unless marked
+cold. The ratio is the other tool's time over TomoJAX's: above 1, TomoJAX is
+faster. Each row's section gives its protocol and command.
+
+| Row | TomoJAX | Other tools | Ratio |
+|---|---|---|---|
+| [Parallel FBP, real](#parallel-beam-on-a-real-scan-against-astra-tomopy-and-tomocupy): Diamond I12, 1801 views of 64 × 2560 pixels, from memory | 0.81 s (default), 3.35 s (FBP) | ASTRA 7.64 s, TomoPy 2.90 s (CPU) | ASTRA 9.4, TomoPy 3.6; FBP alone 2.3 and 0.87 |
+| The same, raw counts on disk to a volume on disk, cold | 11.2 s (default), 10.7 s (FBP) | tomocupy 10.4 s | about 1: writing the volume dominates |
+| [Cone FDK, real](#fips-walnuts-real-lab-cone-beam-ct): FIPS walnut 1, one orbit, 1200 views binned 2 × 2, 501³ | 1.02 s | ASTRA 1.71 s | 1.7, same error (0.091) |
+| [Cone CGLS, real](#fips-walnuts-real-lab-cone-beam-ct): the same walnut, 10 iterations from zero | 28.2 s, error 0.184 | ASTRA 26.8 s, error 0.197 | 0.95 |
+| [Laminography CGLS to a fixed error](#reconstruction-against-astra), 256³ synthetic, smooth / sharp object | 3.29 / 0.435 s | ASTRA 16.5 / 0.452 s | 5.0 / 1.04 (cold 3.4 / 0.70) |
+| [Parallel CGLS to a fixed error](#reconstruction-against-astra), 256³ synthetic, smooth / sharp object | 0.157 / 0.154 s | ASTRA 0.237 / 0.235 s | 1.5 / 1.5 (cold 0.37 / 0.52) |
+| [Cone FDK](#cone-beam-projection-and-fdk), 256³ synthetic, host to host | 0.103 s | ASTRA 0.288 s, TIGRE 0.543 s | ASTRA 2.8, TIGRE 5.3 |
+| [TV reconstruction](#tv-regularised-reconstruction-against-tigre), 128³ parallel synthetic, 3% noise | 0.32 s, error 0.075 | TIGRE 9.1 s, best error 0.101 | 28; TIGRE does not reach TomoJAX's error |
+
+The I12 rows are the one real parallel scan every tool here reads at full
+detector width; the walnut is the real cone scan with a published reference and
+ASTRA's own geometry vectors. Laminography, cone FDK against TIGRE and TV have no
+real scan that ASTRA and TIGRE both take, so the published synthetic cases stand
+in. "Default" is the plain `tj.reconstruct(scan)`, the Fourier-slice inverse for
+an axial half turn.
+
+**Where another tool wins.** ASTRA is faster per CGLS iteration on the walnut:
+26.8 against 28.2 s for 10 iterations, though TomoJAX's error is lower at that
+count. TomoPy's CPU gridrec beats TomoJAX's FBP from memory on I12 (2.90 against
+3.35 s); TomoJAX's default Fourier inverse is faster than both. From raw counts on
+disk to a volume on disk, TomoJAX and tomocupy are level, because writing the
+1.6 GiB volume dominates. ASTRA is faster cold on the sharp laminography object
+and both parallel CGLS rows, where TomoJAX's first call compiles. Plain CGLS from
+zero misses the smooth laminography gate in 256 iterations where ASTRA's plain
+CGLS passes; TomoJAX's coarse-to-fine CGLS passes, so that row uses it.
+
 ## Raw NXtomo loading and held-out split integrity
 
 Loading was measured 2026-10-27 on `a4a969cb`; evaluation was measured
