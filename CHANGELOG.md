@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.0.0rc1 (2026-11-20)
+
+### CGLS on the GPU holds only its own state
+
+The CUDA CGLS solve keeps only its iterate, direction and gradients on the device and gives
+its memory back to the driver when it returns. A 768³ projection followed by CGLS at 512³
+in one process ran out of memory on an 8 GB card before; it now completes, and a 512³ solve
+is 7% faster.
 
 ### Zeiss and SkyScan scans load with the geometry they record
 
@@ -18,8 +25,6 @@ and takes 0.06 s where it took 2.1 s; before, an 8 GB card ran out of memory fro
 columns. It removes the I13 scan's broad rings. Windows of up to nine columns give the same result as before.
 `Stripes(width, varying=True)` keeps its exact median and holds at most about 1 GiB at
 any width.
-
-## 1.0.0rc1 (2026-11-20)
 
 ### Alignment follows each view's own motion by default
 
