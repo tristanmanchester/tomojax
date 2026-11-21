@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import os
 import sys
@@ -87,8 +88,8 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
     with _device(cp):
         if cfg.stream is None:
             free, _total = cp.cuda.runtime.memGetInfo()
-            # Freed arrays stay in CuPy's pool, not in the driver's free count.
-            # A repeated solve can reuse them without falling back to JAX.
+            # Arrays another CuPy call freed stay in CuPy's pool, not in the
+            # driver's free count; this solve can reuse them.
             pool = cp.get_default_memory_pool()
             if cp.cuda.get_allocator() == pool.malloc:
                 free += pool.free_bytes()
@@ -116,46 +117,83 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
             else cp.array(initial.transpose(2, 1, 0), dtype=cp.float32, order="C")
         )
         result, info = _iterate(cp, ops, data, x, cfg, zero_start=initial is None)
-        return np.ascontiguousarray(cp.asnumpy(result).transpose(2, 1, 0)), info
+        volume = np.ascontiguousarray(cp.asnumpy(result).transpose(2, 1, 0))
+        del ops, data, x, result
+    # The solve returns host arrays, so none of its device memory outlives it:
+    # give the blocks back to the driver rather than keep them cached beside
+    # JAX's allocator, where a later JAX call could not use them.
+    cp.get_default_memory_pool().free_all_blocks()
+    return volume, info
+
+
+@functools.cache
+def _kernels(cp):
+    """Fused updates and tests: no volume-sized temporaries beside the iterate.
+
+    The solve's device memory is then the iterate, the direction and two
+    gradients (the old one until the new one replaces it), within
+    ``resident_bytes``, whatever memory another allocator holds. Inner
+    products reduce flat views; an all-elements test clears a flag.
+    """
+    return {
+        "axpy": cp.ElementwiseKernel("T a, T d", "T x", "x += a * d", "cgls_axpy"),
+        "xpay": cp.ElementwiseKernel("T g, T b", "T d", "d = g + b * d", "cgls_xpay"),
+        "negaxpy": cp.ElementwiseKernel("T c, T x", "T g", "g -= c * x", "cgls_negaxpy"),
+        "absaxpy": cp.ElementwiseKernel("T c, T x", "T g", "g += c * abs(x)", "cgls_absaxpy"),
+        "difference": cp.ElementwiseKernel("T u, T v", "T w", "w = u - v", "cgls_difference"),
+        "tiny_step": cp.ElementwiseKernel(
+            "T step, T d, T x, T e, T t",
+            "raw int32 flag",
+            "if (!(abs(step * d) <= e * max(abs(x), t))) flag[0] = 0",
+            "cgls_tiny_step",
+        ),
+        "bounded": cp.ElementwiseKernel(
+            "T g, T c, T e",
+            "raw int32 flag",
+            "if (!(abs(g) <= e * c)) flag[0] = 0",
+            "cgls_bounded",
+        ),
+    }
+
+
+def _dot(cp, u, v):
+    """The inner product of two arrays as a device scalar, without a product array."""
+    return cp.dot(u.ravel(), v.ravel())
+
+
+def _all(cp, kernel, *args: object):
+    """Whether ``kernel``'s condition holds at every element, as a device boolean."""
+    flag = cp.ones(1, cp.int32)
+    kernel(*args, flag)
+    return cp.equal(flag[0], np.int32(1))
 
 
 def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
+    k = _kernels(cp)
     residual = data.copy() if zero_start else data - ops.forward(x)
     residual = project_residual(residual, cfg.data_term, xp=cp)
     damp2 = np.float32(cfg.damping) ** 2
-    # Explicit dense scalar ufuncs avoid importing CuPy sparse-operand dispatch.
-    gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp)) - cp.multiply(damp2, x)
-    gamma = cp.sum(gradient * gradient)
+    gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp))
+    k["negaxpy"](damp2, x, gradient)
+    gamma = _dot(cp, gradient, gradient)
     initial_norm = float(cp.sqrt(gamma))
     tolerance = np.float32(cfg.absolute_tolerance + cfg.tolerance * initial_norm)
-    direction = gradient
     count, recomputations = 0, 0
     failed = not np.isfinite(initial_norm)
     roundoff, verified = False, True
     norm2 = float(gamma)
     eps = np.finfo(np.float32).eps
+    direction = gradient.copy()
     while count < cfg.iterations and norm2 > tolerance**2 and not failed and not roundoff:
         previous = norm2, verified
-        projected = project_residual(ops.forward(direction), cfg.data_term, xp=cp)
-        direction_norm2 = cp.sum(direction * direction)
-        denominator = cp.sum(projected * projected) + cp.multiply(damp2, direction_norm2)
-        value = float(denominator)
-        if not np.isfinite(value) or value <= 0:
+        gradient = None  # release the previous gradient before the transpose allocates the next
+        step = _step(cp, ops, x, direction, residual, gamma, damp2, cfg.data_term)
+        if step is None:
             failed = True
             break
-        alpha = gamma / denominator
-        x += alpha * direction
-        residual -= alpha * projected
-        gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp)) - cp.multiply(
-            damp2, x
-        )
-        gamma_new = cp.sum(gradient * gradient)
+        gradient, gamma_new, roundoff, small_update = step
+        del step  # hold the gradient only through ``gradient``
         count += 1
-        roundoff = cp.all(
-            cp.abs(alpha * direction)
-            <= cp.multiply(eps, cp.maximum(cp.abs(x), np.finfo(np.float32).tiny))
-        )
-        small_update = cp.square(alpha) * direction_norm2 <= cp.multiply(eps**2, cp.sum(x * x))
         stats = cp.asnumpy(cp.stack((gamma_new, roundoff, small_update)))
         norm2, roundoff, small_update = float(stats[0]), bool(stats[1]), bool(stats[2])
         failed = not np.isfinite(norm2)
@@ -183,7 +221,10 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         if failed:
             norm2 = float(gamma)
         else:
-            direction = gradient if restart else gradient + (gamma_new / gamma) * direction
+            if restart:
+                cp.copyto(direction, gradient)
+            else:
+                k["xpay"](gradient, gamma_new / gamma, direction)
             gamma = gamma_new
     converged = bool(not failed and norm2 <= tolerance**2)
     info = {
@@ -208,6 +249,31 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     return x, info
 
 
+def _step(cp, ops, x, direction, residual, gamma, damp2, data_term):
+    """Advance ``x`` and ``residual`` along ``direction`` in place.
+
+    Returns the new gradient, its squared norm and the two round-off tests as
+    device values, or None when the step length breaks down.
+    """
+    k = _kernels(cp)
+    eps, tiny = np.finfo(np.float32).eps, np.finfo(np.float32).tiny
+    projected = project_residual(ops.forward(direction), data_term, xp=cp)
+    direction_norm2 = _dot(cp, direction, direction)
+    denominator = _dot(cp, projected, projected) + cp.multiply(damp2, direction_norm2)
+    value = float(denominator)
+    if not np.isfinite(value) or value <= 0:
+        return None
+    alpha = gamma / denominator
+    k["axpy"](alpha, direction, x)
+    k["axpy"](cp.negative(alpha), projected, residual)
+    del projected
+    gradient = ops.adjoint(project_residual(residual, data_term, xp=cp))
+    k["negaxpy"](damp2, x, gradient)
+    roundoff = _all(cp, k["tiny_step"], alpha, direction, x, eps, tiny)
+    small_update = cp.square(alpha) * direction_norm2 <= cp.multiply(eps**2, _dot(cp, x, x))
+    return gradient, _dot(cp, gradient, gradient), roundoff, small_update
+
+
 def _verify(
     cp,
     ops,
@@ -223,15 +289,21 @@ def _verify(
     previous,
 ):
     """Replace the recurrence with the measured residual before accepting a stop."""
+    k = _kernels(cp)
     prediction = ops.forward(x)
-    cancellation = ops.adjoint(cancellation_magnitude(data, prediction, data_term)) + cp.multiply(
-        damp2, cp.abs(x)
-    )
+    cancellation = ops.adjoint(cancellation_magnitude(data, prediction, data_term))
+    k["absaxpy"](damp2, x, cancellation)
     residual = project_residual(data - prediction, data_term, xp=cp)
-    exact = ops.adjoint(project_residual(residual, data_term, xp=cp)) - cp.multiply(damp2, x)
-    exact_gamma = cp.sum(exact * exact)
-    at_precision = cp.all(cp.abs(exact) <= cp.multiply(8 * np.finfo(np.float32).eps, cancellation))
-    gap = cp.sum((exact - gradient) ** 2)
+    del prediction
+    exact = ops.adjoint(project_residual(residual, data_term, xp=cp))
+    k["negaxpy"](damp2, x, exact)
+    exact_gamma = _dot(cp, exact, exact)
+    at_precision = _all(
+        cp, k["bounded"], exact, cancellation, np.float32(8 * np.finfo(np.float32).eps)
+    )
+    k["difference"](exact, gradient, cancellation)  # the bound is used; reuse its storage
+    gap = _dot(cp, cancellation, cancellation)
+    del cancellation
     checks = cp.asnumpy(cp.stack((exact_gamma, at_precision, gap)))
     norm2, at_precision, gap = float(checks[0]), bool(checks[1]), float(checks[2])
     restart = candidate or roundoff or at_precision or gap > 0.01 * float(gamma)

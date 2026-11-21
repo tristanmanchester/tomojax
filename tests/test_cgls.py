@@ -12,7 +12,7 @@ import pytest
 # check-public-imports: allow-private
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.forward import project_joseph
-from tomojax.geometry import Detector, Grid, LaminographyGeometry
+from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.recon import CGLSConfig, cgls
 
 # check-public-imports: allow-private
@@ -417,10 +417,8 @@ x, info = cgls(geometry, g, d, np.zeros((7, 7, 9), np.float32),
 json.dumps(info, allow_nan=False)
 assert 'jax' not in sys.modules and info['execution_backend'] == 'cupy'
 assert isinstance(x, np.ndarray) and np.isfinite(x).all() and np.linalg.norm(x) < 7
-import cupy as cp
-from unittest.mock import patch
-with patch.object(cp.cuda.runtime, 'memGetInfo', return_value=(0, 1)):
-    result = tj.reconstruct(tj.Scan(np.ones((7, 7, 9), np.float32), geometry), 'cgls', iterations=2)
+# A repeated solve finds the first one's memory back with the driver and stays on CuPy.
+result = tj.reconstruct(tj.Scan(np.ones((7, 7, 9), np.float32), geometry), 'cgls', iterations=2)
 assert 'jax' not in sys.modules and result.info['execution_backend'] == 'cupy'
 assert isinstance(result.volume, np.ndarray) and np.isfinite(result.volume).all()
 assert 'cupyx.scipy.sparse' not in sys.modules
@@ -568,3 +566,45 @@ def test_a_scattered_pool_streams_the_data_rather_than_running_out():
     # The pool's own figures rule the block out: no allocation is tried, so the allocator
     # neither retries nor reports running out.
     assert "bfc_allocator" not in run.stderr.split("RECONSTRUCT")[-1]
+
+
+@pytest.mark.gpu
+def test_cuda_cgls_holds_no_volume_temporaries_beside_its_state():
+    # Iterate, direction and two gradients, or the verification's bound and exact
+    # gradient: at most five volumes and four sinograms are live at once, so the
+    # solve fits where its resident bound is admitted beside another allocator.
+    if jax.default_backend() != "gpu":
+        pytest.skip("requires CUDA")
+    import cupy as cp
+
+    class Live(cp.cuda.MemoryHook):
+        name = "live"
+
+        def __init__(self) -> None:
+            self.now = self.peak = 0
+
+        def malloc_postprocess(self, device_id, size, mem_size, mem_ptr, pmem_id) -> None:
+            self.now += mem_size
+            self.peak = max(self.peak, self.now)
+
+        def free_postprocess(self, device_id, mem_size, mem_ptr, pmem_id) -> None:
+            self.now -= mem_size
+
+    # Few views, so the volumes dominate: before, the solve held about six of them.
+    n, views = 128, 16
+    grid, detector = Grid(n, n, n, 1.0, 1.0, 1.0), Detector(n, n, 1.0, 1.0)
+    geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, views, endpoint=False))
+    data = np.random.default_rng(88).normal(size=(views, n, n)).astype(np.float32)
+    pool = cp.get_default_memory_pool()
+    pool.free_all_blocks()
+    held = pool.total_bytes()  # other tests' live arrays in this process
+    live = Live()
+    with live:
+        _, info = cgls(
+            geometry, grid, detector, data,
+            config=CGLSConfig(iterations=20, tolerance=0, backend="cuda"),
+        )  # fmt: skip
+    assert info["execution_backend"] == "cupy"
+    assert live.peak <= 4 * (5 * n**3 + 4 * data.size)
+    # The solve's blocks go back to the driver, not into CuPy's cache beside JAX.
+    assert pool.total_bytes() <= held
