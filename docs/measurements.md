@@ -519,8 +519,8 @@ part of the missing cone from nonnegativity and the regulariser. At its default
 error); at 100 it is. Raise `iterations` for the converged image.
 
 The cost on a real scan, K11 54013 (1441 views of 540 × 640, 704 × 704 × 234
-grid): FBP 5.5 s; `fista` 614 s at 50 iterations, so about 20 minutes at 100
-(about 12 s an iteration, projections streamed from host memory).
+grid): FBP 5.5 s; `fista` 233 s at 50 iterations (2026-11-21, see
+[Iterative solvers on real scans](#iterative-solvers-on-real-scans)).
 
 ## Reconstruction against ASTRA
 
@@ -1715,6 +1715,37 @@ a 2.36 GiB device peak, against 135 s and 3.20 GiB on `f58a6f7`, measured the sa
 on the same card. The volumes agree to 3.4e-7 relative (L2). On the 4×-binned scan
 (`frames.corrected(binning=4)`, 160 × 160 × 135 grid, 8.64 µm voxels, projections on
 the device, 600 updates) it takes 1.8 s with a 322 MiB peak, against 2.9 s and 366 MiB.
+
+### Iterative solvers on real scans
+
+The plain `tj.reconstruct(scan, method)` with each method's default 50 iterations,
+one fresh process per call, timed from the call to the finished volume, the device
+peak sampled every 10 ms (2026-11-21, `92bd2e8` against `6c80dec`, RTX 4070 Laptop
+8 GB). Seconds, one call each except CuO CGLS (median of six):
+
+| Scan | CGLS | SIRT | MLEM | FISTA-TV |
+|---|---|---|---|---|
+| K11 54013, laminography, 1441 views of 640 × 540, 704 × 704 × 234 grid | 201.6 → 182.0 | 250.5 → 204.8 | 197.9 → 176.8 | 942.5 → 233.2 |
+| Zeiss CuO_2 tomo-A, cone, 801 views, `corrected(binning=4)`, 507³ grid | 99.1 → 99.4 | 98.4 → 97.9 | 102.0 → 101.5 | 156.0 → 145.5 |
+| Diamond I12, parallel, 1801 views of 2560 × 64, 2560 × 2560 × 64 grid | 1748 → 1675 | 206.8 → 207.5 | 215.0 → 214.6 | 2064 → 1984 |
+
+CuO CGLS's six calls range over 98.5–100.0 s before and 98.6–100.5 s after; its
+code path did not change. The device peaks are the same before and after in every
+cell: K11 4.57, 3.07, 4.57 and 3.77 GiB; CuO 4.75, 6.28, 4.72 and 4.04 GiB; I12
+3.35, 2.57, 2.57 and 7.39 GiB. CGLS, SIRT and MLEM give bit-identical volumes, as
+does FISTA-TV on I12, where it does not use the new storage. FISTA-TV's volumes
+differ by 2.9e-7 (K11) and 6.3e-8 (CuO) relative L2, the size of a change in FP32
+summation order: on K11 its automatic Lipschitz estimate moves by one unit in the
+last place; on CuO the estimate and the TV weight agree exactly and the
+iteration's sums run in a different order in the private storage.
+
+FISTA-TV now keeps its iterates in the projector's z-contiguous storage. Every Joseph
+transpose block computes each view's detector footprint once for its run of
+voxels, and SIRT's projection of ones skips interpolation where a ray is
+fully inside the volume. On K11 at 5 iterations each part alone gives: storage,
+FISTA-TV 192.0 → 53.6 s; footprints, CGLS 22.6 → 20.6 s, SIRT 29.5 → 26.6 s,
+MLEM 22.1 → 19.5 s; ones, SIRT 29.5 → 26.5 s; all three, 20.3, 23.9, 19.6 and
+50.6 s.
 
 ### Fourier inverse
 
