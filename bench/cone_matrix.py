@@ -57,7 +57,9 @@ def load_case(args: argparse.Namespace) -> tuple[Any, Any, np.ndarray]:
     frames = tj.load_frames(args.path, darks=0, grid=grid)
     scan = frames.corrected(binning=4 if args.case == "cuo" else 2)
     if grid is None:
-        g = scan.grid
+        # The output grid is the scan's native grid at a quarter of its sampling;
+        # the binned scan's own grid is already coarser.
+        g = frames.geometry.grid
         grid = g.resampled((g.nx // 4, g.ny // 4, g.nz // 4))
     return scan, grid, view_frames(scan.geometry)
 
