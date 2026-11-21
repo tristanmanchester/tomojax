@@ -88,8 +88,8 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
     with _device(cp):
         if cfg.stream is None:
             free, _total = cp.cuda.runtime.memGetInfo()
-            # Freed arrays stay in CuPy's pool, not in the driver's free count.
-            # A repeated solve can reuse them without falling back to JAX.
+            # Arrays another CuPy call freed stay in CuPy's pool, not in the
+            # driver's free count; this solve can reuse them.
             pool = cp.get_default_memory_pool()
             if cp.cuda.get_allocator() == pool.malloc:
                 free += pool.free_bytes()
@@ -117,7 +117,13 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
             else cp.array(initial.transpose(2, 1, 0), dtype=cp.float32, order="C")
         )
         result, info = _iterate(cp, ops, data, x, cfg, zero_start=initial is None)
-        return np.ascontiguousarray(cp.asnumpy(result).transpose(2, 1, 0)), info
+        volume = np.ascontiguousarray(cp.asnumpy(result).transpose(2, 1, 0))
+        del ops, data, x, result
+    # The solve returns host arrays, so none of its device memory outlives it:
+    # give the blocks back to the driver rather than keep them cached beside
+    # JAX's allocator, where a later JAX call could not use them.
+    cp.get_default_memory_pool().free_all_blocks()
+    return volume, info
 
 
 @functools.cache

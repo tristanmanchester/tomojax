@@ -417,10 +417,8 @@ x, info = cgls(geometry, g, d, np.zeros((7, 7, 9), np.float32),
 json.dumps(info, allow_nan=False)
 assert 'jax' not in sys.modules and info['execution_backend'] == 'cupy'
 assert isinstance(x, np.ndarray) and np.isfinite(x).all() and np.linalg.norm(x) < 7
-import cupy as cp
-from unittest.mock import patch
-with patch.object(cp.cuda.runtime, 'memGetInfo', return_value=(0, 1)):
-    result = tj.reconstruct(tj.Scan(np.ones((7, 7, 9), np.float32), geometry), 'cgls', iterations=2)
+# A repeated solve finds the first one's memory back with the driver and stays on CuPy.
+result = tj.reconstruct(tj.Scan(np.ones((7, 7, 9), np.float32), geometry), 'cgls', iterations=2)
 assert 'jax' not in sys.modules and result.info['execution_backend'] == 'cupy'
 assert isinstance(result.volume, np.ndarray) and np.isfinite(result.volume).all()
 assert 'cupyx.scipy.sparse' not in sys.modules
@@ -605,3 +603,5 @@ def test_cuda_cgls_holds_no_volume_temporaries_beside_its_state():
         )  # fmt: skip
     assert info["execution_backend"] == "cupy"
     assert live.peak <= 4 * (5 * n**3 + 4 * data.size)
+    # Nothing is left cached in CuPy's pool for JAX to run short of afterwards.
+    assert cp.get_default_memory_pool().free_bytes() == 0
