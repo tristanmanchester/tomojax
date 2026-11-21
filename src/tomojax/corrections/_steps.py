@@ -167,12 +167,25 @@ class Stripes(Step):
     volume. Each detector row's values are sorted over views, column by column
     (as in Vo, Atwood and Drakopoulos, 2018), so equal ranks of neighbouring
     columns compare like with like; a pixel's offset is the median over ranks
-    of its sorted values minus their median over ``width`` columns. Only that
-    constant is subtracted, preserving differences between views; widen
-    ``width`` for wider stripes. A feature symmetric about the rotation axis is
-    also stationary in the sinogram, and one narrower than ``width`` can be
-    altered. An even ``width`` averages the two windows centred half a pixel
-    either side, so reversing the detector does not change the correction.
+    of its sorted values minus their median over the window. Only that
+    constant is subtracted, preserving differences between views. Widen
+    ``width`` to about twice the widest stripe. A window of up to nine columns
+    is a sliding median over them. A wider one is taken coarse to fine: at
+    each scale the sorted values are averaged over blocks of columns and
+    compared with the median of nine neighbouring blocks, from a window of
+    blocks that spans ``width`` columns down to nine single columns, so a wide
+    window costs the time and memory of a narrow one.
+
+    The median assumes the sample's sorted values are level or change
+    steadily across the window. A broad stripe on a steep flank of the
+    sample's profile, where the profile changes across one block by more than
+    the stripe's height, is not seen. A feature symmetric about the
+    rotation axis is also stationary in the sinogram, and one narrower than
+    ``width`` can be altered: at the peak of a compact sample's profile, on the
+    axis, a wide window leaves a faint ring or dot. An even ``width`` of up to
+    nine averages the two windows centred half a pixel either side, and wider
+    blocks are centred on the detector's middle, so reversing the detector
+    does not change the correction.
 
     ``varying=True`` instead detects pixels with an anomalous view-to-view
     response and fits a gain and offset to their neighbouring sorted values.
@@ -710,9 +723,68 @@ class Paganin(Step):
 
 
 def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:
-    """Each column's offset in one detector row, ``(views, columns)``."""
+    """Each column's offset in one detector row, ``(views, columns)``.
+
+    Coarse to fine: at scale ``f`` the ranked row is averaged over blocks of
+    ``f`` columns, the median of :data:`_STRIPE_WINDOW` neighbouring blocks is
+    its stripe-free level, and the offsets found are interpolated back to the
+    columns and removed before the next finer scale. The coarsest scale spans
+    ``width`` columns and the finest is the columns themselves, so stripes of
+    every width up to ``width`` are taken at the scale where they are narrow,
+    at a cost and memory that do not grow with ``width``.
+    """
     ranked = jnp.sort(row, axis=0)
-    return jnp.median(ranked - _sliding_median(ranked, width), axis=0)
+    columns = ranked.shape[1]
+    levels = 0
+    while _STRIPE_WINDOW << levels < width:
+        levels += 1
+    offsets = jnp.zeros(columns, ranked.dtype)
+    for level in range(levels, -1, -1):
+        scale = 1 << level
+        window = -(-width // scale) if level == levels else _STRIPE_WINDOW
+        rest = ranked - offsets
+        if scale == 1:
+            offsets = offsets + jnp.median(rest - _sliding_median(rest, window), axis=0)
+            continue
+        centres, blocks = _block_means(rest, scale)
+        found = jnp.median(blocks - _sliding_median(blocks, window), axis=0)
+        offsets = offsets + jnp.interp(jnp.arange(columns, dtype=ranked.dtype), centres, found)
+    return offsets
+
+
+# Blocks in each scale's median; also the widest window taken at full resolution.
+_STRIPE_WINDOW = 9
+
+
+def _block_means(values: jax.Array, scale: int) -> tuple[jax.Array, jax.Array]:
+    """Means over ``scale``-column blocks centred on the detector middle, edges repeated.
+
+    Block ``j`` covers ``[m + j scale - scale/2, m + j scale + scale/2]`` with
+    ``m`` the middle column, so the blocks, and the correction, are symmetric
+    under reversal of the detector. A boundary through a column's middle takes
+    half of it. Returns the block centres in columns and the means,
+    ``(rows, blocks)``.
+    """
+    columns = values.shape[1]
+    middle = (columns - 1) / 2
+    reach = -(-int(np.ceil(middle)) // scale)
+    centres = middle + scale * np.arange(-reach, reach + 1)
+    # Columns are [i - 1/2, i + 1/2]: blocks end on column edges for an even
+    # count and on column middles for an odd one.
+    halves = columns % 2
+    taps = scale + halves
+    weights = np.ones(taps)
+    if halves:
+        weights[[0, -1]] = 0.5
+    first = round(centres[0] - scale / 2 + (0.5 if not halves else 0.0))
+    pad = max(0, -first, first + (len(centres) - 1) * scale + taps - columns)
+    padded = jnp.pad(values, ((0, 0), (pad, pad)), mode="edge")
+    start = first + pad
+    stop = start + (len(centres) - 1) * scale + 1
+    total = weights[0] * padded[:, start:stop:scale]
+    for k in range(1, taps):
+        total = total + weights[k] * padded[:, start + k : stop + k : scale]
+    return jnp.asarray(centres, values.dtype), total / scale
 
 
 def _stripe_response(row: jax.Array, width: int) -> jax.Array:
@@ -810,8 +882,29 @@ def _sliding_median(values: jax.Array, width: int) -> jax.Array:
 
     Sorting networks of shifted copies use elementwise minima and maxima,
     which fuse into one pass. Wide odd windows retain only comparisons that
-    reach the median; even windows also need its neighbouring rank.
+    reach the median; even windows also need its neighbouring rank. Each row
+    is independent, so rows are taken in blocks small enough that the window's
+    copies of a block stay within a fixed working size, whatever the width.
     """
+    rows, columns = values.shape
+    block = max(1, min(rows, _MEDIAN_BLOCK_BYTES // max(1, 4 * width * (columns + width))))
+    if block >= rows:
+        return _window_median(values, width)
+    blocks = -(-rows // block)
+    padded = jnp.pad(values, ((0, blocks * block - rows), (0, 0)))
+    medians = jax.lax.map(
+        lambda part: _window_median(part, width), padded.reshape(blocks, block, columns)
+    )
+    return medians.reshape(blocks * block, columns)[:rows]
+
+
+# The window's copies of one block of rows. Narrow windows fuse into one pass and
+# never hold them, so a nine-column window over a few thousand views stays whole.
+_MEDIAN_BLOCK_BYTES = 512 << 20
+
+
+def _window_median(values: jax.Array, width: int) -> jax.Array:
+    """``_sliding_median`` of one block of rows."""
     half, columns = width // 2, values.shape[1]
     even = width % 2 == 0
     padded = jnp.pad(values, ((0, 0), (half, half)), mode="edge")

@@ -55,11 +55,21 @@ Alignment needs scan-specific review. Use the
 - A diffracting crystal, detector fault, changing contrast or material outside the field of view
   can create views that no pose explains. Robust residual weighting and the same-image-step
   line-search comparison reduce those views' influence but cannot recover their missing physics.
+- `tj.align` assumes the whole sample moves as one body. On a sample whose parts move
+  relative to each other it can make the reconstruction worse than the scan as loaded.
 - The alignment image uses a bounded working scale while retaining the physical support and
   original scan data. An explicit `grid=` fixes sampling and can exceed device memory. Cropping
   support leaves attenuation outside it unmodelled.
 
 ## Detector-ring correction
+
+`Stripes` subtracts each column's constant offset against a median of its
+neighbours. Near the rotation axis of a compact sample, a wide window leaves a
+faint ring or dot: on the PSI cSAXS porous glass, `Stripes(201)` changes the
+slice within about ten pixels of the axis by up to a third of its grey range.
+A broad stripe on a steep flank of the sample's profile is not seen. Offsets
+that change during the scan are corrected only by their median; on Diamond I13
+a faint broad ring remains, as it does in the beamline's own reconstruction.
 
 `Rings` separates detector response from object structure statistically. On four real parallel-scan cuts, known injected
 response fields retain 28–61% of their RMS after differential correction.
