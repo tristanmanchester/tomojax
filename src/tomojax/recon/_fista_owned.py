@@ -28,9 +28,13 @@ if TYPE_CHECKING:
 
 
 class FistaResult(NamedTuple):
-    """Only the final image and diagnostics escape the compiled recurrence."""
+    """The final iterates and diagnostics that leave the compiled recurrence."""
 
     x: jax.Array
+    # The extrapolated iterate leaves as its own buffer. Kept inside, it joins
+    # the solve's one temporary block, and a larger block can take a larger
+    # region of device memory although the bytes in use are the same.
+    z: jax.Array
     loss: jax.Array
     iters_done: jax.Array
     done: jax.Array
@@ -199,7 +203,7 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
     jax.block_until_ready((x, z, t))
     count = len(losses)
     losses.extend([value] * (cfg.iterations - count))
-    state = FistaResult(x, jnp.stack(losses), jnp.int32(count), jnp.bool_(done))
+    state = FistaResult(x, z, jnp.stack(losses), jnp.int32(count), jnp.bool_(done))
     return state, jnp.asarray(limit, jnp.float32)
 
 

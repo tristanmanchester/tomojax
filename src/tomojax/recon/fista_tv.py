@@ -537,7 +537,7 @@ def _run_fista_scan(
     )
     loss = jnp.where(jnp.arange(cfg.iterations) < final.iters_done, final.loss, final.prev_obj)
     result = FistaResult(
-        pack_volume(final.x, runtime.projector[0]), loss, final.iters_done, final.done
+        pack_volume(final.x, runtime.projector[0]), final.z, loss, final.iters_done, final.done
     )
     return result, jnp.asarray(L, jnp.float32), runtime.metric
 
