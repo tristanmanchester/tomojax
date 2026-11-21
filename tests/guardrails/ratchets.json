@@ -44,7 +44,6 @@
     "src/tomojax/recon/_cgls_jax.py::_solve": 169,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 120,
     "src/tomojax/recon/_cgls_jax.py::cgls": 115,
-    "src/tomojax/recon/fista_tv.py::_run_fista_scan": 112,
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 116
   },
@@ -54,7 +53,7 @@
     "alignment": 4434,
     "backends": 260,
     "cli": 2278,
-    "core": 9556,
+    "core": 9541,
     "corrections": 2772,
     "datasets": 1083,
     "forward": 404,
@@ -62,9 +61,9 @@
     "io": 3920,
     "motion": 153,
     "nuisance": 232,
-    "recon": 13117
+    "recon": 13111
   },
-  "cuda_kernels": 48,
+  "cuda_kernels": 47,
   "cuda_switches": 34,
   "environment_reads": 22,
   "suppressions": {
@@ -73,6 +72,7 @@
     "pyright: ignore": 12
   },
   "complex_functions": [
+    "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
     "src/tomojax/core/_logging.py::PLR0911::format_duration",
     "src/tomojax/datasets/_impl/artefacts.py::C901::apply_simulation_artefacts",
     "src/tomojax/datasets/_impl/artefacts.py::PLR0915::apply_simulation_artefacts",
@@ -87,7 +87,7 @@
     "chained": 4
   },
   "type_errors": {
-    "reportArgumentType": 46,
+    "reportArgumentType": 44,
     "reportAttributeAccessIssue": 17,
     "reportCallIssue": 2,
     "reportIndexIssue": 6,

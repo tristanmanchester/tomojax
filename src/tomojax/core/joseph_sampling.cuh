@@ -22,14 +22,19 @@ __device__ __forceinline__ float joseph_cubic_weight(float distance) {
     return 0.f;
 }
 
+template<typename Index=long, bool Uniform=false, bool Slab=false>
 __device__ __forceinline__ float joseph_sample(
     const float* x, int a, int k, int b, int c,
-    int nx, int ny, int nz, int nb, int nc) {
+    int nx, int ny, int nz, int nb, int nc, int z0=0) {
     if (b < 0 || b >= nb || c < 0 || c >= nc) return 0.f;
     int ix = a == 0 ? k : (a == 1 ? c : b);
     int iy = a == 0 ? b : (a == 1 ? k : c);
     int iz = a == 0 ? c : (a == 1 ? b : k);
-    return x[VOXEL(long, ix, iy, iz)];
+    if (Slab) {
+        iz -= z0;
+        if ((unsigned)iz >= (unsigned)nz) return 0.f;
+    }
+    return Uniform ? 1.f : x[VOXEL(Index, ix, iy, iz)];
 }
 
 __device__ __forceinline__ void joseph_cubic_weights(float t, float* w, float* d) {

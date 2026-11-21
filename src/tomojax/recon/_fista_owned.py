@@ -27,6 +27,19 @@ if TYPE_CHECKING:
     from .fista_tv import FistaRuntime
 
 
+class FistaResult(NamedTuple):
+    """The final iterates and diagnostics that leave the compiled recurrence."""
+
+    x: jax.Array
+    # The extrapolated iterate leaves as its own buffer. Kept inside, it joins
+    # the solve's one temporary block, and a larger block can take a larger
+    # region of device memory although the bytes in use are the same.
+    z: jax.Array
+    loss: jax.Array
+    iters_done: jax.Array
+    done: jax.Array
+
+
 class FistaScanState(NamedTuple):
     """State carried through the FISTA scan loop."""
 
@@ -37,8 +50,6 @@ class FistaScanState(NamedTuple):
     prev_obj: jnp.ndarray
     streak: jnp.ndarray
     done: jnp.ndarray
-    has_prev: jnp.ndarray
-    last_obj: jnp.ndarray
     iters_done: jnp.ndarray
 
 
@@ -192,18 +203,7 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
     jax.block_until_ready((x, z, t))
     count = len(losses)
     losses.extend([value] * (cfg.iterations - count))
-    state = FistaScanState(
-        x,
-        z,
-        t,
-        jnp.stack(losses),
-        value,
-        jnp.int32(streak),
-        jnp.bool_(done),
-        jnp.bool_(True),
-        value,
-        jnp.int32(count),
-    )
+    state = FistaResult(x, z, jnp.stack(losses), jnp.int32(count), jnp.bool_(done))
     return state, jnp.asarray(limit, jnp.float32)
 
 

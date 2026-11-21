@@ -49,6 +49,19 @@ the README’s automatic reconstruction, and labelled slice export. It installs
 without a package cache; `--extra cuda12` also requires a real CUDA device. A source
 import passing is not enough to establish that the wheel works.
 
+## Make a release
+
+1. Set the version in `pyproject.toml` and head its CHANGELOG section `## <version> (<date>)`.
+2. Run `just ci` and `just test-cuda` on that commit, and push it to main.
+3. Optionally, `gh workflow run Release` publishes main to TestPyPI after the same checks.
+4. Tag it: `git tag v<version>` and `git push origin v<version>`. The release workflow runs
+   the CPU gate and the installed-package matrix, builds the wheel and sdist, waits for a
+   maintainer to approve the `pypi` environment, publishes to PyPI and creates the GitHub
+   release from the CHANGELOG section. A version with `a`, `b`, `rc` or `dev` is marked as a
+   pre-release.
+
+PyPI accepts each version once, so a failed release is fixed with a new version.
+
 ## Engineering conventions
 
 - Import application code through public module roots or `.api` facades. Keep

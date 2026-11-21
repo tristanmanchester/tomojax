@@ -211,7 +211,7 @@ extern "C" __global__ void joseph_vertical(
 
 extern "C" __global__ void joseph_axial(
     const float* __restrict__ coeff, const float* __restrict__ weighted,
-    float* __restrict__ out, int nviews, int nx, int ny, int nz, int nu, int fresh)
+    float* __restrict__ out, int nviews, int nx, int ny, int nz, int nu, int fresh, int out_depth)
 {
     const int R = RUN, VB = 32;
     long run=(long)blockIdx.x*blockDim.x+threadIdx.x;
@@ -252,7 +252,7 @@ extern "C" __global__ void joseph_axial(
         }
     }
     if(live) {
-        long base=VOXEL(long,ix,iy,z);
+        long base=Z_FAST ? ((long)ix*ny+iy)*out_depth+z : VOXEL(long,ix,iy,z);
         // Keep the same +0 addition as a zero-initialized output.
         #pragma unroll
         for(int j=0;j<R;++j) if(z+j<nz)
@@ -326,7 +326,7 @@ def _transpose_launch(
             module.get_function("joseph_axial")(
                 (-(-runs // threads),),
                 (threads,),
-                (c, weighted, target, *map(np.int32, (count, nx, ny, nz, nu, 0))),
+                (c, weighted, target, *map(np.int32, (count, nx, ny, nz, nu, 0, nz))),
             )
 
 
@@ -604,10 +604,16 @@ def transpose_axial_vu_cuda(
     """
     views, nv, nu = images.shape
     nx, ny, nz = grid.nx, grid.ny, grid.nz
-    depth = nz if z_fast else min(nz, 32)
-    # Capture ownership, not the initial array, in the callback.
     fresh = initial is None
     size, chunks = _chunks(views, nu, nz, batch)
+    public_depth = min(nz, 32)
+    # Keep vertical scratch within the original band's combined image and
+    # volume workspace. A private volume can receive each band directly.
+    capacity = public_depth * (size * nu + nx * ny)
+    depth = min(nz, capacity // (size * nu)) if z_fast else public_depth
+    if depth < nz:
+        # Every full band can use the axial kernel's eight-plane vector loads.
+        depth -= depth % 8
 
     def add(stream: int, c: Any, y: Any, weighted: Any, target: Any, z0: int, planes: int) -> None:
         # Aligned float4 loads amortize global-load instructions. Odd axial
@@ -643,7 +649,10 @@ def transpose_axial_vu_cuda(
                     part,
                     weighted,
                     target,
-                    *map(np.int32, (count, nx, ny, planes, nu, fresh and first == 0)),
+                    *map(
+                        np.int32,
+                        (count, nx, ny, planes, nu, fresh and first == 0, nz if z_fast else planes),
+                    ),
                 ),
             )
 
@@ -653,7 +662,8 @@ def transpose_axial_vu_cuda(
         if x or (not band and not chunks):
             initialize_buffer(out, stream=stream, source=x[0] if x else None)
         if not band:
-            add(stream, c, y, weighted, out, 0, nz)
+            for z0 in range(0, nz, depth):
+                add(stream, c, y, weighted, Offset(out, z0), z0, min(depth, nz - z0))
             return
         for z0 in range(0, nz, depth):
             planes = min(depth, nz - z0)
