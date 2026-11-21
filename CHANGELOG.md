@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Wide ring corrections run on an 8 GB card
+
+`Stripes(width)` takes windows wider than nine columns coarse to fine, so a wide window
+costs the time and memory of a narrow one. On four full-width Diamond I13 rows (3001 views
+of 2560 columns), `Stripes(201)` needs 88 MiB of working memory where it needed 10.2 GiB,
+and takes 0.06 s where it took 2.1 s; before, an 8 GB card ran out of memory from 101
+columns. It removes the I13 scan's broad rings. Windows of up to nine columns give the same result as before.
+`Stripes(width, varying=True)` keeps its exact median and holds at most about 1 GiB at
+any width.
+
 ## 1.0.0rc1 (2026-11-20)
 
 ### Alignment follows each view's own motion by default

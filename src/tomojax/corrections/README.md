@@ -57,6 +57,10 @@ Also exported:
 See the [quickstart](../../../docs/quickstart.md#correct-raw-detector-frames)
 for loading frames and choosing steps.
 
+`Stripes(width)` costs the same time and memory at any width; widen it to
+about twice the widest rings. A wide window can leave a faint ring or dot on
+the rotation axis of a compact sample.
+
 `Stripes(..., varying=True)` fits gain and offset only at pixels whose
 view-to-view differences are anomalous. Unselected centred features are
 preserved, but their constant-offset stripes are left too; sparse views or

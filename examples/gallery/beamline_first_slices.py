@@ -37,7 +37,7 @@ CROPS = {
 # The ring correction each slice needs; panels without rings take none.
 RINGS: dict[str, tuple[Step, ...]] = {
     "ESRF NXtomo": (Stripes(9), Stripes(51, varying=True)),
-    "Diamond I13": (Stripes(9), Stripes(51, varying=True)),
+    "Diamond I13": (Stripes(201),),
 }
 
 

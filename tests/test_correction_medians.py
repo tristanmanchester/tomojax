@@ -16,14 +16,50 @@ def _zingers(values: np.ndarray, size: int) -> np.ndarray:
     return np.where(values - median > 0.1, median, values)
 
 
-def _stripes(values: np.ndarray, width: int) -> np.ndarray:
-    ranked = np.sort(values, axis=0)
+def _window_median(values: np.ndarray, width: int) -> np.ndarray:
     half = width // 2
-    padded = np.pad(ranked, ((0, 0), (0, 0), (half, half)), mode="edge")
+    padded = np.pad(values, ((0, 0), (0, 0), (half, half)), mode="edge")
     local = np.median(np.lib.stride_tricks.sliding_window_view(padded, width, axis=2), axis=-1)
     if width % 2 == 0:
         local = 0.5 * (local[..., :-1] + local[..., 1:])
-    return values - np.median(ranked - local, axis=0)[None]
+    return local
+
+
+def _box_means(values: np.ndarray, scale: int) -> tuple[np.ndarray, np.ndarray]:
+    """Mean over [p - scale/2, p + scale/2] of the piecewise-constant columns, edges repeated."""
+    columns = values.shape[-1]
+    middle = (columns - 1) / 2
+    reach = -(-int(np.ceil(middle)) // scale)
+    centres = middle + scale * np.arange(-reach, reach + 1)
+    pad = scale * (reach + 2)
+    extended = np.pad(values.astype(np.float64), ((0, 0), (0, 0), (pad, pad)), mode="edge")
+    edges = np.arange(-pad, columns + pad + 1) - 0.5
+    integral = np.concatenate([np.zeros(extended.shape[:-1] + (1,)), np.cumsum(extended, -1)], -1)
+
+    def at(points: np.ndarray) -> np.ndarray:
+        return np.apply_along_axis(lambda row: np.interp(points, edges, row), -1, integral)
+
+    return centres, (at(centres + scale / 2) - at(centres - scale / 2)) / scale
+
+
+def _stripes(values: np.ndarray, width: int) -> np.ndarray:
+    ranked = np.sort(values, axis=0).astype(np.float64)
+    columns = ranked.shape[-1]
+    levels = 0
+    while 9 * 2**levels < width:
+        levels += 1
+    offsets = np.zeros(ranked.shape[1:])
+    for level in range(levels, -1, -1):
+        scale = 2**level
+        window = -(-width // scale) if level == levels else 9
+        rest = ranked - offsets[None]
+        if scale == 1:
+            offsets += np.median(rest - _window_median(rest, window), axis=0)
+            continue
+        centres, blocks = _box_means(rest, scale)
+        found = np.median(blocks - _window_median(blocks, window), axis=0)
+        offsets += np.stack([np.interp(np.arange(columns), centres, f) for f in found])
+    return values - offsets[None]
 
 
 @pytest.mark.parametrize("shape", [(2, 1, 17), (2, 17, 1), (2, 9, 11)])
@@ -131,3 +167,66 @@ def test_zinger_binary_windows_match_majority(size: int) -> None:
     # of the window is bright; otherwise the zero median replaces it.
     reference = (values.sum(axis=(1, 2)) > size * size // 2).astype(np.float32)
     np.testing.assert_array_equal(actual[:, size // 2, size // 2], reference)
+
+
+@pytest.mark.parametrize("width", [25, 55, 201])
+def test_wide_stripe_windows_commute_with_detector_reversal(width: int) -> None:
+    values = np.random.default_rng(616).normal(size=(17, 3, 300)).astype(np.float32)
+    correct = jax.jit(Stripes(width).apply)
+    reversed_result = np.asarray(correct(values[..., ::-1]))[..., ::-1]
+    np.testing.assert_allclose(correct(values), reversed_result, rtol=0, atol=1e-6)
+
+
+@pytest.mark.parametrize("width", [101, 201])
+def test_wide_stripe_windows_match_numpy(width: int) -> None:
+    values = np.random.default_rng(width).normal(size=(33, 2, 300)).astype(np.float32)
+    actual = jax.jit(Stripes(width=width).apply)(jnp.asarray(values))
+    np.testing.assert_allclose(actual, _stripes(values, width), rtol=1e-6, atol=1e-6)
+
+
+def _compiled_temporaries(step: Stripes, shape: tuple[int, ...]) -> int:
+    values = jax.ShapeDtypeStruct(shape, jnp.float32)
+    analysis = jax.jit(step.apply).lower(values).compile().memory_analysis()
+    assert analysis is not None
+    return int(analysis.temp_size_in_bytes)
+
+
+def test_wide_stripe_windows_need_no_more_device_memory_than_narrow_ones() -> None:
+    # A full-width row of a real scan: 1001 views of 2048 columns. Wide windows once
+    # held a shifted copy of the row per column of the window.
+    shape = (1001, 2, 2048)
+    narrow = _compiled_temporaries(Stripes(9), shape)
+    for width in (101, 401):
+        assert _compiled_temporaries(Stripes(width), shape) <= 1.5 * narrow
+
+
+def test_varying_stripe_memory_does_not_grow_with_the_window() -> None:
+    shape = (1001, 2, 2048)
+    # Windows this wide are taken in blocks of rows, so doubling one does not double the memory.
+    wide = _compiled_temporaries(Stripes(101, varying=True), shape)
+    assert _compiled_temporaries(Stripes(201, varying=True), shape) <= 1.25 * wide
+
+
+def test_wide_windows_remove_a_broad_offset_under_moving_features() -> None:
+    # A wide sample whose line integrals are level across the middle of the detector,
+    # with pores and inclusions tracing sinusoids, and an 80-column stripe of
+    # constant offset on that level. A nine-column window corrects only its edges.
+    views, columns = 360, 1024
+    angles = np.linspace(0, np.pi, views, endpoint=False)[:, None]
+    u = np.arange(columns) - (columns - 1) / 2
+    clean = np.clip((450 - np.abs(u)) / 50, 0, 1) * 2.0 * np.ones((views, 1))
+    features = ((40, 300, 0.3, -0.004), (25, 200, 2.0, 0.006), (60, 100, 4.0, -0.003))
+    for radius, distance, phase, density in features:
+        centre = distance * np.cos(angles + phase)
+        clean += 2 * density * np.sqrt(np.clip(radius**2 - (u - centre) ** 2, 0, None))
+    offset = np.where((np.arange(columns) >= 700) & (np.arange(columns) < 780), 0.05, 0.0)
+    noise = np.random.default_rng(93).normal(0, 0.002, clean.shape)
+    measured = (clean + offset + noise).astype(np.float32)[:, None]
+
+    def left(width: int) -> float:
+        corrected = np.asarray(jax.jit(Stripes(width).apply)(jnp.asarray(measured)))[:, 0]
+        error = np.median(corrected - clean, axis=0)[640:840]
+        return float(np.sqrt(np.mean((error - np.median(error)) ** 2)) / 0.05)
+
+    assert left(9) > 0.5
+    assert left(201) < 0.1
