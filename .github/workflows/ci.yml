@@ -1,9 +1,10 @@
 name: CI
 
 # `just ci` and `just test-cuda` run locally before each push. Here the CPU gate
-# (product-spine) runs on pull requests to main and on demand (`gh workflow run CI`);
-# the release workflow calls this one first, so a release runs the CPU gate and the
-# installed-package matrix before anything is published.
+# (product-spine) runs on demand (`gh workflow run CI`) and, with the quick surface tests
+# in place of the numerical suite, on pull requests to main; the release workflow calls
+# this one first, so a release runs the whole CPU gate and the installed-package matrix
+# before anything is published.
 on:
   pull_request:
     branches: [main]
@@ -79,7 +80,14 @@ jobs:
       - name: Accelerator smoke workflow
         run: uv run --no-sync python tools/smoke_accelerator.py
 
+      # A pull request gets the quick public-surface tests; the numerical suite, about an
+      # hour on a hosted runner, runs on demand and before a release.
+      - name: Surface tests
+        if: github.event_name == 'pull_request'
+        run: uv run --no-sync pytest -q tests -m "surface and not numerical and not gpu"
+
       - name: Tests
+        if: github.event_name != 'pull_request'
         run: uv run --no-sync pytest -q tests -m "not gpu" --cov
 
       - name: Analytic accuracy benchmarks
