@@ -136,7 +136,9 @@ def read_skyscan(path: Path, *, data_path: str | None = None) -> RawAcquisition 
         if direction and "Rotation Step (deg)" in acquisition
         else np.empty(0, np.float64)
     )
-    if direction == "CW":
+    # With TIFF columns increasing along detector u and rows flipped to v-up,
+    # a SkyScan CC sweep is a negative world-from-object rotation about +z.
+    if direction == "CC":
         angles = -angles
     record = ProjectionDataset(
         projections=np.broadcast_to(np.float32(0), counts.shape),
