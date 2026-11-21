@@ -16,8 +16,9 @@ otherwise recognised file can still need `detector=` or `angles=`.
 One native detector row from each recipe below, corrected and reconstructed by
 the default `tj.reconstruct`. At one row the ESRF and TOMCAT slices are noisy.
 The Elettra sample extends past the field of view, so its slice is local
-tomography. The cSAXS slice is phase, not attenuation. The I13 slice keeps its
-rings: these recipes correct none.
+tomography. The cSAXS slice is phase, not attenuation. The ESRF and I13 rows are
+corrected with `corrected(Stripes(9), Stripes(51, varying=True))` for their
+rings; the I13 slice keeps broad rings that this correction does not remove.
 
 ```bash
 uv run python examples/gallery/beamline_first_slices.py DATA beamline-first-slices.png

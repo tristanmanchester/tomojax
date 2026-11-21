@@ -3,7 +3,8 @@
     uv run python examples/gallery/zeiss_full_volume.py CuO_2_tomo-B.txrm VOLUME.npy OUT.png
 
 The scan is 3201 views of 2028 x 2028 pixels; its native grid is 2028³ voxels
-of 1.13 micrometres, 31 GiB in FP32. ``tj.reconstruct_slabs(frames, "fbp")``
+of 1.13 micrometres, 31 GiB in FP32. It is loaded with the centre and per-view
+image shifts the file records, and no alignment is run. ``tj.reconstruct_slabs(frames, "fbp")``
 corrects only the detector rows each slab of the volume needs and the blocks
 are written to a memmap ``VOLUME.npy`` on disk, so neither the corrected
 projections (52 GB) nor the volume is held in memory. The figure shows the

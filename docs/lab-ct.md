@@ -190,13 +190,14 @@ only in the orbit plane, with cone artefacts growing away from it.
 
 ![FDK central slices of two lab scans, each above an enlarged region: a copper oxide specimen from a Zeiss Xradia at 1.13 µm and a box of seeds from a Nikon X-Tek at 94 µm.](images/lab-cone-slices.png)
 
-The orbit plane of two lab scans, each read from the vendor's own files and
-reconstructed by FDK at one voxel per detector pixel at the rotation axis: the
-Zeiss Xradia CuO_2 tomo-B scan (3201 views) and the Nikon X-Tek seeds scan
-(1571 views).
+The orbit plane of two lab scans, each loaded from the vendor's own files with
+the centre they record and reconstructed by FDK at one voxel per detector pixel
+at the rotation axis, with no alignment: the Zeiss Xradia CuO_2 tomo-B scan
+(3201 views, its `AutoRecon/CenterShift` and per-view image shifts) and the
+Nikon X-Tek seeds scan (1571 views, the centre in its `_recon.xtekct`).
 
 ```bash
-uv run python examples/gallery/lab_cone_slices.py CuO_2_tomo-B.txrm "47209 testscan korn01.xtekct" lab-cone-slices.png
+uv run python examples/gallery/lab_cone_slices.py CuO_2_tomo-B.txrm "47209 testscan korn01_recon.xtekct" lab-cone-slices.png
 ```
 
 The iterative solvers model the cone beam exactly, with any per-view poses.

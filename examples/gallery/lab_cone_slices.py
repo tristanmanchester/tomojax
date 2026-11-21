@@ -4,10 +4,14 @@
 
 The scans are a Zeiss Xradia acquisition (CuO_2 tomo-B, a copper oxide
 specimen) and a Nikon X-Tek scan of seeds in a box, each read by
-``tj.load_frames`` from the vendor's own files. Each is
-reconstructed by FDK in its central plane, one voxel per detector pixel at
-the rotation axis, from the 16 detector rows around the centre that this plane
-needs. Each slice is shown whole and with one enlarged region.
+``tj.load_frames`` from the vendor's own files with the centre and shifts those
+files record: the Zeiss scan's ``AutoRecon/CenterShift`` and per-view image
+shifts, and for Nikon the ``_recon.xtekct`` that holds the centre Nikon's
+reconstructor found. No alignment is run. Each is reconstructed by FDK in its
+central plane, one voxel per detector pixel at the rotation axis, from the 64
+detector rows around the centre, which cover the plane's rays in every view
+whatever its recorded vertical shift. Each slice is shown whole and with one
+enlarged region.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ CROPS = {
 def central_slice(frames: tj.Frames) -> tuple[np.ndarray, float]:
     """FDK of the central plane at the native voxel size, and that size."""
     rows = frames.counts.shape[1]
-    scan = frames.cropped(slice(rows // 2 - 8, rows // 2 + 8), slice(None)).corrected()
+    scan = frames.cropped(slice(rows // 2 - 32, rows // 2 + 32), slice(None)).corrected()
     native = frames.geometry.grid
     grid = tj.Grid(native.nx, native.ny, 1, native.vx, native.vy, native.vx)
     return np.asarray(tj.reconstruct(scan, "fbp", grid=grid).volume, np.float32)[0], native.vx
@@ -40,7 +44,7 @@ def central_slice(frames: tj.Frames) -> tuple[np.ndarray, float]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("zeiss", type=Path, help="CuO_2_tomo-B.txrm")
-    parser.add_argument("nikon", type=Path, help="the seeds scan's .xtekct file")
+    parser.add_argument("nikon", type=Path, help="the seeds scan's _recon.xtekct file")
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
     images = {

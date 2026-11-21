@@ -1,8 +1,9 @@
-"""A first slice from a raw synchrotron scan, as the quickstart reaches it.
+r"""A first slice from a raw synchrotron scan, as the quickstart reaches it.
 
-    uv run python examples/gallery/first_slice.py 159815.nxs i13-first-slice.png
     uv run python examples/gallery/first_slice.py full_rows1048-1111.nxs i12-first-slice.png \
         --rows 24 40 --center -138 --crop 1500 1100 --title "Diamond I12, Vo et al."
+    uv run python examples/gallery/first_slice.py 159815.nxs i13-first-slice.png \
+        --view 650 700 1250 --crop 1350 1000
 
 The script follows the quickstart on an NXtomo file of raw counts with its
 flats and darks: ``tj.load_frames``, a crop to 16 detector rows,
@@ -42,6 +43,13 @@ def main() -> None:
     parser.add_argument(
         "--crop", type=int, nargs=2, default=(1400, 1000), metavar=("ROW", "COLUMN")
     )
+    parser.add_argument(
+        "--view",
+        type=int,
+        nargs=3,
+        metavar=("ROW", "COLUMN", "SIDE"),
+        help="the square of the slice the sample fills, in slice pixels",
+    )
     parser.add_argument("--title", default="Diamond I13 scan 159815")
     args = parser.parse_args()
     rows = slice(*args.rows)
@@ -66,11 +74,15 @@ def main() -> None:
     axes[0].set_aspect("auto")
     panel(axes[1], sinogram, "Corrected sinogram, one row", *np.percentile(sinogram, (0.5, 99.5)))
     axes[1].set_aspect("auto")
-    low, high = np.percentile(image, (0.5, 99.5))
+    top, left, side = args.view if args.view else (0, 0, image.shape[0])
+    whole = image[top : top + side, left : left + side]
+    low, high = np.percentile(whole, (0.5, 99.5))
     row0, column0 = args.crop
-    panel(axes[2], image, "FBP slice", low, high)
+    panel(axes[2], whole, "FBP slice, the sample", low, high)
     axes[2].add_patch(
-        plt.Rectangle((column0, row0), CROP, CROP, fill=False, color="tab:orange", lw=0.8)
+        plt.Rectangle(
+            (column0 - left, row0 - top), CROP, CROP, fill=False, color="tab:orange", lw=0.8
+        )
     )
     panel(axes[3], image[row0 : row0 + CROP, column0 : column0 + CROP], "Enlarged", low, high)
     views = scan.projections.shape[0]

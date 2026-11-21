@@ -6,13 +6,15 @@
 beam), ``k11-54286.nxs`` (Diamond K11, laminography),
 ``CuO_2_tomo-B.txrm`` (Zeiss Xradia, cone beam) and ``Walnut1`` (the FIPS
 walnut, cone beam on three orbits). Each slice is at the detector's own
-resolution and cropped to the object:
+resolution and cropped to the largest bright region:
 
-- I13 159815: 3001 views over a full turn, FBP of one detector row with the
-  centre from ``tj.align(fit="center", method="opposite-views")``;
+- I13 159815: 3001 views over a full turn, ``corrected(*RINGS)`` for its rings,
+  the centre from ``tj.align(fit="center", method="opposite-views")``, FBP of
+  one detector row;
 - K11 54286: 1441 views at 35°, aligned by ``tj.align(scan)``, FBP in-plane
   through the glass-sphere layer at 2.16 µm;
-- CuO_2 tomo-B: 3201 views, FDK of the central plane at 1.13 µm;
+- CuO_2 tomo-B: 3201 views with the centre and per-view shifts the file records,
+  FDK of the central plane at 1.13 µm;
 - Walnut 1: all 3600 views of its three orbits, the default ``tj.reconstruct``
   (CGLS for several cone arrangements) on the authors' 501³ grid of 0.1 mm.
 """
@@ -30,15 +32,23 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import tomojax as tj
+from tomojax.corrections import Stripes
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _walnut import load_scan
 
+RINGS = (Stripes(9), Stripes(51, varying=True))  # the I13 scan's ring correction
+
 
 def object_crop(image: np.ndarray, margin: float = 0.06) -> np.ndarray:
-    """The smallest centred square holding the bright object, with a margin."""
-    mask = image > np.percentile(image, 75)
-    rows, columns = np.nonzero(mask)
+    """The smallest centred square holding the largest bright region, with a margin."""
+    from scipy import ndimage
+
+    smooth = ndimage.gaussian_filter(np.asarray(image, np.float64), 4)
+    low, high = np.percentile(smooth, (5, 99.5))
+    labels, count = ndimage.label(smooth > (low + high) / 2)
+    largest = np.argmax(ndimage.sum(np.ones_like(smooth), labels, range(1, count + 1))) + 1
+    rows, columns = np.nonzero(labels == largest)
     centre = np.array(((rows.min() + rows.max()) / 2, (columns.min() + columns.max()) / 2))
     half = (1 + margin) * max(rows.max() - rows.min(), columns.max() - columns.min()) / 2
     half = min(half, *centre, *(np.array(image.shape) - centre))
@@ -50,7 +60,7 @@ def object_crop(image: np.ndarray, margin: float = 0.06) -> np.ndarray:
 def slices(data: Path) -> dict[str, np.ndarray]:
     """The four slices, keyed by their panel titles."""
     frames = tj.load_frames(data / "diamond-i13-mg31912-1/raw/159815.nxs")
-    scan = frames.cropped(slice(1079, 1082), slice(None)).corrected()
+    scan = frames.cropped(slice(1079, 1082), slice(None)).corrected(*RINGS)
     scan = tj.align(scan, fit="center", method="opposite-views").scan
     i13 = np.asarray(tj.reconstruct(scan, "fbp").volume, np.float32)[1]
     k11 = tj.align(load_k11(data / "k11-54286.nxs", 35.0)).scan

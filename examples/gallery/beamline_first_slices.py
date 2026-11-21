@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import tomojax as tj
+from tomojax.corrections import Step, Stripes
 
 # (row, column, side) of each enlarged region, in slice pixels.
 CROPS = {
@@ -33,16 +34,27 @@ CROPS = {
 }
 
 
-def middle_row(frames: tj.Frames) -> np.ndarray:
+# The ring correction each slice needs; panels without rings take none.
+RINGS: dict[str, tuple[Step, ...]] = {
+    "ESRF NXtomo": (Stripes(9), Stripes(51, varying=True)),
+    "Diamond I13": (Stripes(9), Stripes(51, varying=True)),
+}
+
+
+def middle_row(frames: tj.Frames, steps: tuple[Step, ...] = ()) -> np.ndarray:
     """The page's one-row preview: the middle detector row, corrected and reconstructed."""
     row = frames.counts.shape[1] // 2
-    scan = frames.cropped(slice(row, row + 1), slice(None)).corrected()
+    scan = frames.cropped(slice(row, row + 1), slice(None)).corrected(*steps)
     return np.asarray(tj.reconstruct(scan).volume, np.float32)[0]
 
 
 def slices(data: Path) -> dict[str, np.ndarray]:
     """One reconstructed slice per recipe, keyed by facility."""
-    out = {"ESRF NXtomo": middle_row(tj.load_frames(data / "bamboo_reduced_bliss.nx"))}
+    out = {
+        "ESRF NXtomo": middle_row(
+            tj.load_frames(data / "bamboo_reduced_bliss.nx"), RINGS["ESRF NXtomo"]
+        )
+    }
     pitch = 3.7e-3
     out["PSI TOMCAT"] = middle_row(
         tj.load_frames(
@@ -65,7 +77,7 @@ def slices(data: Path) -> dict[str, np.ndarray]:
         data / "diamond-i13-mg31912-1/raw/159815.nxs",
         detector=tj.Detector(2560, 2160, 1, 1, center=(120, 0)),
     )
-    scan = frames.cropped(slice(1080, 1081), slice(441, 1872)).corrected()
+    scan = frames.cropped(slice(1080, 1081), slice(441, 1872)).corrected(*RINGS["Diamond I13"])
     out["Diamond I13"] = np.asarray(tj.reconstruct(scan).volume, np.float32)[0]
     return out
 

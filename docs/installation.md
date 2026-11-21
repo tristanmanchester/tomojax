@@ -88,15 +88,6 @@ No external scan data is needed. Existing outputs are refused; use a new
 working directory or `--force` to replace them. Set `JAX_PLATFORMS=cpu` to
 explicitly select the CPU, or `JAX_PLATFORMS=cuda` to require CUDA for this run.
 
-![The 32-voxel phantom's central slice, its central projection and the reconstruction's central slice, each 32 pixels across.](images/installation-check.png)
-
-What the three commands produce: the phantom, one of its projections and the
-reconstruction, at the 32³ size of the check.
-
-```bash
-uv run python examples/gallery/installation_check.py installation-check.png
-```
-
 If the CLI is missing, check the environment path. If CUDA discovery fails,
 resolve the NVIDIA driver/JAX installation before diagnosing kernel performance.
 
