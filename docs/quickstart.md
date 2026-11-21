@@ -140,19 +140,17 @@ The widths are detector columns, not reconstructed-ring radii. Increase the
 ordinary width for wider stripes, and compare images: stationary centred object
 features can also be changed. Missing information at dead pixels is not recovered.
 
-![A raw detector frame of a dense pellet with a band of 16 rows marked, the corrected sinogram of one row, its FBP slice cropped to the pellet and an enlarged region of the slice.](images/i13-first-slice.png)
+![A raw detector frame of a sandstone plug with a band of 16 rows marked, the corrected sinogram of one row, its FBP slice and an enlarged region of the slice.](images/i12-first-slice.png)
 
-Diamond I13 scan 159815, 3001 views over a full turn, through these steps: one
-raw frame with the 16 cropped rows marked, the corrected sinogram of the middle
-row after `Stripes(9)` and `Stripes(51, varying=True)`, and its FBP slice with
-the centre from `tj.align(fit="center", method="opposite-views")`, cropped to
-the pellet. The pellet absorbs almost all of the beam, so its slice is noisy
-and streaked where the rays cross it longest, and it keeps broad rings that the
-ring correction does not remove.
+The Diamond I12 scan of Vo et al. (Zenodo 3339629), 1801 views over a half turn
+of 2560-pixel rows, through these steps: one raw frame with the 16 cropped rows
+marked, the corrected sinogram of the middle row after `Stripes(9)` and
+`Stripes(51, varying=True)`, and its FBP slice with the axis at column 1417.5,
+as the dataset's notes give it.
 
 ```bash
-uv run python examples/gallery/first_slice.py 159815.nxs i13-first-slice.png \
-  --view 650 700 1250 --crop 1350 1000
+uv run python examples/gallery/first_slice.py full_rows1048-1111.nxs i12-first-slice.png \
+  --rows 24 40 --center -138 --crop 1500 1100 --title "Diamond I12, Vo et al."
 ```
 
 `corrected(..., binning=2)` averages 2 x 2 detector blocks of the line integrals,

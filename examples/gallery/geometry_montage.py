@@ -2,15 +2,15 @@
 
     uv run python examples/gallery/geometry_montage.py DATA geometry-montage.png
 
-``DATA`` holds ``diamond-i13-mg31912-1/raw/159815.nxs`` (Diamond I13, parallel
+``DATA`` holds ``full_rows1048-1111.nxs`` (Diamond I12, Zenodo 3339629, parallel
 beam), ``k11-54286.nxs`` (Diamond K11, laminography),
 ``CuO_2_tomo-B.txrm`` (Zeiss Xradia, cone beam) and ``Walnut1`` (the FIPS
 walnut, cone beam on three orbits). Each slice is at the detector's own
 resolution and cropped to the largest bright region:
 
-- I13 159815: 3001 views over a full turn, ``corrected(*RINGS)`` for its rings,
-  the centre from ``tj.align(fit="center", method="opposite-views")``, FBP of
-  one detector row;
+- the Diamond I12 cut of Vo et al.: 1801 views over a half turn,
+  ``corrected(*RINGS)`` for its rings, the axis at column 1417.5 (the dataset notes),
+  FBP of one detector row;
 - K11 54286: 1441 views at 35°, aligned by ``tj.align(scan)``, FBP in-plane
   through the glass-sphere layer at 2.16 µm;
 - CuO_2 tomo-B: 3201 views with the centre and per-view shifts the file records,
@@ -37,7 +37,7 @@ from tomojax.corrections import Stripes
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _walnut import load_scan
 
-RINGS = (Stripes(9), Stripes(51, varying=True))  # the I13 scan's ring correction
+RINGS = (Stripes(9), Stripes(51, varying=True))  # the I12 scan's ring correction
 
 
 def object_crop(image: np.ndarray, margin: float = 0.06) -> np.ndarray:
@@ -59,14 +59,15 @@ def object_crop(image: np.ndarray, margin: float = 0.06) -> np.ndarray:
 
 def slices(data: Path) -> dict[str, np.ndarray]:
     """The four slices, keyed by their panel titles."""
-    frames = tj.load_frames(data / "diamond-i13-mg31912-1/raw/159815.nxs")
-    scan = frames.cropped(slice(1079, 1082), slice(None)).corrected(*RINGS)
-    scan = tj.align(scan, fit="center", method="opposite-views").scan
-    i13 = np.asarray(tj.reconstruct(scan, "fbp").volume, np.float32)[1]
+    frames = tj.load_frames(
+        data / "full_rows1048-1111.nxs", detector=tj.Detector(2560, 64, 1, 1, center=(-138, 0))
+    )
+    scan = frames.cropped(slice(30, 33), slice(None)).corrected(*RINGS)
+    i12 = np.asarray(tj.reconstruct(scan, "fbp").volume, np.float32)[1]
     k11 = tj.align(load_k11(data / "k11-54286.nxs", 35.0)).scan
     walnut = load_scan(data / "Walnut1", orbits=(1, 2, 3), every=1, binning=1, size=501)
     return {
-        "Parallel beam · Diamond I13 159815": i13,
+        "Parallel beam · Diamond I12, Vo et al.": i12,
         "Laminography · Diamond K11 54286": plane(k11, (0, 0, 12.96), (704, 704, 1)),
         "Cone beam · Zeiss Xradia CuO_2": central_slice(tj.load_frames(data / "CuO_2_tomo-B.txrm"))[
             0

@@ -3,7 +3,7 @@
 Available workflows and their entrypoints. “Supported” means implemented and
 tested. See [installation](installation.md) and [measurement scope](measurements.md).
 
-![Four reconstructed slices, one per geometry: a dense pellet from Diamond I13 in parallel beam, a layer of glass spheres from Diamond K11 laminography, a copper oxide specimen from a Zeiss Xradia cone-beam scan, and a FIPS walnut from three cone-beam orbits.](images/geometry-montage.png)
+![Four reconstructed slices, one per geometry: a sandstone plug from Diamond I12 in parallel beam, a layer of glass spheres from Diamond K11 laminography, a copper oxide specimen from a Zeiss Xradia cone-beam scan, and a FIPS walnut from three cone-beam orbits.](images/geometry-montage.png)
 
 One real scan for each supported geometry, as on the
 [documentation index](README.md).

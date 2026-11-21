@@ -5,16 +5,16 @@ preprocessing details. TomoJAX is an early research library for parallel-beam,
 laminography and lab cone-beam models; consult the support and limitations
 pages before planning a workflow.
 
-![Four reconstructed slices, one per geometry: a dense pellet from Diamond I13 in parallel beam, a layer of glass spheres from Diamond K11 laminography, a copper oxide specimen from a Zeiss Xradia cone-beam scan, and a FIPS walnut from three cone-beam orbits.](images/geometry-montage.png)
+![Four reconstructed slices, one per geometry: a sandstone plug from Diamond I12 in parallel beam, a layer of glass spheres from Diamond K11 laminography, a copper oxide specimen from a Zeiss Xradia cone-beam scan, and a FIPS walnut from three cone-beam orbits.](images/geometry-montage.png)
 
 One real scan for each geometry TomoJAX reconstructs, each slice at its
-detector's resolution and cropped to the sample: Diamond I13 scan 159815
-(parallel beam; `Stripes(9)` and `Stripes(51, varying=True)` for its rings, the
-centre from `tj.align(fit="center", method="opposite-views")`, FBP), Diamond K11
+detector's resolution and cropped to the sample: the Diamond I12 scan of Vo et
+al. (parallel beam; `Stripes(9)` and `Stripes(51, varying=True)` for its rings,
+FBP), Diamond K11
 scan 54286 (laminography; aligned by `tj.align(scan)`, FBP at 2.16 µm), Zeiss
 Xradia CuO_2 tomo-B (cone beam; the centre and shifts its file records, FDK at
 1.13 µm) and FIPS walnut 1 (three cone orbits; CGLS on the authors' 0.1 mm
-grid). The I13 slice keeps broad rings that the ring correction does not remove.
+grid).
 
 ```bash
 uv run python examples/gallery/geometry_montage.py DATA geometry-montage.png
