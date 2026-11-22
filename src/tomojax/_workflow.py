@@ -19,7 +19,7 @@ from dataclasses import is_dataclass, replace
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 import warnings
 
 import numpy as np
@@ -541,15 +541,14 @@ def reconstruct(
     """
     from tomojax.recon.api import method_config, reconstruct_arrays
 
+    settings = {
+        "filter": filter,
+        "iterations": iterations,
+        "tv_weight": tv_weight,
+        "nonnegative": nonnegative,
+        "seed": seed,
+    }
     if region is not None:
-        keywords = {
-            "filter": filter,
-            "iterations": iterations,
-            "tv_weight": tv_weight,
-            "nonnegative": nonnegative,
-            "warm_start": warm_start,
-            "seed": seed,
-        }
         return _reconstruct_in_region(
             scan,
             method,
@@ -558,40 +557,20 @@ def reconstruct(
             out=out,
             config=config,
             devices=devices,
-            keywords=keywords,
+            keywords={**settings, "warm_start": warm_start},
         )
-    given = {
-        name: value
-        for name, value in {
-            "filter": filter,
-            "iterations": iterations,
-            "tv_weight": tv_weight,
-            "nonnegative": nonnegative,
-            "seed": seed,
-            "devices": devices,
-        }.items()
-        if value is not None
-    }
+    given = {k: v for k, v in {**settings, "devices": devices}.items() if v is not None}
     if method == "auto":
-        method_specific = sorted(
-            name
-            for name, value in {
-                "filter": filter,
-                "iterations": iterations,
-                "tv_weight": tv_weight,
-                "nonnegative": nonnegative,
-                "warm_start": warm_start,
-                "seed": seed,
-                "config": config,
-            }.items()
-            if value is not None
-        )
-        if method_specific:
+        options = {**settings, "config": config, "warm_start": warm_start}
+        options = {name: value for name, value in options.items() if value is not None}
+        if options:
             chosen_method, _ = _select_automatic_method(scan)
+            taking = _methods_taking(options)
+            suggestion = f"pass an explicit method that takes them: {', '.join(taking)}"
             raise ValueError(
                 f"method='auto' would select {chosen_method!r} for this scan and does not take "
-                f"method-specific options ({', '.join(method_specific)}); "
-                f"pass an explicit method such as method={chosen_method!r}"
+                f"method-specific options ({', '.join(sorted(options))}); "
+                + (suggestion if taking else "no one method takes all of them")
             )
         options = {"grid": grid, "out": out, "devices": devices}
         return _automatic_reconstruct(scan, {k: v for k, v in options.items() if v is not None})
@@ -618,6 +597,20 @@ def reconstruct(
         LOG.info("The %.1f GiB volume is held in a temporary file in %s, as more than half of "
                  "host memory", volume.nbytes / 2**30, directory)  # fmt: skip
     return Reconstruction(volume, scan.geometry, method, info, scan)
+
+
+def _methods_taking(options: dict[str, Any]) -> list[str]:
+    """The explicit methods whose settings take every one of ``options``."""
+    from tomojax.recon.api import method_config
+
+    taking = []
+    for name in get_args(Method.__value__)[1:]:  # all but "auto"
+        try:
+            _ = method_config(name, **options)
+        except ValueError:
+            continue
+        taking.append(name)
+    return taking
 
 
 def _select_automatic_method(scan: Scan) -> tuple[Method, list[str]]:

@@ -339,6 +339,12 @@ def test_auto_reconstruct_allows_devices_and_rejects_warm_start_false(cylinder_s
     assert recon.volume.shape == cylinder_scan.grid.shape
     with pytest.raises(ValueError, match="would select 'fbp'.*warm_start"):
         tj.reconstruct(cylinder_scan, warm_start=False)
+    with pytest.raises(ValueError, match="takes them: cgls, fista, spdhg, sirt, mlem$"):
+        tj.reconstruct(cylinder_scan, iterations=5)
+    with pytest.raises(ValueError, match="takes them: fbp$"):
+        tj.reconstruct(cylinder_scan, filter="hann")
+    with pytest.raises(ValueError, match="no one method takes all of them$"):
+        tj.reconstruct(cylinder_scan, filter="hann", iterations=5)
 
 
 def test_reconstruction_preserves_region_evidence_and_rejects_mismatched_scan(cylinder_scan):
