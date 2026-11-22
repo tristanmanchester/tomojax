@@ -513,6 +513,9 @@ def test_the_commands_api_counterparts_simulate_inspect_and_export(tmp_path: Pat
     tj.save(tmp_path / "truth.nxs", sim)
     with pytest.raises(ValueError, match="simulation phantom"):
         tj.load_reconstruction(tmp_path / "truth.nxs")
+    # What is made from the simulated scan is not a phantom.
+    tj.save(tmp_path / "recon.nxs", tj.reconstruct(tj.load(tmp_path / "truth.nxs"), "fbp"))
+    assert tj.load_reconstruction(tmp_path / "recon.nxs").method == "fbp"
     report = tj.inspect(tmp_path / "truth.nxs")
     assert report["valid"] and report["issues"] == [] and report["angles"]["count"] == 6
     assert report["volume"]["found"]

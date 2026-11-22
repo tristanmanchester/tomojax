@@ -276,6 +276,8 @@ def save(
         raise TypeError(
             f"save takes a Scan, Reconstruction, Alignment or Simulation, not {type(item)}"
         )
+    if not isinstance(item, Simulation):  # a scan loaded from a simulation carries its tag
+        _ = record.geometry_metadata.pop("volume_role", None)
     save_dataset(path, record)
 
 
