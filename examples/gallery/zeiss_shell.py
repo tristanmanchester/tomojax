@@ -7,9 +7,7 @@ and per-view image shifts the file records; no alignment is run. It is binned
 twice and reconstructed by FDK on 512³ voxels of 30 micrometres. The shell sat
 tilted on its mount, so the volume is turned to stand its coiling axis upright
 before it is drawn. The surface views are first-hit renderings of the shell,
-the largest connected piece of dense material, lit from the upper left; every
-view is a rotation of the volume, never a reflection, so the shell coils on the
-page as it does in the hand: to the right, as almost all snails do.
+the largest connected piece of dense material, lit from the upper left.
 """
 
 from __future__ import annotations
