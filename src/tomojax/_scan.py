@@ -838,7 +838,7 @@ def frame_output_grid(
     elif binning > 1:
         g = geometry.grid
         grid = g.resampled(
-            (max(1, g.nz // binning), max(1, g.ny // binning), max(1, g.nx // binning))
+            shape=(max(1, g.nz // binning), max(1, g.ny // binning), max(1, g.nx // binning))
         )
     else:
         return geometry

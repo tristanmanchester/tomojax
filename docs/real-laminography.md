@@ -79,7 +79,7 @@ Laminography leaves a cone of frequencies around the rotation axis unmeasured. F
 
 ```bash
 tomojax reconstruct corrected-lamino.nxs -o recon.nxs \
-  --method fista --iterations 100 --nonnegative --region off \
+  --method fista --iterations 100 --nonnegative \
   --manifest recon-manifest.json
 tomojax inspect recon.nxs --preview-dir previews
 ```

@@ -207,7 +207,7 @@ def _validate_args(
 def main(argv: Sequence[str] | None = None) -> None:
     """Run ``tomojax simulate``: :func:`tomojax.simulate`, saved with its scan."""
     import tomojax as tj
-    from tomojax._simulate import default_detector
+    from tomojax._simulate import build_sim_config, simulate_config
 
     parser = _build_parser()
     args, metadata = parse_args_with_config(parser, argv)
@@ -217,65 +217,33 @@ def main(argv: Sequence[str] | None = None) -> None:
     _validate_args(parser, args, settings)
     shape = cast("list[int] | None", args.grid)
     pixels = cast("list[int] | None", args.detector)
-    size = cast("int", args.size)
-    geometry = cast("GeometryName", args.geometry)
-    n_views = cast("int | None", args.n_views)
-    tilt = cast("float | None", args.tilt)
-    source_to_axis = cast("float | None", args.source_to_axis)
-    source_to_detector = cast("float | None", args.source_to_detector)
     grid = None if shape is None else tj.Grid(shape[0], shape[1], shape[2], 1, 1, 1)
     detector = None if pixels is None else tj.Detector(pixels[0], pixels[1], 1, 1)
-    config: SimConfig | None = None
-    if settings:
-        artefacts = replace(
-            SimulationArtefacts(),
-            **{name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings},
-        )
-        base_grid = tj.Grid(size, size, size, 1, 1, 1) if grid is None else grid
-        resolved_tilt = (30.0 if geometry == "lamino" else 0.0) if tilt is None else tilt
-        base_det = (
-            default_detector(
-                base_grid,
-                geometry,
-                source_to_axis=source_to_axis,
-                source_to_detector=source_to_detector,
-                tilt=resolved_tilt,
-            )
-            if detector is None
-            else detector
-        )
-        config = replace(
-            SimConfig(
-                nx=base_grid.nx,
-                ny=base_grid.ny,
-                nz=base_grid.nz,
-                nu=base_det.nu,
-                nv=base_det.nv,
-                n_views=2 * size if n_views is None else n_views,
-                artefacts=artefacts,
-            ),
-            **{name: settings[name] for name in _PHANTOM_SETTINGS if name in settings},
-        )
+    artefact_keys = {name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings}
+    artefacts = replace(SimulationArtefacts(), **artefact_keys) if artefact_keys else None
+    phantom_keys = {name: settings[name] for name in _PHANTOM_SETTINGS if name in settings}
     setup_logging()
     log_jax_env()
     with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
-        result = tj.simulate(
+        resolved_grid, resolved_detector, cfg = build_sim_config(
             cast("PhantomName", args.phantom),
-            size=None if grid is not None else size,
-            n_views=2 * size if n_views is None else n_views,
-            geometry=geometry,
+            size=cast("int", args.size),
+            n_views=cast("int | None", args.n_views),
+            geometry=cast("GeometryName", args.geometry),
             rotation=cast("float | None", args.rotation),
-            tilt=tilt,
-            source_to_axis=source_to_axis,
-            source_to_detector=source_to_detector,
+            tilt=cast("float | None", args.tilt),
+            source_to_axis=cast("float | None", args.source_to_axis),
+            source_to_detector=cast("float | None", args.source_to_detector),
             poisson_scale=cast("float", args.poisson_scale),
+            artefacts=artefacts,
             grid=grid,
             detector=detector,
             seed=cast("int", args.seed),
-            config=config,
+            phantom_settings=phantom_keys or None,
         )
+        result = simulate_config(cfg, grid=resolved_grid, detector=resolved_detector)
     tj.save(out, result)
-    scan, phantom = result.scan, result.phantom
+    scan, phantom = result
     print(
         f"wrote {out}: {args.geometry} scan of a {'x'.join(map(str, phantom.shape[::-1]))} "
         f"{args.phantom} phantom, {len(scan.angles)} views on a "

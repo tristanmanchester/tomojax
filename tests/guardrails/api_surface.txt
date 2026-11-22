@@ -84,7 +84,7 @@ class tomojax.Grid(
         vol_center: 'Vec3 | None' = None,
     ) -> None
     .from_dict(cls, data: 'Mapping[str, Any]') -> 'Grid'
-    .resampled(self, shape: 'tuple[int, int, int]') -> 'Grid'
+    .resampled(self, *, shape: 'tuple[int, int, int]') -> 'Grid'
     .shape
     .to_dict(self) -> 'GridDict'
 class tomojax.LaminographyGeometry(
@@ -151,9 +151,7 @@ class tomojax.Scan(
     .selected(self, views: 'slice | Sequence[int] | np.ndarray') -> 'Scan'
     .to_astra(self) -> 'tuple[np.ndarray, dict[str, Any], dict[str, Any]]'
     .with_poses(self, poses: 'np.ndarray | None') -> 'Scan'
-class tomojax.Simulation(scan: 'Scan', phantom: 'np.ndarray', info: 'Mapping[str, object]') -> None
-    .geometry
-    .grid
+class tomojax.Simulation(scan: ForwardRef('Scan'), phantom: ForwardRef('np.ndarray'))
 tomojax.__version__: str
 def tomojax.align(
         scan: 'Scan',
@@ -180,7 +178,7 @@ def tomojax.backproject(
 def tomojax.estimate_region(scan: 'Scan') -> 'RegionEstimate'
 def tomojax.export(
         path: 'str | PathLike[str]',
-        reconstruction: 'Reconstruction | Simulation',
+        reconstruction: 'Reconstruction | Alignment | Simulation',
         *,
         dtype: "Literal['float32', 'uint16']" = 'float32',
         range: 'tuple[float, float] | None' = None,
@@ -263,20 +261,20 @@ def tomojax.save(
         include_scan: 'bool' = False,
     ) -> 'None'
 def tomojax.simulate(
-        phantom: 'Phantom | None' = None,
+        phantom: 'Phantom' = 'shepp',
         *,
-        size: 'int | None' = None,
+        size: 'int' = 64,
         n_views: 'int | None' = None,
-        geometry: 'GeometryName | None' = None,
+        geometry: 'GeometryName' = 'parallel',
         rotation: 'float | None' = None,
         tilt: 'float | None' = None,
         source_to_axis: 'float | None' = None,
         source_to_detector: 'float | None' = None,
-        poisson_scale: 'float | None' = None,
+        poisson_scale: 'float' = 0.0,
+        artefacts: 'SimulationArtefacts | None' = None,
         grid: 'Grid | None' = None,
         detector: 'Detector | None' = None,
-        seed: 'int | None' = None,
-        config: 'SimConfig | None' = None,
+        seed: 'int' = 0,
     ) -> 'Simulation'
 
 # tomojax.geometry
@@ -343,7 +341,7 @@ class tomojax.geometry.Grid(
         vol_center: 'Vec3 | None' = None,
     ) -> None
     .from_dict(cls, data: 'Mapping[str, Any]') -> 'Grid'
-    .resampled(self, shape: 'tuple[int, int, int]') -> 'Grid'
+    .resampled(self, *, shape: 'tuple[int, int, int]') -> 'Grid'
     .shape
     .to_dict(self) -> 'GridDict'
 class tomojax.geometry.LaminographyGeometry(

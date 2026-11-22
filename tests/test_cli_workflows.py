@@ -220,7 +220,8 @@ def _fake_reconstruct(
         if error is not None:
             raise error
         calls.update(method=method, grid=grid, config=config, **keywords)
-        volume = np.zeros((grid.nz, grid.ny, grid.nx), np.float32)
+        target_grid = scan.grid if grid is None else grid
+        volume = np.zeros(target_grid.shape, np.float32)
         return tomojax.Reconstruction(volume, scan.geometry, method, {"config": config}, scan)
 
     monkeypatch.setattr(tomojax, "reconstruct", fake)
@@ -233,7 +234,7 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
     write_projection_dataset(scan)
     calls = _fake_reconstruct(monkeypatch)
 
-    args = ["reconstruct", str(scan), "-o", str(recon), "--method", "cgls", "--region", "off"]
+    args = ["reconstruct", str(scan), "-o", str(recon), "--method", "cgls"]
     assert main([*args, "--grid", "4", "4", "2", "--iterations", "7", "--warm-start"]) == 0
 
     assert calls.pop("method") == "cgls"
@@ -292,8 +293,6 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
         str(recon),
         "--method",
         "fbp",
-        "--region",
-        "off",
         "--grid",
         "4",
         "4",
@@ -319,7 +318,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     assert (settings["filter"], settings["scale"]) == ("ramp", 0.5)
     assert resolved["reconstruction_grid"]["nx"] == 4
     assert resolved["region"] == {
-        "requested": "off",
+        "requested": None,
         "grid_changed": False,
         "cylindrical_output_mask": False,
     }
@@ -333,8 +332,6 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
     manifest = tmp_path / "recon-manifest.json"
     write_projection_dataset(scan)
     args = [
-        "--region",
-        "off",
         "--grid",
         "4",
         "4",
@@ -357,7 +354,7 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
     import tomojax as tj
 
     source = tj.load(scan)
-    grid = source.grid.resampled((2, 4, 4))
+    grid = source.grid.resampled(shape=(2, 4, 4))
     expected = tj.reconstruct(source, "cgls", grid=grid, iterations=6, warm_start=warm_start)
     np.testing.assert_allclose(loaded.volume, np.asarray(expected.volume), rtol=1e-5, atol=1e-6)
 
@@ -372,7 +369,16 @@ def test_recon_cli_auto_roi_does_not_depend_on_physical_units(tmp_path: Path, sc
     scan_path, recon_path = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
     tj.save(scan_path, tj.Scan(np.zeros((2, 3, 9), np.float32), geometry))
 
-    args = ["reconstruct", str(scan_path), "-o", str(recon_path), "--method", "cgls"]
+    args = [
+        "reconstruct",
+        str(scan_path),
+        "-o",
+        str(recon_path),
+        "--method",
+        "cgls",
+        "--region",
+        "auto",
+    ]
     assert main([*args, "--iterations", "0"]) == 0
 
     actual = tj.load_reconstruction(recon_path)
@@ -381,11 +387,10 @@ def test_recon_cli_auto_roi_does_not_depend_on_physical_units(tmp_path: Path, sc
     np.testing.assert_array_equal(actual.volume, np.zeros((3, 9, 9), np.float32))
 
 
-def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path) -> None:
+def test_recon_cli_cylinder_masks_fista_after_solving(tmp_path: Path) -> None:
     import numpy as np
 
     import tomojax as tj
-    from tomojax.recon import FISTAConfig
 
     scan_path, recon_path = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
     write_projection_dataset(scan_path)
@@ -393,19 +398,17 @@ def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path
     assert main([*command, "--region", "cyl", "--iterations", "4"]) == 0
 
     scan = tj.load(scan_path)
-    # The CLI's grid for --region cyl, and the cylinder as FISTA's support.
     grid = tj.load_reconstruction(recon_path).grid
     # check-public-imports: allow-private
     from tomojax._field_of_view import cylinder_support, region_grid
 
-    # The support constrains FISTA's updates, and the saved volume is zero outside.
+    # --region cyl solves unconstrained on the cylinder grid and masks outside afterwards.
     _, cylinder = region_grid(scan, "cyl")
     assert cylinder is not None
-    support = cylinder_support(grid, cylinder)
-    config = FISTAConfig(support=support)
-    expected = tj.reconstruct(scan, "fista", grid=grid, config=config, iterations=4).volume
+    mask = cylinder_support(grid, cylinder)
+    expected = tj.reconstruct(scan, "fista", grid=grid, iterations=4).volume
     actual = tj.load_reconstruction(recon_path).volume
-    np.testing.assert_allclose(actual, np.asarray(expected) * support, rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(actual, np.where(mask, expected, 0), rtol=1e-5, atol=1e-6)
     # Python region="cyl" matches CLI --region cyl identically.
     py_cyl = tj.reconstruct(scan, "fista", region="cyl", iterations=4).volume
     np.testing.assert_allclose(actual, np.asarray(py_cyl), rtol=1e-5, atol=1e-6)
@@ -423,7 +426,7 @@ def test_recon_cli_config_settings_are_fields_of_the_methods_configuration(
     )
 
     args = ["reconstruct", str(scan), "-o", str(tmp_path / "out.nxs"), "--method", "fista"]
-    assert main([*args, "--config", str(config), "--region", "off"]) == 0
+    assert main([*args, "--config", str(config)]) == 0
 
     cfg = calls["config"]
     assert (cfg.regularizer, cfg.huber_delta, cfg.iterations) == ("huber_tv", 0.05, 50)
@@ -602,7 +605,7 @@ def test_inspect_and_preview_share_raw_acquisition_discovery(tmp_path, capsys, l
     )
 
 
-@pytest.mark.parametrize("roi", ["auto", "off", "cyl"])
+@pytest.mark.parametrize("roi", [None, "auto", "cyl"])
 def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
     import tomojax as tj
     from tomojax.geometry import grid_volume_origin
@@ -615,13 +618,13 @@ def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
     ).cropped(slice(6, 8), slice(None))
     src, out = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
     tj.save(src, scan)
+    region_flags = [] if roi is None else ["--region", roi]
     assert (
-        main(["reconstruct", str(src), "-o", str(out), "--grid", "6", "6", "2", "--region", roi])
-        == 0
+        main(["reconstruct", str(src), "-o", str(out), "--grid", "6", "6", "2", *region_flags]) == 0
     )
     result = tj.load_reconstruction(out)
-    assert (result.grid.vx, result.grid.vy, result.grid.vz) == (2, 2, 5 if roi == "off" else 1)
-    assert grid_volume_origin(result.grid)[2] == (-2.5 if roi == "off" else 1.5)
+    assert (result.grid.vx, result.grid.vy, result.grid.vz) == (2, 2, 5 if roi is None else 1)
+    assert grid_volume_origin(result.grid)[2] == (-2.5 if roi is None else 1.5)
     if roi == "cyl":
         assert not np.asarray(result.volume)[:, 0, 0].any()
 
@@ -819,18 +822,30 @@ def test_reconstruct_help_defaults_config_keys_and_boolean_overrides(
                 str(cfg),
                 "--no-nonnegative",
                 "--no-warm-start",
-                "--region",
-                "off",
             ]
         )
         == 0
     )
     assert calls["nonnegative"] is False and calls["warm_start"] is False
 
-    with pytest.raises(SystemExit) as auto_exc:
-        main(["reconstruct", str(scan), "-o", str(tmp_path / "a.nxs"), "--iterations", "5"])
-    assert auto_exc.value.code == 2
-    assert "explicit --method" in capsys.readouterr().err
+    for bad_auto in (["--iterations", "5"], ["--no-warm-start"]):
+        with pytest.raises(SystemExit) as auto_exc:
+            main(["reconstruct", str(scan), "-o", str(tmp_path / "a.nxs"), *bad_auto])
+        assert auto_exc.value.code == 2
+        assert "explicit --method" in capsys.readouterr().err
+
+
+def test_simulate_cli_grid_derives_view_count_like_python(tmp_path: Path) -> None:
+    import tomojax as tj
+
+    out_path = tmp_path / "asym.nxs"
+    assert (
+        main(["simulate", "-o", str(out_path), "--grid", "6", "5", "4", "--phantom", "sphere"]) == 0
+    )
+    loaded = tj.load(out_path)
+    py_scan, _ = tj.simulate("sphere", grid=tj.Grid(6, 5, 4, 1, 1, 1))
+    assert len(loaded.angles) == len(py_scan.angles) == 12
+    assert loaded.grid.shape == (4, 5, 6)
 
 
 def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path, capsys) -> None:
@@ -852,12 +867,16 @@ def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path
     assert main(["align", str(scan), "--dry-run"]) == 0
     plan = json.loads(capsys.readouterr().out)
     assert plan["output_path"] is None and plan["method"] == "joint"
+    assert plan["bounded_working_grid"] is True
+
+    assert main(["align", str(scan), "--dry-run", "--region", "auto"]) == 0
+    assert json.loads(capsys.readouterr().out)["bounded_working_grid"] is True
 
     for extra in (
         ["--fit", "translations"],
         ["--fit", "center", "--grid", "4", "4", "2"],
         ["--fit", "center", "--iterations", "2"],
-        ["--fit", "center", "--region", "off"],
+        ["--fit", "center", "--region", "auto"],
     ):
         with pytest.raises(SystemExit) as exc:
             main(["align", str(scan), "--dry-run", "--method", "opposite-views", *extra])

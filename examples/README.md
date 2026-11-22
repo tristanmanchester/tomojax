@@ -92,7 +92,7 @@ tj.save("aligned-phase.nxs", aligned.scan)
 ```
 
 ```bash
-tomojax reconstruct aligned-phase.nxs -o phase-recon.nxs --method fourier --region off
+tomojax reconstruct aligned-phase.nxs -o phase-recon.nxs --method fourier
 tomojax inspect phase-recon.nxs --preview-dir phase-previews
 ```
 

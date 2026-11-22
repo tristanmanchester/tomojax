@@ -103,6 +103,12 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     record = load_dataset(os.fspath(path))
     if record.volume is None:
         raise ValueError(f"{path} holds no reconstructed volume")
+    meta = record.geometry_metadata
+    if meta.get("volume_role") == "phantom":
+        raise ValueError(
+            f"{path} holds a simulation phantom, not a reconstruction; "
+            "load the scan with tomojax.load or read the phantom with tomojax.io.load_dataset"
+        )
     scan = None if record.projections is None else load(path)
     if scan is None:
         warnings.warn(
@@ -111,7 +117,6 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
             stacklevel=2,
         )
     geometry = geometry_of(record, apply_poses=True) if scan is None else scan.geometry
-    meta = record.geometry_metadata
     info = meta.get("reconstruction_info", meta.get("alignment_info"))
     aligned = "reconstruction_method" not in meta and "alignment_info" in meta
     if aligned:
@@ -232,10 +237,9 @@ def save(
     elif isinstance(item, Simulation):
         record = record_of(item.scan)
         record.volume = item.phantom
-        record.geometry_metadata["reconstruction_method"] = "simulate"
-        record.geometry_metadata["reconstruction_info"] = json.loads(
-            json.dumps({**item.info, "source": source_of(item.scan)}, default=_json_value)
-        )
+        record.geometry_metadata["volume_role"] = "phantom"
+        record.geometry_metadata.pop("reconstruction_method", None)
+        record.geometry_metadata.pop("reconstruction_info", None)
     elif isinstance(item, Reconstruction):
         if item.scan is None and include_scan:
             raise ValueError(
@@ -275,70 +279,37 @@ def save(
     save_dataset(path, record)
 
 
-def intersect_cylinder_support(
-    method: Method,
-    config: MethodConfig | None,
-    grid: Grid,
-    cylinder: Any,
-) -> MethodConfig | None:
-    """Constrain support-capable solvers to ``cylinder``, intersecting any caller support."""
-    from tomojax._field_of_view import cylinder_support
-    from tomojax.recon.api import method_config
-
-    if method not in {"fista", "spdhg", "sirt", "mlem"}:
-        return config
-    base = method_config(method, config=config)
-    mask = cylinder_support(grid, cylinder)
-    existing = getattr(base, "support", None)
-    if existing is not None:
-        mask = np.broadcast_to(np.asarray(existing, bool), grid.shape) & mask
-    return replace(cast("Any", base), support=mask)
-
-
-def in_region(
+def _reconstruct_in_region(
     scan: Scan,
     method: Method,
     *,
     grid: Grid | None,
-    region: Region | None,
-    shape: tuple[int, int, int] | None = None,
-    out: np.ndarray | None = None,
-    config: MethodConfig | None = None,
-    devices: Device | Sequence[Device] | None = None,
+    region: Region,
+    out: np.ndarray | None,
+    config: MethodConfig | None,
+    devices: Device | Sequence[Device] | None,
     keywords: dict[str, Any],
 ) -> Reconstruction:
-    """Reconstruct on the grid ``region`` chooses, applying shared cylinder semantics."""
+    """Reconstruct on the grid ``region`` chooses, masking outside the cylinder afterwards."""
     from tomojax._field_of_view import region_grid, zero_outside_cylinder
     from tomojax._region import RegionEstimate
 
-    if grid is not None and region is not None:
+    if grid is not None:
         raise ValueError("pass grid= or region=, not both")
-    chosen, cylinder = region_grid(scan, region, shape=shape)
-    effective_config = (
-        intersect_cylinder_support(method, config, chosen, cylinder)
-        if cylinder is not None
-        else config
-    )
+    chosen, cylinder = region_grid(scan, region)
     result = reconstruct(
-        scan,
-        method,
-        grid=chosen,
-        out=out,
-        config=effective_config,
-        devices=devices,
-        **keywords,
+        scan, method, grid=chosen, out=out, config=config, devices=devices, **keywords
     )
+    extra: dict[str, object] = {"region": region if isinstance(region, str) else "estimate"}
+    if isinstance(region, RegionEstimate):
+        extra["region_estimate"] = dict(region.info)
     if cylinder is not None:
         volume = zero_outside_cylinder(
             result.volume, result.grid, cylinder, in_place=out is not None
         )
+        extra["cylindrical_output_mask"] = True
         result = replace(result, volume=volume)
-    extra: dict[str, object] = {}
-    if region is not None:
-        extra["region"] = region if isinstance(region, str) else "estimate"
-        if isinstance(region, RegionEstimate):
-            extra["region_estimate"] = dict(region.info)
-    return replace(result, info={**result.info, **extra}) if extra else result
+    return replace(result, info={**result.info, **extra})
 
 
 def _json_value(value: object) -> object:
@@ -571,9 +542,15 @@ def reconstruct(
     from tomojax.recon.api import method_config, reconstruct_arrays
 
     if region is not None:
-        keywords = {"filter": filter, "iterations": iterations, "tv_weight": tv_weight}
-        keywords |= {"nonnegative": nonnegative, "warm_start": warm_start, "seed": seed}
-        return in_region(
+        keywords = {
+            "filter": filter,
+            "iterations": iterations,
+            "tv_weight": tv_weight,
+            "nonnegative": nonnegative,
+            "warm_start": warm_start,
+            "seed": seed,
+        }
+        return _reconstruct_in_region(
             scan,
             method,
             grid=grid,
@@ -599,19 +576,24 @@ def reconstruct(
         method_specific = sorted(
             name
             for name, value in {
-                **given,
+                "filter": filter,
+                "iterations": iterations,
+                "tv_weight": tv_weight,
+                "nonnegative": nonnegative,
+                "warm_start": warm_start,
+                "seed": seed,
                 "config": config,
-                "warm_start": True if warm_start else None,
             }.items()
             if value is not None
         )
         if method_specific:
+            chosen_method, _ = _select_automatic_method(scan)
             raise ValueError(
-                f"method='auto' does not take method-specific options "
-                f"({', '.join(method_specific)}); pass an explicit method such as "
-                "method='cgls', method='fista' or method='fbp'"
+                f"method='auto' would select {chosen_method!r} for this scan and does not take "
+                f"method-specific options ({', '.join(method_specific)}); "
+                f"pass an explicit method such as method={chosen_method!r}"
             )
-        options = {"grid": grid, "out": out}
+        options = {"grid": grid, "out": out, "devices": devices}
         return _automatic_reconstruct(scan, {k: v for k, v in options.items() if v is not None})
     cfg = method_config(method, config=config, warm_start=warm_start, **given)
     if grid is not None:
@@ -638,8 +620,8 @@ def reconstruct(
     return Reconstruction(volume, scan.geometry, method, info, scan)
 
 
-def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstruction:
-    """Select an inverse without changing an explicit scan's acquisition geometry."""
+def _select_automatic_method(scan: Scan) -> tuple[Method, list[str]]:
+    """Choose the default reconstruction method and any advisory reasons for ``scan``."""
     from tomojax.geometry import (
         ConeSegments,
         LaminographyGeometry,
@@ -661,7 +643,7 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
             "reconstruction requires declared acquisition geometry: this file records no "
             "rotation axis; pass geometry=... to tomojax.load"
         )
-    reasons = []
+    reasons: list[str] = []
     method: Method = "fbp"
     if isinstance(base, ConeSegments):
         # Per-view detector offsets (a Zeiss scan's shifts) make segments of one orbit, which
@@ -694,6 +676,12 @@ def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstructio
             "Posed or custom parallel geometry uses FBP; "
             "automatic iterative validation is unavailable."
         )
+    return method, reasons
+
+
+def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstruction:
+    """Select an inverse without changing an explicit scan's acquisition geometry."""
+    method, reasons = _select_automatic_method(scan)
     center_status = _automatic_axial_setup(scan, method=method, reasons=reasons)
     result = reconstruct(scan, method, **options)
     automatic = {
@@ -992,12 +980,13 @@ def align(
     motion : {"independent", "smooth"} or None, optional
         Whether each view moves independently of its neighbours (the default) or the
         motion is smooth drift with occasional slips, for a steady stage (see
-        :class:`AlignConfig`); None keeps ``config``'s value.
+        :class:`tomojax.alignment.AlignConfig`); None keeps ``config``'s value.
     iterations, image_iterations, tolerance, interpolation, resolution : optional
         The everyday settings, replacing the fields of the same name in ``config``
-        (see :class:`AlignConfig`); None keeps its value.
-    config : AlignConfig or None, optional
-        Every setting of the joint fit; None uses the defaults.
+        (see :class:`tomojax.alignment.AlignConfig`); None keeps its value.
+    config : tomojax.alignment.AlignConfig or None, optional
+        Every setting of the joint fit (imported from :mod:`tomojax.alignment`);
+        None uses the defaults.
 
     Returns
     -------
@@ -1023,8 +1012,10 @@ def align(
     Examples
     --------
     >>> import tomojax as tj
+    >>> from tomojax.alignment import AlignConfig
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     >>> result = tj.align(scan, fit=("translations", "roll"))  # doctest: +SKIP
+    >>> result = tj.align(scan, config=AlignConfig(levels=(1,)))  # doctest: +SKIP
     >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP
     """
     from tomojax._region import RegionEstimate

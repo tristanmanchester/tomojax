@@ -75,7 +75,7 @@ Build a scan from arrays with `tj.Scan(projections, geometry)` and simulate proj
 | Laminography CGLS to fixed error, 256³ synthetic (smooth / sharp) | 3.29 / 0.435 s | ASTRA 16.5 / 0.452 s |
 | TV reconstruction, 128³ synthetic, 3% noise | 0.32 s, error 0.075 | TIGRE 9.1 s, best error 0.101 |
 
-Warm times on one 8 GB laptop GPU (measured 2026-11-21), with every tool given the same corrected data, geometry, and output grid. ASTRA is faster per CGLS iteration on the walnut, though TomoJAX reaches lower error at 10 iterations. See the [headline comparison](https://tomojax.dev/measurements/#headline-comparison) for full tables, commands, and where each library wins.
+Warm times on one 8 GB laptop GPU (measured 2026-11-21), with every tool given the same corrected data, geometry, and output grid. ASTRA is faster per CGLS iteration on the walnut, though TomoJAX reaches lower error at 10 iterations. See the [headline comparison](https://tomojax.dev/measurements/#headline-comparison) for full tables and where each library wins.
 
 Volumes larger than GPU memory stream automatically in slabs: SIRT of a whole Diamond I12 scan (1801 views of 2160 × 2560 pixels into a 56.6 GB volume) ran on an 8 GB laptop GPU using 1.4 GB of VRAM at 1.13× the per-voxel time of an in-core scan ([large scans](https://tomojax.dev/large-scans/)).
 

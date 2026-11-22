@@ -67,11 +67,15 @@ There are no aliases. Each old name is gone, and files saved before this release
 | `Scan.binned(factor)` | `Scan.binned(binning)` |
 | `stream_projections=` (FISTA, SPDHG and CGLS configs), SIRT's `info["stream_projections"]` | `stream=`, `info["stream"]` |
 | `CGLSConfig(joseph_interpolation=)` | `interpolation=` |
-| `FistaConfig(recon_rel_tol=, recon_patience=)` | `tolerance=`, `patience=` |
+| `FistaConfig`, `fista_tv`, `spdhg_tv`, `fourier_reconstruct` | `FISTAConfig`, `fista`, `spdhg`, `fourier` (`SPDHGConfig.views_per_block`, `lower_bound`) |
+| `FISTAConfig(recon_rel_tol=, recon_patience=)` | `tolerance=`, `patience=` |
+| `FBPHostConfig(filter=, scale=, backend=)` | `FBPHostConfig(fbp=FBPConfig(...))` |
+| `ConeGeometry(axis_unit_lab=)`, `RotationAxisGeometry(axis_unit_lab=)` | `axis_unit=`, and `.rotation_axis()` across all geometries |
+| `Grid.resampled((nx, ny, nz))` | `Grid.resampled(shape=(nz, ny, nx))` (matching `Grid.shape`) |
 | `geometry.pose_for_view(i)` | `geometry.pose_matrix(i)` |
 | `ConeGeometry.poses()` | `ConeGeometry.pose_matrices()` |
 | `Alignment.volume` (the fit's working image) | `Alignment.image` |
-| `tj.load(poses=)`, `--poses` / `--no-poses` | `apply_poses=`, `--apply-poses` / `--no-apply-poses` |
+| `tj.load(poses=)`, `--poses` / `--no-poses` | `apply_poses=`, `--apply-poses` / `--no-apply-poses` (on `tj.load_frames` too) |
 | `CGLSConfig(rtol=, atol=)` | `tolerance=`, `absolute_tolerance=` |
 | `info["calibration"][name]` (the value) and `info["corrections"][name]` (the change) | `info["calibration"][name] = {"value": ..., "change": ...}` |
 | `info["report"]["corrections"] = {"global": ..., "per_view": ...}` | `info["report"]["calibration"]`, `info["report"]["poses"]` |
@@ -80,19 +84,19 @@ There are no aliases. Each old name is gone, and files saved before this release
 | `Reconstruction(volume, scan, method, info)` | `Reconstruction(volume, geometry, method, info, scan=None)` |
 | `AlignConfig(innovation_scale=)` | `motion=` (`"independent"` by default, or `"smooth"`), and `slip_scale=` under `motion="smooth"` |
 | `tj.estimate_center(scan)` | `tj.align(scan, fit="center", method="opposite-views").scan` |
-| `--roi` (`recon`, `align`) | `--region`, and `region=` on `tj.reconstruct` and `tj.align` |
+| `--roi` (`recon`, `align`) | `--region`, and `region=` on `tj.reconstruct` and `tj.align` (defaulting to the scan's grid in both) |
 | `info["levels"][i]["budget"] = {outer, inner, init_iterations, lm_initial}` | `info["levels"][i]["iterations"]`, `["image_iterations"]`, `["initial_image_iterations"]` |
 | `info["report"]["levels"][i]["steps"]` (a count) | `info["report"]["levels"][i]["iterations"]` |
 | `Alignment(volume, grid, scan, poses, info)` | `Alignment(scan, info, image=None, grid=None)`, with `poses` a property |
 | `tomojax recon` | `tomojax reconstruct` |
-| `tomojax import` | `tomojax load`: `tj.load`, then `tj.save` |
-| `tomojax preprocess` | `tomojax correct` |
-| `preprocess --config` keys `binning` and `[detector]`; `import --config` keys `detector_center`, `tilt`, `tilt_about`, `detector_roll`, `detector_pitch`, `detector_yaw` | `--binning`, `--pixel-size`, `--detector-center`, `--tilt`, `--tilt-about`, `--detector-roll`, `--detector-pitch`, `--detector-yaw` |
+| `tomojax import`, `tomojax preprocess` | `tomojax correct` (single import, conversion, and correction command) |
+| `tomojax inspect --preview DIR` | `tomojax inspect --preview-dir DIR` |
+| `preprocess --config` keys `binning` and `[detector]`; `import --config` keys `detector_center`, `tilt`, `tilt_about`, `detector_roll`, `detector_pitch`, `detector_yaw` | `--binning`, `--pixel-size`, `--detector-center`, `--tilt`, `--tilt-about`, `--detector-roll`, `--detector-pitch`, `--detector-yaw` (and `tomojax correct --config`) |
 | `tomojax inspect --json` angle keys `min_deg`, `max_deg`, `coverage_deg` | `min`, `max`, `coverage` |
 | `Scan.poses`, `Scan.with_poses`, `Alignment.poses`: rotations (alpha, beta, phi) in radians | the same columns in degrees |
 | `info["lever_px_per_radian"]` (the alignment record) | `info["lever"]`, native pixels per degree |
 | `tomojax.datasets.SimConfig` `rotation_deg`, `max_rot_deg`; the phantoms' `max_rot_degrees` | `rotation`, `max_rotation`; and in `tomojax simulate --config` |
-| `result = tj.simulate(...)`, a `Reconstruction` (`result.scan`, `result.volume`) | `scan, phantom = tj.simulate(...)`; `tomojax simulate` saves both as before |
+| `result = tj.simulate(...)`, a `Reconstruction` (`result.scan`, `result.volume`) | `Simulation(scan, phantom)` (`NamedTuple`: unpacks as `scan, phantom = tj.simulate(...)` and saves with `tj.save`) |
 
 ### One projector model
 
@@ -118,20 +122,22 @@ Removed, with no replacement:
 
 ### The commands use the API's verbs, and each has its API function
 
-- **`tomojax load INPUT -o OUTPUT`** is `tj.load` then `tj.save`, for every input
-  `tj.load` reads. Its flags supply what the file lacks under `tj.load`'s names, the
-  geometry included: `--geometry lamino --tilt 30`, for example, so a raw file that
-  records no geometry can be used from the command line.
-- **`tomojax correct`** applies the optional corrections and `--views`, `--crop`
-  and `--binning`, with the same input flags. On raw frames every step runs. On a
-  saved scan of line integrals only the steps that act on them run, and a step on
-  transmission is refused with what to run instead.
+- **`tomojax correct INPUT -o OUTPUT`** imports, converts, or corrects any input
+  `tj.load` reads (raw frames or line integrals), with `--flats`, `--darks`,
+  `--angles`, `--pixel-size`, `--detector-center`, `--geometry`, `--tilt`,
+  `--views`, `--crop`, `--binning`, optional correction steps, and `--config`.
+  On raw frames every step runs; on a saved scan of line integrals only
+  line-integral steps run, and transmission steps are refused with what to run
+  instead.
 - **New functions:**
   - `tj.inspect(path)`: the report `tomojax inspect --json` prints, with `valid` and
     `issues`;
-  - `tj.export(path, reconstruction, ...)`: TIFF slices or one raw file;
-  - `tj.simulate(...)`: the phantom as a reconstruction's volume, with its simulated
-    scan as `scan`.
+  - `tj.load_alignment(path)`: reloads a saved `Alignment`, keeping `scan.grid` and
+    working `grid` distinct (and supporting image-free alignments);
+  - `tj.export(path, item, ...)`: TIFF slices or one raw file for a
+    `Reconstruction`, `Alignment`, or `Simulation`;
+  - `tj.simulate(...)`: returns `Simulation(scan, phantom)` (unpackable and directly
+    saveable with `tj.save`).
 - **Writes moved on whole:** the export's files, the manifest, the motion table and
   the preview PNGs are written beside their name and moved onto it whole, so a failure
   leaves no partial file.
@@ -140,16 +146,17 @@ Removed, with no replacement:
 
 ### `tj.align` takes its settings
 
-`tj.align(scan, fit=..., *, grid, region, method, iterations, image_iterations, tolerance,
-interpolation, resolution, config)`. The five settings most runs change are keywords;
-`tj.AlignConfig` holds every setting with its default, all numbers the fit used to fix in
+`tj.align(scan, fit=..., *, grid, region, method, motion, iterations, image_iterations, tolerance,
+interpolation, resolution, config)`. The everyday settings are keywords;
+`tomojax.alignment.AlignConfig` holds every setting with its default, all numbers the fit used to fix in
 code: levels, iteration counts, stopping rule, working resolution, the motion prior's scales,
 the robust loss and the refinement. A keyword replaces the config's field, and
 `info["config"]` records what a call used. `tomojax align` takes the same keywords as flags
 and the rest from `--config`. `method="opposite-views"` replaces `tj.estimate_center`. It fits
 `fit="center"` alone, from near-opposite views and without an image, so its `Alignment` has
-`image` None. `region=` is new on both `tj.align` and `tj.reconstruct`. The defaults give
-the same results as before.
+`image` None. `region=` is new on both `tj.align` and `tj.reconstruct`, defaulting to the
+scan's grid (`None`) in both Python and the CLI; `region="cyl"` masks outside the seen
+cylinder after solving without constraining the solver support.
 
 ### A saved reconstruction names its projections instead of holding them
 
@@ -162,7 +169,7 @@ of three views. `tj.save(path, recon, include_scan=True)` (or
 `tj.load_reconstruction` reattaches the scan when the file holds it. Otherwise it returns
 the reconstruction with `scan` None and warns that the scan is missing; it does not look
 for the projections. `tj.load` refuses such a file and names `tj.load_reconstruction`.
-`tomojax inspect --preview` shows the volume's central slices when a file has no
+`tomojax inspect --preview-dir` shows the volume's central slices when a file has no
 projections. A saved alignment is still its corrected scan with its poses.
 
 ### A scan records how it was cut down

@@ -95,7 +95,7 @@ grid = tj.Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]
 tj.save("preview.nxs", tj.reconstruct(scan, grid=grid))
 ```
 
-On the CLI, `--grid NX NY NZ` resamples the chosen field of view to those voxel counts while preserving physical extent (in Python, `scan.grid.resampled((NZ, NY, NX))`, matching `grid.shape`).
+On the CLI, `--grid NX NY NZ` resamples the chosen field of view to those voxel counts while preserving physical extent (in Python, `scan.grid.resampled(shape=(NZ, NY, NX))`, matching `grid.shape`).
 
 ### Lens distortion and Paganin phase retrieval
 
@@ -136,7 +136,7 @@ Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `
 
 ### Region and grid options
 
-With an explicit `--method`, `--region auto` (default) crops to the detector field of view, `--region off` keeps the recorded grid, and `--region cyl` also zeroes voxels outside the cylinder seen by every view. `--grid NX NY NZ` changes voxel counts while preserving the selected physical field of view.
+By default, reconstruction keeps the scan's recorded grid (matching `region=None` in Python). Pass `--region auto` (or `bbox`, `cube`, `cyl`) to crop to the detector field of view; `--region cyl` also zeroes voxels outside the cylinder seen by every view after solving. `--grid NX NY NZ` changes voxel counts while preserving the selected physical field of view.
 
 ### Fourier-slice inverse
 

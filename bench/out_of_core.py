@@ -81,7 +81,7 @@ def _cuo(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
     if args.scratch is None:
         start = time.perf_counter()
         scan = frames.corrected(binning=args.binning)
-        grid = scan.grid.resampled((scan.detector.nu,) * 3)
+        grid = scan.grid.resampled(shape=(scan.detector.nu,) * 3)
         record["correct_s"] = time.perf_counter() - start
         start = time.perf_counter()
         result = tj.reconstruct(scan, "sirt", grid=grid, config=config)

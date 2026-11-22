@@ -142,7 +142,7 @@ class Grid:
         """
         return (self.nz, self.ny, self.nx)
 
-    def resampled(self, shape: tuple[int, int, int]) -> Grid:
+    def resampled(self, *, shape: tuple[int, int, int]) -> Grid:
         """Return a grid with new voxel counts and the same physical extent.
 
         Voxel pitches change to preserve the outer cell edges and centre, not
@@ -169,7 +169,7 @@ class Grid:
 
         Examples
         --------
-        >>> Grid(100, 80, 60, 0.2, 0.3, 0.4).resampled((30, 40, 50)).vx
+        >>> Grid(100, 80, 60, 0.2, 0.3, 0.4).resampled(shape=(30, 40, 50)).vx
         0.4
         """
         nz, ny, nx = (operator.index(n) for n in shape)
@@ -275,10 +275,10 @@ def grid_volume_origin(grid: Grid) -> Vec3:
 class Detector:
     """Regular detector plane metadata.
 
-    ``center`` is the detector centre's ``(x, z)`` offset in the lab frame, in
-    the same physical units as ``du`` and ``dv``. For an untilted detector this
-    is also the in-plane ``(u, v)`` offset; for a rolled or tilted cone-beam
-    detector, rotations are applied about this displaced centre.
+    ``center`` is the detector centre's ``(u, v)`` offset (equivalently lab-frame
+    ``(x, z)`` before detector rotations), in the same physical units as ``du``
+    and ``dv``. For a rolled or tilted cone-beam detector, rotations are applied
+    about this displaced centre.
 
     Parameters
     ----------
@@ -287,7 +287,7 @@ class Detector:
     du, dv : float
         Pixel pitches along u and v, in the geometry's physical length unit.
     center : tuple of float, optional
-        Lab-frame (x, z) detector-centre offset in physical units; defaults to zero.
+        Detector-centre ``(u, v)`` offset in physical units; defaults to zero.
 
     Raises
     ------

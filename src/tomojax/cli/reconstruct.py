@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from tomojax import Reconstruction, Scan
+    from tomojax._workflow import Region
     from tomojax.recon.api import MethodConfig
 
 type _Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
@@ -152,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Resample the selected field of view to NX x NY x NZ voxels",
     )
-    _ = p.add_argument("--region", choices=REGION_CHOICES, default="auto", help=REGION_HELP)
+    _ = p.add_argument("--region", choices=REGION_CHOICES, default=None, help=REGION_HELP)
     _ = p.add_argument(
         "--apply-poses",
         action=argparse.BooleanOptionalAction,
@@ -222,7 +223,7 @@ class _Run:
     warm_start: bool | None
     seed: int | None
     grid: tuple[int, int, int] | None
-    region: str
+    region: Region | None
     apply_poses: bool
     include_scan: bool
     preview: str | None
@@ -243,7 +244,7 @@ class _Run:
             warm_start=cast("bool | None", args.warm_start),
             seed=cast("int | None", args.seed),
             grid=None if grid is None else (grid[0], grid[1], grid[2]),
-            region=cast("str", args.region),
+            region=cast("Region | None", args.region),
             apply_poses=cast("bool", args.apply_poses),
             include_scan=cast("bool", args.include_scan),
             preview=cast("str | None", args.preview),
@@ -264,16 +265,7 @@ class _Run:
         from tomojax.recon.api import method_config
 
         if self.method == "auto":
-            method_specific = sorted(
-                [
-                    *settings,
-                    *(
-                        name
-                        for name, value in self.keywords().items()
-                        if not (name == "warm_start" and value is False)
-                    ),
-                ]
-            )
+            method_specific = sorted([*settings, *self.keywords()])
             if method_specific:
                 raise ValueError(
                     f"method 'auto' does not take method-specific options "
@@ -352,26 +344,21 @@ def main() -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
     scan = tj.load(run.data, apply_poses=run.apply_poses)
-    keywords = {
-        "filter": run.filter,
-        "iterations": run.iterations,
-        "tv_weight": run.tv_weight,
-        "nonnegative": run.nonnegative,
-        "warm_start": run.warm_start,
-        "seed": run.seed,
-    }
-    grid, cylinder = (None, None)
-    if run.method != "auto" or run.grid is not None or run.region != "auto":
-        shape = None if run.grid is None else (run.grid[2], run.grid[1], run.grid[0])
-        region = None if run.region == "off" else run.region
-        grid, cylinder = region_grid(scan, region, shape=shape)
+    keywords = {name: cast("Any", getattr(run, name)) for name in _KEYWORDS}
+    if run.grid is not None:
+        shape = (run.grid[2], run.grid[1], run.grid[0])
+        grid, cylinder = region_grid(scan, run.region, shape=shape)
+        result = tj.reconstruct(scan, run.method, grid=grid, config=config, **keywords)
         if cylinder is not None:
-            from tomojax._workflow import intersect_cylinder_support
-
-            config = intersect_cylinder_support(run.method, config, grid, cylinder)
-    result = tj.reconstruct(scan, run.method, grid=grid, config=config, **keywords)
-    if cylinder is not None:
-        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
+            result = replace(
+                result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder)
+            )
+    elif run.region is not None:
+        result = tj.reconstruct(
+            scan, run.method, grid=None, region=run.region, config=config, **keywords
+        )
+    else:
+        result = tj.reconstruct(scan, run.method, grid=None, config=config, **keywords)
     report_automatic(result.info)
     source = scan.source
     if (

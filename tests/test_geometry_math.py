@@ -117,7 +117,7 @@ def test_grid_resampling_preserves_cell_edges_and_placement(placement):
     grid = Grid(11, 8, 5, 0.7, 1.3, 2.1, **placement)
     assert grid.shape == (5, 8, 11)
     assert Grid.from_dict(grid.to_dict()) == grid
-    resampled = grid.resampled((3, 13, 4))
+    resampled = grid.resampled(shape=(3, 13, 4))
     assert resampled.shape == (3, 13, 4)
     old_pitch = np.array([grid.vx, grid.vy, grid.vz])
     new_pitch = np.array([resampled.vx, resampled.vy, resampled.vz])
@@ -126,7 +126,7 @@ def test_grid_resampling_preserves_cell_edges_and_placement(placement):
         np.array(grid_volume_origin(resampled)) - new_pitch / 2,
         np.array(grid_volume_origin(grid)) - old_pitch / 2,
     )
-    assert grid.resampled((5, 8, 11)) is grid
+    assert grid.resampled(shape=(5, 8, 11)) is grid
 
 
 def test_rotation_axis_vocabulary_and_cone_segments_beam():

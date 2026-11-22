@@ -40,7 +40,7 @@ class _Args(argparse.Namespace):
     tolerance: float | None
     interpolation: str | None
     resolution: int | None
-    region: str
+    region: Region | None
     grid: list[int] | None
     apply_poses: bool
     manifest: str | None
@@ -127,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--resolution", type=int, help="The working detector's longest side, in pixels (320)"
     )
-    _ = parser.add_argument("--region", choices=REGION_CHOICES, default="auto", help=REGION_HELP)
+    _ = parser.add_argument("--region", choices=REGION_CHOICES, default=None, help=REGION_HELP)
     _ = parser.add_argument(
         "--grid",
         type=int,
@@ -195,8 +195,6 @@ def _build_align_config(
 def _validate_opposite_views(
     args: _Args,
     settings: Mapping[str, object],
-    explicit: set[str],
-    config_file_values: Mapping[str, object],
 ) -> None:
     """Reject unsupported --fit and joint-only options for ``--method opposite-views``."""
     fit = tuple(args.fit)
@@ -205,7 +203,7 @@ def _validate_opposite_views(
     joint_given = [name for name in _SETTINGS if getattr(args, name) is not None]
     if args.grid is not None:
         joint_given.append("grid")
-    if "region" in explicit or "region" in config_file_values:
+    if args.region is not None:
         joint_given.append("region")
     joint_given.extend(sorted(settings))
     if joint_given:
@@ -258,8 +256,6 @@ def _validate_align_args(
     parser: argparse.ArgumentParser,
     args: _Args,
     settings: Mapping[str, Any],
-    explicit: set[str],
-    config_values: Mapping[str, object],
 ) -> AlignConfig | None:
     """Validate CLI and TOML arguments before loading scan data."""
     if len(args.fit) != len(set(args.fit)):
@@ -270,7 +266,7 @@ def _validate_align_args(
         parser.error("--grid dimensions must be positive integers")
     try:
         if args.method == "opposite-views":
-            _validate_opposite_views(args, settings, explicit, config_values)
+            _validate_opposite_views(args, settings)
             return None
         return _build_align_config(args, settings)
     except (TypeError, ValueError) as exc:
@@ -295,7 +291,7 @@ def _dry_run_plan(
         assert config is not None
         plan["config"] = asdict(config)
         plan["grid"] = (scan.grid if grid is None else grid).to_dict()
-        plan["bounded_working_grid"] = grid is None
+        plan["bounded_working_grid"] = args.grid is None
     return plan
 
 
@@ -308,18 +304,15 @@ def main() -> None:
     namespace, metadata = parse_args_with_config(parser)
     args = cast("_Args", namespace)
     settings = cast("dict[str, Any]", metadata["settings"])
-    explicit = set(cast("list[str]", metadata["explicit_cli_keys"]))
-    config_values = cast("dict[str, object]", metadata["config_file_values"])
-    config = _validate_align_args(parser, args, settings, explicit, config_values)
+    config = _validate_align_args(parser, args, settings)
     outputs = [] if args.dry_run else [args.out, args.manifest]
     check_paths(parser, inputs=[args.data], outputs=outputs, force=args.force)
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     fit = tuple(args.fit)
     grid, cylinder = (None, None)
-    if args.method == "joint" and (args.grid is not None or args.region != "auto"):
+    if args.method == "joint" and (args.grid is not None or args.region is not None):
         shape = None if args.grid is None else (args.grid[2], args.grid[1], args.grid[0])
-        region = None if args.region == "off" else args.region
-        grid, cylinder = region_grid(scan, region, shape=shape)
+        grid, cylinder = region_grid(scan, args.region, shape=shape)
     if args.dry_run:
         print(json.dumps(_dry_run_plan(args, fit, scan, grid, config), indent=2, sort_keys=True))
         return
@@ -327,9 +320,8 @@ def main() -> None:
     log_jax_env()
     if args.method == "opposite-views":
         result = tj.align(scan, fit=fit, method="opposite-views")
-    elif args.grid is None and args.region != "auto":
-        region_arg = cast("Region | None", None if args.region == "off" else args.region)
-        result = tj.align(scan, fit=fit, region=region_arg, config=config)
+    elif args.grid is None:
+        result = tj.align(scan, fit=fit, region=args.region, config=config)
     else:
         result = tj.align(scan, fit=fit, grid=grid, config=config)
         if cylinder is not None and result.image is not None and result.grid is not None:

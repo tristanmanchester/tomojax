@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from tomojax._loading_geometry import DeclaredGeometry
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
 
 # The flags ``tomojax correct`` lists in --help for acquisition inputs.
 PUBLIC = (
@@ -102,10 +99,8 @@ def add_inputs(parser: argparse.ArgumentParser) -> None:
 def validate_inputs(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
-    explicit: Iterable[str] = (),
 ) -> DeclaredGeometry | None:
     """Validate input and geometry flag combinations at parse time (usage status 2)."""
-    del explicit
     sizes = cast("list[float] | None", args.pixel_size)
     if sizes is not None and len(sizes) not in (1, 2):
         parser.error("--pixel-size takes one value, or two (u then v)")

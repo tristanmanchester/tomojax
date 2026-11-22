@@ -19,7 +19,7 @@ Run `tomojax simulate --help` for other phantoms, Poisson noise (`--poisson-scal
 ```bash
 tomojax simulate -o tilted.nxs --geometry lamino --tilt 30 --size 32 --n-views 60
 tomojax reconstruct tilted.nxs -o tilted-recon.nxs \
-  --method fista --iterations 50 --tv-weight 0.005 --nonnegative --region off
+  --method fista --iterations 50 --tv-weight 0.005 --nonnegative
 tomojax inspect tilted-recon.nxs --preview-dir tilted-previews
 ```
 

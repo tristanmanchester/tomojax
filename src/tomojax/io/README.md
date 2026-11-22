@@ -106,7 +106,7 @@ import tomojax as tj
 
 detector = tj.Detector(nu, nv, du, dv, (center_u, center_v))  # measured calibration
 scan = tj.load_frames("skyscan/", detector=detector, flats=65536, darks=0).corrected(binning=4)
-grid = scan.grid.resampled((256, 256, 256))
+grid = scan.grid.resampled(shape=(256, 256, 256))
 result = tj.reconstruct(scan, method="fbp", grid=grid)  # FDK for this cone geometry
 tj.save("grains-recon.nxs", result)
 ```
@@ -117,7 +117,7 @@ volume and a central-slice preview (use fresh output names):
 ```sh
 tomojax correct skyscan/ --flats 65536 --darks 0 --binning 4 --pixel-size ... \
   --detector-center U V -o grains.nxs
-tomojax reconstruct grains.nxs --method fbp --region off --grid 256 256 256 \
+tomojax reconstruct grains.nxs --method fbp --grid 256 256 256 \
   -o grains-recon.nxs --preview grains.png
 ```
 

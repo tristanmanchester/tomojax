@@ -32,7 +32,7 @@ tomojax correct projections/ --flats flats/ --darks darks/ \
 
 Optional detector orientation flags (`--axis-offset`, `--detector-roll`, `--detector-pitch`, `--detector-yaw`) apply right-handed rotations about the detector normal (pointing towards the source), u, and v in that order: positive roll turns u towards v, positive pitch tilts the +v edge towards the source, and positive yaw swings the +u edge away from it.
 
-Without a recorded grid, cone scans default to one voxel per detector pixel at the rotation axis (`pixel_size / magnification`). Use `--grid NX NY NZ` on the CLI or `scan.grid.resampled((64, 64, 64))` in Python to resample the grid while preserving physical extent.
+Without a recorded grid, cone scans default to one voxel per detector pixel at the rotation axis (`pixel_size / magnification`). Use `--grid NX NY NZ` on the CLI or `scan.grid.resampled(shape=(64, 64, 64))` in Python to resample the grid while preserving physical extent.
 
 ### Artefact corrections
 
@@ -50,7 +50,7 @@ For a fast 64³ CPU preview (every 8th view, 16 × 16 binning):
 
 ```bash
 tomojax correct scan.txrm --darks 0 -o corrected.nxs --views ::8 --binning 16
-tomojax reconstruct corrected.nxs -o preview.nxs --method cgls --iterations 10 --grid 64 64 64 --region off
+tomojax reconstruct corrected.nxs -o preview.nxs --method cgls --iterations 10 --grid 64 64 64
 tomojax inspect preview.nxs --preview-dir previews
 ```
 
@@ -60,7 +60,7 @@ In Python:
 import tomojax as tj
 
 scan = tj.load_frames("scan.txrm").selected(slice(None, None, 8)).corrected(binning=16)
-grid = scan.grid.resampled((64, 64, 64))
+grid = scan.grid.resampled(shape=(64, 64, 64))
 recon = tj.reconstruct(scan, "cgls", iterations=10, grid=grid)
 tj.save("preview.nxs", recon)
 ```
@@ -165,8 +165,8 @@ Download and unpack a `WalnutN` directory from the [FIPS walnut collection](../e
 
 ```bash
 python examples/import_walnut.py ~/data/walnuts/Walnut1 -o orbit.nxs
-tomojax reconstruct orbit.nxs -o fdk.nxs --method fbp --region off
-tomojax reconstruct orbit.nxs -o cgls.nxs --method cgls --iterations 20 --region off
+tomojax reconstruct orbit.nxs -o fdk.nxs --method fbp
+tomojax reconstruct orbit.nxs -o cgls.nxs --method cgls --iterations 20
 tomojax inspect cgls.nxs --preview-dir walnut-previews
 ```
 

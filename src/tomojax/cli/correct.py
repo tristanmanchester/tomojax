@@ -63,11 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tomojax correct",
         description=(
-            "Import a scan or apply optional corrections, view selection, cropping and binning. "
-            "On raw frames (HDF5 with image_key, Nikon, SkyScan, Zeiss, ESRF, a TIFF stack), "
-            "runs dark subtraction, flat division and -log plus any requested steps; on saved "
-            "line integrals, runs line-integral steps (--stripes, --rings, --reject-views). "
-            "The scan written records each step."
+            "Import, convert or correct a scan, with optional view selection, cropping and "
+            "binning. On raw frames (HDF5 with image_key, Nikon, SkyScan, Zeiss, ESRF, a TIFF "
+            "stack), runs dark subtraction, flat division and -log plus any requested steps; on "
+            "saved line integrals, converts formats or runs line-integral steps (--stripes, "
+            "--rings, --reject-views). The scan written records each step."
         ),
         epilog=(
             "Examples:\n"
@@ -141,9 +141,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     hide_expert(parser, _PUBLIC)
     return parser
-
-
-_build_parser = build_parser
 
 
 def _numbers(text: str) -> tuple[float, ...]:
@@ -287,7 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args, metadata = parse_args_with_config(parser, argv)
     settings = cast("dict[str, object]", metadata["settings"])
-    declared = validate_inputs(parser, args, cast("list[str]", metadata["explicit_cli_keys"]))
+    declared = validate_inputs(parser, args)
     source, output = cast("str", args.data), cast("str", args.out)
     preview = cast("str | None", args.preview)
     check_paths(

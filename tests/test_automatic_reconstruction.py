@@ -66,8 +66,8 @@ def test_explicit_method_bypasses_automatic_geometry_policy():
         {"tv_weight": 0.0},
         {"nonnegative": False},
         {"warm_start": True},
+        {"warm_start": False},
         {"seed": 0},
-        {"devices": ()},
     ],
 )
 def test_auto_rejects_method_specific_options_before_choosing_a_method(option, monkeypatch):

@@ -60,7 +60,7 @@ def load_case(args: argparse.Namespace) -> tuple[Any, Any, np.ndarray]:
         # The output grid is the scan's native grid at a quarter of its sampling;
         # the binned scan's own grid is already coarser.
         g = frames.geometry.grid
-        grid = g.resampled((g.nz // 4, g.ny // 4, g.nx // 4))
+        grid = g.resampled(shape=(g.nz // 4, g.ny // 4, g.nx // 4))
     return scan, grid, view_frames(scan.geometry)
 
 

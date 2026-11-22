@@ -24,11 +24,10 @@ if TYPE_CHECKING:
 # The regions by name: the box every view sees ("auto", "bbox"), its largest cube or
 # cylinder about the axis ("cube", "cyl", which also zeroes outside it).
 REGIONS = ("auto", "bbox", "cube", "cyl")
-# The command line's --region: the API's names, and "off" for its None (the scan's grid).
-REGION_CHOICES = (*REGIONS, "off")
+REGION_CHOICES = REGIONS
 REGION_HELP = (
-    "Crop the grid to the detector's field of view: auto (default), cube, bbox, "
-    "cyl (auto, zeroing outside the cylinder every view sees), or off"
+    "Crop the grid to the detector's field of view: auto, bbox, cube, "
+    "or cyl (auto, zeroing outside the cylinder every view sees)"
 )
 
 # Samples per grid axis and views tested when finding the voxels every view sees.
@@ -61,7 +60,7 @@ def region_grid(
     if isinstance(region, RegionEstimate):
         _check_estimate_matches_scan(scan, region)
         chosen = region.grid
-        return (chosen if shape is None else chosen.resampled(shape)), None
+        return (chosen if shape is None else chosen.resampled(shape=shape)), None
     if region is not None and region not in REGIONS:
         names = ", ".join(REGIONS)
         raise ValueError(f"region is one of {names} or a RegionEstimate, not {region!r}")
@@ -84,7 +83,7 @@ def region_grid(
         chosen = _window(scan.grid, first, last)
         support = cylinder if region == "cyl" else None
     if shape is not None:
-        chosen = chosen.resampled(shape)
+        chosen = chosen.resampled(shape=shape)
     return chosen, support
 
 

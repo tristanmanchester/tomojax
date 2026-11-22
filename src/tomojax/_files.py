@@ -15,7 +15,7 @@ import numpy as np
 if TYPE_CHECKING:
     from os import PathLike
 
-    from tomojax._scan import Reconstruction
+    from tomojax._scan import Alignment, Reconstruction
     from tomojax._simulate import Simulation
     from tomojax.geometry import Grid
     from tomojax.io.api import Inspection
@@ -89,13 +89,13 @@ def saved_volume_grid(
 
 def export(
     path: str | PathLike[str],
-    reconstruction: Reconstruction | Simulation,
+    reconstruction: Reconstruction | Alignment | Simulation,
     *,
     dtype: Literal["float32", "uint16"] = "float32",
     range: tuple[float, float] | None = None,  # noqa: A002 the command's --range
     prefix: str = "slice",
 ) -> None:
-    """Write a reconstruction or simulation phantom for other software.
+    """Write a reconstruction, alignment image or simulation phantom for other software.
 
     Interchange export for external tools (use :func:`tomojax.save` and
     :func:`tomojax.load_reconstruction` to round-trip TomoJAX datasets).
@@ -110,8 +110,9 @@ def export(
     ----------
     path : str or path-like
         Directory for TIFF slices, or a ``.raw`` file.
-    reconstruction : Reconstruction or Simulation
-        The volume (or simulation phantom) and its grid.
+    reconstruction : Reconstruction, Alignment or Simulation
+        The volume (reconstruction, alignment working image, or simulation
+        phantom) and its grid.
     dtype : {"float32", "uint16"}, optional
         Sample type; ``uint16`` maps ``range`` to 0..65535. Default is float32.
     range : tuple of float or None, optional
@@ -124,19 +125,28 @@ def export(
     Raises
     ------
     ValueError
-        If ``range`` is passed with ``float32`` or has nonfinite or non-increasing bounds.
+        If ``range`` is passed with ``float32`` or has nonfinite or non-increasing bounds,
+        or an alignment holds no working image.
 
     Examples
     --------
     >>> import tomojax as tj
     >>> tj.export("slices", tj.load_reconstruction("recon.nxs"))  # doctest: +SKIP
     """
+    from tomojax._scan import Alignment
     from tomojax._simulate import Simulation
 
-    volume = (
-        reconstruction.phantom if isinstance(reconstruction, Simulation) else reconstruction.volume
-    )
-    grid = reconstruction.grid
+    if isinstance(reconstruction, Simulation):
+        volume = reconstruction.phantom
+        grid = reconstruction.scan.grid
+    elif isinstance(reconstruction, Alignment):
+        if reconstruction.image is None or reconstruction.grid is None:
+            raise ValueError("alignment holds no working image to export")
+        volume = reconstruction.image
+        grid = reconstruction.grid
+    else:
+        volume = reconstruction.volume
+        grid = reconstruction.grid
     write_volume(
         Path(path),
         lambda z: np.asarray(volume[z], np.float32),

@@ -319,19 +319,26 @@ def test_cylinder_masks_caller_output_in_place(cylinder_scan, cylinder_mask):
     np.testing.assert_allclose(out, np.where(cylinder_mask, full, 0), atol=1e-6)
 
 
-def test_fista_intersects_cylindrical_and_caller_support(cylinder_scan, cylinder_mask):
+def test_fista_region_cyl_masks_after_solving_without_imposing_support(
+    cylinder_scan, cylinder_mask
+):
     from tomojax.recon import FISTAConfig
 
     support = np.ones((5, 5), dtype=bool)
     support[2, 2] = False
-    intersection = support & cylinder_mask
-    config = FISTAConfig(iterations=4, tv_weight=0, lipschitz=100)
-    expected = tj.reconstruct(cylinder_scan, "fista", config=replace(config, support=intersection))
-    result = tj.reconstruct(
-        cylinder_scan, "fista", region="cyl", config=replace(config, support=support)
-    )
-    assert np.any(np.asarray(expected.volume)[:, intersection] > 0)
-    np.testing.assert_array_equal(result.volume, expected.volume)
+    config = FISTAConfig(iterations=4, tv_weight=0, lipschitz=100, support=support)
+    unmasked = tj.reconstruct(cylinder_scan, "fista", config=config)
+    result = tj.reconstruct(cylinder_scan, "fista", region="cyl", config=config)
+    assert result.info["cylindrical_output_mask"] is True
+    assert np.any(np.asarray(unmasked.volume)[:, cylinder_mask] > 0)
+    np.testing.assert_array_equal(result.volume, np.where(cylinder_mask, unmasked.volume, 0))
+
+
+def test_auto_reconstruct_allows_devices_and_rejects_warm_start_false(cylinder_scan):
+    recon = tj.reconstruct(cylinder_scan, devices=jax.devices()[:1])
+    assert recon.volume.shape == cylinder_scan.grid.shape
+    with pytest.raises(ValueError, match="would select 'fbp'.*warm_start"):
+        tj.reconstruct(cylinder_scan, warm_start=False)
 
 
 def test_reconstruction_preserves_region_evidence_and_rejects_mismatched_scan(cylinder_scan):
@@ -494,8 +501,12 @@ def test_a_saved_reconstruction_names_its_projections_and_keeps_them_only_when_a
 
 def test_the_commands_api_counterparts_simulate_inspect_and_export(tmp_path: Path) -> None:
     sim = tj.simulate("sphere", size=8, n_views=6, seed=1)
-    assert np.shape(sim.phantom) == (8, 8, 8) and sim.scan.projections.shape == (6, 8, 8)
+    scan, phantom = sim
+    assert scan is sim.scan and phantom is sim.phantom
+    assert np.shape(phantom) == (8, 8, 8) and scan.projections.shape == (6, 8, 8)
     tj.save(tmp_path / "truth.nxs", sim)
+    with pytest.raises(ValueError, match="simulation phantom"):
+        tj.load_reconstruction(tmp_path / "truth.nxs")
     report = tj.inspect(tmp_path / "truth.nxs")
     assert report["valid"] and report["issues"] == [] and report["angles"]["count"] == 6
     assert report["volume"]["found"]
@@ -505,7 +516,7 @@ def test_the_commands_api_counterparts_simulate_inspect_and_export(tmp_path: Pat
     assert (tmp_path / "truth.raw").stat().st_size == 8 * 8 * 8 * 2
     assert not list(tmp_path.glob(".*partial*"))  # each file moved on whole
     sidecar = json.loads((tmp_path / "truth.json").read_text())
-    assert "vol_origin_xyz" in sidecar and sidecar["grid"] == sim.grid.to_dict()
+    assert "vol_origin_xyz" in sidecar and sidecar["grid"] == sim.scan.grid.to_dict()
 
 
 def test_alignment_save_reload_and_export_keep_scan_and_working_grids_distinct(
@@ -562,6 +573,10 @@ def test_alignment_save_reload_and_export_keep_scan_and_working_grids_distinct(
     assert reloaded_center.image is None and reloaded_center.grid is None
     assert reloaded_center.scan.grid == scan_grid
     assert reloaded_center.info["method"] == "opposite-views"
+    tj.export(tmp_path / "align-slices", aligned)
+    assert len(list((tmp_path / "align-slices").glob("slice_*.tif"))) == 3
+    with pytest.raises(ValueError, match="working image"):
+        tj.export(tmp_path / "no-img", center_only)
 
 
 def test_rings_auto_binds_geometry_and_crop_order_preserves_grid_policy(tmp_path: Path) -> None:
