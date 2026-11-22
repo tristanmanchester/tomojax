@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0rc1 (2026-11-20)
+## 1.0.0rc1 (2026-11-22)
 
 ### CGLS on the GPU holds only its own state
 
