@@ -139,7 +139,7 @@ class Pages:
 
     @staticmethod
     def _exported(name: str, member: Any) -> Any:
-        """The object an export refers to: a submodule named like its own function is that function."""
+        """Return the exported object (resolving submodules named after their own function)."""
         obj = member.final_target if member.is_alias else member
         if obj.is_module and name in obj.members:
             inner = obj.members[name]
