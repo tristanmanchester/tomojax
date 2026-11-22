@@ -1,130 +1,63 @@
 # Reconstruct your first scan
 
-This guide starts from an installed checkout; follow [installation](installation.md)
-first. If you do not have data yet, run the [synthetic example](../README.md#first-reconstruction).
-Commands use `uv run --no-sync` from the checkout root. Replace example input
-paths with your files and use new output paths.
+This guide walks through inspecting, correcting, reconstructing, and exporting a real scan with the CLI and Python API. If you do not have scan data yet, try the [synthetic example](../README.md#first-reconstruction).
 
 ## Inspect the data and geometry
 
 ```bash
-uv run --no-sync tomojax inspect scan.nxs
+tomojax inspect scan.nxs
 ```
 
-Check the projection count and shape, angles, detector pitch, voxel pitch, and
-geometry type. Recognised Nikon, Zeiss and ESRF acquisitions use the same
-readers as loading; inspection reports their raw detector values without applying
-corrections. Raw NXtomo, APS Data Exchange and recognised Diamond/GDA layouts
-also use loading's acquisition discovery; optional NXtomo labels are not required. `inspect` also checks the acquisition metadata: it ends with
-`Valid: yes`, or lists the issues and exits with status 1. `--json` prints the report as JSON
-instead. It also lists the corrections that made the projections from
-detector frames, when the file records them.
+`inspect` prints the projection count and shape, angles, detector and voxel pitches, geometry type, and any recorded corrections, then exits 0 with `Valid: yes` (or lists problems and exits 1). Pass `--json` for machine-readable output. It recognises NXtomo, APS Data Exchange, Diamond/GDA, Nikon `.xtekct`, Zeiss `.txrm`, and ESRF acquisitions and inspects raw frames without applying corrections.
 
-Reconstruction expects line integrals (log attenuation). Raw detector counts,
-normalised transmission, and already-corrected attenuation are different
-inputs: establish which you have. TomoJAX corrects raw frames itself when the
-file says they are raw: an NXtomo `image_key` marking flats or darks, an APS
-Data Exchange file with `data_white` or `data_dark` beside `/exchange/data`,
-or a Nikon scan. Missing flats/white level or darks require explicit
-`flats=` (frames or one level) and `darks=` in `load_frames`; use zero darks only
-when the counts are already dark-corrected.
+Reconstruction expects line integrals (log attenuation), not raw counts or normalised transmission. TomoJAX applies flat/dark correction and `-log` automatically when the file marks raw frames (NXtomo `image_key`, Data Exchange `data_white`/`data_dark`, Nikon, Zeiss, or ESRF). If flats or darks are absent, supply `flats=` (frames or a single white level) and `darks=` to `tj.load_frames` (pass `darks=0` only when counts are already dark-subtracted).
 
 ## Beamline exports
 
-For executable first-slice recipes for ESRF NXtomo, TOMCAT/SYRMEP Data Exchange
-and the mixed I13 TIFF folder, start with [beamline exports](beamline-exports.md).
+For single-row first-slice recipes covering ESRF NXtomo, PSI TOMCAT, Elettra SYRMEP, PSI cSAXS, and Diamond I13, see [beamline exports](beamline-exports.md).
 
 ### Raw ESRF acquisitions
 
-`tj.load("scan_folder", angles=...)` reads uncompressed single-image EDF
-projections with SPEC `.info` or XML acquisition metadata. `PixelSize` records
-the effective pitch in micrometres, but the scan range alone does not establish
-the starting angle, so `angles=` gives them.
+- **SPEC EDF folders:** `tj.load("scan_folder", angles=...)` reads uncompressed single-image EDF projections with `.info` or XML metadata. `PixelSize` gives the effective pitch in micrometres; supply `angles=` because the scan range alone does not fix the starting angle.
+- **PyHST `.par` files:** pass the parameter file explicitly with `tj.load_frames("scan.par").corrected()`. This reads the indexed EDF sequence, angles, detector pitch, rotation axis, reconstruction region, and dark/flat schedule for raw single-image axial parallel EDFs (directory discovery does not auto-select `.par`; multi-frame, cone, helical, binning, and distortion modes are unsupported).
+- **Raw Bliss HDF5:** `tj.load("raw_bliss.h5")` reads basic, half-turn, and full-turn Bliss step sequences, including flats, darks, and recorded angles (select among multiple sequences with `data_path="1.1"`). Effective pixel sizes and distances are kept in millimetres. Helical and multi-volume sequences are unsupported.
 
-For EDF acquisitions described by PyHST, pass the parameter file explicitly:
-`tj.load_frames("scan.par").corrected()`. It supplies the indexed EDF series,
-angles, detector pitch and rotation axis, reconstruction region, and dark/flat
-schedule. A directory search does not choose a `.par` file over other acquisition
-metadata. This route requires raw, single-image EDFs with fixed axial parallel
-geometry; multi-frame, cone, helical, binning and distortion-correction modes
-are not supported.
-
-`tj.load("raw_bliss.h5")` reads a basic, half-turn or full-turn Bliss sequence,
-including its flats/darks and recorded angular positions. Select among several
-sequences with `data_path="1.1"`. Effective sample pixels and recorded distances
-are retained in millimetres. Neither format records the rotation centre: the scan
-has the detector middle and its record says so; find the centre with
-`tj.align(scan, fit="center")`. Missing virtual detector pixels
-and mismatched EDF dimensions are errors. Helical and multi-volume Bliss
-sequences are not supported.
-
-`tj.load_frames` keeps HDF5 single-row sinograms stored as `(view, u)` lazy,
-presenting them as `(view, 1, u)`. Corrected `Scan` projections retain that
-singleton detector-row axis.
+Neither SPEC EDF nor raw Bliss records a rotation centre; loading places the centre at the detector middle (`detector_center_status="not_recorded"`). Estimate it with `tj.align(scan, fit="center")`. Single-row HDF5 sinograms stored as `(view, u)` stay lazy and appear as `(view, 1, u)`.
 
 ## Correct raw detector frames
 
-For an HDF5 scan containing sample, flat, dark frames and measured geometry:
+For an HDF5 scan with sample, flat, and dark frames:
 
 ```bash
-uv run --no-sync tomojax correct raw.nxs -o corrected.nxs
-uv run --no-sync tomojax inspect corrected.nxs
+tomojax correct raw.nxs -o corrected.nxs
+tomojax inspect corrected.nxs
 ```
 
-This writes the line integrals `-log((I - D) / (F - D))` of the sample views,
-each view's flat interpolated between the flat sets taken around it, and
-records the correction. The frames, `image_key` and angles are found at their
-NXtomo paths, at the Data Exchange paths (`/exchange/data` with `data_white`,
-`data_dark` and `theta` beside it), or as the file's only datasets of those
-names; `--data-path`,
-`--image-key-path` and `--angles-path` (expert options) name
-them otherwise. Options add corrections: `--zingers`, `--stripes 9`
-(rings), `--reject-views` (views that jump from their neighbours, such as a
-closed shutter); `--views` and `--crop` keep
-part of the scan. Already-corrected data should skip this
-step; applying the logarithm again changes the data.
+`correct` computes `-log((I - D) / (F - D))`, interpolating flats between the flat sets bracketing each sample view, and records the processing history in `corrected.nxs`. Dataset paths are discovered automatically for NXtomo and Data Exchange; use `--data-path`, `--image-key-path`, and `--angles-path` for nonstandard HDF5 layouts. Add `--zingers`, `--stripes 9`, `--rings`, or `--reject-views` for artefact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
 
-A parallel-beam file that records no pixel size loads in pixel units (its record
-says `length_unit: "pixel"`); give the pixel size with `pixel_size=`, or a whole
-`detector=`, or `--pixel-size` and `--detector-center U V` on the command line.
-A cone-beam file needs its pixel size,
-since its distances fix the unit. A rotation centre the file does not record is the
-detector middle. Missing view angles require `angles=`; missing laminography tilt
-requires a complete `geometry=`. A 30° tilt is not assumed.
+When an external file omits metadata:
 
-In Python, `tj.load("raw.nxs")` makes the same correction, and records it in
-`scan.corrections`. For other corrections, load the frames and pass steps from
-`tomojax.corrections`:
+- **Missing pixel pitch (parallel beam):** loads in pixel units (`length_unit: "pixel"`); override with `pixel_size=`, `detector=`, or `--pixel-size`. Cone-beam files require a physical pixel size.
+- **Missing rotation centre:** defaults to the detector middle (`detector_center_status="not_recorded"`). Supply `detector=` / `--detector-center U V`, or fit it afterwards with `tj.align(scan, fit="center")` (or `method="opposite-views"` for a fast projection-only axial estimate).
+- **Missing angles or laminography tilt:** supply `angles=` or a complete `geometry=`. Explicit `detector=` or `geometry=` overrides are always used as given.
+
+In Python, `tj.load("raw.nxs")` runs the default flat/dark/`-log` correction. For cropping, view selection, or extra steps from `tomojax.corrections`, load frames first:
 
 ```python
 import tomojax as tj
 from tomojax.corrections import RejectViews, Stripes
 
-frames = tj.load_frames("raw.nxs")  # or TIFFs with angles=, or a Nikon .xtekct with darks=
+frames = tj.load_frames("raw.nxs")  # also works on TIFFs (with angles=) or Nikon .xtekct
 scan = frames.cropped(slice(100, 900), slice(None)).corrected(RejectViews(), Stripes(9))
-print(scan)  # Scan('sample': ..., corrections: flat_dark(...), log(...), reject_views(...), ...)
+print(scan)
 tj.save("corrected.nxs", scan)
 ```
 
-HDF5 and TIFF sample, flat and dark stacks are read lazily, as they are
-corrected (except sampled rows used for missing-centre estimation): crop or
-select first to read less. `np.asarray(frames.counts)` reads
-the current selection into memory.
+HDF5 and TIFF sample, flat, and dark stacks are read lazily during correction, so call `.cropped(...)` or `.selected(...)` before `.corrected(...)` to avoid reading unused pixels (`np.asarray(frames.counts)` materialises the selection). Selection accepts a forward slice, increasing integer indices, or a boolean mask, preserving each view's geometry and its position between flat sets. Call `scan.corrected(...)` to apply line-integral steps (`Stripes`, `Rings`, `BeamHardening`, `RejectViews`) to an already-corrected `Scan`.
 
-The views are corrected on the GPU a batch at a time, read from the file as
-they are needed. `views_per_batch` must be a positive integer and `epsilon` finite
-and positive. `frames.selected(...)` and `scan.selected(...)` keep a nonempty
-selection in acquisition order: a forward slice, increasing integer indices,
-or a Boolean mask. Selection keeps each view's geometry and its original
-position between the flat fields. `scan.corrected(...)` runs line-integral
-steps (`Stripes`, `BeamHardening`, `RejectViews`) on a scan that is already
-corrected.
+### Ring and stripe removal
 
-For rings that remain after `Stripes(9)`, a detector pixel's response may vary
-with the view rather than add a constant offset. In Python, follow the ordinary
-stripe correction with `Stripes(51, varying=True)`. Keep densely sampled views
-for this correction; selecting widely spaced views first can confuse moving
-object edges with defective pixels. Crop detector rows to save memory instead:
+If rings remain after `Stripes(9)`, a defective pixel's response may vary with intensity rather than by a constant offset. Chain `Stripes(51, varying=True)` after `Stripes(9)` on densely sampled views (crop detector rows to save memory rather than thinning views first, because wide angular gaps can confuse moving sample edges with bad pixels):
 
 ```python
 import tomojax as tj
@@ -132,45 +65,25 @@ from tomojax.corrections import Stripes
 
 frames = tj.load_frames("raw.nxs").cropped(slice(100, 116), slice(None))
 scan = frames.corrected(Stripes(9), Stripes(51, varying=True))
-# Select fewer views for a quick reconstruction only after correcting them.
-preview = scan.selected(slice(None, None, 4))
+preview = scan.selected(slice(None, None, 4))  # thin views only after stripe correction
 ```
 
-The widths are detector columns, not reconstructed-ring radii. Increase the
-ordinary width for wider stripes, and compare images: stationary centred object
-features can also be changed. Missing information at dead pixels is not recovered.
+Widths are in detector columns. Use the narrowest width that covers the stripes, since wide windows can alter stationary centred sample features. For full statistical/full-turn detector-response modelling, see `Rings` in [tomojax.corrections](../src/tomojax/corrections/README.md).
 
 ![A raw detector frame of a sandstone plug with a band of 16 rows marked, the corrected sinogram of one row, its FBP slice and an enlarged region of the slice.](images/i12-first-slice.png)
 
-The Diamond I12 scan of Vo et al. (Zenodo 3339629), 1801 views over a half turn
-of 2560-pixel rows, through these steps: one raw frame with the 16 cropped rows
-marked, the corrected sinogram of the middle row after `Stripes(9)` and
-`Stripes(51, varying=True)`, and its FBP slice with the axis at column 1417.5,
-as the dataset's notes give it.
+Diamond I12 sandstone (Vo et al., Zenodo 3339629; 1801 views of 2560-pixel rows): raw frame with 16 cropped rows marked, middle-row sinogram after `Stripes(9)` and `Stripes(51, varying=True)`, and FBP slice at axis column 1417.5:
 
 ```bash
 uv run python examples/gallery/first_slice.py full_rows1048-1111.nxs i12-first-slice.png \
   --rows 24 40 --center -138 --crop 1500 1100 --title "Diamond I12, Vo et al."
 ```
 
-`corrected(..., binning=2)` averages 2 x 2 detector blocks of the line integrals,
-as `scan.binned(2)` does. With only `Stripes` and the like after the log, it
-bins slabs of rows read straight from an uncompressed file, so the unbinned
-stack never reaches host memory. The CLI takes the same factor:
+### Binning and fast previews
 
-```bash
-uv run --no-sync tomojax correct raw.nxs -o binned.nxs --binning 4
-```
+Pass `binning=N` to `frames.corrected(...)` (or `--binning N` to `tomojax correct`) to average `N × N` blocks of line integrals on the device; when only row-local steps follow `-log`, uncompressed files are binned slab-by-slab without holding the unbinned stack in host RAM.
 
-Binning reduces detector sampling, not the reconstruction grid. In Python,
-pass a coarser `grid=` to `tj.reconstruct` when you also want larger voxels;
-On the CLI, `--grid NX NY NZ` resamples the field of view selected by `--region`
-to those counts, preserving its physical extent. Python uses
-`scan.grid.resampled((NX, NY, NZ))` to do the same without changing any data.
-
-For a small **axial parallel-beam** preview, use one voxel per binned detector
-pixel and retain the selected detector rows' height. This explicit grid avoids
-upsampling the binned data back onto the original fine grid:
+Binning reduces detector resolution without changing a recorded reconstruction grid. Pair it with a matching coarse grid for fast axial parallel previews:
 
 ```python
 import tomojax as tj
@@ -182,43 +95,13 @@ grid = tj.Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]
 tj.save("preview.nxs", tj.reconstruct(scan, grid=grid))
 ```
 
-Inspect it with `tomojax inspect preview.nxs --preview previews`. Use enough
-views for the binned width; fewer views can create streaks. This grid recipe
-is not for cone beams or tilted axes, where magnification or the sample's
-extent along the axis also matters.
+On the CLI, `--grid NX NY NZ` resamples the chosen field of view to those voxel counts while preserving physical extent (in Python, `scan.grid.resampled((NX, NY, NZ))`).
 
-For calibrated lens distortion, pass
-`RadialDistortion(center=(column, row), coefficients=(c0, c1, ...))` from
-`tomojax.corrections`. It bilinearly samples a **backward** radial polynomial
-on transmission before the log. The centre is in zero-based image pixels,
-not the rotation axis; estimate the axis after this correction. Correct
-before cropping if the warp needs pixels outside the crop, and convert the
-calibration after a crop or binning (see `help(RadialDistortion)`).
+### Lens distortion and Paganin phase retrieval
 
-A file written by TomoJAX carries its geometry. External NXtomo and Data Exchange
-use their format-defined axial parallel-beam model and recorded angles. Without a
-recorded pitch they load in pixel units, and `pixel_size=` gives the physical one.
-Without a recorded rotation centre the centre is the detector middle and the record
-says so; `tj.align(scan, fit="center")` estimates it. The vertical origin is the
-axial detector midplane.
+For calibrated lens distortion, pass `RadialDistortion(center=(col, row), coefficients=(c0, c1, ...))` from `tomojax.corrections`. It applies a backward radial polynomial on transmission before `-log` (`center` is in zero-based image pixels, not the rotation axis; estimate the rotation centre afterwards, and apply before cropping if pixels outside the crop are needed).
 
-An explicit `detector=tj.Detector(nu, nv, du, dv, center=(u, v))` or full
-`geometry=` remains authoritative and is not automatically recalibrated.
-For an already loaded unposed axial scan, `tj.align(scan, fit="center",
-method="opposite-views")` estimates physical detector-u from row-gradient
-correlations without a volume solve.
-Near-opposite views are resampled in angle before matching. Inspect the result:
-repetitive structure, motion and truncation can make the estimate ambiguous.
-
-### Retrieve phase from propagation-based phase contrast
-
-`Paganin` is single-material phase retrieval: it filters each view's
-transmission before the logarithm. It takes the material's δ/β, the effective
-propagation distance in metres (the sample-to-detector distance, divided by the
-magnification in a cone beam), the X-ray energy in keV and the pixel size at
-the sample in metres (the detector pixel, divided by the magnification in a
-cone beam). The step does not infer these from the scan. The values below are
-illustrative:
+For propagation-based phase contrast, `Paganin` filters transmission before `-log`. Supply the material's `delta_beta`, effective propagation `distance` in metres (sample-to-detector distance divided by magnification in cone beam), X-ray `energy_kev`, and sample-plane `pixel_size` in metres:
 
 ```python
 import tomojax as tj
@@ -226,158 +109,89 @@ from tomojax.corrections import Paganin
 
 step = Paganin(delta_beta=100, distance=0.1, energy_kev=25, pixel_size=0.65e-6)
 scan = tj.load_frames("raw.nxs").corrected(step)
-# Retain a detector window after phase retrieval, not before it.
-scan = scan.cropped(slice(100, 900), slice(None))
+scan = scan.cropped(slice(100, 900), slice(None))  # crop after Paganin, not before
 ```
 
-Paganin mixes neighbouring pixels, so cropping raw frames first discards
-measured neighbours; correct a larger window and keep its interior if the full
-detector is too expensive.
-
-If using calibrated lens correction too, pass `RadialDistortion` before
-`Paganin`, so phase retrieval acts on uniformly spaced undistorted pixels.
-Put any `Zingers` step before both. Transmission steps run in the order
-supplied, and changing their order changes the result.
-
-On the command line, `--paganin` takes the same four values in that order:
-`tomojax correct raw.nxs -o phase.nxs --paganin 100,0.1,25,0.65e-6`. It is
-an expert option, so `--help` does not list it.
-`--crop` crops raw frames before correction.
+Because Paganin convolves neighbouring pixels, crop after phase retrieval (or correct a padded window) rather than cropping raw frames first. Transmission steps run in the order given: put `Zingers` first, then `RadialDistortion`, then `Paganin`. On the CLI, pass `--paganin 100,0.1,25,0.65e-6` to `tomojax correct` (an expert option omitted from `--help`).
 
 ### TIFF frames
 
-For TIFF frames, use the [TIFF and measured-geometry instructions](real-laminography.md#prepare-tiff-data).
-`tomojax load` applies the standard dark, flat and `-log`; `tomojax correct` adds
-the optional corrections.
+For TIFF stacks with flat/dark folders and angle sidecars, see [preparing TIFF data](real-laminography.md#prepare-tiff-data).
 
 ## Reconstruct and inspect slices
 
-Start with the same automatic policy as `tj.reconstruct(scan)`:
-
 ```bash
-uv run --no-sync tomojax reconstruct corrected.nxs -o recon.nxs \
-  --manifest recon-manifest.json
-uv run --no-sync tomojax inspect recon.nxs --preview previews
+tomojax reconstruct corrected.nxs -o recon.nxs --manifest recon-manifest.json
+tomojax inspect recon.nxs --preview previews
 ```
 
-The default `--method auto` selects a reconstruction from the geometry and
-reports any limitations; use an explicit `--method` for a fixed solver.
-`recon.nxs` stores the volume and its geometry and names the projections it came
-from; `--include-scan` stores the projections too. The manifest records
-the selected method, reconstruction settings and automatic outcome. CPU execution
-is supported and does not by itself mark the automatic outcome as limited. `previews/`
-contains PNGs of the volume's three central planes (`slice_z.png`, `slice_y.png`,
-`slice_x.png`), and of the central projection (`projection.png`) when the file holds
-projections. PNG contrast is scaled for
-display; read the stored floating-point volume for quantitative work.
-`tomojax export recon.nxs -o slices/` writes the volume as TIFF slices for other
-software.
-Each z-slice has y rows and x columns, numbered from low to high physical z.
-For an in-memory Python reconstruction, write the same orientation explicitly:
+The default `--method auto` chooses a solver from the geometry:
+
+- Unposed well-sampled axial `ParallelGeometry` -> `fourier` (otherwise `fbp`)
+- `LaminographyGeometry` or posed `ParallelGeometry` -> `fbp`
+- Single-arrangement `ConeGeometry` -> `fbp` (dispatched to FDK)
+- Multi-orbit `ConeSegments` -> `cgls`
+
+Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview` writes display-scaled PNGs (`slice_z.png`, `slice_y.png`, `slice_x.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
+
+### Region and grid options
+
+With an explicit `--method`, `--region auto` (default) crops to the detector field of view, `--region off` keeps the recorded grid, and `--region cyl` also zeroes voxels outside the cylinder seen by every view. `--grid NX NY NZ` changes voxel counts while preserving the selected physical field of view.
+
+### Fourier-slice inverse
+
+`--method fourier` (or `tj.reconstruct(scan, "fourier")`) runs a fast Fourier-slice inverse in host slabs for axial parallel scans without per-view rotational poses. It uses CuPy on CUDA when available (`tomojax[cuda12]` or `tomojax[fourier-cuda12]`) and NumPy otherwise; force a backend with `FourierConfig(backend="cupy")` or `"numpy"`. It does not take `filter`, iterative options, or `warm_start`.
+
+### Expert settings and truncated scans
+
+Pass solver-specific settings via config classes from `tomojax.recon` (`FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig`, `SIRTConfig`, `MLEMConfig`) or a `--config` TOML file alongside an explicit `--method` (`tomojax reconstruct --config-keys` lists all keys):
+
+```bash
+printf 'regularizer = "huber_tv"\nhuber_delta = 0.01\n' > huber.toml
+tomojax reconstruct corrected.nxs -o tv.nxs --method fista --config huber.toml
+```
+
+In Python:
+
+```python
+from tomojax.recon import FistaConfig
+
+recon = tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv", huber_delta=0.01))
+```
+
+Direct keywords (such as `iterations=100`) override fields of the same name in `config`.
+
+- **Material outside the field of view:** CGLS, FISTA, and SPDHG fit absolute line integrals by default. Pass `data_term="per_view_contrast"` in the config to profile out one constant offset per view (absolute background level is then undetermined).
+- **FISTA TV weight:** `tv_weight=None` estimates noise from projections to set a dimensionless weight above a `5e-5` floor, normalised in physical coordinates so it stays invariant across length units. Pass a positive number to fix it, or `0` to disable TV.
+
+### Export slices
+
+```bash
+tomojax export recon.nxs -o slices/                 # 32-bit TIFF z-slices + JSON sidecar
+tomojax export recon.nxs -o recon.raw --dtype uint16
+```
+
+Each z-slice has y rows and x columns from low to high physical z. `tomojax export` streams one slice at a time without loading the full volume. In Python:
 
 ```python
 from pathlib import Path
-
 import numpy as np
 import tifffile
 import tomojax as tj
 
-recon = tj.load_reconstruction("recon.nxs")  # Or keep the tj.reconstruct result.
+recon = tj.load_reconstruction("recon.nxs")
 slices = Path("slices")
-slices.mkdir()  # Refuse an existing directory rather than overwrite slices.
+slices.mkdir()
 for z in range(recon.grid.nz):
-    plane = np.asarray(recon.volume[z], dtype=np.float32)
-    tifffile.imwrite(slices / f"slice_{z:04d}.tif", plane)
+    tifffile.imwrite(slices / f"slice_{z:04d}.tif", np.asarray(recon.volume[z], dtype=np.float32))
 ```
 
-Keep the saved `.nxs` for geometry and correction records; these TIFFs hold only
-floating-point pixels. The CLI export also writes a JSON geometry sidecar and
-reads one disk slice at a time, avoiding a full-volume load.
+### Checking trial rotation centres by eye
 
-Without grid/ROI overrides, automatic mode leaves region selection to the
-Python workflow. With an explicit method, the default `--region auto` may crop
-to the detector field of view; `--region off` preserves the recorded grid.
-`--grid NX NY NZ` changes voxel counts and spacing together, preserving the
-selected physical extent. Use `--region off` to retain the whole recorded field of
-view, or let `--region auto` restrict it to the measured detector window first.
-Automatic policies that cannot honor an override require an explicit method.
-Check both field of view and physical units before comparing reconstructions.
-`--region cyl` also zeroes the volume outside the cylinder every view sees.
-
-For supported parallel scans, `--method fourier` uses the Fourier-slice inverse,
-with the volume on the host in bounded slabs. The backend uses matching available
-CUDA support from the optional `fourier-cuda12` extra, or NumPy otherwise;
-explicit `backend = "cupy"` or `"numpy"` in a config file fixes that choice.
-In Python:
-
-```python
-from tomojax.recon import FourierConfig
-
-recon = tj.reconstruct(scan, "fourier", config=FourierConfig(backend="cupy"))
-```
-
-Fourier is an approximate inverse with its own frequency cutoff, not an FBP
-filter selection. It requires built-in parallel geometry without per-view poses;
-cone beams and laminography are unsupported. It does not check angular coverage
-or correct detector truncation. It refuses `filter`,
-iterative-solver options and `warm_start`.
-
-For FBP, FDK and Fourier volumes larger than host RAM, provide a writable
-float32 memory map. The returned volume is that same array, written in bounded
-slabs; input and output storage must not overlap. No full output copy is made:
-
-```python
-import numpy as np
-
-g = scan.grid
-out = np.memmap(
-    "volume.dat", mode="w+", dtype=np.float32, shape=(g.nz, g.ny, g.nx), order="C"
-)
-recon = tj.reconstruct(scan, "fbp", out=out)
-out.flush()
-```
-
-C order keeps axial slices together for parallel FBP, FDK and Fourier,
-avoiding page-strided file writes. Use separate input/output files. A failed
-reconstruction may leave partial output. Cone-beam CGLS, SIRT and MLEM also
-accept `out`.
-
-Expert settings are fields of the method's configuration class
-(`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig` or `SPDHGConfig`),
-set in a TOML file passed with `--config` alongside an explicit `--method`;
-`tomojax reconstruct --config-keys` lists them. Each replaces that field of the class's
-defaults, and a setting the method does not take fails with the ones it does. For FISTA with Huber total
-variation:
-
-```bash
-printf 'regularizer = "huber_tv"\nhuber_delta = 0.01\n' > huber.toml
-uv run --no-sync tomojax reconstruct corrected.nxs -o tv.nxs --method fista --config huber.toml
-```
-
-In Python this is
-`tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv", huber_delta=0.01))`,
-with `from tomojax.recon import FistaConfig`.
-The keywords, like the command's options, replace the config's fields of the
-same names: `iterations=100` wins over the config's `iterations`.
-
-CGLS, FISTA and SPDHG fit absolute line integrals by default. When material
-lies outside the field of view, explicitly select
-`data_term="per_view_contrast"` in the method's configuration, for example
-`tj.reconstruct(scan, "fista", config=FistaConfig(data_term="per_view_contrast"))`.
-This fits detector contrast while profiling one unknown constant per view;
-absolute background density is not recoverable. There is no automatic switch
-by geometry. FISTA's default `tv_weight=None` uses a projection-only noise
-estimate to raise an empirical dimensionless minimum of `5e-5`. Set a positive
-weight explicitly to bypass estimation, or `0` to disable TV. Weights are
-physically normalized; do not change them when switching length units.
-
-`tomojax align --fit center` estimates the detector centre (the centre of
-rotation). To compare trial centres by eye instead, shift the detector in
-Python; the centre is in the geometry's length unit, so pixels times `du`:
+Alongside `tomojax align --fit center`, you can sweep offsets in Python (`Detector.center` uses physical lengths, so pixels × `du`):
 
 ```python
 from dataclasses import replace
-
 import tomojax as tj
 
 scan = tj.load("corrected.nxs", apply_poses=False)
@@ -388,11 +202,9 @@ for shift in (-4, -2, 0, 2, 4):
     tj.save(f"cor{shift:+d}.nxs", tj.reconstruct(trial))
 ```
 
-If the projections or the volume are larger than GPU memory, see
-[large scans and several GPUs](large-scans.md).
+### Next steps
 
-For laminography and tilted-axis data the default is FBP; the
-[real scan guide](real-laminography.md#reconstruct-with-the-recorded-geometry)
-shows when and how to ask for FISTA instead.
-If motion remains plausible, use the [alignment guide](align-a-scan.md) after
-checking geometry and preprocessing.
+- **Volumes larger than GPU or host memory** (including writing straight to a memmap with `out=`): [large scans and several GPUs](large-scans.md).
+- **Laminography and TIFF stacks:** [real parallel and laminography scans](real-laminography.md).
+- **Lab cone-beam CT:** [lab cone-beam CT](lab-ct.md).
+- **Motion and setup-angle correction:** [align a scan](align-a-scan.md).

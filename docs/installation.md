@@ -1,18 +1,10 @@
 # Install TomoJAX
 
-TomoJAX supports Linux, with CPU or CUDA 12 dependencies, and requires Python
-3.12 or newer. Fresh CPU wheel and sdist installations are checked on CPython
-3.12, 3.13 and 3.14; fresh CUDA 12 wheel installations are checked on CPython
-3.12 and 3.14. These checks use no package cache and run the README reconstruction
-outside the checkout. Python 3.15 cannot yet be validated: h5py and CuPy do not
-publish Python 3.15 wheels, and building h5py needs a system HDF5 installation.
-Both CPU and CUDA installations include imagecodecs for compressed TIFF inputs,
-including LZW-compressed beamline images.
+TomoJAX runs on Linux with Python 3.12–3.14 on CPU or NVIDIA CUDA 12. Both CPU and CUDA installs include `imagecodecs` for compressed TIFFs (including LZW-compressed beamline files). Python 3.15 is not yet supported because `h5py` and `CuPy` do not publish 3.15 wheels.
 
 ## Install a published release
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then create
-an environment in a new working directory. No Git checkout is needed:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), create a fresh environment, and install the CPU extra:
 
 ```bash
 uv venv --python 3.12
@@ -20,15 +12,11 @@ uv pip install --python .venv/bin/python "tomojax[cpu]"
 .venv/bin/tomojax --help
 ```
 
-These commands install a published release. To install unreleased changes, use
-the local wheel instructions below. You can also use `python -m venv .venv`
-followed by `.venv/bin/python -m pip install "tomojax[cpu]"` with an existing
-Python.
+With standard `venv` and `pip`, run `python -m venv .venv` followed by `.venv/bin/python -m pip install "tomojax[cpu]"`.
 
 ## Use CUDA 12
 
-A working NVIDIA driver is required. In a fresh environment, select the CUDA
-extra instead of `cpu`, and explicitly require the CUDA backend:
+A working system NVIDIA driver is required. Install the `cuda12` extra and check that JAX sees the GPU:
 
 ```bash
 uv venv --python 3.12
@@ -36,28 +24,19 @@ uv pip install --python .venv/bin/python "tomojax[cuda12]"
 JAX_PLATFORMS=cuda .venv/bin/python -c "import jax; print(jax.devices()); assert jax.default_backend() == 'gpu'"
 ```
 
-`JAX_PLATFORMS=cuda` fails if CUDA cannot initialise. Keep it set when
-verifying your first reconstruction. The CUDA 12 extra includes JAX's CUDA dependencies and CuPy.
-It also supplies NVIDIA's CUDA runtime and NVRTC wheels for kernel compilation;
-these wheels do not replace the system NVIDIA driver.
-TomoJAX's CUDA C kernels compile at first use and are cached on disk. Published
-accelerator validation is limited to an Ada RTX 4070 Laptop GPU; see the
-[support matrix](support-matrix.md#numerical-and-accelerator-scope).
+Setting `JAX_PLATFORMS=cuda` forces an immediate error if CUDA fails to initialise. The `cuda12` extra installs JAX's CUDA runtime, CuPy, and NVIDIA's runtime and NVRTC wheels for compiling TomoJAX's CUDA C kernels on first use (compiled kernels are cached on disk). These wheels do not replace the system NVIDIA driver.
 
-The optional `fourier-cuda12` extra installs CuPy alone for a CPU installation
-that needs the Fourier inverse's CUDA path; it is redundant with `cuda12`.
-The Fourier inverse supports uniform parallel scans, not laminography.
+If you installed `tomojax[cpu]` and only want GPU acceleration for the Fourier-slice inverse (`method="fourier"`), install the `fourier-cuda12` extra, which adds CuPy alone. It is already included in `cuda12`.
 
 ## Build and install an unreleased wheel
 
-From the source checkout, build both the sdist and its wheel:
+From a source checkout, build the sdist and wheel:
 
 ```bash
 uv build
 ```
 
-Use the wheel filename produced by the build. The commands below install that
-wheel and its CPU dependencies into a new environment outside the checkout:
+Then install the built wheel from `dist/` into a fresh environment outside the checkout:
 
 ```bash
 mkdir /tmp/tomojax-user
@@ -67,14 +46,11 @@ uv pip install --python .venv/bin/python "/absolute/path/to/tomojax/dist/tomojax
 .venv/bin/tomojax --help
 ```
 
-For CUDA, replace `[cpu]` with `[cuda12]`. Installing the generated `.tar.gz` instead of the wheel builds
-a wheel in an isolated build environment. Both distributions include the GPL
-licence; the wheel includes the CUDA source and typing marker. For development
-setup, see [contributing](../CONTRIBUTING.md).
+Replace `[cpu]` with `[cuda12]` for CUDA, or point `uv pip install` at the `.tar.gz` sdist to build in an isolated environment. Both distributions include the GPL-3.0 licence; the wheel bundles the CUDA C sources and typing marker. For development setup, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-## Verify a useful result
+## Verify the installation
 
-Run these commands from the directory containing the installed environment:
+Run a small synthetic reconstruction from the environment directory:
 
 ```bash
 .venv/bin/tomojax simulate -o synthetic.nxs --size 32 --n-views 60
@@ -82,23 +58,13 @@ Run these commands from the directory containing the installed environment:
 .venv/bin/tomojax inspect recon.nxs --preview previews
 ```
 
-This is the README's first reconstruction: automatic Fourier inversion of a
-small parallel scan, ending with `Valid: yes` and three central slice PNGs.
-No external scan data is needed. Existing outputs are refused; use a new
-working directory or `--force` to replace them. Set `JAX_PLATFORMS=cpu` to
-explicitly select the CPU, or `JAX_PLATFORMS=cuda` to require CUDA for this run.
+`inspect` prints `Valid: yes` and writes three central slice previews to `previews/`. Commands refuse to overwrite existing files unless you pass `--force`. Prefix with `JAX_PLATFORMS=cpu` or `JAX_PLATFORMS=cuda` to pin the backend.
 
-If the CLI is missing, check the environment path. If CUDA discovery fails,
-resolve the NVIDIA driver/JAX installation before diagnosing kernel performance.
+If `tomojax` is not found, check your virtual environment path or activate it with `source .venv/bin/activate`. If CUDA fails to initialise, verify your NVIDIA driver and JAX GPU installation first.
 
 ## Maintainer package checks
 
-After building, the installed-package smoke tool creates a disposable environment
-outside the checkout, installs without a package cache, checks dependencies and
-module provenance, requires the selected device, and runs the commands above.
-It reads an LZW-compressed TIFF, checks the saved reconstruction against the
-simulated volume, and requires finite values and all previews. It does not import
-TomoJAX from the source checkout.
+`tools/smoke_installed_wheel.py` creates a disposable environment outside the checkout, installs the built package without a cache, verifies dependencies and module provenance, requires the requested device, reads an LZW-compressed TIFF, and checks the simulated reconstruction and previews:
 
 ```bash
 uv run --no-sync twine check --strict dist/*
@@ -107,13 +73,4 @@ uv run --no-sync python tools/smoke_installed_wheel.py --python 3.12 --extra cud
 uv run --no-sync python tools/smoke_installed_wheel.py --python 3.12 --artifact sdist
 ```
 
-Repeat the CPU wheel/sdist checks with `--python 3.13` and `--python 3.14`, and
-the CUDA wheel check with `--python 3.14`.
-`--find-links /path/to/wheelhouse` runs without network access or a package
-cache, using dependency wheels from that directory and an already available
-interpreter. An sdist install also needs the build backend there. Without that option, dependencies come from the package
-index. The CI workflow runs lint, types, the package build and the public-surface tests
-on Python 3.12 for pull requests to main. On demand it runs the numerical CPU suite
-as well, and uncached wheel/sdist jobs on Python 3.12–3.14. A release runs all of it
-before it publishes.
-CUDA checks run separately on NVIDIA hardware.
+Check CPU wheels and sdists on Python 3.12, 3.13, and 3.14, and CUDA wheels on Python 3.12 and 3.14. Pass `--find-links /path/to/wheelhouse` for offline verification (an sdist also needs its build backend in the wheelhouse). Pull requests to `main` run lint, type checks, package build, and surface tests on Python 3.12; release workflows run the full CPU suite and uncached wheel/sdist matrix across Python 3.12–3.14, while CUDA checks run separately on NVIDIA hardware.

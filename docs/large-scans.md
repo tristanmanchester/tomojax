@@ -1,125 +1,52 @@
 # Large scans and several GPUs
 
-This page says which parts of a reconstruction must fit in GPU memory, how to
-reconstruct scans that do not fit, and how to share a scan among several GPUs.
-Streaming from host memory applies to projections held as NumPy arrays or
-memmaps, which is what `tj.load` returns. A JAX array already on the GPU stays
-there.
+TomoJAX automatically streams projections from host memory and reconstructs volumes in slabs when a scan exceeds GPU memory, and spills large host arrays to disk when they exceed half of available RAM. Streaming applies to projections held as NumPy arrays or memmaps (what `tj.load` returns); JAX arrays already on the GPU stay resident.
 
 ## GPU allocator
 
-Importing `tomojax` defaults JAX to on-demand allocation rather than an eager
-75% GPU reservation, leaving room for cuSolver and CuPy workspaces. The pool
-retains memory for reuse and grows to at most JAX's 75% of the GPU, the same in
-Python and from the shell; it never hands memory back, so the rest is what the CUDA
-libraries and kernel modules have. Explicit `XLA_PYTHON_CLIENT_PREALLOCATE`,
-`XLA_CLIENT_MEM_FRACTION` (or JAX's legacy `XLA_PYTHON_CLIENT_MEM_FRACTION`) and
-`XLA_PYTHON_CLIENT_ALLOCATOR` take precedence. These process-wide
-settings cannot change an already initialized JAX backend: import TomoJAX or
-set the environment before the first JAX operation in a notebook.
+Importing `tomojax` sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` unless you have set it yourself, so JAX allocates GPU memory on demand instead of reserving 75% up front. This leaves room for cuSolver, CuPy, and CUDA kernel workspaces. The JAX pool still caps at 75% of VRAM and retains freed blocks for reuse. Explicit `XLA_PYTHON_CLIENT_PREALLOCATE`, `XLA_CLIENT_MEM_FRACTION` (or `XLA_PYTHON_CLIENT_MEM_FRACTION`), and `XLA_PYTHON_CLIENT_ALLOCATOR` settings take precedence. Import `tomojax` or set these variables before the first JAX operation.
 
 ## What has to fit in host memory
 
-Every large host array follows one rule: when it would take more than half of
-the available host memory, it is an unlinked temporary file in the standard
-temporary directory (`TMPDIR`), and a NumPy memmap is returned in its place.
+When a large host array would exceed half of available host RAM, TomoJAX backs it with an unlinked temporary file in `TMPDIR` and returns a NumPy memmap:
 
-| Array | Held in a temporary file when |
-|---|---|
-| The corrected stack `tj.load` and `Frames.corrected` return | the stack is more than half of available host memory |
-| A reconstruction's volume in host slabs (FBP, FDK, Fourier, MLEM, SIRT) | the volume is more than half of available host memory |
-| A solver's output and the work volumes it keeps (CGLS, FISTA-TV, accelerated SIRT host slabs) | those volumes together are more than half of it |
+| Array | Spills to a temporary file when |
+| --- | --- |
+| Corrected projection stack from `tj.load` or `Frames.corrected` | Stack exceeds half of available RAM |
+| Host-slab volume (FBP, FDK, Fourier, MLEM, SIRT) | Volume exceeds half of available RAM |
+| Multi-volume solver state (host-slab CGLS, FISTA-TV, accelerated SIRT) | Combined output and work volumes exceed half of available RAM |
 
-`tj.load` logs when it holds the stack in a file, and where; `tj.reconstruct`
-logs it for the volume and records the directory as `info["temporary_file"]`.
-Such a file has no name: it is deleted when the array is released, so keep the
-volume with `tj.save`, or give `out=` a memmap of your own file
-(`np.lib.format.open_memmap("volume.npy", "w+", np.float32, shape)`) to write it
-straight there. A volume passed as `out=` is never moved. A full-size
-synchrotron scan does this on an ordinary workstation: I13 159815, 3301 frames
-of 2560 x 2160, is 73 GB corrected. The file is created only if `TMPDIR` has
-room for all of it; otherwise a `MemoryError` gives the size, the memory and
-free space, and the ways out: point `TMPDIR` at a disk with room, bin the
-detector (`binning=`), or load fewer views (`tj.load_frames(path).selected(...)`).
-On systems where `/tmp` is a RAM disk (tmpfs), a file there is memory, not disk:
-set `TMPDIR` to a directory on a fast local disk before loading a large scan.
+`tj.load` logs the spill location; `tj.reconstruct` logs it and records the directory in `info["temporary_file"]`. Because the temporary file is unlinked, it disappears once the array is garbage-collected. Save it with `tj.save`, or pass your own writable memmap as `out=` so the volume is written straight to a named file (an explicit `out=` array is never moved, and solver work files are placed beside it when `out=` is a memmap).
+
+A full-size synchrotron scan easily hits this limit (Diamond I13 159815 is 73 GB corrected). If `TMPDIR` lacks enough free space, TomoJAX raises `MemoryError` listing the required size and free space. On Linux systems where `/tmp` is `tmpfs` (RAM-backed), point `TMPDIR` to a fast local disk before loading, or reduce size with `binning=` or `Frames.selected(...)`.
 
 ## What has to fit on the GPU
 
 | Method | Projections | Volume |
-|---|---|---|
-| FBP (parallel and laminography) | Streamed from host memory a batch of views at a time | Moves to host slabs automatically when it does not fit |
-| Fourier (axial parallel only) | Host arrays or memmaps, read by row slabs | Always returned in host slabs |
-| FDK (cone beam) | Read from host memory a slab's detector rows at a time when the volume is large | Moves to host z-slabs automatically when it does not fit |
-| CGLS | Streamed when resident data and solver state would exceed free GPU memory | Cone and CUDA linear Joseph parallel/laminography use host slabs automatically when the working state does not fit |
-| FISTA-TV | Streamed under the same rule; host-volume sweeps keep a detector-row ring | CUDA Joseph moves unmasked ordinary-TV state to host slabs when it does not fit |
-| SPDHG-TV | Streamed under the same rule, with its sinogram-sized dual and any weights also kept in host memory | Five volumes on the GPU (the iterate, the data backprojection and three TV duals), plus a block's projections and a few planes of workspace |
+| --- | --- | --- |
+| FBP (parallel and laminography) | Streamed in view batches from host memory | Switches to host slabs above 40% of free VRAM |
+| Fourier (axial parallel only) | Read from host arrays or memmaps by row slab | Always built in host slabs |
+| FDK (cone beam) | Read from host memory by detector-row band when volume is in host slabs | Switches to host z-slabs above 40% of free VRAM |
+| CGLS | Streamed when resident data and solver state exceed free VRAM | Switches to host slabs automatically for cone beam and CUDA linear Joseph parallel/laminography |
+| FISTA-TV | Streamed under the same rule; host-volume sweeps keep a detector-row ring | CUDA Joseph switches unmasked ordinary TV to host slabs when resident state does not fit |
+| SPDHG-TV | Streamed under the same rule, with its sinogram dual and weights in host memory | Five volumes on the GPU (iterate, data backprojection, three TV duals) plus one view block and small workspace |
 
-`stream = true` or `false` in the method's configuration (a
-`--config` key) overrides the 40% rule. Streaming needs the batched projection
-operators: CGLS streams only with the canonical detector grid, and FISTA-TV and
-SPDHG-TV not with an explicit detector grid or the exact ray integrator. SPDHG's
-600 default iterations are sampled view-block updates, not full data sweeps.
-Its probability-aware row/column-sum steps retain scalar preconditioners; TV
-strength and gradients are normalized in physical voxel coordinates. The default
-TV strength is estimated once from projection noise, with a 0.00005 minimum; an
-explicit positive weight fixes the strength, and zero disables TV. Choose
-`data_term="per_view_contrast"` explicitly for material outside the field of view;
-this discards the absolute density level.
+Set `stream = true` or `false` in the method's configuration (`--config` TOML or Python `*Config`) to override automatic streaming. Streaming requires the standard batched operators (canonical detector grid; linear/cubic Joseph rather than exact ray integration).
 
-Streamed CGLS solves the equivalent normal equations, which square the
-condition number of each step's recurrence. It recomputes the exact gradient
-periodically, as in-core CGLS recomputes its residual.
+Implementation details to keep in mind when sizing large runs:
 
-CUDA Joseph FISTA with ordinary TV and no support mask switches to host slabs
-when its estimated resident state will not fit. It retains the same global
-objective, power estimate and finite-iteration TV proximal; the planes are not reconstructed independently. Three host volumes
-hold the iterate, extrapolate and gradient. If they would occupy more than half
-of available host RAM, they are anonymous temporary files in the standard
-`TMPDIR` directory. Use a fast local disk with room for the complete state;
-the returned NumPy memmap owns its unlinked file until its last reference is
-released. Passing `out=` to `tj.reconstruct(scan, "fista", out=volume)`
-forces this route and fills the supplied float32 array or memmap.
-`info["host_slabs"]` identifies this storage route. The exact TV halo
-uses `tv_prox_iterations` planes on each side, so very large proximal iteration
-counts can still exhaust device workspace. Huber-TV, masks
-and multi-device FISTA still require resident volume state. With
-`data_term="per_view_contrast"`, host FISTA reduces one mean per complete detector view
-before forming the gradient. If the row ring holds the entire detector, this
-reuses the projected ring; otherwise it needs a separate forward sweep. Means
-include all measured pixels, including rows outside the volume footprint;
-centering individual slab windows would solve a different problem. Losses also
-include measured energy outside that footprint for either data term. Automatic TV strength samples
-at most 65536 detector Haar cells and transposes one Gaussian probe in batches;
-it does not allocate another full measurement stack. Host slabs center complete
-probe views before cropping their row windows and reduce the gradient norm
-without allocating another host volume.
+- **Streamed CGLS** solves the equivalent normal equations and periodically recomputes the exact gradient to prevent drift. Host-slab CGLS keeps four host volumes (iterate, normal residual, search direction, normal image) and requires the full projection stack on the GPU for parallel/laminography; cone-beam slab sweeps stream the projections through a detector-row ring instead.
+- **Host-slab FISTA-TV** solves the same global objective and finite-iteration TV proximal as resident FISTA-TV (not independent slices), keeping three host volumes (iterate, extrapolate, gradient). Its exact TV halo adds `tv_prox_iterations` planes per side on the GPU, so very high `tv_prox_iterations` can still exhaust VRAM. Huber-TV, support masks, and multi-GPU FISTA-TV require a device-resident volume.
+- **Private z-contiguous layout:** resident CUDA solvers convert the volume once at entry and exit, requiring one temporary volume copy. `tj.project`, `tj.backproject`, and `tj.Projector` make that copy if it fits in free VRAM and read `(z, y, x)` in place otherwise (with identical results). Axial parallel projection streams 32 planes at a time and needs no copy.
 
-Resident CUDA solvers keep their volumes in a private z-contiguous
-order and convert once at entry and exit, which needs one volume-sized copy
-at those two points. `tj.project`,
-`tj.backproject` and `tj.Projector` make the same copy when one more volume fits
-in free GPU memory and otherwise read the `(z, y, x)` array in place; the result
-is the same to the bit. An axial parallel-beam projection never needs the copy:
-it reads 32 planes at a time. The
-[memory measurements](measurements.md#memory) give peak use for 512³
-laminography on an 8 GB GPU.
+See [memory measurements](measurements.md#memory) for peak VRAM across solvers on an 8 GB GPU.
 
 ## Reconstruct a volume larger than the GPU
 
-### Cone beam
-
-`tj.reconstruct(scan)` and `tomojax reconstruct` (FDK, the default method on cone
-data) switch to host z-slabs when the volume would take more than 40% of the
-free GPU memory. The volume then comes back as a NumPy array, and
-`Reconstruction.info["host_slabs"]` is true. Each slab filters only the
-detector rows it projects onto. The `tomojax` commands still hold the whole
-projection stack and volume in host RAM; to write the volume straight to disk,
-pass a memmap through `out=`:
+For FBP, FDK, Fourier, cone CGLS/SIRT/MLEM, and CUDA Joseph parallel/laminography CGLS and FISTA-TV, passing a writable C-ordered `float32` memmap as `out=` forces host-slab execution and writes directly to disk without allocating a second full volume:
 
 ```python
 import numpy as np
-
 import tomojax as tj
 
 scan = tj.load("scan.nxs")
@@ -127,100 +54,38 @@ grid = scan.grid
 volume = np.lib.format.open_memmap(
     "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nz, grid.ny, grid.nx)
 )
-recon = tj.reconstruct(scan, "fbp", out=volume)
+recon = tj.reconstruct(scan, "fbp", out=volume)  # FDK for cone, FBP for parallel/lamino
 volume.flush()
 ```
 
-For explicit slab-depth control, use `fdk_host` with
-`FDKHostConfig(slices_per_batch=...)`; by default slabs take about a third of
-the free GPU memory. FDK accepts per-view cone geometry, including
-`ConeSegments`; noncircular trajectories retain FDK's approximation.
+Input projections and `out=` must not overlap (including separate mappings of the same file). Completed slabs are written as they finish, so an interrupted run can leave partial data on disk. `Reconstruction.info["host_slabs"]` is `True` whenever host slabs are used. Host-slab routes are not differentiable.
 
-### Parallel beam and laminography
+Geometry-specific slab behaviour:
 
-CUDA linear Joseph `tj.reconstruct(scan, "cgls")` automatically uses host slabs
-when its working volumes exceed device memory. Slabs are summed before forming
-the data residual: this remains one global solve, including for tilted scans.
-The full projection stack must fit on the GPU alongside a few slabs. Ray and
-cubic projectors, explicit detector lattices, and multi-device solves retain
-the resident-volume requirement.
+- **Cone-beam FDK:** processes z-slabs, filtering only the detector rows each slab projects onto. Use `fdk_host` with `FDKHostConfig(slices_per_batch=...)` for explicit slab depth (default uses about a third of free VRAM).
+- **Axial parallel FBP and Fourier:** processes axial z-slabs (at most 16 slices for FBP), reading only matching detector rows. C-ordered `(z, y, x)` keeps xy-planes contiguous on disk.
+- **Laminography and posed FBP:** processes x-slabs (sized to about half of free VRAM), streaming and filtering views per slab. Use `fbp_host` with `FBPHostConfig(slices_per_batch=...)` to override slab depth. A 1024³ laminography volume runs in [37 s on an 8 GB laptop GPU](measurements.md#scans-larger-than-the-gpu).
 
-If the four CGLS volumes exceed half of available host RAM, automatic storage
-uses unlinked temporary files. Choose a fast disk with enough free space using
-the standard `TMPDIR` environment variable. The returned NumPy memmap owns its
-file until released. With explicit `out=`, the supplied array is preserved and
-work files are placed beside it if it is a memmap.
+### Stream raw frames directly into slabs
 
-`tj.reconstruct(scan, "fbp")` and `tomojax reconstruct --method fbp` switch to host
-slabs when the volume would take more than 40% of the free device memory.
-`Reconstruction.info["host_slabs"]` records that choice. Passing `out=` forces
-host slabs even for a small volume and fills the supplied float32 storage
-without allocating another full volume:
+`Frames.corrected()` produces a complete corrected stack in host memory (or `TMPDIR`). When neither the corrected stack nor the volume fits comfortably, `tj.reconstruct_slabs` corrects only the detector-row band needed for each output slab:
+
+- **Cone-beam FDK:** `tj.reconstruct_slabs(frames, "fbp")` keeps full-scan angular weights while correcting one row band at a time.
+- **Unposed axial parallel:** supports `"fbp"`, `"fourier"`, `"sirt"`, and `"mlem"` (with optional `config=` and `warm_start=True`). A full Diamond I12 scan (56.6 GB SIRT volume) ran in 24 minutes using [1.4 GB of VRAM](measurements.md#scans-larger-than-the-gpu).
 
 ```python
 import numpy as np
-
-import tomojax as tj
-
-scan = tj.load("corrected-lamino.nxs")
-grid = scan.grid
-volume = np.lib.format.open_memmap(
-    "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nz, grid.ny, grid.nx)
-)
-recon = tj.reconstruct(scan, "fbp", filter="ramp", out=volume)
-volume.flush()
-```
-
-Built-in parallel scans use balanced axial slabs of at most 16 slices, reading
-only the detector rows they need. Host outputs use C-ordered `(z, y, x)`
-arrays, so xy-planes are contiguous. Use the default C order for memmaps too.
-
-Laminography and posed scans use x-slabs,
-each streaming and refiltering every view; those slabs use about half the free
-GPU memory by default. For explicit slab-depth control, call `fbp_host` with
-`FBPHostConfig(slices_per_batch=...)`. Host slabs are not differentiable.
-Device projections remain resident and are sliced on the device; use NumPy
-arrays or memmaps to stream projections from host memory. Axial CUDA FBP may
-stage one slab's detector rows (up to 512 MiB and a quarter of free device
-memory) to reduce host dispatch; filtering still uses bounded view batches.
-Input and output must not overlap, and public `out=` does not support explicit detector grids.
-`method="fourier"` also accepts `out=` for axial parallel scans. These storage
-choices do not make raw-frame correction out of core: `frames.corrected()`
-still returns a complete corrected projection stack in host memory.
-Axial output can overlap one slab download/write with the next
-computation when spare device memory permits. All writes finish before return;
-a failure can leave a partly written volume. A 1024³ laminography volume takes about
-[37 s on an 8 GB laptop GPU](measurements.md#scans-larger-than-the-gpu).
-
-### Stream raw frames
-
-For cone-beam FDK, `tj.reconstruct_slabs(frames, "fbp")` corrects only the
-detector-row band needed by each output slab, using bounded device batches.
-Neither the full corrected stack nor the whole output volume needs to fit in
-host memory. One corrected row band and any retained blocks must fit in host
-memory. Angular weights use the complete acquisition, not the row crop.
-
-For an unposed axial parallel scan, `tj.reconstruct_slabs` corrects raw rows
-and reconstructs them without storing the full corrected stack. Choose `"fbp"`,
-`"fourier"`, `"sirt"` or `"mlem"`, with that method's configuration through
-`config=` when needed; `warm_start=True` starts SIRT and MLEM from FBP. The whole
-Diamond I12 scan, a 56.6 GB SIRT volume, took 24 minutes with
-[1.4 GB of GPU memory](measurements.md#scans-larger-than-the-gpu).
-For example, write owned blocks directly to plane-contiguous storage:
-
-```python
-import numpy as np
-
 import tomojax as tj
 from tomojax.corrections import Stripes
 
 frames = tj.load_frames("raw.nxs")
 grid = frames.geometry.grid
 volume = np.lib.format.open_memmap(
-    "volume.npy", mode="w+", dtype=np.float32,
-    shape=(grid.nz, grid.ny, grid.nx),
+    "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nz, grid.ny, grid.nx)
 )
-with tj.reconstruct_slabs(frames, "fbp", corrections=[Stripes(), Stripes(51, varying=True)]) as slabs:
+with tj.reconstruct_slabs(
+    frames, "fbp", corrections=[Stripes(), Stripes(51, varying=True)]
+) as slabs:
     for z_slice, block in slabs:
         volume[z_slice] = block.volume
 volume.flush()
@@ -228,72 +93,34 @@ volume.flush()
 
 ![The central axial slice and a vertical slice through the axis of a copper oxide specimen at 1.13 µm, each with an enlarged region.](images/zeiss-full-volume.png)
 
-The full Zeiss CuO_2 tomo-B scan, 3201 views of 2028 × 2028 pixels, loaded with
-the centre and per-view image shifts its file records and reconstructed this way
-into a 2028³ volume of 1.13 µm voxels, 31 GiB written to a memmap, with no
-alignment. Its corrected projections alone would take 52 GB. It took 1036 s on
-the RTX 4070 Laptop GPU (8 GB) in a machine with 30 GB of memory.
+The full Zeiss CuO_2 tomo-B scan (3201 views of 2028 × 2028 pixels, 52 GB corrected) reconstructed this way into a 31 GiB `2028³` volume at 1.13 µm in 1036 s on an 8 GB RTX 4070 Laptop GPU with 30 GB host RAM:
 
 ```bash
 uv run python examples/gallery/zeiss_full_volume.py CuO_2_tomo-B.txrm VOLUME.npy OUT.png
 ```
 
-Each block retains its global physical grid, corrected source rows
-(including interpolation neighbors), and correction records. Blocks remain
-valid after iteration or context exit, but collecting them retains both their
-volumes and projections. The context drains pending work on early exit or
-failure. Only whole-row line-integral corrections are supported, not Paganin
-or view rejection; keep the raw and calibration inputs unchanged in the context.
+Only whole-row line-integral corrections (such as `Stripes`) are supported in `reconstruct_slabs`, not `Paganin` or `RejectViews`. Release each `block` as you iterate so its volume and projections do not accumulate in memory.
 
 ## Bin detectors finer than the grid
 
-When the detector samples the rotation axis more finely than the voxels (the
-pixel pitch, divided by the magnification in a cone beam, is smaller than a
-voxel), the projectors do work the volume cannot use. `scan.binned(binning)`
-averages `binning × binning` pixels, which cuts projection cost by `binning²`.
-Pixels that do not fill a block at the edges are dropped, and the detector
-centre moves to match. Iterative `tj.reconstruct` warns, with the
-factor to use, when the detector is at least twice as fine as the grid.
-On the command line, `tomojax correct --binning` bins the detector. On the FIPS
-walnut, binning 2 × 2 made least squares
-[3.5 times faster for no loss of accuracy](measurements.md#fips-walnuts-real-lab-cone-beam-ct).
-
-For an alignment preview, bin the scan and use an explicit coarse `grid=` while retaining the
-physical field of view. Alignment retains the declared block-mean sampling in its ray model.
-See [align a scan](align-a-scan.md).
+When the detector pixel pitch (divided by magnification in cone beam) is finer than the reconstruction voxel pitch, projectors trace more rays than the grid can resolve. `scan.binned(factor)` averages `factor × factor` pixel blocks, reducing projection cost by `factor²` and adjusting the detector centre to match (remainder edge pixels are dropped). Iterative `tj.reconstruct` warns with the suggested factor whenever the detector is at least twice as fine as the grid. On the CLI, pass `--binning` to `tomojax correct`. On the FIPS walnut, 2 × 2 binning made iterative reconstruction [3.5× faster with no loss of accuracy](measurements.md#fips-walnuts-real-lab-cone-beam-ct).
 
 ## Use several GPUs
 
-`devices=` shares a scan's views among GPUs in one process. Pass one device or
-several; `jax.devices()` passes them all:
+Pass `devices=` in Python to split views across multiple GPUs in one process (`jax.devices()` uses all visible GPUs):
 
 ```python
 import jax
-
 import tomojax as tj
 
 scan = tj.load("scan.nxs")
 recon = tj.reconstruct(scan, "fista", nonnegative=True, devices=jax.devices())
 ```
 
-Each GPU projects its own views and holds the whole volume. Their
-backprojections are summed on the first GPU, so the result is the one-GPU
-result up to the order of that sum. Several GPUs therefore add speed, not room
-for a larger volume, with one exception: in `fdk_host` and FDK's automatic
-slabs, each GPU reconstructs its own z-slabs (`FDKConfig(devices=...)` in
-`fdk_host`'s `FDKHostConfig`).
+Each GPU projects its share of views against a full copy of the volume, and backprojections are summed onto the first GPU. Multiple GPUs therefore speed up computation rather than expanding volume capacity, except in `fdk_host` and automatic FDK slabs where each GPU reconstructs its own z-slabs (`FDKConfig(devices=...)`).
 
-- `tj.project`, `tj.backproject` and the `fbp` (including FDK), `cgls` and
-  `fista` methods of `tj.reconstruct` take `devices=`. SPDHG-TV runs on one
-  GPU, because each of its steps would sum a whole volume across the GPUs for
-  one block of views, and `fbp_host` also runs on one.
-- Shared projections are held in GPU memory, divided among the GPUs, and are
-  never streamed from the host; asking for both raises `ValueError`.
-- `tj.align` runs on one device; its host staging bounds projection and mask storage.
-- The GPUs must belong to one process; runs across several machines are not
-  supported.
+- **Supported operations:** `tj.project`, `tj.backproject`, and `tj.reconstruct` with `"fbp"` (including FDK), `"cgls"`, and `"fista"`. `spdhg`, `fbp_host`, `tj.align`, and all CLI commands run on one GPU (select which with `CUDA_VISIBLE_DEVICES`).
+- **Device memory:** multi-GPU runs hold each GPU's view shard in VRAM and cannot be combined with host streaming (`ValueError`).
+- **Scope:** GPUs must belong to one process on one machine.
 
-The `tomojax` commands have no device option and run on JAX's default device,
-the first visible GPU (`CUDA_VISIBLE_DEVICES` chooses which). Call the Python
-API to use several. On four H100 GPUs, 20 FISTA-TV iterations on the walnut ran
-[3.3 times faster than on one](measurements.md#several-gpus).
+On four H100 GPUs, 20 FISTA-TV iterations on the FIPS walnut ran [3.3× faster than on one](measurements.md#several-gpus).

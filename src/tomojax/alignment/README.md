@@ -1,26 +1,11 @@
 # tomojax.alignment
 
-Use `tj.align(scan, fit=..., grid=...)`. The [alignment guide](../../../docs/align-a-scan.md)
-explains how to choose the parameters and check the result. The default fits per-view
-translations; `"center"`, `"tilt"`, `"roll"` and `"rotations"` name the additional parameter
-blocks. All geometries use one private joint solver in `_joint`.
+Use `tj.align(scan, fit=..., grid=...)`. The [alignment guide](../../../docs/align-a-scan.md) explains how to choose parameters and inspect results. By default `fit="translations"` fits per-view lab-frame translations; `"center"`, `"tilt"`, `"roll"`, and `"rotations"` select additional parameter blocks. All geometries share one private joint solver in `_joint`.
 
-The solver estimates the image and the requested geometry corrections together. Per-view
-translation blocks are coupled by a smooth-drift and robust-jump prior. Shared centre and angle
-columns border that system. Exact Schur elimination gives the image update; the backprojector
-is the exact transpose of the selected forward operator. Each working pixel is one ray through
-its centre, and the detector is never binned coarser than a voxel. Each view's gain and
-background (a constant and a ramp down the rows) are refitted to the prediction at every step.
-The returned scan carries the calibrated geometry and fitted per-view poses.
+The solver estimates the volume and selected geometry parameters together. With the default `motion="independent"`, each view moves freely; with `motion="smooth"`, per-view translations follow a smooth-drift and robust-jump prior and per-view rotations couple to neighbours. Shared centre and angle columns border the normal system. Exact Schur elimination gives the image update, and the backprojector is the exact transpose of the forward operator. Each working pixel traces one ray through its centre, binned no coarser than a voxel. Inside every step, each view's offset and vertical row ramp relative to the scan-wide mean level are profiled out so flux fluctuations do not mimic vertical motion. The returned `result.scan` carries the calibrated geometry and fitted per-view poses.
 
-The line search compares a pose trial with the image-only trial at the **same image step**.
-An image improvement cannot pay for a harmful pose move. Per-view rotations pay a size
-prior in radians, including their smooth components, so smooth rotations are not free.
+The line search compares each pose trial against the image-only trial at the same image step so an image improvement cannot pay for a worse pose. Per-view rotations carry a prior in radians (including their smooth components).
 
-A level stops after two consecutive small geometry proposals, following at least four outer
-steps. Both proposals must use damping at or below its initial value. The size is measured before
-line-search scaling: rejecting a pose move, or suppressing it with heavy damping, does not
-establish convergence. Further image improvement can continue in a subsequent reconstruction.
+A pyramid level stops after two consecutive small geometry updates (following at least `min_iterations` steps) when damping is at or below its starting value. Step size is measured before line-search scaling.
 
-`tomojax.alignment.api` retains the projection-only centre preview and its diagnostic report.
-They do not select a different alignment engine behind `tj.align`.
+`tomojax.alignment.api` also exposes the projection-only centre estimator and its diagnostic report (used by `tj.align(..., fit="center", method="opposite-views")`).

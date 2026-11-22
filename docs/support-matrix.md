@@ -1,175 +1,66 @@
-# TomoJAX support matrix
+# Support matrix
 
-Available workflows and their entrypoints. “Supported” means implemented and
-tested. See [installation](installation.md) and [measurement scope](measurements.md).
+This page lists supported workflows, acquisition formats, and numerical backends. See [installation](installation.md) for dependencies and [measurements](measurements.md) for benchmark results.
 
-![Four reconstructed slices, one per geometry: a sandstone plug from Diamond I12 in parallel beam, a layer of glass spheres from Diamond K11 laminography, a copper oxide specimen from a Zeiss Xradia cone-beam scan, and a FIPS walnut from three cone-beam orbits.](images/geometry-montage.png)
+## Workflows
 
-One real scan for each supported geometry, as on the
-[documentation index](README.md).
+| Workflow | Entry point |
+| --- | --- |
+| Inspect, validate, and preview datasets | `tomojax inspect scan.nxs [--json] [--preview previews]` |
+| Convert dataset containers (`.npz`, `.nxs`, `.h5`) | `tomojax load scan.npz -o scan.nxs` |
+| Load and correct HDF5 raw frames (NXtomo, Data Exchange, Diamond/GDA) | `tomojax correct raw.nxs -o corrected.nxs` or `tj.load("raw.nxs")` |
+| Load and correct TIFF stacks (parallel, laminography, cone) | `tomojax correct ./projections --flats ./flats --darks ./darks --angles angles.csv --pixel-size ... -o corrected.nxs` |
+| Load already-corrected TIFF line integrals | `tj.Scan(read_tiff_frames(path), geometry)` |
+| Lazy cropping, view selection, and custom correction steps | `tj.load_frames(path).cropped(...).selected(...).corrected(*steps)`; `scan.corrected(*steps)` |
+| Artefact removal and phase retrieval | `--stripes WIDTH`, `--rings`, `--zingers`, `--reject-views`, `--paganin` (expert); `BeamHardening`, `RadialDistortion` in Python |
+| Analytical and iterative reconstruction (Fourier, FBP/FDK, CGLS, FISTA-TV, SPDHG-TV, SIRT, MLEM) | `tomojax reconstruct corrected.nxs -o recon.nxs [--method ...]` or `tj.reconstruct(scan, method, config=...)` |
+| Nikon `.xtekct` cone-beam import | `tomojax correct scan/part.xtekct --darks 0 -o scan.nxs` or `tj.load_frames("scan/part.xtekct", darks=0).corrected()` |
+| Zeiss `.txrm` projection acquisitions | `tj.load("scan.txrm")` or `tj.load_frames("scan.txrm", flats="reference_Front.xrm").corrected(...)` ([CPU preview](lab-ct.md#zeiss-xradia-preview)) |
+| Multi-orbit cone-beam scans (`ConeSegments`) | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then iterative `tj.reconstruct` and `tj.align` |
+| Joint alignment (centre, translations, tilt, roll, per-view rotations) | `tomojax align corrected.nxs -o aligned.nxs --fit ...` or `tj.align(scan, fit=..., grid=...)` |
+| Export volume to 32-bit TIFF z-slices or raw binary (`float32`/`uint16`) | `tomojax export recon.nxs -o slices/` or `-o recon.raw --dtype uint16` |
+| Synthetic scan generation | `tomojax simulate -o synthetic.nxs --size 64 --geometry parallel\|lamino\|cone` |
+| Volumes larger than GPU or host memory | Automatic host slabs for FBP, FDK, Fourier, CGLS, FISTA-TV, SIRT, MLEM; `out=` memmap and `tj.reconstruct_slabs` ([large scans](large-scans.md)) |
+| Multi-GPU reconstruction (single machine, Python only) | `devices=` on `tj.project`, `tj.backproject`, and `tj.reconstruct` (`fbp`, `cgls`, `fista`) ([several GPUs](large-scans.md#use-several-gpus)) |
 
-| Workflow | Status | Supported entrypoint |
-|---|---|---|
-| Dataset inspection and validation | Supported | `tomojax inspect scan.nxs` (`--json` for a JSON report; exit status 1 when invalid) |
-| Preview PNGs (central projection and central volume slices) | Supported | `tomojax inspect recon.nxs --preview previews` |
-| TIFF stacks of raw frames | Supported | `tomojax load ./tiffs --flats ./flats --darks ./darks --angles angles.csv --pixel-size ... --geometry parallel -o scan.nxs`; already-corrected line integrals build `tj.Scan(read_tiff_frames(path), geometry)` in Python |
-| Dataset container conversion (`.npz`, `.nxs`, `.h5`) | Supported | `tomojax load scan.npz -o scan.nxs` |
-| HDF5 flat/dark correction (NXtomo `image_key`, or APS Data Exchange `data_white`/`data_dark`; flat sets before and after interpolated) | Supported | `tomojax correct raw.nxs -o corrected.nxs`, or `tj.load("raw.nxs")` |
-| Frame corrections in Python (crop, select views, correction steps) | Supported | `tj.load_frames(path).cropped(...).selected(...).corrected(*steps)`; `Scan.corrected(*steps)` for line-integral steps |
-| TIFF flat/dark preprocessing | Supported | `tomojax correct ./projections -o corrected.nxs --flats ./flats --darks ./darks --angles angles.csv --pixel-size ... --detector-center U V` |
-| FBP, CGLS, FISTA-TV, SPDHG-TV from corrected projections | Supported | `tomojax reconstruct corrected.nxs -o recon.nxs --method fbp\|cgls\|fista\|spdhg` |
-| Fourier-slice inverse of supported parallel scans | Supported | `tomojax reconstruct corrected.nxs -o recon.nxs --method fourier`; matching available CUDA or NumPy, with explicit backend configuration |
-| Cone-beam (lab CT) scans: FDK and iterative reconstruction | Supported | `tomojax load ./tiffs --flats ... --darks ... --geometry cone --source-to-axis ... --source-to-detector ... --pixel-size ... --angles angles.csv -o scan.nxs`, then `tomojax reconstruct` (automatic FDK for one arrangement; `--method fbp` selects it explicitly) |
-| Per-view translations and optional rotations | Supported | `tomojax align corrected.nxs -o aligned.nxs --fit translations rotations` |
-| Cone-beam motion (includes along-beam translation) | Supported | `tomojax align cone_scan.nxs -o aligned.nxs --fit translations rotations` |
-| Ring (stripe), zinger, outlier-view and beam-hardening corrections; Paganin phase retrieval | Supported | `tomojax correct raw.nxs -o scan.nxs --stripes 9 --zingers --reject-views` (and the expert `--paganin`); beam hardening uses explicit `tomojax.corrections.BeamHardening` curves |
-| Volume export as TIFF slices or raw (`uint16` or `float32`) | Supported | `tomojax export recon.nxs -o slices/`; `tomojax export recon.nxs -o recon.raw --dtype uint16` |
-| Nikon (X-Tek) scan import, including its calibrated rotation axis | Supported | `tj.load_frames("scan/part.xtekct", darks=0).corrected()`, or `tomojax correct scan/part.xtekct --darks 0 -o scan.nxs` |
-| Zeiss Xradia projection acquisitions | Supported | `tj.load("scan.txrm")`, or `tj.load_frames("scan.txrm").corrected(...)`; separate reference images use `flats="reference_Front.xrm"`; [CPU preview](lab-ct.md#zeiss-xradia-preview) |
-| Multi-orbit cone-beam scans (`ConeSegments`): iterative reconstruction and pose alignment | Supported | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then `tj.reconstruct(scan, "cgls")` and `tj.align(scan)` |
-| Shared detector centre and roll, including cone data | Supported | `tomojax align cone_scan.nxs -o calibrated.nxs --fit center roll` |
-| Detector-centre/COR alignment | Supported | `tomojax align corrected.nxs -o aligned.nxs --fit center` |
-| Detector-centre offset with per-view motion | Supported; the shared offset uses an explicit gauge | `tomojax align corrected.nxs -o aligned.nxs --fit center translations` |
-| Shared setup angles with per-view motion | Supported; one joint solve | `tomojax align corrected.nxs -o aligned.nxs --fit translations tilt roll` |
-| Deterministic synthetic dataset generation | Supported | `tomojax simulate -o synthetic_scan.nxs --size 64 --geometry parallel\|lamino\|cone` |
-| Python API reconstruction | Supported | `tj.reconstruct(scan, method, config=...)`, `tj.project`, `tj.backproject`; building blocks in `tomojax.geometry`, `tomojax.forward`, `tomojax.recon` |
-| Python API alignment | Supported | `tj.align(scan, fit=..., grid=...)` |
-| Volumes larger than the GPU | Supported | FBP and FDK switch to host slabs automatically; `fbp_host` and `fdk_host` in Python ([large scans](large-scans.md)) |
-| Several GPUs in one process | Supported (Python only) | `devices=` on `tj.project`, `tj.backproject`, `tj.reconstruct` (`fbp`, `cgls`, `fista`) ([large scans](large-scans.md#use-several-gpus)) |
+## Metadata and calibration rules
 
-No-flag `tomojax align` fits translations with the same joint solver used by every `fit` setting.
-`tomojax reconstruct` selects its image method from the geometry. Check recovered geometry and
-reconstructed images.
+- **Missing pixel pitch:** parallel-beam scans fall back to pixel units (`length_unit: "pixel"`); override with `pixel_size=`, `detector=`, or `--pixel-size`. Cone-beam scans require a physical pixel size.
+- **Missing rotation centre:** defaults to the detector middle `(0.0, 0.0)` with `detector_center_status="not_recorded"`. Supply `detector=` or fit it with `tj.align(scan, fit="center")`.
+- **Missing angles or laminography tilt:** raise an error naming the argument (`angles=` or `geometry=`) rather than assuming defaults.
+- **Missing flats or darks:** supply `flats=` (frames or scalar white level) and `darks=`. Nikon and SkyScan require explicit `darks=` (SkyScan also requires `flats=`); Zeiss skips darks when `AcquisitionSettings/CameraStaticBackground = 1`.
+- **Cropping and binning:** compressed TIFF crops decode only intersecting strips or tiles. Detector binning reduces output resolution automatically when no explicit grid is recorded; `Scan.binned()` and file-owned grids keep their sampling unless overridden with `grid=`.
 
-## Scope
+## Acquisition formats
 
-NXtomo and generic TIFF/HDF5 frame loading requires recorded or explicitly
-supplied detector pixel sizes and view angles. External NXtomo/Data Exchange
-use their format-defined axial parallel model. If the pitch is recorded but the
-rotation centre is absent, loading places the centre at the middle of the
-detector and records `detector_center_status` "not_recorded"; nothing is
-estimated. The centre comes from the file, from `detector=`, or from
-`tj.align(scan, fit="center")`. Vertical zero defines the free axial origin. Laminography requires a recorded tilt/axis or
-`geometry=`. Nikon files lacking dark calibration require `darks=`; zero is
-only an explicit choice for already corrected counts. A Zeiss file that records
-`AcquisitionSettings/CameraStaticBackground` = 1 (the camera subtracted its dark
-before writing the counts) needs none, and the correction record says so. SkyScan additionally
-requires `flats=` (frames or one level) rather than deriving it from bit depth.
-Compressed TIFF crops decode only their intersecting strips/tiles. In folders,
-TIFF-suffixed entries are image storage, not acquisition text sidecars.
-The command line reads a TIFF stack as raw frames. TIFF line integrals are
-read in Python, `tj.Scan(read_tiff_frames(path), geometry)`, with the whole
-geometry given, including the tilt for laminography.
-For raw frames without an explicit grid, detector binning also reduces output
-resolution. Axial-parallel crops follow the measured row window; other models
-retain their output box. File/caller-supplied grids and `Scan.binned()` retain
-their chosen sampling.
+`tj.load_frames` recognises supported raw exports by file content, even if renamed. Physical pitches are normalised to millimetres.
 
-Missing values produce an error naming the argument that supplies them, except a
-parallel-beam pixel size (pixel units, said in the record) and a rotation centre
-(the detector middle, said in the record). A 30° tilt is not assumed.
+| Format | Frames and calibration | Angles and geometry metadata |
+| --- | --- | --- |
+| External NXtomo (ESRF, Diamond, generic) | Group declaring `NXtomo` (`instrument/detector/data`, `image_key`); ESRF return frames (`image_key_control = -1`) excluded; single-row `(view, u)` sinograms stay lazy as `(view, 1, u)` | `sample/rotation_angle` (or `sample/transformations/rotation_angle`) with units (default degrees); `x_pixel_size`/`y_pixel_size` with length units |
+| Data Exchange (APS, PSI TOMCAT, Elettra SYRMEP) | `/exchange/data`, `data_white`, `data_dark`, or interleaved `image_key` | `/exchange/theta`; `/measurement/instrument/detector/actual_pixel_size_x`/`_y`; facility labels kept |
+| ESRF raw Bliss HDF5 | Sequence-owned detector blocks, image keys, and flat positions (synthetic-tested; all linked files required) | Unit-labelled angular commands; `technique/optic/sample_pixel_size`; distances from `technique/scan` |
+| ESRF SPEC EDF | Ordered single-image EDFs, references, accumulated darks divided by `DARK_N` | `.info`/XML `PixelSize` and `Distance`; supply `angles=` explicitly |
+| ESRF PyHST `.par` | Pass `.par` path explicitly; raw single-image axial parallel EDFs with dark/flat schedules (multi-frame, cone, helical, binning, distortion unsupported) | Recorded angles, pixel pitch, rotation axis, and reconstruction region |
+| Nikon `.xtekct` | Numbered `<Name>` projection TIFFs and `WhiteLevel`; supply `darks=` explicitly; both TIFF axes and angle signs normalised | Source/detector distances, pixel pitch, `ObjectOffsetX`/`Roll`/`Tilt` (or legacy `CentreOfRotationTop/Bottom`), `InitialAngle`/`AngularStep`; vendor ROI offsets kept as metadata |
+| Zeiss `.txrm` | Lazy OLE image streams, embedded or external `.xrm` references (`flats=`), exposure-time count-rate normalisation, timestamp interpolation | `ImageInfo/Angles`, object-plane `pixelsize`, `XrayGeometry`, distances, `AutoRecon/CenterShift`, per-view `alignment/*-shifts` |
+| SkyScan log + TIFFs | Lazy numbered TIFFs (excluding scouts and drift records); requires geometric and flat-field correction enabled in export; supply `flats=` and `darks=` | Source/detector distances, pixel pitch/binning, vertical optical-axis line; supply horizontal centre via `detector=` |
+| PSI cSAXS `.mat` (MATLAB 7.3) | `tj.load` reads unwrapped `aligned_phase_sinogram` directly as line integrals (unaligned complex `stack_object` rejected) | `rotation_angle` (degrees), `pixel_size` (mm), `wavelength` (saved in `geometry_metadata`) |
 
-Workflows outside the table above are research or expert diagnostics.
-
-## Acquisition metadata
-
-`load_frames` recognises these raw exports by content, even with a renamed file.
-A partial detector record is retained for inspection, not completed with a
-zero rotation centre. A missing axial centre is recorded as "not_recorded" with
-the centre at the detector middle, not estimated; a missing pitch requires
-`detector=`/`geometry=`. Physical
-pitches below are normalised to millimetres.
-
-| Export | Frames and calibration | Angles and detector metadata |
-|---|---|---|
-| ESRF raw Bliss step sequence | Sequence-owned detector blocks, image keys and flat positions; external/virtual pixel links checked | Unit-labelled angular commands before raw motors; `technique/optic/sample_pixel_size`; distances from `technique/scan`; a missing axial centre is recorded as not recorded (detector middle) or supplied |
-| ESRF SPEC EDF | Ordered EDF files, reference files, accumulated darks divided by recorded `DARK_N` | `.info`/XML `PixelSize` and propagation `Distance`; caller supplies `angles=` (range alone has no origin), and `detector=` if needed |
-| ESRF PyHST EDF | Explicit `.par` input; inclusive indexed file range and interval, dark/flat schedules | Recorded angles, detector pitch/axis and reconstruction region; raw single-image EDFs with fixed axial parallel geometry |
-| External NXtomo (including ESRF exports) | A group declaring `NXtomo` (by a `definition` dataset or attribute), with `instrument/detector/data` and `image_key`; ESRF return images (`image_key_control` −1) are left out; the entry name is unrestricted | `sample/rotation_angle` (or `sample/transformations/rotation_angle`), recorded angular units; detector `x_pixel_size`/`y_pixel_size` with length units |
-| Data Exchange (including PSI TOMCAT and Elettra SYRMEP TomoBank exports) | `/exchange/data`, `data_white`, `data_dark`, or interleaved `image_key` | `/exchange/theta`; `/measurement/instrument/detector/actual_pixel_size_x` and `_y` with `unit`/`units` when present; sample/source/beamline labels are retained |
-
-These readers do not turn an estimated motor position into a calibrated
-rotation centre, or infer pixel pitch from image dimensions. Data Exchange
-exports lacking facility labels remain Data Exchange, not a guessed beamline.
-Real-file coverage includes ESRF NXtomo converted by nxtomomill (two public nabu
-exports), Data Exchange from APS (TomoBank 13-BM-D and 32-ID), TOMCAT and SYRMEP,
-Diamond I12 HDF5, K11 GDA and I13 NXtomo, Nikon TIFF acquisitions, Zeiss TXRM,
-SkyScan logs/TIFFs, Diamond I13 compressed TIFF folders with explicit calibration,
-the PSI cSAXS porous-glass ptychographic tomography (Zenodo 3539513),
-and TomoJAX NPZ/NXtomo round trips; it does not include native TOMCAT GigaFRoST
-or every native TOMCAT/SYRMEP layout. ESRF SPEC EDF and PyHST `.par` inputs are
-tested on public acquisitions taken with the beam off, which check the file
-layout and metadata but not corrected values. The ESRF raw Bliss reader has
-synthetic tests only. Native EDF/Bliss inputs must include every file named by
-the selected sequence or parameter file: missing inputs are errors.
-Missing calibration does not disable content recognition: supply `flats=` (frames
-or one level) and `darks=`. NXtomo/Data Exchange angular fields use their
-format-defined degree convention when units are absent; generic motor datasets
-without units require explicit `angles=`.
-
-HDF5 `(view, u)` sinograms retain lazy frame access and are presented with a
-singleton row as `(view, 1, u)`, including during NXtomo inspection/validation.
-PyHST multi-frame, cone, helical, binning and distortion modes are rejected;
-pass a `.par` explicitly rather than relying on directory discovery to choose it.
-
-SkyScan logs supply distances, camera pitch/binning, optional resize and the
-vertical optical-axis line, but not a calibrated horizontal centre. Supply
-`detector=`/`geometry=` plus explicit flat/white and dark calibration.
-
-Zeiss reads `ImageInfo/Angles`, object-plane `pixelsize`, `XrayGeometry`,
-cone distances, both `alignment/*-shifts` and `AutoRecon/CenterShift`;
-without `CenterShift`, `detector=` supplies the centre the shifts are measured
-from; other missing calibration requires `geometry=` rather than zero image shifts.
-The embedded reference uses `ReferenceData/DataType`; separate XRM flat/dark
-files use their own `ImageInfo/DataType`. Both are read lazily.
-
-PSI cSAXS ptychographic tomography `.mat` files (MATLAB 7.3, as the cSAXS
-tomography codes save them) hold line integrals, not frames: `tj.load` reads
-`aligned_phase_sinogram` (the unwrapped, aligned phase in radians),
-`rotation_angle` in degrees and `pixel_size`, converted to millimetres. The
-volume is then the phase per millimetre, 2π/λ times the refractive index
-decrement δ; the record keeps `lambda` as `wavelength`. The file records no
-rotation centre, so the detector middle is used (the alignment that produced the
-sinogram centres the axis) and recorded as not recorded. A file holding only the
-complex, unaligned `stack_object` is refused with that reason.
-`MultiReferenceData/ImageN` references use their recorded exposure durations and
-timestamps; the same count-rate correction handles separate XRM references.
-
-Nikon detector pitch/offsets and source distances come from the `.xtekct`
-fields; its axis requires either the recorded modern offset/roll/tilt or both
-legacy COR endpoints. Vendor reconstruction dimensions, pitches and ROI offsets
-remain source metadata, not an applied reconstruction region: TomoJAX uses its
-field-of-view grid unless the caller supplies `grid=`.
-Both TIFF axes and the rotation/calibration signs are normalized together.
-Default angles use `InitialAngle` and `AngularStep`, not `.ang` or `_ctdata.txt`;
-an explicit `angles=` schedule must be in TomoJAX's object-angle frame.
+Tested against real acquisitions from ESRF NXtomo (`nxtomomill`), APS TomoBank (13-BM-D, 32-ID), PSI TOMCAT, Elettra SYRMEP, Diamond I12/K11/I13, Nikon X-Tek, Zeiss Xradia `.txrm`, SkyScan 1172, and PSI cSAXS. Native TOMCAT GigaFRoST is not supported.
 
 ## Numerical and accelerator scope
 
-| Operation | Geometry and backend coverage |
-|---|---|
-| Forward model and matched adjoint | Parallel rays with rigid poses, anisotropic voxels, and shifted grids/detectors; JAX reference and optional CUDA kernels |
-| Parallel FBP | JAX on CPU/CUDA; CUDA selected automatically on CUDA for built-in `ParallelGeometry` without an explicit detector grid |
-| Host-output FBP | `fbp_host`: NumPy/memmap or device input and optional FP32 output for every parallel-beam geometry `fbp` accepts (cone beams use `fdk_host`); parallel axial slabs or laminography x-slabs via JAX or native CUDA kernels; not differentiable. `fbp` itself streams NumPy/memmap projections batch by batch |
-| Fourier-slice inverse (Python API) | `fourier_reconstruct`: uniform/nonuniform half-turn parallel scans, including redundant/opposing exposures, offsets/anisotropic spacing/cropped grids; NumPy reference or optional CuPy CUDA; host arrays/memmaps and axial slabs; not differentiable |
-| General posed/laminography filtered adjoint | JAX; approximate initialisation for incomplete-angle data |
-| Public FISTA-TV and SPDHG-TV | JAX with matched discrete adjoints; convergence regressions for parallel and tilted scans; NumPy/memmap projections stream from host memory when large (SPDHG-TV also keeps its dual and weights there) |
-| Public CGLS (Python API and `tomojax reconstruct --method cgls`) | Matched FP32 JAX/CUDA operators, scalar damping, optional squared physical voxel differences, nonzero starts; CUDA selected automatically on CUDA with canonical detector grids; large NumPy/memmap projections stream from host memory through the equivalent normal equations |
-| Joseph plane model (Python API) | `project_joseph` and the default discretisation of CGLS, FISTA-TV and SPDHG-TV; explicit bilinear or Keys cubic interpolation; JAX reference and matched CUDA gather transpose; CUDA first-order volume/pose AD, JVP/VJP and batching; rigid poses and canonical detector grids required |
-| Fused Joseph least squares (Python API) | `joseph_l2_value_and_grad`: raw half squared error plus volume/matrix-pose gradients; CUDA retains residuals and tile reductions without a ray-by-plane tape; not called by the alignment pipeline |
-| Joseph pose normal equations (Python API) | `joseph_pose_normal_equations`: per-view raw loss, directional gradient, Gauss-Newton matrix and residual; 1–16 caller-supplied pose directions; CUDA avoids a full projection Jacobian; caller chooses damping, priors and gauges |
-| Coarse-to-fine CGLS (Python API) | Optional `cgls_multires` with explicit budgets and a final full-data solve; tested on odd/shifted grids and sharp/noisy phantoms, with known performance regressions |
-| Internal differentiable FISTA core | JAX and explicit CUDA forward/adjoint variants for reconstruction |
-| Parallel-beam geometry | `ParallelGeometry`, `LaminographyGeometry(tilt=...)` or `RotationAxisGeometry(axis_unit_lab=...)` for an axial, tilted or arbitrary axis; a detector centre offset and roll (`detector_roll`); any per-view poses |
-| Cone-beam geometry | `ConeGeometry`: point source and flat detector with offsets, roll, pitch and yaw, a laterally offset (`axis_offset`), tilted or arbitrary axis, any per-view poses; Joseph sampling of diverging rays with a matched transpose; JAX reference (differentiable in volume and poses) and CUDA kernels (CuPy); CGLS, FISTA-TV, SPDHG-TV and FDK (full turns, offset-detector full turns, Parker-weighted short scans on centred or offset detectors); `tomojax simulate`, `tomojax load` and saved datasets. Fan beam is a one-row cone detector |
-| Real GPU validation | CUDA on RTX 4070 Laptop (Ada); CPU reference mode is tested separately |
+| Operation | Coverage and backends |
+| --- | --- |
+| Geometries | `ParallelGeometry`, `LaminographyGeometry`, `RotationAxisGeometry` (arbitrary axis), `ConeGeometry` (`ConeBeam` with offsets, roll, pitch, yaw, `axis_offset`, arbitrary axis), `ConeSegments`; arbitrary per-view rigid poses; fan beam as a 1-row cone detector |
+| Forward projection and matched adjoint | Linear and Keys cubic Joseph plane-sampling models; JAX reference and CUDA C kernels (exact transpose via gather, no scattered atomics); first-order volume and pose AD (`jax.grad`, `jvp`, `vjp`, `vmap`) on CUDA, higher-order AD on JAX |
+| Fused Joseph pose helpers (`tomojax.forward`) | `joseph_l2_value_and_grad` (unweighted half squared error + volume/pose gradients) and `joseph_pose_normal_equations` (per-view loss, gradient, Gauss-Newton `J.T @ J`, residual for 1–16 directions on CUDA without storing full Jacobians) |
+| Parallel FBP and Cone FDK | JAX (CPU/GPU) and CUDA C kernels (auto-selected on CUDA); automatic host-slab fallback (`fbp_host`, `fdk_host`) and raw-frame streaming (`tj.reconstruct_slabs`); full turns, offset-detector full turns, Parker-weighted short scans |
+| Fourier-slice inverse | `fourier_reconstruct` for axial parallel scans (uniform/nonuniform angles, offsets, anisotropic grids, per-view translations); NumPy reference or CuPy CUDA (`cuda12` / `fourier-cuda12`); host slabs; non-differentiable |
+| Iterative solvers (`cgls`, `cgls_multires`, `fista`, `spdhg`, `sirt`, `mlem`) | Exact matched JAX/CUDA projectors; automatic projection streaming and host-slab volume fallback (except SPDHG, which needs 5 volumes in VRAM); TV/Huber-TV, box bounds, support masks, `data_term="per_view_contrast"`, ordered subsets |
+| Joint alignment (`tj.align`) | Single Gauss-Newton/Schur solver for `center`, `translations`, `tilt`, `roll`, `rotations` across all geometries; `method="opposite-views"` projection-only centre estimate for axial parallel scans |
+| PyTorch bridge (`tomojax.torch.Projector`) | Zero-copy DLPack wrapper around CUDA forward and exact-transpose projectors with autograd |
+| Hardware tested | Linux x86_64 CPU; CUDA 12 on RTX 4070 Laptop GPU (Ada, 8 GB) and 4× H100 (80 GB) |
 
-Volumes use `(z, y, x)` array order and projections use `(view, v, u)`. Voxel and
-detector spacings must use consistent physical length units. Forward projection
-integrates over physical ray length. FBP returns attenuation in the volume's
-units; its backprojection normalisation differs from the Euclidean transpose
-used by iterative solvers. See [accuracy and performance evidence](measurements.md) for
-the measured cases, backend choices, and limitations.
-
-For choosing alignment parameters and checking its result, see the
-[alignment guide](align-a-scan.md).
+Volumes use `(z, y, x)` and projections use `(view, v, u)`, with voxel and detector spacings sharing one physical length unit. Forward projection integrates over physical ray length. FBP returns attenuation in inverse length units (normalised differently from the Euclidean transpose used by iterative solvers).

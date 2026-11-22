@@ -1,7 +1,6 @@
 # Runnable examples
 
-Run these from the checkout root after [installation](../docs/installation.md).
-They use public APIs and write no data unless an output is requested.
+These scripts run from the repository root using public TomoJAX APIs and write no files unless an output path is given.
 
 ## Project and reconstruct a volume
 
@@ -9,34 +8,13 @@ They use public APIs and write no data unless an output is requested.
 uv run --no-sync python examples/simulate_and_reconstruct.py
 ```
 
-[simulate_and_reconstruct.py](simulate_and_reconstruct.py) creates a 32³
-Shepp–Logan object, generates 60 parallel projections with the Joseph model,
-and runs 24 CGLS iterations with that same model. It prints the reference and
-reconstruction shapes and the full-volume relative L2 error.
-The iteration budget may end before convergence. The JAX backend runs on CPU or
-an available GPU; prefix the command with `JAX_PLATFORMS=cpu` to require CPU.
-
-Simulation and reconstruction share a discretization, so this is a usage example,
-not independent accuracy evidence. See the [measurements](../docs/measurements.md)
-for independent data and accepted-result comparisons.
+[simulate_and_reconstruct.py](simulate_and_reconstruct.py) creates a 32³ Shepp–Logan phantom, simulates 60 parallel projections with the Joseph model, runs 24 CGLS iterations, and prints the shapes and full-volume relative L2 error. Prefix with `JAX_PLATFORMS=cpu` to run on CPU. For independent benchmarks against analytic references and real scans, see [measurements](../docs/measurements.md).
 
 ## Reproduce the README figures
 
-The README's figures image one phantom: a 29 mm skeletonised mechanical watch
-movement with a mainspring barrel, a going train, a club-tooth escapement and a
-screwed balance with its hairspring, modelled in Blender as one closed mesh per
-material ([watch_blender.py](../bench/phantoms/watch_blender.py)). gVXR traces
-each ray's path length through the meshes, so the projections are exact line
-integrals of the meshes and share nothing with TomoJAX's projector; each
-detector pixel averages the transmission of 2 × 2 rays before Poisson noise and
-the logarithm. The beam is monochromatic at 120 keV, with xraylib attenuation
-for titanium, brass, steel, silicon, ruby, Glucydur, 18-carat gold, Nivarox and
-Nivaflex. The truth on each reconstruction grid is the exact voxel average of
-the meshes ([mesh_voxels.py](../bench/phantoms/mesh_voxels.py)).
+All three README figures image a 29 mm skeletonised mechanical watch movement (mainspring barrel, going train, club-tooth escapement, screwed balance with hairspring) modelled in Blender as closed per-material meshes ([watch_blender.py](../bench/phantoms/watch_blender.py)). gVXR traces exact ray path lengths through the meshes at 120 keV (with `xraylib` attenuations), averaging 2 × 2 sub-pixel transmissions before Poisson noise and `-log`; the voxel truth is the exact mesh average ([mesh_voxels.py](../bench/phantoms/mesh_voxels.py)).
 
-The scripts need a CUDA GPU, Blender 4.5 and the gVXR environment of the
-[watch phantom](../bench/README.md#watch-movement-phantom), found under
-`.artifacts` or given with `--blender` and `--gvxr-python`:
+Running these requires a CUDA GPU, Blender 4.5, and the gVXR environment described in [bench/README.md](../bench/README.md#watch-movement-phantom) (located under `.artifacts` or passed via `--blender` and `--gvxr-python`):
 
 ```bash
 uv sync --locked --extra cuda12 --group examples --no-dev
@@ -45,51 +23,21 @@ uv run --no-sync python examples/align_watch.py
 uv run --no-sync python examples/render_watch.py
 ```
 
-Each writes its figure to `images/` (or `--out`) with a JSON record of its
-settings, errors and run times beside it. Meshes, projections and truths are
-cached under `.artifacts/figures/watch`; the first run builds the meshes in
-about 40 s. Times are on an RTX 4070 Laptop GPU.
+Each script writes its figure to `images/` (or `--out`) alongside a JSON record of settings, errors, and runtimes, caching meshes and projections under `.artifacts/figures/watch` (first run builds the meshes in ~40 s). Timings below are on an RTX 4070 Laptop GPU.
 
 ### Reconstruct a few-view, noisy scan
 
-[reconstruct_watch.py](reconstruct_watch.py) scans the movement with 200 views
-over a half turn and 10⁴ photons per pixel, and reconstructs a 32-slice slab
-through the hairspring on 38.5 µm voxels with filtered backprojection (Hann
-filter) and with 200 iterations of non-negative FISTA-TV (weight 1e-5, which keeps
-the hairspring) started from it. Over the whole slab the relative L2 error is 0.357
-for FBP and 0.124 for FISTA-TV, which takes 17 s. The script takes about a minute.
+[reconstruct_watch.py](reconstruct_watch.py) simulates 200 views over 180° at 10⁴ photons per pixel and reconstructs a 32-slice slab through the hairspring on 38.5 µm voxels with Hann FBP (relative L2 error 0.357) and 200 iterations of nonnegative FISTA-TV (`tv_weight=1e-5`, error 0.124 in 17 s). Total runtime is ~1 minute.
 
 ### Align a scan with per-view motion
 
-[align_watch.py](align_watch.py) scans the whole movement on 77 µm voxels with
-400 views over a half turn and 2 × 10⁴ photons per pixel. The rotation axis
-projects 5.3 px off the detector centre, and every view has its own pose: a
-slow wobble plus jitter of up to 0.25° in each rotation, 2.4 px across the axis
-and 1.5 px along it. `tj.align(scan, fit=("center", "translations", "rotations"))`
-takes 36 s. It recovers the rotations to 0.06° RMS or better and the shifts to
-0.07 px (across) and 0.05 px (along) RMS. The error of a FISTA-TV reconstruction
-(TV weight 1e-5, which keeps the hairspring) falls from 0.905 with the nominal
-geometry to 0.209, against 0.212 with the true poses. The script takes about
-2.5 minutes.
+[align_watch.py](align_watch.py) simulates 400 views on 77 µm voxels at 2 × 10⁴ photons per pixel with a 5.3 px centre offset plus per-view wobble and jitter (up to 0.25° rotations, 2.4 px across the axis, 1.5 px along it). `tj.align(scan, fit=("center", "translations", "rotations"))` runs in 36 s, recovering rotations to ≤ 0.06° RMS and shifts to 0.07 / 0.05 px RMS. FISTA-TV error drops from 0.905 (nominal) to 0.209 (aligned), matching the true-pose reconstruction (0.212). Total runtime is ~2.5 minutes.
 
-Moving the whole movement rigidly, with every pose moved back, predicts the
-same data, as does trading the detector centre against a shift of every view,
-so `tj.align` reports the estimate with the least per-view motion. The truth,
-its poses and its centre are moved to that estimate before they are compared
-(see [where the aligned volume sits](../docs/align-a-scan.md#check-the-result));
-there the centre is found at 3.19 px.
+Because a global rigid shift is unobservable, truth, poses, and centre are aligned to the same least-motion gauge before comparison (see [check the result](../docs/align-a-scan.md#check-the-result)).
 
 ### Volume-render a reconstruction
 
-[render_watch.py](render_watch.py) scans the whole movement with 600 views and
-3 × 10⁴ photons per pixel, reconstructs it on a 768 × 768 × 164 grid of 38.5 µm
-voxels with 60 FISTA-TV iterations (weight 1e-5, 50 s), and draws the reconstruction
-by direct volume rendering in JAX ([_volume_render.py](_volume_render.py)).
-Rays march through the volume, and a transfer function of the reconstructed
-attenuation sets colour and opacity: steel white, brass and the balance gold,
-the timing screws yellow, the ruby jewels red, and titanium blue glass drawn by
-its boundaries. The picture is drawn from the reconstruction alone; the meshes
-only make the projections. The script takes about 3 minutes.
+[render_watch.py](render_watch.py) simulates 600 views at 3 × 10⁴ photons per pixel, reconstructs a 768 × 768 × 164 grid (38.5 µm voxels) with 60 FISTA-TV iterations (`tv_weight=1e-5`, 50 s), and renders the reconstructed volume directly in JAX ([_volume_render.py](_volume_render.py)) using an attenuation transfer function (steel white, brass gold, ruby red, titanium blue glass). Total runtime is ~3 minutes.
 
 ## Prepare and align complex ptychography projections
 
@@ -98,20 +46,14 @@ uv sync --locked --extra cuda12 --extra fourier-cuda12 --no-dev
 uv run --no-sync python examples/align_ptychography.py /path/to/porous_glass_dataset.mat
 ```
 
-[align_ptychography.py](align_ptychography.py) reads either PSI MATLAB example:
-`porous_glass_dataset.mat` (v7.3, measured and already aligned) or
-`example_data.mat` (v5, simulated with motion). The measured-data route crops
-unreliable borders; the smaller simulation uses its full detector. Both prepare
-complex transmission in bounded device batches. For a CPU-sized preview of the
-simulation, keep all angles but bin the **unwrapped phase**, not complex pixels:
+[align_ptychography.py](align_ptychography.py) reads either PSI MATLAB file: `porous_glass_dataset.mat` (v7.3, measured and aligned) or `example_data.mat` (v5, simulated with motion), preparing complex transmission in bounded device batches. For a fast CPU preview of the simulation, bin the unwrapped phase (not the complex pixels):
 
 ```bash
 JAX_PLATFORMS=cpu uv run --no-sync python examples/align_ptychography.py \
   /path/to/example_data.mat --binning 4 -o phase-slices.npz
 ```
 
-The binned run is a preview; inspect its fitted motion and physical slices.
-The same workflow in Python, from the checkout root, is:
+In Python:
 
 ```python
 from examples.align_ptychography import run_example
@@ -120,139 +62,68 @@ volume, poses, report = run_example("example_data.mat", binning=4)
 print(volume.shape, report["value_unit"])
 ```
 
-Its core steps are public APIs:
+The underlying public calls are:
 
 ```python
 import tomojax as tj
 from tomojax.corrections import remove_phase_ramp, unwrap_phase
 
-phase = -remove_phase_ramp(unwrap_phase(objects), air_mask=air * abs(objects)**2)
-scan = tj.Scan(phase, geometry)  # (view, v, u), geometry in pixel units
+phase = -remove_phase_ramp(unwrap_phase(objects), air_mask=air * abs(objects) ** 2)
+scan = tj.Scan(phase, geometry)  # (view, v, u) in pixel units
 aligned = tj.align(scan)
 reconstruction = tj.reconstruct(aligned.scan, "fourier")
 ```
 
-The air mask must cover actual air, not sample pixels. The example's measured-data
-crop and air strips describe these supplied scans; they are not per-view alignment
-corrections and must be reconsidered for other samples.
-The joint estimator returns per-view translations without resampling the input.
-It can fit noise or model mismatch as motion, including on an already aligned
-scan; inspect pose estimates and physical slices rather than treating improved
-consistency or convergence as proof of physical accuracy.
+Adjust the air mask and border crop for other samples so `air_mask` covers only background air. For the measured file, recorded wavelength and pixel size convert reconstructed phase to refractive-index decrement (`wavelength / (2 * pi * pixel_size)`); the uncalibrated simulation reports `rad/pixel`. Pass `-o slices.npz` to save orthogonal slices, poses, and unit metadata.
 
-No supplied aligned phase or reference image is used in inference. For the
-measured file, wavelength and pixel size convert reconstructed phase to
-refractive-index decrement, `wavelength / (2*pi*pixel_size)`. The simulation has
-no physical calibration: its output is phase per original pixel (`rad/pixel`),
-not refractive index. Binning keeps geometry and detector-frame translations in
-original-pixel units; one output voxel spans `binning` original pixels.
-
-The example reports read, preparation, alignment, inverse and whole-workflow
-times. It writes nothing unless `-o slices.npz` is supplied; that archive holds
-central `delta_xy/xz/yz` or `phase_per_pixel_xy/xz/yz` slices, poses and unit
-metadata. `pixel_size_m` is NaN when the input lacks physical calibration.
-Open all three planes and check `value_unit` before interpreting values.
-
-To keep the simulated example as a TomoJAX dataset and use the standard CLI,
-prepare phase in Python (do not apply an absorption logarithm):
+To save the prepared phase as a `.nxs` dataset for the CLI (skipping any absorption logarithm):
 
 ```python
 import numpy as np
 import tomojax as tj
-from examples.align_ptychography import read_psi_objects, prepare_phase, make_scan
+from examples.align_ptychography import make_scan, prepare_phase, read_psi_objects
 
 objects, angles, _, _ = read_psi_objects("example_data.mat")
 air = np.zeros(objects.shape[-2:], dtype=np.float32)
-air[:, :50] = air[:, -50:] = 1  # known air in this supplied example
+air[:, :50] = air[:, -50:] = 1
 scan = make_scan(prepare_phase(objects, air), angles, binning=4)
 aligned = tj.align(scan)
 tj.save("aligned-phase.nxs", aligned.scan)
 ```
 
 ```bash
-uv run --no-sync tomojax reconstruct aligned-phase.nxs -o phase-recon.nxs --method fourier --region off
-uv run --no-sync tomojax inspect phase-recon.nxs --preview phase-previews
+tomojax reconstruct aligned-phase.nxs -o phase-recon.nxs --method fourier --region off
+tomojax inspect phase-recon.nxs --preview phase-previews
 ```
-
-These datasets retain original-pixel geometry: reconstructed values remain
-`rad/pixel`. Python and `tomojax align` use the same joint translation fit.
-
 
 ## Preview a real cone-beam orbit on a CPU
 
-[import_walnut.py](import_walnut.py) prepares a small single-orbit FIPS walnut
-scan for FDK or an iterative reconstruction, without ASTRA or a GPU. It uses
-shared TIFF/geometry loading with the multi-orbit example below. Follow the
-[complete Python and CLI commands](../docs/lab-ct.md#try-one-fips-walnut-orbit-on-a-cpu).
+[import_walnut.py](import_walnut.py) prepares a single-orbit FIPS walnut scan for CPU FDK or CGLS without ASTRA; follow [try one FIPS walnut orbit on a CPU](../docs/lab-ct.md#try-one-fips-walnut-orbit-on-a-cpu).
 
 ## Bring a real multi-orbit scan into register
 
-This one needs data: download a walnut from the FIPS collection (Der
-Sarkissian et al., Scientific Data 6, 215, 2019; CC BY 4.0;
-[Zenodo record 2686726](https://zenodo.org/records/2686726)) and unzip it, then
+Download and unzip a walnut from the FIPS collection (Der Sarkissian et al., Scientific Data 6, 215, 2019; [Zenodo 2686726](https://zenodo.org/records/2686726)):
 
 ```bash
 uv run --no-sync python examples/align_walnut_orbits.py ~/data/walnuts/Walnut1 -o walnut.nxs
 ```
 
-[align_walnut_orbits.py](align_walnut_orbits.py) reads the three orbits'
-projections and the scanner's uncorrected geometry with `tj.Scan.from_astra`,
-bins the detector 2 x 2, aligns every 4th view (900 in all) with `tj.align`, prints each
-orbit's height relative to orbit 1 and reconstructs with 20 iterations of
-non-negative least squares. With the retired alignment route, Walnut 1 gave
--0.38 and -0.76 mm for orbits
-2 and 3, where the authors' corrected geometry has -0.40 and -0.79 mm, in about
-six minutes on an 8 GB laptop GPU. These measurements need repeating with the
-joint solver. The data fix the orbits' heights relative to
-one another but can't pin down the walnut's absolute height: moving the whole
-object, and every view with it, predicts the same projections, so the volume
-can sit a fraction of a millimetre from where the scanner's record would put
-it. [The measurements](../docs/measurements.md#orbit-registration) compare the
-reconstruction with the authors' reference.
+[align_walnut_orbits.py](align_walnut_orbits.py) loads all three orbits with their uncorrected scanner geometry via `tj.Scan.from_astra`, bins 2 × 2, aligns every 4th view (900 views) with `tj.align`, prints relative orbit heights, and reconstructs 20 iterations of nonnegative least squares. On Walnut 1, `tj.align` recovers orbit heights of −0.385 and −0.753 mm (against the authors' −0.397 and −0.794 mm) in ~100 s on an 8 GB laptop GPU ([orbit registration](../docs/measurements.md#orbit-registration)).
 
 ## Reconstruct raw laminography from nominal geometry
 
-[align_laminography.py](align_laminography.py) declares a laminography geometry
-from the nominal tilt (`--tilt`) and detector pitch (`--pixel`), which raw frames
-do not record, then fits translations, tilt and roll jointly with the image (choose
-others with `--fit`). Recognised Diamond/GDA layouts need no dataset paths; other
-files take `--data-path`, `--angles-path` and `--image-key-path`. See the
-[laminography section](../docs/real-laminography.md#automatic-nexus-laminography)
-for the limitations. It writes nothing unless `-o` is supplied.
+[align_laminography.py](align_laminography.py) attaches nominal tilt (`--tilt`) and pixel pitch (`--pixel`) to raw laminography frames and fits translations, tilt, and roll jointly (override with `--fit`). Diamond/GDA layouts are detected automatically; pass `--data-path`, `--angles-path`, and `--image-key-path` for other HDF5 files. See [automatic NeXus laminography](../docs/real-laminography.md#automatic-nexus-laminography).
 
 ## Gallery figures
 
-The scripts in [gallery](gallery) make the figures on the
-[gallery page](../docs/gallery.md): laminography alignment of a gVXR-rendered
-chip package, ring removal on a real Diamond I12 scan, few-view sandstone
-micro-CT, an offset-detector battery scan and wide-cone FDK against CGLS on a
-lattice part. Each takes an output path; the phantoms are built on first use
-and cached under `.artifacts/figures`.
+The scripts in [gallery/](gallery) generate the figures shown in [docs/gallery.md](../docs/gallery.md). Each takes an output PNG path and caches generated phantoms under `.artifacts/figures`.
 
 ## Train a denoiser through the PyTorch projector
 
-Install a CUDA-enabled PyTorch separately, then run
-[train_denoiser.py](train_denoiser.py) on a Diamond I12 NXtomo row cut (raw
-counts with flat and dark frames, Zenodo 3339629):
+With a CUDA build of PyTorch installed, run [train_denoiser.py](train_denoiser.py) on the Diamond I12 NXtomo row cut (Zenodo 3339629):
 
 ```bash
 python examples/train_denoiser.py full_rows1048-1111.nxs --center-px -138
 ```
 
-The small residual CNN learns from two disjoint, angle-interleaved view sets:
-one supplies an FBP input, the other an independent image and projection target.
-The loss sums image and projection mean-square errors in dimensionless units.
-The CUDA PyTorch projector backpropagates with its exact transpose. A third view set is used
-only for final projection-error reporting, never for training or input FBP.
-The default bins 8×8, uses all views and takes 500 training steps.
-Do not undersample each split: missing angular detail can teach the CNN to
-blur structures even while its held-out projection error improves. `--center-px`
-is the calibrated centre in native detector pixels (−138 for this scan), converted
-with the native pitch whatever the binning. Omit it to estimate the centre from the
-scan before splitting.
-
-No clean image is needed for training. This is a single-scan demonstration;
-projection residual is not image accuracy, and shared calibration errors,
-rings and truncation can bias the result. Validate against an independent
-reconstruction before interpreting learned features. Nothing is written
-unless `--output result.npz` is given.
+A small residual CNN trains across two disjoint angle-interleaved view sets (one for FBP input, one for image and projection targets, backpropagating through `tomojax.torch.Projector`'s exact transpose), with a third set held out for projection-error reporting. Defaults bin 8 × 8 over all views for 500 steps; avoid undersampling the splits so the CNN does not learn to blur angular detail. `--center-px` specifies the rotation centre in native pixels (omit to estimate it automatically). Pass `--output result.npz` to save outputs.

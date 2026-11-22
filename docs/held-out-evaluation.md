@@ -1,37 +1,18 @@
 # Held-out evaluation
 
-`tomojax.evaluation.Split` freezes training and held-out observations before
-fitting. It does not select an iteration, regularisation weight or projector.
-The caller supplies predictions from the **same discretisation** used in the
-fit. Scores have no fitted intensity scale or background offset.
+`tomojax.evaluation.Split` partitions observations into training, held-out test, and optional guard sets before fitting. Pass predictions computed with the same projector and discretisation used in the fit; scores compare predictions directly against held-out observations without fitting an intensity scale or offset.
 
-Choose the split for what the model shares between observations:
+Choose the split that matches what your model shares across observations:
 
-- `Split.interleaved(shape, stride=5, offset=2)` holds out individual views for
-  selecting reconstruction iterations or regularisation. Repeat at several
-  strides; sparse angular sampling can change which solution is preferred.
-- `Split.angular(shape, angles, start=60, width=30, guard=5)` holds out a
-  contiguous angular interval, repeated every 360 degrees. This tests global
-  geometry or a smooth motion model that predicts withheld angles.
-- `Split.detector(shape, start=32, width=32, period=128, guard=8, offsets=...)`
-  holds out detector-column blocks within **every** view. Offsets are frozen
-  integer pixel offsets, one per view or a common offset. Use this split for
-  independent per-view poses: poses at completely unseen views have no fit
-  evidence. Column blocks cover all detector rows.
+- `Split.interleaved(shape, stride=5, offset=2)` holds out evenly spaced views, for comparing iteration counts or regularisation weights. Check several strides, since sparser angular sampling can shift the preferred setting.
+- `Split.angular(shape, angles, start=60, width=30, guard=5)` holds out a contiguous angular arc (repeated every 360°), for testing global geometry or smooth motion models across unseen angles.
+- `Split.detector(shape, start=32, width=32, period=128, guard=8, offsets=...)` holds out full-height detector-column blocks in every view (with fixed integer pixel `offsets`, either common or per view). Use this for independent per-view poses, where wholly unseen views have no pose evidence.
 
-`shape` is `(views, rows, columns)` and angles are degrees. `split.train` and
-`split.test` are read-only boolean arrays broadcastable to that shape. Neither
-mask includes guard observations. The JSON `split.specification` and SHA256
-`split.fingerprint` describe the split; record them with source IDs, selected
-frame IDs, geometry, corrections and the fitting command. The fingerprint is
-not a data checksum. Freeze the split before inspecting its scores.
+`shape` is `(views, rows, columns)` and `angles` are in degrees. `split.train` and `split.test` are read-only boolean masks broadcastable to `shape`, with guard observations excluded from both. `split.specification` (JSON) and `split.fingerprint` (SHA-256 of the specification) identify the split for logging alongside dataset IDs, geometry, corrections, and commands.
 
 ![One detector row of K11 scan 54013 drawn three times as a sinogram of view angle against detector column. Held-out observations are orange: every sixth view, a 30° block of angles, and 32-column blocks in every view. Guards are grey.](images/held-out-splits.png)
 
-The three splits on one corrected detector row of Diamond K11 scan 54013:
-held-out observations orange, guards grey, training observations unchanged.
-`Split.interleaved` holds out whole views, `Split.angular` a block of angles,
-and `Split.detector` the same column blocks in every view.
+The three splits on one corrected detector row of Diamond K11 scan 54013 (held-out observations in orange, guards in grey):
 
 ```bash
 uv run python examples/gallery/held_out_splits.py k11-54013.nxs held-out-splits.png
@@ -39,43 +20,29 @@ uv run python examples/gallery/held_out_splits.py k11-54013.nxs held-out-splits.
 
 ## Prevent leakage
 
-Every fitted operation must exclude test and guard observations: reconstruction,
-pose initialisation, motion fitting, data-derived weights and nuisance fitting.
-Masking only the last residual is insufficient. Do not estimate an amplitude or
-offset from the held-out observations. Independent flats and darks may calibrate
-both partitions; sample-dependent ring correction or angular smoothing must not
-mix them. Freeze a native-coordinate split before preprocessing. Guard bands
-must cover local preprocessing support and allowed motion; global Fourier
-filters cannot be certified by a finite guard band.
+Exclude test and guard observations from every fitted step: reconstruction, pose initialisation, motion priors, data-derived weights, and nuisance parameters. Independent flat and dark frames may calibrate both partitions, whereas sample-dependent ring removal or angular smoothing must not mix them. Freeze the split in native detector coordinates before preprocessing, and size guard bands to cover any local preprocessing support or motion range (global Fourier filters mix the whole row regardless of guard width).
 
-The masks do **not** enforce this policy inside `tj.align` or `tj.reconstruct`.
-For interleaved/angular splits, fit only the selected training views. Detector
-splits require a solver whose image and pose objectives both accept observation
-weights. Replacing excluded observations by zero without also zeroing their
-likelihood weights is not exclusion. Test this contract by changing all
-excluded observations and checking that the complete fit remains unchanged.
+`tj.reconstruct` and `tj.align` do not apply `Split` masks automatically:
+
+- For interleaved and angular splits, pass only `scan.selected(split.train_views)` (or the training view indices) into the fit.
+- For detector splits, use a solver whose image and pose objectives accept observation weights, and zero the weights on excluded pixels (zeroing the data alone is not exclusion).
+
+Verify isolation by perturbing all excluded observations and confirming the fitted result is unchanged.
 
 ## Score matched predictions
 
 ```python
-import numpy as np
 from tomojax.evaluation import Split
 
 split = Split.interleaved(observations.shape, stride=5, offset=2)
-# Fit using only split.train. Compute prediction with that fit's projector,
-# geometry, intensity convention and any training-only nuisance parameters.
+# Fit using split.train only, then predict with that fit's projector and geometry.
 score = split.score(prediction, observations)
 print(score.mse, score.relative_l2, score.count)
 ```
 
-`weights=` is nonnegative **precision**, not square-root precision. The score
-reports weighted squared error, weighted target energy, precision sum, and the
-number of positive-weight test observations. Zero-weight observations contribute
-nothing. Positive-weight nonfinite test values are errors; unscored values are
-not used. Empty batches have zero additive totals and NaN mean/relative error.
-Relative error is NaN when target energy is zero.
+Optional `weights=` specifies nonnegative precision (not square-root precision). Zero-weight entries are ignored; nonfinite values with positive weight raise an error. Empty test batches yield zero totals and `NaN` mean/relative error; zero target energy yields `NaN` relative error.
 
-Large scans can be scored in view batches:
+For large scans, accumulate `Score` objects over view batches before reading ratios:
 
 ```python
 from tomojax.evaluation import Score
@@ -87,209 +54,24 @@ for start in range(0, observations.shape[0], 32):
 print(total.mse)
 ```
 
-Sum the statistics before forming ratios; do not average per-batch MSEs when
-batch sizes or precisions differ. Cross-validation scores used to choose a model
-are selection scores, not an independent final test of that selected model.
+Summing `Score` totals preserves exact weighting across uneven batches. Keep a separate untouched test split if you use cross-validation scores to select hyperparameters.
 
 ## Stopping-rule limits
 
-Minimising held-out projection MSE does not guarantee the smallest image error.
-The following CGLS checks hold out every fifth view, offset two, and compare
-iterations 1, 2, 4, 8, 16, 32 and 64. The oracle is the best **tested** iteration
-for the stated image metric, not an optimum over all iterations. Geometry and
-intensity scale are fixed; no image registration or fitted rescaling is used.
+Minimising held-out projection MSE does not reliably select the lowest-error reconstruction. On three real scans with an interleaved every-fifth-view split (`stride=5, offset=2`) and CGLS candidate budgets of `1, 2, 4, 8, 16, 32, 64` iterations (fixed geometry, no intensity rescaling):
 
-| Scan and image metric | MSE-selected iteration / error | Oracle iteration / error | Error ratio |
+| Scan and image metric | MSE-selected iteration / error | Best tested iteration / error | Error ratio |
 | --- | ---: | ---: | ---: |
-| 2DeteCT 00001 mode 1, 128²; mode-2 reference agreement | 16 / 0.22469 | 8 / 0.15918 | 1.4115 |
-| Walnut 1, all three orbits, detector binning 8, 64³; authors' AGD reference agreement | 64 / 0.28250 | 8 / 0.20272 | 1.3935 |
-| I13 159815, row 1080, every eighth sample view, 256²; injected Gaussian incremental-response error | 16 / 0.56073 | 32 / 0.25989 | 2.1576 |
+| 2DeteCT 00001 mode 1 (128²), against mode-2 reference | 16 / 0.2247 | 8 / 0.1592 | 1.41× |
+| FIPS Walnut 1, 3 orbits, binned 8×8 (64³), against authors' reference | 64 / 0.2825 | 8 / 0.2027 | 1.39× |
+| Diamond I13 159815, row 1080, every 8th view (256²), injected Gaussian increment | 16 / 0.5607 | 32 / 0.2599 | 2.16× |
 
-Errors are relative image L2 norms. The I13 metric compares the difference of
-two reconstructions with an analytic attenuation addition, not with the unknown
-whole specimen. Its binomial thinning uses rounded photon counts inferred from
-ADU values and retains original read noise; it is an approximate known-truth
-control. CGLS depends on its right-hand side, so this difference is not a linear
-reconstruction of the added signal. Walnut uses all 1200 views from each orbit
-before splitting and exact cell-overlap averaging of the published reference.
+Errors are relative image L2 norms. Shared calibration noise, detector truncation, and forward-model mismatch violate the independent-noise assumption behind view cross-validation, so projection MSE systematically over- or under-iterates relative to image quality.
 
-Measured 2026-10-27 with numerical source `20fe1a9c` and evaluation `09437d17`.
-Commands, from the lab harness kept outside the repository (see
-[measurements](measurements.md#test-environment)), are
-`OPENBLAS_NUM_THREADS=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
-uv run --no-sync python shared/agent02/` followed by
-`stopping_stack_kill.py`, `stopping_walnut_protocol.py` or
-`stopping_i13_increment.py`, with `LAB_ARTIFACTS` set to an output directory.
-The radiometric-convention comparison uses `stopping_author_protocol.py`.
-Those scripts pin the stated numerical source. Selected-iteration cold/warm
-times are respectively 0.220/0.220, 12.183/12.218 and 0.153/0.145 seconds;
-peak process GPU memory is 208, 1172 and 220 MiB, and peak host RSS is 959,
-2266 and 1005 MiB. Times include reconstruction and matched prediction/scoring;
-I13 includes both reconstructions needed for its difference metric. Cold means
-the first run of that candidate; these are not fresh-process compilation times.
+The same gap appears across other solvers and selection criteria tested on these scans:
 
-All three exceed the tested 1.10 oracle-gap limit. The 2DeteCT check also
-depends on radiometric convention: using the authors' plain flat/dark correction
-and crop centre gives a gap of 1.4960 on the same candidate iterations, rather
-than fixing the failure. Shared calibration noise, truncation and model mismatch
-can invalidate an independent-noise interpretation of view cross-validation.
-Use image or known-truth checks alongside prediction scores; TomoJAX does not
-adopt these failed MSE selectors as automatic stopping rules.
+- **SIRT on 2DeteCT 00001 (128²):** projection MSE picked 256 updates instead of the best tested 128 for both unconstrained (1.26× higher error) and nonnegative SIRT (1.24×).
+- **Ridge regularisation on 2DeteCT 00001 (32²):** both projection MSE and an exact discrete image-space risk estimator (`||x||² - 2<x, A_test⁺ y_test>`) picked `λ = 1e-4` instead of `1e-2` (3.27× higher error), even when validated against high-dose mode-2 observations.
+- **Fine-grid FDK/FBP validation proxy (`||x||² - 2<x, z_test>`):** matched the best CGLS iteration on four 2DeteCT slices (1.00–1.02× error ratio), but failed to transfer to Diamond I13 (selecting 8 updates with 4.13× the incremental error of 128 updates and 20% worse projection MSE than 50 updates) and showed 3.6–15.9% proxy bias on analytic sharp-disc and truncated-object controls.
 
-### Discrete image-space validation
-
-On 2DeteCT 00001 at 64², the criterion
-`||x||² - 2 <x, A_test⁺ y_test>` also missed the image-reference oracle.
-The full-rank held-out projector's numerical left inverse selected 16 CGLS
-iterations (relative image error 0.215930), versus 8 (0.127258), a 1.69679 gap.
-Its normal-matrix eigenvalue ratio was 3.80e-5 and numerical left-inverse
-residual 3.14e-15. Replacing low-dose validation observations with real mode-2
-high-dose observations selected the same iteration and gap. Accurate inversion
-and higher-dose validation did not remove the failure. These tests do not
-separate physical-model error, shared calibration and reference-reconstruction bias.
-Reference agreement is not physical accuracy.
-
-Measured 2026-10-27 on `20fe1a9c`, using the same interleaved split and tested
-iterations, authors' plain flat/dark correction and crop centre, and no fitted
-scale or registration. Commands use the environment above with
-`stopping_exact_image_risk.py` and `stopping_exact_image_risk_dose.py`.
-Dense setup and all candidates took 50.07/51.20 s; the selected candidate's
-first/repeat reconstruction and scoring took 0.6498/0.6494 and
-0.6496/0.6496 s. Peak GPU memory was 532/528 MiB and host RSS 6877/6700 MiB.
-Dense basis construction is a diagnostic, not a scalable stopping implementation;
-neither criterion is an automatic TomoJAX selector.
-
-### Ridge regularization
-
-The same failure occurs without iterative stopping. On 2DeteCT 00001 at 32²,
-unconstrained ridge solutions minimize `||A_train x - y_train||² + λ ||x||²`.
-Testing λ divided by the largest training normal-matrix eigenvalue at
-`0, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, .01, .1, 1` gives an oracle at `.01`
-(relative reference error 0.0807442). Prediction MSE and discrete image-space
-risk, with either low-dose or mode-2 validation, select `.0001` (0.2644305):
-an oracle gap of 3.27492. The numerical inverse residual is 1.03e-15.
-This is reference agreement, not physical accuracy; exact algebra does not
-remove representation mismatch or shared-calibration effects.
-
-Measured 2026-10-28 on `20fe1a9c`, with the same split, radiometric convention
-and fixed geometry, using `ridge_lambda_kill.py` in the environment above.
-Dense setup and all candidates took 16.73 s, with peak GPU memory 314 MiB
-and host RSS 4360 MiB. TomoJAX does not adopt this diagnostic as a λ selector.
-
-### SIRT stopping
-
-On 2DeteCT 00001 at 128², projection MSE selected 256 SIRT updates rather
-than the reference-agreement oracle at 128. Unconstrained SIRT had errors
-0.1762805 versus 0.1397493 (gap 1.26140); nonnegative SIRT had errors
-0.1352244 versus 0.1088912 (gap 1.24183). Both exceed 1.10. The candidate
-updates were powers of two from 1 through 1024, without acceleration, using
-900 views, the same interleaved split and authors' radiometric convention.
-
-Measured 2026-10-28 on `20fe1a9c` with `stopping_sirt_family.py` and
-`stopping_sirt_supplement.py`. Selected-candidate first/repeat times were
-11.173/11.169 and 11.130/11.129 s. Completed-candidate times sum to 357.80 s;
-this is not end-to-end wall time. Peak sampled GPU memory was 164 MiB. Host RSS
-was 829 MiB for the last of the 22 configurations alone; the sweep's host peak
-over the other 21 was not recorded.
-
-### Fine-grid image validation
-
-A different diagnostic uses `||x||² - 2 <x, z_test>`, where `z_test` is a
-1024² FDK reconstruction of held-out views averaged into the candidate's cells.
-The 956-column fan detector is symmetrically zero-extended to 1912 columns
-before filtering to retain filtered tails; this assumes zero attenuation beyond
-the measured panel and does not recover genuinely truncated observations.
-On 2DeteCT 00001 and 00067 at 32², this criterion selected the ridge oracle
-λ ratio `.01` in both cases, with reference errors 0.0807442 and 0.2970754.
-Projection-MSE oracle gaps were 3.27492 and 1.83881 on the same paths.
-
-At 128², using all 3600 views, 2880 training and 720 held out at stride five,
-offset two, the criterion gave the following CGLS reference-agreement results.
-Candidates were powers of two from 1 through 64; every tested oracle was at eight
-updates, not an endpoint. Slice 05521 is out of distribution in the dataset split.
-
-| Slice | Image-risk updates / error | Oracle error | Image-risk gap | Projection-MSE gap |
-| --- | ---: | ---: | ---: | ---: |
-| 00001 | 8 / 0.138736 | 0.138736 | 1.00000 | 1.47721 |
-| 00067 | 8 / 0.350894 | 0.350894 | 1.00000 | 1.21979 |
-| 00100 | 16 / 0.167781 | 0.164503 | 1.01993 | 1.36731 |
-| 05521 | 8 / 0.138079 | 0.138079 | 1.00000 | 1.27097 |
-
-These are reference-agreement checks, not physical accuracy or a general stopping
-rule. Shared calibration and physical-model errors can bias this image proxy.
-
-Measured 2026-10-28 on `20fe1a9c` with `ridge_fine_proxy.py` and
-`stopping_fine_full.py` (00001/00067) and `stopping_fine_fresh.py`
-(00100/05521), using fixed geometry and no fitted rescaling.
-Ridge setup and all candidates took 15.26/15.41 s, with GPU peaks 314/314 MiB
-and host RSS 4340/4334 MiB. CGLS selected-candidate first/repeat times were
-1.566/1.565 and 1.572/1.574 s, with complete-sweep GPU peaks 224/202 MiB and
-host RSS 989/880 MiB. CPU validation-proxy first/repeat times were separately
-1.275/0.451 and 1.078/0.490 s. For 00100/05521, selected-candidate times were
-2.960/2.960 and 1.568/1.569 s, GPU peaks 202/202 MiB, host RSS 889/880 MiB;
-CPU proxy times were 0.858/0.356 and 0.870/0.350 s. A 128² analytic sharp-disk
-control had error
-0.1742 with 180 held-out angles versus 0.01693 with 720; a genuinely truncated
-Gaussian control had error 0.1591 despite zero extension. These failures prevent
-using this diagnostic as an automatic TomoJAX selector.
-
-#### Transfer to real I13 data
-
-The fine-grid score does not transfer unconditionally. On I13 159815, row 1080,
-columns 441:1869, all 3001 views, the same stride-five/offset-two split leaves
-600 validation views. A 1024² FBP of those views, with symmetric detector
-zero-extension and cell averaging to 256², supplies the validation proxy.
-The axis is fixed at −5 detector pixels; there is no fitted scale or registration.
-Known analytic Gaussian attenuation is added by approximate ADU-based thinning
-(seed 9134), retaining the read-noise limitation described above.
-
-For candidates 1, 2, 4, 8, 16, 32 and 64, applying the score to the **paired
-reconstruction increment** selects 32, with incremental error 0.146480, the best
-tested value. This score requires the injection pair and cannot select stopping
-for an unknown specimen. Applying the **absolute image score** to the injected
-scan, on the expanded path including 50 and 128 updates, selects eight:
-incremental error 0.457729 versus 0.110811 at 128. The ratio is at least 4.1307;
-the best tested value is an endpoint, not a resolved oracle. The absolute score
-does beat the fixed 50-update increment error of 0.765734 in this experiment.
-However, its validation projection MSE is 0.0131178 versus 0.0109171 at 50
-updates, a 20.16% increase. It therefore also fails prediction non-harm against
-that fixed iteration count, independently of the stronger oracle-gap criterion.
-These are known-perturbation checks, not whole-image accuracy estimates, and
-the two scores target different quantities.
-
-Applying the same fine-grid inverse to both predicted and measured validation
-rays, and minimizing their image-space squared difference, also selects eight
-updates. This removes the assumption that the inverse exactly recovers the
-candidate voxel values, but still targets a transformed-prediction seminorm,
-not full-image error. The same prediction non-harm failure remains. These
-fixed-iteration comparisons disable residual-tolerance stopping; they do not
-establish equivalence to the public default's nonzero tolerance.
-
-The large 50-update increment error is not caused by residual-verification
-restarts: neither solve restarts, and disabling verification changes that error
-only to 0.765740. Early-stopped CGLS has right-hand-side-dependent coefficients;
-its response to a small addition can be nonmonotonic even when the data fit
-improves. Do not treat a paired increment as a linear reconstruction operator.
-
-An independent sharp-disk control also rejects this proxy on the frozen split:
-six off-axis disks have cell-mean image errors 0.0356–0.0991, exceeding 0.03,
-despite relative mass errors below 0.001. For one narrow disk, increasing the
-FBP grid from 1024² to 4096² only reduces error from 0.0939 to 0.0867;
-using 1500 recorded angles at 1024² instead gives 0.0192. The latter is an
-angular-sampling diagnostic on a different split, not a replacement score for
-the failed split. Analytic chords and circle-cell quadrature provide this truth,
-not the reconstruction projector.
-
-Measured 2026-10-28 with numerical source `20fe1a9c` and harness `09437d17`.
-Commands use the environment above with `stopping_i13_fine.py`,
-`stopping_i13_absolute.py`, `stopping_i13_matched.py` and `cgls_trace.py`; CPU controls use
-`JAX_PLATFORMS=cpu` with `i13_sharp_gate.py` and `i13_sharp_attribution.py`.
-For the original increment score, selected-candidate first/repeat times are
-1.806/1.807 s, peak GPU 316 MiB and host RSS 1215 MiB. For the absolute score,
-they are 0.492/0.492 s, peak GPU 252 MiB and host RSS 985 MiB; its complete
-sweep takes 48.79 s. Times include both reconstructions and matched scoring,
-and are first/repeat candidate times, not fresh-process compilation times.
-The transformed-prediction follow-up takes 48.99 s, with GPU 412 MiB and host
-RSS 1088 MiB, including its additional inverse transforms.
-The six-disk CPU control takes 2.46 s with host RSS 740 MiB and no GPU allocation.
-No automatic stopping or regularisation rule is adopted from these diagnostics.
+For these reasons, TomoJAX provides `Split` and `Score` as evaluation tools and does not use held-out projection scores for automatic stopping or regularisation selection. Pair held-out scores with slice inspection or known-truth checks when tuning a workflow.

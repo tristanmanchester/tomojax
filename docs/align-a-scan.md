@@ -1,130 +1,85 @@
 # Align a scan
 
-`tj.align` estimates geometry errors and sample movement while it reconstructs. You choose
-which errors it estimates with `fit=`. Start with the cheapest model that matches the error you
-suspect, look at the result, and add parameters only while artefacts remain: a parameter the data
-do not need costs accuracy, and a missing one leaves an error the fit cannot represent.
+`tj.align` estimates geometry errors and sample motion jointly with the reconstructed volume. Choose which parameters to fit with `fit=`. Start with the simplest model that matches the artefact you see, check the result, and add parameters only while artefacts remain: unnecessary degrees of freedom cost accuracy, while missing ones leave errors the fit cannot represent.
 
-Before you align, correct the projections to line integrals and check the declared geometry
-against the instrument, as the [real scan guide](real-laminography.md) describes. Pass
-`RejectViews()` to that correction when frames may be broken or a crystal may diffract: the fit
-otherwise moves those views to explain them. On a real laminography scan with one broken frame,
-`RejectViews` removed that frame and the four others where the fitted corrections jumped. Check
-what it rejected in `scan.corrections`: on scans whose flux hops or alternates, as some lab sources
-and modulated beams do, it can reject good views as well. Reconstruct once without alignment so
-that you have an image to compare with.
+Before aligning, correct projections to line integrals and check declared geometry against the instrument ([real scan guide](real-laminography.md)). If the scan may contain broken frames or diffraction flashes, pass `RejectViews()` during correction so the aligner does not move views to chase bad frames; check `scan.corrections` afterwards, because `RejectViews` can also drop valid views on modulated or hopping beams. Reconstruct once without alignment to keep a baseline for comparison.
 
 ## Choose what to fit
 
 | What you see | Likely error | Fit |
 | --- | --- | --- |
-| Point-like features drawn as rings or arcs, the same in every slice | The rotation centre | `fit="center"` |
-| Doubled or smeared edges that vary from feature to feature | Drift or sudden slips of the sample between views | `fit="translations"` (the default) |
-| Sharp slices at the detector's centre row, with haloes and doubled edges that grow towards the top and bottom of the volume | The rotation axis or the detector rolled about the beam | `fit=("translations", "roll")` |
-| In laminography, doubling that remains after translations, worst far from the rotation axis | The laminography tilt | `fit=("translations", "tilt")` |
-| Blur that remains after translations and the setup angles | The rotation axis wobbling between views | `fit=("translations", "rotations")` |
+| Point-like features drawn as identical rings or arcs in every slice | Rotation centre offset | `fit="center"` |
+| Doubled or smeared edges that vary across features | Drift or sudden slips between views | `fit="translations"` (default) |
+| Sharp central slice, with haloes and doubled edges growing towards top and bottom | Rotation axis or detector rolled about the beam | `fit=("translations", "roll")` |
+| In laminography, doubling remaining after translations, worst far from the rotation axis | Laminography tilt error | `fit=("translations", "tilt")` |
+| Blur remaining after translations and setup angles | Rotation axis wobbling between views | `fit=("translations", "rotations")` |
 
 ```python
 import tomojax as tj
 
 scan = tj.load("corrected.nxs")
-result = tj.align(scan)                                  # translations
-result = tj.align(scan, fit="center")                    # the rotation center only
-result = tj.align(scan, fit=("translations", "roll"))    # add the axis roll
+result = tj.align(scan)                                # translations
+result = tj.align(scan, fit="center")                  # rotation centre only
+result = tj.align(scan, fit=("translations", "roll"))  # translations + axis roll
 tj.save("aligned.nxs", result)
-recon = tj.reconstruct(result.scan, "cgls")              # result.scan carries the corrections
+recon = tj.reconstruct(result.scan, "cgls")            # result.scan carries the corrections
 ```
 
-After a vertical correction of n pixels, the outermost n slices at the top and bottom of a
-reconstruction on the default grid are not fully covered by data: some corrected views look above
-or below the measured rows there.
-
-The command line uses the same names:
+On the command line:
 
 ```bash
 tomojax align corrected.nxs -o aligned.nxs --fit translations roll
 ```
 
-`fit` is one name or a tuple of distinct names; the order does not matter. Parameters you leave
-out stay at their input values. Every combination uses the same joint solve of the image and the
-selected parameters, for parallel, laminography and cone data.
+Pass one name or a tuple of distinct names in any order; omitted parameters stay fixed at their input values. Every combination runs the same joint volume-and-geometry solver across parallel, laminography, and cone-beam scans. Note that after a vertical shift of `n` pixels, the outermost `n` top and bottom slices on the default grid are only partly covered by data.
 
 | Name | Fitted parameters | Units and frame |
 | --- | --- | --- |
-| `center` | One detector-u centre, plus detector-v for cone data | Physical detector-centre lengths, in the same units as `Detector.center` |
-| `tilt` | One axis or laminography tilt correction shared by every view | Degrees; positive tilt leans the rotation axis towards the beam |
-| `roll` | One detector roll correction shared by every view | Degrees, right-handed about the detector normal: positive turns u towards v, so a point above the centre projects towards +u |
-| `translations` | Two translations per view; three for cone data | Physical lab-frame lengths: across the beam and vertically, plus along the beam for cone |
-| `rotations` | Two wobble components of the rotation axis per view; each view's angle about the axis is taken as recorded | Sample-frame rotations in degrees, about object x and y |
+| `center` | Detector-u centre (plus detector-v for cone data) | Physical length, matching `Detector.center` |
+| `tilt` | Shared axis or laminography tilt correction | Degrees; positive leans the rotation axis towards the beam |
+| `roll` | Shared detector roll correction | Degrees, right-handed about the detector normal (positive turns u towards v) |
+| `translations` | Per-view translations (2 for parallel/lamino; 3 for cone) | Physical lab-frame lengths: across beam and vertical, plus along beam for cone |
+| `rotations` | Per-view wobble of the rotation axis (2 components; nominal view angle is kept as recorded) | Degrees, sample-frame rotations about object x and y |
 
-The figures below show each error on simulated scans, before and after the matching fit: a watch
-movement in laminography, and a spark plug in parallel-beam tomography. The lower row of each
-figure is the image minus the image made with the true geometry, so any remaining error stands
-out. The numbers above each panel are the pose error in detector pixels and the time to fit.
-These figures were made with the default `motion="independent"`; [How the figures were
-made](#how-the-figures-were-made) gives the command.
+The figures below illustrate each error before and after fitting on simulated scans (a watch movement in laminography and a spark plug in parallel beam, using the default `motion="independent"`). The lower row shows the difference against a true-geometry reconstruction; panel titles list pose error in detector pixels and runtime. See [How the figures were made](#how-the-figures-were-made).
 
 ## The rotation centre
 
-A wrong rotation centre turns every small, bright feature into a ring. The rings are the same size
-everywhere in the slice, because every view is displaced by the same amount.
+A wrong rotation centre turns every small bright feature into a ring of the same radius across the entire slice.
 
 ![The balance wheel with a 6-pixel centre error: each screw is drawn as a ring. After fit="center" the screws are points again, matching the true geometry.](images/alignment-ladder-centre.png)
 
-`fit="center"` estimates one number for parallel and laminography data and is the fastest fit:
-23 s here. Fit the centre first on a new instrument or after any change to the detector or stage.
+`fit="center"` estimates a single scalar for parallel and laminography scans and is the fastest fit (23 s here). Run it first on a new instrument or after detector or stage changes.
 
-For cone data, `"center"` also estimates the detector-v centre. The data determine it only weakly:
-a vertical detector offset looks almost the same as moving the image vertically, so the fit may
-leave the v centre near its starting value and move the image instead, so do not read the
-fitted v centre as an instrument calibration.
+For cone data, `"center"` also fits detector-v, though the data constrain it weakly because a vertical detector shift is nearly equivalent to shifting the volume vertically.
 
-`tj.align(scan, fit="center", method="opposite-views")` estimates the centre from near-opposite
-views of an axial parallel scan, without an image: a quick estimate that does not reconstruct, and
-estimates neither tilt, roll nor drift. Its result has no `image`.
+For a quick axial parallel estimate without reconstructing a volume, run `tj.align(scan, fit="center", method="opposite-views")`, which matches near-opposite views directly (its result has no `image`).
 
 ## Drift and slips
 
-When the sample moves between views, features are doubled or smeared by different amounts,
-depending on when each view was taken. The translation fit follows smooth drift and sudden slips
-of the sample together.
+Sample motion between views doubles or smears features by varying amounts depending on when each view was acquired. `fit="translations"` tracks both gradual drift and sudden slips.
 
 ### Independent or smooth motion
 
-`motion=` says how a view's corrections may differ from its neighbours'. With the default,
-`motion="independent"`, nothing ties a view to its neighbours: drift, slips and a stage that
-jitters from view to view are all followed. With `motion="smooth"`, the translations drift
-freely along a spline and step from one view to the next only where the data call for a slip,
-and each view's rotations are tied to its neighbours'. How far a view may then move from its
-neighbours is read from the scan itself: from how much each view's own best position scatters
-from one view to the next. Error that differs from view to view and is not motion, such as the
-model error of a real scan, raises that scale, so the fit does not turn it into motion. A slip
-much larger than the scale is still followed, a little short where the scale is large.
+`motion=` controls whether neighbouring views are coupled:
+
+- `motion="independent"` (default): each view moves freely, tracking smooth drift, sudden slips, and view-to-view stage jitter.
+- `motion="smooth"`: translations follow a smooth spline and step between views only when the data justify a slip, and per-view rotations couple to neighbours. The coupling scale is estimated from view-to-view scatter in the scan itself so model error is not absorbed as jitter.
 
 ```python
-result = tj.align(scan)                    # motion="independent"
-result = tj.align(scan, motion="smooth")   # a steady stage
+result = tj.align(scan)                   # motion="independent"
+result = tj.align(scan, motion="smooth")  # steady stage
 ```
 
-On the README's watch scan, with up to 0.8 px of jitter in every view, the default recovers the
-shifts to 0.07 / 0.05 px RMS across and along the axis, and `motion="smooth"` to 0.47 / 0.29 px,
-leaving the jitter. On K11 54013, a steady stage, the slices look the same either way, but the
-ruby sphere's track, an independent record of the motion, is left 0.30 / 0.19 px unexplained by
-the default against 0.20 / 0.18 px by `motion="smooth"`. Use `motion="smooth"` for a stage you
-know to be steady.
+On the README watch scan (up to 0.8 px jitter per view), `motion="independent"` recovers shifts to 0.07 / 0.05 px RMS across and along the axis, while `motion="smooth"` leaves 0.47 / 0.29 px. On Diamond K11 scan 54013 (a steady stage), slices look the same either way, and `motion="smooth"` reduces the unexplained ruby-sphere track residual from 0.30 / 0.19 px to 0.20 / 0.18 px. Use `motion="smooth"` when you know the stage is steady.
 
 ![The balance wheel with drift and five slips between views: the screws are doubled. After fit="translations" the image matches the true geometry.](images/alignment-ladder-drift.png)
 
-`fit="translations"` removes the drift and slips in this example to 0.012 px in 36 s. It also absorbs a centre error in parallel and laminography scans, so you do not need to fit
-the centre separately first. If you request `"center"` and `"translations"` together, the
-translations are given zero mean: a common translation and a centre offset describe the same
-parallel-ray geometry, and the data cannot tell them apart.
+Here `fit="translations"` recovers the drift and five slips to 0.012 px in 36 s. In parallel and laminography scans it also absorbs any constant centre offset, so you do not need to fit `"center"` first. When `"center"` and `"translations"` are requested together, translations are constrained to zero mean so the shared gauge is unique.
 
 ![A simulated sandstone plug sliced near its base and halfway up, as loaded and after tj.align(scan), each with an enlarged region. As loaded, the grains are doubled and smeared; after the call their edges are sharp.](images/alignment-rock.png)
 
-A simulated sandstone plug, 384 voxels across, drifts by up to four and a half voxels during a
-parallel-beam half turn and slips by six voxels a third of the way through. The plain
-`tj.align(scan)` removes both.
+A 384-voxel simulated sandstone plug drifting by 4.5 voxels over a parallel half turn with a 6-voxel slip a third of the way through, corrected by `tj.align(scan)`:
 
 ```bash
 uv run python examples/gallery/rock_alignment.py alignment-rock.png
@@ -132,10 +87,7 @@ uv run python examples/gallery/rock_alignment.py alignment-rock.png
 
 ![Two slices through Diamond K11 laminography scan 54013 at 2.16 µm, through a ruby sphere's equator and 78 µm lower, as loaded and after tj.align(scan), each with an enlarged region where a large bubble meets the sphere. As loaded, the edges of the sphere and the bubble are doubled; after the call each is one line.](images/alignment-k11-sphere.png)
 
-On a real scan the motion is not known, so the check is the slices. In Diamond K11 laminography
-scan 54013 (1441 views) the edges of a ruby sphere and a bubble beside it are doubled as loaded;
-after the plain `tj.align(scan)` on a 6.48 µm grid each is one line, here reconstructed by FBP at
-the detector's 2.16 µm pitch.
+On Diamond K11 laminography scan 54013 (1441 views), `tj.align(scan)` on a 6.48 µm working grid turns the doubled sphere and bubble boundaries into sharp single edges when reconstructed by FBP at 2.16 µm:
 
 ```bash
 uv run python examples/gallery/k11_sphere_alignment.py k11-54013.nxs alignment-k11-sphere.png
@@ -145,118 +97,53 @@ uv run python examples/gallery/k11_sphere_alignment.py k11-54013.nxs alignment-k
 
 ### Roll
 
-If the rotation axis is rolled about the beam, or the detector is rolled, each detector row sees a
-different rotation centre. The row at the detector's centre is right, and the error grows linearly
-above and below it. Slices near the middle of the volume are sharp; slices towards the top and
-bottom grow haloes and doubled edges. Per-view translations move every row together, so they
-cannot correct it.
-
-A vertical section through the rotation axis shows the pattern at once: the error is zero at the
-detector's centre row and grows towards the top and bottom of the sample.
+When the rotation axis or detector is rolled about the beam, each detector row sees a different rotation centre. The middle row stays sharp while haloes and doubling grow linearly towards the top and bottom of the volume. Per-view translations move every row together and cannot fix roll.
 
 ![A vertical section of the spark plug with its rotation axis rolled 0.75° about the beam. The lower row, each section minus the true-geometry section, is blank at the detector's centre row and shows doubled edges that grow towards the terminal at the top and the thread and electrodes at the bottom. fit="translations" spreads the error into the middle instead of removing it; after fit=("translations", "roll") the difference is nearly blank throughout.](images/alignment-ladder-roll-vertical.png)
 
-Slices at four heights show what the error does to the features themselves:
+Slices at four heights show how roll blurs small features away from the midplane:
 
 ![The spark plug sliced at four heights. 19 mm above the centre row the terminal nut has a halo; at the centre row the hex is sharp; 11 mm below, a 0.25 mm bubble in the glass seal is blurred away; 22 mm below, the platinum pad on the ground electrode is smeared. fit="translations" does not remove any of these. After fit=("translations", "roll") all four slices match the true geometry.](images/alignment-ladder-roll.png)
 
-Adding `"roll"` estimates one angle for the whole scan. In this example it recovers the 0.75° roll
-as 0.756°, and every slice then matches the true-geometry image to within 0.3% (relative L2).
-It takes 77 s, against 50 s for translations alone. The roll matters most where it is easiest to
-miss: away from the centre row it blurs away small defects, such as the bubble in the glass seal.
-On a parallel-beam instrument, roll is the setup error to look for first: a fraction of a degree is
-enough to blur the top and bottom of a tall sample.
+`fit=("translations", "roll")` recovers the 0.75° roll as 0.756° in 77 s (versus 50 s for translations alone), matching the true-geometry image to 0.3% relative L2 at every height. On parallel-beam instruments, roll is the first setup angle to check: even a fraction of a degree blurs the top and bottom of a tall sample.
 
 ### Tilt
 
-If the rotation axis leans towards or away from the beam, every point rises and falls once per
-turn, by the tilt times its depth along the beam. For a compact sample most of that is the whole
-sample bobbing up and down, which per-view translations describe exactly, so `fit="translations"`
-removes most of a tilt. What remains is a smaller error that grows with distance from the sample's
-own centre.
+When the rotation axis tilts towards or away from the beam, every point rises and falls once per turn in proportion to its depth along the beam. For a compact sample, per-view translations absorb almost all of this motion, leaving only a smaller residual that grows with distance from the sample's centre.
 
 ![A vertical section of the spark plug, mounted 9 mm off the rotation axis, with the axis tilted 3° towards the beam. With the error, horizontal edges are smeared vertically, most at the threads and the ground electrode far from the axis. After fit="translations" only faint smearing remains.](images/alignment-ladder-tilt.png)
 
-Here the plug is mounted 9 mm off the axis so that its features sweep wide circles; a sample
-centred on the axis and symmetric about it is barely affected by a tilt at all. A 3° tilt, larger
-than a typical setup error, leaves the section 49% from the true-geometry image (relative L2), and
-translations bring it to 10%. The pose error does not fall with them, 4.9 px before and 5.5 px
-after, because translations cannot express a tilt: what they correct is the image. In parallel-beam
-tomography the roll matters far more than the tilt.
+Mounted 9 mm off-axis with a large 3° tilt, the vertical section error drops from 49% to 10% under `fit="translations"` alone (even though pose error stays around 5 px because translations cannot express a tilt). In parallel-beam tomography, tilt is only weakly separated from translations, so rely on `fit="translations"` rather than adding `"tilt"`.
 
-In laminography a wrong tilt changes the projections much more, and the fit can separate it from
-translations: `fit=("translations", "tilt")` recovers a 2° laminography tilt error in the watch
-example to 0.017 px in 84 s, against 28 s for translations alone. Small laminography tilt errors
-still do little to the image: 0.5° leaves no visible artefact there, and the error has to reach
-about 2° before features double. In parallel-beam tomography the data tell a tilt from translations
-only through the small remainder, so a tilt fit there converges slowly and can stop well short of
-the true angle; rely on translations instead.
+In laminography, tilt strongly affects projections and separates cleanly from translations: `fit=("translations", "tilt")` recovers a 2° laminography tilt error on the watch scan to 0.017 px in 84 s (versus 28 s for translations alone). Small laminography tilt errors below ~0.5° leave little visible artefact; doubling becomes clear around 2°.
 
-`"tilt"` and `"roll"` are shared parameters in the same solve as the image and the per-view
-corrections, not an outer search over repeated alignments. They still need structure and angular
-coverage that make them observable; an angle the data constrain only weakly is not an instrument
-calibration.
+Both `"tilt"` and `"roll"` are solved jointly with the image and per-view poses in one optimisation rather than an outer grid search.
 
 ## Sample rotation
 
-If the rotation axis wobbles between views, tipping the sample slightly, translations remove most
-of the blur but leave a residual at the finest features. Fitting rotations estimates the two
-wobble components of the axis for every view. Each view's angle about the axis is taken as
-recorded: stage encoders give it, and errors in it are rare. A real laminography scan whose file
-records set-point angles rather than encoder readings, checked against a tracked sphere, turned at
-constant speed right to its ends. Angle errors are not small when present:
-on the simulated watch movement, 0.07° RMS of error in the recorded angles moves its features by
-0.13 detector pixels RMS, and no fit here corrects it.
+When the rotation axis wobbles between views, translations remove most blur but leave a fine residual. Adding `"rotations"` fits the two wobble angles per view while keeping each view's recorded rotation angle about the axis (stage encoders are typically accurate, though if recorded angles do contain errors, `tj.align` does not fit them: 0.07° RMS angle error moves features on the watch phantom by 0.13 px RMS).
 
 ![The balance wheel with random rotations of 0.37° RMS between views: the screws are smeared. fit="translations" removes most of the blur and leaves a faint ring at the screws; fit=("translations", "rotations") matches the true geometry.](images/alignment-ladder-rotations.png)
 
-Fit rotations only when the residual is visible. On data without rotation they cost accuracy: on the
-drift example at 96 × 96 detector pixels they leave 0.080 px instead of 0.022 px. Their size prior is in angular units, so
-changing the voxel size or binning does not make a rotation cheaper; the data must justify each
-one. On repetitive structures, such as a TEM grid, per-view rotations can lock onto a wrong
-orientation that matches the pattern. Check the fitted angles, and compare the image with the
-translation fit.
+Add `"rotations"` only when a residual remains after translations and setup angles. When no wobble is present, extra rotational degrees of freedom degrade accuracy (on the 96 × 96 drift test, 0.080 px versus 0.022 px with translations alone), and on periodic structures such as a TEM grid they can lock onto a false orientation. Their size prior is in radians, independent of voxel size or binning.
 
 ## Check the result
 
-1. Compare the aligned reconstruction with your unaligned one and with the previous setting's
-   result. An extra parameter should remove a visible artefact; if it does not, use the simpler fit.
-2. Inspect the estimated values. `result.info["calibration"]` holds each fitted global under the
-   name used in `fit=`, and `result.poses` holds the per-view correction table. The returned
-   `result.scan` carries both, so use it for reconstruction and saving. Each global's `"value"` is
-   the final setting and passes straight to a constructor in another script; its `"change"` is how
-   far the fit moved it:
+1. **Compare reconstructions** against the unaligned baseline and simpler `fit=` choices; keep an extra parameter only when it removes a visible artefact.
+2. **Inspect fitted globals and poses.** `result.scan` carries both the updated geometry and per-view poses for reconstruction and saving. `result.info["calibration"]` holds `{"value": ..., "change": ...}` for each fitted global (`change` is in detector pixels for `center` and degrees for angles; segmented cone scans list values in segment order). Each `"value"` passes directly to constructors in another script:
 
-   | Value | Parallel or laminography data | Cone data |
+   | Parameter | Parallel or laminography | Cone beam |
    | --- | --- | --- |
    | `center` | `Detector(..., center=(center, v))` | `Detector(..., center=center)` |
-   | `roll` | `ParallelGeometry(..., detector_roll=roll)`, or the same keyword on `LaminographyGeometry` | `ConeBeam(..., detector_roll=roll)` |
-   | `tilt` | `LaminographyGeometry(..., tilt=tilt)`: a tilted parallel scan is a laminography scan | `ConeGeometry(..., axis_unit=(0, sin(tilt), cos(tilt)))` |
+   | `roll` | `ParallelGeometry(..., detector_roll=roll)` / `LaminographyGeometry(..., detector_roll=roll)` | `ConeBeam(..., detector_roll=roll)` |
+   | `tilt` | `LaminographyGeometry(..., tilt=tilt)` | `ConeGeometry(..., axis_unit=(0, sin(tilt), cos(tilt)))` |
 
-3. Check that the global values are physically plausible: a tilt correction of several degrees, or
-   per-view rotations of more than a fraction of a degree, usually means the model is wrong rather
-   than the instrument.
-4. Compare poses only after removing one common rigid motion of the object. Moving the whole
-   object and moving every pose back predicts the same data.
-5. Read `result.info["report"]`. It states how each level ended ("pose_steps_below_tolerance"
-   or "step_budget_reached"), the size of the corrections in detector pixels or degrees, split
-   into a smooth part and a view-to-view part, and the range of the per-view offsets. It also
-   lists two kinds of view, and `tj.align` warns when either is present:
-   - `isolated_views`: a correction that jumps away from both neighbours in the same direction.
-     A slip, where the object moves and stays, is not one.
-   - `unusual_views`: views whose residual is at least three times their neighbours', such as a
-     broken frame or a crystal diffracting. These need not have moved, so look at the frames.
-   Look at those views before trusting their corrections, and drop broken frames, or correct
-   with `RejectViews()` and align again. A view below the thresholds can still be wrong.
-   `info["report"]["advisories"]` also
-   states measured limits that apply to the fit, such as per-view rotations fitted with the
-   rotation axis perpendicular to the beam, where they are weakly determined and can end worse
-   than translations alone.
-6. To test whether the alignment helped, hold out every sixth view, fit the others, and predict
-   the held-out views from a reconstruction of the fitted ones, with poses interpolated in view
-   order. Compare the prediction error with the fitted and with the nominal poses, after removing
-   each view's offset and row ramp, which the fit does not predict. This tests only the smooth
-   part of the correction: a single view's error cannot be interpolated into it.
+   Per-view poses in `result.poses` have columns `(alpha, beta, phi, x, z, y)` in degrees and physical lengths.
+3. **Check physical plausibility.** Multi-degree tilt shifts or per-view rotations larger than a fraction of a degree usually indicate model mismatch rather than real stage motion. Remember that a global rigid motion of the object cannot be observed from projections; remove one common rigid transform before comparing pose tables.
+4. **Read `result.info["report"]`.** It summarises each level's termination (`pose_steps_below_tolerance` or `step_budget_reached`), smooth and view-to-view correction magnitudes, offset ranges, `advisories` (for example, weakly determined rotations on an axial parallel scan), and flagged views that also trigger warnings:
+   - `isolated_views`: single-view jumps away from both neighbours (not permanent slips).
+   - `unusual_views`: views with residuals at least 3× their neighbours', such as broken frames or diffraction flashes. Inspect those frames and drop them or rerun with `RejectViews()`.
+5. **Check held-out views** to test smooth motion recovery. Hold out every sixth view, align the remaining views, interpolate their poses to the held-out views, and compare projection error against nominal poses after removing each view's offset and vertical ramp:
 
    ```python
    import numpy as np
@@ -280,90 +167,50 @@ translation fit.
    print(held_out_error(np.zeros((len(index), 6))), held_out_error(poses))
    ```
 
-`calibration` has one entry for each requested global, `{"value": ..., "change": ...}`. The value
-is final: `center` is a scalar for parallel data and a `(u, v)` pair for cone data; `tilt` is the
-signed lab inclination `atan2(axis_y, axis_z)` in degrees; `roll` is the detector angle from u
-towards v in degrees. For a segmented cone scan whose starting calibrations differ, the final values
-are listed in segment order. The change is the fitted increment, in detector pixels for the centre
-and degrees for the angles. Per-view tables use `(alpha, beta, phi, x, z, y)`; rotations are in
-degrees and translations in physical lengths. `info["report"]` gives the same split:
-`"calibration"` for the globals' changes and `"poses"` for the size of the per-view corrections.
+### Working grid and per-view background
 
-The fit works on a bounded grid of at most 16 million voxels and a detector of at most 320 pixels a
-side, binned so that each working pixel is no wider than a voxel at the object. Supplying `grid=`
-keeps that grid and limits the binning instead. The fitted image extends a little above and below
-the grid, so material that moving views bring into the outer rows has somewhere to be; the
-returned volume is cropped back to the grid. Each view also has its own offset and ramp down the
-detector rows, which the line integrals do not describe: flux changes or phase-retrieval offsets
-between views would otherwise look like vertical motion. Each view's departure from the level
-the views share is eliminated inside every step, so the poses see only what an offset and ramp
-cannot explain, and the data are never modified. The shared level itself stays with the data:
-an image can produce it (a faint disc, brightest at its rim, whose every view is one constant),
-so removing it too would let the fit invent that disc and drag the views toward their nominal
-positions. `info["offsets"]` reports each view's fitted pair relative to the shared level. `result.scan` keeps the scan's grid, so
-reconstructing it gives the full-resolution image; `result.image` is the fit's own image, on the
-bounded working grid `result.grid`, not a final-resolution reconstruction. The fit compares model
-and data through [1, 2, 1] / 4 along the detector's rows and columns, because at the Nyquist
-frequency a sampled model cannot be right; nothing then constrains that band, so the fit's image
-carries texture at the grid's finest scale that the object does not have.
+By default, `tj.align` fits on a bounded working grid of at most 16 million voxels and a detector of at most 320 pixels per side, binned no coarser than one voxel at the object (passing `grid=` fixes the grid and adjusts binning to match). The working volume extends slightly above and below the grid so shifted material stays inside the model, then crops back on return. `result.image` is this working-grid volume (filtered with `[1, 2, 1] / 4` along detector rows and columns to suppress Nyquist mismatch, so it carries fine-scale texture); reconstruct `result.scan` to get a full-resolution volume.
+
+Inside every step, the solver profiles out each view's offset and vertical row ramp relative to the scan-wide mean level so flux fluctuations or phase offsets do not mimic vertical motion (the data themselves are untouched; `info["offsets"]` records the fitted pairs). The shared mean level stays in the residual because removing it lets the solver invent a constant-projection disc.
 
 ## Settings
 
-`tj.align` takes the six settings most runs change as keywords, `motion`, `iterations`,
-`image_iterations`, `tolerance`, `interpolation` and `resolution`, and every setting through
-`config=tj.AlignConfig(...)`. A keyword replaces the field of the same name.
-`result.info["config"]` records the values a call used, with the ones that depend on the scan
-resolved. On the command line, `tomojax align` takes the six as `--motion`, `--iterations`,
-`--image-iterations`, `--tolerance`, `--interpolation` and `--resolution`, and the rest as keys of a
-`--config` TOML file under the same names; `--config-keys` lists them, and `--dry-run` prints the
-resolved settings.
+Pass the six common settings as keywords to `tj.align` (`motion`, `iterations`, `image_iterations`, `tolerance`, `interpolation`, `resolution`) and any remaining settings via `config=tj.AlignConfig(...)`. Keywords override matching fields in `config`, and `result.info["config"]` records all resolved values. On the CLI, pass `--motion`, `--iterations`, `--image-iterations`, `--tolerance`, `--interpolation`, and `--resolution`, or a `--config` TOML file (`tomojax align --config-keys` lists every key, and `--dry-run` prints resolved settings).
 
 ```python
 config = tj.AlignConfig(levels=(1,), refine_iterations=0)
 result = tj.align(scan, fit="translations", iterations=12, config=config)
 ```
 
-| Setting | Default | What it decides | When to change it |
+| Setting | Default | What it controls | When to change it |
 | --- | --- | --- | --- |
-| `motion` | `"independent"` | Whether each view moves on its own (`"independent"`) or as smooth drift with occasional slips (`"smooth"`) | `"smooth"` for a stage you know to be steady |
-| `iterations` | 8 | Gauss-Newton iterations at the working resolution | Raise it when `info["levels"][-1]["status"]` is `step_budget_reached`; each one costs a linearisation and an image solve |
-| `coarse_iterations` | 12 | Iterations at each coarser level | The same trade at the coarse level |
-| `levels` | `(2, 1)` | Each level's binning of the working detector, coarsest first | `(1,)` for little motion; a coarser start, such as `(4, 2, 1)`, for large motion |
-| `image_iterations` | 16 | Image-solve iterations per Gauss-Newton iteration | Fewer for speed on a translations fit, more for angles: on exact data 8 leaves 0.00044 px after 100 iterations, 16 under 0.0002 px |
-| `image_tolerance` | 0.03 | When an image solve may stop before its count | Lower for a tighter solve |
-| `tolerance` | 0.01 working pixels | A level stops when two successive pose proposals move the views less than this | 0 runs every level to its iterations; larger stops sooner |
-| `min_iterations` | 4 | The fewest iterations before `tolerance` may stop a level | With `tolerance`, against an early stop |
-| `resolution` | 320 pixels | The working detector's longest side | Finer for small motion on a large detector; coarser for speed |
-| `max_voxels` | 16 000 000 | The working grid's size | Memory against resolution |
-| `interpolation` | cubic with an angle on parallel rays, else linear | The projector's in-plane kernel in the fit | Cubic for sharp objects and the best accuracy, at about three times the time (a K11 laminography scan: 287 s linear, 876 s cubic) |
-| `refine_iterations` | 5 | The final per-view refinement with the image held | 0 turns it off, for speed or to see the joint fit alone |
-| `initial_image_iterations` | 5 | FISTA iterations for the first image | More for a better start on a hard scan |
-| `slip_scale` | 0.02 native pixels | Under `motion="smooth"`, the view-to-view step at which the pull towards the neighbours is strongest; larger steps are followed as slips | Rarely |
-| `knot_spacing` | 10 views | Under `motion="smooth"`, how stiff the drift is | Drift faster or slower than ten views |
-| `rotation_sigma` | 0.5 degrees | The per-view rotations' size prior | A stage's wobble scale |
-| `loss_width` | 2.5 noise deviations | Where the robust loss turns from quadratic to linear | Outliers such as zingers or diffraction |
-| `loss_contrast_floor` | 0.5 of the contrast | The least loss width, on low-noise data | With `loss_width` |
-| `image_tv_weight`, `image_tv_huber` | 0, 1.0 | Total variation on the fit's image | A regularised working image on very noisy data |
-| `margin` | 1/16 of the height | How far the fit's image extends past each end of the grid | Material entering the field from above or below |
-| `refine_smoothing`, `refine_neighbors` | 8 native pixels, 5 views | The refinement's edge filter and its neighbourhood | Rarely |
+| `motion` | `"independent"` | Free per-view motion (`"independent"`) or smooth drift with slips (`"smooth"`) | Set `"smooth"` for a steady stage |
+| `iterations` | 8 | Gauss-Newton iterations at the working resolution | Raise if `info["levels"][-1]["status"] == "step_budget_reached"` |
+| `coarse_iterations` | 12 | Gauss-Newton iterations at coarser pyramid levels | Same trade-off at coarse levels |
+| `levels` | `(2, 1)` | Detector binning factors from coarsest to finest | `(1,)` for small motion; `(4, 2, 1)` for large shifts |
+| `image_iterations` | 16 | CG image-solve iterations per Gauss-Newton step | Lower for faster translation fits; keep 16+ for angle fits |
+| `image_tolerance` | 0.03 | Early-stop tolerance for each image solve | Lower for tighter solves |
+| `tolerance` | 0.01 working pixels | Stop a level when two successive pose updates move less than this | `0` runs the full budget; higher stops sooner |
+| `min_iterations` | 4 | Minimum iterations before `tolerance` can stop a level | Raise alongside `tolerance` to prevent early stopping |
+| `resolution` | 320 pixels | Longest side of the working detector | Raise for small motion on large detectors; lower for speed |
+| `max_voxels` | 16 000 000 | Working grid voxel cap | Trade VRAM against resolution |
+| `interpolation` | cubic for parallel angle fits, else linear | Projector interpolation kernel during alignment | `"cubic"` for sharp objects and highest accuracy (~3× slower: 876 s vs 287 s on K11) |
+| `refine_iterations` | 5 | Final per-view refinement with the image held fixed | `0` for speed or to inspect the joint solve alone |
+| `initial_image_iterations` | 5 | FISTA iterations for the initial volume | Raise on difficult scans |
+| `slip_scale` | 0.02 native pixels | Under `motion="smooth"`, step scale of maximum neighbour pull; larger jumps pass as slips | Rarely |
+| `knot_spacing` | 10 views | Under `motion="smooth"`, spline stiffness for drift | Match faster or slower drift |
+| `rotation_sigma` | 0.5 degrees | Prior scale on per-view rotations | Match known stage wobble |
+| `loss_width` | 2.5 noise deviations | Robust loss transition from quadratic to linear | Lower for heavy outliers (zingers, diffraction) |
+| `loss_contrast_floor` | 0.5 of contrast | Minimum loss width on low-noise scans | Tune alongside `loss_width` |
+| `image_tv_weight`, `image_tv_huber` | 0, 1.0 | Total variation on the working image | Enable on very noisy scans |
+| `margin` | 1/16 of height | Vertical padding above and below the grid during fitting | Raise if large vertical shifts bring outside material into view |
+| `refine_smoothing`, `refine_neighbors` | 8 native pixels, 5 views | Edge filter width and neighbourhood for refinement | Rarely |
 
-`region=` chooses the part of the grid to fit on, as for `tj.reconstruct`: `"auto"` or `"bbox"`
-for the box every view sees, `"cube"`, `"cyl"`, or a `RegionEstimate`. Each level's record,
-`info["levels"][i]`, gives the `iterations`, `image_iterations` and `initial_image_iterations` it
-was given, its `steps` and the `status` it ended with.
+`region=` restricts the fitting region just as in `tj.reconstruct` (`"auto"`, `"bbox"`, `"cube"`, `"cyl"`, or a `RegionEstimate`). Each level's resolved budgets, step count, and status are recorded in `info["levels"][i]`.
 
 ## How the figures were made
 
-Both phantoms are meshes simulated with gVXR at 120 keV with 10⁴ photons per pixel and
-reconstructed with FBP. The watch is scanned in 35° laminography with 720 views on 384 × 384
-detector pixels of 0.135 mm and a 384³ grid. The spark plug (steel, nickel, copper, alumina,
-conductive glass, talc, a carbon resistor, an iridium tip and a platinum pad) is scanned in
-parallel beam with 720 views on 384 × 384 pixels of 0.135 mm and a 384³ grid. The centre error
-is in the declared geometry; drift, slips, rotations, roll and tilt are rendered into the data.
-Each difference is taken against the same data reconstructed with the true poses, moved by the
-fit's one rigid motion of the whole object, which no data can determine. Pose errors are
-detector landmark RMS in 0.135 mm pixels after that motion. Times are for one RTX 4070 Laptop
-GPU.
+Both phantoms are closed meshes simulated with gVXR at 120 keV and 10⁴ photons per pixel, reconstructed with FBP on a 384³ grid from 720 views of 384 × 384 pixels (0.135 mm pitch). The watch uses 35° laminography; the spark plug (steel, nickel, copper, alumina, conductive glass, talc, carbon, iridium, platinum) uses parallel beam. Centre errors are injected into declared geometry; drift, slips, rotations, roll, and tilt are rendered into the projections. Differences and landmark RMS errors (in 0.135 mm pixels) are evaluated against a true-geometry reconstruction after removing one global rigid motion. Timings are on an RTX 4070 Laptop GPU.
 
 ```bash
 uv run --no-project --with numpy --with scipy --with scikit-image \
@@ -371,5 +218,4 @@ uv run --no-project --with numpy --with scipy --with scikit-image \
 uv run python examples/gallery/alignment_ladder.py PLUG_MESHES docs/images
 ```
 
-Numerical checks of each `fit=`
-setting are described in [the benchmark guide](../bench/README.md#alignment-fit-settings).
+See [bench/README.md](../bench/README.md#alignment-fit-settings) for analytic verification of each `fit=` setting.
