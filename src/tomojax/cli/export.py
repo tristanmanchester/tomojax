@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, cast
 import h5py
 import numpy as np
 
-from tomojax.cli._options import add_output, check_paths
+from tomojax.cli._options import add_output, check_paths, fail
 from tomojax.io.api import saved_volume_axes
 
 if TYPE_CHECKING:
@@ -25,9 +25,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tomojax export",
         description=(
-            "Export a reconstruction for other software: a directory of z-slice TIFFs "
-            "(y rows, x columns), or one little-endian z-major file when OUTPUT ends in "
-            ".raw. A JSON sidecar gives the shape, voxel size and value scaling."
+            "Export a reconstruction or alignment image for other software: a directory of "
+            "z-slice TIFFs (y rows, x columns), or one little-endian z-major file when OUTPUT "
+            "ends in .raw. A JSON sidecar gives the shape, voxel size, grid placement and value "
+            "scaling."
         ),
         epilog=(
             "Exit status: 0 success, 1 failure, 2 usage error.\n\nExamples:\n"
@@ -44,8 +45,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default="float32",
         help="uint16 maps --range (default: the 0.1 and 99.9 percentiles) to 0..65535",
     )
-    _ = parser.add_argument("--range", type=float, nargs=2, metavar=("LOW", "HIGH"), default=None)
-    _ = parser.add_argument("--prefix", default="slice", help="TIFF file name prefix")
+    _ = parser.add_argument(
+        "--range",
+        type=float,
+        nargs=2,
+        metavar=("LOW", "HIGH"),
+        default=None,
+        help="Values mapped to 0 and 65535 for --dtype uint16 (finite, LOW < HIGH)",
+    )
+    _ = parser.add_argument("--prefix", default=None, help="TIFF file name prefix (default slice)")
     return parser
 
 
@@ -66,40 +74,67 @@ def _z_slice(dataset: h5py.Dataset, axes: str, z: int) -> np.ndarray:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the export command: :func:`tomojax.export`, reading the volume a slice at a time."""
-    from tomojax._files import write_volume
+    from tomojax._files import saved_volume_grid, validate_export_range, write_volume
 
     parser = _build_parser()
     args = parser.parse_args(argv)
     data, out = Path(cast("str", args.data)), Path(cast("str", args.out))
+    raw = out.suffix.lower() == ".raw"
+    dtype = cast("str", args.dtype)
+    value_range = cast("list[float] | None", args.range)
+    explicit_prefix = cast("str | None", args.prefix)
+    if raw and explicit_prefix is not None:
+        parser.error("--prefix applies only to TIFF directory exports, not .raw files")
+    try:
+        _ = validate_export_range(dtype, value_range)
+    except ValueError as exc:
+        parser.error(str(exc))
+    prefix = "slice" if explicit_prefix is None else explicit_prefix
     # A raw volume writes a JSON sidecar beside it; refuse to replace either.
-    outputs = [out, out.with_suffix(".json")] if out.suffix.lower() == ".raw" else [out]
+    outputs = [out, out.with_suffix(".json")] if raw else [out]
     check_paths(parser, inputs=[data], outputs=outputs, force=cast("bool", args.force))
-    with h5py.File(data, "r") as handle:
-        dataset = handle.get(_VOLUME_PATH)
-        if not isinstance(dataset, h5py.Dataset) or dataset.ndim != 3:
-            parser.error(
-                f"{data} holds no reconstructed volume; reconstruct it with tomojax reconstruct"
+    try:
+        with h5py.File(data, "r") as handle:
+            dataset = handle.get(_VOLUME_PATH)
+            if not isinstance(dataset, h5py.Dataset) or dataset.ndim != 3:
+                return fail(
+                    "export",
+                    f"{data} holds no reconstructed volume; "
+                    "reconstruct it with tomojax reconstruct",
+                )
+            grid_meta = json.loads(_decode(handle["/entry"].attrs.get("grid_meta_json"), "{}"))
+            geom_group = handle.get("/entry/geometry")
+            geom_meta = (
+                json.loads(_decode(geom_group.attrs.get("geometry_meta_json"), "{}"))
+                if isinstance(geom_group, h5py.Group)
+                else {}
             )
-        grid = cast(
-            "dict[str, float]",
-            json.loads(_decode(handle["/entry"].attrs.get("grid_meta_json"), "{}")),
-        )
-        attribute = handle["/entry/processing/tomojax"].attrs.get(_AXES_ATTR)
-        try:
+            grid = saved_volume_grid(grid_meta, geom_meta)
+            attribute = handle["/entry/processing/tomojax"].attrs.get(_AXES_ATTR)
             axes = saved_volume_axes(None if attribute is None else _decode(attribute, ""), data)
-        except ValueError as exc:
-            parser.error(str(exc))
-        shape = {axis: int(n) for axis, n in zip(axes, dataset.shape, strict=True)}
-        _ = write_volume(
-            out,
-            lambda z: _z_slice(dataset, axes, z),
-            (shape["z"], shape["y"], shape["x"]),
-            (grid.get("vx", 1.0), grid.get("vy", 1.0), grid.get("vz", 1.0)),
-            dtype=cast("str", args.dtype),
-            value_range=cast("list[float] | None", args.range),
-            prefix=cast("str", args.prefix),
-            source=str(data),
-        )
+            shape = {axis: int(n) for axis, n in zip(axes, dataset.shape, strict=True)}
+            voxel = (
+                (grid.vx, grid.vy, grid.vz)
+                if grid is not None
+                else (
+                    float(grid_meta.get("vx", 1.0)),
+                    float(grid_meta.get("vy", 1.0)),
+                    float(grid_meta.get("vz", 1.0)),
+                )
+            )
+            _ = write_volume(
+                out,
+                lambda z: _z_slice(dataset, axes, z),
+                (shape["z"], shape["y"], shape["x"]),
+                voxel,
+                dtype=dtype,
+                value_range=value_range,
+                prefix=prefix,
+                source=str(data),
+                grid=grid,
+            )
+    except (OSError, ValueError, KeyError) as exc:
+        return fail("export", str(exc).strip("'\""))
     print(f"exported {shape['z']} z-slices of {shape['y']}x{shape['x']} to {out}")
     return 0
 

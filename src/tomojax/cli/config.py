@@ -161,7 +161,7 @@ def _config_actions_by_dest(
 ) -> dict[str, argparse.Action]:
     actions: dict[str, argparse.Action] = {}
     for action in options(parser):
-        if action.dest in (argparse.SUPPRESS, "help", "config"):
+        if action.dest in (argparse.SUPPRESS, "help", "config", "out", "force"):
             continue
         if not action.option_strings:
             continue
@@ -222,6 +222,14 @@ def _coerce_action_value(action: argparse.Action, value: ConfigValue) -> ConfigV
 def _coerce_scalar(action: argparse.Action, value: ConfigValue) -> ConfigValue:
     if action.type is None:
         return value
+    if action.type is int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"expected an integer, got {type(value).__name__}")
+        return int(value)
+    if action.type is float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise TypeError(f"expected a number, got {type(value).__name__}")
+        return float(value)
     coercer = cast("Callable[[ConfigValue], ConfigValue]", action.type)
     return coercer(value)
 

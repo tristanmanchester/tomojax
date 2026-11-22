@@ -24,6 +24,7 @@ PUBLIC_MODULES = (
     "tomojax.datasets",
     "tomojax.forward",
     "tomojax.forward.api",
+    "tomojax.corrections.api",
     "tomojax.recon.api",
     "tomojax.io.api",
     "tomojax.alignment.api",
@@ -37,7 +38,7 @@ PUBLIC_DATA = {
     "tomojax.forward.api.ResidualLossMode": "Residual loss: l2 or pseudo_huber.",
     "tomojax.__version__": "Installed TomoJAX release version.",
     "tomojax.recon.api.MethodConfig": "A method's configuration: FBPConfig, FourierConfig, "
-    "CGLSConfig, FistaConfig, SPDHGConfig, SIRTConfig or "
+    "CGLSConfig, FISTAConfig, SPDHGConfig, SIRTConfig or "
     "MLEMConfig.",
     "tomojax.io.api.JsonValue": "Recursive JSON value: null, boolean, number, string, list or "
     "mapping.",

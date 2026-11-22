@@ -14,7 +14,7 @@ results can be reconstructed, aligned again or saved without restating it::
 
 from __future__ import annotations
 
-from contextlib import closing, contextmanager
+from contextlib import AbstractContextManager, closing, contextmanager
 from dataclasses import is_dataclass, replace
 import json
 import logging
@@ -29,6 +29,7 @@ from tomojax._scan import (
     Alignment,
     Reconstruction,
     Scan,
+    bind_step_geometry,
     cropped_record,
     geometry_of,
     geometry_record,
@@ -39,13 +40,14 @@ from tomojax._scan import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Iterator, Sequence
     from os import PathLike
 
     import jax
 
     from tomojax._loading import Frames
     from tomojax._region import RegionEstimate
+    from tomojax._simulate import Simulation
     from tomojax._typed_arrays import Device
     from tomojax.alignment import AlignConfig
     from tomojax.corrections import Step
@@ -63,12 +65,15 @@ LOG = logging.getLogger(__name__)
 
 
 def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
-    """Load a reconstruction or alignment saved by :func:`save` or the ``tomojax`` commands.
+    """Load a reconstruction or alignment image saved by :func:`save` or ``tomojax`` commands.
 
     The reconstruction has its scan when the file holds the projections (saved with
-    ``include_scan=True``, or an alignment). A file saved without them gives a
-    reconstruction whose ``scan`` is None, and says so; ``info["source"]`` names
-    the projections it came from. Nothing looks for them.
+    ``include_scan=True``, or an alignment). When loading an alignment file, the
+    returned reconstruction's :attr:`~Reconstruction.grid` is the working image's
+    grid while ``scan.grid`` remains the scan's own grid; use
+    :func:`load_alignment` to reload an :class:`Alignment` directly. A file saved
+    without projections gives a reconstruction whose ``scan`` is None, and says so;
+    ``info["source"]`` names the projections it came from. Nothing looks for them.
 
     Parameters
     ----------
@@ -92,6 +97,7 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     >>> import tomojax as tj
     >>> recon = tj.load_reconstruction("recon.nxs")  # doctest: +SKIP
     """
+    from tomojax._files import saved_volume_grid
     from tomojax.io import load_dataset
 
     record = load_dataset(os.fspath(path))
@@ -108,11 +114,13 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     meta = record.geometry_metadata
     info = meta.get("reconstruction_info", meta.get("alignment_info"))
     aligned = "reconstruction_method" not in meta and "alignment_info" in meta
-    if aligned and isinstance(info, dict) and isinstance(info.get("working_grid"), dict):
-        from tomojax.geometry import Grid
-
-        geometry = rebuild(geometry, grid=Grid(**info["working_grid"]))  # the image's grid
-        scan = None if scan is None else replace(scan, geometry=geometry)
+    if aligned:
+        volume_grid = saved_volume_grid(
+            None if record.grid is None else record.grid.to_dict(),
+            meta,
+        )
+        if volume_grid is not None:
+            geometry = rebuild(geometry, grid=volume_grid)
     return Reconstruction(
         volume=np.asarray(record.volume),
         geometry=geometry,
@@ -122,25 +130,76 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     )
 
 
+def load_alignment(path: str | PathLike[str]) -> Alignment:
+    """Load an :class:`Alignment` saved by :func:`save` or ``tomojax align``.
+
+    Preserves the scan's own grid on ``result.scan.grid`` separately from the
+    working image's grid on ``result.grid``, and supports image-free alignments
+    such as ``method="opposite-views"`` (leaving ``image`` and ``grid`` None).
+
+    Parameters
+    ----------
+    path : str or path-like
+        Saved alignment dataset.
+
+    Returns
+    -------
+    Alignment
+        Aligned scan, stored alignment record and optional working image and grid.
+
+    Raises
+    ------
+    ValueError
+        If the dataset holds no alignment record.
+    FileNotFoundError
+        If the input does not exist.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> result = tj.load_alignment("aligned.nxs")  # doctest: +SKIP
+    """
+    from tomojax.geometry import Grid
+    from tomojax.io import load_dataset
+
+    record = load_dataset(os.fspath(path))
+    meta = record.geometry_metadata
+    raw_info = meta.get("alignment_info")
+    if not isinstance(raw_info, dict):
+        raise ValueError(f"{path} holds no alignment record")
+    scan = load(path)
+    info = dict(raw_info)
+    raw_working_grid = info.pop("working_grid", None)
+    image = None if record.volume is None else np.asarray(record.volume)
+    if image is None:
+        working_grid: Grid | None = None
+    elif isinstance(raw_working_grid, dict):
+        working_grid = Grid.from_dict(raw_working_grid)
+    else:
+        working_grid = scan.grid
+    return Alignment(scan=scan, info=info, image=image, grid=working_grid)
+
+
 def save(
     path: str | PathLike[str],
-    item: Scan | Reconstruction | Alignment,
+    item: Scan | Reconstruction | Alignment | Simulation,
     *,
     include_scan: bool = False,
 ) -> None:
-    """Save a scan, reconstruction or alignment as a TomoJAX dataset.
+    """Save a scan, reconstruction, alignment or simulation as a TomoJAX dataset.
 
     A reconstruction is saved with its volume, geometry and full record, and names
     the projections it came from (``info["source"]``: their path, shape, size and a
     hash of three views); ``include_scan=True`` saves the scan too, so the file also
     reloads with :func:`load`. An alignment is saved as its corrected scan with its
-    poses and working image.
+    poses and working image. A simulation is saved as its scan together with its
+    ground-truth phantom as the stored volume.
 
     Parameters
     ----------
     path : str or path-like
         Output dataset path; an existing file is overwritten.
-    item : Scan, Reconstruction or Alignment
+    item : Scan, Reconstruction, Alignment or Simulation
         Scan or result to save with its geometry and metadata.
     include_scan : bool, optional
         Also save a reconstruction's scan. Default is False.
@@ -153,7 +212,7 @@ def save(
     Raises
     ------
     TypeError
-        If item is not a scan, reconstruction or alignment.
+        If item is not a scan, reconstruction, alignment or simulation.
     ValueError
         If the output format is unsupported, or ``include_scan`` is asked of a
         reconstruction loaded without its scan.
@@ -164,10 +223,19 @@ def save(
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     >>> tj.save("copy.nxs", scan)  # doctest: +SKIP
     """
+    from tomojax._simulate import Simulation
     from tomojax.io import save_dataset
+    from tomojax.io.api import replace_dataset
 
     if isinstance(item, Scan):
         record = record_of(item)
+    elif isinstance(item, Simulation):
+        record = record_of(item.scan)
+        record.volume = item.phantom
+        record.geometry_metadata["reconstruction_method"] = "simulate"
+        record.geometry_metadata["reconstruction_info"] = json.loads(
+            json.dumps({**item.info, "source": source_of(item.scan)}, default=_json_value)
+        )
     elif isinstance(item, Reconstruction):
         if item.scan is None and include_scan:
             raise ValueError(
@@ -180,7 +248,7 @@ def save(
             record = record_of(item.scan, grid=item.grid)
             source = source_of(item.scan)
             if not include_scan:
-                record = replace(record, projections=None)
+                record = replace_dataset(record, projections=None)
         record.volume = item.volume
         record.geometry_metadata["reconstruction_method"] = item.method
         # As JSON, which the file's metadata is: a configuration as its fields, and
@@ -195,31 +263,82 @@ def save(
         # and settings no longer describe it.
         record.geometry_metadata.pop("reconstruction_method", None)
         record.geometry_metadata.pop("reconstruction_info", None)
-        # The image's grid, which need not be the scan's: load_reconstruction reads it back.
+        # The image's grid, which need not be the scan's: load_alignment/export read it back.
         info = {**item.info} if item.grid is None else {**item.info, "working_grid": item.grid}
         record.geometry_metadata["alignment_info"] = json.loads(
             json.dumps(info, default=_json_value)
         )
     else:
-        raise TypeError(f"save takes a Scan, Reconstruction or Alignment, not {type(item)}")
+        raise TypeError(
+            f"save takes a Scan, Reconstruction, Alignment or Simulation, not {type(item)}"
+        )
     save_dataset(path, record)
 
 
-def _in_region(
-    run: Callable[[Grid], Reconstruction], scan: Scan, grid: Grid | None, region: Region
-) -> Reconstruction:
-    """``run`` on the grid ``region`` chooses, zeroed outside a ``"cyl"`` region's cylinder."""
-    from tomojax._field_of_view import region_grid, zero_outside_cylinder
+def intersect_cylinder_support(
+    method: Method,
+    config: MethodConfig | None,
+    grid: Grid,
+    cylinder: Any,
+) -> MethodConfig | None:
+    """Constrain support-capable solvers to ``cylinder``, intersecting any caller support."""
+    from tomojax._field_of_view import cylinder_support
+    from tomojax.recon.api import method_config
 
-    if grid is not None:
+    if method not in {"fista", "spdhg", "sirt", "mlem"}:
+        return config
+    base = method_config(method, config=config)
+    mask = cylinder_support(grid, cylinder)
+    existing = getattr(base, "support", None)
+    if existing is not None:
+        mask = np.broadcast_to(np.asarray(existing, bool), grid.shape) & mask
+    return replace(cast("Any", base), support=mask)
+
+
+def in_region(
+    scan: Scan,
+    method: Method,
+    *,
+    grid: Grid | None,
+    region: Region | None,
+    shape: tuple[int, int, int] | None = None,
+    out: np.ndarray | None = None,
+    config: MethodConfig | None = None,
+    devices: Device | Sequence[Device] | None = None,
+    keywords: dict[str, Any],
+) -> Reconstruction:
+    """Reconstruct on the grid ``region`` chooses, applying shared cylinder semantics."""
+    from tomojax._field_of_view import region_grid, zero_outside_cylinder
+    from tomojax._region import RegionEstimate
+
+    if grid is not None and region is not None:
         raise ValueError("pass grid= or region=, not both")
-    chosen, cylinder = region_grid(scan, region)
-    result = run(chosen)
-    if cylinder is not None:
-        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
-    return replace(
-        result, info={**result.info, "region": (region if isinstance(region, str) else "estimate")}
+    chosen, cylinder = region_grid(scan, region, shape=shape)
+    effective_config = (
+        intersect_cylinder_support(method, config, chosen, cylinder)
+        if cylinder is not None
+        else config
     )
+    result = reconstruct(
+        scan,
+        method,
+        grid=chosen,
+        out=out,
+        config=effective_config,
+        devices=devices,
+        **keywords,
+    )
+    if cylinder is not None:
+        volume = zero_outside_cylinder(
+            result.volume, result.grid, cylinder, in_place=out is not None
+        )
+        result = replace(result, volume=volume)
+    extra: dict[str, object] = {}
+    if region is not None:
+        extra["region"] = region if isinstance(region, str) else "estimate"
+        if isinstance(region, RegionEstimate):
+            extra["region_estimate"] = dict(region.info)
+    return replace(result, info={**result.info, **extra}) if extra else result
 
 
 def _json_value(value: object) -> object:
@@ -268,9 +387,10 @@ def project(
     --------
     >>> import tomojax as tj
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
-    >>> projections = tj.project(scan.geometry, tj.reconstruct(scan).volume)  # doctest: +SKIP
+    >>> recon = tj.reconstruct(scan)  # doctest: +SKIP
+    >>> projections = tj.project(recon.geometry, recon.volume)  # doctest: +SKIP
     """
-    from tomojax.recon import project as _project
+    from tomojax.recon.api import project as _project
 
     return _project(geometry, volume, grid=grid, devices=devices)
 
@@ -298,7 +418,8 @@ def backproject(
     Returns
     -------
     jax.Array
-        Adjoint volume, shape (grid.nz, grid.ny, grid.nx).
+        Adjoint volume, shape (grid.nz, grid.ny, grid.nx), or (grid.ny, grid.nx)
+        for a single-slice 2D input.
 
     Raises
     ------
@@ -311,7 +432,7 @@ def backproject(
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     >>> volume = tj.backproject(scan.geometry, scan.projections)  # doctest: +SKIP
     """
-    from tomojax.recon import backproject as _backproject
+    from tomojax.recon.api import backproject as _backproject
 
     return _backproject(geometry, projections, grid=grid, devices=devices)
 
@@ -452,13 +573,15 @@ def reconstruct(
     if region is not None:
         keywords = {"filter": filter, "iterations": iterations, "tv_weight": tv_weight}
         keywords |= {"nonnegative": nonnegative, "warm_start": warm_start, "seed": seed}
-        return _in_region(
-            lambda grid: reconstruct(
-                scan, method, grid=grid, out=out, config=config, devices=devices, **keywords
-            ),
+        return in_region(
             scan,
-            grid,
-            region,
+            method,
+            grid=grid,
+            region=region,
+            out=out,
+            config=config,
+            devices=devices,
+            keywords=keywords,
         )
     given = {
         name: value
@@ -473,7 +596,22 @@ def reconstruct(
         if value is not None
     }
     if method == "auto":
-        options = {"grid": grid, "out": out, "config": config, "warm_start": warm_start, **given}
+        method_specific = sorted(
+            name
+            for name, value in {
+                **given,
+                "config": config,
+                "warm_start": True if warm_start else None,
+            }.items()
+            if value is not None
+        )
+        if method_specific:
+            raise ValueError(
+                f"method='auto' does not take method-specific options "
+                f"({', '.join(method_specific)}); pass an explicit method such as "
+                "method='cgls', method='fista' or method='fbp'"
+            )
+        options = {"grid": grid, "out": out}
         return _automatic_reconstruct(scan, {k: v for k, v in options.items() if v is not None})
     cfg = method_config(method, config=config, warm_start=warm_start, **given)
     if grid is not None:
@@ -586,7 +724,6 @@ def _automatic_axial_setup(scan: Scan, *, method: Method, reasons: list[str]) ->
     return status
 
 
-@contextmanager
 def reconstruct_slabs(
     frames: Frames,
     method: Literal["fbp", "fourier", "sirt", "mlem"],
@@ -596,19 +733,21 @@ def reconstruct_slabs(
     config: FBPConfig | FourierConfig | SIRTConfig | MLEMConfig | None = None,
     warm_start: bool | None = None,
     epsilon: float = 1e-6,
-) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
+) -> AbstractContextManager[Iterator[tuple[slice, Reconstruction]]]:
     """Correct raw frames and reconstruct bounded z slabs.
 
     Use ``with reconstruct_slabs(frames, "fbp", ...) as slabs:`` and iterate
     over ``(z_slice, reconstruction)``. The slice indexes the requested output
     grid; each reconstruction retains its physical global grid, genuine corrected
     source rows (including interpolation neighbors), and correction records.
-    Volumes are owned float32 host arrays. Results remain valid after advancing
-    or closing the iterator; collecting them retains their volume and projections.
+    Volumes are owned float32 host arrays. Write or consume each slab as it
+    arrives: accumulating every yielded :class:`Reconstruction` retains both its
+    volume and its corrected source rows in memory.
 
     This supports cone-beam FDK, unposed axial parallel beams and whole-row line-integral
-    corrections such as Stripes, not Paganin or view rejection. SIRT/OSEM also
-    require matching detector and voxel planes; ``warm_start=True`` uses FBP.
+    corrections such as Stripes or Rings (geometry-dependent steps bind to
+    ``frames.geometry`` automatically), not Paganin or view rejection. SIRT/OSEM
+    also require matching detector and voxel planes; ``warm_start=True`` uses FBP.
     Method configurations retain the same meaning as in ``reconstruct``.
     CUDA consumes corrected rows without a corrected-projection host round trip.
     Raw reads are prefetched within bounded storage and calibration is reused.
@@ -634,10 +773,11 @@ def reconstruct_slabs(
     epsilon : float, optional
         Positive finite lower bound for flat field and transmission.
 
-    Yields
-    ------
-    iterator of tuple of (slice, Reconstruction)
-        Context-managed slab iterator; each z slice indexes the requested grid.
+    Returns
+    -------
+    contextlib.AbstractContextManager
+        Context manager yielding an iterator of ``(z_slice, Reconstruction)``
+        pairs; each ``z_slice`` indexes the requested grid.
 
     Raises
     ------
@@ -652,11 +792,9 @@ def reconstruct_slabs(
     ...     for z_slice, recon in slabs:
     ...         print(z_slice, recon.volume.shape)
     """
-    from tomojax._scan import detector_window, rebuild
-    from tomojax.corrections import corrected_row_source
-    from tomojax.geometry import ParallelGeometry, grid_volume_origin
+    from tomojax.geometry import ParallelGeometry
     from tomojax.geometry.api import is_cone_beam
-    from tomojax.recon.api import method_config, reconstruct_slabs as array_slabs
+    from tomojax.recon.api import method_config
 
     cfg = method_config(method, config=config, warm_start=warm_start)
     cone = is_cone_beam(frames.geometry)
@@ -667,6 +805,36 @@ def reconstruct_slabs(
             "reconstruct_slabs requires cone FBP or unposed axial FBP/Fourier/SIRT/MLEM"
         )
     target = frames.geometry.grid if grid is None else grid
+    bound = bind_step_geometry(corrections, frames.geometry)
+    return _reconstruct_slabs_context(
+        frames,
+        method,
+        target=target,
+        corrections=bound,
+        cfg=cfg,
+        cone=cone,
+        warm_start=bool(warm_start),
+        epsilon=epsilon,
+    )
+
+
+@contextmanager
+def _reconstruct_slabs_context(
+    frames: Frames,
+    method: Literal["fbp", "fourier", "sirt", "mlem"],
+    *,
+    target: Grid,
+    corrections: Sequence[Step],
+    cfg: MethodConfig,
+    cone: bool,
+    warm_start: bool,
+    epsilon: float,
+) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
+    from tomojax._scan import detector_window, rebuild
+    from tomojax.corrections.api import corrected_row_source
+    from tomojax.geometry import grid_volume_origin
+    from tomojax.recon.api import reconstruct_slabs as array_slabs
+
     origin = grid_volume_origin(target)
     with corrected_row_source(
         frames.counts,
@@ -695,7 +863,7 @@ def reconstruct_slabs(
             frames.geometry.detector,
             read,
             config=cfg,
-            warm_start=bool(warm_start),
+            warm_start=warm_start,
         )
         with closing(completed) as prepared:
 
@@ -859,6 +1027,7 @@ def align(
     >>> result = tj.align(scan, fit=("translations", "roll"))  # doctest: +SKIP
     >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP
     """
+    from tomojax._region import RegionEstimate
     from tomojax.alignment import AlignConfig
 
     settings = {
@@ -869,47 +1038,60 @@ def align(
         "interpolation": interpolation,
         "resolution": resolution,
     }
-    config = replace(
-        AlignConfig() if config is None else config,
-        **{name: value for name, value in settings.items() if value is not None},
-    )
+    supplied = {name: value for name, value in settings.items() if value is not None}
     if method == "opposite-views":
-        return _opposite_views(scan, fit, grid, region)
+        extra: list[str] = sorted(
+            [
+                *supplied,
+                *(["config"] if config is not None else []),
+                *(["grid"] if grid is not None else []),
+                *(["region"] if region is not None else []),
+            ]
+        )
+        if extra:
+            raise ValueError(
+                f'method="opposite-views" fits no image and takes no joint options '
+                f"({', '.join(extra)})"
+            )
+        return _opposite_views(scan, fit)
     if method not in (None, "joint"):
         raise ValueError(f"method is 'joint' or 'opposite-views', not {method!r}")
+    config = replace(AlignConfig() if config is None else config, **supplied)
+    cylinder = None
     if region is not None:
         from tomojax._field_of_view import region_grid
 
         if grid is not None:
             raise ValueError("pass grid= or region=, not both")
-        grid = region_grid(scan, region)[0]
+        grid, cylinder = region_grid(scan, region)
     from tomojax._smooth_alignment import align_poses
 
     result = align_poses(scan, fit=fit, grid=grid, config=config)
     assert result.scan is not None  # the alignment's corrected scan
+    image = result.volume
+    if cylinder is not None and image is not None and result.grid is not None:
+        from tomojax._field_of_view import zero_outside_cylinder
+
+        image = zero_outside_cylinder(image, result.grid, cylinder)
     # The fit's working grid belongs to its image; the scan keeps the caller's grid.
     corrected = with_grid(result.scan, scan.grid if grid is None else grid)
-    info = (
-        result.info
-        if region is None
-        else {**result.info, "region": (region if isinstance(region, str) else "estimate")}
-    )
-    return Alignment(corrected, info, result.volume, result.grid)
+    info = dict(result.info)
+    if region is not None:
+        info["region"] = region if isinstance(region, str) else "estimate"
+        if isinstance(region, RegionEstimate):
+            info["region_estimate"] = dict(region.info)
+    return Alignment(corrected, info, image, result.grid)
 
 
-def _opposite_views(
-    scan: Scan, fit: str | tuple[str, ...], grid: Grid | None, region: Region | None
-) -> Alignment:
+def _opposite_views(scan: Scan, fit: str | tuple[str, ...]) -> Alignment:
     """``fit="center"`` from near-opposite views, without an image."""
     if fit not in ("center", ("center",)):
         raise ValueError(f'method="opposite-views" fits fit="center" alone, not {fit!r}')
-    if grid is not None or region is not None:
-        raise ValueError('method="opposite-views" fits no image: it takes no grid= or region=')
     centered, record = _estimate_center(scan)
     before, after = scan.detector.center[0], centered.detector.center[0]
     center = {"value": float(after), "change": float((after - before) / scan.detector.du)}
     info = {
-        "method": "opposite_views",
+        "method": "opposite-views",
         "fit": ["center"],
         "calibration": {"center": center},
         "diagnostics": record["diagnostics"],
@@ -969,6 +1151,7 @@ __all__ = [
     "align",
     "backproject",
     "load",
+    "load_alignment",
     "load_reconstruction",
     "project",
     "reconstruct",

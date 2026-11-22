@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+from typing import Literal
 
 import numpy as np
 
@@ -63,12 +64,19 @@ class Score:
         )
 
     def __add__(self, other: Score) -> Score:
+        if not isinstance(other, Score):
+            return NotImplemented
         return Score(
             self.squared_error + other.squared_error,
             self.target_energy + other.target_energy,
             self.weight_sum + other.weight_sum,
             self.count + other.count,
         )
+
+    def __radd__(self, other: Score | Literal[0]) -> Score:
+        if other == 0:
+            return self
+        return NotImplemented
 
 
 def _shape(shape: tuple[int, int, int]) -> tuple[int, int, int]:

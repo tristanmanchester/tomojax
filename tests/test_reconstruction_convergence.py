@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
-from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
+from tomojax.recon import FISTAConfig, SPDHGConfig, fista, spdhg
 
 # check-public-imports: allow-private
 from tomojax.recon._projection import projection_operators
@@ -41,15 +41,15 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(tilted: bool, solver: s
     length = (detector.nu * detector.du * detector.nv * detector.dv) ** 0.5
     alpha = 0.001 * length / (contrast * data.size * h**2)
     if solver == "fista":
-        volume, _ = fista_tv(
+        volume, _ = fista(
             geometry,
             grid,
             detector,
             data,
-            config=FistaConfig(
+            config=FISTAConfig(
                 iterations=30,
                 tv_weight=alpha,
-                nonnegative=True,
+                lower_bound=0.0,
                 power_iterations=5,
                 views_per_batch=4,
                 backend="jax",
@@ -57,7 +57,7 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(tilted: bool, solver: s
         )
         residual_limit, volume_limit = 0.005, 0.04
     else:
-        volume, _ = spdhg_tv(
+        volume, _ = spdhg(
             geometry,
             grid,
             detector,
@@ -65,8 +65,8 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(tilted: bool, solver: s
             config=SPDHGConfig(
                 iterations=100,
                 tv_weight=alpha,
-                nonnegative=True,
-                views_per_batch=4,
+                lower_bound=0.0,
+                views_per_block=4,
                 seed=18,
                 backend="jax",
             ),
@@ -97,7 +97,7 @@ def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regularize
     expected = np.linalg.solve(matrix.T @ matrix, matrix.T @ data - lam * np.asarray([-1.0, 1.0]))
     assert expected[1] - expected[0] > delta
     if solver == "fista":
-        config = FistaConfig(
+        config = FISTAConfig(
             iterations=150,
             tv_prox_iterations=30,
             lipschitz=np.linalg.norm(matrix, 2) ** 2,
@@ -108,7 +108,7 @@ def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regularize
     else:
         config = SPDHGConfig(
             iterations=1000,
-            views_per_batch=3,
+            views_per_block=3,
             log_every=0,
             backend="jax",
             stream=stream,
@@ -123,7 +123,7 @@ def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regularize
     config.tv_weight = lam * length * grid.vx / (contrast * data.size * h**3)
     config.huber_delta = delta * length**2 / (contrast * grid.vx)
     for scale in [0.01, 1.0, 100.0]:
-        actual, info = (fista_tv if solver == "fista" else spdhg_tv)(
+        actual, info = (fista if solver == "fista" else spdhg)(
             geometry,
             grid,
             detector,

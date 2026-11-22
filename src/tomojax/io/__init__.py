@@ -14,8 +14,10 @@ from tomojax.io._datasets import (
     save_dataset,
     validate_dataset,
 )
+from tomojax.io._inspection_types import Inspection
 
 __all__ = [
+    "Inspection",
     "ProjectionDataset",
     "ValidationReport",
     "build_geometry_from_dataset_metadata",

@@ -26,7 +26,7 @@ import numpy as np
 
 import tomojax as tj
 from tomojax.geometry import LaminographyGeometry, ParallelGeometry
-from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
+from tomojax.recon import FISTAConfig, SPDHGConfig, fista, spdhg
 
 
 def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dict[str, Any]:
@@ -42,23 +42,23 @@ def run_case(size: int, kind: str, method: str, args: argparse.Namespace) -> dic
     n_views = len(case.angles)
     lipschitz = 1.5 * n_views * max(grid.nx, grid.ny, grid.nz)
     if method == "fista":
-        config = FistaConfig(
+        config = FISTAConfig(
             iterations=args.recon_iters,
             regularizer="huber_tv",
             lipschitz=None if args.auto_norm else lipschitz,
             views_per_batch=args.batch,
-            nonnegative=True,
+            lower_bound=0.0,
         )
 
         def call() -> tuple:
-            return fista_tv(geometry, grid, detector, data, config=config)
+            return fista(geometry, grid, detector, data, config=config)
     elif method == "spdhg":
         config = SPDHGConfig(
-            iterations=args.spdhg_iters, views_per_batch=args.batch, seed=31, nonnegative=True
+            iterations=args.spdhg_iters, views_per_block=args.batch, seed=31, lower_bound=0.0
         )
 
         def call() -> tuple:
-            return spdhg_tv(geometry, grid, detector, data, config=config)
+            return spdhg(geometry, grid, detector, data, config=config)
     else:
         config = None
         phase = np.linspace(0.0, 2 * np.pi, n_views, endpoint=False)

@@ -67,7 +67,7 @@ if TYPE_CHECKING:
 class SPDHGConfig:
     """Configuration for stochastic primal-dual TV reconstruction.
 
-    ``backend`` chooses where the projection runs, as in :class:`FistaConfig`:
+    ``backend`` chooses where the projection runs, as in :class:`FISTAConfig`:
     ``"auto"`` is CUDA on CUDA.
 
     ``stream`` keeps NumPy or memmap projections, any weights and
@@ -115,9 +115,9 @@ class SPDHGConfig:
         0.01.
     theta : float, optional
         Extrapolation factor for the dual gradient. Default is 1.0.
-    views_per_batch : int, optional
-        Number of views processed together to bound temporary storage. Default is
-        16.
+    views_per_block : int, optional
+        Number of views per stochastic update block; changing this changes the
+        stochastic algorithm as well as temporary storage. Default is 16.
     seed : int, optional
         Random seed for stochastic block selection. Default is 0.
     tau : float | None, optional
@@ -129,10 +129,12 @@ class SPDHGConfig:
     backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
-    nonnegative : bool, optional
-        Constrain the reconstruction to nonnegative values. Default is False.
+    lower_bound : float | None, optional
+        Lower voxel-value bound (set ``0.0`` for nonnegativity), or None for no
+        lower bound.
     support : array-like | None, optional
-        Binary (0/1) volume support mask. Excluded voxels remain zero; None uses the entire grid.
+        Boolean volume support mask, broadcastable to the grid. False (zero)
+        voxels remain zero; None uses the entire grid.
     log_every : int, optional
         Number of iterations between logged objective samples. Default is 10.
     stream : bool | None, optional
@@ -146,7 +148,7 @@ class SPDHGConfig:
     regularizer: Regularizer = "tv"
     huber_delta: float = 1e-2
     theta: float = 1.0  # extrapolation of the dual gradient
-    views_per_batch: int = 16  # size of a stochastic block
+    views_per_block: int = 16  # size of a stochastic block
     seed: int = 0
 
     # Step sizes (None resolves the probability-aware physical Schur sizes).
@@ -158,8 +160,8 @@ class SPDHGConfig:
     backend: ProjectorBackend = "auto"
 
     # constraints
-    nonnegative: bool = False
-    support: jnp.ndarray | None = None  # 0/1 mask in volume space
+    lower_bound: float | None = None
+    support: jnp.ndarray | None = None  # boolean mask in volume space
 
     # logging
     log_every: int = 10  # sampled objective at the current primal every k steps
@@ -266,12 +268,12 @@ def _proj_pos_support(
     x: jnp.ndarray,
     support: jnp.ndarray | None,
     *,
-    nonnegative: bool,
+    lower_bound: float | None,
 ) -> jnp.ndarray:
+    if lower_bound is not None:
+        x = jnp.maximum(x, jnp.asarray(lower_bound, x.dtype))
     if support is not None:
-        x = x * support
-    if nonnegative:
-        x = jnp.maximum(x, 0)
+        x = jnp.where(support, x, 0.0)
     return x
 
 
@@ -314,7 +316,7 @@ def _batched_projector(
 
 
 def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
-    views_per_batch = int(max(1, min(config.views_per_batch, n_views)))
+    views_per_batch = int(max(1, min(config.views_per_block, n_views)))
     num_blocks = (n_views + views_per_batch - 1) // views_per_batch
     rng = np.random.default_rng(config.seed)
     # SPDHG's inverse-probability extrapolation assumes independent draws,
@@ -333,7 +335,7 @@ def _initial_spdhg_state(runtime: _SPDHGRuntime, shape: tuple[int, int, int]) ->
     cfg = runtime.config
     zeros = jnp.zeros(shape, jnp.float32)
     x0 = zeros if runtime.init_x is None else runtime.init_x
-    x0 = _proj_pos_support(x0, runtime.support, nonnegative=cfg.nonnegative)
+    x0 = _proj_pos_support(x0, runtime.support, lower_bound=cfg.lower_bound)
     return _SPDHGScanState(
         x=x0,
         # Streaming keeps the duals on the host; a placeholder stands in here.
@@ -476,7 +478,7 @@ def _prepare_spdhg_runtime(
         tv_weight=5e-5 if cfg.tv_weight is None else cfg.tv_weight,
         huber_delta=cfg.huber_delta,
     )
-    support = None if cfg.support is None else jnp.asarray(cfg.support, dtype=jnp.float32)
+    support = None if cfg.support is None else jnp.asarray(cfg.support, dtype=bool)
     if support is not None:
         support = pack_volume(support.reshape((1,) * (3 - support.ndim) + support.shape), model)
     resolved_tv_weight = 5e-5 if cfg.tv_weight is None else cfg.tv_weight
@@ -497,9 +499,9 @@ def _prepare_spdhg_runtime(
                     det_grid,
                     weights_arr,
                     key,
-                    support,
+                    None if support is None else support.astype(jnp.float32),
                     projector=projector,
-                    views_per_batch=cfg.views_per_batch,
+                    views_per_batch=cfg.views_per_block,
                 ).block_until_ready()
             metric = raise_tv_weight(metric, noise * rms)
         resolved_tv_weight = 5e-5 * float(metric.weight_over_contrast) / (initial_factor or 1)
@@ -759,7 +761,7 @@ def _run_spdhg_scan(
         candidate = _proj_pos_support(
             partial - (1 + cfg.theta / schedule.selection_prob) * step_sizes.tau * s_data_new,
             runtime.support,
-            nonnegative=cfg.nonnegative,
+            lower_bound=cfg.lower_bound,
         )
         x_new = jnp.where(t + 1 < cfg.iterations, candidate, partial)
         return _SPDHGScanState(
@@ -778,7 +780,7 @@ def _run_spdhg_scan(
     return final.x, final.losses, final.p, final.y_data
 
 
-def spdhg_tv(
+def spdhg(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
@@ -851,12 +853,12 @@ def spdhg_tv(
     --------
     >>> import numpy as np
     >>> import tomojax as tj
-    >>> from tomojax.recon import spdhg_tv, SPDHGConfig, project
+    >>> from tomojax.recon import SPDHGConfig, spdhg
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
-    >>> volume, info = spdhg_tv(
+    >>> data = tj.project(geometry, np.ones((1, 4, 4), np.float32))
+    >>> volume, info = spdhg(
     ...     geometry,
     ...     geometry.grid,
     ...     geometry.detector,

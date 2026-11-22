@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import json
+import math
+import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+import shutil
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
@@ -13,16 +16,21 @@ if TYPE_CHECKING:
     from os import PathLike
 
     from tomojax._scan import Reconstruction
+    from tomojax._simulate import Simulation
+    from tomojax.geometry import Grid
     from tomojax.io.api import Inspection
 
 
 def inspect(path: str | PathLike[str]) -> Inspection:
-    """Describe a dataset or acquisition and check that it can be reconstructed.
+    """Describe a dataset or acquisition and run structural and calibration checks.
 
     Reads metadata and a bounded sample of the frames, never the whole stack: the
     projections' shape, type and statistics, the angles, geometry, detector,
     flats and darks, the corrections recorded, saved poses, memory estimates and a
-    saved volume. ``valid`` and ``issues`` say what the check found missing.
+    saved volume. ``valid`` is True when the checks performed for that format
+    find no issues in ``issues`` (frame layout, angles, sample frames, and raw
+    calibration for recognised acquisitions). A generic HDF5 stack can still
+    require explicit geometry or pixel size on load even when ``valid`` is True.
 
     Parameters
     ----------
@@ -55,42 +63,79 @@ def inspect(path: str | PathLike[str]) -> Inspection:
     return cast("Inspection", {**report, "valid": not issues, "issues": issues})
 
 
+def saved_volume_grid(
+    grid_meta: Mapping[str, Any] | None,
+    geometry_meta: Mapping[str, Any] | None,
+) -> Grid | None:
+    """Resolve the grid belonging to a saved dataset's stored volume.
+
+    Alignments store the scan grid in ``grid_meta`` and the working image's grid
+    under ``geometry_meta["alignment_info"]["working_grid"]``. Reconstructions
+    and simulations store the volume's grid in ``grid_meta``.
+    """
+    from tomojax.geometry import Grid
+
+    meta = geometry_meta or {}
+    if "reconstruction_method" not in meta:
+        alignment_info = meta.get("alignment_info")
+        if isinstance(alignment_info, Mapping):
+            working = alignment_info.get("working_grid")
+            if isinstance(working, Mapping):
+                return Grid.from_dict(working)
+    if grid_meta:
+        return Grid.from_dict(grid_meta)
+    return None
+
+
 def export(
     path: str | PathLike[str],
-    reconstruction: Reconstruction,
+    reconstruction: Reconstruction | Simulation,
     *,
     dtype: Literal["float32", "uint16"] = "float32",
     range: tuple[float, float] | None = None,  # noqa: A002 the command's --range
     prefix: str = "slice",
 ) -> None:
-    """Write a reconstruction for other software: TIFF z-slices, or one raw file.
+    """Write a reconstruction or simulation phantom for other software.
 
+    Interchange export for external tools (use :func:`tomojax.save` and
+    :func:`tomojax.load_reconstruction` to round-trip TomoJAX datasets).
     ``path`` ending in ``.raw`` writes one little-endian, z-major file; otherwise
     ``path`` is a directory of z-slice TIFFs (y rows, x columns), numbered from
-    the bottom of the volume. A JSON sidecar gives the shape, voxel size and value
-    scaling. Each file is written beside its name and moved onto it when whole,
-    so a failure leaves no partial file.
+    the bottom of the volume. A JSON sidecar gives the shape, voxel size,
+    physical grid placement (``vol_origin_xyz`` and ``grid``) and value scaling.
+    TIFF directory exports stage the complete slice set before replacing an
+    existing stack so stale slices are never mixed in.
 
     Parameters
     ----------
     path : str or path-like
         Directory for TIFF slices, or a ``.raw`` file.
-    reconstruction : Reconstruction
-        The volume and its grid.
+    reconstruction : Reconstruction or Simulation
+        The volume (or simulation phantom) and its grid.
     dtype : {"float32", "uint16"}, optional
         Sample type; ``uint16`` maps ``range`` to 0..65535. Default is float32.
     range : tuple of float or None, optional
-        The values ``uint16`` maps to 0 and 65535; None takes the 0.1 and 99.9
-        percentiles of up to 16 slices.
+        The values ``uint16`` maps to 0 and 65535 (finite, ``low < high``);
+        None takes the 0.1 and 99.9 percentiles of up to 16 slices. Only valid
+        with ``dtype="uint16"``.
     prefix : str, optional
         TIFF file name prefix. Default is "slice".
+
+    Raises
+    ------
+    ValueError
+        If ``range`` is passed with ``float32`` or has nonfinite or non-increasing bounds.
 
     Examples
     --------
     >>> import tomojax as tj
     >>> tj.export("slices", tj.load_reconstruction("recon.nxs"))  # doctest: +SKIP
     """
-    volume = reconstruction.volume
+    from tomojax._simulate import Simulation
+
+    volume = (
+        reconstruction.phantom if isinstance(reconstruction, Simulation) else reconstruction.volume
+    )
     grid = reconstruction.grid
     write_volume(
         Path(path),
@@ -100,7 +145,59 @@ def export(
         dtype=dtype,
         value_range=range,
         prefix=prefix,
+        grid=grid,
     )
+
+
+def validate_export_range(
+    dtype: str, value_range: Sequence[float] | None
+) -> tuple[float, float] | None:
+    """Validate optional ``(low, high)`` scaling bounds for volume export."""
+    if value_range is None:
+        return None
+    if dtype != "uint16":
+        raise ValueError("range applies only to dtype='uint16'")
+    if len(value_range) != 2:
+        raise ValueError("range must contain two values: (low, high)")
+    low, high = float(value_range[0]), float(value_range[1])
+    if not (math.isfinite(low) and math.isfinite(high)) or low >= high:
+        raise ValueError(f"range must be finite with low < high, got ({low}, {high})")
+    return low, high
+
+
+def _write_tiff_directory(
+    out: Path,
+    plane: Callable[[int], np.ndarray],
+    convert: Callable[[np.ndarray], np.ndarray],
+    nz: int,
+    prefix: str,
+    sidecar_text: str,
+) -> Path:
+    """Write TIFF z-slices and sidecar in a sibling staging directory before replacing ``out``."""
+    import imageio.v3 as iio
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    staging = out.parent / f".{out.name}.partial-{os.getpid()}"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True, exist_ok=False)
+    try:
+        for z in range(nz):
+            iio.imwrite(staging / f"{prefix}_{z:05d}.tif", convert(plane(z)), extension=".tif")
+        _ = (staging / f"{prefix}.json").write_text(sidecar_text)
+        if not out.exists():
+            staging.replace(out)
+        else:
+            for stale in out.iterdir():
+                if stale.is_file() and stale.suffix.lower() in {".tif", ".tiff", ".json"}:
+                    stale.unlink()
+            for item in staging.iterdir():
+                item.replace(out / item.name)
+            staging.rmdir()
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return out / f"{prefix}.json"
 
 
 def write_volume(
@@ -113,20 +210,21 @@ def write_volume(
     value_range: Sequence[float] | None,
     prefix: str,
     source: str | None = None,
+    grid: Grid | None = None,
 ) -> Path:
     """Write ``shape`` (z, y, x) z-planes, each ``plane(z)``, as TIFFs or one raw file.
 
     Returns the sidecar's path.
     """
-    import imageio.v3 as iio
-
     from tomojax.core.files import replaced_when_complete
+    from tomojax.geometry import grid_volume_origin
 
+    validated_range = validate_export_range(dtype, value_range)
     nz = shape[0]
     raw = out.suffix.lower() == ".raw"
     low, high = (0.0, 1.0)
     if dtype == "uint16":
-        low, high = _value_range(plane, nz) if value_range is None else map(float, value_range)
+        low, high = _value_range(plane, nz) if validated_range is None else validated_range
 
     def convert(values: np.ndarray) -> np.ndarray:
         if dtype == "float32":
@@ -134,20 +232,6 @@ def write_volume(
         scaled = (values - low) / (high - low) * 65535.0
         return np.clip(np.round(scaled), 0, 65535).astype(np.uint16)
 
-    parts = f"volume {np.prod(shape) * np.dtype(dtype).itemsize / 2**30:.1f} GiB"
-    if raw:
-        little = np.dtype(dtype).newbyteorder("<")
-        with replaced_when_complete(out, parts) as temporary, temporary.open("wb") as stream:
-            for z in range(nz):
-                _ = stream.write(convert(plane(z)).astype(little).tobytes())
-        sidecar = out.with_suffix(".json")
-    else:
-        out.mkdir(parents=True, exist_ok=True)
-        for z in range(nz):
-            target = out / f"{prefix}_{z:05d}.tif"
-            with replaced_when_complete(target, f"slice {z}") as temporary:
-                iio.imwrite(temporary, convert(plane(z)), extension=".tif")
-        sidecar = out / f"{prefix}.json"
     info: dict[str, object] = {
         "source": source,
         "format": "raw" if raw else "tiff",
@@ -158,8 +242,21 @@ def write_volume(
         "value_range": [low, high] if dtype == "uint16" else None,
         "slice_axis": "z, from the bottom of the volume",
     }
+    if grid is not None:
+        info["vol_origin_xyz"] = list(grid_volume_origin(grid))
+        info["grid"] = grid.to_dict()
+    sidecar_text = json.dumps(info, indent=2) + "\n"
+
+    if not raw:
+        return _write_tiff_directory(out, plane, convert, nz, prefix, sidecar_text)
+    parts = f"volume {np.prod(shape) * np.dtype(dtype).itemsize / 2**30:.1f} GiB"
+    little = np.dtype(dtype).newbyteorder("<")
+    with replaced_when_complete(out, parts) as temporary, temporary.open("wb") as stream:
+        for z in range(nz):
+            _ = stream.write(convert(plane(z)).astype(little).tobytes())
+    sidecar = out.with_suffix(".json")
     with replaced_when_complete(sidecar, "sidecar") as temporary:
-        _ = temporary.write_text(json.dumps(info, indent=2) + "\n")
+        _ = temporary.write_text(sidecar_text)
     return sidecar
 
 
@@ -172,4 +269,4 @@ def _value_range(plane: Callable[[int], np.ndarray], nz: int) -> tuple[float, fl
     return low, high if high > low else low + 1.0
 
 
-__all__ = ["export", "inspect", "write_volume"]
+__all__ = ["export", "inspect", "saved_volume_grid", "validate_export_range", "write_volume"]

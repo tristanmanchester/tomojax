@@ -7,7 +7,7 @@ Simulate synthetic scans to verify an installation or test reconstruction settin
 ```bash
 tomojax simulate -o synthetic.nxs --size 32 --n-views 60
 tomojax reconstruct synthetic.nxs -o recon.nxs
-tomojax inspect recon.nxs --preview previews
+tomojax inspect recon.nxs --preview-dir previews
 ```
 
 `--size 32` builds a 32³ Shepp–Logan phantom and a 32×32 detector. `reconstruct` selects the Fourier-slice inverse automatically for this axial parallel scan, and `inspect` writes central projection and slice PNGs to `previews/`.
@@ -20,7 +20,7 @@ Run `tomojax simulate --help` for other phantoms, Poisson noise (`--poisson-scal
 tomojax simulate -o tilted.nxs --geometry lamino --tilt 30 --size 32 --n-views 60
 tomojax reconstruct tilted.nxs -o tilted-recon.nxs \
   --method fista --iterations 50 --tv-weight 0.005 --nonnegative --region off
-tomojax inspect tilted-recon.nxs --preview tilted-previews
+tomojax inspect tilted-recon.nxs --preview-dir tilted-previews
 ```
 
 `--tilt` is the angle of the rotation axis away from the perpendicular tomography axis. Because laminography leaves a cone of frequencies around the rotation axis unmeasured, features blur along that axis.

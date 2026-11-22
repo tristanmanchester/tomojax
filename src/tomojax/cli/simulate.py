@@ -33,7 +33,6 @@ _PUBLIC = (
     "--source-to-detector",
     "--poisson-scale",
     "--seed",
-    "--progress",
 )
 
 
@@ -117,7 +116,7 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs=3,
         metavar=("NX", "NY", "NZ"),
         default=None,
-        help="Volume shape, overriding --size",
+        help="Unit-spaced volume shape (voxel pitch 1), overriding --size",
     )
     _ = parser.add_argument(
         "--detector",
@@ -125,13 +124,10 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs=2,
         metavar=("NU", "NV"),
         default=None,
-        help="Detector shape (default: --size, or enough to see the whole cone-beam volume)",
+        help="Unit-spaced centred detector shape (pixel pitch 1; default from --size)",
     )
     _ = parser.add_argument(
         "--seed", type=int, default=0, metavar="N", help="Random seed (phantom and noise)"
-    )
-    _ = parser.add_argument(
-        "--progress", action="store_true", help="Show progress bars if tqdm is available"
     )
     _ = parser.add_argument(
         "--transfer-guard",
@@ -174,53 +170,112 @@ def _settings() -> dict[str, object]:
     }
 
 
+def _validate_args(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    settings: dict[str, object],
+) -> None:
+    if cast("int", args.size) < 1:
+        parser.error("--size must be a positive integer")
+    n_views = cast("int | None", args.n_views)
+    if n_views is not None and n_views < 1:
+        parser.error("--n-views must be a positive integer")
+    shape = cast("list[int] | None", args.grid)
+    if shape is not None and min(shape) < 1:
+        parser.error("--grid dimensions must be positive integers")
+    pixels = cast("list[int] | None", args.detector)
+    if pixels is not None and min(pixels) < 1:
+        parser.error("--detector dimensions must be positive integers")
+    if cast("float", args.poisson_scale) < 0:
+        parser.error("--poisson-scale must be nonnegative")
+    geometry = cast("str", args.geometry)
+    if geometry != "cone" and (
+        args.source_to_axis is not None or args.source_to_detector is not None
+    ):
+        parser.error("--source-to-axis and --source-to-detector require --geometry cone")
+    if geometry == "parallel" and args.tilt is not None:
+        parser.error("--tilt applies to --geometry lamino or cone, not parallel")
+    try:
+        _ = replace(
+            SimulationArtefacts(),
+            **{name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings},
+        )
+    except (TypeError, ValueError) as exc:
+        parser.error(str(exc))
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Run ``tomojax simulate``: :func:`tomojax.simulate`, saved with its scan."""
     import tomojax as tj
-    from tomojax._simulate import simulated
+    from tomojax._simulate import default_detector
 
     parser = _build_parser()
     args, metadata = parse_args_with_config(parser, argv)
     settings = cast("dict[str, object]", metadata["settings"])
     out = cast("str", args.out)
     check_paths(parser, outputs=[out], force=cast("bool", args.force))
-    artefacts = replace(
-        SimulationArtefacts(),
-        **{name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings},
-    )
-    config = replace(
-        SimConfig(nx=1, ny=1, nz=1, nu=1, nv=1, n_views=1, artefacts=artefacts),
-        **{name: settings[name] for name in _PHANTOM_SETTINGS if name in settings},
-    )
+    _validate_args(parser, args, settings)
     shape = cast("list[int] | None", args.grid)
     pixels = cast("list[int] | None", args.detector)
+    size = cast("int", args.size)
+    geometry = cast("GeometryName", args.geometry)
+    n_views = cast("int | None", args.n_views)
+    tilt = cast("float | None", args.tilt)
+    source_to_axis = cast("float | None", args.source_to_axis)
+    source_to_detector = cast("float | None", args.source_to_detector)
+    grid = None if shape is None else tj.Grid(shape[0], shape[1], shape[2], 1, 1, 1)
+    detector = None if pixels is None else tj.Detector(pixels[0], pixels[1], 1, 1)
+    config: SimConfig | None = None
+    if settings:
+        artefacts = replace(
+            SimulationArtefacts(),
+            **{name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings},
+        )
+        base_grid = tj.Grid(size, size, size, 1, 1, 1) if grid is None else grid
+        resolved_tilt = (30.0 if geometry == "lamino" else 0.0) if tilt is None else tilt
+        base_det = (
+            default_detector(
+                base_grid,
+                geometry,
+                source_to_axis=source_to_axis,
+                source_to_detector=source_to_detector,
+                tilt=resolved_tilt,
+            )
+            if detector is None
+            else detector
+        )
+        config = replace(
+            SimConfig(
+                nx=base_grid.nx,
+                ny=base_grid.ny,
+                nz=base_grid.nz,
+                nu=base_det.nu,
+                nv=base_det.nv,
+                n_views=2 * size if n_views is None else n_views,
+                artefacts=artefacts,
+            ),
+            **{name: settings[name] for name in _PHANTOM_SETTINGS if name in settings},
+        )
     setup_logging()
     log_jax_env()
-    if cast("bool", args.progress):
-        os.environ["TOMOJAX_PROGRESS"] = "1"
-    try:
-        with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
-            scan, phantom, info = simulated(
-                cast("PhantomName", args.phantom),
-                size=cast("int", args.size),
-                n_views=cast("int | None", args.n_views),
-                geometry=cast("GeometryName", args.geometry),
-                rotation=cast("float | None", args.rotation),
-                tilt=cast("float | None", args.tilt),
-                source_to_axis=cast("float | None", args.source_to_axis),
-                source_to_detector=cast("float | None", args.source_to_detector),
-                poisson_scale=cast("float", args.poisson_scale),
-                grid=None if shape is None else tj.Grid(shape[0], shape[1], shape[2], 1, 1, 1),
-                detector=None if pixels is None else tj.Detector(pixels[0], pixels[1], 1, 1),
-                seed=cast("int", args.seed),
-                config=config,
-            )
-    except ValueError as exc:
-        parser.error(str(exc))
-    # The scan, with the phantom as its volume.
-    tj.save(
-        out, tj.Reconstruction(phantom, scan.geometry, "simulate", info, scan), include_scan=True
-    )
+    with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
+        result = tj.simulate(
+            cast("PhantomName", args.phantom),
+            size=None if grid is not None else size,
+            n_views=2 * size if n_views is None else n_views,
+            geometry=geometry,
+            rotation=cast("float | None", args.rotation),
+            tilt=tilt,
+            source_to_axis=source_to_axis,
+            source_to_detector=source_to_detector,
+            poisson_scale=cast("float", args.poisson_scale),
+            grid=grid,
+            detector=detector,
+            seed=cast("int", args.seed),
+            config=config,
+        )
+    tj.save(out, result)
+    scan, phantom = result.scan, result.phantom
     print(
         f"wrote {out}: {args.geometry} scan of a {'x'.join(map(str, phantom.shape[::-1]))} "
         f"{args.phantom} phantom, {len(scan.angles)} views on a "

@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.recon import FourierConfig, fourier_reconstruct
+from tomojax.recon import FourierConfig, fourier
 
 
 def _scan():
@@ -36,7 +36,7 @@ def test_fourier_workflow_preserves_geometry_and_recovers_independent_gaussian(b
     assert actual.method == "fourier" and actual.grid == grid
     assert actual.scan.name == scan.name and actual.scan.detector == scan.detector
     assert actual.info == {"config": cfg, "host_slabs": True, "backend": backend}
-    expected = fourier_reconstruct(scan.geometry, grid, scan.detector, scan.projections, config=cfg)
+    expected = fourier(scan.geometry, grid, scan.detector, scan.projections, config=cfg)
     np.testing.assert_array_equal(actual.volume, expected)
     x = (np.arange(grid.nx) - (grid.nx - 1) / 2) + 0.4
     y = (np.arange(grid.ny) - (grid.ny - 1) / 2) - 0.3
@@ -44,10 +44,17 @@ def test_fourier_workflow_preserves_geometry_and_recovers_independent_gaussian(b
     assert np.linalg.norm(actual.volume[0] - truth) / np.linalg.norm(truth) < 0.02
 
 
-@pytest.mark.parametrize("options", [{"filter": "ramp"}, {"iterations": 1}, {"warm_start": False}])
+@pytest.mark.parametrize("options", [{"filter": "ramp"}, {"iterations": 1}, {"warm_start": True}])
 def test_fourier_refuses_inapplicable_workflow_options(options):
     with pytest.raises(ValueError, match="method 'fourier' does not take"):
         tj.reconstruct(_scan(), "fourier", **options)
+
+
+def test_fourier_accepts_warm_start_false_as_a_no_op():
+    scan = _scan()
+    expected = tj.reconstruct(scan, "fourier")
+    actual = tj.reconstruct(scan, "fourier", warm_start=False)
+    np.testing.assert_array_equal(actual.volume, expected.volume)
 
 
 def test_cli_fourier_uses_config_and_round_trips_context(tmp_path):

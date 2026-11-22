@@ -14,12 +14,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-def normalize_axis_unit(axis_unit_lab: Sequence[float]) -> tuple[float, float, float]:
+def normalize_axis_unit(axis_unit: Sequence[float]) -> tuple[float, float, float]:
     """Return a validated unit axis vector in lab/world coordinates.
 
     Parameters
     ----------
-    axis_unit_lab : sequence of float
+    axis_unit : sequence of float
         Finite nonzero three-component lab-frame vector.
 
     Returns
@@ -32,14 +32,14 @@ def normalize_axis_unit(axis_unit_lab: Sequence[float]) -> tuple[float, float, f
     ValueError
         If the vector has invalid shape, nonfinite values or negligible norm.
     """
-    axis = np.asarray(axis_unit_lab, dtype=np.float64)
+    axis = np.asarray(axis_unit, dtype=np.float64)
     if axis.shape != (3,):
-        raise ValueError(f"axis_unit_lab must have shape (3,), got {axis.shape}")
+        raise ValueError(f"axis_unit must have shape (3,), got {axis.shape}")
     if not np.isfinite(axis).all():
-        raise ValueError("axis_unit_lab must contain finite values")
+        raise ValueError("axis_unit must contain finite values")
     norm = float(np.linalg.norm(axis))
     if norm < 1e-12:
-        raise ValueError("axis_unit_lab must be non-zero")
+        raise ValueError("axis_unit must be non-zero")
     return tuple(float(v) for v in axis / norm)
 
 
@@ -60,7 +60,7 @@ class RotationAxisGeometry:
         Detector dimensions, pitches and physical centre.
     angles : sequence of float
         View rotation angles in degrees, in acquisition order.
-    axis_unit_lab : sequence of float
+    axis_unit : sequence of float
         Nonzero finite lab-frame rotation-axis vector, normalized on construction.
     detector_roll : float, optional
         Roll about the detector normal, in degrees; positive turns u towards v.
@@ -74,14 +74,21 @@ class RotationAxisGeometry:
     grid: Grid
     detector: Detector
     angles: Sequence[float]
-    axis_unit_lab: Sequence[float]
+    axis_unit: Sequence[float]
     detector_roll: float = 0.0
 
     def __post_init__(self) -> None:
-        self.axis_unit_lab = normalize_axis_unit(self.axis_unit_lab)
+        self.axis_unit = normalize_axis_unit(self.axis_unit)
 
-    def _axis_unit(self) -> np.ndarray:
-        return np.asarray(normalize_axis_unit(self.axis_unit_lab), dtype=np.float64)
+    def rotation_axis(self) -> np.ndarray:
+        """Return the lab-frame unit rotation axis.
+
+        Returns
+        -------
+        numpy.ndarray
+            Three-component unit rotation axis in lab coordinates.
+        """
+        return np.asarray(normalize_axis_unit(self.axis_unit), dtype=np.float64)
 
     def pose_matrix(self, i: int) -> PoseMatrix:
         """Return the world-from-object pose for one view.
@@ -105,7 +112,7 @@ class RotationAxisGeometry:
         """
         angle_deg = float(self.angles[i])
         theta = float(np.deg2rad(angle_deg))
-        axis = self._axis_unit()
+        axis = self.rotation_axis()
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         S = align_u_to_v(ez, axis)
         Rz = rot_axis_angle(ez, theta)[:3, :3]

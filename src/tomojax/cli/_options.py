@@ -15,7 +15,7 @@ import argparse
 from functools import cached_property
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -86,7 +86,33 @@ class _ConfigKeys(argparse.Action):
         """Resolve method defaults only for config validation or listing."""
         return (self._settings() if callable(self._settings) else self._settings) or {}
 
-    def __call__(self, parser: argparse.ArgumentParser, *_args: object) -> NoReturn:
+    def _setting_entries(self, namespace: argparse.Namespace) -> dict[str, str]:
+        selected = self.settings
+        if callable(self._settings):
+            import inspect
+
+            if "method" in inspect.signature(self._settings).parameters:
+                method = getattr(namespace, "method", None)
+                selected = cast("Mapping[str, object]", cast("Any", self._settings)(method=method))
+        formatted: dict[str, str] = {}
+        for key, value in selected.items():
+            if value is None:
+                formatted[key] = f"# {key} = ..."
+            elif isinstance(value, tuple) and len(value) == 2 and isinstance(value[1], str):
+                default_val, note = value
+                rhs = "..." if default_val is None else _toml(default_val)
+                prefix = "# " if default_val is None else ""
+                formatted[key] = f"{prefix}{key} = {rhs}  # {note}"
+            else:
+                formatted[key] = f"{key} = {_toml(value)}"
+        return formatted
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        *_args: object,
+    ) -> NoReturn:
         entries: dict[str, str] = {}
         for action in options(parser):
             if not action.option_strings or action.dest in {"help", "config", "out", "force"}:
@@ -100,12 +126,14 @@ class _ConfigKeys(argparse.Action):
             if negated:
                 text = f"false: {text}" if text else ""
             default = cast("object", action.default)
-            value = "..." if default is None else _toml(default)
-            line = f"{action.dest} = {value}" + (f"  # {text}" if text else "")
+            suffix = f"  # {text}" if text else ""
+            prefix = "# " if default is None else ""
+            rhs = "..." if default is None else _toml(default)
+            line = f"{prefix}{action.dest} = {rhs}{suffix}"
             if action.dest not in entries or not negated:
                 _ = entries.setdefault(action.dest, line)
-        for key, value in self.settings.items():
-            _ = entries.setdefault(key, f"{key} = {'...' if value is None else _toml(value)}")
+        for key, line in self._setting_entries(namespace).items():
+            _ = entries.setdefault(key, line)
         print("\n".join(entries[key] for key in sorted(entries)))
         parser.exit(0)
 
@@ -158,12 +186,26 @@ def check_paths(
     outputs: Iterable[str | Path | None] = (),
     force: bool = False,
 ) -> None:
-    """Exit with a usage error for a missing input or an existing output (without ``--force``)."""
+    """Exit with a usage error for missing inputs, colliding destinations, or existing outputs."""
+    resolved_inputs: set[Path] = set()
     for path in inputs:
-        if path is not None and not Path(path).exists():
-            parser.error(f"input not found: {path}")
+        if path is not None:
+            candidate = Path(path)
+            if not candidate.exists():
+                parser.error(f"input not found: {path}")
+            resolved_inputs.add(candidate.resolve())
+    seen_outputs: set[Path] = set()
     for path in outputs:
-        if path is not None and Path(path).exists() and not force:
+        if path is None:
+            continue
+        candidate = Path(path)
+        resolved = candidate.resolve()
+        if resolved in seen_outputs:
+            parser.error(f"duplicate output destination: {path}")
+        seen_outputs.add(resolved)
+        if resolved in resolved_inputs:
+            parser.error(f"output path must differ from input path: {path}")
+        if candidate.exists() and not force:
             parser.error(f"output already exists: {path} (pass --force to replace it)")
 
 

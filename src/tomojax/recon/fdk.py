@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from tomojax._typed_arrays import Device
     from tomojax.core.geometry.base import Detector, Geometry, Grid
     from tomojax.core.geometry.cone import ConeBeam
+    from tomojax.recon._projection import ProjectorBackend
     from tomojax.recon.types import ReconstructionSlab
 
 
@@ -70,7 +71,7 @@ class FDKConfig:
     ----------
     filter : str, optional
         Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
-    backend : str, optional
+    backend : ProjectorBackend, optional
         Execution backend: "auto", "jax" or "cuda". Auto uses CUDA when available.
         Default is 'auto'.
     views_per_batch : int, optional
@@ -82,7 +83,7 @@ class FDKConfig:
     """
 
     filter: str = "ramp"
-    backend: str = "auto"
+    backend: ProjectorBackend = "auto"
     views_per_batch: int = 64
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 

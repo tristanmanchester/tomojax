@@ -12,7 +12,7 @@ from scipy.spatial.transform import Rotation
 import tomojax as tj
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.io import ProjectionDataset, load_dataset, save_dataset
-from tomojax.recon import FBPConfig, FDKConfig, FistaConfig, api, fbp, fista_tv
+from tomojax.recon import FBPConfig, FDKConfig, FISTAConfig, api, fbp, fista
 
 # check-public-imports: allow-private
 from tomojax.recon.api import clear_filter_caches, default_fbp_scale
@@ -72,12 +72,12 @@ def test_fista_reconstruction_smoke_is_finite() -> None:
     grid, detector, geometry = _tiny_geometry()
     projections = jnp.ones((4, 4, 4), dtype=jnp.float32)
 
-    volume, info = fista_tv(
+    volume, info = fista(
         geometry,
         grid,
         detector,
         projections,
-        config=FistaConfig(iterations=1, tv_weight=0.0, views_per_batch=1, power_iterations=1),
+        config=FISTAConfig(iterations=1, tv_weight=0.0, views_per_batch=1, power_iterations=1),
     )
 
     assert volume.shape == (4, 4, 4)
@@ -168,12 +168,12 @@ def test_public_warm_start_retains_arrangements_then_applies_the_solver_constrai
     monkeypatch.setattr(importlib.import_module("tomojax.recon.fdk"), "fdk", filter_part)
     monkeypatch.setattr(
         importlib.import_module("tomojax.recon"),
-        {"cgls": "cgls", "fista": "fista_tv"}[method],
+        method,
         solve,
     )
     config = api.method_config(method)
     if method != "cgls":
-        config = replace(config, nonnegative=True)
+        config = replace(config, lower_bound=0.0)
     volume, info = api.reconstruct_arrays(
         method, segments, segments.grid, detector, projections, config=config, warm_start=True
     )
@@ -199,7 +199,7 @@ def test_segmented_start_matches_individual_fdk_with_all_pose_corrections(monkey
         return fdk(*args, config=replace(config, backend="jax"))
 
     monkeypatch.setattr(importlib.import_module("tomojax.recon.fdk"), "fdk", initialize)
-    config = FistaConfig(iterations=0, lipschitz=1.0, tv_weight=0.0, nonnegative=False)
+    config = FISTAConfig(iterations=0, lipschitz=1.0, tv_weight=0.0, lower_bound=None)
     actual, _ = api.reconstruct_arrays(
         "fista", geometry, segments.grid, segments.detector, data, config=config, warm_start=True
     )

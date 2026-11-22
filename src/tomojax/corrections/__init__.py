@@ -18,7 +18,6 @@ from ._hardening import BeamHardening
 from ._phase import remove_phase_ramp, unwrap_phase
 from ._records import Correction
 from ._rings import Rings
-from ._rows import corrected_row_source
 from ._spectrum import tube_spectrum
 from ._steps import (
     Paganin,
@@ -42,7 +41,6 @@ __all__ = [
     "Zingers",
     "correct_frames",
     "correct_projections",
-    "corrected_row_source",
     "remove_phase_ramp",
     "tube_spectrum",
     "unwrap_phase",

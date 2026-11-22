@@ -113,29 +113,6 @@ class AlignConfig:
     refine_smoothing: float = 8.0
     refine_neighbors: int = 5
 
-    def resolved(self, fit: tuple[str, ...], *, cone: bool) -> AlignConfig:
-        """The config with what depends on the scan chosen: the interpolation for ``fit``.
-
-        Angular columns need smooth interpolation as sample points rotate through voxel
-        cells; centre and translation fits, and cone rays, keep the cheaper linear basis.
-
-        Parameters
-        ----------
-        fit : tuple of str
-            The parameters fitted, as ``tj.align``'s ``fit``.
-        cone : bool
-            Whether the rays come from a point source.
-
-        Returns
-        -------
-        AlignConfig
-            This config, or a copy with ``interpolation`` chosen.
-        """
-        if self.interpolation is not None:
-            return self
-        angular = any(name in fit for name in ("tilt", "roll", "rotations"))
-        return replace(self, interpolation="cubic" if angular and not cone else "linear")
-
     def __post_init__(self) -> None:
         if self.motion not in ("independent", "smooth"):
             raise ValueError(f'motion is "independent" or "smooth", not {self.motion!r}')
@@ -143,6 +120,14 @@ class AlignConfig:
             raise ValueError(f"levels are binnings of at least 1 ending at 1, not {self.levels}")
         if self.interpolation not in (None, "linear", "cubic"):
             raise ValueError(f"interpolation is 'linear' or 'cubic', not {self.interpolation!r}")
+
+
+def resolve_align_config(config: AlignConfig, fit: tuple[str, ...], *, cone: bool) -> AlignConfig:
+    """Choose ``interpolation`` from ``fit`` and beam type when left as None."""
+    if config.interpolation is not None:
+        return config
+    angular = any(name in fit for name in ("tilt", "roll", "rotations"))
+    return replace(config, interpolation="cubic" if angular and not cone else "linear")
 
 
 __all__ = ["AlignConfig"]

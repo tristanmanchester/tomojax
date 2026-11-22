@@ -56,7 +56,7 @@ Measured 2026-11-19 on commit `40330cf` across 27 synthetic cells: Gaussian, sha
 | Geometric mean | 1.20× | 2.35× |
 | Range | 0.65–3.80× | 0.78–14.5× |
 
-Neither library passed the sharp anisotropic 64³ gate. In most parallel and anisotropic cells TomoJAX's fastest accepted method is the CUDA Fourier inverse (`fourier_reconstruct` with CuPy); in laminography it is Joseph CGLS (plain, FBP-started, or coarse-to-fine). ASTRA is faster on sharp and noisy 256³ laminography (0.65–0.93×) where both reach the gate at the same iteration count.
+Neither library passed the sharp anisotropic 64³ gate. In most parallel and anisotropic cells TomoJAX's fastest accepted method is the CUDA Fourier inverse (`fourier` with CuPy); in laminography it is Joseph CGLS (plain, FBP-started, or coarse-to-fine). ASTRA is faster on sharp and noisy 256³ laminography (0.65–0.93×) where both reach the gate at the same iteration count.
 
 | Object | Cell | TomoJAX fastest (cold / warm ms) | ASTRA fastest (cold / warm ms) | Cold speedup | Warm speedup |
 | --- | --- | --- | --- | ---: | ---: |

@@ -6,8 +6,8 @@ This page lists supported workflows, acquisition formats, and numerical backends
 
 | Workflow | Entry point |
 | --- | --- |
-| Inspect, validate, and preview datasets | `tomojax inspect scan.nxs [--json] [--preview previews]` |
-| Convert dataset containers (`.npz`, `.nxs`, `.h5`) | `tomojax load scan.npz -o scan.nxs` |
+| Inspect, validate, and preview datasets | `tomojax inspect scan.nxs [--json] [--preview-dir previews]` |
+| Convert dataset containers (`.npz`, `.nxs`, `.h5`) | `tomojax correct scan.npz -o scan.nxs` |
 | Load and correct HDF5 raw frames (NXtomo, Data Exchange, Diamond/GDA) | `tomojax correct raw.nxs -o corrected.nxs` or `tj.load("raw.nxs")` |
 | Load and correct TIFF stacks (parallel, laminography, cone) | `tomojax correct ./projections --flats ./flats --darks ./darks --angles angles.csv --pixel-size ... -o corrected.nxs` |
 | Load already-corrected TIFF line integrals | `tj.Scan(read_tiff_frames(path), geometry)` |
@@ -57,7 +57,7 @@ Tested against real acquisitions from ESRF NXtomo (`nxtomomill`), APS TomoBank (
 | Forward projection and matched adjoint | Linear and Keys cubic Joseph plane-sampling models; JAX reference and CUDA C kernels (exact transpose via gather, no scattered atomics); first-order volume and pose AD (`jax.grad`, `jvp`, `vjp`, `vmap`) on CUDA, higher-order AD on JAX |
 | Fused Joseph pose helpers (`tomojax.forward`) | `joseph_l2_value_and_grad` (unweighted half squared error + volume/pose gradients) and `joseph_pose_normal_equations` (per-view loss, gradient, Gauss-Newton `J.T @ J`, residual for 1–16 directions on CUDA without storing full Jacobians) |
 | Parallel FBP and Cone FDK | JAX (CPU/GPU) and CUDA C kernels (auto-selected on CUDA); automatic host-slab fallback (`fbp_host`, `fdk_host`) and raw-frame streaming (`tj.reconstruct_slabs`); full turns, offset-detector full turns, Parker-weighted short scans |
-| Fourier-slice inverse | `fourier_reconstruct` for axial parallel scans (uniform/nonuniform angles, offsets, anisotropic grids, per-view translations); NumPy reference or CuPy CUDA (`cuda12` / `fourier-cuda12`); host slabs; non-differentiable |
+| Fourier-slice inverse | `fourier` for axial parallel scans (uniform/nonuniform angles, offsets, anisotropic grids, per-view translations); NumPy reference or CuPy CUDA (`cuda12` / `fourier-cuda12`); host slabs; non-differentiable |
 | Iterative solvers (`cgls`, `cgls_multires`, `fista`, `spdhg`, `sirt`, `mlem`) | Exact matched JAX/CUDA projectors; automatic projection streaming and host-slab volume fallback (except SPDHG, which needs 5 volumes in VRAM); TV/Huber-TV, box bounds, support masks, `data_term="per_view_contrast"`, ordered subsets |
 | Joint alignment (`tj.align`) | Single Gauss-Newton/Schur solver for `center`, `translations`, `tilt`, `roll`, `rotations` across all geometries; `method="opposite-views"` projection-only centre estimate for axial parallel scans |
 | PyTorch bridge (`tomojax.torch.Projector`) | Zero-copy DLPack wrapper around CUDA forward and exact-transpose projectors with autograd |

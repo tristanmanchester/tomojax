@@ -964,7 +964,7 @@ def test_only_detector_derived_output_grids_follow_crop_and_bin(tmp_path, explic
     if explicit:
         assert scan.grid == frames.geometry.grid
     elif tilted:
-        assert scan.grid == frames.geometry.grid.resampled((4, 4, 3))
+        assert scan.grid == frames.geometry.grid.resampled((3, 4, 4))
     else:
         assert scan.grid == tj.Grid(3, 3, 2, 2, 2, 2, vol_center=(0, 0, 1))
 

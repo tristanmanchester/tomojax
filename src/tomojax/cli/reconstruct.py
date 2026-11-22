@@ -21,7 +21,6 @@ import numpy as np
 from tomojax._field_of_view import (
     REGION_CHOICES,
     REGION_HELP,
-    cylinder_support,
     region_grid,
     zero_outside_cylinder,
 )
@@ -69,9 +68,10 @@ _PUBLIC = (
 _SETTINGS = (
     "Expert settings are --config keys, fields of the method's configuration:\n"
     "tomojax.recon.FBPConfig (fbp, and FDK for cone beams), FourierConfig, CGLSConfig,\n"
-    "FistaConfig, SPDHGConfig, SIRTConfig or MLEMConfig. Each replaces\n"
+    "FISTAConfig, SPDHGConfig, SIRTConfig or MLEMConfig. Each replaces\n"
     "a default field; a setting the method's class has no field for fails with the ones it has.\n"
     "Expert settings require an explicit --method rather than automatic selection.\n"
+    "Pass --method NAME --config-keys to list one method's keys and defaults.\n"
 )
 _EPILOG = (
     "Examples:\n"
@@ -92,7 +92,11 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=_EPILOG,
     )
     _ = p.add_argument("data", metavar="INPUT", help="Scan to reconstruct (.nxs, .h5, .npz)")
-    add_output(p, "Output .nxs: the volume, with the scan's projections and geometry")
+    add_output(
+        p,
+        "Output .nxs: reconstructed volume, geometry and source reference "
+        "(pass --include-scan to embed projections)",
+    )
     add_config(p, settings=_settings)
     _ = p.add_argument(
         "--method",
@@ -116,26 +120,26 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help="Iterations: cgls/fista/mlem 50 by default; spdhg 400 (one block of views each)",
+        help="Iterations: cgls/fista/sirt/mlem 50, spdhg 600 (one view block each)",
     )
     _ = p.add_argument(
         "--tv-weight",
         type=float,
         default=None,
         metavar="W",
-        help="Total-variation weight of fista and spdhg (default 0.005)",
+        help="Total-variation weight for fista/spdhg (default: auto from noise; 0 disables)",
     )
     _ = p.add_argument(
         "--nonnegative",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=None,
-        help="Keep fista and spdhg voxels nonnegative",
+        help="Keep fista, spdhg or sirt voxels nonnegative (sets lower_bound=0)",
     )
     _ = p.add_argument(
         "--warm-start",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=None,
-        help="Start iterative methods from the FBP reconstruction",
+        help="Start iterative methods (cgls, fista, spdhg, sirt, mlem) from FBP/FDK",
     )
     _ = p.add_argument(
         "--seed", type=int, default=None, metavar="N", help="Seed of spdhg's view order (default 0)"
@@ -176,24 +180,32 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _settings() -> dict[str, object]:
-    """A config file's expert settings: every method's configuration fields.
-
-    Each has the default the methods share, or None where they differ.
-    """
+def _settings(*, method: str | None = None) -> dict[str, object]:
+    """A config file's expert settings: every method's configuration fields, or one method's."""
     from tomojax.recon.api import method_config
 
-    defaults: dict[str, list[object]] = {}
-    for method in _METHODS:
+    if method is not None and method != "auto" and method in _METHODS:
         config = method_config(method)
+        return {
+            item.name: cast("object", getattr(config, item.name))
+            for item in fields(config)
+            if item.init and item.name not in _NOT_SETTINGS
+        }
+    defaults: dict[str, list[tuple[str, object]]] = {}
+    for name in _METHODS:
+        config = method_config(name)
         for item in fields(config):
             if item.init and item.name not in _NOT_SETTINGS:
-                value = cast("object", getattr(config, item.name))
-                defaults.setdefault(item.name, []).append(value)
-    return {
-        name: values[0] if all(v == values[0] for v in values) else None
-        for name, values in defaults.items()
-    }
+                defaults.setdefault(item.name, []).append(
+                    (name, cast("object", getattr(config, item.name)))
+                )
+    out: dict[str, object] = {}
+    for key, pairs in defaults.items():
+        values = [v for _, v in pairs]
+        methods = ", ".join(m for m, _ in pairs)
+        shared = values[0] if all(v == values[0] for v in values) else None
+        out[key] = (shared, f"methods: {methods}")
+    return out
 
 
 @dataclass(frozen=True)
@@ -252,8 +264,21 @@ class _Run:
         from tomojax.recon.api import method_config
 
         if self.method == "auto":
-            if settings:
-                raise ValueError("expert reconstruction settings require an explicit --method")
+            method_specific = sorted(
+                [
+                    *settings,
+                    *(
+                        name
+                        for name, value in self.keywords().items()
+                        if not (name == "warm_start" and value is False)
+                    ),
+                ]
+            )
+            if method_specific:
+                raise ValueError(
+                    f"method 'auto' does not take method-specific options "
+                    f"({', '.join(method_specific)}); pass an explicit --method"
+                )
             return None
         expert = cast("dict[str, Any]", dict(settings))
         config = method_config(self.method, config=None, warm_start=self.warm_start, **expert)
@@ -313,6 +338,8 @@ def main() -> None:
     parser = build_parser()
     args, metadata = parse_args_with_config(parser)
     run = _Run.of(args)
+    if run.grid is not None and min(run.grid) < 1:
+        parser.error("--grid dimensions must be positive integers")
     outputs = [run.out, run.preview, run.manifest]
     check_paths(parser, inputs=[run.data], outputs=outputs, force=cast("bool", args.force))
     try:
@@ -325,26 +352,24 @@ def main() -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
     scan = tj.load(run.data, apply_poses=run.apply_poses)
+    keywords = {
+        "filter": run.filter,
+        "iterations": run.iterations,
+        "tv_weight": run.tv_weight,
+        "nonnegative": run.nonnegative,
+        "warm_start": run.warm_start,
+        "seed": run.seed,
+    }
     grid, cylinder = (None, None)
     if run.method != "auto" or run.grid is not None or run.region != "auto":
+        shape = None if run.grid is None else (run.grid[2], run.grid[1], run.grid[0])
         region = None if run.region == "off" else run.region
-        grid, cylinder = region_grid(scan, region, shape=run.grid)
-    if cylinder is not None and config is not None and hasattr(config, "support"):
-        assert grid is not None
-        # The solvers that take a support constrain the solve to the cylinder.
-        config = replace(config, support=cylinder_support(grid, cylinder))
-    result = tj.reconstruct(
-        scan,
-        run.method,
-        grid=grid,
-        config=config,
-        filter=run.filter,
-        iterations=run.iterations,
-        tv_weight=run.tv_weight,
-        nonnegative=run.nonnegative,
-        warm_start=run.warm_start,
-        seed=run.seed,
-    )
+        grid, cylinder = region_grid(scan, region, shape=shape)
+        if cylinder is not None:
+            from tomojax._workflow import intersect_cylinder_support
+
+            config = intersect_cylinder_support(run.method, config, grid, cylinder)
+    result = tj.reconstruct(scan, run.method, grid=grid, config=config, **keywords)
     if cylinder is not None:
         result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
     report_automatic(result.info)
@@ -355,18 +380,18 @@ def main() -> None:
     ):
         logging.warning(
             "%s records no rotation centre; the detector middle was used. "
-            "Fit one with tomojax align --fit center before recon.",
+            "Fit one with tomojax align --fit center before reconstructing.",
             run.data,
         )
     tj.save(run.out, result, include_scan=run.include_scan)
-    logging.info("Saved reconstruction to %s", run.out)
     if run.preview is not None:
         from tomojax.recon.quicklook import save_quicklook_png
 
         _ = save_quicklook_png(run.preview, result.volume)
-        logging.info("Saved reconstruction preview to %s", run.preview)
     if run.manifest is not None:
-        _write_manifest(args, metadata, scan, result, masked=cylinder is not None)
+        _write_manifest(args, metadata, scan, result, masked=run.region == "cyl")
+    print(f"wrote {run.out}: {result.method} volume {tuple(np.shape(result.volume))}")
 
 
-__all__ = ["build_parser", "main"]
+if __name__ == "__main__":  # pragma: no cover
+    main()

@@ -169,11 +169,11 @@ def test_bad_devices_are_refused():
 
 @pytest.mark.parametrize("solver", ["cgls", "fista"])
 def test_shared_projections_are_not_streamed(solver):
-    from tomojax.recon import CGLSConfig, FistaConfig, cgls, fista_tv
+    from tomojax.recon import CGLSConfig, FISTAConfig, cgls, fista
 
     geometry = _geometry("parallel")
     data = np.zeros((VIEWS, 20, 24), np.float32)
-    run, config = (cgls, CGLSConfig) if solver == "cgls" else (fista_tv, FistaConfig)
+    run, config = (cgls, CGLSConfig) if solver == "cgls" else (fista, FISTAConfig)
     settings = config(stream=True, devices=jax.devices())
     with pytest.raises(ValueError, match="cannot be streamed"):
         run(geometry, geometry.grid, geometry.detector, data, config=settings)

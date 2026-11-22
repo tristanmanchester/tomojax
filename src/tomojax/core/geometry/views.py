@@ -99,7 +99,7 @@ def host_view_poses(
         rotation[:, 1, 0] = np.sin(angles)
         rotation[:, 0, 1] = -np.sin(angles)
         rotation[:, 2, 2] = 1.0
-        alignment = align_u_to_v(np.array([0.0, 0.0, 1.0]), geometry.axis_unit_lab)
+        alignment = align_u_to_v(np.array([0.0, 0.0, 1.0]), geometry.rotation_axis())
         poses = np.zeros((int(n_views), 4, 4), dtype=np.float64)
         poses[:, :3, :3] = alignment @ rotation
         poses[:, 3, 3] = 1.0

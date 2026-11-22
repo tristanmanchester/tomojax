@@ -44,6 +44,8 @@ PUBLIC_PACKAGES = (
     "tomojax",
     "tomojax.geometry",
     "tomojax.evaluation",
+    "tomojax.corrections",
+    "tomojax.forward",
     "tomojax.recon",
     "tomojax.io",
     "tomojax.alignment",
@@ -52,11 +54,12 @@ PUBLIC_PACKAGES = (
 # Expert modules: not snapshotted name by name, but their size is ratcheted.
 EXPERT_MODULES = (
     "tomojax.geometry.api",
+    "tomojax.corrections.api",
     "tomojax.recon.api",
     "tomojax.io.api",
     "tomojax.alignment.api",
 )
-CLI_COMMANDS = ("inspect", "load", "correct", "reconstruct", "align", "export", "simulate")
+CLI_COMMANDS = ("inspect", "correct", "reconstruct", "align", "export", "simulate")
 # Files and functions longer than these are recorded with their length, which
 # may only fall: debt inside an already long one counts too.
 LONG_FILE_LINES = 800
@@ -100,7 +103,7 @@ def _describe(module: str, name: str, obj: object) -> list[str]:
     qualified = f"{module}.{name}"
     if inspect.isclass(obj):
         lines = [f"class {qualified}{_signature(obj)}"]
-        own = {k for k in vars(obj) if not k.startswith("_")}
+        own = {k for k in vars(obj) if not k.startswith("_") or k == "__call__"}
         fields = (
             {f.name for f in dataclasses.fields(obj)} if dataclasses.is_dataclass(obj) else set()
         )

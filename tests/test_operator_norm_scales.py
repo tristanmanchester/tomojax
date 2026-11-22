@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
-from tomojax.recon import FistaConfig, fista_tv
+from tomojax.recon import FISTAConfig, fista
 
 
 @pytest.mark.numerical
@@ -14,12 +14,12 @@ def test_auto_step_fista_recovers_same_one_voxel_image_in_any_length_units(scale
     grid, detector = Grid(1, 1, 1, scale, scale, scale), Detector(1, 1, scale, scale)
     geometry = ParallelGeometry(grid, detector, [0.0])
     # This axis-aligned voxel integrates to [scale].
-    actual, info = fista_tv(
+    actual, info = fista(
         geometry,
         grid,
         detector,
         jnp.full((1, 1, 1), 3 * scale),
-        config=FistaConfig(
+        config=FISTAConfig(
             iterations=1,
             tv_weight=0,
             backend="jax",
@@ -33,11 +33,11 @@ def test_auto_step_fista_recovers_same_one_voxel_image_in_any_length_units(scale
 @pytest.mark.numerical
 @pytest.mark.parametrize("scale", [1e-4, 1.0, 1e4])
 def test_spdhg_auto_steps_use_the_physical_data_norm_without_floors(scale):
-    from tomojax.recon import SPDHGConfig, spdhg_tv
+    from tomojax.recon import SPDHGConfig, spdhg
 
     grid, detector = Grid(1, 1, 1, scale, scale, scale), Detector(1, 1, scale, scale)
     geometry = ParallelGeometry(grid, detector, [0.0])
-    _, info = spdhg_tv(
+    _, info = spdhg(
         geometry,
         grid,
         detector,
@@ -66,11 +66,11 @@ def _dense_gradient_norm(shape):
 @pytest.mark.parametrize("shape", [(1, 1, 1), (2, 1, 1), (3, 2, 1), (4, 3, 2)])
 @pytest.mark.parametrize("tv_weight", [0.0, 0.1])
 def test_spdhg_uses_exact_active_gradient_norm_and_keeps_explicit_steps(shape, tv_weight):
-    from tomojax.recon import SPDHGConfig, spdhg_tv
+    from tomojax.recon import SPDHGConfig, spdhg
 
     grid, detector = Grid(*shape, 1.0, 1.0, 1.0), Detector(3, 2, 1.0, 1.0)
     geometry = ParallelGeometry(grid, detector, [0.0])
-    _, info = spdhg_tv(
+    _, info = spdhg(
         geometry,
         grid,
         detector,
@@ -88,11 +88,11 @@ def test_spdhg_uses_exact_active_gradient_norm_and_keeps_explicit_steps(shape, t
 @pytest.mark.numerical
 @pytest.mark.parametrize("tv_weight", [0.0, 0.1])
 def test_spdhg_zero_combined_operator_has_defined_auto_steps_and_retains_start(tv_weight):
-    from tomojax.recon import SPDHGConfig, spdhg_tv
+    from tomojax.recon import SPDHGConfig, spdhg
 
     grid, detector = Grid(1, 1, 1, 1.0, 1.0, 1.0), Detector(1, 1, 1.0, 1.0, (100.0, 100.0))
     geometry = ParallelGeometry(grid, detector, [0.0])
-    actual, info = spdhg_tv(
+    actual, info = spdhg(
         geometry,
         grid,
         detector,

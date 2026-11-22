@@ -93,7 +93,7 @@ tj.save("aligned-phase.nxs", aligned.scan)
 
 ```bash
 tomojax reconstruct aligned-phase.nxs -o phase-recon.nxs --method fourier --region off
-tomojax inspect phase-recon.nxs --preview phase-previews
+tomojax inspect phase-recon.nxs --preview-dir phase-previews
 ```
 
 ## Preview a real cone-beam orbit on a CPU

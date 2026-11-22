@@ -217,9 +217,9 @@ def test_the_exact_tiers_objective_has_its_minimum_at_the_gauge_free_truth(monke
     # 0.5 px start; a truth held at another sub-voxel position than the fit's gauge cannot be
     # reached, which is what this tier must exclude. Anything that moves the minimum (a
     # pedestal, a filter's free band) fails here.
-    import tomojax as tj
+    from tomojax.alignment import AlignConfig
 
-    ends = _exact_tier_ends(config=tj.AlignConfig(iterations=100, tolerance=-1.0))
+    ends = _exact_tier_ends(config=AlignConfig(iterations=100, tolerance=-1.0))
     assert ends["gauge-free"] < 2e-4
     assert ends["raw"] > 5e-3
 
@@ -228,7 +228,7 @@ def test_the_exact_tiers_objective_has_its_minimum_at_the_gauge_free_truth(monke
 def test_the_default_call_on_exact_data_ends_within_the_stop_rules_tolerance():
     # The stop rule ends a level once two successive pose proposals are under its tolerance;
     # on exact data the default call's remaining error must be under that same tolerance.
-    from tomojax import AlignConfig
+    from tomojax.alignment import AlignConfig
 
     assert _exact_tier_ends(("gauge-free",))["gauge-free"] < AlignConfig().tolerance
 

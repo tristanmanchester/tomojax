@@ -161,8 +161,6 @@ class ProjectionDataset:
         Original container format.
     sample_name : str or None, optional
         Sample name retained on output.
-    _metadata : NXTomoMetadata or None, optional
-        Internal retained acquisition metadata; normally populated by from_nxtomo.
     """
 
     projections: np.ndarray | None
@@ -180,7 +178,7 @@ class ProjectionDataset:
     source_path: str | None = None
     source_format: str | None = None
     sample_name: str | None = None
-    _metadata: NXTomoMetadata | None = field(default=None, repr=False, compare=False)
+    _metadata: NXTomoMetadata | None = field(default=None, init=False, repr=False, compare=False)
 
     @classmethod
     def from_nxtomo(
@@ -215,7 +213,7 @@ class ProjectionDataset:
             # load_frames can apply an explicit detector before materialisation.
             detector = None
         grid = metadata.grid
-        return cls(
+        dataset = cls(
             projections=None if payload.projections is None else np.asarray(payload.projections),
             angles=np.asarray(
                 np.empty(0, dtype=np.float32) if metadata.angles is None else metadata.angles,
@@ -227,7 +225,7 @@ class ProjectionDataset:
             else (Detector.from_dict(detector) if detector is not None else None),
             grid=grid
             if isinstance(grid, Grid)
-            else (_grid_from_mapping(grid) if grid is not None else None),
+            else (Grid.from_dict(grid) if grid is not None else None),
             geometry_type=str(metadata.geometry_type),
             geometry_metadata=dict(metadata.geometry_meta or {}),
             angle_offset=(
@@ -243,8 +241,9 @@ class ProjectionDataset:
             source_path=None if source_path is None else str(source_path),
             source_format="nxtomo",
             sample_name=metadata.sample_name,
-            _metadata=metadata,
         )
+        dataset._metadata = metadata
+        return dataset
 
     @property
     def image_key(self) -> np.ndarray | None:
@@ -258,22 +257,13 @@ class ProjectionDataset:
         return None if self._metadata is None else self._metadata.image_key
 
     def to_nxtomo_metadata(self) -> NXTomoMetadata:
-        """Return NXtomo metadata for saving this public dataset.
+        """Return writable NXtomo metadata reflecting the dataset's current fields.
 
         Returns
         -------
         NXTomoMetadata
-            Persistence metadata reflecting the dataset's current fields.
-        """
-        return self.copy_metadata()
-
-    def copy_metadata(self) -> NXTomoMetadata:
-        """Return writable persistence metadata for save/update workflows.
-
-        Returns
-        -------
-        NXTomoMetadata
-            Writable metadata with copied arrays and retained acquisition information.
+            Writable persistence metadata with copied arrays and retained
+            acquisition information.
         """
         if self._metadata is None:
             metadata = NXTomoMetadata()
@@ -325,7 +315,7 @@ class ProjectionDataset:
         if detector is None:
             raise ValueError(
                 "Missing detector pixel sizes: pass pixel_size=..., detector=... or "
-                "geometry=..., or set detector in tomojax correct --config"
+                "geometry=..., or use tomojax correct --pixel-size"
             )
         views = len(self.angles) if self.projections is None else self.projections.shape[0]
         if not views or self.angles.shape != (views,):
@@ -388,7 +378,7 @@ class ProjectionDataset:
             meta = {**meta, "detector_pixel_size_status": "not_recorded", "length_unit": "pixel"}
         _, nv, nu = cast("np.ndarray", self.projections).shape  # a record without a detector
         detector = Detector(nu, nv, du, dv, (0.0, 0.0))
-        return replace(self, detector=detector, geometry_metadata=meta)
+        return replace_dataset(self, detector=detector, geometry_metadata=meta)
 
 
 def load_dataset(path: PathLike) -> ProjectionDataset:
@@ -480,7 +470,7 @@ def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
     output_path = Path(path)
     suffix = output_path.suffix.lower()
     # The metadata copy would duplicate a large volume that the writer only reads.
-    metadata = replace(dataset, volume=None).to_nxtomo_metadata()
+    metadata = replace_dataset(dataset, volume=None).to_nxtomo_metadata()
     metadata.volume = dataset.volume
     projections = None if dataset.projections is None else np.asarray(dataset.projections)
     if suffix in _HDF5_SUFFIXES:
@@ -649,7 +639,7 @@ def _dataset_issues(input_path: Path) -> list[str]:
     if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
         return [
             "TIFF stacks require an angle sidecar or explicit angles; "
-            "pass them with tomojax load --angles, or tj.load(angles=...)"
+            "pass them with tomojax correct --angles, or tj.load(angles=...)"
         ]
     return [f"unsupported dataset format for {input_path}"]
 
@@ -687,34 +677,42 @@ def _merge_geometry_metadata_dict(
             payload[key] = value
 
 
-def _grid_from_mapping(payload: Mapping[str, Any]) -> Grid:
-    vol_origin = (
-        None
-        if payload.get("vol_origin") is None
-        else _vec3(payload["vol_origin"], name="vol_origin")
-    )
-    vol_center = (
-        None
-        if payload.get("vol_center") is None
-        else _vec3(payload["vol_center"], name="vol_center")
-    )
-    return Grid(
-        nx=int(payload["nx"]),
-        ny=int(payload["ny"]),
-        nz=int(payload["nz"]),
-        vx=float(payload["vx"]),
-        vy=float(payload["vy"]),
-        vz=float(payload["vz"]),
-        vol_origin=vol_origin,
-        vol_center=vol_center,
-    )
+def replace_dataset(
+    dataset: ProjectionDataset,
+    *,
+    metadata: NXTomoMetadata | None = None,
+    keep_metadata: bool = True,
+    **changes: Any,
+) -> ProjectionDataset:
+    """Return a copy of ``dataset`` with updated fields while preserving NXtomo metadata.
 
+    Parameters
+    ----------
+    dataset : ProjectionDataset
+        Source dataset to copy.
+    metadata : NXTomoMetadata or None, optional
+        Replacement low-level NXtomo metadata record; None keeps the source
+        metadata when ``keep_metadata`` is True.
+    keep_metadata : bool, optional
+        Retain the source dataset's internal NXtomo metadata when ``metadata``
+        is None. Default is True.
+    **changes : Any
+        Field updates forwarded to :func:`dataclasses.replace`.
 
-def _vec3(value: object, *, name: str) -> tuple[float, float, float]:
-    items = tuple(float(v) for v in cast("Sequence[float | int | str]", value))
-    if len(items) != 3:
-        raise ValueError(f"{name} must have length 3")
-    return items[0], items[1], items[2]
+    Returns
+    -------
+    ProjectionDataset
+        Copied dataset with the requested field updates and preserved metadata.
+    """
+    updated = replace(dataset, **changes)
+    if metadata is not None:
+        retained: NXTomoMetadata | None = metadata
+    elif keep_metadata:
+        retained = cast("NXTomoMetadata | None", object.__getattribute__(dataset, "_metadata"))
+    else:
+        retained = None
+    object.__setattr__(updated, "_metadata", retained)
+    return updated
 
 
 def _copied(value: dict[str, Any] | None) -> dict[str, Any] | None:

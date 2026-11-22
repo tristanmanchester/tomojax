@@ -75,7 +75,7 @@ preprocessing use this same parser. It accepts leading headers, blank lines,
 and comments; empty/nonfinite data and malformed rows after numeric data starts
 raise `ValueError`. The caller checks that angle count matches projection count.
 
-`tomojax load` and `tomojax correct` take what a file lacks as flags under
+`tomojax correct` takes what a file lacks as flags under
 `tj.load`'s names: `--pixel-size`, `--detector-center U V`, `--geometry` with
 `--tilt` for laminography, and `--source-to-axis`, `--source-to-detector` and the
 detector's `--detector-roll`, `--detector-pitch` and `--detector-yaw` for cone data. Python `Detector.center` stores physical lengths, so an

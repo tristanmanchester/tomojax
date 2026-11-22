@@ -51,15 +51,19 @@ def _build_parser() -> argparse.ArgumentParser:
             f"Commands:\n{commands}"
         ),
         epilog=(
-            "Each command reads INPUT and writes -o OUTPUT, refusing to replace an existing "
-            "output without --force; `tomojax <command> --help` describes it. Exit status: "
+            "Command forms:\n"
+            "  inspect INPUT [--preview-dir DIR] [--json]\n"
+            "  correct | align | reconstruct | export  INPUT -o OUTPUT [options]\n"
+            "  simulate -o OUTPUT [options]\n\n"
+            "Commands refuse to replace an existing output without --force; "
+            "`tomojax <command> --help` describes each one. Exit status: "
             "0 success, 1 failure, 2 usage error.\n\n"
             "A lab CT scan from start to finish:\n"
-            "  tomojax load scan/scan.xtekct -o scan.nxs --darks 0\n"
+            "  tomojax correct scan/scan.xtekct -o scan.nxs --darks 0\n"
             "  tomojax inspect scan.nxs\n"
             "  tomojax align scan.nxs -o aligned.nxs --fit center roll\n"
             "  tomojax reconstruct aligned.nxs -o recon.nxs\n"
-            "  tomojax inspect recon.nxs --preview previews\n"
+            "  tomojax inspect recon.nxs --preview-dir previews\n"
             "  tomojax export recon.nxs -o slices/"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

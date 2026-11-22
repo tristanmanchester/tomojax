@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import closing, nullcontext
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import math
 import operator
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +20,7 @@ from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_detector, validate_projection_stack
-from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
+from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
 from ._host_arrays import ProjectionRows, validate_host_arrays
 from .fbp import (
@@ -58,8 +58,8 @@ class FBPHostConfig:
     rows are read and transferred with at most two input batches on the device.
     Runtime/compiler caches add memory beyond these arrays. General slabs shrink
     their depth, then their view batch, after device allocation exhaustion.
-    ``scale`` has the
-    same meaning as in :class:`FBPConfig`.
+    Filter, scale and backend live on ``fbp`` (:class:`FBPConfig`), matching
+    :class:`FDKHostConfig`.
 
     Parameters
     ----------
@@ -68,20 +68,13 @@ class FBPHostConfig:
     views_per_batch : int, optional
         Number of views processed together to bound temporary storage. Default is
         32.
-    filter : str, optional
-        Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
-    scale : float | None, optional
-        Constant angular weight per view, or None for geometry-derived weights.
-    backend : Literal['auto', 'jax', 'cuda'], optional
-        Backprojection backend: "auto", "jax" or "cuda". Auto uses CUDA
-        acceleration when available. Default is 'auto'.
+    fbp : FBPConfig, optional
+        Filter, angular scale and backend settings. Default is ``FBPConfig()``.
     """
 
     slices_per_batch: int | None = None
     views_per_batch: int = 32
-    filter: str = "ramp"
-    scale: float | None = None
-    backend: Literal["auto", "jax", "cuda"] = "auto"
+    fbp: FBPConfig = field(default_factory=FBPConfig)
 
 
 def _axial_depth(nz: int, requested: int | None) -> int:
@@ -204,7 +197,7 @@ def _output_memory(projections: np.ndarray | jax.Array, poses: jax.Array) -> int
 
 
 def fbp_host(
-    geometry: ParallelGeometry,
+    geometry: Geometry,
     grid: Grid,
     detector: Detector,
     projections: np.ndarray | jax.Array,
@@ -222,17 +215,18 @@ def fbp_host(
     remain unchanged until the call finishes. This host-returning routine is
     not differentiable. Use :func:`fbp` for device-resident output.
 
-    Every geometry ``fbp`` accepts is supported, with the same exact weights:
-    laminography and posed scans reconstruct in axial slabs, built-in parallel
-    scans in axial slabs that read only the detector rows they need.
-    Anisotropic spacing, detector offsets and shifted volume origins are
+    Supports every parallel-beam geometry (axial, laminography, arbitrary axis
+    and posed scans), with the same exact weights as :func:`fbp`; cone-beam
+    geometries use :func:`fdk_host`. Built-in axial parallel scans read only the
+    detector rows each slab needs; laminography and posed scans stream views per
+    slab. Anisotropic spacing, detector offsets and shifted volume origins are
     supported. Filter tails use the same zero-extended measurement model as
     ``fbp``.
 
     Parameters
     ----------
     geometry : Geometry
-        Scan geometry, including view angles and any per-view poses.
+        Parallel-beam scan geometry, including view angles and any per-view poses.
     grid : Grid
         Reconstruction grid with named physical dimensions and voxel spacing.
     detector : Detector
@@ -257,32 +251,33 @@ def fbp_host(
     """
     require_parallel_beam(geometry, "fbp_host")
     cfg = FBPHostConfig() if config is None else config
+    fbp_cfg = cfg.fbp
     slices = None if cfg.slices_per_batch is None else operator.index(cfg.slices_per_batch)
     views = operator.index(cfg.views_per_batch)
     if (slices is not None and slices < 1) or views < 1:
         raise ValueError("fbp_host: slices_per_batch and views_per_batch must be positive")
-    if cfg.backend not in {"auto", "jax", "cuda"}:
+    if fbp_cfg.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("fbp_host: backend must be 'auto', 'jax' or 'cuda'")
-    shape = validate_fbp_geometry(geometry, grid, detector, cfg.scale, "fbp_host")
+    shape = validate_fbp_geometry(geometry, grid, detector, fbp_cfg.scale, "fbp_host")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fbp_host projections"
     )
 
     poses = stack_view_poses(geometry, n_views)
-    view_scale = _view_weights(poses, cfg.scale)[0]
+    view_scale = _view_weights(poses, fbp_cfg.scale)[0]
     cuda = all(
         d.platform == "gpu" and d.client.platform_version.lower().startswith("cuda")
         for d in poses.devices()
     )
-    if cfg.backend == "cuda" and not cuda:
+    if fbp_cfg.backend == "cuda" and not cuda:
         raise ValueError("fbp_host: CUDA requires CUDA")
-    backend = "cuda" if cuda and cfg.backend != "jax" else "jax"
+    backend = "cuda" if cuda and fbp_cfg.backend != "jax" else "jax"
     if type(geometry) is not ParallelGeometry:
         return _general_slabs(poses, grid, detector, projections, cfg, out, backend, slices, views)
     depth = _axial_depth(grid.nz, slices)
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
-    ramp = rfft_filter_array(cfg.filter, local_detector.nu, detector.du, jnp.float32)
+    ramp = rfft_filter_array(fbp_cfg.filter, local_detector.nu, detector.du, jnp.float32)
     output = validate_host_arrays(projections, out, shape, device_input=True)
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
@@ -343,10 +338,10 @@ def _general_slabs(
 ) -> np.ndarray:
     """Reconstruct z-slabs, streaming every view batch once per slab."""
     output = validate_host_arrays(projections, out, (grid.nz, grid.ny, grid.nx), device_input=True)
-    view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
+    view_scale, params, arc_length, separable = _view_weights(poses, cfg.fbp.scale)
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
-    spectrum = rfft_filter_array(cfg.filter, detector_f.nu, detector.du, jnp.float32)
+    spectrum = rfft_filter_array(cfg.fbp.filter, detector_f.nu, detector.du, jnp.float32)
     batch = min(views, projections.shape[0])
     if slices is None:
         # Filtering workspace: padded real batch plus its complex spectrum.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import importlib
 import math
 import subprocess
 import sys
@@ -19,7 +20,7 @@ from tomojax.geometry import (
     ParallelGeometry,
     grid_volume_origin,
 )
-from tomojax.recon import FourierConfig, fourier_reconstruct
+from tomojax.recon import FourierConfig, fourier
 
 BACKENDS = ["numpy", pytest.param("cupy", marks=pytest.mark.gpu)]
 
@@ -29,9 +30,9 @@ def test_host_fourier_does_not_import_unneeded_runtimes(backend):
     code = f"""
 import sys, numpy as np
 from tomojax.geometry import Grid, Detector, ParallelGeometry
-from tomojax.recon import FourierConfig, fourier_reconstruct
+from tomojax.recon import FourierConfig, fourier
 g, d = Grid(4, 4, 1, 1, 1, 1), Detector(4, 1, 1, 1)
-x = fourier_reconstruct(ParallelGeometry(g, d, [0., 90.]), g, d,
+x = fourier(ParallelGeometry(g, d, [0., 90.]), g, d,
     np.zeros((2, 1, 4), np.float32), config=FourierConfig(backend='{backend}'),
     out=np.empty((1, 4, 4), np.float32))
 assert 'jax' not in sys.modules and np.all(x == 0)
@@ -113,7 +114,7 @@ def test_bounded_staging_ignores_unused_invalid_rows_without_taking_full_source(
 
 @pytest.mark.gpu
 def test_fractional_pipeline_commits_completed_slabs_before_late_invalid_neighbor(monkeypatch):
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     pytest.importorskip("cupy")
     grid = Grid(17, 19, 13, 1, 1, 1, vol_origin=(-8, -9, -6.25))
@@ -124,7 +125,7 @@ def test_fractional_pipeline_commits_completed_slabs_before_late_invalid_neighbo
     out = np.full((grid.nz, grid.ny, grid.nx), np.nan, np.float32)
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 0)
     with pytest.raises(ValueError, match="sampled projection rows must be finite"):
-        fourier_reconstruct(
+        fourier(
             ParallelGeometry(grid, detector, angles),
             grid,
             detector,
@@ -161,7 +162,7 @@ def test_fractional_rows_preserve_readonly_strided_input_and_rounding(dtype, row
 @pytest.mark.gpu
 @pytest.mark.parametrize("threshold", [0, 10**12])
 def test_cached_geometry_keeps_concurrent_calls_independent(monkeypatch, threshold):
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", threshold)
     from concurrent.futures import ThreadPoolExecutor
@@ -172,12 +173,12 @@ def test_cached_geometry_keeps_concurrent_calls_independent(monkeypatch, thresho
     grid, detector, geometry, data, _ = scan()
     config = FourierConfig(backend="cupy", slices_per_batch=3)
     inputs = [data, data * np.float32(1.7)]
-    expected = [fourier_reconstruct(geometry, grid, detector, x, config=config) for x in inputs]
+    expected = [fourier(geometry, grid, detector, x, config=config) for x in inputs]
     device = cp.cuda.runtime.getDevice()
 
     def reconstruct(x):
         with cp.cuda.Device(device), cp.cuda.Stream(non_blocking=True):
-            return fourier_reconstruct(geometry, grid, detector, x, config=config)
+            return fourier(geometry, grid, detector, x, config=config)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(reconstruct, inputs))
@@ -187,7 +188,7 @@ def test_cached_geometry_keeps_concurrent_calls_independent(monkeypatch, thresho
 
 @pytest.mark.gpu
 def test_repeated_host_pipeline_calls_reuse_allocator_storage(monkeypatch):
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     cp = pytest.importorskip("cupy")
     if jax.default_backend() != "gpu":
@@ -199,11 +200,11 @@ def test_repeated_host_pipeline_calls_reuse_allocator_storage(monkeypatch):
     data, _ = physical_gaussian(grid, detector, angles)
     geometry = ParallelGeometry(grid, detector, angles)
     config = FourierConfig(backend="cupy", slices_per_batch=16)
-    reference = fourier_reconstruct(geometry, grid, detector, data, config=config)
+    reference = fourier(geometry, grid, detector, data, config=config)
     pool = cp.get_default_memory_pool()
     initial = pool.total_bytes()
     for _ in range(6):
-        result = fourier_reconstruct(geometry, grid, detector, data, config=config)
+        result = fourier(geometry, grid, detector, data, config=config)
         np.testing.assert_array_equal(result, reference)
     # Allow allocator fragmentation and FFT workspace variation, but reject a
     # new set of retained stream arenas on every completed reconstruction.
@@ -212,13 +213,11 @@ def test_repeated_host_pipeline_calls_reuse_allocator_storage(monkeypatch):
 
 @pytest.mark.parametrize("stage", ["construction", "later_slab"])
 def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(monkeypatch, stage):
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     original_plan = implementation.FourierPlan
     grid, detector, geometry, data, _ = scan()
-    expected = fourier_reconstruct(
-        geometry, grid, detector, data, config=FourierConfig(backend="numpy")
-    )
+    expected = fourier(geometry, grid, detector, data, config=FourierConfig(backend="numpy"))
     depths, destroyed = [], []
 
     class Exhausted(MemoryError):
@@ -253,7 +252,7 @@ def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(mo
         implementation, "prepare_projection_rows", implementation.sample_projection_rows
     )
     output = np.full(expected.shape, -123, np.float32)
-    actual = fourier_reconstruct(
+    actual = fourier(
         geometry,
         grid,
         detector,
@@ -273,7 +272,7 @@ def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(mo
     [MemoryError("CPU memory"), ValueError("bad data"), ImportError("optional backend")],
 )
 def test_only_cuda_allocation_exhaustion_is_retried(monkeypatch, backend, depth, exception):
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     grid, detector, geometry, data, _ = scan()
     attempts = []
@@ -284,7 +283,7 @@ def test_only_cuda_allocation_exhaustion_is_retried(monkeypatch, backend, depth,
 
     monkeypatch.setattr(implementation, "FourierPlan", fail)
     with pytest.raises(type(exception), match=str(exception)):
-        fourier_reconstruct(
+        fourier(
             geometry,
             grid,
             detector,
@@ -331,7 +330,7 @@ def test_host_pipeline_drains_pending_transfers_after_output_failure():
 @pytest.mark.gpu
 @pytest.mark.parametrize("storage", ["array", "mapped", "mapped_F", "strided"])
 def test_host_pipeline_matches_sequential_with_partial_slabs(monkeypatch, tmp_path, storage):
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     pytest.importorskip("cupy")
     if jax.default_backend() != "gpu":
@@ -347,7 +346,7 @@ def test_host_pipeline_matches_sequential_with_partial_slabs(monkeypatch, tmp_pa
     geometry = ParallelGeometry(grid, detector, angles)
     config = FourierConfig(backend="cupy", slices_per_batch=4)
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 10**12)
-    expected = fourier_reconstruct(geometry, grid, detector, projections, config=config)
+    expected = fourier(geometry, grid, detector, projections, config=config)
     if storage.startswith("mapped"):
         out = np.lib.format.open_memmap(
             tmp_path / "pipeline.npy",
@@ -361,7 +360,7 @@ def test_host_pipeline_matches_sequential_with_partial_slabs(monkeypatch, tmp_pa
     else:
         out = np.empty_like(expected)
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 0)
-    actual = fourier_reconstruct(geometry, grid, detector, projections, config=config, out=out)
+    actual = fourier(geometry, grid, detector, projections, config=config, out=out)
     assert actual is out
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(projections, data)
@@ -369,7 +368,7 @@ def test_host_pipeline_matches_sequential_with_partial_slabs(monkeypatch, tmp_pa
 
 @pytest.mark.gpu
 def test_host_pipeline_finishes_completed_slabs_before_late_input_error(monkeypatch):
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     pytest.importorskip("cupy")
     if jax.default_backend() != "gpu":
@@ -382,7 +381,7 @@ def test_host_pipeline_finishes_completed_slabs_before_late_input_error(monkeypa
     out = np.full((grid.nz, grid.ny, grid.nx), np.nan, dtype=np.float32)
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 0)
     with pytest.raises(ValueError, match="sampled projection rows must be finite"):
-        fourier_reconstruct(
+        fourier(
             ParallelGeometry(grid, detector, angles),
             grid,
             detector,
@@ -492,7 +491,7 @@ def scan(kind="offset", length_scale=1.0):
 def test_independent_physical_gaussian(backend, kind):
     grid, detector, geometry, data, truth = scan(kind)
     original = data.copy()
-    actual = fourier_reconstruct(
+    actual = fourier(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=3, backend=backend)
     )
     assert actual.dtype == np.float32
@@ -506,14 +505,14 @@ def test_redundant_exposures_share_one_angular_cell(backend):
     exposures = np.repeat(data, 3, axis=0)
     exposures += np.random.default_rng(723).normal(0, 0.02, exposures.shape).astype(np.float32)
     config = FourierConfig(backend=backend)
-    expected = fourier_reconstruct(
+    expected = fourier(
         geometry,
         grid,
         detector,
         exposures.reshape(len(data), 3, *data.shape[1:]).mean(axis=1),
         config=config,
     )
-    actual = fourier_reconstruct(
+    actual = fourier(
         ParallelGeometry(grid, detector, np.repeat(geometry.angles, 3)),
         grid,
         detector,
@@ -526,7 +525,7 @@ def test_redundant_exposures_share_one_angular_cell(backend):
 @pytest.mark.parametrize("length_scale", [0.5, 2.0])
 def test_physical_units_preserve_attenuation(backend, length_scale):
     grid, detector, geometry, data, truth = scan(length_scale=length_scale)
-    actual = fourier_reconstruct(
+    actual = fourier(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=20, backend=backend)
     )
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < 0.008
@@ -586,10 +585,10 @@ def test_cuda_matches_numpy_for_signed_data_and_partial_slabs(nu, vx, views):
     angles = np.linspace(-37, 143, views, endpoint=False)[::-1]
     geometry = ParallelGeometry(grid, detector, angles)
     data = np.random.default_rng(321).normal(size=(views, 7, nu)).astype(np.float32)
-    reference = fourier_reconstruct(
+    reference = fourier(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=2, backend="numpy")
     )
-    actual = fourier_reconstruct(
+    actual = fourier(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=2, backend="cupy")
     )
     assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 2e-5
@@ -605,14 +604,14 @@ def test_detector_rows_zero_extend_and_ignore_unused_nonfinite_samples(row_grid)
 
 
 def test_unmeasured_axial_slices_are_zero(backend, monkeypatch):
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 0)
     grid = Grid(9, 7, 5, 1.0, 1.0, 1.0)
     detector = Detector(9, 1, 1.0, 1.0)
     geometry = ParallelGeometry(grid, detector, np.arange(10) * 18)
     data = np.ones((10, 1, 9), dtype=np.float32)
-    actual = fourier_reconstruct(
+    actual = fourier(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=3, backend=backend)
     )
     np.testing.assert_array_equal(actual[[0, 1, 3, 4]], 0)
@@ -626,7 +625,7 @@ def test_nonfinite_sampled_rows_rejected_before_output_written(invalid):
     data[0, 3, 1] = invalid
     output = np.full((grid.nz, grid.ny, grid.nx), 123, dtype=np.float32)
     with np.errstate(over="ignore"), pytest.raises(ValueError, match="finite in FP32"):
-        fourier_reconstruct(geometry, grid, detector, data, out=output)
+        fourier(geometry, grid, detector, data, out=output)
     np.testing.assert_array_equal(output, 123)
 
 
@@ -637,7 +636,7 @@ def test_memmap_output_and_batch_size_independence(tmp_path, backend):
     target = np.memmap(
         tmp_path / "target.bin", dtype=np.float32, mode="w+", shape=(grid.nz, grid.ny, grid.nx)
     )
-    actual = fourier_reconstruct(
+    actual = fourier(
         geometry,
         grid,
         detector,
@@ -646,7 +645,7 @@ def test_memmap_output_and_batch_size_independence(tmp_path, backend):
         out=target,
     )
     assert actual is target
-    reference = fourier_reconstruct(
+    reference = fourier(
         geometry, grid, detector, data, config=FourierConfig(slices_per_batch=7, backend=backend)
     )
     assert reference.flags.c_contiguous and actual.flags.c_contiguous
@@ -666,7 +665,7 @@ def test_overlapping_storage_rejected_before_writing(tmp_path, mapped):
         out = data.reshape(3, 4, 5)
     data[:] = 123
     with pytest.raises(ValueError, match="overlap|separate files"):
-        fourier_reconstruct(geometry, grid, detector, data, out=out)
+        fourier(geometry, grid, detector, data, out=out)
     np.testing.assert_array_equal(data, 123)
 
 
@@ -705,15 +704,15 @@ def test_invalid_inputs_rejected_before_output_written(invalid):
         config = FourierConfig(backend="invalid")
     elif invalid == "batch":
         config = FourierConfig(slices_per_batch=0)
-    with pytest.raises((ValueError, TypeError), match="fourier_reconstruct"):
-        fourier_reconstruct(geometry, grid, detector, data, config=config, out=out)
+    with pytest.raises((ValueError, TypeError), match="fourier"):
+        fourier(geometry, grid, detector, data, config=config, out=out)
     np.testing.assert_array_equal(out, 123)
 
 
 def test_missing_cupy_does_not_mask_original_memory_or_import_errors(monkeypatch):
     import sys
 
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     monkeypatch.setitem(sys.modules, "cupy", None)
     assert not implementation.is_cuda_oom(MemoryError("host allocation"))
@@ -723,7 +722,7 @@ def test_missing_cupy_does_not_mask_original_memory_or_import_errors(monkeypatch
 @pytest.mark.parametrize("nz", [1, 6, 7])
 @pytest.mark.parametrize("threshold", [0, 10**12])
 def test_fixed_fft_batches_materialize_only_real_output_slices(monkeypatch, backend, nz, threshold):
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     grid, detector, geometry, _, _ = scan()
     grid = replace(grid, nz=nz)
@@ -743,7 +742,7 @@ def test_fixed_fft_batches_materialize_only_real_output_slices(monkeypatch, back
 
     monkeypatch.setattr(implementation, "FourierPlan", Plan)
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", threshold)
-    actual = fourier_reconstruct(
+    actual = fourier(
         geometry,
         grid,
         detector,
@@ -763,12 +762,12 @@ def test_fixed_fft_batches_materialize_only_real_output_slices(monkeypatch, back
 def test_provided_output_retains_layout_and_identity(backend, layout):
     grid, detector, geometry, data, truth = scan()
     config = FourierConfig(backend=backend, slices_per_batch=3)
-    expected = fourier_reconstruct(geometry, grid, detector, data, config=config)
+    expected = fourier(geometry, grid, detector, data, config=config)
     out = np.empty(truth.shape, dtype=np.float32, order="F" if layout == "F" else "C")
     if layout == "reversed":
         out = out[::-1, ::-1, ::-1]
     strides = out.strides
-    result = fourier_reconstruct(geometry, grid, detector, data, config=config, out=out)
+    result = fourier(geometry, grid, detector, data, config=config, out=out)
     assert result is out and result.strides == strides
     np.testing.assert_array_equal(result.view(np.uint32), expected.view(np.uint32))
 
@@ -843,7 +842,7 @@ def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny,
     data = np.random.default_rng(321).normal(size=(13, 7, 17)).astype(np.float32)
     data += ((-1.0) ** np.arange(17))[None, None, :]
     reference = dense_full_spectrum_reference(grid, detector, angles, data)
-    actual = fourier_reconstruct(
+    actual = fourier(
         ParallelGeometry(grid, detector, angles),
         grid,
         detector,
@@ -854,7 +853,7 @@ def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny,
 
 
 def test_automatic_slab_depth_bounds_padded_physical_support_and_preserves_overrides(monkeypatch):
-    import tomojax.recon.fourier as implementation
+    implementation = importlib.import_module("tomojax.recon.fourier")
 
     depths = []
 
@@ -872,7 +871,7 @@ def test_automatic_slab_depth_bounds_padded_physical_support_and_preserves_overr
         for requested, selected in ((None, expected), (5, 5)):
             cfg = FourierConfig(backend="cupy", slices_per_batch=requested)
             with pytest.raises(RuntimeError, match="planning complete"):
-                fourier_reconstruct(geometry, grid, detector, data, config=cfg)
+                fourier(geometry, grid, detector, data, config=cfg)
             assert depths[-1] == selected
 
 
@@ -885,7 +884,7 @@ def test_cuda_fourier_coordinate_pass_matches_physical_reference(nonuniform):
     geometry = ParallelGeometry(grid, detector, angles)
     data = np.random.default_rng(837).normal(size=(len(angles), 7, 17)).astype(np.float32)
     results = [
-        fourier_reconstruct(geometry, grid, detector, data, config=FourierConfig(backend=backend))
+        fourier(geometry, grid, detector, data, config=FourierConfig(backend=backend))
         for backend in ("numpy", "cupy")
     ]
     np.testing.assert_allclose(results[1], results[0], rtol=3e-4, atol=2e-7)

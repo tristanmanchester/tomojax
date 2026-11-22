@@ -81,7 +81,7 @@ Laminography leaves a cone of frequencies around the rotation axis unmeasured. F
 tomojax reconstruct corrected-lamino.nxs -o recon.nxs \
   --method fista --iterations 100 --nonnegative --region off \
   --manifest recon-manifest.json
-tomojax inspect recon.nxs --preview previews
+tomojax inspect recon.nxs --preview-dir previews
 ```
 
 On simulated laminography benchmarks, FISTA-TV with its automatic TV weight halves FBP's error on measured frequencies (0.079 vs 0.165 and 0.163) and suppresses missing-cone fog. FISTA's default 50 iterations under-converge on laminography; raise `--iterations` to 100 or more (see [laminography measurements](measurements.md#laminography-the-default-fbp-against-fista)). Enable `--nonnegative` only when attenuation is nonnegative.

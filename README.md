@@ -26,14 +26,14 @@ uv pip install --python .venv/bin/python "tomojax[cpu]"
 
 .venv/bin/tomojax simulate -o synthetic.nxs --size 32 --n-views 60
 .venv/bin/tomojax reconstruct synthetic.nxs -o recon.nxs
-.venv/bin/tomojax inspect recon.nxs --preview previews
+.venv/bin/tomojax inspect recon.nxs --preview-dir previews
 ```
 
 To try unreleased changes from source, [build and install a wheel](https://tomojax.dev/installation/#build-and-install-an-unreleased-wheel) first, then run the same three commands.
 
 For this axial parallel scan, `reconstruct` selects the Fourier-slice inverse automatically and writes the volume, geometry, and processing record to `recon.nxs` (pass `--include-scan` to keep the projections in the same file). `inspect` checks the file (`Valid: yes`) and writes display-scaled central slice PNGs to `previews/`.
 
-Every CLI command takes an input and `-o OUTPUT`, refusing to overwrite existing files without `--force`. Run `tomojax <command> --help` for flags, or see the [CLI overview](https://github.com/tristanmanchester/tomojax/blob/main/src/tomojax/cli/README.md). For CUDA 12 installation see [installation](https://tomojax.dev/installation/); for real data start with the [quickstart](https://tomojax.dev/quickstart/).
+Commands that write data take `-o OUTPUT` and refuse to overwrite existing files without `--force` (`inspect` prints a report and optionally writes PNGs to `--preview-dir DIR`; `simulate` takes no input). Run `tomojax <command> --help` for flags, or see the [CLI overview](https://github.com/tristanmanchester/tomojax/blob/main/src/tomojax/cli/README.md). For CUDA 12 installation see [installation](https://tomojax.dev/installation/); for real data start with the [quickstart](https://tomojax.dev/quickstart/).
 
 ## Choose a workflow
 
@@ -61,7 +61,7 @@ result = tj.align(scan, fit=("translations", "rotations"))  # result.scan holds 
 tj.save("recon.nxs", tj.reconstruct(result.scan))
 ```
 
-CLI options use the same names: `tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 50` and `tomojax align scan.nxs -o aligned.nxs --fit translations rotations`. Pass method-specific settings via config classes from `tomojax.recon` (such as `FistaConfig(regularizer="huber_tv")`) or a TOML file passed to `--config`. See [align a scan](https://tomojax.dev/align-a-scan/#settings) for alignment settings.
+CLI options use the same names: `tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 50` and `tomojax align scan.nxs -o aligned.nxs --fit translations rotations`. Pass method-specific settings via config classes from `tomojax.recon` (such as `FISTAConfig(regularizer="huber_tv")`) or a TOML file passed to `--config`. See [align a scan](https://tomojax.dev/align-a-scan/#settings) for alignment settings.
 
 Build a scan from arrays with `tj.Scan(projections, geometry)` and simulate projections with `tj.project(geometry, volume)`. Volumes use `(z, y, x)` and projections use `(view, v, u)`, with detector and voxel spacings in one consistent length unit. Lower-level interfaces live in `tomojax.recon`, `tomojax.alignment`, `tomojax.corrections`, `tomojax.geometry`, `tomojax.io`, `tomojax.forward`, and `tomojax.datasets`. Start with [examples/simulate_and_reconstruct.py](https://github.com/tristanmanchester/tomojax/blob/main/examples/simulate_and_reconstruct.py) or browse [tomojax.dev](https://tomojax.dev/).
 

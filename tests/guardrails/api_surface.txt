@@ -1,31 +1,4 @@
 # tomojax
-class tomojax.AlignConfig(
-        *,
-        motion: 'Motion' = 'independent',
-        iterations: 'int' = 8,
-        coarse_iterations: 'int' = 12,
-        levels: 'tuple[int, ...]' = (2, 1),
-        image_iterations: 'int' = 16,
-        image_tolerance: 'float' = 0.03,
-        tolerance: 'float' = 0.01,
-        min_iterations: 'int' = 4,
-        resolution: 'int' = 320,
-        max_voxels: 'int' = 16000000,
-        interpolation: 'Interpolation | None' = None,
-        refine_iterations: 'int' = 5,
-        initial_image_iterations: 'int' = 5,
-        slip_scale: 'float' = 0.02,
-        knot_spacing: 'int' = 10,
-        rotation_sigma: 'float' = 0.5,
-        loss_width: 'float' = 2.5,
-        loss_contrast_floor: 'float' = 0.5,
-        image_tv_weight: 'float' = 0.0,
-        image_tv_huber: 'float' = 1.0,
-        margin: 'float' = 0.0625,
-        refine_smoothing: 'float' = 8.0,
-        refine_neighbors: 'int' = 5,
-    ) -> None
-    .resolved(self, fit: 'tuple[str, ...]', *, cone: 'bool') -> 'AlignConfig'
 class tomojax.Alignment(
         scan: 'Scan',
         info: 'Mapping[str, object]',
@@ -74,6 +47,7 @@ class tomojax.Detector(
 class tomojax.Frames(
         counts: 'Any',
         geometry: 'ScanGeometry',
+        *,
         flats: 'Any' = None,
         darks: 'Any' = None,
         flat_positions: 'np.ndarray | None' = None,
@@ -105,10 +79,13 @@ class tomojax.Grid(
         vx: 'float',
         vy: 'float',
         vz: 'float',
+        *,
         vol_origin: 'Vec3 | None' = None,
         vol_center: 'Vec3 | None' = None,
     ) -> None
+    .from_dict(cls, data: 'Mapping[str, Any]') -> 'Grid'
     .resampled(self, shape: 'tuple[int, int, int]') -> 'Grid'
+    .shape
     .to_dict(self) -> 'GridDict'
 class tomojax.LaminographyGeometry(
         grid: 'Grid',
@@ -118,9 +95,9 @@ class tomojax.LaminographyGeometry(
         tilt_about: 'str' = 'x',
         detector_roll: 'float' = 0.0,
     ) -> None
-    .axis_unit_lab
     .pose_matrix(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
+    .rotation_axis(self) -> 'np.ndarray'
 class tomojax.ParallelGeometry(
         grid: 'Grid',
         detector: 'Detector',
@@ -135,6 +112,7 @@ class tomojax.Projector(
         grid: 'Grid | None' = None,
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> 'None'
+    .__call__(self, volume: 'jax.Array | np.ndarray') -> 'jax.Array'
     .adjoint(self, projections: 'jax.Array | np.ndarray') -> 'jax.Array'
 class tomojax.Reconstruction(
         volume: 'np.ndarray | jax.Array',
@@ -173,6 +151,9 @@ class tomojax.Scan(
     .selected(self, views: 'slice | Sequence[int] | np.ndarray') -> 'Scan'
     .to_astra(self) -> 'tuple[np.ndarray, dict[str, Any], dict[str, Any]]'
     .with_poses(self, poses: 'np.ndarray | None') -> 'Scan'
+class tomojax.Simulation(scan: 'Scan', phantom: 'np.ndarray', info: 'Mapping[str, object]') -> None
+    .geometry
+    .grid
 tomojax.__version__: str
 def tomojax.align(
         scan: 'Scan',
@@ -199,7 +180,7 @@ def tomojax.backproject(
 def tomojax.estimate_region(scan: 'Scan') -> 'RegionEstimate'
 def tomojax.export(
         path: 'str | PathLike[str]',
-        reconstruction: 'Reconstruction',
+        reconstruction: 'Reconstruction | Simulation',
         *,
         dtype: "Literal['float32', 'uint16']" = 'float32',
         range: 'tuple[float, float] | None' = None,
@@ -223,6 +204,7 @@ def tomojax.load(
         angles_path: 'str | None' = None,
         apply_poses: 'bool' = True,
     ) -> 'Scan'
+def tomojax.load_alignment(path: 'str | PathLike[str]') -> 'Alignment'
 def tomojax.load_frames(
         path: 'str | PathLike[str]',
         *,
@@ -238,6 +220,7 @@ def tomojax.load_frames(
         data_path: 'str | None' = None,
         image_key_path: 'str | None' = None,
         angles_path: 'str | None' = None,
+        apply_poses: 'bool' = True,
     ) -> 'Frames'
 def tomojax.load_reconstruction(path: 'str | PathLike[str]') -> 'Reconstruction'
 def tomojax.project(
@@ -272,29 +255,29 @@ def tomojax.reconstruct_slabs(
         config: 'FBPConfig | FourierConfig | SIRTConfig | MLEMConfig | None' = None,
         warm_start: 'bool | None' = None,
         epsilon: 'float' = 1e-06,
-    ) -> 'Iterator[Iterator[tuple[slice, Reconstruction]]]'
+    ) -> 'AbstractContextManager[Iterator[tuple[slice, Reconstruction]]]'
 def tomojax.save(
         path: 'str | PathLike[str]',
-        item: 'Scan | Reconstruction | Alignment',
+        item: 'Scan | Reconstruction | Alignment | Simulation',
         *,
         include_scan: 'bool' = False,
     ) -> 'None'
 def tomojax.simulate(
-        phantom: 'Phantom' = 'shepp',
+        phantom: 'Phantom | None' = None,
         *,
-        size: 'int' = 64,
+        size: 'int | None' = None,
         n_views: 'int | None' = None,
-        geometry: 'GeometryName' = 'parallel',
+        geometry: 'GeometryName | None' = None,
         rotation: 'float | None' = None,
         tilt: 'float | None' = None,
         source_to_axis: 'float | None' = None,
         source_to_detector: 'float | None' = None,
-        poisson_scale: 'float' = 0.0,
+        poisson_scale: 'float | None' = None,
         grid: 'Grid | None' = None,
         detector: 'Detector | None' = None,
-        seed: 'int' = 0,
+        seed: 'int | None' = None,
         config: 'SimConfig | None' = None,
-    ) -> 'tuple[Scan, np.ndarray]'
+    ) -> 'Simulation'
 
 # tomojax.geometry
 class tomojax.geometry.ConeBeam(
@@ -332,7 +315,6 @@ class tomojax.geometry.ConeSegments(
         trajectory_lengths: 'tuple[int, ...]' = (),
     ) -> None
     .angles
-    .beam
     .detector
     .grid
     .pose_matrix(self, i: 'int') -> 'PoseMatrix'
@@ -356,10 +338,13 @@ class tomojax.geometry.Grid(
         vx: 'float',
         vy: 'float',
         vz: 'float',
+        *,
         vol_origin: 'Vec3 | None' = None,
         vol_center: 'Vec3 | None' = None,
     ) -> None
+    .from_dict(cls, data: 'Mapping[str, Any]') -> 'Grid'
     .resampled(self, shape: 'tuple[int, int, int]') -> 'Grid'
+    .shape
     .to_dict(self) -> 'GridDict'
 class tomojax.geometry.LaminographyGeometry(
         grid: 'Grid',
@@ -369,9 +354,9 @@ class tomojax.geometry.LaminographyGeometry(
         tilt_about: 'str' = 'x',
         detector_roll: 'float' = 0.0,
     ) -> None
-    .axis_unit_lab
     .pose_matrix(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
+    .rotation_axis(self) -> 'np.ndarray'
 class tomojax.geometry.ParallelGeometry(
         grid: 'Grid',
         detector: 'Detector',
@@ -384,11 +369,12 @@ class tomojax.geometry.RotationAxisGeometry(
         grid: 'Grid',
         detector: 'Detector',
         angles: 'Sequence[float]',
-        axis_unit_lab: 'Sequence[float]',
+        axis_unit: 'Sequence[float]',
         detector_roll: 'float' = 0.0,
     ) -> None
     .pose_matrix(self, i: 'int') -> 'PoseMatrix'
     .rays_for_view(self, i: 'int') -> 'RayPair'
+    .rotation_axis(self) -> 'np.ndarray'
 class tomojax.geometry.ScanGeometry(*args, **kwargs)
     .angles
     .detector
@@ -456,6 +442,140 @@ class tomojax.evaluation.Split(
         views: 'slice | None' = None,
     ) -> 'Score'
 
+# tomojax.corrections
+class tomojax.corrections.BeamHardening(
+        rates: 'tuple[float, ...]' = (1.0,),
+        weights: 'tuple[float, ...]' = (1.0,),
+        energy_kev: 'float | None' = None,
+    ) -> None
+    .apply(self, batch: 'jax.Array') -> 'jax.Array'
+    .curve(self, p: 'np.ndarray | float') -> 'np.ndarray'
+    .from_polynomial(cls, coefficients: 'Sequence[float]', *, upto: 'float') -> 'BeamHardening'
+    .from_spectrum(
+        cls,
+        energies: 'Sequence[float] | np.ndarray',
+        weights: 'Sequence[float] | np.ndarray',
+        material: 'str',
+        *,
+        energy_kev: 'float | None' = None,
+    ) -> 'BeamHardening'
+    .inverse(self, q: 'np.ndarray | float') -> 'np.ndarray'
+class tomojax.corrections.Corrected(
+        projections: ForwardRef('np.ndarray'),
+        records: ForwardRef('tuple[Correction, ...]'),
+        kept: ForwardRef('np.ndarray'),
+    )
+class tomojax.corrections.Correction(
+        name: 'str',
+        settings: 'dict[str, Json]' = <factory>,
+        found: 'dict[str, Json]' = <factory>,
+    ) -> None
+    .from_dict(cls, value: 'dict[str, Any]') -> 'Correction'
+    .to_dict(self) -> 'dict[str, Json]'
+class tomojax.corrections.Paganin(
+        delta_beta: 'float',
+        distance: 'float',
+        energy_kev: 'float',
+        pixel_size: 'float',
+    ) -> None
+    .apply(self, batch: 'jax.Array') -> 'jax.Array'
+    .workspace_pixels(self, rows: 'int', cols: 'int') -> 'int'
+class tomojax.corrections.RadialDistortion(*, center: 'tuple[float, float]', coefficients: 'tuple[float, ...]') -> None
+    .apply(self, batch: 'jax.Array') -> 'jax.Array'
+    .workspace_pixels(self, rows: 'int', cols: 'int') -> 'int'
+class tomojax.corrections.RejectViews(z: 'float' = 6.0) -> None
+    .select(
+        self,
+        statistics: 'np.ndarray',
+        views: 'np.ndarray',
+    ) -> 'tuple[np.ndarray, dict[str, Json]]'
+    .statistic(self, batch: 'jax.Array') -> 'jax.Array'
+class tomojax.corrections.Rings(geometry: 'object' = None, *, views: 'int | None' = 512) -> None
+    .apply(self, batch: 'jax.Array') -> 'jax.Array'
+    .mirror_axis
+    .record(self) -> 'Correction'
+    .retained(self, kept: 'np.ndarray') -> 'Rings'
+class tomojax.corrections.Step() -> None
+    .apply(self, batch: 'jax.Array') -> 'jax.Array'
+    .record(self) -> 'Correction'
+    .retained(self, kept: 'np.ndarray') -> 'Step'
+    .select(
+        self,
+        statistics: 'np.ndarray',
+        views: 'np.ndarray',
+    ) -> 'tuple[np.ndarray, dict[str, Json]]'
+    .statistic(self, batch: 'jax.Array') -> 'jax.Array'
+    .workspace_pixels(self, rows: 'int', cols: 'int') -> 'int'
+class tomojax.corrections.Stripes(width: 'int' = 9, *, varying: 'bool' = False) -> None
+    .apply(self, batch: 'jax.Array') -> 'jax.Array'
+class tomojax.corrections.Zingers(threshold: 'float' = 0.1, size: 'int' = 3) -> None
+    .apply(self, batch: 'jax.Array') -> 'jax.Array'
+def tomojax.corrections.correct_frames(
+        counts: 'Any',
+        *,
+        flats: 'Any',
+        flat_positions: 'np.ndarray | None',
+        darks: 'Any',
+        white_level: 'float | None',
+        steps: 'Sequence[Step]',
+        epsilon: 'float',
+        view_positions: 'np.ndarray | None' = None,
+        exposure_times: 'np.ndarray | float | None' = None,
+        flat_exposure_times: 'np.ndarray | float | None' = None,
+        views_per_batch: 'int | None' = None,
+        binning: 'int' = 1,
+        dark_source: 'str | None' = None,
+        linear_limit: 'tuple[float, str] | None' = None,
+    ) -> 'Corrected'
+def tomojax.corrections.correct_projections(
+        projections: 'Any',
+        steps: 'Sequence[Step]',
+        *,
+        views_per_batch: 'int | None' = None,
+    ) -> 'Corrected'
+def tomojax.corrections.remove_phase_ramp(phase: 'jax.Array', *, air_mask: 'jax.Array') -> 'jax.Array'
+def tomojax.corrections.tube_spectrum(
+        kv: 'float',
+        *,
+        filters: 'Iterable[Layer]' = (),
+        detector: 'Layer | None' = None,
+        target_angle: 'float' = 12.0,
+        step_kev: 'float' = 0.5,
+    ) -> 'tuple[np.ndarray, np.ndarray]'
+def tomojax.corrections.unwrap_phase(projections: 'jax.Array') -> 'jax.Array'
+
+# tomojax.forward
+def tomojax.forward.joseph_l2_value_and_grad(
+        volume: 'jax.Array',
+        poses: 'jax.Array',
+        target: 'jax.Array',
+        grid: 'Grid',
+        detector: 'Detector',
+        *,
+        backend: "Literal['jax', 'cuda']" = 'jax',
+        interpolation: "Literal['linear', 'cubic']" = 'linear',
+    ) -> 'tuple[jax.Array, tuple[jax.Array, jax.Array]]'
+def tomojax.forward.joseph_pose_normal_equations(
+        volume: 'jax.Array',
+        poses: 'jax.Array',
+        pose_directions: 'jax.Array',
+        target: 'jax.Array',
+        grid: 'Grid',
+        detector: 'Detector',
+        *,
+        backend: "Literal['jax', 'cuda']" = 'jax',
+        interpolation: "Literal['linear', 'cubic']" = 'linear',
+    ) -> 'tuple[jax.Array, jax.Array, jax.Array, jax.Array]'
+def tomojax.forward.project_joseph(
+        volume: 'jax.Array',
+        poses: 'jax.Array',
+        grid: 'Grid',
+        detector: 'Detector',
+        *,
+        backend: "Literal['jax', 'cuda']" = 'jax',
+        interpolation: "Literal['linear', 'cubic']" = 'linear',
+    ) -> 'jax.Array'
+
 # tomojax.recon
 class tomojax.recon.CGLSConfig(
         *,
@@ -482,19 +602,17 @@ class tomojax.recon.FBPHostConfig(
         *,
         slices_per_batch: 'int | None' = None,
         views_per_batch: 'int' = 32,
-        filter: 'str' = 'ramp',
-        scale: 'float | None' = None,
-        backend: "Literal['auto', 'jax', 'cuda']" = 'auto',
+        fbp: 'FBPConfig' = <factory>,
     ) -> None
 class tomojax.recon.FDKConfig(
         *,
         filter: 'str' = 'ramp',
-        backend: 'str' = 'auto',
+        backend: 'ProjectorBackend' = 'auto',
         views_per_batch: 'int' = 64,
         devices: 'Device | Sequence[Device] | None' = None,
     ) -> None
 class tomojax.recon.FDKHostConfig(*, slices_per_batch: 'int | None' = None, fdk: 'FDKConfig' = <factory>) -> None
-class tomojax.recon.FistaConfig(
+class tomojax.recon.FISTAConfig(
         *,
         iterations: 'int' = 50,
         data_term: 'DataTerm' = 'absolute',
@@ -508,7 +626,6 @@ class tomojax.recon.FistaConfig(
         patience: 'int' = 0,
         power_iterations: 'int' = 3,
         support: 'jnp.ndarray | None' = None,
-        nonnegative: 'bool' = False,
         lower_bound: 'float | None' = None,
         upper_bound: 'float | None' = None,
         backend: 'ProjectorBackend' = 'auto',
@@ -528,13 +645,6 @@ class tomojax.recon.MLEMConfig(
         views_per_batch: 'int' = 32,
         backend: 'ProjectorBackend' = 'auto',
     ) -> None
-class tomojax.recon.Projector(
-        geometry: 'ScanGeometry',
-        *,
-        grid: 'Grid | None' = None,
-        devices: 'Device | Sequence[Device] | None' = None,
-    ) -> 'None'
-    .adjoint(self, projections: 'jax.Array | np.ndarray') -> 'jax.Array'
 class tomojax.recon.SIRTConfig(
         *,
         iterations: 'int' = 50,
@@ -555,24 +665,17 @@ class tomojax.recon.SPDHGConfig(
         regularizer: 'Regularizer' = 'tv',
         huber_delta: 'float' = 0.01,
         theta: 'float' = 1.0,
-        views_per_batch: 'int' = 16,
+        views_per_block: 'int' = 16,
         seed: 'int' = 0,
         tau: 'float | None' = None,
         sigma_data: 'float | None' = None,
         sigma_tv: 'float | None' = None,
         backend: 'ProjectorBackend' = 'auto',
-        nonnegative: 'bool' = False,
+        lower_bound: 'float | None' = None,
         support: 'jnp.ndarray | None' = None,
         log_every: 'int' = 10,
         stream: 'bool | None' = None,
     ) -> None
-def tomojax.recon.backproject(
-        geometry: 'ScanGeometry',
-        projections: 'jax.Array | np.ndarray',
-        *,
-        grid: 'Grid | None' = None,
-        devices: 'Device | Sequence[Device] | None' = None,
-    ) -> 'jax.Array'
 def tomojax.recon.cgls(
         geometry: 'Geometry',
         grid: 'Grid',
@@ -606,7 +709,7 @@ def tomojax.recon.fbp(
         det_grid: 'tuple[jnp.ndarray, jnp.ndarray] | None' = None,
     ) -> 'jnp.ndarray'
 def tomojax.recon.fbp_host(
-        geometry: 'ParallelGeometry',
+        geometry: 'Geometry',
         grid: 'Grid',
         detector: 'Detector',
         projections: 'np.ndarray | jax.Array',
@@ -631,19 +734,19 @@ def tomojax.recon.fdk_host(
         config: 'FDKHostConfig | None' = None,
         out: 'np.ndarray | None' = None,
     ) -> 'np.ndarray'
-def tomojax.recon.fista_tv(
+def tomojax.recon.fista(
         geometry: 'Geometry',
         grid: 'Grid',
         detector: 'Detector',
         projections: 'jnp.ndarray | np.ndarray',
         *,
         init_x: 'jnp.ndarray | None' = None,
-        config: 'FistaConfig | None' = None,
+        config: 'FISTAConfig | None' = None,
         callback: 'LossCallback | None' = None,
         det_grid: 'tuple[jnp.ndarray, jnp.ndarray] | None' = None,
         out: 'np.ndarray | None' = None,
     ) -> 'tuple[jnp.ndarray | np.ndarray, dict[str, object]]'
-def tomojax.recon.fourier_reconstruct(
+def tomojax.recon.fourier(
         geometry: 'ScanGeometry',
         grid: 'Grid',
         detector: 'Detector',
@@ -663,13 +766,6 @@ def tomojax.recon.mlem(
         det_grid: 'tuple[jax.Array, jax.Array] | None' = None,
         out: 'np.ndarray | None' = None,
     ) -> 'tuple[jax.Array | np.ndarray, dict[str, object]]'
-def tomojax.recon.project(
-        geometry: 'ScanGeometry',
-        volume: 'jax.Array | np.ndarray',
-        *,
-        grid: 'Grid | None' = None,
-        devices: 'Device | Sequence[Device] | None' = None,
-    ) -> 'jax.Array'
 def tomojax.recon.sirt(
         geometry: 'Geometry',
         grid: 'Grid',
@@ -681,7 +777,7 @@ def tomojax.recon.sirt(
         det_grid: 'tuple[jax.Array, jax.Array] | None' = None,
         out: 'np.ndarray | None' = None,
     ) -> 'tuple[jax.Array | np.ndarray, dict[str, object]]'
-def tomojax.recon.spdhg_tv(
+def tomojax.recon.spdhg(
         geometry: 'Geometry',
         grid: 'Grid',
         detector: 'Detector',
@@ -695,6 +791,7 @@ def tomojax.recon.spdhg_tv(
     ) -> 'tuple[jnp.ndarray, dict[str, object]]'
 
 # tomojax.io
+class tomojax.io.Inspection
 class tomojax.io.ProjectionDataset(
         projections: 'np.ndarray | None',
         angles: 'np.ndarray',
@@ -710,9 +807,7 @@ class tomojax.io.ProjectionDataset(
         source_path: 'str | None' = None,
         source_format: 'str | None' = None,
         sample_name: 'str | None' = None,
-        _metadata: 'NXTomoMetadata | None' = None,
     ) -> None
-    .copy_metadata(self) -> 'NXTomoMetadata'
     .from_nxtomo(
         cls,
         payload: 'LoadedNXTomo',
@@ -771,7 +866,6 @@ class tomojax.alignment.AlignConfig(
         refine_smoothing: 'float' = 8.0,
         refine_neighbors: 'int' = 5,
     ) -> None
-    .resolved(self, fit: 'tuple[str, ...]', *, cone: 'bool') -> 'AlignConfig'
 
 # tomojax.datasets
 class tomojax.datasets.DetectorModel(
@@ -924,8 +1018,12 @@ def tomojax.datasets.rotated_centered_cube(
         edge_softness: 'float' = 1.0,
     ) -> 'np.ndarray'
 def tomojax.datasets.shepp_logan_3d(nx: 'int', ny: 'int', nz: 'int') -> 'np.ndarray'
-def tomojax.datasets.simulate(cfg: 'SimConfig') -> 'SimulatedData'
-def tomojax.datasets.simulate_to_file(cfg: 'SimConfig', out_path: 'str') -> 'str'
+def tomojax.datasets.simulate(
+        cfg: 'SimConfig',
+        *,
+        grid: 'Grid | None' = None,
+        detector: 'Detector | None' = None,
+    ) -> 'SimulatedData'
 def tomojax.datasets.sphere(
         nx: 'int',
         ny: 'int',

@@ -95,7 +95,7 @@ grid = tj.Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]
 tj.save("preview.nxs", tj.reconstruct(scan, grid=grid))
 ```
 
-On the CLI, `--grid NX NY NZ` resamples the chosen field of view to those voxel counts while preserving physical extent (in Python, `scan.grid.resampled((NX, NY, NZ))`).
+On the CLI, `--grid NX NY NZ` resamples the chosen field of view to those voxel counts while preserving physical extent (in Python, `scan.grid.resampled((NZ, NY, NX))`, matching `grid.shape`).
 
 ### Lens distortion and Paganin phase retrieval
 
@@ -112,7 +112,7 @@ scan = tj.load_frames("raw.nxs").corrected(step)
 scan = scan.cropped(slice(100, 900), slice(None))  # crop after Paganin, not before
 ```
 
-Because Paganin convolves neighbouring pixels, crop after phase retrieval (or correct a padded window) rather than cropping raw frames first. Transmission steps run in the order given: put `Zingers` first, then `RadialDistortion`, then `Paganin`. On the CLI, pass `--paganin 100,0.1,25,0.65e-6` to `tomojax correct` (an expert option omitted from `--help`).
+Because Paganin convolves neighbouring pixels, crop after phase retrieval (or correct a padded window) rather than cropping raw frames first. Transmission steps run in the order given: put `Zingers` first, then `RadialDistortion`, then `Paganin`. On the CLI, pass `--paganin 100,0.1,25,0.65e-6` or a `--config` TOML file to `tomojax correct` (`tomojax correct --config-keys` lists every key).
 
 ### TIFF frames
 
@@ -122,7 +122,7 @@ For TIFF stacks with flat/dark folders and angle sidecars, see [preparing TIFF d
 
 ```bash
 tomojax reconstruct corrected.nxs -o recon.nxs --manifest recon-manifest.json
-tomojax inspect recon.nxs --preview previews
+tomojax inspect recon.nxs --preview-dir previews
 ```
 
 The default `--method auto` chooses a solver from the geometry:
@@ -132,7 +132,7 @@ The default `--method auto` chooses a solver from the geometry:
 - Single-arrangement `ConeGeometry` -> `fbp` (dispatched to FDK)
 - Multi-orbit `ConeSegments` -> `cgls`
 
-Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview` writes display-scaled PNGs (`slice_z.png`, `slice_y.png`, `slice_x.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
+Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview-dir` writes display-scaled PNGs (`slice_z.png`, `slice_y.png`, `slice_x.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
 
 ### Region and grid options
 
@@ -144,7 +144,7 @@ With an explicit `--method`, `--region auto` (default) crops to the detector fie
 
 ### Expert settings and truncated scans
 
-Pass solver-specific settings via config classes from `tomojax.recon` (`FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig`, `SIRTConfig`, `MLEMConfig`) or a `--config` TOML file alongside an explicit `--method` (`tomojax reconstruct --config-keys` lists all keys):
+Pass solver-specific settings via config classes from `tomojax.recon` (`FBPConfig`, `FourierConfig`, `CGLSConfig`, `FISTAConfig`, `SPDHGConfig`, `SIRTConfig`, `MLEMConfig`) or a `--config` TOML file alongside an explicit `--method` (`tomojax reconstruct --method fista --config-keys` lists one method's keys):
 
 ```bash
 printf 'regularizer = "huber_tv"\nhuber_delta = 0.01\n' > huber.toml
@@ -154,9 +154,9 @@ tomojax reconstruct corrected.nxs -o tv.nxs --method fista --config huber.toml
 In Python:
 
 ```python
-from tomojax.recon import FistaConfig
+from tomojax.recon import FISTAConfig
 
-recon = tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv", huber_delta=0.01))
+recon = tj.reconstruct(scan, "fista", config=FISTAConfig(regularizer="huber_tv", huber_delta=0.01))
 ```
 
 Direct keywords (such as `iterations=100`) override fields of the same name in `config`.

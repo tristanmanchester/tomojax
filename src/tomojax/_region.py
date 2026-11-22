@@ -15,8 +15,7 @@ from scipy.signal.windows import tukey
 from tomojax._scan import Scan, describe, with_grid
 from tomojax.backends import device_free_memory_bytes
 from tomojax.geometry import Grid, stack_view_poses
-from tomojax.recon import backproject, project
-from tomojax.recon.api import reconstruct_arrays
+from tomojax.recon.api import backproject, project, reconstruct_arrays
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -309,7 +308,7 @@ def estimate_region(scan: Scan) -> RegionEstimate:
     >>> import tomojax as tj
     >>> scan = tj.load("laminography.nxs")  # doctest: +SKIP
     >>> region = tj.estimate_region(scan)  # doctest: +SKIP
-    >>> recon = tj.reconstruct(region.scan, "cgls")  # doctest: +SKIP
+    >>> recon = tj.reconstruct(scan, "cgls", region=region)  # doctest: +SKIP
     """
     if describe(scan.geometry)[0] != "lamino":
         raise ValueError("estimate_region requires a calibrated laminography scan")

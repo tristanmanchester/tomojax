@@ -18,7 +18,6 @@ from tomojax.datasets._impl.simulate import (
     SimulatedData,
     make_phantom,
     simulate,
-    simulate_to_file,
 )
 
 __all__ = [
@@ -35,6 +34,5 @@ __all__ = [
     "rotated_centered_cube",
     "shepp_logan_3d",
     "simulate",
-    "simulate_to_file",
     "sphere",
 ]

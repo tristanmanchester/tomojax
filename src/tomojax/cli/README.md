@@ -4,17 +4,20 @@
 
 ## Conventions
 
-Every command has the shape `tomojax <command> INPUT -o OUTPUT [options]`
-(`simulate` takes no input).
-
-- An existing output is refused unless `--force` is given.
+- Commands that produce a file (`correct`, `reconstruct`, `align`, `export`) take
+  `INPUT -o OUTPUT [options]`.
+- `inspect INPUT [--json] [--preview-dir DIR]` reports on a dataset without `-o`.
+- `simulate -o OUTPUT [options]` generates a synthetic scan without an input.
+- An existing output is refused unless `--force` is given, and an output may never
+  collide with an input or another output of the same run.
 - `tomojax <command> --help` lists the command's options. Expert settings are
   not on the help page: put them in a TOML file and pass it with
-  `--config FILE` (`reconstruct`, `align` and `simulate`).
+  `--config FILE` (`correct`, `reconstruct`, `align` and `simulate`).
   `tomojax <command> --config-keys` lists the keys a file may set, with their
-  defaults; explicit command-line options override the file.
+  defaults (`tomojax reconstruct --method NAME --config-keys` filters to one method);
+  explicit command-line options override the file.
 - Exit status is 0 on success, 1 on failure (for `inspect`, also when the
-  dataset is invalid) and 2 for a usage error.
+  dataset is invalid or a preview fails) and 2 for a usage error.
 - `tomojax --version` prints the version.
 
 The options match the Python API's keywords: `tomojax reconstruct --method cgls
@@ -29,31 +32,29 @@ released in the same joint solver; it takes one or more of `center`, `translatio
 ## Commands
 
 - `inspect`: `tj.inspect`, describing a dataset and checking that it can be reconstructed;
-  `--json` prints the report as JSON, and `--preview DIR` writes PNGs of the
+  `--json` prints the report as JSON, and `--preview-dir DIR` writes PNGs of the
   central projection, when the file holds projections, and of a reconstruction's
   central slices.
-- `load`: `tj.load`, then `tj.save`, for every input `tj.load` reads (raw frames,
-  corrected with dark, flat and `-log`, or a dataset). Its flags supply what the
-  file lacks under `tj.load`'s names: `--flats`, `--darks`, `--angles`,
-  `--pixel-size`, `--detector-center`, `--apply-poses`, and `--geometry` with
-  `--tilt` and the cone's distances and detector angles.
-- `correct`: the optional corrections (`--zingers`, `--paganin`, `--stripes`,
-  `--rings`, `--reject-views`) and `--views`, `--crop` and `--binning`. On raw frames
-  every step runs and the same input flags as `load` apply; on a dataset of line
-  integrals only the steps that act on them do.
-- `reconstruct`: choose automatically, or reconstruct with Fourier, FBP/FDK, CGLS, FISTA-TV
-  or SPDHG-TV with `tj.reconstruct`, with the poses saved in the input unless
-  `--no-apply-poses`. Its expert settings are fields of the method's configuration
-  class (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`, `FistaConfig` or
-  `SPDHGConfig`), each replacing that field of the class's defaults, as
-  `tj.reconstruct(config=...)` takes them; `--region cyl` zeroes the volume
-  outside the cylinder every view sees. The output holds the volume, its geometry and
-  record, and names the input projections; `--include-scan` keeps them too.
+- `correct`: import raw acquisitions or datasets, supply missing metadata (`--flats`,
+  `--darks`, `--angles`, `--pixel-size`, `--detector-center`, `--geometry`, `--tilt`,
+  `--apply-poses` and cone parameters), and apply optional corrections (`--zingers`,
+  `--paganin`, `--stripes`, `--rings`, `--reject-views`) and `--views`, `--crop`
+  and `--binning`. On raw frames every step runs; on a dataset of line integrals
+  only the steps that act on them do.
+- `reconstruct`: choose automatically, or reconstruct with Fourier, FBP/FDK, CGLS,
+  FISTA-TV, SPDHG-TV, SIRT or MLEM with `tj.reconstruct`, with the poses saved in
+  the input unless `--no-apply-poses`. Its expert settings are fields of the method's
+  configuration class (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`,
+  `FISTAConfig`, `SPDHGConfig`, `SIRTConfig` or `MLEMConfig`), each replacing that
+  field of the class's defaults, as `tj.reconstruct(config=...)` takes them;
+  `--region cyl` zeroes the volume outside the cylinder every view sees. The output
+  holds the volume, its geometry and record, and names the input projections;
+  `--include-scan` keeps them too.
 - `align`: jointly estimate the image and the named geometry corrections with `tj.align`, on
   top of the poses saved in the input unless `--no-apply-poses`. `--fit center` fits one shared centre
   (two for cone data); `--fit translations tilt roll` adds shared setup angles to per-view shifts.
   `--iterations`, `--image-iterations`, `--tolerance`, `--interpolation` and `--resolution`
-  are `tj.align`'s keywords; a `--config` file sets the other `tj.AlignConfig` fields.
+  are `tj.align`'s keywords; a `--config` file sets the other `tomojax.alignment.AlignConfig` fields.
   `--method opposite-views` estimates `--fit center` from near-opposite views without an image.
   `--fit translations rotations` adds per-view sample rotations. `--grid` sets image sampling.
 - `export`: `tj.export`, writing a reconstruction as TIFF slices, or as one raw file when
@@ -67,7 +68,7 @@ tomojax correct scan/scan.xtekct --darks dark.tif -o scan.nxs
 tomojax inspect scan.nxs
 tomojax align scan.nxs -o aligned.nxs --fit center roll
 tomojax reconstruct aligned.nxs -o recon.nxs
-tomojax inspect recon.nxs --preview previews
+tomojax inspect recon.nxs --preview-dir previews
 tomojax export recon.nxs -o slices/
 ```
 

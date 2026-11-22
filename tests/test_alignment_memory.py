@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
+from tomojax.alignment import AlignConfig
 
 # check-public-imports: allow-private
 from tomojax.alignment._joint import _fit
@@ -93,7 +94,7 @@ def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
     monkeypatch.setattr(jax, "jit", recording)
     monkeypatch.setattr(_fit, "Operators", made)
     projections, nominal, grid, detector = _scan(views, nu, nv, n, nz)
-    config = tj.AlignConfig(levels=(1,), iterations=2)
+    config = AlignConfig(levels=(1,), iterations=2)
     _fit.fit_poses(projections, nominal, grid, detector, keep_grid=True, config=config)
     monkeypatch.setattr(jax, "jit", jit)
     monkeypatch.setattr(_fit, "Operators", operators)

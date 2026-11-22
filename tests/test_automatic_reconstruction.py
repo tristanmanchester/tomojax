@@ -55,8 +55,33 @@ def test_explicit_method_bypasses_automatic_geometry_policy():
     scan = tj.Scan(np.ones((12, 3, 8), np.float32), geometry)
     result = tj.reconstruct(scan, "fbp", config=FBPConfig())
     assert "automatic" not in result.info and result.scan is scan
-    with pytest.raises(ValueError, match="method 'fbp' does not take iterations"):
-        tj.reconstruct(scan, iterations=3)
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        {"iterations": 3},
+        {"config": FBPConfig()},
+        {"filter": "hann"},
+        {"tv_weight": 0.0},
+        {"nonnegative": False},
+        {"warm_start": True},
+        {"seed": 0},
+        {"devices": ()},
+    ],
+)
+def test_auto_rejects_method_specific_options_before_choosing_a_method(option, monkeypatch):
+    from tomojax import _workflow  # check-public-imports: allow-private
+
+    def unexpected_dispatch(*args, **kwargs):
+        pytest.fail("invalid options reached automatic dispatch")
+
+    monkeypatch.setattr(_workflow, "_automatic_reconstruct", unexpected_dispatch)
+    grid, detector = tj.Grid(4, 4, 2, 1, 1, 1), tj.Detector(8, 2, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, [0, 90])
+    scan = tj.Scan(np.ones((2, 2, 8), np.float32), geometry)
+    with pytest.raises(ValueError, match=f"method='auto'.*{next(iter(option))}"):
+        tj.reconstruct(scan, "auto", **option)
 
 
 @pytest.mark.parametrize("status", [None, "recorded", "provided", "inferred", "not_recorded"])
@@ -91,8 +116,8 @@ def test_automatic_segmented_cone_preserves_calibration():
         )
     )
     scan = tj.Scan(np.ones((2, 5, 8), np.float32), geometry)
-    expected = tj.reconstruct(scan, "cgls", iterations=2)
-    actual = tj.reconstruct(scan, iterations=2)
+    expected = tj.reconstruct(scan, "cgls")
+    actual = tj.reconstruct(scan)
     np.testing.assert_allclose(actual.volume, expected.volume, rtol=2e-6, atol=1e-7)
     assert actual.scan is scan and actual.method == "cgls"
     assert actual.info["automatic"]["status"] == "limited"
@@ -226,4 +251,4 @@ def test_one_orbit_with_per_view_detector_offsets_reconstructs_with_fdk():
         )
     )
     blank = tj.Scan(np.zeros((len(_ANGLES), 24, 24), np.float32), two)
-    assert tj.reconstruct(blank, iterations=1).method == "cgls"
+    assert tj.reconstruct(blank).method == "cgls"

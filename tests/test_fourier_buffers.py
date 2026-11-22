@@ -80,11 +80,11 @@ def test_async_fourier_owns_upload_and_retained_outputs_without_global_watchers(
 
 def test_fourier_output_mapping_follows_escaped_buffer_views():
     from tomojax.geometry import Detector, Grid, ParallelGeometry
-    from tomojax.recon import FourierConfig, fourier_reconstruct
+    from tomojax.recon import FourierConfig, fourier
 
     grid, detector = Grid(4, 5, 2, 1, 1, 1), Detector(7, 2, 1, 1)
     geometry = ParallelGeometry(grid, detector, [0.0, 90.0])
-    output = fourier_reconstruct(
+    output = fourier(
         geometry,
         grid,
         detector,

@@ -9,7 +9,7 @@ import pytest
 
 from tomojax.forward import project_joseph
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
-from tomojax.recon import SPDHGConfig, spdhg_tv
+from tomojax.recon import SPDHGConfig, spdhg
 from tomojax.recon.spdhg_tv import _prox_fstar_l2
 
 
@@ -137,7 +137,7 @@ def test_weighted_data_masked_outliers_keep_dense_reconstruction_and_truth_error
     expected = np.linalg.solve(normal, matrix.T @ (weights * data.astype(np.float64)))
     assert np.linalg.cond(normal) < 100
     assert np.linalg.norm(expected - truth) / np.linalg.norm(truth) < 0.01
-    volume, info = spdhg_tv(
+    volume, info = spdhg(
         geometry,
         grid,
         detector,
@@ -145,7 +145,7 @@ def test_weighted_data_masked_outliers_keep_dense_reconstruction_and_truth_error
         weights=weights.reshape((3, 3, 4)),
         config=SPDHGConfig(
             iterations=2000,
-            views_per_batch=2,
+            views_per_block=2,
             tv_weight=0,
             log_every=2000,
             backend="jax",

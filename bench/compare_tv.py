@@ -43,7 +43,7 @@ if which == "tomojax":
     import jax.numpy as jnp
 
     from tomojax.geometry import ParallelGeometry
-    from tomojax.recon import CGLSConfig, FistaConfig, cgls, fista_tv
+    from tomojax.recon import CGLSConfig, FISTAConfig, cgls, fista
 
     geo = ParallelGeometry(case.grid, case.detector, case.angles)
 
@@ -54,12 +54,12 @@ if which == "tomojax":
 
     # tv_weight is dimensionless (relative to the data contrast); None is automatic.
     for lam in [None, 1e-5, 3e-5, 1e-4, 3e-4]:
-        cfg = FistaConfig(iterations=iters, tv_weight=lam, nonnegative=True)
-        solve(fista_tv, cfg)
+        cfg = FISTAConfig(iterations=iters, tv_weight=lam, lower_bound=0.0)
+        solve(fista, cfg)
         t = time.perf_counter()
-        x = solve(fista_tv, cfg)
+        x = solve(fista, cfg)
         dt = time.perf_counter() - t
-        results.append(("tomojax fista_tv", lam, err(x), dt))
+        results.append(("tomojax fista", lam, err(x), dt))
     for it in [5, 10, 20]:
         cfg = CGLSConfig(iterations=it, tolerance=0)
         solve(cgls, cfg)

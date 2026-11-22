@@ -116,7 +116,7 @@ def _align_ez_to_axis(axis_unit: jnp.ndarray) -> jnp.ndarray:
 @jax.jit
 def axis_pose_stack(
     angles: object,
-    axis_unit_lab: object,
+    axis_unit: object,
 ) -> jnp.ndarray:
     """Build a traced-safe stack of world-from-object poses for an axis direction.
 
@@ -127,7 +127,7 @@ def axis_pose_stack(
     ----------
     angles : array-like
         One-dimensional view angles in degrees.
-    axis_unit_lab : array-like
+    axis_unit : array-like
         Three-component lab-frame rotation axis.
 
     Returns
@@ -136,7 +136,7 @@ def axis_pose_stack(
         Float32 world-from-object transforms, shape (views, 4, 4).
     """
     thetas = jnp.asarray(angles, dtype=jnp.float32)
-    axis = jnp.asarray(axis_unit_lab, dtype=jnp.float32)
+    axis = jnp.asarray(axis_unit, dtype=jnp.float32)
     S = _align_ez_to_axis(axis)
 
     def one(theta_deg: jnp.ndarray) -> jnp.ndarray:

@@ -84,10 +84,9 @@ def use_owned_fista(grid: Grid, projections, runtime: FistaRuntime) -> bool:
     return (
         cfg.iterations > 0
         and runtime.x0 is None
-        and cfg.nonnegative
         and cfg.tv_weight == 0
         and runtime.volume_mask is None
-        and constraints.lower_bound in (None, 0)
+        and constraints.lower_bound == 0.0
         and constraints.upper_bound is None
         and not runtime.stream
         and runtime.split is None

@@ -48,6 +48,7 @@ MODULES = [
     ("tomojax.alignment.api", "alignment-api"),
     ("tomojax.geometry.api", "geometry-api"),
     ("tomojax.forward.api", "forward-api"),
+    ("tomojax.corrections.api", "corrections-api"),
 ]
 # The workflow names in reading order; the rest of a module follows its __all__.
 FIRST = [
@@ -59,10 +60,12 @@ FIRST = [
     "backproject",
     "save",
     "load_reconstruction",
+    "load_alignment",
     "Scan",
     "Frames",
     "Reconstruction",
     "Alignment",
+    "Simulation",
 ]
 SKIP = {"__version__"}
 # NumPy section titles by how their body is laid out.

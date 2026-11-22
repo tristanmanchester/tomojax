@@ -128,10 +128,10 @@ def resolve_spdhg_step_sizes(
             grid=grid,
             detector=detector,
             projector=projector,
-            views_per_batch=config.views_per_batch,
+            views_per_batch=config.views_per_block,
         )
         row, column = float(row), float(column)
-        batch = min(config.views_per_batch, poses.shape[0])
+        batch = min(config.views_per_block, poses.shape[0])
         blocks = (poses.shape[0] + batch - 1) // batch
         observed = float(metric.observed_count)
         mean_weight = float(metric.weight_sum) / observed if observed else 1.0

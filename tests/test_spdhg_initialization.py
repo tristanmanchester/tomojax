@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.recon import SPDHGConfig, spdhg_tv
+from tomojax.recon import SPDHGConfig, spdhg
 
 SHAPE = (2, 2, 3)
 
@@ -18,7 +18,7 @@ def _problem():
     detector = tj.Detector(5, 4, 0.7, 0.9, (0.17, -0.23))
     geometry = tj.ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
     initial = np.linspace(-0.4, 0.8, 12).astype(np.float32).reshape(SHAPE)
-    support = (np.arange(12) % 3 != 0).reshape(SHAPE).astype(np.float32)
+    support = (np.arange(12) % 3 != 0).reshape(SHAPE)
     truth = np.maximum(initial, 0) * support
     return grid, detector, geometry, initial, support, truth
 
@@ -44,7 +44,7 @@ def test_spdhg_initial_feasibility_and_first_step_match_dense(iterations, theta)
         new_adjoint = matrix.T @ dual
         extrapolated = new_adjoint + theta * (new_adjoint - adjoint)
         adjoint = new_adjoint
-    volume, info = spdhg_tv(
+    volume, info = spdhg(
         geometry,
         grid,
         detector,
@@ -57,8 +57,8 @@ def test_spdhg_initial_feasibility_and_first_step_match_dense(iterations, theta)
             sigma_tv=0.2,
             theta=theta,
             tv_weight=0,
-            views_per_batch=3,
-            nonnegative=True,
+            views_per_block=3,
+            lower_bound=0.0,
             support=support,
         ),
     )
@@ -76,7 +76,7 @@ def test_public_spdhg_warm_start_obeys_support_even_with_no_iterations():
         scan,
         "spdhg",
         warm_start=True,
-        config=SPDHGConfig(iterations=0, tv_weight=0, nonnegative=True, support=support),
+        config=SPDHGConfig(iterations=0, tv_weight=0, lower_bound=0.0, support=support),
     )
     np.testing.assert_array_equal(result.volume, np.maximum(seed, 0) * support)
     assert result.info["warm_start"] is True

@@ -36,10 +36,9 @@ def _stored_dataset():
     return dataset, metadata
 
 
-@pytest.mark.parametrize("method", ["copy_metadata", "to_nxtomo_metadata"])
 @pytest.mark.parametrize("arrays", [False, True])
 @pytest.mark.parametrize("fortran", [False, True])
-def test_metadata_uses_current_owned_arrays_and_preserves_scanner_fields(method, arrays, fortran):
+def test_metadata_uses_current_owned_arrays_and_preserves_scanner_fields(arrays, fortran):
     dataset, stored = _stored_dataset()
     dataset.angles = np.asarray([-31.123456789, 311.234567891])
     dataset.volume = np.arange(24, dtype=np.float32).reshape(2, 4, 3) if arrays else None
@@ -51,7 +50,7 @@ def test_metadata_uses_current_owned_arrays_and_preserves_scanner_fields(method,
     dataset.align_gauge = {"pose_translation_frame": "detector"}
     dataset.misalign_spec = {"source": "current provenance"}
     dataset.sample_name = "current sample"
-    copied = getattr(dataset, method)()
+    copied = dataset.to_nxtomo_metadata()
     for field in ("angles", "volume", "align_params", "angle_offset"):
         source, value = getattr(dataset, field), getattr(copied, field)
         if source is None:
@@ -118,12 +117,11 @@ def test_resaved_reconstruction_uses_edited_volume_and_keeps_known_image(tmp_pat
     assert np.linalg.norm(again - truth) / np.linalg.norm(truth) < 2e-4
 
 
-@pytest.mark.parametrize("method", ["copy_metadata", "to_nxtomo_metadata"])
-def test_metadata_copies_own_their_nested_dictionaries(method):
+def test_metadata_copies_own_their_nested_dictionaries():
     dataset, _ = _stored_dataset()
     dataset.geometry_metadata = {"acquisition": {"axis_status": "recorded", "paths": ["a"]}}
     dataset.align_gauge = {"pose_translation_frame": "object", "fixed": {"views": [0]}}
-    copied = getattr(dataset, method)()
+    copied = dataset.to_nxtomo_metadata()
     copied.geometry_meta["acquisition"]["axis_status"] = "changed"
     copied.geometry_meta["acquisition"]["paths"].append("b")
     copied.align_gauge["fixed"]["views"].append(1)

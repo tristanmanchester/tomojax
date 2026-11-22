@@ -280,6 +280,7 @@ _PEAK_PROBE = """
 import json, sys
 import jax, jax.numpy as jnp, numpy as np
 import tomojax as tj
+from tomojax.alignment import AlignConfig
 from tomojax.alignment._integration import cone_frames
 from tomojax.alignment._joint import _fit, _solver
 from tomojax.geometry import stack_view_poses
@@ -288,7 +289,7 @@ n, nz, nu, nv, views = (int(a) for a in sys.argv[1:6])
 cone, stage = sys.argv[6] == "cone", sys.argv[7]
 # One level, so the process's peak is the level's; for "fine", a short coarse level first,
 # whose volume the fine level (measured, being the last and larger) starts from.
-config = tj.AlignConfig(levels=(2, 1), coarse_iterations=2) if stage == "fine" else tj.AlignConfig(levels=(1,))
+config = AlignConfig(levels=(2, 1), coarse_iterations=2) if stage == "fine" else AlignConfig(levels=(1,))
 dev, seen = jax.devices()[0], {}
 solve, refine = _solver.solve, _fit.refine
 

@@ -741,7 +741,7 @@ call. The same policy applies to all sizes, suites and supported geometries.
 The final partial slab uses the same compiled shape. Tilted geometry is recorded
 as unsupported, and no case-specific slab tuning is performed in these records.
 
-`tomojax_fourier_cupy` calls the opt-in public `fourier_reconstruct` API with
+`tomojax_fourier_cupy` calls the opt-in public `tomojax.recon.fourier` API with
 16 output slices per batch for every case. It uses six-point Kaiser–Bessel
 radial interpolation, linear angular interpolation and a detector-Nyquist disk
 cutoff. Host slab assembly, FFT/interpolation work, transfers, output writes and

@@ -130,9 +130,9 @@ def solve_tomojax(
         else ParallelGeometry(case.grid, case.detector, case.angles)
     )
     if method == "tomojax_fourier_cupy":
-        from tomojax.recon import FourierConfig, fourier_reconstruct
+        from tomojax.recon import FourierConfig, fourier
 
-        result = fourier_reconstruct(
+        result = fourier(
             geometry,
             case.grid,
             case.detector,
@@ -149,14 +149,16 @@ def solve_tomojax(
             "positivity": False,
         }
     if method == "tomojax_fbp_host_cuda":
-        from tomojax.recon import FBPHostConfig, fbp_host
+        from tomojax.recon import FBPConfig, FBPHostConfig, fbp_host
 
         result = fbp_host(
             geometry,
             case.grid,
             case.detector,
             case.analytic,
-            config=FBPHostConfig(slices_per_batch=16, views_per_batch=32, backend="cuda"),
+            config=FBPHostConfig(
+                slices_per_batch=16, views_per_batch=32, fbp=FBPConfig(backend="cuda")
+            ),
         )
         return result, {
             "backend": "Cuda_FBP_host_slabs",
@@ -244,16 +246,16 @@ def solve_tomojax(
         }
     import jax.numpy as jnp
 
-    from tomojax.recon import FistaConfig, fista_tv
+    from tomojax.recon import FISTAConfig, fista
 
-    config = FistaConfig(
+    config = FISTAConfig(
         iterations=iterations,
         tv_weight=0,
         regularizer="huber_tv",
-        nonnegative=False,
+        lower_bound=None,
         views_per_batch=batch,
     )
-    result, info = fista_tv(
+    result, info = fista(
         geometry, case.grid, case.detector, jnp.asarray(case.analytic), config=config
     )
     return np.asarray(result), {

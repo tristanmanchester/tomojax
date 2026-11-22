@@ -56,11 +56,10 @@ if TYPE_CHECKING:
 @functools.partial(
     jax.tree_util.register_dataclass,
     data_fields=[],
-    meta_fields=["nonnegative", "lower_bound", "upper_bound"],
+    meta_fields=["lower_bound", "upper_bound"],
 )
 @dataclass(frozen=True)
 class _FistaConstraints:
-    nonnegative: bool
     lower_bound: float | None
     upper_bound: float | None
 
@@ -70,7 +69,7 @@ class _FistaConstraints:
 class FistaRuntime:
     """Resolved solver state shared with the initialization module."""
 
-    config: FistaConfig
+    config: FISTAConfig
     regularizer: Regularizer = field(metadata={"static": True})
     metric: TVMetric | None
     noise_scale: jax.Array | float | None
@@ -104,7 +103,7 @@ class FistaRuntime:
 
 
 @dataclass(kw_only=True)
-class FistaConfig:
+class FISTAConfig:
     """Configuration for public FISTA/TV reconstruction.
 
     ``backend`` follows :class:`CGLSConfig`: ``"auto"`` projects with CUDA on
@@ -182,16 +181,15 @@ class FistaConfig:
         Number of power iterations used to estimate the data-gradient Lipschitz
         constant. Default is 3.
     support : array-like | None, optional
-        Volume support weights, broadcastable to the grid. Zero entries fix the
-        reconstructed voxel to zero, including at initialization and in every
-        proximal update. Bounds apply only at nonzero entries; zero support wins
-        over a positive lower bound. Nonzero fractional weights multiply the
-        forward model, not the reconstructed iterates. TV differences across
-        the support boundary remain active. None uses the entire grid.
-    nonnegative : bool, optional
-        Constrain the reconstruction to nonnegative values. Default is False.
+        Boolean volume support mask, broadcastable to the grid. False (zero)
+        entries fix the reconstructed voxel to zero, including at initialization
+        and in every proximal update; True (nonzero) entries are included.
+        Bounds apply only at included entries; exclusion wins over a positive
+        lower bound. TV differences across the support boundary remain active.
+        None uses the entire grid.
     lower_bound : float | None, optional
-        Lower voxel-value bound, or None for no explicit lower bound.
+        Lower voxel-value bound (set ``0.0`` for nonnegativity), or None for no
+        lower bound.
     upper_bound : float | None, optional
         Upper voxel-value bound, or None for no upper bound.
     backend : ProjectorBackend, optional
@@ -217,7 +215,6 @@ class FistaConfig:
     patience: int = 0
     power_iterations: int = 3
     support: jnp.ndarray | None = None
-    nonnegative: bool = False
     lower_bound: float | None = None
     upper_bound: float | None = None
     backend: ProjectorBackend = "auto"
@@ -229,9 +226,9 @@ class FistaConfig:
 
 
 jax.tree_util.register_dataclass(
-    FistaConfig,
+    FISTAConfig,
     data_fields=["support"],
-    meta_fields=[field.name for field in fields(FistaConfig) if field.name != "support"],
+    meta_fields=[field.name for field in fields(FISTAConfig) if field.name != "support"],
 )
 
 
@@ -242,18 +239,20 @@ def _prepare_fista_runtime(
     projections: jnp.ndarray | np.ndarray,
     *,
     init_x: jnp.ndarray | None,
-    config: FistaConfig | None,
+    config: FISTAConfig | None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> FistaRuntime:
-    cfg = FistaConfig() if config is None else config
-    nonnegative, lower_bound, upper_bound = validate_fista_config(cfg)
-    volume_mask = None if cfg.support is None else jnp.asarray(cfg.support, jnp.float32)
+    cfg = FISTAConfig() if config is None else config
+    lower_bound, upper_bound = validate_fista_config(cfg)
+    volume_mask = (
+        None if cfg.support is None else jnp.asarray(cfg.support, bool).astype(jnp.float32)
+    )
     regularizer = validate_regularizer(
         cfg.regularizer,
         cfg.huber_delta,
-        context="fista_tv config",
+        context="fista config",
     )
-    constraints = _FistaConstraints(nonnegative, lower_bound, upper_bound)
+    constraints = _FistaConstraints(lower_bound, upper_bound)
     validate_grid(grid, "fista_tv grid")
     n_views, _, _ = validate_projection_stack(
         projections,
@@ -326,7 +325,7 @@ def _prepare_fista_runtime(
 
 
 def _batched_projector(
-    cfg: FistaConfig,
+    cfg: FISTAConfig,
     n_views: int,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     geometry: object,
@@ -416,7 +415,7 @@ def _feasible_volume(x: jax.Array, runtime: FistaRuntime) -> jax.Array:
     constraints = runtime.constraints
     return project_box(
         x,
-        nonnegative=constraints.nonnegative,
+        nonnegative=False,
         lower_bound=constraints.lower_bound,
         upper_bound=constraints.upper_bound,
         support=runtime.volume_mask,
@@ -440,7 +439,7 @@ def _fista_proximal(
         support=runtime.volume_mask,
         gradient_scale_xyz=runtime.metric.gradient_scale_xyz,
         iterations=int(cfg.tv_prox_iterations),
-        nonnegative=constraints.nonnegative,
+        nonnegative=False,
         lower_bound=constraints.lower_bound,
         upper_bound=constraints.upper_bound,
     )
@@ -542,14 +541,14 @@ def _run_fista_scan(
     return result, jnp.asarray(L, jnp.float32), runtime.metric
 
 
-def fista_tv(
+def fista(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray | np.ndarray,
     *,
     init_x: jnp.ndarray | None = None,
-    config: FistaConfig | None = None,
+    config: FISTAConfig | None = None,
     callback: LossCallback | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     out: np.ndarray | None = None,
@@ -574,8 +573,8 @@ def fista_tv(
         Measured line integrals with shape ``(views, detector.nv, detector.nu)``.
     init_x : array-like or None, optional
         Initial volume of shape ``(nz, ny, nx)``; None starts from zero.
-    config : FistaConfig or None, optional
-        Solver settings. None uses FistaConfig defaults.
+    config : FISTAConfig or None, optional
+        Solver settings. None uses FISTAConfig defaults.
     callback : callable or None, optional
         Callback receiving ``(step, loss)`` at the first and last logged samples.
     det_grid : tuple of array-like or None, optional
@@ -605,17 +604,17 @@ def fista_tv(
     --------
     >>> import numpy as np
     >>> import tomojax as tj
-    >>> from tomojax.recon import fista_tv, FistaConfig, project
+    >>> from tomojax.recon import FISTAConfig, fista
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
-    >>> volume, info = fista_tv(
+    >>> data = tj.project(geometry, np.ones((1, 4, 4), np.float32))
+    >>> volume, info = fista(
     ...     geometry,
     ...     geometry.grid,
     ...     geometry.detector,
     ...     data,
-    ...     config=FistaConfig(iterations=1),
+    ...     config=FISTAConfig(iterations=1),
     ... )
     >>> volume.shape
     (1, 4, 4)

@@ -113,8 +113,8 @@ class Grid:
     vx: float
     vy: float
     vz: float
-    vol_origin: Vec3 | None = None
-    vol_center: Vec3 | None = None
+    vol_origin: Vec3 | None = field(default=None, kw_only=True)
+    vol_center: Vec3 | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         _plain_numbers(self, ("nx", "ny", "nz"), ("vx", "vy", "vz"))
@@ -131,6 +131,17 @@ class Grid:
                 _coerce_fixed_tuple("vol_center", self.vol_center, 3),
             )
 
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        """Volume array shape ``(nz, ny, nx)`` in NumPy order.
+
+        Returns
+        -------
+        tuple of int
+            Voxel counts ``(nz, ny, nx)`` matching volume arrays on this grid.
+        """
+        return (self.nz, self.ny, self.nx)
+
     def resampled(self, shape: tuple[int, int, int]) -> Grid:
         """Return a grid with new voxel counts and the same physical extent.
 
@@ -141,7 +152,8 @@ class Grid:
         Parameters
         ----------
         shape : tuple of int
-            Positive voxel counts ``(nx, ny, nz)`` for the returned grid.
+            Positive voxel counts ``(nz, ny, nx)`` in NumPy volume order,
+            matching :attr:`shape`.
 
         Returns
         -------
@@ -157,10 +169,10 @@ class Grid:
 
         Examples
         --------
-        >>> Grid(100, 80, 60, 0.2, 0.3, 0.4).resampled((50, 40, 30)).vx
+        >>> Grid(100, 80, 60, 0.2, 0.3, 0.4).resampled((30, 40, 50)).vx
         0.4
         """
-        nx, ny, nz = (operator.index(n) for n in shape)
+        nz, ny, nx = (operator.index(n) for n in shape)
         if min(nx, ny, nz) < 1:
             raise ValueError("shape must contain three positive voxel counts")
         if (nx, ny, nz) == (self.nx, self.ny, self.nz):
@@ -183,7 +195,7 @@ class Grid:
         dict
             Grid counts, voxel pitches and any explicit placement, ready for JSON.
         """
-        d = {
+        d: GridDict = {
             "nx": int(self.nx),
             "ny": int(self.ny),
             "nz": int(self.nz),
@@ -196,6 +208,40 @@ class Grid:
         if self.vol_center is not None:
             d["vol_center"] = list(self.vol_center)
         return d
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Grid:
+        """Return the grid that a :meth:`to_dict` mapping describes.
+
+        Parameters
+        ----------
+        data : mapping
+            Grid metadata written by :meth:`to_dict`.
+
+        Returns
+        -------
+        Grid
+            Grid described by the metadata.
+
+        Raises
+        ------
+        KeyError
+            If voxel counts or pitches are missing.
+        TypeError
+            If counts are not integers or placement coordinates are not real numbers.
+        ValueError
+            If a placement vector does not have three components.
+        """
+        return cls(
+            nx=int(data["nx"]),
+            ny=int(data["ny"]),
+            nz=int(data["nz"]),
+            vx=float(data["vx"]),
+            vy=float(data["vy"]),
+            vz=float(data["vz"]),
+            vol_origin=data.get("vol_origin"),
+            vol_center=data.get("vol_center"),
+        )
 
 
 def grid_volume_origin(grid: Grid) -> Vec3:
@@ -229,8 +275,10 @@ def grid_volume_origin(grid: Grid) -> Vec3:
 class Detector:
     """Regular detector plane metadata.
 
-    ``center`` is the detector centre's ``(u, v)`` offset in its plane, in the
-    same physical units as ``du`` and ``dv``.
+    ``center`` is the detector centre's ``(x, z)`` offset in the lab frame, in
+    the same physical units as ``du`` and ``dv``. For an untilted detector this
+    is also the in-plane ``(u, v)`` offset; for a rolled or tilted cone-beam
+    detector, rotations are applied about this displaced centre.
 
     Parameters
     ----------
@@ -239,7 +287,7 @@ class Detector:
     du, dv : float
         Pixel pitches along u and v, in the geometry's physical length unit.
     center : tuple of float, optional
-        Detector-plane (u, v) centre offset in physical units; defaults to zero.
+        Lab-frame (x, z) detector-centre offset in physical units; defaults to zero.
 
     Raises
     ------

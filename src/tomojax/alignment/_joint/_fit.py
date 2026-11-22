@@ -25,7 +25,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.alignment._config import AlignConfig
+from tomojax.alignment._config import AlignConfig, resolve_align_config
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.joseph import validate_plane_geometry
 from tomojax.recon.fista_tv import resolve_tv_metric
@@ -358,7 +358,7 @@ def fit_poses(
         if frames is not None:
             frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
         gauge, constraint = fit_gauge(poses, pose_scales, parameters.fit, detector.center, frames)
-        config = config.resolved(parameters.fit, cone=frames is not None)
+        config = resolve_align_config(config, parameters.fit, cone=frames is not None)
         x = p = None
         order = ViewOrder(len(y0), view_positions)
         prior = None

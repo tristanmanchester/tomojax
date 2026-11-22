@@ -9,7 +9,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax._data import NXTomoMetadata, save_nxtomo
 from tomojax.core.cone import cone_coefficients, cone_project
 from tomojax.core.geometry import (
     ConeBeam,
@@ -35,7 +34,7 @@ from tomojax.datasets._impl.phantoms import (
     shepp_logan_3d,
     sphere,
 )
-from tomojax.recon import project
+from tomojax.recon.api import project
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import DetectorDict, GridDict, ScanGeometry
@@ -108,7 +107,7 @@ class SimConfig:
         Acquisition geometry; default is 'parallel'.
     tilt : float, optional
         Laminography or cone rotation-axis tilt in degrees; default is 30.
-    tilt_about : {'x', 'y'}, optional
+    tilt_about : {'x', 'z'}, optional
         Axis about which the nominal rotation axis is tilted; default is 'x'.
     source_to_axis : float or None, optional
         Cone source-to-axis distance. None uses three times the largest physical
@@ -274,13 +273,24 @@ def _project_phantom(geom: ScanGeometry, vol: jax.Array, beam: ConeBeam | None) 
     )
 
 
-def simulate(cfg: SimConfig) -> SimulatedData:
+def simulate(
+    cfg: SimConfig,
+    *,
+    grid: Grid | None = None,
+    detector: Detector | None = None,
+) -> SimulatedData:
     """Generate projections and metadata from a simulation configuration.
 
     Parameters
     ----------
     cfg : SimConfig
         Phantom, acquisition geometry and optional line-integral artefacts.
+    grid : Grid or None, optional
+        Explicit voxel grid preserving ``vol_origin`` or ``vol_center``; None
+        builds a centred grid from ``cfg``.
+    detector : Detector or None, optional
+        Explicit detector preserving ``center``; None builds a centred detector
+        from ``cfg``.
 
     Returns
     -------
@@ -292,8 +302,12 @@ def simulate(cfg: SimConfig) -> SimulatedData:
     ValueError
         If the phantom, geometry or artefact settings are unsupported.
     """
-    grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz)
-    det = Detector(cfg.nu, cfg.nv, cfg.du, cfg.dv, center=(0.0, 0.0))
+    grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz) if grid is None else grid
+    det = (
+        Detector(cfg.nu, cfg.nv, cfg.du, cfg.dv, center=(0.0, 0.0))
+        if detector is None
+        else detector
+    )
     # Determine total rotation based on geometry unless overridden
     if cfg.rotation is not None:
         total_deg = float(cfg.rotation)
@@ -321,7 +335,7 @@ def simulate(cfg: SimConfig) -> SimulatedData:
         }
     elif cfg.geometry == "cone":
         geometry_type = "cone"
-        extent = max(cfg.nx * cfg.vx, cfg.ny * cfg.vy, cfg.nz * cfg.vz)
+        extent = max(grid.nx * grid.vx, grid.ny * grid.vy, grid.nz * grid.vz)
         sod = 3.0 * extent if cfg.source_to_axis is None else float(cfg.source_to_axis)
         sdd = 1.5 * sod if cfg.source_to_detector is None else float(cfg.source_to_detector)
         beam = ConeBeam(sod, sdd)
@@ -365,39 +379,3 @@ def simulate(cfg: SimConfig) -> SimulatedData:
         "meta": meta,
         "simulation_artefacts": artefact_metadata,
     }
-
-
-def simulate_to_file(cfg: SimConfig, out_path: str) -> str:
-    """Generate a synthetic dataset and save its projections as NXtomo.
-
-    Parameters
-    ----------
-    cfg : SimConfig
-        Phantom, geometry and artefact configuration.
-    out_path : str
-        Destination NXtomo file path.
-
-    Returns
-    -------
-    str
-        Destination path. The file contains projections and metadata, not the phantom.
-
-    Raises
-    ------
-    ValueError
-        If simulation settings are unsupported.
-    """
-    data = simulate(cfg)
-    metadata = NXTomoMetadata.from_dataset(data)
-    metadata.image_key = np.zeros((cfg.n_views,), dtype=np.int32)
-    metadata.frame = "sample"
-    metadata.sample_name = str(cfg.phantom)
-    metadata.source_name = "TomoJAX simulator"
-    metadata.source_type = "simulation"
-    metadata.source_probe = "x-ray"
-    save_nxtomo(
-        out_path,
-        projections=np.asarray(data["projections"]),
-        metadata=metadata,
-    )
-    return out_path

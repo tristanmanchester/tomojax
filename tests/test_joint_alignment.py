@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
+from tomojax.alignment import AlignConfig
 from tomojax.alignment._joint import (  # check-public-imports: allow-private
     EdgeFilter,
     MotionPrior,
@@ -451,7 +452,7 @@ def test_independent_motion_follows_per_view_jitter_and_smooth_motion_does_not()
     before = _landmark_error(nominal, truth, grid)
     errors = {}
     for motion in ("independent", "smooth"):
-        config = tj.AlignConfig(motion=motion)
+        config = AlignConfig(motion=motion)
         _, _, table, _ = fit_poses(projections, nominal, grid, detector, config=config)
         public = np.c_[np.degrees(table[:, :3]), table[:, 3:]]
         estimated = np.asarray(stack_view_poses(empty.with_poses(public).geometry, len(nominal)))

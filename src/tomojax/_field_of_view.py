@@ -52,12 +52,14 @@ def region_grid(
     every view projects onto the detector, with cone magnification, poses, a
     tilted axis and detector roll. None keeps the scan's grid, and a
     :class:`RegionEstimate` gives its own. ``"auto"`` falls back to the scan's
-    grid, with a warning, when no box is seen. ``shape`` resamples the region to
-    new voxel counts, preserving its physical extent.
+    grid, with a warning, when no box is seen. ``shape`` (``(nz, ny, nx)`` in
+    NumPy order) resamples the region to new voxel counts, preserving its
+    physical extent.
     """
     from tomojax._region import RegionEstimate
 
     if isinstance(region, RegionEstimate):
+        _check_estimate_matches_scan(scan, region)
         chosen = region.grid
         return (chosen if shape is None else chosen.resampled(shape)), None
     if region is not None and region not in REGIONS:
@@ -86,22 +88,56 @@ def region_grid(
     return chosen, support
 
 
+def _check_estimate_matches_scan(scan: Scan, estimate: RegionEstimate) -> None:
+    """Reject a ``RegionEstimate`` built from a different scan or geometry."""
+    from tomojax._scan import describe
+
+    ref = estimate.scan
+    same_shape = tuple(scan.projections.shape) == tuple(ref.projections.shape)
+    same_detector = scan.detector == ref.detector
+    same_angles = scan.angles.shape == ref.angles.shape and bool(
+        np.allclose(scan.angles, ref.angles, atol=1e-5, rtol=0.0)
+    )
+    kind_a, meta_a, poses_a, _ = describe(scan.geometry)
+    kind_b, meta_b, poses_b, _ = describe(ref.geometry)
+    same_geom = kind_a == kind_b and meta_a == meta_b
+    same_poses = (poses_a is None and poses_b is None) or (
+        poses_a is not None
+        and poses_b is not None
+        and poses_a[1] == poses_b[1]
+        and bool(np.allclose(poses_a[0], poses_b[0], atol=1e-5, rtol=0.0))
+    )
+    if not (same_shape and same_detector and same_angles and same_geom and same_poses):
+        raise ValueError(
+            "RegionEstimate does not match this scan; pass the scan it was estimated from "
+            "or use estimate.scan"
+        )
+
+
 def cylinder_support(grid: Grid, cylinder: Cylinder) -> np.ndarray:
-    """``(nz, ny, nx)``: 1 inside ``cylinder``, 0 outside."""
+    """``(nz, ny, nx)`` boolean mask: True inside ``cylinder``, False outside."""
     origin = grid_volume_origin(grid)
     x = origin[0] + np.arange(grid.nx) * grid.vx
     y = origin[1] + np.arange(grid.ny) * grid.vy
     tolerance = 8 * np.finfo(np.float64).eps * cylinder.radius
     # hypot avoids squaring physical lengths, which can underflow or overflow.
     inside = np.hypot(x[None, :], y[:, None]) <= cylinder.radius + tolerance
-    return np.broadcast_to(inside.astype(np.float32), (grid.nz, grid.ny, grid.nx)).copy()
+    return np.broadcast_to(inside, (grid.nz, grid.ny, grid.nx)).copy()
 
 
 def zero_outside_cylinder(
-    volume: np.ndarray | jax.Array, grid: Grid, cylinder: Cylinder
+    volume: np.ndarray | jax.Array,
+    grid: Grid,
+    cylinder: Cylinder,
+    *,
+    in_place: bool = False,
 ) -> np.ndarray:
     """``volume`` with the voxels outside ``cylinder`` set to zero."""
-    return np.asarray(volume) * cylinder_support(grid, cylinder)
+    mask = cylinder_support(grid, cylinder)
+    if in_place and isinstance(volume, np.ndarray):
+        volume[~mask] = 0
+        return volume
+    return np.where(mask, np.asarray(volume), 0)
 
 
 def _window(grid: Grid, first: np.ndarray, last: np.ndarray) -> Grid:

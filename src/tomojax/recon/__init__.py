@@ -12,7 +12,6 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from tomojax.recon._operators import Projector, backproject, project
     from tomojax.recon.cgls import CGLSConfig, cgls
     from tomojax.recon.cgls_multires import cgls_multires
     from tomojax.recon.fbp import (
@@ -21,22 +20,19 @@ if TYPE_CHECKING:
     )
     from tomojax.recon.fbp_host import FBPHostConfig, fbp_host
     from tomojax.recon.fdk import FDKConfig, FDKHostConfig, fdk, fdk_host
-    from tomojax.recon.fista_tv import FistaConfig, fista_tv
-    from tomojax.recon.fourier import FourierConfig, fourier_reconstruct
+    from tomojax.recon.fista_tv import FISTAConfig, fista
+    from tomojax.recon.fourier import FourierConfig, fourier
     from tomojax.recon.mlem import MLEMConfig, mlem
     from tomojax.recon.sirt import SIRTConfig, sirt
-    from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
+    from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg
 
 _SOURCES = {
-    "Projector": "_operators",
-    "backproject": "_operators",
-    "project": "_operators",
     "CGLSConfig": "cgls",
     "FBPConfig": "fbp",
     "FBPHostConfig": "fbp_host",
     "FDKConfig": "fdk",
     "FDKHostConfig": "fdk",
-    "FistaConfig": "fista_tv",
+    "FISTAConfig": "fista_tv",
     "FourierConfig": "fourier",
     "MLEMConfig": "mlem",
     "mlem": "mlem",
@@ -49,9 +45,9 @@ _SOURCES = {
     "fbp_host": "fbp_host",
     "fdk": "fdk",
     "fdk_host": "fdk",
-    "fista_tv": "fista_tv",
-    "fourier_reconstruct": "fourier",
-    "spdhg_tv": "spdhg_tv",
+    "fista": "fista_tv",
+    "fourier": "fourier",
+    "spdhg": "spdhg_tv",
 }
 
 __all__ = [
@@ -60,25 +56,22 @@ __all__ = [
     "FBPHostConfig",
     "FDKConfig",
     "FDKHostConfig",
-    "FistaConfig",
+    "FISTAConfig",
     "FourierConfig",
     "MLEMConfig",
-    "Projector",
     "SIRTConfig",
     "SPDHGConfig",
-    "backproject",
     "cgls",
     "cgls_multires",
     "fbp",
     "fbp_host",
     "fdk",
     "fdk_host",
-    "fista_tv",
-    "fourier_reconstruct",
+    "fista",
+    "fourier",
     "mlem",
-    "project",
     "sirt",
-    "spdhg_tv",
+    "spdhg",
 ]
 
 

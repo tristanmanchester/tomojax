@@ -73,12 +73,12 @@ def test_profiled_residual_is_weighted_nuisance_minimum(weighted):
 @pytest.mark.parametrize("batch", [1, 3])
 def test_fista_contrast_matches_profiled_gradient_and_offset_invariance(batch):
     from tomojax.forward import project_joseph
-    from tomojax.recon import FistaConfig, fista_tv
+    from tomojax.recon import FISTAConfig, fista
 
     grid, detector = Grid(4, 3, 2, 0.7, 0.8, 0.9), Detector(5, 4, 0.6, 0.7)
     geometry = ParallelGeometry(grid, detector, np.linspace(0, 170, 7))
     y = np.random.default_rng(4).normal(size=(7, 4, 5)).astype(np.float32)
-    cfg = FistaConfig(
+    cfg = FISTAConfig(
         iterations=1,
         tv_weight=0,
         lipschitz=100,
@@ -86,9 +86,9 @@ def test_fista_contrast_matches_profiled_gradient_and_offset_invariance(batch):
         views_per_batch=batch,
         data_term="per_view_contrast",
     )
-    x, info = fista_tv(geometry, grid, detector, y, config=cfg)
+    x, info = fista(geometry, grid, detector, y, config=cfg)
     offset = np.arange(7, dtype=np.float32)[:, None, None]
-    shifted, _ = fista_tv(geometry, grid, detector, y + offset, config=cfg)
+    shifted, _ = fista(geometry, grid, detector, y + offset, config=cfg)
     np.testing.assert_allclose(x, shifted, rtol=3e-5, atol=2e-8)
     assert info["background_profiled"] and info["effective_tv_weight"] == 0
     # From zero, one step of 1/L moves along A^T of the data less each view's mean.
@@ -96,7 +96,7 @@ def test_fista_contrast_matches_profiled_gradient_and_offset_invariance(batch):
     _, transpose = jax.vjp(lambda v: project_joseph(v, poses, grid, detector), jnp.zeros_like(x))
     centred = y - y.mean(axis=(1, 2), keepdims=True)
     np.testing.assert_allclose(x, transpose(jnp.asarray(centred))[0] / 100, rtol=1e-5, atol=2e-8)
-    streamed, _ = fista_tv(geometry, grid, detector, y, config=replace(cfg, stream=True))
+    streamed, _ = fista(geometry, grid, detector, y, config=replace(cfg, stream=True))
     np.testing.assert_allclose(x, streamed, rtol=1e-6, atol=2e-8)
 
 
@@ -126,16 +126,16 @@ def test_metric_cone_segments_and_pose_wrappers_use_object_plane_area():
 
 @pytest.mark.parametrize("regularizer", ["tv", "huber_tv"])
 @pytest.mark.parametrize("weight", [0, 0.001, None])
-@pytest.mark.parametrize("support", [None, np.asarray([0.5, 0, 0.7, 1], np.float32)])
+@pytest.mark.parametrize("support", [None, np.array([True, False, True, True])])
 def test_public_fista_physical_metric_covaries_with_units_and_amplitude(
     regularizer, weight, support
 ):
-    from tomojax.recon import FistaConfig, fista_tv
+    from tomojax.recon import FISTAConfig, fista
 
     grid, detector = Grid(4, 3, 2, 0.7, 0.8, 0.9), Detector(5, 4, 0.6, 0.7)
     geometry = ParallelGeometry(grid, detector, np.linspace(0, 170, 7))
     data = np.random.default_rng(4).normal(size=(7, 4, 5)).astype(np.float32)
-    cfg = FistaConfig(
+    cfg = FISTAConfig(
         iterations=5,
         tv_weight=weight,
         regularizer=regularizer,
@@ -143,16 +143,14 @@ def test_public_fista_physical_metric_covaries_with_units_and_amplitude(
         backend="jax",
         data_term="per_view_contrast",
     )
-    expected, info = fista_tv(geometry, grid, detector, data, config=cfg)
+    expected, info = fista(geometry, grid, detector, data, config=cfg)
     if support is not None:
-        np.testing.assert_array_equal(np.asarray(expected)[..., support == 0], 0)
+        np.testing.assert_array_equal(np.asarray(expected)[..., ~support], 0)
         zero_cfg = replace(cfg, iterations=0, support=support.tolist(), lower_bound=2)
-        start, _ = fista_tv(geometry, grid, detector, data, config=zero_cfg)
-        np.testing.assert_array_equal(
-            start, np.broadcast_to(np.where(support != 0, 2, 0), start.shape)
-        )
+        start, _ = fista(geometry, grid, detector, data, config=zero_cfg)
+        np.testing.assert_array_equal(start, np.broadcast_to(np.where(support, 2, 0), start.shape))
     if weight is None:
-        explicit, _ = fista_tv(
+        explicit, _ = fista(
             geometry,
             grid,
             detector,
@@ -164,10 +162,10 @@ def test_public_fista_physical_metric_covaries_with_units_and_amplitude(
     g = replace(grid, vx=grid.vx * length, vy=grid.vy * length, vz=grid.vz * length)
     d = replace(detector, du=detector.du * length, dv=detector.dv * length)
     scaled = replace(geometry, grid=g, detector=d)
-    actual, record = fista_tv(scaled, g, d, data * amplitude, config=cfg)
+    actual, record = fista(scaled, g, d, data * amplitude, config=cfg)
     np.testing.assert_allclose(actual * length / amplitude, expected, rtol=2e-5, atol=3e-7)
     np.testing.assert_allclose(record["loss"], np.asarray(info["loss"]) * amplitude**2, rtol=2e-5)
-    flat, _ = fista_tv(geometry, grid, detector, np.ones_like(data), config=cfg)
+    flat, _ = fista(geometry, grid, detector, np.ones_like(data), config=cfg)
     assert np.isfinite(flat).all()
 
 
@@ -190,7 +188,7 @@ def test_noise_weight_raises_all_metric_ratios_without_changing_geometry():
 def test_explicit_fista_weight_bypasses_noise_and_single_pixel_auto_is_zero(monkeypatch, pixels):
     import importlib
 
-    from tomojax.recon import FistaConfig, fista_tv
+    from tomojax.recon import FISTAConfig, fista
 
     module = importlib.import_module("tomojax.recon.fista_tv")
 
@@ -201,11 +199,11 @@ def test_explicit_fista_weight_bypasses_noise_and_single_pixel_auto_is_zero(monk
     grid, detector = Grid(2, 2, 1, 1, 1, 1), Detector(pixels, 1, 1, 1)
     geometry = ParallelGeometry(grid, detector, [0, 90])
     for weight in [0.0, 0.001] + ([None] if pixels == 1 else []):
-        volume, info = fista_tv(
+        volume, info = fista(
             geometry,
             grid,
             detector,
             np.ones((2, 1, pixels), np.float32),
-            config=FistaConfig(iterations=2, tv_weight=weight, backend="jax"),
+            config=FISTAConfig(iterations=2, tv_weight=weight, backend="jax"),
         )
         assert np.isfinite(volume).all() and info["effective_tv_weight"] == 0

@@ -64,7 +64,7 @@ class FourierConfig:
     backend: Literal["auto", "numpy", "cupy"] = "auto"
 
 
-def fourier_reconstruct(
+def fourier(
     geometry: ScanGeometry,
     grid: Grid,
     detector: Detector,
@@ -133,12 +133,12 @@ def fourier_reconstruct(
     --------
     >>> import numpy as np
     >>> import tomojax as tj
-    >>> from tomojax.recon import fourier_reconstruct, FourierConfig, project
+    >>> from tomojax.recon import FourierConfig, fourier
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
-    >>> volume = fourier_reconstruct(geometry, geometry.grid, geometry.detector, np.asarray(data))
+    >>> data = tj.project(geometry, np.ones((1, 4, 4), np.float32))
+    >>> volume = fourier(geometry, geometry.grid, geometry.detector, np.asarray(data))
     >>> volume.shape
     (1, 4, 4)
     """

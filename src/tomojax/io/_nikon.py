@@ -177,8 +177,10 @@ def _raw_nikon(file: Path) -> RawAcquisition:
     white = _number(params, "WhiteLevel") if "WhiteLevel" in params else None
     record = _nikon_record(file, params, counts.shape, white)
     if closing:  # recorded, as other excluded frames are
+        from ._datasets import replace_dataset
+
         meta = {**record.geometry_metadata, "closing_frames_excluded": closing}
-        record = replace(record, geometry_metadata=meta)
+        record = replace_dataset(record, geometry_metadata=meta)
     return RawAcquisition(record=record, counts=counts, white_level=white)
 
 

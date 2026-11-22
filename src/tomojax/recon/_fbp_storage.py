@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager, nullcontext
 import logging
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import jax.numpy as jnp
     import numpy as np
 
-    from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
+    from tomojax.geometry import Detector, Geometry, Grid
 
     from .fbp import FBPConfig
     from .fdk import FDKConfig
@@ -99,9 +99,7 @@ def _host_fbp(
         data = np.asarray(projections, np.float32)
         host = FDKHostConfig(slices_per_batch=slab_planes, fdk=fdk_config(cfg))
         return fdk_host(geometry, grid, detector, data, config=host, out=out)
-    host = FBPHostConfig(filter=cfg.filter, scale=cfg.scale, backend=cfg.backend)
+    host = FBPHostConfig(fbp=cfg)
     # Slabs are not shared among devices; the first selected one does the work.
     with first_device(cfg):
-        return fbp_host(
-            cast("ParallelGeometry", geometry), grid, detector, projections, config=host, out=out
-        )
+        return fbp_host(geometry, grid, detector, projections, config=host, out=out)

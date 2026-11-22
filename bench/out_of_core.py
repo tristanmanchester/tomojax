@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _measure import GpuSampler, environment
 
 import tomojax as tj
-from tomojax.corrections import corrected_row_source
+from tomojax.corrections.api import corrected_row_source
 from tomojax.geometry import ConeBeam, ConeGeometry, Detector, Grid
 from tomojax.recon import CGLSConfig, SIRTConfig, cgls, sirt
 

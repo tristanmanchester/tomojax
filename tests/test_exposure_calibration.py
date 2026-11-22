@@ -3,7 +3,8 @@
 import numpy as np
 
 import tomojax as tj
-from tomojax.corrections import correct_frames, corrected_row_source
+from tomojax.corrections import correct_frames
+from tomojax.corrections.api import corrected_row_source
 
 
 def test_exposure_dark_and_temporal_interpolation_match_physical_counts():

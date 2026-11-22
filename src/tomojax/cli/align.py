@@ -1,4 +1,4 @@
-"""``tomojax align``: one joint geometry fit on a saved scan."""
+"""``tomojax align``: one geometry fit on a saved scan."""
 
 from __future__ import annotations
 
@@ -17,16 +17,20 @@ from tomojax._field_of_view import (
     region_grid,
     zero_outside_cylinder,
 )
-from tomojax.cli._options import EXIT_STATUS, add_config, add_output, check_paths
+from tomojax.cli._options import EXIT_STATUS, add_config, add_force, check_paths
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
-    from tomojax import Alignment, Scan
+    from collections.abc import Mapping
+
+    from tomojax import Alignment, Grid, Scan
+    from tomojax._workflow import Region
+    from tomojax.alignment import AlignConfig
 
 
 class _Args(argparse.Namespace):
     data: str
-    out: str
+    out: str | None
     force: bool
     fit: list[str]
     method: str
@@ -52,8 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tomojax align",
         description=(
-            "Fit selected geometry parameters jointly with a reconstruction. "
-            "OUTPUT holds the corrected scan, its poses and the volume."
+            "Fit selected geometry parameters jointly with a reconstruction, or estimate "
+            "the rotation centre from near-opposite views (--method opposite-views). "
+            "OUTPUT holds the corrected scan and poses, plus the working image for joint fits."
         ),
         epilog=(
             "Examples:\n"
@@ -65,7 +70,16 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _ = parser.add_argument("data", metavar="INPUT", help="Scan to align (.nxs, .h5, .npz)")
-    add_output(parser, "Output .nxs: the corrected scan, its poses and volume")
+    _ = parser.add_argument(
+        "-o",
+        "--output",
+        dest="out",
+        default=None,
+        metavar="OUTPUT",
+        help="Output .nxs: corrected scan and poses, plus working image for joint fits "
+        "(optional with --dry-run)",
+    )
+    add_force(parser)
     _ = parser.add_argument(
         "--fit",
         nargs="+",
@@ -140,41 +154,153 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _config_settings() -> dict[str, object]:
     """A config file's settings: every AlignConfig field the flags do not set."""
-    from tomojax import AlignConfig
+    from tomojax.alignment import AlignConfig
 
     return {k: v for k, v in asdict(AlignConfig()).items() if k not in _SETTINGS}
 
 
-def _write_manifest(args: _Args, scan: Scan, result: Alignment, *, masked: bool) -> None:
+def _build_align_config(
+    args: _Args,
+    settings: Mapping[str, Any],
+) -> AlignConfig:
+    """Validate expert TOML settings and construct ``AlignConfig`` before loading data."""
+    from tomojax.alignment import AlignConfig
+
+    defaults = asdict(AlignConfig())
+    coerced: dict[str, Any] = {}
+    for key, value in settings.items():
+        if key == "levels":
+            if not isinstance(value, list | tuple) or not all(
+                isinstance(item, int) and not isinstance(item, bool) for item in value
+            ):
+                raise ValueError("levels must be a list of positive integers ending at 1")
+            coerced[key] = tuple(int(item) for item in value)
+            continue
+        expected = defaults.get(key)
+        if isinstance(expected, bool):
+            if not isinstance(value, bool):
+                raise ValueError(f"{key} must be a boolean")
+        elif isinstance(expected, int):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{key} must be an integer")
+        elif isinstance(expected, float) and (
+            isinstance(value, bool) or not isinstance(value, int | float)
+        ):
+            raise ValueError(f"{key} must be a number")
+        coerced[key] = value
+    given = {name: getattr(args, name) for name in _SETTINGS if getattr(args, name) is not None}
+    return replace(AlignConfig(**coerced), **given)
+
+
+def _validate_opposite_views(
+    args: _Args,
+    settings: Mapping[str, object],
+    explicit: set[str],
+    config_file_values: Mapping[str, object],
+) -> None:
+    """Reject unsupported --fit and joint-only options for ``--method opposite-views``."""
+    fit = tuple(args.fit)
+    if fit != ("center",):
+        raise ValueError(f"--method opposite-views fits --fit center alone, not {list(fit)!r}")
+    joint_given = [name for name in _SETTINGS if getattr(args, name) is not None]
+    if args.grid is not None:
+        joint_given.append("grid")
+    if "region" in explicit or "region" in config_file_values:
+        joint_given.append("region")
+    joint_given.extend(sorted(settings))
+    if joint_given:
+        raise ValueError(
+            f"--method opposite-views fits no image and takes no joint options "
+            f"({', '.join(sorted(set(joint_given)))})"
+        )
+
+
+def _write_manifest(
+    args: _Args,
+    metadata: Mapping[str, object],
+    scan: Scan,
+    result: Alignment,
+    *,
+    masked: bool,
+) -> None:
     """Save the requested inputs, fitted geometry and solver record."""
     from tomojax.cli.manifest import build_manifest, save_manifest
 
     payload: dict[str, object] = {
         "input_path": args.data,
         "output_path": args.out,
+        "manifest_path": args.manifest,
+        "config_path": metadata["config_path"],
+        "config_file_values": metadata["config_file_values"],
+        "explicit_cli_keys": metadata["explicit_cli_keys"],
+        "effective_options": metadata["effective_options"],
+        "settings": metadata["settings"],
         "input_projection_shape": list(np.shape(scan.projections)),
         "input_poses": scan.poses is not None,
-        "fit": result.info["fit"],
+        "fit": list(args.fit),
+        "method": args.method,
         "region": {
             "requested": args.region,
-            "grid_changed": result.grid != scan.grid,
+            "grid_changed": result.grid is not None and result.grid != scan.grid,
             "cylindrical_output_mask": masked,
         },
-        "reconstruction_grid": None if result.grid is None else result.grid.to_dict(),
+        "scan_grid": result.scan.grid.to_dict(),
+        "working_grid": None if result.grid is None else result.grid.to_dict(),
         "detector": result.scan.detector.to_dict(),
-        "poses_shape": list(result.poses.shape),
-        "image_shape": None if result.image is None else list(np.shape(result.image)),
         "alignment": result.info,
     }
-    save_manifest(
-        cast("str", args.manifest),
-        build_manifest("tomojax align", list(sys.argv), args, payload),
-    )
-    logging.info("Saved reproducibility manifest to %s", args.manifest)
+    manifest = build_manifest("tomojax align", list(sys.argv), args, payload)
+    save_manifest(str(args.manifest), manifest)
+    logging.info("Saved alignment manifest to %s", args.manifest)
+
+
+def _validate_align_args(
+    parser: argparse.ArgumentParser,
+    args: _Args,
+    settings: Mapping[str, Any],
+    explicit: set[str],
+    config_values: Mapping[str, object],
+) -> AlignConfig | None:
+    """Validate CLI and TOML arguments before loading scan data."""
+    if len(args.fit) != len(set(args.fit)):
+        parser.error("--fit names must not repeat")
+    if not args.dry_run and not args.out:
+        parser.error("the following arguments are required: -o/--output")
+    if args.grid is not None and min(args.grid) < 1:
+        parser.error("--grid dimensions must be positive integers")
+    try:
+        if args.method == "opposite-views":
+            _validate_opposite_views(args, settings, explicit, config_values)
+            return None
+        return _build_align_config(args, settings)
+    except (TypeError, ValueError) as exc:
+        parser.error(str(exc))
+
+
+def _dry_run_plan(
+    args: _Args,
+    fit: tuple[str, ...],
+    scan: Scan,
+    grid: Grid | None,
+    config: AlignConfig | None,
+) -> dict[str, object]:
+    """Return the JSON summary for ``tomojax align --dry-run``."""
+    plan: dict[str, object] = {
+        "input_path": args.data,
+        "output_path": args.out,
+        "fit": list(fit),
+        "method": args.method,
+    }
+    if args.method == "joint":
+        assert config is not None
+        plan["config"] = asdict(config)
+        plan["grid"] = (scan.grid if grid is None else grid).to_dict()
+        plan["bounded_working_grid"] = grid is None
+    return plan
 
 
 def main() -> None:
-    """Run ``tomojax align`` with the same joint solver as :func:`tomojax.align`."""
+    """Run ``tomojax align``."""
     import tomojax as tj
     from tomojax.core import log_jax_env, setup_logging
 
@@ -182,54 +308,39 @@ def main() -> None:
     namespace, metadata = parse_args_with_config(parser)
     args = cast("_Args", namespace)
     settings = cast("dict[str, Any]", metadata["settings"])
-    if len(args.fit) != len(set(args.fit)):
-        parser.error("--fit names must not repeat")
-    check_paths(
-        parser,
-        inputs=[args.data],
-        outputs=[args.out, args.manifest],
-        force=args.force,
-    )
+    explicit = set(cast("list[str]", metadata["explicit_cli_keys"]))
+    config_values = cast("dict[str, object]", metadata["config_file_values"])
+    config = _validate_align_args(parser, args, settings, explicit, config_values)
+    outputs = [] if args.dry_run else [args.out, args.manifest]
+    check_paths(parser, inputs=[args.data], outputs=outputs, force=args.force)
     scan = tj.load(args.data, apply_poses=args.apply_poses)
+    fit = tuple(args.fit)
     grid, cylinder = (None, None)
-    if args.grid is not None or args.region != "auto":
-        shape = None if args.grid is None else (args.grid[0], args.grid[1], args.grid[2])
+    if args.method == "joint" and (args.grid is not None or args.region != "auto"):
+        shape = None if args.grid is None else (args.grid[2], args.grid[1], args.grid[0])
         region = None if args.region == "off" else args.region
         grid, cylinder = region_grid(scan, region, shape=shape)
-    fit = tuple(args.fit)
-    given = {name: getattr(args, name) for name in _SETTINGS if getattr(args, name) is not None}
-    if "levels" in settings:  # a TOML array
-        settings["levels"] = tuple(settings["levels"])
-    config = replace(tj.AlignConfig(**settings), **given)
     if args.dry_run:
-        print(
-            json.dumps(
-                {
-                    "input_path": args.data,
-                    "output_path": args.out,
-                    "fit": list(fit),
-                    "method": args.method,
-                    "config": asdict(config),
-                    "grid": (scan.grid if grid is None else grid).to_dict(),
-                    "bounded_working_grid": grid is None,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
+        print(json.dumps(_dry_run_plan(args, fit, scan, grid, config), indent=2, sort_keys=True))
         return
     setup_logging()
     log_jax_env()
     if args.method == "opposite-views":
         result = tj.align(scan, fit=fit, method="opposite-views")
+    elif args.grid is None and args.region != "auto":
+        region_arg = cast("Region | None", None if args.region == "off" else args.region)
+        result = tj.align(scan, fit=fit, region=region_arg, config=config)
     else:
         result = tj.align(scan, fit=fit, grid=grid, config=config)
-    if cylinder is not None and result.image is not None and result.grid is not None:
-        result = replace(result, image=zero_outside_cylinder(result.image, result.grid, cylinder))
+        if cylinder is not None and result.image is not None and result.grid is not None:
+            masked_image = zero_outside_cylinder(result.image, result.grid, cylinder)
+            result = replace(result, image=masked_image)
+    assert args.out is not None
     tj.save(args.out, result)
     logging.info("Saved alignment results to %s", args.out)
     if args.manifest is not None:
-        _write_manifest(args, scan, result, masked=cylinder is not None)
+        _write_manifest(args, metadata, scan, result, masked=cylinder is not None)
 
 
-__all__ = ["build_parser", "main"]
+if __name__ == "__main__":  # pragma: no cover
+    main()

@@ -107,7 +107,7 @@ class ConeBeam:
         Parameters
         ----------
         detector : Detector
-            Detector with its physical in-plane centre offset.
+            Detector with its physical lab-frame (x, z) centre offset.
 
         Returns
         -------
@@ -428,20 +428,6 @@ class ConeSegments:
         """
         return [float(t) for s in self.segments for t in s.angles]
 
-    @property
-    def beam(self) -> ConeBeam:
-        """Not defined: each segment has its own beam (see :func:`cone_parts`).
-
-        Raises
-        ------
-        ValueError
-            Always: each segment has its own beam; a single-beam method cannot use this scan.
-        """
-        raise ValueError(
-            "this scan has one source-detector arrangement per segment; reconstruct it "
-            "with cgls, fista or spdhg (FDK takes one arrangement)"
-        )
-
     def _locate(self, i: int) -> tuple[ScanGeometry, int]:
         for segment in self.segments:
             count = len(segment.angles)
@@ -535,6 +521,11 @@ def beam_of(geometry: object) -> ConeBeam | None:
     ValueError
         If geometry has a separate beam per segment rather than one shared beam.
     """
+    if segments_of(geometry) is not None:
+        raise ValueError(
+            "this scan has one source-detector arrangement per segment; inspect "
+            "cone_parts(geometry) or geometry.segments"
+        )
     beam = getattr(geometry, "beam", None)
     return beam if isinstance(beam, ConeBeam) else None
 
@@ -604,7 +595,7 @@ def require_parallel_beam(geometry: object, context: str) -> None:
     if is_cone_beam(geometry):
         raise ValueError(
             f"{context} models parallel rays; cone-beam geometries need the iterative "
-            "solvers (cgls, fista_tv, spdhg_tv) or fdk"
+            "solvers (cgls, fista, spdhg, sirt, mlem) or fdk"
         )
 
 

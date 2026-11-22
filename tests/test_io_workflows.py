@@ -77,7 +77,7 @@ def test_projection_payload_save_load_preserves_metadata_copy(tmp_path: Path) ->
 
     payload = load_dataset(path)
 
-    copied = payload.copy_metadata()
+    copied = payload.to_nxtomo_metadata()
     assert copied.sample_name == "fixture"
     assert copied.detector == payload.detector
     assert copied.grid == payload.grid
@@ -186,7 +186,7 @@ def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
     dataset.align_params = np.ones((2, 5), dtype=np.float32)
     dataset.angle_offset = np.asarray([0.25, -0.25], dtype=np.float32)
 
-    direct_copy = dataset.copy_metadata()
+    direct_copy = dataset.to_nxtomo_metadata()
     assert not np.shares_memory(direct_copy.angles, dataset.angles)
     assert direct_copy.volume is not None
     assert not np.shares_memory(direct_copy.volume, dataset.volume)

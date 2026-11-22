@@ -12,7 +12,7 @@ import jax.dlpack
 import torch
 from torch.utils import dlpack
 
-from tomojax.recon import Projector as _Projector
+from tomojax.recon.api import Projector as _Projector
 
 if TYPE_CHECKING:
     from collections.abc import Callable

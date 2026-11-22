@@ -9,7 +9,7 @@ Xradia acquisitions, or TIFFs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 import logging
 import numbers
 import os
@@ -22,6 +22,7 @@ from tomojax._data import calibration_issues, views_of
 from tomojax._loading_geometry import frame_geometry
 from tomojax._scan import (
     Scan,
+    bind_step_geometry,
     binned_geometry,
     check_shape,
     cropped_record,
@@ -37,12 +38,34 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from os import PathLike
 
+    from tomojax._loading_geometry import DeclaredGeometry
     from tomojax.corrections import Correction, Step
     from tomojax.geometry import Detector, Grid, ScanGeometry
     from tomojax.io import ProjectionDataset
     from tomojax.io.api import LocatedFrames
 
 LOG = logging.getLogger(__name__)
+
+
+def is_raw_input(
+    path: str | PathLike[str],
+    *,
+    flats: np.ndarray | float | str | PathLike[str] | None = None,
+    darks: np.ndarray | float | str | PathLike[str] | None = None,
+    data_path: str | None = None,
+    image_key_path: str | None = None,
+    angles_path: str | None = None,
+) -> bool:
+    """Whether ``path`` holds raw detector frames rather than saved line integrals."""
+    from tomojax.io.api import read_acquisition
+
+    file = Path(path)
+    if flats is not None or darks is not None:
+        return True
+    paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
+    if read_acquisition(file, **paths) is not None:
+        return True
+    return _line_integrals(file, **paths) is None
 
 
 def load(
@@ -110,6 +133,42 @@ def load(
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     >>> scan = tj.load("tomo.h5", detector=tj.Detector(960, 600, 0.65, 0.65))  # doctest: +SKIP
     """
+    return load_scan_with_declaration(
+        path,
+        flats=flats,
+        darks=darks,
+        angles=angles,
+        detector=detector,
+        pixel_size=pixel_size,
+        grid=grid,
+        geometry=geometry,
+        exposure_times=exposure_times,
+        flat_exposure_times=flat_exposure_times,
+        data_path=data_path,
+        image_key_path=image_key_path,
+        angles_path=angles_path,
+        apply_poses=apply_poses,
+    )
+
+
+def load_scan_with_declaration(
+    path: str | PathLike[str],
+    *,
+    flats: np.ndarray | float | str | PathLike[str] | None = None,
+    darks: np.ndarray | float | str | PathLike[str] | None = None,
+    angles: Sequence[float] | np.ndarray | None = None,
+    detector: Detector | None = None,
+    pixel_size: float | tuple[float, float] | None = None,
+    grid: Grid | None = None,
+    geometry: ScanGeometry | None = None,
+    exposure_times: np.ndarray | float | None = None,
+    flat_exposure_times: np.ndarray | float | None = None,
+    data_path: str | None = None,
+    image_key_path: str | None = None,
+    angles_path: str | None = None,
+    apply_poses: bool = True,
+    declared: DeclaredGeometry | None = None,
+) -> Scan:
     file = Path(path)
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
@@ -120,6 +179,7 @@ def load(
         "pixel_size": pixel_size,
         "grid": grid,
         "geometry": geometry,
+        "declared": declared,
     }
     discovered = _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides)
     if discovered is None:
@@ -270,6 +330,7 @@ class Frames:
 
     counts: Any
     geometry: ScanGeometry
+    _: KW_ONLY
     flats: Any = None
     darks: Any = None
     flat_positions: np.ndarray | None = None
@@ -362,6 +423,7 @@ class Frames:
         """
         from tomojax.corrections import correct_frames
 
+        bound = bind_step_geometry(steps, self.geometry)
         done = correct_frames(
             self.counts,
             flats=self.flats,
@@ -373,7 +435,7 @@ class Frames:
             dark_source=self.dark_source,
             linear_limit=self.linear_limit,
             white_level=self.white_level,
-            steps=steps,
+            steps=bound,
             epsilon=epsilon,
             views_per_batch=views_per_batch,
             binning=binning,
@@ -492,6 +554,7 @@ def load_frames(
     data_path: str | None = None,
     image_key_path: str | None = None,
     angles_path: str | None = None,
+    apply_poses: bool = True,
 ) -> Frames:
     """Load detector frames and acquisition metadata from supported scan formats.
 
@@ -555,6 +618,10 @@ def load_frames(
         Explicit HDF5 sample/flat/dark key path; None discovers it.
     angles_path : str or None, optional
         Explicit HDF5 rotation-angle path; None discovers it.
+    apply_poses : bool, optional
+        Apply saved per-view pose corrections, and a scanner's own recorded
+        per-view shifts and centre shift (Zeiss); default is True. False gives
+        the nominal geometry while keeping vendor shift provenance in metadata.
 
     Returns
     -------
@@ -576,6 +643,42 @@ def load_frames(
     >>> frames = tj.load_frames("raw_scan.nxs")  # doctest: +SKIP
     >>> scan = frames.corrected(binning=4)  # doctest: +SKIP
     """
+    return load_raw_frames_with_declaration(
+        path,
+        flats=flats,
+        darks=darks,
+        angles=angles,
+        detector=detector,
+        pixel_size=pixel_size,
+        grid=grid,
+        geometry=geometry,
+        exposure_times=exposure_times,
+        flat_exposure_times=flat_exposure_times,
+        data_path=data_path,
+        image_key_path=image_key_path,
+        angles_path=angles_path,
+        apply_poses=apply_poses,
+    )
+
+
+def load_raw_frames_with_declaration(
+    path: str | PathLike[str],
+    *,
+    flats: np.ndarray | float | str | PathLike[str] | None = None,
+    darks: np.ndarray | float | str | PathLike[str] | None = None,
+    angles: Sequence[float] | np.ndarray | None = None,
+    detector: Detector | None = None,
+    pixel_size: float | tuple[float, float] | None = None,
+    grid: Grid | None = None,
+    geometry: ScanGeometry | None = None,
+    exposure_times: np.ndarray | float | None = None,
+    flat_exposure_times: np.ndarray | float | None = None,
+    data_path: str | None = None,
+    image_key_path: str | None = None,
+    angles_path: str | None = None,
+    apply_poses: bool = True,
+    declared: DeclaredGeometry | None = None,
+) -> Frames:
     file = Path(path)
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
@@ -586,11 +689,12 @@ def load_frames(
         "pixel_size": pixel_size,
         "grid": grid,
         "geometry": geometry,
+        "declared": declared,
     }
     frames = _frames(
         file,
-        _acquisition_frames(file, **paths, **overrides),
-        apply_poses=True,
+        _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides),
+        apply_poses=apply_poses,
         **paths,
         **overrides,
     )
@@ -714,6 +818,7 @@ def _hdf5_frames(
     pixel_size: float | tuple[float, float] | None = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
+    declared: DeclaredGeometry | None = None,
 ) -> Frames:
     """The sample frames, flats and darks of an HDF5 file, split by ``image_key``.
 
@@ -768,6 +873,7 @@ def _hdf5_frames(
         grid=grid,
         geometry=geometry,
         apply_poses=apply_poses,
+        declared=declared,
     )
     flats = stack.frames_at(key == 1) if (key == 1).any() else None
     darks = stack.frames_at(key == 2) if (key == 2).any() else None
@@ -804,6 +910,7 @@ def _record_frames(
     pixel_size: float | tuple[float, float] | None = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
+    declared: DeclaredGeometry | None = None,
 ) -> Frames:
     """A TomoJAX record's sample frames, flats and darks, split by its saved ``image_key``."""
     key = _saved_image_key(record)
@@ -820,15 +927,17 @@ def _record_frames(
                 return values
             return values[sample]
 
-        metadata = record.copy_metadata()
+        from tomojax.io.api import replace_dataset
+
+        metadata = record.to_nxtomo_metadata()
         metadata.image_key = None
-        record = replace(
+        record = replace_dataset(
             record,
             projections=samples,
             angles=views(record.angles),
             angle_offset=views(record.angle_offset),
             align_params=views(record.align_params),
-            _metadata=metadata,
+            metadata=metadata,
         )
     record, resolved = frame_geometry(
         record,
@@ -838,6 +947,7 @@ def _record_frames(
         grid=grid,
         geometry=geometry,
         apply_poses=apply_poses,
+        declared=declared,
     )
     flats = stack[key == 1] if (key == 1).any() else None
     return Frames(
@@ -892,6 +1002,7 @@ def _tiff_frames(
     pixel_size: float | tuple[float, float] | None = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
+    declared: DeclaredGeometry | None = None,
 ) -> Frames:
     from tomojax.io import ProjectionDataset
     from tomojax.io.api import read_tiff_frames
@@ -915,7 +1026,9 @@ def _tiff_frames(
         source_path=str(file),
         source_format="tiff_stack",
     )
-    record, resolved = frame_geometry(record, pixel_size=pixel_size, grid=grid, geometry=geometry)
+    record, resolved = frame_geometry(
+        record, pixel_size=pixel_size, grid=grid, geometry=geometry, declared=declared
+    )
     return Frames(counts, resolved, source=record)
 
 

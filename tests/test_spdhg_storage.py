@@ -79,7 +79,7 @@ def test_compiled_solve_holds_its_state_and_bounded_scratch():
         data,
         weights=None,
         init_x=None,
-        config=SPDHGConfig(iterations=3, tv_weight=0.01, views_per_batch=4, stream=False),
+        config=SPDHGConfig(iterations=3, tv_weight=0.01, views_per_block=4, stream=False),
         det_grid=None,
     )
     mem = _run_spdhg_scan.lower(grid, detector, runtime).compile().memory_analysis()
@@ -93,11 +93,11 @@ def test_compiled_solve_holds_its_state_and_bounded_scratch():
 def test_insufficient_state_memory_names_host_solvers(monkeypatch):
     import importlib
 
-    from tomojax.recon import spdhg_tv
+    from tomojax.recon import spdhg
 
     module = importlib.import_module("tomojax.recon.spdhg_tv")
     grid, detector = Grid(8, 8, 4, 1.0, 1.0, 1.0), Detector(8, 4, 1.0, 1.0)
     geometry = LaminographyGeometry(grid, detector, np.linspace(0, 360, 6, endpoint=False), 30)
     monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 4 * 4 * 8 * 8 * 4)
     with pytest.raises(MemoryError, match=r"volume state .* fista, cgls and sirt"):
-        spdhg_tv(geometry, grid, detector, np.zeros((6, 4, 8), np.float32))
+        spdhg(geometry, grid, detector, np.zeros((6, 4, 8), np.float32))

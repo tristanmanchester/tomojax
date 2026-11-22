@@ -74,9 +74,8 @@ class LaminographyGeometry:
     tilt_about: str = "x"  # or "z"
     detector_roll: float = 0.0
 
-    @property
-    def axis_unit_lab(self) -> np.ndarray:
-        """The rotation axis in the lab frame, a unit vector.
+    def rotation_axis(self) -> np.ndarray:
+        """Return the lab-frame unit rotation axis.
 
         Returns
         -------
@@ -113,7 +112,7 @@ class LaminographyGeometry:
             If the view index is outside the angle sequence.
         """
         theta = float(np.deg2rad(self.angles[i]))
-        axis = self.axis_unit_lab
+        axis = self.rotation_axis()
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         S = align_u_to_v(ez, axis)
         Rz = rot_axis_angle(ez, theta)[:3, :3]

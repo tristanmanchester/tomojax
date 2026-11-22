@@ -115,7 +115,10 @@ def test_grid_resampling_preserves_cell_edges_and_placement(placement):
     from tomojax.geometry import grid_volume_origin
 
     grid = Grid(11, 8, 5, 0.7, 1.3, 2.1, **placement)
-    resampled = grid.resampled((4, 13, 3))
+    assert grid.shape == (5, 8, 11)
+    assert Grid.from_dict(grid.to_dict()) == grid
+    resampled = grid.resampled((3, 13, 4))
+    assert resampled.shape == (3, 13, 4)
     old_pitch = np.array([grid.vx, grid.vy, grid.vz])
     new_pitch = np.array([resampled.vx, resampled.vy, resampled.vz])
     np.testing.assert_allclose(new_pitch * [4, 13, 3], old_pitch * [11, 8, 5])
@@ -123,7 +126,31 @@ def test_grid_resampling_preserves_cell_edges_and_placement(placement):
         np.array(grid_volume_origin(resampled)) - new_pitch / 2,
         np.array(grid_volume_origin(grid)) - old_pitch / 2,
     )
-    assert grid.resampled((11, 8, 5)) is grid
+    assert grid.resampled((5, 8, 11)) is grid
+
+
+def test_rotation_axis_vocabulary_and_cone_segments_beam():
+    from tomojax.geometry import (
+        ConeBeam,
+        ConeGeometry,
+        ConeSegments,
+        LaminographyGeometry,
+        beam_of,
+    )
+
+    grid, detector = Grid(5, 4, 3, 1, 1, 1), Detector(7, 5, 1, 1)
+    lamino = LaminographyGeometry(grid, detector, [0.0, 90.0], tilt=25.0)
+    axis = lamino.rotation_axis()
+    rot = RotationAxisGeometry(grid, detector, [0.0, 90.0], axis_unit=axis)
+    cone = ConeGeometry(grid, detector, [0.0, 90.0], ConeBeam(30.0, 45.0), axis_unit=tuple(axis))
+    np.testing.assert_allclose(rot.rotation_axis(), axis)
+    np.testing.assert_allclose(cone.rotation_axis(), axis)
+    assert not hasattr(lamino, "axis_unit_lab")
+    assert not hasattr(rot, "axis_unit_lab")
+    segments = ConeSegments((cone,))
+    assert not hasattr(segments, "beam")
+    with pytest.raises(ValueError, match="cone_parts"):
+        beam_of(segments)
 
 
 def test_detector_grid_is_flattened_row_by_row_about_the_centre() -> None:

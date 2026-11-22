@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -122,23 +123,23 @@ def test_reconstruct_runs_every_method(kind: str) -> None:
 
 
 def test_reconstruct_takes_the_methods_configuration_under_its_keywords() -> None:
-    from tomojax.recon import CGLSConfig, FistaConfig, fista_tv
+    from tomojax.recon import CGLSConfig, FISTAConfig, fista
 
     geometry = _geometries(16)["parallel"]
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(16))), geometry)
-    config = FistaConfig(regularizer="huber_tv", huber_delta=0.05, tv_weight=1e-3, iterations=4)
+    config = FISTAConfig(regularizer="huber_tv", huber_delta=0.05, tv_weight=1e-3, iterations=4)
     recon = tj.reconstruct(scan, "fista", config=config)
     assert recon.info["config"] == config and recon.info["regularizer"] == "huber_tv"
     # A keyword replaces its field; the config's others stay.
     recon = tj.reconstruct(scan, "fista", config=config, iterations=6, nonnegative=True)
-    expected = replace(config, iterations=6, nonnegative=True)
+    expected = replace(config, iterations=6, lower_bound=0.0)
     assert recon.info["config"] == expected
-    direct, direct_info = fista_tv(
+    direct, direct_info = fista(
         geometry, geometry.grid, geometry.detector, scan.projections, config=expected
     )
     assert recon.info["huber_delta"] == direct_info["huber_delta"]
     np.testing.assert_allclose(np.asarray(recon.volume), np.asarray(direct), rtol=1e-6, atol=1e-6)
-    with pytest.raises(ValueError, match="method 'fista' takes a FistaConfig, not a CGLSConfig"):
+    with pytest.raises(ValueError, match="method 'fista' takes a FISTAConfig, not a CGLSConfig"):
         tj.reconstruct(scan, "fista", config=CGLSConfig())
     with pytest.raises(ValueError, match="method 'fbp' does not take warm_start"):
         tj.reconstruct(scan, "fbp", warm_start=True)
@@ -293,6 +294,73 @@ def test_reconstruction_fills_non_cubic_zyx_output_without_replacing_it(tmp_path
     np.testing.assert_array_equal(result.volume, 0)
 
 
+@pytest.fixture
+def cylinder_scan():
+    grid, detector = tj.Grid(5, 5, 3, 1, 1, 1), tj.Detector(5, 3, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.arange(0, 360, 15))
+    truth = np.ones((3, 5, 5), np.float32)
+    return tj.Scan(np.asarray(tj.project(geometry, truth)), geometry)
+
+
+@pytest.fixture
+def cylinder_mask():
+    # At 45 degrees voxel (x=2, y=1) projects beyond the outermost detector
+    # sample at u=2. The nearest excluded samples have squared radius 5.
+    y, x = np.ogrid[-2:3, -2:3]
+    return x**2 + y**2 < 5
+
+
+def test_cylinder_masks_caller_output_in_place(cylinder_scan, cylinder_mask):
+    full = tj.reconstruct(cylinder_scan, "fbp").volume
+    out = np.full((3, 5, 5), np.nan, dtype=np.float32)
+    result = tj.reconstruct(cylinder_scan, "fbp", region="cyl", out=out, warm_start=False)
+    assert result.volume is out
+    assert np.any(np.asarray(full)[:, ~cylinder_mask] != 0.0)
+    np.testing.assert_allclose(out, np.where(cylinder_mask, full, 0), atol=1e-6)
+
+
+def test_fista_intersects_cylindrical_and_caller_support(cylinder_scan, cylinder_mask):
+    from tomojax.recon import FISTAConfig
+
+    support = np.ones((5, 5), dtype=bool)
+    support[2, 2] = False
+    intersection = support & cylinder_mask
+    config = FISTAConfig(iterations=4, tv_weight=0, lipschitz=100)
+    expected = tj.reconstruct(cylinder_scan, "fista", config=replace(config, support=intersection))
+    result = tj.reconstruct(
+        cylinder_scan, "fista", region="cyl", config=replace(config, support=support)
+    )
+    assert np.any(np.asarray(expected.volume)[:, intersection] > 0)
+    np.testing.assert_array_equal(result.volume, expected.volume)
+
+
+def test_reconstruction_preserves_region_evidence_and_rejects_mismatched_scan(cylinder_scan):
+    estimate = tj.RegionEstimate(cylinder_scan, {"status": "broad_uncertain"})
+    result = tj.reconstruct(cylinder_scan, "fbp", region=estimate)
+    assert result.info["region_estimate"] == estimate.info
+    other_scan = cylinder_scan.selected(np.arange(1, len(cylinder_scan.angles)))
+    with pytest.raises(ValueError, match="RegionEstimate does not match this scan"):
+        tj.reconstruct(other_scan, region=estimate)
+
+
+def test_opposite_views_records_method_and_rejects_joint_options(cylinder_scan):
+    with pytest.raises(ValueError, match="opposite-views.*iterations"):
+        tj.align(cylinder_scan, method="opposite-views", fit="center", iterations=3)
+    result = tj.align(cylinder_scan, method="opposite-views", fit="center")
+    assert result.info["method"] == "opposite-views"
+
+
+@pytest.mark.filterwarnings("ignore:tj.align.*views fit unusually badly:UserWarning")
+def test_joint_alignment_masks_image_outside_cylinder(cylinder_scan, cylinder_mask):
+    from tomojax.alignment import AlignConfig
+
+    config = AlignConfig(levels=(1,), iterations=1, image_iterations=2)
+    full = tj.align(cylinder_scan, config=config).image
+    result = tj.align(cylinder_scan, config=config, region="cyl")
+    assert np.any(np.asarray(full)[:, ~cylinder_mask] != 0.0)
+    np.testing.assert_allclose(result.image, np.where(cylinder_mask, full, 0), atol=1e-6)
+
+
 def test_single_sinogram_scan_promotes_rows_without_replacing_geometry():
     grid, detector = tj.Grid(7, 5, 1, 0.7, 0.8, 0.9), tj.Detector(9, 1, 0.7, 0.9)
     geometry = tj.ParallelGeometry(grid, detector, [0.0, 90.0])
@@ -425,16 +493,115 @@ def test_a_saved_reconstruction_names_its_projections_and_keeps_them_only_when_a
 
 
 def test_the_commands_api_counterparts_simulate_inspect_and_export(tmp_path: Path) -> None:
-    scan, phantom = tj.simulate("sphere", size=8, n_views=6, seed=1)
-    assert np.shape(phantom) == (8, 8, 8) and scan.projections.shape == (6, 8, 8)
-    # What tomojax simulate writes: the scan, with the phantom as its volume.
-    truth = tj.Reconstruction(phantom, scan.geometry, "simulate", {}, scan)
-    tj.save(tmp_path / "truth.nxs", truth, include_scan=True)
+    sim = tj.simulate("sphere", size=8, n_views=6, seed=1)
+    assert np.shape(sim.phantom) == (8, 8, 8) and sim.scan.projections.shape == (6, 8, 8)
+    tj.save(tmp_path / "truth.nxs", sim)
     report = tj.inspect(tmp_path / "truth.nxs")
     assert report["valid"] and report["issues"] == [] and report["angles"]["count"] == 6
     assert report["volume"]["found"]
-    tj.export(tmp_path / "slices", truth)
+    tj.export(tmp_path / "slices", sim)
     assert len(list((tmp_path / "slices").glob("slice_*.tif"))) == 8
-    tj.export(tmp_path / "truth.raw", truth, dtype="uint16", range=(0.0, 1.0))
+    tj.export(tmp_path / "truth.raw", sim, dtype="uint16", range=(0.0, 1.0))
     assert (tmp_path / "truth.raw").stat().st_size == 8 * 8 * 8 * 2
     assert not list(tmp_path.glob(".*partial*"))  # each file moved on whole
+    sidecar = json.loads((tmp_path / "truth.json").read_text())
+    assert "vol_origin_xyz" in sidecar and sidecar["grid"] == sim.grid.to_dict()
+
+
+def test_alignment_save_reload_and_export_keep_scan_and_working_grids_distinct(
+    tmp_path: Path,
+) -> None:
+    from tomojax.cli.main import main as cli_main
+
+    scan_grid = tj.Grid(8, 8, 6, 0.5, 0.5, 0.5, vol_center=(0.1, -0.2, 0.3))
+    work_grid = tj.Grid(4, 5, 3, 1.0, 0.8, 1.2, vol_center=(0.2, -0.1, 0.4))
+    detector = tj.Detector(8, 6, 0.5, 0.5)
+    geometry = tj.ParallelGeometry(scan_grid, detector, np.linspace(0.0, 180.0, 4, endpoint=False))
+    scan = tj.Scan(np.zeros((4, 6, 8), np.float32), geometry)
+    working_image = np.arange(3 * 5 * 4, dtype=np.float32).reshape(3, 5, 4)
+
+    aligned = tj.Alignment(scan=scan, info={"method": "joint"}, image=working_image, grid=work_grid)
+    aligned_path = tmp_path / "aligned.nxs"
+    tj.save(aligned_path, aligned)
+
+    reloaded_align = tj.load_alignment(aligned_path)
+    assert reloaded_align.scan.grid == scan_grid
+    assert reloaded_align.grid == work_grid
+    assert reloaded_align.image is not None
+    np.testing.assert_array_equal(reloaded_align.image, working_image)
+
+    reloaded_recon = tj.load_reconstruction(aligned_path)
+    assert reloaded_recon.grid == work_grid
+    assert reloaded_recon.scan is not None and reloaded_recon.scan.grid == scan_grid
+
+    slices_dir = tmp_path / "slices"
+    assert cli_main(["export", str(aligned_path), "-o", str(slices_dir)]) == 0
+    sidecar = json.loads((slices_dir / "slice.json").read_text())
+    assert sidecar["voxel_size_xyz"] == [1.0, 0.8, 1.2]
+    assert sidecar["grid"] == work_grid.to_dict()
+
+    # Forced re-export with fewer slices and a new prefix cleans stale slices.
+    smaller = tj.Reconstruction(
+        np.zeros((2, 4, 4), np.float32),
+        tj.ParallelGeometry(tj.Grid(4, 4, 2, 1.0, 1.0, 1.0), detector, geometry.angles),
+        "fbp",
+        {},
+    )
+    tj.export(slices_dir, smaller, prefix="small")
+    assert sorted(p.name for p in slices_dir.iterdir()) == [
+        "small.json",
+        "small_00000.tif",
+        "small_00001.tif",
+    ]
+
+    # Image-free alignment (e.g. opposite-views) round-trips via load_alignment.
+    center_only = tj.Alignment(scan=scan, info={"method": "opposite-views"})
+    center_path = tmp_path / "center.nxs"
+    tj.save(center_path, center_only)
+    reloaded_center = tj.load_alignment(center_path)
+    assert reloaded_center.image is None and reloaded_center.grid is None
+    assert reloaded_center.scan.grid == scan_grid
+    assert reloaded_center.info["method"] == "opposite-views"
+
+
+def test_rings_auto_binds_geometry_and_crop_order_preserves_grid_policy(tmp_path: Path) -> None:
+    import h5py
+
+    from tomojax.corrections import Rings
+
+    grid = tj.Grid(8, 8, 4, 1.0, 1.0, 1.0)
+    detector = tj.Detector(8, 4, 1.0, 1.0)
+    angles = np.linspace(0.0, 360.0, 16, endpoint=False)
+    geometry = tj.ParallelGeometry(grid, detector, angles)
+    scan = tj.Scan(np.full((16, 4, 8), 0.5, np.float32), geometry)
+
+    corrected = scan.corrected(Rings())
+    ring_record = next(c for c in corrected.corrections if c.name == "rings")
+    assert ring_record.settings["mirror_axis"] == pytest.approx(3.5)
+
+    # Detector-derived grid policy matches regardless of crop/correct order.
+    raw_path = tmp_path / "raw.nxs"
+    tj.save(raw_path, scan)
+    with h5py.File(raw_path, "r+") as handle:
+        del handle["entry"].attrs["grid_meta_json"]
+        handle["entry/instrument/detector/data"][...] = 500.0
+    frames = tj.load_frames(raw_path, flats=1000.0, darks=0.0)
+    a = frames.cropped(slice(1, 3), slice(2, 6)).corrected()
+    b = frames.corrected().cropped(slice(1, 3), slice(2, 6))
+    assert a.grid == b.grid == tj.Grid(4, 4, 2, 1.0, 1.0, 1.0, vol_center=(0.0, 0.0, 0.0))
+
+
+def test_load_frames_honours_apply_poses_false(tmp_path: Path) -> None:
+    grid = tj.Grid(6, 6, 4, 1.0, 1.0, 1.0)
+    detector = tj.Detector(6, 4, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(grid, detector, [0.0, 90.0])
+    poses = np.array([[0.0, 0.0, 0.0, 0.5, -0.25, 0.0], [0.0, 0.0, 0.0, -0.5, 0.25, 0.0]])
+    scan = tj.Scan(np.full((2, 4, 6), 500.0, np.float32), geometry).with_poses(poses)
+    path = tmp_path / "posed.nxs"
+    tj.save(path, scan)
+
+    with_poses = tj.load_frames(path, flats=1000.0, darks=0.0, apply_poses=True).corrected()
+    nominal = tj.load_frames(path, flats=1000.0, darks=0.0, apply_poses=False).corrected()
+    assert with_poses.poses is not None
+    np.testing.assert_allclose(with_poses.poses, poses, atol=1e-5)
+    assert nominal.poses is None

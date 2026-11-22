@@ -22,7 +22,7 @@ from tomojax.geometry import (
     LaminographyGeometry,
     ParallelGeometry,
 )
-from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
+from tomojax.recon import FISTAConfig, SPDHGConfig, fista, spdhg
 
 # check-public-imports: allow-private
 from tomojax.recon._projection import projection_operators
@@ -62,7 +62,7 @@ def test_spdhg_small_weights_preserve_the_dense_weighted_minimizer(stream, weigh
     normal = matrix.T @ (reference_weights[:, None] * matrix)
     expected = np.linalg.solve(normal, matrix.T @ (reference_weights * data))
     assert np.linalg.cond(normal) < 100
-    volume, info = spdhg_tv(
+    volume, info = spdhg(
         geometry,
         grid,
         detector,
@@ -70,7 +70,7 @@ def test_spdhg_small_weights_preserve_the_dense_weighted_minimizer(stream, weigh
         weights=weights.reshape((3, 3, 4)),
         config=SPDHGConfig(
             iterations=2000,
-            views_per_batch=3,
+            views_per_block=3,
             tv_weight=0,
             tau=0.2 / (weight_scale * np.linalg.norm(matrix, 2) ** 2),
             sigma_data=0.2 * weight_scale,
@@ -114,7 +114,7 @@ def test_spdhg_zero_weight_mask_recovers_dense_weighted_solution(tilted, stream,
     assert np.linalg.cond(normal) < 100
     assert np.linalg.norm(expected - truth) / np.linalg.norm(truth) < 0.01
     weights = weights.reshape((3, 3, 4))
-    volume, info = spdhg_tv(
+    volume, info = spdhg(
         geometry,
         grid,
         detector,
@@ -122,7 +122,7 @@ def test_spdhg_zero_weight_mask_recovers_dense_weighted_solution(tilted, stream,
         weights=jnp.asarray(weights) if device_weights else weights,
         config=SPDHGConfig(
             iterations=2000,
-            views_per_batch=2,
+            views_per_block=2,
             tv_weight=0,
             log_every=2000,
             backend="jax",
@@ -145,7 +145,7 @@ def test_repeated_solver_calls_use_new_arrays(solver):
         geometry = ParallelGeometry(grid, detector, np.asarray([17.0, 69.0, 137.0]) + run * 8)
         poses = jnp.asarray([geometry.pose_matrix(i) for i in range(3)])
         data = jnp.asarray(rng.normal(size=(3, 3, 4)), dtype=jnp.float32)
-        support = jnp.asarray(rng.uniform(0.3, 1.0, size=(2, 3, 2)), dtype=jnp.float32)
+        support = jnp.asarray(rng.random((2, 3, 2)) > 0.3)
 
         forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, "joseph")
 
@@ -154,16 +154,16 @@ def test_repeated_solver_calls_use_new_arrays(solver):
 
         matrix = np.asarray(jax.jacfwd(project)(jnp.zeros(12)))
         if solver == "fista":
-            cfg = FistaConfig(
+            cfg = FISTAConfig(
                 iterations=1,
                 lipschitz=20.0,
                 tv_weight=0.0,
                 views_per_batch=2,
-                nonnegative=False,
+                lower_bound=None,
                 support=support,
                 backend="jax",
             )
-            actual, _ = fista_tv(geometry, grid, detector, data, config=cfg)
+            actual, _ = fista(geometry, grid, detector, data, config=cfg)
             expected = support.ravel() * (matrix.T @ data.ravel()) / 20.0
         else:
             weights = jnp.asarray(rng.uniform(0.5, 1.5, size=data.shape), dtype=jnp.float32)
@@ -173,12 +173,12 @@ def test_repeated_solver_calls_use_new_arrays(solver):
                 sigma_data=0.2,
                 sigma_tv=0.2,
                 tv_weight=0.0,
-                views_per_batch=3,
-                nonnegative=False,
+                views_per_block=3,
+                lower_bound=None,
                 support=support,
                 backend="jax",
             )
-            actual, _ = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
+            actual, _ = spdhg(geometry, grid, detector, data, weights=weights, config=cfg)
             dual = 0.2 * data * weights / (0.2 + weights)
             expected = 2 * 0.1 * support.ravel() * (matrix.T @ dual.ravel())
         np.testing.assert_allclose(actual.ravel(), expected, rtol=2e-5, atol=2e-6)
@@ -199,15 +199,15 @@ def test_fista_streams_host_projections_like_device_projections(tmp_path, batch)
     results = {}
     # The same host arrays either way: only the placement differs.
     for stream, projections in [(False, data), (True, stored)]:
-        config = FistaConfig(
+        config = FISTAConfig(
             iterations=4,
             tv_weight=0.01,
-            nonnegative=True,
+            lower_bound=0.0,
             backend="jax",
             views_per_batch=batch,
             stream=stream,
         )
-        results[stream] = fista_tv(geometry, grid, detector, projections, config=config)
+        results[stream] = fista(geometry, grid, detector, projections, config=config)
     # Within rounding: GPU atomics sum in no fixed order.
     np.testing.assert_allclose(results[True][0], results[False][0], rtol=1e-5, atol=1e-6)
     np.testing.assert_allclose(results[True][1]["loss"], results[False][1]["loss"], rtol=1e-5)
@@ -232,10 +232,10 @@ def test_spdhg_streams_data_weights_and_duals_from_host(tmp_path, weighted, data
             iterations=20,
             data_term=data_term,
             tv_weight=0.01,
-            views_per_batch=4,
+            views_per_block=4,
             stream=stream,
         )
-        results[stream] = spdhg_tv(
+        results[stream] = spdhg(
             geometry, grid, detector, projections, weights=weights, config=config
         )
     # The host and device placements give the same bits with the default projector
@@ -262,12 +262,12 @@ def test_spdhg_partial_steps_match_dense_first_update_and_preserve_each_override
     config = SPDHGConfig(
         iterations=2,
         tv_weight=0,
-        views_per_batch=3,
+        views_per_block=3,
         log_every=1,
         backend="jax",
     )
     weights = np.random.default_rng(91).uniform(0.5, 1.5, data.shape).astype(np.float32)
-    _, automatic = spdhg_tv(geometry, grid, detector, data, weights=weights, config=config)
+    _, automatic = spdhg(geometry, grid, detector, data, weights=weights, config=config)
     overrides = {"tau": 0.07, "sigma_data": 0.13, "sigma_tv": 0.19}
     for selected in itertools.product([False, True], repeat=3):
         given = {
@@ -275,7 +275,7 @@ def test_spdhg_partial_steps_match_dense_first_update_and_preserve_each_override
             for (name, value), use in zip(overrides.items(), selected, strict=True)
             if use
         }
-        actual, info = spdhg_tv(
+        actual, info = spdhg(
             geometry, grid, detector, data, weights=weights, config=replace(config, **given)
         )
         for name, value in overrides.items():
@@ -314,14 +314,14 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(regularizer):
         tv_weight=0.04,
         regularizer=regularizer,
         huber_delta=0.08,
-        views_per_batch=3,
+        views_per_block=3,
         log_every=1,
         backend="jax",
     )
     lam, delta, scales = _physical_tv_parameters(grid, detector, data, None, config)
     edges *= scales[:, None, None]
     for given in [{"sigma_tv": 0.19}, {"tau": 0.07, "sigma_data": 0.13, "sigma_tv": 0.19}]:
-        volume, info = spdhg_tv(
+        volume, info = spdhg(
             geometry, grid, detector, data, init_x=initial, config=replace(config, **given)
         )
         assert info["sigma_tv"] == pytest.approx(given["sigma_tv"])
@@ -372,7 +372,7 @@ def test_spdhg_disabled_tv_cannot_corrupt_finite_data_diagnostics(regularizer, s
     geometry = ParallelGeometry(grid, detector, [0.0])
     initial = np.array([0.0, 1e20], dtype=np.float32).reshape(1, 1, 2)
     data = (initial.ravel() * np.float32(scale)).reshape(1, 1, 2)
-    actual, info = spdhg_tv(
+    actual, info = spdhg(
         geometry,
         grid,
         detector,
@@ -411,15 +411,15 @@ def test_spdhg_masked_invalid_data_preserve_solution_and_diagnostics(stream, mis
     weights.reshape(-1)[::4] = 0.0
     cfg = SPDHGConfig(
         iterations=100,
-        views_per_batch=2,
+        views_per_block=2,
         tv_weight=0,
         log_every=10,
         backend="jax",
         stream=stream,
     )
-    reference, ref_info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
+    reference, ref_info = spdhg(geometry, grid, detector, data, weights=weights, config=cfg)
     data[weights == 0] = missing
-    actual, info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
+    actual, info = spdhg(geometry, grid, detector, data, weights=weights, config=cfg)
     # Independent CUDA norm estimates can differ by an ulp between solves.
     np.testing.assert_allclose(actual, reference, rtol=1e-6, atol=1e-7)
     np.testing.assert_allclose(info["loss"], ref_info["loss"], rtol=1e-5, atol=1e-10)
@@ -431,7 +431,7 @@ def test_spdhg_masked_invalid_data_preserve_solution_and_diagnostics(stream, mis
 def test_spdhg_all_missing_data_preserve_finite_warm_start(stream):
     grid, detector, geometry = _three_view_problem()
     initial = np.asarray([0.2, 1.0], dtype=np.float32).reshape(1, 1, 2)
-    actual, info = spdhg_tv(
+    actual, info = spdhg(
         geometry,
         grid,
         detector,
@@ -440,7 +440,7 @@ def test_spdhg_all_missing_data_preserve_finite_warm_start(stream):
         init_x=initial,
         config=SPDHGConfig(
             iterations=2,
-            views_per_batch=2,
+            views_per_block=2,
             tv_weight=0,
             log_every=1,
             stream=stream,
@@ -460,17 +460,17 @@ def test_spdhg_streaming_still_rejects_unmasked_nonfinite_data(weighted, invalid
     weights = np.ones_like(data) if weighted else None
     cfg = SPDHGConfig(
         iterations=1,
-        views_per_batch=3,
+        views_per_block=3,
         tv_weight=0,
         stream=True,
         backend="jax",
     )
     with pytest.raises(ValueError, match="finite"):
-        spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
+        spdhg(geometry, grid, detector, data, weights=weights, config=cfg)
     # Reject before ordered dual callbacks: their failed token would otherwise
     # make this valid solve (or a later caller's solve) fail with the old error.
     data[0, 0, 0] = 0.0
-    actual, info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
+    actual, info = spdhg(geometry, grid, detector, data, weights=weights, config=cfg)
     np.testing.assert_array_equal(actual, 0.0)
     np.testing.assert_array_equal(info["loss"], [0.0])
 
@@ -493,13 +493,13 @@ def test_fista_disabled_tv_does_not_evaluate_regularizer(monkeypatch, regularize
     monkeypatch.setattr(module, "huber_tv_value", disabled)
     module._run_fista_scan.clear_cache()
     try:
-        actual, info = fista_tv(
+        actual, info = fista(
             geometry,
             grid,
             detector,
             data,
             init_x=initial,
-            config=FistaConfig(
+            config=FISTAConfig(
                 iterations=2,
                 lipschitz=1.0,
                 tv_weight=0.0,
@@ -547,15 +547,15 @@ def test_spdhg_segmented_cone_batches_follow_dense_individual_arrangements(batch
     iterations, tau, sigma = 9, 0.03, 0.2
     cfg = SPDHGConfig(
         iterations=iterations,
-        views_per_batch=batch,
+        views_per_block=batch,
         tv_weight=0.0,
         tau=tau,
         sigma_data=sigma,
-        nonnegative=True,
+        lower_bound=0.0,
         seed=17,
         stream=stream,
     )
-    actual, _ = spdhg_tv(
+    actual, _ = spdhg(
         geometry,
         grid,
         detectors[0],
@@ -599,7 +599,7 @@ def test_spdhg_automatic_steps_stay_stable_when_one_view_measures_the_volume():
     geometry = _RareMeasuredView(grid, detector, [0.0] * 19)
     data = np.zeros((19, 1, 1), np.float32)
     data[0] = 3.0
-    volume, info = spdhg_tv(
+    volume, info = spdhg(
         geometry,
         grid,
         detector,
@@ -607,7 +607,7 @@ def test_spdhg_automatic_steps_stay_stable_when_one_view_measures_the_volume():
         config=SPDHGConfig(
             iterations=1500,
             tv_weight=0,
-            views_per_batch=1,
+            views_per_block=1,
             backend="jax",
             seed=8,
             log_every=0,
@@ -646,9 +646,9 @@ def test_spdhg_tv_trajectory_matches_dense_primal_dual_reference(regularizer):
         tau=0.015,
         sigma_data=0.07,
         sigma_tv=0.08,
-        views_per_batch=2,
+        views_per_block=2,
         seed=12,
-        nonnegative=True,
+        lower_bound=0.0,
         log_every=1,
     )
     lam, delta, scales = _physical_tv_parameters(
@@ -682,7 +682,7 @@ def test_spdhg_tv_trajectory_matches_dense_primal_dual_reference(regularizer):
                 lengths - 0.5 * delta,
             )
         losses.append(1.5 * np.sum(w * (a @ x - y) ** 2) + lam * lengths.sum())
-    actual, info = spdhg_tv(
+    actual, info = spdhg(
         geometry,
         grid,
         detector,
@@ -705,12 +705,12 @@ def test_spdhg_automatic_norm_bounds_every_block_scaled_by_its_probability():
     )
     columns = [np.asarray(tj.project(geometry, b.reshape(shape))).ravel() for b in np.eye(2)]
     matrix = np.stack(columns, axis=1).astype(np.float64)
-    _, info = spdhg_tv(
+    _, info = spdhg(
         geometry,
         grid,
         detector,
         np.zeros((5, 3, 4), np.float32),
-        config=SPDHGConfig(iterations=1, tv_weight=0, views_per_batch=2, log_every=0),
+        config=SPDHGConfig(iterations=1, tv_weight=0, views_per_block=2, log_every=0),
     )
     block_norms = [np.linalg.norm(matrix[start * 12 : (start + 2) * 12], 2) for start in (0, 2, 4)]
     assert info["A_norm"] >= np.linalg.norm(matrix, 2)
@@ -734,7 +734,7 @@ def test_spdhg_runs_with_global_x64_and_returns_fp32():
         grid.vy**2 * weights.sum(axis=(0, 1))
     )
     with jax.enable_x64():
-        actual, _ = spdhg_tv(
+        actual, _ = spdhg(
             geometry,
             grid,
             detector,
@@ -744,8 +744,8 @@ def test_spdhg_runs_with_global_x64_and_returns_fp32():
             config=SPDHGConfig(
                 iterations=1500,
                 tv_weight=lam,
-                nonnegative=True,
-                views_per_batch=2,
+                lower_bound=0.0,
+                views_per_block=2,
                 backend="jax",
                 log_every=0,
             ),
@@ -766,7 +766,7 @@ def test_spdhg_finite_iterates_covary_with_units_signal_and_weight(regularizer, 
     data[weights == 0] = np.nan
     cfg = SPDHGConfig(
         iterations=25,
-        views_per_batch=2,
+        views_per_block=2,
         log_every=1,
         backend="jax",
         regularizer=regularizer,
@@ -777,7 +777,7 @@ def test_spdhg_finite_iterates_covary_with_units_signal_and_weight(regularizer, 
         grid = Grid(3, 2, 2, 0.8 * length, 1.1 * length, 1.3 * length)
         detector = Detector(4, 3, 0.9 * length, 1.2 * length)
         geometry = LaminographyGeometry(grid, detector, [13, 71, 127, 193, 241], 25)
-        volume, info = spdhg_tv(
+        volume, info = spdhg(
             geometry,
             grid,
             detector,
@@ -869,13 +869,13 @@ def test_spdhg_automatic_weight_replays_weighted_masked_streaming(stream, data_t
     data[weights == 0] = np.nan
     cfg = SPDHGConfig(
         iterations=12,
-        views_per_batch=2,
+        views_per_block=2,
         log_every=1,
         tv_weight=None,
         data_term=data_term,
         stream=stream,
     )
-    volume, info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=cfg)
+    volume, info = spdhg(geometry, grid, detector, data, weights=weights, config=cfg)
     assert cfg.tv_weight is None and info["tv_weight"] is None
     from tomojax.recon.spdhg_tv import _prepare_spdhg_runtime
 
@@ -888,7 +888,7 @@ def test_spdhg_automatic_weight_replays_weighted_masked_streaming(stream, data_t
     assert jax.tree.structure(first) == jax.tree.structure(second)
     assert info["resolved_tv_weight"] > 5e-5
     fixed = replace(cfg, tv_weight=info["resolved_tv_weight"], stream=False)
-    replay, replay_info = spdhg_tv(geometry, grid, detector, data, weights=weights, config=fixed)
+    replay, replay_info = spdhg(geometry, grid, detector, data, weights=weights, config=fixed)
     np.testing.assert_allclose(volume, replay, rtol=2e-5, atol=2e-6)
     np.testing.assert_allclose(info["loss"], replay_info["loss"], rtol=2e-5, atol=2e-6)
 
@@ -907,7 +907,7 @@ def test_spdhg_explicit_weight_skips_noise_estimation(monkeypatch, weight):
     grid = Grid(2, 2, 1, 1, 1, 1)
     detector = Detector(2, 2, 1, 1)
     geometry = ParallelGeometry(grid, detector, [0, 90])
-    spdhg_tv(
+    spdhg(
         geometry,
         grid,
         detector,

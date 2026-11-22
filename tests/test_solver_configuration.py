@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
-from tomojax.recon import FistaConfig, SPDHGConfig, fista_tv, spdhg_tv
+from tomojax.recon import FISTAConfig, SPDHGConfig, fista, spdhg
 
 
 def _problem(tilted=False):
@@ -25,8 +25,15 @@ def _problem(tilted=False):
     return grid, detector, geometry, data
 
 
-@pytest.mark.parametrize("solver", ["fista", "spdhg"])
-@pytest.mark.parametrize("field", ["iterations", "views_per_batch"])
+@pytest.mark.parametrize(
+    ("solver", "field"),
+    [
+        ("fista", "iterations"),
+        ("spdhg", "iterations"),
+        ("fista", "views_per_batch"),
+        ("spdhg", "views_per_block"),
+    ],
+)
 @pytest.mark.parametrize("value", [-1, 1.5, True])
 def test_solvers_reject_invalid_counts_before_building_geometry(monkeypatch, solver, field, value):
     grid, detector, geometry, data = _problem()
@@ -36,9 +43,9 @@ def test_solvers_reject_invalid_counts_before_building_geometry(monkeypatch, sol
         pytest.fail("invalid configuration reached geometry construction")
 
     monkeypatch.setattr(module, "stack_view_poses", unexpected_geometry)
-    config = (FistaConfig if solver == "fista" else SPDHGConfig)(**{field: value})
+    config = (FISTAConfig if solver == "fista" else SPDHGConfig)(**{field: value})
     with pytest.raises(ValueError, match=field):
-        (fista_tv if solver == "fista" else spdhg_tv)(geometry, grid, detector, data, config=config)
+        (fista if solver == "fista" else spdhg)(geometry, grid, detector, data, config=config)
 
 
 @pytest.mark.parametrize("value", [-1.0, np.inf, np.nan])
@@ -63,9 +70,9 @@ def test_solvers_reject_invalid_scalars_before_building_geometry(monkeypatch, so
         pytest.fail("invalid configuration reached geometry construction")
 
     monkeypatch.setattr(module, "stack_view_poses", unexpected_geometry)
-    config = (FistaConfig if solver == "fista" else SPDHGConfig)(**{field: value})
+    config = (FISTAConfig if solver == "fista" else SPDHGConfig)(**{field: value})
     with pytest.raises(ValueError, match=field):
-        (fista_tv if solver == "fista" else spdhg_tv)(geometry, grid, detector, data, config=config)
+        (fista if solver == "fista" else spdhg)(geometry, grid, detector, data, config=config)
 
 
 @pytest.mark.parametrize(
@@ -75,7 +82,7 @@ def test_solvers_reject_invalid_scalars_before_building_geometry(monkeypatch, so
         ("fista", "lipschitz"),
         ("fista", "tv_prox_iterations"),
         ("fista", "power_iterations"),
-        ("spdhg", "views_per_batch"),
+        ("spdhg", "views_per_block"),
         ("spdhg", "tau"),
         ("spdhg", "sigma_data"),
         ("spdhg", "sigma_tv"),
@@ -83,9 +90,9 @@ def test_solvers_reject_invalid_scalars_before_building_geometry(monkeypatch, so
 )
 def test_solvers_reject_zero_sizes_and_steps(solver, field):
     grid, detector, geometry, data = _problem()
-    config = (FistaConfig if solver == "fista" else SPDHGConfig)(**{field: 0})
+    config = (FISTAConfig if solver == "fista" else SPDHGConfig)(**{field: 0})
     with pytest.raises(ValueError, match=field):
-        (fista_tv if solver == "fista" else spdhg_tv)(geometry, grid, detector, data, config=config)
+        (fista if solver == "fista" else spdhg)(geometry, grid, detector, data, config=config)
 
 
 @pytest.mark.parametrize("field", ["tv_prox_iterations", "power_iterations", "patience"])
@@ -93,14 +100,14 @@ def test_solvers_reject_zero_sizes_and_steps(solver, field):
 def test_fista_rejects_invalid_internal_iteration_counts(field, value):
     grid, detector, geometry, data = _problem()
     with pytest.raises(ValueError, match=field):
-        fista_tv(geometry, grid, detector, data, config=FistaConfig(**{field: value}))
+        fista(geometry, grid, detector, data, config=FISTAConfig(**{field: value}))
 
 
 @pytest.mark.parametrize("value", [-1, 1.5])
 def test_spdhg_rejects_invalid_logging_interval(value):
     grid, detector, geometry, data = _problem()
     with pytest.raises(ValueError, match="log_every"):
-        spdhg_tv(geometry, grid, detector, data, config=SPDHGConfig(log_every=value))
+        spdhg(geometry, grid, detector, data, config=SPDHGConfig(log_every=value))
 
 
 @pytest.mark.parametrize("value", [-1.0, -1e-40, np.nan, np.inf, 1j])
@@ -126,9 +133,9 @@ def test_spdhg_rejects_invalid_weight_tail_before_geometry(
         mapped = np.memmap(tmp_path / "weights", mode="w+", dtype=dtype, shape=data.shape)
         mapped[:] = weights
         weights = mapped
-    config = SPDHGConfig(iterations=iterations, views_per_batch=2, stream=stream)
+    config = SPDHGConfig(iterations=iterations, views_per_block=2, stream=stream)
     with pytest.raises(ValueError, match="weights must be real, finite in FP32 and nonnegative"):
-        spdhg_tv(geometry, grid, detector, data, weights=weights, config=config)
+        spdhg(geometry, grid, detector, data, weights=weights, config=config)
 
 
 @pytest.mark.parametrize("value", [-1e-50, 1e40, "invalid"])
@@ -141,7 +148,7 @@ def test_spdhg_checks_host_weights_before_fp32_conversion(monkeypatch, value):
     weights = np.ones(data.shape, dtype=object if isinstance(value, str) else np.float64)
     weights[-1, -1, -1] = value
     with pytest.raises(ValueError, match="weights must be real, finite in FP32 and nonnegative"):
-        spdhg_tv(geometry, grid, detector, data, weights=weights, config=SPDHGConfig(iterations=0))
+        spdhg(geometry, grid, detector, data, weights=weights, config=SPDHGConfig(iterations=0))
 
 
 @pytest.mark.numerical
@@ -154,7 +161,7 @@ def test_spdhg_accepts_real_zero_weight_masks(dtype, device):
     weights = np.zeros(data.shape, dtype=dtype)
     if np.issubdtype(weights.dtype, np.floating):
         weights[:] = -0.0
-    volume, info = spdhg_tv(
+    volume, info = spdhg(
         geometry,
         grid,
         detector,
@@ -204,7 +211,7 @@ def test_spdhg_host_weight_validation_is_bounded_and_does_not_upload(
         module, "stack_view_poses", lambda *args, **kwargs: pytest.fail("geometry constructed")
     )
     with pytest.raises(ValueError, match="weights must be real, finite in FP32 and nonnegative"):
-        spdhg_tv(geometry, grid, detector, data, weights=weights, config=SPDHGConfig(iterations=0))
+        spdhg(geometry, grid, detector, data, weights=weights, config=SPDHGConfig(iterations=0))
     assert len(checked_sizes) > 1
     assert sum(checked_sizes) == weights.size
 
@@ -220,7 +227,7 @@ def test_spdhg_rejects_extended_host_weight_formats_cleanly(monkeypatch, dtype):
         module, "stack_view_poses", lambda *args, **kwargs: pytest.fail("geometry constructed")
     )
     with pytest.raises(ValueError, match="standard NumPy floating or bfloat16 dtypes"):
-        spdhg_tv(geometry, grid, detector, data, weights=weights, config=SPDHGConfig(iterations=0))
+        spdhg(geometry, grid, detector, data, weights=weights, config=SPDHGConfig(iterations=0))
 
 
 @pytest.mark.parametrize("dtype", [jnp.float8_e4m3fn, jnp.float8_e5m2])
@@ -232,7 +239,7 @@ def test_spdhg_rejects_extended_device_weight_formats_cleanly(monkeypatch, dtype
         module, "stack_view_poses", lambda *args, **kwargs: pytest.fail("geometry constructed")
     )
     with pytest.raises(ValueError, match="standard NumPy floating or bfloat16 dtypes"):
-        spdhg_tv(geometry, grid, detector, data, weights=weights, config=SPDHGConfig(iterations=0))
+        spdhg(geometry, grid, detector, data, weights=weights, config=SPDHGConfig(iterations=0))
 
 
 @pytest.mark.numerical
@@ -241,11 +248,11 @@ def test_zero_iteration_budget_keeps_initial_volume_and_logs_nothing(solver):
     grid, detector, geometry, data = _problem()
     initial = np.random.default_rng(99).normal(size=(2, 3, 2)).astype(np.float32)
     if solver == "fista":
-        config = FistaConfig(iterations=0, tv_weight=0, lipschitz=10, tolerance=0)
+        config = FISTAConfig(iterations=0, tv_weight=0, lipschitz=10, tolerance=0)
     else:
         config = SPDHGConfig(iterations=0, tv_weight=0, tau=0.1, sigma_data=0.1, log_every=0)
     calls = []
-    volume, info = (fista_tv if solver == "fista" else spdhg_tv)(
+    volume, info = (fista if solver == "fista" else spdhg)(
         geometry,
         grid,
         detector,
@@ -264,16 +271,16 @@ def test_zero_iteration_budget_keeps_initial_volume_and_logs_nothing(solver):
 def test_fista_auto_step_is_finite_for_zero_operator(warm_start):
     grid, detector, geometry, data = _problem()
     initial = np.random.default_rng(99).normal(size=(2, 3, 2)).astype(np.float32)
-    volume, info = fista_tv(
+    volume, info = fista(
         geometry,
         grid,
         detector,
         data,
         init_x=initial if warm_start else None,
-        config=FistaConfig(
+        config=FISTAConfig(
             iterations=3,
             tv_weight=0,
-            support=jnp.zeros((2, 3, 2)),
+            support=jnp.zeros((2, 3, 2), dtype=bool),
             backend="jax",
         ),
     )

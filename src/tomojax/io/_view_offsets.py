@@ -46,9 +46,11 @@ def with_view_offsets(record: ProjectionDataset, detector: Detector) -> Projecti
     ProjectionDataset
         The record on ``detector`` with each view's offset applied.
     """
+    from ._datasets import replace_dataset
+
     meta = dict(record.geometry_metadata)
     if OFFSETS_KEY not in meta:
-        return replace(record, detector=detector)
+        return replace_dataset(record, detector=detector)
     offsets = np.asarray(meta[OFFSETS_KEY], np.float64) * (detector.du, detector.dv)
     centers = np.asarray(detector.center, np.float64) + offsets
     for key in ("cone_segments", "trajectory_lengths", "cone_beam"):
@@ -67,7 +69,7 @@ def with_view_offsets(record: ProjectionDataset, detector: Detector) -> Projecti
         poses[:, 3:5] = -offsets
     else:
         detector = replace(detector, center=(float(centers[0, 0]), float(centers[0, 1])))
-    return replace(
+    return replace_dataset(
         record,
         detector=detector,
         geometry_metadata=meta,
@@ -92,10 +94,12 @@ def without_view_offsets(record: ProjectionDataset) -> ProjectionDataset:
     ProjectionDataset
         The record on its detector's nominal centre, with no per-view offsets.
     """
+    from ._datasets import replace_dataset
+
     meta = dict(record.geometry_metadata)
     if OFFSETS_KEY in meta:
         meta[OFFSETS_KEY] = np.zeros(np.shape(meta[OFFSETS_KEY])).tolist()
-    record = replace(record, geometry_metadata=meta)
+    record = replace_dataset(record, geometry_metadata=meta)
     if record.detector is None:
         return record
     d = record.detector

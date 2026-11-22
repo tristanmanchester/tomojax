@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
-from tomojax.recon import FistaConfig, fista_tv
+from tomojax.recon import FISTAConfig, fista
 
 # check-public-imports: allow-private
 from tomojax.recon._tv_ops import (
@@ -176,17 +176,17 @@ def test_box_constrained_tv_proximal_is_the_joint_minimizer():
     # One FISTA step from zero with A=I and L=1 applies the same proximal map to the data.
     grid, detector = Grid(2, 1, 2, 1.0, 1.0, 1.0), Detector(2, 2, 1.0, 1.0)
     # Physical lambda = alpha * std(data) * W / length = alpha * std(x) * 2.
-    stepped, _ = fista_tv(
+    stepped, _ = fista(
         ParallelGeometry(grid, detector, [0.0]),
         grid,
         detector,
         x[:, 0, :][None].copy(),
-        config=FistaConfig(
+        config=FISTAConfig(
             iterations=1,
             lipschitz=1,
             tv_weight=lam / (2 * np.std(x)),
             tv_prox_iterations=500,
-            nonnegative=True,
+            lower_bound=0.0,
         ),
     )
     np.testing.assert_allclose(stepped, joint, atol=2e-6)

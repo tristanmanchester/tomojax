@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
-from tomojax.recon import SPDHGConfig, spdhg_tv
+from tomojax.recon import SPDHGConfig, spdhg
 
 # check-public-imports: allow-private
 from tomojax.recon._tv_ops import (
@@ -68,7 +68,7 @@ def test_spdhg_one_iteration_smoke_is_finite_and_positive() -> None:
     )
     projections = jnp.ones((2, 2, 2), dtype=jnp.float32)
 
-    volume, info = spdhg_tv(
+    volume, info = spdhg(
         geometry,
         grid,
         detector,
@@ -76,12 +76,12 @@ def test_spdhg_one_iteration_smoke_is_finite_and_positive() -> None:
         config=SPDHGConfig(
             iterations=1,
             tv_weight=0.0,
-            views_per_batch=1,
+            views_per_block=1,
             seed=123,
             tau=0.1,
             sigma_data=0.1,
             sigma_tv=0.1,
-            nonnegative=True,
+            lower_bound=0.0,
             log_every=1,
         ),
     )

@@ -14,7 +14,7 @@ def workflow_steps(root: Path) -> list[list[str]]:
     return [
         ["simulate", "-o", str(scan), "--size", "32", "--n-views", "60"],
         ["reconstruct", str(scan), "-o", str(recon)],
-        ["inspect", str(recon), "--preview", str(root / "previews")],
+        ["inspect", str(recon), "--preview-dir", str(root / "previews")],
     ]
 
 

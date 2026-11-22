@@ -8,7 +8,7 @@ import pytest
 
 import tomojax as tj
 from tomojax.geometry import Detector, Grid
-from tomojax.recon import FistaConfig
+from tomojax.recon import FISTAConfig
 from tomojax.recon._cone_slabs import HostVolume  # check-public-imports: allow-private
 from tomojax.recon._cuda_tv import (
     proximal_host,
@@ -72,10 +72,10 @@ def test_host_fista_matches_resident_with_mapped_state(
 ):
     from tomojax.geometry import ConeBeam, ConeGeometry, LaminographyGeometry
     from tomojax.recon import (  # check-public-imports: allow-private
-        FistaConfig,
+        FISTAConfig,
         _cone_slabs,
         _parallel_slabs,
-        fista_tv,
+        fista,
     )
 
     grid, det = Grid(9, 7, 5, 0.8, 1.1, 1.3), Detector(11, 31 if cone else 9, 0.9, 1.2)
@@ -85,19 +85,19 @@ def test_host_fista_matches_resident_with_mapped_state(
     rng = np.random.default_rng(20261101)
     data = rng.uniform(0, 1, (17, det.nv, 11)).astype(np.float32)
     initial = rng.uniform(0, 0.2, (5, 7, 9)).astype(np.float32) if warm else None
-    cfg = FistaConfig(
+    cfg = FISTAConfig(
         iterations=5,
         tv_weight=weight,
         data_term=data_term,
         tv_prox_iterations=3,
-        nonnegative=True,
+        lower_bound=0.0,
         upper_bound=0.7,
         lipschitz=limit,
         tolerance=tolerance,
         patience=1,
         views_per_batch=6,
     )
-    expected, reference = fista_tv(geometry, grid, det, data, init_x=initial, config=cfg)
+    expected, reference = fista(geometry, grid, det, data, init_x=initial, config=cfg)
     if not cone and data_term == "per_view_contrast":
         # check-public-imports: allow-private
         from tomojax.recon._view_statistics import ViewStatistics
@@ -110,7 +110,7 @@ def test_host_fista_matches_resident_with_mapped_state(
     monkeypatch.setattr(_parallel_slabs, "slab_depth", lambda *args: 2)
     monkeypatch.setattr(_cone_slabs, "slab_depth", lambda *args, **kwargs: 2)
     if warm:
-        actual, record = fista_tv(geometry, grid, det, data, init_x=mapped, config=cfg, out=mapped)
+        actual, record = fista(geometry, grid, det, data, init_x=mapped, config=cfg, out=mapped)
     else:
         result = tj.reconstruct(tj.Scan(data, geometry), "fista", config=cfg, out=mapped)
         actual, record = result.volume, result.info
@@ -126,17 +126,17 @@ def test_host_fista_matches_resident_with_mapped_state(
 
 def test_host_output_rejected_on_unsupported_backend():
     from tomojax.geometry import ParallelGeometry
-    from tomojax.recon import FistaConfig, fista_tv
+    from tomojax.recon import FISTAConfig, fista
 
     grid, det = Grid(2, 2, 1, 1, 1, 1), Detector(2, 1, 1, 1)
     geometry = ParallelGeometry(grid, det, [0, 90])
     with pytest.raises(ValueError, match="out requires"):
-        fista_tv(
+        fista(
             geometry,
             grid,
             det,
             np.ones((2, 1, 2), np.float32),
-            config=FistaConfig(backend="jax"),
+            config=FISTAConfig(backend="jax"),
             out=np.zeros((1, 2, 2), np.float32),
         )
 
@@ -156,13 +156,15 @@ def test_fista_host_selection_counts_proximal_workspace(monkeypatch, weight, reg
     from tomojax.recon._fista_host import solve_on_host  # check-public-imports: allow-private
 
     grid, detector = Grid(8, 8, 8, 1, 1, 1), Detector(1, 1, 1, 1)
+    support = np.ones(shape, dtype=bool)
     runtime = SimpleNamespace(
         projector=("joseph", "cuda", 1),
         x0=None,
         split=None,
         stream=True,
         constraints=None,
-        config=FistaConfig(tv_weight=weight, regularizer=regularizer, support=np.ones(shape)),
+        volume_mask=support.astype(np.float32),
+        config=FISTAConfig(tv_weight=weight, regularizer=regularizer, support=support),
     )
     data = np.zeros((1, 1, 1), np.float32)
     # Four outer volumes, four reference-TV fields and four one-pixel batches.

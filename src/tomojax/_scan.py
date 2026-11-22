@@ -119,7 +119,9 @@ class Scan:
         """The scan with line-integral ``steps`` applied (see :mod:`tomojax.corrections`).
 
         Steps on counts or transmission need the frames: use :func:`load_frames`
-        and :meth:`Frames.corrected`.
+        and :meth:`Frames.corrected`. Geometry-dependent steps such as
+        :class:`~tomojax.corrections.Rings` with ``geometry=None`` bind to this
+        scan's current geometry automatically.
 
         Parameters
         ----------
@@ -140,7 +142,8 @@ class Scan:
         """
         from tomojax.corrections import correct_projections
 
-        done = correct_projections(self.projections, steps, views_per_batch=views_per_batch)
+        bound = bind_step_geometry(steps, self.geometry)
+        done = correct_projections(self.projections, bound, views_per_batch=views_per_batch)
         everything = len(done.kept) == self.projections.shape[0]
         return replace(
             self,
@@ -152,6 +155,10 @@ class Scan:
 
     def cropped(self, rows: slice, cols: slice) -> Scan:
         """Crop a contiguous detector window and move the detector to match.
+
+        An automatically chosen axial-parallel output grid follows the window,
+        matching :meth:`Frames.cropped`; an explicit grid, or a non-axial output
+        box, is retained.
 
         Parameters
         ----------
@@ -174,7 +181,7 @@ class Scan:
         return replace(
             self,
             projections=np.asarray(self.projections)[:, rows, cols],
-            geometry=rebuild(self.geometry, detector=window),
+            geometry=frame_output_grid(rebuild(self.geometry, detector=window), self.source),
             corrections=(*self.corrections, cropped_record(rows, cols, self.detector)),
         )
 
@@ -576,7 +583,7 @@ def describe(geometry: Geometry) -> tuple[str, dict[str, object], Any, Geometry]
         meta = {"tilt": float(geometry.tilt), "tilt_about": str(geometry.tilt_about)}
     elif isinstance(geometry, RotationAxisGeometry):
         kind = "lamino"
-        meta["axis_unit_lab"] = [float(x) for x in geometry.axis_unit_lab]
+        meta["axis_unit_lab"] = [float(x) for x in geometry.axis_unit]
     elif isinstance(geometry, ParallelGeometry):
         kind = "parallel"
     else:
@@ -606,22 +613,36 @@ def _describe_segments(
     return "cone", meta, None if table is None else (table, "detector"), geometry
 
 
+def bind_step_geometry(steps: Sequence[Step], geometry: ScanGeometry) -> tuple[Step, ...]:
+    """Attach ``geometry`` to geometry-aware correction steps whose geometry was omitted."""
+    from tomojax.corrections import Rings
+
+    return tuple(
+        Rings(geometry, views=step.views)
+        if isinstance(step, Rings) and step.geometry is None
+        else step
+        for step in steps
+    )
+
+
 def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
     """A dataset record for ``scan``: its geometry, keeping the source's provenance."""
+    from tomojax.io.api import replace_dataset
+
     record = geometry_record(scan.geometry, name=scan.name, source=scan.source, grid=grid)
     meta = record.geometry_metadata
     if scan.corrections:
         meta["corrections"] = [c.to_dict() for c in scan.corrections]
     if scan.view_positions is not None:
         meta["view_positions"] = scan.view_positions.tolist()
-    record = replace(record, projections=np.asarray(scan.projections))
+    record = replace_dataset(record, projections=np.asarray(scan.projections))
     if scan.source is None:
         return record
     # A Scan holds only sample-view line integrals, not the acquisition's raw
     # frame labels. Keep the other provenance without reusing a stale view axis.
-    metadata = record.copy_metadata()
+    metadata = record.to_nxtomo_metadata()
     metadata.image_key = None
-    return replace(record, _metadata=metadata)
+    return replace_dataset(record, metadata=metadata)
 
 
 def source_of(scan: Scan) -> dict[str, Any]:
@@ -654,6 +675,7 @@ def geometry_record(
 ) -> ProjectionDataset:
     """A dataset record of ``geometry`` alone, keeping ``source``'s provenance."""
     from tomojax.io import ProjectionDataset
+    from tomojax.io.api import replace_dataset
 
     geometry_type, meta, poses, _ = describe(geometry)
     kept = (
@@ -679,7 +701,7 @@ def geometry_record(
         "align_gauge": None if poses is None else {"pose_translation_frame": poses[1]},
         "sample_name": name,
     }
-    return ProjectionDataset(**fields) if source is None else replace(source, **fields)
+    return ProjectionDataset(**fields) if source is None else replace_dataset(source, **fields)
 
 
 def scan_from_record(record: ProjectionDataset, *, apply_poses: bool) -> Scan:
@@ -816,7 +838,7 @@ def frame_output_grid(
     elif binning > 1:
         g = geometry.grid
         grid = g.resampled(
-            (max(1, g.nx // binning), max(1, g.ny // binning), max(1, g.nz // binning))
+            (max(1, g.nz // binning), max(1, g.ny // binning), max(1, g.nx // binning))
         )
     else:
         return geometry

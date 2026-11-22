@@ -72,7 +72,7 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
     assert result.scan.projections is scan.projections and result.scan.detector == detector
     np.testing.assert_allclose(result.scan.poses[:, 3:5], shifts)
     np.testing.assert_array_equal(result.scan.poses[:, [0, 1, 2, 5]], 0)
-    np.testing.assert_allclose(result.scan.geometry.axis_unit_lab, scan.geometry.axis_unit_lab)
+    np.testing.assert_allclose(result.scan.geometry.rotation_axis(), scan.geometry.rotation_axis())
     assert result.info["method"] == "joint_volume_pose" and result.info["calibration"] == {}
     assert result.scan.grid == (supplied or grid)
     assert scan.source is None

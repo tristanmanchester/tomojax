@@ -371,11 +371,11 @@ def mlem(
     --------
     >>> import numpy as np
     >>> import tomojax as tj
-    >>> from tomojax.recon import mlem, MLEMConfig, project
+    >>> from tomojax.recon import MLEMConfig, mlem
     >>> grid = tj.Grid(4, 4, 1, 1.0, 1.0, 1.0)
     >>> detector = tj.Detector(4, 1, 1.0, 1.0)
     >>> geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 8, endpoint=False))
-    >>> data = project(geometry, np.ones((1, 4, 4), np.float32))
+    >>> data = tj.project(geometry, np.ones((1, 4, 4), np.float32))
     >>> volume, info = mlem(
     ...     geometry,
     ...     geometry.grid,

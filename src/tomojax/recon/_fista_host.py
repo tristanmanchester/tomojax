@@ -50,10 +50,7 @@ class HostFista:
             if config.data_term == "absolute" and self.statistics is not None
             else 0.0
         )
-        self.lower = max(
-            0.0 if config.nonnegative else -math.inf,
-            config.lower_bound if config.lower_bound is not None else -math.inf,
-        )
+        self.lower = config.lower_bound if config.lower_bound is not None else -math.inf
         self.upper = config.upper_bound if config.upper_bound is not None else math.inf
         self.initial = initial
         if initial is not None and np.may_share_memory(initial, x):

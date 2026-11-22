@@ -20,10 +20,11 @@ if TYPE_CHECKING:
     import numpy as np
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
+    from tomojax.recon._operators import Projector, backproject, project
     from tomojax.recon.cgls import CGLSConfig
     from tomojax.recon.fbp import FBPConfig, default_fbp_scale
     from tomojax.recon.filters import clear_filter_caches
-    from tomojax.recon.fista_tv import FistaConfig
+    from tomojax.recon.fista_tv import FISTAConfig
     from tomojax.recon.fourier import FourierConfig
     from tomojax.recon.mlem import MLEMConfig
     from tomojax.recon.sirt import SIRTConfig
@@ -34,7 +35,7 @@ type MethodConfig = (
     recon.FBPConfig
     | recon.FourierConfig
     | recon.CGLSConfig
-    | recon.FistaConfig
+    | recon.FISTAConfig
     | recon.SPDHGConfig
     | recon.SIRTConfig
     | recon.MLEMConfig
@@ -44,15 +45,18 @@ _CONFIGS = {
     "fbp": "FBPConfig",
     "fourier": "FourierConfig",
     "cgls": "CGLSConfig",
-    "fista": "FistaConfig",
+    "fista": "FISTAConfig",
     "spdhg": "SPDHGConfig",
     "sirt": "SIRTConfig",
     "mlem": "MLEMConfig",
 }
 
 _SOURCES = {
+    "Projector": "_operators",
+    "backproject": "_operators",
     "clear_filter_caches": "filters",
     "default_fbp_scale": "fbp",
+    "project": "_operators",
 }
 
 
@@ -79,7 +83,7 @@ def method_config(
     """Build a method configuration from defaults or named replacements.
 
     ``fbp`` (FDK for cone beams) takes an :class:`FBPConfig`, ``cgls`` a
-    :class:`CGLSConfig`, ``fista`` a :class:`FistaConfig` and ``spdhg`` an
+    :class:`CGLSConfig`, ``fista`` a :class:`FISTAConfig` and ``spdhg`` an
     :class:`SPDHGConfig`; ``sirt`` takes :class:`SIRTConfig`, ``mlem``
     :class:`MLEMConfig` and ``fourier`` :class:`FourierConfig`. Each setting
     replaces the field of its name, as :func:`dataclasses.replace` does. A config
@@ -119,21 +123,43 @@ def method_config(
     if name is None:
         raise ValueError(f"method must be one of {', '.join(_CONFIGS)}; got {method!r}")
     kind = cast("type[MethodConfig]", getattr(recon, name))
-    if warm_start is not None and method in {"fbp", "fourier"}:
+    if warm_start and method in {"fbp", "fourier"}:
         raise ValueError(f"method {method!r} does not take warm_start")
     if config is not None and not isinstance(config, kind):
         raise ValueError(
             f"method {method!r} takes a {kind.__name__}, not a {type(config).__name__}"
         )
+    resolved_settings = dict(settings)
+    if "nonnegative" in resolved_settings:
+        nonnegative = resolved_settings.pop("nonnegative")
+        if method not in {"fista", "spdhg", "sirt"}:
+            detail = (
+                "mlem is intrinsically nonnegative"
+                if method == "mlem"
+                else (
+                    "cgls is unconstrained" if method == "cgls" else "direct methods take no bounds"
+                )
+            )
+            raise ValueError(f"method {method!r} does not take nonnegative ({detail})")
+        if nonnegative is not None:
+            current = (
+                None
+                if config is None
+                else cast("float | None", getattr(config, "lower_bound", None))
+            )
+            if nonnegative:
+                resolved_settings["lower_bound"] = 0.0 if current is None else max(0.0, current)
+            elif "lower_bound" not in resolved_settings and current == 0.0:
+                resolved_settings["lower_bound"] = None
     names = sorted(item.name for item in fields(kind) if item.init)
-    unknown = sorted(set(settings) - set(names))
+    unknown = sorted(set(resolved_settings) - set(names))
     if unknown:
         raise ValueError(
             f"method {method!r} does not take {', '.join(unknown)} "
             f"({kind.__name__} has {', '.join(names)})"
         )
     base = kind() if config is None else config
-    return replace(base, **settings) if settings else base
+    return replace(base, **resolved_settings) if resolved_settings else base
 
 
 def reconstruct_slabs[T](
@@ -291,7 +317,7 @@ def reconstruct_arrays(
         from tomojax.recon._fourier_backend import resolve_fourier_backend
 
         backend = resolve_fourier_backend(cfg.backend)
-        volume = recon.fourier_reconstruct(
+        volume = recon.fourier(
             cast("ParallelGeometry", geometry),
             grid,
             detector,
@@ -312,7 +338,7 @@ def reconstruct_arrays(
         cfg = cast("FBPConfig", cfg)
         return fbp_volume(geometry, grid, detector, projections, cfg, det_grid, out)
     # The method name has ruled out the FBP and Fourier configurations above.
-    iterative = cast("CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig | MLEMConfig", cfg)
+    iterative = cast("CGLSConfig | FISTAConfig | SPDHGConfig | SIRTConfig | MLEMConfig", cfg)
     return _iterative_result(
         method, geometry, grid, detector, projections, iterative, det_grid,
         warm_start=warm_start, out=out,
@@ -325,7 +351,7 @@ def _iterative_result(
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray | np.ndarray,
-    cfg: CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig | MLEMConfig,
+    cfg: CGLSConfig | FISTAConfig | SPDHGConfig | SIRTConfig | MLEMConfig,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
     warm_start: bool,
@@ -394,7 +420,7 @@ def _iterative_incore(
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray | np.ndarray,
-    cfg: CGLSConfig | FistaConfig | SPDHGConfig | SIRTConfig | MLEMConfig,
+    cfg: CGLSConfig | FISTAConfig | SPDHGConfig | SIRTConfig | MLEMConfig,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
     warm_start: bool,
@@ -419,15 +445,16 @@ def _iterative_incore(
             geometry, grid, detector, projections, config=recon.FBPConfig(devices=devices),
             det_grid=det_grid, out=out,
         )  # fmt: skip
-        if getattr(cfg, "nonnegative", False):
+        lower = getattr(cfg, "lower_bound", None)
+        if lower is not None:
             import jax.numpy as jnp
 
-            start = jnp.maximum(start, 0.0)
+            start = jnp.maximum(start, float(lower))
     args = (geometry, grid, detector, projections)
     name = {
         "cgls": "cgls",
-        "fista": "fista_tv",
-        "spdhg": "spdhg_tv",
+        "fista": "fista",
+        "spdhg": "spdhg",
         "sirt": "sirt",
     }[method]
     solve = getattr(recon, name) if solver is None else solver
@@ -446,9 +473,12 @@ def _detector_grid(
 
 __all__ = [
     "MethodConfig",
+    "Projector",
+    "backproject",
     "clear_filter_caches",
     "default_fbp_scale",
     "method_config",
+    "project",
     "reconstruct_arrays",
     "reconstruct_slabs",
 ]

@@ -131,15 +131,6 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--manifest": "file output",
         "--dry-run": "prints the selected parameters and grid without fitting",
     },
-    "load": {
-        "--flats": ("load", "flats"),
-        "--darks": ("load", "darks"),
-        "--angles": ("load", "angles"),
-        "--pixel-size": ("load", "pixel_size"),
-        "--geometry": ("load", "geometry"),
-        "--tilt": "a field of the geometry --geometry declares",
-        "--apply-poses": ("load", "apply_poses"),
-    },
     "correct": {
         "--flats": ("load", "flats"),
         "--darks": ("load", "darks"),
@@ -204,7 +195,7 @@ def _configuration_fields(command: str) -> set[str]:
     from tomojax.recon import (
         CGLSConfig,
         FBPConfig,
-        FistaConfig,
+        FISTAConfig,
         FourierConfig,
         MLEMConfig,
         SIRTConfig,
@@ -212,7 +203,7 @@ def _configuration_fields(command: str) -> set[str]:
     )
 
     if command == "align":  # every AlignConfig field but the everyday ones, which are options
-        from tomojax import AlignConfig
+        from tomojax.alignment import AlignConfig
 
         everyday = {
             "motion",
@@ -227,7 +218,7 @@ def _configuration_fields(command: str) -> set[str]:
         FBPConfig,
         FourierConfig,
         CGLSConfig,
-        FistaConfig,
+        FISTAConfig,
         SPDHGConfig,
         SIRTConfig,
         MLEMConfig,

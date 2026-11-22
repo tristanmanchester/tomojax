@@ -470,7 +470,7 @@ def test_fourier_slab_option_reaches_isolated_worker_and_result(benchmark, monke
         slabs.append(config.slices_per_batch)
         return case.volume
 
-    monkeypatch.setattr(tomojax.recon, "fourier_reconstruct", reconstruct)
+    monkeypatch.setattr(tomojax.recon, "fourier", reconstruct)
     monkeypatch.setattr(benchmark, "load_fixture", lambda _: case)
     monkeypatch.setattr(benchmark, "environment", dict)
     monkeypatch.setattr(benchmark.subprocess, "run", lambda *args, **kwargs: None)

@@ -13,7 +13,6 @@ from tomojax.datasets import (
     make_phantom,
     random_cubes_spheres,
     simulate,
-    simulate_to_file,
 )
 from tomojax.io import load_dataset
 
@@ -150,30 +149,57 @@ def test_sim_config_no_longer_accepts_noise_shorthand() -> None:
         )
 
 
-def test_simulate_to_file_writes_loadable_dataset(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    _install_fast_public_simulator(monkeypatch)
-    out_path = tmp_path / "synthetic.nxs"
-    config = SimConfig(
-        nx=2,
-        ny=2,
-        nz=2,
-        nu=2,
-        nv=2,
-        n_views=2,
+def test_workflow_simulate_preserves_config_placement_and_saves_directly(tmp_path: Path) -> None:
+    import tomojax as tj
+
+    cfg = SimConfig(
+        nx=6,
+        ny=5,
+        nz=4,
+        nu=8,
+        nv=7,
+        n_views=5,
+        geometry="lamino",
+        tilt=25.0,
         phantom="sphere",
-        single_rotate=False,
+        seed=9,
     )
+    shifted_grid = tj.Grid(6, 5, 4, 0.5, 0.7, 0.9, vol_center=(0.4, -0.3, 0.2))
+    offset_detector = tj.Detector(10, 9, 0.6, 0.8, center=(0.25, -0.15))
 
-    simulate_to_file(config, str(out_path))
+    sim = tj.simulate(config=cfg, grid=shifted_grid, detector=offset_detector)
+
+    assert isinstance(sim, tj.Simulation)
+    assert sim.scan.geometry.grid == shifted_grid
+    assert sim.scan.geometry.detector == offset_detector
+    assert sim.phantom.shape == shifted_grid.shape
+    assert len(sim.scan.angles) == 5
+    assert isinstance(sim.scan.geometry, tj.LaminographyGeometry)
+    assert sim.scan.geometry.tilt == 25.0
+    assert sim.info["phantom"] == "sphere"
+    assert sim.info["seed"] == 9
+    expected = np.asarray(tj.project(sim.scan.geometry, sim.phantom))
+    np.testing.assert_allclose(np.asarray(sim.scan.projections), expected, rtol=1e-5, atol=1e-5)
+
+    out_path = tmp_path / "synthetic.nxs"
+    tj.save(out_path, sim)
     loaded = load_dataset(out_path)
+    assert loaded.projections is not None and loaded.projections.shape == (5, 9, 10)
+    assert loaded.volume is not None and loaded.volume.shape == (4, 5, 6)
+    assert loaded.grid == shifted_grid
+    assert loaded.detector == offset_detector
 
-    assert loaded.projections.shape == (2, 2, 2)
-    assert loaded.volume is not None
-    assert loaded.volume.shape == (2, 2, 2)
-    assert loaded.grid is not None
-    assert loaded.detector is not None
+
+def test_workflow_simulate_cone_sizes_detector_from_physical_extent() -> None:
+    import tomojax as tj
+
+    grid = tj.Grid(6, 5, 4, 0.5, 0.5, 0.5, vol_center=(0.5, 0.0, 0.25))
+    sim = tj.simulate("sphere", geometry="cone", grid=grid, n_views=4, seed=2)
+    assert isinstance(sim.geometry, tj.ConeGeometry)
+    assert sim.geometry.grid == grid
+    assert sim.geometry.detector.du == 0.5 and sim.geometry.detector.dv == 0.5
+    expected = np.asarray(tj.project(sim.geometry, sim.phantom))
+    np.testing.assert_allclose(np.asarray(sim.scan.projections), expected, rtol=1e-5, atol=1e-5)
 
 
 @pytest.mark.parametrize(

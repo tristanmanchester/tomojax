@@ -30,17 +30,17 @@ if TYPE_CHECKING:
     from tomojax._loading import Frames, load, load_frames
     from tomojax._region import RegionEstimate, estimate_region
     from tomojax._scan import Alignment, Reconstruction, Scan
-    from tomojax._simulate import simulate
+    from tomojax._simulate import Simulation, simulate
     from tomojax._workflow import (
         align,
         backproject,
+        load_alignment,
         load_reconstruction,
         project,
         reconstruct,
         reconstruct_slabs,
         save,
     )
-    from tomojax.alignment import AlignConfig
     from tomojax.geometry import (
         ConeBeam,
         ConeGeometry,
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
         LaminographyGeometry,
         ParallelGeometry,
     )
-    from tomojax.recon import Projector
+    from tomojax.recon.api import Projector
 
 from tomojax._runtime import configure_jax_allocator_defaults as _configure_jax_allocator_defaults
 from tomojax._version import __version__
@@ -57,13 +57,13 @@ from tomojax._version import __version__
 _configure_jax_allocator_defaults()
 
 _SOURCES = {
-    "AlignConfig": "tomojax.alignment",
-    "Projector": "tomojax.recon",
+    "Projector": "tomojax.recon.api",
     "Alignment": "tomojax._scan",
     "Frames": "tomojax._loading",
     "Reconstruction": "tomojax._scan",
     "RegionEstimate": "tomojax._region",
     "Scan": "tomojax._scan",
+    "Simulation": "tomojax._simulate",
     "align": "tomojax._workflow",
     "backproject": "tomojax._workflow",
     "estimate_region": "tomojax._region",
@@ -71,6 +71,7 @@ _SOURCES = {
     "inspect": "tomojax._files",
     "simulate": "tomojax._simulate",
     "load": "tomojax._loading",
+    "load_alignment": "tomojax._workflow",
     "load_frames": "tomojax._loading",
     "load_reconstruction": "tomojax._workflow",
     "project": "tomojax._workflow",
@@ -86,7 +87,6 @@ _SOURCES = {
 }
 
 __all__ = [
-    "AlignConfig",
     "Alignment",
     "ConeBeam",
     "ConeGeometry",
@@ -99,6 +99,7 @@ __all__ = [
     "Reconstruction",
     "RegionEstimate",
     "Scan",
+    "Simulation",
     "__version__",
     "align",
     "backproject",
@@ -106,6 +107,7 @@ __all__ = [
     "export",
     "inspect",
     "load",
+    "load_alignment",
     "load_frames",
     "load_reconstruction",
     "project",

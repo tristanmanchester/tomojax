@@ -8,7 +8,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.corrections import Step, correct_frames, corrected_row_source
+from tomojax.corrections import Step, correct_frames
+from tomojax.corrections.api import corrected_row_source
 
 
 def test_whole_row_workers_preserve_cpu_placement_and_tail(monkeypatch):

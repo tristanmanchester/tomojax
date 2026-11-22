@@ -5,21 +5,21 @@
 
 - `fbp` and `fdk` (cone beams), with `fbp_host` and `fdk_host` for volumes
   kept in host memory
-- `fourier_reconstruct`
+- `fourier`
 - `cgls`
 - `cgls_multires`
-- `fista_tv`
-- `spdhg_tv`
+- `fista`
+- `spdhg`
 - `sirt` (SIRT, OS-SART and SART)
 - `mlem`, with ordered subsets in `MLEMConfig`
 
 Each method's settings are a configuration class: `FBPConfig` (FBP and FDK),
-`FourierConfig`, `CGLSConfig`, `FistaConfig`, `SPDHGConfig`, `SIRTConfig` and
+`FourierConfig`, `CGLSConfig`, `FISTAConfig`, `SPDHGConfig`, `SIRTConfig` and
 `MLEMConfig`. Pass one as
-`tj.reconstruct(scan, "fista", config=FistaConfig(regularizer="huber_tv"))`;
+`tj.reconstruct(scan, "fista", config=FISTAConfig(regularizer="huber_tv"))`;
 keywords such as `iterations=` replace the fields of the same name. The same
 fields are the keys of a `tomojax reconstruct --config` TOML file
-(`tomojax reconstruct --config-keys` lists them).
+(`tomojax reconstruct --method NAME --config-keys` lists them).
 
 CGLS, FISTA and SPDHG default to `data_term="absolute"`, fitting measured
 line integrals. Use `data_term="per_view_contrast"` when material lies outside
@@ -113,7 +113,7 @@ Completed slabs are written immediately, so a later exception can leave partial
 output. Callers own memmap flushing. Device workspace and runtime caches remain
 additional costs; batch dimensions are not a hard process-memory cap.
 
-`fourier_reconstruct` (`tj.reconstruct(scan, "fourier")`) is an opt-in
+`fourier` (`tj.reconstruct(scan, "fourier")`) is an opt-in
 Fourier-slice inverse for axial parallel half-turn scans, including
 nonuniform encoder angles, rejected views and an inclusive 0 to 180 degree
 range; views of one direction share an angular cell and are averaged. It accepts
@@ -127,9 +127,9 @@ acquired detector field to avoid wrapping an object outside a cropped ROI back
 into it. Missing detector data are assumed zero; this does not correct truncation.
 
 ```python
-from tomojax.recon import FourierConfig, fourier_reconstruct
+from tomojax.recon import FourierConfig, fourier
 
-volume = fourier_reconstruct(
+volume = fourier(
     geometry, grid, detector, projections_numpy,
     config=FourierConfig(),  # backend and slab depth selected automatically
     out=output_memmap,  # optional writable FP32 host storage
@@ -224,7 +224,7 @@ noisy data. The default schedule is not an automatic image-quality criterion.
 Each new level shape can require compilation. A numerical breakdown at any
 level raises `FloatingPointError`.
 
-CUDA Joseph `fista_tv` uses host slabs automatically when resident state
+CUDA Joseph `fista` uses host slabs automatically when resident state
 would exceed device memory; its `out=` argument explicitly selects host output.
 The host route supports ordinary TV and box constraints without a support mask.
 It uses the same global power estimate,

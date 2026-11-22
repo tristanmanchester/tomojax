@@ -175,10 +175,12 @@ Inside every step, the solver profiles out each view's offset and vertical row r
 
 ## Settings
 
-Pass the six common settings as keywords to `tj.align` (`motion`, `iterations`, `image_iterations`, `tolerance`, `interpolation`, `resolution`) and any remaining settings via `config=tj.AlignConfig(...)`. Keywords override matching fields in `config`, and `result.info["config"]` records all resolved values. On the CLI, pass `--motion`, `--iterations`, `--image-iterations`, `--tolerance`, `--interpolation`, and `--resolution`, or a `--config` TOML file (`tomojax align --config-keys` lists every key, and `--dry-run` prints resolved settings).
+Pass the six common settings as keywords to `tj.align` (`motion`, `iterations`, `image_iterations`, `tolerance`, `interpolation`, `resolution`) and any remaining settings via `config=AlignConfig(...)` from `tomojax.alignment`. Keywords override matching fields in `config`, and `result.info["config"]` records all resolved values. Save a fit with `tj.save("aligned.nxs", result)` and read it back with `tj.load_alignment("aligned.nxs")`. On the CLI, pass `--motion`, `--iterations`, `--image-iterations`, `--tolerance`, `--interpolation`, and `--resolution`, or a `--config` TOML file (`tomojax align --config-keys` lists every key, and `--dry-run` prints resolved settings).
 
 ```python
-config = tj.AlignConfig(levels=(1,), refine_iterations=0)
+from tomojax.alignment import AlignConfig
+
+config = AlignConfig(levels=(1,), refine_iterations=0)
 result = tj.align(scan, fit="translations", iterations=12, config=config)
 ```
 

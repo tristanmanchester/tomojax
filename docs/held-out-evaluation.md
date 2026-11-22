@@ -42,15 +42,13 @@ print(score.mse, score.relative_l2, score.count)
 
 Optional `weights=` specifies nonnegative precision (not square-root precision). Zero-weight entries are ignored; nonfinite values with positive weight raise an error. Empty test batches yield zero totals and `NaN` mean/relative error; zero target energy yields `NaN` relative error.
 
-For large scans, accumulate `Score` objects over view batches before reading ratios:
+For large scans, accumulate `Score` objects over view batches with `+` or `sum(...)` before reading ratios:
 
 ```python
-from tomojax.evaluation import Score
-
-total = Score(0, 0, 0, 0)
-for start in range(0, observations.shape[0], 32):
-    views = slice(start, start + 32)
-    total += split.score(prediction[views], observations[views], views=views)
+total = sum(
+    split.score(prediction[slice(start, start + 32)], observations[slice(start, start + 32)], views=slice(start, start + 32))
+    for start in range(0, observations.shape[0], 32)
+)
 print(total.mse)
 ```
 

@@ -95,7 +95,7 @@ Run it and generate slice previews:
 
 ```bash
 python preview.py
-tomojax inspect preview.nxs --preview preview-images
+tomojax inspect preview.nxs --preview-dir preview-images
 ```
 
 Reload the floating-point volume and geometry in Python with:
@@ -127,7 +127,7 @@ tj.save("i13-preview.nxs", result)
 
 ```bash
 python i13_preview.py
-tomojax inspect i13-preview.nxs --preview i13-preview-images
+tomojax inspect i13-preview.nxs --preview-dir i13-preview-images
 ```
 
 Recorded angle signs are kept as stored. For TIFF-only acquisitions without NXtomo metadata, see [preparing TIFF data](real-laminography.md#prepare-tiff-data).

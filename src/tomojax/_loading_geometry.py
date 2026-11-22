@@ -1,27 +1,56 @@
 """Record-to-geometry resolution, before any detector pixels are read.
 
-Explicit geometry and grids remain authoritative. A complete recorded pitch
-may prepare an internal axial centre seed; the loading boundary must estimate
-that centre from calibrated pixels before returning it to the caller.
+Explicit geometry and grids remain authoritative. When a file records a pitch
+but no rotation centre, the detector middle ``(0.0, 0.0)`` is used and recorded
+with ``detector_center_status="not_recorded"``; fit a centre explicitly with
+:func:`tomojax.align`.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import TYPE_CHECKING, cast
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, cast
 import warnings
 
 import numpy as np
 
 from tomojax._scan import frame_output_grid, geometry_of
-from tomojax.geometry import Detector, Grid
-from tomojax.io.api import dropped_offsets_message, with_view_offsets, without_view_offsets
+from tomojax.geometry import (
+    ConeBeam,
+    ConeGeometry,
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+)
+from tomojax.io.api import (
+    dropped_offsets_message,
+    replace_dataset,
+    with_view_offsets,
+    without_view_offsets,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tomojax.geometry import ScanGeometry
     from tomojax.io import ProjectionDataset
+
+
+@dataclass(frozen=True)
+class DeclaredGeometry:
+    """CLI geometry declaration resolved inside the loader before file geometry is required."""
+
+    kind: str | None = None
+    tilt: float | None = None
+    tilt_about: str = "x"
+    detector_roll: float = 0.0
+    detector_pitch: float = 0.0
+    detector_yaw: float = 0.0
+    source_to_axis: float | None = None
+    source_to_detector: float | None = None
+    axis_offset: float = 0.0
+    detector_center: tuple[float, float] | None = None
 
 
 def _vendor_corrections(record: ProjectionDataset, *, applied: bool) -> ProjectionDataset:
@@ -34,7 +63,128 @@ def _vendor_corrections(record: ProjectionDataset, *, applied: bool) -> Projecti
     meta = {**record.geometry_metadata, "vendor_corrections": {**vendor, "applied": applied}}
     if not applied and meta.get("detector_center_status") == "recorded":
         meta["detector_center_status"] = "nominal"
-    return replace(record, geometry_metadata=meta)
+    return replace_dataset(record, geometry_metadata=meta)
+
+
+def _declared_grid(
+    declared: DeclaredGeometry,
+    detector: Detector,
+    grid: Grid | None,
+) -> Grid:
+    """Resolve the default grid for a CLI-declared geometry."""
+    if grid is not None:
+        return grid
+    if declared.kind == "cone":
+        assert declared.source_to_axis is not None
+        assert declared.source_to_detector is not None
+        mag = float(declared.source_to_detector) / float(declared.source_to_axis)
+        vx, vz = detector.du / mag, detector.dv / mag
+        return Grid(detector.nu, detector.nu, detector.nv, vx, vx, vz)
+    return Grid(
+        detector.nu,
+        detector.nu,
+        detector.nv,
+        detector.du,
+        detector.du,
+        detector.dv,
+        vol_center=(0.0, 0.0, detector.center[1]),
+    )
+
+
+def _declared_geometry(
+    record: ProjectionDataset,
+    declared: DeclaredGeometry,
+    *,
+    grid: Grid | None,
+) -> tuple[ProjectionDataset, ScanGeometry]:
+    """Build a declared geometry directly from frame shape, pitches and angles."""
+    detector = record.detector
+    if detector is None:
+        if declared.kind == "cone":
+            raise ValueError(
+                "Cone geometry requires a detector pixel size: pass --pixel-size or detector=..."
+            )
+        record = record.with_parallel_detector()
+        detector = record.detector
+    assert detector is not None
+    if declared.detector_center is not None:
+        detector = replace(detector, center=declared.detector_center)
+    angles = cast("Sequence[float]", np.asarray(record.angles, np.float32))
+    resolved_grid = _declared_grid(declared, detector, grid or record.grid)
+    if declared.kind == "parallel":
+        geom: ScanGeometry = ParallelGeometry(
+            resolved_grid, detector, angles, detector_roll=declared.detector_roll
+        )
+    elif declared.kind == "lamino":
+        if declared.tilt is None:
+            raise ValueError("--geometry lamino needs --tilt")
+        geom = LaminographyGeometry(
+            resolved_grid,
+            detector,
+            angles,
+            declared.tilt,
+            tilt_about=declared.tilt_about,
+            detector_roll=declared.detector_roll,
+        )
+    elif declared.kind == "cone":
+        if declared.source_to_axis is None or declared.source_to_detector is None:
+            raise ValueError("--geometry cone needs --source-to-axis and --source-to-detector")
+        beam = ConeBeam(
+            declared.source_to_axis,
+            declared.source_to_detector,
+            detector_roll=declared.detector_roll,
+            detector_pitch=declared.detector_pitch,
+            detector_yaw=declared.detector_yaw,
+            axis_offset=declared.axis_offset,
+        )
+        geom = ConeGeometry(
+            resolved_grid,
+            detector,
+            angles,
+            beam,
+            tilt=declared.tilt or 0.0,
+            tilt_about=declared.tilt_about,
+        )
+    else:
+        raise ValueError(f"unknown geometry {declared.kind!r}")
+    return replace_dataset(record, detector=detector), geom
+
+
+def _updated_geometry_metadata(
+    record: ProjectionDataset,
+    *,
+    geometry: ScanGeometry | None,
+    declares_geom: bool,
+    has_center: bool,
+    detector: Detector | None,
+    pixel_size: float | tuple[float, float] | None,
+) -> tuple[Detector | None, dict[str, Any]]:
+    """Update detector and provenance flags from explicit caller overrides."""
+    meta = dict(record.geometry_metadata)
+    if pixel_size is not None:  # the shape from the frames, the centre from the file or the middle
+        du, dv = np.broadcast_to(np.asarray(pixel_size, np.float64), (2,)).tolist()
+        _, nv, nu = cast("np.ndarray", record.projections).shape  # frames: always present
+        center = (0.0, 0.0) if record.detector is None else record.detector.center
+        detector = Detector(nu, nv, du, dv, center)
+        meta["detector_pixel_size_status"] = "provided"
+        meta.pop("length_unit", None)
+    explicit_center = (
+        geometry is not None
+        or declares_geom
+        or has_center
+        or (detector is not None and pixel_size is None)
+    )
+    if explicit_center:
+        meta["detector_center_status"] = "provided"
+    if geometry is not None or declares_geom:
+        meta["axis_status"] = "provided"
+        if "acquisition" in meta:
+            meta["acquisition"] = {
+                **meta["acquisition"],
+                "geometry_status": "provided",
+                "geometry_note": "Geometry supplied explicitly by caller.",
+            }
+    return detector, meta
 
 
 def frame_geometry(
@@ -46,46 +196,54 @@ def frame_geometry(
     geometry: ScanGeometry | None = None,
     apply_poses: bool = True,
     pixel_size: float | tuple[float, float] | None = None,
+    declared: DeclaredGeometry | None = None,
 ) -> tuple[ProjectionDataset, ScanGeometry]:
     """Resolve caller metadata before constructing any geometry from a file.
 
-    Readers may return incomplete records. An explicit geometry must not first
-    require constructing (and guessing) the missing source geometry. Recorded
-    per-view detector offsets move from the file's detector to a caller's
-    ``detector``; an explicit ``geometry`` replaces them, with a warning.
+    Readers may return incomplete records. An explicit geometry or CLI
+    declaration must not first require constructing (and guessing) the missing
+    source geometry. Recorded per-view detector offsets move from the file's
+    detector to a caller's ``detector``; an explicit ``geometry`` or declared
+    geometry replaces them, with a warning.
     """
     if pixel_size is not None and (detector is not None or geometry is not None):
         raise ValueError(
             "pixel_size= and detector= (or geometry=) both describe the detector: pass one"
         )
-    if geometry is not None and (message := dropped_offsets_message(record)):
+    declares_geom = declared is not None and declared.kind is not None
+    if (geometry is not None or declares_geom) and (message := dropped_offsets_message(record)):
         warnings.warn(message, stacklevel=4)
-    record = _vendor_corrections(record, applied=apply_poses and geometry is None)
-    meta = dict(record.geometry_metadata)
-    if pixel_size is not None:  # the shape from the frames, the centre from the file or the middle
-        du, dv = np.broadcast_to(np.asarray(pixel_size, np.float64), (2,)).tolist()
-        _, nv, nu = cast("np.ndarray", record.projections).shape  # frames: always present
-        center = (0.0, 0.0) if record.detector is None else record.detector.center
-        detector = Detector(nu, nv, du, dv, center)
-        meta["detector_pixel_size_status"] = "provided"
-        meta.pop("length_unit", None)
-    if geometry is not None or (detector is not None and pixel_size is None):
-        meta["detector_center_status"] = "provided"
-    if geometry is not None:
-        meta["axis_status"] = "provided"
-    if geometry is not None and "acquisition" in meta:
-        meta["acquisition"] = {
-            **meta["acquisition"],
-            "geometry_status": "provided",
-            "geometry_note": "Geometry supplied explicitly by caller.",
-        }
-    record = replace(
+    record = _vendor_corrections(
+        record, applied=apply_poses and geometry is None and not declares_geom
+    )
+    has_center = declared is not None and declared.detector_center is not None
+    detector, meta = _updated_geometry_metadata(
+        record,
+        geometry=geometry,
+        declares_geom=declares_geom,
+        has_center=has_center,
+        detector=detector,
+        pixel_size=pixel_size,
+    )
+    record = replace_dataset(
         record,
         angles=record.angles if angles is None else np.asarray(angles, np.float32),
         detector=detector or record.detector,
         grid=geometry.grid if geometry is not None else grid or record.grid,
         geometry_metadata=meta,
     )
+    if declares_geom and geometry is None:
+        assert declared is not None
+        record, resolved = _declared_geometry(record, declared, grid=grid)
+        return record, frame_output_grid(resolved, record)
+    if has_center and geometry is None:
+        assert declared is not None
+        assert declared.detector_center is not None
+        if record.detector is None:
+            record = record.with_parallel_detector()
+        assert record.detector is not None
+        detector = replace(record.detector, center=declared.detector_center)
+        record = replace_dataset(record, detector=detector)
     if geometry is None and detector is not None:
         record = with_view_offsets(record, detector)
     record = record.with_parallel_detector() if geometry is None else record

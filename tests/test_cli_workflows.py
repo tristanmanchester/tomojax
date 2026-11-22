@@ -140,7 +140,7 @@ def test_inspect_cli_previews_a_reconstruction(tmp_path: Path) -> None:
             "assert main(sys.argv[1:]) == 0; assert 'jax' not in sys.modules",
             "inspect",
             str(path),
-            "--preview",
+            "--preview-dir",
             str(previews),
         ],
         capture_output=True,
@@ -151,27 +151,49 @@ def test_inspect_cli_previews_a_reconstruction(tmp_path: Path) -> None:
     names = sorted(p.name for p in previews.iterdir())
     assert names == ["projection.png", "slice_x.png", "slice_y.png", "slice_z.png"]
     with pytest.raises(SystemExit) as exc_info:
-        main(["inspect", str(path), "--preview", str(previews)])
+        main(["inspect", str(path), "--preview-dir", str(previews)])
     assert exc_info.value.code == 2
-    assert main(["inspect", str(path), "--preview", str(previews), "--force"]) == 0
+    assert main(["inspect", str(path), "--preview-dir", str(previews), "--force"]) == 0
 
 
-def test_load_declares_a_geometry_the_file_does_not_record(tmp_path, capsys):
-    # tomojax load is tj.load then tj.save; its flags supply what the file lacks, the
-    # geometry included (item 40: a K11 scan's tilt is in no file).
+def test_load_command_is_retired(capsys):
+    with pytest.raises(SystemExit) as error:
+        main(["load", "raw.nxs", "-o", "scan.nxs"])
+    assert error.value.code == 2
+    assert "unknown command 'load'" in capsys.readouterr().err
+
+
+def test_correct_declares_a_geometry_the_file_does_not_record(tmp_path, capsys):
+    # tomojax correct supplies what the file lacks, the geometry included,
+    # and resolves it inside the loader before file geometry is required.
     import tomojax as tj
 
     write_raw_nxtomo(tmp_path / "raw.nxs")
     output = tmp_path / "scan.nxs"
-    args = ["load", str(tmp_path / "raw.nxs"), "-o", str(output), "--pixel-size", "0.5"]
-    assert main([*args, "--geometry", "lamino"]) == 1
+    args = ["correct", str(tmp_path / "raw.nxs"), "-o", str(output), "--pixel-size", "0.5"]
+    with pytest.raises(SystemExit) as exc:
+        main([*args, "--geometry", "lamino"])
+    assert exc.value.code == 2
     assert "needs --tilt" in capsys.readouterr().err and not output.exists()
+    with pytest.raises(SystemExit) as exc:
+        main([*args, "--tilt", "47"])
+    assert exc.value.code == 2
+    assert "requires --geometry" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as exc:
+        main(
+            ["correct", str(tmp_path / "raw.nxs"), "-o", str(output), "--pixel-size", "1", "2", "3"]
+        )
+    assert exc.value.code == 2
+    assert "one value, or two" in capsys.readouterr().err
     lamino = ["--geometry", "lamino", "--tilt", "47", "--detector-roll", "1.25"]
     assert main([*args, *lamino, "--detector-center", "0.1", "0.0"]) == 0
-    geometry = tj.load(output).geometry
+    loaded = tj.load(output)
+    geometry = loaded.geometry
     assert isinstance(geometry, tj.LaminographyGeometry) and geometry.tilt == 47
     assert geometry.detector_roll == 1.25 and geometry.detector.center == (0.1, 0.0)
     assert geometry.detector.du == 0.5
+    assert loaded.source is not None
+    assert loaded.source.geometry_metadata.get("detector_center_status") == "provided"
 
 
 def test_import_cli_converts_nxtomo_to_npz(tmp_path: Path) -> None:
@@ -179,7 +201,7 @@ def test_import_cli_converts_nxtomo_to_npz(tmp_path: Path) -> None:
     npz_path = tmp_path / "scan.npz"
     write_projection_dataset(nxs_path)
 
-    assert main(["load", str(nxs_path), "-o", str(npz_path)]) == 0
+    assert main(["correct", str(nxs_path), "-o", str(npz_path)]) == 0
 
     dataset = load_dataset(npz_path)
     assert dataset.projections.shape == (2, 2, 4)
@@ -335,7 +357,7 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
     import tomojax as tj
 
     source = tj.load(scan)
-    grid = source.grid.resampled((4, 4, 2))
+    grid = source.grid.resampled((2, 4, 4))
     expected = tj.reconstruct(source, "cgls", grid=grid, iterations=6, warm_start=warm_start)
     np.testing.assert_allclose(loaded.volume, np.asarray(expected.volume), rtol=1e-5, atol=1e-6)
 
@@ -363,7 +385,7 @@ def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path
     import numpy as np
 
     import tomojax as tj
-    from tomojax.recon import FistaConfig
+    from tomojax.recon import FISTAConfig
 
     scan_path, recon_path = tmp_path / "scan.nxs", tmp_path / "recon.nxs"
     write_projection_dataset(scan_path)
@@ -380,10 +402,13 @@ def test_recon_cli_cylinder_constrains_fista_to_the_field_of_view(tmp_path: Path
     _, cylinder = region_grid(scan, "cyl")
     assert cylinder is not None
     support = cylinder_support(grid, cylinder)
-    config = FistaConfig(support=support)
+    config = FISTAConfig(support=support)
     expected = tj.reconstruct(scan, "fista", grid=grid, config=config, iterations=4).volume
     actual = tj.load_reconstruction(recon_path).volume
     np.testing.assert_allclose(actual, np.asarray(expected) * support, rtol=1e-5, atol=1e-6)
+    # Python region="cyl" matches CLI --region cyl identically.
+    py_cyl = tj.reconstruct(scan, "fista", region="cyl", iterations=4).volume
+    np.testing.assert_allclose(actual, np.asarray(py_cyl), rtol=1e-5, atol=1e-6)
 
 
 def test_recon_cli_config_settings_are_fields_of_the_methods_configuration(
@@ -458,7 +483,7 @@ def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path)
         group.create_dataset("volume", data=volume)
         group.attrs["volume_axes_order"] = "xyz"
 
-    assert main(["inspect", str(path), "--preview", str(previews)]) == 0
+    assert main(["inspect", str(path), "--preview-dir", str(previews)]) == 0
 
     # Central slices, displayed as (y, x), (z, x) and (z, y).
     for name, plane in (
@@ -563,7 +588,7 @@ def test_inspect_and_preview_share_raw_acquisition_discovery(tmp_path, capsys, l
             "radians" if layout == "exchange" else "mm" if layout == "gda" else "degree"
         )
     previews = tmp_path / "previews"
-    assert main(["inspect", str(path), "--json", "--preview", str(previews)]) == 0
+    assert main(["inspect", str(path), "--json", "--preview-dir", str(previews)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["valid"] and report["issues"] == []
     assert report["projection"]["path"] == data_path
@@ -636,3 +661,285 @@ def test_raw_export_refuses_to_replace_an_existing_sidecar(tmp_path: Path):
     with pytest.raises(SystemExit) as exit_info:
         main(["export", str(tmp_path / "recon.nxs"), "-o", str(tmp_path / "volume.raw")])
     assert exit_info.value.code == 2 and (tmp_path / "volume.json").read_text() == "keep"
+
+
+def test_correct_cli_supports_config_slices_and_open_crop(tmp_path: Path, capsys) -> None:
+    import tomojax as tj
+
+    raw = tmp_path / "raw.nxs"
+    write_raw_nxtomo(raw)
+    cfg = tmp_path / "correct.toml"
+    cfg.write_text("zingers_size = 3\nstripes_varying = true\n", encoding="utf-8")
+    out = tmp_path / "scan.nxs"
+
+    with pytest.raises(SystemExit) as info:
+        main(["correct", "--config-keys"])
+    assert info.value.code == 0
+    keys_out = capsys.readouterr().out
+    assert "zingers_size" in keys_out and "paganin_delta_beta" in keys_out
+
+    assert (
+        main(
+            [
+                "correct",
+                str(raw),
+                "-o",
+                str(out),
+                "--config",
+                str(cfg),
+                "--views",
+                "::2",
+                "--crop",
+                "0:2,:1",
+                "--zingers",
+                "--stripes",
+                "3",
+            ]
+        )
+        == 0
+    )
+    loaded = tj.load(out)
+    assert loaded.projections.shape == (1, 2, 1)
+
+    for bad_flag in (["--views", "bad"], ["--crop", "bad"], ["--paganin", "100,,10,1"]):
+        with pytest.raises(SystemExit) as exc:
+            main(["correct", str(raw), "-o", str(tmp_path / "bad.nxs"), *bad_flag])
+        assert exc.value.code == 2
+
+
+def test_correct_cli_no_apply_poses_preserves_nominal_geometry(tmp_path: Path) -> None:
+    import tomojax as tj
+
+    src = tmp_path / "posed.nxs"
+    out = tmp_path / "nominal.nxs"
+    write_raw_nxtomo(src)
+    with h5py.File(src, "a") as handle:
+        geom = handle.require_group("entry/geometry")
+        geom.attrs["align_params_json"] = json.dumps(
+            [[1.0, 2.0, 0.0, 0.0, 0.0], [0.5, -1.0, 0.0, 0.0, 0.0]]
+        )
+    assert main(["correct", str(src), "-o", str(out), "--no-apply-poses"]) == 0
+    loaded = tj.load(out)
+    assert loaded.poses is None
+
+
+def test_cli_rejects_duplicate_and_self_overwrite_outputs_even_with_force(
+    tmp_path: Path, capsys
+) -> None:
+    scan = tmp_path / "scan.nxs"
+    write_projection_dataset(scan)
+    with pytest.raises(SystemExit) as exc:
+        main(["reconstruct", str(scan), "-o", str(scan), "--force"])
+    assert exc.value.code == 2
+    assert "output path must differ from input path" in capsys.readouterr().err
+
+    same = tmp_path / "out.nxs"
+    with pytest.raises(SystemExit) as exc:
+        main(["reconstruct", str(scan), "-o", str(same), "--manifest", str(same), "--force"])
+    assert exc.value.code == 2
+    assert "duplicate output" in capsys.readouterr().err
+
+
+def test_cli_config_validation_rejects_bad_types_and_forbidden_keys(tmp_path: Path, capsys) -> None:
+    scan = tmp_path / "scan.nxs"
+    write_projection_dataset(scan)
+
+    for toml_text, args, fragment in (
+        (
+            "force = true\n",
+            ["reconstruct", str(scan), "-o", str(tmp_path / "a.nxs")],
+            "unknown config key",
+        ),
+        (
+            'out = "x.nxs"\n',
+            ["reconstruct", str(scan), "-o", str(tmp_path / "b.nxs")],
+            "unknown config key",
+        ),
+        (
+            "iterations = 8.9\n",
+            ["reconstruct", str(scan), "-o", str(tmp_path / "c.nxs"), "--method", "cgls"],
+            "integer",
+        ),
+        (
+            "levels = 2\n",
+            ["align", str(scan), "-o", str(tmp_path / "d.nxs")],
+            "levels",
+        ),
+    ):
+        cfg = tmp_path / "bad.toml"
+        cfg.write_text(toml_text, encoding="utf-8")
+        with pytest.raises(SystemExit) as exc:
+            main([*args, "--config", str(cfg)])
+        assert exc.value.code == 2
+        assert fragment in capsys.readouterr().err
+
+
+def test_reconstruct_help_defaults_config_keys_and_boolean_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    import tomllib
+
+    from tomojax.recon import CGLSConfig, FISTAConfig, MLEMConfig, SIRTConfig, SPDHGConfig
+
+    with pytest.raises(SystemExit) as help_exit:
+        main(["reconstruct", "--help"])
+    assert help_exit.value.code == 0
+    help_text = capsys.readouterr().out
+    assert f"cgls/fista/sirt/mlem {CGLSConfig().iterations}" in help_text
+    assert (
+        CGLSConfig().iterations
+        == FISTAConfig().iterations
+        == SIRTConfig().iterations
+        == MLEMConfig().iterations
+    )
+    assert f"spdhg {SPDHGConfig().iterations}" in help_text
+
+    with pytest.raises(SystemExit) as keys_exit:
+        main(["reconstruct", "--method", "fista", "--config-keys"])
+    assert keys_exit.value.code == 0
+    keys_text = capsys.readouterr().out
+    parsed = tomllib.loads(keys_text)
+    assert "regularizer" in parsed and "tau" not in parsed
+
+    scan = tmp_path / "scan.nxs"
+    write_projection_dataset(scan)
+    cfg = tmp_path / "recon.toml"
+    cfg.write_text("nonnegative = true\nwarm_start = true\n", encoding="utf-8")
+    calls = _fake_reconstruct(monkeypatch)
+    assert (
+        main(
+            [
+                "reconstruct",
+                str(scan),
+                "-o",
+                str(tmp_path / "r.nxs"),
+                "--method",
+                "fista",
+                "--config",
+                str(cfg),
+                "--no-nonnegative",
+                "--no-warm-start",
+                "--region",
+                "off",
+            ]
+        )
+        == 0
+    )
+    assert calls["nonnegative"] is False and calls["warm_start"] is False
+
+    with pytest.raises(SystemExit) as auto_exc:
+        main(["reconstruct", str(scan), "-o", str(tmp_path / "a.nxs"), "--iterations", "5"])
+    assert auto_exc.value.code == 2
+    assert "explicit --method" in capsys.readouterr().err
+
+
+def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path, capsys) -> None:
+    import tomojax as tj
+
+    scan = tmp_path / "scan.nxs"
+    grid = tj.Grid(8, 8, 4, 1.0, 1.0, 1.0)
+    detector = tj.Detector(10, 4, 1.0, 1.0)
+    angles = np.array([0.0, 90.0, 180.0, 270.0], np.float32)
+    geom = tj.ParallelGeometry(grid, detector, angles)
+    x = np.linspace(-1.0, 1.0, 10, dtype=np.float32)
+    proj = np.zeros((4, 4, 10), np.float32)
+    proj[0] = np.exp(-((x - 0.2) ** 2) / 0.15)
+    proj[1] = np.exp(-((x + 0.1) ** 2) / 0.2)
+    proj[2] = np.exp(-((-x - 0.2) ** 2) / 0.15)
+    proj[3] = np.exp(-((-x + 0.1) ** 2) / 0.2)
+    tj.save(scan, tj.Scan(proj, geom))
+
+    assert main(["align", str(scan), "--dry-run"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["output_path"] is None and plan["method"] == "joint"
+
+    for extra in (
+        ["--fit", "translations"],
+        ["--fit", "center", "--grid", "4", "4", "2"],
+        ["--fit", "center", "--iterations", "2"],
+        ["--fit", "center", "--region", "off"],
+    ):
+        with pytest.raises(SystemExit) as exc:
+            main(["align", str(scan), "--dry-run", "--method", "opposite-views", *extra])
+        assert exc.value.code == 2
+
+    out = tmp_path / "aligned.nxs"
+    manifest = tmp_path / "align.json"
+    assert (
+        main(
+            [
+                "align",
+                str(scan),
+                "-o",
+                str(out),
+                "--method",
+                "opposite-views",
+                "--fit",
+                "center",
+                "--manifest",
+                str(manifest),
+            ]
+        )
+        == 0
+    )
+    resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
+    assert resolved["method"] == "opposite-views"
+    assert "explicit_cli_keys" in resolved and "effective_options" in resolved
+
+
+def test_export_cli_validates_flags_cleans_stale_tiffs_and_fails_without_volume(
+    tmp_path: Path, capsys
+) -> None:
+    from tomojax.geometry import Detector, Grid
+    from tomojax.io import ProjectionDataset
+
+    no_vol = tmp_path / "scan.nxs"
+    write_projection_dataset(no_vol)
+    assert main(["export", str(no_vol), "-o", str(tmp_path / "out.raw")]) == 1
+    assert "no reconstructed volume" in capsys.readouterr().err
+
+    recon = tmp_path / "recon.nxs"
+    dataset = ProjectionDataset(
+        projections=np.zeros((2, 4, 6), np.float32),
+        angles=np.asarray([0.0, 90.0], np.float32),
+        volume=np.ones((2, 4, 6), np.float32),
+        detector=Detector(6, 4, 1.0, 1.0),
+        grid=Grid(6, 4, 2, 0.5, 0.5, 0.25),
+    )
+    save_dataset(recon, dataset)
+
+    for bad_args in (
+        ["--dtype", "float32", "--range", "0", "1", "-o", str(tmp_path / "a.raw")],
+        ["--dtype", "uint8", "--range", "1", "1", "-o", str(tmp_path / "b.raw")],
+        ["--prefix", "img", "-o", str(tmp_path / "c.raw")],
+    ):
+        with pytest.raises(SystemExit) as exc:
+            main(["export", str(recon), *bad_args])
+        assert exc.value.code == 2
+
+    tiffs = tmp_path / "slices"
+    tiffs.mkdir()
+    (tiffs / "slice_00099.tif").write_bytes(b"stale")
+    assert main(["export", str(recon), "-o", str(tiffs), "--force"]) == 0
+    assert not (tiffs / "slice_00099.tif").exists()
+    assert sorted(p.name for p in tiffs.iterdir()) == [
+        "slice.json",
+        "slice_00000.tif",
+        "slice_00001.tif",
+    ]
+    sidecar = json.loads((tiffs / "slice.json").read_text(encoding="utf-8"))
+    assert "vol_origin_xyz" in sidecar and "grid" in sidecar
+
+
+def test_inspect_json_prints_even_if_preview_fails(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "scan.nxs"
+    write_projection_dataset(path)
+    blocker = tmp_path / "not_a_dir"
+    blocker.write_text("file", encoding="utf-8")
+
+    assert main(["inspect", str(path), "--json", "--preview-dir", str(blocker)]) == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["valid"] is True
+    assert payload["preview_error"]
+    assert "preview failed" in captured.err

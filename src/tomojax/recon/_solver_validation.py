@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 if TYPE_CHECKING:
-    from .fista_tv import FistaConfig
+    from .fista_tv import FISTAConfig
     from .spdhg_tv import SPDHGConfig
 
 
@@ -32,9 +32,9 @@ def _weight(value: float, name: str, *, positive: bool = False, context: str) ->
         raise ValueError(f"{context}: {name} must be finite and {requirement}")
 
 
-def validate_fista_config(cfg: FistaConfig) -> tuple[bool, float | None, float | None]:
-    """Check scalar settings and return normalized feasibility constraints."""
-    context = "fista_tv config"
+def validate_fista_config(cfg: FISTAConfig) -> tuple[float | None, float | None]:
+    """Check scalar settings and return normalized feasibility bounds."""
+    context = "fista config"
     if cfg.data_term not in {"absolute", "per_view_contrast"}:
         raise ValueError(f"{context}: data_term must be absolute or per_view_contrast")
     for name in ("iterations", "patience"):
@@ -53,35 +53,33 @@ def validate_fista_config(cfg: FistaConfig) -> tuple[bool, float | None, float |
     return _fista_constraints(cfg)
 
 
-def _fista_constraints(cfg: FistaConfig) -> tuple[bool, float | None, float | None]:
+def _fista_constraints(cfg: FISTAConfig) -> tuple[float | None, float | None]:
     lower = None if cfg.lower_bound is None else float(cfg.lower_bound)
     upper = None if cfg.upper_bound is None else float(cfg.upper_bound)
     if lower is not None and not math.isfinite(lower):
-        raise ValueError("fista_tv constraints: lower_bound must be finite when provided")
+        raise ValueError("fista constraints: lower_bound must be finite when provided")
     if upper is not None and not math.isfinite(upper):
-        raise ValueError("fista_tv constraints: upper_bound must be finite when provided")
-    effective_lower = max(0.0, lower) if cfg.nonnegative and lower is not None else lower
-    if cfg.nonnegative and effective_lower is None:
-        effective_lower = 0.0
-    if upper is not None and effective_lower is not None and upper < effective_lower:
+        raise ValueError("fista constraints: upper_bound must be finite when provided")
+    if upper is not None and lower is not None and upper < lower:
         raise ValueError(
-            "fista_tv constraints: upper_bound must be greater than or equal to "
-            "the effective lower bound"
+            "fista constraints: upper_bound must be greater than or equal to lower_bound"
         )
-    return bool(cfg.nonnegative), lower, upper
+    return lower, upper
 
 
 def validate_spdhg_config(cfg: SPDHGConfig) -> None:
     """Check scalar settings, including independently optional step sizes."""
-    context = "spdhg_tv config"
+    context = "spdhg config"
     if cfg.data_term not in {"absolute", "per_view_contrast"}:
         raise ValueError(f"{context}: data_term must be absolute or per_view_contrast")
     for name in ("iterations", "log_every"):
         _count(getattr(cfg, name), name, minimum=0, context=context)
-    _count(cfg.views_per_batch, "views_per_batch", minimum=1, context=context)
+    _count(cfg.views_per_block, "views_per_block", minimum=1, context=context)
     if cfg.tv_weight is not None:
         _weight(cfg.tv_weight, "tv_weight", context=context)
     _weight(cfg.theta, "theta", context=context)
+    if cfg.lower_bound is not None and not math.isfinite(float(cfg.lower_bound)):
+        raise ValueError(f"{context}: lower_bound must be finite when provided")
     for name in ("tau", "sigma_data", "sigma_tv"):
         value = getattr(cfg, name)
         if value is not None:

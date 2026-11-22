@@ -44,10 +44,17 @@ def test_frozen_masks_and_streamed_scores_match_independent_sums(split):
     rescaled = split.score(prediction, target, weights=7.5 * weights)
     assert rescaled.mse == pytest.approx(score.mse, rel=1e-12)
     assert rescaled.relative_l2 == pytest.approx(score.relative_l2, rel=1e-12)
-    total = Score(0, 0, 0, 0)
-    for start in range(0, split.shape[0], 5):
-        v = slice(start, start + 5)
-        total += split.score(prediction[v], target[v], weights=weights[v], views=v)
+    batches = [
+        split.score(
+            prediction[slice(start, start + 5)],
+            target[slice(start, start + 5)],
+            weights=weights[slice(start, start + 5)],
+            views=slice(start, start + 5),
+        )
+        for start in range(0, split.shape[0], 5)
+    ]
+    total = sum(batches)
+    assert isinstance(total, Score)
     assert total.mse == pytest.approx(score.mse, rel=1e-14)
     assert total.relative_l2 == pytest.approx(score.relative_l2, rel=1e-14)
     assert total.count == score.count

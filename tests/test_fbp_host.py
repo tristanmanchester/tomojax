@@ -42,7 +42,9 @@ def test_host_slabs_match_full_physical_reconstruction(kind, depth, backend):
         grid,
         detector,
         data,
-        config=FBPHostConfig(slices_per_batch=depth, views_per_batch=3, backend=backend),
+        config=FBPHostConfig(
+            slices_per_batch=depth, views_per_batch=3, fbp=FBPConfig(backend=backend)
+        ),
     )
     assert isinstance(actual, np.ndarray)
     assert actual.dtype == np.float32
@@ -67,7 +69,7 @@ def test_host_slabs_reuse_compilation_and_bound_device_shapes(
         return kernel(accum, poses, projections, *args, **kwargs)
 
     monkeypatch.setattr(module, "_fbp_accumulate_batch", record)
-    cfg = FBPHostConfig(slices_per_batch=depth, views_per_batch=2, backend="jax")
+    cfg = FBPHostConfig(slices_per_batch=depth, views_per_batch=2, fbp=FBPConfig(backend="jax"))
     actual = fbp_host(geometry, grid, detector, data, config=cfg)
     assert len(calls) == count
     assert all(shape[0] == 2 and shape[1] <= row_bound for shape, _, _ in calls)
@@ -243,7 +245,9 @@ def test_host_slabs_write_memmap_and_preserve_custom_scale(tmp_path):
     target = np.memmap(
         tmp_path / "volume.bin", mode="w+", dtype=np.float32, shape=(grid.nz, grid.ny, grid.nx)
     )
-    cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=2, scale=0.27, filter="hann")
+    cfg = FBPHostConfig(
+        slices_per_batch=4, views_per_batch=2, fbp=FBPConfig(scale=0.27, filter="hann")
+    )
     result = fbp_host(geometry, grid, detector, source, config=cfg, out=target)
     assert result is target
     target.flush()
@@ -285,8 +289,13 @@ def test_host_slabs_reject_overlapping_output_before_writing(tmp_path, mapping):
 )
 def test_host_slabs_reject_invalid_configuration(field, value):
     grid, detector, geometry, data = scan()
+    config = (
+        FBPHostConfig(fbp=replace(FBPConfig(), **{field: value}))
+        if field in {"scale", "backend"}
+        else replace(FBPHostConfig(), **{field: value})
+    )
     with pytest.raises(ValueError, match="fbp_host"):
-        fbp_host(geometry, grid, detector, data, config=replace(FBPHostConfig(), **{field: value}))
+        fbp_host(geometry, grid, detector, data, config=config)
 
 
 @pytest.mark.parametrize("depth", [None, 1, 4, 20])
@@ -303,7 +312,9 @@ def test_host_slabs_reconstruct_laminography_like_fbp(depth, backend):
         grid,
         detector,
         data,
-        config=FBPHostConfig(slices_per_batch=depth, views_per_batch=2, backend=backend),
+        config=FBPHostConfig(
+            slices_per_batch=depth, views_per_batch=2, fbp=FBPConfig(backend=backend)
+        ),
     )
     assert actual.flags.c_contiguous
     np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
@@ -341,7 +352,7 @@ def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted,
     grid, detector, geometry, data = scan(kind)
     if tilted:
         geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt=30)
-    config = FBPHostConfig(slices_per_batch=4, views_per_batch=3, backend=backend)
+    config = FBPHostConfig(slices_per_batch=4, views_per_batch=3, fbp=FBPConfig(backend=backend))
     expected = fbp_host(geometry, grid, detector, data, config=config)
     module = importlib.import_module("tomojax.recon.fbp_host")
     queried = []

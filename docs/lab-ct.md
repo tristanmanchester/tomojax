@@ -22,7 +22,7 @@ TomoJAX reverses Nikon's top-right panel origin and converts angles and offsets 
 For scanners without a dedicated reader, pass measured `ConeGeometry` to `tj.load_frames(..., geometry=..., flats=..., darks=...)`, or declare it on the CLI using one consistent length unit:
 
 ```bash
-tomojax load projections/ --flats flats/ --darks darks/ \
+tomojax correct projections/ --flats flats/ --darks darks/ \
   --angles angles.csv --geometry cone \
   --source-to-axis 120.5 --source-to-detector 980.0 \
   --pixel-size 0.2 --detector-center 0.0 0.0 -o scan.nxs
@@ -46,12 +46,12 @@ Load the **projection acquisition** (`.txrm`), not a reconstructed `.txm` volume
 - **References and darks:** pass a separate flat with `--flats reference_Front.xrm` (or `flats=` + `flat_exposure_times=` in seconds for raw arrays). Files with `AcquisitionSettings/CameraStaticBackground = 1` need no darks; otherwise supply `--darks` / `darks=`.
 - **Detector saturation:** Zeiss records the camera's linear ceiling in `MaxLinearRange` (45 000 counts on typical scans). Long exposures can push air pixels past that ceiling; `tj.load` warns when counts exceed it and records the affected fraction and `linear_limit_line_integral` in the `flat_dark` record. Saturated air reads as artificial absorption (e.g. ~0.33 instead of 0 on CuO_2) and appears as a bright background around the sample.
 
-For a fast 64³ CPU preview (every 8th view, 16 × 16 binning; replace `801` with your scan's view count):
+For a fast 64³ CPU preview (every 8th view, 16 × 16 binning):
 
 ```bash
-tomojax correct scan.txrm --darks 0 -o corrected.nxs --views 0:801:8 --binning 16
+tomojax correct scan.txrm --darks 0 -o corrected.nxs --views ::8 --binning 16
 tomojax reconstruct corrected.nxs -o preview.nxs --method cgls --iterations 10 --grid 64 64 64 --region off
-tomojax inspect preview.nxs --preview previews
+tomojax inspect preview.nxs --preview-dir previews
 ```
 
 In Python:
@@ -167,7 +167,7 @@ Download and unpack a `WalnutN` directory from the [FIPS walnut collection](../e
 python examples/import_walnut.py ~/data/walnuts/Walnut1 -o orbit.nxs
 tomojax reconstruct orbit.nxs -o fdk.nxs --method fbp --region off
 tomojax reconstruct orbit.nxs -o cgls.nxs --method cgls --iterations 20 --region off
-tomojax inspect cgls.nxs --preview walnut-previews
+tomojax inspect cgls.nxs --preview-dir walnut-previews
 ```
 
 In Python after the import:
