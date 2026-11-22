@@ -1,190 +1,99 @@
 # Contributing to TomoJAX
 
-Make scientific behavior reviewable: describe the input and geometry, the
-expected result, the change, and how you checked it. A lower residual or faster
-kernel is not sufficient evidence for a more accurate or faster reconstruction.
+In every change, state the input and geometry, the expected result, what changed, and how you checked it. Check reconstruction or pose error alongside residuals and timings.
 
 ## Set up development
 
-From a checkout with Python 3.12 and uv:
+With Python 3.12 and [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
 uv sync --locked --extra cpu --dev
 ```
 
-On Linux CUDA, select `--extra cuda12` instead. Add `--group examples` only when
-generating figures, or `--group benchmark` for optional comparison dependencies.
-See [bench/README.md](bench/README.md) for external solver setup.
+On Linux with CUDA, pass `--extra cuda12` instead. Add `--group examples` when generating figures, or `--group benchmark` for optional comparison libraries (see [bench/README.md](bench/README.md)).
 
-The [just](https://github.com/casey/just) recipes below use `uv run --no-sync`:
-setup is explicit, so checks preserve the selected CPU/CUDA extras. `uv sync`
-can remove manually installed packages, including locally built comparison
-libraries; use a separate environment for those or reinstall them deliberately.
-You can also run each recipe's commands directly from the [justfile](justfile).
+The [just](https://github.com/casey/just) recipes below run with `uv run --no-sync` so they keep your chosen CPU or CUDA extra. Note that `uv sync` removes manually installed packages such as a locally built TIGRE; keep comparison builds in a separate environment or reinstall them afterwards. You can also run the underlying commands directly from [justfile](justfile).
 
 ## Run checks
 
 | Command | Purpose |
 | --- | --- |
-| `just format` | Apply Ruff formatting and automatic lint fixes |
-| `just surface-check` | Read-only formatting/lint/import checks, CLI/accelerator smoke checks, and explicitly marked surface tests (excluding numerical/GPU markers) |
+| `just format` | Format and auto-fix lint issues with Ruff |
+| `just surface-check` | Read-only format, lint, and import checks, CLI and accelerator smoke checks, and surface tests (excluding numerical and GPU markers) |
 | `just test` | CPU test suite, including numerical tests |
 | `just docstrings` | Validate NumPy-style public API docstrings |
-| `just docs` | Build the Python reference in `.artifacts/docs/` |
-| `just typecheck` | Configured public API, IO, CLI, and tool type checks |
-| `just imports` | Dependency layers and public-import guardrails |
-| `just examples` | Public projection/reconstruction example |
-| `just package` | Build sdist/wheel, check metadata, and run a fresh installed-wheel workflow |
-| `just ci` | Full local gate: static checks, package/workflow checks, example, CPU coverage, and small analytic benchmarks |
-| `just test-cuda` | Require a real CUDA accelerator, then run every test with the GPU visible |
-| `just guardrails` | Record an intended change to the public API or the code-health ratchets |
+| `just docs` | Build the Python reference HTML into `.artifacts/docs/` |
+| `just typecheck` | Run `basedpyright` on the configured public API, IO, CLI, and tools |
+| `just imports` | Check dependency layers and public-import guardrails |
+| `just examples` | Run the public projection and reconstruction example |
+| `just package` | Build sdist and wheel, run `twine check --strict`, and smoke-test the installed wheel |
+| `just ci` | Full CPU gate: static checks, package build and smoke test, example, CPU coverage, and small analytic benchmarks |
+| `just test-cuda` | Require CUDA, then run every test with the GPU visible |
+| `just guardrails` | Update the public API and code-health ratchet records after an intentional change |
 
-`just check` also formats files before running checks. Use `just ci` when you
-want validation without automatic source edits. Package recipes replace `dist/`;
-keep release artifacts elsewhere. GPU tests are separate from CPU CI and must
-be run on suitable hardware for kernel or accelerator behavior changes.
+`just check` formats files before running checks; use `just ci` for read-only validation. Package recipes overwrite `dist/`, so store release artefacts elsewhere. Run `just test-cuda` on NVIDIA hardware whenever a change touches GPU kernels or accelerator paths.
 
-The installed-wheel check imports outside the checkout and exercises simulation,
-the README’s automatic reconstruction, and labelled slice export. It installs
-without a package cache; `--extra cuda12` also requires a real CUDA device. A source
-import passing is not enough to establish that the wheel works.
+`tools/smoke_installed_wheel.py` creates a disposable environment outside the repository, installs the built wheel without a package cache (requiring a real GPU under `--extra cuda12`), and runs simulation, automatic reconstruction, and slice export.
 
 ## Make a release
 
-1. Set the version in `pyproject.toml` and head its CHANGELOG section `## <version> (<date>)`.
-2. Run `just ci` and `just test-cuda` on that commit, and push it to main.
-3. Optionally, `gh workflow run Release` publishes main to TestPyPI after the same checks.
-4. Tag it: `git tag v<version>` and `git push origin v<version>`. The release workflow runs
-   the CPU gate and the installed-package matrix, builds the wheel and sdist, waits for a
-   maintainer to approve the `pypi` environment, publishes to PyPI and creates the GitHub
-   release from the CHANGELOG section. A version with `a`, `b`, `rc` or `dev` is marked as a
-   pre-release.
+1. Update the version in `pyproject.toml` and add a `## <version> (<date>)` heading to `CHANGELOG.md`.
+2. Run `just ci` and `just test-cuda` on that commit, then push to `main`.
+3. Optionally run `gh workflow run Release` to publish `main` to TestPyPI after the same checks.
+4. Tag and push: `git tag v<version> && git push origin v<version>`. The release workflow runs the CPU gate and installed-package matrix, builds the wheel and sdist, waits for maintainer approval on the `pypi` environment, publishes to PyPI, and creates the GitHub release from the changelog section. Versions containing `a`, `b`, `rc`, or `dev` are marked as pre-releases.
 
-PyPI accepts each version once, so a failed release is fixed with a new version.
+PyPI accepts each version once; fix a failed release with a new version number.
 
 ## Engineering conventions
 
-- Import application code through public module roots or `.api` facades. Keep
-  CLI orchestration separate from numerical implementation and honor the
-  [import contracts](.importlinter). The scan workflow keeps alignment orchestration
-  separate from the private joint solver; its internal plumbing is not an expert API.
-  White-box unit tests may import definition modules
-  with an explicit `check-public-imports: allow-private` marker. Do not export
-  implementation details just to make them available to tests.
-- Keep geometry explicit: Python volumes are `(z, y, x)`, projections are
-  `(view, v, u)`, and voxel/detector lengths use consistent physical units.
-  Document parameter frames and units at API boundaries.
-- Preserve matched forward/adjoint semantics. Test numerical changes against
-  independent physical or dense references, including shifted, anisotropic,
-  tilted, odd-sized, and boundary cases when applicable.
-- Validate user inputs before expensive work. Do not silently discard malformed
-  projection metadata or convert a failed solve into a success status.
-- Keep solver defaults and result semantics stable unless a change is
-  justified, tested, and recorded in the [changelog](CHANGELOG.md).
-- Add regression tests for behavior and correctness bugs. Avoid tests that only
-  repeat implementation details or timing thresholds that depend on the host.
+- Import application code through public module roots or `.api` facades. Keep CLI orchestration separate from numerical code and follow the [import contracts](.importlinter). Keep alignment orchestration separate from the private joint solver. White-box unit tests may import private modules with an explicit `check-public-imports: allow-private` comment; do not export internals just for tests.
+- Keep geometry explicit: Python volumes use `(z, y, x)`, projections use `(view, v, u)`, and voxel and detector spacings share one physical length unit. Document parameter frames and units at API boundaries.
+- Keep backprojectors as exact transposes of their forward projectors. Test numerical changes against independent analytic or dense references, including shifted, anisotropic, tilted, odd-sized, and boundary cases.
+- Validate inputs before expensive work. Reject malformed metadata instead of silently discarding it, and never report a failed solve as success.
+- Keep solver defaults and result semantics stable unless a change is tested and recorded in the [changelog](CHANGELOG.md).
+- Add regression tests for correctness bugs. Avoid tests that mirror implementation details or rely on host-dependent timing thresholds.
 
 ## Design rules
 
-TomoJAX should feel like one small, consistent tool. Before adding to its
-surface, check the change against these rules.
+TomoJAX should feel like one small, consistent tool. Check API changes against these rules:
 
-- **One vocabulary.** A concept has one name in Python, on the command line and
-  in the docs: `method`, `iterations`, `tv_weight`, `nonnegative`, `fit`, `poses`.
-  CLI options are the Python keywords with
-  hyphens. Internal names (profiles, schedules, solver stages) stay internal.
-- **One way to do a thing.** No aliases, no second spelling of an option, no
-  mode that duplicates another with different defaults.
-- **Small interfaces, deep modules.** A function or package should hide much
-  more than it exposes. Prefer computing a setting from the data to adding an
-  option; add a configuration field only with a stated reason. Package roots
-  export what users call; expert helpers live in `.api`.
-- **Options are keyword-only,** after at most the one or two arguments a call is
-  about (`tj.reconstruct(scan, "cgls", iterations=50)`). No positional flags.
-- **Results carry their context.** Return objects that hold the geometry and
-  settings they were made with, not bare arrays plus metadata to keep in sync.
-- **Fix the method, don't wrap it.** When a method gets a case wrong, change its
-  model or its statistics so that the case comes out right. Do not detect the
-  case and bypass the method. For example, the nano-tomography aligner once
-  reported about 0.1 px of motion on scans that were already aligned. A
-  "consistency guard" was built that reconstructed two half-datasets, compared
-  their resolution and discarded the alignment unless it improved. It hid the
-  bias rather than removing it, flipped between "no motion" and a full
-  correction at a threshold, judged the method by a second objective, and still
-  let a worse result through on drifted data. The fix belongs in the estimator:
-  weight residuals by their noise, regularise each pose by how well the data
-  determine it, and report the pose uncertainties.
-- **A helper earns its name** by having two or more callers, being tested on its
-  own, or naming a concept its caller shouldn't have to know. Otherwise keep the
-  code inline. A long function split into a chain of one-caller helpers is the
-  same function, harder to read.
-- **The CLI shape is fixed:** `tomojax <command> INPUT -o OUTPUT`, existing
-  outputs refused without `--force`, exit status 0/1/2. `--help` shows what
-  most runs need; reconstruction and preprocessing expert settings are `--config` keys.
+- **One vocabulary.** Each concept has one name across Python, the CLI, and the docs: `method`, `iterations`, `tv_weight`, `nonnegative`, `fit`, `poses`. CLI flags are the Python keywords with hyphens. Internal names (profiles, schedules, solver stages) stay internal.
+- **One way to do a thing.** No aliases, no duplicate option spellings, and no modes that merely change defaults.
+- **Small interfaces, deep modules.** Hide implementation detail behind small entry points. Compute settings from the data rather than adding options; add a config field only with a clear reason. Export user-facing calls from package roots and expert helpers from `.api`.
+- **Keyword-only options.** Accept at most one or two positional arguments for the main subject (`tj.reconstruct(scan, "cgls", iterations=50)`); make all other options keyword-only.
+- **Results carry their context.** Return objects that bundle their geometry and settings rather than bare arrays plus separate metadata.
+- **Fix the method, don't wrap it.** When a method gets a case wrong, fix its model or statistics instead of detecting the case and bypassing it. For example, an earlier aligner reported ~0.1 px of motion on already aligned scans. A "consistency guard" was added that split the data in two, compared resolutions, and discarded alignment below a threshold. That hid the bias, flipped discontinuously between aligned and unaligned, and still let bad results through on drifted data. The right fix lives in the estimator: noise-weighted residuals, regularisation scaled by data observability, and reported uncertainties.
+- **A helper earns its name** by having two or more callers, being tested on its own, or naming a concept its caller should not need to know. Keep single-use helpers inline.
+- **Fixed CLI shape.** Every command takes `tomojax <command> INPUT -o OUTPUT`, refuses to overwrite existing outputs without `--force`, and uses exit codes 0 (success), 1 (failure), and 2 (usage error). Keep `--help` short and put expert settings in `--config` TOML files.
 
-`tests/test_architecture.py` enforces what can be checked mechanically:
+`tests/test_architecture.py` enforces the mechanical checks:
 
-- the public API matches `tests/guardrails/api_surface.txt`, so every change
-  to it shows in review;
-- the measures in `tests/guardrails/ratchets.json` may fall but never rise:
-  the fields of every public `*Config`, exported names, CLI flags, the length
-  of every file over 800 lines and every function over 100 (excluding
-  docstrings, but counting comments and code), each package's total lines, CUDA
-  kernels and their compile-time switches, environment-variable reads, lint
-  suppressions, functions over the complexity limits, single-use private
-  helpers (tiny ones, forwarders and those in single-caller chains), type errors
-  in modules CI does not yet type-check, public functions, methods and `*Config`
-  classes taking options positionally, code that assumes the first device,
-  private imports in tests, and other known debt;
-- CLI options map to Python keywords, and `--help` stays short.
+- The public API matches `tests/guardrails/api_surface.txt`, so API changes appear in diff review.
+- The ratchets in `tests/guardrails/ratchets.json` may decrease but never rise: `*Config` fields, exported names, CLI flags, files over 800 lines, functions over 100 lines (excluding docstrings), per-package line counts, CUDA kernels and compile-time switches, environment-variable reads, lint suppressions, complexity counts, single-use private helpers, untyped module errors, positional options on public APIs, first-device assumptions, and private imports in tests.
+- CLI flags map cleanly to Python keywords, and `--help` stays concise.
 
-After an intended change, run `just guardrails` and commit the updated
-records with it. When a ratchet falls, lock it in the same way. Do not raise
-a ratchet to make a change pass; fix the change instead. If the debt is worth
-taking on, say why in the commit that raises the number.
+After an intentional change (or when a ratchet drops), run `just guardrails` and commit the updated records. Do not raise a ratchet to make a change pass; fix the code instead, or explain why the debt is justified in the commit message.
 
 ## Documentation and figures
 
-Public API docstrings use NumPy-style Parameters, Returns (or Yields), and
-Raises sections, with shapes, frames and units at the boundary. Main workflow
-entry points include short Examples. `just docstrings` checks the exported
-callables and their public methods/properties, including documented `.api`
-facades. Constants and typing aliases have checked prose reference entries.
-Related APIs and extended prose are optional when the summary and parameters
-suffice. `just docs` builds the same surface into HTML.
+Write public API docstrings in NumPy style with `Parameters`, `Returns` (or `Yields`), and `Raises` sections, stating array shapes, coordinate frames, and units at boundaries. Include short `Examples` on main workflow entry points. Run `just docstrings` to validate coverage and `just docs` to build the HTML reference.
 
-Start from the reader's task. Provide prerequisites, complete commands, expected
-outputs, and material limitations alongside each feature. Check commands against
-the actual CLI or public API. Keep user guides in `docs/`; module-level READMEs
-explain the corresponding Python interfaces.
+Keep user guides in `docs/` (using British English in prose while keeping API identifiers exact) and module-level interfaces in each package's `README.md`. Check commands against the actual CLI and public API.
 
-The README's figures come from [examples/reconstruct_watch.py](examples/reconstruct_watch.py),
-[examples/align_watch.py](examples/align_watch.py) and
-[examples/render_watch.py](examples/render_watch.py). Keep scientific image
-scales explicit and retain their JSON records. Record missing provenance for
-historical assets in [images/README.md](images/README.md); visual quality is
-not an accuracy metric.
+The README watch figures come from [examples/reconstruct_watch.py](examples/reconstruct_watch.py), [examples/align_watch.py](examples/align_watch.py), and [examples/render_watch.py](examples/render_watch.py). Keep image scales explicit with their JSON records, and note provenance for historical assets in [images/README.md](images/README.md).
 
-## Repository layout and measurement records
+## Repository layout and benchmark records
 
 | Location | Contents |
 | --- | --- |
 | `src/tomojax/` | Installable library and CLI |
-| `tests/` | Public behavior, numerical, and accelerator regressions |
+| `tests/` | Public behaviour, numerical, and GPU regression tests |
 | `examples/` | Small runnable public API examples |
-| `tools/` | Development and package checks |
-| `docs/` | User guides and the current measurements |
-| `bench/` | Comparison drivers; not part of the installed API |
-| `images/` | Documented presentation assets |
-| `reports/`, `research_notes/` | Research material and literature notes |
-| `.artifacts/` | Ignored local runs, logs, and generated working files |
+| `tools/` | Development and packaging checks |
+| `docs/` | User guides and measured benchmarks |
+| `bench/` | Comparison drivers (not part of the installed package) |
+| `images/` | Presentation figures |
+| `reports/`, `research_notes/` | Research notes and literature reviews |
+| `.artifacts/` | Ignored local runs, logs, and build outputs |
 
-Measurement records stay out of the repository. The benchmark scripts write
-them under `bench/results/`, which Git ignores; attach the records a reviewer
-needs to the pull request or issue instead. [Measurements](docs/measurements.md)
-gives each headline result with the command, commit and date needed to rerun
-it, so a result is reproducible without its raw files in the tree.
-Do not combine measurements from different timing protocols or silently replace
-historical data. New performance claims should account for accepted-result
-quality, fresh-process and warm time, and process GPU memory across the declared
-geometry/object set. See [measurement scope](docs/measurements.md).
+Keep raw benchmark records out of the repository. Benchmark scripts write under `bench/results/` (gitignored); attach any raw JSON files a reviewer needs to the PR or issue. [Measurements](docs/measurements.md) records each published result with the command, commit, and date needed to rerun it. When adding new performance numbers, report reconstruction quality alongside cold time, warm time, and peak GPU memory.

@@ -1,598 +1,65 @@
 # Measurements
 
-This page holds the measured evidence behind the speed, accuracy and memory
-claims in the guides. Each section names the date, the TomoJAX commit the
-numbers were measured on and the protocol. Failed cases are reported with the
-rest.
+Measured speed, accuracy, and memory results behind the TomoJAX guides, including cases where other libraries win or where a method hits its limits. Each section notes the date, commit, and protocol; runnable scripts live in [bench/](../bench/README.md) and [examples/](../examples/README.md).
 
 ## Test environment
 
-Unless a section says otherwise, measurements use one NVIDIA GeForce RTX 4070
-Laptop GPU (Ada, 8 GB) on Linux with Python 3.12, JAX 0.11.2, ASTRA 2.5 and
-TIGRE 3.1.3. The several-GPU results use four H100 80 GB GPUs in one machine on
-Modal.
-Each protocol identifies its synthetic objects or measured scans.
-Reference agreement is distinct from physical accuracy.
+Unless noted otherwise, measurements run on Linux with one NVIDIA GeForce RTX 4070 Laptop GPU (Ada, 8 GB), Python 3.12, JAX 0.11.2, ASTRA 2.5.0, TIGRE 3.1.3, TomoPy 1.15.2, and tomocupy 1.1.0. Multi-GPU runs use four H100 80 GB GPUs on a single Modal host.
 
-*Cold* time is a fresh process through the first accepted result, including
-imports, compilation and transfers. *Warm* time repeats the same call in that
-process. GPU memory is the process's peak, sampled every 10 ms; sampling can
-miss short peaks, and it includes runtime and allocator overhead.
-
-Commands, adapters and physical conventions are in the
-[benchmark guide](../bench/README.md). Raw records are kept out of the
-repository; each result names the command, commit and date. Commands under
-`bench/` and `examples/` run from a checkout. Commands under `shared/`,
-`../../shared/` or `artifacts/`, and `run_default.py`, are lab harness scripts
-kept outside the repository with the run evidence: they record the protocol but
-cannot be rerun from a checkout.
+- **Cold time:** fresh process through the first result, including imports, compilation, and host-device transfers (filesystem cache not cleared).
+- **Warm time:** repeated call in the same process.
+- **GPU memory:** process peak sampled every 10–20 ms (includes runtime and allocator overhead; brief spikes can fall between samples).
 
 ## Headline comparison
 
-Measured 2026-11-21 on `58a30e0` on the laptop GPU above, with ASTRA 2.5.0,
-TIGRE 3.1.3, TomoPy 1.15.2 and tomocupy 1.1.0. Every tool gets the same
-corrected data, calibrated geometry and output grid. Iterative methods are
-compared at a fixed reconstruction error, except the walnut CGLS row, which uses
-the same iteration count and shows both errors. Times are warm unless marked
-cold. The ratio is the other tool's time over TomoJAX's: above 1, TomoJAX is
-faster. Each row's section gives its protocol and command.
+Measured 2026-11-21 on commit `58a30e0` on the laptop GPU above. Every library receives identical corrected projections, calibrated geometry, and output grids. Iterative methods are compared at matched reconstruction error except the walnut CGLS row, which uses 10 iterations and reports both errors. Times are warm unless marked cold; ratios above 1 mean TomoJAX is faster.
 
-| Row | TomoJAX | Other tools | Ratio |
-|---|---|---|---|
-| [Parallel FBP, real](#parallel-beam-on-a-real-scan-against-astra-tomopy-and-tomocupy): Diamond I12, 1801 views of 64 × 2560 pixels, from memory | 0.81 s (default), 3.35 s (FBP) | ASTRA 7.64 s, TomoPy 2.90 s (CPU) | ASTRA 9.4, TomoPy 3.6; FBP alone 2.3 and 0.87 |
-| The same, raw counts on disk to a volume on disk, cold | 11.2 s (default), 10.7 s (FBP) | tomocupy 10.4 s | about 1: writing the volume dominates |
-| [Cone FDK, real](#fips-walnuts-real-lab-cone-beam-ct): FIPS walnut 1, one orbit, 1200 views binned 2 × 2, 501³ | 1.02 s | ASTRA 1.71 s | 1.7, same error (0.091) |
-| [Cone CGLS, real](#fips-walnuts-real-lab-cone-beam-ct): the same walnut, 10 iterations from zero | 28.2 s, error 0.184 | ASTRA 26.8 s, error 0.197 | 0.95 |
-| [Laminography CGLS to a fixed error](#reconstruction-against-astra), 256³ synthetic, smooth / sharp object | 3.29 / 0.435 s | ASTRA 16.5 / 0.452 s | 5.0 / 1.04 (cold 3.4 / 0.70) |
-| [Parallel CGLS to a fixed error](#reconstruction-against-astra), 256³ synthetic, smooth / sharp object | 0.157 / 0.154 s | ASTRA 0.237 / 0.235 s | 1.5 / 1.5 (cold 0.37 / 0.52) |
-| [Cone FDK](#cone-beam-projection-and-fdk), 256³ synthetic, host to host | 0.103 s | ASTRA 0.288 s, TIGRE 0.543 s | ASTRA 2.8, TIGRE 5.3 |
-| [TV reconstruction](#tv-regularised-reconstruction-against-tigre), 128³ parallel synthetic, 3% noise | 0.32 s, error 0.075 | TIGRE 9.1 s, best error 0.101 | 28; TIGRE does not reach TomoJAX's error |
+| Case | TomoJAX | Other tools | Speedup ratio |
+| --- | --- | --- | --- |
+| [Parallel, real](#parallel-beam-on-a-real-scan-against-astra-tomopy-and-tomocupy): Diamond I12, 1801 views of 64 × 2560 px, in memory | 0.81 s (default Fourier), 3.35 s (FBP) | ASTRA FBP 7.64 s, TomoPy gridrec 2.90 s (CPU) | Default: 9.4× ASTRA, 3.6× TomoPy; FBP: 2.3× ASTRA, 0.87× TomoPy |
+| Same scan, raw counts on disk to volume on disk, cold | 11.2 s (default), 10.7 s (FBP) | tomocupy 10.4 s | ~1× (writing 1.6 GiB volume dominates) |
+| [Cone FDK, real](#fips-walnuts-real-lab-cone-beam-ct): FIPS walnut 1, 1 orbit, 1200 views binned 2×2, 501³ | 1.02 s | ASTRA 1.71 s | 1.7× (same error, 0.091) |
+| [Cone CGLS, real](#fips-walnuts-real-lab-cone-beam-ct): same walnut, 10 iterations from zero | 28.2 s, error 0.184 | ASTRA 26.8 s, error 0.197 | 0.95× (lower error in TomoJAX) |
+| [Laminography CGLS](#reconstruction-against-astra) to fixed error, 256³ synthetic (smooth / sharp) | 3.29 / 0.435 s | ASTRA 16.5 / 0.452 s | 5.0× / 1.04× (cold 3.4× / 0.70×) |
+| [Parallel CGLS](#reconstruction-against-astra) to fixed error, 256³ synthetic (smooth / sharp) | 0.157 / 0.154 s | ASTRA 0.237 / 0.235 s | 1.5× / 1.5× (cold 0.37× / 0.52×) |
+| [Cone FDK](#cone-beam-projection-and-fdk), 256³ synthetic, host to host | 0.103 s | ASTRA 0.288 s, TIGRE 0.543 s | 2.8× ASTRA, 5.3× TIGRE |
+| [TV reconstruction](#tv-regularised-reconstruction-against-tigre), 128³ parallel synthetic, 3% noise | 0.32 s, error 0.075 | TIGRE 9.1 s, best error 0.101 | 28× (TIGRE does not reach 0.075) |
 
-The I12 rows are the one real parallel scan every tool here reads at full
-detector width; the walnut is the real cone scan with a published reference and
-ASTRA's own geometry vectors. Laminography, cone FDK against TIGRE and TV have no
-real scan that ASTRA and TIGRE both take, so the published synthetic cases stand
-in. "Default" is the plain `tj.reconstruct(scan)`, the Fourier-slice inverse for
-an axial half turn.
+**Where other tools win:** ASTRA is faster per CGLS iteration on the walnut (26.8 vs 28.2 s for 10 iterations, though TomoJAX reaches lower error) and faster cold on the sharp laminography and parallel CGLS cells where TomoJAX compiles on first use. TomoPy's CPU gridrec beats TomoJAX's FBP from memory on I12 (2.90 vs 3.35 s), though TomoJAX's default Fourier inverse beats both. On smooth 256³ laminography, plain CGLS from zero misses the error target in 256 iterations where ASTRA passes; TomoJAX's coarse-to-fine CGLS passes and is what the table uses.
 
-**Where another tool wins.** ASTRA is faster per CGLS iteration on the walnut:
-26.8 against 28.2 s for 10 iterations, though TomoJAX's error is lower at that
-count. TomoPy's CPU gridrec beats TomoJAX's FBP from memory on I12 (2.90 against
-3.35 s); TomoJAX's default Fourier inverse is faster than both. From raw counts on
-disk to a volume on disk, TomoJAX and tomocupy are level, because writing the
-1.6 GiB volume dominates. ASTRA is faster cold on the sharp laminography object
-and both parallel CGLS rows, where TomoJAX's first call compiles. Plain CGLS from
-zero misses the smooth laminography gate in 256 iterations where ASTRA's plain
-CGLS passes; TomoJAX's coarse-to-fine CGLS passes, so that row uses it.
+## Parallel beam on a real scan against ASTRA, TomoPy and tomocupy
 
-## Raw NXtomo loading and held-out split integrity
+Measured 2026-11-21 on commit `58a30e0` with [`bench/compare_parallel.py`](../bench/compare_parallel.py) on the Diamond I12 sandstone cut of Vo et al. (Zenodo 3339629): 1801 views over 180°, 64 rows × 2560 columns, axis at column 1417.5, reconstructed onto 2560 × 2560 slices.
 
-Loading was measured 2026-10-27 on `a4a969cb`; evaluation was measured
-2026-10-28 on `0199b919`, using the local Diamond files. These are functional/integrity tests, not image
-or pose accuracy measurements. Commands in the lab shared directory are
-`JAX_PLATFORMS=cpu uv run --no-sync python shared/agent02/loader_kill.py`
-(the metadata/pixel section) and
-`JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 uv run --no-sync python
-shared/agent02/evaluation_kill.py`.
+| From line integrals in host RAM to volume in host RAM | Cold | Warm | Correlation with TomoJAX FBP |
+| --- | ---: | ---: | ---: |
+| TomoJAX default `tj.reconstruct(scan)` (Fourier-slice inverse) | 2.53 s | 0.81 s | 0.9997 |
+| TomoJAX FBP | 4.75 s | 3.35 s | reference |
+| ASTRA `FBP_CUDA` (slice by slice) | 8.41 s | 7.64 s | 0.99998 |
+| TomoPy gridrec (CPU, 32 threads) | 3.69 s | 2.90 s | 0.988 |
 
-- I13 NXtomo scans 159791 and 159815 classify respectively 37/80/80 and
-  3001/200/100 sample/flat/dark frames. First-sample row1080 columns441:449
-  exactly match raw HDF5 pixels (maximum integer error 0). Discovery cold/warm
-  times are 55.7/4.75 ms and 46.6/15.2 ms, with 260 MiB peak process RSS and no
-  GPU allocation. Missing physical pitch requires explicit detector geometry.
-- I12 physical row1080, every thirtieth sample view (61×1×2560), tests
-  interleaved-view, angular-block and detector-block splits. Changing every
-  excluded value to 1234 leaves a fixed four-coefficient least-squares fit
-  bitwise unchanged. Streamed versus dense squared-error relative differences
-  are 1.96e-16, 0 and 3.00e-16. First/repeat fit-and-score times are 23.17/20.02,
-  20.07/19.93 and 15.05/13.36 ms; peak RSS 70.48 MiB, GPU 0. This checks held-out
-  accounting, not tomographic reconstruction or stopping-rule effectiveness.
+Correlation is computed on the middle slice after a 2-pixel Gaussian blur (unblurred, TomoPy is 0.77 because gridrec retains more high-frequency noise).
 
-The [held-out guide](held-out-evaluation.md) describes the split and leakage
-contract. Public reconstruction/alignment workflows do not automatically enforce
-arbitrary detector observation masks.
-
-## Raw-input inventory and bounded workflows
-
-A CPU audit on 2026-10-28 (`0199b919`) tested 521 acquisition and metadata
-candidates, not 521 complete scans. Literal `tj.load` calls returned 513
-`ValueError` exceptions identifying missing calibration, geometry, unavailable
-external pixels or unsupported/incomplete inputs; five errors named missing paths.
-ESRF bamboo and Elettra 00024 completed separate public correction,
-reconstruction, alignment, save and reload checks on 128 selected views and
-central 64² detector cuts. Their automatic alignments report `limited`; finite
-outputs and exact save/reload agreement are not image or pose accuracy tests.
-PyHST's file-owned 2048²×1200 grid alone requires 20.13 GB, exceeding the audit's
-18 GB job limit; that numerical workflow was not run at unchanged defaults.
-
-The sweep took 601.92 s, with 6.77 GiB peak anonymous-plus-shared host memory,
-no GPU allocation, no watchdog stops and no timeouts. Generated datasets were
-deleted. Command: `JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
-TOMO_SOURCE_COMMIT=0199b919 PYTHONPATH=PINNED/src LAB_ARTIFACTS=OUTPUT taskset -c 24
-python run_default.py`, using the frozen lab inventory and its per-record
-16.75 GiB/180 s watchdog. This is a full-input loading audit with bounded
-numerical follow-ups, not full-volume completion.
-
-The independent CLI audit `shared/agent02/cli_input_audit.py` checks APS, PSI,
-two Nikon families and SkyScan with `inspect`, `preprocess`, `recon` and `align`,
-twice each. All 40 calls stopped with actionable missing-input messages and no
-traceback: 117.91 s total, 671.81 MiB peak RSS, GPU 0 on `adbf6b52`
-(2026-10-28).
-Missing-input contracts do not establish reconstruction quality.
-
-## Real-scan comparison criteria
-
-Use the same calibrated geometry and physical output grid for each library,
-and compare iterative methods at matched reconstruction error rather than a
-fixed iteration count. Nikon and Zeiss comparisons use data residuals from one
-common calibrated ASTRA forward projector for all libraries, together with
-volume differences. Compare iterative times at matched residual; compare FDK
-times with both diagnostics reported. Physical accuracy checks use the walnut
-reference and independent analytic phantoms. The Zeiss vendor comparison uses
-a fixed registered valid-data region and an intensity-affine fit as an image
-diagnostic, not as a truth volume or an acceptance threshold.
-
-## Resident cone volume storage
-
-Measured 2026-10-27–28 on Omarchy, RTX 4070 Laptop 8 GB, under concurrent
-CPU load. The control is `c7d8578d`, with public `(x, y, z)` volumes. The
-candidate commits below use public `(z, y, x)` volumes and private
-z-contiguous resident iterates. All original views and calibrated grids are
-retained: Walnut one/three orbits at binning 2, Nikon and Zeiss at binning 2,
-and both CuO scans at binning 4. Every solve starts from FDK. CGLS uses three
-iterations; ordered-subset rows use one sweep with the subset counts below.
-
-These are **T3 pipeline agreements, not reconstruction accuracy**. Image
-differences compare physical voxels after axis permutation, without fitting
-scale or alignment. The maximum relative peak difference over these pairs is
-5.18e-7. Walnut-support agreement with the authors' reconstruction is unchanged
-to the shown precision: CGLS 0.087821/0.061075, OS-SART 0.083891/0.055488,
-and OSEM 0.071995/0.048422 for one/three orbits. No views are held out.
-
-Each row uses two fresh processes per implementation, interleaved in one GPU
-job. Cold includes loading, numerical imports, compilation, FDK, solving and
-host output; warm repeats the complete reconstruction including FDK, but not
-loading. Times average the two process cold times or warm medians. Scoring
-and saving comparisons are outside timing and the reported memory boundary.
-GPU peaks use 20 ms sampling; host peaks are process RSS high-water marks
-before scoring. Memory columns give the maximum over the two processes,
-control / candidate. Filesystem caches are uncontrolled.
-
-| Scan, method | Control cold / warm (s) | Candidate cold / warm (s) | Image relative L2 | GPU peak MiB | Host peak GB | Candidate commit |
-|---|---:|---:|---:|---:|---:|---|
-| walnut1, cgls | 22.85 / 14.76 | 22.12 / 14.69 | 6.69e-08 | 4308 / 4308 | 5.757 / 5.757 | `11833821` |
-| nikon, cgls | 29.61 / 22.95 | 28.12 / 22.51 | 4.09e-08 | 4574 / 4574 | 4.253 / 4.216 | `e2f8010f` |
-| zeiss, cgls | 15.23 / 10.03 | 15.27 / 9.79 | 0 | 4576 / 4576 | 3.537 / 3.532 | `e2f8010f` |
-| walnut3, cgls | 60.63 / 44.24 | 61.03 / 43.36 | 7.53e-08 | 4312 / 4312 | 7.539 / 7.537 | `11833821` |
-| cuo-spl1, cgls | 64.66 / 38.86 | 62.91 / 37.39 | 0 | 4576 / 4576 | 6.194 / 6.193 | `11833821` |
-| cuo2, cgls | 63.14 / 38.72 | 61.62 / 36.84 | 1.92e-08 | 4576 / 4717 | 6.176 / 6.171 | `e2f8010f` |
-| walnut1, ossart | 16.51 / 8.50 | 15.92 / 8.40 | 1.82e-08 | 6152 / 6152 | 5.755 / 5.756 | `e2f8010f` |
-| walnut1, osem | 16.16 / 7.59 | 17.72 / 7.57 | 2.19e-07 | 4282 / 4282 | 5.755 / 5.756 | `11833821` |
-| nikon, ossart | 18.35 / 11.45 | 17.05 / 11.73 | 1.86e-08 | 3606 / 3606 | 4.181 / 4.154 | `11833821` |
-| zeiss, ossart | 12.45 / 6.88 | 12.09 / 6.37 | 0 | 6204 / 6204 | 4.124 / 4.121 | `bd49f888` |
-| zeiss, osem | 10.55 / 4.73 | 10.22 / 4.73 | 0 | 4546 / 4546 | 4.917 / 4.918 | `bd49f888` |
-| walnut3, ossart | 40.69 / 25.04 | 44.18 / 23.79 | 1.95e-08 | 3318 / 3318 | 7.538 / 7.539 | `bd49f888` |
-| walnut3, osem | 42.55 / 22.38 | 35.83 / 21.87 | 2.21e-07 | 3266 / 3266 | 7.885 / 7.880 | `bd49f888` |
-
-The Nikon OS-SART pairs in the table are slower warm by 0.73% and 4.32%.
-A balanced repeat on `e74bd197` (2026-10-28, three warm calls per process,
-`shared/agent01/nikon_repeat.sh`) gives 11.162/11.270 s for the control and
-11.110/11.124 s for the candidate: 0.47% and 1.29% faster. Cold times including
-loading are 16.971/16.810 s and 16.184/17.262 s respectively. The image relative
-L2 difference is at most 1.86e-8, both GPU peaks are 3606 MiB, and maximum
-host RSS is 4.186 GB for both. These results show run-to-run timing variation;
-they do not establish a uniform cold speedup. Walnut-one OSEM and Zeiss OSEM
-also have mixed-sign warm timing differences.
-
-One CuO2 candidate process in the table reaches 4717 MiB rather than 4576 MiB.
-An instrumented four-process repeat on `e74bd197` (`shared/agent01/cuo_peak.sh`,
-2026-10-28) gives 4576 MiB globally and 4566 MiB per compute process for every
-arm, with identical JAX peak live allocation (3.712 GB) and pool (4.563 GB).
-The extra 141 MiB in the table has no retained per-process trace and remains
-unattributed. Prescoring host RSS spans 6.156–6.168 GB. Instrumentation includes
-corrected-input hashing, so its cold times are not a loading benchmark.
-
-CuO2 fresh-process comparisons can differ by 2.83e-6 relative L2 because
-preprocessing uses sequential or balanced four-pixel sums during binning.
-With identical pre-binning logarithms, those two sum trees reproduce every
-corrected pixel and the differing FDK/final-image hashes; the solver is not
-the first divergence. This is T3 arithmetic agreement, not an accuracy result.
-The attribution commands are `shared/agent04-preprocess/run_tree.sh` and
-`run_fingerprint.sh` on `c7d8578d` (2026-10-28). The instrumented repeat gives
-the same 2.83e-6 difference between two control processes whose binning trees
-differ, as between control and candidate.
-The executable protocol is `bench/cone_matrix.py`; set the input environment
-variables to the scans named in the full-view sections below. CGLS uses
-`--iterations 3`; all ordered-subset cases use `--iterations 1`. Other options
-are unchanged defaults, including FDK initialization and recomputed
-normalization:
+End-to-end from raw counts on disk to volume on disk (5 interleaved cold runs with `sync` before each): TomoJAX default 11.2 s median (range 4.3–11.9 s), TomoJAX FBP 10.7 s (6.8–16.6 s), and `tomocupy recon` Fourier 10.4 s (8.8–35.8 s; correlation 0.991). Writing the 1.6 GiB volume dominates all three.
 
 ```bash
-python bench/cone_matrix.py "$CASE" "$INPUT" --library tomojax \
-  --method "$METHOD" --iterations "$ITERATIONS" --subsets "$SUBSETS" \
-  --repeats "$REPEATS" --output result.json
+uv run --no-sync python bench/compare_parallel.py full_rows1048-1111.nxs WORK \
+  --axis 1417.5 --baselines-python BASELINES/bin/python
 ```
-
-Use `CASE=walnut1/walnut3/nikon/zeiss/cuo` and the corresponding path; both
-CuO inputs use `CASE=cuo`. OS-SART subset counts are 12/17/13/13 for
-Walnut-one/Walnut-three/Nikon/Zeiss; OSEM counts are 12/13/1 for
-Walnut-one/Walnut-three/Zeiss. The lab pairing commands are
-`shared/agent01/all13.sh 0 4 0,3`, `all13.sh 4 9 4,7,8`, and
-`all13.sh 9 13`, with the corresponding original command list in
-`shared/baseline/cmds.txt`. These use two warm CGLS repeats for Walnut-one
-and one elsewhere. `shared/agent04-transfer/run.sh` measures Nikon CGLS
-(two warm repeats) and CuO2 CGLS (one), control/candidate/control/candidate.
-`shared/agent01/balanced_pair.sh` measures Walnut-one OS-SART and Zeiss CGLS
-with three warm repeats, candidate/control/control/candidate. The all13
-pairing uses control first on even command indices and candidate first on
-odd indices, repeating that order twice. The drivers perform canonical
-voxel comparisons and delete scratch volumes after scoring.
-
-## Detector response and structure controls
-
-Measured 2026-10-27 on `e71f900f` for response injections and `271fd6e3` for
-independently scored structure increments. The `Rings` implementation is the
-same in both. These are T1 known perturbations of real line-integral data,
-not reconstruction accuracy or ring-energy rankings. All selected views are
-used; there is no held-out split, fitted registration or pose-gauge removal.
-Explicit detector centres are −5/−138/−15/0 pixels in table order; ESRF uses
-the panel centre, not an independently calibrated axis.
-
-| Scan and frozen cut | Injected-field residual, Rings | Injected-field residual, Algotom | Off-axis structure alteration, Rings | Off-axis structure alteration, Algotom |
-|---|---:|---:|---:|---:|
-| I13 159815, row 1080, columns 441:1869, every eighth of 3000 views | 0.2803 | 0.4033 | 0.1112 | 0.3501 |
-| I12 3339629, row 1080, all 2560 columns, every eighth view | 0.3917 | 0.2406 | 0.0085 | 0.2998 |
-| APS 2-BM `test_data.h5`, row 11, all 1536 columns, every eighth view | 0.6110 | 0.2302 | 0.0130 | 2.0735 |
-| ESRF bamboo, row 270, all 640 columns, every eighth view | 0.4370 | 0.1696 | 0.0367 | 0.3529 |
-
-Injected response is `a + b * (1 - exp(-q))`, with independent pixel fields,
-RMS 0.004 and 0.006, seeds 608–611, and paired sparse support. These amplitudes
-are declared perturbations, **not calibrated detector errors**. The field
-residual is `RMS(C(q + error) - C(q)) / RMS(error)`: existing structure damage
-common to both outputs cancels. Corresponding off-support ratios are
-0.246/0.298/0.221/0.307 for Rings and 0.299/0.202/0.208/0.152 for Algotom.
-Rings misses at least one of the frozen residual ≤0.5 and off-support ≤0.2
-gates on every scan. Even/odd injection variants also miss those gates.
-
-Structure increments are independent analytic Gaussian Radon traces, not
-TomoJAX projections: widths 2 and 8 pixels, peak 0.05, radii 0.35 and 0.7
-of detector half-width, azimuth seed 9027. The table gives the maximum
-`norm(C(q + increment) - C(q) - increment) / norm(increment)` per scan.
-Rings misses the 5% gate on I13; Algotom misses it on all four cuts. The I13
-maximum remains 10.5% with all 3000 views. Axis-centred Gaussians and annuli
-are reported separately as unidentifiable detector/object aliases, not as
-failures to recover uniquely determined structure.
-
-Even an off-axis Gaussian has a radial component. A follow-up physical-radial
-projection on `09437d17` assigns 1.13–6.68%, 0.76–4.09%, 1.26–6.29% and
-2.32–12.89% of the probes' energy to that component. Maximum error outside
-the radial component, normalized by nonradial truth, is
-0.04712/0.00601/0.01009/0.03771 for Rings. Thus the I13 full-increment failure
-mostly concerns the radial prior, not its uniquely varying component. The
-frozen full-increment gate above is not retrospectively changed.
-
-Algotom 1.7 uses its canonical transmission-domain chain,
-`-log(remove_all_stripe(exp(-q)))`, with unchanged defaults 3/51/21.
-Commands, from this run's checkout with its external `shared/` harness:
-
-```bash
-JAX_PLATFORMS=cpu ALGO_DOMAIN=transmission LAB_ARTIFACTS=OUTPUT \
-  uv run --no-sync python ../../shared/agent08/rings/injected_kill.py
-JAX_PLATFORMS=cpu LAB_ARTIFACTS=OUTPUT \
-  uv run --no-sync python ../../shared/agent02/ring_structure_score.py
-JAX_PLATFORMS=cpu LAB_ARTIFACTS=OUTPUT \
-  uv run --no-sync python ../../shared/agent02/i13_native_noharm.py
-```
-
-The response run's CPU first/warm correction times are 5.070/0.225 s,
-1.220/0.141 s, 1.235/0.038 s and 0.990/0.028 s for the table's scan order;
-these exclude imports and loading and do not follow the page's fresh-process protocol.
-Peak host RSS is 1281 MiB and GPU use is zero. No speed comparison is claimed.
-Final ring quality requires independent rows and seeds plus reconstruction
-metrics; these perturbation controls do not establish removal of native rings.
-
-### Response-inverse feasibility
-
-On the I13 159815 runtime cut (every 25th sample view, rows 1080:1088,
-columns 441:1873, count-binned 8×8), the former final response had no real
-inverse for 166 observations. Its three Newton steps nevertheless returned
-finite values spanning −8.77 to 9.11. The constrained fit on `694a9ae7`
-changes seven of 179 final-stage coefficient pairs, gives a minimum response
-derivative of 0.5011 and maximum forward/inverse closure error of 3.58e−7.
-The final weighted data-fit SSE changes from 1325.891 to 1324.329; the first
-fine stage increases by 0.00136%. These are numerical feasibility checks,
-not reconstruction accuracy. The constraint changes the odd coefficient
-components too: RMS 0.01785 for offset and 0.02860 for response slope.
-
-```bash
-JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/source_coarse.py
-```
-
-The four-scan finite-reference fixture and analytic structure controls retain
-their previous pass/fail outcomes; the fit constraint repairs inversion, not
-the statistical separation of detector errors and object structure.
-
-CUDA A/B/A/B on the native I13 cut, baseline `c7d8578d` versus the constrained
-implementation, gives median warm correction times 0.01403/0.01719 and
-0.01312/0.01613 s: approximately **23% slower**, with sampled GPU peaks
-704–706 versus 742 MiB (**about 36 MiB more**). Cold calls are 9.63–9.68
-versus 9.73–9.92 s; peak host RSS is 1607 versus 1623–1628 MiB. On the same
-runs, seed-622 dense log-gain residual is 0.919913 and the independent
-Gaussian increment alteration is 0.104278 for both implementations; native
-output disagreement is at most 7.62e−8 relative. These controls still fail
-their quality gates. The correctness repair is not a speed improvement.
-
-```bash
-LAB_ARTIFACTS=OUTPUT uv run --no-sync python ../../shared/agent08/rings/paired_gpu.py
-```
-
-### Calibration-backed gaps and response-only correction
-
-`Rings` fits a scalar response map for each detector column; it does not infer
-missing measurements from low angular variation. Raw flat/dark calibration
-interpolates bracketed pixels without measured illumination in transmission.
-On Elettra TomoBank 00024, row 1024, all 400 views and 2048 columns, the maximum
-known off-axis Gaussian sinogram alteration is 0.012812 on `c46c52e3` (2026-10-27,
-seed 9027, radii 0.35/0.7, widths 2/8 pixels). The detector centre is nominal,
-not independently calibrated. Axis-centred probes remain ambiguous. An
-independent exact-source CPU replay gives first/warm correction times
-0.701/0.039 s and peak host memory 956 MiB (no GPU); this is not a paired
-speed comparison.
-
-Six I13 159815 native-row comparisons use all 3001 recorded views, columns
-441:1872, axis column 718.5, default flat/dark/log correction and pixel-unit
-1431² ramp FBP. The native radial proxy uses a 15-pixel trend and the common
-uncorrected-image scale; it includes circular object structure and is **not
-reconstruction accuracy or Savu agreement**. Analytic Gaussian increments
-use radius 0.7, widths 2/8, peak 0.05 and the third azimuth draw from seed 9027.
-
-| Native row | Radial proxy, Rings | Radial proxy, Algotom | Maximum image-increment alteration, Rings | Algotom |
-|---|---:|---:|---:|---:|
-| 500 | .003057 | .006196 | .173830 | .314045 |
-| 690 | .002455 | .006707 | .088688 | .252735 |
-| 780 | .002870 | .008635 | .075554 | .260407 |
-| 1060 | .004081 | .011083 | .070758 | .277029 |
-| 1080 | .003170 | .014322 | .066621 | .238971 |
-| 1470 | .003597 | .009529 | .100141 | .206984 |
-
-Both methods fail the 5% structure-preservation gate on every row despite
-lower radial energy. Rings' first/warm correction is 9.10–11.44 s and
-0.108–0.124 s per row in this sequential run; these timings are not a balanced speed comparison. GPU scoring
-takes 139.08 s with peak GPU/host memory 2770/2300 MiB; CPU input/reference
-preparation takes 287.70 s separately. Full temporary arrays are deleted.
-
-A separate finite-reference injection on I13 159815 row 1080 uses all 2560
-columns, 375 views (raw IDs 200:3200:8), centre 120, and the actual 100+100
-flat/100 dark acquisition schedule. For seeds 70540–70543, the reconstructed
-known-error RMS retained by Rings+FBP is .831439/.479073/.811468/.686370 of
-the uncorrected error. This measures added-error carry-through, **not the
-fraction of native rings remaining**. Source `c46c52e3` and detector model
-`97407af5` use measured gain 1.78546 and read noise 4.38286 ADU, with no added
-sample noise. CPU correction first/warm is 3.752/0.180–0.186 s; FBP first/warm
-is 0.786/0.631–0.668 s. Total including IO is 31.66 s, peak host memory
-1560 MiB, with no GPU use.
-The same seed 70540 with all 3001 views retains 0.840656 of known image-error
-RMS (`a9d0e716`, numerically unchanged Rings on `0199b919`). This full-view
-control takes 46.84 s CPU/3277 MiB, no GPU; correction first/second calls take
-7.078/1.575 s and FBP 6.557/5.727 s. It is one seed, not a four-seed transfer.
-
-Independent analytic raw-count controls (seeds 916001/916003, clean/stable
-0.1 gain/four dead single pixels/four dead eight-pixel blocks, with and without
-noise) expose another limitation: calibration-only image NRMSE medians are
-.149620/.149977/.151859/.279746, while applying Rings gives
-.257742/.258001/.258441/.320091. Recovering calibration gaps does not make
-subsequent response estimation harmless. These are analytic chord truths,
-not projections from the reconstruction operator or labelled native dead
-pixels. The control takes 2.59 s CPU/803 MiB, without a separate warm run or
-GPU use.
-
-Measured on `c46c52e3`, 2026-10-27. Commands use this run's external shared
-harness and its archived `657709f2` comparison module. Set `LAB_ARTIFACTS`
-to a scoring-output directory; native preparation uses the fixed directory
-shown below, and native scoring deletes its staged arrays:
-
-```bash
-JAX_PLATFORMS=cuda,cpu FILL_MODE=removed uv run --no-sync python ../../shared/agent08/rings/fill_ablation.py
-LAB_ARTIFACTS=../../artifacts/agent08-fill-native-prep JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/fill_native_prepare.py
-JAX_PLATFORMS=cuda,cpu uv run --no-sync python ../../shared/agent08/rings/fill_native_score.py
-JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/fill_calibration_chain.py
-JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent05-detector/carry_through.py
-JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent05-detector/carry_fullviews.py
-```
-
-### Cross-facility image-domain controls
-
-Measured 2026-10-28 on `a3bef73d` (runtime `0199b919`), using the same
-raw-image normalization and 15-pixel radial trend as above. Native radial
-energy includes specimen structure: it is **not reconstruction accuracy**.
-The structural check compares reconstructed corrected and uncorrected
-increments from independent analytic Gaussians, not a solver-generated
-phantom. Peak line integral is 0.05, radius 0.7 and azimuth is the third draw
-from seed 9027. The dense detector-field check injects log-gain RMS 0.002.
-No intensity fit, registration or parameter tuning is used.
-
-| Input | Radial proxy, raw / Rings / Algotom | Maximum Gaussian image alteration, Rings / Algotom | Gain image-error fraction, Rings / Algotom | Raw Gaussian image NRMSE, narrow / wide |
-|---|---:|---:|---:|---:|
-| I12 | 0.029959 / 0.021835 / 0.008991 | 0.026669 / 2.470997 | 0.251673 / 0.141547 | 1.202109 / 0.199304 |
-| APS | 0.030843 / 0.021202 / 0.007688 | 0.034996 / 18.042499 | 0.499524 / 0.078955 | 1.610583 / 0.449732 |
-| ESRF | 0.071829 / 0.046719 / 0.010100 | 0.284594 / 2.396933 | 0.181807 / 0.100796 | 0.558084 / 0.016571 |
-| Elettra | 0.046728 / 0.034904 / 0.006028 | 0.079931 / 2.485404 | 0.233622 / 0.073352 | 0.557697 / 0.003074 |
-| 2DeteCT | 0.027762 / 0.023853 / 0.006060 | 0.005527 / 2.308251 | 0.278180 / 0.144948 | 0.677629 / 0.078820 |
-| PSI-00071 | 0.023069 / 0.021458 / 0.004511 | 0.003431 / 3.858773 | 0.412902 / 0.061021 | 1.610184 / 0.449757 |
-| Walnut1V2 | 0.028809 / 0.028624 / 0.017158 | 0.037258 / 0.656604 | 0.400968 / 0.382335 | 0.077549 / 0.440996 |
-
-Rings fails the 5% image no-harm gate on ESRF and Elettra, despite passing
-the sinogram-domain gate. Their wide-Gaussian uncorrected image NRMSEs are only
-1.66% and 0.31%: these failures are not explained by a poor reconstruction
-baseline. All seven Algotom comparisons fail the image no-harm gate despite
-lower native radial proxies. Both methods retain at most 50% of the injected
-gain-image error on these cuts; this does not identify the native detector
-field. Sparse-view and truncated-panel raw baselines can be weak, so a small
-differential alteration alone is not absolute image fidelity.
-
-I12/APS/ESRF use rows 32/11/270, views `::8` (226/90/126), all
-2560/1536/640 columns and centres -138/-15/0 pixels. Elettra uses all 400
-views, row 1024, 2048 columns and the nominal centre. PSI 00071 uses row
-1200, 151 views `::8`, 2560 columns, centre -23 and the measured 200-flat/
-10-dark schedule, without phase retrieval. These parallel grids have unit
-pitch and one voxel per detector column; Gaussian widths are 2/8 pixels.
-2DeteCT slice 00001 mode 1 uses 450 views `::8`, all 1912 columns and
-recorded circular fan geometry; widths are 2/8 object-plane detector pixels.
-The dense-field seeds in table order are 609/610/611/642/643/646/647.
-The frozen cuts retain their original calibration and transmission floors;
-this is not a default-loading audit. Algotom 1.7 uses canonical transmission-
-domain `remove_all_stripe`, followed by minus-log, independently per row.
-
-Walnut 1 orbit 2 uses all 1200 views, authors' corrected vectors and a
-501² central plane at 0.1 mm. Native rows 456:484 cover every plane ray
-vertically with interpolation margin; calibration/log precedes additional
-2×2 binning, giving 14×384 detector pixels. Its Gaussian widths are 0.2/0.8 mm
-and radius is 0.7 of the image half-width; its injected gain varies in both
-detector directions. The 50.1 mm square is horizontally truncated. Increasing
-the slab from 14 to 42 binned rows leaves raw Gaussian NRMSE unchanged.
-Analytic-only doubling of physical panel width reduces those errors to
-.042561/.002946; zero-extending only the measured panel instead gives
-.042561/.201345. Retaining filtered tails cannot recover genuinely missing
-observations. Neither extension changes the native scores in the table.
-
-The five local GPU cuts take 26.13 s, with peak GPU/host memory 364/1854 MiB;
-CPU calibration/reference preparation takes 17.64 s/409 MiB separately.
-Rings first/warm calls span 1.36–1.70 s / 2.84–5.69 ms in this sequential
-run, not a balanced speed comparison. PSI runs CPU-only with all public data
-in RAM: 471.98 s total, including 462.42 s HTTP reading, peak host 1321 MiB;
-Rings first/warm is 0.658/0.0208 s and FBP 0.459/0.289 s. Walnut CPU scoring
-takes 8.81 s/1243 MiB after 26.83 s/709 MiB preparation; Rings first/warm is
-1.203/0.622 s and FDK 0.896/0.259 s. All temporary staged arrays are deleted.
-
-Commands use this run's external shared harness. Set `LAB_ARTIFACTS` for
-scoring output and `SCORE_SOURCE_COMMIT` to the source being tested:
-
-```bash
-LAB_ARTIFACTS=../../artifacts/agent08-image-coverage-stage JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/image_coverage_prepare.py
-JAX_PLATFORMS=cuda,cpu uv run --no-sync python ../../shared/agent08/rings/image_coverage_score.py
-JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/psi_image_memory.py
-LAB_ARTIFACTS=../../artifacts/agent08-walnut-image-stage JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/walnut_image_prepare.py
-JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/rings/walnut_image_cpu.py
-```
-
-## Cone-setup aliases and a conditional calibration test
-
-Geometry-only checks on recorded Nikon crystals-in-clay, Zeiss CuO2-B and
-Walnut 1 V1–V3 ray bundles expose aliases before any image fit. With an
-independent unrestricted six-DOF pose per view, translating each source and
-its detector together (including source-radius or orbit-height changes) can
-be absorbed by the poses. Scaling source-to-detector displacement, pixel
-pitch and detector offsets together leaves every ray unchanged even without
-a pose update. The maximum residual unit-ray RMS after rigid compensation is:
-
-| Recorded geometry | Radius/height camera-translation aliases | Detector homothety |
-|---|---:|---:|
-| Nikon clay, bin 4 | 8.84e−15 | 9.13e−15 |
-| Zeiss CuO2-B, bin 4 | 5.38e−16 | 5.11e−16 |
-| Walnut 1 V1–V3, bin 2 | 1.01e−14 | 1.01e−14 |
-
-These are exact geometric identities checked numerically, **not image
-accuracy, Fisher information or confidence intervals**. Restricted five-DOF
-poses can have different aliases. A flat square-pixel camera modulo a rigid
-pose retains focal length in pixels and two principal-point coordinates;
-image content and view diversity still determine whether those are estimable.
-Known pixel pitch and detector distance alone do not fix object scale when
-source positions and the object can scale together. A known source baseline
-or object length is needed to interpret absolute distances in that case.
-
-A fixed-pose Walnut 1 three-orbit experiment fits only a common focal-plane
-distance scale, preserving principal points, source positions and detector
-pitch. Its reciprocal source-chord rays require no full-panel zero extension.
-Independent analytic Gaussian projections at scales .99/1/1.01 recover the
-scale within 3.24e−9 in a noiseless control. Native data choose scale 1.000537;
-test/raw correspondence MSE is **1.000339**, failing the required 1% improvement.
-This uses 675 pairs per fold from geometry rows 0::40 and 20::40, bin 2; the
-folds were consumed by earlier experiments. It is not a fresh validation,
-matched-projector image test, free-pose self-calibration or uncertainty result.
-No focal correction is adopted from it.
-
-Measured 2026-10-27: geometric audit `ad7f9805`, 1.30 s CPU/317 MiB;
-focal experiment `c46c52e3`, 31.33 s CPU/734 MiB; neither uses the GPU.
-Commands use this run's external shared harness with `LAB_ARTIFACTS` set:
-
-```bash
-JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/calibration/gauge_audit.py
-JAX_PLATFORMS=cpu uv run --no-sync python ../../shared/agent08/calibration/scale_gauge.py
-JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 uv run --no-sync python ../../shared/agent08/calibration/focal_reciprocity.py
-```
-
-## PSI ptychographic tomography
-
-Measured 2026-11-19 on `cfc6f7d` with the PSI reader added, RTX 4070
-Laptop. `tj.load("porous_glass_dataset.mat")` (Odstrcil et al. 2019, Zenodo
-3539513: 720 aligned phase projections of 416 × 1312, 6.868 nm pixels) takes
-3.6 s, and the plain `tj.reconstruct(scan)` 1.6 s; it chooses the Fourier
-inverse on the 1312 × 1312 × 416 grid. Converted to δ by λ/2π, the middle slice
-agrees with the authors' own reconstruction in the same file (`tomogram_delta`):
-correlation 0.984, median ratio 0.997.
-
-## Laminography: the default FBP against FISTA
-
-`tj.reconstruct(scan)` on a laminography scan runs FBP.
-Two simulated laminography scans with an independent truth: a rock (120 views,
--35° tilt) and a watch (360 views, -15° tilt), 96³ grids. The data are the
-meshes' fine truth (4× finer, at a sub-voxel offset) projected at the true
-poses, counted at 1e4 photons per fine pixel and binned 4. The error is
-relative to the truth's norm and split in Fourier space: the region the views
-measure, within the band holding all but 1e-4 of the truth's energy, and the
-missing cone no view's plane contains (2026-11-15, 03a44438; RTX 4070 Laptop
-8 GB).
-
-| Method | Rock: measured / missing cone | Watch: measured / missing cone |
-|---|---|---|
-| FBP (default) | 0.165 / 0.316 | 0.163 / 0.396 |
-| `fista`, 50 iterations (its default) | 0.0835 / 0.212 | 0.0918 / 0.215 |
-| `fista`, 100 iterations | 0.0788 / 0.185 | 0.0790 / 0.208 |
-| `fista`, 1000 iterations | 0.0792 / 0.186 | 0.0788 / 0.208 |
-
-`fista` is `tj.reconstruct(scan, "fista", nonnegative=True, iterations=N)` with
-its automatic TV weight. It halves the error on the measured region and fills
-part of the missing cone from nonnegativity and the regulariser. At its default
-50 iterations it is not converged on these scans (5% and 16% above its converged
-error); at 100 it is. Raise `iterations` for the converged image.
-
-The cost on a real scan, K11 54013 (1441 views of 540 × 640, 704 × 704 × 234
-grid): FBP 5.5 s; `fista` 233 s at 50 iterations (2026-11-21, see
-[Iterative solvers on real scans](#iterative-solvers-on-real-scans)).
 
 ## Reconstruction against ASTRA
 
-Measured 2026-11-19 on commit `40330cf`. The matrix has 27 cells: Gaussian,
-sharp (structured) and noisy structured objects, each scanned in parallel,
-shifted anisotropic and 30° laminography geometry on 64³, 128³ and 256³ grids,
-all with 180 views. Each method runs at budgets of 1, 2, 4, … 256 iterations
-until its full-volume relative L2 error passes the cell's fixed gate, without
-fitted amplitudes or clipping. Each side contributes its fastest accepted
-workflow by cold time, from TomoJAX's Fourier inverse, FBP, CGLS, FBP-started
-CGLS and coarse-to-fine CGLS, and ASTRA's `fbp2d`, `fbp3d` (CuPy), CGLS and
-FBP-started CGLS. Cold time runs through the first accepted budget, including
-the failed lower budgets; warm time is the median of three repeats of that
-budget. Both libraries were measured in the same session, each suite from a
-cool GPU. TIGRE was not rerun, because it was the fastest external method in
-no cell of the earlier matrices.
+Measured 2026-11-19 on commit `40330cf` across 27 synthetic cells: Gaussian, sharp (structured), and noisy structured objects in parallel, shifted anisotropic, and 30° laminography geometries on 64³, 128³, and 256³ grids (180 views). Each method runs budgets of 1, 2, 4, …, 256 iterations until full-volume relative L2 error passes the cell's gate (no amplitude rescaling or clipping), and each library contributes its fastest accepted workflow by cold time.
 
-| Speedup (ASTRA time / TomoJAX time), 26 paired cells | Cold | Warm |
-|---|---:|---:|
-| Geometric mean | 1.20 | 2.35 |
-| Range | 0.65–3.80 | 0.78–14.5 |
+| Speedup (ASTRA / TomoJAX across 26 passing cells) | Cold | Warm |
+| --- | ---: | ---: |
+| Geometric mean | 1.20× | 2.35× |
+| Range | 0.65–3.80× | 0.78–14.5× |
 
-The sharp anisotropic 64³ cell has no accepted result on either side. In most
-parallel and anisotropic cells TomoJAX's fastest method is the opt-in Fourier
-inverse on CUDA (`fourier_reconstruct` with CuPy), not the default FBP; in the
-smallest parallel cells CGLS reaches the gate first. In laminography it is
-Joseph CGLS: plain, FBP-started or coarse-to-fine. ASTRA is faster in the
-sharp and noisy laminography 256³ cells (0.65–0.93): there both CGLS solvers
-pass the gate at the same budget, and ASTRA's iteration is faster (warm 739
-against 956 ms at 8 iterations on the sharp object, 480 against 614 ms at 4
-on the noisy one).
+Neither library passed the sharp anisotropic 64³ gate. In most parallel and anisotropic cells TomoJAX's fastest accepted method is the CUDA Fourier inverse (`fourier_reconstruct` with CuPy); in laminography it is Joseph CGLS (plain, FBP-started, or coarse-to-fine). ASTRA is faster on sharp and noisy 256³ laminography (0.65–0.93×) where both reach the gate at the same iteration count.
 
-| Object | Cell | TomoJAX fastest accepted, cold / warm ms | ASTRA fastest accepted, cold / warm ms | Cold speedup | Warm speedup |
-|---|---|---|---|---:|---:|
+| Object | Cell | TomoJAX fastest (cold / warm ms) | ASTRA fastest (cold / warm ms) | Cold speedup | Warm speedup |
+| --- | --- | --- | --- | ---: | ---: |
 | Gaussian | parallel 64 | coarse-to-fine CGLS: 358 / 10.5 | CGLS: 397 / 26.0 | 1.11 | 2.48 |
 | Gaussian | anisotropic 64 | Fourier: 364 / 2.0 | CGLS: 396 / 29.5 | 1.09 | 14.48 |
 | Gaussian | laminography 64 | coarse-to-fine CGLS: 835 / 269.8 | CGLS: 1740 / 681.2 | 2.08 | 2.52 |
@@ -603,7 +70,7 @@ on the noisy one).
 | Gaussian | anisotropic 256 | Fourier: 478 / 32.3 | fbp3d (CuPy): 510 / 45.9 | 1.07 | 1.42 |
 | Gaussian | laminography 256 | coarse-to-fine CGLS: 10942 / 3532.5 | FBP-started CGLS: 34900 / 16530.2 | 3.19 | 4.68 |
 | Sharp | parallel 64 | CGLS: 381 / 18.1 | fbp2d: 368 / 31.5 | 0.97 | 1.74 |
-| Sharp | anisotropic 64 | none accepted | none accepted | — | — |
+| Sharp | anisotropic 64 | none passed | none passed | — | — |
 | Sharp | laminography 64 | coarse-to-fine CGLS: 369 / 10.0 | CGLS: 413 / 29.1 | 1.12 | 2.91 |
 | Sharp | parallel 128 | Fourier: 465 / 11.9 | fbp2d: 420 / 73.7 | 0.90 | 6.19 |
 | Sharp | anisotropic 128 | Fourier: 327 / 7.8 | fbp3d (CuPy): 437 / 7.6 | 1.34 | 0.98 |
@@ -632,1420 +99,309 @@ for suite in gaussian-v1 structured-v1 structured-noisy-v1; do
 done
 ```
 
-The 256³ parallel and laminography cells were rerun on 2026-11-21 on commit
-`58a30e0` with the CGLS workflows only (TomoJAX plain, FBP-started and
-coarse-to-fine; ASTRA plain and FBP-started), the same gates and three repeats.
-Times are cold / warm ms for each side's fastest accepted CGLS workflow:
+Rerunning the 256³ CGLS-only subset on 2026-11-21 (`58a30e0`):
 
-| Object | Cell | TomoJAX | ASTRA | Cold speedup | Warm speedup |
-|---|---|---|---|---:|---:|
+| Object | Cell | TomoJAX (cold / warm ms) | ASTRA (cold / warm ms) | Cold speedup | Warm speedup |
+| --- | --- | --- | --- | ---: | ---: |
 | Gaussian | parallel 256 | FBP-started CGLS: 2275 / 157 | FBP-started CGLS: 850 / 237 | 0.37 | 1.51 |
 | Gaussian | laminography 256 | coarse-to-fine CGLS: 10385 / 3287 | FBP-started CGLS: 34839 / 16519 | 3.35 | 5.03 |
 | Sharp | parallel 256 | FBP-started CGLS: 1355 / 154 | FBP-started CGLS: 704 / 235 | 0.52 | 1.53 |
 | Sharp | laminography 256 | FBP-started CGLS: 2165 / 435 | FBP-started CGLS: 1522 / 452 | 0.70 | 1.04 |
 
-Plain CGLS from zero is slower per iteration in TomoJAX than in ASTRA in these
-cells (warm 1038 against 654 ms for 8 iterations on the Gaussian parallel cell,
-893 against 736 ms on the sharp laminography cell). On the Gaussian
-laminography cell TomoJAX's plain and FBP-started CGLS miss the 0.10 gate after
-256 iterations (0.1096 and 0.1094) where ASTRA's pass (0.0971 and 0.0972);
-TomoJAX's coarse-to-fine CGLS passes (0.0922).
+## Laminography: the default FBP against FISTA
 
-```bash
-for suite in gaussian-v1 structured-v1; do
-  uv run --no-sync python bench/compare_reconstructions.py --suite $suite \
-    --sizes 256 --geometries parallel lamino --views 180 --repeats 3 \
-    --methods tomojax_cgls_cuda tomojax_multires_cgls_cuda tomojax_fbp_joseph_cgls_cuda \
-      astra_cgls astra_fbp_cgls \
-    --output OUTPUT/$suite.json
-done
-```
+Measured 2026-11-15 (`03a44438`) on two simulated laminography scans with independent fine-mesh truths (4× finer truth projected at 10⁴ photons per fine pixel and binned 4×4 onto 96³ grids): a sandstone rock (120 views, −35° tilt) and a watch movement (360 views, −15° tilt). Relative L2 error is split in Fourier space into the measured band and the unmeasured missing cone:
 
-## Parallel beam on a real scan against ASTRA, TomoPy and tomocupy
+| Method | Rock (measured / missing cone) | Watch (measured / missing cone) |
+| --- | ---: | ---: |
+| FBP (default) | 0.165 / 0.316 | 0.163 / 0.396 |
+| `fista`, 50 iterations (default) | 0.0835 / 0.212 | 0.0918 / 0.215 |
+| `fista`, 100 iterations | 0.0788 / 0.185 | 0.0790 / 0.208 |
+| `fista`, 1000 iterations | 0.0792 / 0.186 | 0.0788 / 0.208 |
 
-Measured 2026-11-21 on commit `58a30e0` with
-[`bench/compare_parallel.py`](../bench/compare_parallel.py), TomoPy 1.15.2 and
-tomocupy 1.1.0. The scan is the Diamond I12 cut of Vo et al. (Zenodo 3339629): 1801
-views over 180° of 64 full-width rows, 2560 pixels each, raw counts with 50 flats
-and 20 darks, the axis at column 1417.5. Every tool reconstructs every row on a
-2560 × 2560 slice from the same corrected line integrals, each in a fresh process.
-
-| From line integrals in host memory to a volume in host memory | Cold | Warm | Agreement |
-|---|---:|---:|---:|
-| TomoJAX, the default `tj.reconstruct(scan)` (Fourier-slice inverse) | 2.53 s | 0.81 s | 0.9997 |
-| TomoJAX FBP | 4.75 s | 3.35 s | reference |
-| ASTRA `FBP_CUDA`, slice by slice | 8.41 s | 7.64 s | 0.99998 |
-| TomoPy gridrec, on the CPU (32 threads) | 3.69 s | 2.90 s | 0.988 |
-
-Agreement is the correlation of the middle slice with TomoJAX FBP's after a
-2-pixel Gaussian blur. Unblurred, TomoPy's is 0.77: gridrec keeps more of the
-noise.
-
-From raw counts on disk to a volume on disk, five interleaved fresh processes
-with `sync` before each: TomoJAX's default 11.2 s median (4.3–11.9 s), TomoJAX FBP
-10.7 s (6.8–16.6 s) and `tomocupy recon` with its Fourier method 10.4 s (8.8–35.8 s).
-Writing the 1.6 GiB volume dominates and varies from run to run, so this
-comparison does not separate the three. tomocupy's volume agrees with TomoJAX
-FBP's to 0.991 by the same measure.
-
-```bash
-uv run --no-sync python bench/compare_parallel.py full_rows1048-1111.nxs WORK \
-  --axis 1417.5 --baselines-python BASELINES/bin/python
-```
+Nonnegative FISTA-TV with its automatic TV weight halves measured-band error and fills part of the missing cone; 50 iterations stops 5–16% short of convergence on these scans, while 100 iterations reaches the converged floor. On real Diamond K11 scan 54013 (1441 views, 704 × 704 × 234 grid), FBP takes 5.5 s and 50-iteration FISTA-TV takes 233 s ([iterative solvers on real scans](#iterative-solvers-on-real-scans)).
 
 ## TV-regularised reconstruction against TIGRE
 
-Measured 2026-11-21 on commit `58a30e0` with
-[`bench/compare_tv.py`](../bench/compare_tv.py) (`compare_tv.py 128 tomojax`,
-then `compare_tv.py 128 tigre`, each from a cool GPU). A 128³ structured parallel
-phantom is scanned with 180 views and 3% noise. Each library runs 50
-iterations over its own grid of regularisation weights, and the best relative
-L2 error is reported with its warm time. Both libraries are warmed by an
-untimed run, and every time includes moving the data and volume between host
-and device.
+Measured 2026-11-21 (`58a30e0`) with [`bench/compare_tv.py`](../bench/compare_tv.py) on a 128³ structured parallel phantom (180 views, 3% noise). Each library runs 50 iterations over its own grid of TV weights and reports its lowest relative L2 error and warm host-to-host time:
 
 | Method | Best relative L2 error | Warm time |
-|---|---:|---:|
+| --- | --- | ---: |
 | TomoJAX FISTA-TV | 0.075 (automatic weight: 0.077) | 0.32 s |
 | TIGRE FISTA | 0.101 | 9.1 s |
 | TIGRE ASD-POCS | 0.146 | 5.6 s |
 
-Larger TIGRE FISTA weights diverge. Unregularised CGLS reaches 0.138 at best
-(10 iterations). This is one phantom at one noise level, not a general ranking.
+Higher TIGRE FISTA weights diverge; unregularised CGLS bottoms out at 0.138 (10 iterations).
+
+## PSI ptychographic tomography
+
+Measured 2026-11-19 (`cfc6f7d`) on `porous_glass_dataset.mat` (Odstrcil et al. 2019, Zenodo 3539513: 720 aligned phase projections of 416 × 1312, 6.868 nm pitch). Loading takes 3.6 s and `tj.reconstruct(scan)` (automatic Fourier inverse onto 1312 × 1312 × 416) takes 1.6 s. Converted to `δ` via `λ / 2π`, the middle slice agrees with the authors' `tomogram_delta` to correlation 0.984 and median ratio 0.997.
 
 ## Cone-beam projection and FDK
 
-Measured 2026-11-21 on commit `58a30e0` with
-[`bench/compare_cone.py`](../bench/compare_cone.py) (`--size 256 --views 360`): five voxelised ellipsoids
-(256³, 2×2×2 sub-samples) on a circular 360-view scan with a 384² detector at
-1.5× magnification. Forward projections are compared with exact analytic line
-integrals and FDK volumes with the phantom. Times are the best of three warm
-calls. Every library takes and returns host arrays, so each time includes
-moving a 64 MiB volume and 202.5 MiB of projections.
+Measured 2026-11-21 (`58a30e0`) with [`bench/compare_cone.py`](../bench/compare_cone.py) (`--size 256 --views 360`): five voxelised ellipsoids on a 256³ grid, 384² detector, 1.5× magnification. Warm host-to-host times (best of 3, transferring 64 MiB volume and 202.5 MiB projections):
 
 | Operation | TomoJAX | ASTRA 2.5 | TIGRE |
-|---|---:|---:|---:|
-| Forward projection | 0.137 s (error 0.0060) | 0.168 s (0.0060) | 0.479 s interpolated (0.0062), 1.24 s Siddon (0.0068) |
-| Backprojection | 0.122 s, exact transpose | 0.073 s, approximate transpose | 0.094 s, "matched" |
+| --- | --- | --- | --- |
+| Forward projection | 0.137 s (error 0.0060) | 0.168 s (0.0060) | 0.479 s interp (0.0062), 1.24 s Siddon (0.0068) |
+| Backprojection | 0.122 s (exact transpose) | 0.073 s (approximate) | 0.094 s ("matched") |
 | FDK | 0.103 s (error 0.0581) | 0.288 s (0.0581) | 0.543 s (0.0581) |
-| Forward, axis tilted 0.5° | 0.138 s | 0.168 s | |
-| Backprojection, axis tilted 0.5° | 0.106 s, exact transpose | 0.073 s, approximate transpose | |
+| Forward, axis tilted 0.5° | 0.138 s | 0.168 s | — |
+| Backprojection, axis tilted 0.5° | 0.106 s (exact transpose) | 0.073 s (approximate) | — |
 
-On 2026-11-19 (`40330cf`) the host-to-host FDK times were 0.090, 0.214 and 0.484 s.
-All three libraries were slower on 2026-11-21, while TomoJAX's device-resident FDK
-was not (0.050 against 0.049 s), so the change is in moving the arrays, not the
-reconstruction.
+Device-resident TomoJAX times on the same geometry are 0.096 s forward, 0.082 s exact transpose, and 0.049 s FDK.
 
-Iterative solvers keep their arrays on the device. There TomoJAX's forward
-projection takes 0.096 s, its exact transpose 0.082 s and FDK 0.049 s; ASTRA's
-and TIGRE's device-resident times are not measured here.
+With CGLS on the same scan (`dc411a2`, 2026-10-06), TomoJAX's exact transpose runs 10 / 20 / 40 iterations in 3.4 / 6.6 / 13.2 s (volume errors 0.090 / 0.043 / 0.048). ASTRA's `CGLS3D_CUDA` runs in 2.3 / 4.4 / 8.7 s (errors 0.088 / 0.040 / 0.101), diverging after ~20 iterations because its backprojector is approximate (data residual rises from 0.0053 at 30 iterations to 0.027 at 60).
 
-TomoJAX's backprojection is the exact transpose of its forward projector,
-which the iterative solvers and gradients rely on. ASTRA's voxel-driven
-backprojector is cheaper but only approximately its transpose.
+At 1024³ (1024 views of 1024², 4.3 GB each way, `95f0530`, 2026-10-07), `fdk_host` finishes in 8.0 s warm (11.1 s cold) from RAM, compared with 20.3 s for ASTRA `FDK_CUDA` and 30.7 s for TIGRE `fdk`.
 
-On the same scan (2026-10-06, commit `dc411a2`), CGLS with the matched transpose took 3.4, 6.6 and 13.2 s for
-10, 20 and 40 iterations, with volume errors of 0.090, 0.043 and 0.048.
-ASTRA's `CGLS3D_CUDA` took 2.3, 4.4 and 8.7 s with errors of 0.088, 0.040 and
-0.101. It diverges after about 20 iterations: its own data residual rises
-from 0.0053 at 30 iterations to 0.0062 at 40 and 0.027 at 60, which CGLS with a
-matched transpose cannot do.
+### Full-view cone-beam iterative and FDK benchmarks
 
-On the binned FIPS walnut (2026-10-11, commit `f9b2c5b`; 900 views from the
-three orbits, 501³ voxels, error inside the walnut against the authors'
-published reconstruction, warm times including transfers) neither CGLS
-diverges within 50 iterations, and ASTRA's is faster at equal error. From
-zero, TomoJAX's reaches 0.040 at 25 iterations in 77 s and ASTRA's 0.043 at 35
-in 72 s; ASTRA's then rises to 0.047 at 50. Started from the mean of the
-orbits' FDK volumes, TomoJAX's reaches 0.046 in 15 iterations and 49 s, ASTRA's
-0.047 in 18 and 39 s. The walnut's axis leans about half a degree, which rules
-out the faster transpose path above, so each TomoJAX iteration costs more than
-ASTRA's.
+Benchmarked on full-view real scans (all on the RTX 4070 Laptop GPU, 2 × 2 detector binning unless noted, starting iterative solves from each library's FDK; common-projector residuals use one calibrated ASTRA forward projector across libraries; scripts in [`bench/cone_matrix.py`](../bench/cone_matrix.py)).
 
-`fdk_host` reconstructed a 1024³ scan (1024 views of 1024² pixels, 4.3 GB each
-way) in z-slabs in 8.0 s with the projections and volume in RAM, 11.1 s on the
-first call (2026-10-07, commit `95f0530`). ASTRA's `FDK_CUDA` took 20.3 s and
-TIGRE's `fdk` 30.7 s from arrays in RAM.
+#### SIRT (walnut, Nikon seeds, Zeiss HDtomo)
 
-### Full-view walnut SIRT
+TomoJAX runs 12 iterations of accelerated nonnegative SIRT (`SIRTConfig(lower_bound=0, subsets=1, acceleration=True)`); ASTRA and TIGRE run 24 nonnegative SIRT iterations. Measured 2026-10-19 (walnut/Nikon) and 2026-11-21 (`1c94b346`, Zeiss):
 
-Measured 2026-10-19 on `20f4a966` (TomoJAX), `9a743fc0` (ASTRA one orbit),
-`e280d938` (ASTRA three orbits) and `e3bc2f63` (TIGRE). Walnut 1 uses all
-1200 views of orbit 2 or all 3600 views of the three orbits, binned 2 × 2 onto
-a 486 × 384 detector, and a 501³ grid with 0.1 mm voxels. Load the projections
-with `bench/walnut.py`'s `load_orbits(walnut_path, [2], 1, binning=2)` or
-`load_orbits(walnut_path, [1, 2, 3], 1, binning=2)` and use
-`volume_geometry(10)` with `tj.Scan.from_astra`. The TomoJAX call is:
-
-```python
-from tomojax.recon import SIRTConfig
-
-result = tj.reconstruct(
-    scan, "sirt", iterations=12, warm_start=True,
-    config=SIRTConfig(lower_bound=0, subsets=1, acceleration=True),
-)
-volume = np.asarray(result.volume)
-```
-
-Each solve includes its library's FDK initializer. TomoJAX uses 12 iterations
-with `SIRTConfig(lower_bound=0, acceleration=True)`; ASTRA and TIGRE use 24
-nonnegative SIRT iterations. The one-orbit ASTRA call is `SIRT3D_CUDA`; the three-orbit
-call uses the same recurrence with ASTRA forward/backprojection in 512-view
-batches. Cold includes imports, loading and the first solve with fresh
-compilation caches; warm repeats the solve in that process. The filesystem
-cache is not cleared.
-
-| Orbits | Library | Cold / warm (s) | Common-projector relative residual | Full / walnut-support relative L2 error |
-|---|---|---:|---:|---:|
-| One | TomoJAX | 58.02 / 53.47 | 0.024742 | 0.106162 / 0.074939 |
-| One | ASTRA | 70.36 / 67.27 | 0.025998 | 0.109991 / 0.077235 |
-| One | TIGRE | 364.27 / 363.06 | 0.044170 | 0.142517 / 0.098411 |
-| Three | TomoJAX | 179.07 / 174.22 | 0.026222 | 0.067624 / 0.045780 |
-| Three | ASTRA | 237.79 / 234.35 | 0.027558 | 0.072746 / 0.049110 |
-| Three | TIGRE | 1171.20 / 1120.54 | 0.045232 | 0.113725 / 0.076657 |
-
-The residual uses one calibrated ASTRA forward projector for all three libraries.
-Both image errors use the authors' reference, without intensity fitting.
-
-### Full-view Nikon and Zeiss SIRT
-
-The Nikon rows were measured 2026-10-19 on `272684c7` (TomoJAX), `35f4055f`
-(ASTRA) and `e3bc2f63` (TIGRE). The Zeiss rows were measured 2026-11-21 on
-`1c94b346`, with the Zeiss centre shift loaded with its recorded sign.
-Nikon uses all 1571 views and a 500³ grid with 0.1880371266 mm
-voxels; Zeiss uses all 801 views and a 512³ grid with 0.0833853988647461 mm
-voxels. The input is
-`tj.load_frames(path, darks=0, grid=grid).corrected(binning=2)`, where `path`
-is the Nikon seeds XTekCT file or the Zeiss HDtomo `tomo-A.txrm` file and
-`grid` is `tj.Grid(n, n, n, pitch, pitch, pitch)` with those dimensions.
-Each solve starts from its library's FDK. TomoJAX uses the same 12-iteration
-accelerated SIRT call above; ASTRA uses 24 nonnegative iterations, with its
-forward/backprojectors in 512-view batches for Nikon and `SIRT3D_CUDA` with
-`MinConstraint` 0 for Zeiss. TIGRE uses
-`tigre.algorithms.sirt(data, geo, angles, 24, init=initial, verbose=False)`,
-with `initial = tigre.algorithms.fdk(data, geo, angles, dowang=False)`.
-
-| Scan | Library | Cold / warm (s) | Common-projector relative residual | Volume difference to ASTRA |
-|---|---|---:|---:|---:|
-| Nikon | TomoJAX | 95.52 / 89.63 | 0.028788 | 0.013977 |
-| Nikon | ASTRA | 135.89 / 125.78 | 0.030057 | — |
-| Nikon | TIGRE | 504.23 / 493.43 | 0.056112 | 0.102748 |
-| Zeiss | TomoJAX | 33.32 / 26.32 | 0.183740 | 0.025155 |
-| Zeiss | ASTRA | 55.51 / 51.85 | 0.185370 | — |
-| Zeiss | TIGRE | 309.66 / 308.06 | 0.204008 | 0.136161 |
-
-Cold includes imports, loading and the first host volume with fresh compilation
-caches; warm repeats the solve. Filesystem caches are not cleared. Loading took
-3.03 / 10.04 / 3.02 s for Nikon TomoJAX / ASTRA / TIGRE, and
-3.63 / 3.73 / 3.88 s for Zeiss.
-The same calibrated ASTRA forward projector scores all three libraries. Volume
-differences are full-volume relative L2, without intensity fitting. Against
-the vendor's reconstruction, averaged over 2 × 2 × 2 blocks onto the same grid
-and compared as in the CuO FDK section below, NRMSE is 0.321365 for TomoJAX,
-0.319123 for ASTRA and 0.311827 for TIGRE; this is an image diagnostic, not an
-acceptance gate.
+| Scan | Library | Cold / warm (s) | Common-projector residual | Reference error (full / support) or diff to ASTRA |
+| --- | --- | ---: | ---: | --- |
+| Walnut 1, 1 orbit (1200 views, 501³) | TomoJAX | 58.02 / 53.47 | 0.02474 | 0.1062 / 0.0749 |
+| | ASTRA | 70.36 / 67.27 | 0.02600 | 0.1100 / 0.0772 |
+| | TIGRE | 364.27 / 363.06 | 0.04417 | 0.1425 / 0.0984 |
+| Walnut 1, 3 orbits (3600 views, 501³) | TomoJAX | 179.07 / 174.22 | 0.02622 | 0.0676 / 0.0458 |
+| | ASTRA | 237.79 / 234.35 | 0.02756 | 0.0727 / 0.0491 |
+| | TIGRE | 1171.20 / 1120.54 | 0.04523 | 0.1137 / 0.0767 |
+| Nikon seeds (1571 views, 500³) | TomoJAX | 95.52 / 89.63 | 0.02879 | 0.0140 diff to ASTRA |
+| | ASTRA | 135.89 / 125.78 | 0.03006 | — |
+| | TIGRE | 504.23 / 493.43 | 0.05611 | 0.1027 diff to ASTRA |
+| Zeiss HDtomo (801 views, 512³) | TomoJAX | 33.32 / 26.32 | 0.18374 | 0.0252 diff to ASTRA |
+| | ASTRA | 55.51 / 51.85 | 0.18537 | — |
+| | TIGRE | 309.66 / 308.06 | 0.20401 | 0.1362 diff to ASTRA |
 
 ![Warm SIRT times of TomoJAX, ASTRA and TIGRE on the walnut with one and three orbits, the Nikon seeds and the Zeiss HDtomo scan, each with its common-projector residual.](images/sirt-times.png)
-
-The two SIRT tables above, drawn from their numbers: warm time and, after it,
-the common-projector relative residual.
 
 ```bash
 uv run python examples/gallery/sirt_times.py sirt-times.png
 ```
 
-### CuO FDK at fourfold binning
+#### CuO FDK (4×4 binning)
 
-Measured 2026-11-21 on `d8758ca5`, with the Zeiss centre shift loaded with its
-recorded sign (before, both scans loaded with the wrong centre). Both Zeiss CuO scans use all 3201 views
-with 4 × 4 detector binning: spl1 has a 509³ grid and CuO2 a 507³ grid.
-Load `frames = tj.load_frames(path, darks=0)`, then
-`scan = frames.corrected(binning=4)` and call
-`tj.reconstruct(scan, "fbp", grid=frames.geometry.grid.resampled((n, n, n)))`
-with the corresponding grid size. ASTRA uses `FDK_CUDA`; TIGRE uses
-`tigre.algorithms.fdk(data, geo, angles, dowang=False)`, with the same calibrated
-geometry. No library changes its geometry or input to match another image.
+Measured 2026-11-21 (`d8758ca5`) on both 3201-view Zeiss CuO scans (`spl1` on 509³, `CuO2` on 507³):
 
-| Scan | Library | Cold / warm (s) | Common-projector relative residual | Full-volume difference to ASTRA |
-|---|---|---:|---:|---:|
-| spl1 | TomoJAX | 32.48 / 3.44 | 0.056577 | 0.125739 |
-| spl1 | ASTRA | 32.13 / 5.33 | 0.103854 | — |
-| spl1 | TIGRE | 37.75 / 10.38 | 0.103839 | 0.000038 |
-| CuO2 | TomoJAX | 30.73 / 3.43 | 0.063343 | 0.122384 |
-| CuO2 | ASTRA | 29.19 / 5.22 | 0.112359 | — |
-| CuO2 | TIGRE | 35.56 / 10.08 | 0.112342 | 0.000039 |
+| Scan | Library | Cold / warm (s) | Common-projector residual | Full-volume diff to ASTRA |
+| --- | --- | ---: | ---: | ---: |
+| CuO-spl1 | TomoJAX | 32.48 / 3.44 | 0.05658 | 0.1257 |
+| | ASTRA | 32.13 / 5.33 | 0.10385 | — |
+| | TIGRE | 37.75 / 10.38 | 0.10384 | 0.00004 |
+| CuO2 | TomoJAX | 30.73 / 3.43 | 0.06334 | 0.1224 |
+| | ASTRA | 29.19 / 5.22 | 0.11236 | — |
+| | TIGRE | 35.56 / 10.08 | 0.11234 | 0.00004 |
 
-Cold includes loading and the first host image in a fresh process with fresh
-compilation caches; warm repeats the solve. Filesystem caches are not cleared.
-Loading and setup take 24.05 / 24.74 / 24.42 s for spl1 TomoJAX / ASTRA / TIGRE,
-and 23.08 / 22.48 / 24.11 s for CuO2. TomoJAX's cold workflow is slightly slower
-than ASTRA's on both scans despite its faster warm solve.
+99.7% of the TomoJAX–ASTRA difference on `spl1` sits outside the vendor's reconstructed field of view (relative L2 inside the field is 0.0068), due to virtual padding and full-turn coverage weights. Against the 4×4×4-binned vendor reconstruction (affine-registered inside the field), NRMSE is 0.1094 / 0.1098 / 0.1098 for TomoJAX / ASTRA / TIGRE.
 
-All views use the same calibrated ASTRA residual. Full-volume differences are
-relative L2 without intensity fitting, not physical error. On spl1, differences
-in virtual padding, filter discretization and full-turn coverage weights account
-for the difference between TomoJAX and ASTRA. The vendor comparison averages
-the vendor's reconstruction over 4 × 4 × 4 blocks (501 four-plane blocks,
-covering 2004 native planes), registers it once to TomoJAX's volume (a fixed
-flip and an integer shift, by phase correlation of high-passed volumes) and fits
-one affine intensity map over the voxels inside the vendor's reconstructed field
-(above half the vendor volume's median). NRMSE, the fitted residual's RMS over
-the vendor's standard deviation there, is 0.109446 / 0.109836 / 0.109839 for
-TomoJAX / ASTRA / TIGRE. This is an image diagnostic, not ground truth. CuO2 has
-no vendor volume. On the full spl1 grid, TomoJAX–ASTRA relative L2 is 0.006836
-inside the vendor's field and 0.617055 outside it; 99.72% of the squared
-difference is outside. The field comes from the vendor's volume, independent of
-both library images. The TomoJAX and ASTRA rows are
-`bench/cone_matrix.py cuo PATH --library tomojax|astra --method fdk --repeats 1`.
+#### Full-view CGLS, OS-SART, and OSEM
 
-### Full-view Nikon OSEM
+Paired interleaved runs (2 fresh processes per library, `bench/cone_matrix.py`). CGLS runs 3 iterations in TomoJAX vs 4 in ASTRA (5 on CuO); OS-SART and OSEM run 1 full sweep from FDK (except Nikon OSEM, which runs 8 outer × 4 subsets in TomoJAX/TIGRE vs 48 in ASTRA from uniform start):
 
-Measured 2026-10-19 on `44170fc0` (TomoJAX and TIGRE) and `20f4a966`
-(ASTRA). All 1571 views of the Nikon seeds scan use the same load call,
-2 × 2 detector binning and 500³ physical grid as above. Solve inputs are
-clipped at zero. The TomoJAX call is
-`tj.reconstruct(scan, "mlem", iterations=8, warm_start=True,
-config=MLEMConfig(subsets=4))`, with `MLEMConfig` from `tomojax.recon`.
-Each outer iteration visits four ordered subsets. TomoJAX and TIGRE start
-from FDK; ASTRA starts from a uniform positive volume. The ASTRA and TIGRE
-adapters apply ordered-subset updates using their forward and backprojectors.
+| Scan, method | TomoJAX (iters/subsets, cold / warm s) | ASTRA (iters/subsets, cold / warm s) | Quality metric (TomoJAX vs ASTRA) | Peak GPU MiB (T / A) |
+| --- | --- | --- | --- | ---: |
+| Walnut 1, 1 orbit, CGLS (`40330cf`) | 3 iters: 19.76 / 11.31 | 4 iters: 18.34 / 13.86 | support err 0.0878 vs 0.0867 | 4309 / 5065 |
+| Walnut 1, 3 orbits, CGLS (`3ba80328`) | 3 iters: 79.06 / 59.25 | 4 iters: 74.56 / 60.26 | support err 0.0611 vs 0.0582 | 4404 / 5720 |
+| Nikon seeds, CGLS (`22571a59`) | 3 iters: 27.99 / 22.83 | 4 iters: 35.41 / 31.60 | residual 0.0349 vs 0.0299 | 4574 / 4922 |
+| Zeiss HDtomo, CGLS (`1c94b346`) | 3 iters: 16.29 / 9.20 | 4 iters: 15.59 / 12.00 | residual 0.1583 vs 0.1496 | 4577 / 5167 |
+| CuO-spl1 (bin 4), CGLS (`d8758ca5`) | 3 iters: 65.67 / 34.64 | 5 iters: 94.67 / 72.43 | residual 0.0262 vs 0.0252 | 4577 / 6777 |
+| CuO2 (bin 4), CGLS (`d8758ca5`) | 3 iters: 64.16 / 34.23 | 5 iters: 91.26 / 69.18 | residual 0.0413 vs 0.0405 | 4577 / 6695 |
+| Walnut 1, 1 orbit, OS-SART (`e2cd2101`) | 12 sub: 16.75 / 9.95 | 16 sub: 12.29 / 8.38 | support err 0.0839 vs 0.0811 | — |
+| Walnut 1, 3 orbits, OS-SART (`75435039`) | 17 sub: 36.27 / 26.62 | 16 sub: 31.59 / 22.54 | support err 0.0555 vs 0.0563 | — |
+| Nikon seeds, OS-SART (`ed9641e7`) | 13 sub: 18.63 / 13.08 | 12 sub: 16.08 / 12.34 | residual 0.0346 vs 0.0354 | — |
+| Zeiss HDtomo, OS-SART (`1c94b346`) | 13 sub: 13.06 / 6.21 | 16 sub: 11.67 / 7.36 | residual 0.1922 vs 0.1897 | — |
+| Walnut 1, 1 orbit, OSEM (`e2cd2101`) | 12 sub: 14.41 / 8.50 | 14 sub: 10.32 / 6.52 | support err 0.0720 vs 0.0690 | — |
+| Walnut 1, 3 orbits, OSEM (`ed9641e7`) | 13 sub: 42.85 / 27.96 | 14 sub: 30.70 / 21.00 | support err 0.0484 vs 0.0470 | 3358 / 3892 |
+| Zeiss HDtomo, OSEM (`1c94b346`) | 1 sub: 11.84 / 4.51 | 2 sub: 9.86 / 5.22 | residual 0.2138 vs 0.2060 | 4547 / — |
+| Nikon seeds, OSEM (`44170fc0`) | 8×4 sub: 100.71 / 94.96 | 48×4 sub: 260.40 / 256.31 | residual 0.02665 vs 0.02673 | — |
 
-| Library | Outer iterations | Cold / warm (s) | Common-projector relative residual | Volume difference to ASTRA |
-|---|---:|---:|---:|---:|
-| TomoJAX | 8 | 100.71 / 94.96 | 0.026650 | 0.319973 |
-| ASTRA | 48 | 260.40 / 256.31 | 0.026732 | — |
-| TIGRE | 8 | 210.11 / 196.94 | 0.026848 | 0.313299 |
-
-Cold includes imports, loading and the first host volume with fresh compilation
-caches; warm repeats the solve in that process. The filesystem cache is not
-cleared. Loading took 3.48, 10.09 and 3.83 s respectively. Residuals use the
-same calibrated ASTRA forward projector and the original corrected data,
-including negative samples. Volume differences are full-volume relative L2,
-without intensity fitting. There is no physical truth volume for this scan;
-these are image diagnostics, not reconstruction errors.
-
-### Full-view CGLS
-
-The Walnut rows were measured 2026-11-19 on `40330cf`, Nikon on `22571a59`
-and Zeiss 2026-11-21 on `1c94b346` (with the Zeiss centre shift loaded with its
-recorded sign), with ASTRA 2.5.0, CuPy 14.2.0 and one OpenBLAS/OMP thread per
-process.
-Walnut uses all 1200 views of orbit 2, detector binning 2 × 2 and a 501³ grid
-of 0.1 mm voxels. Nikon and Zeiss use the full-view inputs and physical grids
-above; the Nikon input is
-`47209 testscan korn01_recon.xtekct`. Both libraries start from their own FDK.
-TomoJAX uses three iterations and ASTRA four. ASTRA's native CGLS fits Walnut
-and Zeiss; Nikon uses an explicit FP32 recurrence over ASTRA's projectors,
-with GPU residuals, host search projections and 128-view batches.
-
-| Scan | Library | Cold / warm (s) | Full / support reference disagreement, or common-projector fit | Volume difference to ASTRA |
-|---|---|---:|---:|---:|
-| Walnut, one orbit | TomoJAX | 19.76 / 11.31 | 0.184222 / 0.087821 | 0.013025 |
-| Walnut, one orbit | ASTRA | 18.34 / 13.86 | 0.182273 / 0.086669 | — |
-| Nikon | TomoJAX | 27.99 / 22.83 | 0.034928 | 0.027397 |
-| Nikon | ASTRA | 35.41 / 31.60 | 0.029934 | — |
-| Zeiss | TomoJAX | 16.29 / 9.20 | 0.158260 | 0.041474 |
-| Zeiss | ASTRA | 15.59 / 12.00 | 0.149628 | — |
-
-Each pair uses two fresh processes per library in ASTRA–TomoJAX–TomoJAX–ASTRA
-order, with two warm solves per process. The table averages all four warm
-samples; cold averages the two first-call values. Cold includes numerical
-imports, loading and the first host volume with fresh compilation caches;
-warm includes FDK, setup, transfers and the host volume. Filesystem caches
-are not cleared. Scoring is outside the timer.
-
-Walnut disagreement uses the authors' reference, in the full volume and its
-fixed support; it is reference agreement, not physical reconstruction accuracy.
-Nikon and Zeiss report data fit, not physical reconstruction error:
-all original corrected log projections are scored with one common calibrated
-ASTRA forward projector. Full-volume differences use no alignment or intensity
-fit. Historical orthogonal-section comparisons showed the same structures,
-with differences in smooth backgrounds, support boundaries, edges and streaks.
-On the Walnut pair, TomoJAX's mean warm time is 18.4% lower, but
-cold time is 7.7% higher and support disagreement is 1.33% higher. This is
-**not a matched-error speed win**. Sampled total-device GPU peaks are 4309 / 5065 MiB
-(TomoJAX / ASTRA, 20 ms sampling); prescoring host RSS peaks are 5.53 GB for
-both. The temporary comparison volume was deleted after scoring.
-
-On the Nikon pair, TomoJAX's observed warm time is 27.7% lower,
-but its common-projector residual is 16.7% higher: again **not a matched-error
-speed win**. Prescoring total-device GPU peaks are 4574 / 4922 MiB and host
-RSS peaks 4.226 / 6.088 GB (TomoJAX / ASTRA); the whole-job trace including
-scoring peaks at 5620 MiB. Whole-process host peaks including scoring are
-5.160 / 6.088 GB. Both TomoJAX processes give identical reported
-image differences and residuals; ASTRA's repeat image difference is zero.
-The temporary reference volume was deleted. CPU affinity was 0–31. Recent
-host-memory pressure was observed and per-arm pressure history was not
-recorded. Major page faults in ABBA order
-were 1599 / 1588 / 1 / 22; reported process swaps were zero. These observations
-do not establish absence of system swapping or equal filesystem-cache state.
-
-On the Zeiss pair, TomoJAX's warm time is 23.3% lower, but cold time is 4.5%
-higher and its common-projector residual 5.8% higher: **not a matched-error
-speed win**. Prescoring total-device GPU peaks are 4577 / 5167 MiB and host RSS
-peaks 3.494 / 3.733 GB (TomoJAX / ASTRA). The temporary reference volume was
-deleted.
-
-The historical Walnut times on `e2cd2101` were 27.48 / 18.84 s for TomoJAX
-and 22.28 / 16.30 s for ASTRA. Historical Nikon times were 31.74 / 26.74 s
-and 33.74 / 26.14 s, respectively. Neither is a paired speedup comparison
-with the refresh. Historical Zeiss times were 17.87 / 12.24 s for TomoJAX
-and 16.53 / 12.90 s for ASTRA, also not a paired comparison with this refresh.
-
-Set `WALNUT`, `NIKON` and `ZEISS` to those inputs. For these protocols, also
-set `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1`,
-`JAX_PLATFORMS=cuda,cpu` and `TOMOJAX_CUDA_KERNELS=1`. These commands configure one
-fresh process each; run each pair in the order above, with separate output
-filenames for the two processes:
+On the Nikon OSEM case, TIGRE (8×4 subsets) took 210.11 / 196.94 s at residual 0.02685. Across the iterative cone-beam rows where ASTRA is faster, Nsight Systems profiling shows TomoJAX's exact matched transpose accounts for the gap (about 2× ASTRA's approximate voxel-driven backprojection), while TomoJAX uses less VRAM and faster forward projection and FDK.
 
 ```bash
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
-python bench/cone_matrix.py walnut1 "$WALNUT" --library astra \
-  --method cgls --iterations 4 --storage native --repeats 2 \
-  --output bench/results/walnut1-astra.json
-python bench/cone_matrix.py walnut1 "$WALNUT" --library tomojax \
-  --method cgls --iterations 3 --repeats 2 \
-  --output bench/results/walnut1-tomojax.json
-python bench/cone_matrix.py nikon "$NIKON" --library astra \
-  --method cgls --iterations 4 --storage device-residual --batch 128 --repeats 2 \
-  --output bench/results/nikon-astra.json
-python bench/cone_matrix.py nikon "$NIKON" --library tomojax \
-  --method cgls --iterations 3 --repeats 2 \
-  --output bench/results/nikon-tomojax.json
-python bench/cone_matrix.py zeiss "$ZEISS" --library astra \
-  --method cgls --iterations 4 --storage native --repeats 2 \
-  --output bench/results/zeiss-astra.json
-python bench/cone_matrix.py zeiss "$ZEISS" --library tomojax \
-  --method cgls --iterations 3 --repeats 2 \
-  --output bench/results/zeiss-tomojax.json
+python bench/cone_matrix.py walnut1 "$WALNUT" --library tomojax --method cgls --iterations 3 --repeats 2
+python bench/cone_matrix.py walnut3 "$WALNUT" --library tomojax --method ossart --iterations 1 --subsets 17 --repeats 1
+python bench/cone_matrix.py cuo "$CUO_SPL1" --library tomojax --method cgls --iterations 3 --repeats 1
 ```
-
-Add `--save-volume reference.npy` to the first ASTRA process and
-`--compare-to reference.npy` to the TomoJAX processes to reproduce the image
-differences, then delete the temporary volume.
-
-#### Three-orbit walnut and CuO CGLS
-
-Measured 2026-10-20 UTC, with two fresh processes per library in the same
-interleaved order, one warm solve per process, and the same timing boundaries.
-The table averages both warm samples. Three-orbit Walnut uses all 3600 views
-on the 501³, 0.1 mm grid. Both CuO scans use all 3201 views, detector binning
-4 × 4, and grids of 509³ at 4.51024 µm (spl1) and 507³ at 4.53458 µm (CuO2).
-ASTRA uses its bounded device-residual recurrence with 128-view batches.
-
-| Input, source commit | Library, iterations | Cold / warm (s) | Full / support reference disagreement, or common-projector fit | Volume difference to ASTRA |
-|---|---|---:|---:|---:|
-| Walnut, three orbits, `3ba80328` | TomoJAX, 3 | 79.06 / 59.25 | 0.149590 / 0.061075 | 0.010133 |
-| Same | ASTRA, 4 | 74.56 / 60.26 | 0.146930 / 0.058154 | — |
-| CuO-spl1, `d8758ca5` | TomoJAX, 3 | 65.67 / 34.64 | 0.026172 | 0.073441 |
-| Same | ASTRA, 5 | 94.67 / 72.43 | 0.025219 | — |
-| CuO2, `d8758ca5` | TomoJAX, 3 | 64.16 / 34.23 | 0.041269 | 0.069022 |
-| Same | ASTRA, 5 | 91.26 / 69.18 | 0.040453 | — |
-
-Walnut warm times are effectively tied: ASTRA's two samples are 58.98 and
-61.54 s; TomoJAX's are 59.257 and 59.252 s. Mean loading/setup and first solve
-take 17.26 + 61.79 s for TomoJAX and 16.07 + 58.49 s for ASTRA.
-The CuO rows were measured 2026-11-21, with the Zeiss centre shift loaded with
-its recorded sign. TomoJAX is 52.2% faster warm on spl1 and 50.5% on CuO2; at
-these iteration counts its common-projector fit is 3.8% and 2.0% higher than
-ASTRA's. These are data-fit comparisons, not physical image-error comparisons.
-Fixed orthogonal sections retain the specimen shapes and pores; their largest
-differences are smooth fields and acquisition-support boundaries.
-
-| Input | Peak solver GPU MiB, TomoJAX / ASTRA | Peak solver host GB, TomoJAX / ASTRA |
-|---|---:|---:|
-| Walnut, three orbits | 4404 / 5720 | 7.398 / 8.074 |
-| CuO-spl1 | 4577 / 6777 | 5.477 / 7.406 |
-| CuO2 | 4577 / 6695 | 5.489 / 7.667 |
-
-Set `CUO_SPL1` to `Tristan Manchester_Copper_oxyde_spl1.txrm` and `CUO2`
-to `CuO_2_tomo-B.txrm`. Run each pair in ASTRA–TomoJAX–TomoJAX–ASTRA order
-with distinct output names:
-
-```bash
-python bench/cone_matrix.py walnut3 "$WALNUT" --library astra \
-  --method cgls --iterations 4 --storage device-residual --batch 128 --repeats 1 \
-  --output bench/results/walnut3-astra-cgls.json
-python bench/cone_matrix.py walnut3 "$WALNUT" --library tomojax \
-  --method cgls --iterations 3 --repeats 1 \
-  --output bench/results/walnut3-tomojax-cgls.json
-python bench/cone_matrix.py cuo "$CUO_SPL1" --library astra \
-  --method cgls --iterations 5 --storage device-residual --batch 128 --repeats 1 \
-  --output bench/results/spl1-astra-cgls.json
-python bench/cone_matrix.py cuo "$CUO_SPL1" --library tomojax \
-  --method cgls --iterations 3 --repeats 1 \
-  --output bench/results/spl1-tomojax-cgls.json
-python bench/cone_matrix.py cuo "$CUO2" --library astra \
-  --method cgls --iterations 5 --storage device-residual --batch 128 --repeats 1 \
-  --output bench/results/cuo2-astra-cgls.json
-python bench/cone_matrix.py cuo "$CUO2" --library tomojax \
-  --method cgls --iterations 3 --repeats 1 \
-  --output bench/results/cuo2-tomojax-cgls.json
-```
-
-#### CGLS work counts
-
-Separate warm profiles on `3ba80328` (2026-10-20 UTC) locate the one-orbit
-Walnut and Nikon gaps in the matched transpose. Kernel times below are
-diagnostic; the paired, uninstrumented solves supply the wall times.
-T/A denotes TomoJAX / ASTRA.
-
-| Input | Forward T/A (s) | Iterative transpose T/A (s) | FDK backprojection T/A (s) | GPU copies T/A (s) |
-|---|---:|---:|---:|---:|
-| Walnut, one orbit | 4.410 / 6.557 | 13.419 / 7.013 | 0.827 / 1.291 | 0.355 / 0.955 |
-| Nikon | 7.464 / 12.735 | 20.512 / 8.403 | 1.093 / 1.690 | 0.412 / 2.527 |
-
-TomoJAX makes 76 / 100 forward callbacks and 76 / 100 adjoint callbacks,
-respectively, with 4864 / 6400 launched view slots: 4800 / 6284 physical
-views plus shifted-tail overlap. Its wide transpose takes 13.311 / 20.349 s
-across 304 / 400 kernels. ASTRA has 190 / 250 iterative backprojection
-launches; its bounded Nikon recurrence records 7855 forward and 7855
-backprojected views. Native ASTRA Walnut view counts are not inferred from
-kernel counts.
-
-Each driver solve has an NVTX range `cone-solve-N`, with `N=0` for the first
-solve. Capture a warm solve with Nsight Systems, retaining at least one repeat;
-replace the example's driver arguments with those of the selected row:
-
-```bash
-NSYS_NVTX_PROFILER_REGISTER_ONLY=0 nsys profile --trace=cuda,nvtx \
-  --capture-range=nvtx --nvtx-capture=cone-solve-1 --capture-range-end=stop \
-  --sample=none --cpuctxsw=none -o bench/results/cone-profile \
-  python bench/cone_matrix.py walnut1 "$WALNUT" --library tomojax \
-  --method cgls --iterations 3 --repeats 1 --output bench/results/profile.json
-nsys stats --report cuda_gpu_kern_sum,cuda_gpu_kern_gb_sum,cuda_gpu_mem_time_sum \
-  --filter-nvtx cone-solve-1 bench/results/cone-profile.nsys-rep
-```
-
-### One-orbit walnut ordered subsets
-
-Measured 2026-10-20 on `e2cd2101`, with the same full-view one-orbit input and
-501³ grid as CGLS above. Each solve starts from FDK and makes one pass through
-its subsets. OS-SART is nonnegative; OSEM clips solve inputs at zero. ASTRA
-computes each subset's column normalization when it is used.
-
-| Method | Library and subsets | Cold / warm (s) | Full / walnut-support relative L2 error | Volume difference to ASTRA |
-|---|---|---:|---:|---:|
-| OS-SART | TomoJAX, 12 | 16.75 / 9.95 | 0.121031 / 0.083891 | 0.012251 |
-| OS-SART | ASTRA, 16 | 12.29 / 8.38 | 0.116176 / 0.081108 | — |
-| OSEM | TomoJAX, 12 | 14.41 / 8.50 | 0.097780 / 0.071995 | 0.009635 |
-| OSEM | ASTRA, 14 | 10.32 / 6.52 | 0.094714 / 0.069006 | — |
-
-These use the same interleaved fresh-process protocol, with one warm solve per
-process: the reported warm time averages two samples per library. Author
-errors and full-volume differences use no intensity fitting. TomoJAX is
-18.8% slower warm for OS-SART and 30.4% slower for OSEM at these settings.
-Both ASTRA settings have lower author errors than the TomoJAX settings.
-
-```bash
-python bench/cone_matrix.py walnut1 "$WALNUT" --library astra \
-  --method ossart --iterations 1 --subsets 16 --norms recompute \
-  --output bench/results/walnut1-astra-os.json
-python bench/cone_matrix.py walnut1 "$WALNUT" --library tomojax \
-  --method ossart --iterations 1 --subsets 12 \
-  --output bench/results/walnut1-tomojax-os.json
-python bench/cone_matrix.py walnut1 "$WALNUT" --library astra \
-  --method osem --iterations 1 --subsets 14 --norms recompute \
-  --output bench/results/walnut1-astra-osem.json
-python bench/cone_matrix.py walnut1 "$WALNUT" --library tomojax \
-  --method osem --iterations 1 --subsets 12 \
-  --output bench/results/walnut1-tomojax-osem.json
-```
-
-### Full-view Nikon and Zeiss ordered subsets
-
-The Nikon rows were measured 2026-10-20 UTC on `ed9641e7` and the Zeiss rows
-2026-11-21 on `1c94b346`, with the Zeiss centre shift loaded with its recorded
-sign, using the full-view inputs and grids above, one sweep from FDK, and ASTRA recomputed column normalization.
-Two fresh processes per library run in ASTRA–TomoJAX–TomoJAX–ASTRA order,
-with one warm repeat per process. Cold and warm use the CGLS timing boundaries.
-All rows meet their fixed common-projector fit target: 0.0354 for Nikon OS,
-0.1971 for Zeiss OS and 0.2238 for Zeiss OSEM.
-
-| Input, method | Library, subsets | Cold / warm (s) | Common-projector fit | Volume difference to ASTRA |
-|---|---|---:|---:|---:|
-| Nikon OS | TomoJAX, 13 | 18.63 / 13.08 | 0.034627 | 0.005683 |
-| Same | ASTRA, 12 | 16.08 / 12.34 | 0.035392 | — |
-| Zeiss OS | TomoJAX, 13 | 13.06 / 6.21 | 0.192199 | 0.021831 |
-| Same | ASTRA, 16 | 11.67 / 7.36 | 0.189707 | — |
-| Zeiss OSEM | TomoJAX, 1 | 11.84 / 4.51 | 0.213754 | 0.122147 |
-| Same | ASTRA, 2 | 9.86 / 5.22 | 0.206000 | — |
-
-TomoJAX's warm time is 6.0% longer than ASTRA's on Nikon OS, and 15.6% and
-13.6% shorter on Zeiss OS and OSEM. The fixed sections
-retain the same objects. OS differences include edges, background and streaks;
-the larger OSEM difference is mainly object contrast, with TomoJAX's one-subset
-result dimmer than ASTRA's two-subset result. These target-fit comparisons
-do not establish equal physical image error.
-
-The subset counts include throughput probes, not just the first passing count.
-Nikon ASTRA at 16 subsets also passes, with probe warm time 12.27 s versus
-12.11 s at 12; their throughput difference is small. Zeiss ASTRA at 16 OS
-subsets is faster than 13. For Zeiss OSEM, two subsets beat one; TomoJAX's
-two-subset probe has fit 0.209491 and warm time 5.58 s, versus 5.49 s at one.
-These probes ran on `ed9641e7`, before the Zeiss centre-shift fix.
-Single-subset TomoJAX OSEM uses 4547 MiB peak GPU and 4.785 GB peak host
-memory in the paired runs.
-
-```bash
-python bench/cone_matrix.py nikon "$NIKON" --library astra \
-  --method ossart --iterations 1 --subsets 12 --norms recompute --repeats 1 \
-  --output bench/results/nikon-astra-os.json
-python bench/cone_matrix.py nikon "$NIKON" --library tomojax \
-  --method ossart --iterations 1 --subsets 13 --repeats 1 \
-  --output bench/results/nikon-tomojax-os.json
-python bench/cone_matrix.py zeiss "$ZEISS" --library astra \
-  --method ossart --iterations 1 --subsets 16 --norms recompute --repeats 1 \
-  --output bench/results/zeiss-astra-os.json
-python bench/cone_matrix.py zeiss "$ZEISS" --library tomojax \
-  --method ossart --iterations 1 --subsets 13 --repeats 1 \
-  --output bench/results/zeiss-tomojax-os.json
-python bench/cone_matrix.py zeiss "$ZEISS" --library astra \
-  --method osem --iterations 1 --subsets 2 --norms recompute --repeats 1 \
-  --output bench/results/zeiss-astra-osem.json
-python bench/cone_matrix.py zeiss "$ZEISS" --library tomojax \
-  --method osem --iterations 1 --subsets 1 --repeats 1 \
-  --output bench/results/zeiss-tomojax-osem.json
-```
-
-### Ordered-subset work counts
-
-Separate warm profiles on `ed9641e7` use the selected settings above:
-2026-10-20 UTC for OS and Zeiss OSEM, and 2026-10-21 UTC for Walnut OSEM.
-The one-orbit Walnut timing rows use `e2cd2101`.
-
-| Input, method | Forward T/A (s) | Iterative transpose T/A (s) | FDK backprojection T/A (s) | GPU copies T/A (s) |
-|---|---:|---:|---:|---:|
-| Walnut, one-orbit OS | 2.414 / 2.222 | 5.876 / 2.513 | 0.796 / 1.226 | 0.217 / 0.857 |
-| Walnut, one-orbit OSEM | 1.111 / 1.128 | 6.462 / 2.483 | 0.795 / 1.236 | 0.264 / 0.601 |
-| Nikon OS | 2.038 / 4.671 | 8.824 / 3.257 | 1.039 / 1.515 | 0.380 / 1.092 |
-| Zeiss OS | 2.784 / 2.095 | 3.128 / 1.663 | 0.506 / 0.839 | 0.230 / 0.932 |
-| Zeiss OSEM | 0.891 / 1.223 | 3.209 / 1.659 | 0.500 / 0.841 | 0.235 / 0.415 |
-
-Forward time includes OS row normalization: Nikon uses 0.277 s of specialized
-uniform-support projections, while the other OS rows use ordinary forwards.
-The matched transpose accounts for most of each gap; Zeiss OS also spends
-longer on forwards.
-
-Walnut, Nikon and Zeiss OS make 24 / 26 / 13 TomoJAX paired-adjoint callbacks,
-carrying 2400 / 3172 / 1612 scalar view slots. Their data and support forwards
-carry the same totals. These include padding and shifted-tail overlap; ASTRA
-records 2400 / 3142 / 1602 physical forward and backprojected views.
-Walnut and Nikon use 144 / 156 paired-plane kernels (5.836 / 8.764 s);
-Zeiss uses 104 separable-adjoint kernels (3.099 s). ASTRA's iterative
-backprojections use 96 / 120 / 64 launches.
-
-One-orbit Walnut OSEM makes 48 TomoJAX forwards (1200 slots) and 96 adjoint
-callbacks (2400 slots); its wide transpose uses 192 kernels taking 6.405 s.
-ASTRA records 1200 physical forward views, 2400 backprojected views and 84
-backprojection launches. A same-source paired probe of 12 versus 13 TomoJAX
-subsets takes 8.391 versus 8.424 s warm: fewer callbacks do not improve
-throughput here.
-
-Zeiss OSEM makes 26 TomoJAX forwards (806 slots) and 52 adjoint callbacks
-(1612 slots), including 104 separable-adjoint kernels (3.172 s).
-ASTRA records 801 physical forward views and 1602 backprojected views,
-with 52 backprojection launches. Use the warm NVTX capture above with the
-corresponding ordered-subset command to reproduce these profiles.
 
 ## FIPS walnuts (real lab cone-beam CT)
 
-`bench/walnut.py` reconstructs the walnut collection of Der Sarkissian et al.
-(Scientific Data 6, 215, 2019; CC BY 4.0). Each walnut has three source orbits
-of 1200 projections on a FleX-ray scanner, per-view geometry vectors, and a
-reference reconstruction: 50 iterations of non-negative least squares on all
-three orbits, 501³ voxels of 0.1 mm. Walnut 1 was measured on 2026-10-07
-(commits `95f0530` to `d1f36f2`):
+[`bench/walnut.py`](../bench/walnut.py) evaluates the 42-walnut FleX-ray dataset of Der Sarkissian et al. (Scientific Data 6, 215, 2019; 3 orbits × 1200 views, published 50-iteration NNLS reference on 501³ at 0.1 mm). On Walnut 1 (`95f0530`–`d1f36f2`, updated `58a30e0` on 2026-11-21):
 
-| | TomoJAX | ASTRA |
+| Case | TomoJAX | ASTRA |
 | --- | --- | --- |
-| Geometry from the vectors | source 66.0014 mm, detector 199.0062 mm (the scanner's log: 66.0014, 199.0062) | |
-| FDK, one orbit (1200 views) | 1.7–1.9 s on the first call, compilation included; 1.55 s after; within 0.05% of ASTRA's volume and 0.6% of the authors' published FDK | 2.13 s |
-| FDK error against the reference, in the walnut | 0.099 | 0.099 |
-| FDK, detector binned 2 × 2 | 1.23 s on the first call, 1.05 s after; error 0.091 | 1.43 s; 0.091 |
-| Non-negative least squares, three orbits, every 4th view, 20 iterations | 304 s; error 0.152 | 217 s (the reference's own solver); 0.147 |
-| The same, detector binned 2 × 2 | 86 s; error 0.154 | 91 s; 0.152 |
+| FDK, 1 orbit (1200 views) | 1.55 s warm (1.7–1.9 s cold); error 0.099 | 2.13 s; error 0.099 |
+| FDK, 1 orbit, binned 2×2 (`58a30e0`) | 1.02 s warm; error 0.0912 | 1.71 s; error 0.0911 |
+| CGLS from zero, 1 orbit, binned 2×2, 10 iters (`58a30e0`) | 28.2 s warm; error 0.184 | 26.8 s; error 0.197 |
+| NNLS, 3 orbits, every 4th view, 20 iters (unbinned) | 304 s; error 0.152 | 217 s; error 0.147 |
+| NNLS, 3 orbits, every 4th view, 20 iters (binned 2×2) | 86 s; error 0.154 | 91 s; error 0.152 |
 
-On 2026-11-21 (`58a30e0`), orbit 2's 1200 views binned 2 × 2 onto the 501³ grid
-gave FDK in 1.02 s warm against ASTRA's 1.71 s, with errors in the walnut of 0.0912
-and 0.0911, and CGLS from zero, 10 iterations, in 28.2 s against ASTRA's 26.8 s,
-with errors of 0.184 and 0.197 (`bench/walnut.py ~/data/walnuts/Walnut1 --orbits 2
---bin 2 --method fbp|cgls --iterations 10 --libraries tomojax astra --repeats 3`).
-
-Times start with the projections in host memory and end with the volume
-there. JAX's GPU start-up (about 2 s, once per process) is not included. FDK
-filters each row by a matrix product on the GPU and backprojects through the
-texture unit from half floats, scaled per batch to their peak; like ASTRA's,
-its interpolation weights are rounded to 1/256. The volumes agree with ASTRA's
-to 0.05% (FDK) and 1.3% (least squares).
-
-Unbinned, TomoJAX's least squares is slower. The detector samples twice as
-finely as the 0.1 mm voxels (a pixel spans 0.05 mm at the axis), so the
-matched transpose, which follows every ray through every plane, does four
-times the work the volume needs; ASTRA's backprojector samples the detector
-once per voxel. Binning 2 × 2 (`scan.binned(2)`) costs nothing in accuracy here
-and makes TomoJAX's reconstruction 3.5 times faster and ASTRA's 2.4 times. The
-FleX-ray's rotation axis also leans 0.5° across the detector, so every view
-takes the transpose's general path, about 1.3 times slower than its path for
-an upright axis.
-
-### Full-view ordered subsets
-
-Measured 2026-10-20 on `75435039`: all 3600 views, 2 × 2 detector binning,
-a 501³ grid with 0.1 mm voxels, and nonnegative OS-SART from FDK. The call is
-`tj.reconstruct(scan, "sirt", iterations=1, warm_start=True,
-config=SIRTConfig(subsets=17, lower_bound=0))`. ASTRA uses 16 interleaved
-subsets, its native forward/backprojectors, and column normalization recomputed
-at each update; its FDK start averages the three physical turns.
-
-| Library | Cold / warm (s) | Full / walnut-support relative L2 error |
-|---|---:|---:|
-| TomoJAX, 17 subsets | 36.27 / 26.62 | 0.082527 / 0.055488 |
-| ASTRA, 16 subsets | 31.59 / 22.54 | 0.083874 / 0.056272 |
-
-Times are means of two interleaved fresh-process measurements; cold includes
-loading and setup, warm repeats the whole solve, including FDK and normalization.
-Filesystem caches are not cleared. TomoJAX has lower error but is 18.1% slower
-warm. A separate profile spends 16.91 s in its exact transpose versus 7.63 s
-in ASTRA's backprojection; this identifies an implementation cost, not a lower
-bound on every exact-transpose implementation.
-
-That profile records 408 launches of TomoJAX's paired residual-and-normalization
-transpose kernel, versus 256 ASTRA iterative backprojection launches. TomoJAX
-also launches 68 data forwards (4.67 s) and 68 uniform-volume forwards (0.42 s);
-ASTRA's forwards, including row normalization, take 6.84 s. FDK backprojection
-takes 2.41 / 3.76 s for TomoJAX / ASTRA, and GPU host/device copy time is
-0.53 / 1.53 s. These are diagnostic kernel times, not the uninstrumented
-whole-solve timings in the table.
-
-The public benchmark configures these OS settings with:
-
-```bash
-python bench/cone_matrix.py walnut3 "$WALNUT" --library astra \
-  --method ossart --iterations 1 --subsets 16 --norms recompute --repeats 1 \
-  --output bench/results/walnut3-astra-os.json
-python bench/cone_matrix.py walnut3 "$WALNUT" --library tomojax \
-  --method ossart --iterations 1 --subsets 17 --repeats 1 \
-  --output bench/results/walnut3-tomojax-os.json
-```
-
-#### Three-orbit OSEM
-
-Measured 2026-10-21 UTC on `ed9641e7`, with the same 3600-view input,
-2 × 2 detector binning and 501³ grid. Both libraries use one sweep from FDK;
-ASTRA recomputes column normalization. Two fresh processes per library run
-in ASTRA–TomoJAX–TomoJAX–ASTRA order, with one warm solve per process.
-Cold includes numerical imports, loading and the first host volume; warm
-includes FDK, normalization, transfers and the host result. Filesystem caches
-are not cleared, and scoring is outside the timer.
-
-| Library, subsets | Cold / warm (s) | Full / support image error | Volume difference to ASTRA |
-|---|---:|---:|---:|
-| TomoJAX, 13 | 42.85 / 27.96 | 0.070274 / 0.048422 | 0.004439 |
-| ASTRA, 14 | 30.70 / 21.00 | 0.068634 / 0.047040 | — |
-
-Both meet the fixed full/support error targets of 0.0724 / 0.0504.
-The unfitted orthogonal sections show the same shell and internal structures;
-differences lie mainly in shell contrast and smooth support fields.
-TomoJAX is 33.2% slower warm. Peak solver memory is 3358 / 3892 MiB GPU and
-7.733 / 9.045 GB host for TomoJAX / ASTRA. ASTRA's host-cached 13-subset
-normalization fits in 14.69 GB host memory but takes 38.61 s warm in a policy
-probe, versus 19.76 s for 14-subset recomputation.
-
-```bash
-python bench/cone_matrix.py walnut3 "$WALNUT" --library astra \
-  --method osem --iterations 1 --subsets 14 --norms recompute --repeats 1 \
-  --output bench/results/walnut3-astra-osem.json
-python bench/cone_matrix.py walnut3 "$WALNUT" --library tomojax \
-  --method osem --iterations 1 --subsets 13 --repeats 1 \
-  --output bench/results/walnut3-tomojax-osem.json
-```
-
-Separate warm profiles on the same source locate the gap in the transpose:
-
-| Forward T/A (s) | Iterative transpose T/A (s) | FDK backprojection T/A (s) | GPU copies T/A (s) |
-|---:|---:|---:|---:|
-| 3.413 / 4.176 | 19.765 / 8.138 | 2.590 / 3.890 | 0.774 / 1.651 |
-
-TomoJAX makes 117 forward callbacks (3627 slots) and 234 adjoint callbacks
-(7254 slots), including padding and shifted-tail overlap. Its wide transpose
-uses 468 kernels taking 19.615 s. ASTRA records 3600 physical forward views,
-7200 backprojected views and 252 backprojection launches. Both profile outputs
-meet the same image-error targets. These counts describe the current
-implementations, not an inherent cost of requiring an exact transpose.
+Unbinned, the detector pitch at the axis (0.05 mm) is twice as fine as the 0.1 mm voxels, so TomoJAX's exact ray-driven transpose does 4× unnecessary work. Binning 2 × 2 (`scan.binned(2)`) preserves accuracy while speeding up TomoJAX 3.5× and ASTRA 2.4×.
 
 ### Orbit registration
 
-The collection provides two geometries per walnut. `scan_geom_original.geom`
-is as the scanner recorded it. In `scan_geom_corrected.geom` the authors
-raised the source and detector of orbits 2 and 3 by 0.397 and 0.794 mm to bring
-them into register with orbit 1. Seen from the object, which is how TomoJAX's
-poses describe it, that is a vertical correction (`dz`) of −0.397 and
-−0.794 mm. Measured 2026-10-07 on commit `0684880`, `bench/walnut_alignment.py`
-gives `tj.align` the original record (three orbits, every 4th view, binned
-2 × 2), which finds the correction itself in 4.4 minutes:
+The dataset ships both raw scanner geometry (`scan_geom_original.geom`) and the authors' height-corrected geometry (orbits 2 and 3 shifted by −0.397 and −0.794 mm in object coordinates). Given the uncorrected geometry (every 4th view, binned 2×2), `tj.align` recovers the relative orbit heights directly (`bench/walnut_alignment.py`):
 
-| | Orbit 2 | Orbit 3 |
-| --- | --- | --- |
-| Height relative to orbit 1, TomoJAX | −0.381 mm | −0.755 mm |
-| The authors' correction | −0.397 mm | −0.794 mm |
+| Height relative to orbit 1 | Orbit 2 | Orbit 3 |
+| --- | ---: | ---: |
+| TomoJAX `tj.align` | −0.381 mm | −0.755 mm |
+| Authors' correction | −0.397 mm | −0.794 mm |
 
-Only the orbits' relative heights are observable. `tj.align` reports the
-least-motion estimate, here 0.38 mm above the authors', who keep orbit 1 where
-its record puts it. To compare volumes voxel by voxel the bench therefore holds
-orbit 1 fixed, as they do. Then 20 iterations of non-negative least squares
-reach the reference to an error of 0.155 with TomoJAX's geometry, against
-0.154 with the authors' and 0.280 with the original record:
+Reconstructing 20 iterations of NNLS (with orbit 1 fixed to compare voxel-for-voxel) drops error against the published reference from 0.280 (uncorrected) to 0.155 (TomoJAX-aligned), matching the authors' corrected geometry (0.154). Across all 42 walnuts, median disagreement with the authors' heights is under a fifth of a voxel ([bench/README.md](../bench/README.md#fips-walnuts-real-lab-cone-beam-ct)).
 
 ![Vertical and axial slices of the walnut reconstructed with the published, original, TomoJAX-aligned and corrected geometries](images/walnut_alignment_slices.png)
 
 ![Each orbit's height relative to orbit 1, recovered by tj.align, against the authors' correction](images/walnut_alignment_heights.png)
 
-The retired projection-only orbit-height estimator found +0.37 and +0.74 mm
-in 23 s on the same walnut
-(2026-10-10, commit `944b2e0`). Pose alignment there finds +0.38 and +0.76 in
-about 250 s, and held-out views favour about +0.39 and +0.76.
-
-Across all 42 walnuts (2026-10-08), the median disagreement with the authors'
-heights is under a fifth of a voxel; the
-[benchmark guide](../bench/README.md#fips-walnuts-real-lab-cone-beam-ct) has
-the table.
-
 ## Alignment
 
-The measurements in this section describe their recorded, earlier implementations. The
-consolidated `fit=` solver replaces those routes; the numbers below are historical evidence,
-not its qualification or current runtime. See [align a scan](align-a-scan.md) for the current API.
+### Independent vs smooth motion
 
-Unless stated, these are fresh `tomojax align` processes on analytic
-projections of continuous objects, which are independent of TomoJAX's voxel
-model. They were measured with the default settings and detector-frame
-translations on 2026-10-06, commit `9d4c4d1`.
+Measured 2026-11-20 on commit `dd8f2cd` comparing the default `motion="independent"` with `motion="smooth"` on one RTX 4070 Laptop GPU:
 
-### Per-view pose recovery
+| Scan | `motion="smooth"` | `motion="independent"` (default) |
+| --- | --- | --- |
+| README watch scan (`examples/align_watch.py`), shift RMS across / along | 0.47 / 0.29 px, 35 s | 0.07 / 0.05 px, 36 s |
+| Diamond K11 54013 (1441 views, 704 × 704 × 234), ruby-sphere track residual u / v | 0.20 / 0.18 px, 281 s (3.19 GiB) | 0.30 / 0.19 px, 281 s (3.19 GiB) |
+| Diamond K11 54286 (1441 views, tilt +35°) | 279 s (3.19 GiB) | 278 s (3.19 GiB) |
+| Diamond K11 67208 (4000 views, tilt +30.9°) | 1039 s (4.63 GiB) | 1009 s (4.63 GiB) |
+| Synthetic slip rock (120 views, 0.95 px slip), pose RMS / slip recovered | 0.095 px / 0.80 px, 10 s | 0.095 px / 0.88 px, 6 s |
+| Half-turn rock, `fit=("translations", "tilt")`, landmarks / fitted tilt (true −0.35°) | 0.148 px / −0.764°, 16 s | 0.148 px / −0.764°, 15 s |
+| FIPS walnut, 3 orbits (`examples/align_walnut_orbits.py`), relative heights | 0, −0.385, −0.753 mm, 101 s | 0, −0.385, −0.753 mm, 100 s |
+| Zeiss CuO_2 tomo-A (binned 4×4) | 88 s | 75 s (volumes differ 1.0%) |
 
-181 views at 128³, 361 at 256³, 30° laminography and parallel:
+The smooth motion prior scales linearly in view count (`3aae66e`, FP64): factoring and solving for 1000 / 4000 / 16000 views takes 2.8 / 5.0 / 13.8 ms to factor and 0.71 / 0.84 / 1.9 ms to solve, peaking at 14 / 41 / 163 MiB.
 
-| Scan | Motion | Time | Rotation RMSE |
-|---|---|---:|---:|
-| 128³ parallel / laminography | ±0.25°, ±0.5 px | 50 / 43 s | 0.0085 / 0.0026° |
-| 128³ parallel / laminography / anisotropic | ±0.5°, ±8 px | 33 / 46 / 34 s | 0.0090 / 0.0029 / 0.022° |
-| 256³ laminography, full resolution | ±0.25°, ±0.5 px | 202 s | 0.0030° |
-| 256³ laminography, stopped at half resolution (earlier coarse schedule) | ±0.25°, ±0.5 px | 55 s | 0.0052° |
-| 64³ parallel / laminography | ±0.5°, ±15 px (23% of the detector) | 19 / 27 s | 0.031 / 0.013° |
+On axial parallel scans, per-view rotations are weakly determined (`a64ea92e`): across 13 axial watch/rock cases, `fit=("translations", "rotations")` beat translations alone on 7, tied on 1, and was up to 27% worse on 5.
 
-At 128³ the translations are recovered to 0.002 pixels, and the 256³ run fits
-in 8 GB of GPU memory. At 64³ the 0.01–0.03° results are the discretisation
-floor for that size. At 32³ the floor is 0.1–0.5°, even when the solve starts
-from the true poses (2026-10-05, commit `f155b94`). The 64³ anisotropic scan
-with ±15 px shifts is not captured (5.0° rotation error) in either translation
-frame. An earlier record of 0.0076° and 0.016° for the ±8 px parallel and
-anisotropic scans could not be reproduced: that commit now gives 0.0087° and
-0.022°.
+### Projection-only detector centre (`method="opposite-views"`)
 
-The global shift search is what captures large shifts (2026-10-05, commit
-`84b941b`). With ±0.5° tilts and ±15 px shifts at 64³, rotations end 7.7–12.6°
-wrong without it and 0.012–0.034° with it, in parallel and laminography scans.
+On real scans with injected ±0.25, ±0.5, and ±1 px shifts (`a04e5ee7`), 95th-percentile centre-change errors across 3 detector rows were 0.00085 px (APS 2-BM), 0.00117 px (Diamond I12), 0.00292 px (Elettra 00024), 0.00488 px (Diamond I13), 0.00567 px (ESRF bamboo), 0.00051 px (PSI cSAXS phase), and 0.00285 px (PSI TOMCAT 00082, 64 rows).
 
-After the half-resolution alignment of the 256³ laminography scan, the full
-data were reconstructed with the recovered poses (2026-10-05, commit
-`a7416a7`). Unregularised CGLS reaches 0.27 relative error. Positivity-
-constrained FISTA reaches 0.12 after 100 iterations and 0.091 after 300
-(109 s), against 0.059 for the volume of the full-resolution alignment.
+On independent analytic Gaussian projections with Poisson noise (100 pairs per category), p95 location errors were 0.0088–0.0152 px (dense, sparse, truncated) and 0.086 px (low contrast), with 91–100% empirical coverage of the local 90% matching intervals. On independent gVXR cuboids (257 × 65 px, 30 000 photons), p95 errors were 0.052–0.173 px for dense, sparse, off-centre, phase-fringe, and truncated objects, rising to **3.91 px** at low contrast (competing peaks; only 1 of 5 truths inside its local 90% interval) and **1.00 px** with a 1° axis tilt.
 
-On straight-axis scans per-view rotations are weakly determined (2026-11-13,
-commit `a64ea92e`, rotations tied to their neighbours). On the 13 axial rows of
-the simulated watch and rock corpus, `fit=("translations", "rotations")` ended
-with a lower landmark error than translations alone on 7, the same on 1 and up
-to 27% higher on 5 (the watch's full-turn and half-turn parallel rows and one
-rock half turn).
+### Cone-setup aliases and a conditional calibration test
 
-### Automatic translation alignment
+Checking recorded cone ray bundles (`ad7f9805`) confirms two exact geometric aliases under unrestricted 6-DOF per-view poses: shifting source and detector rigidly together (such as radius or orbit-height changes) is absorbed by poses to 5.38e−16–1.01e−14 unit-ray RMS across Nikon clay, Zeiss CuO_2, and Walnut 1; scaling source-to-detector distance, pixel pitch, and detector offsets together leaves all rays identical to 5.11e−16–1.01e−14 RMS.
 
-The earlier automatic route on unposed parallel and laminography scans fitted per-view
-detector translations with its image/translation solve. Measured on 2026-11-06 on `279bd686`
-with that change (branch `curvature-alignment`), one process per scan, the
-default allocator; GPU memory is JAX's peak in use, not the sampled process peak.
+A fixed-pose Walnut 1 focal-scale test (`c46c52e3`) recovered synthetic scale within 3.24e−9 noiselessly, but on real walnut data shifted held-out correspondence MSE to 1.00034× (no improvement), so focal scaling is not fitted automatically.
 
-| Scan | Pose error, new / previous | FISTA-TV image, new / previous / true poses | Time cold / warm, new (previous) | GPU, new (previous) |
-|---|---:|---:|---:|---:|
-| Watch laminography −35°, 384³, 720 views, gVXR, 1e4 photons; xyz drift and five slips | 0.010 / 0.506 px | 0.4934 / 0.4990 / 0.4934 | 51 / 46 s (41 s) | 1.35 (0.82) GiB |
-| Watch laminography −35°, 384³, 720 views; drift, jumps and 0.37° RMS rotations | 0.622 / 0.638 px | 0.4975 / 0.4980 / 0.4959 | 50 / 47 s (45.5 s) | 1.43 (0.82) GiB |
-| K11 54013, 1441 views of 640 × 540, 640 × 640 × 560 at 2.16 µm | no truth | | 156 / 154 s (171 s) | 4.44 GiB |
+## Detector response and structure controls
 
-Pose error is the RMS detector-pixel error of 27 landmarks over the central
-±30% of the grid after one common rigid gauge; images are default FISTA-TV
-relative errors against the voxelised truth. The second scan's best possible
-translation-only result (nominal rotations, per-view shifts matching the true
-landmarks) is 0.6219 px, so both methods stop at the rotation they do not model.
-On K11 the fitted trajectory predicts held-out views better than the previous
-one in every quarter of the scan (FBP from half the views, mean absolute error
-of the other half after a per-view offset: 0.05757 against 0.05808), and about
-20 views keep 0.5–1.2 px one-view excursions; see
-[known limitations](known-limitations.md).
+Comparing `tomojax.corrections.Rings` against Algotom 1.7 (`-log(remove_all_stripe(exp(-q)))`, default 3/51/21) on real parallel-beam cuts (`e71f900f`, `271fd6e3`). Injected detector response is `a + b(1 - exp(-q))` (RMS 0.004 and 0.006); off-axis structure probes are independent analytic Gaussian Radon traces (widths 2 and 8 px, peak 0.05, radii 0.35 and 0.7 of detector half-width):
 
-On a 74-case matrix (rock and watch phantoms; parallel 180°/360° and 15°/35°
-laminography; 1e3 to 1e8 photons; clean, drift, jumps, jitter, wobble and
-detector faults) every case is within +max(0.01 px, 5%) pose and +0.0005 image
-error of the reference implementation the method was developed and qualified
-with; the largest pose increase is +0.009 px on a low-dose jittered watch scan.
-Against the previous route, that reference improved pose on every moving case
-among the 51 it was not developed on, with image regressions of at most +0.0002
-there; two large-drift development cases regressed by +0.0009 and +0.0012.
+| Scan cut | Injected residual (`Rings` / Algotom) | Off-axis sinogram alteration (`Rings` / Algotom) |
+| --- | ---: | ---: |
+| I13 159815, row 1080, cols 441:1869, `::8` | 0.280 / 0.403 | 0.111 / 0.350 |
+| I12 3339629, row 1080, 2560 cols, `::8` | 0.392 / 0.241 | 0.0085 / 0.300 |
+| APS 2-BM `test_data.h5`, row 11, 1536 cols, `::8` | 0.611 / 0.230 | 0.0130 / 2.074 |
+| ESRF bamboo, row 270, 640 cols, `::8` | 0.437 / 0.170 | 0.0367 / 0.353 |
 
-### The plain call on K11
+Reconstructed image-domain checks across seven facilities (`a3bef73d`, same analytic off-axis Gaussians at radius 0.7 plus injected dense log-gain RMS 0.002):
 
-Measured 2026-11-15: K11 54013, the 1153 views whose index
-is not 2 modulo 5, declared grid 2112 × 2112 × 704 at 2.16 µm, tilt −35°,
-`tj.align(scan)` with nothing set, one process, nothing else on the GPU. Time is
-the `tj.align` call alone, after loading; GPU memory is JAX's peak in use.
+| Facility | Radial proxy (raw / `Rings` / Algotom) | Max Gaussian image alteration (`Rings` / Algotom) | Injected gain retained (`Rings` / Algotom) |
+| --- | ---: | ---: | ---: |
+| I12 | 0.0300 / 0.0218 / 0.0090 | 0.0267 / 2.471 | 0.252 / 0.142 |
+| APS | 0.0308 / 0.0212 / 0.0077 | 0.0350 / 18.04 | 0.500 / 0.079 |
+| ESRF | 0.0718 / 0.0467 / 0.0101 | 0.2846 / 2.397 | 0.182 / 0.101 |
+| Elettra | 0.0467 / 0.0349 / 0.0060 | 0.0799 / 2.485 | 0.234 / 0.073 |
+| 2DeteCT | 0.0278 / 0.0239 / 0.0061 | 0.0055 / 2.308 | 0.278 / 0.145 |
+| PSI 00071 | 0.0231 / 0.0215 / 0.0045 | 0.0034 / 3.859 | 0.413 / 0.061 |
+| Walnut 1 orbit 2 | 0.0288 / 0.0286 / 0.0172 | 0.0373 / 0.657 | 0.401 / 0.382 |
 
-| Commit | Result | Time | GPU |
-|---|---|---:|---:|
-| `29836aaa` (main, 2026-11-02) | completes; working grid 352 × 352 × 118, detector binned 2 | 205.0 s | 2.31 GiB |
-| `aa6cec52` (main) | completes | 148.8 s | 3.51 GiB |
-| `76fc1769` to `ed86a8f0` (main) | runs out of memory in the image solve's Schur matrix-vector product (1.37 GiB) | | |
-| `20b5f42a` (fix/review-high) | runs out of memory in the first linearisation (765 MiB, the shared level's moments) | | |
-| `188f1794` (fix/review-high) | completes | 276.8 s | 3.62 GiB |
-
-On `188f1794` the same call on K11 54286 (all 1441 views, 640 × 640 × 560 declared,
-working grid 214 × 214 × 187) completes in 364.9 s at 3.91 GiB.
-
-Against `aa6cec52` the branch takes 128 s (86%) longer on the same call, at 0.11 GiB
-more. A profile of both (every phase timed with a device sync) puts 116 s of it in
-the image solve: both take 12 coarse and 8 fine steps, but `aa6cec52` gives the
-image solve 4 conjugate-gradient iterations for a translations fit, while since
-`45f9932d` every fit uses 16, all of which are spent on every step after the
-first (5.12 against 2.27 s a coarse step, 24.21 against 12.65 s a fine one). The
-shared level's two extra back-projections per linearisation add 18.5 s; the
-linearisations are 8.4 s faster (pose columns stored in 16-bit floats); setup,
-the initial image and the refinement differ by 1.2 s. The 0.11 GiB is the shared
-level's two image-sized arrays (127 MiB); the rest of `aa6cec52`'s peak over
-`29836aaa` (3.51 against 2.31 GiB) came on main before the branch.
-
-The full scans at the declared 704 × 704 × 234 grid (6.48 µm voxels, all views,
-native 640 × 540 detector at 2.16 µm), `tj.align(scan)` with nothing set, one process,
-measured 2026-11-19 and 2026-11-20 on the RTX 4070 Laptop. On `f58a6f7a` and `dc736fb3`
-the plain call's motion prior is what is now `motion="smooth"`; the last time column is
-today's default, `motion="independent"` (commit `dd8f2cd`; K11 67208 on `18c7703`, after the
-refinement learned to stop at convergence, 1111 s before):
-
-| Scan | Views | `f58a6f7a` | `dc736fb3` | `dd8f2cd`, independent | GPU, `f58a6f7a` → `dc736fb3` |
-|---|---:|---:|---:|---:|---:|
-| K11 54013, tilt −35° | 1441 | 354 s | 281 s | 281 s | 3.31 → 3.19 GiB |
-| K11 54286, tilt +35° | 1441 | 352 s | 279 s | 278 s | 3.31 → 3.19 GiB |
-| K11 67208, tilt +30.9° | 4000 | 1304 s | 1039 s | 1009 s | 4.73 → 4.63 GiB |
-
-`f58a6f7a` and `dc736fb3` return byte-identical poses and images on all three. On 54013, undoing one
-change at a time costs 45 s for converting the CG search direction to z-contiguous
-storage once per product, 15 s for forming the motion scale's scores on the device,
-14 s for the forward kernel's fixed-stride interior reads and 8 s for the gather's
-native launcher.
-
-The motion prior takes linear storage and work in the views (commit `3aae66e`).
-Its factor and solve alone, two translations and the centre fitted, knots every
-10 views, FP64, one fresh process per row (2026-11-20):
-
-| Views | Held, before → after | Peak, before → after | Factor, before → after | Solve, before → after |
-|---:|---:|---:|---:|---:|
-| 1000 | 20.7 → 6.4 MiB | 90 → 14 MiB | 9.2 → 2.8 ms | 0.83 → 0.71 ms |
-| 4000 | 318 → 26 MiB | 906 → 41 MiB | 263 → 5.0 ms | 2.6 → 0.84 ms |
-| 16000 | 5023 → 105 MiB | out of memory → 163 MiB | — → 13.8 ms | — → 1.9 ms |
-
-On K11 54013 the call with `motion="smooth"` takes 282 s. Its poses move by up to 0.30 px
-(6.6% of the image), the same as reordering the old prior's columns, and moving one
-pixel of the data by one unit in the last place moves them by 0.22 px (7.0%).
-
-The default `motion="independent"` (commit `dd8f2cd`, 2026-11-20) leaves each view free of
-its neighbours; `motion="smooth"` is the previous default, byte-identical to it on the small
-alignment scans and on K11 54013. Each pair below is smooth / independent, one process each:
-
-| Scan | Smooth | Independent |
-|---|---|---|
-| README watch scan (`examples/align_watch.py`), shifts RMS across / along | 0.47 / 0.29 px, 35 s | 0.07 / 0.05 px, 36 s |
-| K11 54013, the ruby sphere's track left unexplained, u / v | 0.20 / 0.18 px, 281 s | 0.30 / 0.19 px, 281 s |
-| Slip rock (120 views, 0.95 px slip), pose RMS; slip followed | 0.095 px; 0.80 px, 10 s | 0.095 px; 0.88 px, 6 s |
-| Half-turn rock, `fit=("translations", "tilt")`, landmarks; tilt (true −0.35°) | 0.148 px; −0.764°, 16 s | 0.148 px; −0.764°, 15 s |
-| FIPS walnut, three orbits (`examples/align_walnut_orbits.py`), orbit heights | 0, −0.385, −0.753 mm, 101 s | the same, 100 s |
-| Zeiss CuO_2 tomo-A, binned 4 | 88 s | 75 s; volumes differ by 1.0% |
-
-### Detector centre
-
-The projection-only estimator uses a one-pixel derivative bandwidth and a
-Fourier-interpolated global correlation peak. On 2026-10-27, the fixed shift
-matrix (`JAX_PLATFORMS=cpu uv run --no-sync python
-../../shared/agent03/shift_kill.py`, implementation `a04e5ee7`) gave the following 95th-percentile absolute errors in the **change**
-of centre after injected ±0.25, ±0.5 and ±1 px shifts (T1):
-
-| Scan (three detector rows) | Centre-change error, px |
-|---|---:|
-| APS 2-BM test_data | 0.00085 |
-| Elettra TomoBank 00024 | 0.00292 |
-| ESRF bamboo | 0.00567 |
-| I12 3339629, rows 1050/1080/1100 | 0.00117 |
-| I13 159815, rows 690/1080/1470 | 0.00488 |
-
-These errors test shift equivariance, not absolute centre accuracy. Motion,
-truncation and competing correlation peaks can bias a single centre estimate.
-
-`alignment.api.estimate_center_report` retains the weighted view-pair constraints,
-conditional 90% matching intervals, other correlation peaks and apparent
-row-centre slope. The uncertainty uses eight detector-column blocks, an observed
-cross-Hessian and leverage correction; it does not claim a physical-centre
-interval under arbitrary motion. Pair disagreement is reported separately.
-The projection-only preview retains these diagnostics and reports conditional
-inconsistency; it does not estimate independent per-view poses.
-Runtime fields label the intervals `local_matching_interval90_px`, with
-`global_coverage_calibrated=false` and `uncertainty_status=local_matching_only`.
-These are local matching diagnostics, not calibrated global centre intervals;
-the centre report retains this limitation even without pair disagreement.
-
-On 2026-10-27 (`a04e5ee7`), 64 real rows gave centre-change p95 errors
-0.00422 px on Elettra 00024 and 0.00284 px on I13 159815. The report took
-0.233/0.230 s and 2.30/2.27 s cold/warm on corrected inputs; cumulative peak
-host memory was 348/663 MiB, GPU memory zero. Reading and correcting the
-selected HDF5 observations took 0.035/52.61 s separately. Command:
-`OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu uv run --no-sync python
-../../shared/agent03/full_rows.py`. I13 used rows 300:1860 and columns 441:1872;
-both scans sampled 64 evenly spaced rows. I13 pair centres ranged from
-−3.76 to +0.59 px, with 1.75 px scatter and conditional standard errors
-0.049–0.287 px. These conflicting pairs do not define one physical centre.
-Elettra's 50.800 px estimate and conditional interval [49.235, 52.366] px
-include the TomoBank 51.5 px centre convention (T3 agreement, not accuracy).
-
-Independent analytic Gaussian line integrals with Poisson counts, seed 304,
-100 pairs per category, gave conditional 90% coverage 93% dense, 100% sparse,
-91% low contrast and 91% truncated. Their p95 location errors were
-0.0103/0.0152/0.0861/0.0088 px. Command: `OPENBLAS_NUM_THREADS=1
-JAX_PLATFORMS=cpu uv run --no-sync python
-../../shared/agent03/production_coverage.py`. This calibration excludes wrong
-matching modes, axis tilt and sample motion; it is not whole-scan coverage.
-
-Independent gVXR cuboid projections expose failures outside that calibration
-(2026-10-27, `a04e5ee7`, renderer seed 316, count seed 317, five cases per
-category, 257 by 65 pixels, 30,000 incident photons). Absolute centre p95
-errors were 0.086/0.156/0.120/0.052/0.173 px for dense, sparse, off-centre,
-phase-fringe and truncated objects, respectively, but 3.907 px at low contrast
-and 1.004 px with a one-degree axis tilt. Only one of the five low-contrast
-truths lay inside its conditional 90% interval. Tilt is outside the axial
-matching model; its apparent row-slope error reached 0.678 px p95 over the
-32-row half-height. Command: isolated gVXR Python runs
-`../../shared/agent03/gvxr_render.py`, then `JAX_PLATFORMS=cpu uv run --no-sync
-python ../../shared/agent03/gvxr_score.py`, with `LAB_ARTIFACTS` set to the
-output directory. The complete renderer-and-score job took 3.04 s; the CPU
-scoring stage took 0.564 s with 273 MiB peak host memory.
-
-Signed cSAXS porous-glass phase data gave centre-change p95 0.000512 px over
-the same six injected shifts, versus 0.006150 px for the integer-peak baseline
-(2026-10-27, `a04e5ee7`). The 51 selected views used 64 evenly spaced rows and
-1312 columns. Point estimation took 0.410/0.410 s cold/warm versus
-0.0393/0.0398 s for the baseline; data reading took 7.31 s, with 640 MiB peak
-host memory and no GPU use. Command: `OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu
-uv run --no-sync python ../../shared/agent03/psi_phase.py`. This is shift
-equivariance on phase data, not an absolute centre measurement.
-
-Nonreserved TOMCAT TomoBank 00082 (dry fuel cell) gives centre-change median/p95
-errors 0.001048/0.002845 px over the same six shifts (2026-10-28, `17ed9dd1`).
-This uses rows 192:256, all 1440 columns, the first 20 flat frames, all 10 dark
-frames and sample views 0/1/999/1000. The HDF5 file has no recorded angles;
-geometry is supplied explicitly using the [TomoBank example](https://github.com/tomography/tomobank/blob/master/docs/demo/tomopy_rectv_fc.py)'s
-endpoint-excluding 1001-view, 180-degree convention. The selected opposed
-constraint has nominal angular mismatch 0.179820 degrees. First/repeated
-public-report calls on corrected inputs take 0.1307/0.1276 s, separately from
-81.30 s HTTP reading and 0.0041 s flat/dark/log correction. Peak host memory is
-329.75 MiB, with no GPU use. The 48 HTTP ranges total 6.272 MB and are held
-only in bounded RAM, discarded after scoring. Command:
-`OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu uv run --no-sync python
-../../shared/agent03/tomcat82_center.py`. This is a 64-row-band delta test,
-not full-height performance, absolute centre accuracy or default-loader
-success. The report labels its intervals as local matching diagnostics;
-global coverage remains uncalibrated.
-
-| Mode and scan | Result |
-|---|---|
-| Earlier centre route, +3.7 px offset, 128³ parallel / laminography (2026-10-05, `74923c1`) | 3.693 / 3.677 px in 41 / 84 s; with ±0.5°/±8 px motion as well, 2.2 / 3.3 px |
-| Earlier centre-then-pose route, +3.7 px offset with ±0.5°/±8 px motion, 128³ parallel / laminography | rotations to 0.005 / 0.006°, volume error 0.0007 against a true-geometry reconstruction; reports −3.573 px, where the identifiable value is −3.569 px (the random shifts have a mean of 0.131 px) |
-| Earlier centre-then-pose route, gVXR chip phantom (DIAD-like 25 keV laminography with phase contrast, blur and noise; 3.2 px offset, about 2 px shifts, 0.1° tilts) | 3.18 px (identifiable 3.178 px), rotations to 0.073°, shifts to 0.087 px RMS, in 127 s |
-
-The earlier sequence, a centre-of-rotation search followed by a pose polish,
-left rotation errors of 0.23–0.26° on the analytic scans. With object-frame
-translations on the chip phantom's 720 views, `dx` reached 70 px RMS around
-90° and 270°, and the per-view u error rose to 0.37 px, against 0.06 px with
-detector-frame translations.
-
-### Where the volume sits
-
-Without the least-motion gauge (2026-10-06, commit `123dffe`), a 64³ cone-beam
-alignment left a common 1-voxel shift along the axis, and a half-turn parallel
-scan with a detector offset a 3-voxel shift. The relative volume errors were
-0.26 and 0.55; with the gauge they fall to 0.0037 and 0.019. The README's 96³
-laminography example falls from 0.099, with only a rigid shift removed, to
-0.047.
-
-### Cone-beam scans
-
-The earlier cone setup route on 128³ and 256³ blob scans (360 views, 1% to 5% noise) with axis
-offsets of 3.7 to 11.2 voxels and detector rolls up to 1.2° recovers the offset
-to 0.08 voxels and the roll to 0.04°, in about 4 s at 256³. At 64³ the roll is
-good to about 0.15° (2026-10-06, commit `0547ee7`).
-
-On a 64³ cone scan (120 views, magnification 1.5) with ±0.3° and ±1.5 px of
-random motion in all six parameters, pose alignment recovers the poses exactly
-when the data come from its own projector (2026-10-06, commit `3c35507`). From
-exact line integrals of smooth Gaussian blobs it recovers translations to
-0.004–0.07 px and rotations to 0.16° RMS (0.13° at 128³), against 0.10°
-(0.08°) for the same objects in a parallel beam. `phi`, about the rotation
-axis, is the weakest parameter in both.
-
-### Free-voxel pilot
-
-The six-cell pilot (2026-10-04 to 10-06) uses independent random-voxel 32³
-objects, 61 irregular views, parallel, shifted anisotropic and 30° tilted
-geometry, each clean and noisy, with ±0.25°/±0.5 px motion. Its gates are
-0.01° for rotations together with fixed image and shift gates. Its
-projections integrate the voxel basis exactly. With the default Joseph
-integrator, a different discretisation from the data, every cell misses the
-0.01° gate at 0.10–0.26°, while volume errors stay at 0.009–0.085. With
-the earlier exact voxel-basis integrator, the model the data were made with, five of six
-cells pass in 8–20 s. That partly reflects an inverse crime. The noisy
-anisotropic cell misses at about 0.016°; a local noise analysis predicts about
-0.017° from the measurement noise alone. The exact integrator is 10–30 times
-slower than Joseph sampling (2026-10-05, commit `f155b94`).
+`Rings` alters off-axis structure far less than Algotom across every facility, though it still exceeds 5% image alteration on ESRF (28.5%), Elettra (8.0%), and native I13 rows (6.7–17.4% across six rows). On finite-reference raw-count simulations on I13 row 1080 (4 seeds), `Rings` + FBP retained 48–83% of the injected image-error RMS; on synthetic calibration-gap controls, calibration-only NRMSE (0.150–0.280) rose to 0.258–0.320 after `Rings`. Constrained inverse feasibility (`694a9ae7`) ensures every fitted response curve has a monotonic inverse (minimum derivative 0.501, closure error ≤ 3.6e−7).
 
 ## Memory
 
 ### Scans larger than the GPU
 
-All on the 8 GB laptop GPU:
+All runs on the 8 GB RTX 4070 Laptop GPU (30 GB host RAM):
 
 | Run | Result | Date, commit |
-|---|---|---|
-| `fbp_host`, 1024³ laminography (30° tilt, 1024 views of 1024²), memmap in and out, 4.3 GB each | 37 s, in two x-slabs; laminography FBP ran out of memory at 768³ before | 2026-10-05, `8bc0653` |
-| FISTA-TV, 512³ laminography, 3072 views (3.2 GB of projections), streamed, 10 iterations | 4.3 GB peak GPU memory | 2026-10-05, `6fa1585` |
-| FISTA-TV, the same with 768 views, where both fit | 67.6 s streamed, 65.0 s with the projections on the GPU | 2026-10-05, `6fa1585` |
-| CGLS, 3072 views, streamed, 10 iterations | 154 s, 3.2 GB peak; converges to the same solution | 2026-10-06, `9d4c4d1` |
-| SPDHG-TV, 3072 views, streamed, 192 iterations (one view block each) | 297 s, 4.3 GB peak, with its 3.2 GB dual in host memory; bitwise identical to the device-resident solver | 2026-10-06, `9d4c4d1` |
-| SIRT from raw frames with `tj.reconstruct_slabs`, the whole Diamond I12 scan below: 1801 views of 2160 × 2560 pixels (39.8 GB corrected), a 2560² × 2160 volume (56.6 GB) | 1436 s of solving, 1.41 GB peak GPU memory and 3.7 GB host memory; 1.13 times the per-voxel time of an 8-row reconstruction that fits | 2026-10-17, `440cc563` |
-| `tj.reconstruct` of 352 rows of the same scan, returned as one 9.23 GB array | 211 s, 0.78 GB peak GPU memory, 17 GB host memory; 1.04 times the per-voxel time of 8 rows | 2026-10-17, `440cc563` |
-| OSEM of the FIPS walnut at full resolution: all 3600 views of 972 × 768 pixels, a 1001³ volume, 4 subsets × 1 iteration from FDK | First / repeat solve 230.65 / 241.81 s in 128-plane host slabs; loading 7.52 s; peak GPU 5798 MiB, host 15.57 GB anonymous; full / walnut-support relative L2 error 0.124385 / 0.094026 | 2026-10-21, `30f9f1df` |
-| FDK from raw CuO-spl1 frames: all 3201 views of 2036² pixels, a 2036³ volume, 32-plane output slabs | Correction and reconstruction 900.47 s; imports and loading 1.63 s; peak host 9.86 GB | 2026-11-21, `d8758ca5` |
-| ASTRA FDK on the same raw CuO-spl1 frames and output slabs, before the Zeiss centre-shift fix | First / repeat correction and reconstruction 847.16 / 838.56 s; imports and loading 13.67 s; peak GPU 3036 MiB, host 13.193 GB, including scoring | 2026-10-20, `76a1f412` |
-| FDK from raw CuO2 frames: all 3201 views of 2028² pixels, a 2028³ volume, 32-plane output slabs | First correction and reconstruction 1053.93 s; imports and loading 16.17 s; peak GPU 4494 MiB, host 14.240 GB, including scoring | 2026-10-20, `75435039` |
-| OS-SART of CuO-spl1 at twofold binning: all 3201 views of 1018² pixels corrected into memory (13.3 GB), a 1018³ volume kept on the GPU, 3 iterations × 8 subsets from zero | 441 s solving, 30 s correcting; peak GPU 7484 MiB, host 13.78 GB while solving (15.40 GB with scoring); relative residual 0.0319 on every eighth view | 2026-10-20, `30f9f1df` |
-| SIRT of a synthetic 1300³ volume (8.79 GB, more than the GPU) in host memory: 180 cone views of 1300² pixels, 3 iterations | 62.8 s solving in 128-plane slabs; peak GPU 6160 MiB, host 11.47 GB | 2026-10-20, `5cf50e6b` |
-| CGLS of the same synthetic 1300³ volume with it and its three work volumes memory-mapped on a USB hard disk (35 GB), 2 iterations | 1514 s solving in 128-plane slabs; peak GPU 6476 MiB, host 14.55 GB anonymous; 113 GB read and 114 GB written, creating the files included; normal residual 7.79e8 → 8.69e7 | 2026-10-21, `30f9f1df` |
-| OS-SART of native CuO-spl1 from raw frames: all 3201 views of 2036² pixels, corrected as the sweeps reach them, a 2036³ volume (33.76 GB) memory-mapped on a USB hard disk, 1 iteration × 4 subsets from zero | 2131 s solving, 2295 s in all; peak GPU 6398 MiB, host 9.39 GB anonymous (12.07 GB resident); 207 GB read (106 GB of raw frames, 101 GB of volume), 135 GB written | 2026-10-20, `5cf50e6b` |
+| --- | --- | --- |
+| `fbp_host`, 1024³ laminography (30° tilt, 1024 views of 1024², 4.3 GB memmaps) | 37 s in two x-slabs | 2026-10-05, `8bc0653` |
+| FISTA-TV, 512³ laminography, 3072 views (3.2 GB projections), streamed, 10 iters | 4.3 GB peak GPU (at 768 views: 67.6 s streamed vs 65.0 s resident) | 2026-10-05, `6fa1585` |
+| CGLS, 512³ laminography, 3072 views, streamed, 10 iters | 154 s, 3.2 GB peak GPU | 2026-10-06, `9d4c4d1` |
+| SPDHG-TV, 512³ laminography, 3072 views, streamed, 192 iters | 297 s, 4.3 GB peak GPU (3.2 GB dual in host RAM; bitwise identical to resident) | 2026-10-06, `9d4c4d1` |
+| `tj.reconstruct_slabs` SIRT, full Diamond I12: 1801 views of 2160 × 2560 (39.8 GB corrected) -> 56.6 GB volume | 1436 s solving, 1.41 GB peak GPU, 3.7 GB host RAM (1.13× per-voxel time of an 8-row in-core run) | 2026-10-17, `440cc563` |
+| OSEM, full-resolution FIPS walnut: 3600 views of 972 × 768 -> 1001³ volume, 4 subsets × 1 iter from FDK | 230.7 / 241.8 s in 128-plane slabs; 5.66 GiB GPU, 15.6 GB host; error 0.124 / 0.094 (full / support) | 2026-10-21, `30f9f1df` |
+| `tj.reconstruct_slabs` FDK, full CuO-spl1: 3201 views of 2036² -> 2036³ (33.8 GB), 32-plane slabs | 900.5 s total, 9.86 GB peak host; 256-view residual 0.0571, vendor NRMSE 0.1099 | 2026-11-21, `d8758ca5` |
+| `tj.reconstruct_slabs` FDK, full CuO2: 3201 views of 2028² -> 2028³ (31 GiB), 32-plane slabs | 1053.9 s, 4.39 GiB peak GPU, 14.2 GB host | 2026-10-20, `75435039` |
+| OS-SART, CuO-spl1 binned 2×2: 3201 views of 1018² -> 1018³ resident, 3 iters × 8 subsets | 441 s solving (+30 s correcting), 7.31 GiB GPU, 13.8 GB host; residual 0.0319 | 2026-10-20, `30f9f1df` |
+| SIRT, synthetic 1300³ (8.79 GB host volume), 180 cone views, 3 iters | 62.8 s in 128-plane slabs, 6.02 GiB GPU, 11.5 GB host | 2026-10-20, `5cf50e6b` |
+| CGLS, synthetic 1300³ (4 volumes = 35 GB memmapped on USB HDD), 2 iters | 1514 s in 128-plane slabs, 6.32 GiB GPU, 14.6 GB host (113 GB read, 114 GB written) | 2026-10-21, `30f9f1df` |
+| OS-SART, native CuO-spl1 from raw frames (2036³ = 33.8 GB memmapped on USB HDD), 1 iter × 4 subsets | 2131 s solving (2295 s total), 6.25 GiB GPU, 9.4 GB anon host (207 GB read, 135 GB written) | 2026-10-20, `5cf50e6b` |
 
-The walnut call is `tj.reconstruct(scan, "mlem", warm_start=True,
-config=MLEMConfig(iterations=1, subsets=4))`, using all three corrected
-geometries, unbinned projections clipped at zero, and 0.05 mm voxels. The
-volume is scored at the published 0.1 mm voxel centres. Both calls use
-`XLA_PYTHON_CLIENT_PREALLOCATE=false`; the repeat uses the same process after
-releasing the first volume.
+Reproduce the out-of-core cone runs with [`bench/out_of_core.py`](../bench/out_of_core.py):
 
-The CuO call is `tj.load_frames("Tristan Manchester_Copper_oxyde_spl1.txrm",
-darks=0)`, followed by `tj.reconstruct_slabs(frames, "fbp")`. Consume and
-release each block before advancing the iterator; no whole volume is retained.
-The grid uses the recorded 1.12756 µm sampling without binning. The process
-uses fresh compilation caches and `XLA_PYTHON_CLIENT_PREALLOCATE=false`. The
-time sums the correction and reconstruction stages; writing each slab into a
-memory-mapped volume for scoring is outside it.
-
-CuO's relative projection residual is 0.0570821 on 256 fixed, evenly spaced
-views, using the full detector and an ASTRA forward projection summed over
-the physical output slabs. Reconstruction uses all 3201 views. Against the
-vendor's reconstruction, averaged over 4 × 4 × 4 blocks and compared as in the
-CuO FDK section, NRMSE is 0.109866. It is a diagnostic, not physical ground
-truth.
-
-The ASTRA run and the comparisons below were measured before the Zeiss
-centre-shift fix, when both libraries loaded spl1 with a centre 5.1 pixels out.
-ASTRA uses `FDK_CUDA` in 256-view batches on the same 32-plane output slabs,
-preserving the complete acquisition's preweighting and angular scale. Its
-first / repeat scored passes take 1304.22 / 1314.98 s, with imports and loading
-additional to the first pass. Its projection residual is 0.1171325 and vendor
-NRMSE 0.209232 by that run's comparison, both repeatable. The lower TomoJAX
-projection residual does not establish better physical image accuracy.
-On six native axial cuts, the relative difference between the images is 0.143371
-across the cuts and 0.008441 within an independently vendor-defined sample mask.
-99.41% of their squared difference lies outside the horizontal cylinder seen
-by every view. These are cut diagnostics, not a full-volume image comparison.
-
-CuO2 uses the same load and slab calls with `CuO_2_tomo-B.txrm` and the
-recorded 1.13365 µm sampling. Its first scored pass takes 1376.31 s, with
-imports and loading additional. The same 256-view projection score is
-0.0790636. There is no vendor volume, repeated pass or native library comparison
-for this scan; this is a capacity and data-fit measurement.
-
-The OS-SART rows of CuO-spl1 are `python bench/out_of_core.py cuo
-"Tristan Manchester_Copper_oxyde_spl1.txrm" --binning 2 --iterations 3
---subsets 8`, which corrects the projections with `Frames.corrected(binning=2)`
-and calls `tj.reconstruct(scan, "sirt", grid=..., config=SIRTConfig(iterations=3,
-subsets=8))`, and the same script at native resolution with `--iterations 1
---subsets 4 --scratch DIR`. The synthetic rows are `python bench/out_of_core.py
-synthetic --size 1300 --views 180 --method sirt --iterations 3` (and `--method
-cgls --iterations 2 --scratch DIR`), spheres in a cylinder seen with the CuO
-cone angle. Each CGLS iteration reads the four volumes six times and writes
-them four times between them.
-
-At native resolution the 2036³ float32 volume, 33.76 GB, is more than this
-machine's 30 GB of RAM. In the native OS-SART row it is a memory-mapped file
-in `DIR` given as `out=`, written by the first sweep and read and rewritten
-once by each later one, in 32-plane slabs (the 8 GB GPU holds no thicker ones
-beside a subset's 800 views). The corrected projections (53 GB) are never
-stored: each sweep corrects 64-row bands of every view from the raw frames, a
-band ahead on a worker thread. The raw frames are on the internal NVMe disk,
-the volume on a USB hard disk; exFAT has no sparse files, so creating the
-volume writes it once more. One iteration of four subsets from zero is a
-capacity measurement, not a converged reconstruction; its central planes show
-the sample cylinder as the twofold-binned reconstruction does.
-
-The Diamond rows use `SIRTConfig(iterations=3, subsets=15, lower_bound=0)`
-with `warm_start=True` (an FBP start) on frames from
-`tj.load_frames(projections, angles=..., flats=..., darks=...)`, a 2560² grid
-with the detector centre at −138 pixels. The full scan was run as three jobs of
-720 rows, each from a fresh process, so the time is their sum; each job peaked
-at the same GPU memory. Eight slab rows are bitwise equal to ordinary
-`tj.reconstruct` of those rows. Stock ASTRA and TIGRE entry points would need
-the 39.8 GB of corrected projections and the 56.6 GB volume in host memory,
-more than the 30 GB of this machine, so no full-scan comparison was attempted;
-either can be split by rows by hand for this geometry.
+```bash
+python bench/out_of_core.py synthetic --size 1300 --views 180 --method sirt --iterations 3
+python bench/out_of_core.py cuo "$CUO_SPL1" --binning 2 --iterations 3 --subsets 8
+```
 
 ### Iterative solver memory
 
-512³ laminography, 768 views of 512² pixels (0.8 GB of projections), with
-`XLA_PYTHON_CLIENT_MEM_FRACTION=0.95` (2026-10-05, commit `4bdf52a`):
+On 512³ laminography (768 views of 512², 0.8 GB projections) with `XLA_PYTHON_CLIENT_MEM_FRACTION=0.95` (`4bdf52a`), peak GPU memory is 5.6 GB for CGLS, 4.6 GB for FISTA-TV, and 4.9 GB for SPDHG-TV.
 
-| Solver | Peak GPU memory before the change | After |
-|---|---|---|
-| CGLS | out of memory | 5.6 GB |
-| FISTA-TV | 7.2 GB | 4.6 GB |
-| SPDHG-TV | out of memory | 4.9 GB |
-
-CGLS keeps about five volumes and three sinograms, FISTA-TV seven volumes, and
-SPDHG-TV eight volumes plus its dual sinogram. JAX's default allocator limit is
-75% of device memory, and TomoJAX keeps it for the CLI and Python alike; under
-it this CGLS case does not fit.
-
-SPDHG-TV first rewrote its five state volumes in place (2026-11-19, commit
-`596052b`): the plain `tj.reconstruct(scan, "spdhg")` on K11 54013 at full size
-(1441 views of 540 × 640, 704 × 704 × 234 grid, projections streamed from host
-memory) takes 137 s with a 3.2 GiB device peak on the RTX 4070 Laptop (8 GB),
-under the default 75% limit; before, it ran out of memory.
-
-SPDHG-TV keeps its volume state in the projector's native layout and folds the
-old data backprojection into the primal update before the next transpose overwrites
-it (2026-11-19, commit `19431f9`). The same plain call on K11 54013 takes 98 s with
-a 2.36 GiB device peak, against 135 s and 3.20 GiB on `f58a6f7`, measured the same day
-on the same card. The volumes agree to 3.4e-7 relative (L2). On the 4×-binned scan
-(`frames.corrected(binning=4)`, 160 × 160 × 135 grid, 8.64 µm voxels, projections on
-the device, 600 updates) it takes 1.8 s with a 322 MiB peak, against 2.9 s and 366 MiB.
+Keeping SPDHG-TV's five state volumes in place in z-contiguous layout (`19431f9`, 2026-11-19) runs default `tj.reconstruct(scan, "spdhg")` on full-size K11 54013 (1441 views, 704 × 704 × 234 grid, projections streamed from host) in 98 s at 2.36 GiB peak VRAM (within JAX's default 75% cap on an 8 GB GPU).
 
 ### Iterative solvers on real scans
 
-The plain `tj.reconstruct(scan, method)` with each method's default 50 iterations,
-one fresh process per call, timed from the call to the finished volume, the device
-peak sampled every 10 ms (2026-11-21, `92bd2e8` against `6c80dec`, RTX 4070 Laptop
-8 GB). Seconds, one call each except CuO CGLS (median of six):
+Default `tj.reconstruct(scan, method)` (50 iterations, fresh process per call, `92bd2e8`, 2026-11-21) on the 8 GB RTX 4070 Laptop GPU:
 
-| Scan | CGLS | SIRT | MLEM | FISTA-TV |
-|---|---|---|---|---|
-| K11 54013, laminography, 1441 views of 640 × 540, 704 × 704 × 234 grid | 201.6 → 182.0 | 250.5 → 204.8 | 197.9 → 176.8 | 942.5 → 233.2 |
-| Zeiss CuO_2 tomo-A, cone, 801 views, `corrected(binning=4)`, 507³ grid | 99.1 → 99.4 | 98.4 → 97.9 | 102.0 → 101.5 | 156.0 → 145.5 |
-| Diamond I12, parallel, 1801 views of 2560 × 64, 2560 × 2560 × 64 grid | 1748 → 1675 | 206.8 → 207.5 | 215.0 → 214.6 | 2064 → 1984 |
-
-CuO CGLS's six calls range over 98.5–100.0 s before and 98.6–100.5 s after; its
-code path did not change. The device peaks are the same before and after in every
-cell: K11 4.57, 3.07, 4.57 and 3.77 GiB; CuO 4.75, 6.28, 4.72 and 4.04 GiB; I12
-3.35, 2.57, 2.57 and 7.39 GiB. CGLS, SIRT and MLEM give bit-identical volumes, as
-does FISTA-TV on I12, where it does not use the new storage. FISTA-TV's volumes
-differ by 2.9e-7 (K11) and 6.3e-8 (CuO) relative L2, the size of a change in FP32
-summation order: on K11 its automatic Lipschitz estimate moves by one unit in the
-last place; on CuO the estimate and the TV weight agree exactly and the
-iteration's sums run in a different order in the private storage.
-
-FISTA-TV now keeps its iterates in the projector's z-contiguous storage. Every Joseph
-transpose block computes each view's detector footprint once for its run of
-voxels, and SIRT's projection of ones skips interpolation where a ray is
-fully inside the volume. On K11 at 5 iterations each part alone gives: storage,
-FISTA-TV 192.0 → 53.6 s; footprints, CGLS 22.6 → 20.6 s, SIRT 29.5 → 26.6 s,
-MLEM 22.1 → 19.5 s; ones, SIRT 29.5 → 26.5 s; all three, 20.3, 23.9, 19.6 and
-50.6 s.
+| Scan | CGLS (time / peak VRAM) | SIRT (time / peak VRAM) | MLEM (time / peak VRAM) | FISTA-TV (time / peak VRAM) |
+| --- | ---: | ---: | ---: | ---: |
+| K11 54013, laminography, 1441 views, 704 × 704 × 234 | 182.0 s / 4.57 GiB | 204.8 s / 3.07 GiB | 176.8 s / 4.57 GiB | 233.2 s / 3.77 GiB |
+| Zeiss CuO_2 tomo-A, cone, 801 views, bin 4, 507³ | 99.4 s / 4.75 GiB | 97.9 s / 6.28 GiB | 101.5 s / 4.72 GiB | 145.5 s / 4.04 GiB |
+| Diamond I12, parallel, 1801 views, 2560 × 2560 × 64 | 1675 s / 3.35 GiB | 207.5 s / 2.57 GiB | 214.6 s / 2.57 GiB | 1984 s / 7.39 GiB |
 
 ### Fourier inverse
 
-Measured 2026-10-04 on commit `776a8c9`. Parallel Gaussian
-phantom, 720 views, CUDA backend; warm time is the median of seven solves. At
-512³ the default 16-slice slabs peak at 678 MiB. Allowing the CuPy queues to
-be reused across calls brought that peak down from 3892 MiB.
+Measured 2026-10-04 (`776a8c9`) on a parallel Gaussian phantom (720 views, CuPy CUDA backend, median of 7 warm calls):
 
-| Case | Slices per slab | Warm time | Peak GPU memory | Fastest external warm, its peak |
-|---|---:|---:|---:|---|
-| 256³ | 16 | 88.0 ms | 284 MiB | CuPy/ASTRA: 432 ms, 814 MiB |
-| 256³ | 8 | 87.2 ms | 220 MiB | CuPy/ASTRA: 431 ms, 814 MiB |
-| 512³ | 16 | 518 ms | 678 MiB | CuPy/ASTRA: 3085 ms, 1262 MiB |
-| 512³ | 8 | 615 ms | 430 MiB | native ASTRA 2D: 3072 ms, 156 MiB |
+| Size | Slices per slab | Warm time | Peak GPU memory | Fastest external warm (peak GPU) |
+| --- | ---: | ---: | ---: | --- |
+| 256³ | 16 | 88.0 ms | 284 MiB | CuPy/ASTRA: 432 ms (814 MiB) |
+| 256³ | 8 | 87.2 ms | 220 MiB | CuPy/ASTRA: 431 ms (814 MiB) |
+| 512³ | 16 | 518 ms | 678 MiB | CuPy/ASTRA: 3085 ms (1262 MiB) |
+| 512³ | 8 | 615 ms | 430 MiB | native ASTRA 2D: 3072 ms (156 MiB) |
 
-`FourierConfig(slices_per_batch=8, backend="cupy")` selects eight slices.
-ASTRA's slice-wise native 2D FBP uses the least memory.
+Set `FourierConfig(slices_per_batch=8, backend="cupy")` to trade slight throughput for lower VRAM; ASTRA's slice-by-slice 2D FBP uses the least GPU memory.
 
 ## Several GPUs
 
-Measured 2026-10-08 on commit `a3a925b`, on four H100 80 GB GPUs in one Modal
-machine. The run is 20 non-negative FISTA iterations on the binned FIPS walnut
-(three orbits, every fourth view: 900 views of 486 × 384 pixels, 501³ voxels),
-with views shared among the GPUs by `devices=`. Each time is the second call:
+Measured 2026-10-08 (`a3a925b`) on four H100 80 GB GPUs on Modal: 20 nonnegative FISTA iterations on the binned FIPS walnut (3 orbits, every 4th view = 900 views of 486 × 384, 501³ grid) using `devices=`. Warm (second-call) times:
 
-| GPUs | Time (s) | Speedup | Volume vs one GPU (relative L2) |
-|---:|---:|---:|---:|
-| 1 | 24.8 | 1.00 | — |
-| 2 | 13.6 | 1.83 | 2.9e-7 |
-| 4 | 7.4 | 3.34 | 2.9e-7 |
+| GPUs | Warm time (s) | Cold time (s) | Speedup | Diff vs 1 GPU (rel. L2) |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 24.8 | 27.4 | 1.00× | — |
+| 2 | 13.6 | 15.8 | 1.83× | 2.9e-7 |
+| 4 | 7.4 | 9.5 | 3.34× | 2.9e-7 |
 
-First calls, which compile, took 27.4, 15.8 and 9.5 s. The difference from one
-GPU is the order of the cross-device sum. Each GPU still runs the solver's
-volume-sized updates, which do not shrink with more GPUs, and the 0.5 GB volume
-sum crosses NVLink once per iteration. ASTRA and TIGRE were not run on this
-machine, so these numbers are not a comparison with them.
-
-## Images
-
-[images/README.md](../images/README.md) says how each README figure was made:
-the synthetic ones are traced by gVXR from meshes, not simulated with TomoJAX's
-own projector. The [historical DIAD laminography images](../images/README.md#historical-real-data-illustrations)
-show qualitative use on real data; their raw scan and configuration are not
-bundled, so they cannot be reproduced.
-
-### Host-staged pose-column reuse
-
-This comparison belongs to the retired coupled engine; it is not a benchmark of `_joint`.
-
-On 2026-10-27, `b7e67359` was measured on I13 159815: sample views
-`0:3000:16`, detector rows `1048:1112`, columns `441:1869`, binned 4×4 to
-188×16×357. Both arms forced host staging of the same five-parameter,
-12-CG-step joint update. The command was
-`XLA_PYTHON_CLIENT_PREALLOCATE=false python shared/agent06-cache/kill_cache.py --full --steps 12`.
-
-| Input | Uncached first / warm call (s) | Cached first / warm call (s) | Warm ratio |
-|---|---:|---:|---:|
-| Original | 8.035 / 1.018 | 3.178 / 0.591 | 1.72× |
-| Injected horizontal motion | 1.039 / 1.037 | 0.582 / 0.622 | 1.67× |
-
-Arms were interleaved four times; warm time is the median of the last three
-calls. First-call times include any compilation not already shared by earlier
-calls, not fresh-process startup. Image and pose increments were bit-identical
-(reference agreement, not accuracy). Known cubic-interpolated motion of up to
-10 native pixels gave the same single-step differential RMS error, 4.2345 px,
-after removing the common-object sine/cosine translation gauge. This is not a
-successful motion-recovery or converged full-resolution alignment test.
-The paired process peaked at 352 MiB sampled GPU memory and 1.529 GiB host RSS;
-the column cache occupied 20.48 MiB. These measurements isolate host staging,
-not the automatic choice for a small scan that fits entirely on the GPU.
+Volume-sized solver updates stay constant per GPU and a 0.5 GB volume reduction crosses NVLink once per iteration.
 
 ## Calibrated detector count noise
 
-`tomojax.datasets.DetectorModel` estimates effective photon gain and read noise
-from repeated flats/darks and draws Poisson/read noise before flat correction.
-The following **T2 held-out-flat** check calibrates on the first temporal half
-and evaluates independent adjacent-frame differences in the second half. It
-measures noise, not reconstruction accuracy or complete ring realism.
+`tomojax.datasets.DetectorModel` fits photon gain and read noise from repeated flats and darks (`b608d187`, `0199b919`). Calibrating on the first half of flats and evaluating adjacent-frame log differences on the second half (16 rows, 100 exposures):
 
-On 2026-10-27, commit `b608d187`, seed 705, the first/repeated calls generated
-100 flat exposures on a 16-row cut. Both observed and generated log differences
-used the same column high-pass (Gaussian sigma 8, 32-column edge exclusion).
+| Scan cut | Simulated / observed RMS | Adjacent-row correlation error |
+| --- | ---: | ---: |
+| Diamond I13 159815, rows 1080:1096, cols 441:1869 | 0.960 | −0.0095 |
+| Diamond I12 3339629, rows 1048:1064, all cols | 1.002 | −0.0085 |
+| ESRF bamboo, rows 262:278, all cols (1 dark; read noise assumed 0) | 1.002 | −0.0395 |
 
-| Scan and training rows | Simulated/observed RMS | Adjacent-row correlation error | First/repeated draw (s) |
-|---|---:|---:|---:|
-| I13 159815, 1080:1096, columns 441:1869 | 0.9601 | -0.0095 | 0.113/0.113 |
-| I12 3339629, 1048:1064, all columns | 1.0022 | -0.0085 | 0.216/0.213 |
-| ESRF bamboo reduced, 262:278, all columns | 1.0019 | -0.0395 | 0.052/0.050 |
+Propagating finite-reference noise through 360-view full-turn FBP across Gaussian difference bands (σ = 1, 2, 4, 8 px) yields pooled simulated/observed RMS ratios of 0.919–1.100 across all three facilities (individual annuli span 0.661–1.300 on ESRF, 0.893–1.080 on I12/I13).
 
-All pass the frozen RMS-within-20% and correlation-error-within-0.1 thresholds.
-An equally calibrated independent Gaussian baseline also passes; these data do
-not require a more complicated spatial noise model at those tolerances. ESRF
-has one dark frame: its read noise is explicitly assumed zero, not measured.
-The effective gain can absorb unseparated noise under that assumption.
+Two real-detector effects are outside the independent-pixel Poisson + read-noise model:
 
-Command: `LAB_ARTIFACTS=artifacts/agent05-count-statistics JAX_PLATFORMS=cpu uv run
---no-sync python shared/agent05-detector/count_statistics_flux.py` in lab run
-`tomojax-20261027a`. The combined run used 620 MiB peak host RSS and no GPU memory;
-draw times exclude imports and reference loading. Finite-flat noise generates
-persistent row-specific errors, but sample-ring statistics and blind-judge
-indistinguishability remain unmeasured for this model.
+- **Heavy tails on ESRF:** excess kurtosis differs by 0.30–4.81 across signal quintiles (versus ≤ 0.39 on I12 and I13) due to sparse transient artefacts.
+- **Spatial correlation on I13 159850:** averaging over 64 to 2048 columns raises observed/predicted RMS ratios from 1.01 to 3.18 (pre-scan flats) and 1.02 to 1.55 (post-scan flats), because correlated flat fluctuations do not average down as `1/sqrt(N)`.
 
-A stricter tail check on the same frozen split (commit `b608d187`, seed 705,
-`shared/agent05-detector/noise_tails_flux.py`) divides pixels into five first-half
-signal quintiles. RMS ratios remain within 20% for every group, but ESRF's
-excess-kurtosis discrepancy is 0.300–4.811, exceeding the 0.5 gate in four of
-five groups. I12 and I13 pass all five groups, with maximum discrepancies
-0.023 and 0.390. The model therefore fails ESRF's tail-distribution test despite
-matching its RMS; sparse transient contamination is not represented by its
-Poisson/read model.
+## Images
 
-### Finite-reference noise in reconstructed images
-
-A **T2 held-out-flat** check on 2026-10-28 (`0199b919`, seed 70552) propagates
-reference noise through a common centered, unit-pitch, 360-view full-turn FBP
-at each detector's native width. Calibration uses the first half of the flats;
-second-half adjacent log-flat differences are averaged over 50 pairs for I13
-and 12 for I12/ESRF. Simulations use two independent flat means with the same
-number of references. Both differences are divided by sqrt(2), conditional on
-a shared dark mean. Four fixed row offsets (0, 5, 10, 15) are scored in radial
-annuli 0.1–0.3, 0.3–0.6 and 0.6–0.9 of the image half-width.
-
-| Scan, rows (all columns) | RMS ratio, Gaussian difference bands sigma 1 / 2 / 4 / 8 px |
-|---|---:|
-| I13 159815, 1112:1128 | 0.985 / 0.941 / 0.919 / 0.994 |
-| I12 3339629, 1080:1096 | 1.064 / 1.006 / 0.969 / 0.953 |
-| ESRF bamboo reduced, 294:310 | 0.985 / 1.038 / 0.960 / 1.100 |
-
-Each band is the difference of Gaussian smoothings at sigma and twice sigma.
-Energies pooled over rows and annuli pass the frozen 20% RMS gate for all
-12 entries. Individual annuli do not all pass: ESRF ratios span 0.661–1.300;
-I13 and I12 span 0.893–1.013 and 0.934–1.080. These are finite-reference noise
-statistics under a standardized scoring geometry, not native total-ring
-statistics or a demonstration of realistic detector drift.
-
-Command: `JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 LAB_ARTIFACTS=artifacts/reference-image
-uv run --no-sync python shared/agent05-detector/reference_image_statistics.py`
-in lab run `tomojax-20261027a`. Combined time was 39.81 s, peak host RSS 922 MiB,
-GPU memory zero. First/repeated FBP calls were 1.254/0.644–0.707 s for I12 and
-0.152/0.044–0.049 s for ESRF; I13 reused the 2560-column compilation.
-
-The independent-pixel law does not predict all spatial averages. On I13 159850
-(2026-10-28, numerical source `0199b919`), adjacent differences of the first
-20 pre-flats and last 20 post-flats were averaged over a symmetric detector
-window at offset -128.6201 px. Rows 8:1056 and 1105:2152 were retained; the first
-10 darks were shared. With gain 1.78546 and read noise 4.38286 counts, removing
-an affine row trend in each interval gave observed/predicted row-mean RMS
-ratios 1.929 and 1.585. With only a per-frame constant removed, column-bin
-widths 1/64/256/1024/2048 gave ratios 1.013/1.162/1.495/2.384/3.176 before the
-scan and 1.024/1.063/1.136/1.353/1.549 after it. Small pixel-level discrepancies
-therefore do not establish correct uncertainty after averaging many columns.
-
-Commands: `i13_vertical_flat_variance.py` and `i13_column_noise.py` under
-`shared/agent05-detector/`, with the CPU environment above. They took 9.15 and
-6.85 s, with peak host RSS 318 and 409 MiB and no GPU allocation. These
-conditional calibration-noise diagnostics do not identify the physical source
-of the dependence; the simulator has no correlated-noise component.
-
-## Weighted alignment background profiling
-
-Measured 2026-10-27 on `cf827cf8`, CPU, with
-`JAX_PLATFORMS=cpu uv run --no-sync python artifacts/agent07/weighted_profile_kill.py`
-(the experiment script is archived outside the package). Native-texture joint
-alignment profiles row offsets and a shared detector slope after whitening,
-using the same orthogonal projection in the forward map, transpose and pose
-Jacobian. Per-pixel weights can exclude observations from the background fit.
-
-On I13 159815, row 1080, columns 441:1869, every 40th view of the frozen
-`0:3000:8` selection and every fourth column, a masked block and a completely
-excluded view give relative agreement `1.37e-7` with an independent dense
-weighted least-squares projection. The adjoint inner-product discrepancy is
-`5.82e-7`; replacing excluded measurements by 1234 changes the result by zero.
-This is numerical agreement and exclusion integrity, not motion accuracy.
-First/repeated filter evaluations take 0.0325/0.000553 s, excluding imports and
-file reading; peak process host memory is 615 MiB and GPU use is zero.
-
-Fourier resampling of measured rows can transfer excluded observations into
-training data; weighted background profiling alone does not prevent that leak.
+See [images/README.md](../images/README.md) for how the README figures were generated (all synthetic watch figures use gVXR ray-traced meshes rather than TomoJAX's projector) and provenance notes for historical DIAD laminography images.

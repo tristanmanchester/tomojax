@@ -73,7 +73,7 @@ tomojax export recon.nxs -o slices/
 
 A file that records the pixel size but not the rotation centre (external
 NXtomo or Data Exchange, ESRF Bliss or EDF) loads with the centre at the middle
-of the detector, and `recon` says so. Fit the centre first:
+of the detector, and `reconstruct` reports that status. Fit the centre first:
 
 ```bash
 tomojax align scan.h5 -o aligned.nxs --fit center
@@ -83,5 +83,5 @@ tomojax reconstruct aligned.nxs -o recon.nxs
 Nikon scans record no dark field: `--darks` takes a dark image or one level,
 and `--darks 0` suits only counts that are already dark-corrected.
 `align --fit center roll` estimates the cone detector's centre and roll,
-and `recon` uses them. `previews/` then holds `slice_z.png`, `slice_y.png` and
+and `reconstruct` uses them. `previews/` then holds `slice_z.png`, `slice_y.png`, and
 `slice_x.png`. See the [lab cone-beam CT guide](../../../docs/lab-ct.md).

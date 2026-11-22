@@ -1,303 +1,54 @@
 # Known limitations
 
-The shipped package covers the workflows listed in
-[`support-matrix.md`](support-matrix.md), including one joint alignment solver for selected
-translations, rotations and global geometry corrections.
+## Reconstruction and regularisation
 
-## Reconstruction detail and regularization
-
-On synthetic data scored against truth, FISTA-TV is more accurate than FBP.
-On phase-contrast data, FISTA-TV renders propagation fringes as smooth bands
-where FBP keeps the bright and dark fringe pair; more iterations do not bring
-the pair back. Apply the alignment poses (`Scan.with_poses`) before comparing
-methods on a real scan: residual motion blurs edges in every method and can
-be mistaken for regularization.
-
-The automatic TV minimum is normalized in physical coordinates, so changing
-voxel pitch does not require an additional power-of-pitch weight correction.
-The edge width still depends on the object, the forward model and the discrete
-TV penalty.
-
-## Alignment limitations
-
-Alignment needs scan-specific review. Use the
-[alignment guide](align-a-scan.md#check-the-result) to choose parameters and check the result.
-
-- `fit="translations"` is the default for every geometry. It cannot correct a missing global
-  tilt or roll, or per-view rotation. Add the corresponding parameter only when it explains a
-  remaining artefact. A roll can leave the central slice almost unchanged while blurring slices
-  above and below it.
-- On a half-turn parallel scan, a slow drift of about 0.1 px across the scan is only weakly
-  determined: the fit may leave it, and the reconstruction is unaffected.
-- On a half-turn parallel scan, `fit=("translations", "tilt")` can overshoot the tilt by a few
-  tenths of a degree: on a synthetic sandstone scan it fitted −0.76° for a true −0.35°.
-- A sudden slip of about a pixel between neighbouring views is followed about 8% short: on a
-  synthetic sandstone scan the fit moved 0.88 px for a 0.95 px slip, and 0.80 px with
-  `motion="smooth"`.
-- When the sample extends past the detector, the outermost slices are unreliable, aligned or
-  not: reconstructed with the true poses they are as far from the truth.
-- The image and geometry are jointly estimated. Common rigid object motion is a gauge, and a
-  constant parallel-ray translation shares a gauge with the detector centre. Reported parameter
-  values depend on the stated gauge; they are not independent instrument measurements.
-- Per-view rotations are the two wobble components of the rotation axis; each view's angle
-  about the axis is taken as recorded, so an error in a view's recorded angle is not corrected.
-  Such errors are rare on real stages but not small when present: 0.07° RMS moves the features
-  of a simulated watch movement by 0.13 detector pixels RMS.
-  They carry a physical angular size prior and are tied to their neighbouring views, so a
-  rotation that jumps at one view (a broken frame, a diffraction flash) is expensive. This
-  limits unsupported motion but does not resolve repeated-pattern ambiguities. A TEM grid can match at a wrong orientation.
-  Finite detector pixels also average transmitted intensity before the logarithm, whereas the
-  linear projector fits line integrals. At sharp, strongly attenuating edges, that mismatch can
-  look like motion. A smaller residual alone does not establish more accurate poses.
-- The derivatives are local to interpolation cells and dominant ray axes. Sharp, poorly sampled
-  objects can give biased or weakly constrained geometry updates. Exact transpose semantics
-  establish a consistent discrete solve, not a complete physical forward model.
-- A diffracting crystal, detector fault, changing contrast or material outside the field of view
-  can create views that no pose explains. Robust residual weighting and the same-image-step
-  line-search comparison reduce those views' influence but cannot recover their missing physics.
-- `tj.align` assumes the whole sample moves as one body. On a sample whose parts move
-  relative to each other it can make the reconstruction worse than the scan as loaded.
-- The alignment image uses a bounded working scale while retaining the physical support and
-  original scan data. An explicit `grid=` fixes sampling and can exceed device memory. Cropping
-  support leaves attenuation outside it unmodelled.
-
-## Detector-ring correction
-
-`Stripes` subtracts each column's constant offset against a median of its
-neighbours. Near the rotation axis of a compact sample, a wide window leaves a
-faint ring or dot: on the PSI cSAXS porous glass, `Stripes(201)` changes the
-slice within about ten pixels of the axis by up to a third of its grey range.
-A broad stripe on a steep flank of the sample's profile is not seen. Offsets
-that change during the scan are corrected only by their median; on Diamond I13
-a faint broad ring remains, as it does in the beamline's own reconstruction.
-
-`Rings` separates detector response from object structure statistically. On four real parallel-scan cuts, known injected
-response fields retain 28–61% of their RMS after differential correction.
-Independent off-axis analytic structure increments change by up to 11.1% on
-I13 and 0.9–3.7% on the other three scans; see the
-[ring measurements](measurements.md#detector-response-and-structure-controls).
-On six native I13 rows, off-axis image increments change by 6.7–17.4%,
-and a separate four-seed finite-reference test retains 48–83% of known added
-image-error RMS; see the
-[image-domain controls](measurements.md#calibration-backed-gaps-and-response-only-correction).
-Further image-domain checks fail the 5% no-harm gate on ESRF bamboo (28.5%)
-and Elettra (8.0%), despite sinogram-domain passes; see the
-[cross-facility controls](measurements.md#cross-facility-image-domain-controls).
-Review corrected and uncorrected structures, especially on moving samples.
-`Rings` fits angular bin means of about six views each on a 3000-view scan;
-pass `views=None` to fit every view when fine structure far from the axis
-crosses several columns within a bin.
-A centred radial feature and an even detector error are indistinguishable in
-a stationary full turn: correction of that component depends on the method's
-prior, not information uniquely supplied by the scan. Natural motion can
-supply extra calibration constraints, but `Rings` does not fit those constraints.
-`Rings` does not identify or interpolate dead pixels from the sinogram. Raw
-calibration fills bracketed pixels without measured illumination; other defective
-measurements require independent calibration evidence and repair before `Rings`.
-
-## Data and geometry boundaries
-
-- Projection-only centre reports apply to axial parallel scans. Pair intervals
-  describe a selected rigid matching mode, not ambiguous peaks or sample motion;
-  opposing shifts determine sums, not individual per-view motion. Row-centre
-  slope is an apparent detector trend, not a calibrated three-dimensional axis
-  tilt. Inspect the pair diagnostics when estimating a detector centre.
-  In five low-contrast gVXR mesh cases, wrong-mode errors reached a 3.91 px
-  p95 and the conditional 90% intervals covered only one truth; check competing
-  modes against an independent calibration rather than treating a narrow local
-  interval as a global accuracy certificate. Runtime reports mark global
-  coverage uncalibrated for every estimate, including a single pair without
-  a disagreement test.
-- `tomojax inspect` checks storage and missing calibration in recognized raw
-  acquisitions. A file that records no axial centre loads with the centre at the
-  middle of the detector; estimate it with `tj.align(fit="center")`, or quickly with
-  `method="opposite-views"`. A valid report does not certify physical geometry or
-  reconstruction readiness.
-- External HDF5 links require readable backing files at their recorded paths.
-  The loader reports missing detector sources; it does not repair damaged files
-  or guess relocated links.
-- Metadata-only files do not supply reconstruction observations. `tj.load`
-  requires an acquisition containing detector projections, even when a separate
-  metadata file describes its angles or instrument.
-- Flat/dark correction needs at least one detector pixel with resolved
-  illumination. If none exists, supply illuminated flats and matching darks,
-  or include an illuminated region in the crop. Unilluminated margins and
-  bracketed interior gaps are supported.
-- Zeiss frames are numbered image streams, not the planned `NoOfImages` count;
-  interrupted acquisitions load when their per-view metadata matches the stored
-  frames. Metadata-only drift records contain no reconstructible projections,
-  and missing interior image streams require a complete acquisition file.
-- MATLAB ptychography files are not raw detector-count acquisitions. Prepare
-  their complex transmission with the [ptychography example](../examples/align_ptychography.py)
-  before constructing a `Scan`. Walnut collection folders require their vector
-  geometry and calibration, as in the [walnut example](../examples/align_walnut_orbits.py).
-  2DeteCT folders require explicit fan/cone geometry and flat/dark correction;
-  the directory name does not supply that metadata to `load_frames`.
-- A TIFF stack is read as raw frames: `tomojax load` and `correct` need its
-  flats and darks. Already-corrected line integrals are built into a `tj.Scan` in
-  Python; reconstruction expects line integrals (log attenuation).
-- `tomojax correct` of generic TIFF frames requires `--pixel-size` and, unless the
-  middle, `--detector-center`; `--geometry` declares a non-parallel geometry. See
-  the [real scan guide](real-laminography.md#prepare-tiff-data).
-- Missing detector pixel sizes require `detector=` or `geometry=`. For axial
-  acquisitions with recorded pitch, an absent rotation centre is not estimated
-  at load: the scan has the centre at the detector middle and its record says
-  "not_recorded"; `tj.reconstruct` reports that status. Supply `detector=` or
-  fit it with `tj.align(scan, fit="center")`. Missing angles require `angles=`. See the
-  [quickstart](quickstart.md#correct-raw-detector-frames).
-- Content-discovered external acquisitions remain detector counts even when
-  stored as floats. Missing flat/dark calibration requires `flats=` (frames or
-  one level) and `darks=`; a floating dtype is not evidence of correction.
-  External NXtomo also requires frame labels (`image_key_path=`); Data Exchange
-  defines its separate `data` array as projections. TomoJAX dataset containers
-  store line integrals unless explicitly labelled as raw.
-- A laminography dataset without explicit tilt or axis metadata requires
-  `geometry=` in `tj.load_frames`; no 30° tilt is assumed.
-- `tomojax inspect --preview` PNGs are display-scaled central slices. Use the
-  floating-point dataset volume for quantitative analysis and honour its
-  recorded axis order.
-
-## Implementation limitations
-
-- Held-out projection error is not an image-error certificate. Tested CGLS
-  MSE selectors miss the best tested image iteration on 2DeteCT and Walnut
-  reference comparisons and an I13 injected-response control; see the
-  [stopping-rule limits](held-out-evaluation.md#stopping-rule-limits).
-  Held-out iteration and regularisation selection are not automatic.
-- The explicit CUDA Joseph projection API supports first-order derivatives
-  for linear and cubic interpolation. Cubic has negative lobes, can overshoot,
-  and uses a larger stencil; it does not remove physical support truncation or
-  poor pose observability. The alignment default uses linear interpolation;
-  requesting any angular parameter uses cubic interpolation for parallel rays.
-  Use the JAX reference for higher derivatives, and parameterise poses as rigid
-  transforms. Derivatives are local to the selected dominant axis and
-  interpolation cell. The fused loss is unweighted half squared error; other
-  losses use the differentiable projector. The alignment pipeline does not
-  call the fused loss or pose normal equations.
-- Cone-beam scans: FDK assumes a circular source orbit (it is exact only in
-  the orbit plane, with cone artefacts growing away from it) and supports full
-  turns, including offset-detector (half-fan) turns weighted by actual
-  conjugate-panel coverage, and Parker-weighted short scans, whose weights an
-  offset detector shares only between rays that were both measured. The
-  iterative solvers model any per-view poses exactly. Cone-beam
-  projection needs the canonical detector grid (no `detector_roll`
-  replay grid; detector roll is part of `ConeBeam`). The CUDA kernels need
-  CuPy; without it the JAX reference runs, about ten times slower. On CUDA
-  the matched transpose is slower than ASTRA's approximate backprojector (see
-  [measurements](measurements.md#cone-beam-projection-and-fdk)). CUDA forward
-  projection supports first-order pose and volume derivatives;
-  Gauss–Newton evaluates analytic pose columns in one ray traversal. Derivatives
-  hold the dominant ray axis and bilinear cell fixed; use the JAX reference for
-  higher derivatives. Joint alignment can fit detector centre, roll and a shared axis-tilt
-  correction. It does not fit detector pitch or yaw, the source distances or arbitrary detector
-  deformation. The
-  [cone-setup alias measurements](measurements.md#cone-setup-aliases-and-a-conditional-calibration-test)
-  show exact redundancies under unrestricted per-view poses; they do not
-  provide uncertainty or identify a calibrated setup. A fixed-pose Walnut
-  focal-distance test fails the 1% held-out correspondence improvement gate.
-- FBP weights every view exactly for rotation about one fixed axis, at any
-  tilt, arc length or angular spacing. It cannot recover frequencies no view
-  measured: laminography's missing cone reconstructs as zero, so FBP gives
-  elongated features along the rotation axis. Iterative solvers can recover
-  part of the cone only through a bounded volume or a prior.
+- **Laminography missing cone:** FBP reconstructs every measured frequency accurately and leaves the unmeasured cone around the rotation axis empty, elongating features along the axis. Iterative solvers (FISTA-TV with nonnegativity) recover part of the missing cone from volume bounds and priors, at the cost of slight smoothing of fine in-plane detail.
 
   ![A sandstone slab in laminography: in-plane slices and vertical sections of the truth, FBP and FISTA-TV. In the FBP section the grains are smeared along the axis and the slab has no top or bottom; FISTA-TV restores the slab's faces but blurs the grains.](images/rock-missing-cone.png)
 
-  A 0.28 mm sandstone slab with a known truth, simulated in 35° laminography
-  with 720 views. FBP leaves the cone empty: its relative error inside the slab
-  is 0.555. FISTA-TV with nonnegativity and its automatic weight recovers the
-  slab's faces from the volume's bounds and its prior, error 0.210, and blurs
-  the finest detail in the slice.
+  A 0.28 mm sandstone slab simulated in 35° laminography (720 views): FBP leaves the missing cone empty (relative error 0.555 inside the slab), while nonnegative FISTA-TV restores the slab faces from bounds and total variation (error 0.210) while slightly smoothing the finest grains:
 
   ```bash
   uv run python examples/gallery/rock_missing_cone.py rock-missing-cone.png
   ```
-- FBP retains filtered tails across the full volume, assuming zero raw
-  attenuation outside the measured detector. This does not recover missing
-  measurements of a truncated object. Explicit detector coordinates
-  (`det_grid`) must be the detector lattice rotated and shifted in its plane,
-  such as a fitted detector roll; FBP moves the poses to match and weights them
-  as any other scan.
-- CUDA projector paths are optional accelerator backends. Parallel FBP selects
-  CUDA C kernels automatically on CUDA; `FBPConfig(backend="jax")` selects JAX.
-  Reference/JAX paths and independent analytic data both validate correctness.
-- `fourier_reconstruct` is an opt-in, non-differentiable Fourier-slice inverse
-  for built-in parallel half-turn scans, including nonuniform encoder angles,
-  rejected views and repeated or opposing exposures. It rejects tilted/custom
-  geometry. Its disk frequency cutoff and angular interpolation differ from FBP
-  and can produce artefacts on sharp or undersampled scans; a large missing
-  angular sector is interpolated, not recovered. Missing detector data are
-  assumed zero, without truncation correction. CUDA requires the optional
-  `fourier-cuda12` extra; the NumPy reference is the default. Full
-  projection/output storage stays on the host,
-  while FFT plans, slab arrays and allocator caches add device memory.
-- Most iterative solvers need the whole volume and several work arrays on the
-  GPU. Cone-beam MLEM/OSEM can keep the volume in host memory; unposed axial
-  parallel SIRT/MLEM can run in independent slabs. Raw-frame FBP and FDK with
-  `tj.reconstruct_slabs` need neither the whole corrected stack nor the output
-  volume in host memory. Several GPUs (`devices=`) share views, not the storage
-  of a device-resident volume. SPDHG-TV and `fbp_host` run
-  on one GPU, the `tomojax` commands always use one, and the GPUs must belong
-  to one process. [Large scans and several GPUs](large-scans.md) says which
-  solvers stream projections from host memory and what each GPU holds.
-- SPDHG-TV keeps five volumes on the GPU (its iterate, its accumulated data backprojection
-  and the three TV duals), so a volume must fit there five times: a 1014³ grid (3.9 GiB a
-  volume) does not on an 8 GB card. FISTA, CGLS and SIRT keep such a volume in host memory.
-- Alignment fixes an object's position only up to what the data can see. Cone translations
-  include along-beam motion, but the common rigid gauge remains unobservable. Compare geometry
-  after one rigid gauge and include detector-centre changes in detector-space scores.
-- CUDA projectors compile C kernels with NVRTC. Install `tomojax[cuda12]` and
-  a working NVIDIA driver; see [installation](installation.md).
-- `just accelerator-smoke` verifies the portable reference mode on
-  CPU and attempts CUDA kernels when JAX reports a CUDA backend.
-  Real CUDA coverage therefore depends on the host CUDA/JAX installation, not
-  only this package. Use `just accelerator-smoke-cuda` on CUDA hosts that must
-  prove the real accelerator path is available. `just test-cuda` additionally
-  runs every test with the GPU visible, numerical tests of real kernels
-  included; ordinary CPU CI skips those cases.
-- The published timings cover one laptop GPU (and four H100 GPUs for the
-  several-GPU runs), synthetic phantoms and the FIPS walnut. The exact
-  cone-beam transpose is slower than ASTRA's
-  approximate voxel-driven backprojector, most of all when the detector
-  samples finer than the grid; bin such detectors (`Scan.binned`).
-  The TIGRE benchmark adapter also represents calibrated cone vectors,
-  including detector offsets and per-view rotations; comparisons must retain
-  those calibrations rather than substituting a circular centred scan.
 
-## Raw ESRF, HDF5 and Nikon inputs
+- **Phase-contrast fringes under FISTA-TV:** on propagation phase-contrast data, FISTA-TV smooths bright/dark fringe pairs into bands even at high iteration counts, whereas FBP preserves them. Align scans before comparing solvers so motion blur is not mistaken for regularisation.
+- **FDK approximation:** FDK assumes a circular orbit, is exact only in the midplane, and develops cone artefacts at larger cone angles. Use an iterative solver (`cgls`, `fista`, `sirt`) for wide cones or multi-orbit scans.
+- **Detector truncation:** FBP zero-extends filtered tails across the output grid and `fourier_reconstruct` assumes zero attenuation outside the detector; neither recovers truncated mass. For iterative solvers with material outside the field of view, pass `data_term="per_view_contrast"` (which leaves the absolute background offset undetermined).
+- **Fourier-slice inverse (`fourier_reconstruct`):** supports axial parallel scans only (rejects tilted axes and rotational poses), is non-differentiable, and interpolates across missing angular sectors rather than recovering them; its disc frequency cutoff and angular interpolation can introduce artefacts on sharp or undersampled data.
+- **No automatic held-out stopping:** held-out projection MSE systematically over- or under-iterates relative to image error on real scans (see [stopping-rule limits](held-out-evaluation.md#stopping-rule-limits)), so iteration counts and regularisation weights are not chosen automatically by cross-validation.
 
-ESRF raw Bliss and SPEC EDF metadata do not establish a calibrated detector
-centre: it must be estimated from data or supplied. SPEC scan range alone also
-needs explicit `angles=`; accumulated darks without `DARK_N` need `darks=`.
-An explicit PyHST `.par` supplies its own angles and rotation axis, but only
-raw single-image EDFs with fixed axial parallel geometry are supported. PyHST
-multi-frame, cone, helical, binning and distortion modes are rejected. Every
-projection and calibration file named by the selected input must be available.
-Cropping the detector preserves an explicit PyHST output grid; supply `grid=`
-for a smaller preview or use slab reconstruction for a volume larger than memory.
+## Alignment
 
-An explicit file-owned reconstruction grid survives detector cropping. The
-ESRF `scan_3_.par` fixture specifies 2048×2048×1200 voxels: one float32 volume
-alone needs 20,132,659,200 bytes; under an 18 GB memory limit it loads but does
-not reconstruct. Supply a smaller `grid=` to `tj.load_frames` when the file grid
-exceeds available memory.
+See [align a scan](align-a-scan.md#check-the-result) for choosing `fit=` parameters and checking results.
 
-HDF5 virtual detector stacks require all referenced pixel files and mapped
-regions to be present; missing sources are errors, not zero-filled exposures.
-An unreadable external-root master needs its referenced files and datasets restored;
-its link names and targets are reported when no detector stack can be found.
+- **Rigid-body assumption:** `tj.align` assumes the whole sample moves rigidly. Deforming or independently moving parts can make an aligned reconstruction worse than the input.
+- **Unobservable gauges:** a global rigid shift of the object (and, in parallel beam, a constant translation traded against `Detector.center`) leaves projections unchanged. Remove one common rigid transform before comparing pose tables, and treat weakly constrained globals (such as cone detector-v) as gauge-dependent rather than standalone instrument calibrations.
+- **Unmodelled view-angle errors:** `"rotations"` fits the two wobble components of the rotation axis and keeps each view's recorded encoder angle fixed. Encoder errors are not corrected (0.07° RMS angle error shifts features by 0.13 px RMS on the watch phantom).
+- **Sensitivity limits on parallel half-turns:** slow drift around 0.1 px across a half-turn is weakly constrained (with negligible image effect); `fit=("translations", "tilt")` can overshoot parallel tilt (fitting −0.76° for a true −0.35° on a synthetic sandstone scan); and a 1 px sudden slip is followed ~8% short (0.88 px for a 0.95 px slip, or 0.80 px with `motion="smooth"`).
+- **Periodic structures and edge mismatch:** per-view rotations can lock onto wrong orientations on periodic samples such as TEM grids. At sharp, high-attenuation edges, finite-pixel transmission averaging differs from linear ray integration and can mimic small shifts.
+- **Outliers and truncation:** broken frames, diffraction flashes, or truncated boundaries outside the grid cannot be explained by rigid motion; robust weighting reduces their pull, and `RejectViews()` should be used for bad frames. Outermost slices on truncated samples remain unreliable with or without alignment.
+- **Cone-beam calibration limits:** joint alignment fits detector centre, detector roll, and shared axis tilt, not detector pitch/yaw, source distances, or detector warp. Under unrestricted 6-DOF per-view poses, source-radius/orbit-height shifts and uniform camera scaling are exact geometric aliases ([cone-setup aliases](measurements.md#cone-setup-aliases-and-a-conditional-calibration-test)).
+- **Projection-only centre (`method="opposite-views"`):** applies to axial parallel scans only. On low-contrast objects or tilted axes, competing correlation peaks can produce large errors (up to 3.9 px p95 on low-contrast gVXR cuboids, and 1.0 px at 1° tilt), and reported 90% intervals cover only local peak matching, not global mode ambiguity.
 
-Nikon vendor reconstruction regions (including `OffsetX/Y/Z`) remain source
-metadata and are not applied: their coordinate mapping is not established.
-TomoJAX uses its own acquisition field-of-view grid unless `grid=` is supplied.
-Missing detector offsets or axis calibration require explicit geometry.
+## Ring and stripe correction
 
-## Ring-correction differentiation
+- **`Stripes`:** subtracts each column's median offset against its neighbours. Wide windows on compact samples can leave a faint ring or dot within ~10 pixels of the rotation axis (up to a third of the grey range on PSI cSAXS with `Stripes(201)`), broad stripes on steep sample flanks are missed, and time-varying offsets are only partly removed by their median.
+- **`Rings`:** separates detector response from object structure statistically (or via mirror symmetry on full-turn parallel scans). In injected-perturbation controls across real scans, 28–61% of injected detector-field RMS remained, and off-axis analytic features shifted by 0.9–11.1% in sinograms and up to 28.5% (ESRF bamboo) and 8.0% (Elettra) in reconstructed images ([ring measurements](measurements.md#detector-response-and-structure-controls)). Centred circular sample features and even detector errors are indistinguishable on a stationary full turn, and `Rings` does not detect or interpolate dead pixels (calibration handles bracketed unilluminated pixels).
+- **Differentiation:** full-turn `Rings` uses tiled CUDA kernels in `float32` that do not support automatic differentiation; CPU and `float64` run the JAX path.
 
-Full-turn ring correction uses tiled CUDA kernels for its adaptive spatial
-reference in float32. The kernels retain the weighted quadratic fits, robust
-scatter, correlations and noise blending, but do not provide automatic
-differentiation through that reference. CPU and float64 retain the JAX
-implementation. CUDA fits use a weighted polynomial basis and retain its full
-Gram matrix; they are mathematically equivalent, not bit-identical, to the
-JAX normal-equation solves.
+## Performance, memory, and derivatives
+
+- **Exact cone-beam transpose speed:** TomoJAX's exact cone-beam transpose is slower than ASTRA's approximate voxel-driven backprojector, especially when the detector is much finer than the voxel grid (bin with `scan.binned(...)` when the detector is ≥2× finer).
+- **Memory limits:** SPDHG-TV requires five volumes in VRAM (a 1014³ volume needs ~19.5 GiB and does not fit on an 8 GB GPU; use FISTA-TV, CGLS, or SIRT for host-slab execution). Passing an explicit `grid=` to `tj.align` disables working-grid coarsening and can exceed VRAM.
+- **Multi-GPU scope:** `devices=` distributes views across GPUs in a single process (no multi-node support) and cannot be combined with host streaming. `spdhg`, `fbp_host`, `tj.align`, and CLI commands use one GPU.
+- **CUDA derivatives and cubic interpolation:** CUDA Joseph kernels support first-order volume and pose derivatives only (use JAX for higher-order AD), with local derivatives that hold the dominant ray axis and interpolation cell fixed. Cubic interpolation (`interpolation="cubic"`) has negative lobes, can overshoot nonnegative data, and uses a wider 4 × 4 stencil.
+- **CUDA requirement:** GPU kernels require `tomojax[cuda12]` and a working NVIDIA driver; without CuPy, cone-beam kernels fall back to the JAX reference (~10× slower).
+
+## File formats and external data
+
+- **No helical scans or scatter modelling:** TomoJAX models circular cone orbits and flat detectors, uses single-material beam-hardening curves, and does not model X-ray scatter.
+- **Unapplied vendor metadata:** Nikon `OffsetX/Y/Z` reconstruction regions and vendor beam-hardening parameters (Nikon, Zeiss, Bruker) are stored in metadata without being applied automatically.
+- **PyHST `.par`:** supports raw single-image axial parallel EDFs only (rejects multi-frame, cone, helical, binning, and distortion modes). Large file-owned grids (such as 2048² × 1200, 20.1 GB in `float32`) survive detector cropping; pass a smaller `grid=` or use `tj.reconstruct_slabs` if memory is tight.
+- **External HDF5 links and Zeiss streams:** missing backing files for HDF5 virtual datasets and missing interior Zeiss image streams raise errors rather than zero-filling. Interrupted Zeiss scans load only while stored frames match per-view metadata.
+- **Custom benchmark layouts:** raw complex MATLAB ptychography (`stack_object`), FIPS walnut directories, and 2DeteCT folders require explicit preparation scripts (see [examples/README.md](../examples/README.md)).
