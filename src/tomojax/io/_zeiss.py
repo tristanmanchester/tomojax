@@ -45,8 +45,11 @@ class _OleFile(olefile.OleFileIO):
 class _ZeissFrames(FrameStack):
     """A logical window of OLE image streams, in their recorded row order.
 
-    Each indexing request opens its own file; neither discovery nor
-    cropping reads image pixels. Reads touch only the requested image rows.
+    Xradia stores each image's columns in the opposite sense to detector u, so a
+    read reverses them: with the recorded column order a reconstruction is the
+    mirror image of the sample (see :func:`_record`). Each indexing request opens
+    its own file; neither discovery nor cropping reads image pixels. Reads touch
+    only the requested image rows.
     """
 
     path: str
@@ -78,7 +81,7 @@ class _ZeissFrames(FrameStack):
                         source, self.fat, self.sector_size, self.starts[index], offset, size
                     )
                 frame = np.frombuffer(raw, dtype=self.dtype).reshape(self.rows, self.image_shape[1])
-                result[destination] = frame[:, cols]
+                result[destination] = frame[:, ::-1][:, cols]
                 del frame, raw
         return result
 
@@ -323,8 +326,9 @@ def _offsets(container: Any, count: int) -> tuple[np.ndarray | None, float | Non
 
     ``AutoRecon/CenterShift`` adds to the horizontal image shifts. Its sign was
     checked against the vendor's own reconstruction of a scan that records it:
-    the other sign doubles every small feature into a ring. Acquisition binning
-    is already in the pixel calibration.
+    the other sign doubles every small feature into a ring. The horizontal shifts
+    are returned along detector u, which runs against the stored columns.
+    Acquisition binning is already in the pixel calibration.
     Only a reconstruction setup writes it, so a raw scan may lack it. An interrupted
     acquisition records its shift tables at the planned length (``NoOfImages``), the
     stored views first, while its angles and exposures cover the stored views only.
@@ -344,13 +348,20 @@ def _offsets(container: Any, count: int) -> tuple[np.ndarray | None, float | Non
                 f"({planned} declared); supply an acquisition with matching shift records"
             )
         columns.append(np.broadcast_to(values, (count,)))
-    shifts = np.column_stack(columns).astype(np.float64)
+    shifts = np.column_stack(columns).astype(np.float64) * (-1.0, 1.0)
     center = "AutoRecon/CenterShift"
     return shifts, _scalar(container, center, "<f4") if container.exists(center) else None
 
 
 def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> ProjectionDataset:
-    """Keep incomplete calibration separate from the image storage contract."""
+    """Keep incomplete calibration separate from the image storage contract.
+
+    The orientation is the vendor's: with the columns reversed and a view's angle
+    taken as 180 degrees less the recorded one, a reconstruction matches Xradia's
+    own volume of the same scan voxel for voxel, and a snail shell comes out with
+    the handedness of the shell itself. The recorded columns and angles as they
+    stand give its mirror image.
+    """
     count, rows, cols = shape
     pixel = (
         _scalar(container, "ImageInfo/pixelsize", "<f4") / 1000
@@ -358,7 +369,7 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         else None
     )
     angles = (
-        _values(container, "ImageInfo/Angles", "<f4").copy()
+        (180.0 - _values(container, "ImageInfo/Angles", "<f4")).astype(np.float32)
         if container.exists("ImageInfo/Angles")
         else np.empty(0, np.float32)
     )
@@ -424,7 +435,7 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
     if pitch is not None and shifts is not None and cone is not None:
         # The shifts are measured from the recorded centre; a raw scan with no
         # reconstruction setup records none, and its shifts are measured from the middle.
-        center = (pitch * (center_shift or 0.0), 0.0)
+        center = (-pitch * (center_shift or 0.0), 0.0)
         record = with_view_offsets(record, Detector(cols, rows, pitch, pitch, center=center))
     known = record.detector is not None and center_shift is not None
     record.geometry_metadata["detector_center_status"] = "recorded" if known else "not_recorded"

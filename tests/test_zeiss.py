@@ -168,7 +168,7 @@ def _check_missing_zeiss_inputs(path, streams, frames, counts):
         dropped = key != "alignment/y-shifts"
         with pytest.warns(UserWarning, match="geometry= replaces") if dropped else nullcontext():
             explicit = tj.load_frames(path, geometry=frames.geometry, darks=0)
-        np.testing.assert_array_equal(explicit.counts[:], counts)
+        np.testing.assert_array_equal(explicit.counts[:], counts[:, :, ::-1])
     write_ole(path, {k: v for k, v in streams.items() if k != "ReferenceData/DataType"})
     with pytest.raises(ValueError, match="flats="):
         tj.load_frames(path, darks=0)
@@ -211,17 +211,20 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     frames = tj.load_frames(path, darks=0)
     assert frames.source.geometry_metadata["zeiss"]["declared_view_count"] == declared_count
     assert not isinstance(frames.counts, np.ndarray)
-    np.testing.assert_array_equal(np.asarray(frames.counts), counts)
+    # Detector u runs against the stored columns, and a view's angle is 180 degrees
+    # less the recorded one: the orientation of Xradia's own reconstruction.
+    along_u = counts[:, :, ::-1]
+    np.testing.assert_array_equal(np.asarray(frames.counts), along_u)
     np.testing.assert_array_equal(np.asarray(frames.flats)[0], reference)
     crop = frames.selected([1, 2]).cropped(slice(2, 6), slice(3, 9))
-    np.testing.assert_array_equal(np.asarray(crop.counts), counts[1:, 2:6, 3:9])
+    np.testing.assert_array_equal(np.asarray(crop.counts), along_u[1:, 2:6, 3:9])
     scan = tj.load_frames(path, darks=0).corrected()
-    np.testing.assert_allclose(scan.projections, -np.log(counts / reference), rtol=2e-6)
-    np.testing.assert_array_equal(scan.angles, [0, 90, 180])
+    np.testing.assert_allclose(scan.projections, -np.log(along_u / reference), rtol=2e-6)
+    np.testing.assert_array_equal(scan.angles, [180, 90, 0])
     assert scan.grid.vx == pytest.approx(0.01)
     assert scan.detector.du == pytest.approx(0.015)
-    # The view's centre is pitch x (x-shift + CenterShift): 0.015 x (0.25 + 0.125).
-    np.testing.assert_allclose(scan.detector.center, [0.005625, -0.0075])
+    # The view's centre is -pitch x (x-shift + CenterShift) along u: -0.015 x (0.25 + 0.125).
+    np.testing.assert_allclose(scan.detector.center, [-0.005625, -0.0075])
     assert scan.geometry.beam.source_to_axis == 40
     assert scan.geometry.beam.source_to_detector == 60
     streams["alignment/x-shifts"] = np.array([0.25, 0.5, -0.25], "<f4").tobytes()
@@ -230,18 +233,18 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     assert geometry.trajectory_lengths == (3,)
     segments = geometry.segments
     np.testing.assert_allclose(
-        [s.detector.center[0] for s in segments], [0.005625, 0.009375, -0.001875]
+        [s.detector.center[0] for s in segments], [-0.005625, -0.009375, 0.001875]
     )
     streams["ImageInfo/XrayGeometry"] = np.array([0], "<u4").tobytes()
     write_ole(path, streams)
     parallel = tj.load_frames(path, darks=0).corrected()
     transforms = np.asarray(stack_view_poses(parallel.geometry, 3))
     # The recorded centre stays on the detector and each view's shift is a pose:
-    # together they move the image by -(x-shift + CenterShift) pixels, as for cone.
-    assert parallel.detector.center[0] == pytest.approx(0.00125)
-    np.testing.assert_allclose(transforms[:, 0, 3], [-0.0025, -0.005, 0.0025], atol=1e-8)
+    # together they move the image by (x-shift + CenterShift) pixels along u, as for cone.
+    assert parallel.detector.center[0] == pytest.approx(-0.00125)
+    np.testing.assert_allclose(transforms[:, 0, 3], [0.0025, 0.005, -0.0025], atol=1e-8)
     np.testing.assert_allclose(
-        transforms[:, 0, 3] - parallel.detector.center[0], [-0.00375, -0.00625, 0.00125], atol=1e-8
+        transforms[:, 0, 3] - parallel.detector.center[0], [0.00375, 0.00625, -0.00125], atol=1e-8
     )
     np.testing.assert_allclose(transforms[:, 2, 3], 0.005, atol=1e-8)
     streams["ImageInfo/AcquisitionMode"] = np.array([1], "<u4").tobytes()
@@ -313,7 +316,7 @@ def test_zeiss_fragmented_sector_windows_match_pixels_without_full_stream_reads(
         (slice(None), slice(None)),
     ]:
         got = frames.frames_at(np.array([1, 0, 1])).window(rows, cols)[:]
-        np.testing.assert_array_equal(got, counts[[1, 0, 1], rows, cols])
+        np.testing.assert_array_equal(got, counts[:, :, ::-1][[1, 0, 1], rows, cols])
 
 
 def test_external_zeiss_reference_is_lazy_and_needs_no_sample_geometry(tmp_path, monkeypatch):
@@ -449,7 +452,7 @@ def test_a_supplied_center_keeps_the_recorded_shifts_as_a_written_one_does(tmp_p
     pitch = 0.015 if cone else 0.01
     recorded = tj.load_frames(written, darks=0).corrected()
     supplied = tj.load_frames(
-        raw, detector=tj.Detector(12, 8, pitch, pitch, (pitch * 1.25, 0.0)), darks=0
+        raw, detector=tj.Detector(12, 8, pitch, pitch, (-pitch * 1.25, 0.0)), darks=0
     ).corrected()
     assert type(supplied.geometry) is type(recorded.geometry)
     assert supplied.grid == recorded.grid
@@ -510,11 +513,11 @@ def test_a_cone_scan_without_a_center_shift_loads_with_the_middle_as_its_center(
     assert meta["detector_center_status"] == "not_recorded"
     assert meta["zeiss"]["center_shift_pixels"] is None
     assert scan.detector.du == pytest.approx(0.015)  # 10 um at the sample, magnified 1.5
-    # The recorded shifts (0.25, -0.5 px) are applied from the middle: 0.25 x 0.015 mm.
-    np.testing.assert_allclose(scan.detector.center, [0.00375, -0.0075])
+    # The recorded shifts (0.25, -0.5 px) are applied from the middle: -0.25 x 0.015 mm along u.
+    np.testing.assert_allclose(scan.detector.center, [-0.00375, -0.0075])
     # The centre shift (0.125 px) moves the centre by its pitch and changes nothing else.
     np.testing.assert_allclose(
-        np.subtract(recorded.detector.center, scan.detector.center), [0.125 * 0.015, 0]
+        np.subtract(recorded.detector.center, scan.detector.center), [-0.125 * 0.015, 0]
     )
     np.testing.assert_array_equal(scan.projections, recorded.projections)
     np.testing.assert_array_equal(scan.angles, recorded.angles)
@@ -611,9 +614,9 @@ def test_an_interrupted_scan_loads_its_stored_views_with_their_shifts(tmp_path):
     zeiss = frames.source.geometry_metadata["zeiss"]
     assert (zeiss["declared_view_count"], zeiss["stored_view_count"]) == (10, 3)
     assert frames.views == 3
-    np.testing.assert_array_equal(frames.geometry.angles, [0, 90, 180])
+    np.testing.assert_array_equal(frames.geometry.angles, [180, 90, 0])
     centers = [s.detector.center for s in frames.geometry.segments]  # pitch 0.015, shift 0.125
-    np.testing.assert_allclose([c[0] for c in centers], [0.005625, 0.009375, -0.001875])
+    np.testing.assert_allclose([c[0] for c in centers], [-0.005625, -0.009375, 0.001875])
     # A shift table of any other length is not the planned one: say what the file holds.
     streams["alignment/x-shifts"] = planned[:5].tobytes()
     write_ole(tmp_path / "scan.txrm", streams)

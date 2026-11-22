@@ -1,4 +1,4 @@
-"""The Zeiss centre convention against the vendor's own reconstruction of a real scan.
+"""The Zeiss centre and orientation against the vendor's own reconstruction of a real scan.
 
 The scan and its reconstruction are not public; the test runs where they are held
 and is skipped elsewhere.
@@ -57,14 +57,13 @@ def _peak_correlation(ours: np.ndarray, theirs: np.ndarray) -> float:
 def test_the_recorded_centre_shift_reproduces_the_vendor_reconstruction():
     # spl1 records AutoRecon/CenterShift = +2.55 px. Applied with the wrong sign the
     # centre is 5.1 px out, every small feature becomes a ring and the fine structure
-    # no longer matches the vendor's slice (correlation about 0.70 against 0.90).
+    # no longer matches the vendor's slice (correlation about 0.70 against 0.90). The
+    # slices are compared as they stand: a mirrored or turned reconstruction fails too.
     frames = tj.load_frames(SCAN)
     rows = frames.counts.shape[1]
     scan = frames.cropped(slice(rows // 2 - 32, rows // 2 + 32), slice(None)).corrected(binning=4)
     grid = scan.geometry.grid
     plane = tj.Grid(grid.nx, grid.ny, 1, grid.vx, grid.vy, grid.vz)
     ours = np.asarray(tj.reconstruct(scan, "fbp", grid=plane).volume, np.float64)[0]
-    # The vendor stores its slices turned half a turn and mirrored left to right.
-    ours = np.rot90(np.flip(ours, 1), 2)
     correlation = _peak_correlation(_high_pass(ours), _high_pass(_vendor_middle_slice(4)))
     assert correlation > 0.85
