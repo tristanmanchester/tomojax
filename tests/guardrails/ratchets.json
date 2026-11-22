@@ -14,7 +14,7 @@
     "SimConfig": 31
   },
   "exported_names": {
-    "tomojax": 28,
+    "tomojax": 29,
     "tomojax.geometry": 13,
     "tomojax.evaluation": 2,
     "tomojax.corrections": 15,
@@ -50,7 +50,7 @@
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 116
   },
   "code_lines": {
-    "(modules)": 4171,
+    "(modules)": 4185,
     "_data": 2104,
     "alignment": 4435,
     "backends": 260,

@@ -221,6 +221,7 @@ def tomojax.load_frames(
         apply_poses: 'bool' = True,
     ) -> 'Frames'
 def tomojax.load_reconstruction(path: 'str | PathLike[str]') -> 'Reconstruction'
+def tomojax.load_simulation(path: 'str | PathLike[str]') -> 'Simulation'
 def tomojax.project(
         geometry: 'ScanGeometry',
         volume: 'np.ndarray | jax.Array',

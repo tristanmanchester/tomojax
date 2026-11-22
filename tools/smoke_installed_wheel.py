@@ -112,10 +112,9 @@ def main(argv: list[str] | None = None) -> int:
                 str(python),
                 "-c",
                 "import numpy as np; import tomojax as tj; "
-                "from tomojax.io import load_dataset; "
                 "r = tj.load_reconstruction('recon.nxs'); "
                 "v = np.asarray(r.volume); "
-                "truth = np.asarray(load_dataset('synthetic.nxs').volume); "
+                "truth = tj.load_simulation('synthetic.nxs').phantom; "
                 "assert v.shape == truth.shape and np.isfinite(v).all(); "
                 "error = float(np.linalg.norm(v - truth) / np.linalg.norm(truth)); "
                 "assert error < 0.5, error; "

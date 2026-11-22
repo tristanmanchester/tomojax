@@ -61,6 +61,7 @@ FIRST = [
     "save",
     "load_reconstruction",
     "load_alignment",
+    "load_simulation",
     "Scan",
     "Frames",
     "Reconstruction",

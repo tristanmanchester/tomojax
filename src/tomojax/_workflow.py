@@ -107,7 +107,7 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     if meta.get("volume_role") == "phantom":
         raise ValueError(
             f"{path} holds a simulation phantom, not a reconstruction; "
-            "load the scan with tomojax.load or read the phantom with tomojax.io.load_dataset"
+            "load it with tomojax.load_simulation"
         )
     scan = None if record.projections is None else load(path)
     if scan is None:
@@ -133,6 +133,40 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
         info=dict(info) if isinstance(info, dict) else {},
         scan=scan,
     )
+
+
+def load_simulation(path: str | PathLike[str]) -> Simulation:
+    """Load a :class:`Simulation` saved by :func:`save` or ``tomojax simulate``.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Saved simulation dataset.
+
+    Returns
+    -------
+    Simulation
+        The simulated scan and its ground-truth phantom, ``(nz, ny, nx)``.
+
+    Raises
+    ------
+    ValueError
+        If the dataset holds no simulation phantom.
+    FileNotFoundError
+        If the input does not exist.
+
+    Examples
+    --------
+    >>> import tomojax as tj
+    >>> scan, phantom = tj.load_simulation("synthetic.nxs")  # doctest: +SKIP
+    """
+    from tomojax._simulate import Simulation
+    from tomojax.io import load_dataset
+
+    record = load_dataset(os.fspath(path))
+    if record.volume is None or record.geometry_metadata.get("volume_role") != "phantom":
+        raise ValueError(f"{path} holds no simulation phantom")
+    return Simulation(load(path), np.asarray(record.volume))
 
 
 def load_alignment(path: str | PathLike[str]) -> Alignment:
@@ -1139,6 +1173,7 @@ __all__ = [
     "load",
     "load_alignment",
     "load_reconstruction",
+    "load_simulation",
     "project",
     "reconstruct",
     "save",

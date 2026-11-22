@@ -60,6 +60,13 @@ volume = tj.reconstruct(scan, "cgls", iterations=24).volume
 
 Python keywords mirror the CLI flags: `"cgls"`, `iterations=`, `tv_weight=`, and `nonnegative=` correspond to `--method cgls`, `--iterations`, `--tv-weight`, and `--nonnegative`.
 
+`tj.simulate` is the Python counterpart of `tomojax simulate`, and `tj.load_simulation` reads a saved simulation back as the scan and its true object:
+
+```python
+scan, phantom = tj.load_simulation("synthetic.nxs")
+error = np.linalg.norm(tj.reconstruct(scan).volume - phantom) / np.linalg.norm(phantom)
+```
+
 Volumes use `(z, y, x)` order and projections use `(view, v, u)`. All voxel and detector spacings must share one physical length unit; projections integrate attenuation over that unit.
 
 For independent benchmarks against analytic references and real scans, see [measurements](measurements.md). For the watch movement figures in the README, see [examples](../examples/README.md).

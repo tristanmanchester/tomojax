@@ -16,6 +16,12 @@ loaded with the wrong centre, off by twice the recorded shift, and a SkyScan sca
 with counter-clockwise rotation loaded with its rotation reversed. The Zeiss numbers on the
 measurements page are remeasured with the corrected centre.
 
+A Zeiss scan also loaded as the mirror image of the sample. The reader now reverses the
+stored detector columns and takes each view's angle as 180° less the recorded one, so a
+reconstruction matches Xradia's own volume of the same scan voxel for voxel, and a scanned
+snail shell coils the way the shell does. Reconstruction error is unchanged; volumes and
+figures made from Zeiss scans before this release are mirrored.
+
 ### Wide ring corrections run on an 8 GB card
 
 `Stripes(width)` takes windows wider than nine columns coarse to fine, so a wide window
@@ -137,7 +143,9 @@ Removed, with no replacement:
   - `tj.export(path, item, ...)`: TIFF slices or one raw file for a
     `Reconstruction`, `Alignment`, or `Simulation`;
   - `tj.simulate(...)`: returns `Simulation(scan, phantom)` (unpackable and directly
-    saveable with `tj.save`).
+    saveable with `tj.save`);
+  - `tj.load_simulation(path)`: reloads a saved `Simulation`, as written by `tj.save` or
+    `tomojax simulate`.
 - **Writes moved on whole:** the export's files, the manifest, the motion table and
   the preview PNGs are written beside their name and moved onto it whole, so a failure
   leaves no partial file.

@@ -511,11 +511,16 @@ def test_the_commands_api_counterparts_simulate_inspect_and_export(tmp_path: Pat
     assert scan is sim.scan and phantom is sim.phantom
     assert np.shape(phantom) == (8, 8, 8) and scan.projections.shape == (6, 8, 8)
     tj.save(tmp_path / "truth.nxs", sim)
-    with pytest.raises(ValueError, match="simulation phantom"):
+    with pytest.raises(ValueError, match="load it with tomojax.load_simulation"):
         tj.load_reconstruction(tmp_path / "truth.nxs")
+    loaded = tj.load_simulation(tmp_path / "truth.nxs")
+    np.testing.assert_array_equal(loaded.phantom, phantom)
+    np.testing.assert_array_equal(loaded.scan.projections, scan.projections)
     # What is made from the simulated scan is not a phantom.
     tj.save(tmp_path / "recon.nxs", tj.reconstruct(tj.load(tmp_path / "truth.nxs"), "fbp"))
     assert tj.load_reconstruction(tmp_path / "recon.nxs").method == "fbp"
+    with pytest.raises(ValueError, match="holds no simulation phantom"):
+        tj.load_simulation(tmp_path / "recon.nxs")
     report = tj.inspect(tmp_path / "truth.nxs")
     assert report["valid"] and report["issues"] == [] and report["angles"]["count"] == 6
     assert report["volume"]["found"]
