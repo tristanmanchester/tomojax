@@ -26,7 +26,7 @@ from tomojax.io.api import load_angles, read_tiff_frames
 
 projections = read_tiff_frames("projections")
 nv, nu = projections.shape[1:]
-detector = tj.Detector(nu, nv, 0.65, 0.65, center=(0.0, 0.0))  # measured pitch and centre
+detector = tj.Detector(nu, nv, 0.65, 0.65, center=(0.0, 0.0))  # measured pitch and center
 grid = tj.Grid(nu, nu, nv, 0.65, 0.65, 0.65)
 geometry = tj.ParallelGeometry(grid, detector, load_angles("angles.csv"))
 # For laminography, use tj.LaminographyGeometry(grid, detector, angles, tilt=30.0, tilt_about="x")

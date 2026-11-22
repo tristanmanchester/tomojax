@@ -97,7 +97,6 @@ def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None
 
     assert product_command_names() == (
         "inspect",
-        "load",
         "correct",
         "reconstruct",
         "align",
@@ -146,7 +145,12 @@ def test_help_names_only_the_settings_route_a_command_has(
 ) -> None:
     from tomojax.cli.main import main
 
-    for command, has_config in (("load", False), ("correct", False), ("simulate", True)):
+    for command, has_config in (
+        ("inspect", False),
+        ("export", False),
+        ("correct", True),
+        ("simulate", True),
+    ):
         with pytest.raises(SystemExit) as exc_info:
             main([command, "--help"])
         assert exc_info.value.code == 0

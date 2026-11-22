@@ -371,7 +371,7 @@ def test_load_records_a_declared_cone_beam_geometry(tmp_path: Path):
     write_tiff_stack(tmp_path / "tiffs", [1.0, 2.0, 3.0, 4.0], shape=(4, 6))
     write_angle_csv(tmp_path / "angles.csv", [0.0, 90.0, 180.0, 270.0])
     # The frames are counts of a flat of 10 and no dark; the file records no geometry.
-    args = ["load", str(tmp_path / "tiffs"), "-o", str(tmp_path / "scan.nxs"), "--force"]
+    args = ["correct", str(tmp_path / "tiffs"), "-o", str(tmp_path / "scan.nxs"), "--force"]
     args += ["--flats", "10", "--darks", "0", "--detector-center", "0", "0"]
     args += ["--detector-roll", "0.5", "--pixel-size", "1", "--angles"]
     args += [str(tmp_path / "angles.csv"), "--geometry", "cone", "--source-to-axis", "50"]
@@ -516,7 +516,7 @@ def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):
 
 @pytest.mark.parametrize("shape", [(3, 4, 5), (3, 4, 3)])
 def test_export_and_previews_refuse_an_untagged_volume_as_the_loader_does(
-    tmp_path: Path, shape: tuple[int, int, int]
+    tmp_path: Path, shape: tuple[int, int, int], capsys: pytest.CaptureFixture[str]
 ):
     # A saved volume without volume_axes_order is an older TomoJAX file (4aa6c997): its
     # order is not guessed from its shape, whether or not the shape would decide it.
@@ -544,8 +544,8 @@ def test_export_and_previews_refuse_an_untagged_volume_as_the_loader_does(
         del group["volume"], group.attrs["volume_axes_order"]
         group["volume"] = volume.transpose(2, 1, 0)
     out = tmp_path / "out.raw"
-    with pytest.raises(SystemExit):
-        main(["export", str(path), "-o", str(out)])
+    assert main(["export", str(path), "-o", str(out)]) == 1
+    assert "does not record its axis order" in capsys.readouterr().err
     assert not out.exists()
     with pytest.raises(ValueError, match="does not record its axis order"):
         _hdf5_images(path)

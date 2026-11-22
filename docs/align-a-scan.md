@@ -19,7 +19,7 @@ import tomojax as tj
 
 scan = tj.load("corrected.nxs")
 result = tj.align(scan)                                # translations
-result = tj.align(scan, fit="center")                  # rotation centre only
+result = tj.align(scan, fit="center")                  # rotation center only
 result = tj.align(scan, fit=("translations", "roll"))  # translations + axis roll
 tj.save("aligned.nxs", result)
 recon = tj.reconstruct(result.scan, "cgls")            # result.scan carries the corrections

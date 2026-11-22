@@ -68,10 +68,12 @@ RETIRED = {
     ("*align*info*", "lm_initial"): "(internal)",
     ("*align*info*", "corrections"): "calibration (fitted globals) and poses (per view)",
     ("cli", "recon"): "reconstruct",
-    ("cli", "import"): "load",
+    ("cli", "import"): "correct",
+    ("cli", "load"): "correct",
     ("cli", "preprocess"): "correct",
     ("docs *", "tomojax recon"): "tomojax reconstruct",
-    ("docs *", "tomojax import"): "tomojax load",
+    ("docs *", "tomojax import"): "tomojax correct",
+    ("docs *", "tomojax load"): "tomojax correct",
     ("docs *", "tomojax preprocess"): "tomojax correct",
 }
 BRITISH = {
@@ -98,10 +100,10 @@ SYNONYMS = {
 MIRRORS = {
     "align": ("align", {"scan", "config"}),
     "reconstruct": ("reconstruct", {"scan", "out", "config", "devices"}),
-    "load": ("load", {"path", "detector", "grid", "exposure_times", "flat_exposure_times"}),
+    "correct": ("load", {"path", "detector", "grid", "exposure_times", "flat_exposure_times"}),
     "export": ("export", {"path", "reconstruction"}),
     "inspect": ("inspect", {"path"}),
-    "simulate": ("simulate", set()),
+    "simulate": ("simulate", {"artefacts"}),
 }
 # Sites allowed to break a rule, by surface: (place, name) -> the reason. Empty: the renames
 # of v1 are done.
