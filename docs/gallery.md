@@ -75,9 +75,9 @@ uv run python examples/gallery/rock_few_views.py rock-few-views.png
 
 ## A cell wider than the detector
 
-![Battery cross-section and vertical slice reconstructed from a full detector and from an offset detector 60% as wide.](../images/gallery/battery-offset-detector.png)
+![Two drawings of the scan from above, with the full detector and with one 60% as wide and offset, each beside the cell coloured by the share of the turn in which the detector sees each point; below, cross-sections and vertical slices of the phantom and of both reconstructions.](../images/gallery/battery-offset-detector.png)
 
-A scaled 18650 lithium-ion cell in lab cone beam at 8× magnification. With an offset detector 60% as wide extending 1.15 mm past the axis, FDK weights the doubly measured central overlap (dashed circle) to reconstruct the full cross-section at error 0.188, compared with 0.180 for a full-width detector.
+A scaled 18650 lithium-ion cell, 8.5 mm across, in lab cone beam at 8× magnification. A detector 60% as wide, shifted to reach 1.16 mm past the rotation axis, still sees every point of the cell for more than half the turn, and FDK weights the rays near the axis that it measures twice. The whole cross-section reconstructs at error 0.188, against 0.180 with the full detector.
 
 ```bash
 uv run python examples/gallery/battery_offset_detector.py battery-offset-detector.png
