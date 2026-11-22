@@ -32,6 +32,16 @@ Glass spheres between PEKK plates in Diamond K11 laminography scan 54286, aligne
 uv run python examples/gallery/k11_glass_layer.py k11-54286.nxs k11-glass-layer.png
 ```
 
+## A snail shell from a lab cone-beam scan
+
+![A snail shell drawn from outside and cut open along its axis, beside a slice through the axis showing every whorl and a slice across the spire showing the wall as a spiral.](../images/gallery/zeiss-shell.png)
+
+A 12 mm snail shell scanned on a Zeiss Xradia (1601 views of 1024 × 1024 pixels over a full turn), loaded from its `.txrm` file with the recorded centre and per-view shifts and reconstructed by FDK on 512³ voxels of 30 µm, without alignment. The cut-open view and the slice through the axis show each earlier whorl inside the last. Seen from the apex, the wall spirals outward clockwise: the shell coils to the right, as the real one does, because a Zeiss scan loads in the orientation of Xradia's own reconstruction.
+
+```bash
+uv run python examples/gallery/zeiss_shell.py S_1_tomo-A.txrm zeiss-shell.png
+```
+
 ## Laminography alignment of a chip package
 
 ![Solder-ball and die slices of the phantom, a nominal-geometry reconstruction and an aligned one, above recovered and true per-view shifts.](../images/gallery/chip-laminography.png)
