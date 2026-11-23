@@ -8,8 +8,41 @@ import json
 import signal
 import sys
 from types import FrameType
+from typing import NoReturn
+
+import msgspec
 
 from tomojax import progress
+from tomojax.wire.progress import Error, Result
+
+
+class ProgressParser(argparse.ArgumentParser):
+    """Render usage failures in the requested output mode as well as on stderr."""
+
+    invocation: list[str] | None = None
+
+    @property
+    def json_output(self) -> bool:
+        args = self.invocation if self.invocation is not None else sys.argv[1:]
+        mode = self.get_default("progress")
+        for index, option in enumerate(args):
+            if option == "--":
+                break
+            if option == "--progress" and index + 1 < len(args):
+                mode = args[index + 1]
+            elif option.startswith("--progress="):
+                mode = option.removeprefix("--progress=")
+        return mode == "json"
+
+    def set_invocation(self, argv: list[str]) -> None:
+        self.invocation = argv
+        if self.json_output and any(flag in argv for flag in ("--help", "-h", "--config-keys")):
+            self.error("help and configuration listings cannot be combined with --progress json")
+
+    def error(self, message: str) -> NoReturn:
+        if self.json_output:
+            print(msgspec.json.encode(Error(2, "invalid_parameter", message)).decode(), flush=True)
+        super().error(message)
 
 
 def add_progress(parser: argparse.ArgumentParser) -> None:
@@ -45,7 +78,21 @@ class _Bar:
         print(f"\r\033[2K{line}", end="", file=sys.stderr, flush=True)
 
 
-def run_command(command: str, mode: str, operation: Callable[[], None]) -> int:
+def _handler(mode: str) -> Callable[[progress.Event], None]:
+    if mode == "bar" or (mode == "auto" and sys.stderr.isatty()):
+        return _Bar()
+    if mode == "json":
+        return lambda e: print(json.dumps(progress.to_json(e), allow_nan=False), flush=True)
+    return lambda _e: None
+
+
+def _write_result(result: Result | int | None, command: str) -> None:
+    if not isinstance(result, Result):
+        raise RuntimeError(f"{command} did not return a result")
+    print(msgspec.json.encode(result).decode(), flush=True)
+
+
+def run_command(command: str, mode: str, operation: Callable[[], Result | int | None]) -> int:
     """Run the command under one watch, restoring the caller's SIGINT policy."""
     token = progress.Control()
 
@@ -54,15 +101,14 @@ def run_command(command: str, mode: str, operation: Callable[[], None]) -> int:
             raise KeyboardInterrupt
         token.cancel()
 
-    def deliver(event: progress.Event) -> None:
-        if mode == "json":
-            print(json.dumps(progress.to_json(event), allow_nan=False), flush=True)
-
-    handler = _Bar() if mode == "bar" or (mode == "auto" and sys.stderr.isatty()) else deliver
     previous = signal.signal(signal.SIGINT, interrupt)
     try:
-        with progress.watch(handler, control=token):
-            operation()
+        with progress.watch(_handler(mode), control=token):
+            result = operation()
+            if mode == "json":
+                _write_result(result, command)
+            elif isinstance(result, int):
+                return result
     except Exception as exc:
         record = progress.error_record(exc)
         if mode == "json":

@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
+import msgspec
 import numpy as np
 
 import tomojax as tj
+from tomojax._typed_arrays import device_id
 from tomojax.cli.operations import ExecutionInput, Plane
 from tomojax.cli.products import DataProduct, HandleProduct, PlaneResult, Provenance, Snapshot
 from tomojax.wire.arrays import Array, Axis, Fixed, Member, Npy, Storage, Uniform
-from tomojax.wire.progress import Event, Info
+from tomojax.wire.progress import INFO_BYTES, Event, Info
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from numpy.typing import ArrayLike
+
+    from tomojax._typed_arrays import Device
 
 
 class Control(Protocol):
@@ -216,6 +220,7 @@ def summarise(
     arrays: dict[str, Array] = {}
 
     def visit(value: object, pointer: str) -> object:
+        value = _config_value(value)
         if isinstance(value, np.ndarray | jax.Array):
             if value.ndim:
                 arrays[pointer] = externalise(pointer, value)
@@ -235,10 +240,44 @@ def summarise(
                 arrays[pointer] = externalise(pointer, np.asarray(value))
                 return None
             return [visit(item, f"{pointer}/{index}") for index, item in enumerate(value)]
-        return value
+        return value if value is None or isinstance(value, str | bool | int | float) else str(value)
 
     summary = {
         key: visit(value, "/" + key.replace("~", "~0").replace("/", "~1"))
         for key, value in info.items()
     }
-    return Info(summary, arrays)
+    return _bounded_info(summary, arrays)
+
+
+def _config_value(value: object) -> object:
+    """Walk dataclass settings without asdict's deep copies of support or device arrays."""
+    import jax
+
+    if is_dataclass(value) and not isinstance(value, type):
+        return {field.name: getattr(value, field.name) for field in fields(value)}
+    if isinstance(value, jax.Device):
+        return device_id(cast("Device", value))
+    return value
+
+
+def _bounded_info(summary: dict[str, object], arrays: dict[str, Array]) -> Info:
+    if len(msgspec.json.encode({"summary": summary, "arrays": arrays})) <= INFO_BYTES:
+        return Info(summary, arrays)
+    # Keep whole fields and their matching JSON pointers. Prefer the selection
+    # decision over bulky solver histories; count every field omitted for size.
+    kept: dict[str, object] = {}
+    references: dict[str, Array] = {}
+    omitted = 0
+    for key in sorted(summary, key=lambda k: k != "automatic"):
+        pointer = "/" + key.replace("~", "~0").replace("/", "~1")
+        subset = {p: a for p, a in arrays.items() if p == pointer or p.startswith(pointer + "/")}
+        record = {
+            "summary": {**kept, key: summary[key], "_omitted_fields": len(summary)},
+            "arrays": {**references, **subset},
+        }
+        if len(msgspec.json.encode(record)) <= INFO_BYTES:
+            kept[key] = summary[key]
+            references.update(subset)
+        else:
+            omitted += 1
+    return Info({**kept, "_omitted_fields": omitted}, references)

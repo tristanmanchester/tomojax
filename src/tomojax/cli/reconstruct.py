@@ -26,7 +26,7 @@ from tomojax._field_of_view import (
     zero_outside_cylinder,
 )
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
-from tomojax.cli._progress import add_progress, run_command
+from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from tomojax import Reconstruction, Scan
     from tomojax._workflow import Region
     from tomojax.recon.api import MethodConfig
+    from tomojax.wire.progress import Result
 
 type _Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
 _METHODS: tuple[_Method, ...] = (
@@ -86,7 +87,7 @@ _EPILOG = (
 
 def build_parser() -> argparse.ArgumentParser:
     """The ``tomojax reconstruct`` parser; expert settings are the methods' configuration fields."""
-    p = argparse.ArgumentParser(
+    p = ProgressParser(
         prog="tomojax reconstruct",
         description=(
             "Reconstruct a volume from a scan, with the poses saved with it (by tomojax "
@@ -347,7 +348,7 @@ def main() -> int:
 
 def _run(
     parser: argparse.ArgumentParser, args: argparse.Namespace, metadata: Mapping[str, object]
-) -> None:
+) -> Result | None:
     import tomojax as tj
     from tomojax import progress
     from tomojax.cli._runtime import report_automatic
@@ -395,8 +396,13 @@ def _run(
     if run.manifest is not None:
         progress.check_cancelled()
         _write_manifest(args, metadata, scan, result, masked=run.region == "cyl")
-    if args.progress != "json":
-        print(f"wrote {run.out}: {result.method} volume {tuple(np.shape(result.volume))}")
+    if args.progress == "json":
+        from tomojax.cli._results import saved_result
+
+        outputs = tuple(str(p) for p in (run.out, run.preview, run.manifest) if p is not None)
+        return saved_result(run.out, result, outputs=outputs, include_scan=run.include_scan)
+    print(f"wrote {run.out}: {result.method} volume {tuple(np.shape(result.volume))}")
+    return None
 
 
 if __name__ == "__main__":  # pragma: no cover

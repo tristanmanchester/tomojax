@@ -6,23 +6,27 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 from typing import TYPE_CHECKING, cast
 
 import h5py
 import numpy as np
 
-from tomojax.cli._options import add_output, check_paths, fail
+from tomojax.cli._options import add_output, check_paths
+from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.io.api import saved_volume_axes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from tomojax.wire.progress import Result
+
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
 _AXES_ATTR = "volume_axes_order"
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+def _build_parser() -> ProgressParser:
+    parser = ProgressParser(
         prog="tomojax export",
         description=(
             "Export a reconstruction or alignment image for other software: a directory of "
@@ -38,6 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _ = parser.add_argument("data", metavar="INPUT", help="Reconstruction (.nxs, .h5)")
+    add_progress(parser)
     add_output(parser, "Directory for TIFF slices, or a .raw file")
     _ = parser.add_argument(
         "--dtype",
@@ -77,28 +82,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     from tomojax._files import saved_volume_grid, validate_export_range, write_volume
 
     parser = _build_parser()
+    parser.set_invocation(list(sys.argv[1:] if argv is None else argv))
     args = parser.parse_args(argv)
-    data, out = Path(cast("str", args.data)), Path(cast("str", args.out))
-    raw = out.suffix.lower() == ".raw"
-    dtype = cast("str", args.dtype)
-    value_range = cast("list[float] | None", args.range)
-    explicit_prefix = cast("str | None", args.prefix)
-    if raw and explicit_prefix is not None:
-        parser.error("--prefix applies only to TIFF directory exports, not .raw files")
-    try:
-        _ = validate_export_range(dtype, value_range)
-    except ValueError as exc:
-        parser.error(str(exc))
-    prefix = "slice" if explicit_prefix is None else explicit_prefix
-    # A raw volume writes a JSON sidecar beside it; refuse to replace either.
-    outputs = [out, out.with_suffix(".json")] if raw else [out]
-    check_paths(parser, inputs=[data], outputs=outputs, force=cast("bool", args.force))
-    try:
+
+    def run() -> Result | None:
+        data, out = Path(cast("str", args.data)), Path(cast("str", args.out))
+        raw = out.suffix.lower() == ".raw"
+        dtype = cast("str", args.dtype)
+        value_range = cast("list[float] | None", args.range)
+        explicit_prefix = cast("str | None", args.prefix)
+        if raw and explicit_prefix is not None:
+            parser.error("--prefix applies only to TIFF directory exports, not .raw files")
+        try:
+            _ = validate_export_range(dtype, value_range)
+        except ValueError as exc:
+            parser.error(str(exc))
+        prefix = "slice" if explicit_prefix is None else explicit_prefix
+        # A raw volume writes a JSON sidecar beside it; refuse to replace either.
+        outputs = [out, out.with_suffix(".json")] if raw else [out]
+        check_paths(parser, inputs=[data], outputs=outputs, force=cast("bool", args.force))
+        registered = {}
         with h5py.File(data, "r") as handle:
             dataset = handle.get(_VOLUME_PATH)
             if not isinstance(dataset, h5py.Dataset) or dataset.ndim != 3:
-                return fail(
-                    "export",
+                raise ValueError(
                     f"{data} holds no reconstructed volume; "
                     "reconstruct it with tomojax reconstruct",
                 )
@@ -122,7 +129,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     float(grid_meta.get("vz", 1.0)),
                 )
             )
-            _ = write_volume(
+            if args.progress == "json":
+                from tomojax.cli._results import disk_volume
+
+                registered["source_volume"] = disk_volume(
+                    data, grid, axes, tuple(dataset.shape), dataset.dtype.str, geom_meta
+                )
+            sidecar = write_volume(
                 out,
                 lambda z: _z_slice(dataset, axes, z),
                 (shape["z"], shape["y"], shape["x"]),
@@ -133,10 +146,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source=str(data),
                 grid=grid,
             )
-    except (OSError, ValueError, KeyError) as exc:
-        return fail("export", str(exc).strip("'\""))
-    print(f"exported {shape['z']} z-slices of {shape['y']}x{shape['x']} to {out}")
-    return 0
+        if args.progress == "json":
+            from tomojax.cli._results import report_result
+
+            written = [out] if raw else [out / f"{prefix}_{z:05d}.tif" for z in range(shape["z"])]
+            return report_result(
+                out,
+                tuple(str(p) for p in [*written, sidecar]),
+                json.loads(sidecar.read_text()),
+                arrays=registered,
+            )
+        print(f"exported {shape['z']} z-slices of {shape['y']}x{shape['x']} to {out}")
+        return None
+
+    return run_command("export", args.progress, run)
 
 
 if __name__ == "__main__":  # pragma: no cover

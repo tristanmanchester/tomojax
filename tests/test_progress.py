@@ -238,6 +238,9 @@ def test_cli_json_records_arrive_during_reconstruction(tmp_path, cancel):
             if record["event"] == "error":
                 assert cancel and record["kind"] == "cancelled"
                 continue
+            if record["event"] == "result":
+                assert not cancel and str(output) in record["outputs"]
+                continue
             cls = {
                 "started": progress.Started,
                 "advanced": progress.Advanced,
@@ -595,7 +598,7 @@ def test_align_json_distinguishes_usage_and_io_errors(tmp_path, capsys):
     with pytest.raises(SystemExit) as usage:
         main(["align", data, "--dry-run", "--progress", "json"])
     assert usage.value.code == 2
-    assert capsys.readouterr().out == ""
+    assert json.loads(capsys.readouterr().out)["event"] == "error"
     status = main(["align", data, "--progress", "json", "-o", str(tmp_path / "out.nxs")])
     assert status == 1
     assert json.loads(capsys.readouterr().out)["kind"] == "input"
@@ -841,7 +844,7 @@ def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys
     write_raw_nxtomo(source)
     with pytest.raises(SystemExit) as usage:
         main([*command, "--binning", "0"])
-    assert usage.value.code == 2 and capsys.readouterr().out == ""
+    assert usage.value.code == 2 and json.loads(capsys.readouterr().out)["event"] == "error"
     assert main(command) == 0
     records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert all(r.pop("schema") == 2 for r in records)
@@ -851,6 +854,8 @@ def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys
         "finished": progress.Finished,
         "note": progress.Note,
     }
+    result = records.pop()
+    assert result["event"] == "result" and result["outputs"] == [str(output)]
     events = [kinds[r.pop("event")](**r) for r in records]
     validate_tree(events)
     assert [e.name for e in events if isinstance(e, progress.Started)] == [

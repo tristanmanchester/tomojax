@@ -4,19 +4,24 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, cast
 
 from tomojax.cli._options import add_force, check_paths, options
 from tomojax.cli._previews import preview_paths, write_previews
+from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.io.api import format_inspection_report
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from tomojax.io.api import Inspection
+    from tomojax.wire.progress import Result
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+
+def _build_parser() -> ProgressParser:
+    parser = ProgressParser(
         prog="tomojax inspect",
         description=(
             "Describe a dataset or recognized vendor acquisition (projections, angles, geometry, "
@@ -43,6 +48,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help="Write PNGs of the central projection (and the volume's central slices) to DIR",
     )
+    add_progress(parser)
     add_force(parser)
     for action in options(parser):
         if action.dest == "force":
@@ -50,34 +56,11 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run ``tomojax inspect``: :func:`tomojax.inspect`, with optional previews."""
-    import tomojax as tj
-
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-    path = cast("str", args.data)
-    preview_dir = cast("str | None", args.preview_dir)
-    check_paths(parser, inputs=[path])
-    if preview_dir is not None:
-        check_paths(
-            parser,
-            inputs=[path],
-            outputs=preview_paths(path, preview_dir).values(),
-            force=cast("bool", args.force),
-        )
-
-    report = tj.inspect(path)
+def _display(
+    report: Inspection, previews: dict[str, str], preview_error: str | None, *, as_json: bool
+) -> None:
     issues = report["issues"]
-    previews: dict[str, str] = {}
-    preview_error: str | None = None
-    if preview_dir is not None:
-        try:
-            previews = {k: str(p) for k, p in write_previews(path, preview_dir).items()}
-        except (OSError, ValueError, KeyError) as exc:
-            preview_error = str(exc).strip("'\"")
-
-    if cast("bool", args.json):
+    if as_json:
         payload: dict[str, object] = {**report, "previews": previews}
         if preview_error is not None:
             payload["preview_error"] = preview_error
@@ -92,7 +75,50 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Valid: yes" if not issues else f"Issues ({len(issues)}):")
         for issue in issues:
             print(f"  - {issue}")
-    return 0 if (not issues and preview_error is None) else 1
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run ``tomojax inspect``: :func:`tomojax.inspect`, with optional previews."""
+    import tomojax as tj
+
+    parser = _build_parser()
+    parser.set_invocation(list(sys.argv[1:] if argv is None else argv))
+    args = parser.parse_args(argv)
+    if args.json and args.progress == "json":
+        parser.error("--json cannot print an inspection document with --progress json")
+
+    def run() -> Result | int:
+        path = cast("str", args.data)
+        preview_dir = cast("str | None", args.preview_dir)
+        check_paths(parser, inputs=[path])
+        if preview_dir is not None:
+            check_paths(
+                parser,
+                inputs=[path],
+                outputs=preview_paths(path, preview_dir).values(),
+                force=cast("bool", args.force),
+            )
+
+        report = tj.inspect(path)
+        issues = report["issues"]
+        previews: dict[str, str] = {}
+        preview_error: str | None = None
+        if preview_dir is not None:
+            try:
+                previews = {k: str(p) for k, p in write_previews(path, preview_dir).items()}
+            except (OSError, ValueError, KeyError) as exc:
+                preview_error = str(exc).strip("'\"")
+
+        if args.progress == "json":
+            from tomojax.cli._results import report_result
+
+            if preview_error or issues:
+                raise ValueError(preview_error or "; ".join(issues))
+            return report_result(Path(path), tuple(previews.values()), dict(report))
+        _display(report, previews, preview_error, as_json=cast("bool", args.json))
+        return int(bool(issues or preview_error))
+
+    return run_command("inspect", args.progress, run)
 
 
 if __name__ == "__main__":  # pragma: no cover

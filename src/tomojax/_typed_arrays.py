@@ -24,6 +24,11 @@ class Device(Protocol):
     def local_hardware_id(self) -> int: ...
 
 
+def device_id(device: Device) -> str:
+    """Identify a participating JAX device on the worker protocol."""
+    return f"{device.platform}:{device.id}"
+
+
 def numpy_array(value: object) -> NDArray[np.object_]:
     """Convert an array-like value to a NumPy array at an untrusted IO boundary."""
     return cast("NDArray[np.object_]", np.asarray(value))

@@ -14,6 +14,9 @@ type ErrorKind = Literal[
 type Scalar = str | int | float | bool | None
 
 
+INFO_BYTES = 65536
+
+
 class Info(Record):
     """Bounded JSON summary, with bulk members referenced separately by JSON Pointer."""
 
@@ -21,8 +24,8 @@ class Info(Record):
     arrays: dict[str, Array]
 
     def __post_init__(self) -> None:
-        if len(msgspec.json.encode(self)) > 65536:
-            raise ValueError("info exceeds 65536 UTF-8 JSON bytes")
+        if len(msgspec.json.encode(self)) > INFO_BYTES:
+            raise ValueError(f"info exceeds {INFO_BYTES} UTF-8 JSON bytes")
 
 
 class Progress(Record, tag_field="event"):

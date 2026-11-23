@@ -329,3 +329,70 @@ def test_admission_finds_all_nested_inputs_before_queueing():
         type=envelope.Request,
     )
     assert operations.input_references(request.command) == (arrays.Member("s", "scan"),) * 2
+
+
+def test_cli_streams_one_terminal_per_command(tmp_path):
+    import subprocess
+    import sys
+
+    import h5py
+
+    def invoke(*args, status=0):
+        call = subprocess.run(
+            [sys.executable, "-m", "tomojax.cli.main", *map(str, args), "--progress=json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert call.returncode == status, call.stderr
+        records = [
+            msgspec.json.decode(line, type=wire.ProgressRecord) for line in call.stdout.splitlines()
+        ]
+        assert sum(isinstance(r, wire.Result | wire.Error) for r in records) == 1
+        assert isinstance(records[-1], wire.Error if status else wire.Result)
+        return records[-1]
+
+    source = tmp_path / "scan.nxs"
+    output = tmp_path / "recon.nxs"
+    aligned = tmp_path / "aligned.nxs"
+    raw = tmp_path / "export.raw"
+    result = invoke("simulate", "--size", 12, "--n-views", 24, "--rotation", 360, "-o", source)
+    with h5py.File(source) as f:
+        for key in ("projections", "phantom"):
+            desc = result.arrays[key]
+            assert desc.shape == f[desc.storage.dataset].shape
+            assert desc.dtype == f[desc.storage.dataset].dtype.str
+    assert invoke("inspect", source).info.summary["valid"]
+    assert invoke("correct", source, "-o", tmp_path / "corrected.nxs").arrays[
+        "projections"
+    ].shape == (24, 12, 12)
+    result = invoke("reconstruct", source, "-o", output)
+    assert result.info.summary["automatic"]["method"] == result.method
+    assert result.arrays["volume"].shape == (12, 12, 12)
+    result = invoke("align", source, "--method", "opposite-views", "--fit", "center", "-o", aligned)
+    assert result.method == "opposite-views" and result.arrays["poses"].shape == (24, 6)
+    result = invoke("export", output, "-o", raw)
+    assert result.outputs == (str(raw), str(raw.with_suffix(".json")))
+    with h5py.File(output) as f:
+        np.testing.assert_array_equal(
+            np.fromfile(raw, "<f4").reshape(12, 12, 12),
+            f[result.arrays["source_volume"].storage.dataset][:],
+        )
+
+    for command in ("correct", "reconstruct", "align", "inspect", "export"):
+        target = ["-o", tmp_path / "new.nxs"] if command != "inspect" else []
+        assert invoke(command, tmp_path / "missing", *target, status=1).kind == "input"
+    assert (
+        invoke("simulate", "--size", 0, "-o", tmp_path / "bad.nxs", status=2).kind
+        == "invalid_parameter"
+    )
+    assert invoke("inspect", source, "--json", status=2).kind == "invalid_parameter"
+
+
+def test_result_summary_keeps_selection_when_solver_history_exceeds_budget():
+    record = execution.summarise(
+        {"history": [{"detail": "x" * 500} for _ in range(1000)], "automatic": {"method": "cgls"}},
+        externalise=lambda *_: pytest.fail("structured records are not numeric arrays"),
+    )
+    assert len(msgspec.json.encode(record)) <= 65536
+    assert record.summary == {"automatic": {"method": "cgls"}, "_omitted_fields": 1}

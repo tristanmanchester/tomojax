@@ -31,30 +31,30 @@
     "tomojax.alignment.api": 4
   },
   "cli_flags": {
-    "inspect": 4,
+    "inspect": 5,
     "correct": 34,
     "reconstruct": 19,
     "align": 19,
-    "export": 6,
-    "simulate": 18
+    "export": 7,
+    "simulate": 19
   },
   "long_files": {
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 160,
-    "src/tomojax/cli/simulate.py::_build_parser": 103,
+    "src/tomojax/cli/simulate.py::_build_parser": 102,
     "src/tomojax/recon/_cgls_jax.py::_solve": 146,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 101,
     "src/tomojax/recon/_cgls_jax.py::cgls": 111,
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "code_lines": {
-    "(modules)": 4711,
+    "(modules)": 4715,
     "_data": 2153,
     "alignment": 4472,
     "backends": 263,
-    "cli": 3732,
+    "cli": 4102,
     "core": 9561,
     "corrections": 2975,
     "datasets": 1072,
@@ -64,7 +64,7 @@
     "motion": 153,
     "nuisance": 232,
     "recon": 13700,
-    "wire": 240
+    "wire": 243
   },
   "cuda_kernels": 47,
   "cuda_switches": 34,
@@ -85,7 +85,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 64,
+    "tiny": 66,
     "forwarders": 5,
     "chained": 4
   },

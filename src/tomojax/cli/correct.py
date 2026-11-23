@@ -23,7 +23,7 @@ from tomojax.cli._inputs import (
     validate_inputs,
 )
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
-from tomojax.cli._progress import add_progress, run_command
+from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
     from tomojax._loading_geometry import DeclaredGeometry
     from tomojax.corrections import Step
+    from tomojax.wire.progress import Result
 
 _PUBLIC = (
     *INPUTS,
@@ -63,7 +64,7 @@ def _settings() -> dict[str, object]:
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``tomojax correct`` parser."""
-    parser = argparse.ArgumentParser(
+    parser = ProgressParser(
         prog="tomojax correct",
         description=(
             "Import, convert or correct a scan, with optional view selection, cropping and "
@@ -301,7 +302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
 
-    def run() -> None:
+    def run() -> Result | None:
         for path in [source, *input_paths(args)]:
             if path is not None and not Path(path).exists():
                 raise FileNotFoundError(f"input not found: {path}")
@@ -319,8 +320,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if preview is not None:
             progress.check_cancelled()
             _ = save_projection_quicklook(Path(output), Path(preview))
-        if args.progress != "json":
-            print(f"wrote {output}: {scan!r}")
+        if args.progress == "json":
+            from tomojax.cli._results import saved_result
+
+            outputs = (output,) if preview is None else (output, preview)
+            return saved_result(output, scan, outputs=outputs)
+        print(f"wrote {output}: {scan!r}")
+        return None
 
     return run_command("correct", args.progress, run)
 

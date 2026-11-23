@@ -21,7 +21,7 @@ from tomojax._field_of_view import (
     zero_outside_cylinder,
 )
 from tomojax.cli._options import EXIT_STATUS, add_config, add_force, check_paths
-from tomojax.cli._progress import add_progress, run_command
+from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from tomojax import Alignment, Grid, Scan
     from tomojax._workflow import Region
     from tomojax.alignment import AlignConfig
+    from tomojax.wire.progress import Result
 
 
 class _Args(argparse.Namespace):
@@ -58,7 +59,7 @@ _SETTINGS = ("motion", "iterations", "image_iterations", "tolerance", "interpola
 
 def build_parser() -> argparse.ArgumentParser:
     """The ``tomojax align`` parser, with the same fit names as Python."""
-    parser = argparse.ArgumentParser(
+    parser = ProgressParser(
         prog="tomojax align",
         description=(
             "Fit selected geometry parameters jointly with a reconstruction, or estimate "
@@ -318,7 +319,7 @@ def _run(
     args: _Args,
     metadata: Mapping[str, Any],
     config: AlignConfig | None,
-) -> None:
+) -> Result | None:
     import tomojax as tj
     from tomojax.core import log_jax_env, setup_logging
 
@@ -336,7 +337,7 @@ def _run(
         grid, cylinder = region_grid(scan, args.region, shape=shape)
     if args.dry_run:
         print(json.dumps(_dry_run_plan(args, fit, scan, grid, config), indent=2, sort_keys=True))
-        return
+        return None
     setup_logging()
     log_jax_env()
     if args.method == "opposite-views":
@@ -355,6 +356,12 @@ def _run(
     if args.manifest is not None:
         progress.check_cancelled()
         _write_manifest(args, metadata, scan, result, masked=cylinder is not None)
+    if args.progress == "json":
+        from tomojax.cli._results import saved_result
+
+        outputs = tuple(p for p in (args.out, args.manifest) if p is not None)
+        return saved_result(args.out, result, method=args.method, outputs=outputs)
+    return None
 
 
 if __name__ == "__main__":  # pragma: no cover

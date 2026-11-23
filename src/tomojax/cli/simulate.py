@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import argparse
 from dataclasses import fields, replace
 import os
 from typing import TYPE_CHECKING, Literal, cast
 
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
+from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
 from tomojax.core import log_jax_env, setup_logging
 from tomojax.datasets import SimConfig, SimulationArtefacts
@@ -15,7 +15,10 @@ from tomojax.datasets import SimConfig, SimulationArtefacts
 from ._runtime import transfer_guard_context
 
 if TYPE_CHECKING:
+    import argparse
     from collections.abc import Sequence
+
+    from tomojax.wire.progress import Result
 
 GeometryName = Literal["parallel", "lamino", "cone"]
 PhantomName = Literal["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"]
@@ -23,6 +26,7 @@ TransferGuardName = Literal["off", "log", "disallow"]
 
 
 _PUBLIC = (
+    "--progress",
     "--size",
     "--n-views",
     "--geometry",
@@ -38,7 +42,7 @@ _PUBLIC = (
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the simulate command parser."""
-    parser = argparse.ArgumentParser(
+    parser = ProgressParser(
         prog="tomojax simulate",
         description=(
             "Write a synthetic scan of a phantom (projections, geometry and the true "
@@ -51,6 +55,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  tomojax simulate -o lamino.nxs --geometry lamino --tilt 30 --poisson-scale 1000"
         ),
     )
+    add_progress(parser)
     add_output(parser, "Dataset to write (.nxs)")
     add_config(parser, settings=_settings)
     _ = parser.add_argument(
@@ -67,9 +72,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Number of views (default 2 x size)",
     )
-    _ = parser.add_argument(
-        "--geometry", choices=["parallel", "lamino", "cone"], default="parallel"
-    )
+    _ = parser.add_argument("--geometry", choices=GeometryName.__args__, default="parallel")
     _ = parser.add_argument(
         "--phantom",
         choices=["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"],
@@ -204,52 +207,61 @@ def _validate_args(
         parser.error(str(exc))
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     """Run ``tomojax simulate``: :func:`tomojax.simulate`, saved with its scan."""
     import tomojax as tj
     from tomojax._simulate import build_sim_config, simulate_config
 
     parser = _build_parser()
     args, metadata = parse_args_with_config(parser, argv)
-    settings = cast("dict[str, object]", metadata["settings"])
-    out = cast("str", args.out)
-    check_paths(parser, outputs=[out], force=cast("bool", args.force))
-    _validate_args(parser, args, settings)
-    shape = cast("list[int] | None", args.grid)
-    pixels = cast("list[int] | None", args.detector)
-    grid = None if shape is None else tj.Grid(shape[0], shape[1], shape[2], 1, 1, 1)
-    detector = None if pixels is None else tj.Detector(pixels[0], pixels[1], 1, 1)
-    artefact_keys = {name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings}
-    artefacts = replace(SimulationArtefacts(), **artefact_keys) if artefact_keys else None
-    phantom_keys = {name: settings[name] for name in _PHANTOM_SETTINGS if name in settings}
-    setup_logging()
-    log_jax_env()
-    with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
-        resolved_grid, resolved_detector, cfg = build_sim_config(
-            cast("PhantomName", args.phantom),
-            size=cast("int", args.size),
-            n_views=cast("int | None", args.n_views),
-            geometry=cast("GeometryName", args.geometry),
-            rotation=cast("float | None", args.rotation),
-            tilt=cast("float | None", args.tilt),
-            source_to_axis=cast("float | None", args.source_to_axis),
-            source_to_detector=cast("float | None", args.source_to_detector),
-            poisson_scale=cast("float", args.poisson_scale),
-            artefacts=artefacts,
-            grid=grid,
-            detector=detector,
-            seed=cast("int", args.seed),
-            phantom_settings=phantom_keys or None,
+
+    def run() -> Result | None:
+        settings = cast("dict[str, object]", metadata["settings"])
+        out = cast("str", args.out)
+        check_paths(parser, outputs=[out], force=cast("bool", args.force))
+        _validate_args(parser, args, settings)
+        shape = cast("list[int] | None", args.grid)
+        pixels = cast("list[int] | None", args.detector)
+        grid = None if shape is None else tj.Grid(shape[0], shape[1], shape[2], 1, 1, 1)
+        detector = None if pixels is None else tj.Detector(pixels[0], pixels[1], 1, 1)
+        artefact_keys = {name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings}
+        artefacts = replace(SimulationArtefacts(), **artefact_keys) if artefact_keys else None
+        phantom_keys = {name: settings[name] for name in _PHANTOM_SETTINGS if name in settings}
+        setup_logging()
+        log_jax_env()
+        with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
+            resolved_grid, resolved_detector, cfg = build_sim_config(
+                cast("PhantomName", args.phantom),
+                size=cast("int", args.size),
+                n_views=cast("int | None", args.n_views),
+                geometry=cast("GeometryName", args.geometry),
+                rotation=cast("float | None", args.rotation),
+                tilt=cast("float | None", args.tilt),
+                source_to_axis=cast("float | None", args.source_to_axis),
+                source_to_detector=cast("float | None", args.source_to_detector),
+                poisson_scale=cast("float", args.poisson_scale),
+                artefacts=artefacts,
+                grid=grid,
+                detector=detector,
+                seed=cast("int", args.seed),
+                phantom_settings=phantom_keys or None,
+            )
+            result = simulate_config(cfg, grid=resolved_grid, detector=resolved_detector)
+        tj.save(out, result)
+        if args.progress == "json":
+            from tomojax.cli._results import saved_result
+
+            return saved_result(out, result, outputs=(out,))
+        scan, phantom = result
+        print(
+            f"wrote {out}: {args.geometry} scan of a {'x'.join(map(str, phantom.shape[::-1]))} "
+            f"{args.phantom} phantom, {len(scan.angles)} views on a "
+            f"{scan.detector.nu}x{scan.detector.nv} detector"
         )
-        result = simulate_config(cfg, grid=resolved_grid, detector=resolved_detector)
-    tj.save(out, result)
-    scan, phantom = result
-    print(
-        f"wrote {out}: {args.geometry} scan of a {'x'.join(map(str, phantom.shape[::-1]))} "
-        f"{args.phantom} phantom, {len(scan.angles)} views on a "
-        f"{scan.detector.nu}x{scan.detector.nv} detector"
-    )
+        return None
+
+    return run_command("simulate", args.progress, run)
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    raise SystemExit(main())

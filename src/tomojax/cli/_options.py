@@ -186,11 +186,15 @@ def check_paths(
     force: bool = False,
 ) -> None:
     """Exit with a usage error for missing inputs, colliding destinations, or existing outputs."""
+    from tomojax.cli._progress import ProgressParser
+
     resolved_inputs: set[Path] = set()
     for path in inputs:
         if path is not None:
             candidate = Path(path)
             if not candidate.exists():
+                if isinstance(parser, ProgressParser) and parser.json_output:
+                    raise FileNotFoundError(f"input not found: {path}")
                 parser.error(f"input not found: {path}")
             resolved_inputs.add(candidate.resolve())
     seen_outputs: set[Path] = set()

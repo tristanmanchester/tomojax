@@ -64,3 +64,9 @@ A returned `NewHandle` gives logical bytes, a pure `bind(id)` returning the publ
 | Worker schema, `cli/envelope.py`, schema assembly in `tools/build_wire_schemas.py`, session transcript, protocol transport documentation and writer tests | Worker agent |
 | `.importlinter`, `tests/guardrails/api_surface.txt`, `tests/guardrails/ratchets.json`, `tools/check_docstrings.py` and all of `tools/guardrails.py` including `CLI_COMMANDS` | Execution agent integrates registration and measured deltas from both branches |
 | Product commands in `cli/api.py`, dispatch/help in `cli/main.py` and CLI vocabulary/help entries in `tests/test_architecture.py` | Worker agent integrates command changes from both branches. |
+
+## Standalone commands
+
+Pass `--progress json` to inspect, correct, reconstruct, align, simulate or export. Read one JSON object per stdout line. A successful invocation ends with `result`. Its `outputs` list includes each written file, and its `arrays` reference the stored data. Export reports the source volume in disk axis order and lists the converted files and sidecar. Inspect returns its report in `info.summary`. Auxiliary NumPy files for bulk diagnostics or NPZ members are caller-owned and live alongside the output. A scalar summary that exceeds the byte limit reports the number of omitted fields as `_omitted_fields`, giving method selection priority over solver histories.
+
+Errors end the stream with `error`. An invalid command line exits 2, an operational failure exits 1 and cancellation exits 130. An internal error also produces a traceback on stderr. A process killed before delivery leaves EOF without a terminal. Request the standalone inspect JSON document or a dry-run plan separately from JSON progress.

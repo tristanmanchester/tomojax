@@ -32,6 +32,10 @@ def parse_args_with_config(
     have no option; they are returned as written, under ``"settings"``.
     """
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    from tomojax.cli._progress import ProgressParser
+
+    if isinstance(parser, ProgressParser):
+        parser.set_invocation(raw_argv)
     config_path = _discover_config_path(parser, raw_argv)
     config_values: dict[str, ConfigValue] = {}
     config_defaults: dict[str, ConfigValue] = {}
@@ -68,7 +72,10 @@ def _discover_config_path(
     parser: argparse.ArgumentParser,
     argv: Sequence[str],
 ) -> Path | None:
-    config_parser = argparse.ArgumentParser(add_help=False, prog=parser.prog)
+    from tomojax.cli._progress import ProgressParser
+
+    config_parser = ProgressParser(add_help=False, prog=parser.prog, allow_abbrev=False)
+    config_parser.set_invocation(list(argv))
     _ = config_parser.add_argument("--config", default=None)
     namespace, _ = config_parser.parse_known_args(list(argv))
     config_value = cast("str | None", getattr(namespace, "config", None))
