@@ -70,6 +70,9 @@ def test_fixed_client_transcripts(schemas, scenario):
             assert left["operation"] == name
             (left,) = left["inputs"]
         assert left["parameters"]["path"] == "/data/a.h5"
+    if scenario == "simulation":
+        parents = results["b"]["manifest"]["inputs"]
+        assert parents == [results["s"]["manifest"], results["p"]["manifest"]]
     if scenario == "raw-slabs":
         assert results["v"]["value"]["volume"]["storage"]["type"] == "npy"
     if scenario == "saved-volume":
@@ -161,7 +164,6 @@ class Control:
 
 def stub(operation, context):
     context.control.checkpoint()
-    value = context.leases[operation.source]
     context.event(wire.Note(2, 1, 0.0, "info", "stub"))
     context.snapshot(products.Snapshot(0.0, "cpu:0", "host", None, None, None))
     stage = context.staging.array()
@@ -184,7 +186,7 @@ def stub(operation, context):
     return execution.Success(
         products.PlaneResult(metadata),
         wire.Info({}, {}),
-        products.Provenance("plane", {"axis": "y", "index": 2}, (value.provenance,)),
+        products.Provenance("plane", {"axis": "y", "index": 2}, context.lineage(operation)),
     )
 
 
@@ -329,6 +331,38 @@ def test_admission_finds_all_nested_inputs_before_queueing():
         type=envelope.Request,
     )
     assert operations.input_references(request.command) == (arrays.Member("s", "scan"),) * 2
+
+
+def test_adapter_lineage_uses_admitted_handles_and_artifacts_in_command_order(tmp_path):
+    scan = arrays.Member("s", "scan")
+    artifact = arrays.Npy(str(tmp_path / "never-opened.npy"), "projection")
+    simulation = products.Provenance("simulate", {"seed": 17}, ())
+    projection = products.Provenance("project", {}, (simulation, simulation))
+    context = execution.ExecutionContext(
+        {
+            artifact: execution.Lease(artifact, projection),
+            scan: execution.Lease(
+                tj.Scan(
+                    np.ones((1, 1, 1)),
+                    tj.ParallelGeometry(tj.Grid(1, 1, 1, 1, 1, 1), tj.Detector(1, 1, 1, 1), [0.0]),
+                ),
+                simulation,
+            ),
+        },
+        Control(None),
+        pytest.fail,
+        pytest.fail,
+        Stage(tmp_path),
+    )
+    assert context.lineage(operations.Run(operations.Backproject(scan, artifact))) == (
+        simulation,
+        projection,
+    )
+    combine = operations.Combine((scan, operations.PathInput("input.nxs"), scan))
+    assert context.lineage(operations.Validate(combine)) == (simulation, simulation)
+    unpinned = arrays.Npy(artifact.path, "unknown")
+    with pytest.raises(KeyError):
+        context.lineage(operations.Run(operations.Backproject(scan, unpinned)))
 
 
 def test_cli_streams_one_terminal_per_command(tmp_path):

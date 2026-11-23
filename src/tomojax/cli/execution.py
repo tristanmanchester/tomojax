@@ -12,7 +12,7 @@ import numpy as np
 
 import tomojax as tj
 from tomojax._typed_arrays import device_id
-from tomojax.cli.operations import ExecutionInput, Plane
+from tomojax.cli.operations import ExecutionInput, Plane, input_references
 from tomojax.cli.products import DataProduct, HandleProduct, PlaneResult, Provenance, Snapshot
 from tomojax.wire.arrays import Array, Axis, Fixed, Member, Npy, Storage, Uniform
 from tomojax.wire.progress import INFO_BYTES, Event, Info
@@ -77,7 +77,7 @@ type HandleValue = (
 class Lease:
     """Value and full input lineage pinned before enqueue, even if its handle closes."""
 
-    value: HandleValue
+    value: HandleValue | Npy
     provenance: Provenance
 
 
@@ -105,14 +105,29 @@ class Staging(Protocol):
 class ExecutionContext:
     """Capabilities restricted to a single request and its pre-admitted inputs."""
 
-    leases: Mapping[Member, Lease]
+    leases: Mapping[Member | Npy, Lease]
     control: Control
     event: Callable[[Event], None]
     snapshot: Callable[[Snapshot], None]
     staging: Staging
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "leases", MappingProxyType(dict(self.leases)))
+    def __init__[K: Member | Npy](
+        self,
+        leases: Mapping[K, Lease],
+        control: Control,
+        event: Callable[[Event], None],
+        snapshot: Callable[[Snapshot], None],
+        staging: Staging,
+    ) -> None:
+        object.__setattr__(self, "leases", MappingProxyType(dict(leases)))
+        object.__setattr__(self, "control", control)
+        object.__setattr__(self, "event", event)
+        object.__setattr__(self, "snapshot", snapshot)
+        object.__setattr__(self, "staging", staging)
+
+    def lineage(self, command: ExecutionInput) -> tuple[Provenance, ...]:
+        """Return each pinned producer in command order, including repeated references."""
+        return tuple(self.leases[ref].provenance for ref in input_references(command))
 
 
 @dataclass(frozen=True)
@@ -198,7 +213,7 @@ def browse_plane(operation: Plane, context: ExecutionContext) -> Success:
     manifest = Provenance(
         "plane",
         {"axis": axis.name, "index": operation.index, "source": operation.source},
-        (lease.provenance,),
+        context.lineage(operation),
     )
     return Success(PlaneResult(plane), Info({}, {}), manifest)
 
