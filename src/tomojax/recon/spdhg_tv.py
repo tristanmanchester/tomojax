@@ -580,7 +580,7 @@ def _tv_dual_step(
 
 
 def _sweep(
-    state: _SPDHGScanState, runtime: _SPDHGRuntime, step: jax.Array
+    state: _SPDHGScanState, runtime: _SPDHGRuntime, iteration: jax.Array
 ) -> tuple[tuple[jax.Array, ...], jax.Array]:
     """Overwrite each plane after its forward differences and outgoing flux are known.
 
@@ -625,7 +625,7 @@ def _sweep(
             )
             below_old, below_new = old[2][-1:], new[2][-1:]
         candidate = u - runtime.step_sizes.tau * gradient_bar
-        kept = jnp.where(step + 1 < cfg.iterations, candidate, u)
+        kept = jnp.where(iteration < cfg.iterations, candidate, u)
         return p, jax.lax.dynamic_update_slice_in_dim(x, kept, start, 0), below_old, below_new
 
     def slab(i: jax.Array, carry: tuple) -> tuple:
@@ -713,9 +713,9 @@ def _advance_spdhg(
             return state.y_data
         return jax.lax.dynamic_update_slice_in_dim(state.y_data, duals, start, axis=0)
 
-    def one_step(t: jnp.ndarray, state: _SPDHGScanState) -> _SPDHGScanState:
+    def one_step(iteration: jnp.ndarray, state: _SPDHGScanState) -> _SPDHGScanState:
         size = schedule.views_per_batch
-        start = schedule.block_ids[t] * size
+        start = schedule.block_ids[iteration - 1] * size
         start_shifted = jnp.minimum(start, n_views - size)
 
         T_chunk = jax.lax.dynamic_slice_in_dim(
@@ -735,15 +735,15 @@ def _advance_spdhg(
 
         y_data_new = store(state, start_shifted, y_dual_new)
 
-        do_log = (cfg.log_every > 0) & ((t + 1) % cfg.log_every == 0)
+        do_log = (cfg.log_every > 0) & (iteration % cfg.log_every == 0)
 
         def log_step() -> jnp.ndarray:
             obj = _sampled_loss(runtime, state.x, pred, y_chunk, w_chunk, row_mask)
-            return state.losses.at[t].set(obj)
+            return state.losses.at[iteration - 1].set(obj)
 
         # The objective at the current primal, before the sweep overwrites it.
         losses_new = jax.lax.cond(do_log, log_step, lambda: state.losses)
-        p, partial = _sweep(state, runtime, t)
+        p, partial = _sweep(state, runtime, iteration)
         # Consume the old accumulator before the matched transpose overwrites it.
         partial, acc = jax.lax.optimization_barrier((partial, state.s_data))
         s_data_new = backproject_chunk(delta_y, start_shifted, T_chunk, acc)
@@ -752,7 +752,7 @@ def _advance_spdhg(
             runtime.support,
             lower_bound=cfg.lower_bound,
         )
-        x_new = jnp.where(t + 1 < cfg.iterations, candidate, partial)
+        x_new = jnp.where(iteration < cfg.iterations, candidate, partial)
         return _SPDHGScanState(
             x=x_new,
             y_data=y_data_new,
@@ -761,7 +761,9 @@ def _advance_spdhg(
             losses=losses_new,
         )
 
-    return jax.lax.fori_loop(first, end, one_step, state)
+    # Count completed updates directly: the sampled loss and final primal both use this
+    # count. Keeping it as the loop induction variable lets XLA overwrite x in the sweep.
+    return jax.lax.fori_loop(first + 1, end + 1, one_step, state)
 
 
 def _spdhg_program(

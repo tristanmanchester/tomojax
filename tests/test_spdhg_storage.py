@@ -39,7 +39,7 @@ def test_sweep_matches_whole_volume_update(regularizer):
 
     @jax.jit
     def update(x, p, data):
-        return _sweep(SimpleNamespace(x=x, p=p, s_data=data), runtime, jnp.int32(0))
+        return _sweep(SimpleNamespace(x=x, p=p, s_data=data), runtime, jnp.int32(1))
 
     actual, partial = update(x, p, data)
     gradients = tuple(
