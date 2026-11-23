@@ -73,14 +73,6 @@ def _device(cp):
     return cp.cuda.Device(cp.cuda.runtime.getDevice())
 
 
-def _poses(geometry, n):
-    poses = host_view_poses(geometry, n)
-    assert poses is not None
-    validate_pose_stack(poses, n, context="cgls")
-    validate_physical_poses(poses, "cgls", rigid=True)
-    return poses
-
-
 def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
     """Return None only when CUDA is unavailable or the resident data would not fit."""
     import cupy as cp
@@ -104,7 +96,10 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
             projections, detector, geometry=geometry, context="cgls"
         )
         validate_placement(grid, detector, "cgls")
-        poses = _poses(geometry, n)
+        poses = host_view_poses(geometry, n)
+        assert poses is not None
+        validate_pose_stack(poses, n, context="cgls")
+        validate_physical_poses(poses, "cgls", rigid=True)
         if not np.isfinite(projections).all() or (
             initial is not None and not np.isfinite(initial).all()
         ):

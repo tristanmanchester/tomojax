@@ -191,12 +191,12 @@ def validate_acquisition(
     geometry: Geometry, grid: Grid, detector: Detector, context: str
 ) -> tuple[int, int, int]:
     """Check volume placement and measured angles before reading any projections."""
-    dimensions = validate_grid(grid, context)
+    nx, ny, nz = validate_grid(grid, context)
     validate_placement(grid, detector, context)
     angles = getattr(geometry, "angles", None)
     if angles is not None and not np.isfinite(angles).all():
         raise InvalidParameter("source", f"{context}: angles must be finite")
-    return dimensions[::-1]
+    return nz, ny, nx
 
 
 def validate_physical_poses(poses: Any, context: str, *, rigid: bool) -> None:
