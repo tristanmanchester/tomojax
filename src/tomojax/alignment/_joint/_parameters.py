@@ -6,15 +6,18 @@ broadcast; scores apply the transpose of that broadcast. Held parameters do
 not have columns or entries in the linear system.
 """
 
+from typing import get_args
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax._parameters import Fit
 from tomojax.errors import InvalidParameter
 
 from ._projection import posed
 
-_NAMES = ("center", "tilt", "roll", "translations", "rotations")
+_NAMES = get_args(Fit.__value__)
 
 
 def parse_fit(fit):

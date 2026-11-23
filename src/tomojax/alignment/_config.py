@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import math
 import operator
 from typing import Literal
@@ -98,24 +98,24 @@ class AlignConfig:
     coarse_iterations: int = 12
     levels: tuple[int, ...] = (2, 1)
     image_iterations: int = 16
-    image_tolerance: float = 0.03
-    tolerance: float = 0.01
+    image_tolerance: float = field(default=0.03, metadata={"unit": "1"})
+    tolerance: float = field(default=0.01, metadata={"unit": "working_pixel"})
     min_iterations: int = 4
-    resolution: int = 320
-    max_voxels: int = 16_000_000
+    resolution: int = field(default=320, metadata={"unit": "working_pixel"})
+    max_voxels: int = field(default=16_000_000, metadata={"unit": "voxel"})
     interpolation: Interpolation | None = None
     refine_iterations: int = 5
     initial_image_iterations: int = 5
-    slip_scale: float = 0.02
-    knot_spacing: int = 10
-    rotation_sigma: float = 0.5
-    loss_width: float = 2.5
-    loss_contrast_floor: float = 0.5
-    image_tv_weight: float = 0.0
-    image_tv_huber: float = 1.0
-    margin: float = 1 / 16
-    refine_smoothing: float = 8.0
-    refine_neighbors: int = 5
+    slip_scale: float = field(default=0.02, metadata={"unit": "native_pixel"})
+    knot_spacing: int = field(default=10, metadata={"unit": "view"})
+    rotation_sigma: float = field(default=0.5, metadata={"unit": "degree"})
+    loss_width: float = field(default=2.5, metadata={"unit": "noise_sigma"})
+    loss_contrast_floor: float = field(default=0.5, metadata={"unit": "1"})
+    image_tv_weight: float = field(default=0.0, metadata={"unit": "1"})
+    image_tv_huber: float = field(default=1.0, metadata={"unit": "1"})
+    margin: float = field(default=1 / 16, metadata={"unit": "1"})
+    refine_smoothing: float = field(default=8.0, metadata={"unit": "native_pixel"})
+    refine_neighbors: int = field(default=5, metadata={"unit": "view"})
 
     def __post_init__(self) -> None:
         for name in (

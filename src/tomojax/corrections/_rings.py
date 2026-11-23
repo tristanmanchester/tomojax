@@ -727,7 +727,7 @@ class Rings(Step):
     domain: ClassVar[Domain] = "line integrals"
     whole_rows: ClassVar[bool] = True
     geometry: object = field(default=None, repr=False, compare=False)
-    views: int | None = field(default=512, kw_only=True)
+    views: int | None = field(default=512, kw_only=True, metadata={"unit": "view"})
     # what the geometry decides, compared and hashed so compiled kernels are not shared
     _axis: float | None = field(default=None, init=False, repr=False)
     _columns: int | None = field(default=None, init=False, repr=False)

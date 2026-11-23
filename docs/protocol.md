@@ -4,6 +4,9 @@ Protocol 1 uses UTF-8 JSON Lines. The client writes one request per line. The wo
 
 A request has a unique string `id`, a tagged `command` and an optional `channel`. `type` selects the variant of a command, workflow, product or storage reference. Required fields and defaults are in the schemas. Omitting a defaulted field uses its declared default. An explicit null is valid only for a nullable field.
 
+The `describe` response contains a JSON Schema in `result.parameters`. Its `$defs` describe the inputs to each operation. Form controls can read `description` for help, `x-choices` for canonical domain choices, and `x-unit` for the unit of a value. `geometry_length` uses the scan's length unit. `native_pixel` and `working_pixel` refer to the original and working detectors. The `x-python` table maps public Python arguments to wire fields. A worker-owned argument such as the reconstruction output buffer is allocated by the executor.
+
+
 Each admitted request receives zero or more `progress` envelopes followed by one `result` or `error`. Match all three by `request`. Each echoes `channel: null` or the channel name and its monotonically increasing revision. When replacing work on a channel, drop progress and artifacts from older revisions, including records already in the pipe. A rejected line receives a separate `protocol_error` of kind `invalid_request`. Its optional `request` is diagnostic. A duplicate ID leaves the original request pending. Unexpected EOF before a terminal means the process or connection was lost.
 
 ## Inputs and outputs

@@ -29,6 +29,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax._parameters import check_backend
 from tomojax.core.cone import ConeModel, use_cuda_cone
 from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry.base import grid_volume_origin
@@ -40,15 +41,15 @@ from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
 from tomojax.recon._fdk_coverage import full_turn_weights, reliability
 from tomojax.recon._fdk_cuda import backproject_cuda
 from tomojax.recon._host_arrays import validate_host_arrays
-from tomojax.recon.filters import Filter, get_fbp_filter_np, normalize_filter
+from tomojax.recon.filters import get_fbp_filter_np, normalize_filter
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
 
+    from tomojax._parameters import Filter, ProjectorBackend
     from tomojax._typed_arrays import Device
     from tomojax.core.geometry.base import Detector, Geometry, Grid
     from tomojax.core.geometry.cone import ConeBeam
-    from tomojax.recon._projection import ProjectorBackend
     from tomojax.recon.types import ReconstructionSlab
 
 
@@ -89,8 +90,6 @@ class FDKConfig:
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
-        from ._projection import check_backend
-
         check_backend(self.backend, "fdk")
         object.__setattr__(self, "filter", normalize_filter(self.filter))
         object.__setattr__(self, "devices", as_devices(self.devices))

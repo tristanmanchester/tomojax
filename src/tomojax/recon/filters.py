@@ -5,14 +5,13 @@ from __future__ import annotations
 import functools
 import math
 import operator
-from typing import Literal, cast, get_args
+from typing import cast, get_args
 
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax._parameters import Filter
 from tomojax.errors import InvalidParameter
-
-type Filter = Literal["ramp", "hann", "shepp-logan"]
 
 
 def normalize_filter(name: str | None) -> Filter:

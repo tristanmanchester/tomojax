@@ -14,18 +14,21 @@ results can be reconstructed, aligned again or saved without restating it::
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, closing, contextmanager
 from dataclasses import is_dataclass, replace
 import json
 import logging
 import os
+from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 import numpy as np
 
-from tomojax import progress
-from tomojax._loading import load
+from tomojax import _typed_arrays, progress, recon
+from tomojax._loading import Frames, load
+from tomojax._parameters import AlignMethod, AnnotationModule, Filter, Fit, Method, RegionName
 from tomojax._scan import (
     Alignment,
     Reconstruction,
@@ -39,29 +42,25 @@ from tomojax._scan import (
     source_of,
     with_grid,
 )
+from tomojax._simulate import Simulation
+from tomojax._typed_arrays import Device
+from tomojax.alignment import AlignConfig
 from tomojax.errors import InvalidParameter
+from tomojax.geometry import Grid, ScanGeometry
 from tomojax.progress import warn
+from tomojax.recon.api import MethodConfig
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator, Sequence
-    from os import PathLike
+    from collections.abc import Generator
 
-    import jax
-
-    from tomojax._loading import Frames
-    from tomojax._region import RegionEstimate
-    from tomojax._simulate import Simulation
-    from tomojax._typed_arrays import Device
-    from tomojax.alignment import AlignConfig
-    from tomojax.corrections import Step
-    from tomojax.geometry import Detector, Geometry, Grid, ScanGeometry
-    from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig
-    from tomojax.recon.api import MethodConfig
+    from tomojax import _region, corrections
+    from tomojax.geometry import Detector, Geometry
     from tomojax.recon.types import ReconstructionSlab
+else:
+    corrections = AnnotationModule("tomojax.corrections")
+    _region = AnnotationModule("tomojax._region")
 
-type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
-type Region = Literal["auto", "bbox", "cube", "cyl"] | RegionEstimate
-type AlignMethod = Literal["joint", "opposite-views"]
+type Region = RegionName | _region.RegionEstimate
 LOG = logging.getLogger(__name__)
 
 
@@ -366,11 +365,11 @@ def _json_value(value: object) -> object:
 
 def project(
     geometry: ScanGeometry,
-    volume: np.ndarray | jax.Array,
+    volume: np.ndarray | _typed_arrays.JaxArray,
     *,
     grid: Grid | None = None,
     devices: Device | Sequence[Device] | None = None,
-) -> jax.Array:
+) -> _typed_arrays.JaxArray:
     """Project a volume through the supplied geometry.
 
     Parameters
@@ -410,11 +409,11 @@ def project(
 
 def backproject(
     geometry: ScanGeometry,
-    projections: np.ndarray | jax.Array,
+    projections: np.ndarray | _typed_arrays.JaxArray,
     *,
     grid: Grid | None = None,
     devices: Device | Sequence[Device] | None = None,
-) -> jax.Array:
+) -> _typed_arrays.JaxArray:
     """Apply the exact transpose of the forward projector.
 
     Parameters
@@ -459,7 +458,7 @@ def reconstruct(
     region: Region | None = None,
     out: np.ndarray | None = None,
     config: MethodConfig | None = None,
-    filter: str | None = None,
+    filter: Filter | None = None,
     iterations: int | None = None,
     tv_weight: float | None = None,
     nonnegative: bool | None = None,
@@ -756,8 +755,12 @@ def reconstruct_slabs(
     method: Literal["fbp", "fourier", "sirt", "mlem"],
     *,
     grid: Grid | None = None,
-    corrections: Sequence[Step] = (),
-    config: FBPConfig | FourierConfig | SIRTConfig | MLEMConfig | None = None,
+    corrections: Sequence[corrections.Step] = (),
+    config: recon.FBPConfig
+    | recon.FourierConfig
+    | recon.SIRTConfig
+    | recon.MLEMConfig
+    | None = None,
     warm_start: bool | None = None,
     epsilon: float = 1e-6,
 ) -> AbstractContextManager[Iterator[tuple[slice, Reconstruction]]]:
@@ -835,7 +838,7 @@ def _reconstruct_slabs_context(
     method: Literal["fbp", "fourier", "sirt", "mlem"],
     *,
     grid: Grid | None,
-    corrections: Sequence[Step],
+    corrections: Sequence[corrections.Step],
     config: MethodConfig | None,
     warm_start: bool | None,
     epsilon: float,
@@ -981,7 +984,7 @@ def _estimate_center(scan: Scan) -> tuple[Scan, dict[str, object]]:
 def align(
     scan: Scan,
     *,
-    fit: str | tuple[str, ...] = "translations",
+    fit: Fit | tuple[Fit, ...] = "translations",
     grid: Grid | None = None,
     region: Region | None = None,
     method: AlignMethod | None = None,

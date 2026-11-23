@@ -6,8 +6,7 @@ from typing import Literal
 
 import msgspec
 
-from tomojax._simulate import GeometryName, Phantom
-from tomojax._workflow import AlignMethod, Method
+from tomojax._parameters import AlignMethod, GeometryName, Method, Phantom, RegionName
 from tomojax.cli import wire_options as w
 from tomojax.wire.arrays import Count, Id, Member, Npy, Record, Storage
 
@@ -29,7 +28,7 @@ type Config = (
     | w.SIRTConfig
     | w.MLEMConfig
 )
-type Region = Literal["auto", "cube", "bbox", "cyl"] | Member
+type Region = RegionName | Member
 
 
 class PathInput(Record, tag="path"):

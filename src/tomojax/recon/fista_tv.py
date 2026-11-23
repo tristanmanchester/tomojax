@@ -1,18 +1,19 @@
 """Public FISTA/TV reconstruction adapter."""
 
-from __future__ import annotations
-
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, fields, replace
 import functools
-from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax._parameters import ProjectorBackend, check_backend
+from tomojax._typed_arrays import Device
 from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.devices import ViewSplit, as_devices, refuse_streaming, view_split
+from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_grid,
@@ -30,7 +31,6 @@ from ._noise import estimate_projection_noise
 from ._noise_probe import probe_gradient_rms
 from ._projection import (
     ConeModel,
-    ProjectorBackend,
     least_squares_operators,
     resolve_geometry_projector,
 )
@@ -45,14 +45,7 @@ from ._tv_ops import (
     validate_regularizer,
 )
 from ._volume_storage import Model, pack_volume, resident_model, volume_shape
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
-
-    from tomojax._typed_arrays import Device
-    from tomojax.core.geometry.base import Detector, Geometry, Grid
-
-    from .types import DataTerm, Regularizer
+from .types import DataTerm, Regularizer
 
 
 @functools.partial(
@@ -71,7 +64,7 @@ class _FistaConstraints:
 class FistaRuntime:
     """Resolved solver state shared with the initialization module."""
 
-    config: FISTAConfig
+    config: "FISTAConfig"
     regularizer: Regularizer = field(metadata={"static": True})
     metric: TVMetric | None
     noise_scale: jax.Array | float | None
@@ -271,8 +264,6 @@ class FISTAConfig:
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
-        from ._projection import check_backend
-
         check_backend(self.backend, "fista")
         _ = validate_fista_config(self)
         _ = validate_regularizer(self.regularizer, self.huber_delta, context="fista config")

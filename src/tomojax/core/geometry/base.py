@@ -107,14 +107,18 @@ class Grid:
         If a placement vector does not have three components.
     """
 
-    nx: int
-    ny: int
-    nz: int
-    vx: float
-    vy: float
-    vz: float
-    vol_origin: Vec3 | None = field(default=None, kw_only=True)
-    vol_center: Vec3 | None = field(default=None, kw_only=True)
+    nx: int = field(metadata={"unit": "voxel"})
+    ny: int = field(metadata={"unit": "voxel"})
+    nz: int = field(metadata={"unit": "voxel"})
+    vx: float = field(metadata={"unit": "geometry_length"})
+    vy: float = field(metadata={"unit": "geometry_length"})
+    vz: float = field(metadata={"unit": "geometry_length"})
+    vol_origin: Vec3 | None = field(
+        default=None, kw_only=True, metadata={"unit": "geometry_length"}
+    )
+    vol_center: Vec3 | None = field(
+        default=None, kw_only=True, metadata={"unit": "geometry_length"}
+    )
 
     def __post_init__(self) -> None:
         _plain_numbers(self, ("nx", "ny", "nz"), ("vx", "vy", "vz"))
@@ -297,11 +301,11 @@ class Detector:
         If center does not have two components.
     """
 
-    nu: int
-    nv: int
-    du: float
-    dv: float
-    center: Vec2 = field(default_factory=lambda: (0.0, 0.0))
+    nu: int = field(metadata={"unit": "pixel"})
+    nv: int = field(metadata={"unit": "pixel"})
+    du: float = field(metadata={"unit": "geometry_length"})
+    dv: float = field(metadata={"unit": "geometry_length"})
+    center: Vec2 = field(default_factory=lambda: (0.0, 0.0), metadata={"unit": "geometry_length"})
 
     def __post_init__(self) -> None:
         _plain_numbers(self, ("nu", "nv"), ("du", "dv"))

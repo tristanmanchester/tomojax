@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 import json
 import math
 import os
+from os import PathLike
 from pathlib import Path
 import shutil
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -13,14 +14,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import numpy as np
 
 from tomojax import progress
+from tomojax._scan import Alignment, Reconstruction
+from tomojax._simulate import Simulation
+from tomojax.io.api import Inspection
 
 if TYPE_CHECKING:
-    from os import PathLike
-
-    from tomojax._scan import Alignment, Reconstruction
-    from tomojax._simulate import Simulation
     from tomojax.geometry import Grid
-    from tomojax.io.api import Inspection
 
 
 def inspect(path: str | PathLike[str]) -> Inspection:

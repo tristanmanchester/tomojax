@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.geometry.views import stack_view_poses
@@ -30,7 +31,6 @@ from tomojax.recon._cone_slabs import RowReader, host_volumes
 from tomojax.recon._host_arrays import validate_host_views
 from tomojax.recon._projection import (
     ConeModel,
-    ProjectorBackend,
     poisson_operators,
     resolve_geometry_projector,
 )
@@ -124,8 +124,6 @@ class MLEMConfig:
     backend: ProjectorBackend = "auto"
 
     def __post_init__(self) -> None:
-        from ._projection import check_backend
-
         check_backend(self.backend, "mlem")
         for name, minimum in (("iterations", 0), ("subsets", 1), ("views_per_batch", 1)):
             if operator.index(getattr(self, name)) < minimum:

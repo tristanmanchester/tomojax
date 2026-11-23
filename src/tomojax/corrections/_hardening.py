@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
@@ -72,9 +72,9 @@ class BeamHardening(Step):
     """
 
     domain: ClassVar[Domain] = "line integrals"
-    rates: tuple[float, ...] = (1.0,)
-    weights: tuple[float, ...] = (1.0,)
-    energy_kev: float | None = None
+    rates: tuple[float, ...] = field(default=(1.0,), metadata={"unit": "1"})
+    weights: tuple[float, ...] = field(default=(1.0,), metadata={"unit": "1"})
+    energy_kev: float | None = field(default=None, metadata={"unit": "keV"})
 
     def __post_init__(self) -> None:
         if self.energy_kev is not None and not (

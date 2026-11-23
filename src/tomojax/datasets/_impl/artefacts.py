@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Literal, TypedDict
 
 import jax.numpy as jnp
@@ -85,20 +85,20 @@ class SimulationArtefacts:
         Drift profile; default is 'none'.
     """
 
-    poisson_scale: float = 0.0
-    gaussian_sigma: float = 0.0
-    dead_pixel_fraction: float = 0.0
-    dead_pixel_value: float = 0.0
-    hot_pixel_fraction: float = 0.0
-    hot_pixel_value: float = 1.0
-    zinger_fraction: float = 0.0
-    zinger_value: float = 1.0
-    stripe_fraction: float = 0.0
-    stripe_gain_sigma: float = 0.0
-    dropped_view_fraction: float = 0.0
-    dropped_view_fill: float = 0.0
-    detector_blur_sigma: float = 0.0
-    intensity_drift_amplitude: float = 0.0
+    poisson_scale: float = field(default=0.0, metadata={"unit": "counts_per_line_integral"})
+    gaussian_sigma: float = field(default=0.0, metadata={"unit": "line_integral"})
+    dead_pixel_fraction: float = field(default=0.0, metadata={"unit": "1"})
+    dead_pixel_value: float = field(default=0.0, metadata={"unit": "line_integral"})
+    hot_pixel_fraction: float = field(default=0.0, metadata={"unit": "1"})
+    hot_pixel_value: float = field(default=1.0, metadata={"unit": "line_integral"})
+    zinger_fraction: float = field(default=0.0, metadata={"unit": "1"})
+    zinger_value: float = field(default=1.0, metadata={"unit": "line_integral"})
+    stripe_fraction: float = field(default=0.0, metadata={"unit": "1"})
+    stripe_gain_sigma: float = field(default=0.0, metadata={"unit": "1"})
+    dropped_view_fraction: float = field(default=0.0, metadata={"unit": "1"})
+    dropped_view_fill: float = field(default=0.0, metadata={"unit": "line_integral"})
+    detector_blur_sigma: float = field(default=0.0, metadata={"unit": "pixel"})
+    intensity_drift_amplitude: float = field(default=0.0, metadata={"unit": "1"})
     intensity_drift_mode: IntensityDriftMode = "none"
 
     def to_dict(self) -> JsonObject:

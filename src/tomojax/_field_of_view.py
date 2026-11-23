@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, get_args
 
 import numpy as np
 
+from tomojax._parameters import RegionName
 from tomojax.geometry import Grid, grid_volume_origin
 from tomojax.geometry.api import is_cone_beam, view_frames
 
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 
 # The regions by name: the box every view sees ("auto", "bbox"), its largest cube or
 # cylinder about the axis ("cube", "cyl", which also zeroes outside it).
-REGIONS = ("auto", "bbox", "cube", "cyl")
+REGIONS = get_args(RegionName.__value__)
 REGION_CHOICES = REGIONS
 REGION_HELP = (
     "Crop the grid to the detector's field of view: auto, bbox, cube, "

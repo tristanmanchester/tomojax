@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
@@ -28,7 +29,6 @@ from tomojax.recon._chunks import Chunked, fixed_updates
 from tomojax.recon._cone_slabs import RowReader, host_volumes
 from tomojax.recon._projection import (
     ConeModel,
-    ProjectorBackend,
     resolve_geometry_projector,
     subset_operators,
 )
@@ -107,8 +107,6 @@ class SIRTConfig:
     backend: ProjectorBackend = "auto"
 
     def __post_init__(self) -> None:
-        from ._projection import check_backend
-
         check_backend(self.backend, "sirt")
         for name, minimum in (("iterations", 0), ("views_per_batch", 1), ("subsets", 1)):
             if operator.index(getattr(self, name)) < minimum:

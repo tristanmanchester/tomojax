@@ -44,7 +44,7 @@
   },
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 160,
-    "src/tomojax/cli/simulate.py::_build_parser": 102,
+    "src/tomojax/cli/simulate.py::_build_parser": 104,
     "src/tomojax/corrections/_engine.py::correct_frames": 101,
     "src/tomojax/recon/_cgls_jax.py::_solve": 146,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 101,
@@ -52,12 +52,12 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "code_lines": {
-    "(modules)": 4722,
+    "(modules)": 4775,
     "_data": 2153,
-    "alignment": 4509,
+    "alignment": 4512,
     "backends": 263,
-    "cli": 4799,
-    "core": 9575,
+    "cli": 4825,
+    "core": 9579,
     "corrections": 2997,
     "datasets": 1070,
     "forward": 404,
@@ -65,7 +65,7 @@
     "io": 3941,
     "motion": 153,
     "nuisance": 232,
-    "recon": 13776,
+    "recon": 13730,
     "wire": 243
   },
   "cuda_kernels": 47,

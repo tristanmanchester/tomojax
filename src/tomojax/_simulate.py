@@ -4,21 +4,22 @@ from __future__ import annotations
 
 from dataclasses import replace
 import math
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
+from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
 
 import numpy as np
 
 from tomojax import progress
+from tomojax._parameters import AnnotationModule, GeometryName, Phantom
+from tomojax.geometry import Detector, Grid
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from tomojax import datasets
     from tomojax._scan import Scan
-    from tomojax.datasets import SimConfig, SimulationArtefacts
-    from tomojax.geometry import Detector, Grid
-
-type Phantom = Literal["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"]
-type GeometryName = Literal["parallel", "lamino", "cone"]
+    from tomojax.datasets import SimConfig
+else:
+    datasets = AnnotationModule("tomojax.datasets")
 
 
 class Simulation(NamedTuple):
@@ -76,7 +77,7 @@ def build_sim_config(
     source_to_axis: float | None = None,
     source_to_detector: float | None = None,
     poisson_scale: float = 0.0,
-    artefacts: SimulationArtefacts | None = None,
+    artefacts: datasets.SimulationArtefacts | None = None,
     grid: Grid | None = None,
     detector: Detector | None = None,
     seed: int = 0,
@@ -179,15 +180,15 @@ def simulate_config(
 def simulate(
     phantom: Phantom = "shepp",
     *,
-    size: int = 64,
-    n_views: int | None = None,
+    size: Annotated[int, "voxel"] = 64,
+    n_views: Annotated[int | None, "view"] = None,
     geometry: GeometryName = "parallel",
-    rotation: float | None = None,
-    tilt: float | None = None,
-    source_to_axis: float | None = None,
-    source_to_detector: float | None = None,
-    poisson_scale: float = 0.0,
-    artefacts: SimulationArtefacts | None = None,
+    rotation: Annotated[float | None, "degree"] = None,
+    tilt: Annotated[float | None, "degree"] = None,
+    source_to_axis: Annotated[float | None, "geometry_length"] = None,
+    source_to_detector: Annotated[float | None, "geometry_length"] = None,
+    poisson_scale: Annotated[float, "counts_per_line_integral"] = 0.0,
+    artefacts: datasets.SimulationArtefacts | None = None,
     grid: Grid | None = None,
     detector: Detector | None = None,
     seed: int = 0,

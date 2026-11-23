@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from tomojax._loading_geometry import DeclaredGeometry
+from tomojax._parameters import GeometryName, TiltAbout
 
 # The flags ``tomojax correct`` lists in --help for acquisition inputs.
 PUBLIC = (
@@ -61,14 +62,17 @@ def add_inputs(parser: argparse.ArgumentParser) -> None:
     )
     _ = group.add_argument(
         "--geometry",
-        choices=("parallel", "lamino", "cone"),
+        choices=get_args(GeometryName.__value__),
         help="Declare the acquisition geometry the file does not record",
     )
     _ = group.add_argument(
         "--tilt", type=float, help="Rotation axis tilt in degrees (lamino, cone)"
     )
     _ = group.add_argument(
-        "--tilt-about", choices=("x", "z"), default=None, help="The axis the tilt turns about (x)"
+        "--tilt-about",
+        choices=get_args(TiltAbout.__value__),
+        default=None,
+        help="The axis the tilt turns about (x)",
     )
     _ = group.add_argument(
         "--detector-roll", type=float, default=None, help="Detector roll, degrees"
@@ -104,7 +108,7 @@ def validate_inputs(
     sizes = cast("list[float] | None", args.pixel_size)
     if sizes is not None and len(sizes) not in (1, 2):
         parser.error("--pixel-size takes one value, or two (u then v)")
-    kind = cast("str | None", args.geometry)
+    kind = cast("GeometryName | None", args.geometry)
     center = cast("list[float] | None", args.detector_center)
     if kind is None:
         dangling = [
@@ -137,7 +141,7 @@ def validate_inputs(
     return DeclaredGeometry(
         kind=kind,
         tilt=cast("float | None", args.tilt),
-        tilt_about="x" if args.tilt_about is None else cast("str", args.tilt_about),
+        tilt_about="x" if args.tilt_about is None else cast("TiltAbout", args.tilt_about),
         detector_roll=0.0 if args.detector_roll is None else cast("float", args.detector_roll),
         detector_pitch=0.0 if args.detector_pitch is None else cast("float", args.detector_pitch),
         detector_yaw=0.0 if args.detector_yaw is None else cast("float", args.detector_yaw),

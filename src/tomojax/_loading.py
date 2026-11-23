@@ -9,19 +9,22 @@ Xradia acquisitions, or TIFFs.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
 import logging
 import numbers
 import os
+from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import numpy as np
 
 from tomojax import progress
 from tomojax._data import calibration_issues, views_of
 from tomojax._loading_geometry import frame_geometry
+from tomojax._parameters import AnnotationModule
 from tomojax._scan import (
     Scan,
     bind_step_geometry,
@@ -36,16 +39,16 @@ from tomojax._scan import (
 )
 from tomojax.core.host_volume import discard_failed_outputs
 from tomojax.core.validation import view_indices
+from tomojax.geometry import Detector, Grid, ScanGeometry
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from os import PathLike
-
+    from tomojax import corrections
     from tomojax._loading_geometry import DeclaredGeometry
-    from tomojax.corrections import Correction, Step
-    from tomojax.geometry import Detector, Grid, ScanGeometry
+    from tomojax.corrections import Correction
     from tomojax.io import ProjectionDataset
     from tomojax.io.api import LocatedFrames
+else:
+    corrections = AnnotationModule("tomojax.corrections")
 
 LOG = logging.getLogger(__name__)
 
@@ -76,13 +79,13 @@ def load(
     *,
     flats: np.ndarray | float | str | PathLike[str] | None = None,
     darks: np.ndarray | float | str | PathLike[str] | None = None,
-    angles: Sequence[float] | np.ndarray | None = None,
+    angles: Annotated[Sequence[float] | np.ndarray | None, "degree"] = None,
     detector: Detector | None = None,
-    pixel_size: float | tuple[float, float] | None = None,
+    pixel_size: Annotated[float | tuple[float, float] | None, "geometry_length"] = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
-    exposure_times: np.ndarray | float | None = None,
-    flat_exposure_times: np.ndarray | float | None = None,
+    exposure_times: Annotated[np.ndarray | float | None, "s"] = None,
+    flat_exposure_times: Annotated[np.ndarray | float | None, "s"] = None,
     data_path: str | None = None,
     image_key_path: str | None = None,
     angles_path: str | None = None,
@@ -390,7 +393,7 @@ class Frames:
 
     def corrected(
         self,
-        *steps: Step,
+        *steps: corrections.Step,
         epsilon: float = 1e-6,
         views_per_batch: int | None = None,
         binning: int = 1,
@@ -566,13 +569,13 @@ def load_frames(
     *,
     flats: np.ndarray | float | str | PathLike[str] | None = None,
     darks: np.ndarray | float | str | PathLike[str] | None = None,
-    angles: Sequence[float] | np.ndarray | None = None,
+    angles: Annotated[Sequence[float] | np.ndarray | None, "degree"] = None,
     detector: Detector | None = None,
-    pixel_size: float | tuple[float, float] | None = None,
+    pixel_size: Annotated[float | tuple[float, float] | None, "geometry_length"] = None,
     grid: Grid | None = None,
     geometry: ScanGeometry | None = None,
-    exposure_times: np.ndarray | float | None = None,
-    flat_exposure_times: np.ndarray | float | None = None,
+    exposure_times: Annotated[np.ndarray | float | None, "s"] = None,
+    flat_exposure_times: Annotated[np.ndarray | float | None, "s"] = None,
     data_path: str | None = None,
     image_key_path: str | None = None,
     angles_path: str | None = None,

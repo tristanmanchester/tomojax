@@ -1,23 +1,17 @@
 """Conjugate-gradient least squares using the exact matched projector pair."""
 
-from __future__ import annotations
-
+from collections.abc import Sequence
 from dataclasses import dataclass
 import math
 import operator
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import Literal, get_args
 
-from tomojax import progress
+import numpy as np
+
+from tomojax import _typed_arrays, progress
+from tomojax._parameters import check_backend
 from tomojax.errors import InvalidParameter
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    import jax.numpy as jnp
-    import numpy as np
-
-    from tomojax._typed_arrays import Device
-    from tomojax.geometry import Detector, Geometry, Grid
+from tomojax.geometry import Detector, Geometry, Grid
 
 from .types import DataTerm
 
@@ -121,11 +115,9 @@ class CGLSConfig:
     interpolation: Literal["linear", "cubic"] = "linear"
     gradient_damping: float = 0.0
     stream: bool | None = None
-    devices: Device | Sequence[Device] | None = None  # kept as a tuple
+    devices: _typed_arrays.Device | Sequence[_typed_arrays.Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
-        from ._projection import check_backend
-
         iterations, batch = operator.index(self.iterations), operator.index(self.views_per_batch)
         if iterations < 0 or batch < 1:
             raise InvalidParameter(
@@ -169,13 +161,13 @@ def cgls(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections: jnp.ndarray | np.ndarray,
+    projections: "_typed_arrays.JaxArray | np.ndarray",
     *,
-    init_x: jnp.ndarray | np.ndarray | None = None,
+    init_x: "_typed_arrays.JaxArray | np.ndarray | None" = None,
     config: CGLSConfig | None = None,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    det_grid: "tuple[_typed_arrays.JaxArray, _typed_arrays.JaxArray] | None" = None,
     out: np.ndarray | None = None,
-) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
+) -> "tuple[_typed_arrays.JaxArray | np.ndarray, dict[str, object]]":
     """Reconstruct with matched CGLS and report convergence diagnostics.
 
     Inputs and the solve use FP32. Host arrays on CUDA can use the native

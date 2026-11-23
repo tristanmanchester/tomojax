@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import fields, replace
 import os
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, cast, get_args
 
+from tomojax._parameters import GeometryName, Phantom
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
@@ -20,8 +21,6 @@ if TYPE_CHECKING:
 
     from tomojax.wire.progress import Result
 
-GeometryName = Literal["parallel", "lamino", "cone"]
-PhantomName = Literal["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"]
 TransferGuardName = Literal["off", "log", "disallow"]
 
 
@@ -72,10 +71,12 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Number of views (default 2 x size)",
     )
-    _ = parser.add_argument("--geometry", choices=GeometryName.__args__, default="parallel")
+    _ = parser.add_argument(
+        "--geometry", choices=get_args(GeometryName.__value__), default="parallel"
+    )
     _ = parser.add_argument(
         "--phantom",
-        choices=["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"],
+        choices=get_args(Phantom.__value__),
         default="shepp",
     )
     _ = parser.add_argument(
@@ -231,7 +232,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         log_jax_env()
         with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
             resolved_grid, resolved_detector, cfg = build_sim_config(
-                cast("PhantomName", args.phantom),
+                cast("Phantom", args.phantom),
                 size=cast("int", args.size),
                 n_views=cast("int | None", args.n_views),
                 geometry=cast("GeometryName", args.geometry),

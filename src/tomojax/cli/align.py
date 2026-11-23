@@ -9,7 +9,7 @@ import json
 import logging
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, get_args
 
 import numpy as np
 
@@ -20,6 +20,7 @@ from tomojax._field_of_view import (
     region_grid,
     zero_outside_cylinder,
 )
+from tomojax._parameters import Fit
 from tomojax.cli._options import EXIT_STATUS, add_config, add_force, check_paths
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
@@ -38,7 +39,7 @@ class _Args(argparse.Namespace):
     out: str | None
     force: bool
     progress: str
-    fit: list[str]
+    fit: list[Fit]
     method: str
     motion: str | None
     iterations: int | None
@@ -90,7 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--fit",
         nargs="+",
-        choices=("center", "tilt", "roll", "translations", "rotations"),
+        choices=get_args(Fit.__value__),
         default=["translations"],
         metavar="NAME",
         help=(

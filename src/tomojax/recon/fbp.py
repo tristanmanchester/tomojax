@@ -1,17 +1,18 @@
 """Filtered-backprojection reconstruction routines."""
 
-from __future__ import annotations
-
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 import math
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax._parameters import Filter, check_backend
+from tomojax._typed_arrays import Device
 from tomojax.backends.api import is_oom_error
 from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry import Detector, Geometry, Grid, grid_volume_origin
@@ -26,14 +27,8 @@ from tomojax.core.validation import (
 )
 
 from ._fbp_weights import fbp_weights
-from .filters import Filter, fft_filter_rows, normalize_filter, rfft_filter_array
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from tomojax._typed_arrays import Device
-
-    from ._host_arrays import ProjectionRows
+from ._host_arrays import ProjectionRows
+from .filters import fft_filter_rows, normalize_filter, rfft_filter_array
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -74,8 +69,6 @@ class FBPConfig:
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
-        from ._projection import check_backend
-
         check_backend(self.backend, "fbp")
         object.__setattr__(self, "filter", normalize_filter(self.filter))
         object.__setattr__(self, "devices", as_devices(self.devices))

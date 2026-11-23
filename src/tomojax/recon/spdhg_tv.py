@@ -1,18 +1,18 @@
 """SPDHG/TV reconstruction routine."""
 
-from __future__ import annotations
-
+from collections.abc import Callable
 import contextlib
 from dataclasses import dataclass, field, fields, replace
 import functools
 import math
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.host_stream import (
     host_buffer,
@@ -22,6 +22,7 @@ from tomojax.backends.host_stream import (
     should_stream,
     write_block,
 )
+from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_grid,
@@ -32,7 +33,6 @@ from tomojax.core.validation import (
     validate_volume,
 )
 from tomojax.recon._projection import (
-    ProjectorBackend,
     resolve_geometry_projector,
 )
 from tomojax.wire.metrics import Metric
@@ -55,14 +55,7 @@ from ._tv_ops import (
     validate_regularizer,
 )
 from ._volume_storage import Model, pack_volume, resident_model, restore_volume, volume_shape
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from tomojax.core.geometry.base import Detector, Geometry, Grid
-
-    from .types import DataTerm, Regularizer
-
+from .types import DataTerm, Regularizer
 
 # --------- config ----------
 
@@ -173,8 +166,6 @@ class SPDHGConfig:
     stream: bool | None = None
 
     def __post_init__(self) -> None:
-        from ._projection import check_backend
-
         check_backend(self.backend, "spdhg")
         validate_spdhg_config(self)
         _ = validate_regularizer(self.regularizer, self.huber_delta, context="spdhg_tv config")

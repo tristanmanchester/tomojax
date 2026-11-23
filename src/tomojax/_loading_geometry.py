@@ -8,11 +8,12 @@ with ``detector_center_status="not_recorded"``; fit a centre explicitly with
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tomojax._parameters import GeometryName, TiltAbout
 from tomojax._scan import frame_output_grid, geometry_of
 from tomojax.geometry import (
     ConeBeam,
@@ -39,18 +40,38 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class DeclaredGeometry:
-    """CLI geometry declaration resolved inside the loader before file geometry is required."""
+    """Geometry supplied when opening frames with missing or overridden acquisition metadata.
 
-    kind: str | None = None
-    tilt: float | None = None
-    tilt_about: str = "x"
-    detector_roll: float = 0.0
-    detector_pitch: float = 0.0
-    detector_yaw: float = 0.0
-    source_to_axis: float | None = None
-    source_to_detector: float | None = None
-    axis_offset: float = 0.0
-    detector_center: tuple[float, float] | None = None
+    Parameters
+    ----------
+    kind : str or None
+        Acquisition geometry. None uses the recorded geometry.
+    tilt : float or None
+        Angle of the rotation axis from the axial geometry.
+    tilt_about : str
+        Coordinate axis about which the rotation axis is tilted.
+    detector_roll, detector_pitch, detector_yaw : float
+        Detector rotations about its normal, horizontal and vertical axes respectively.
+    source_to_axis, source_to_detector : float or None
+        Cone source distances to the rotation axis and detector.
+    axis_offset : float
+        Horizontal displacement of the rotation axis in the cone geometry.
+    detector_center : tuple of float or None
+        Detector centre offset in horizontal and vertical coordinates.
+    """
+
+    kind: GeometryName | None = None
+    tilt: float | None = field(default=None, metadata={"unit": "degree"})
+    tilt_about: TiltAbout = "x"
+    detector_roll: float = field(default=0.0, metadata={"unit": "degree"})
+    detector_pitch: float = field(default=0.0, metadata={"unit": "degree"})
+    detector_yaw: float = field(default=0.0, metadata={"unit": "degree"})
+    source_to_axis: float | None = field(default=None, metadata={"unit": "geometry_length"})
+    source_to_detector: float | None = field(default=None, metadata={"unit": "geometry_length"})
+    axis_offset: float = field(default=0.0, metadata={"unit": "geometry_length"})
+    detector_center: tuple[float, float] | None = field(
+        default=None, metadata={"unit": "geometry_length"}
+    )
 
 
 def _vendor_corrections(record: ProjectionDataset, *, applied: bool) -> ProjectionDataset:

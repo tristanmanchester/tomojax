@@ -1,0 +1,4652 @@
+{
+  "anyOf": [
+    {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Plane"
+        },
+        {
+          "$ref": "#/$defs/Slice"
+        },
+        {
+          "$ref": "#/$defs/CentreSweep"
+        },
+        {
+          "$ref": "#/$defs/CorrectionPreview"
+        },
+        {
+          "$ref": "#/$defs/RegionPreview"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "type",
+        "mapping": {
+          "plane": "#/$defs/Plane",
+          "slice": "#/$defs/Slice",
+          "centre_sweep": "#/$defs/CentreSweep",
+          "correction_preview": "#/$defs/CorrectionPreview",
+          "region_preview": "#/$defs/RegionPreview"
+        }
+      }
+    },
+    {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Run"
+        },
+        {
+          "$ref": "#/$defs/Inspect"
+        },
+        {
+          "$ref": "#/$defs/Open"
+        },
+        {
+          "$ref": "#/$defs/Plan"
+        },
+        {
+          "$ref": "#/$defs/Validate"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "type",
+        "mapping": {
+          "run": "#/$defs/Run",
+          "inspect": "#/$defs/Inspect",
+          "open": "#/$defs/Open",
+          "plan": "#/$defs/Plan",
+          "validate": "#/$defs/Validate"
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "Run": {
+      "title": "Run",
+      "description": "Execute a workflow.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "run"
+          ]
+        },
+        "operation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Correct"
+            },
+            {
+              "$ref": "#/$defs/Reconstruct"
+            },
+            {
+              "$ref": "#/$defs/ReconstructSlabs"
+            },
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "$ref": "#/$defs/Simulate"
+            },
+            {
+              "$ref": "#/$defs/Project"
+            },
+            {
+              "$ref": "#/$defs/Backproject"
+            },
+            {
+              "$ref": "#/$defs/Save"
+            },
+            {
+              "$ref": "#/$defs/Export"
+            },
+            {
+              "$ref": "#/$defs/Select"
+            },
+            {
+              "$ref": "#/$defs/Crop"
+            },
+            {
+              "$ref": "#/$defs/Bin"
+            },
+            {
+              "$ref": "#/$defs/Poses"
+            },
+            {
+              "$ref": "#/$defs/Combine"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "correct": "#/$defs/Correct",
+              "reconstruct": "#/$defs/Reconstruct",
+              "reconstruct_slabs": "#/$defs/ReconstructSlabs",
+              "align": "#/$defs/Align",
+              "simulate": "#/$defs/Simulate",
+              "project": "#/$defs/Project",
+              "backproject": "#/$defs/Backproject",
+              "save": "#/$defs/Save",
+              "export": "#/$defs/Export",
+              "select": "#/$defs/Select",
+              "crop": "#/$defs/Crop",
+              "bin": "#/$defs/Bin",
+              "poses": "#/$defs/Poses",
+              "combine": "#/$defs/Combine"
+            }
+          }
+        },
+        "previews": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "type",
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "Correct": {
+      "title": "Correct",
+      "description": "Correct a scan or raw frames.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "correct"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          }
+        },
+        "corrections": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BeamHardening"
+              },
+              {
+                "$ref": "#/$defs/Paganin"
+              },
+              {
+                "$ref": "#/$defs/RadialDistortion"
+              },
+              {
+                "$ref": "#/$defs/RejectViews"
+              },
+              {
+                "$ref": "#/$defs/Rings"
+              },
+              {
+                "$ref": "#/$defs/Stripes"
+              },
+              {
+                "$ref": "#/$defs/Zingers"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "BeamHardening": "#/$defs/BeamHardening",
+                "Paganin": "#/$defs/Paganin",
+                "RadialDistortion": "#/$defs/RadialDistortion",
+                "RejectViews": "#/$defs/RejectViews",
+                "Rings": "#/$defs/Rings",
+                "Stripes": "#/$defs/Stripes",
+                "Zingers": "#/$defs/Zingers"
+              }
+            }
+          },
+          "default": [],
+          "description": "Corrections applied in domain order, then in the order supplied."
+        },
+        "epsilon": {
+          "type": "number",
+          "default": 1e-06,
+          "description": "Positive finite lower bound for flat field and transmission."
+        },
+        "views_per_batch": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Positive views per device batch; None selects a workspace-based size."
+        },
+        "binning": {
+          "type": "integer",
+          "default": 1,
+          "description": "Positive factor for averaging detector blocks after correction."
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "Scan.corrected": {
+          "steps": "corrections",
+          "views_per_batch": "views_per_batch"
+        },
+        "Frames.corrected": {
+          "steps": "corrections",
+          "epsilon": "epsilon",
+          "views_per_batch": "views_per_batch",
+          "binning": "binning"
+        }
+      }
+    },
+    "PathInput": {
+      "title": "PathInput",
+      "description": "File input opened on the execution queue.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "path"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "Member": {
+      "title": "Member",
+      "description": "A typed member pinned with its root handle.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "member"
+          ]
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "member": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "handle",
+        "member"
+      ],
+      "additionalProperties": false
+    },
+    "BeamHardening": {
+      "title": "BeamHardening",
+      "description": "Linearise single-material beam hardening.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "BeamHardening"
+          ]
+        },
+        "rates": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": [
+            1.0
+          ],
+          "description": "Positive attenuation of each spectral component relative to the reference.",
+          "x-unit": "1"
+        },
+        "weights": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": [
+            1.0
+          ],
+          "description": "Nonnegative detected share of each component; scaled to sum to one.",
+          "x-unit": "1"
+        },
+        "energy_kev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reference energy whose attenuation the corrected line integrals give; None uses the unhardened beam's mean attenuation (unit initial slope).",
+          "x-unit": "keV"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Paganin": {
+      "title": "Paganin",
+      "description": "Retrieve single-material phase from propagation contrast.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "Paganin"
+          ]
+        },
+        "delta_beta": {
+          "type": "number",
+          "description": "Positive ratio of the material's refractive-index decrement to absorption.",
+          "x-unit": "1"
+        },
+        "distance": {
+          "type": "number",
+          "description": "Positive effective propagation distance at the sample, in metres.",
+          "x-unit": "m"
+        },
+        "energy_kev": {
+          "type": "number",
+          "description": "Positive X-ray energy in keV.",
+          "x-unit": "keV"
+        },
+        "pixel_size": {
+          "type": "number",
+          "description": "Positive detector-pixel size at the sample, in metres.",
+          "x-unit": "m"
+        }
+      },
+      "required": [
+        "type",
+        "delta_beta",
+        "distance",
+        "energy_kev",
+        "pixel_size"
+      ],
+      "additionalProperties": false
+    },
+    "RadialDistortion": {
+      "title": "RadialDistortion",
+      "description": "Unwarp transmission with a calibrated backward radial polynomial.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "RadialDistortion"
+          ]
+        },
+        "center": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false,
+          "description": "Distortion centre ``(column, row)`` in zero-based frame pixels.",
+          "x-unit": "pixel"
+        },
+        "coefficients": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "Backward radial-polynomial coefficients ``(c0, c1, ...)`` in frame-pixel coordinates; ``(1.0,)`` is the identity."
+        }
+      },
+      "required": [
+        "type",
+        "center",
+        "coefficients"
+      ],
+      "additionalProperties": false
+    },
+    "RejectViews": {
+      "title": "RejectViews",
+      "description": "Drop views taken during a beam or detector event: a level that starts and stops abruptly.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "RejectViews"
+          ]
+        },
+        "z": {
+          "type": "number",
+          "default": 6.0,
+          "description": "Positive robust-standard-deviation threshold for a step. Default is 6.",
+          "x-unit": "noise_sigma"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Rings": {
+      "title": "Rings",
+      "description": "Correct ring artefacts from each detector column's own response.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "Rings"
+          ]
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Member"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The scan's geometry, with the detector the data were recorded on. Default is None."
+        },
+        "views": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 512,
+          "description": "Fit the responses on the means of about this many contiguous angular bins of views, neighbouring bins as instrument, and correct every view. Default 512. Scans without a mirror axis then fit once rather than twice. None fits every view: several times slower, for scans whose structure moves across columns within a bin.",
+          "x-unit": "view"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Stripes": {
+      "title": "Stripes",
+      "description": "Correct detector stripes that reconstruct as rings.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "Stripes"
+          ]
+        },
+        "width": {
+          "type": "integer",
+          "default": 9,
+          "description": "Neighbourhood width in detector columns, at least 3. Default is 9.",
+          "x-unit": "pixel"
+        },
+        "varying": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fit gain and offset at anomalous pixels instead of subtracting constant offsets at all pixels. Default is False."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Zingers": {
+      "title": "Zingers",
+      "description": "Replace bright specks (zingers) with the median of the pixels around them.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "Zingers"
+          ]
+        },
+        "threshold": {
+          "type": "number",
+          "default": 0.1,
+          "description": "Positive excess over the neighbourhood median, as a fraction of the open beam. Default is 0.1.",
+          "x-unit": "transmission"
+        },
+        "size": {
+          "type": "integer",
+          "default": 3,
+          "description": "Odd side length of the square neighbourhood, at least 3 pixels. Default is 3.",
+          "x-unit": "pixel"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Reconstruct": {
+      "title": "Reconstruct",
+      "description": "Reconstruct the supplied scan on its resolved grid.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "reconstruct"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Measured line integrals with their acquisition geometry."
+        },
+        "method": {
+          "enum": [
+            "auto",
+            "cgls",
+            "fbp",
+            "fista",
+            "fourier",
+            "mlem",
+            "sirt",
+            "spdhg"
+          ],
+          "default": "auto",
+          "description": "One of auto, fbp, fourier, cgls, fista, spdhg, sirt or mlem.",
+          "x-choices": [
+            "auto",
+            "fbp",
+            "fourier",
+            "cgls",
+            "fista",
+            "spdhg",
+            "sirt",
+            "mlem"
+          ]
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Output grid; None retains the scan's grid."
+        },
+        "region": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "enum": [
+                    "auto",
+                    "bbox",
+                    "cube",
+                    "cyl"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The part of the scan's grid to reconstruct, in place of ``grid``: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a :class:`RegionEstimate` gives its own grid. None keeps the scan's grid.",
+          "x-choices": [
+            "auto",
+            "bbox",
+            "cube",
+            "cyl"
+          ]
+        },
+        "config": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FBPConfig"
+                },
+                {
+                  "$ref": "#/$defs/FourierConfig"
+                },
+                {
+                  "$ref": "#/$defs/CGLSConfig"
+                },
+                {
+                  "$ref": "#/$defs/FISTAConfig"
+                },
+                {
+                  "$ref": "#/$defs/SPDHGConfig"
+                },
+                {
+                  "$ref": "#/$defs/SIRTConfig"
+                },
+                {
+                  "$ref": "#/$defs/MLEMConfig"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "FBPConfig": "#/$defs/FBPConfig",
+                  "FourierConfig": "#/$defs/FourierConfig",
+                  "CGLSConfig": "#/$defs/CGLSConfig",
+                  "FISTAConfig": "#/$defs/FISTAConfig",
+                  "SPDHGConfig": "#/$defs/SPDHGConfig",
+                  "SIRTConfig": "#/$defs/SIRTConfig",
+                  "MLEMConfig": "#/$defs/MLEMConfig"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Method-specific settings; explicit keywords replace its fields."
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "FBP filter: ramp, shepp-logan or hann; None uses the configuration.",
+          "x-choices": [
+            "ramp",
+            "hann",
+            "shepp-logan"
+          ]
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Iteration count; None uses the method default or configuration."
+        },
+        "tv_weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Total-variation weight for fista/spdhg; None uses the configuration."
+        },
+        "nonnegative": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Nonnegative constraint where supported; None uses the configuration."
+        },
+        "warm_start": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Use FBP/FDK initialization for supported iterative methods."
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Random seed for stochastic view ordering where supported."
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Devices sharing views for supported methods; None uses the default device."
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "reconstruct": {
+          "scan": "source",
+          "method": "method",
+          "grid": "grid",
+          "region": "region",
+          "out": {
+            "owner": "worker",
+            "description": "Writable float32 output or memmap for fbp/fourier, CUDA Joseph fista, host-slab cgls, and cone sirt/mlem; must not overlap input."
+          },
+          "config": "config",
+          "filter": "filter",
+          "iterations": "iterations",
+          "tv_weight": "tv_weight",
+          "nonnegative": "nonnegative",
+          "warm_start": "warm_start",
+          "seed": "seed",
+          "devices": "devices"
+        }
+      }
+    },
+    "Grid": {
+      "title": "Grid",
+      "description": "Regular voxel grid metadata.",
+      "type": "object",
+      "properties": {
+        "nx": {
+          "type": "integer",
+          "description": "Voxel counts along x, y and z.",
+          "x-unit": "voxel"
+        },
+        "ny": {
+          "type": "integer",
+          "description": "Voxel counts along x, y and z.",
+          "x-unit": "voxel"
+        },
+        "nz": {
+          "type": "integer",
+          "description": "Voxel counts along x, y and z.",
+          "x-unit": "voxel"
+        },
+        "vx": {
+          "type": "number",
+          "description": "Voxel pitches in a consistent physical length unit.",
+          "x-unit": "geometry_length"
+        },
+        "vy": {
+          "type": "number",
+          "description": "Voxel pitches in a consistent physical length unit.",
+          "x-unit": "geometry_length"
+        },
+        "vz": {
+          "type": "number",
+          "description": "Voxel pitches in a consistent physical length unit.",
+          "x-unit": "geometry_length"
+        },
+        "vol_origin": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Physical centre of voxel (0, 0, 0); takes precedence over vol_center.",
+          "x-unit": "geometry_length"
+        },
+        "vol_center": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Physical grid centre when vol_origin is absent; defaults to (0, 0, 0).",
+          "x-unit": "geometry_length"
+        }
+      },
+      "required": [
+        "nx",
+        "ny",
+        "nz",
+        "vx",
+        "vy",
+        "vz"
+      ],
+      "additionalProperties": false
+    },
+    "FBPConfig": {
+      "title": "FBPConfig",
+      "description": "Configuration for filtered backprojection.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "FBPConfig"
+          ]
+        },
+        "filter": {
+          "type": "string",
+          "default": "ramp",
+          "description": "Frequency filter: \"ramp\", \"shepp-logan\" or \"hann\". Default is 'ramp'.",
+          "x-choices": [
+            "ramp",
+            "hann",
+            "shepp-logan"
+          ]
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Constant angular weight per view, or None for geometry-derived weights."
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto",
+          "description": "Backprojection backend: \"auto\", \"jax\" or \"cuda\". Auto uses CUDA acceleration when available. Default is 'auto'.",
+          "x-choices": [
+            "auto",
+            "jax",
+            "cuda"
+          ]
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JAX device or sequence of devices. None uses the current default; multiple devices divide the views and each hold the full volume."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "FourierConfig": {
+      "title": "FourierConfig",
+      "description": "Choose a portable NumPy reference or CUDA execution with fixed axial slabs.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "FourierConfig"
+          ]
+        },
+        "slices_per_batch": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Positive slab depth, or None to choose automatically as described above."
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cupy",
+            "numpy"
+          ],
+          "default": "auto",
+          "description": "Execution backend: \"auto\", \"numpy\" or \"cupy\". Explicit choices never change backends. Default is 'auto'.",
+          "x-choices": [
+            "auto",
+            "numpy",
+            "cupy"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "CGLSConfig": {
+      "title": "CGLSConfig",
+      "description": "Control an unconstrained least-squares solve.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "CGLSConfig"
+          ]
+        },
+        "data_term": {
+          "enum": [
+            "absolute",
+            "per_view_contrast"
+          ],
+          "default": "absolute",
+          "description": "Absolute least squares by default. Contrast profiles one unknown constant per detector view. Use it when material lies outside the field of view; absolute background density is lost and contained-object accuracy can worsen.",
+          "x-choices": [
+            "absolute",
+            "per_view_contrast"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 50,
+          "description": "Maximum number of solver updates. For SIRT and MLEM, an update is a complete subset sweep. Default is 50."
+        },
+        "tolerance": {
+          "type": "number",
+          "default": 1e-06,
+          "description": "Nonnegative relative tolerance on the normal-residual norm. Default is 1e-06."
+        },
+        "absolute_tolerance": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Nonnegative absolute tolerance on the normal-residual norm. Default is 0.0."
+        },
+        "damping": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Nonnegative weight of the volume-norm penalty; squared in the objective. Default is 0.0."
+        },
+        "views_per_batch": {
+          "type": "integer",
+          "default": 64,
+          "description": "Number of views processed together to bound temporary storage. Default is 64."
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto",
+          "description": "Execution backend: \"auto\", \"jax\" or \"cuda\". An explicit accelerator request never silently falls back. Default is 'auto'.",
+          "x-choices": [
+            "auto",
+            "jax",
+            "cuda"
+          ]
+        },
+        "interpolation": {
+          "enum": [
+            "cubic",
+            "linear"
+          ],
+          "default": "linear",
+          "description": "Plane interpolation: \"linear\" or Keys \"cubic\" with a=-1/2. Default is 'linear'.",
+          "x-choices": [
+            "linear",
+            "cubic"
+          ]
+        },
+        "gradient_damping": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Nonnegative weight of the physical finite-difference penalty; squared in the objective. Default is 0.0."
+        },
+        "stream": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Read host projections one view batch at a time. None selects streaming from available device memory; False keeps them resident."
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JAX device or sequence of devices. None uses the current default; multiple devices divide the views and each hold the full volume."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "FISTAConfig": {
+      "title": "FISTAConfig",
+      "description": "Configuration for public FISTA/TV reconstruction.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "FISTAConfig"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 50,
+          "description": "Maximum number of solver updates. For SIRT and MLEM, an update is a complete subset sweep. Default is 50."
+        },
+        "data_term": {
+          "enum": [
+            "absolute",
+            "per_view_contrast"
+          ],
+          "default": "absolute",
+          "description": "\"absolute\" (default) fits line integrals. Use \"per_view_contrast\" when material lies outside the field of view: it profiles an unknown constant per view, so absolute background density is not recoverable. This costs accuracy on contained objects; do not select it for contained scans.",
+          "x-choices": [
+            "absolute",
+            "per_view_contrast"
+          ]
+        },
+        "tv_weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Dimensionless physical-TV weight; zero disables TV. Default None raises an empirical minimum of 0.00005 using a projection-only Haar-MAD noise estimate and one centered Gaussian gradient probe (seed 0). The minimum was selected on plate validation and image-checked on K11 and the corpus; it is not derived. Noise only raises it. Positive explicit values bypass estimation. Correlated detector noise and object texture are not separated by this iid noise scale. The selected strength is fixed for differentiation; physical intensity/unit normalization retains its derivatives."
+        },
+        "regularizer": {
+          "enum": [
+            "huber_tv",
+            "tv"
+          ],
+          "default": "tv",
+          "description": "Regularization model: \"tv\" or \"huber_tv\". Both use a constrained proximal solve after each data-gradient step. Default is 'tv'.",
+          "x-choices": [
+            "tv",
+            "huber_tv"
+          ]
+        },
+        "huber_delta": {
+          "type": "number",
+          "default": 0.01,
+          "description": "Positive dimensionless Huber transition scale when regulariser is \"huber_tv\". Default is 0.01."
+        },
+        "lipschitz": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Positive data-gradient Lipschitz constant, or None to estimate it by power iteration."
+        },
+        "views_per_batch": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "View batch size. None uses 64."
+        },
+        "tv_prox_iterations": {
+          "type": "integer",
+          "default": 10,
+          "description": "Iterations of the TV or Huber-TV proximal solve per FISTA update. Default is 10."
+        },
+        "tolerance": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative objective-change tolerance for stopping reconstruction early; None disables it."
+        },
+        "patience": {
+          "type": "integer",
+          "default": 0,
+          "description": "Number of successive small-change iterations required for early stopping. Default is 0."
+        },
+        "power_iterations": {
+          "type": "integer",
+          "default": 3,
+          "description": "Number of power iterations used to estimate the data-gradient Lipschitz constant. Default is 3."
+        },
+        "support": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Boolean volume support mask, broadcastable to the grid. False (zero) entries fix the reconstructed voxel to zero, including at initialization and in every proximal update; True (nonzero) entries are included. Bounds apply only at included entries; exclusion wins over a positive lower bound. TV differences across the support boundary remain active. None uses the entire grid."
+        },
+        "lower_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lower voxel-value bound (set ``0.0`` for nonnegativity), or None for no lower bound."
+        },
+        "upper_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Upper voxel-value bound, or None for no upper bound."
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto",
+          "description": "Execution backend: \"auto\", \"jax\" or \"cuda\". An explicit accelerator request never silently falls back. Default is 'auto'.",
+          "x-choices": [
+            "auto",
+            "jax",
+            "cuda"
+          ]
+        },
+        "stream": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Read host projections one view batch at a time. None selects streaming from available device memory; False keeps them resident."
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JAX device or sequence of devices. None uses the current default; multiple devices divide the views and each hold the full volume."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Npy": {
+      "title": "Npy",
+      "description": "A NumPy file. Published session files carry a release token.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "npy"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "Hdf5": {
+      "title": "Hdf5",
+      "description": "A dataset inside an HDF5 file.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "hdf5"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "dataset"
+      ],
+      "additionalProperties": false
+    },
+    "SPDHGConfig": {
+      "title": "SPDHGConfig",
+      "description": "Configuration for stochastic primal-dual TV reconstruction.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "SPDHGConfig"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 600,
+          "description": "Number of sampled data-block updates, each with a TV update (not full sweeps through the data). Default is 600."
+        },
+        "tv_weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Dimensionless physical-TV strength. None (default) estimates the noise from measured projections and raises a fixed 0.00005 minimum using one contrast-noise gradient probe. Explicit positive values bypass this estimate; zero disables TV."
+        },
+        "data_term": {
+          "enum": [
+            "absolute",
+            "per_view_contrast"
+          ],
+          "default": "absolute",
+          "description": "Absolute least squares by default. Use per_view_contrast when material lies outside the field of view (ROI scans, most laminography, K11). It discards each view's baseline and gives up the absolute density level. Keep absolute fitting for contained objects: removing their view means discards measured information and can worsen the reconstruction.",
+          "x-choices": [
+            "absolute",
+            "per_view_contrast"
+          ]
+        },
+        "regularizer": {
+          "enum": [
+            "huber_tv",
+            "tv"
+          ],
+          "default": "tv",
+          "description": "Regularization model: \"tv\" or \"huber_tv\". Default is 'tv'.",
+          "x-choices": [
+            "tv",
+            "huber_tv"
+          ]
+        },
+        "huber_delta": {
+          "type": "number",
+          "default": 0.01,
+          "description": "Positive dimensionless Huber transition scale when regulariser is \"huber_tv\". Default is 0.01."
+        },
+        "theta": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Extrapolation factor for the dual gradient. Default is 1.0."
+        },
+        "views_per_block": {
+          "type": "integer",
+          "default": 16,
+          "description": "Number of views per stochastic update block; changing this changes the stochastic algorithm as well as temporary storage. Default is 16."
+        },
+        "seed": {
+          "type": "integer",
+          "default": 0,
+          "description": "Random seed for stochastic block selection. Default is 0."
+        },
+        "tau": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Positive primal step size, or None to estimate it."
+        },
+        "sigma_data": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Positive data-dual step size, or None to estimate it."
+        },
+        "sigma_tv": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Positive TV-dual step size, or None to estimate it."
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto",
+          "description": "Execution backend: \"auto\", \"jax\" or \"cuda\". An explicit accelerator request never silently falls back. Default is 'auto'.",
+          "x-choices": [
+            "auto",
+            "jax",
+            "cuda"
+          ]
+        },
+        "lower_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lower voxel-value bound (set ``0.0`` for nonnegativity), or None for no lower bound."
+        },
+        "support": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Boolean volume support mask, broadcastable to the grid. False (zero) voxels remain zero; None uses the entire grid."
+        },
+        "log_every": {
+          "type": "integer",
+          "default": 10,
+          "description": "Number of iterations between logged objective samples. Default is 10."
+        },
+        "stream": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Read host projections one view batch at a time. None selects streaming from available device memory; False keeps them resident."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "SIRTConfig": {
+      "title": "SIRTConfig",
+      "description": "SIRT, or OS-SART with ``subsets > 1`` (one view per subset is SART).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "SIRTConfig"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 50,
+          "description": "Maximum number of solver updates. For SIRT and MLEM, an update is a complete subset sweep. Default is 50."
+        },
+        "subsets": {
+          "type": "integer",
+          "default": 1,
+          "description": "Number of interleaved view subsets visited per sweep; one uses the simultaneous method. Default is 1."
+        },
+        "relaxation": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Update scale strictly between 0 and 2. Default is 1.0."
+        },
+        "acceleration": {
+          "type": "boolean",
+          "default": false,
+          "description": "Apply FISTA momentum to full-data SIRT; requires subsets=1 and relaxation <= 1. Default is False."
+        },
+        "lower_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lower voxel-value bound, or None for no explicit lower bound."
+        },
+        "upper_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Upper voxel-value bound, or None for no upper bound."
+        },
+        "support": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Volume support mask. Excluded voxels remain zero; None uses the entire grid."
+        },
+        "views_per_batch": {
+          "type": "integer",
+          "default": 64,
+          "description": "Number of views processed together to bound temporary storage. Default is 64."
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto",
+          "description": "Execution backend: \"auto\", \"jax\" or \"cuda\". An explicit accelerator request never silently falls back. Default is 'auto'.",
+          "x-choices": [
+            "auto",
+            "jax",
+            "cuda"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "MLEMConfig": {
+      "title": "MLEMConfig",
+      "description": "Reconstruct nonnegative linear Poisson measurements, ``y ~ Poisson(A x)``.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "MLEMConfig"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 50,
+          "description": "Maximum number of solver updates. For SIRT and MLEM, an update is a complete subset sweep. Default is 50."
+        },
+        "subsets": {
+          "type": "integer",
+          "default": 1,
+          "description": "Number of interleaved view subsets visited per sweep; one uses the simultaneous method. Default is 1."
+        },
+        "support": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Boolean support mask broadcastable to the volume shape; excluded voxels remain zero. None uses the entire grid."
+        },
+        "views_per_batch": {
+          "type": "integer",
+          "default": 32,
+          "description": "Number of views processed together to bound temporary storage. Default is 32."
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto",
+          "description": "Execution backend: \"auto\", \"jax\" or \"cuda\". An explicit accelerator request never silently falls back. Default is 'auto'.",
+          "x-choices": [
+            "auto",
+            "jax",
+            "cuda"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "ReconstructSlabs": {
+      "title": "ReconstructSlabs",
+      "description": "Consume each yielded slab into one staged disk-backed volume.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "reconstruct_slabs"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Raw detector frames for cone FDK or unposed axial parallel-beam geometry."
+        },
+        "method": {
+          "enum": [
+            "fbp",
+            "fourier",
+            "mlem",
+            "sirt"
+          ],
+          "description": "Slab reconstruction method.",
+          "x-choices": [
+            "fbp",
+            "fourier",
+            "sirt",
+            "mlem"
+          ]
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Output grid; None uses the frames' grid."
+        },
+        "config": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FBPConfig"
+                },
+                {
+                  "$ref": "#/$defs/FourierConfig"
+                },
+                {
+                  "$ref": "#/$defs/SIRTConfig"
+                },
+                {
+                  "$ref": "#/$defs/MLEMConfig"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "FBPConfig": "#/$defs/FBPConfig",
+                  "FourierConfig": "#/$defs/FourierConfig",
+                  "SIRTConfig": "#/$defs/SIRTConfig",
+                  "MLEMConfig": "#/$defs/MLEMConfig"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Method-specific settings, as for ``reconstruct``."
+        },
+        "corrections": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BeamHardening"
+              },
+              {
+                "$ref": "#/$defs/Paganin"
+              },
+              {
+                "$ref": "#/$defs/RadialDistortion"
+              },
+              {
+                "$ref": "#/$defs/RejectViews"
+              },
+              {
+                "$ref": "#/$defs/Rings"
+              },
+              {
+                "$ref": "#/$defs/Stripes"
+              },
+              {
+                "$ref": "#/$defs/Zingers"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "BeamHardening": "#/$defs/BeamHardening",
+                "Paganin": "#/$defs/Paganin",
+                "RadialDistortion": "#/$defs/RadialDistortion",
+                "RejectViews": "#/$defs/RejectViews",
+                "Rings": "#/$defs/Rings",
+                "Stripes": "#/$defs/Stripes",
+                "Zingers": "#/$defs/Zingers"
+              }
+            }
+          },
+          "default": [],
+          "description": "Whole-row line-integral corrections applied before reconstruction."
+        },
+        "warm_start": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Start SIRT/OSEM from FBP; None uses the method's default."
+        },
+        "epsilon": {
+          "type": "number",
+          "default": 1e-06,
+          "description": "Positive finite lower bound for flat field and transmission."
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "method"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "reconstruct_slabs": {
+          "frames": "source",
+          "method": "method",
+          "grid": "grid",
+          "corrections": "corrections",
+          "config": "config",
+          "warm_start": "warm_start",
+          "epsilon": "epsilon"
+        }
+      }
+    },
+    "Align": {
+      "title": "Align",
+      "description": "Return geometry-corrected scan and fitted pose table.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "align"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Measured line integrals with their declared acquisition geometry."
+        },
+        "fit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "default": "translations",
+          "description": "Parameters to fit. Defaults to ``\"translations\"``.",
+          "x-choices": [
+            "center",
+            "tilt",
+            "roll",
+            "translations",
+            "rotations"
+          ]
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reconstruction region and sampling. None uses a bounded working grid with the scan's physical field of view; an explicit grid is kept."
+        },
+        "region": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "enum": [
+                    "auto",
+                    "bbox",
+                    "cube",
+                    "cyl"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The part of the scan's grid to fit on, in place of ``grid``, as for :func:`reconstruct`.",
+          "x-choices": [
+            "auto",
+            "bbox",
+            "cube",
+            "cyl"
+          ]
+        },
+        "method": {
+          "anyOf": [
+            {
+              "enum": [
+                "joint",
+                "opposite-views"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the parameters are estimated; None is \"joint\".",
+          "x-choices": [
+            "joint",
+            "opposite-views"
+          ]
+        },
+        "motion": {
+          "anyOf": [
+            {
+              "enum": [
+                "independent",
+                "smooth"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How each view's corrections may differ from its neighbours'. \"independent\" (the default) leaves every view free: no term ties a view's translations or rotations to its neighbours', and only the rotations' size prior remains. \"smooth\" lets the translations drift freely along a spline and step from one view to the next only where the data call for a slip, and ties each view's rotations to its neighbours'; use it for a steady stage, where per-view error that is not motion should not be followed.",
+          "x-choices": [
+            "independent",
+            "smooth"
+          ]
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Gauss-Newton iterations at the working resolution. Default is 8."
+        },
+        "image_iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Conjugate-gradient iterations of the image solve in each Gauss-Newton iteration. Default is 16."
+        },
+        "tolerance": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A level stops when two successive pose proposals move the views by less than this, in working pixels; 0 runs every level to its iterations. Default is 0.01.",
+          "x-unit": "working_pixel"
+        },
+        "interpolation": {
+          "anyOf": [
+            {
+              "enum": [
+                "cubic",
+                "linear"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The projector's in-plane interpolation in the fit. None chooses cubic for a fit with an angle on parallel rays and linear otherwise.",
+          "x-choices": [
+            "linear",
+            "cubic"
+          ]
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The working detector's longest side, in pixels. Default is 320.",
+          "x-unit": "working_pixel"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AlignConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Every setting of the joint fit (imported from :mod:`tomojax.alignment`); None uses the defaults."
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "align": {
+          "scan": "source",
+          "fit": "fit",
+          "grid": "grid",
+          "region": "region",
+          "method": "method",
+          "motion": "motion",
+          "iterations": "iterations",
+          "image_iterations": "image_iterations",
+          "tolerance": "tolerance",
+          "interpolation": "interpolation",
+          "resolution": "resolution",
+          "config": "config"
+        }
+      }
+    },
+    "AlignConfig": {
+      "title": "AlignConfig",
+      "description": "The settings of :func:`tomojax.align`.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "AlignConfig"
+          ]
+        },
+        "motion": {
+          "enum": [
+            "independent",
+            "smooth"
+          ],
+          "default": "independent",
+          "description": "How each view's corrections may differ from its neighbours'. \"independent\" (the default) leaves every view free: no term ties a view's translations or rotations to its neighbours', and only the rotations' size prior remains. \"smooth\" lets the translations drift freely along a spline and step from one view to the next only where the data call for a slip, and ties each view's rotations to its neighbours'; use it for a steady stage, where per-view error that is not motion should not be followed.",
+          "x-choices": [
+            "independent",
+            "smooth"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 8,
+          "description": "Gauss-Newton iterations at the working resolution. Default is 8."
+        },
+        "coarse_iterations": {
+          "type": "integer",
+          "default": 12,
+          "description": "Gauss-Newton iterations at each coarser level. Default is 12."
+        },
+        "levels": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": [
+            2,
+            1
+          ],
+          "description": "Each level's binning of the working detector, coarsest first, ending at 1. Default is ``(2, 1)``; ``(1,)`` fits at the working resolution alone."
+        },
+        "image_iterations": {
+          "type": "integer",
+          "default": 16,
+          "description": "Conjugate-gradient iterations of the image solve in each Gauss-Newton iteration. Default is 16."
+        },
+        "image_tolerance": {
+          "type": "number",
+          "default": 0.03,
+          "description": "Relative residual at which an image solve may stop before its count. Default is 0.03.",
+          "x-unit": "1"
+        },
+        "tolerance": {
+          "type": "number",
+          "default": 0.01,
+          "description": "A level stops when two successive pose proposals move the views by less than this, in working pixels; 0 runs every level to its iterations. Default is 0.01.",
+          "x-unit": "working_pixel"
+        },
+        "min_iterations": {
+          "type": "integer",
+          "default": 4,
+          "description": "The fewest iterations before ``tolerance`` may stop a level. Default is 4."
+        },
+        "resolution": {
+          "type": "integer",
+          "default": 320,
+          "description": "The working detector's longest side, in pixels. Default is 320.",
+          "x-unit": "working_pixel"
+        },
+        "max_voxels": {
+          "type": "integer",
+          "default": 16000000,
+          "description": "The working grid's largest number of voxels. Default is 16 000 000.",
+          "x-unit": "voxel"
+        },
+        "interpolation": {
+          "anyOf": [
+            {
+              "enum": [
+                "cubic",
+                "linear"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The projector's in-plane interpolation in the fit. None chooses cubic for a fit with an angle on parallel rays and linear otherwise.",
+          "x-choices": [
+            "linear",
+            "cubic"
+          ]
+        },
+        "refine_iterations": {
+          "type": "integer",
+          "default": 5,
+          "description": "Iterations of the final per-view refinement with the image held; 0 turns it off. Default is 5."
+        },
+        "initial_image_iterations": {
+          "type": "integer",
+          "default": 5,
+          "description": "FISTA iterations for the first level's starting image. Default is 5."
+        },
+        "slip_scale": {
+          "type": "number",
+          "default": 0.02,
+          "description": "Under ``motion=\"smooth\"``, the view-to-view step, in native pixels, at which the pull towards the neighbours is strongest; larger steps are followed as slips, and the rotations' tie to their neighbours is inversely proportional to it. Default is 0.02.",
+          "x-unit": "native_pixel"
+        },
+        "knot_spacing": {
+          "type": "integer",
+          "default": 10,
+          "description": "Under ``motion=\"smooth\"``, views between the drift's spline knots. Default is 10.",
+          "x-unit": "view"
+        },
+        "rotation_sigma": {
+          "type": "number",
+          "default": 0.5,
+          "description": "The per-view rotations' size prior, in degrees. Default is 0.5.",
+          "x-unit": "degree"
+        },
+        "loss_width": {
+          "type": "number",
+          "default": 2.5,
+          "description": "Where the robust loss turns from quadratic to linear, in noise standard deviations. Default is 2.5.",
+          "x-unit": "noise_sigma"
+        },
+        "loss_contrast_floor": {
+          "type": "number",
+          "default": 0.5,
+          "description": "The least loss width, as a fraction of the data's contrast. Default is 0.5.",
+          "x-unit": "1"
+        },
+        "image_tv_weight": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Total-variation weight on the fit's image, as a fraction of its contrast; 0 leaves the image unregularized. Default is 0.0.",
+          "x-unit": "1"
+        },
+        "image_tv_huber": {
+          "type": "number",
+          "default": 1.0,
+          "description": "The total variation's Huber width, as a fraction of the contrast. Default is 1.0.",
+          "x-unit": "1"
+        },
+        "margin": {
+          "type": "number",
+          "default": 0.0625,
+          "description": "How far the fit's image extends past each end of the grid, as a fraction of its height. Default is 1/16.",
+          "x-unit": "1"
+        },
+        "refine_smoothing": {
+          "type": "number",
+          "default": 8.0,
+          "description": "The refinement's edge filter width, in native pixels. Default is 8.0.",
+          "x-unit": "native_pixel"
+        },
+        "refine_neighbors": {
+          "type": "integer",
+          "default": 5,
+          "description": "Views on each side that set a view's expected residual in the refinement. Default is 5.",
+          "x-unit": "view"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Simulate": {
+      "title": "Simulate",
+      "description": "Produce both a scan and its ground truth.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "simulate"
+          ]
+        },
+        "phantom": {
+          "enum": [
+            "blobs",
+            "cube",
+            "lamino_disk",
+            "random_shapes",
+            "shepp",
+            "sphere"
+          ],
+          "default": "shepp",
+          "description": "The object. Default is \"shepp\".",
+          "x-choices": [
+            "shepp",
+            "cube",
+            "sphere",
+            "blobs",
+            "random_shapes",
+            "lamino_disk"
+          ]
+        },
+        "size": {
+          "type": "integer",
+          "default": 64,
+          "description": "Volume edge in voxels, and the detector size, unless ``grid`` or ``detector`` say otherwise. Default is 64.",
+          "x-unit": "voxel"
+        },
+        "n_views": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of views; None uses twice the longest grid edge.",
+          "x-unit": "view"
+        },
+        "geometry": {
+          "enum": [
+            "cone",
+            "lamino",
+            "parallel"
+          ],
+          "default": "parallel",
+          "description": "Acquisition geometry. Default is \"parallel\".",
+          "x-choices": [
+            "parallel",
+            "lamino",
+            "cone"
+          ]
+        },
+        "rotation": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rotation range in degrees; None uses 180 for parallel rays and 360 otherwise.",
+          "x-unit": "degree"
+        },
+        "tilt": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rotation axis tilt in degrees; None uses 30 for laminography and 0 otherwise.",
+          "x-unit": "degree"
+        },
+        "source_to_axis": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cone-beam distances; None uses three times the volume's physical extent and 1.5 times that.",
+          "x-unit": "geometry_length"
+        },
+        "source_to_detector": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cone-beam distances; None uses three times the volume's physical extent and 1.5 times that.",
+          "x-unit": "geometry_length"
+        },
+        "poisson_scale": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Poisson noise, drawing counts of the value times this (higher is quieter); 0 adds none. Default is 0.0.",
+          "x-unit": "counts_per_line_integral"
+        },
+        "artefacts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SimulationArtefacts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Detector artefacts (dead/hot pixels, zingers, stripes, Poisson noise) from :class:`tomojax.datasets.SimulationArtefacts`."
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The volume's grid, including any ``vol_origin`` or ``vol_center``."
+        },
+        "detector": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Detector"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The detector, including any ``center`` offset."
+        },
+        "seed": {
+          "type": "integer",
+          "default": 0,
+          "description": "Random seed for the phantom and noise. Default is 0."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "simulate": {
+          "phantom": "phantom",
+          "size": "size",
+          "n_views": "n_views",
+          "geometry": "geometry",
+          "rotation": "rotation",
+          "tilt": "tilt",
+          "source_to_axis": "source_to_axis",
+          "source_to_detector": "source_to_detector",
+          "poisson_scale": "poisson_scale",
+          "artefacts": "artefacts",
+          "grid": "grid",
+          "detector": "detector",
+          "seed": "seed"
+        }
+      }
+    },
+    "SimulationArtefacts": {
+      "title": "SimulationArtefacts",
+      "description": "Configure simple projection-domain simulation artefacts.",
+      "type": "object",
+      "properties": {
+        "poisson_scale": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Multiply nonnegative line integrals by this count scale before Poisson sampling, then divide by it. Zero disables sampling.",
+          "x-unit": "counts_per_line_integral"
+        },
+        "gaussian_sigma": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Standard deviation of additive line-integral noise; zero disables it.",
+          "x-unit": "line_integral"
+        },
+        "dead_pixel_fraction": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Fraction of detector pixels replaced by dead values in every view; default is zero.",
+          "x-unit": "1"
+        },
+        "dead_pixel_value": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Replacement line integral for dead pixels; default is zero.",
+          "x-unit": "line_integral"
+        },
+        "hot_pixel_fraction": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Fraction of detector pixels replaced by hot values in every view; default is zero.",
+          "x-unit": "1"
+        },
+        "hot_pixel_value": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Replacement line integral for hot pixels; default is 1.",
+          "x-unit": "line_integral"
+        },
+        "zinger_fraction": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Fraction of individual projection samples receiving a spike; default is zero.",
+          "x-unit": "1"
+        },
+        "zinger_value": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Additive line-integral spike amplitude; default is 1.",
+          "x-unit": "line_integral"
+        },
+        "stripe_fraction": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Fraction of detector-u columns with multiplicative gains; default is zero.",
+          "x-unit": "1"
+        },
+        "stripe_gain_sigma": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Standard deviation of column gains about one, clipped below at zero.",
+          "x-unit": "1"
+        },
+        "dropped_view_fraction": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Fraction of projection views replaced; default is zero.",
+          "x-unit": "1"
+        },
+        "dropped_view_fill": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Replacement line integral for dropped views; default is zero.",
+          "x-unit": "line_integral"
+        },
+        "detector_blur_sigma": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Gaussian blur standard deviation in detector pixels; zero disables it.",
+          "x-unit": "pixel"
+        },
+        "intensity_drift_amplitude": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Amplitude of multiplicative intensity drift across views; default is zero.",
+          "x-unit": "1"
+        },
+        "intensity_drift_mode": {
+          "enum": [
+            "linear",
+            "none",
+            "sinusoidal"
+          ],
+          "default": "none",
+          "description": "Drift profile; default is 'none'.",
+          "x-choices": [
+            "none",
+            "linear",
+            "sinusoidal"
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "Detector": {
+      "title": "Detector",
+      "description": "Regular detector plane metadata.",
+      "type": "object",
+      "properties": {
+        "nu": {
+          "type": "integer",
+          "description": "Detector column and row counts.",
+          "x-unit": "pixel"
+        },
+        "nv": {
+          "type": "integer",
+          "description": "Detector column and row counts.",
+          "x-unit": "pixel"
+        },
+        "du": {
+          "type": "number",
+          "description": "Pixel pitches along u and v, in the geometry's physical length unit.",
+          "x-unit": "geometry_length"
+        },
+        "dv": {
+          "type": "number",
+          "description": "Pixel pitches along u and v, in the geometry's physical length unit.",
+          "x-unit": "geometry_length"
+        },
+        "center": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false,
+          "default": [
+            0.0,
+            0.0
+          ],
+          "description": "Detector-centre ``(u, v)`` offset in physical units; defaults to zero.",
+          "x-unit": "geometry_length"
+        }
+      },
+      "required": [
+        "nu",
+        "nv",
+        "du",
+        "dv"
+      ],
+      "additionalProperties": false
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Project registered voxels with the source scan geometry.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "project"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Per-view geometry defining the matched projector."
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Npy"
+            },
+            {
+              "$ref": "#/$defs/Hdf5"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "npy": "#/$defs/Npy",
+              "hdf5": "#/$defs/Hdf5",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Volume in (z, y, x) order."
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Voxel grid; None uses the geometry's grid."
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Devices sharing the views; None uses the current default device."
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "volume"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "project": {
+          "geometry": "source",
+          "volume": "volume",
+          "grid": "grid",
+          "devices": "devices"
+        }
+      }
+    },
+    "Backproject": {
+      "title": "Backproject",
+      "description": "Apply the matched transpose with the source scan geometry.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "backproject"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Per-view geometry defining the matched projector."
+        },
+        "projections": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Npy"
+            },
+            {
+              "$ref": "#/$defs/Hdf5"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "npy": "#/$defs/Npy",
+              "hdf5": "#/$defs/Hdf5",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Line integrals in (view, v, u) order, or (view, u) for a single slice."
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Voxel grid; None uses the geometry's grid."
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Devices sharing the views; None uses the current default device."
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "projections"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "backproject": {
+          "geometry": "source",
+          "projections": "projections",
+          "grid": "grid",
+          "devices": "devices"
+        }
+      }
+    },
+    "Save": {
+      "title": "Save",
+      "description": "Stage the dataset and adjacent manifest.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "save"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/Member",
+          "description": "Scan or result to save with its geometry and metadata."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Output dataset path; an existing file is overwritten."
+        },
+        "force": {
+          "type": "boolean",
+          "default": false
+        },
+        "include_scan": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also save a reconstruction's scan. Default is False."
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "path"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "save": {
+          "path": "path",
+          "item": "source",
+          "include_scan": "include_scan"
+        }
+      }
+    },
+    "Export": {
+      "title": "Export",
+      "description": "Stage the complete raw or TIFF export with its sidecars.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "export"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/Member",
+          "description": "The volume (reconstruction, alignment working image, or simulation phantom) and its grid."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Directory for TIFF slices, or a ``.raw`` file."
+        },
+        "force": {
+          "type": "boolean",
+          "default": false
+        },
+        "dtype": {
+          "enum": [
+            "float32",
+            "uint16"
+          ],
+          "default": "float32",
+          "description": "Sample type; ``uint16`` maps ``range`` to 0..65535. Default is float32.",
+          "x-choices": [
+            "float32",
+            "uint16"
+          ]
+        },
+        "range": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The values ``uint16`` maps to 0 and 65535 (finite, ``low < high``); None takes the 0.1 and 99.9 percentiles of up to 16 slices. Only valid with ``dtype=\"uint16\"``."
+        },
+        "prefix": {
+          "type": "string",
+          "default": "slice",
+          "description": "TIFF file name prefix. Default is \"slice\"."
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "path"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "export": {
+          "path": "path",
+          "reconstruction": "source",
+          "dtype": "dtype",
+          "range": "range",
+          "prefix": "prefix"
+        }
+      }
+    },
+    "Select": {
+      "title": "Select",
+      "description": "Select ordered view indices.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "select"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          }
+        },
+        "views": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "Forward slice, increasing indices or nonempty boolean sample-view mask."
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "views"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "Scan.selected": {
+          "views": "views"
+        },
+        "Frames.selected": {
+          "views": "views"
+        }
+      }
+    },
+    "Crop": {
+      "title": "Crop",
+      "description": "Crop half-open detector intervals.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "crop"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false,
+          "description": "Nonempty contiguous detector row window."
+        },
+        "cols": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false,
+          "description": "Nonempty contiguous detector column window."
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "rows",
+        "cols"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "Scan.cropped": {
+          "rows": "rows",
+          "cols": "cols"
+        },
+        "Frames.cropped": {
+          "rows": "rows",
+          "cols": "cols"
+        }
+      }
+    },
+    "Bin": {
+      "title": "Bin",
+      "description": "Mean-bin both detector dimensions.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "bin"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          }
+        },
+        "binning": {
+          "type": "integer",
+          "description": "Positive detector-block side length, in pixels."
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "binning"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "Scan.binned": {
+          "binning": "binning"
+        }
+      }
+    },
+    "Poses": {
+      "title": "Poses",
+      "description": "Replace the public six-column table or clear it.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "poses"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          }
+        },
+        "poses": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Replacement (views, 6) correction table; None removes all corrections."
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "poses"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "Scan.with_poses": {
+          "poses": "poses"
+        }
+      }
+    },
+    "Combine": {
+      "title": "Combine",
+      "description": "Combine scans in the given order, retaining all input provenance.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "combine"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PathInput"
+              },
+              {
+                "$ref": "#/$defs/Member"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "path": "#/$defs/PathInput",
+                "member": "#/$defs/Member"
+              }
+            }
+          },
+          "description": "Nonempty cone-beam scans with equal detector pixel counts."
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Combined sample name; None keeps the first scan's name."
+        }
+      },
+      "required": [
+        "type",
+        "sources"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "Scan.combine": {
+          "scans": "sources",
+          "name": "name"
+        }
+      }
+    },
+    "Plane": {
+      "title": "Plane",
+      "description": "Browse one plane from a registered volume.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "plane"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/Member"
+        },
+        "axis": {
+          "enum": [
+            "x",
+            "y",
+            "z"
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "axis",
+        "index"
+      ],
+      "additionalProperties": false
+    },
+    "Slice": {
+      "title": "Slice",
+      "description": "Select a plane from the specified full method.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "slice"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Measured line integrals with their acquisition geometry."
+        },
+        "method": {
+          "enum": [
+            "auto",
+            "cgls",
+            "fbp",
+            "fista",
+            "fourier",
+            "mlem",
+            "sirt",
+            "spdhg"
+          ],
+          "default": "auto",
+          "description": "One of auto, fbp, fourier, cgls, fista, spdhg, sirt or mlem.",
+          "x-choices": [
+            "auto",
+            "fbp",
+            "fourier",
+            "cgls",
+            "fista",
+            "spdhg",
+            "sirt",
+            "mlem"
+          ]
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Output grid; None retains the scan's grid."
+        },
+        "region": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "enum": [
+                    "auto",
+                    "bbox",
+                    "cube",
+                    "cyl"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The part of the scan's grid to reconstruct, in place of ``grid``: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a :class:`RegionEstimate` gives its own grid. None keeps the scan's grid.",
+          "x-choices": [
+            "auto",
+            "bbox",
+            "cube",
+            "cyl"
+          ]
+        },
+        "config": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FBPConfig"
+                },
+                {
+                  "$ref": "#/$defs/FourierConfig"
+                },
+                {
+                  "$ref": "#/$defs/CGLSConfig"
+                },
+                {
+                  "$ref": "#/$defs/FISTAConfig"
+                },
+                {
+                  "$ref": "#/$defs/SPDHGConfig"
+                },
+                {
+                  "$ref": "#/$defs/SIRTConfig"
+                },
+                {
+                  "$ref": "#/$defs/MLEMConfig"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "FBPConfig": "#/$defs/FBPConfig",
+                  "FourierConfig": "#/$defs/FourierConfig",
+                  "CGLSConfig": "#/$defs/CGLSConfig",
+                  "FISTAConfig": "#/$defs/FISTAConfig",
+                  "SPDHGConfig": "#/$defs/SPDHGConfig",
+                  "SIRTConfig": "#/$defs/SIRTConfig",
+                  "MLEMConfig": "#/$defs/MLEMConfig"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Method-specific settings; explicit keywords replace its fields."
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "FBP filter: ramp, shepp-logan or hann; None uses the configuration.",
+          "x-choices": [
+            "ramp",
+            "hann",
+            "shepp-logan"
+          ]
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Iteration count; None uses the method default or configuration."
+        },
+        "tv_weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Total-variation weight for fista/spdhg; None uses the configuration."
+        },
+        "nonnegative": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Nonnegative constraint where supported; None uses the configuration."
+        },
+        "warm_start": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Use FBP/FDK initialization for supported iterative methods."
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Random seed for stochastic view ordering where supported."
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Devices sharing views for supported methods; None uses the default device."
+        },
+        "axis": {
+          "enum": [
+            "x",
+            "y",
+            "z"
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "axis",
+        "index"
+      ],
+      "additionalProperties": false
+    },
+    "CentreSweep": {
+      "title": "CentreSweep",
+      "description": "Reconstruct at signed horizontal offsets in detector pixels.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "centre_sweep"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Measured line integrals with their acquisition geometry."
+        },
+        "method": {
+          "enum": [
+            "auto",
+            "cgls",
+            "fbp",
+            "fista",
+            "fourier",
+            "mlem",
+            "sirt",
+            "spdhg"
+          ],
+          "default": "auto",
+          "description": "One of auto, fbp, fourier, cgls, fista, spdhg, sirt or mlem.",
+          "x-choices": [
+            "auto",
+            "fbp",
+            "fourier",
+            "cgls",
+            "fista",
+            "spdhg",
+            "sirt",
+            "mlem"
+          ]
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Output grid; None retains the scan's grid."
+        },
+        "region": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "enum": [
+                    "auto",
+                    "bbox",
+                    "cube",
+                    "cyl"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The part of the scan's grid to reconstruct, in place of ``grid``: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a :class:`RegionEstimate` gives its own grid. None keeps the scan's grid.",
+          "x-choices": [
+            "auto",
+            "bbox",
+            "cube",
+            "cyl"
+          ]
+        },
+        "config": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FBPConfig"
+                },
+                {
+                  "$ref": "#/$defs/FourierConfig"
+                },
+                {
+                  "$ref": "#/$defs/CGLSConfig"
+                },
+                {
+                  "$ref": "#/$defs/FISTAConfig"
+                },
+                {
+                  "$ref": "#/$defs/SPDHGConfig"
+                },
+                {
+                  "$ref": "#/$defs/SIRTConfig"
+                },
+                {
+                  "$ref": "#/$defs/MLEMConfig"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "FBPConfig": "#/$defs/FBPConfig",
+                  "FourierConfig": "#/$defs/FourierConfig",
+                  "CGLSConfig": "#/$defs/CGLSConfig",
+                  "FISTAConfig": "#/$defs/FISTAConfig",
+                  "SPDHGConfig": "#/$defs/SPDHGConfig",
+                  "SIRTConfig": "#/$defs/SIRTConfig",
+                  "MLEMConfig": "#/$defs/MLEMConfig"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Method-specific settings; explicit keywords replace its fields."
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "FBP filter: ramp, shepp-logan or hann; None uses the configuration.",
+          "x-choices": [
+            "ramp",
+            "hann",
+            "shepp-logan"
+          ]
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Iteration count; None uses the method default or configuration."
+        },
+        "tv_weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Total-variation weight for fista/spdhg; None uses the configuration."
+        },
+        "nonnegative": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Nonnegative constraint where supported; None uses the configuration."
+        },
+        "warm_start": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Use FBP/FDK initialization for supported iterative methods."
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Random seed for stochastic view ordering where supported."
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Devices sharing views for supported methods; None uses the default device."
+        },
+        "axis": {
+          "enum": [
+            "x",
+            "y",
+            "z"
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "centres": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "axis",
+        "index",
+        "centres"
+      ],
+      "additionalProperties": false
+    },
+    "CorrectionPreview": {
+      "title": "CorrectionPreview",
+      "description": "Inspect original view IDs and corrected rows in a binned half-open interval.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "correction_preview"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          }
+        },
+        "corrections": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BeamHardening"
+              },
+              {
+                "$ref": "#/$defs/Paganin"
+              },
+              {
+                "$ref": "#/$defs/RadialDistortion"
+              },
+              {
+                "$ref": "#/$defs/RejectViews"
+              },
+              {
+                "$ref": "#/$defs/Rings"
+              },
+              {
+                "$ref": "#/$defs/Stripes"
+              },
+              {
+                "$ref": "#/$defs/Zingers"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "BeamHardening": "#/$defs/BeamHardening",
+                "Paganin": "#/$defs/Paganin",
+                "RadialDistortion": "#/$defs/RadialDistortion",
+                "RejectViews": "#/$defs/RejectViews",
+                "Rings": "#/$defs/Rings",
+                "Stripes": "#/$defs/Stripes",
+                "Zingers": "#/$defs/Zingers"
+              }
+            }
+          },
+          "default": [],
+          "description": "Corrections applied in domain order, then in the order supplied."
+        },
+        "epsilon": {
+          "type": "number",
+          "default": 1e-06,
+          "description": "Positive finite lower bound for flat field and transmission."
+        },
+        "views_per_batch": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Positive views per device batch; None selects a workspace-based size."
+        },
+        "binning": {
+          "type": "integer",
+          "default": 1,
+          "description": "Positive factor for averaging detector blocks after correction."
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "RegionPreview": {
+      "title": "RegionPreview",
+      "description": "Estimate physical bounds and registered overlays.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "region_preview"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Calibrated oblique laminography scan of corrected line integrals."
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "estimate_region": {
+          "scan": "source"
+        }
+      }
+    },
+    "Inspect": {
+      "title": "Inspect",
+      "description": "Read a file's inspection report.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "inspect"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "HDF5/NXtomo dataset, saved reconstruction, or recognised raw acquisition."
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "inspect": {
+          "path": "path"
+        }
+      }
+    },
+    "Open": {
+      "title": "Open",
+      "description": "Open a file with the named public loader.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "open"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Saved simulation dataset."
+        },
+        "kind": {
+          "enum": [
+            "alignment",
+            "frames",
+            "reconstruction",
+            "scan",
+            "simulation"
+          ]
+        },
+        "flats": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Replacement flat frames, calibration stack path or constant open-beam level. A TIFF path is read in the same panel orientation as TIFF projections."
+        },
+        "darks": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Replacement dark frames, calibration stack path or constant dark level."
+        },
+        "angles": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Sample-view angles in degrees, replacing file metadata.",
+          "x-unit": "degree"
+        },
+        "detector": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Detector"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Replacement detector dimensions, pixel sizes and physical centre."
+        },
+        "pixel_size": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The detector's pixel size (u, v) in the geometry's length unit, when the file records none or another; the shape comes from the frames and the centre from the file or the middle. Not with ``detector`` or ``geometry``.",
+          "x-unit": "geometry_length"
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Replacement reconstruction grid."
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeclaredGeometry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Complete sample-view geometry, overriding individual metadata."
+        },
+        "exposure_times": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Sample exposure durations in seconds, replacing file metadata.",
+          "x-unit": "s"
+        },
+        "flat_exposure_times": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Flat exposure durations in seconds, replacing file metadata.",
+          "x-unit": "s"
+        },
+        "data_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Explicit HDF5 frame dataset path; None discovers it."
+        },
+        "image_key_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Explicit HDF5 sample/flat/dark key path; None discovers it."
+        },
+        "angles_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Explicit HDF5 rotation-angle path; None discovers it."
+        },
+        "apply_poses": {
+          "type": "boolean",
+          "default": true,
+          "description": "Apply saved per-view pose corrections, and a scanner's own recorded per-view shifts and centre shift (Zeiss); default is True. False gives the nominal geometry while keeping vendor shift provenance in metadata."
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "kind"
+      ],
+      "additionalProperties": false,
+      "x-python": {
+        "load": {
+          "path": "path",
+          "flats": "flats",
+          "darks": "darks",
+          "angles": "angles",
+          "detector": "detector",
+          "pixel_size": "pixel_size",
+          "grid": "grid",
+          "geometry": "geometry",
+          "exposure_times": "exposure_times",
+          "flat_exposure_times": "flat_exposure_times",
+          "data_path": "data_path",
+          "image_key_path": "image_key_path",
+          "angles_path": "angles_path",
+          "apply_poses": "apply_poses"
+        },
+        "load_frames": {
+          "path": "path",
+          "flats": "flats",
+          "darks": "darks",
+          "angles": "angles",
+          "detector": "detector",
+          "pixel_size": "pixel_size",
+          "grid": "grid",
+          "geometry": "geometry",
+          "exposure_times": "exposure_times",
+          "flat_exposure_times": "flat_exposure_times",
+          "data_path": "data_path",
+          "image_key_path": "image_key_path",
+          "angles_path": "angles_path",
+          "apply_poses": "apply_poses"
+        },
+        "load_reconstruction": {
+          "path": "path"
+        },
+        "load_alignment": {
+          "path": "path"
+        },
+        "load_simulation": {
+          "path": "path"
+        }
+      }
+    },
+    "DeclaredGeometry": {
+      "title": "DeclaredGeometry",
+      "description": "Geometry supplied when opening frames with missing or overridden acquisition metadata.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Acquisition geometry. None uses the recorded geometry.",
+          "x-choices": [
+            "parallel",
+            "lamino",
+            "cone"
+          ]
+        },
+        "tilt": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Angle of the rotation axis from the axial geometry.",
+          "x-unit": "degree"
+        },
+        "tilt_about": {
+          "type": "string",
+          "default": "x",
+          "description": "Coordinate axis about which the rotation axis is tilted.",
+          "x-choices": [
+            "x",
+            "z"
+          ]
+        },
+        "detector_roll": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Detector rotations about its normal, horizontal and vertical axes respectively.",
+          "x-unit": "degree"
+        },
+        "detector_pitch": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Detector rotations about its normal, horizontal and vertical axes respectively.",
+          "x-unit": "degree"
+        },
+        "detector_yaw": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Detector rotations about its normal, horizontal and vertical axes respectively.",
+          "x-unit": "degree"
+        },
+        "source_to_axis": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cone source distances to the rotation axis and detector.",
+          "x-unit": "geometry_length"
+        },
+        "source_to_detector": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cone source distances to the rotation axis and detector.",
+          "x-unit": "geometry_length"
+        },
+        "axis_offset": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Horizontal displacement of the rotation axis in the cone geometry.",
+          "x-unit": "geometry_length"
+        },
+        "detector_center": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Detector centre offset in horizontal and vertical coordinates.",
+          "x-unit": "geometry_length"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "Plan": {
+      "title": "Plan",
+      "description": "Resolve budgets, grids and placement estimates.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "plan"
+          ]
+        },
+        "operation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reconstruct"
+            },
+            {
+              "$ref": "#/$defs/Align"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "reconstruct": "#/$defs/Reconstruct",
+              "align": "#/$defs/Align"
+            }
+          }
+        }
+      },
+      "required": [
+        "type",
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "Validate": {
+      "title": "Validate",
+      "description": "Apply execution preflight to the proposed operation.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "validate"
+          ]
+        },
+        "operation": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Correct"
+                },
+                {
+                  "$ref": "#/$defs/Reconstruct"
+                },
+                {
+                  "$ref": "#/$defs/ReconstructSlabs"
+                },
+                {
+                  "$ref": "#/$defs/Align"
+                },
+                {
+                  "$ref": "#/$defs/Simulate"
+                },
+                {
+                  "$ref": "#/$defs/Project"
+                },
+                {
+                  "$ref": "#/$defs/Backproject"
+                },
+                {
+                  "$ref": "#/$defs/Save"
+                },
+                {
+                  "$ref": "#/$defs/Export"
+                },
+                {
+                  "$ref": "#/$defs/Select"
+                },
+                {
+                  "$ref": "#/$defs/Crop"
+                },
+                {
+                  "$ref": "#/$defs/Bin"
+                },
+                {
+                  "$ref": "#/$defs/Poses"
+                },
+                {
+                  "$ref": "#/$defs/Combine"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "correct": "#/$defs/Correct",
+                  "reconstruct": "#/$defs/Reconstruct",
+                  "reconstruct_slabs": "#/$defs/ReconstructSlabs",
+                  "align": "#/$defs/Align",
+                  "simulate": "#/$defs/Simulate",
+                  "project": "#/$defs/Project",
+                  "backproject": "#/$defs/Backproject",
+                  "save": "#/$defs/Save",
+                  "export": "#/$defs/Export",
+                  "select": "#/$defs/Select",
+                  "crop": "#/$defs/Crop",
+                  "bin": "#/$defs/Bin",
+                  "poses": "#/$defs/Poses",
+                  "combine": "#/$defs/Combine"
+                }
+              }
+            },
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Plane"
+                },
+                {
+                  "$ref": "#/$defs/Slice"
+                },
+                {
+                  "$ref": "#/$defs/CentreSweep"
+                },
+                {
+                  "$ref": "#/$defs/CorrectionPreview"
+                },
+                {
+                  "$ref": "#/$defs/RegionPreview"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "plane": "#/$defs/Plane",
+                  "slice": "#/$defs/Slice",
+                  "centre_sweep": "#/$defs/CentreSweep",
+                  "correction_preview": "#/$defs/CorrectionPreview",
+                  "region_preview": "#/$defs/RegionPreview"
+                }
+              }
+            },
+            {
+              "$ref": "#/$defs/Open"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "operation"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

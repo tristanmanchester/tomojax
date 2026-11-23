@@ -7,6 +7,7 @@ corrections, binning), and its record in a dataset file. Files become scans in
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field, is_dataclass, replace
 import logging
 from typing import TYPE_CHECKING, Any
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from tomojax._data import views_of
+from tomojax._parameters import AnnotationModule
 from tomojax.core.array_ops import mean_detector_pixels
 from tomojax.core.validation import view_indices
 from tomojax.geometry import (
@@ -25,13 +27,16 @@ from tomojax.geometry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Mapping
 
     import jax
 
-    from tomojax.corrections import Correction, Step
+    from tomojax import corrections
+    from tomojax.corrections import Correction
     from tomojax.geometry import ConeBeam, ConeSegments, Detector, Geometry, ScanGeometry
     from tomojax.io import ProjectionDataset
+else:
+    corrections = AnnotationModule("tomojax.corrections")
 
 LOG = logging.getLogger(__name__)
 
@@ -115,7 +120,7 @@ class Scan:
             text += ", corrections: " + ", ".join(str(c) for c in self.corrections)
         return text + ")"
 
-    def corrected(self, *steps: Step, views_per_batch: int | None = None) -> Scan:
+    def corrected(self, *steps: corrections.Step, views_per_batch: int | None = None) -> Scan:
         """The scan with line-integral ``steps`` applied (see :mod:`tomojax.corrections`).
 
         Steps on counts or transmission need the frames: use :func:`load_frames`
@@ -616,7 +621,9 @@ def _describe_segments(
     return "cone", meta, None if table is None else (table, "detector"), geometry
 
 
-def bind_step_geometry(steps: Sequence[Step], geometry: ScanGeometry) -> tuple[Step, ...]:
+def bind_step_geometry(
+    steps: Sequence[corrections.Step], geometry: ScanGeometry
+) -> tuple[corrections.Step, ...]:
     """Attach ``geometry`` to geometry-aware correction steps whose geometry was omitted."""
     from tomojax.corrections import Rings
 

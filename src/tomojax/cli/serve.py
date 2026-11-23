@@ -6,7 +6,7 @@ import argparse
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from importlib import metadata
+from importlib import metadata, resources
 import os
 from pathlib import Path
 import select
@@ -233,5 +233,9 @@ def main() -> int:
     return serve(
         _cpu_adapter,
         ready=_ready,
-        description=e.Description(msgspec.json.schema(op.ExecutionInput)),
+        description=e.Description(
+            msgspec.json.decode(
+                resources.files("tomojax.cli").joinpath("parameters.json").read_bytes()
+            )
+        ),
     )

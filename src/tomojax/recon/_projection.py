@@ -7,12 +7,13 @@ measurements remain host resident.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 
+from tomojax._parameters import check_backend
 from tomojax.backends.host_stream import read_views
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import ConeModel, cone_model, use_cuda_cone
@@ -20,7 +21,6 @@ from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.joseph import affine_grid
 from tomojax.core.operator_norm import unit
-from tomojax.errors import InvalidParameter
 from tomojax.recon._cgls_stopping import cancellation_magnitude
 from tomojax.recon._data_term import project_residual
 from tomojax.recon._projection_batches import ViewBatches
@@ -32,14 +32,6 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Grid
 
     from .types import DataTerm
-
-type ProjectorBackend = Literal["auto", "jax", "cuda"]
-
-
-def check_backend(backend: str, context: str) -> None:
-    """Check the backend vocabulary before querying any device."""
-    if backend not in get_args(ProjectorBackend.__value__):
-        raise InvalidParameter("backend", f"{context}: backend must be 'auto', 'jax' or 'cuda'")
 
 
 def resolve_projector(

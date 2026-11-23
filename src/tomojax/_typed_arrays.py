@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 from numpy.typing import NDArray
 
+from tomojax._parameters import AnnotationModule
+
+if TYPE_CHECKING:
+    import jax
+else:
+    jax = AnnotationModule("jax")
+
+type JaxArray = jax.Array
 type Float32Array = NDArray[np.float32]
 type Float64Array = NDArray[np.float64]
 

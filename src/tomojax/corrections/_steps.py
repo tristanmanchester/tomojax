@@ -219,7 +219,7 @@ class Stripes(Step):
 
     domain: ClassVar[Domain] = "line integrals"
     whole_rows: ClassVar[bool] = True
-    width: int = 9
+    width: int = field(default=9, metadata={"unit": "pixel"})
     varying: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
@@ -316,7 +316,7 @@ class RejectViews(Step):
 
     domain: ClassVar[Domain] = "line integrals"
     selects_views: ClassVar[bool] = True
-    z: float = 6.0
+    z: float = field(default=6.0, metadata={"unit": "noise_sigma"})
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.z) or not self.z > 0:
@@ -487,8 +487,8 @@ class Zingers(Step):
     """
 
     domain: ClassVar[Domain] = "transmission"
-    threshold: float = 0.1
-    size: int = 3
+    threshold: float = field(default=0.1, metadata={"unit": "transmission"})
+    size: int = field(default=3, metadata={"unit": "pixel"})
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.threshold) or not self.threshold > 0:
@@ -559,7 +559,7 @@ class RadialDistortion(Step):
     """
 
     domain: ClassVar[Domain] = "transmission"
-    center: tuple[float, float]
+    center: tuple[float, float] = field(metadata={"unit": "pixel"})
     coefficients: tuple[float, ...]
 
     def __post_init__(self) -> None:
@@ -651,10 +651,10 @@ class Paganin(Step):
     """
 
     domain: ClassVar[Domain] = "transmission"
-    delta_beta: float
-    distance: float
-    energy_kev: float
-    pixel_size: float
+    delta_beta: float = field(metadata={"unit": "1"})
+    distance: float = field(metadata={"unit": "m"})
+    energy_kev: float = field(metadata={"unit": "keV"})
+    pixel_size: float = field(metadata={"unit": "m"})
 
     def __post_init__(self) -> None:
         for name in ("delta_beta", "distance", "energy_kev", "pixel_size"):

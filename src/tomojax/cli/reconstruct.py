@@ -15,7 +15,7 @@ from functools import partial
 import logging
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast, get_args
 
 import numpy as np
 
@@ -25,6 +25,7 @@ from tomojax._field_of_view import (
     region_grid,
     zero_outside_cylinder,
 )
+from tomojax._parameters import Filter, Method
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
@@ -37,16 +38,7 @@ if TYPE_CHECKING:
     from tomojax.recon.api import MethodConfig
     from tomojax.wire.progress import Result
 
-type _Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
-_METHODS: tuple[_Method, ...] = (
-    "fbp",
-    "fourier",
-    "cgls",
-    "fista",
-    "spdhg",
-    "sirt",
-    "mlem",
-)
+_METHODS = get_args(Method.__value__)[1:]
 # The options that are tj.reconstruct keywords besides the method and grid.
 _KEYWORDS = ("filter", "iterations", "tv_weight", "nonnegative", "warm_start", "seed")
 # Configuration fields a TOML file cannot hold.
@@ -115,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _ = p.add_argument(
         "--filter",
-        choices=["ramp", "shepp-logan", "hann"],
+        choices=get_args(Filter.__value__),
         default=None,
         help="FBP filter (default ramp)",
     )
@@ -216,7 +208,7 @@ class _Run:
 
     data: str
     out: str
-    method: _Method
+    method: Method
     filter: str | None
     iterations: int | None
     tv_weight: float | None
@@ -237,7 +229,7 @@ class _Run:
         return cls(
             data=cast("str", args.data),
             out=cast("str", args.out),
-            method=cast("_Method", args.method),
+            method=cast("Method", args.method),
             filter=cast("str | None", args.filter),
             iterations=cast("int | None", args.iterations),
             tv_weight=cast("float | None", args.tv_weight),

@@ -27,6 +27,7 @@ layers =
     tomojax.geometry
     tomojax.core
     tomojax.progress
+    tomojax._parameters
     tomojax.errors
     tomojax.wire
 
