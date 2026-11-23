@@ -52,7 +52,13 @@ def inversion_storage(
         slabbed = volume_exceeds_room(grid, room)
     else:
         slabbed = bool(getattr(cfg, "stream", False)) or (room is not None and resident > room)
-    batch = min(views, getattr(cfg, "views_per_batch", getattr(cfg, "views_per_block", views)))
+    from .fista_tv import FISTAConfig, fista_view_batch
+
+    batch = (
+        fista_view_batch(cfg, views)
+        if isinstance(cfg, FISTAConfig)
+        else min(views, getattr(cfg, "views_per_batch", getattr(cfg, "views_per_block", views)))
+    )
     working = (
         min(resident, max(volume // grid.nz, 4 * batch * rows * cols) * 4) if slabbed else resident
     )

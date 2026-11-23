@@ -371,6 +371,12 @@ def _prepare_fista_runtime(
     )
 
 
+def fista_view_batch(config: FISTAConfig, views: int) -> int:
+    """Resolve the batch used by the FISTA operators and their memory estimate."""
+    requested = 64 if config.views_per_batch is None else int(config.views_per_batch)
+    return min(requested, views)
+
+
 def _batched_projector(
     cfg: FISTAConfig,
     n_views: int,
@@ -379,11 +385,10 @@ def _batched_projector(
     detector: Detector,
 ) -> tuple[str | ConeModel, str, int]:
     """The batched operators' model, backend and views per batch."""
-    requested = 64 if cfg.views_per_batch is None else int(cfg.views_per_batch)
     model, backend = resolve_geometry_projector(
         geometry, cfg.backend, detector=detector, det_grid=det_grid, context="fista_tv"
     )
-    return model, backend, max(1, min(requested, n_views))
+    return model, backend, fista_view_batch(cfg, n_views)
 
 
 def _data_term(

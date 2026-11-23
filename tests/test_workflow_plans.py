@@ -7,6 +7,7 @@ import pytest
 
 import tomojax as tj
 from tomojax._planning import resolve_reconstruction
+from tomojax.cli._plans import plan_product  # check-public-imports: allow-private
 from tomojax.cli.main import main
 from tomojax.wire.resources import Snapshot
 
@@ -20,8 +21,6 @@ def scan(angles):
 
 
 def test_snapshot_controls_estimate_while_run_reports_actual():
-    from tomojax.cli._plans import plan_product  # check-public-imports: allow-private
-
     source = scan([0, 45, 90, 135])
     grid = source.grid
     volume = 4 * 7 * 8 * 5
@@ -113,3 +112,14 @@ def test_alignment_plan_budgets_and_padded_levels_match_run(tmp_path, capsys):
     centre = json.loads(capsys.readouterr().out)
     assert centre["type"] == "opposite_views_plan" and centre["pairs"] == 4
     assert centre["placement"]["devices"] == ["cpu:0"]
+
+
+@pytest.mark.parametrize("method", ["fbp", "fourier", "cgls", "sirt", "mlem", "spdhg", "fista"])
+def test_default_plan_for_each_method(method):
+    source = scan(np.linspace(0, 180, 211, endpoint=False))
+    snapshot = (Snapshot(0, "cpu:0", "host", None, None, 1),)
+    plan = plan_product(source, resolve_reconstruction(source, method), snapshot=snapshot)
+    assert plan.method == method and plan.grid.nz == 5
+    if method == "fista":
+        # The stream uploads at most 64 complete detector images in its default batch.
+        assert plan.placement.device_bytes == 4 * (64 * 6 * 12 * 4)
