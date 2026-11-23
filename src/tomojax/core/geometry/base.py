@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 import numpy as np
 
+from tomojax.errors import InvalidParameter
+
 if TYPE_CHECKING:
     import jax.numpy as jnp
 
@@ -72,9 +74,15 @@ def _coerce_fixed_tuple(name: str, value: Iterable[float], expected_len: int) ->
 def _plain_numbers(obj: object, counts: tuple[str, ...], pitches: tuple[str, ...]) -> None:
     """Store counts as Python ints and pitches as floats, whatever NumPy type they came as."""
     for name in counts:
-        object.__setattr__(obj, name, operator.index(getattr(obj, name)))
+        count = operator.index(getattr(obj, name))
+        if count < 1:
+            raise InvalidParameter(name, f"{name} must be a positive integer")
+        object.__setattr__(obj, name, count)
     for name in pitches:
-        object.__setattr__(obj, name, float(getattr(obj, name)))
+        pitch = float(getattr(obj, name))
+        if not math.isfinite(pitch) or pitch <= 0:
+            raise InvalidParameter(name, f"{name} must be finite and positive")
+        object.__setattr__(obj, name, pitch)
 
 
 @dataclass(frozen=True)

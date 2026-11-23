@@ -714,11 +714,11 @@ def slab_settings(
             "method", "reconstruct_slabs requires cone FBP or unposed axial FBP/Fourier/SIRT/MLEM"
         )
     target = frames.geometry.grid if grid is None else grid
-    validate_reconstruction(method, frames.geometry, target, cfg, slabs=True)
+    validate_reconstruction(method, frames.geometry, target, cfg, warm_start=bool(warm_start))
     bound = bind_step_geometry(corrections, frames.geometry)
     slab_steps(bound)
     positive_finite(epsilon, "epsilon")
-    return target, cfg, bound, cone
+    return target, cfg, bound
 
 
 @contextmanager
@@ -733,20 +733,21 @@ def _reconstruct_slabs_context(
     epsilon: float,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
     from tomojax.corrections.api import corrected_row_source
+    from tomojax.geometry.api import is_cone_beam
     from tomojax.recon.api import reconstruct_slabs as array_slabs
 
-    target, cfg, bound, cone = slab_settings(
-        frames,
-        method,
-        grid=grid,
-        config=config,
-        warm_start=warm_start,
-        corrections=corrections,
-        epsilon=epsilon,
-    )
-    with (
-        progress.task("reconstruct", "fdk" if cone else method, None, "slabs"),
-        corrected_row_source(
+    cone = is_cone_beam(frames.geometry)
+    with progress.task("reconstruct", "fdk" if cone else method, None, "slabs"):
+        target, cfg, bound = slab_settings(
+            frames,
+            method,
+            grid=grid,
+            config=config,
+            warm_start=warm_start,
+            corrections=corrections,
+            epsilon=epsilon,
+        )
+        with corrected_row_source(
             frames.counts,
             flats=frames.flats,
             flat_positions=frames.flat_positions,
@@ -760,27 +761,26 @@ def _reconstruct_slabs_context(
             host=cone,
             dark_source=frames.dark_source,
             linear_limit=frames.linear_limit,
-        ) as source,
-    ):
+        ) as source:
 
-        def read(first: int, stop: int):
-            corrected = source(first, stop)
-            return corrected.projections, corrected
+            def read(first: int, stop: int):
+                corrected = source(first, stop)
+                return corrected.projections, corrected
 
-        completed = array_slabs(
-            method,
-            frames.geometry,
-            target,
-            frames.geometry.detector,
-            read,
-            config=cfg,
-            warm_start=bool(warm_start),
-        )
-        with (
-            closing(completed),
-            closing(_slab_results(completed, frames, target, method, cfg)) as output,
-        ):
-            yield output
+            completed = array_slabs(
+                method,
+                frames.geometry,
+                target,
+                frames.geometry.detector,
+                read,
+                config=cfg,
+                warm_start=bool(warm_start),
+            )
+            with (
+                closing(completed),
+                closing(_slab_results(completed, frames, target, method, cfg)) as output,
+            ):
+                yield output
 
 
 def _slab_results(

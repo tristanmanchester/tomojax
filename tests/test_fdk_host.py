@@ -125,7 +125,8 @@ def test_host_slabs_reject_sampled_nonfinite_fp32_values(value):
 @pytest.mark.parametrize("invalid", ["nx", "vz"])
 def test_host_slabs_validate_grid_before_allocating_or_writing(invalid):
     geometry, grid, detector, data = scan()
-    grid = replace(grid, **{invalid: 0})
+    # A grid restored from an older pickle can bypass constructor validation.
+    object.__setattr__(grid, invalid, 0)
     with pytest.raises(ValueError, match="fdk_host grid"):
         fdk_host(geometry, grid, detector, data)
 

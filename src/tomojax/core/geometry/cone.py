@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tomojax.errors import InvalidParameter
+
 from .lamino import laminography_tilt_matrix
 from .transforms import align_u_to_v
 
@@ -78,7 +80,8 @@ class ConeBeam:
 
     def __post_init__(self) -> None:
         if not (0.0 < float(self.source_to_axis) < float(self.source_to_detector)):
-            raise ValueError("ConeBeam needs 0 < source_to_axis < source_to_detector")
+            name = "source_to_axis" if not self.source_to_axis > 0 else "source_to_detector"
+            raise InvalidParameter(name, "ConeBeam needs 0 < source_to_axis < source_to_detector")
 
     @property
     def magnification(self) -> float:

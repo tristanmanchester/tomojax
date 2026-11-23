@@ -245,3 +245,97 @@ def test_combined_scan_keeps_repeated_parents_and_alignment_exposes_scan(worker)
         )
     )
     assert recon["manifest"]["inputs"] == [alignment["manifest"]]
+
+
+@pytest.mark.parametrize(
+    ("operation", "path"),
+    [
+        (dict(type="simulate", size=0), "size"),
+        (dict(type="simulate", n_views=-1), "n_views"),
+        (dict(type="simulate", poisson_scale=2, artefacts={"poisson_scale": 3}), "poisson_scale"),
+        (dict(type="simulate", detector={"nu": 2, "nv": 1, "du": -0.5, "dv": 1}), "detector.du"),
+        (dict(type="simulate", geometry="cone", size=2, source_to_axis=-1), "source_to_axis"),
+        (
+            dict(type="open", kind="scan", path="missing.h5", geometry={"kind": "lamino"}),
+            "geometry.tilt",
+        ),
+        (
+            dict(
+                type="open",
+                kind="scan",
+                path="missing.h5",
+                geometry={"kind": "cone", "source_to_axis": 2},
+            ),
+            "geometry.source_to_detector",
+        ),
+    ],
+)
+def test_constructor_paths_precede_io_and_dispatch(worker, operation, path):
+    replies = [worker("validate", operation=operation)]
+    replies.append(
+        worker("open", **{k: v for k, v in operation.items() if k != "type"})
+        if operation["type"] == "open"
+        else worker("run", operation=operation)
+    )
+    for reply in replies:
+        assert reply["type"] == "error", reply
+        assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", path)
+
+
+def test_mask_shape_and_subsets_depend_on_the_selected_scan(worker, simulation, tmp_path):
+    source = simulation["value"]["scan"]
+    path = tmp_path / "support.npy"
+    np.save(path, np.ones((3, 2), np.uint8))
+    for config, field in [
+        (dict(type="SIRTConfig", subsets=13), "config.subsets"),
+        (dict(type="SIRTConfig", support=dict(type="npy", path=str(path))), "config.support"),
+    ]:
+        recipe = dict(type="reconstruct", source=source, method="sirt", config=config)
+        for command in ("validate", "run"):
+            failure = worker(command, operation=recipe)["error"]
+            assert (failure["kind"], failure["path"]) == ("invalid_parameter", field)
+    recipe = dict(
+        type="reconstruct",
+        source=source,
+        method="sirt",
+        config=dict(type="SIRTConfig", subsets=12, iterations=0),
+    )
+    assert output(worker("validate", operation=recipe))["value"]["type"] == "validated"
+    assert output(worker("run", operation=recipe))["value"]["volume"]["shape"] == [8, 8, 8]
+
+
+def test_short_cone_and_single_direction_fourier_fail_during_preflight(worker, simulation):
+    cone = output(
+        worker(
+            "run", operation=dict(type="simulate", geometry="cone", size=6, n_views=10, rotation=45)
+        )
+    )
+    selected = output(
+        worker("run", operation=dict(type="select", source=simulation["value"]["scan"], views=[3]))
+    )
+    for ref, method in [
+        (cone["value"]["scan"], "fbp"),
+        (dict(type="member", handle=selected["value"]["handle"], member="self"), "fourier"),
+    ]:
+        recipe = dict(type="reconstruct", method=method, source=ref)
+        for command in ("validate", "plan", "run"):
+            error = worker(command, operation=recipe)["error"]
+            assert (error["kind"], error["path"]) == ("invalid_parameter", "method")
+
+
+def test_force_preserves_an_open_source_and_its_ancestor_directory(worker, simulation, tmp_path):
+    parent = tmp_path / "dataset"
+    parent.mkdir()
+    scan = parent / "simulation.nxs"
+    root = dict(type="member", handle=simulation["value"]["handle"], member="self")
+    output(worker("run", operation=dict(type="save", source=root, path=str(scan))))
+    before = scan.read_bytes()
+    reopened = output(worker("open", kind="simulation", path=str(scan)))["value"]
+    current = dict(type="member", handle=reopened["handle"], member="self")
+    for command, path in [("save", scan), ("export", parent)]:
+        for outer in ("validate", "run"):
+            error = worker(
+                outer, operation=dict(type=command, source=current, path=str(path), force=True)
+            )["error"]
+            assert (error["kind"], error["path"]) == ("invalid_parameter", "path")
+    assert scan.read_bytes() == before

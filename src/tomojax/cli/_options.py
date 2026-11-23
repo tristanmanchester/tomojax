@@ -197,19 +197,28 @@ def check_paths(
                     raise FileNotFoundError(f"input not found: {path}")
                 parser.error(f"input not found: {path}")
             resolved_inputs.add(candidate.resolve())
-    seen_outputs: set[Path] = set()
+    try:
+        check_destinations(
+            resolved_inputs, (Path(p) for p in outputs if p is not None), force=force
+        )
+    except (FileExistsError, ValueError) as exc:
+        parser.error(str(exc))
+
+
+def check_destinations(inputs: set[Path], outputs: Iterable[Path], *, force: bool) -> None:
+    """Check all caller-owned destinations against their inputs and each other."""
+    from tomojax.errors import InvalidParameter
+
+    seen: set[Path] = set()
     for path in outputs:
-        if path is None:
-            continue
-        candidate = Path(path)
-        resolved = candidate.resolve()
-        if resolved in seen_outputs:
-            parser.error(f"duplicate output destination: {path}")
-        seen_outputs.add(resolved)
-        if resolved in resolved_inputs:
-            parser.error(f"output path must differ from input path: {path}")
-        if candidate.exists() and not force:
-            parser.error(f"output already exists: {path} (pass --force to replace it)")
+        resolved = path.resolve()
+        if resolved in seen:
+            raise InvalidParameter("path", f"duplicate output destination: {path}")
+        seen.add(resolved)
+        if any(src.is_relative_to(resolved) for src in inputs):
+            raise InvalidParameter("path", f"output path must differ from input path: {path}")
+        if not force and (path.exists() or path.is_symlink()):
+            raise FileExistsError(f"output already exists: {path} (pass --force to replace it)")
 
 
 def fail(command: str, message: str) -> int:

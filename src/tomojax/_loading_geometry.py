@@ -9,12 +9,13 @@ with ``detector_center_status="not_recorded"``; fit a centre explicitly with
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, get_args
 
 import numpy as np
 
 from tomojax._parameters import GeometryName, TiltAbout
 from tomojax._scan import frame_output_grid, geometry_of
+from tomojax.errors import InvalidParameter
 from tomojax.geometry import (
     ConeBeam,
     ConeGeometry,
@@ -72,6 +73,23 @@ class DeclaredGeometry:
     detector_center: tuple[float, float] | None = field(
         default=None, metadata={"unit": "geometry_length"}
     )
+
+    def __post_init__(self) -> None:
+        if self.kind is not None and self.kind not in get_args(GeometryName.__value__):
+            raise InvalidParameter("kind", f"unknown geometry {self.kind!r}")
+        if self.tilt_about not in get_args(TiltAbout.__value__):
+            raise InvalidParameter(
+                "tilt_about", f"tilt_about must be x or z, got {self.tilt_about!r}"
+            )
+        if self.kind == "lamino" and self.tilt is None:
+            raise InvalidParameter("tilt", "--geometry lamino needs --tilt")
+        if self.kind == "cone":
+            if self.source_to_axis is None or self.source_to_detector is None:
+                field = "source_to_axis" if self.source_to_axis is None else "source_to_detector"
+                raise InvalidParameter(
+                    field, "--geometry cone needs --source-to-axis and --source-to-detector"
+                )
+            ConeBeam(self.source_to_axis, self.source_to_detector)
 
 
 def _vendor_corrections(record: ProjectionDataset, *, applied: bool) -> ProjectionDataset:
@@ -137,8 +155,7 @@ def _declared_geometry(
             resolved_grid, detector, angles, detector_roll=declared.detector_roll
         )
     elif declared.kind == "lamino":
-        if declared.tilt is None:
-            raise ValueError("--geometry lamino needs --tilt")
+        assert declared.tilt is not None
         geom = LaminographyGeometry(
             resolved_grid,
             detector,
@@ -148,8 +165,8 @@ def _declared_geometry(
             detector_roll=declared.detector_roll,
         )
     elif declared.kind == "cone":
-        if declared.source_to_axis is None or declared.source_to_detector is None:
-            raise ValueError("--geometry cone needs --source-to-axis and --source-to-detector")
+        assert declared.source_to_axis is not None
+        assert declared.source_to_detector is not None
         beam = ConeBeam(
             declared.source_to_axis,
             declared.source_to_detector,
@@ -228,8 +245,9 @@ def frame_geometry(
     geometry replaces them, with a warning.
     """
     if pixel_size is not None and (detector is not None or geometry is not None):
-        raise ValueError(
-            "pixel_size= and detector= (or geometry=) both describe the detector: pass one"
+        raise InvalidParameter(
+            "pixel_size",
+            "pixel_size= and detector= (or geometry=) both describe the detector: pass one",
         )
     declares_geom = declared is not None and declared.kind is not None
     if (geometry is not None or declares_geom) and (message := dropped_offsets_message(record)):

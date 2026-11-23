@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from functools import partial, singledispatchmethod
 import json
@@ -25,6 +25,7 @@ from tomojax._workflow import align_resolved, reconstruct_resolved
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, source
 from tomojax.cli._handles import Root, handle, stage_array, unit_of
+from tomojax.cli._options import check_destinations
 from tomojax.cli._plans import plan_product
 from tomojax.cli._results import VOLUME_DATASET, length_unit, scan_axes
 from tomojax.core.array_ops import check_binning
@@ -54,6 +55,8 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
         axes = tuple(Axis(f"axis{i}", "diagnostic", "index", Uniform(0, 1)) for i in range(a.ndim))
         return Array(stage_array(context, a), a.shape, a.dtype.str, axes, "unspecified", pointer)
 
+    for snapshot in sample():
+        context.snapshot(snapshot)
     with progress.watch(event, control=cast("progress.Control", context.control)):
         if isinstance(operation, op.Plane):
             if not isinstance(command, op.Validate):
@@ -64,30 +67,28 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
             work = Admission(context, manifest, isinstance(command, op.Plan)).prepare(operation)
             item = p.Validated() if isinstance(command, op.Validate) else work()
         context.control.checkpoint()
+        for snapshot in sample():
+            context.snapshot(snapshot)
         info = item.info if isinstance(item, tj.Reconstruction | tj.Alignment) else {}
         summary = ex.summarise(info, externalise=diagnostic)
         if isinstance(item, tj.Scan | tj.Frames | tj.Reconstruction | tj.Alignment | tj.Simulation):
             storage = unit = None
-            if (
-                isinstance(operation, op.Open)
-                and isinstance(item, tj.Reconstruction)
-                and h5py.is_hdf5(operation.path)
-            ):
-                with h5py.File(operation.path, "r") as f:
-                    # A canonical member also covers files saved in a legacy axis order.
-                    if f["/entry/processing/tomojax"].attrs.get("volume_axes_order") in (
-                        "zyx",
-                        b"zyx",
-                    ):
-                        storage = Hdf5(operation.path, VOLUME_DATASET)
-                    if (group := f.get("/entry/geometry")) is not None:
-                        unit = length_unit(
-                            json.loads(
-                                cast("str | bytes", group.attrs.get("geometry_meta_json", "{}"))
-                            )
-                        )
+            if isinstance(operation, op.Open) and isinstance(item, tj.Reconstruction):
+                storage, unit = saved_registration(operation.path)
             return ex.Success(handle(item, volume_storage=storage, unit=unit), summary, manifest)
         return ex.Success(item, summary, manifest)
+
+
+def saved_registration(path: str) -> tuple[Hdf5 | None, str | None]:
+    """Use a saved dataset directly only when it has canonical in-memory axis order."""
+    if not h5py.is_hdf5(path):
+        return None, None
+    with h5py.File(path, "r") as file:
+        axes = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
+        storage = Hdf5(path, VOLUME_DATASET) if axes in ("zyx", b"zyx") else None
+        group = file.get("/entry/geometry")
+        meta = group.attrs.get("geometry_meta_json", "{}") if group is not None else "{}"
+        return storage, length_unit(json.loads(cast("str | bytes", meta)))
 
 
 @dataclass(frozen=True)
@@ -298,8 +299,10 @@ class Admission:
         if isinstance(operation, op.ReconstructSlabs):
             settings = arguments(operation, self.context, omit=("source",))
             from tomojax._workflow import slab_settings
+            from tomojax.recon.api import validate_slab_grid
 
-            grid, _, _, _ = slab_settings(item, **settings)
+            grid, _, _ = slab_settings(item, **settings)
+            validate_slab_grid(operation.method, item.geometry, grid, item.geometry.detector)
 
             def fill():
                 with tj.reconstruct_slabs(item, **settings) as slabs:
@@ -355,6 +358,8 @@ class Admission:
             kinds=(*kinds, tj.Scan) if isinstance(operation, op.Save) else kinds,
         )
         path = Path(operation.path)
+        if not path.name or path.name == "..":
+            raise InvalidParameter("path", "expected an output file or directory name")
         sidecar = path.with_name(path.name + ".manifest.json")
         paths = [path, sidecar]
         raw = path.suffix.lower() == ".raw"
@@ -364,9 +369,7 @@ class Admission:
                 raise InvalidParameter("source", "alignment holds no working image to export")
             if raw:
                 paths.append(path.with_suffix(".json"))
-        for output in paths:
-            if not operation.force and (output.exists() or output.is_symlink()):
-                raise FileExistsError(f"output exists: {output}")
+        check_destinations(set(ancestor_paths(self.manifest.inputs)), paths, force=operation.force)
 
         def write():
             staged = {p: self.context.staging.output(p, force=operation.force) for p in paths}
@@ -389,3 +392,27 @@ class Admission:
             return p.Files(tuple(outputs))
 
         return write
+
+
+def ancestor_paths(ancestors: tuple[p.Provenance, ...]) -> Iterator[Path]:
+    """Identify caller-owned source files in a durable output's input history."""
+    for node in ancestors:
+        if node.operation == "open":
+            yield Path(node.parameters["path"]).resolve()
+            for field in ("flats", "darks"):
+                if isinstance(path := node.parameters.get(field), str):
+                    yield Path(path).resolve()
+        yield from storage_paths(node.parameters)
+        yield from ancestor_paths(node.inputs)
+
+
+def storage_paths(value: object) -> Iterator[Path]:
+    if isinstance(value, dict):
+        if value.get("type") in {"path", "npy", "hdf5"}:
+            yield Path(value["path"]).resolve()
+        else:
+            for option in value.values():
+                yield from storage_paths(option)
+    elif isinstance(value, tuple | list):
+        for option in value:
+            yield from storage_paths(option)

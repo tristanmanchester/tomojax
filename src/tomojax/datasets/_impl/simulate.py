@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax._parameters import simulation_distances
 from tomojax.core.cone import cone_coefficients, cone_project
 from tomojax.core.geometry import (
     ConeBeam,
@@ -336,9 +337,7 @@ def simulate(
     elif cfg.geometry == "cone":
         geometry_type = "cone"
         extent = max(grid.nx * grid.vx, grid.ny * grid.vy, grid.nz * grid.vz)
-        sod = 3.0 * extent if cfg.source_to_axis is None else float(cfg.source_to_axis)
-        sdd = 1.5 * sod if cfg.source_to_detector is None else float(cfg.source_to_detector)
-        beam = ConeBeam(sod, sdd)
+        beam = ConeBeam(*simulation_distances(extent, cfg.source_to_axis, cfg.source_to_detector))
         cone = ConeGeometry(
             grid=grid,
             detector=det,

@@ -103,7 +103,7 @@ def resolve_reconstruction(
         settings["devices"] = devices
     cfg = method_config(method, config=config, warm_start=warm_start, **settings)
     scan = scan if grid is None else with_grid(scan, grid)
-    validate_reconstruction(method, scan.geometry, scan.grid, cfg)
+    validate_reconstruction(method, scan.geometry, scan.grid, cfg, warm_start=bool(warm_start))
     return ResolvedReconstruction(scan, method, cfg, cylinder, tuple(reasons), info)
 
 

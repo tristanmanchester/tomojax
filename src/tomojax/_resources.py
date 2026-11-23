@@ -15,7 +15,9 @@ if TYPE_CHECKING:
     from tomojax._smooth_alignment import CentreSelection, JointSelection
 
 
-def sample(plan: CentreSelection | JointSelection | ResolvedReconstruction) -> tuple[Snapshot, ...]:
+def sample(
+    plan: CentreSelection | JointSelection | ResolvedReconstruction | None = None,
+) -> tuple[Snapshot, ...]:
     """Sample only on the execution thread. CPU availability is host/cgroup room."""
     from tomojax._planning import ResolvedReconstruction
     from tomojax._smooth_alignment import CentreSelection

@@ -13,7 +13,6 @@ from tomojax import progress
 from tomojax.backends.api import device_free_memory_bytes, is_oom_error
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
-from ._axial_slabs import independent_planes
 from .api import reconstruct_arrays
 from .types import ReconstructionSlab
 
@@ -39,11 +38,9 @@ def iterative_slabs[T](
     retain them, or discard each to keep total storage bounded. No TV/CGLS solve
     is split: their regularizer or global step lengths couple the planes.
     """
-    if method not in {"sirt", "mlem"} or not independent_planes(geometry, grid, detector):
-        raise ValueError(
-            "iterative slabs require independent axial Joseph planes "
-            "(matching grid and detector rows)"
-        )
+    from .api import validate_slab_grid
+
+    validate_slab_grid(method, geometry, grid, detector)
     origin = grid_volume_origin(grid)
     free = device_free_memory_bytes()
     per_row = 4 * (

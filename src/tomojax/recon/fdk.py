@@ -159,6 +159,33 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
     return np.concatenate(weights) / repeats[view_angle][:, None]
 
 
+def check_angular_coverage(geometry: Geometry, detector: Detector, n_views: int) -> None:
+    """Check the arc of each calibrated fan before allocating weights or reading frames."""
+    _, angles, full = ordered_arc(grouped_angles(geometry, n_views)[0])
+    if not full:
+        for _, beam, own in cone_parts(geometry, detector) or ():
+            short_scan_fan(beam, own, angles)
+
+
+def short_scan_fan(
+    beam: ConeBeam, detector: Detector, angles: np.ndarray
+) -> tuple[float, np.ndarray, float]:
+    """Resolve the virtual fan used for Parker weighting and validate the acquired arc."""
+    gaps = np.diff(angles)
+    step = float(np.median(gaps))
+    arc = float(angles[-1] - angles[0]) + step
+    gamma = _fan_angles(beam, detector)
+    delta = float(np.max(np.abs(gamma)))
+    if arc < np.pi + 2 * delta - 1e-6:
+        raise ValueError(
+            f"FDK short scans need at least 180 degrees plus the fan angle "
+            f"({np.rad2deg(np.pi + 2 * delta):.1f} degrees); got {np.rad2deg(arc):.1f}"
+        )
+    # Treat the extra acquisition angle as a virtual fan. Otherwise the
+    # minimum-scan window assigns zero to valid later views of an overscan.
+    return step, gamma, max(delta, (arc - np.pi) / 2)
+
+
 def _distinct_view_weights(
     beam: ConeBeam,
     detector: Detector,
@@ -168,25 +195,12 @@ def _distinct_view_weights(
     """:func:`view_weights` for views at distinct ``angles`` (radians)."""
     order, sorted_angles, _ = ordering
     n_views = len(order)
-    gaps = np.diff(sorted_angles)
-    step = float(np.median(gaps))
-    arc = float(sorted_angles[-1] - sorted_angles[0]) + step
+    step, gamma, delta = short_scan_fan(beam, detector, sorted_angles)
+    pixel = float(detector.du) / float(beam.source_to_detector)
     # Angular measure of each view: half the gap to each neighbour.
     measure = np.empty(n_views)
     padded = np.concatenate([[sorted_angles[0] - step], sorted_angles, [sorted_angles[-1] + step]])
     measure[order] = 0.5 * (padded[2:] - padded[:-2])
-    # Parker weights over the fan angle of each detector column.
-    gamma = _fan_angles(beam, detector)
-    pixel = float(detector.du) / float(beam.source_to_detector)
-    delta = float(np.max(np.abs(gamma)))
-    if arc < np.pi + 2 * delta - 1e-6:
-        raise ValueError(
-            f"FDK short scans need at least 180 degrees plus the fan angle "
-            f"({np.rad2deg(np.pi + 2 * delta):.1f} degrees); got {np.rad2deg(arc):.1f}"
-        )
-    # Treat the extra acquisition angle as a virtual fan. Otherwise the
-    # minimum-scan window assigns zero to valid later views of an overscan.
-    delta = max(delta, (arc - np.pi) / 2)
     end = np.pi + 2 * delta
 
     def parker(beta: np.ndarray, g: np.ndarray) -> np.ndarray:
@@ -730,7 +744,7 @@ def fdk_slabs[T](
 
     validate_grid(grid, "FDK slab grid")
     n_views = len(getattr(geometry, "angles", ()))
-    ordered_arc(grouped_angles(geometry, n_views)[0])
+    check_angular_coverage(geometry, detector, n_views)
     devices = as_devices(config.devices)
     device = devices[0] if devices else None
     with jax.default_device(device):
@@ -829,7 +843,7 @@ def fdk_host(
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk_host projections"
     )
-    ordered_arc(grouped_angles(geometry, n_views)[0])
+    check_angular_coverage(geometry, detector, n_views)
     result = validate_host_arrays(projections, out, (nz, ny, nx), "fdk_host")
     devices = as_devices(cfg.fdk.devices) or (None,)
     if depth is None:

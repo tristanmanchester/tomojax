@@ -169,7 +169,12 @@ def method_config(
 
 
 def validate_reconstruction(
-    method: str, geometry: ScanGeometry, grid: Grid, config: MethodConfig, *, slabs: bool = False
+    method: str,
+    geometry: ScanGeometry,
+    grid: Grid,
+    config: MethodConfig,
+    *,
+    warm_start: bool = False,
 ) -> None:
     """Check resolved solver settings against the actual acquisition before dispatch.
 
@@ -183,8 +188,8 @@ def validate_reconstruction(
         Working volume grid.
     config : MethodConfig
         Settings for the resolved method.
-    slabs : bool, optional
-        Require an independent streaming row source.
+    warm_start : bool, optional
+        Initialise an iterative solve with filtered backprojection.
 
     Raises
     ------
@@ -219,21 +224,53 @@ def validate_reconstruction(
         )
     except ValueError as err:
         raise InvalidParameter("config.support", str(err)) from err
-    if method == "fbp" and is_cone_beam(geometry):
-        fdk_config(cast("FBPConfig", config))
+    if (warm_start or method == "fbp") and is_cone_beam(geometry):
+        from tomojax.recon.fdk import check_angular_coverage
+
+        if method == "fbp":
+            fdk_config(cast("FBPConfig", config))
+        try:
+            check_angular_coverage(geometry, geometry.detector, views)
+        except ValueError as err:
+            raise InvalidParameter("warm_start" if warm_start else "method", str(err)) from err
     if method == "fourier":
         from tomojax.core.geometry.cone import require_parallel_beam
+        from tomojax.recon._fourier_grid import sorted_half_turn
         from tomojax.recon.fourier import detector_translations
 
         try:
+            import numpy as np
+
             require_parallel_beam(geometry, "fourier_reconstruct")
+            sorted_half_turn(np.asarray(geometry.angles))
             detector_translations(geometry, views)
         except ValueError as err:
             raise InvalidParameter("method", str(err)) from err
-    if slabs and method in {"sirt", "mlem"}:
+
+
+def validate_slab_grid(method: str, geometry: Geometry, grid: Grid, detector: Detector) -> None:
+    """Check that iterative raw reconstruction uses independent axial planes.
+
+    Parameters
+    ----------
+    method : str
+        Slab method.
+    geometry : Geometry
+        Acquisition geometry.
+    grid : Grid
+        Requested output grid.
+    detector : Detector
+        Detector measuring the raw projections.
+
+    Raises
+    ------
+    InvalidParameter
+        If a voxel plane depends on multiple detector rows in an iterative solve.
+    """
+    if method in {"sirt", "mlem"}:
         from tomojax.recon._axial_slabs import independent_planes
 
-        if not independent_planes(geometry, grid, geometry.detector):
+        if not independent_planes(geometry, grid, detector):
             raise InvalidParameter(
                 "grid",
                 "iterative slabs require independent axial Joseph planes "
@@ -564,4 +601,5 @@ __all__ = [
     "reconstruct_arrays",
     "reconstruct_slabs",
     "validate_reconstruction",
+    "validate_slab_grid",
 ]

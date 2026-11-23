@@ -24,6 +24,14 @@ def check_backend(backend: str, context: str) -> None:
         raise InvalidParameter("backend", f"{context}: backend must be 'auto', 'jax' or 'cuda'")
 
 
+def simulation_distances(
+    extent: float, source_to_axis: float | None, source_to_detector: float | None
+) -> tuple[float, float]:
+    """Resolve the synthetic cone's nominal source distances from the largest volume extent."""
+    sod = 3.0 * extent if source_to_axis is None else float(source_to_axis)
+    return sod, 1.5 * sod if source_to_detector is None else float(source_to_detector)
+
+
 class AnnotationModule(ModuleType):
     """Load a numerical module only when a runtime consumer resolves an annotation."""
 

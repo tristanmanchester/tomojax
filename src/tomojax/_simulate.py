@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
 import numpy as np
 
 from tomojax import progress
-from tomojax._parameters import AnnotationModule, GeometryName, Phantom
-from tomojax.geometry import Detector, Grid
+from tomojax._parameters import AnnotationModule, GeometryName, Phantom, simulation_distances
+from tomojax.errors import InvalidParameter
+from tomojax.geometry import ConeBeam, Detector, Grid
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -43,21 +44,23 @@ class Simulation(NamedTuple):
 
 def default_detector(
     grid: Grid,
-    geometry: GeometryName,
+    beam: ConeBeam | None,
     *,
-    source_to_axis: float | None = None,
-    source_to_detector: float | None = None,
     tilt: float = 0.0,
 ) -> Detector:
     """Return a default detector sized to cover ``grid``'s physical extent."""
     from tomojax.geometry import Detector
 
-    if geometry == "cone":
+    if beam is not None:
         du = dv = min(grid.vx, grid.vy, grid.vz)
-        extent = max(grid.nx * grid.vx, grid.ny * grid.vy, grid.nz * grid.vz)
-        sod = 3.0 * extent if source_to_axis is None else float(source_to_axis)
-        sdd = 1.5 * sod if source_to_detector is None else float(source_to_detector)
-        nu, nv = _cone_detector(grid, sod, sdd, du, dv, tilted=abs(float(tilt)) > 1e-12)
+        nu, nv = _cone_detector(
+            grid,
+            beam.source_to_axis,
+            beam.source_to_detector,
+            du,
+            dv,
+            tilted=abs(float(tilt)) > 1e-12,
+        )
         return Detector(nu, nv, du, dv)
     du = min(grid.vx, grid.vy)
     dv = grid.vz
@@ -87,23 +90,30 @@ def build_sim_config(
     from tomojax.datasets import SimConfig, SimulationArtefacts
     from tomojax.geometry import Grid
 
+    if grid is None and size < 1:
+        raise InvalidParameter("size", "size must be a positive voxel count")
+    if n_views is not None and n_views < 1:
+        raise InvalidParameter("n_views", "n_views must be positive")
+    if not math.isfinite(poisson_scale) or poisson_scale < 0:
+        raise InvalidParameter("poisson_scale", "poisson_scale must be finite and non-negative")
     resolved_grid = Grid(size, size, size, 1.0, 1.0, 1.0) if grid is None else grid
     resolved_tilt = (30.0 if geometry == "lamino" else 0.0) if tilt is None else tilt
-    resolved_detector = (
-        default_detector(
-            resolved_grid,
-            geometry,
-            source_to_axis=source_to_axis,
-            source_to_detector=source_to_detector,
-            tilt=resolved_tilt,
+    beam = None
+    if geometry == "cone":
+        extent = max(
+            resolved_grid.nx * resolved_grid.vx,
+            resolved_grid.ny * resolved_grid.vy,
+            resolved_grid.nz * resolved_grid.vz,
         )
-        if detector is None
-        else detector
+        beam = ConeBeam(*simulation_distances(extent, source_to_axis, source_to_detector))
+    resolved_detector = (
+        default_detector(resolved_grid, beam, tilt=resolved_tilt) if detector is None else detector
     )
     resolved_n_views = 2 * max(resolved_grid.shape) if n_views is None else n_views
     if poisson_scale > 0.0 and artefacts is not None and artefacts.poisson_scale > 0.0:
-        raise ValueError(
-            "pass poisson_scale= or artefacts=SimulationArtefacts(poisson_scale=...), not both"
+        raise InvalidParameter(
+            "poisson_scale",
+            "pass poisson_scale= or artefacts=SimulationArtefacts(poisson_scale=...), not both",
         )
     resolved_artefacts = artefacts
     if poisson_scale > 0.0:
@@ -295,7 +305,9 @@ def _cone_detector(
         radius = max(math.hypot(x, y) for x in xs for y in ys)
         half_z = max(abs(z) for z in zs)
     if source_to_axis <= radius:
-        raise ValueError("the source must be outside the volume: increase source_to_axis")
+        raise InvalidParameter(
+            "source_to_axis", "the source must be outside the volume: increase source_to_axis"
+        )
     across = radius * source_to_detector / math.sqrt(source_to_axis**2 - radius**2)
     up = half_z * source_to_detector / (source_to_axis - radius)
     return 2 * math.ceil(across / du), 2 * math.ceil(up / dv)
