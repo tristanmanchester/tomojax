@@ -27,6 +27,7 @@ from tomojax.core.validation import (
 )
 from tomojax.errors import InvalidParameter
 
+from ._backend import reconstruction_backend
 from ._fbp_weights import fbp_weights
 from ._host_arrays import ProjectionRows
 from .filters import fft_filter_rows, normalize_filter, rfft_filter_array
@@ -779,7 +780,7 @@ def _plan(
     projections: jnp.ndarray | np.ndarray,
     cfg: FBPConfig,
     *,
-    cuda: bool,
+    backend: str,
     moved: bool = False,
 ) -> _Plan:
     """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan.
@@ -805,7 +806,7 @@ def _plan(
         spectrum=spectrum,
         grid=grid,
         detector=filter_detector,
-        backend="cuda" if cuda and cfg.backend != "jax" else "jax",
+        backend=backend,
         batch=_parallel_filter_batch_size(
             n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
         ),
@@ -927,14 +928,21 @@ def parallel_fbp(
         if motion is not None:
             # The same rays through the canonical lattice: one geometry-aware method.
             T_all = jnp.matmul(jnp.asarray(motion), T_all, precision=jax.lax.Precision.HIGHEST)
-        cuda = all(
-            device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
-            for device in (T_all.devices() if on_host else proj.devices())
+        backend = reconstruction_backend(
+            cfg.backend,
+            cone=False,
+            context="fbp",
+            devices=T_all.devices() if on_host else proj.devices(),
         )
-        if cfg.backend == "cuda" and not cuda:
-            raise ValueError("CUDA FBP requires CUDA arrays")
         plan = _plan(
-            geometry, grid, detector, T_all, proj, cfg, cuda=cuda, moved=motion is not None
+            geometry,
+            grid,
+            detector,
+            T_all,
+            proj,
+            cfg,
+            backend=backend,
+            moved=motion is not None,
         )
         if row is not None:
             # Original filter, weights, view partition and numerical batch size. The

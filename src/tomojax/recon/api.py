@@ -165,7 +165,17 @@ def method_config(
             f"({kind.__name__} has {', '.join(names)})",
         )
     base = kind() if config is None else config
-    return replace(base, **resolved_settings) if resolved_settings else base
+    return _replace_settings(base, resolved_settings) if resolved_settings else base
+
+
+def _replace_settings(base: MethodConfig, settings: dict[str, object]) -> MethodConfig:
+    """Name an invalid field where its value came from in the operation."""
+    try:
+        return replace(base, **settings)
+    except InvalidParameter as err:
+        if err.path in settings:
+            raise
+        raise InvalidParameter(f"config.{err.path}", str(err)) from err
 
 
 def validate_reconstruction(
@@ -175,6 +185,7 @@ def validate_reconstruction(
     config: MethodConfig,
     *,
     warm_start: bool = False,
+    projections: jnp.ndarray | np.ndarray | None = None,
 ) -> None:
     """Check resolved solver settings against the actual acquisition before dispatch.
 
@@ -190,6 +201,8 @@ def validate_reconstruction(
         Settings for the resolved method.
     warm_start : bool, optional
         Initialise an iterative solve with filtered backprojection.
+    projections : array-like or None, optional
+        Loaded measurements for data-dependent checks and resident backend placement.
 
     Raises
     ------
@@ -202,6 +215,7 @@ def validate_reconstruction(
         validate_optional_same_shape,
     )
 
+    _check_solver_inputs(method, geometry, config, projections)
     views = len(geometry.angles)
     if subsets := getattr(config, "subsets", None):
         from tomojax.errors import within
@@ -246,6 +260,43 @@ def validate_reconstruction(
             detector_translations(geometry, views)
         except ValueError as err:
             raise InvalidParameter("method", str(err)) from err
+
+
+def _check_solver_inputs(
+    method: str,
+    geometry: ScanGeometry,
+    config: MethodConfig,
+    projections: jnp.ndarray | np.ndarray | None,
+) -> None:
+    """Check interpolation, accelerator placement and measured values for this inverse."""
+    from tomojax.core.geometry.cone import is_cone_beam
+
+    if method == "cgls":
+        from tomojax.recon.cgls import check_cgls_geometry
+
+        check_cgls_geometry(geometry, cast("CGLSConfig", config).interpolation)
+    if config.backend == "cuda":
+        import jax
+
+        from tomojax.recon._backend import reconstruction_backend
+
+        cone = is_cone_beam(geometry)
+        reconstruction_backend(
+            config.backend,
+            cone=cone,
+            context="fdk" if method == "fbp" and cone else method,
+            devices=projections.devices()
+            if method == "fbp" and isinstance(projections, jax.Array)
+            else None,
+        )
+    if method == "mlem" and projections is not None:
+        from tomojax.recon.mlem import check_measurements
+
+        check_measurements(projections)
+    if config.backend == "cupy":
+        from tomojax.recon._fourier_backend import resolve_fourier_backend
+
+        resolve_fourier_backend(config.backend)
 
 
 def validate_slab_grid(method: str, geometry: Geometry, grid: Grid, detector: Detector) -> None:

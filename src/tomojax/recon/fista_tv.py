@@ -12,7 +12,7 @@ from tomojax import progress
 from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax._typed_arrays import Device
 from tomojax.backends.host_stream import host_source, should_stream
-from tomojax.core.devices import ViewSplit, announce, as_devices, refuse_streaming, view_split
+from tomojax.core.devices import ViewSplit, announce, as_devices, view_split
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
@@ -326,7 +326,6 @@ def _prepare_fista_runtime(
     projector = _batched_projector(cfg, n_views, det_grid, geometry, detector)
     split = view_split(cfg.devices, n_views)
     announce(None if split is None else split.mesh.devices.flat, array=projections)
-    refuse_streaming(split, cfg.stream, "fista_tv")
     stream = (
         split is None
         and not isinstance(projections, jax.Array)

@@ -1,4 +1,4 @@
-"""Resolve workflow settings before allocating solver state or reading image samples."""
+"""Resolve workflow settings and measurement constraints before allocating solver state."""
 
 from __future__ import annotations
 
@@ -103,7 +103,14 @@ def resolve_reconstruction(
         settings["devices"] = devices
     cfg = method_config(method, config=config, warm_start=warm_start, **settings)
     scan = scan if grid is None else with_grid(scan, grid)
-    validate_reconstruction(method, scan.geometry, scan.grid, cfg, warm_start=bool(warm_start))
+    validate_reconstruction(
+        method,
+        scan.geometry,
+        scan.grid,
+        cfg,
+        warm_start=bool(warm_start),
+        projections=scan.projections,
+    )
     return ResolvedReconstruction(scan, method, cfg, cylinder, tuple(reasons), info)
 
 

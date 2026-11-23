@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 import numpy as np
 
 from tomojax import progress
+from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
 from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
@@ -19,10 +20,26 @@ from ._fourier_rows import ProjectionRows, interpolate_projection_rows
 from ._pinned import PinnedPool
 
 
+def _cupy_device() -> int:
+    """Return the current usable CuPy device without changing the caller's CUDA context."""
+    try:
+        import cupy
+    except ImportError as err:
+        raise InvalidParameter(
+            "config.backend", "fourier_reconstruct: backend='cupy' requires tomojax[fourier-cuda12]"
+        ) from err
+    if not cupy.cuda.is_available():
+        raise InvalidParameter("config.backend", "fourier_reconstruct: CuPy needs a CUDA device")
+    return cupy.cuda.runtime.getDevice()
+
+
 def resolve_fourier_backend(backend: str) -> Literal["numpy", "cupy"]:
     """Resolve auto once, without falling back after reconstruction has started."""
-    if backend in {"numpy", "cupy"}:
-        return "cupy" if backend == "cupy" else "numpy"
+    if backend == "cupy":
+        _cupy_device()
+        return "cupy"
+    if backend == "numpy":
+        return "numpy"
     if backend != "auto":
         raise ValueError("fourier_reconstruct: backend must be 'auto', 'numpy' or 'cupy'")
     import jax
@@ -30,18 +47,13 @@ def resolve_fourier_backend(backend: str) -> Literal["numpy", "cupy"]:
     device = jax.config.jax_default_device
     if device is None or isinstance(device, str):
         device = jax.devices(device)[0]
-    if device.platform != "gpu" or not device.client.platform_version.lower().startswith("cuda"):
-        return "numpy"
-    try:
-        import cupy
-    except ImportError:
-        return "numpy"
-    if not cupy.cuda.is_available():
-        return "numpy"
-    # Never change the caller's current CUDA device or mix it with another JAX device.
-    if cupy.cuda.runtime.getDevice() != device.local_hardware_id:
-        return "numpy"
-    return "cupy"
+    if device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda"):
+        try:
+            if _cupy_device() == device.local_hardware_id:
+                return "cupy"
+        except InvalidParameter:
+            pass
+    return "numpy"
 
 
 def fourier_slab_depth(grid: Grid, detector: Detector, requested: int | None, backend: str) -> int:
@@ -76,12 +88,8 @@ class _Geometry:
     def __init__(self, grid, detector, nviews, flipped, angles, backend) -> None:
         self.cuda = backend == "cupy"
         if self.cuda:
-            try:
-                import cupy as xp
-            except ImportError as exc:
-                raise ImportError(
-                    "fourier_reconstruct: backend='cupy' requires tomojax[fourier-cuda12]"
-                ) from exc
+            import cupy as xp
+
             from ._fourier_cuda import interpolation_kernel, mass_deapod_kernel
 
             self.mass_kernel = mass_deapod_kernel()
@@ -294,12 +302,8 @@ class FourierPlan:
         self.cuda = backend == "cupy"
         cuda = None
         if self.cuda:
-            try:
-                import cupy as xp
-            except ImportError as exc:
-                raise ImportError(
-                    "fourier_reconstruct: backend='cupy' requires tomojax[fourier-cuda12]"
-                ) from exc
+            import cupy as xp
+
             cuda = xp.cuda
             if progress.tracking_placement():
                 progress.placed((f"gpu:{cuda.runtime.getDevice()}",))

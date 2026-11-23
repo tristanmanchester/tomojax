@@ -52,6 +52,9 @@ def _weight(value: float, name: str, *, positive: bool = False, context: str) ->
 
 def validate_fista_config(cfg: FISTAConfig) -> tuple[float | None, float | None]:
     """Check scalar settings and return normalized feasibility bounds."""
+    from tomojax.core.devices import refuse_streaming
+
+    refuse_streaming(cfg.devices, cfg.stream, "fista_tv")
     context = "fista config"
     if cfg.data_term not in {"absolute", "per_view_contrast"}:
         raise InvalidParameter(

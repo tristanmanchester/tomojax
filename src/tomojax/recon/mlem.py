@@ -29,7 +29,6 @@ from tomojax.geometry import grid_volume_origin
 from tomojax.recon._axial_slabs import independent_planes
 from tomojax.recon._chunks import Chunked, fixed_updates
 from tomojax.recon._cone_slabs import RowReader, host_volumes
-from tomojax.recon._host_arrays import validate_host_views
 from tomojax.recon._projection import (
     ConeModel,
     poisson_operators,
@@ -214,7 +213,7 @@ def _segment(
         x = jnp.ones(shape, jnp.float32) if initial is None else initial
         if support is not None:
             x = jnp.where(support, x, 0.0)
-        inputs_valid = jnp.bool_(True) if stream else jnp.all(jnp.isfinite(data) & (data >= 0))
+        inputs_valid = jnp.bool_(True) if stream else _poisson_domain(data)
         inputs_valid &= jnp.all(jnp.isfinite(x) & (x >= 0)) & jnp.all(jnp.isfinite(poses))
         # A full subset stack on a large volume can exceed device memory. Retain
         # only one current sensitivity in that case, independent of subset count.
@@ -289,6 +288,25 @@ def _device(array: object) -> jax.Array:
     return jax.device_put(np.asarray(array, np.float32))
 
 
+@jax.jit
+def _poisson_domain(data: jax.Array) -> jax.Array:
+    values = data.astype(jnp.float32)
+    return jnp.all(jnp.isfinite(values) & (values >= 0))
+
+
+def check_measurements(projections: np.ndarray | jax.Array) -> None:
+    """Check the Poisson domain where the measurements live, in bounded host blocks or on device."""
+    from tomojax.core.host_volume import check_rows
+
+    if isinstance(projections, np.ndarray):
+        try:
+            check_rows(projections, "mlem", nonnegative=True)
+        except ValueError as err:
+            raise InvalidParameter("source", str(err)) from err
+    elif not bool(_poisson_domain(projections)):
+        raise InvalidParameter("source", "mlem: projections must be finite and nonnegative")
+
+
 def _run_device(
     geometry: Geometry,
     grid: Grid,
@@ -322,9 +340,7 @@ def _run_device(
     initial = None if initial is None else _device(initial)
     stream = should_stream(projections)
     if stream:
-        validate_host_views(np.asarray(projections))
-        if np.min(projections) < 0:
-            raise ValueError("mlem: projections must be nonnegative")
+        check_measurements(projections)
     context = host_source(np.asarray(projections)) if stream else nullcontext(_device(projections))
     with context as data:
         # Query after these persistent inputs occupy their device storage.

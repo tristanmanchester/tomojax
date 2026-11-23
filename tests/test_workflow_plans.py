@@ -123,3 +123,15 @@ def test_default_plan_for_each_method(method):
     if method == "fista":
         # The stream uploads at most 64 complete detector images in its default batch.
         assert plan.placement.device_bytes == 4 * (64 * 6 * 12 * 4)
+
+
+def test_explicit_fourier_backend_needs_cupy_at_preflight(monkeypatch):
+    import sys
+
+    from tomojax.recon import FourierConfig
+
+    source = scan([0, 45, 90, 135])
+    monkeypatch.setitem(sys.modules, "cupy", None)
+    with pytest.raises(tj.InvalidParameter) as err:
+        resolve_reconstruction(source, "fourier", config=FourierConfig(backend="cupy"))
+    assert err.value.path == "config.backend"

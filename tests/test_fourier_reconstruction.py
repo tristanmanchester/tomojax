@@ -213,6 +213,7 @@ def test_repeated_host_pipeline_calls_reuse_allocator_storage(monkeypatch):
 
 @pytest.mark.parametrize("stage", ["construction", "later_slab"])
 def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(monkeypatch, stage):
+    monkeypatch.setattr("tomojax.recon._fourier_backend._cupy_device", lambda: 0)
     implementation = importlib.import_module("tomojax.recon.fourier")
 
     original_plan = implementation.FourierPlan
@@ -272,6 +273,7 @@ def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(mo
     [MemoryError("CPU memory"), ValueError("bad data"), ImportError("optional backend")],
 )
 def test_only_cuda_allocation_exhaustion_is_retried(monkeypatch, backend, depth, exception):
+    monkeypatch.setattr("tomojax.recon._fourier_backend._cupy_device", lambda: 0)
     implementation = importlib.import_module("tomojax.recon.fourier")
 
     grid, detector, geometry, data, _ = scan()
@@ -859,6 +861,7 @@ def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny,
 
 
 def test_automatic_slab_depth_bounds_padded_physical_support_and_preserves_overrides(monkeypatch):
+    monkeypatch.setattr("tomojax.recon._fourier_backend._cupy_device", lambda: 0)
     implementation = importlib.import_module("tomojax.recon.fourier")
 
     depths = []

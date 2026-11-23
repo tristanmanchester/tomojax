@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.backends.host_stream import host_source
-from tomojax.core.devices import ViewSplit, announce, refuse_streaming, view_split
+from tomojax.core.devices import ViewSplit, announce, view_split
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
@@ -24,7 +24,6 @@ from tomojax.recon._cgls_stopping import cancellation_magnitude, precision_stall
 from tomojax.recon._chunks import Chunked
 from tomojax.recon._data_term import project_residual
 from tomojax.recon._projection import (
-    ConeModel,
     normal_equation_operators,
     projection_operators as _operators,
     resolve_geometry_projector,
@@ -511,7 +510,6 @@ def _placement(
 ) -> tuple[ViewSplit | None, bool]:
     """How the projections are held: shared among devices, or streamed from the host."""
     split = view_split(cfg.devices, n)
-    refuse_streaming(split, cfg.stream, "cgls")
     if split is not None:
         return split, False  # each device holds its share
     if isinstance(projections, jax.Array) or det_grid is not None:
@@ -677,8 +675,6 @@ def cgls(
         geometry, cfg.backend,
         detector=detector, det_grid=det_grid, context="cgls",
     )  # fmt: skip
-    if isinstance(model, ConeModel) and cfg.interpolation != "linear":
-        raise ValueError("cgls: cone-beam geometry supports interpolation='linear' only")
     _ = validate_grid(grid, "cgls grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="cgls")
     validate_detector_grid(det_grid, detector, context="cgls")

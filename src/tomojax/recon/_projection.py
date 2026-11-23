@@ -13,14 +13,13 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 
-from tomojax._parameters import check_backend
 from tomojax.backends.host_stream import read_views
-from tomojax.core.backend_policy import cuda_backend
-from tomojax.core.cone import ConeModel, cone_model, use_cuda_cone
+from tomojax.core.cone import ConeModel, cone_model
 from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.joseph import affine_grid
 from tomojax.core.operator_norm import unit
+from tomojax.recon._backend import reconstruction_backend
 from tomojax.recon._cgls_stopping import cancellation_magnitude
 from tomojax.recon._data_term import project_residual
 from tomojax.recon._projection_batches import ViewBatches
@@ -46,14 +45,9 @@ def resolve_projector(
     The plane coefficients carry an affine detector grid, such as a rolled one, so
     every grid the library makes projects with the one model.
     """
-    check_backend(backend, context)
     if det_grid is not None and not (detector is not None and affine_grid(det_grid, detector)):
         raise ValueError(f"{context}: needs an affine detector grid (a shifted, rolled lattice)")
-    cuda = backend != "jax" and cuda_backend()
-    if backend == "auto":
-        backend = "cuda" if cuda else "jax"
-    if backend == "cuda" and not cuda:
-        raise ValueError(f"{context}: backend='cuda' needs a CUDA device")
+    backend = reconstruction_backend(backend, cone=False, context=context)
     return "joseph", backend
 
 
@@ -75,12 +69,7 @@ def resolve_geometry_projector(
         return resolve_projector(backend, det_grid=det_grid, detector=detector, context=context)
     if det_grid is not None:
         raise ValueError(f"{context}: cone-beam geometry needs the canonical detector grid")
-    check_backend(backend, context)
-    cuda = backend != "jax" and use_cuda_cone()
-    if backend == "auto":
-        backend = "cuda" if cuda else "jax"
-    if backend == "cuda" and not cuda:
-        raise ValueError(f"{context}: the CUDA cone kernels need CuPy on a CUDA device")
+    backend = reconstruction_backend(backend, cone=True, context=context)
     cone = cone_model(geometry, detector)
     assert cone is not None
     return cone, backend

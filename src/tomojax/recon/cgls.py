@@ -138,9 +138,21 @@ class CGLSConfig:
             )
         check_backend(self.backend, "cgls")
         if self.devices is not None:
-            from tomojax.core.devices import as_devices
+            from tomojax.core.devices import as_devices, refuse_streaming
+
+            refuse_streaming(self.devices, self.stream, "cgls")
 
             object.__setattr__(self, "devices", as_devices(self.devices))
+
+
+def check_cgls_geometry(geometry: Geometry, interpolation: str) -> None:
+    """Require linear interpolation for the cone projector and its matched transpose."""
+    from tomojax.core.geometry.cone import is_cone_beam
+
+    if interpolation != "linear" and is_cone_beam(geometry):
+        raise InvalidParameter(
+            "config.interpolation", "cgls: cone-beam geometry supports interpolation='linear' only"
+        )
 
 
 def resident_bytes(grid: Grid, projection_shape: Sequence[int]) -> int:
@@ -238,6 +250,7 @@ def cgls(
     (1, 4, 4)
     """
     cfg = CGLSConfig() if config is None else config
+    check_cgls_geometry(geometry, cfg.interpolation)
     from ._cgls_cuda import available, solve
 
     if out is None and available(geometry, projections, init_x, cfg, det_grid):

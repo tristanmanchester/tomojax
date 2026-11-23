@@ -31,13 +31,14 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._parameters import check_backend
-from tomojax.core.cone import ConeModel, use_cuda_cone
+from tomojax.core.cone import ConeModel
 from tomojax.core.devices import BatchRanges, announce, as_devices, sum_batches, view_split
 from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.geometry.cone import cone_parts
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_grid, validate_projection_stack
+from tomojax.recon._backend import reconstruction_backend
 from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
 from tomojax.recon._fdk_coverage import full_turn_weights, reliability
 from tomojax.recon._fdk_cuda import backproject_cuda
@@ -467,11 +468,7 @@ def _prepare(
     parts = cone_parts(geometry, detector)
     if parts is None:
         raise ValueError("fdk needs a cone-beam geometry; use fbp for parallel beams")
-    if cfg.backend not in {"auto", "jax", "cuda"}:
-        raise ValueError("fdk backend must be 'auto', 'jax' or 'cuda'")
-    cuda = use_cuda_cone() if cfg.backend == "auto" else cfg.backend == "cuda"
-    if cuda and not use_cuda_cone():
-        raise ValueError("fdk: the CUDA kernel needs CuPy on a CUDA device")
+    cuda = reconstruction_backend(cfg.backend, cone=True, context="fdk") == "cuda"
     magnification = parts[0][1].magnification
     du_iso = float(detector.du) / magnification
     column_parts = cone_parts(geometry, columns)

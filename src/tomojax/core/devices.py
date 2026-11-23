@@ -251,9 +251,11 @@ def view_split(devices: Device | Sequence[Device] | None, n_views: int) -> ViewS
     return ViewSplit(Mesh(np.array(devices), (VIEWS,)), int(n_views))
 
 
-def refuse_streaming(split: ViewSplit | None, stream: bool | None, context: str) -> None:
+def refuse_streaming(
+    devices: Device | Sequence[Device] | None, stream: bool | None, context: str
+) -> None:
     """Raise if projections shared among devices are asked to stream: each holds its share."""
-    if split is not None and stream:
+    if devices is not None and stream:
         raise InvalidParameter(
             "stream", f"{context}: projections shared among devices cannot be streamed"
         )

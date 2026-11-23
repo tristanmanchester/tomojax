@@ -23,6 +23,7 @@ from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_detector, validate_projection_stack
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
+from ._backend import reconstruction_backend
 from ._host_arrays import ProjectionRows, validate_host_arrays
 from .fbp import (
     FBPConfig,
@@ -275,13 +276,9 @@ def fbp_host(
     announce()
     poses = stack_view_poses(geometry, n_views)
     view_scale = _view_weights(poses, fbp_cfg.scale)[0]
-    cuda = all(
-        d.platform == "gpu" and d.client.platform_version.lower().startswith("cuda")
-        for d in poses.devices()
+    backend = reconstruction_backend(
+        fbp_cfg.backend, cone=False, context="fbp_host", devices=poses.devices()
     )
-    if fbp_cfg.backend == "cuda" and not cuda:
-        raise ValueError("fbp_host: CUDA requires CUDA")
-    backend = "cuda" if cuda and fbp_cfg.backend != "jax" else "jax"
     if type(geometry) is not ParallelGeometry:
         return _general_slabs(poses, grid, detector, projections, cfg, out, backend, slices, views)
     depth = axial_depth(grid.nz, slices)
@@ -468,13 +465,9 @@ def fbp_slabs[T](
     with context:
         announce()
         poses = stack_view_poses(geometry, len(geometry.angles))
-        cuda = all(
-            d.platform == "gpu" and d.client.platform_version.lower().startswith("cuda")
-            for d in poses.devices()
+        backend = reconstruction_backend(
+            config.backend, cone=False, context="fbp", devices=poses.devices()
         )
-        if config.backend == "cuda" and not cuda:
-            raise ValueError("FBP CUDA backprojection requires CUDA")
-        backend = "cuda" if cuda and config.backend != "jax" else "jax"
         if backend == "cuda" and _slab_layout(grid, detector, depth)[-1]:
             depth = min(depth, 4)
         host_poses = np.asarray(poses, np.float32)

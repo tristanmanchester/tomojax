@@ -554,3 +554,101 @@ def test_forced_stack_export_preserves_unrelated_directory_entries(
     else:
         assert not stale.exists()
         assert (stack / "slice_00000.tif").is_file()
+
+
+def test_cone_cgls_interpolation_preflight(worker, simulation):
+    cone = output(
+        worker(
+            "run",
+            operation=dict(type="simulate", geometry="cone", size=6, n_views=12, rotation=360),
+        )
+    )
+    for scan, interpolation, accepted in (
+        (cone, "cubic", False),
+        (cone, "linear", True),
+        (simulation, "cubic", True),
+    ):
+        recipe = dict(
+            type="reconstruct",
+            source=scan["value"]["scan"],
+            method="cgls",
+            config=dict(
+                type="CGLSConfig", backend="jax", interpolation=interpolation, iterations=0
+            ),
+        )
+        for command in ("validate", "plan", "run"):
+            reply = worker(command, operation=recipe)
+            if accepted:
+                assert reply["type"] == "result", reply
+            else:
+                assert reply["type"] == "error", reply
+                assert (reply["error"]["kind"], reply["error"]["path"]) == (
+                    "invalid_parameter",
+                    "config.interpolation",
+                )
+
+
+@pytest.mark.parametrize(("method", "kind"), [("cgls", "CGLSConfig"), ("fista", "FISTAConfig")])
+@pytest.mark.parametrize("nested_devices", [True, False])
+def test_stream_device_conflict_has_the_same_field_in_preflight_and_run(
+    worker, simulation, method, kind, nested_devices
+):
+    device = output(worker("devices"))["devices"][0]["id"]
+    config = dict(type=kind, stream=True, iterations=0)
+    recipe = dict(
+        type="reconstruct", source=simulation["value"]["scan"], method=method, config=config
+    )
+    (config if nested_devices else recipe)["devices"] = [device]
+    for command in ("validate", "plan", "run"):
+        reply = worker(command, operation=recipe)
+        assert reply["type"] == "error", reply
+        assert (reply["error"]["kind"], reply["error"]["path"]) == (
+            "invalid_parameter",
+            "config.stream",
+        )
+
+
+@pytest.mark.parametrize(("method", "kind"), [("fbp", "FBPConfig"), ("sirt", "SIRTConfig")])
+@pytest.mark.parametrize("geometry", ["parallel", "cone"])
+def test_unavailable_cuda_backend_is_rejected_in_preflight(
+    worker, simulation, method, kind, geometry
+):
+    if any(device["platform"] == "gpu" for device in output(worker("devices"))["devices"]):
+        pytest.skip("requires CPU placement")
+    scan = (
+        simulation
+        if geometry == "parallel"
+        else output(
+            worker(
+                "run",
+                operation=dict(type="simulate", geometry="cone", size=6, n_views=12, rotation=360),
+            )
+        )
+    )
+    recipe = dict(
+        type="reconstruct",
+        source=scan["value"]["scan"],
+        method=method,
+        config=dict(type=kind, backend="cuda"),
+    )
+    for command in ("validate", "plan", "run"):
+        reply = worker(command, operation=recipe)
+        assert reply["type"] == "error", reply
+        assert (reply["error"]["kind"], reply["error"]["path"]) == (
+            "invalid_parameter",
+            "config.backend",
+        )
+
+
+def test_mlem_preflight_checks_the_measurement_domain(worker, tmp_path):
+    path = tmp_path / "negative.nxs"
+    grid = tj.Grid(3, 3, 2, 1, 1, 1)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(4, 2, 1, 1), [0, 43, 91, 137])
+    measured = np.ones((4, 2, 4), np.float32)
+    measured[-1, -1, -1] = -0.125
+    tj.save(path, tj.Scan(measured, geometry))
+    recipe = dict(type="reconstruct", method="mlem", source=dict(type="path", path=str(path)))
+    for command in ("validate", "plan", "run"):
+        reply = worker(command, operation=recipe)
+        assert reply["type"] == "error", reply
+        assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", "source")
