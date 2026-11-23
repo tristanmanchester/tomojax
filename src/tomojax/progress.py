@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from functools import wraps
@@ -57,6 +57,7 @@ type _Name = Literal[
     "estimate_region",
     "opposite-views",
     "image",
+    "prepare",
     "step",
     "linearize",
     "solve",
@@ -400,6 +401,11 @@ def step(unit: str, *, remaining: int | None = None) -> None:
         if remaining is not None:
             active.total = done + remaining
         active.advance(done, {})
+
+
+def preparing(label: str, first: int = 0) -> AbstractContextManager[None]:
+    """Mark an owned program's first dispatch or explicit compilation on its caller."""
+    return task("prepare", label, None, "") if first == 0 and watching() else nullcontext()
 
 
 def chunks(total: int) -> Iterator[tuple[int, int]]:

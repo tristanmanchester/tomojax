@@ -73,7 +73,13 @@ def test_watched_chunk_compiles_before_allocating_the_primal_and_duals(monkeypat
 
     module = import_module("tomojax.recon.spdhg_tv")
     calls = Mock()
-    calls.compile_chunk = Mock(wraps=module._advance_spdhg.lower)
+    lower = module._advance_spdhg.lower
+
+    def lower_updates(*args):
+        assert progress.current_task.get().name == "prepare"
+        return lower(*args)
+
+    calls.compile_chunk = Mock(side_effect=lower_updates)
     calls.allocate_state = Mock(wraps=module._initial_spdhg_state)
     monkeypatch.setattr(module._advance_spdhg, "lower", calls.compile_chunk)
     monkeypatch.setattr(module, "_initial_spdhg_state", calls.allocate_state)

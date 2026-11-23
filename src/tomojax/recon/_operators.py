@@ -13,6 +13,7 @@ import jax
 from jax.core import Tracer
 import jax.numpy as jnp
 
+from tomojax import progress
 from tomojax.backends import device_free_memory_bytes
 from tomojax.core.devices import announce, as_devices, view_split
 from tomojax.core.geometry.views import stack_view_poses
@@ -199,8 +200,9 @@ class Projector:
             volume = self._split.everywhere(volume)
         volume = jnp.asarray(volume, jnp.float32)
         announce(None if self._split is None else self._split.mesh.devices.flat, array=volume)
-        private = self._private_call(volume, 0, volume.size + math.prod(self.projection_shape))
-        projections = (private or self._forward)(volume)
+        with progress.preparing("dispatch projector"):
+            private = self._private_call(volume, 0, volume.size + math.prod(self.projection_shape))
+            projections = (private or self._forward)(volume)
         if self._split is not None:
             projections = self._split.take(projections)
         return projections[:, 0, :] if squeezed else projections
@@ -230,13 +232,14 @@ class Projector:
             projections = projections[:, None, :]
         self._validate(projections, self.projection_shape, "backproject: projections")
         announce(None if self._split is None else self._split.mesh.devices.flat, array=projections)
-        if self._split is None:
-            projections = jnp.asarray(projections, jnp.float32)
-            elements = 2 * math.prod(self.volume_shape)
-            adjoint = self._band_adjoint or self._private_call(projections, 1, elements)
-            volume = (adjoint or self._adjoint)(projections)
-        else:
-            volume = self._split.gather(self._adjoint(self._split.place(projections)))
+        with progress.preparing("dispatch adjoint"):
+            if self._split is None:
+                projections = jnp.asarray(projections, jnp.float32)
+                elements = 2 * math.prod(self.volume_shape)
+                adjoint = self._band_adjoint or self._private_call(projections, 1, elements)
+                volume = (adjoint or self._adjoint)(projections)
+            else:
+                volume = self._split.gather(self._adjoint(self._split.place(projections)))
         return volume[0] if squeezed else volume
 
     @functools.cached_property

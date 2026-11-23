@@ -1,6 +1,7 @@
 """Drive one donated JAX loop from the operation's calling thread."""
 
 from collections.abc import Callable
+from contextlib import ExitStack
 from contextvars import ContextVar
 from functools import partial
 from time import monotonic
@@ -33,7 +34,8 @@ def run_chunks[S](
     while done < end and not stopped:
         progress.check_cancelled()
         start = monotonic()
-        state = jax.block_until_ready(advance(state, min(end, done + length)))
+        with progress.preparing("first update", int(compiled)):
+            state = jax.block_until_ready(advance(state, min(end, done + length)))
         elapsed = monotonic() - start
         previous = done
         done, stopped, metrics = completed(state)
@@ -59,7 +61,14 @@ class Chunked[R]:
         if task is None:
             return self.unwatched(*args, **kwargs)
         progress.check_cancelled()
-        return self.program(*args, **kwargs, drive=partial(run_chunks, task=task))
+        with ExitStack() as setup:
+            setup.enter_context(progress.preparing("initialise solver"))
+
+            def drive(state, end, advance, completed):
+                setup.close()
+                return run_chunks(state, end, advance, completed, task=task)
+
+            return self.program(*args, **kwargs, drive=drive)
 
 
 def fixed_updates(state, end, advance, drive, metrics=None):

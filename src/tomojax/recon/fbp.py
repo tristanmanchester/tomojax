@@ -511,17 +511,18 @@ def _fbp_from_host(
             progress.check_cancelled()
         current = pending
         # Dispatch is asynchronous: read and transfer the next batch while this one runs.
-        accum = _fbp_accumulate_batch(
-            accum,
-            *current,
-            spectrum,
-            jnp.float32(arc_length),
-            grid=grid,
-            detector=detector,
-            backend=backend,
-            separable=separable,
-            z_mode=z_mode,
-        )
+        with progress.preparing("dispatch filtered backprojection", start):
+            accum = _fbp_accumulate_batch(
+                accum,
+                *current,
+                spectrum,
+                jnp.float32(arc_length),
+                grid=grid,
+                detector=detector,
+                backend=backend,
+                separable=separable,
+                z_mode=z_mode,
+            )
         if start + b < n:
             pending = batch(start + b)
             # Prefetch overlaps this step, but do not enqueue another compute
@@ -691,16 +692,17 @@ class _Plan:
         while True:
             try:
                 if isinstance(self.projections, jax.Array):
-                    acc = _run_fbp_streamed(
-                        put(self.poses[part]),
-                        put(self.projections[part]),
-                        put(jnp.asarray(self.view_scale[part])),
-                        put(jnp.asarray(self.params[part])),
-                        put(self.spectrum),
-                        jnp.float32(self.arc_length),
-                        batch_size=size,
-                        **options,
-                    )
+                    with progress.preparing("dispatch filtered backprojection"):
+                        acc = _run_fbp_streamed(
+                            put(self.poses[part]),
+                            put(self.projections[part]),
+                            put(jnp.asarray(self.view_scale[part])),
+                            put(jnp.asarray(self.params[part])),
+                            put(self.spectrum),
+                            jnp.float32(self.arc_length),
+                            batch_size=size,
+                            **options,
+                        )
                 else:
                     acc = _fbp_from_host(
                         np.asarray(self.poses, np.float32)[part],

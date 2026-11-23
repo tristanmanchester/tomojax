@@ -193,12 +193,13 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
         task.advance(1, {Metric.loss.name: float(first_value)})
     for _step in range(len(losses), cfg.iterations):
         progress.check_cancelled()
-        residual = _residual(grid, detector, data, z, runtime)
-        value = 0.5 * jnp.vdot(residual, residual).real
-        residual.block_until_ready()
-        new = _apply(grid, detector, z, residual, limit, runtime)
-        new.block_until_ready()
-        z, t = _momentum(x, new, t, clipped=True)
+        with progress.preparing("first fista update", _step - (first_value is not None)):
+            residual = _residual(grid, detector, data, z, runtime)
+            value = 0.5 * jnp.vdot(residual, residual).real
+            residual.block_until_ready()
+            new = _apply(grid, detector, z, residual, limit, runtime)
+            new.block_until_ready()
+            z, t = _momentum(x, new, t, clipped=True)
         x = new
         losses.append(value)
         if task is not None:
@@ -225,6 +226,7 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
 def run_owned_fista(grid, detector, projections, runtime):
     """Run nonnegative least squares with owned, reusable volume buffers."""
     data = jnp.asarray(projections)
-    x, first_value, limit = _zero_start(grid, detector, data, runtime)
+    with progress.preparing("initialise fista"):
+        x, first_value, limit = _zero_start(grid, detector, data, runtime)
     state, limit = _refine(grid, detector, data, runtime, x, limit, first_value)
     return state, limit, runtime.metric

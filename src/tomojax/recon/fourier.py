@@ -210,7 +210,8 @@ def fourier(
                 for start in range(0, grid.nz, depth):
                     progress.check_cancelled()
                     count = min(depth, grid.nz - start)
-                    write(start, plan.reconstruct(prepare(start), count=count))
+                    with progress.preparing("dispatch fourier transform", start):
+                        write(start, plan.reconstruct(prepare(start), count=count))
                     progress.step("slabs")
             return output
         except Exception as error:
@@ -343,7 +344,8 @@ def _run_host_pipeline(
                 stop = min(start + depth, nz)
                 if stop < nz:
                     prepared = reader.submit(prepare, stop)
-                pending.append((start, plan.enqueue(data, count=stop - start)))
+                with progress.preparing("dispatch fourier transform", start):
+                    pending.append((start, plan.enqueue(data, count=stop - start)))
                 del data
                 if len(pending) >= 2:
                     finish(*pending.pop(0))

@@ -320,7 +320,10 @@ class FourierPlan:
             )
         # Construct geometry on the compute stream too, so its temporary
         # allocations can be reused by the FFT rather than held in another arena.
-        with self.compute if self.compute is not None else nullcontext():
+        with (
+            progress.preparing("plan fourier transform"),
+            self.compute if self.compute is not None else nullcontext(),
+        ):
             geometry = _plan_geometry(grid, detector, nviews, flipped, angles, backend)
             self.shifts = None if shifts is None else xp.asarray(shifts, dtype=xp.float32)
             self.nviews = geometry.nviews

@@ -16,6 +16,16 @@ from tomojax import progress
 from tomojax.recon import CGLSConfig
 
 
+def work_events(events):
+    """Select operation and work counters after checking the preparation task shape."""
+    prepare = set()
+    for event in events:
+        if isinstance(event, progress.Started) and event.name == "prepare":
+            assert event.total is None and event.unit == "" and event.parent is not None
+            prepare.add(event.task)
+    return [event for event in events if event.task not in prepare]
+
+
 def validate_tree(events, *, interrupted=False):
     """Reconstruct the active stack using only public events."""
     stack, seen, counts = [], set(), {}
@@ -138,7 +148,7 @@ def test_nested_watches_are_thread_local():
         for events in (outer, inner):
             validate_tree(events)
         return [
-            [e.label for e in events if isinstance(e, progress.Started)]
+            [e.label for e in work_events(events) if isinstance(e, progress.Started)]
             for events in (outer, inner)
         ]
 
@@ -258,7 +268,7 @@ def test_cli_json_records_arrive_during_reconstruction(tmp_path, cancel):
                 process.send_signal(signal.SIGINT)
         assert process.wait(timeout=60) == (130 if cancel else 0)
     validate_tree(events)
-    assert [e.name for e in events if isinstance(e, progress.Started)] == (
+    assert [e.name for e in work_events(events) if isinstance(e, progress.Started)] == (
         ["load", "reconstruct"] if cancel else ["load", "reconstruct", "save", "write"]
     )
     assert events[-1].status == ("cancelled" if cancel else "done")
@@ -300,7 +310,7 @@ def test_watching_preserves_recurrence_and_stop(method):
         == result.info["effective_iterations"]
         == reference.info["effective_iterations"]
     )
-    assert [type(event) for event in events] == [
+    assert [type(event) for event in work_events(events)] == [
         progress.Started,
         progress.Placed,
         *([progress.Advanced] * len(advances)),
@@ -372,7 +382,7 @@ def test_fixed_update_solvers_preserve_the_schedule(monkeypatch, method, seconds
     validate_tree(events)
     updates = [event for event in events if isinstance(event, progress.Advanced)]
     assert [e.done for e in updates] == (list(range(1, 8)) if seconds == 0.25 else [1, 2, 7])
-    assert [type(event) for event in events] == [
+    assert [type(event) for event in work_events(events)] == [
         progress.Started,
         progress.Placed,
         *([progress.Advanced] * len(updates)),
@@ -585,7 +595,9 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
                 assert caught.value is problem
                 assert isinstance(events[-1], progress.Advanced)
             else:
-                assert [e.status for e in events if isinstance(e, progress.Finished)] == [
+                assert [
+                    e.status for e in work_events(events) if isinstance(e, progress.Finished)
+                ] == [
                     "cancelled",
                     "cancelled",
                     "cancelled",
@@ -593,7 +605,7 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
             return
         result = tj.align(alignment_scan, grid=alignment_scan.grid, config=cfg)
     validate_tree(events)
-    started = [e for e in events if isinstance(e, progress.Started)]
+    started = [e for e in work_events(events) if isinstance(e, progress.Started)]
     roots = [e for e in started if e.parent == started[0].task]
     assert [e.name for e in roots] == ["level", "level", "refine"]
     assert started[0].label == "translations"
@@ -703,7 +715,7 @@ def test_load_reports_completed_views_and_fused_corrections(tmp_path, monkeypatc
             result = tj.load(path)
             np.testing.assert_allclose(result.projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
     validate_tree(events)
-    load, correction = [e for e in events if isinstance(e, progress.Started)]
+    load, correction = [e for e in work_events(events) if isinstance(e, progress.Started)]
     assert (load.name, load.label, load.total, load.unit) == ("load", path.name, 2, "views")
     assert (correction.name, correction.label, correction.total, correction.parent) == (
         "correction",
@@ -721,7 +733,7 @@ def test_load_reports_completed_views_and_fused_corrections(tmp_path, monkeypatc
     ]
     assert reads == ([(1, 2)] if interrupt else [(1, 2), (2, 2)])
     assert writes == ([] if interrupt else [1, 2])
-    assert [e.status for e in events if isinstance(e, progress.Finished)] == [
+    assert [e.status for e in work_events(events) if isinstance(e, progress.Finished)] == [
         "cancelled" if interrupt else "done"
     ] * 2
     assert set(threading.enumerate()) <= workers
@@ -798,7 +810,7 @@ def test_corrections_report_each_executed_group_on_the_caller(monkeypatch):
         result = frames.corrected(*steps, views_per_batch=3)
     np.testing.assert_allclose(result.projections, np.log(2), rtol=1e-6)
     validate_tree(events)
-    groups = [e for e in events if isinstance(e, progress.Started)]
+    groups = [e for e in work_events(events) if isinstance(e, progress.Started)]
     assert [(e.label, e.unit) for e in groups] == [
         ("flat dark, log", "view batches"),
         ("stripes", "row batches"),
@@ -890,7 +902,7 @@ def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys
     assert result["event"] == "result" and result["outputs"] == [str(output)]
     events = [kinds[r.pop("event")](**r) for r in records]
     validate_tree(events)
-    assert [e.name for e in events if isinstance(e, progress.Started)] == [
+    assert [e.name for e in work_events(events) if isinstance(e, progress.Started)] == [
         "metadata",
         "load",
         "correction",
@@ -968,7 +980,7 @@ def test_fused_row_correction_counts_completed_rows_and_joins_its_workers(monkey
             result = frames.corrected(Stripes(3))
             np.testing.assert_allclose(result.projections, np.log(2), rtol=1e-6)
     validate_tree(events)
-    assert len([e for e in events if isinstance(e, progress.Started)]) == 1
+    assert len([e for e in work_events(events) if isinstance(e, progress.Started)]) == 1
     assert (events[0].label, events[0].unit, events[0].total) == (
         "flat dark, log, stripes",
         "row batches",
@@ -1176,7 +1188,7 @@ def test_load_counts_completed_storage_reads(tmp_path, monkeypatch, suffix):
     with progress.watch(events.append):
         loaded = tj.load(path)
     validate_tree(events)
-    (task,) = [e for e in events if isinstance(e, progress.Started)]
+    (task,) = [e for e in work_events(events) if isinstance(e, progress.Started)]
     assert (task.name, task.label, task.total, task.unit) == ("load", path.name, 13, "views")
     assert [e.done for e in events if isinstance(e, progress.Advanced)] == (
         [3, 6, 9, 12, 13] if suffix == ".nxs" else [13]
@@ -1192,14 +1204,14 @@ def test_metadata_and_pixel_reads_have_distinct_lifetimes(tmp_path):
     events = []
     with progress.watch(events.append):
         frames = tj.load_frames(path)
-    assert [(e.name, e.label) for e in events if isinstance(e, progress.Started)] == [
+    assert [(e.name, e.label) for e in work_events(events) if isinstance(e, progress.Started)] == [
         ("metadata", path.name)
     ]
     assert not any(isinstance(e, progress.Advanced) for e in events)
     events.clear()
     with progress.watch(events.append):
         result = frames.corrected(views_per_batch=1)
-    load, correction = [e for e in events if isinstance(e, progress.Started)]
+    load, correction = [e for e in work_events(events) if isinstance(e, progress.Started)]
     assert (load.label, load.total, correction.parent) == (path.name, 2, load.task)
     assert [e.done for e in events if isinstance(e, progress.Advanced) and e.task == load.task] == [
         1,
@@ -1220,7 +1232,7 @@ def test_public_operations_report_at_the_work(tmp_path):
         tj.backproject(synthetic.scan.geometry, projections)
         tj.export(raw, synthetic)
     validate_tree(events)
-    roots = [e for e in events if isinstance(e, progress.Started) and e.parent is None]
+    roots = [e for e in work_events(events) if isinstance(e, progress.Started) and e.parent is None]
     assert [e.name for e in roots] == [
         "simulate",
         "save",
@@ -1269,7 +1281,11 @@ def test_numpy_fourier_placement_uses_the_host():
     # A host FFT isn't dispatched to the selected accelerator or virtual CPU device.
     with jax.default_device(jax.local_devices()[-1]), progress.watch((events := []).append):
         tj.reconstruct(scan(), "fourier", config=FourierConfig(backend="numpy"))
-    inverse = next(e for e in events if isinstance(e, progress.Started) and e.name == "reconstruct")
+    inverse = next(
+        e
+        for e in work_events(events)
+        if isinstance(e, progress.Started) and e.name == "reconstruct"
+    )
     assert [
         e.devices for e in events if isinstance(e, progress.Placed) and e.task == inverse.task
     ] == [("cpu:0",)]
@@ -1294,7 +1310,7 @@ def test_load_labels_describe_the_input_even_if_open_fails(tmp_path, read, name)
     with progress.watch(events.append), pytest.raises(FileNotFoundError, match=path.name):
         read(path)
     validate_tree(events)
-    assert [(e.name, e.label) for e in events if isinstance(e, progress.Started)] == [
+    assert [(e.name, e.label) for e in work_events(events) if isinstance(e, progress.Started)] == [
         (name, path.name)
     ]
     assert events[-1].status == "failed"

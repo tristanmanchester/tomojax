@@ -173,14 +173,15 @@ def _all(cp, kernel, *args: object):
 
 
 def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
-    k = _kernels(cp)
-    residual = data.copy() if zero_start else data - ops.forward(x)
-    residual = project_residual(residual, cfg.data_term, xp=cp)
-    damp2 = np.float32(cfg.damping) ** 2
-    gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp))
-    k["negaxpy"](damp2, x, gradient)
-    gamma = _dot(cp, gradient, gradient)
-    initial_norm = float(cp.sqrt(gamma))
+    with progress.preparing("initialise cgls"):
+        k = _kernels(cp)
+        residual = data.copy() if zero_start else data - ops.forward(x)
+        residual = project_residual(residual, cfg.data_term, xp=cp)
+        damp2 = np.float32(cfg.damping) ** 2
+        gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp))
+        k["negaxpy"](damp2, x, gradient)
+        gamma = _dot(cp, gradient, gradient)
+        initial_norm = float(cp.sqrt(gamma))
     tolerance = np.float32(cfg.absolute_tolerance + cfg.tolerance * initial_norm)
     count, recomputations = 0, 0
     failed = not np.isfinite(initial_norm)
@@ -197,7 +198,8 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
             k["xpay"](gradient, gamma / previous_gamma, direction)
         previous = norm2, verified
         gradient = None  # release the previous gradient before the transpose allocates the next
-        step = _step(cp, ops, x, direction, residual, gamma, damp2, cfg.data_term)
+        with progress.preparing("first cgls update", count):
+            step = _step(cp, ops, x, direction, residual, gamma, damp2, cfg.data_term)
         if step is None:
             failed = True
             break

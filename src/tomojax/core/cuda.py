@@ -20,6 +20,8 @@ from typing import Any, Protocol, cast
 
 import numpy as np
 
+from tomojax import progress
+
 _OPTIONS = ("--std=c++17",)
 
 
@@ -152,6 +154,7 @@ def _cache_file(source: str, options: tuple[str, ...], architecture: str) -> Pat
 
 
 @cache
+@progress.task("prepare", "compile cuda kernel", None, "")
 def _compiled_binary(source: str, options: tuple[str, ...], architecture: str) -> bytes:
     path = _cache_file(source, options, architecture)
     if path is not None:

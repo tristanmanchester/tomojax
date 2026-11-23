@@ -9,6 +9,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tomojax import progress
+
 # check-public-imports: allow-private
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.forward import project_joseph
@@ -16,7 +18,7 @@ from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeome
 from tomojax.recon import CGLSConfig, cgls
 
 # check-public-imports: allow-private
-from tomojax.recon._cgls_jax import _operators, _run_cgls
+from tomojax.recon._cgls_jax import _operators, _run_cgls, _solve, _solve_initial
 
 
 @pytest.mark.numerical
@@ -174,28 +176,51 @@ def test_zero_data_and_zero_iteration_limit_preserve_valid_results():
 
 
 def test_changed_data_geometry_and_budget_reuse_compiled_solver():
-    _run_cgls.unwatched.clear_cache()
+    from contextlib import nullcontext
+    from threading import get_ident
+
+    programs = (_run_cgls.unwatched, _solve_initial, _solve)
+    for program in programs:
+        program.clear_cache()
+    owner = get_ident()
+    labels = []
+
+    def observe(event):
+        assert get_ident() == owner
+        if isinstance(event, progress.Started) and event.name == "prepare":
+            assert event.total is None and event.unit == ""
+            labels.append(event.label)
+
     outputs = []
-    for offset, iterations in [(0.0, 35), (7.0, 50)]:
+    for watched, offset, iterations, expected_sizes in [
+        (False, 0.0, 35, [1, 0, 0]),
+        (True, 0.0, 35, [1, 1, 1]),
+        (True, 7.0, 50, [1, 1, 1]),
+        (False, 7.0, 50, [1, 1, 1]),
+    ]:
         grid, detector, geometry, matrix = small_problem(offset)
         truth = np.linspace(-0.3, 1.7 + offset / 10, 12)
         data = (matrix @ truth).reshape((5, 4, 5)).astype(np.float32)
-        result, info = cgls(
-            geometry,
-            grid,
-            detector,
-            data,
-            config=CGLSConfig(
-                iterations=iterations,
-                views_per_batch=3,
-                backend="jax",
-            ),
-        )
+        labels.clear()
+        with progress.watch(observe) if watched else nullcontext():
+            result, info = cgls(
+                geometry,
+                grid,
+                detector,
+                data,
+                config=CGLSConfig(
+                    iterations=iterations,
+                    views_per_batch=3,
+                    backend="jax",
+                ),
+            )
         np.testing.assert_allclose(result.ravel(), truth, rtol=2e-4, atol=2e-5)
         assert info["converged"]
+        assert labels == (["initialise solver", "first update"] if watched else [])
+        assert [program._cache_size() for program in programs] == expected_sizes
         outputs.append(np.asarray(result))
     assert _run_cgls.unwatched._cache_size() == 1
-    assert not np.allclose(*outputs)
+    assert not np.allclose(outputs[0], outputs[-1])
 
 
 @pytest.mark.parametrize(

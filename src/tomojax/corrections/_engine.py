@@ -613,12 +613,13 @@ def correct_view_batches(
             if load is not None:
                 load.advance(stop, {})
             progress.check_cancelled()
-            done = first_pass(
-                jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop],
-                exposure_scale[start:stop], flats, dark, usable,
-                fill_gaps=fill_gaps,
-                **settings,
-            )  # fmt: skip
+            with progress.preparing("correct view batch", start):
+                done = first_pass(
+                    jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop],
+                    exposure_scale[start:stop], flats, dark, usable,
+                    fill_gaps=fill_gaps,
+                    **settings,
+                )  # fmt: skip
             copies.start(done[0])
             if pending is not None:  # the last batch comes back while this one runs
                 collect(*pending)
@@ -810,7 +811,9 @@ def _correct_row_slabs(
             if load is not None and stop == rows - rows % factor:
                 load.advance(views, {})
                 progress.check_cancelled()
-            done = submit(run, start, stop, raw)
+            with progress.preparing("correct detector rows", start):
+                done = submit(run, start, stop, raw)
+
             if pending is not None:
                 collect(*pending.result())
             pending = done

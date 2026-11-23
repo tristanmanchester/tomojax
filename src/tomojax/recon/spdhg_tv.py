@@ -897,8 +897,9 @@ def spdhg(
             # XLA can use a volume of scratch during compilation. Release it
             # before materialising the watched primal and dual arrays.
             shape = volume_shape(runtime.projector[0], grid)
-            state = _initial_spdhg_state.eval_shape(runtime, shape)
-            _advance_spdhg.lower(grid, detector, runtime, state, 0, 1).compile()
+            with progress.preparing("compile spdhg updates"):
+                state = _initial_spdhg_state.eval_shape(runtime, shape)
+                _advance_spdhg.lower(grid, detector, runtime, state, 0, 1).compile()
         x, losses = _run_spdhg_scan(grid, detector, runtime)[:2]
         if runtime.y_meas is None:
             x.block_until_ready()

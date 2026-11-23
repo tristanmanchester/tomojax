@@ -90,6 +90,8 @@ Release takes only the issued artifact token. A successful release or handle clo
 
 ## Standalone commands
 
+An indeterminate `prepare` task brackets work on the calling thread that can include cache lookup, lowering, compilation or first execution. A warm run can report the same task.
+
 Pass `--progress json` to inspect, correct, reconstruct, align, simulate or export. Read one JSON object per stdout line. A successful invocation ends with `result`. Its `outputs` list includes each written file, and its `arrays` reference the stored data. Export reports the source volume in disk axis order and lists the converted files and sidecar. Inspect returns its report in `info.summary`. Auxiliary NumPy files for bulk diagnostics or NPZ members are caller-owned and live alongside the output. A scalar summary that exceeds the byte limit reports the number of omitted fields as `_omitted_fields`, giving method selection priority over solver histories.
 
 Errors end the stream with `error`. An invalid command line exits 2, an operational failure exits 1 and cancellation exits 130. An internal error also produces a traceback on stderr. A process killed before delivery leaves EOF without a terminal. Request the standalone inspect JSON document or a dry-run plan separately from JSON progress.

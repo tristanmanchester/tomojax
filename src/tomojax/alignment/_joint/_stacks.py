@@ -44,6 +44,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.backends.host_stream import host_source, read_block, write_block
 from tomojax.core.devices import block_fits, pool_stats
 from tomojax.core.host_volume import close_work_file, host_array
@@ -245,8 +246,6 @@ class LevelStacks:
         except jax.errors.JaxRuntimeError as err:
             if not _exhausted(err):
                 raise
-            from tomojax import progress
-
             progress.retried("host stack")
             self.raised.append(name)
             return None
@@ -318,7 +317,8 @@ def temporaries(compiled: Any, *args: Any) -> int:
 
     The compile is the one its calls with arguments of the same shapes then reuse.
     """
-    analysis = compiled.lower(*args).compile().memory_analysis()
+    with progress.preparing("compile alignment workspace"):
+        analysis = compiled.lower(*args).compile().memory_analysis()
     if analysis is None:
         raise RuntimeError(f"no memory analysis on {jax.default_backend()}: cannot plan a level")
     return int(analysis.temp_size_in_bytes)

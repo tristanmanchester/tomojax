@@ -414,12 +414,13 @@ class _Level:
         start_chunk, next_chunk = _into(first), _into(advance)
         state = None
         for low, high in progress.chunks(iterations):
-            state = (
-                start_chunk(self.stacks["x"], high, *args)
-                if state is None
-                else next_chunk(state, high - low, *args)
-            )
-            jax.block_until_ready(state)
+            with progress.preparing("initial image update", max(0, low - 1)):
+                state = (
+                    start_chunk(self.stacks["x"], high, *args)
+                    if state is None
+                    else next_chunk(state, high - low, *args)
+                )
+                jax.block_until_ready(state)
             self.stacks.update([("x", state[0])])
             task.advance(high, {})
             progress.check_cancelled()

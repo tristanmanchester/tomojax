@@ -607,11 +607,12 @@ def _accumulate(
                 batch = pending.result()
                 if index + 1 < len(starts):
                     pending = copier.submit(read, starts[index + 1])
-                out = _fdk_batch(
-                    batch, start, share, here.cosine, here.weights, here.kernel, here.operator,
-                    out, grid=kernel_grid, detector=virtual, scale=prep.scale, cuda=prep.cuda,
-                    pad_lo=prep.pad_lo, pad_hi=prep.pad_hi,
-                )  # fmt: skip
+                with progress.preparing("dispatch cone backprojection", index):
+                    out = _fdk_batch(
+                        batch, start, share, here.cosine, here.weights, here.kernel, here.operator,
+                        out, grid=kernel_grid, detector=virtual, scale=prep.scale, cuda=prep.cuda,
+                        pad_lo=prep.pad_lo, pad_hi=prep.pad_hi,
+                    )  # fmt: skip
                 # Keep only this batch and its prefetched successor live.
                 out.block_until_ready()
                 if task is not None:
