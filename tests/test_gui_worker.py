@@ -309,7 +309,11 @@ def test_preview_release_keeps_queued_artifact_lease(client, tmp_path):
     c.send("late", "run", operation=operation)
     assert c.read()["type"] == "protocol_error"
     c.proceed()
-    assert c.end("pinned")["result"]["value"]["report"]["sum"] == 99
+    pinned = c.end("pinned")["result"]
+    assert pinned["value"]["report"]["sum"] == 99
+    assert pinned["manifest"]["inputs"] == [
+        {"operation": "inspect", "parameters": {"path": "preview"}, "inputs": []}
+    ]
     assert not path.exists()
     c.shutdown()
     assert mine.read_bytes() == b"caller data"
@@ -406,3 +410,41 @@ def test_oversized_line_is_drained_through_one_newline(client):
     c.proc.stdin.flush()
     assert c.read()["type"] == "protocol_error"
     c.shutdown()
+
+
+def test_simulation_transcript_artifact_lineage(schema):
+    lines = [
+        json.loads(line)
+        for line in (DOCS / "transcripts/simulation.jsonl").read_text().splitlines()
+    ]
+    with subprocess.Popen(
+        [sys.executable, "-m", "tomojax.cli.main", "serve"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        bufsize=0,
+    ) as proc:
+        try:
+            client = Client(proc, None, schema)
+            assert client.read()["type"] == "ready"
+            outputs = {}
+            for request, expected in zip(lines[::2], lines[1::2], strict=True):
+                operation = request["command"]["operation"]
+                if operation["type"] == "backproject":
+                    operation["projections"] = outputs["p"]["value"]["projections"]["storage"]
+                client.send(request["id"], "run", operation=operation)
+                reply = client.end(request["id"])
+                assert reply["type"] == "result", reply
+                output = reply["result"]
+                assert output["value"]["type"] == expected["result"]["value"]["type"]
+                assert (
+                    output["manifest"]["operation"] == expected["result"]["manifest"]["operation"]
+                )
+                outputs[request["id"]] = output
+            sim, project, back = (outputs[rid]["manifest"] for rid in ("s", "p", "b"))
+            assert sim["inputs"] == []
+            assert project["inputs"] == [sim, sim]
+            assert back["inputs"] == [sim, project]
+            client.shutdown()
+        finally:
+            if proc.poll() is None:
+                proc.kill()

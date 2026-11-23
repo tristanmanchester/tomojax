@@ -39,6 +39,13 @@ class Resource:
 
 
 @dataclass
+class Artifact:
+    path: Path
+    resource: Resource
+    manifest: p.Provenance
+
+
+@dataclass
 class Handle:
     bound: ex.BoundHandle
     manifest: p.Provenance
@@ -54,7 +61,7 @@ class Job:
     channel: e.ChannelRevision | None
     control: progress.Control
     stages: Stages
-    leases: dict[Member, ex.Lease]
+    leases: dict[Member | Npy, ex.Lease]
     lifetime: ExitStack
     published: set[str] = field(default_factory=set)
 
@@ -78,7 +85,7 @@ class Session:
         self.queue: deque[Job] = deque()
         self.jobs: dict[str, Job] = {}
         self.handles: dict[str, Handle] = {}
-        self.artifacts: dict[str, tuple[Path, Resource]] = {}
+        self.artifacts: dict[str, Artifact] = {}
         self.snapshots: dict[tuple[str, str], p.Snapshot] = {}
         self.changed = Condition()
         self.closing = False
@@ -133,19 +140,20 @@ class Session:
 
     def _pin(self, rid: str, cmd: op.ExecutionInput, channel: e.ChannelRevision | None) -> Job:
         with ExitStack() as pins:
-            leases = {}
+            leases: dict[Member | Npy, ex.Lease] = {}
             for ref in dict.fromkeys(op.input_references(cmd)):
                 if isinstance(ref, Member):
                     handle = self.handles[ref.handle]
                     leases[ref] = ex.Lease(handle.bound.members[ref.member], handle.manifest)
                     handle.resource.pin(pins)
                     for token in handle.artifacts.intersection(self.artifacts):
-                        self.artifacts[token][1].pin(pins)
+                        self.artifacts[token].resource.pin(pins)
                 elif ref.artifact:
-                    path, resource = self.artifacts[ref.artifact]
-                    if str(path) != ref.path:
+                    artifact = self.artifacts[ref.artifact]
+                    if str(artifact.path) != ref.path:
                         raise ValueError("artifact path differs from issued path")
-                    resource.pin(pins)
+                    artifact.resource.pin(pins)
+                    leases[ref] = ex.Lease(ref, artifact.manifest)
             return Job(
                 rid,
                 cmd,
@@ -186,7 +194,7 @@ class Session:
         if isinstance(cmd, e.Close):
             self._close_handle(cmd.handle)
         elif isinstance(cmd, e.Release):
-            self.artifacts.pop(cmd.artifact)[1].drop()
+            self.artifacts.pop(cmd.artifact).resource.drop()
         elif isinstance(cmd, e.Shutdown):
             self.stop()
         elif isinstance(cmd, e.ControlRequest) and (job := self.jobs.get(cmd.target)):
@@ -214,8 +222,8 @@ class Session:
 
     def close(self) -> None:
         with ExitStack() as cleanup:
-            for _, resource in self.artifacts.values():
-                cleanup.callback(resource.drop)
+            for artifact in self.artifacts.values():
+                cleanup.callback(artifact.resource.drop)
             self.artifacts.clear()
             for name in list(self.handles):
                 cleanup.callback(self._close_handle, name)
@@ -226,7 +234,7 @@ class Session:
             cleanup.callback(handle.resource.drop)
             for token in handle.artifacts:
                 if issued := self.artifacts.pop(token, None):
-                    cleanup.callback(issued[1].drop)
+                    cleanup.callback(issued.resource.drop)
 
     def _stale(self, job: Job) -> bool:
         return bool(job.channel and self.revisions[job.channel.name] != job.channel.revision)
@@ -295,18 +303,20 @@ class Session:
         _ = msgspec.json.encode(result)
         with ExitStack() as undo:
             for token in tuple(job.stages.arrays):
-                self._publish(job, token)
-                undo.callback(self.artifacts.pop, token)
-                undo.callback(self.artifacts[token][1].drop)
+                self._publish(job, token, success.manifest, undo)
             job.stages.commit()
             undo.pop_all()
         if handle:
             self.handles[job.id] = handle
         return result
 
-    def _publish(self, job: Job, token: str) -> None:
+    def _publish(self, job: Job, token: str, manifest: p.Provenance, undo: ExitStack) -> None:
         public = job.stages.publish_array(token)
-        self.artifacts[token] = public, Resource(partial(public.unlink, missing_ok=True))
+        self.artifacts[token] = Artifact(
+            public, Resource(partial(public.unlink, missing_ok=True)), manifest
+        )
+        undo.callback(self.artifacts.pop, token)
+        undo.callback(self.artifacts[token].resource.drop)
         job.published.add(token)
 
     def _sample(self, job: Job, snapshot: p.Snapshot) -> None:
@@ -321,6 +331,11 @@ class Session:
             if isinstance(event, w.Preview):
                 if job.control.cancelled:
                     return
+                # Preview files are reusable before the adapter returns its final manifest.
+                command = job.command.operation if isinstance(job.command, op.Run) else job.command
+                parameters = msgspec.to_builtins(command)
+                parents = tuple(job.leases[r].provenance for r in op.input_references(job.command))
+                manifest = p.Provenance(parameters.pop("type"), parameters, parents)
                 with ExitStack() as undo:
                     for array in event.arrays.values():
                         refs = [
@@ -334,9 +349,7 @@ class Session:
                         for ref in refs:
                             if isinstance(ref, Npy) and ref.artifact in job.stages.arrays:
                                 assert ref.artifact is not None
-                                self._publish(job, ref.artifact)
-                                undo.callback(self.artifacts.pop, ref.artifact)
-                                undo.callback(self.artifacts[ref.artifact][1].drop)
+                                self._publish(job, ref.artifact, manifest, undo)
                     self.emit(e.EventReply(job.id, job.channel, event))
                     undo.pop_all()
                 return
