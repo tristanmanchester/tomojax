@@ -717,6 +717,7 @@ class _Plan:
             except Exception as exc:
                 if size == 1 or not is_oom_error(exc):
                     raise
+                progress.retried("view batch")
                 size //= 2
 
 

@@ -841,7 +841,7 @@ def fdk_host(
     progress.remaining("slabs", len(slabs))
     poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
     work = _Slabs(geometry, grid, detector, projections, poses, result)
-    if progress.watching():
+    if progress.tracking_placement():
         announce(
             tuple(d for d in devices[: len(slabs)] if d is not None) or jax.local_devices()[:1]
         )

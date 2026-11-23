@@ -61,6 +61,11 @@ def too_large_for_the_device(grid: Grid, cfg: FBPConfig) -> bool:
     # View-shared reconstruction holds the whole volume on every device.
     with first_device(cfg):
         free = device_free_memory_bytes()
+    return volume_exceeds_room(grid, free)
+
+
+def volume_exceeds_room(grid: Grid, free: int | None) -> bool:
+    """Reserve 60% of the available device memory for projection workspaces."""
     return free is not None and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
 
 

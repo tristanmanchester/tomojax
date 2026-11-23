@@ -22,7 +22,7 @@ import logging
 import os
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
@@ -45,7 +45,6 @@ from tomojax._scan import (
 from tomojax._simulate import Simulation
 from tomojax._typed_arrays import Device
 from tomojax.alignment import AlignConfig
-from tomojax.errors import InvalidParameter
 from tomojax.geometry import Grid, ScanGeometry
 from tomojax.progress import warn
 from tomojax.recon.api import MethodConfig
@@ -54,7 +53,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from tomojax import _region, corrections
-    from tomojax.geometry import Detector, Geometry
+    from tomojax._smooth_alignment import CentreSelection
+    from tomojax.geometry import Detector
     from tomojax.recon.types import ReconstructionSlab
 else:
     corrections = AnnotationModule("tomojax.corrections")
@@ -319,39 +319,6 @@ def save(
         save_dataset(path, record)
 
 
-def _reconstruct_in_region(
-    scan: Scan,
-    method: Method,
-    *,
-    grid: Grid | None,
-    region: Region,
-    out: np.ndarray | None,
-    config: MethodConfig | None,
-    devices: Device | Sequence[Device] | None,
-    keywords: dict[str, Any],
-) -> Reconstruction:
-    """Reconstruct on the grid ``region`` chooses, masking outside the cylinder afterwards."""
-    from tomojax._field_of_view import region_grid, zero_outside_cylinder
-    from tomojax._region import RegionEstimate
-
-    if grid is not None:
-        raise InvalidParameter("grid", "pass grid= or region=, not both")
-    chosen, cylinder = region_grid(scan, region)
-    result = reconstruct(
-        scan, method, grid=chosen, out=out, config=config, devices=devices, **keywords
-    )
-    extra: dict[str, object] = {"region": region if isinstance(region, str) else "estimate"}
-    if isinstance(region, RegionEstimate):
-        extra["region_estimate"] = dict(region.info)
-    if cylinder is not None:
-        volume = zero_outside_cylinder(
-            result.volume, result.grid, cylinder, in_place=out is not None
-        )
-        extra["cylindrical_output_mask"] = True
-        result = replace(result, volume=volume)
-    return replace(result, info={**result.info, **extra})
-
-
 def _json_value(value: object) -> object:
     from dataclasses import fields
 
@@ -581,59 +548,41 @@ def reconstruct(
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     >>> recon = tj.reconstruct(scan, "cgls", iterations=50)  # doctest: +SKIP
     """
-    from tomojax.recon.api import method_config, reconstruct_arrays
+    from tomojax._planning import resolve_reconstruction
+    from tomojax.recon.api import reconstruct_arrays
 
     progress.check_cancelled()
 
-    settings = {
-        "filter": filter,
-        "iterations": iterations,
-        "tv_weight": tv_weight,
-        "nonnegative": nonnegative,
-        "seed": seed,
-    }
-    if region is not None:
-        return _reconstruct_in_region(
-            scan,
-            method,
-            grid=grid,
-            region=region,
-            out=out,
-            config=config,
-            devices=devices,
-            keywords={**settings, "warm_start": warm_start},
-        )
-    given = {k: v for k, v in {**settings, "devices": devices}.items() if v is not None}
-    if method == "auto":
-        options = {**settings, "config": config, "warm_start": warm_start}
-        options = {name: value for name, value in options.items() if value is not None}
-        if options:
-            chosen_method, _ = _select_automatic_method(scan)
-            taking = _methods_taking(options)
-            suggestion = f"pass an explicit method that takes them: {', '.join(taking)}"
-            raise InvalidParameter(
-                sorted(options)[0],
-                f"method='auto' would select {chosen_method!r} for this scan and does not take "
-                f"method-specific options ({', '.join(sorted(options))}); "
-                + (suggestion if taking else "no one method takes all of them"),
-            )
-        options = {"grid": grid, "out": out, "devices": devices}
-        return _automatic_reconstruct(scan, {k: v for k, v in options.items() if v is not None})
-    cfg = method_config(method, config=config, warm_start=warm_start, **given)
-    if grid is not None:
-        scan = with_grid(scan, grid)
+    plan = resolve_reconstruction(
+        scan,
+        method,
+        grid=grid,
+        region=region,
+        config=config,
+        filter=filter,
+        iterations=iterations,
+        tv_weight=tv_weight,
+        nonnegative=nonnegative,
+        warm_start=warm_start,
+        seed=seed,
+        devices=devices,
+    )
+    scan, method = plan.scan, plan.method
     if method not in {"fbp", "fourier"}:
         _suggest_binning(scan, "iterative reconstruction")
-    volume, info = reconstruct_arrays(
-        method,
-        scan.geometry,
-        scan.grid,
-        scan.detector,
-        scan.projections,
-        config=cfg,
-        warm_start=bool(warm_start),
-        out=out,
-    )
+    with progress.runtime() as actual:
+        volume, info = reconstruct_arrays(
+            method,
+            scan.geometry,
+            scan.grid,
+            scan.detector,
+            scan.projections,
+            config=plan.config,
+            warm_start=bool(warm_start),
+            out=out,
+        )
+    slabbed = bool(info.get("host_slabs") or info.get("host_volume"))
+    info["placement"] = actual.record(slabbed=slabbed)
     from tomojax.core.host_volume import scratch_directory
 
     directory = None if out is not None else scratch_directory(volume)
@@ -641,113 +590,11 @@ def reconstruct(
         info = {**info, "temporary_file": str(directory)}
         LOG.info("The %.1f GiB volume is held in a temporary file in %s, as more than half of "
                  "host memory", volume.nbytes / 2**30, directory)  # fmt: skip
-    return Reconstruction(volume, scan.geometry, method, info, scan)
+    if plan.cylinder is not None:
+        from tomojax._field_of_view import zero_outside_cylinder
 
-
-def _methods_taking(options: dict[str, Any]) -> list[str]:
-    """The explicit methods whose settings take every one of ``options``."""
-    from tomojax.recon.api import method_config
-
-    taking = []
-    for name in get_args(Method.__value__)[1:]:  # all but "auto"
-        try:
-            _ = method_config(name, **options)
-        except ValueError:
-            continue
-        taking.append(name)
-    return taking
-
-
-def _select_automatic_method(scan: Scan) -> tuple[Method, list[str]]:
-    """Choose the default reconstruction method and any advisory reasons for ``scan``."""
-    from tomojax.geometry import (
-        ConeSegments,
-        LaminographyGeometry,
-        ParallelGeometry,
-        RotationAxisGeometry,
-    )
-
-    base: Any = scan.geometry
-    while hasattr(base, "base"):
-        base = base.base
-    acquisition = (
-        {} if scan.source is None else scan.source.geometry_metadata.get("acquisition", {})
-    )
-    unknown_axis = (
-        isinstance(acquisition, dict) and acquisition.get("geometry_status") == "not_recorded"
-    )
-    if unknown_axis:
-        raise ValueError(
-            "reconstruction requires declared acquisition geometry: this file records no "
-            "rotation axis; pass geometry=... to tomojax.load"
-        )
-    reasons: list[str] = []
-    method: Method = "fbp"
-    if isinstance(base, ConeSegments):
-        # Per-view detector offsets (a Zeiss scan's shifts) make segments of one orbit, which
-        # FDK weights and backprojects view by view, exactly. Several trajectories, or
-        # arrangements that differ (a source at several heights), are not one circular orbit.
-        beams = [getattr(segment, "beam", None) for segment in base.segments]
-        if len(base.trajectory_lengths) > 1 or any(b != beams[0] for b in beams):
-            method = "cgls"
-            reasons.append(
-                "Segmented cone geometry uses matched CGLS because FDK requires one arrangement; "
-                "iteration count and image quality are not automatically validated."
-            )
-    elif type(scan.geometry) is ParallelGeometry:
-        angles = np.unique(np.mod(np.asarray(scan.angles, np.float64), 180.0))
-        gaps = np.diff(np.r_[angles, angles[0] + 180])
-        if len(angles) >= 16 and np.max(gaps) <= max(22.5, 2 * float(np.median(gaps))):
-            method = "fourier"
-        else:
-            reasons.append(
-                "Sparse or incomplete half-turn coverage: Fourier inversion was not selected."
-            )
-    elif isinstance(base, LaminographyGeometry | RotationAxisGeometry):
-        reasons.append(
-            "FBP leaves the frequencies no view measures (the missing cone of a tilted "
-            "axis) empty; method='fista' estimates them from nonnegativity and its "
-            "regulariser, at the cost of its iterations."
-        )
-    elif getattr(base, "beam", None) is None:
-        reasons.append(
-            "Posed or custom parallel geometry uses FBP; "
-            "automatic iterative validation is unavailable."
-        )
-    return method, reasons
-
-
-def _automatic_reconstruct(scan: Scan, options: dict[str, Any]) -> Reconstruction:
-    """Select an inverse without changing an explicit scan's acquisition geometry."""
-    method, reasons = _select_automatic_method(scan)
-    center_status = _automatic_axial_setup(scan, method=method, reasons=reasons)
-    result = reconstruct(scan, method, **options)
-    automatic = {
-        "method": method,
-        "status": "limited" if reasons else "ok",
-        "reasons": reasons,
-        "center_status": center_status,
-        "geometry": "preserved",
-        "warning": "Method selection does not validate geometry, support or detector artefacts.",
-    }
-    return replace(result, info={**result.info, "automatic": automatic})
-
-
-def _automatic_axial_setup(scan: Scan, *, method: Method, reasons: list[str]) -> str | None:
-    """The centre the scan's file recorded, and unresolved raw-workflow limitations."""
-    status = (
-        None if scan.source is None else scan.source.geometry_metadata.get("detector_center_status")
-    )
-    if method == "fourier" and any(step.name == "log" for step in scan.corrections):
-        reasons.append(
-            "Corrected projections were already materialized; use reconstruct_slabs on raw "
-            "Frames to avoid that host round trip. Raw-workflow speed is not guaranteed here."
-        )
-        if not any(step.name in {"stripes", "rings"} for step in scan.corrections):
-            reasons.append(
-                "No stripe correction is recorded; detector-ring suppression is unassessed."
-            )
-    return status
+        volume = zero_outside_cylinder(volume, scan.grid, plan.cylinder, in_place=out is not None)
+    return Reconstruction(volume, scan.geometry, method, {**info, **plan.info}, scan)
 
 
 def reconstruct_slabs(
@@ -949,16 +796,14 @@ def _slab_results(
             del slab, scan  # Do not retain device rows while preparing the next slab.
 
 
-def _estimate_center(scan: Scan) -> tuple[Scan, dict[str, object]]:
+def _estimate_center(scan: Scan, selection: CentreSelection) -> tuple[Scan, dict[str, object]]:
     """The scan with its centre from near-opposite views, and the estimate's record.
 
     Pixels are unchanged; the record gives the pair diagnostics, input and output.
     The centre fixes the median sampled-pair mean shift to zero, so it aliases
     common sample motion.
     """
-    from tomojax.alignment.api import estimate_center_report
-
-    report = estimate_center_report(cast("Geometry", scan.geometry), scan.projections)
+    report = selection.measure(scan.projections)
     geometry = report.geometry
     calibration: dict[str, object] = {
         "status": "estimated",
@@ -1074,51 +919,37 @@ def align(
     >>> result = tj.align(scan, config=AlignConfig(levels=(1,)))  # doctest: +SKIP
     >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP
     """
-    from tomojax._region import RegionEstimate
-    from tomojax.alignment import AlignConfig
+    from tomojax._smooth_alignment import CentreSelection, align_poses, resolve_alignment
 
     label = ", ".join(map(str, fit)) if isinstance(fit, tuple) else str(fit)
     with progress.task("align", label, None, "fit"):
-        settings = {
-            "motion": motion,
-            "iterations": iterations,
-            "image_iterations": image_iterations,
-            "tolerance": tolerance,
-            "interpolation": interpolation,
-            "resolution": resolution,
-        }
-        supplied = {name: value for name, value in settings.items() if value is not None}
-        if method == "opposite-views":
-            extra: list[str] = sorted(
-                [
-                    *supplied,
-                    *(["config"] if config is not None else []),
-                    *(["grid"] if grid is not None else []),
-                    *(["region"] if region is not None else []),
-                ]
+        plan = resolve_alignment(
+            scan,
+            fit=fit,
+            method=method,
+            grid=grid,
+            region=region,
+            motion=motion,
+            iterations=iterations,
+            image_iterations=image_iterations,
+            tolerance=tolerance,
+            interpolation=interpolation,
+            resolution=resolution,
+            config=config,
+        )
+        if isinstance(plan, CentreSelection):
+            with progress.runtime() as actual:
+                alignment = _opposite_views(scan, plan)
+            return replace(
+                alignment, info={**alignment.info, "placement": actual.record(slabbed=False)}
             )
-            if extra:
-                raise InvalidParameter(
-                    extra[0],
-                    f'method="opposite-views" fits no image and takes no joint options '
-                    f"({', '.join(extra)})",
-                )
-            return _opposite_views(scan, fit)
-        if method not in (None, "joint"):
-            raise InvalidParameter(
-                "method", f"method is 'joint' or 'opposite-views', not {method!r}"
-            )
-        config = replace(AlignConfig() if config is None else config, **supplied)
-        cylinder = None
-        if region is not None:
-            from tomojax._field_of_view import region_grid
-
-            if grid is not None:
-                raise InvalidParameter("grid", "pass grid= or region=, not both")
-            grid, cylinder = region_grid(scan, region)
-        from tomojax._smooth_alignment import align_poses
-
-        result = align_poses(scan, fit=fit, grid=grid, config=config)
+        with progress.runtime() as actual:
+            result = align_poses(scan, fit=fit, plan=plan)
+        slabbed = any(
+            "host" in level["stacks"]["placement"].values()
+            for level in cast("Sequence[dict[str, Any]]", result.info.get("levels", ()))
+        )
+        grid, cylinder = plan.grid, plan.cylinder
         assert result.scan is not None  # the alignment's corrected scan
         image = result.volume
         if cylinder is not None and image is not None and result.grid is not None:
@@ -1127,21 +958,13 @@ def align(
             image = zero_outside_cylinder(image, result.grid, cylinder)
         # The fit's working grid belongs to its image; the scan keeps the caller's grid.
         corrected = with_grid(result.scan, scan.grid if grid is None else grid)
-        info = dict(result.info)
-        if region is not None:
-            info["region"] = region if isinstance(region, str) else "estimate"
-            if isinstance(region, RegionEstimate):
-                info["region_estimate"] = dict(region.info)
+        info = {**result.info, **plan.info, "placement": actual.record(slabbed=slabbed)}
         return Alignment(corrected, info, image, result.grid)
 
 
-def _opposite_views(scan: Scan, fit: str | tuple[str, ...]) -> Alignment:
-    """``fit="center"`` from near-opposite views, without an image."""
-    if fit not in ("center", ("center",)):
-        raise InvalidParameter(
-            "fit", f'method="opposite-views" fits fit="center" alone, not {fit!r}'
-        )
-    centered, record = _estimate_center(scan)
+def _opposite_views(scan: Scan, selection: CentreSelection) -> Alignment:
+    """Fit the centre from near-opposite views, without an image."""
+    centered, record = _estimate_center(scan, selection)
     before, after = scan.detector.center[0], centered.detector.center[0]
     center = {"value": float(after), "change": float((after - before) / scan.detector.du)}
     info = {

@@ -8,7 +8,10 @@ layers =
     tomojax.cli
     tomojax.torch
     tomojax._workflow
+    tomojax._resources
     tomojax._smooth_alignment
+    tomojax._planning
+    tomojax._field_of_view
     tomojax._region
     tomojax._loading
     tomojax._loading_geometry
@@ -40,6 +43,8 @@ source_modules =
     tomojax._smooth_alignment
     tomojax._region
     tomojax._workflow
+    tomojax._resources
+    tomojax._planning
     tomojax._loading
     tomojax._scan
     tomojax._astra
@@ -56,6 +61,8 @@ source_modules =
     tomojax._smooth_alignment
     tomojax._region
     tomojax._workflow
+    tomojax._resources
+    tomojax._planning
     tomojax._loading
     tomojax._scan
     tomojax._astra

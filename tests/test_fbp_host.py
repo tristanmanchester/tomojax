@@ -289,9 +289,16 @@ def test_host_slabs_reject_overlapping_output_before_writing(tmp_path, mapping):
 )
 def test_host_slabs_reject_invalid_configuration(field, value):
     grid, detector, geometry, data = scan()
+    if field == "backend":
+        from tomojax import InvalidParameter
+
+        with pytest.raises(InvalidParameter, match="fbp: backend") as error:
+            FBPConfig(backend=value)
+        assert error.value.path == "backend"
+        return
     config = (
-        FBPHostConfig(fbp=replace(FBPConfig(), **{field: value}))
-        if field in {"scale", "backend"}
+        FBPHostConfig(fbp=FBPConfig(scale=value))
+        if field == "scale"
         else replace(FBPHostConfig(), **{field: value})
     )
     with pytest.raises(ValueError, match="fbp_host"):
@@ -472,7 +479,11 @@ def test_general_slabs_release_outputs_and_retry_only_unfinished_slab(monkeypatc
         return value
 
     monkeypatch.setattr(module, "_fbp_from_host", bounded)
-    actual = fbp_host(geometry, grid, detector, data, config=cfg)
+    from tomojax import progress
+
+    with progress.runtime() as actual_placement:
+        actual = fbp_host(geometry, grid, detector, data, config=cfg)
+    assert actual_placement.retries == {"slab depth": 2, "view batch": 2}
     assert calls[:5] == [(0, 4, 4), (4, 4, 4), (4, 2, 4), (4, 1, 4), (4, 1, 2)]
     assert calls[5:] == [(start, 1, 1) for start in range(4, grid.nz)]
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)

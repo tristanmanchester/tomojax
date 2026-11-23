@@ -102,6 +102,7 @@ _STANDARD_OPTIONS = {"-h", "--help", "-o", "--output", "--force", "--config", "-
 _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
     "serve": {},
     "reconstruct": {
+        "--dry-run": "prints the resolved reconstruction plan",
         "--method": ("reconstruct", "method"),
         "--filter": ("reconstruct", "filter"),
         "--iterations": ("reconstruct", "iterations"),

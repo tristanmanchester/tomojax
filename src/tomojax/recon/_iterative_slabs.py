@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import jax
 import numpy as np
 
+from tomojax import progress
 from tomojax.backends.api import device_free_memory_bytes, is_oom_error
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
@@ -87,6 +88,7 @@ def iterative_slabs[T](
             data = context = volume = result = None
             if depth == 1 or not is_oom_error(error):
                 raise
+            progress.retried("slab depth")
             depth = max(1, depth // 2)
             continue
         yield ReconstructionSlab(start, stop, slice(start, stop), data, volume, context, info)

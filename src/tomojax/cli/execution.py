@@ -268,7 +268,7 @@ def _bounded_info(summary: dict[str, object], arrays: dict[str, Array]) -> Info:
     kept: dict[str, object] = {}
     references: dict[str, Array] = {}
     omitted = 0
-    for key in sorted(summary, key=lambda k: k != "automatic"):
+    for key in sorted(summary, key=lambda k: k not in {"automatic", "placement"}):
         pointer = "/" + key.replace("~", "~0").replace("/", "~1")
         subset = {p: a for p, a in arrays.items() if p == pointer or p.startswith(pointer + "/")}
         record = {

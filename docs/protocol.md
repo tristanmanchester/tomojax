@@ -93,3 +93,10 @@ Release takes only the issued artifact token. A successful release or handle clo
 Pass `--progress json` to inspect, correct, reconstruct, align, simulate or export. Read one JSON object per stdout line. A successful invocation ends with `result`. Its `outputs` list includes each written file, and its `arrays` reference the stored data. Export reports the source volume in disk axis order and lists the converted files and sidecar. Inspect returns its report in `info.summary`. Auxiliary NumPy files for bulk diagnostics or NPZ members are caller-owned and live alongside the output. A scalar summary that exceeds the byte limit reports the number of omitted fields as `_omitted_fields`, giving method selection priority over solver histories.
 
 Errors end the stream with `error`. An invalid command line exits 2, an operational failure exits 1 and cancellation exits 130. An internal error also produces a traceback on stderr. A process killed before delivery leaves EOF without a terminal. Request the standalone inspect JSON document or a dry-run plan separately from JSON progress.
+
+
+### Planning a run
+
+`tomojax reconstruct --dry-run` and `tomojax align --dry-run` print the resolved plan without writing an output. Reconstruction reports the selected inverse, its reasons, its voxel grid and the configured iteration limit for iterative methods. A joint fit lists the padded working grid, outer iteration limit and image iterations per solve at each level. The returned working image crops the padding. Opposite-views reports how many angular pairs the estimator will examine. Pairs with unusable measured data can subsequently be rejected.
+
+The placement estimate includes the sample timestamp, device identifiers and available bytes. Host and device byte estimates describe the working arrays. CPU availability comes from host memory and its cgroup limit. Compiled temporaries, allocator fragmentation and other processes can affect execution. Read the run's `info.placement` for the participating devices, actual storage strategy and the number of allocation retries by work unit.

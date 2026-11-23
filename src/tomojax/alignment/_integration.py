@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from tomojax.alignment._joint import fit_poses
+from tomojax.alignment._geometry.detector_center import CentreSelection, opposite_samples
+from tomojax.alignment._joint._fit import FitSchedule, fit_poses, fit_schedule
+from tomojax.alignment._joint._parameters import parse_fit
 from tomojax.core.geometry.cone import cone_parts
 
 if TYPE_CHECKING:
@@ -30,4 +32,12 @@ def cone_frames(geometry: ScanGeometry) -> np.ndarray | None:
     )
 
 
-__all__ = ["cone_frames", "fit_poses"]
+__all__ = [
+    "CentreSelection",
+    "FitSchedule",
+    "cone_frames",
+    "fit_poses",
+    "fit_schedule",
+    "opposite_samples",
+    "parse_fit",
+]

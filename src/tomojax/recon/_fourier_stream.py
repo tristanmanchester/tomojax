@@ -9,6 +9,7 @@ from typing import Any
 import jax
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.validation import validate_detector, validate_grid
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
@@ -123,6 +124,7 @@ def fourier_slabs[T](
         except Exception as error:
             if backend != "cupy" or depth == 1 or not is_cuda_oom(error):
                 raise
+            progress.retried("slab depth")
             depth = max(1, depth // 2)
         finally:
             if plan is not None:

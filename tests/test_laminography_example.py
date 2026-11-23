@@ -56,7 +56,7 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         frames,
         detector_roll,
         view_positions,
-        declared_poses,
+        schedule,
         config=None,
     ):
         assert projections is scan.projections and d == detector and keep_grid == explicit
@@ -68,7 +68,7 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         return volume, g, table, {"fit": ["translations"], "calibration": {}, "report": report}
 
     monkeypatch.setattr(automatic, "fit_poses", fit)
-    result = automatic.align_poses(scan, grid=supplied)
+    result = tj.align(scan, grid=supplied)
     assert result.scan.projections is scan.projections and result.scan.detector == detector
     np.testing.assert_allclose(result.scan.poses[:, 3:5], shifts)
     np.testing.assert_array_equal(result.scan.poses[:, [0, 1, 2, 5]], 0)

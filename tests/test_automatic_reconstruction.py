@@ -71,12 +71,12 @@ def test_explicit_method_bypasses_automatic_geometry_policy():
     ],
 )
 def test_auto_rejects_method_specific_options_before_choosing_a_method(option, monkeypatch):
-    from tomojax import _workflow  # check-public-imports: allow-private
+    from tomojax.recon import api
 
     def unexpected_dispatch(*args, **kwargs):
         pytest.fail("invalid options reached automatic dispatch")
 
-    monkeypatch.setattr(_workflow, "_automatic_reconstruct", unexpected_dispatch)
+    monkeypatch.setattr(api, "reconstruct_arrays", unexpected_dispatch)
     grid, detector = tj.Grid(4, 4, 2, 1, 1, 1), tj.Detector(8, 2, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, [0, 90])
     scan = tj.Scan(np.ones((2, 2, 8), np.float32), geometry)

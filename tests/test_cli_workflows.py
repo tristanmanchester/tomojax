@@ -873,7 +873,7 @@ def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path
     assert plan["bounded_working_grid"] is True
 
     assert main(["align", str(scan), "--dry-run", "--region", "auto"]) == 0
-    assert json.loads(capsys.readouterr().out)["bounded_working_grid"] is True
+    assert json.loads(capsys.readouterr().out)["bounded_working_grid"] is False
 
     for extra in (
         ["--fit", "translations"],

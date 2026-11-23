@@ -245,6 +245,9 @@ class LevelStacks:
         except jax.errors.JaxRuntimeError as err:
             if not _exhausted(err):
                 raise
+            from tomojax import progress
+
+            progress.retried("host stack")
             self.raised.append(name)
             return None
         if forced or fits(self.transient):

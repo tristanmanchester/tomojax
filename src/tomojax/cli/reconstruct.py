@@ -12,11 +12,13 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, fields, replace
 from functools import partial
+import json
 import logging
 from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, cast, get_args
 
+import msgspec
 import numpy as np
 
 from tomojax._field_of_view import (
@@ -26,7 +28,7 @@ from tomojax._field_of_view import (
     zero_outside_cylinder,
 )
 from tomojax._parameters import Filter, Method
-from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
+from tomojax.cli._options import add_config, add_force, check_paths, hide_expert
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
 
@@ -59,6 +61,7 @@ _PUBLIC = (
     "--preview",
     "--manifest",
     "--progress",
+    "--dry-run",
 )
 
 _SETTINGS = (
@@ -88,10 +91,17 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=_EPILOG,
     )
     _ = p.add_argument("data", metavar="INPUT", help="Scan to reconstruct (.nxs, .h5, .npz)")
-    add_output(
-        p,
-        "Output .nxs: reconstructed volume, geometry and source reference "
+    _ = p.add_argument(
+        "-o",
+        "--output",
+        dest="out",
+        metavar="OUTPUT",
+        help="Output .nxs: reconstructed volume, geometry and source reference "
         "(pass --include-scan to embed projections)",
+    )
+    add_force(p)
+    _ = p.add_argument(
+        "--dry-run", action="store_true", help="Print the reconstruction plan as JSON"
     )
     add_config(p, settings=_settings)
     _ = p.add_argument(
@@ -207,7 +217,7 @@ class _Run:
     """The command's arguments."""
 
     data: str
-    out: str
+    out: str | None
     method: Method
     filter: str | None
     iterations: int | None
@@ -228,7 +238,7 @@ class _Run:
         grid = cast("list[int] | None", args.grid)
         return cls(
             data=cast("str", args.data),
-            out=cast("str", args.out),
+            out=cast("str | None", args.out),
             method=cast("Method", args.method),
             filter=cast("str | None", args.filter),
             iterations=cast("int | None", args.iterations),
@@ -259,7 +269,7 @@ class _Run:
             parser.error("--grid dimensions must be positive integers")
         if not Path(self.data).exists():
             raise FileNotFoundError(f"input not found: {self.data}")
-        outputs = [self.out, self.preview, self.manifest]
+        outputs = [] if args.dry_run else [self.out, self.preview, self.manifest]
         check_paths(parser, inputs=[self.data], outputs=outputs, force=cast("bool", args.force))
         try:
             return self.config(cast("dict[str, object]", metadata["settings"]))
@@ -335,6 +345,10 @@ def main() -> int:
     """Run ``tomojax reconstruct``."""
     parser = build_parser()
     args, metadata = parse_args_with_config(parser)
+    if args.dry_run and args.progress == "json":
+        parser.error("--dry-run cannot write a plan with --progress json")
+    if not args.dry_run and not args.out:
+        parser.error("the following arguments are required: -o/--output")
     return run_command("reconstruct", args.progress, partial(_run, parser, args, metadata))
 
 
@@ -355,18 +369,23 @@ def _run(
     scan = tj.load(run.data, apply_poses=run.apply_poses)
     progress.check_cancelled()
     keywords = {name: cast("Any", getattr(run, name)) for name in _KEYWORDS}
+    grid, cylinder = None, None
     if run.grid is not None:
         shape = (run.grid[2], run.grid[1], run.grid[0])
         grid, cylinder = region_grid(scan, run.region, shape=shape)
-        result = tj.reconstruct(scan, run.method, grid=grid, config=config, **keywords)
-        if cylinder is not None:
-            result = replace(
-                result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder)
-            )
-    else:
-        if run.region is not None:
-            keywords["region"] = run.region
-        result = tj.reconstruct(scan, run.method, grid=None, config=config, **keywords)
+    elif run.region is not None:
+        keywords["region"] = run.region
+    if args.dry_run:
+        from tomojax._planning import resolve_reconstruction
+        from tomojax.cli._plans import plan_product
+
+        work = resolve_reconstruction(scan, run.method, grid=grid, config=config, **keywords)
+        print(json.dumps(msgspec.to_builtins(plan_product(scan, work)), indent=2))
+        return None
+    assert run.out is not None
+    result = tj.reconstruct(scan, run.method, grid=grid, config=config, **keywords)
+    if cylinder is not None:
+        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
     report_automatic(result.info)
     source = scan.source
     if (

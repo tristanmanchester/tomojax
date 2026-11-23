@@ -378,8 +378,56 @@ def step(unit: str, *, remaining: int | None = None) -> None:
         active.advance(done, {})
 
 
+class Runtime:
+    """Devices and allocation retries observed by one workflow's coordinators."""
+
+    def __init__(self) -> None:
+        self.devices: dict[str, None] = {}
+        self.retries: dict[str, int] = {}
+        self.lock = RLock()
+
+    def record(self, *, slabbed: bool) -> dict[str, object]:
+        """Summarise decisions after all workers have joined."""
+        return {
+            "devices": tuple(self.devices),
+            "strategy": "slabbed" if slabbed else "resident",
+            "retries": dict(self.retries),
+        }
+
+
+current_runtime: ContextVar[Runtime | None] = ContextVar("tomojax_runtime", default=None)
+
+
+@contextmanager
+def runtime() -> Iterator[Runtime]:
+    """Collect actual placement without installing a progress handler or changing checkpoints."""
+    value = Runtime()
+    token = current_runtime.set(value)
+    try:
+        yield value
+    finally:
+        current_runtime.reset(token)
+
+
+def tracking_placement() -> bool:
+    """Whether an event or a run result needs the participating device IDs."""
+    return current_task.get() is not None or current_runtime.get() is not None
+
+
+def retried(unit: str) -> None:
+    """Count allocation failures that actually led to another attempt."""
+    value = current_runtime.get()
+    if value is not None:
+        with value.lock:
+            value.retries[unit] = value.retries.get(unit, 0) + 1
+
+
 def placed(devices: tuple[str, ...]) -> None:
     """Report a change of placement within the current coordinator's task."""
+    run = current_runtime.get()
+    if run is not None:
+        with run.lock:
+            run.devices.update(dict.fromkeys(devices))
     active = current_task.get()
     if active is not None and active.devices != devices:
         active.devices = devices

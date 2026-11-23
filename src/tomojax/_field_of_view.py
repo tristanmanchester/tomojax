@@ -19,8 +19,8 @@ from tomojax.geometry.api import is_cone_beam, view_frames
 if TYPE_CHECKING:
     import jax
 
-    from tomojax import Scan
     from tomojax._region import RegionEstimate
+    from tomojax._scan import Scan
 
 # The regions by name: the box every view sees ("auto", "bbox"), its largest cube or
 # cylinder about the axis ("cube", "cyl", which also zeroes outside it).

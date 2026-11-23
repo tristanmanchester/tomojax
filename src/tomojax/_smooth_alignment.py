@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import TYPE_CHECKING, cast
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tomojax._planning import resolve_grid
 from tomojax._scan import Reconstruction, describe, record_of, with_grid
-from tomojax.alignment._integration import cone_frames, fit_poses
+from tomojax.alignment._integration import CentreSelection, fit_poses
 from tomojax.backends.api import is_oom_error
+from tomojax.errors import InvalidParameter
 from tomojax.geometry import stack_view_poses
 from tomojax.progress import warn
 
 if TYPE_CHECKING:
+    from tomojax._field_of_view import Cylinder
+    from tomojax._parameters import RegionName
+    from tomojax._region import RegionEstimate
     from tomojax._scan import Scan
     from tomojax.alignment import AlignConfig
+    from tomojax.alignment._integration import FitSchedule
     from tomojax.geometry import Grid
 
 
@@ -23,13 +29,12 @@ def align_poses(
     scan: Scan,
     *,
     fit: str | tuple[str, ...] = "translations",
-    grid: Grid | None = None,
-    config: AlignConfig | None = None,
+    plan: JointSelection,
 ) -> Reconstruction:
     """Jointly fit one image and the selected global and per-view parameters."""
     from tomojax.alignment._calibration import publish_calibration
 
-    _require_declared_geometry(scan)
+    grid = plan.grid
     if grid is not None:
         scan = with_grid(scan, grid)
     views = len(scan.angles)
@@ -43,11 +48,11 @@ def align_poses(
             scan.detector,
             fit=fit,
             keep_grid=grid is not None,
-            frames=cone_frames(scan.geometry),
+            frames=plan.frames,
             detector_roll=float(cast("float", metadata.get("detector_roll", 0.0))),
             view_positions=scan.view_positions,
-            declared_poses=np.asarray(stack_view_poses(scan.with_poses(None).geometry, views)),
-            config=config,
+            schedule=plan.schedule,
+            config=plan.config,
         )
     except Exception as exc:
         if grid is None or not is_oom_error(exc):
@@ -91,7 +96,62 @@ def _first(views: list[int], count: int = 5) -> str:
     return f"views {shown}, ..." if len(views) > count else f"views {shown}"
 
 
-def _require_declared_geometry(scan: Scan) -> None:
+@dataclass(frozen=True)
+class JointSelection:
+    """Working support, calibrated ray frames and the fit's execution schedule."""
+
+    grid: Grid | None
+    config: AlignConfig
+    cylinder: Cylinder | None
+    info: dict[str, Any]
+    schedule: FitSchedule
+    frames: np.ndarray | None
+
+
+def resolve_alignment(
+    scan: Scan,
+    *,
+    fit: str | tuple[str, ...] = "translations",
+    method: str | None = None,
+    grid: Grid | None = None,
+    region: RegionName | RegionEstimate | None = None,
+    config: AlignConfig | None = None,
+    **settings: Any,
+) -> JointSelection | CentreSelection:
+    """Resolve the method-specific work without sampling projections."""
+    from tomojax.alignment import AlignConfig
+    from tomojax.alignment._integration import (
+        cone_frames,
+        fit_schedule,
+        opposite_samples,
+        parse_fit,
+    )
+
+    supplied = {name: value for name, value in settings.items() if value is not None}
+    if method == "opposite-views":
+        extras = sorted(
+            key
+            for key, value in {**supplied, "config": config, "grid": grid, "region": region}.items()
+            if value is not None
+        )
+        if extras:
+            raise InvalidParameter(
+                extras[0],
+                'method="opposite-views" fits no image and takes no joint options '
+                f"({', '.join(extras)})",
+            )
+        if fit not in ("center", ("center",)):
+            raise InvalidParameter(
+                "fit", f'method="opposite-views" fits fit="center" alone, not {fit!r}'
+            )
+        return opposite_samples(scan.geometry)
+    if method not in (None, "joint"):
+        raise InvalidParameter("method", f"method is 'joint' or 'opposite-views', not {method!r}")
+    _ = parse_fit(fit)
+    config = replace(AlignConfig() if config is None else config, **supplied)
+    grid, cylinder, info = resolve_grid(scan, grid, region)
+    if grid is not None:
+        scan = with_grid(scan, grid)
     acquisition = (
         {} if scan.source is None else scan.source.geometry_metadata.get("acquisition", {})
     )
@@ -100,3 +160,13 @@ def _require_declared_geometry(scan: Scan) -> None:
             "alignment requires declared acquisition geometry: this file records no rotation "
             "axis; pass geometry=... to tomojax.load"
         )
+    frames = cone_frames(scan.geometry)
+    declared = (
+        np.asarray(stack_view_poses(scan.with_poses(None).geometry, len(scan.angles)))
+        if frames is not None
+        else None
+    )
+    schedule = fit_schedule(
+        scan.grid, scan.detector, declared, frames, keep_grid=grid is not None, config=config
+    )
+    return JointSelection(grid, config, cylinder, info, schedule, frames)

@@ -391,8 +391,10 @@ def _general_slabs(
                 raise
             volume = None
             if depth > 1:
+                progress.retried("slab depth")
                 depth = max(1, depth // 2)
             elif batch > 1:
+                progress.retried("view batch")
                 batch = max(1, batch // 2)
             else:
                 raise
@@ -490,6 +492,7 @@ def fbp_slabs[T](
             except Exception as error:
                 if depth == 1 or not is_oom_error(error):
                     raise
+                progress.retried("slab depth")
                 depth = max(1, depth // 2)
 
 

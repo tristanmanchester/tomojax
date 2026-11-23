@@ -356,6 +356,92 @@ def _center_summary(
     )
 
 
+type AngularSample = tuple[list[tuple[int, float]], list[tuple[int, float]], float]
+
+
+@dataclass(frozen=True)
+class CentreSelection:
+    """Eligible opposing view pairs with their interpolation weights in source order."""
+
+    geometry: ParallelGeometry
+    views: tuple[int, ...] | None
+    samples: tuple[AngularSample, ...]
+
+    def measure(self, projections: np.ndarray | jax.Array) -> CenterEstimate:
+        """Measure the sampled opposing pairs of the resolved selection."""
+        geometry, samples = self.geometry, self.samples
+        detector = geometry.detector
+        validate_projection_stack(
+            projections, detector, geometry=geometry, context="opposite-views"
+        )
+        with progress.task("opposite-views", "opposite view pairs", len(samples), "pairs"):
+            progress.placed(("cpu:0",))
+            rows = np.linspace(0, detector.nv - 1, min(64, detector.nv)).round().astype(int)
+            groups = np.array_split(np.arange(len(rows)), min(8, len(rows)))
+            row_positions = np.asarray([np.mean(rows[group]) for group in groups])
+            pairs, row_offsets = [], []
+            if samples:
+                views = np.unique([i for first, second, _ in samples for i, _ in first + second])
+                data = np.asarray(projections[views[:, None], rows[None, :], :], np.float64)
+                for first, second, error in samples:
+                    progress.check_cancelled()
+                    a = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in first))
+                    b = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in second))
+                    result = _paired_measurement(a, b, error)
+                    if result is None:
+                        progress.step("pairs")
+                        continue
+                    stat, alternatives, heights = result
+                    pairs.append(
+                        CenterPair(
+                            tuple(first),
+                            tuple(second),
+                            error,
+                            stat.offset_px,
+                            stat.sigma_px,
+                            stat.interval90_px,
+                            tuple(float(x) for x in alternatives),
+                            tuple(float(x) for x in heights),
+                        )
+                    )
+                    row_offsets.append(
+                        tuple(_paired_offset(a[group], b[group], error) for group in groups)
+                    )
+                    progress.step("pairs")
+            if not pairs:
+                raise ValueError(
+                    'method="opposite-views" needs finite, nonconstant opposite projections. '
+                    "Near-opposite pairs need angular neighbours within 2 degrees; "
+                    "use finer angular sampling when subsampling views."
+                )
+            return replace(
+                _center_summary(geometry, pairs, row_positions, row_offsets),
+                calibration_views=self.views,
+            )
+
+
+def opposite_samples(
+    geometry: object, views: slice | Sequence[int] | np.ndarray | None = None
+) -> CentreSelection:
+    """Original view indices and interpolation weights for the estimator's work."""
+    if type(geometry) is not ParallelGeometry:
+        raise ValueError('method="opposite-views" needs an unposed axial ParallelGeometry')
+    geometry = cast("ParallelGeometry", geometry)
+    detector = geometry.detector
+    angles = np.asarray(geometry.angles, np.float64)
+    eligible = np.arange(len(angles)) if views is None else view_indices(views, len(angles))
+    calibration_views = None if views is None else tuple(int(i) for i in eligible)
+    samples = [
+        (
+            [(int(eligible[i]), w) for i, w in first],
+            [(int(eligible[i]), w) for i, w in second],
+            error,
+        )
+        for first, second, error in _sample_pairs(angles[eligible], detector.nu)
+    ]
+    return CentreSelection(geometry, calibration_views, tuple(samples))
+
+
 def estimate_center_report(
     geometry: Geometry,
     projections: np.ndarray | jax.Array,
@@ -398,68 +484,7 @@ def estimate_center_report(
         near-opposite pairs lack angular neighbours within two degrees.
         Exact opposing views do not require angular interpolation.
     """
-    if type(geometry) is not ParallelGeometry:
-        raise ValueError('method="opposite-views" needs an unposed axial ParallelGeometry')
-    geometry = cast("ParallelGeometry", geometry)
-    validate_projection_stack(
-        projections, geometry.detector, geometry=geometry, context="opposite-views"
-    )
-    detector = geometry.detector
-    angles = np.asarray(geometry.angles, np.float64)
-    eligible = np.arange(len(angles)) if views is None else view_indices(views, len(angles))
-    calibration_views = None if views is None else tuple(int(i) for i in eligible)
-    samples = [
-        (
-            [(int(eligible[i]), w) for i, w in first],
-            [(int(eligible[i]), w) for i, w in second],
-            error,
-        )
-        for first, second, error in _sample_pairs(angles[eligible], detector.nu)
-    ]
-    with progress.task("opposite-views", "opposite view pairs", len(samples), "pairs"):
-        progress.placed(("cpu:0",))
-        rows = np.linspace(0, detector.nv - 1, min(64, detector.nv)).round().astype(int)
-        groups = np.array_split(np.arange(len(rows)), min(8, len(rows)))
-        row_positions = np.asarray([np.mean(rows[group]) for group in groups])
-        pairs, row_offsets = [], []
-        if samples:
-            views = np.unique([i for first, second, _ in samples for i, _ in first + second])
-            data = np.asarray(projections[views[:, None], rows[None, :], :], np.float64)
-            for first, second, error in samples:
-                progress.check_cancelled()
-                a = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in first))
-                b = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in second))
-                result = _paired_measurement(a, b, error)
-                if result is None:
-                    progress.step("pairs")
-                    continue
-                stat, alternatives, heights = result
-                pairs.append(
-                    CenterPair(
-                        tuple(first),
-                        tuple(second),
-                        error,
-                        stat.offset_px,
-                        stat.sigma_px,
-                        stat.interval90_px,
-                        tuple(float(x) for x in alternatives),
-                        tuple(float(x) for x in heights),
-                    )
-                )
-                row_offsets.append(
-                    tuple(_paired_offset(a[group], b[group], error) for group in groups)
-                )
-                progress.step("pairs")
-        if not pairs:
-            raise ValueError(
-                'method="opposite-views" needs finite, nonconstant opposite projections. '
-                "Near-opposite pairs need angular neighbours within 2 degrees; "
-                "use finer angular sampling when subsampling views."
-            )
-        return replace(
-            _center_summary(geometry, pairs, row_positions, row_offsets),
-            calibration_views=calibration_views,
-        )
+    return opposite_samples(geometry, views).measure(projections)
 
 
 def estimate_center(

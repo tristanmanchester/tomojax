@@ -120,11 +120,16 @@ class ViewSplit:
         default, so host-driven loops (batches streamed from the host, CUDA
         launches) keep every device busy at once.
         """
+        runtime = progress.current_runtime.get()
 
         def on(share: tuple[Device, range]) -> jax.Array:
             device, views = share
-            with jax.default_device(device):
-                return run(device, views)
+            token = progress.current_runtime.set(runtime)
+            try:
+                with jax.default_device(device):
+                    return run(device, views)
+            finally:
+                progress.current_runtime.reset(token)
 
         shares = self.shares()
         announce(tuple(device for device, _ in shares))
@@ -170,7 +175,7 @@ def current_device() -> Device:
 
 def announce(devices: Iterable[Device] | None = None, *, array: object = None) -> None:
     """Announce concrete placement on the coordinator, including cache hits."""
-    if progress.current_task.get() is None or isinstance(array, Tracer):
+    if not progress.tracking_placement() or isinstance(array, Tracer):
         return
     if devices is None:
         devices = (

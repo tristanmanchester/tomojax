@@ -291,7 +291,14 @@ def _dry_run_plan(
     config: AlignConfig | None,
 ) -> dict[str, object]:
     """Return the JSON summary for ``tomojax align --dry-run``."""
+    import msgspec
+
+    from tomojax._smooth_alignment import resolve_alignment
+    from tomojax.cli._plans import plan_product
+
+    work = resolve_alignment(scan, fit=fit, method=args.method, grid=grid, config=config)
     plan: dict[str, object] = {
+        **msgspec.to_builtins(plan_product(scan, work)),
         "input_path": args.data,
         "output_path": args.out,
         "fit": list(fit),
@@ -301,7 +308,7 @@ def _dry_run_plan(
         assert config is not None
         plan["config"] = asdict(config)
         plan["grid"] = (scan.grid if grid is None else grid).to_dict()
-        plan["bounded_working_grid"] = args.grid is None
+        plan["bounded_working_grid"] = grid is None
     return plan
 
 

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from tomojax.cli.wire_options import Grid
-from tomojax.wire.arrays import Array, Count, Id, Member, Record, Seconds
+from tomojax.wire import resources
+from tomojax.wire.arrays import Array, Count, Id, Member, Record
 from tomojax.wire.progress import Info
+
+Placement = resources.Placement
+Snapshot = resources.Snapshot
 
 
 class Scan(Record, tag="scan"):
@@ -100,27 +104,6 @@ class Inspection(Record, tag="inspection"):
     """The public inspection report."""
 
     report: dict[str, Any]
-
-
-class Snapshot(Record):
-    """Immutable executor sample. Bytes refer to the named allocator and device."""
-
-    time: Seconds
-    device: Id
-    scope: Id
-    used: Count | None
-    peak: Count | None
-    available: Count | None
-
-
-class Placement(Record):
-    """Resource estimate at planning time."""
-
-    devices: tuple[Id, ...]
-    strategy: Literal["resident", "slabbed"]
-    host_bytes: Count
-    device_bytes: Count
-    snapshot: tuple[Snapshot, ...]
 
 
 class ReconPlan(Record, tag="reconstruction_plan"):

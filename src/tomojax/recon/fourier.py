@@ -220,6 +220,7 @@ def fourier(
             # buffers and the exception traceback before allocating a smaller
             # slab; rewriting from slice zero also replaces any completed output.
             plan = None
+        progress.retried("slab depth")
         depth = max(1, depth // 2)
 
 

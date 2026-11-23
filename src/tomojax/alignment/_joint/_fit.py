@@ -16,7 +16,7 @@ right at Nyquist. Image TV is off by default, so the fit imposes no shape prefer
 on weak geometry modes.
 """
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import math
 import time
 from typing import cast
@@ -167,11 +167,10 @@ def _level(
     scale,
     noise,
     poses,
-    base,
+    g,
     detector,
     center,
     total_bin,
-    b,
     *,
     lever,
     native,
@@ -198,7 +197,6 @@ def _level(
     for s in range(0, len(y), 16):
         y[s : s + 16] = residual_filter(y[s : s + 16])
     precision = filtered_precision(precision)
-    g = _resized(base, tuple(math.ceil(n / b) for n in (base.nx, base.ny, base.nz)))
     d = Detector(
         y.shape[2],
         y.shape[1],
@@ -281,6 +279,48 @@ def working_scale(grid, detector, *, keep_grid=False, magnification=1.0, config=
     return base, dbin, bins
 
 
+@dataclass(frozen=True)
+class FitLevel:
+    """One actual detector binning, padded grid and solve budget."""
+
+    binning: int
+    grid: Grid
+    budget: Budget
+
+
+@dataclass(frozen=True)
+class FitSchedule:
+    """Grid returned to the caller and the ordered working grids of the joint fit."""
+
+    base: Grid
+    detector_binning: int
+    margin: int
+    levels: tuple[FitLevel, ...]
+
+
+def fit_schedule(grid, detector, poses, frames, *, keep_grid, config):
+    """Plan from declared poses, independent of the current fitted corrections."""
+    frames = None if frames is None else np.broadcast_to(frames, (len(poses), 4, 3))
+    base, dbin, bins = working_scale(
+        grid,
+        detector,
+        keep_grid=keep_grid,
+        magnification=_magnification(poses, frames),
+        config=config,
+    )
+    padded, margin = _padded(base, bins, config.margin)
+    iterations = (config.coarse_iterations,) * (len(bins) - 1) + (config.iterations,)
+    levels = tuple(
+        FitLevel(
+            dbin * b,
+            _resized(padded, tuple(math.ceil(n / b) for n in (padded.nx, padded.ny, padded.nz))),
+            Budget.of(config, outer),
+        )
+        for b, outer in zip(bins, iterations, strict=True)
+    )
+    return FitSchedule(base, dbin, margin, levels)
+
+
 def _physical_frame(poses, grid, detector, native, lever, frames):
     """The pose scales, and the per-view lab frame for cone-beam scans."""
     if frames is None:
@@ -304,6 +344,7 @@ def fit_poses(
     detector_roll=0.0,
     view_positions=None,
     declared_poses=None,
+    schedule=None,
     placement=None,
     config=None,
 ):
@@ -351,12 +392,18 @@ def fit_poses(
         lever = 0.5 * max(grid.nx * grid.vx, grid.ny * grid.vy) / native[0]
         parameters = Parameters(len(y0), fit, cone=frames is not None, lever=lever)
         pose_scales, frames = _physical_frame(poses, grid, detector, native, lever, frames)
-        mag = _magnification(poses if declared_poses is None else declared_poses, frames)
-        base, dbin, bins = working_scale(
-            grid, detector, keep_grid=keep_grid, magnification=mag, config=config
-        )
-        padded, margin = _padded(base, bins, config.margin)
-        multiple = dbin * math.lcm(*bins)
+        if schedule is None:
+            schedule = fit_schedule(
+                grid,
+                detector,
+                poses if declared_poses is None else declared_poses,
+                frames,
+                keep_grid=keep_grid,
+                config=config,
+            )
+        base, dbin, margin = schedule.base, schedule.detector_binning, schedule.margin
+        bins = [level.binning for level in schedule.levels]
+        multiple = math.lcm(*bins)
         drop_v, drop_u = detector.nv % multiple, detector.nu % multiple
         measured = y0[:, : detector.nv - drop_v, : detector.nu - drop_u]
         center = (
@@ -371,20 +418,20 @@ def fit_poses(
         order = ViewOrder(len(y0), view_positions)
         prior = None
         levels = []
-        binned, scale, noise = _read(measured, [dbin * b for b in bins])
-        iterations = (config.coarse_iterations,) * (len(bins) - 1) + (config.iterations,)
-        for b, outer in zip(bins, iterations, strict=True):
-            with progress.task("level", f"Binning {dbin * b}", outer, "steps"):
+        binned, scale, noise = _read(measured, bins)
+        for level in schedule.levels:
+            with progress.task(
+                "level", f"Binning {level.binning}", level.budget.iterations, "steps"
+            ):
                 y, precision, g, ops, cal = _level(
                     binned.pop(0),  # the level's arrays are its own from here
                     scale,
                     noise,
                     poses,
-                    padded,
+                    level.grid,
                     detector,
                     center,
-                    dbin * b,
-                    b,
+                    level.binning,
                     lever=lever,
                     native=native,
                     frames=frames,
@@ -417,7 +464,7 @@ def fit_poses(
                     cal["tv_weight"],
                     cal["eps"],
                     ops=ops,
-                    budget=Budget.of(config, outer),
+                    budget=level.budget,
                     x0=x,
                     p0=p,
                     pose_sigma=cal["sigma"],
@@ -427,7 +474,7 @@ def fit_poses(
                 )
                 levels.append(
                     {
-                        "binning": dbin * b,
+                        "binning": level.binning,
                         "grid": asdict(g),
                         **record,
                     }
