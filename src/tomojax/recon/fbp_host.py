@@ -23,7 +23,7 @@ from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_detector, validate_projection_stack
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
-from ._host_arrays import ProjectionRows, finite_projections, validate_host_arrays
+from ._host_arrays import ProjectionRows, validate_host_arrays
 from .fbp import (
     FBPConfig,
     _fbp_from_host,  # pyright: ignore[reportPrivateUsage]
@@ -31,6 +31,7 @@ from .fbp import (
     _filter_detector,  # pyright: ignore[reportPrivateUsage]
     _parallel_filter_detector,  # pyright: ignore[reportPrivateUsage]
     _view_weights,  # pyright: ignore[reportPrivateUsage]
+    finite_projections,
     supports_parallel_fbp_z_integer,
     validate_fbp_geometry,
 )

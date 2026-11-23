@@ -26,7 +26,6 @@ from tomojax.core.validation import (
 )
 
 from ._fbp_weights import fbp_weights
-from ._host_arrays import finite_projections
 from .filters import fft_filter_rows, rfft_filter_array
 
 if TYPE_CHECKING:
@@ -397,6 +396,12 @@ def _fbp_accumulate_batch(
     return _backproject_into(
         accum, poses, filtered, grid=grid, detector=detector, backend=backend, z_mode=z_mode
     )
+
+
+@jax.jit
+def finite_projections(projections: jax.Array) -> jax.Array:
+    """Device validity flag for the measured FBP rows."""
+    return jnp.all(jnp.isfinite(projections))
 
 
 def _fbp_from_resident(
