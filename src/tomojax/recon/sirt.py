@@ -547,7 +547,7 @@ class SIRTCall:
         cone, rows = isinstance(model, ConeModel), isinstance(projections, RowReader)
         if (out is not None or rows) and not cone:
             raise ValueError("sirt: out and row readers need a cone-beam geometry")
-        hosted = out is not None or rows or host_volumes(grid, 5 + 2 * cfg.acceleration, backend)
+        hosted = out is not None or rows or host_volumes(grid, cfg, backend)
         if axial:
             result = self._slabs(geometry, grid, detector, projections, init_x, cfg)
             if result is not None:
@@ -694,7 +694,6 @@ class SIRTCall:
             projections,
             initial=init_x,
             support=cfg.support,
-            volume_buffers=3 + min(cfg.subsets, 16) + 2 * cfg.acceleration,
-            projection_buffers=2 + 2 / cfg.subsets,
+            config=cfg,
             solve=solve_slab,
         )

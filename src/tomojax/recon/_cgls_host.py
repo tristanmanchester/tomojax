@@ -46,6 +46,11 @@ _EPS = float(np.finfo(np.float32).eps)
 _TINY = np.finfo(np.float32).tiny
 
 
+def host_sweep_supported(cfg: CGLSConfig, *, shared: bool, cone: bool, parallel: bool) -> bool:
+    """Volume sweeps support unshared cone rays and canonical linear CUDA Joseph rays."""
+    return not shared and (cone or (parallel and cfg.interpolation == "linear"))
+
+
 def solve_on_host(
     geometry: Geometry,
     grid: Grid,
@@ -67,17 +72,16 @@ def solve_on_host(
     several devices. CUDA linear Joseph supports parallel and tilted scans.
     """
     cone = isinstance(model, ConeModel)
-    parallel = (
-        model == "joseph"
-        and backend == "cuda"
-        and cfg.interpolation == "linear"
-        and det_grid is None
+    supported = host_sweep_supported(
+        cfg,
+        shared=shared,
+        cone=cone,
+        parallel=model == "joseph" and backend == "cuda" and det_grid is None,
     )
-    supported = not shared and (cone or parallel)
     rows = isinstance(projections, RowReader)
     if (out is not None or rows) and not supported:
         raise ValueError("cgls: out and row readers need a supported Joseph geometry on one device")
-    if not supported or (out is None and not rows and not host_volumes(grid, 6, backend)):
+    if not supported or (out is None and not rows and not host_volumes(grid, cfg, backend)):
         return None
     start = None if initial is None else np.asanyarray(initial)
     return solve(

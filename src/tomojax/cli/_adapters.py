@@ -208,7 +208,7 @@ class Admission:
             work = plans[0]
         else:
             work = resolve_reconstruction(scan, **options)
-            compute = partial(reconstruct_resolved, work, warm_start=bool(operation.warm_start))
+            compute = partial(reconstruct_resolved, work)
         snapshots = sample(work)
         for snapshot in snapshots:
             self.context.snapshot(snapshot)

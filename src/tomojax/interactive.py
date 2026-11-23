@@ -46,9 +46,7 @@ __all__ = [
 type Axis = Literal["z", "y", "x"]
 
 
-def resolved_slice(
-    plan: ResolvedReconstruction, axis: Axis, index: int, *, warm_start: bool
-) -> Any:
+def resolved_slice(plan: ResolvedReconstruction, axis: Axis, index: int) -> Any:
     """Select the plane after resolving options and any volume support on the full grid."""
     dim = plane_dimension(plan.scan.grid, axis, index)
     if axis == "z" and plan.method == "fbp" and isinstance(plan.config, FBPConfig):
@@ -63,7 +61,7 @@ def resolved_slice(
                 mask = cylinder_support(replace(scan.grid, nz=1), plan.cylinder)[0]
                 value = np.where(mask, value, 0)
             return value
-    result = reconstruct_resolved(plan, warm_start=warm_start)
+    result = reconstruct_resolved(plan)
     key: list[slice | int] = [slice(None)] * 3
     key[dim] = index
     return result.volume[tuple(key)].copy()
@@ -93,7 +91,7 @@ def reconstruct_slice(
         Float32 attenuation in the remaining public array axes.
     """
     plan = resolve_reconstruction(scan, method, plane=(axis, index), **options)
-    return resolved_slice(plan, axis, index, warm_start=bool(options.get("warm_start")))
+    return resolved_slice(plan, axis, index)
 
 
 def _shift_center(geometry: ScanGeometry, shift: float) -> ScanGeometry:
@@ -149,7 +147,7 @@ def centre_sweep(
         Float32 attenuation with a leading centre coordinate, in the supplied order.
     """
     plans = resolve_sweep(scan, axis, index, centres, method=method, **options)
-    return resolved_sweep(plans, axis, index, warm_start=bool(options.get("warm_start")))
+    return resolved_sweep(plans, axis, index)
 
 
 def resolve_sweep(
@@ -188,8 +186,6 @@ def resolved_sweep(
     plans: Sequence[ResolvedReconstruction],
     axis: Axis,
     index: int,
-    *,
-    warm_start: bool,
 ) -> Any:
     """Execute the validated acquisitions in order, keeping only their requested planes."""
     import jax
@@ -198,7 +194,7 @@ def resolved_sweep(
     images = []
     for plan in plans:
         progress.check_cancelled()
-        images.append(resolved_slice(plan, axis, index, warm_start=warm_start))
+        images.append(resolved_slice(plan, axis, index))
     return jnp.stack(images) if isinstance(images[0], jax.Array) else np.stack(images)
 
 

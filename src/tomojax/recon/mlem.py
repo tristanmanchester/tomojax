@@ -457,7 +457,7 @@ def run_mlem(
     """Own workflow initialization inside the solver, never copying a private host start."""
     announce(array=projections)
     cfg = config
-    iterations, subsets, batch = cfg.iterations, cfg.subsets, cfg.views_per_batch
+    iterations, subsets = cfg.iterations, cfg.subsets
     validate_grid(grid, "mlem grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="mlem")
     validate_detector_grid(det_grid, detector, context="mlem")
@@ -469,15 +469,16 @@ def run_mlem(
         det_grid=det_grid, context="mlem",
     )  # fmt: skip
     storage, rows = {}, isinstance(projections, RowReader)
-    if isinstance(model, ConeModel) and (out is not None or rows or host_volumes(grid, 5, backend)):
+    if isinstance(model, ConeModel) and (
+        out is not None or rows or host_volumes(grid, cfg, backend)
+    ):
         from ._mlem_host import solve as solve_host
 
         volume, storage = solve_host(
             geometry, grid, detector, projections, model=model, backend=backend,
             poses=stack_view_poses(geometry, n),
             order=np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable"),
-            subsets=subsets, iterations=iterations, batch=batch, initial=init_x,
-            support=cfg.support, warm_start=warm_start, out=out,
+            cfg=cfg, initial=init_x, warm_start=warm_start, out=out,
         )  # fmt: skip
     elif out is not None or rows:
         raise ValueError("mlem: out and row readers need a cone-beam geometry")

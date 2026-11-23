@@ -625,17 +625,9 @@ def _iterative_result(
                     warm_start=warm_start, solver=solver,
                 )  # fmt: skip
 
-            # EM stores axial sensitivities as single planes; the cache policy
-            # separately reserves capacity for them after inputs are resident.
-            buffers = (
-                4
-                if method == "mlem"
-                else 3 + min(algebraic.subsets, 16) + 2 * getattr(algebraic, "acceleration", False)
-            )
             result = axial_slabs(
                 geometry, grid, detector, projections, initial=None, support=support,
-                volume_buffers=buffers,
-                projection_buffers=2 if method == "mlem" else 2 + 2 / algebraic.subsets,
+                config=algebraic,
                 solve=solve,
             )  # fmt: skip
             if result is not None:

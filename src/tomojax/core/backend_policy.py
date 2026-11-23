@@ -29,6 +29,15 @@ def cuda_backend(platform: str | None = None) -> bool:
     return platform == "gpu" and "cuda" in get_backend(platform).platform_version.lower()
 
 
+def cupy_available_bytes() -> int:
+    """Driver room plus freed blocks reusable by the current CuPy allocator."""
+    import cupy as cp
+
+    free, _ = cp.cuda.runtime.memGetInfo()
+    pool = cp.get_default_memory_pool()
+    return int(free + (pool.free_bytes() if cp.cuda.get_allocator() == pool.malloc else 0))
+
+
 def normalize_projector_backend(value: ProjectorBackendInput) -> ProjectorBackend:
     """Normalize a public projector backend value."""
     backend = option_name(value)

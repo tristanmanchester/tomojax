@@ -30,16 +30,15 @@ def slice_product(
     """Stage one spatial registration, optionally with signed detector coordinates."""
     plan = plans[0]
     axis, index = command.axis, command.index
-    warm_start = bool(command.warm_start)
     write = partial(stage_array, context)
     if isinstance(command, op.CentreSweep):
-        pixels = interactive.resolved_sweep(plans, axis, index, warm_start=warm_start)
+        pixels = interactive.resolved_sweep(plans, axis, index)
         leading = (
             Axis("centre", "detector", "pixel", Coordinates(write(np.asarray(command.centres)))),
         )
         product = p.Sweep
     else:
-        pixels = interactive.resolved_slice(plan, axis, index, warm_start=warm_start)
+        pixels = interactive.resolved_slice(plan, axis, index)
         leading = ()
         product = p.PlaneResult
     unit = unit_of(plan.scan)

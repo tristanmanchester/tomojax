@@ -115,14 +115,20 @@ def test_alignment_plan_budgets_and_padded_levels_match_run(tmp_path, capsys):
 
 
 @pytest.mark.parametrize("method", ["fbp", "fourier", "cgls", "sirt", "mlem", "spdhg", "fista"])
-def test_default_plan_for_each_method(method):
+def test_default_plan_for_each_method(method, monkeypatch):
     source = scan(np.linspace(0, 180, 211, endpoint=False))
     snapshot = (Snapshot(0, "cpu:0", "host", None, None, 1),)
     plan = plan_product(source, resolve_reconstruction(source, method), snapshot=snapshot)
     assert plan.method == method and plan.grid.nz == 5
     if method == "fista":
-        # The stream uploads at most 64 complete detector images in its default batch.
-        assert plan.placement.device_bytes == 4 * (64 * 6 * 12 * 4)
+        # CPU FISTA keeps its state resident, even under a constrained memory sample.
+        assert plan.placement.strategy == "resident"
+        assert plan.placement.device_bytes == 8 * 4 * 7 * 8 * 5 + 2 * 4 * 211 * 6 * 12
+        monkeypatch.setattr("tomojax.recon._backend.cuda_backend", lambda: True)
+        device = (Snapshot(0, "gpu:0", "jax", None, None, 1),)
+        plan = plan_product(source, resolve_reconstruction(source, method), snapshot=device)
+        assert plan.placement.strategy == "slabbed"
+        assert plan.placement.device_bytes == 4 * 4 * 64 * 6 * 12
 
 
 def test_explicit_fourier_backend_needs_cupy_at_preflight(monkeypatch):
@@ -223,3 +229,94 @@ def test_fista_preflight_respects_host_solver_capabilities(monkeypatch, field):
         with pytest.raises(tj.InvalidParameter) as error:
             action(source, "fista", config=cfg)
         assert error.value.path == f"config.{field}"
+
+
+@pytest.mark.parametrize(
+    ("method", "rooms"),
+    [
+        ("sirt", [14000, 17279, 17280, 17281]),
+        ("mlem", [8000, 11519, 11520, 11521]),
+        ("fbp", [1799, 1800, 1801]),
+        ("fdk", [1799, 1800, 1801]),
+        ("fourier", [8000, 14000, 100000]),
+        ("cgls", [5000, 5082, 5083, 14000]),
+        ("fista", [8000, 13552, 13553, 14000]),
+        ("spdhg", [1800, 8000, 14000]),
+    ],
+)
+def test_plan_matches_execution_across_storage_threshold(monkeypatch, method, rooms):
+    import jax
+
+    grid = tj.Grid(6, 6, 5, 1, 1, 1)
+    detector = tj.Detector(8, 5, 1, 1)
+    angles = np.arange(9) * (40.0 if method == "fdk" else 20.0)
+    geo = (
+        tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(50, 80))
+        if method == "fdk"
+        else tj.ParallelGeometry(grid, detector, angles)
+    )
+    scan = tj.Scan(np.ones((9, 5, 8), np.float32), geo)
+    name = "fbp" if method == "fdk" else method
+    settings = {} if name in ("fbp", "fourier") else {"iterations": 1}
+    if method in ("fista", "spdhg"):
+        settings["tv_weight"] = 0.0
+    if method == "cgls":
+        settings = {"config": tj.recon.CGLSConfig(iterations=1, stream=True)}
+    device = jax.devices()[0]
+    for room in rooms:
+        monkeypatch.setattr(
+            "tomojax.backends.device_free_memory_bytes", lambda available=room, **kw: available
+        )
+        snapshot = (
+            Snapshot(
+                0,
+                f"{device.platform}:{device.id}",
+                "host" if device.platform == "cpu" else "jax",
+                None,
+                None,
+                room,
+            ),
+        )
+        plan = plan_product(scan, resolve_reconstruction(scan, name, **settings), snapshot=snapshot)
+        actual = tj.reconstruct(scan, name, **settings).info["placement"]["strategy"]
+        if method in ("sirt", "mlem"):
+            assert actual == (
+                "slabbed" if room < (17280 if method == "sirt" else 11520) else "resident"
+            )
+        assert plan.placement.strategy == actual, (method, room, actual)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    ("method", "rooms"),
+    [
+        ("cgls", [10_079, 10_080]),
+        ("sirt", [15_000, 40_000]),
+        ("mlem", [15_000, 40_000]),
+    ],
+)
+def test_plan_matches_execution_across_cupy_pool_threshold(monkeypatch, method, rooms):
+    grid = tj.Grid(6, 6, 5, 1, 1, 1)
+    detector = tj.Detector(8, 5, 1, 1)
+    angles = np.arange(9) * 40.0
+    if method == "cgls":
+        geometry = tj.ParallelGeometry(grid, detector, angles)
+        settings = {"config": tj.recon.CGLSConfig(iterations=1, views_per_batch=1)}
+    else:
+        geometry = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(50, 80))
+        settings = {"iterations": 1}
+    source = tj.Scan(np.ones((9, 5, 8), np.float32), geometry)
+    # The JAX allocator cannot hold the state. CuPy may still hold the output.
+    monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda **kw: 1)
+    for available, expected in zip(rooms, ["slabbed", "resident"], strict=True):
+        monkeypatch.setattr(
+            "tomojax.core.backend_policy.cupy_available_bytes", lambda room=available: room
+        )
+        work = resolve_reconstruction(source, method, **settings)
+        plan = plan_product(source, work)
+        assert {s.scope: s.available for s in plan.placement.snapshot} == {
+            "jax": 1,
+            "cupy": available,
+        }
+        actual = tj.reconstruct(source, method, **settings).info["placement"]["strategy"]
+        assert plan.placement.strategy == actual == expected

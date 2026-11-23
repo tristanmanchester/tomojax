@@ -29,6 +29,7 @@ class ResolvedReconstruction:
     cylinder: Cylinder | None
     reasons: tuple[str, ...]
     info: dict[str, Any]
+    warm_start: bool
 
 
 def plane_dimension(grid: Grid, axis: str, index: int) -> int:
@@ -126,7 +127,9 @@ def resolve_reconstruction(
         projections=scan.projections,
         axial_index=axial_index,
     )
-    return ResolvedReconstruction(scan, method, cfg, cylinder, tuple(reasons), info)
+    return ResolvedReconstruction(
+        scan, method, cfg, cylinder, tuple(reasons), info, bool(warm_start)
+    )
 
 
 def _methods_taking(options: dict[str, Any]) -> list[str]:

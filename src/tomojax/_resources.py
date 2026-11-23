@@ -57,6 +57,26 @@ def sample(
                 device_free_memory_bytes(device=device),
             )
         )
+        if (
+            isinstance(plan, ResolvedReconstruction)
+            and device.platform == "gpu"
+            and plan.method in {"cgls", "sirt", "mlem"}
+            and plan.config.backend != "jax"
+        ):
+            from importlib.util import find_spec
+
+            from tomojax.core.backend_policy import cuda_backend, cupy_available_bytes
+
+            if cuda_backend(device.platform) and find_spec("cupy") is not None:
+                import cupy
+
+                with cupy.cuda.Device(device.local_hardware_id):
+                    if cupy.cuda.is_available():
+                        result.append(
+                            Snapshot(
+                                clock, device_id(device), "cupy", None, None, cupy_available_bytes()
+                            )
+                        )
     return tuple(result)
 
 
@@ -103,5 +123,10 @@ def estimate(
     from tomojax.recon.planning import inversion_storage
 
     return inversion_storage(
-        plan.method, plan.config, plan.scan.geometry, scan.projections, snapshot
+        plan.method,
+        plan.config,
+        plan.scan.geometry,
+        scan.projections,
+        snapshot,
+        warm_start=plan.warm_start,
     )

@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 import jax
 import numpy as np
 
+from tomojax.core import backend_policy
 from tomojax.core.cone import ConeModel
 from tomojax.core.host_volume import (
     check_rows,
@@ -47,6 +48,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from tomojax.geometry import Detector, Geometry, Grid
+
+    from .cgls import CGLSConfig
+    from .mlem import MLEMConfig
+    from .sirt import SIRTConfig
 
 
 ROW_BAND = 64  # rows are finished in bands of [k ROW_BAND, (k + 1) ROW_BAND)
@@ -556,32 +561,51 @@ class _Ring:
         return accumulate
 
 
-def host_volumes(grid: Grid, volumes: int, backend: str) -> bool:
-    """Whether ``volumes`` FP32 copies of ``grid`` exceed 85% of free CUDA device memory."""
-    if backend != "cuda":
-        return False
+def host_volumes(grid: Grid, cfg: CGLSConfig | SIRTConfig | MLEMConfig, backend: str) -> bool:
+    """Whether the resident solver's volume state requires host sweeps on this device."""
     from tomojax.backends import device_free_memory_bytes
 
-    free = device_free_memory_bytes()
+    return backend == "cuda" and needs_volume_sweeps(grid, cfg, device_free_memory_bytes())
+
+
+def needs_volume_sweeps(
+    grid: Grid, cfg: CGLSConfig | SIRTConfig | MLEMConfig, free: int | None
+) -> bool:
+    """Apply the CUDA solver's volume budget to a fixed free-memory sample."""
+    from .cgls import CGLSConfig
+    from .sirt import SIRTConfig
+
+    volumes = 6 if isinstance(cfg, CGLSConfig) else 5
+    if isinstance(cfg, SIRTConfig):
+        volumes += 2 * cfg.acceleration
     return free is not None and volumes * 4 * grid.nx * grid.ny * grid.nz > 0.85 * free
 
 
-def _free_bytes() -> int:
-    import cupy as cp
+def algebraic_sweep(
+    cfg: SIRTConfig | MLEMConfig, count: int, *, host_output: bool, warm_start: bool = False
+) -> dict[str, int]:
+    """Subset views, row channels and resident iterates used by the SIRT and EM cone sweeps."""
+    from .sirt import SIRTConfig
 
-    return cp.cuda.runtime.memGetInfo()[0] + cp.get_default_memory_pool().free_bytes()
+    sirt = isinstance(cfg, SIRTConfig)
+    return {
+        "views": -(-count // cfg.subsets),
+        "batch": min(count, cfg.views_per_batch),
+        "channels": 1 + (sirt and cfg.support is not None),
+        "resident": 0
+        if host_output or (warm_start and not sirt)
+        else 1 + (sirt and cfg.acceleration),
+    }
 
 
-def _device_need(
-    plan: SlabPlan, views: int, channels: int, batch: int, engine: Engine, *, kept: int
-) -> int:
+def _device_need(plan: SlabPlan, views: int, channels: int, batch: int, *, kept: int) -> int:
     """Device bytes of a sweep.
 
     Its ring, the slab volumes alive at once (``kept`` projected slabs per
     channel and one being uploaded, or two transposes and the slab they
     update) and view-batch scratch.
     """
-    plane, row = 4 * engine.grid.nx * engine.grid.ny, 4 * engine.detector.nu
+    plane, row = 4 * plan.grid.nx * plan.grid.ny, 4 * plan.detector.nu
     height = max(stop - first for first, stop in plan.windows)
     return (
         channels * views * plan.ring * row
@@ -606,11 +630,26 @@ def slab_depth(
     """
     if isinstance(engine, JaxEngine):
         return max(1, -(-engine.grid.nz // 4))
-    free = _free_bytes() - resident * 4 * engine.grid.nx * engine.grid.ny * engine.grid.nz
+    return cuda_slab_depth(
+        plans, engine.grid, views, channels, batch, resident, backend_policy.cupy_available_bytes()
+    )
+
+
+def cuda_slab_depth(
+    plans: Callable[[int], SlabPlan],
+    grid: Grid,
+    views: int,
+    channels: int,
+    batch: int,
+    resident: int,
+    free: int,
+) -> int:
+    """Choose the deepest sweep fitting beside the requested resident volume buffers."""
+    free -= resident * 4 * grid.nx * grid.ny * grid.nz
     for depth in (128, 64, 32, 16, 8, 4, 2, 1):
-        if depth >= 2 * engine.grid.nz:
+        if depth >= 2 * grid.nz:
             continue
-        if _device_need(plans(depth), views, channels, batch, engine, kept=1) <= 0.8 * free:
+        if _device_need(plans(depth), views, channels, batch, kept=1) <= 0.8 * free:
             return depth
     raise MemoryError(
         "the detector rows reached by one z plane do not fit on the device; "
@@ -744,6 +783,43 @@ class ConeProblem:
         return self.engine.upload(rows)
 
 
+def cone_windows(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    model: ConeModel,
+    count: int,
+    *,
+    common_height: bool,
+    poses: jax.Array | None = None,
+) -> Callable[[int], SlabPlan]:
+    """Prepare the per-depth window plans from the calibrated rays, without allocating volumes."""
+    from tomojax.core.geometry.views import host_view_poses, stack_view_poses
+
+    host = host_view_poses(geometry, count, dtype=np.float64)
+    if host is None:
+        host = np.asarray(stack_view_poses(geometry, count) if poses is None else poses, np.float64)
+    frames = model.frames(count)
+
+    @cache
+    def plans(depth: int) -> SlabPlan:
+        return plan_slabs(frames, host, grid, detector, depth, common_height=common_height)
+
+    return plans
+
+
+def resident_sweep_depth(grid: Grid, resident: int, fit: Callable[[], int]) -> int | None:
+    """Keep the iterates resident if at least a 64-plane sweep (or the whole grid) fits."""
+    if resident:
+        try:
+            depth = fit()
+        except MemoryError:
+            return None
+        if depth >= min(64, grid.nz):
+            return depth
+    return None
+
+
 def cone_problem(
     geometry: Geometry,
     grid: Grid,
@@ -763,35 +839,34 @@ def cone_problem(
     The solver's ``resident`` volumes stay on the device when they fit beside
     the sweep (see :attr:`ConeProblem.on_device`).
     """
-    from tomojax.core.geometry.views import host_view_poses
-
     count = int(poses.shape[0])
     coefficients = np.asarray(model.coefficients(poses, grid), np.float32)
-    host_poses = host_view_poses(geometry, count, dtype=np.float64)
-    host_poses = np.asarray(poses if host_poses is None else host_poses, np.float64)
     engine = engine_for(grid, detector, backend)
     batch = min(batch, count)
-    frames = model.frames(count)
-
-    @cache
-    def plans(depth: int) -> SlabPlan:
-        return plan_slabs(
-            frames, host_poses, grid, detector, depth, common_height=isinstance(engine, JaxEngine)
-        )
-
+    plans = cone_windows(
+        geometry,
+        grid,
+        detector,
+        model,
+        count,
+        common_height=isinstance(engine, JaxEngine),
+        poses=poses,
+    )
     sweeps = count if views is None else views
-    on_device, keep = False, isinstance(engine, JaxEngine)
-    if resident and isinstance(engine, CudaEngine):
-        try:
-            depth = slab_depth(plans, sweeps, channels, batch, engine, resident)
-            on_device = depth >= min(64, grid.nz)  # thin slabs would cost more than transfers
-        except MemoryError:
-            pass
-    if not on_device:
+    keep = isinstance(engine, JaxEngine)
+    depth = (
+        resident_sweep_depth(
+            grid, resident, lambda: slab_depth(plans, sweeps, channels, batch, engine, resident)
+        )
+        if isinstance(engine, CudaEngine)
+        else None
+    )
+    on_device = depth is not None
+    if depth is None:
         depth = slab_depth(plans, sweeps, channels, batch, engine)
         if isinstance(engine, CudaEngine):
             plan = plans(depth)
-            need = _device_need(plan, sweeps, channels, batch, engine, kept=plan.lag + 1)
-            keep = need <= 0.8 * _free_bytes()
+            need = _device_need(plan, sweeps, channels, batch, kept=plan.lag + 1)
+            keep = need <= 0.8 * backend_policy.cupy_available_bytes()
     sweep = Sweep(plans(depth), engine, coefficients, batch)
     return ConeProblem(sweep, data, on_device, keep)

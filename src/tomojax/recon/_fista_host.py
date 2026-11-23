@@ -294,17 +294,15 @@ def needs_host_state(
     projections: np.ndarray | jax.Array,
     cfg: FISTAConfig,
     batch: int,
+    free: int | None,
     *,
     zero_start: bool,
     stream: bool,
     joseph: bool,
 ) -> bool:
     """Check the resident FISTA workspace against the current device memory sample."""
-    from tomojax.backends import device_free_memory_bytes
-
     from ._fista_owned import store_residuals
 
-    free = device_free_memory_bytes()
     if free is None:
         return False
     owned = store_residuals(
@@ -350,32 +348,52 @@ def check_fista_storage(
     warm_start: bool,
 ) -> None:
     """Check resident-only objectives against the same placement decision as the CUDA solver."""
+    from tomojax.backends import device_free_memory_bytes
+
+    error = host_objective_error(cfg)
+    if error is not None and fista_host_required(
+        geometry, grid, projections, cfg, device_free_memory_bytes(), warm_start=warm_start
+    ):
+        raise error
+
+
+def fista_host_required(
+    geometry: ScanGeometry,
+    grid: Grid,
+    projections: np.ndarray | jax.Array,
+    cfg: FISTAConfig,
+    free: int | None,
+    *,
+    warm_start: bool,
+) -> bool:
+    """Whether this acquisition needs CUDA host-volume sweeps at the sampled capacity."""
     from tomojax.core.geometry.cone import is_cone_beam
 
     from ._backend import reconstruction_backend
     from .fista_tv import fista_view_batch, stream_fista_views
 
-    if cfg.devices is not None or (error := host_objective_error(cfg)) is None:
-        return
+    if cfg.devices is not None:
+        return False
     cone = is_cone_beam(geometry)
-    if reconstruction_backend(
+    return reconstruction_backend(
         cfg.backend, cone=cone, context="fista_tv"
     ) == "cuda" and needs_host_state(
         grid,
         projections,
         cfg,
         fista_view_batch(cfg, projections.shape[0]),
+        free,
         zero_start=not warm_start,
-        stream=stream_fista_views(grid, projections, cfg),
+        stream=stream_fista_views(grid, projections, cfg, lambda: free, gpu=True),
         joseph=not cone,
-    ):
-        raise error
+    )
 
 
 def solve_on_host(
     geometry, grid, detector, projections, runtime, *, out=None
 ) -> tuple[np.ndarray, dict[str, Any], Any] | None:
     """Select host state only when requested, or when the resident state cannot fit."""
+    from tomojax.backends import device_free_memory_bytes
     from tomojax.core.cone import ConeModel
 
     from ._cone_slabs import cone_problem, host_projections
@@ -395,6 +413,7 @@ def solve_on_host(
         projections,
         cfg,
         batch,
+        device_free_memory_bytes(),
         zero_start=runtime.x0 is None,
         stream=runtime.stream,
         joseph=model == "joseph",

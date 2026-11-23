@@ -16,7 +16,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.host_volume import fill, release_planes
 
-from ._cone_slabs import cone_problem, host_projections
+from ._cone_slabs import algebraic_sweep, cone_problem, host_projections
 from ._host_arrays import validate_host_arrays
 
 if TYPE_CHECKING:
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
 
     from ._cone_slabs import Batch
+    from .mlem import MLEMConfig
 
 
 def solve(
@@ -38,11 +39,8 @@ def solve(
     backend: str,
     poses: jax.Array,
     order: np.ndarray,
-    subsets: int,
-    iterations: int,
-    batch: int,
+    cfg: MLEMConfig,
     initial: jax.Array | np.ndarray | None,
-    support: jax.Array | np.ndarray | None,
     warm_start: bool = False,
     out: np.ndarray | None = None,
 ) -> tuple[Any, dict[str, object]]:
@@ -50,6 +48,7 @@ def solve(
 
     Voxels no subset sees are zero; zero initial voxels stay zero.
     """
+    subsets, iterations, support = cfg.subsets, cfg.iterations, cfg.support
     data = host_projections(projections, "mlem", nonnegative=True)
     if not np.isfinite(np.asarray(poses)).all():
         raise ValueError("mlem: poses must be finite")
@@ -63,8 +62,7 @@ def solve(
         fbp_start(geometry, grid, detector, data, config=FBPConfig(), det_grid=None, out=x)
     problem = cone_problem(
         geometry, grid, detector, data, model=model, backend=backend, poses=poses,
-        batch=batch, channels=1, views=-(-data.shape[0] // subsets),
-        resident=0 if out is not None or warm_start else 1,
+        **algebraic_sweep(cfg, data.shape[0], host_output=out is not None, warm_start=warm_start),
     )  # fmt: skip
     if x is None:
         x = problem.iterate(initial, out, "mlem")

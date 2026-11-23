@@ -258,8 +258,7 @@ def test_axial_slabs_release_each_result_before_solving_the_next(monkeypatch):
         np.zeros((1, 3, 3)),
         initial=None,
         support=None,
-        volume_buffers=4,
-        projection_buffers=2,
+        config=SIRTConfig(),
         solve=solve,
     )
     assert result is not None and len(previous) == 3 and previous[-1]() is None

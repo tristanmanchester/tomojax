@@ -11,7 +11,7 @@ import numpy as np
 from tomojax import progress
 from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax._typed_arrays import Device
-from tomojax.backends.host_stream import host_source, should_stream
+from tomojax.backends.host_stream import host_source, stream_view_bytes
 from tomojax.core.devices import ViewSplit, announce, as_devices, view_split
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
@@ -326,7 +326,11 @@ def _prepare_fista_runtime(
     projector = _batched_projector(cfg, n_views, det_grid, geometry, detector)
     split = view_split(cfg.devices, n_views)
     announce(None if split is None else split.mesh.devices.flat, array=projections)
-    stream = stream_fista_views(grid, projections, cfg)
+    from tomojax.backends import device_free_memory_bytes
+
+    stream = stream_fista_views(
+        grid, projections, cfg, device_free_memory_bytes, gpu=jax.default_backend() == "gpu"
+    )
 
     metric = (
         resolve_tv_metric(
@@ -362,7 +366,14 @@ def _prepare_fista_runtime(
     )
 
 
-def stream_fista_views(grid: Grid, projections: np.ndarray | jax.Array, cfg: FISTAConfig) -> bool:
+def stream_fista_views(
+    grid: Grid,
+    projections: np.ndarray | jax.Array,
+    cfg: FISTAConfig,
+    available: Callable[[], int | None],
+    *,
+    gpu: bool,
+) -> bool:
     """Reserve room for the iterate and TV workspace before placing a host measurement stack."""
     return (
         cfg.devices is None
@@ -370,7 +381,10 @@ def stream_fista_views(grid: Grid, projections: np.ndarray | jax.Array, cfg: FIS
         and (
             cfg.stream
             if cfg.stream is not None
-            else should_stream(projections, reserve_bytes=32 * grid.nx * grid.ny * grid.nz)
+            else gpu
+            and stream_view_bytes(
+                4 * projections.size, available(), reserve_bytes=32 * grid.nx * grid.ny * grid.nz
+            )
         )
     )
 

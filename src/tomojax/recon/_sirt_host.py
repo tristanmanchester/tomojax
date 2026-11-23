@@ -16,7 +16,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.host_volume import fill, release_planes
 
-from ._cone_slabs import Batch, cone_problem, host_projections
+from ._cone_slabs import Batch, algebraic_sweep, cone_problem, host_projections
 
 if TYPE_CHECKING:
     import jax
@@ -45,9 +45,7 @@ def solve(
     projections = host_projections(projections, "sirt")
     problem = cone_problem(
         geometry, grid, detector, projections, model=model, backend=backend, poses=poses,
-        batch=cfg.views_per_batch, channels=1 if cfg.support is None else 2,
-        views=-(-projections.shape[0] // cfg.subsets),
-        resident=0 if out is not None else 1 + cfg.acceleration,
+        **algebraic_sweep(cfg, projections.shape[0], host_output=out is not None),
     )  # fmt: skip
     solver = _HostSIRT(problem, cfg, bounds, initial, out)
     with problem.using(out, solver.volume, solver.point):

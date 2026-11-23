@@ -92,7 +92,18 @@ def should_stream(
     from tomojax.backends import device_free_memory_bytes
 
     free = device_free_memory_bytes()
-    nbytes = int(np.prod(np.shape(cast("ArrayLike", projections)))) * 4 * copies
+    return stream_view_bytes(
+        int(np.prod(np.shape(cast("ArrayLike", projections)))) * 4 * copies,
+        free,
+        fraction=fraction,
+        reserve_bytes=reserve_bytes,
+    )
+
+
+def stream_view_bytes(
+    nbytes: int, free: int | None, *, fraction: float = 0.4, reserve_bytes: int = 0
+) -> bool:
+    """Whether the specified measurement buffers exceed their share of the available bytes."""
     return free is not None and nbytes > fraction * max(0, free - reserve_bytes)
 
 

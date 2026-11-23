@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import Detector, Geometry, Grid
 
+    from .mlem import MLEMConfig
+    from .sirt import SIRTConfig
+
     type Array = jax.Array | np.ndarray
     type Solve = Callable[
         [ParallelGeometry, Array, Array | None, Array | None],
@@ -36,6 +39,36 @@ def independent_planes(geometry: Geometry, grid: Grid, detector: Detector) -> bo
     )
 
 
+def axial_workspace(cfg: SIRTConfig | MLEMConfig, volume: int, projections: int) -> float:
+    """FP32 workspace in bytes for SIRT or EM over the given volume and projections."""
+    from .sirt import SIRTConfig
+
+    if isinstance(cfg, SIRTConfig):
+        return (3 + min(cfg.subsets, 16) + 2 * cfg.acceleration) * volume + (
+            2 + 2 / cfg.subsets
+        ) * projections
+    # EM keeps four volume buffers; axial sensitivities have the shape of one plane.
+    return 4 * volume + 2 * projections
+
+
+def axial_slab_depth(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    views: int,
+    cfg: SIRTConfig | MLEMConfig,
+    free: int | None,
+) -> int | None:
+    """Depth of independent z slabs under the half-memory policy, or None for a resident solve."""
+    if free is None or grid.nz < 2 or not independent_planes(geometry, grid, detector):
+        return None
+    per_row = axial_workspace(cfg, 4 * grid.nx * grid.ny, 4 * views * detector.nu)
+    if per_row * grid.nz <= 0.5 * free:
+        return None
+    fitting = max(1, int(0.5 * free / per_row))
+    return 2 ** (fitting.bit_length() - 1)
+
+
 def axial_slabs(
     geometry: Geometry,
     grid: Grid,
@@ -44,8 +77,7 @@ def axial_slabs(
     *,
     initial: Array | None,
     support: Array | None,
-    volume_buffers: int,
-    projection_buffers: float,
+    config: SIRTConfig | MLEMConfig,
     solve: Solve,
 ) -> tuple[np.ndarray, dict[str, object]] | None:
     """Solve in slabs if storage is large and Joseph planes are independent.
@@ -57,19 +89,14 @@ def axial_slabs(
     stay caller-owned. The result is a new host array; no volume is written to
     disk. Buffer counts estimate this solver's peak workspace conservatively.
     """
-    if not independent_planes(geometry, grid, detector) or grid.nz < 2:
-        return None
-    origin = grid_volume_origin(grid)
     from tomojax.backends import device_free_memory_bytes
 
-    free = device_free_memory_bytes()
-    per_row = 4 * (
-        grid.nx * grid.ny * volume_buffers + data.shape[0] * detector.nu * projection_buffers
+    depth = axial_slab_depth(
+        geometry, grid, detector, data.shape[0], config, device_free_memory_bytes()
     )
-    if free is None or per_row * grid.nz <= 0.5 * free:
+    if depth is None:
         return None
-    fitting = max(1, int(0.5 * free / per_row))
-    depth = 2 ** (fitting.bit_length() - 1)
+    origin = grid_volume_origin(grid)
     output = np.empty((grid.nz, grid.ny, grid.nx), np.float32)
     info = {}
     from ._chunks import partial_sweep

@@ -582,11 +582,11 @@ def reconstruct(
         seed=seed,
         devices=devices,
     )
-    return reconstruct_resolved(plan, warm_start=bool(warm_start), out=out)
+    return reconstruct_resolved(plan, out=out)
 
 
 def reconstruct_resolved(
-    plan: ResolvedReconstruction, *, warm_start: bool, out: np.ndarray | None = None
+    plan: ResolvedReconstruction, *, out: np.ndarray | None = None
 ) -> Reconstruction:
     """Execute the resolved method on its original selected support and grid."""
     from tomojax.recon.api import reconstruct_arrays
@@ -607,7 +607,7 @@ def reconstruct_resolved(
             scan.detector,
             scan.projections,
             config=plan.config,
-            warm_start=bool(warm_start),
+            warm_start=plan.warm_start,
             out=out,
         )
     slabbed = bool(info.get("host_slabs") or info.get("host_volume"))

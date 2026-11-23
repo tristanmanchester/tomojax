@@ -253,7 +253,13 @@ def cgls(
     check_cgls_geometry(geometry, cfg.interpolation)
     from ._cgls_cuda import available, solve
 
-    if out is None and available(geometry, projections, init_x, cfg, det_grid):
+    if out is None and available(
+        geometry,
+        projections,
+        cfg,
+        host_initial=init_x is None or isinstance(init_x, np.ndarray),
+        canonical=det_grid is None,
+    ):
         result = solve(geometry, grid, detector, projections, init_x, cfg)
         if result is not None:
             return result

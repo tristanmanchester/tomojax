@@ -10,6 +10,7 @@ import sys
 import numpy as np
 
 from tomojax import progress
+from tomojax.core import backend_policy
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import host_view_poses
@@ -29,17 +30,19 @@ from ._data_term import project_residual
 from .cgls import CGLSConfig, resident_bytes
 
 
-def available(geometry, projections, initial, cfg: CGLSConfig, det_grid) -> bool:
+def available(
+    geometry, projections, cfg: CGLSConfig, *, host_initial: bool, canonical: bool
+) -> bool:
     """Whether the native host path supports this solve and the selected device."""
     if (
         not isinstance(projections, np.ndarray)
-        or (initial is not None and not isinstance(initial, np.ndarray))
+        or not host_initial
         or cfg.backend == "jax"
         or cfg.interpolation != "linear"
         or cfg.gradient_damping
         or cfg.devices is not None
         or cfg.stream
-        or det_grid is not None
+        or not canonical
         or type(geometry) not in {ParallelGeometry, LaminographyGeometry}
         or os.environ.get("TOMOJAX_CUDA_KERNELS") == "0"
     ):
@@ -73,6 +76,11 @@ def _device(cp):
     return cp.cuda.Device(cp.cuda.runtime.getDevice())
 
 
+def native_fits(cfg: CGLSConfig, grid, shape, free: int | None) -> bool:
+    """Whether the host-input CUDA path would run the entire resident solve."""
+    return cfg.stream is False or (free is not None and resident_bytes(grid, shape) <= free)
+
+
 def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
     """Return None only when CUDA is unavailable or the resident data would not fit."""
     import cupy as cp
@@ -80,15 +88,13 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
     if not cp.cuda.is_available():
         return None
     with _device(cp):
-        if cfg.stream is None:
-            free, _total = cp.cuda.runtime.memGetInfo()
-            # Arrays another CuPy call freed stay in CuPy's pool, not in the
-            # driver's free count; this solve can reuse them.
-            pool = cp.get_default_memory_pool()
-            if cp.cuda.get_allocator() == pool.malloc:
-                free += pool.free_bytes()
-            if resident_bytes(grid, projections.shape) > free:
-                return None
+        if not native_fits(
+            cfg,
+            grid,
+            projections.shape,
+            backend_policy.cupy_available_bytes() if cfg.stream is None else None,
+        ):
+            return None
         if progress.tracking_placement():
             progress.placed((f"gpu:{cp.cuda.runtime.getDevice()}",))
         shape = validate_grid(grid, "cgls grid")[::-1]
