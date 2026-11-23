@@ -248,3 +248,31 @@ def test_sweep_keeps_input_cylinder_support():
     shifted = replace(scan, geometry=replace(geom, detector=replace(det, center=(3, 0))))
     full = tj.reconstruct(shifted, "fbp", grid=cyl.grid)
     np.testing.assert_array_equal(result[1], np.where(support, full.volume[1], 0))
+
+
+def test_plane_does_not_retain_the_full_mapped_reconstruction(monkeypatch, tmp_path):
+    import gc
+    import weakref
+
+    from tomojax import interactive
+
+    grid = tj.Grid(9, 7, 5, 1, 1, 1)
+    geom = tj.ParallelGeometry(grid, tj.Detector(11, 5, 1, 1), np.arange(0, 180, 15))
+    scan = tj.Scan(np.random.default_rng(8).uniform(0, 1, (12, 5, 11)).astype("f"), geom)
+    full = tj.reconstruct(scan, "fourier").volume
+    reconstruct = interactive.reconstruct_resolved
+    refs = []
+
+    def mapped(plan, **options):
+        out = np.lib.format.open_memmap(
+            tmp_path / "volume.npy", mode="w+", dtype="f", shape=grid.shape
+        )
+        result = reconstruct(plan, out=out, **options)
+        refs.append(weakref.ref(result.volume))
+        return result
+
+    monkeypatch.setattr(interactive, "reconstruct_resolved", mapped)
+    plane = reconstruct_slice(scan, "x", 3, method="fourier")
+    gc.collect()
+    np.testing.assert_array_equal(plane, full[:, :, 3])
+    assert refs[0]() is None

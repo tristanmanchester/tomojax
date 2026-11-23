@@ -73,7 +73,7 @@ def resolved_slice(
     result = reconstruct_resolved(plan, warm_start=warm_start)
     key: list[slice | int] = [slice(None)] * 3
     key[dim] = index
-    return result.volume[tuple(key)]
+    return result.volume[tuple(key)].copy()
 
 
 def reconstruct_slice(

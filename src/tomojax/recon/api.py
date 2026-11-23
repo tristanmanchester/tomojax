@@ -682,7 +682,7 @@ def axial_fbp_plane(
                 projections,
                 config=FBPHostConfig(fbp=cfg, slices_per_batch=depth),
             )
-        return volume[index - first]
+        return volume[index - first].copy()
     # Compilers can fuse the z multiply-add and replace division by a reciprocal.
     # Prove each operation exact in FP32 before removing interpolation neighbours.
     pitch = float(np.float32(detector.dv))
