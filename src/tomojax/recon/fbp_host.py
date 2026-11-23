@@ -20,7 +20,11 @@ from tomojax.core.devices import announce, as_devices
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.host_transfer import copy_to_host, upload_host
-from tomojax.core.validation import validate_detector, validate_projection_stack
+from tomojax.core.validation import (
+    validate_acquisition,
+    validate_detector,
+    validate_projection_stack,
+)
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
 from ._backend import reconstruction_backend
@@ -34,7 +38,6 @@ from .fbp import (
     _view_weights,  # pyright: ignore[reportPrivateUsage]
     finite_projections,
     supports_parallel_fbp_z_integer,
-    validate_fbp_geometry,
 )
 from .filters import rfft_filter_array
 from .types import ReconstructionSlab
@@ -88,7 +91,19 @@ def axial_depth(nz: int, requested: int | None) -> int:
     return (nz + batches - 1) // batches
 
 
-def _slab_layout(
+def axial_row_starts(
+    nz: int, depth: int, nv: int, rows: int, first: float, step: float, *, integer: bool
+) -> Generator[tuple[int, int, float]]:
+    """Yield the output start, detector-row start and fractional phase of each slab."""
+    for z in range(0, nz, depth):
+        v = first + z * step
+        row = math.floor(v)
+        if not integer:
+            row = max(0, min(row, nv - rows))
+        yield z, row, v - row
+
+
+def slab_layout(
     grid: Grid, detector: Detector, depth: int
 ) -> tuple[Grid, Detector, float, float, bool]:
     """Choose a fixed local coordinate system and interpolation support."""
@@ -268,7 +283,7 @@ def fbp_host(
         raise ValueError("fbp_host: slices_per_batch and views_per_batch must be positive")
     if fbp_cfg.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("fbp_host: backend must be 'auto', 'jax' or 'cuda'")
-    shape = validate_fbp_geometry(geometry, grid, detector, "fbp_host")
+    shape = validate_acquisition(geometry, grid, detector, "fbp_host")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fbp_host projections"
     )
@@ -282,7 +297,7 @@ def fbp_host(
     if type(geometry) is not ParallelGeometry:
         return _general_slabs(poses, grid, detector, projections, cfg, out, backend, slices, views)
     depth = axial_depth(grid.nz, slices)
-    local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
+    local_grid, local_detector, first, step, integer = slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(fbp_cfg.filter, local_detector.nu, detector.du, jnp.float32)
     output = validate_host_arrays(projections, out, shape, device_input=True)
@@ -298,17 +313,15 @@ def fbp_host(
     )
     progress.remaining("slabs", -(-grid.nz // depth))
     with _VolumeWriter(enabled=enabled) as write:
-        for start in range(0, grid.nz, depth):
+        for start, v_start, phase in axial_row_starts(
+            grid.nz, depth, detector.nv, rows, first, step, integer=integer
+        ):
             progress.check_cancelled()
-            v = first + start * step
-            v_start = math.floor(v)
-            if not integer:
-                v_start = max(0, min(v_start, detector.nv - rows))
             # Local grid/detector metadata stay identical for every slab. Only the
             # fractional row phase changes, passed as a dynamic pose translation.
             local_poses = host_poses.copy()
             if not integer:
-                local_poses[:, 2, 3] = (v - v_start) * detector.dv
+                local_poses[:, 2, 3] = phase * detector.dv
             volume = _fbp_from_host(
                 local_poses,
                 _device_rows(projections, v_start, rows)
@@ -454,7 +467,7 @@ def fbp_slabs[T](
     """
     if type(geometry) is not ParallelGeometry:
         raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")
-    _ = validate_fbp_geometry(geometry, grid, detector, "reconstruct_slabs")
+    _ = validate_acquisition(geometry, grid, detector, "reconstruct_slabs")
     _ = validate_detector(detector, "reconstruct_slabs detector")
     if config.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("FBP backend must be 'auto', 'jax' or 'cuda'")
@@ -468,7 +481,7 @@ def fbp_slabs[T](
         backend = reconstruction_backend(
             config.backend, cone=False, context="fbp", devices=poses.devices()
         )
-        if backend == "cuda" and _slab_layout(grid, detector, depth)[-1]:
+        if backend == "cuda" and slab_layout(grid, detector, depth)[-1]:
             depth = min(depth, 4)
         host_poses = np.asarray(poses, np.float32)
         scale = np.asarray(_view_weights(poses, config.scale)[0], np.float32)
@@ -511,7 +524,7 @@ def _run_slabs[T](
     depth: int,
     start: int,
 ) -> Generator[ReconstructionSlab[T], None, None]:
-    local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
+    local_grid, local_detector, first, step, integer = slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(config.filter, local_detector.nu, detector.du, jnp.float32)
     params = np.zeros((len(poses), 6), np.float32)

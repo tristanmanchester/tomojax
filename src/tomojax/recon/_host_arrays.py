@@ -35,6 +35,22 @@ class ProjectionRows:
         return data
 
 
+def check_measurements(projections: np.ndarray | jax.Array, method: str) -> None:
+    """Check measured line integrals on their own device or in bounded host blocks."""
+    from tomojax.core.host_volume import check_rows
+    from tomojax.errors import InvalidParameter
+
+    poisson = method == "mlem"
+    if isinstance(projections, np.ndarray):
+        check_rows(projections, method, nonnegative=poisson)
+    else:
+        from ._solver_validation import valid_measurements
+
+        if not bool(valid_measurements(projections, nonnegative=poisson)):
+            domain = "finite and nonnegative" if poisson else "finite in FP32"
+            raise InvalidParameter("source", f"{method}: projections must be {domain}")
+
+
 def _mapped_storage(array: np.ndarray) -> np.memmap | None:
     """Find mapped ownership through NumPy and buffer-protocol views, without reading pixels."""
     current: object = array

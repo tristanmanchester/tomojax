@@ -89,8 +89,6 @@ def full_turn_weights(
     to equal weighting as the panel centres; absent conjugates receive none.
     """
     lo, hi = fans.min(axis=1), fans.max(axis=1)
-    if np.any((lo > pixels) | (hi < -pixels)):
-        raise ValueError("FDK needs the rotation axis to project onto the detector")
     parameters = np.column_stack([lo - pixels / 2, hi + pixels / 2, pixels])
     members = _members(groups, repeats)
     order = np.argsort(angles)

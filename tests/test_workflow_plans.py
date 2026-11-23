@@ -155,3 +155,49 @@ def test_low_memory_plan_and_run_agree_on_rolled_slab_eligibility(monkeypatch, m
     expected = "slabbed" if method == "fourier" or not roll else "resident"
     assert actual.info["placement"]["strategy"] == expected
     assert planned.placement.strategy == expected
+
+
+@pytest.mark.parametrize(
+    ("bad", "path"), [("grid", "grid"), ("angle", "source"), ("pose", "source")]
+)
+def test_preflight_rejects_invalid_projection_geometry(bad, path):
+    class ScaledPose(tj.ParallelGeometry):
+        def pose_matrix(self, index):
+            matrix = np.array(super().pose_matrix(index))
+            matrix[2, 2] = 1.05
+            return matrix
+
+    grid = tj.Grid(4, 4, 2, 1, 1, 1, vol_origin=(0, np.nan if bad == "grid" else 0, 0))
+    kind = ScaledPose if bad == "pose" else tj.ParallelGeometry
+    geometry = kind(grid, tj.Detector(4, 2, 1, 1), [0, np.nan if bad == "angle" else 90])
+    source = tj.Scan(np.ones((2, 2, 4), np.float32), geometry)
+    with pytest.raises(tj.InvalidParameter) as error:
+        resolve_reconstruction(source, "cgls")
+    assert error.value.path == path
+
+
+@pytest.mark.parametrize("cone", [True, False])
+@pytest.mark.parametrize("bad_row", [0, 16])
+def test_host_fbp_preflight_uses_execution_row_windows(monkeypatch, cone, bad_row):
+    from tomojax import backends
+
+    monkeypatch.setattr(backends, "device_free_memory_bytes", lambda **kw: 1)
+    grid = tj.Grid(3, 3, 1, 1, 1, 1)
+    detector = tj.Detector(5, 33, 1, 1)
+    angles = np.arange(0, 360, 30)
+    geometry = (
+        tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(50, 80))
+        if cone
+        else tj.ParallelGeometry(grid, detector, angles)
+    )
+    data = np.ones((12, 33, 5), np.float32)
+    data[4, bad_row, 2] = np.nan
+    source = tj.Scan(data, geometry)
+    if bad_row == 0:
+        resolve_reconstruction(source, "fbp")
+        assert np.isfinite(tj.reconstruct(source, "fbp").volume).all()
+    else:
+        for action in (resolve_reconstruction, tj.reconstruct):
+            with pytest.raises(tj.InvalidParameter) as error:
+                action(source, "fbp")
+            assert error.value.path == "source"

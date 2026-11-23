@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 import math
 import operator
 from typing import TYPE_CHECKING
@@ -116,6 +117,14 @@ def validate_spdhg_config(cfg: SPDHGConfig) -> None:
         value = getattr(cfg, name)
         if value is not None:
             _weight(value, name, positive=True, context=context)
+
+
+@partial(jax.jit, static_argnames=("nonnegative",))
+def valid_measurements(data: jax.Array, *, nonnegative: bool = False) -> jax.Array:
+    """Reduce the FP32 measurement-domain check on the device holding the input."""
+    values = data.astype(jnp.float32)
+    finite = jnp.isfinite(values)
+    return jnp.all(finite & (values >= 0) if nonnegative else finite)
 
 
 @jax.jit

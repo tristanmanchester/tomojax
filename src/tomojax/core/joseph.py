@@ -19,7 +19,7 @@ from tomojax.core.volume_layout import swap_private_axes
 
 from ._plane_interpolation import cubic_weights_and_derivatives, validate_interpolation
 from .compilation_cache import enable_persistent_compilation_cache
-from .geometry.base import grid_volume_origin
+from .validation import validate_physical_poses, validate_placement
 
 if TYPE_CHECKING:
     from .geometry.base import Detector, Grid
@@ -51,16 +51,8 @@ def affine_grid(det_grid: tuple[jax.Array, jax.Array], detector: Detector) -> bo
 
 def validate_plane_geometry(poses: jax.Array, grid: Grid, detector: Detector) -> None:
     """Reject geometry that would make the plane map or gather bounds undefined."""
-    if not np.isfinite((*grid_volume_origin(grid), *detector.center)).all():
-        raise ValueError("cgls: Joseph grid origin and detector centre must be finite")
-    host_poses = np.asarray(poses)
-    rotations = host_poses[:, :3, :3]
-    if not (
-        np.allclose(rotations @ rotations.transpose(0, 2, 1), np.eye(3), atol=2e-5)
-        and np.allclose(np.linalg.det(rotations), 1.0, atol=2e-5)
-        and np.allclose(host_poses[:, 3, :], [0.0, 0.0, 0.0, 1.0], atol=2e-5)
-    ):
-        raise ValueError("cgls: Joseph sampling requires rigid homogeneous poses")
+    validate_placement(grid, detector, "cgls")
+    validate_physical_poses(poses, "cgls", rigid=True)
 
 
 def select_axis(

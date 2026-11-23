@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tomojax.errors import InvalidParameter
+
+from .geometry.base import grid_volume_origin
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
@@ -173,6 +177,43 @@ def validate_detector(detector: Detector, context: str) -> tuple[int, int]:
             fix="fix detector metadata so dv and du are finite and > 0.",
         )
     return int(detector.nv), int(detector.nu)
+
+
+def validate_placement(grid: Grid, detector: Detector, context: str) -> None:
+    """Require finite physical coordinates before computing projection or gather bounds."""
+    if not np.isfinite(grid_volume_origin(grid)).all():
+        raise InvalidParameter("grid", f"{context}: grid origin must be finite")
+    if not np.isfinite(detector.center).all():
+        raise InvalidParameter("source", f"{context}: detector centre must be finite")
+
+
+def validate_acquisition(
+    geometry: Geometry, grid: Grid, detector: Detector, context: str
+) -> tuple[int, int, int]:
+    """Check volume placement and measured angles before reading any projections."""
+    dimensions = validate_grid(grid, context)
+    validate_placement(grid, detector, context)
+    angles = getattr(geometry, "angles", None)
+    if angles is not None and not np.isfinite(angles).all():
+        raise InvalidParameter("source", f"{context}: angles must be finite")
+    return dimensions[::-1]
+
+
+def validate_physical_poses(poses: Any, context: str, *, rigid: bool) -> None:
+    """Check finite transforms and, for Joseph plane sampling, proper rigid motion."""
+    host = np.asarray(poses)
+    if not np.isfinite(host).all():
+        raise InvalidParameter("source", f"{context}: poses must be finite")
+    if rigid:
+        rotations = host[:, :3, :3]
+        if not (
+            np.allclose(rotations @ rotations.transpose(0, 2, 1), np.eye(3), atol=2e-5)
+            and np.allclose(np.linalg.det(rotations), 1.0, atol=2e-5)
+            and np.allclose(host[:, 3, :], [0.0, 0.0, 0.0, 1.0], atol=2e-5)
+        ):
+            raise InvalidParameter(
+                "source", f"{context}: Joseph sampling requires rigid homogeneous poses"
+            )
 
 
 def validate_projection_shape(

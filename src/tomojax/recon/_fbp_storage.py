@@ -73,6 +73,50 @@ def needs_fbp_slabs(geometry: Geometry, grid: Grid, free: int | None) -> bool:
     )
 
 
+def check_host_fbp_samples(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray | np.ndarray,
+    cfg: FBPConfig,
+) -> None:
+    """Check the measured rows each host slab will read, scanning overlapping windows once."""
+    if not too_large_for_the_device(geometry, grid, cfg):
+        return
+
+    import numpy as np
+
+    from tomojax.core.devices import as_devices
+    from tomojax.core.geometry.cone import is_cone_beam
+    from tomojax.core.geometry.views import stack_view_poses
+    from tomojax.geometry import ParallelGeometry
+
+    from ._host_arrays import check_measurements
+    from .fbp_host import axial_depth, axial_row_starts, slab_layout
+    from .fdk import host_slab_ranges, storage_rows
+
+    if is_cone_beam(geometry):
+        poses = np.asarray(stack_view_poses(geometry, projections.shape[0]), np.float64)
+        slabs = host_slab_ranges(grid, as_devices(cfg.devices) or (None,), None)
+        windows = [storage_rows(geometry, grid, detector, poses, lo, hi) for lo, hi in slabs]
+    elif type(geometry) is ParallelGeometry:
+        depth = axial_depth(grid.nz, None)
+        _, local, first, step, integer = slab_layout(grid, detector, depth)
+        starts = axial_row_starts(
+            grid.nz, depth, detector.nv, local.nv, first, step, integer=integer
+        )
+        windows = [(row, min(row + local.nv, detector.nv)) for _, row, _ in starts]
+    else:
+        windows = [(0, detector.nv)]
+    checked = 0
+    for lower, upper in sorted(windows):
+        start = max(lower, checked)
+        if start < upper:
+            for view in range(0, projections.shape[0], 16):
+                check_measurements(projections[view : view + 16, start:upper], "fbp")
+            checked = upper
+
+
 def fdk_config(cfg: FBPConfig) -> FDKConfig:
     """FBP's filter, backend and devices for FDK on cone beams.
 

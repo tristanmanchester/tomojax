@@ -10,13 +10,18 @@ import sys
 import numpy as np
 
 from tomojax import progress
-from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.joseph_cuda import JosephCUDA
 from tomojax.core.registration import planes
-from tomojax.core.validation import validate_grid, validate_pose_stack, validate_projection_stack
+from tomojax.core.validation import (
+    validate_grid,
+    validate_physical_poses,
+    validate_placement,
+    validate_pose_stack,
+    validate_projection_stack,
+)
 from tomojax.wire.metrics import Metric
 
 from ._cgls_stopping import cancellation_magnitude, precision_stalled, termination
@@ -72,13 +77,7 @@ def _poses(geometry, n):
     poses = host_view_poses(geometry, n)
     assert poses is not None
     validate_pose_stack(poses, n, context="cgls")
-    rotations = poses[:, :3, :3]
-    if not (
-        np.allclose(rotations @ rotations.transpose(0, 2, 1), np.eye(3), atol=2e-5)
-        and np.allclose(np.linalg.det(rotations), 1.0, atol=2e-5)
-        and np.allclose(poses[:, 3, :], [0.0, 0.0, 0.0, 1.0], atol=2e-5)
-    ):
-        raise ValueError("cgls: Joseph sampling requires rigid homogeneous poses")
+    validate_physical_poses(poses, "cgls", rigid=True)
     return poses
 
 
@@ -104,8 +103,7 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
         n, _, _ = validate_projection_stack(
             projections, detector, geometry=geometry, context="cgls"
         )
-        if not np.isfinite((*grid_volume_origin(grid), *detector.center)).all():
-            raise ValueError("cgls: Joseph grid origin and detector centre must be finite")
+        validate_placement(grid, detector, "cgls")
         poses = _poses(geometry, n)
         if not np.isfinite(projections).all() or (
             initial is not None and not np.isfinite(initial).all()

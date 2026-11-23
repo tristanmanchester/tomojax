@@ -348,9 +348,12 @@ def check_rows(data: np.ndarray, context: str, *, nonnegative: bool = False) -> 
 
     A memory-mapped stack's pages are released as they are checked.
     """
+    from tomojax.errors import InvalidParameter
+
     for first in range(0, data.shape[0], 16):
+        progress.check_cancelled()
         block = np.asarray(data[first : first + 16], np.float32)
         if not np.isfinite(block).all() or (nonnegative and block.min() < 0):
             kind = "finite and nonnegative" if nonnegative else "finite in FP32"
-            raise ValueError(f"{context}: projections must be {kind}")
+            raise InvalidParameter("source", f"{context}: projections must be {kind}")
         release(data)

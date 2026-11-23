@@ -211,10 +211,12 @@ def validate_reconstruction(
     """
     from tomojax.core.geometry.cone import is_cone_beam
     from tomojax.core.validation import (
+        validate_acquisition,
         validate_optional_broadcastable_shape,
         validate_optional_same_shape,
     )
 
+    validate_acquisition(geometry, grid, geometry.detector, method)
     _check_solver_inputs(method, geometry, config, projections)
     views = len(geometry.angles)
     if subsets := getattr(config, "subsets", None):
@@ -247,6 +249,12 @@ def validate_reconstruction(
             check_angular_coverage(geometry, geometry.detector, views)
         except ValueError as err:
             raise InvalidParameter("warm_start" if warm_start else "method", str(err)) from err
+    if method == "fbp" and projections is not None:
+        from tomojax.recon._fbp_storage import check_host_fbp_samples
+
+        check_host_fbp_samples(
+            geometry, grid, geometry.detector, projections, cast("FBPConfig", config)
+        )
     if method == "fourier":
         from tomojax.recon.fourier import check_fourier_inputs
 
@@ -262,6 +270,18 @@ def _check_solver_inputs(
     """Check interpolation, accelerator placement and measured values for this inverse."""
     from tomojax.core.geometry.cone import is_cone_beam
 
+    if method != "fourier":
+        from tomojax.core.geometry.views import host_view_poses, stack_view_poses
+        from tomojax.core.validation import validate_physical_poses, validate_pose_stack
+
+        views = len(geometry.angles)
+        try:
+            host = host_view_poses(geometry, views)
+            poses = stack_view_poses(geometry, views) if host is None else host
+            validate_pose_stack(poses, views, context=method)
+        except ValueError as err:
+            raise InvalidParameter("source", str(err)) from err
+        validate_physical_poses(poses, method, rigid=method != "fbp" and not is_cone_beam(geometry))
     if method == "cgls":
         from tomojax.recon.cgls import check_cgls_geometry
 
@@ -280,10 +300,10 @@ def _check_solver_inputs(
             if method == "fbp" and isinstance(projections, jax.Array)
             else None,
         )
-    if method == "mlem" and projections is not None:
-        from tomojax.recon.mlem import check_measurements
+    if method not in {"fourier", "fbp"} and projections is not None:
+        from tomojax.recon._host_arrays import check_measurements
 
-        check_measurements(projections)
+        check_measurements(projections, method)
     if config.backend == "cupy":
         from tomojax.recon._fourier_backend import resolve_fourier_backend
 

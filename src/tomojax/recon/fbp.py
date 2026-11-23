@@ -20,8 +20,8 @@ from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
+    validate_acquisition,
     validate_detector_grid,
-    validate_grid,
     validate_pose_stack,
     validate_projection_stack,
 )
@@ -103,19 +103,6 @@ def default_fbp_scale(n_views: int) -> float:
     if int(n_views) <= 0:
         raise ValueError("n_views must be positive")
     return float(np.pi / float(n_views))
-
-
-def validate_fbp_geometry(
-    geometry: Geometry, grid: Grid, detector: Detector, context: str
-) -> tuple[int, int, int]:
-    """Check the grid, placement and angles before reading projections or poses."""
-    nx, ny, nz = validate_grid(grid, f"{context} grid")
-    if not np.isfinite([*grid_volume_origin(grid), *detector.center]).all():
-        raise ValueError(f"{context}: grid and detector placement must be finite")
-    thetas = getattr(geometry, "angles", None)
-    if thetas is not None and not np.isfinite(np.asarray(thetas)).all():
-        raise ValueError(f"{context}: angles must be finite")
-    return nz, ny, nx
 
 
 def _bilinear_detector(image: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
@@ -910,7 +897,7 @@ def parallel_fbp(
 ) -> jnp.ndarray:
     """Filter and backproject original view batches on the grid or one aligned axial row."""
     with progress.task("reconstruct", "fbp", None, "batches"):
-        validate_fbp_geometry(geometry, grid, detector, "fbp")
+        validate_acquisition(geometry, grid, detector, "fbp")
         n_views, _, _ = validate_projection_stack(
             projections,
             detector,

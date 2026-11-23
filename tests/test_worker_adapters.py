@@ -707,3 +707,35 @@ def test_fourier_preflight_checks_only_sampled_detector_rows(worker, tmp_path, b
                 "invalid_parameter",
                 "source",
             )
+
+
+@pytest.mark.parametrize("method", ["cgls", "fista", "spdhg", "sirt"])
+def test_iterative_preflight_requires_finite_measurements(worker, tmp_path, method):
+    grid = tj.Grid(4, 4, 2, 1, 1, 1)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(4, 2, 1, 1), [0, 45, 90, 135])
+    measured = np.zeros((4, 2, 4), np.float32)
+    measured[2, 0, 1] = np.inf
+    path = tmp_path / "nonfinite.nxs"
+    tj.save(path, tj.Scan(measured, geometry))
+    recipe = dict(type="reconstruct", method=method, source=dict(type="path", path=str(path)))
+    for command in ("validate", "plan", "run"):
+        reply = worker(command, operation=recipe)
+        assert reply["type"] == "error", reply
+        assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", "source")
+
+
+@pytest.mark.parametrize(("method", "field"), [("fbp", "method"), ("cgls", "warm_start")])
+def test_full_turn_fdk_requires_axis_on_detector(worker, tmp_path, method, field):
+    grid = tj.Grid(4, 4, 2, 1, 1, 1)
+    geometry = tj.ConeGeometry(
+        grid, tj.Detector(7, 5, 1, 1, (20, 0)), np.arange(0, 360, 30), tj.ConeBeam(50, 80)
+    )
+    path = tmp_path / "offset.nxs"
+    tj.save(path, tj.Scan(np.ones((12, 5, 7), np.float32), geometry))
+    recipe = dict(type="reconstruct", method=method, source=dict(type="path", path=str(path)))
+    if method == "cgls":
+        recipe["warm_start"] = True
+    for command in ("validate", "plan", "run"):
+        reply = worker(command, operation=recipe)
+        assert reply["type"] == "error", reply
+        assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", field)

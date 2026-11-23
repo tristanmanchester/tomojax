@@ -147,8 +147,9 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
         for count, beam, own in parts:
             size = n_views if count is None else count
             counts.append(size)
-            fans.append(np.broadcast_to(_fan_angles(beam, own), (size, own.nu)))
-            pixels.append(np.full(size, float(own.du) / float(beam.source_to_detector)))
+            fan, pixel = full_turn_fan(beam, own)
+            fans.append(np.broadcast_to(fan, (size, own.nu)))
+            pixels.append(np.full(size, pixel))
         return full_turn_weights(
             angles, view_angle, repeats, np.concatenate(fans), np.concatenate(pixels), tuple(counts)
         )
@@ -164,9 +165,20 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
 def check_angular_coverage(geometry: Geometry, detector: Detector, n_views: int) -> None:
     """Check the arc of each calibrated fan before allocating weights or reading frames."""
     _, angles, full = ordered_arc(grouped_angles(geometry, n_views)[0])
-    if not full:
-        for _, beam, own in cone_parts(geometry, detector) or ():
+    for _, beam, own in cone_parts(geometry, detector) or ():
+        if full:
+            full_turn_fan(beam, own)
+        else:
             short_scan_fan(beam, own, angles)
+
+
+def full_turn_fan(beam: ConeBeam, detector: Detector) -> tuple[np.ndarray, float]:
+    """Check that this panel measures the rotation axis before forming conjugate weights."""
+    fan = _fan_angles(beam, detector)
+    pixel = float(detector.du) / float(beam.source_to_detector)
+    if fan.min() > pixel or fan.max() < -pixel:
+        raise ValueError("FDK needs the rotation axis to project onto the detector")
+    return fan, pixel
 
 
 def short_scan_fan(
@@ -703,7 +715,7 @@ def _slab_grid(grid: Grid, z0: int, z1: int) -> Grid:
     )
 
 
-def _storage_rows(
+def storage_rows(
     geometry: Geometry, grid: Grid, detector: Detector, poses: np.ndarray, z0: int, z1: int
 ) -> tuple[int, int]:
     """Bucket a slab's measured rows without changing any physical coordinates."""
@@ -763,7 +775,7 @@ def fdk_slabs[T](
         coeff = prep.coefficients(geometry, grid, detector, jnp.asarray(poses, jnp.float32))
         for start in range(0, grid.nz, depth):
             stop = min(start + depth, grid.nz)
-            r0, r1 = _storage_rows(geometry, grid, detector, poses, start, stop)
+            r0, r1 = storage_rows(geometry, grid, detector, poses, start, stop)
             projections, context = read(r0, r1)
             slab = _slab_grid(grid, start, stop)
             volume = _accumulate(
@@ -778,6 +790,18 @@ def fdk_slabs[T](
             del volume
             yield ReconstructionSlab(start, stop, slice(r0, r1), projections, owned, context)
             del projections, owned, context
+
+
+def host_slab_ranges(
+    grid: Grid, devices: Sequence[Device | None], depth: int | None
+) -> list[tuple[int, int]]:
+    """Size FDK slabs for the least free memory among their workers."""
+    from tomojax.backends import device_free_memory_bytes
+
+    if depth is None:
+        free = min(device_free_memory_bytes(device=d) or 2 * 1024**3 for d in devices)
+        depth = max(1, int(free // (3 * 4 * grid.nx * grid.ny)))
+    return [(z, min(z + depth, grid.nz)) for z in range(0, grid.nz, depth)]
 
 
 @progress.task("reconstruct", "fdk", None, "slabs")
@@ -830,8 +854,6 @@ def fdk_host(
     ValueError
         If shapes, geometry or solver settings are incompatible with this method.
     """
-    from tomojax.backends import device_free_memory_bytes
-
     cfg = FDKHostConfig() if config is None else config
     if cone_parts(geometry, detector) is None:
         raise ValueError("fdk_host needs a cone-beam geometry; use fbp_host for parallel beams")
@@ -854,12 +876,7 @@ def fdk_host(
     check_angular_coverage(geometry, detector, n_views)
     result = validate_host_arrays(projections, out, (nz, ny, nx), "fdk_host")
     devices = as_devices(cfg.fdk.devices) or (None,)
-    if depth is None:
-        # Every worker runs slabs of one depth: size them for the smallest device.
-        free = min(device_free_memory_bytes(device=d) or 2 * 1024**3 for d in devices)
-        depth = max(1, int(free // (3 * max(1, 4 * grid.nx * grid.ny))))
-    depth = min(int(depth), grid.nz)
-    slabs = [(z0, min(z0 + depth, grid.nz)) for z0 in range(0, grid.nz, depth)]
+    slabs = host_slab_ranges(grid, devices, depth)
     progress.remaining("slabs", len(slabs))
     poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
     work = _Slabs(geometry, grid, detector, projections, poses, result)
@@ -894,7 +911,7 @@ class _Slabs:
     def reconstruct(self, z0: int, z1: int, prep: _Prepared, coeff: jax.Array) -> jax.Array:
         """Slices ``[z0, z1)``, filtering only their physical detector-row window."""
         slab = _slab_grid(self.grid, z0, z1)
-        r0, r1 = _storage_rows(self.geometry, self.grid, self.detector, self.poses, z0, z1)
+        r0, r1 = storage_rows(self.geometry, self.grid, self.detector, self.poses, z0, z1)
         views = _RowView(self.projections, r0, r1)
         return _accumulate(
             slab, views, prep.window(r0, r1), _window_coefficients(coeff, r0, z0), None
