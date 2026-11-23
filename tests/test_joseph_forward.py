@@ -108,7 +108,10 @@ def test_public_projection_rejects_invalid_static_inputs(bad):
     elif bad == "complex_pose":
         poses = poses.astype(np.complex64)
     elif bad == "spacing":
-        d = replace(d, du=0)
+        # A zero pitch never reaches the projector: the detector itself rejects it.
+        with pytest.raises(ValueError, match="du must be finite and positive"):
+            replace(d, du=0)
+        return
     elif bad == "origin":
         g = replace(g, vol_origin=(np.nan, 0, 0))
     elif bad == "center":

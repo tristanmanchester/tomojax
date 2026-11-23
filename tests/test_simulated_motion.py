@@ -219,7 +219,7 @@ def test_the_exact_tiers_objective_has_its_minimum_at_the_gauge_free_truth(monke
     # pedestal, a filter's free band) fails here.
     from tomojax.alignment import AlignConfig
 
-    ends = _exact_tier_ends(config=AlignConfig(iterations=100, tolerance=-1.0))
+    ends = _exact_tier_ends(config=AlignConfig(iterations=100, tolerance=0.0))
     assert ends["gauge-free"] < 2e-4
     assert ends["raw"] > 5e-3
 

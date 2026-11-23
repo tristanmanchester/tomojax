@@ -1,62 +1,75 @@
-"""The gallery scale and slice coordinates follow its stated physical grid."""
+"""The K11 gallery planes follow their stated physical grid and share one grey range."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 plt = pytest.importorskip("matplotlib.pyplot")
+pytest.importorskip("h5py")
+
+GALLERY = Path(__file__).parents[1] / "examples" / "gallery"
 
 
-def test_ruby_gallery_preserves_region_and_labels_scale(monkeypatch, tmp_path):
-    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "examples" / "gallery"))
-    import k11_ruby_sphere as gallery
+def _encoded_reconstruct(calls):
+    """A stand-in for tj.reconstruct whose voxel (z, y, x) holds 10000 z + 100 y + x."""
 
-    initial = gallery.sampling_grid(4)
-    assert (initial.nx, initial.ny, initial.nz) == (160, 160, 135)
-    assert initial.vx == 8.64
-    grid = gallery.tj.Grid(552, 552, 192, 8.64, 8.64, 8.64)
-    volume = np.broadcast_to(np.arange(grid.nx)[None, None, :], (grid.nz, grid.ny, grid.nx))
+    def reconstruct(scan, method, *, grid, **options):
+        calls.append((method, grid, options))
+        z, y, x = np.meshgrid(
+            np.arange(grid.nz), np.arange(grid.ny), np.arange(grid.nx), indexing="ij"
+        )
+        return SimpleNamespace(volume=(10000 * z + 100 * y + x).astype(np.float32))
+
+    return reconstruct
+
+
+def test_plane_orients_each_cut_and_centres_its_grid(monkeypatch):
+    monkeypatch.syspath_prepend(str(GALLERY))
+    import _k11
+
+    calls = []
+    monkeypatch.setattr(_k11.tj, "reconstruct", _encoded_reconstruct(calls))
+    center = (-345.0, -60.0, 12.0)
+
+    xy = _k11.plane(None, center, (5, 4, 1))
+    xz = _k11.plane(None, center, (5, 1, 3))
+    yz = _k11.plane(None, center, (1, 4, 3), "fista", tv_weight=0.1)
+
+    assert xy.shape == (4, 5) and xy[2, 3] == 100 * 2 + 3  # rows along y, columns along x
+    assert xz.shape == (3, 5) and xz[2, 3] == 10000 * 2 + 3  # rows along z, columns along x
+    assert yz.shape == (3, 4) and yz[2, 3] == 10000 * 2 + 100 * 3  # rows along z, columns y
+    for _, grid, _ in calls:
+        assert (grid.vx, grid.vy, grid.vz) == (_k11.PITCH_UM,) * 3
+        np.testing.assert_allclose(grid.vol_center, center)
+    assert calls[2][0] == "fista" and calls[2][2] == {"tv_weight": 0.1}
+
+
+@pytest.mark.parametrize("module", ["k11_ruby_sphere", "k11_glass_layer"])
+def test_figure_draws_200_um_bars_on_one_grey_range(monkeypatch, tmp_path, module):
+    monkeypatch.syspath_prepend(str(GALLERY))
+    gallery = __import__(module)
     figures = []
     monkeypatch.setattr(gallery, "save", lambda fig, path: figures.append(fig))
-    gallery.slice_figure(volume, grid, tmp_path / "ruby.png")
+    rng = np.random.default_rng(0)
+    cuts = [
+        ("xy", rng.random((60, 60))),
+        ("xz", 2 + rng.random((20, 90))),
+        ("yz", rng.random((20, 90))),
+    ]
+
+    gallery.figure(cuts, tmp_path / "out.png")
+
     fig = figures[0]
-    assert any("2.16 µm pixels · 4x4 binning · 8.64 µm voxels" in t.get_text() for t in fig.texts)
-    yz = fig.axes[2].images[0].get_array()
-    np.testing.assert_array_equal(yz, yz[0, 0])
-    x = gallery.grid_volume_origin(grid)[0] + float(yz[0, 0]) * grid.vx
-    assert abs(x - (-332.64)) <= grid.vx / 2 + 1e-9
-    assert f"x = {x:.1f} µm" in fig.axes[2].get_title()
-    for ax in fig.axes:
-        assert np.diff(ax.lines[0].get_xdata())[0] == 200
-        assert any(text.get_text() == "200 µm" for text in ax.texts)
-    plt.close(fig)
-
-
-def test_layer_gallery_uses_world_slice_coordinate_and_enlarges_cross_sections(
-    monkeypatch, tmp_path
-):
-    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "examples" / "gallery"))
-    import k11_glass_layer as gallery
-
-    geometry = gallery.scan_geometry(np.array([0.0, 90.0]), 4)
-    np.testing.assert_allclose(
-        np.asarray(geometry.pose_matrix(0))[:3, 2], (0.0, 0.5735764364, 0.8191520443)
-    )
-    assert geometry.detector.du == 2.16 and geometry.grid.vx == 8.64
-    grid = gallery.tj.Grid(384, 384, 64, 8.64, 8.64, 8.64, vol_center=(0, 0, 17.28))
-    volume = np.broadcast_to(np.arange(grid.nz)[:, None, None], (grid.nz, grid.ny, grid.nx))
-    figures = []
-    monkeypatch.setattr(gallery, "save", lambda fig, path: figures.append(fig))
-    gallery.slice_figure(volume, grid, tmp_path / "layer.png")
-    fig = figures[0]
-    np.testing.assert_array_equal(fig.axes[0].images[0].get_array(), 31)
-    assert "z = 13.0 µm" in fig.axes[0].get_title()
-    for ax in fig.axes[1:]:
-        extent = ax.images[0].get_extent()
-        assert extent[1] - extent[0] < grid.nx * grid.vx
-        assert extent[3] - extent[2] < grid.nz * grid.vz
-    for ax in fig.axes:
-        assert np.diff(ax.lines[0].get_xdata())[0] == 200
+    limits = {ax.images[0].get_clim() for ax in fig.axes}
+    assert len(limits) == 1  # one grey range across the planes
+    low, high = limits.pop()
+    values = np.concatenate([cut.ravel() for _, cut in cuts])
+    assert (low, high) == tuple(np.percentile(values, (1, 99.5)))
+    for ax, (title, _) in zip(fig.axes, cuts, strict=True):
+        assert ax.get_title() == title
+        bar = ax.lines[0].get_xdata()
+        assert bar[1] - bar[0] == pytest.approx(200 / gallery.PITCH_UM)
         assert any(text.get_text() == "200 µm" for text in ax.texts)
     plt.close(fig)
