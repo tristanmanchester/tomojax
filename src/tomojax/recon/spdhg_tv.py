@@ -880,21 +880,27 @@ def spdhg(
         config=config,
         det_grid=det_grid,
     )
-    if runtime.y_meas is None:
-        y_host = np.asarray(projections)
-        w_host = None if weights is None else np.asarray(weights)
-        validate_host_views(y_host, weights=w_host)
-        with contextlib.ExitStack() as stack:
+    with contextlib.ExitStack() as stack:
+        if runtime.y_meas is None:
+            y_host = np.asarray(projections)
+            w_host = None if weights is None else np.asarray(weights)
+            validate_host_views(y_host, weights=w_host)
             keys = [
                 stack.enter_context(host_source(y_host)),
                 stack.enter_context(host_buffer(runtime.data_shape)),
                 stack.enter_context(host_source(w_host)) if w_host is not None else jnp.int32(-1),
             ]
             runtime = replace(runtime, host_keys=jnp.stack(keys))
-            x, losses = _run_spdhg_scan(grid, detector, runtime)[:2]
-            x.block_until_ready()
-    else:
+        if runtime.config.iterations and progress.for_unit("iterations") is not None:
+            progress.check_cancelled()
+            # XLA can use a volume of scratch during compilation. Release it
+            # before materialising the watched primal and dual arrays.
+            shape = volume_shape(runtime.projector[0], grid)
+            state = _initial_spdhg_state.eval_shape(runtime, shape)
+            _advance_spdhg.lower(grid, detector, runtime, state, 0, 1).compile()
         x, losses = _run_spdhg_scan(grid, detector, runtime)[:2]
+        if runtime.y_meas is None:
+            x.block_until_ready()
     result = _SPDHGResult(
         volume=restore_volume(x, runtime.projector[0]),
         losses=losses,
