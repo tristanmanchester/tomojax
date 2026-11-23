@@ -178,6 +178,10 @@ def _replace_settings(base: MethodConfig, settings: dict[str, object]) -> Method
         raise InvalidParameter(f"config.{err.path}", str(err)) from err
 
 
+class AngularCoverageError(InvalidParameter):
+    """The resolved cone acquisition does not cover the angles needed for FDK."""
+
+
 def validate_reconstruction(
     method: str,
     geometry: ScanGeometry,
@@ -248,7 +252,7 @@ def validate_reconstruction(
         try:
             check_angular_coverage(geometry, geometry.detector, views)
         except ValueError as err:
-            raise InvalidParameter("warm_start" if warm_start else "method", str(err)) from err
+            raise AngularCoverageError("warm_start" if warm_start else "method", str(err)) from err
     if method == "fista" and projections is not None:
         from tomojax.recon._fista_host import check_fista_storage
 

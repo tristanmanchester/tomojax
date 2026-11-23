@@ -193,20 +193,19 @@ class Admission:
 
             compute = apply_alignment
             work = alignment
-        else:
-            reconstruction = resolve_reconstruction(scan, **options)
-            if isinstance(operation, op.Slice):
-                interactive.plane_dimension(
-                    reconstruction.scan.grid, operation.axis, operation.index
+        elif isinstance(operation, op.Slice):
+            if isinstance(operation, op.CentreSweep):
+                plans = interactive.resolve_sweep(
+                    scan, operation.axis, operation.index, operation.centres, **options
                 )
-                if isinstance(operation, op.CentreSweep):
-                    interactive.check_centres(operation.centres)
-                compute = partial(slice_product, operation, reconstruction, self.context)
             else:
-                compute = partial(
-                    reconstruct_resolved, reconstruction, warm_start=bool(operation.warm_start)
-                )
-            work = reconstruction
+                plans = (resolve_reconstruction(scan, **options),)
+                interactive.plane_dimension(plans[0].scan.grid, operation.axis, operation.index)
+            compute = partial(slice_product, operation, plans, self.context)
+            work = plans[0]
+        else:
+            work = resolve_reconstruction(scan, **options)
+            compute = partial(reconstruct_resolved, work, warm_start=bool(operation.warm_start))
         snapshots = sample(work)
         for snapshot in snapshots:
             self.context.snapshot(snapshot)

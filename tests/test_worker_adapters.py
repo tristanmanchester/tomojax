@@ -739,3 +739,40 @@ def test_full_turn_fdk_requires_axis_on_detector(worker, tmp_path, method, field
         reply = worker(command, operation=recipe)
         assert reply["type"] == "error", reply
         assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", field)
+
+
+@pytest.mark.parametrize(("original", "centres", "invalid"), [(0, [0, 20], 1), (20, [0], None)])
+def test_fdk_sweep_validates_each_requested_detector_centre(
+    worker, tmp_path, original, centres, invalid
+):
+    from dataclasses import replace
+
+    grid = tj.Grid(4, 4, 2, 1, 1, 1)
+    detector = tj.Detector(7, 5, 1, 1, (original, 0))
+    geometry = tj.ConeGeometry(grid, detector, np.arange(0, 360, 30), tj.ConeBeam(50, 80))
+    data = np.random.default_rng(17).uniform(size=(12, 5, 7)).astype(np.float32)
+    path = tmp_path / "full-turn.nxs"
+    tj.save(path, tj.Scan(data, geometry))
+    args = dict(
+        source=dict(type="path", path=str(path)), method="fbp", axis="z", index=0, centres=centres
+    )
+    for command in ("validate", "centre_sweep"):
+        reply = (
+            worker(command, operation=dict(type="centre_sweep", **args))
+            if command == "validate"
+            else worker(command, **args)
+        )
+        if invalid is not None:
+            assert reply["type"] == "error", reply
+            assert (reply["error"]["kind"], reply["error"]["path"]) == (
+                "invalid_parameter",
+                f"centres[{invalid}]",
+            )
+        elif command == "validate":
+            assert reply["type"] == "result", reply
+        else:
+            pixels = np.load(output(reply)["value"]["planes"]["storage"]["path"])
+            shifted = tj.Scan(data, replace(geometry, detector=replace(detector, center=(0, 0))))
+            np.testing.assert_allclose(
+                pixels[0], tj.reconstruct(shifted, "fbp").volume[0], atol=1e-6
+            )

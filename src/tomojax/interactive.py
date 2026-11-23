@@ -9,7 +9,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._loading import corrected_data
-from tomojax._planning import ResolvedReconstruction, resolve_reconstruction
+from tomojax._planning import ResolvedReconstruction, resolve_grid, resolve_reconstruction
 from tomojax._region import RegionEstimate, estimate_region
 from tomojax._scan import Scan, binned_geometry
 from tomojax._workflow import reconstruct, reconstruct_resolved
@@ -17,13 +17,13 @@ from tomojax.core.registration import planes, recorded_length_unit
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import ConeSegments, grid_volume_origin
 from tomojax.recon import FBPConfig
-from tomojax.recon.api import axial_fbp_plane
+from tomojax.recon.api import AngularCoverageError, axial_fbp_plane
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tomojax._loading import Frames
-    from tomojax._parameters import Method
+    from tomojax._parameters import Method, RegionName
     from tomojax.corrections import Step
     from tomojax.geometry import Detector, Grid, ScanGeometry
 
@@ -153,40 +153,56 @@ def centre_sweep(
     numpy.ndarray or jax.Array
         Float32 attenuation with a leading centre coordinate, in the supplied order.
     """
-    plan = resolve_reconstruction(scan, method, **options)
-    return resolved_sweep(plan, axis, index, centres, warm_start=bool(options.get("warm_start")))
+    plans = resolve_sweep(scan, axis, index, centres, method=method, **options)
+    return resolved_sweep(plans, axis, index, warm_start=bool(options.get("warm_start")))
 
 
-def check_centres(centres: Sequence[float]) -> None:
-    """Validate the ordered detector-offset coordinates."""
-    if len(centres) == 0 or not np.isfinite(centres).all():
-        raise InvalidParameter(
-            "centres", "centres must be a nonempty sequence of finite detector offsets"
-        )
-
-
-def resolved_sweep(
-    plan: ResolvedReconstruction,
+def resolve_sweep(
+    scan: Scan,
     axis: Axis,
     index: int,
     centres: Sequence[float],
     *,
+    method: Method = "auto",
+    grid: Grid | None = None,
+    region: RegionName | RegionEstimate | None = None,
+    **options: Any,
+) -> tuple[ResolvedReconstruction, ...]:
+    """Resolve support on the input and validate the actual acquisition for each requested plane."""
+    if len(centres) == 0 or not np.isfinite(centres).all():
+        raise InvalidParameter(
+            "centres", "centres must be a nonempty sequence of finite detector offsets"
+        )
+    fixed_grid, cylinder, info = resolve_grid(scan, grid, region)
+    plane_dimension(fixed_grid or scan.grid, axis, index)
+    plans = []
+    for i, centre in enumerate(centres):
+        progress.check_cancelled()
+        shift = float(centre) * scan.detector.du - scan.detector.center[0]
+        shifted = replace(scan, geometry=_shift_center(scan.geometry, shift))
+        try:
+            plan = resolve_reconstruction(shifted, method, grid=fixed_grid, **options)
+        except AngularCoverageError as err:
+            raise InvalidParameter(f"centres[{i}]", str(err)) from err
+        plans.append(replace(plan, cylinder=cylinder, info={**plan.info, **info}))
+    return tuple(plans)
+
+
+def resolved_sweep(
+    plans: Sequence[ResolvedReconstruction],
+    axis: Axis,
+    index: int,
+    *,
     warm_start: bool,
 ) -> Any:
-    """Keep only the returned planes while varying the detector centre on the resolved scan."""
+    """Execute the validated acquisitions in order, keeping only their requested planes."""
     import jax
     import jax.numpy as jnp
 
-    check_centres(centres)
-    scan = plan.scan
     images = []
-    for c in centres:
+    for plan in plans:
         progress.check_cancelled()
-        shift = float(c) * scan.detector.du - scan.detector.center[0]
-        source = replace(scan, geometry=_shift_center(scan.geometry, shift))
-        images.append(
-            resolved_slice(replace(plan, scan=source), axis, index, warm_start=warm_start)
-        )
+        images.append(resolved_slice(plan, axis, index, warm_start=warm_start))
     return jnp.stack(images) if isinstance(images[0], jax.Array) else np.stack(images)
 
 

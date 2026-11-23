@@ -56,11 +56,11 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 5555,
+    "(modules)": 5571,
     "_data": 2153,
     "alignment": 4670,
     "backends": 263,
-    "cli": 5751,
+    "cli": 5749,
     "core": 9909,
     "corrections": 3139,
     "datasets": 1069,
@@ -69,7 +69,7 @@
     "io": 3947,
     "motion": 153,
     "nuisance": 232,
-    "recon": 14672,
+    "recon": 14675,
     "wire": 266
   },
   "cuda_kernels": 47,
