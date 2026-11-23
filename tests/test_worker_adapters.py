@@ -525,3 +525,32 @@ def test_region_overlays_can_drive_another_reconstruction_and_close(worker, tmp_
         )
     output(worker("close", handle=value["handle"]))
     assert all(not Path(a["storage"]["path"]).exists() for a in value["arrays"].values())
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+def test_forced_stack_export_preserves_unrelated_directory_entries(
+    worker, simulation, tmp_path, rollback
+):
+    stack = tmp_path / "stack"
+    stack.mkdir()
+    sentinel = stack / "acquisition.txt"
+    sentinel.write_text("original")
+    nested = stack / "calibration" / "reference.tif"
+    nested.parent.mkdir()
+    nested.write_bytes(b"flat")
+    stale = stack / "old.TIFF"
+    stale.write_bytes(b"previous stack")
+    if rollback:
+        # Walk a real failure after installing the TIFFs, at the manifest destination.
+        stack.with_suffix(".manifest.json").mkdir()
+    root = dict(type="member", handle=simulation["value"]["handle"], member="self")
+    reply = worker("run", operation=dict(type="export", source=root, path=str(stack), force=True))
+    assert reply["type"] == ("error" if rollback else "result")
+    assert sentinel.read_text() == "original"
+    assert nested.read_bytes() == b"flat"
+    if rollback:
+        assert stale.read_bytes() == b"previous stack"
+        assert not (stack / "slice_00000.tif").exists()
+    else:
+        assert not stale.exists()
+        assert (stack / "slice_00000.tif").is_file()

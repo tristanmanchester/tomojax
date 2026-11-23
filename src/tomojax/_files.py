@@ -193,6 +193,11 @@ def validate_export_range(
     return low, high
 
 
+def tiff_stack_entry(path: Path) -> bool:
+    """Whether an existing entry is replaced when exporting a TIFF stack."""
+    return path.is_file() and path.suffix.lower() in {".tif", ".tiff", ".json"}
+
+
 def _write_tiff_directory(
     out: Path,
     plane: Callable[[int], np.ndarray],
@@ -219,7 +224,7 @@ def _write_tiff_directory(
             staging.replace(out)
         else:
             for stale in out.iterdir():
-                if stale.is_file() and stale.suffix.lower() in {".tif", ".tiff", ".json"}:
+                if tiff_stack_entry(stale):
                     stale.unlink()
             for item in staging.iterdir():
                 item.replace(out / item.name)

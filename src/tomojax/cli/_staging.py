@@ -25,13 +25,13 @@ class Destination:
     def stage(self) -> Path:
         return self.work / "new" / self.path.name
 
-    def restore(self, backup: Path) -> None:
+    def restore(self, backup: Path, destination: Path) -> None:
         try:
-            backup.replace(self.path)
+            backup.replace(destination)
         except OSError as err:
             self.keep_backup = True
             raise OSError(
-                f"failed to restore {self.path}; recover the original at {backup}"
+                f"failed to restore {destination}; recover the original at {backup}"
             ) from err
 
     def clean(self) -> None:
@@ -48,9 +48,26 @@ class Destination:
         if self.force and os.path.lexists(self.path):
             if not self.path.is_symlink() and self.path.is_dir() != self.stage.is_dir():
                 raise ValueError(f"incompatible destination type: {self.path}")
+            if self.stage.is_dir() and self.path.is_dir() and not self.path.is_symlink():
+                from tomojax._files import tiff_stack_entry
+
+                originals = self.work / "original"
+                originals.mkdir()
+                for entry in self.path.iterdir():
+                    if tiff_stack_entry(entry) or (
+                        entry.is_symlink() and (self.stage / entry.name).exists()
+                    ):
+                        backup = originals / entry.name
+                        entry.replace(backup)
+                        undo.callback(self.restore, backup, entry)
+                for staged in self.stage.iterdir():
+                    destination = self.path / staged.name
+                    staged.replace(destination)
+                    undo.callback(destination.replace, staged)
+                return
             backup = self.work / "original"
             self.path.replace(backup)
-            undo.callback(self.restore, backup)
+            undo.callback(self.restore, backup, self.path)
         if self.force:
             self.stage.replace(self.path)
         elif self.stage.is_dir():
