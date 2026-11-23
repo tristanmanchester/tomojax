@@ -655,7 +655,10 @@ def reconstruct_slabs(
     The context drains pending work on normal completion, early exit or failure.
     Raw frames and calibration arrays must remain unchanged inside the context.
     Cone FDK corrects host row bands in device-sized view batches and retains
-    the complete acquisition's weights while reconstructing each slab.
+    the complete acquisition's weights while reconstructing each slab. On a rolled
+    detector, Fourier reads the rotated row footprint with its interpolation
+    neighbours. The oblique FBP filter and iterative projector couple the rows;
+    these methods read the complete detector and return the coupled volume in one slab.
 
     Parameters
     ----------
@@ -773,7 +776,7 @@ def _reconstruct_slabs_context(
             view_positions=frames.view_positions,
             exposure_times=frames.exposure_times,
             flat_exposure_times=frames.flat_exposure_times,
-            host=cone,
+            host=cone or bool(getattr(frames.geometry, "detector_roll", 0)),
             dark_source=frames.dark_source,
             linear_limit=frames.linear_limit,
         ) as source:

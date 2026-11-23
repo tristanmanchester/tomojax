@@ -20,7 +20,12 @@ from ._fourier_backend import (
     is_cuda_oom,
     resolve_fourier_backend,
 )
-from ._fourier_grid import sample_projection_rows, sorted_half_turn
+from ._fourier_grid import (
+    rolled_row_window,
+    sample_projection_rows,
+    sample_rolled_rows,
+    sorted_half_turn,
+)
 from .fourier import FourierConfig
 from .types import ReconstructionSlab
 
@@ -117,7 +122,9 @@ def fourier_slabs[T](
                 backend,
                 async_transfers=backend == "cupy",
             )
-            with closing(_run_plan(plan, read, order, positions, start)) as completed:
+            with closing(
+                _run_plan(plan, read, order, positions, start, geometry.detector_roll)
+            ) as completed:
                 for slab in completed:
                     start = slab.stop
                     yield slab
@@ -138,6 +145,7 @@ def _run_plan[T](
     order: np.ndarray,
     positions: np.ndarray,
     start: int,
+    roll: float,
 ) -> Generator[ReconstructionSlab[T], None, None]:
     pending: list[tuple[ReconstructionSlab[T], PendingSlab]] = []
     device_order: Any = order
@@ -149,16 +157,37 @@ def _run_plan[T](
         for at in range(start, plan.grid.nz, plan.depth):
             stop = min(at + plan.depth, plan.grid.nz)
             requested = positions[at:stop]
-            first, last = _source_rows(requested, plan.detector.nv)
+            det = plan.detector
+            ratio = det.dv / det.du
+            first, last = (
+                rolled_row_window(requested, det.nv, det.nu, roll, ratio)
+                if roll
+                else _source_rows(requested, det.nv)
+            )
+            if first == last:  # Keep a real acquisition interval for the zero-extended slab.
+                first = min(first, det.nv - 1)
+                last = first + 1
             data, context = read(first, last)
             slab = ReconstructionSlab(at, stop, slice(first, last), data, np.empty(0), context)
-            if plan.cuda:
+            if plan.cuda and not roll:
                 job = plan.enqueue_rows(data, device_order, requested - first)
                 pending.append((slab, job))
                 if len(pending) >= 2:
                     yield _finish(pending.pop(0))
             else:
-                raw = sample_projection_rows(np.asarray(data), order, requested - first)
+                raw = (
+                    sample_rolled_rows(
+                        np.asarray(data),
+                        order,
+                        requested,
+                        roll,
+                        ratio,
+                        native_rows=det.nv,
+                        row_offset=first,
+                    )
+                    if roll
+                    else sample_projection_rows(np.asarray(data), order, requested - first)
+                )
                 if stop - at < plan.depth:
                     raw = np.pad(raw, ((0, plan.depth - (stop - at)), (0, 0), (0, 0)))
                 slab.volume = plan.reconstruct(raw, count=stop - at)

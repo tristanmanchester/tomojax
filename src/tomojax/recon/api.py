@@ -267,7 +267,7 @@ def validate_slab_grid(method: str, geometry: Geometry, grid: Grid, detector: De
     InvalidParameter
         If a voxel plane depends on multiple detector rows in an iterative solve.
     """
-    if method in {"sirt", "mlem"}:
+    if method in {"sirt", "mlem"} and not getattr(geometry, "detector_roll", 0):
         from tomojax.recon._axial_slabs import independent_planes
 
         if not independent_planes(geometry, grid, detector):
@@ -319,6 +319,16 @@ def reconstruct_slabs[T](
         If the method or a setting does not support slabs.
     """
     cfg = method_config(method, config=config, warm_start=warm_start or None)
+    from tomojax.geometry import ParallelGeometry
+
+    if (
+        method in {"fbp", "sirt", "mlem"}
+        and isinstance(geometry, ParallelGeometry)
+        and geometry.detector_roll
+    ):
+        return _coupled_detector_volume(
+            method, geometry, grid, detector, read, cfg, warm_start=warm_start
+        )
     if method in {"fbp", "fourier"}:
         if method == "fbp":
             from tomojax.core.geometry.cone import is_cone_beam
@@ -359,6 +369,30 @@ def reconstruct_slabs[T](
         method=method,
         config=cast("SIRTConfig | MLEMConfig", cfg),
         warm_start=warm_start,
+    )
+
+
+def _coupled_detector_volume[T](
+    method: str,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    read: Callable[[int, int], tuple[jnp.ndarray | np.ndarray, T]],
+    config: MethodConfig,
+    *,
+    warm_start: bool,
+) -> Generator[ReconstructionSlab[T], None, None]:
+    """An oblique ramp uses the 2D spectrum; Joseph updates couple neighbouring voxel planes."""
+    import numpy as np
+
+    from .types import ReconstructionSlab
+
+    data, context = read(0, detector.nv)
+    volume, info = reconstruct_arrays(
+        method, geometry, grid, detector, data, config=config, warm_start=warm_start
+    )
+    yield ReconstructionSlab(
+        0, grid.nz, slice(0, detector.nv), data, np.asarray(volume), context, info
     )
 
 

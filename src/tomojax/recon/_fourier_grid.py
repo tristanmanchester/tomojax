@@ -135,12 +135,28 @@ def sample_projection_rows(
     return result
 
 
+def rolled_row_window(
+    positions: np.ndarray, nv: int, nu: int, roll: float, pitch_ratio: float
+) -> tuple[int, int]:
+    """Enclose the native row footprint of the rotated lattice and its interpolation neighbours."""
+    angle = np.deg2rad(roll)
+    center = (nv - 1) / 2
+    height = np.cos(angle) * (positions - center)
+    reach = abs(np.sin(angle)) * (nu - 1) / (2 * pitch_ratio) + 1
+    first = int(np.clip(np.floor(np.min(height) + center - reach), 0, nv))
+    stop = int(np.clip(np.ceil(np.max(height) + center + reach) + 1, 0, nv))
+    return first, stop
+
+
 def sample_rolled_rows(
     projections: np.ndarray,
     order: np.ndarray,
     positions: np.ndarray,
     roll_deg: float,
     pitch_ratio: float,
+    *,
+    native_rows: int | None = None,
+    row_offset: int = 0,
 ) -> np.ndarray:
     """Bilinearly resample a rolled detector onto unrolled rows, with zero extension.
 
@@ -149,7 +165,8 @@ def sample_rolled_rows(
     detector-plane offset R(roll) @ (x', z') from the detector centre, so the
     unrolled point (x, z) reads the measurement at R(-roll) @ (x, z).
     """
-    _, nv, nu = projections.shape
+    _, rows, nu = projections.shape
+    nv = rows if native_rows is None else native_rows
     angle = np.deg2rad(roll_deg)
     c, s = np.cos(angle), np.sin(angle)
     center_u, center_v = (nu - 1) / 2, (nv - 1) / 2
@@ -158,13 +175,12 @@ def sample_rolled_rows(
     z = z[:, :, None] if z.ndim == 2 else z[:, None, None]
     result = np.zeros((len(positions), len(order), nu), dtype=np.float32)
     # Read the band of measured rows the slab touches once, for all views.
-    reach = np.abs(s) * center_u / pitch_ratio + 1
-    lowest = np.floor(np.nanmin(c * z) + center_v - reach)
-    highest = np.ceil(np.nanmax(c * z) + center_v + reach)
-    first, last = int(max(0, lowest)), int(min(nv - 1, highest))
-    if not np.isfinite(z).all() or last < first:
+    first, stop = rolled_row_window(positions, nv, nu, roll_deg, pitch_ratio)
+    if first == stop:
         return result
-    band = np.asarray(projections[order[:, None], np.arange(first, last + 1)[None, :]], np.float32)
+    last = stop - 1
+    local_rows = np.arange(first - row_offset, stop - row_offset)
+    band = np.asarray(projections[order[:, None], local_rows[None, :]], np.float32)
     if not np.isfinite(band).all():
         raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
     views = np.arange(len(order))[:, None]
