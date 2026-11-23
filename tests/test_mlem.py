@@ -178,6 +178,35 @@ def test_streamed_counts_match_resident_subsets_and_release_sources(
     assert set(np.concatenate(reads)) == set(range(5))
 
 
+def test_watched_axial_visibility_occupies_at_most_one_plane(monkeypatch):
+    from jax.tree import leaves
+
+    from tomojax import progress
+
+    grid = Grid(5, 4, 3, 1, 1, 1)
+    detector = Detector(5, 3, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, [0, 45, 90])
+    module = import_module("tomojax.recon.mlem")
+    segment = module._segment
+    mask_sizes = []
+
+    def measured(*args, **kwargs):
+        result = segment(*args, **kwargs)
+        mask_sizes.extend(a.size for a in leaves(result) if a.dtype == bool and a.ndim > 0)
+        return result
+
+    monkeypatch.setattr(module, "_segment", measured)
+    with progress.watch(lambda _: None):
+        mlem(
+            geometry,
+            grid,
+            detector,
+            np.ones((3, 3, 5), np.float32),
+            config=MLEMConfig(iterations=2, subsets=2),
+        )
+    assert max(mask_sizes, default=0) <= grid.nx * grid.ny
+
+
 @pytest.mark.numerical
 def test_single_plane_sensitivities_match_full_axial_norms(monkeypatch):
     module = import_module("tomojax.recon.mlem")

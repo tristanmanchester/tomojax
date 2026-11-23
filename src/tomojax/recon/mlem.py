@@ -187,6 +187,7 @@ def _segment(
     sensitivity, correction = poisson_operators(
         poses, grid, detector, det_grid, backend, batch_size, model, indices, valid, stream=stream
     )
+    normal_grid = grid
     if axial:
         # Equal axial rows share A.T 1, even when activity/support varies by plane.
         normal_grid = replace(grid, nz=1, vol_origin=(*grid_volume_origin(grid)[:2], 0.0))
@@ -209,7 +210,7 @@ def _segment(
         # A wholly unobserved voxel has no likelihood information: choose zero,
         # not an arbitrary unit activity. Visibility must include every subset;
         # a voxel missed by one subset can still be measured by another.
-        observed = jnp.zeros(shape, bool)
+        observed = jnp.zeros(volume_shape(model, normal_grid), bool)
         if sensitivities is not None:
             # A stack-shaped > 0 comparison can retain a second full zero stack
             # alongside the map's writable cache. Compare one volume at a time.
@@ -221,7 +222,7 @@ def _segment(
             observed = jax.lax.cond(
                 iterations == 0,
                 lambda: jax.lax.fori_loop(
-                    0, subsets, lambda i, seen: seen | (sensitivity(i) > 0), jnp.zeros(shape, bool)
+                    0, subsets, lambda i, seen: seen | (sensitivity(i) > 0), observed
                 ),
                 lambda: observed,
             )
