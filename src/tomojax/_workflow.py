@@ -39,6 +39,7 @@ from tomojax._scan import (
     geometry_record,
     rebuild,
     record_of,
+    recorded_length_unit,
     source_of,
     with_grid,
 )
@@ -136,6 +137,7 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
         method="align" if aligned else str(meta.get("reconstruction_method", "unknown")),
         info=dict(info) if isinstance(info, dict) else {},
         scan=scan,
+        length_unit=recorded_length_unit(meta),
     )
 
 
@@ -303,6 +305,8 @@ def save(
                 source = source_of(item.scan)
                 if not include_scan:
                     record = replace_dataset(record, projections=None)
+            if item.length_unit is not None:
+                record.geometry_metadata["length_unit"] = item.length_unit
             record.volume = item.volume
             record.geometry_metadata["reconstruction_method"] = item.method
             # As JSON, which the file's metadata is: a configuration as its fields, and

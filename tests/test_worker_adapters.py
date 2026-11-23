@@ -350,3 +350,39 @@ def test_force_preserves_an_open_source_and_its_ancestor_directory(worker, simul
             )["error"]
             assert (error["kind"], error["path"]) == ("invalid_parameter", "path")
     assert scan.read_bytes() == before
+
+
+@pytest.mark.parametrize(("original", "copy"), [("npz", "nxs"), ("nxs", "npz")])
+def test_standalone_volume_keeps_its_recorded_unit_when_reopened_and_saved(
+    worker, tmp_path, original, copy
+):
+    from tomojax.io import ProjectionDataset, save_dataset
+
+    grid = tj.Grid(4, 3, 2, 0.5, 2, 3, vol_origin=(11, -5, 7))
+    pixels = np.arange(24, dtype=np.float32).reshape(grid.shape)
+    path, destination = tmp_path / f"original.{original}", tmp_path / f"copy.{copy}"
+    save_dataset(
+        path,
+        ProjectionDataset(
+            projections=None,
+            angles=np.array([0, 45, 90], np.float32),
+            volume=pixels,
+            detector=tj.Detector(4, 2, 0.5, 3),
+            grid=grid,
+            geometry_metadata={
+                "acquisition": {"length_unit": "um"},
+                "reconstruction_method": "fbp",
+            },
+        ),
+    )
+    for file in (path, destination):
+        value = output(worker("open", kind="reconstruction", path=str(file)))["value"]
+        assert value["scan"] is None and value["volume"]["unit"] == "1/um"
+        assert [a["unit"] for a in value["volume"]["axes"]] == ["um"] * 3
+        ref = dict(type="member", handle=value["handle"], member="volume")
+        plane = output(worker("plane", source=ref, axis="z", index=1))["value"]["plane"]
+        assert (plane["fixed"][0]["coordinate"], plane["fixed"][0]["unit"]) == (10, "um")
+        np.testing.assert_array_equal(np.load(plane["storage"]["path"]), pixels[1])
+        if file == path:
+            root = dict(type="member", handle=value["handle"], member="self")
+            output(worker("run", operation=dict(type="save", source=root, path=str(destination))))

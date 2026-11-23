@@ -880,6 +880,12 @@ def with_grid(scan: Scan, grid: Grid) -> Scan:
     return replace(scan, geometry=rebuild(scan.geometry, grid=grid))
 
 
+def recorded_length_unit(meta: Mapping[str, Any]) -> str | None:
+    """Read the geometry's calibration unit from current or acquisition metadata."""
+    unit = meta.get("length_unit") or (meta.get("acquisition") or {}).get("length_unit")
+    return str(unit) if unit else None
+
+
 @dataclass(frozen=True)
 class Reconstruction:
     """A reconstructed volume, its geometry, how it was made and the scan it came from.
@@ -904,6 +910,9 @@ class Reconstruction:
         Resolved method settings and solver records.
     scan : Scan or None, optional
         Input scan, including the output grid and any inferred geometry.
+    length_unit : str or None, optional
+        Unit of grid coordinates and poses. An attached scan supplies its recorded
+        unit. A standalone volume retains the unit stored in its file.
     """
 
     volume: np.ndarray | jax.Array
@@ -911,6 +920,18 @@ class Reconstruction:
     method: str
     info: Mapping[str, object]
     scan: Scan | None = None
+    length_unit: str | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        from tomojax.errors import InvalidParameter
+
+        if self.scan is None or self.scan.source is None:
+            return
+        unit = recorded_length_unit(self.scan.source.geometry_metadata)
+        if unit is not None:
+            if self.length_unit is not None and self.length_unit != unit:
+                raise InvalidParameter("length_unit", f"the scan's recorded length unit is {unit}")
+            object.__setattr__(self, "length_unit", unit)
 
     @property
     def grid(self) -> Grid:

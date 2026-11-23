@@ -67,13 +67,16 @@ class TerminalFiles:
         return Array(self.reference(data), data.shape, data.dtype.str, axes, "unspecified", pointer)
 
 
-def length_unit(meta: Mapping[str, Any]) -> str:
-    """The recorded acquisition length unit, or an explicitly uncalibrated scan unit."""
-    return str(
-        meta.get("length_unit")
-        or (meta.get("acquisition") or {}).get("length_unit")
-        or "scan_length"
-    )
+def unit_of(item: tj.Scan | tj.Frames | tj.Reconstruction | None) -> str:
+    """Return the recorded spatial unit or the wire name for uncalibrated lengths."""
+    import tomojax as tj
+    from tomojax._scan import recorded_length_unit
+
+    if isinstance(item, tj.Reconstruction):
+        unit = item.length_unit
+    else:
+        unit = recorded_length_unit(item.source.geometry_metadata) if item and item.source else None
+    return unit or "scan_length"
 
 
 def disk_volume(
@@ -85,6 +88,7 @@ def disk_volume(
     meta: Mapping[str, Any],
 ) -> Array:
     """Describe the export source in its recorded storage order, including legacy volumes."""
+    from tomojax._scan import recorded_length_unit
     from tomojax.cli.execution import volume_metadata
 
     storage = Hdf5(str(path), VOLUME_DATASET)
@@ -92,7 +96,12 @@ def disk_volume(
         disk_axes = tuple(Axis(a, "stored_volume", "index", Uniform(0, 1)) for a in axes)
         unit = "unspecified"
     else:
-        volume = volume_metadata(grid, storage=storage, dtype=dtype, length_unit=length_unit(meta))
+        volume = volume_metadata(
+            grid,
+            storage=storage,
+            dtype=dtype,
+            length_unit=recorded_length_unit(meta) or "scan_length",
+        )
         disk_axes = tuple(volume.axes["zyx".index(a)] for a in axes)
         unit = volume.unit
     return Array(storage, shape, dtype, disk_axes, unit, "attenuation")
@@ -123,9 +132,7 @@ def saved_result(
     with ExitStack() as cleanup:
         files = TerminalFiles(Path(path), cleanup)
         scan = item if isinstance(item, tj.Scan) else item.scan
-        unit = length_unit(
-            scan.source.geometry_metadata if scan is not None and scan.source is not None else {}
-        )
+        unit = unit_of(item if isinstance(item, tj.Reconstruction) else scan)
         arrays: dict[str, Array] = {}
         info: Mapping[str, object] = {}
         if isinstance(item, tj.Reconstruction):

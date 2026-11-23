@@ -121,6 +121,8 @@ class tomojax.Reconstruction(
         method: 'str',
         info: 'Mapping[str, object]',
         scan: 'Scan | None' = None,
+        *,
+        length_unit: 'str | None' = None,
     ) -> None
     .grid
 class tomojax.RegionEstimate(scan: 'Scan', info: 'Mapping[str, object]') -> None

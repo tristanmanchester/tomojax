@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from functools import partial, singledispatchmethod
-import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -24,10 +23,10 @@ from tomojax._smooth_alignment import resolve_alignment
 from tomojax._workflow import align_resolved, reconstruct_resolved, validate_save
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, source
-from tomojax.cli._handles import Root, handle, stage_array, unit_of
+from tomojax.cli._handles import Root, handle, stage_array
 from tomojax.cli._options import check_destinations
 from tomojax.cli._plans import plan_product
-from tomojax.cli._results import VOLUME_DATASET, length_unit, scan_axes
+from tomojax.cli._results import VOLUME_DATASET, scan_axes, unit_of
 from tomojax.core.array_ops import check_binning
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
@@ -76,23 +75,20 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
         info = item.info if isinstance(item, tj.Reconstruction | tj.Alignment) else {}
         summary = ex.summarise(info, externalise=diagnostic)
         if isinstance(item, tj.Scan | tj.Frames | tj.Reconstruction | tj.Alignment | tj.Simulation):
-            storage = unit = None
+            storage = None
             if isinstance(operation, op.Open) and isinstance(item, tj.Reconstruction):
-                storage, unit = saved_registration(operation.path)
-            return ex.Success(handle(item, volume_storage=storage, unit=unit), summary, manifest)
+                storage = saved_storage(operation.path)
+            return ex.Success(handle(item, volume_storage=storage), summary, manifest)
         return ex.Success(item, summary, manifest)
 
 
-def saved_registration(path: str) -> tuple[Hdf5 | None, str | None]:
+def saved_storage(path: str) -> Hdf5 | None:
     """Use a saved dataset directly only when it has canonical in-memory axis order."""
     if not h5py.is_hdf5(path):
-        return None, None
+        return None
     with h5py.File(path, "r") as file:
         axes = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
-        storage = Hdf5(path, VOLUME_DATASET) if axes in ("zyx", b"zyx") else None
-        group = file.get("/entry/geometry")
-        meta = group.attrs.get("geometry_meta_json", "{}") if group is not None else "{}"
-        return storage, length_unit(json.loads(cast("str | bytes", meta)))
+        return Hdf5(path, VOLUME_DATASET) if axes in ("zyx", b"zyx") else None
 
 
 @dataclass(frozen=True)

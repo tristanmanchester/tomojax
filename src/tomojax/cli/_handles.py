@@ -10,7 +10,7 @@ import numpy as np
 
 import tomojax as tj
 from tomojax.cli import execution as ex, products as p
-from tomojax.cli._results import length_unit, scan_axes
+from tomojax.cli._results import scan_axes, unit_of
 from tomojax.geometry.api import is_cone_beam
 from tomojax.wire.arrays import (
     Array,
@@ -27,13 +27,6 @@ from tomojax.wire.arrays import (
 type Root = tj.Scan | tj.Frames | tj.Simulation | tj.Alignment | tj.Reconstruction
 
 
-def unit_of(scan: tj.Scan | tj.Frames | None) -> str:
-    """Use the length unit retained with the acquisition."""
-    return length_unit(
-        scan.source.geometry_metadata if scan is not None and scan.source is not None else {}
-    )
-
-
 def stage_array(context: ex.ExecutionContext, data: Any) -> Npy:
     """Write only to this request's private reservation."""
     stage = context.staging.array()
@@ -42,12 +35,10 @@ def stage_array(context: ex.ExecutionContext, data: Any) -> Npy:
     return stage.reference
 
 
-def handle(
-    item: Root, *, volume_storage: Storage | None = None, unit: str | None = None
-) -> ex.NewHandle:
+def handle(item: Root, *, volume_storage: Storage | None = None) -> ex.NewHandle:
     """Prepare registrations on the executor; binding only assigns the owner's id."""
     source = item if isinstance(item, tj.Scan | tj.Frames) else item.scan
-    unit = unit or unit_of(source)
+    unit = unit_of(item if isinstance(item, tj.Reconstruction) else source)
     pixels: dict[str, Any] = {}
     if source is not None:
         pixels["angles"] = np.asarray(source.geometry.angles)

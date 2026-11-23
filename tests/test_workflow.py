@@ -509,6 +509,24 @@ def test_a_saved_reconstruction_names_its_projections_and_keeps_them_only_when_a
         tj.save(tmp_path / "none.nxs", alone, include_scan=True)
 
 
+def test_reconstruction_uses_the_attached_scans_calibration():
+    from tomojax.io import ProjectionDataset
+
+    angles = np.array([0, 90], np.float32)
+    grid, detector = tj.Grid(3, 3, 2, 0.2, 0.2, 0.3), tj.Detector(3, 2, 0.2, 0.3)
+    data = np.zeros((2, 2, 3), np.float32)
+    scan = tj.Scan(
+        data,
+        tj.ParallelGeometry(grid, detector, angles),
+        source=ProjectionDataset(data, angles, geometry_metadata={"length_unit": "mm"}),
+    )
+    volume = np.ones(grid.shape, np.float32)
+    assert tj.Reconstruction(volume, scan.geometry, "fbp", {}, scan).length_unit == "mm"
+    with pytest.raises(tj.InvalidParameter) as caught:
+        tj.Reconstruction(volume, scan.geometry, "fbp", {}, scan, length_unit="pixel")
+    assert caught.value.path == "length_unit"
+
+
 def test_the_commands_api_counterparts_simulate_inspect_and_export(tmp_path: Path) -> None:
     sim = tj.simulate("sphere", size=8, n_views=6, seed=1)
     scan, phantom = sim
