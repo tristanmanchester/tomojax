@@ -11,6 +11,7 @@ chooses the volume step length and the fraction of the pose step. Only scalar
 decisions leave the device.
 """
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import partial
 import time
@@ -381,8 +382,7 @@ class _Level:
         lipschitz = lipschitz + float(jnp.max(jnp.real(jnp.linalg.eigvals(inverse @ outer))))
 
         # The shared images are an argument: captured, the program would hold them as a constant.
-        @_into
-        def run(x, q, y, precision, lipschitz, images, inverse, data_moments):
+        def advance(state, count, q, y, precision, lipschitz, images, inverse, data_moments):
             def fista(_, state):
                 old, z, t = state
                 shared = inverse @ (
@@ -395,11 +395,35 @@ class _Level:
                 tn = (1 + jnp.sqrt(1 + 4 * t * t)) / 2
                 return new, new + ((t - 1) / tn).astype(jnp.float32) * (new - old), tn
 
-            return jax.lax.fori_loop(0, iterations, fista, (x, x, jnp.asarray(1.0, jnp.float64)))[0]
+            return jax.lax.fori_loop(0, count, fista, state)
+
+        def first(x, count, *args: Any):
+            return advance((x, x, jnp.asarray(1.0, jnp.float64)), count, *args)
 
         self._write("x", _Volumes.start, 0.0)  # an argument: a constant zero could be folded
         args = (ops.prepare(q), y, precision, lipschitz, images, inverse, data_moments)
-        return self._write("x", run, *args)
+        task = progress.for_unit("iterations")
+        if task is None or not iterations:
+
+            @_into
+            def run(x, *operands: Any):
+                return first(x, iterations, *operands)[0]
+
+            return self._write("x", run, *args)
+        # Only x is donated on the first dispatch: old and z both start from x.
+        start_chunk, next_chunk = _into(first), _into(advance)
+        state = None
+        for low, high in progress.chunks(iterations):
+            state = (
+                start_chunk(self.stacks["x"], high, *args)
+                if state is None
+                else next_chunk(state, high - low, *args)
+            )
+            jax.block_until_ready(state)
+            self.stacks.update([("x", state[0])])
+            task.advance(high, {})
+            progress.check_cancelled()
+        return self.stacks["x"]
 
     def start(self, c, x0, iterations):
         """The level's first volume at poses ``c``, from ``x0`` (None: FISTA from zero)."""
@@ -407,7 +431,8 @@ class _Level:
         lipschitz, observed = self.ops.sensitivity(q, self.stacks["free"])
         self.stacks.update([("free", observed)])
         if x0 is None:
-            self.initial_volume(q, lipschitz, iterations)
+            with progress.task("image", "initial image", iterations, "iterations"):
+                self.initial_volume(q, lipschitz, iterations)
         else:
             self._write("x", _Volumes.start, x0)
         # Prolongation can populate voxels invisible to every ray at this level.
@@ -419,6 +444,7 @@ class _Level:
         """Hold an accepted step's volume as the level's, and the previous one beside it."""
         self.stacks.update([("x", x), ("other", previous)])
 
+    @progress.task("linearize", "linearize", None, "")
     def linearize(self, c, x):
         """The robust linearization at compact poses ``c`` and volume ``x``, with the shared term.
 
@@ -531,6 +557,7 @@ class _Level:
         dc = -poses(prior.solve, factor, common, k.gp + jadx)
         return _Proposal(dx, dc, r, jadx, bdx, linear_step)
 
+    @progress.task("solve", "undamped diagnostic", None, "")
     def proposal(self, x, c, linear, lm, pose_weight):
         """The RMS pose change one step from this linearisation proposes at damping lm, or None."""
         step = self._propose(x, self._context(x, c, linear, pose_weight), lm)
@@ -546,10 +573,15 @@ class _Level:
         Returns the accepted step with its predicted reduction, or None.
         """
         k = self._context(x, c, linear, pose_weight)
-        for _ in range(5):
+        for attempt in range(5):
             # A refused proposal's step and trials end with the attempt, before the next
             # Schur solve: kept, they were the level's peak (13 volumes on K11 54013).
-            accepted = self._attempt(x, c, k, lm, pose_weight, f)
+            with (
+                progress.task("retry", f"damping retry {attempt}", None, "")
+                if attempt
+                else nullcontext()
+            ):
+                accepted = self._attempt(x, c, k, lm, pose_weight, f)
             if accepted is not None:
                 return accepted
             lm *= 10
@@ -558,7 +590,8 @@ class _Level:
     def _attempt(self, x, c, k, lm, pose_weight, f):
         """One proposal at damping lm and its line search: the accepted step's record, or None."""
         prior, common = self.prior, k.common
-        proposed = self._propose(x, k, lm)
+        with progress.task("solve", "schur solve", None, ""):
+            proposed = self._propose(x, k, lm)
         if proposed is None:
             return None
         dx, dc, r, jadx, bdx = proposed.dx, proposed.dc, proposed.r, proposed.jadx, proposed.bdx
@@ -569,7 +602,8 @@ class _Level:
         if gx_dx + gp_dc < 0:
             held = (k.residual, r, k.sw, common.moments, bdx)
             trial = partial(self.trial, x, c, dx, dc, pose_weight, held)
-            accepted = _line_search(trial, f, gx_dx, gp_dc)
+            with progress.task("line_search", "line search", None, ""):
+                accepted = _line_search(trial, f, gx_dx, gp_dc)
         if accepted:
             a, beta, new = accepted
             dp = prior.expand(dc)
@@ -724,57 +758,65 @@ def _descend(level, c, x0, budget, pose_sigma, weight):
     """The level's damped Gauss-Newton steps from poses ``c`` and volume ``x0`` (None: FISTA)."""
     prior = level.prior
     x = level.start(c, x0, budget.initial_image_iterations)
-    gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
-    linear = (gx0, dd, sw, j, gr, gram, residual, common)
-    pose_weight, noise, fisher = _pose_weight(level, linear, pose_sigma)
-    f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
-    initial_objective = f
     history, lm, stable, status = [], budget.lm_initial, 0, "step_budget_reached"
-    for it in range(budget.iterations):
-        progress.check_cancelled()
-        if it:
-            # Release the previous weights and columns first: two stack-sized sets
-            # would not fit beside each other on a small device.
-            del gx0, dd, sw, j, gr, gram, residual, common, linear
+    f, pose_weight = 0.0, None
+    level_task = progress.for_unit("steps")
+    # A zero-step level still measures its initial objective and motion prior.
+    for it in range(max(1, budget.iterations)):
+        with (
+            progress.task("step", f"step {it + 1}", None, "")
+            if budget.iterations
+            else nullcontext()
+        ):
             gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
             linear = (gx0, dd, sw, j, gr, gram, residual, common)
-            held = pose_weight  # the weight follows the views' scatter; f is restated at it
+            held = pose_weight
             pose_weight, noise, fisher = _pose_weight(level, linear, pose_sigma)
-            f += float(prior.value(c, pose_weight)) - float(prior.value(c, held))
-        result = level.step(x, c, linear, lm, pose_weight, f)
-        if result is None:
-            status = "line_search_stalled"
-            break
-        x0, c0 = x, c
-        a, beta, (fn, x, c), predicted, change, lm, cg_steps, cg_residual, linear_record = result
-        level.accept(x, x0)
-        rho = _gain_ratio(f - fn, predicted)
-        valid, down = map(float, np.asarray(obstats))
-        history.append(
-            {
-                Metric.objective.name: fn,
-                Metric.pose_step_rms.name: change,
-                Metric.line_step.name: a,
-                Metric.pose_fraction.name: beta,
-                Metric.lm.name: lm,
-                Metric.gain_ratio.name: rho,
-                Metric.predicted_reduction.name: predicted,
-                Metric.cg_iterations.name: cg_steps,
-                Metric.cg_relative_residual.name: cg_residual,
-                **linear_record,
-                Metric.fraction_downweighted.name: down / max(valid, 1),
-            }
-        )
-        f = fn
-        if rho > 0.75 and a == 1:
-            lm = max(_LM_MIN, lm / 2)
-        elif rho < 0.25 or a < 0.5:
-            lm = min(lm * 3, 1e6)
-        undamped = _undamped_proposal(level, history[-1], x0, c0, linear, budget, pose_weight)
-        history[-1][Metric.undamped_proposed_pose_step_rms.name] = undamped
-        if (task := progress.for_unit("steps")) is not None:
+            if it:
+                f += float(prior.value(c, pose_weight)) - float(prior.value(c, held))
+            else:
+                f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
+                initial_objective = f
+                if not budget.iterations:
+                    break
+            result = level.step(x, c, linear, lm, pose_weight, f)
+            if result is None:
+                status = "line_search_stalled"
+                break
+            x0, c0 = x, c
+            a, beta, (fn, x, c), predicted, change, lm, cg_steps, cg_residual, linear_record = (
+                result
+            )
+            level.accept(x, x0)
+            rho = _gain_ratio(f - fn, predicted)
+            valid, down = map(float, np.asarray(obstats))
+            history.append(
+                {
+                    Metric.objective.name: fn,
+                    Metric.pose_step_rms.name: change,
+                    Metric.line_step.name: a,
+                    Metric.pose_fraction.name: beta,
+                    Metric.lm.name: lm,
+                    Metric.gain_ratio.name: rho,
+                    Metric.predicted_reduction.name: predicted,
+                    Metric.cg_iterations.name: cg_steps,
+                    Metric.cg_relative_residual.name: cg_residual,
+                    **linear_record,
+                    Metric.fraction_downweighted.name: down / max(valid, 1),
+                }
+            )
+            f = fn
+            if rho > 0.75 and a == 1:
+                lm = max(_LM_MIN, lm / 2)
+            elif rho < 0.25 or a < 0.5:
+                lm = min(lm * 3, 1e6)
+            undamped = _undamped_proposal(level, history[-1], x0, c0, linear, budget, pose_weight)
+            history[-1][Metric.undamped_proposed_pose_step_rms.name] = undamped
+            # Two sets of linearized view stacks would exceed the placement budget.
+            del gx0, dd, sw, j, gr, gram, residual, common, linear
+        if level_task is not None:
             jax.block_until_ready((x, c))
-            task.advance(len(history), history[-1])
+            level_task.advance(len(history), history[-1])
         stable = stable + 1 if undamped is not None and undamped < budget.tolerance else 0
         if stable >= 2 and it + 1 >= budget.min_iterations:
             status = "pose_steps_below_tolerance"

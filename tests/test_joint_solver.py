@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
+from tomojax import progress
 from tomojax.alignment._joint import _refine, _solver, _tv  # check-public-imports: allow-private
 from tomojax.alignment._joint._operators import (  # check-public-imports: allow-private
     Operators,
@@ -24,6 +25,27 @@ from tomojax.alignment._joint._solver import (
 from tomojax.geometry import stack_view_poses
 
 from . import _joint_stacks as js
+
+
+def test_damping_retries_and_undamped_diagnostic_have_separate_checkpoints():
+    events, attempts = [], []
+    level = SimpleNamespace(_context=lambda *_: None, _propose=lambda *_: None)
+
+    def attempt(*args):
+        attempts.append(args[3])
+        return "accepted" if len(attempts) == 3 else None
+
+    level._attempt = attempt
+    with progress.watch(events.append), progress.task("step", "step 1", None, ""):
+        assert _solver._Level.step(level, None, None, None, 0.001, None, 0) == "accepted"
+        assert _solver._Level.proposal(level, None, None, None, 0.001, None) is None
+    assert attempts == [0.001, 0.01, 0.1]
+    root, *children = [e for e in events if isinstance(e, progress.Started)]
+    assert [(e.parent, e.name, e.label) for e in children] == [
+        (root.task, "retry", "damping retry 1"),
+        (root.task, "retry", "damping retry 2"),
+        (root.task, "solve", "undamped diagnostic"),
+    ]
 
 
 @pytest.mark.parametrize("weight", [0.0, 0.02])

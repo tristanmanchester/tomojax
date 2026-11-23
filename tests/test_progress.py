@@ -588,22 +588,35 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
                 assert [e.status for e in events if isinstance(e, progress.Finished)] == [
                     "cancelled",
                     "cancelled",
+                    "cancelled",
                 ]
             return
         result = tj.align(alignment_scan, grid=alignment_scan.grid, config=cfg)
     validate_tree(events)
     started = [e for e in events if isinstance(e, progress.Started)]
-    assert [e.name for e in started] == ["align", "level", "level", "refine"]
+    roots = [e for e in started if e.parent == started[0].task]
+    assert [e.name for e in roots] == ["level", "level", "refine"]
     assert started[0].label == "translations"
-    assert started[-1].label == "refine poses"
-    for task, level in zip(started[1:3], result.info["levels"], strict=True):
+    assert roots[-1].label == "refine poses"
+    (image,) = [e for e in started if e.name == "image"]
+    assert image.parent == roots[0].task and image.total == 3
+    completed = [
+        e.done for e in events if isinstance(e, progress.Advanced) and e.task == image.task
+    ]
+    assert completed[0] == 1 and completed[-1] == 3
+    for task, level in zip(roots[:2], result.info["levels"], strict=True):
+        steps = [e for e in started if e.name == "step" and e.parent == task.task]
+        assert len(steps) >= len(level["steps"])
+        for step in steps:
+            children = [e.name for e in started if e.parent == step.task]
+            assert children[0] == "linearize" and "solve" in children
         updates = [e for e in events if isinstance(e, progress.Advanced) and e.task == task.task]
         assert task.label == f"binning {level['binning']}"
         assert updates
         assert [e.done for e in updates] == list(range(1, len(level["steps"]) + 1))
         assert all("undamped_proposed_pose_step_rms" in e.metrics for e in updates)
         assert [dict(e.metrics) for e in updates] == level["steps"]
-    refine = [e for e in events if isinstance(e, progress.Advanced) and e.task == started[-1].task]
+    refine = [e for e in events if isinstance(e, progress.Advanced) and e.task == roots[-1].task]
     assert [e.done for e in refine] == list(range(1, 1 + len(result.info["refinement"]["steps"])))
 
 

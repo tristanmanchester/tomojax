@@ -56,6 +56,12 @@ type _Name = Literal[
     "export",
     "estimate_region",
     "opposite-views",
+    "image",
+    "step",
+    "linearize",
+    "solve",
+    "retry",
+    "line_search",
     "write",
 ]
 type _Status = Literal["done", "failed", "cancelled"]
@@ -394,6 +400,23 @@ def step(unit: str, *, remaining: int | None = None) -> None:
         if remaining is not None:
             active.total = done + remaining
         active.advance(done, {})
+
+
+def chunks(total: int) -> Iterator[tuple[int, int]]:
+    """Group existing work units at owner checkpoints, using completed chunk time."""
+    if not watching():
+        if total:
+            yield 0, total
+        return
+    first, length = 0, 1
+    while first < total:
+        check_cancelled()
+        stop = min(total, first + length)
+        start = monotonic()
+        yield first, stop
+        if first:  # The first dispatch can include compilation.
+            length = max(1, round(0.25 * (stop - first) / max(monotonic() - start, 1e-9)))
+        first = stop
 
 
 class Runtime:
