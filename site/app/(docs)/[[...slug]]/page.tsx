@@ -3,14 +3,22 @@ import {
   DocsDescription,
   DocsPage,
   DocsTitle,
-  MarkdownCopyButton,
-  ViewOptionsPopover,
 } from "fumadocs-ui/layouts/docs/page";
 import { createRelativeLink } from "fumadocs-ui/mdx";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getMDXComponents } from "@/components/mdx";
-import { appName, getPageMarkdownUrl, getSourceUrl } from "@/lib/shared";
+import {
+  AskAIPopover,
+  CopyMarkdownButton,
+  GitHubSourceLink,
+} from "@/components/page-actions";
+import {
+  appName,
+  getPageMarkdownUrl,
+  getSourceUrl,
+  siteUrl,
+} from "@/lib/shared";
 import { source } from "@/lib/source";
 
 export default async function Page(props: PageProps<"/[[...slug]]">) {
@@ -32,13 +40,14 @@ export default async function Page(props: PageProps<"/[[...slug]]">) {
       <DocsDescription className="mb-0">
         {page.data.description}
       </DocsDescription>
-      <div className="flex flex-row gap-2 items-center border-b pb-6">
-        <MarkdownCopyButton markdownUrl={markdownUrl} />
+      <div className="flex flex-row flex-wrap gap-2 items-center border-b pb-6">
+        <CopyMarkdownButton markdownPath={markdownUrl} />
+        <AskAIPopover
+          markdownUrl={`${siteUrl}${markdownUrl}`}
+          title={page.data.title}
+        />
         {page.data.source && (
-          <ViewOptionsPopover
-            markdownUrl={markdownUrl}
-            githubUrl={getSourceUrl(page.data.source)}
-          />
+          <GitHubSourceLink href={getSourceUrl(page.data.source)} />
         )}
       </div>
       <DocsBody>
