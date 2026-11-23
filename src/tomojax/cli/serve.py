@@ -194,6 +194,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _ready() -> e.Ready:
     import jax
 
+    from tomojax.cli._adapters import EXECUTABLE
+
     devices = jax.devices()
     inventory = tuple(e.Device(f"{d.platform}:{d.id}", d.platform, d.device_kind) for d in devices)
     cuda = next(
@@ -224,12 +226,7 @@ def _ready() -> e.Ready:
             "close",
             "release",
             "shutdown",
-            "inspect",
-            "open",
-            "validate",
-            "plan",
-            "run",
-            "plane",
+            *(str(kind.__struct_config__.tag) for kind in EXECUTABLE),
         ),
         inventory,
     )

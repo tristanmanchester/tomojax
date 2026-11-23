@@ -126,6 +126,17 @@ def test_save_reopen_plan_edit_and_export(worker, simulation, tmp_path):
     assert output(worker("inspect", path=str(file)))["value"]["report"]["valid"]
     reopened = output(worker("open", kind="reconstruction", path=str(file)))["value"]
     assert reopened["scan"] is None and reopened["volume"]["storage"]["type"] == "hdf5"
+    reopened_root = dict(type="member", handle=reopened["handle"], member="self")
+    for name, options, field in [
+        ("copy.nxs", dict(include_scan=True), "include_scan"),
+        ("copy.txt", {}, "path"),
+    ]:
+        path = tmp_path / name
+        recipe = dict(type="save", source=reopened_root, path=str(path), **options)
+        for cmd in ("validate", "run"):
+            error = worker(cmd, operation=recipe)["error"]
+            assert (error["kind"], error["path"]) == ("invalid_parameter", field)
+        assert not path.exists() and not path.with_name(path.name + ".manifest.json").exists()
     ref = dict(type="member", handle=reopened["handle"], member="volume")
     sliced = output(worker("plane", source=ref, axis="y", index=1))["value"]["plane"]
     with h5py.File(file) as f:

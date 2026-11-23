@@ -223,6 +223,20 @@ def load_alignment(path: str | PathLike[str]) -> Alignment:
     return Alignment(scan=scan, info=info, image=image, grid=working_grid)
 
 
+def validate_save(
+    path: Path, item: Scan | Reconstruction | Alignment | Simulation, *, include_scan: bool
+) -> None:
+    """Check the destination format and availability of the requested scan before writing."""
+    from tomojax.errors import InvalidParameter
+    from tomojax.io.api import dataset_output_format
+
+    dataset_output_format(path)
+    if isinstance(item, Reconstruction) and item.scan is None and include_scan:
+        raise InvalidParameter(
+            "include_scan", "this reconstruction was loaded without its scan: there is none to save"
+        )
+
+
 def save(
     path: str | PathLike[str],
     item: Scan | Reconstruction | Alignment | Simulation,
@@ -271,6 +285,7 @@ def save(
     from tomojax.io.api import replace_dataset
 
     with progress.task("save", Path(path).name, None, ""):
+        validate_save(Path(path), item, include_scan=include_scan)
         if isinstance(item, Scan):
             record = record_of(item)
         elif isinstance(item, Simulation):
@@ -280,10 +295,6 @@ def save(
             record.geometry_metadata.pop("reconstruction_method", None)
             record.geometry_metadata.pop("reconstruction_info", None)
         elif isinstance(item, Reconstruction):
-            if item.scan is None and include_scan:
-                raise ValueError(
-                    "this reconstruction was loaded without its scan: there is none to save"
-                )
             if item.scan is None:
                 record = geometry_record(item.geometry)
                 source = item.info.get("source")

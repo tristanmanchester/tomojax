@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 import numpy as np
 
@@ -27,6 +27,7 @@ from tomojax._data import (
     validate_nxtomo,
 )
 from tomojax.core.geometry import Detector, Grid, ScanGeometry
+from tomojax.errors import InvalidParameter
 from tomojax.io._tiff import TIFF_SUFFIXES, read_tiff_frames
 
 __all__ = [
@@ -445,6 +446,32 @@ def _psi_record(path: Path) -> ProjectionDataset:
     return record.with_parallel_detector()
 
 
+def dataset_output_format(path: Path) -> Literal["npz", "hdf5"]:
+    """Select the dataset container from its output name.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        Requested destination.
+
+    Returns
+    -------
+    str
+        Container used by the dataset writer.
+
+    Raises
+    ------
+    InvalidParameter
+        If the destination has an unsupported suffix.
+    """
+    suffix = path.suffix.lower()
+    if suffix in _HDF5_SUFFIXES:
+        return "hdf5"
+    if suffix == ".npz":
+        return "npz"
+    raise InvalidParameter("path", f"unsupported dataset output format for {path}")
+
+
 def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
     """Save a public projection dataset as NXtomo/HDF5 or NPZ.
 
@@ -468,18 +495,12 @@ def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
         If the output cannot be written.
     """
     output_path = Path(path)
-    suffix = output_path.suffix.lower()
+    writer = save_nxtomo if dataset_output_format(output_path) == "hdf5" else save_npz
     # The metadata copy would duplicate a large volume that the writer only reads.
     metadata = replace_dataset(dataset, volume=None).to_nxtomo_metadata()
     metadata.volume = dataset.volume
     projections = None if dataset.projections is None else np.asarray(dataset.projections)
-    if suffix in _HDF5_SUFFIXES:
-        save_nxtomo(str(output_path), projections=projections, metadata=metadata)
-        return
-    if suffix == ".npz":
-        save_npz(str(output_path), projections, metadata=metadata)
-        return
-    raise ValueError(f"unsupported dataset output format for {output_path}")
+    writer(str(output_path), projections, metadata=metadata)
 
 
 def convert_dataset(input_path: PathLike, output_path: PathLike) -> None:

@@ -21,7 +21,7 @@ from tomojax._resources import sample
 from tomojax._scan import combined_geometry
 from tomojax._simulate import build_sim_config, simulate_config
 from tomojax._smooth_alignment import resolve_alignment
-from tomojax._workflow import align_resolved, reconstruct_resolved
+from tomojax._workflow import align_resolved, reconstruct_resolved, validate_save
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, source
 from tomojax.cli._handles import Root, handle, stage_array, unit_of
@@ -35,10 +35,14 @@ from tomojax.wire.progress import Event
 
 type Work = Callable[[], Root | p.DataProduct]
 
+EXECUTABLE = (op.Inspect, op.Open, op.Validate, op.Plan, op.Run, op.Plane)
+
 
 def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Success:
     """Forward watch events and attach provenance from this command's admission."""
     context.control.checkpoint()
+    if not isinstance(command, EXECUTABLE):
+        raise ValueError(f"operation unavailable: {command.__struct_config__.tag}")
     operation = (
         command.operation if isinstance(command, op.Run | op.Plan | op.Validate) else command
     )
@@ -363,7 +367,9 @@ class Admission:
         sidecar = path.with_name(path.name + ".manifest.json")
         paths = [path, sidecar]
         raw = path.suffix.lower() == ".raw"
-        if isinstance(operation, op.Export):
+        if isinstance(operation, op.Save):
+            validate_save(path, value, include_scan=operation.include_scan)
+        else:
             validate_export_options(path, operation.dtype, operation.range, operation.prefix)
             if isinstance(value, tj.Alignment) and value.image is None:
                 raise InvalidParameter("source", "alignment holds no working image to export")

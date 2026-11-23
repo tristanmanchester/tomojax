@@ -430,3 +430,48 @@ def test_result_summary_keeps_selection_when_solver_history_exceeds_budget():
     )
     assert len(msgspec.json.encode(record)) <= 65536
     assert record.summary == {"automatic": {"method": "cgls"}, "_omitted_fields": 1}
+
+
+@pytest.mark.parametrize("adapter", ["stub", "cpu"])
+def test_backprojection_accepts_the_admitted_artifact_after_its_producer_closes(tmp_path, adapter):
+    from tomojax.cli._adapters import execute  # check-public-imports: allow-private
+
+    grid = tj.Grid(4, 3, 2, 1.0, 1.0, 1.0)
+    detector = tj.Detector(5, 2, 1.0, 1.0)
+    geometry = tj.ParallelGeometry(grid, detector, [0.0, 47.0, 123.0])
+    scan = tj.Scan(np.zeros((3, 2, 5), np.float32), geometry)
+    pixels = np.linspace(-1, 4, 30, dtype=np.float32).reshape(3, 2, 5)
+    path = tmp_path / "issued.npy"
+    np.save(path, pixels)
+    handle, artifact = arrays.Member("simulation", "scan"), arrays.Npy(str(path), "projected")
+    simulation = products.Provenance("simulate", {"seed": 22}, ())
+    projection = products.Provenance("project", {}, (simulation, simulation))
+    admitted = {
+        artifact: execution.Lease(artifact, projection),
+        handle: execution.Lease(scan, simulation),
+    }
+    stage = Stage(tmp_path)
+    context = execution.ExecutionContext(
+        admitted, progress.Control(), lambda _: None, lambda _: None, stage
+    )
+    admitted.clear()
+    operation = operations.Run(operations.Backproject(handle, artifact))
+    reference = np.asarray(tj.backproject(geometry, pixels))
+    if adapter == "cpu":
+        result = execute(operation, context)
+    else:
+        reserved = stage.array()
+        with reserved.path.open("wb") as stream:
+            np.save(stream, reference)
+        registered = execution.volume_metadata(
+            grid, storage=reserved.reference, dtype=reference.dtype.str, length_unit="scan_length"
+        )
+        result = execution.Success(
+            products.Volume(registered),
+            wire.Info({}, {}),
+            products.Provenance("backproject", {}, context.lineage(operation)),
+        )
+    assert result.manifest.inputs == (simulation, projection)
+    assert result.value.volume.shape == grid.shape
+    np.testing.assert_array_equal(np.load(stage.private), reference)
+    assert not stage.public.exists()
