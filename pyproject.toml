@@ -32,6 +32,7 @@ dependencies = [
     "numpy>=2.3.2,<3",
     "olefile>=0.47,<1",
     "scipy>=1.16.1,<2",
+    "msgspec>=0.19,<1",
 ]
 
 [project.optional-dependencies]
@@ -79,6 +80,7 @@ dev = [
     "pytest-cov>=7,<8",
     "ruff>=0.11,<0.12",
     "twine>=6,<7",
+    "jsonschema>=4.23,<5",
 ]
 
 [tool.ruff]
@@ -138,6 +140,10 @@ ignore = [
     "PLC0415",
 ]
 fixable = ["ALL"]
+
+[tool.ruff.lint.flake8-type-checking]
+# msgspec resolves wire-model annotations when constructing decoders and schemas.
+runtime-evaluated-base-classes = ["tomojax.wire.arrays.Record"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["tomojax"]

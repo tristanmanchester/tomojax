@@ -1,0 +1,414 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tomojax.dev/protocol/arrays.schema.json",
+  "$ref": "#/$defs/Array",
+  "$defs": {
+    "Array": {
+      "title": "Array",
+      "description": "A registered array. Axes and shape follow storage dimension order.",
+      "type": "object",
+      "properties": {
+        "storage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Npy"
+            },
+            {
+              "$ref": "#/$defs/Hdf5"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "npy": "#/$defs/Npy",
+              "hdf5": "#/$defs/Hdf5",
+              "member": "#/$defs/Member"
+            }
+          }
+        },
+        "shape": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "dtype": {
+          "type": "string",
+          "minLength": 1
+        },
+        "axes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Axis"
+          }
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "domain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fixed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Fixed"
+          },
+          "default": []
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Column"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "storage",
+        "shape",
+        "dtype",
+        "axes",
+        "unit",
+        "domain"
+      ],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "domain": {
+            "const": "poses"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "columns"
+        ],
+        "properties": {
+          "columns": {
+            "minItems": 6,
+            "maxItems": 6,
+            "prefixItems": [
+              {
+                "properties": {
+                  "name": {
+                    "const": "alpha"
+                  },
+                  "unit": {
+                    "const": "degree"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "name": {
+                    "const": "beta"
+                  },
+                  "unit": {
+                    "const": "degree"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "name": {
+                    "const": "phi"
+                  },
+                  "unit": {
+                    "const": "degree"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "name": {
+                    "const": "x"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "name": {
+                    "const": "z"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "name": {
+                    "const": "y"
+                  }
+                }
+              }
+            ]
+          },
+          "shape": {
+            "minItems": 2,
+            "maxItems": 2,
+            "prefixItems": [
+              {},
+              {
+                "const": 6
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Npy": {
+      "title": "Npy",
+      "description": "A NumPy file. Published session files carry a release token.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "npy"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "Hdf5": {
+      "title": "Hdf5",
+      "description": "A dataset inside an HDF5 file.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "hdf5"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "dataset"
+      ],
+      "additionalProperties": false
+    },
+    "Member": {
+      "title": "Member",
+      "description": "A typed member pinned with its root handle.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "member"
+          ]
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "member": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "handle",
+        "member"
+      ],
+      "additionalProperties": false
+    },
+    "Axis": {
+      "title": "Axis",
+      "description": "Coordinates of array elements in one named frame.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frame": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "coordinates": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uniform"
+            },
+            {
+              "$ref": "#/$defs/Coordinates"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "uniform": "#/$defs/Uniform",
+              "coordinates": "#/$defs/Coordinates"
+            }
+          }
+        }
+      },
+      "required": [
+        "name",
+        "frame",
+        "unit",
+        "coordinates"
+      ],
+      "additionalProperties": false
+    },
+    "Uniform": {
+      "title": "Uniform",
+      "description": "Centre coordinate of element zero and signed step in axis units.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "uniform"
+          ]
+        },
+        "origin": {
+          "type": "number"
+        },
+        "spacing": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "origin",
+        "spacing"
+      ],
+      "additionalProperties": false
+    },
+    "Coordinates": {
+      "title": "Coordinates",
+      "description": "An ordered coordinate vector, length equal to its dimension.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "coordinates"
+          ]
+        },
+        "values": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Npy"
+            },
+            {
+              "$ref": "#/$defs/Hdf5"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "npy": "#/$defs/Npy",
+              "hdf5": "#/$defs/Hdf5",
+              "member": "#/$defs/Member"
+            }
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "Fixed": {
+      "title": "Fixed",
+      "description": "A dimension removed by indexing in the source array.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frame": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "coordinate": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "frame",
+        "unit",
+        "index",
+        "coordinate"
+      ],
+      "additionalProperties": false
+    },
+    "Column": {
+      "title": "Column",
+      "description": "One pose-table column, in acquisition pose convention.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "enum": [
+            "alpha",
+            "beta",
+            "phi",
+            "x",
+            "y",
+            "z"
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "name",
+        "unit"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

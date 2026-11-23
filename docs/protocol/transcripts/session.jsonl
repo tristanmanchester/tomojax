@@ -1,0 +1,11 @@
+{"type":"ready","protocol":1,"progress":2,"versions":{"tomojax":"0.1.0","jax":"0.11.2","cuda":null,"cupy":null},"capabilities":["describe","devices","inspect","open","close","validate","plan","run","plane","slice","centre_sweep","correction_preview","region_preview","control","status","release","shutdown"],"devices":[{"id":"cpu:0","platform":"cpu","name":"CPU"}]}
+{"id":"x","command":{"type":"run","operation":{"type":"reconstruct","source":{"type":"path","path":"/data/scan.h5"}}},"channel":"image"}
+{"type":"progress","request":"x","channel":{"name":"image","revision":1},"record":{"event":"started","schema":2,"task":1,"time":0,"parent":null,"name":"reconstruct","label":"scan","total":10,"unit":"iterations"}}
+{"id":"x","command":{"type":"status"}}
+{"type":"protocol_error","kind":"invalid_request","request":"x","message":"duplicate id"}
+{"id":"stop","command":{"type":"control","target":"x","action":"cancel"}}
+{"type":"result","request":"stop","channel":null,"result":{"type":"ack"}}
+{"type":"progress","request":"x","channel":{"name":"image","revision":1},"record":{"event":"finished","schema":2,"task":1,"time":1,"status":"cancelled"}}
+{"type":"error","request":"x","channel":{"name":"image","revision":1},"error":{"schema":2,"event":"error","kind":"cancelled","message":"cancelled"}}
+{"id":"q","command":{"type":"shutdown"}}
+{"type":"result","request":"q","channel":null,"result":{"type":"ack"}}

@@ -27,6 +27,7 @@ layers =
     tomojax.geometry
     tomojax.core
     tomojax.progress
+    tomojax.wire
 
 [importlinter:contract:cli-uses-align-facade]
 name = CLI uses alignment facade instead of nested alignment internals

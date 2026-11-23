@@ -1,0 +1,749 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tomojax.dev/protocol/worker.schema.json",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Request"
+    },
+    {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Ready"
+        },
+        {
+          "$ref": "#/$defs/EventReply"
+        },
+        {
+          "$ref": "#/$defs/ResultReply"
+        },
+        {
+          "$ref": "#/$defs/ErrorReply"
+        },
+        {
+          "$ref": "#/$defs/ProtocolError"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "type",
+        "mapping": {
+          "ready": "#/$defs/Ready",
+          "progress": "#/$defs/EventReply",
+          "result": "#/$defs/ResultReply",
+          "error": "#/$defs/ErrorReply",
+          "protocol_error": "#/$defs/ProtocolError"
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "Request": {
+      "title": "Request",
+      "description": "One client line. A non-null channel enables superseding.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plane"
+                    },
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Slice"
+                    },
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CentreSweep"
+                    },
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CorrectionPreview"
+                    },
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/RegionPreview"
+                    }
+                  ],
+                  "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                      "plane": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plane",
+                      "slice": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Slice",
+                      "centre_sweep": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CentreSweep",
+                      "correction_preview": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CorrectionPreview",
+                      "region_preview": "https://tomojax.dev/protocol/operations.schema.json#/$defs/RegionPreview"
+                    }
+                  }
+                },
+                {
+                  "anyOf": [
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Run"
+                    },
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Inspect"
+                    },
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Open"
+                    },
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plan"
+                    },
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Validate"
+                    }
+                  ],
+                  "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                      "run": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Run",
+                      "inspect": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Inspect",
+                      "open": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Open",
+                      "plan": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plan",
+                      "validate": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Validate"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Describe"
+                },
+                {
+                  "$ref": "#/$defs/Devices"
+                },
+                {
+                  "$ref": "#/$defs/Close"
+                },
+                {
+                  "$ref": "#/$defs/Release"
+                },
+                {
+                  "$ref": "#/$defs/ControlRequest"
+                },
+                {
+                  "$ref": "#/$defs/Status"
+                },
+                {
+                  "$ref": "#/$defs/Shutdown"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "describe": "#/$defs/Describe",
+                  "devices": "#/$defs/Devices",
+                  "close": "#/$defs/Close",
+                  "release": "#/$defs/Release",
+                  "control": "#/$defs/ControlRequest",
+                  "status": "#/$defs/Status",
+                  "shutdown": "#/$defs/Shutdown"
+                }
+              }
+            }
+          ]
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "Describe": {
+      "title": "Describe",
+      "description": "Return cached form descriptions.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "describe"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Devices": {
+      "title": "Devices",
+      "description": "Return cached device inventory.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "devices"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Close": {
+      "title": "Close",
+      "description": "Prevent subsequent admission against a handle.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "close"
+          ]
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "Release": {
+      "title": "Release",
+      "description": "Release a session-issued artifact token.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "release"
+          ]
+        },
+        "artifact": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "artifact"
+      ],
+      "additionalProperties": false
+    },
+    "ControlRequest": {
+      "title": "ControlRequest",
+      "description": "Request a cooperative transition.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "control"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "enum": [
+            "cancel",
+            "pause",
+            "resume"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "target",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "Status": {
+      "title": "Status",
+      "description": "Read the owner's latest snapshots.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "status"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Shutdown": {
+      "title": "Shutdown",
+      "description": "Cancel outstanding work and close the session.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "shutdown"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Ready": {
+      "title": "Ready",
+      "description": "First stdout line.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "ready"
+          ]
+        },
+        "protocol": {
+          "enum": [
+            1
+          ]
+        },
+        "progress": {
+          "enum": [
+            2
+          ]
+        },
+        "versions": {
+          "$ref": "#/$defs/Versions"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Device"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "protocol",
+        "progress",
+        "versions",
+        "capabilities",
+        "devices"
+      ],
+      "additionalProperties": false
+    },
+    "Versions": {
+      "title": "Versions",
+      "description": "Runtime versions, with unavailable optional runtimes represented by null.",
+      "type": "object",
+      "properties": {
+        "tomojax": {
+          "type": "string"
+        },
+        "jax": {
+          "type": "string"
+        },
+        "cuda": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cupy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tomojax",
+        "jax",
+        "cuda",
+        "cupy"
+      ],
+      "additionalProperties": false
+    },
+    "Device": {
+      "title": "Device",
+      "description": "Stable session identifier used in placement and parameters.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "platform",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "EventReply": {
+      "title": "EventReply",
+      "description": "Nonterminal watch event.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "progress"
+          ]
+        },
+        "request": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChannelRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "record": {
+          "anyOf": [
+            {
+              "$ref": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Started"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Placed"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Advanced"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Finished"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Note"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Paused"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Resumed"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Preview"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "event",
+            "mapping": {
+              "started": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Started",
+              "placed": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Placed",
+              "advanced": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Advanced",
+              "finished": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Finished",
+              "note": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Note",
+              "paused": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Paused",
+              "resumed": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Resumed",
+              "preview": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Preview"
+            }
+          }
+        }
+      },
+      "required": [
+        "type",
+        "request",
+        "channel",
+        "record"
+      ],
+      "additionalProperties": false
+    },
+    "ChannelRevision": {
+      "title": "ChannelRevision",
+      "description": "Atomic channel name and revision pair.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "ResultReply": {
+      "title": "ResultReply",
+      "description": "Exactly one terminal on success.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "result"
+          ]
+        },
+        "request": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChannelRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "https://tomojax.dev/protocol/products.schema.json#/$defs/Output"
+            },
+            {
+              "$ref": "#/$defs/Description"
+            },
+            {
+              "$ref": "#/$defs/DeviceList"
+            },
+            {
+              "$ref": "#/$defs/StatusReport"
+            },
+            {
+              "$ref": "#/$defs/Ack"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "output": "https://tomojax.dev/protocol/products.schema.json#/$defs/Output",
+              "description": "#/$defs/Description",
+              "devices": "#/$defs/DeviceList",
+              "status": "#/$defs/StatusReport",
+              "ack": "#/$defs/Ack"
+            }
+          }
+        }
+      },
+      "required": [
+        "type",
+        "request",
+        "channel",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "Description": {
+      "title": "Description",
+      "description": "Parameter description document.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "description"
+          ]
+        },
+        "parameters": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "parameters"
+      ],
+      "additionalProperties": false
+    },
+    "DeviceList": {
+      "title": "DeviceList",
+      "description": "Cached inventory.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "devices"
+          ]
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Device"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "devices"
+      ],
+      "additionalProperties": false
+    },
+    "StatusReport": {
+      "title": "StatusReport",
+      "description": "Logical handle bytes are independent of allocator measurements.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "status"
+          ]
+        },
+        "requests": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "pause-requested",
+              "paused",
+              "queued",
+              "running"
+            ]
+          }
+        },
+        "handles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "allocators": {
+          "type": "array",
+          "items": {
+            "$ref": "https://tomojax.dev/protocol/products.schema.json#/$defs/Snapshot"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "requests",
+        "handles",
+        "allocators"
+      ],
+      "additionalProperties": false
+    },
+    "Ack": {
+      "title": "Ack",
+      "description": "Owner acknowledged the command.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "ack"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "ErrorReply": {
+      "title": "ErrorReply",
+      "description": "Exactly one terminal on execution failure.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "error"
+          ]
+        },
+        "request": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChannelRevision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "$ref": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Error"
+        }
+      },
+      "required": [
+        "type",
+        "request",
+        "channel",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "ProtocolError": {
+      "title": "ProtocolError",
+      "description": "Rejected input never owns a terminal or affects a prior admission.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "protocol_error"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "invalid_request"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "request": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "kind",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

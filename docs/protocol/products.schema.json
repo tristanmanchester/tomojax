@@ -1,0 +1,800 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tomojax.dev/protocol/products.schema.json",
+  "$ref": "#/$defs/Output",
+  "$defs": {
+    "Output": {
+      "title": "Output",
+      "description": "Published execution result.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "output"
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Scan"
+                },
+                {
+                  "$ref": "#/$defs/Frames"
+                },
+                {
+                  "$ref": "#/$defs/Reconstruction"
+                },
+                {
+                  "$ref": "#/$defs/Alignment"
+                },
+                {
+                  "$ref": "#/$defs/Simulation"
+                },
+                {
+                  "$ref": "#/$defs/Region"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "scan": "#/$defs/Scan",
+                  "frames": "#/$defs/Frames",
+                  "reconstruction": "#/$defs/Reconstruction",
+                  "alignment": "#/$defs/Alignment",
+                  "simulation": "#/$defs/Simulation",
+                  "region": "#/$defs/Region"
+                }
+              }
+            },
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PlaneResult"
+                },
+                {
+                  "$ref": "#/$defs/Projections"
+                },
+                {
+                  "$ref": "#/$defs/Volume"
+                },
+                {
+                  "$ref": "#/$defs/Sweep"
+                },
+                {
+                  "$ref": "#/$defs/CorrectionResult"
+                },
+                {
+                  "$ref": "#/$defs/Files"
+                },
+                {
+                  "$ref": "#/$defs/Inspection"
+                },
+                {
+                  "$ref": "#/$defs/ReconPlan"
+                },
+                {
+                  "$ref": "#/$defs/JointPlan"
+                },
+                {
+                  "$ref": "#/$defs/CentrePlan"
+                },
+                {
+                  "$ref": "#/$defs/Validated"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "plane": "#/$defs/PlaneResult",
+                  "projections": "#/$defs/Projections",
+                  "volume": "#/$defs/Volume",
+                  "sweep": "#/$defs/Sweep",
+                  "correction_preview": "#/$defs/CorrectionResult",
+                  "files": "#/$defs/Files",
+                  "inspection": "#/$defs/Inspection",
+                  "reconstruction_plan": "#/$defs/ReconPlan",
+                  "joint_plan": "#/$defs/JointPlan",
+                  "opposite_views_plan": "#/$defs/CentrePlan",
+                  "validated": "#/$defs/Validated"
+                }
+              }
+            }
+          ]
+        },
+        "info": {
+          "$ref": "https://tomojax.dev/protocol/progress.schema.json#/$defs/Info"
+        },
+        "manifest": {
+          "$ref": "#/$defs/Provenance"
+        }
+      },
+      "required": [
+        "type",
+        "value",
+        "info",
+        "manifest"
+      ],
+      "additionalProperties": false
+    },
+    "Scan": {
+      "title": "Scan",
+      "description": "A reusable scan with its registered projections.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "scan"
+          ]
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projections": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        }
+      },
+      "required": [
+        "type",
+        "handle",
+        "projections"
+      ],
+      "additionalProperties": false
+    },
+    "Frames": {
+      "title": "Frames",
+      "description": "Lazy raw input, retaining calibration.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "frames"
+          ]
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "counts": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        }
+      },
+      "required": [
+        "type",
+        "handle",
+        "counts"
+      ],
+      "additionalProperties": false
+    },
+    "Reconstruction": {
+      "title": "Reconstruction",
+      "description": "A volume can outlive or omit its source scan.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "reconstruction"
+          ]
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "volume": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        },
+        "scan": {
+          "anyOf": [
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "handle",
+        "volume",
+        "scan",
+        "method"
+      ],
+      "additionalProperties": false
+    },
+    "Alignment": {
+      "title": "Alignment",
+      "description": "Reusable corrected geometry and optional working image.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "alignment"
+          ]
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scan": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+        },
+        "poses": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "handle",
+        "scan",
+        "poses",
+        "image"
+      ],
+      "additionalProperties": false
+    },
+    "Simulation": {
+      "title": "Simulation",
+      "description": "Truth and the synthetic acquisition.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "simulation"
+          ]
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scan": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+        },
+        "phantom": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        }
+      },
+      "required": [
+        "type",
+        "handle",
+        "scan",
+        "phantom"
+      ],
+      "additionalProperties": false
+    },
+    "Region": {
+      "title": "Region",
+      "description": "Estimated support and registered overlay planes.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "region"
+          ]
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "grid": {
+          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Grid"
+        },
+        "bounds": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            }
+          ],
+          "items": false
+        },
+        "arrays": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "handle",
+        "grid",
+        "bounds",
+        "arrays"
+      ],
+      "additionalProperties": false
+    },
+    "PlaneResult": {
+      "title": "PlaneResult",
+      "description": "One registered plane.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "plane"
+          ]
+        },
+        "plane": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        }
+      },
+      "required": [
+        "type",
+        "plane"
+      ],
+      "additionalProperties": false
+    },
+    "Projections": {
+      "title": "Projections",
+      "description": "Forward projection in (view, v, u) order.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "projections"
+          ]
+        },
+        "projections": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        }
+      },
+      "required": [
+        "type",
+        "projections"
+      ],
+      "additionalProperties": false
+    },
+    "Volume": {
+      "title": "Volume",
+      "description": "Backprojected or slab-reconstructed volume.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "volume"
+          ]
+        },
+        "volume": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        }
+      },
+      "required": [
+        "type",
+        "volume"
+      ],
+      "additionalProperties": false
+    },
+    "Sweep": {
+      "title": "Sweep",
+      "description": "Ordered planes with a leading signed centre-offset coordinate.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "sweep"
+          ]
+        },
+        "planes": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        }
+      },
+      "required": [
+        "type",
+        "planes"
+      ],
+      "additionalProperties": false
+    },
+    "CorrectionResult": {
+      "title": "CorrectionResult",
+      "description": "Registered measurements and retained original acquisition IDs.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "correction_preview"
+          ]
+        },
+        "before": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        },
+        "after": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        },
+        "views": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        }
+      },
+      "required": [
+        "type",
+        "before",
+        "after",
+        "views"
+      ],
+      "additionalProperties": false
+    },
+    "Files": {
+      "title": "Files",
+      "description": "All committed output destinations, including adjacent manifests.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "files"
+          ]
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "type",
+        "paths"
+      ],
+      "additionalProperties": false
+    },
+    "Inspection": {
+      "title": "Inspection",
+      "description": "The public inspection report.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "inspection"
+          ]
+        },
+        "report": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "report"
+      ],
+      "additionalProperties": false
+    },
+    "ReconPlan": {
+      "title": "ReconPlan",
+      "description": "Method selection and original working grid.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "reconstruction_plan"
+          ]
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grid": {
+          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Grid"
+        },
+        "placement": {
+          "$ref": "#/$defs/Placement"
+        }
+      },
+      "required": [
+        "type",
+        "method",
+        "reasons",
+        "iterations",
+        "grid",
+        "placement"
+      ],
+      "additionalProperties": false
+    },
+    "Placement": {
+      "title": "Placement",
+      "description": "Resource estimate at planning time.",
+      "type": "object",
+      "properties": {
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "strategy": {
+          "enum": [
+            "resident",
+            "slabbed"
+          ]
+        },
+        "host_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "device_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "snapshot": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Snapshot"
+          }
+        }
+      },
+      "required": [
+        "devices",
+        "strategy",
+        "host_bytes",
+        "device_bytes",
+        "snapshot"
+      ],
+      "additionalProperties": false
+    },
+    "Snapshot": {
+      "title": "Snapshot",
+      "description": "Immutable executor sample. Bytes refer to the named allocator and device.",
+      "type": "object",
+      "properties": {
+        "time": {
+          "type": "number",
+          "minimum": 0
+        },
+        "device": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "used": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "peak": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "available": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "time",
+        "device",
+        "scope",
+        "used",
+        "peak",
+        "available"
+      ],
+      "additionalProperties": false
+    },
+    "JointPlan": {
+      "title": "JointPlan",
+      "description": "Working grids in execution order.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "joint_plan"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "levels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Level"
+          }
+        },
+        "placement": {
+          "$ref": "#/$defs/Placement"
+        }
+      },
+      "required": [
+        "type",
+        "reasons",
+        "levels",
+        "placement"
+      ],
+      "additionalProperties": false
+    },
+    "Level": {
+      "title": "Level",
+      "description": "A joint-fit level and its iteration budget.",
+      "type": "object",
+      "properties": {
+        "grid": {
+          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Grid"
+        },
+        "iterations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "image_iterations": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "grid",
+        "iterations",
+        "image_iterations"
+      ],
+      "additionalProperties": false
+    },
+    "CentrePlan": {
+      "title": "CentrePlan",
+      "description": "Centre estimation uses paired projections.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "opposite_views_plan"
+          ]
+        },
+        "pairs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "placement": {
+          "$ref": "#/$defs/Placement"
+        }
+      },
+      "required": [
+        "type",
+        "pairs",
+        "reasons",
+        "placement"
+      ],
+      "additionalProperties": false
+    },
+    "Validated": {
+      "title": "Validated",
+      "description": "Successful shared preflight.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "validated"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Provenance": {
+      "title": "Provenance",
+      "description": "Ordered input tree, preserving repeated inputs to combine and their histories.",
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          }
+        }
+      },
+      "required": [
+        "operation",
+        "parameters",
+        "inputs"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

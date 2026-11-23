@@ -1,0 +1,3846 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tomojax.dev/protocol/operations.schema.json",
+  "anyOf": [
+    {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Plane"
+        },
+        {
+          "$ref": "#/$defs/Slice"
+        },
+        {
+          "$ref": "#/$defs/CentreSweep"
+        },
+        {
+          "$ref": "#/$defs/CorrectionPreview"
+        },
+        {
+          "$ref": "#/$defs/RegionPreview"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "type",
+        "mapping": {
+          "plane": "#/$defs/Plane",
+          "slice": "#/$defs/Slice",
+          "centre_sweep": "#/$defs/CentreSweep",
+          "correction_preview": "#/$defs/CorrectionPreview",
+          "region_preview": "#/$defs/RegionPreview"
+        }
+      }
+    },
+    {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Run"
+        },
+        {
+          "$ref": "#/$defs/Inspect"
+        },
+        {
+          "$ref": "#/$defs/Open"
+        },
+        {
+          "$ref": "#/$defs/Plan"
+        },
+        {
+          "$ref": "#/$defs/Validate"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "type",
+        "mapping": {
+          "run": "#/$defs/Run",
+          "inspect": "#/$defs/Inspect",
+          "open": "#/$defs/Open",
+          "plan": "#/$defs/Plan",
+          "validate": "#/$defs/Validate"
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "Run": {
+      "title": "Run",
+      "description": "Execute a workflow.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "run"
+          ]
+        },
+        "operation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Correct"
+            },
+            {
+              "$ref": "#/$defs/Reconstruct"
+            },
+            {
+              "$ref": "#/$defs/ReconstructSlabs"
+            },
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "$ref": "#/$defs/Simulate"
+            },
+            {
+              "$ref": "#/$defs/Project"
+            },
+            {
+              "$ref": "#/$defs/Backproject"
+            },
+            {
+              "$ref": "#/$defs/Save"
+            },
+            {
+              "$ref": "#/$defs/Export"
+            },
+            {
+              "$ref": "#/$defs/Select"
+            },
+            {
+              "$ref": "#/$defs/Crop"
+            },
+            {
+              "$ref": "#/$defs/Bin"
+            },
+            {
+              "$ref": "#/$defs/Poses"
+            },
+            {
+              "$ref": "#/$defs/Combine"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "correct": "#/$defs/Correct",
+              "reconstruct": "#/$defs/Reconstruct",
+              "reconstruct_slabs": "#/$defs/ReconstructSlabs",
+              "align": "#/$defs/Align",
+              "simulate": "#/$defs/Simulate",
+              "project": "#/$defs/Project",
+              "backproject": "#/$defs/Backproject",
+              "save": "#/$defs/Save",
+              "export": "#/$defs/Export",
+              "select": "#/$defs/Select",
+              "crop": "#/$defs/Crop",
+              "bin": "#/$defs/Bin",
+              "poses": "#/$defs/Poses",
+              "combine": "#/$defs/Combine"
+            }
+          }
+        },
+        "previews": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "type",
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "Correct": {
+      "title": "Correct",
+      "description": "Correct a scan or raw frames.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "correct"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "corrections": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BeamHardening"
+              },
+              {
+                "$ref": "#/$defs/Paganin"
+              },
+              {
+                "$ref": "#/$defs/RadialDistortion"
+              },
+              {
+                "$ref": "#/$defs/RejectViews"
+              },
+              {
+                "$ref": "#/$defs/Rings"
+              },
+              {
+                "$ref": "#/$defs/Stripes"
+              },
+              {
+                "$ref": "#/$defs/Zingers"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "BeamHardening": "#/$defs/BeamHardening",
+                "Paganin": "#/$defs/Paganin",
+                "RadialDistortion": "#/$defs/RadialDistortion",
+                "RejectViews": "#/$defs/RejectViews",
+                "Rings": "#/$defs/Rings",
+                "Stripes": "#/$defs/Stripes",
+                "Zingers": "#/$defs/Zingers"
+              }
+            }
+          },
+          "default": []
+        },
+        "epsilon": {
+          "type": "number",
+          "default": 1e-06
+        },
+        "views_per_batch": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "binning": {
+          "type": "integer",
+          "default": 1
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "PathInput": {
+      "title": "PathInput",
+      "description": "File input opened on the execution queue.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "path"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "BeamHardening": {
+      "title": "BeamHardening",
+      "description": "Wire fields of BeamHardening.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "BeamHardening"
+          ]
+        },
+        "rates": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": [
+            1.0
+          ]
+        },
+        "weights": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": [
+            1.0
+          ]
+        },
+        "energy_kev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Paganin": {
+      "title": "Paganin",
+      "description": "Wire fields of Paganin.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "Paganin"
+          ]
+        },
+        "delta_beta": {
+          "type": "number"
+        },
+        "distance": {
+          "type": "number"
+        },
+        "energy_kev": {
+          "type": "number"
+        },
+        "pixel_size": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "delta_beta",
+        "distance",
+        "energy_kev",
+        "pixel_size"
+      ],
+      "additionalProperties": false
+    },
+    "RadialDistortion": {
+      "title": "RadialDistortion",
+      "description": "Wire fields of RadialDistortion.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "RadialDistortion"
+          ]
+        },
+        "center": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "coefficients": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "center",
+        "coefficients"
+      ],
+      "additionalProperties": false
+    },
+    "RejectViews": {
+      "title": "RejectViews",
+      "description": "Wire fields of RejectViews.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "RejectViews"
+          ]
+        },
+        "z": {
+          "type": "number",
+          "default": 6.0
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Rings": {
+      "title": "Rings",
+      "description": "Wire fields of Rings.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "Rings"
+          ]
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "views": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 512
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Stripes": {
+      "title": "Stripes",
+      "description": "Wire fields of Stripes.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "Stripes"
+          ]
+        },
+        "width": {
+          "type": "integer",
+          "default": 9
+        },
+        "varying": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Zingers": {
+      "title": "Zingers",
+      "description": "Wire fields of Zingers.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "Zingers"
+          ]
+        },
+        "threshold": {
+          "type": "number",
+          "default": 0.1
+        },
+        "size": {
+          "type": "integer",
+          "default": 3
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Reconstruct": {
+      "title": "Reconstruct",
+      "description": "Reconstruct the supplied scan on its resolved grid.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "reconstruct"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "method": {
+          "enum": [
+            "auto",
+            "cgls",
+            "fbp",
+            "fista",
+            "fourier",
+            "mlem",
+            "sirt",
+            "spdhg"
+          ],
+          "default": "auto"
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "region": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "enum": [
+                    "auto",
+                    "bbox",
+                    "cube",
+                    "cyl"
+                  ]
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "config": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FBPConfig"
+                },
+                {
+                  "$ref": "#/$defs/FourierConfig"
+                },
+                {
+                  "$ref": "#/$defs/CGLSConfig"
+                },
+                {
+                  "$ref": "#/$defs/FISTAConfig"
+                },
+                {
+                  "$ref": "#/$defs/SPDHGConfig"
+                },
+                {
+                  "$ref": "#/$defs/SIRTConfig"
+                },
+                {
+                  "$ref": "#/$defs/MLEMConfig"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "FBPConfig": "#/$defs/FBPConfig",
+                  "FourierConfig": "#/$defs/FourierConfig",
+                  "CGLSConfig": "#/$defs/CGLSConfig",
+                  "FISTAConfig": "#/$defs/FISTAConfig",
+                  "SPDHGConfig": "#/$defs/SPDHGConfig",
+                  "SIRTConfig": "#/$defs/SIRTConfig",
+                  "MLEMConfig": "#/$defs/MLEMConfig"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tv_weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nonnegative": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "warm_start": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "Grid": {
+      "title": "Grid",
+      "description": "Wire fields of Grid.",
+      "type": "object",
+      "properties": {
+        "nx": {
+          "type": "integer"
+        },
+        "ny": {
+          "type": "integer"
+        },
+        "nz": {
+          "type": "integer"
+        },
+        "vx": {
+          "type": "number"
+        },
+        "vy": {
+          "type": "number"
+        },
+        "vz": {
+          "type": "number"
+        },
+        "vol_origin": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "vol_center": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "nx",
+        "ny",
+        "nz",
+        "vx",
+        "vy",
+        "vz"
+      ],
+      "additionalProperties": false
+    },
+    "FBPConfig": {
+      "title": "FBPConfig",
+      "description": "Wire fields of FBPConfig.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "FBPConfig"
+          ]
+        },
+        "filter": {
+          "type": "string",
+          "default": "ramp"
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto"
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "FourierConfig": {
+      "title": "FourierConfig",
+      "description": "Wire fields of FourierConfig.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "FourierConfig"
+          ]
+        },
+        "slices_per_batch": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cupy",
+            "numpy"
+          ],
+          "default": "auto"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "CGLSConfig": {
+      "title": "CGLSConfig",
+      "description": "Wire fields of CGLSConfig.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "CGLSConfig"
+          ]
+        },
+        "data_term": {
+          "enum": [
+            "absolute",
+            "per_view_contrast"
+          ],
+          "default": "absolute"
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 50
+        },
+        "tolerance": {
+          "type": "number",
+          "default": 1e-06
+        },
+        "absolute_tolerance": {
+          "type": "number",
+          "default": 0.0
+        },
+        "damping": {
+          "type": "number",
+          "default": 0.0
+        },
+        "views_per_batch": {
+          "type": "integer",
+          "default": 64
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto"
+        },
+        "interpolation": {
+          "enum": [
+            "cubic",
+            "linear"
+          ],
+          "default": "linear"
+        },
+        "gradient_damping": {
+          "type": "number",
+          "default": 0.0
+        },
+        "stream": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "FISTAConfig": {
+      "title": "FISTAConfig",
+      "description": "Wire fields of FISTAConfig.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "FISTAConfig"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 50
+        },
+        "data_term": {
+          "enum": [
+            "absolute",
+            "per_view_contrast"
+          ],
+          "default": "absolute"
+        },
+        "tv_weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "regularizer": {
+          "enum": [
+            "huber_tv",
+            "tv"
+          ],
+          "default": "tv"
+        },
+        "huber_delta": {
+          "type": "number",
+          "default": 0.01
+        },
+        "lipschitz": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "views_per_batch": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tv_prox_iterations": {
+          "type": "integer",
+          "default": 10
+        },
+        "tolerance": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "patience": {
+          "type": "integer",
+          "default": 0
+        },
+        "power_iterations": {
+          "type": "integer",
+          "default": 3
+        },
+        "support": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lower_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "upper_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto"
+        },
+        "stream": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "SPDHGConfig": {
+      "title": "SPDHGConfig",
+      "description": "Wire fields of SPDHGConfig.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "SPDHGConfig"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 600
+        },
+        "tv_weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "data_term": {
+          "enum": [
+            "absolute",
+            "per_view_contrast"
+          ],
+          "default": "absolute"
+        },
+        "regularizer": {
+          "enum": [
+            "huber_tv",
+            "tv"
+          ],
+          "default": "tv"
+        },
+        "huber_delta": {
+          "type": "number",
+          "default": 0.01
+        },
+        "theta": {
+          "type": "number",
+          "default": 1.0
+        },
+        "views_per_block": {
+          "type": "integer",
+          "default": 16
+        },
+        "seed": {
+          "type": "integer",
+          "default": 0
+        },
+        "tau": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sigma_data": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sigma_tv": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto"
+        },
+        "lower_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "support": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "log_every": {
+          "type": "integer",
+          "default": 10
+        },
+        "stream": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "SIRTConfig": {
+      "title": "SIRTConfig",
+      "description": "Wire fields of SIRTConfig.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "SIRTConfig"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 50
+        },
+        "subsets": {
+          "type": "integer",
+          "default": 1
+        },
+        "relaxation": {
+          "type": "number",
+          "default": 1.0
+        },
+        "acceleration": {
+          "type": "boolean",
+          "default": false
+        },
+        "lower_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "upper_bound": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "support": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "views_per_batch": {
+          "type": "integer",
+          "default": 64
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "MLEMConfig": {
+      "title": "MLEMConfig",
+      "description": "Wire fields of MLEMConfig.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "MLEMConfig"
+          ]
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 50
+        },
+        "subsets": {
+          "type": "integer",
+          "default": 1
+        },
+        "support": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "views_per_batch": {
+          "type": "integer",
+          "default": 32
+        },
+        "backend": {
+          "enum": [
+            "auto",
+            "cuda",
+            "jax"
+          ],
+          "default": "auto"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "ReconstructSlabs": {
+      "title": "ReconstructSlabs",
+      "description": "Consume each yielded slab into one staged disk-backed volume.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "reconstruct_slabs"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "method": {
+          "enum": [
+            "fbp",
+            "fourier",
+            "mlem",
+            "sirt"
+          ]
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "config": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FBPConfig"
+                },
+                {
+                  "$ref": "#/$defs/FourierConfig"
+                },
+                {
+                  "$ref": "#/$defs/SIRTConfig"
+                },
+                {
+                  "$ref": "#/$defs/MLEMConfig"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "FBPConfig": "#/$defs/FBPConfig",
+                  "FourierConfig": "#/$defs/FourierConfig",
+                  "SIRTConfig": "#/$defs/SIRTConfig",
+                  "MLEMConfig": "#/$defs/MLEMConfig"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "corrections": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BeamHardening"
+              },
+              {
+                "$ref": "#/$defs/Paganin"
+              },
+              {
+                "$ref": "#/$defs/RadialDistortion"
+              },
+              {
+                "$ref": "#/$defs/RejectViews"
+              },
+              {
+                "$ref": "#/$defs/Rings"
+              },
+              {
+                "$ref": "#/$defs/Stripes"
+              },
+              {
+                "$ref": "#/$defs/Zingers"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "BeamHardening": "#/$defs/BeamHardening",
+                "Paganin": "#/$defs/Paganin",
+                "RadialDistortion": "#/$defs/RadialDistortion",
+                "RejectViews": "#/$defs/RejectViews",
+                "Rings": "#/$defs/Rings",
+                "Stripes": "#/$defs/Stripes",
+                "Zingers": "#/$defs/Zingers"
+              }
+            }
+          },
+          "default": []
+        },
+        "warm_start": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "epsilon": {
+          "type": "number",
+          "default": 1e-06
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "method"
+      ],
+      "additionalProperties": false
+    },
+    "Align": {
+      "title": "Align",
+      "description": "Return geometry-corrected scan and fitted pose table.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "align"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "fit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "default": "translations"
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "region": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "enum": [
+                    "auto",
+                    "bbox",
+                    "cube",
+                    "cyl"
+                  ]
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "method": {
+          "anyOf": [
+            {
+              "enum": [
+                "joint",
+                "opposite-views"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "motion": {
+          "anyOf": [
+            {
+              "enum": [
+                "independent",
+                "smooth"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "image_iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tolerance": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "interpolation": {
+          "anyOf": [
+            {
+              "enum": [
+                "cubic",
+                "linear"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AlignConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "AlignConfig": {
+      "title": "AlignConfig",
+      "description": "Wire fields of AlignConfig.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "AlignConfig"
+          ]
+        },
+        "motion": {
+          "enum": [
+            "independent",
+            "smooth"
+          ],
+          "default": "independent"
+        },
+        "iterations": {
+          "type": "integer",
+          "default": 8
+        },
+        "coarse_iterations": {
+          "type": "integer",
+          "default": 12
+        },
+        "levels": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": [
+            2,
+            1
+          ]
+        },
+        "image_iterations": {
+          "type": "integer",
+          "default": 16
+        },
+        "image_tolerance": {
+          "type": "number",
+          "default": 0.03
+        },
+        "tolerance": {
+          "type": "number",
+          "default": 0.01
+        },
+        "min_iterations": {
+          "type": "integer",
+          "default": 4
+        },
+        "resolution": {
+          "type": "integer",
+          "default": 320
+        },
+        "max_voxels": {
+          "type": "integer",
+          "default": 16000000
+        },
+        "interpolation": {
+          "anyOf": [
+            {
+              "enum": [
+                "cubic",
+                "linear"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "refine_iterations": {
+          "type": "integer",
+          "default": 5
+        },
+        "initial_image_iterations": {
+          "type": "integer",
+          "default": 5
+        },
+        "slip_scale": {
+          "type": "number",
+          "default": 0.02
+        },
+        "knot_spacing": {
+          "type": "integer",
+          "default": 10
+        },
+        "rotation_sigma": {
+          "type": "number",
+          "default": 0.5
+        },
+        "loss_width": {
+          "type": "number",
+          "default": 2.5
+        },
+        "loss_contrast_floor": {
+          "type": "number",
+          "default": 0.5
+        },
+        "image_tv_weight": {
+          "type": "number",
+          "default": 0.0
+        },
+        "image_tv_huber": {
+          "type": "number",
+          "default": 1.0
+        },
+        "margin": {
+          "type": "number",
+          "default": 0.0625
+        },
+        "refine_smoothing": {
+          "type": "number",
+          "default": 8.0
+        },
+        "refine_neighbors": {
+          "type": "integer",
+          "default": 5
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "Simulate": {
+      "title": "Simulate",
+      "description": "Produce both a scan and its ground truth.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "simulate"
+          ]
+        },
+        "phantom": {
+          "enum": [
+            "blobs",
+            "cube",
+            "lamino_disk",
+            "random_shapes",
+            "shepp",
+            "sphere"
+          ],
+          "default": "shepp"
+        },
+        "size": {
+          "type": "integer",
+          "default": 64
+        },
+        "n_views": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "geometry": {
+          "enum": [
+            "cone",
+            "lamino",
+            "parallel"
+          ],
+          "default": "parallel"
+        },
+        "rotation": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tilt": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_to_axis": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_to_detector": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "poisson_scale": {
+          "type": "number",
+          "default": 0.0
+        },
+        "artefacts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SimulationArtefacts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "detector": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Detector"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "seed": {
+          "type": "integer",
+          "default": 0
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "SimulationArtefacts": {
+      "title": "SimulationArtefacts",
+      "description": "Wire fields of SimulationArtefacts.",
+      "type": "object",
+      "properties": {
+        "poisson_scale": {
+          "type": "number",
+          "default": 0.0
+        },
+        "gaussian_sigma": {
+          "type": "number",
+          "default": 0.0
+        },
+        "dead_pixel_fraction": {
+          "type": "number",
+          "default": 0.0
+        },
+        "dead_pixel_value": {
+          "type": "number",
+          "default": 0.0
+        },
+        "hot_pixel_fraction": {
+          "type": "number",
+          "default": 0.0
+        },
+        "hot_pixel_value": {
+          "type": "number",
+          "default": 1.0
+        },
+        "zinger_fraction": {
+          "type": "number",
+          "default": 0.0
+        },
+        "zinger_value": {
+          "type": "number",
+          "default": 1.0
+        },
+        "stripe_fraction": {
+          "type": "number",
+          "default": 0.0
+        },
+        "stripe_gain_sigma": {
+          "type": "number",
+          "default": 0.0
+        },
+        "dropped_view_fraction": {
+          "type": "number",
+          "default": 0.0
+        },
+        "dropped_view_fill": {
+          "type": "number",
+          "default": 0.0
+        },
+        "detector_blur_sigma": {
+          "type": "number",
+          "default": 0.0
+        },
+        "intensity_drift_amplitude": {
+          "type": "number",
+          "default": 0.0
+        },
+        "intensity_drift_mode": {
+          "enum": [
+            "linear",
+            "none",
+            "sinusoidal"
+          ],
+          "default": "none"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "Detector": {
+      "title": "Detector",
+      "description": "Wire fields of Detector.",
+      "type": "object",
+      "properties": {
+        "nu": {
+          "type": "integer"
+        },
+        "nv": {
+          "type": "integer"
+        },
+        "du": {
+          "type": "number"
+        },
+        "dv": {
+          "type": "number"
+        },
+        "center": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false,
+          "default": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "required": [
+        "nu",
+        "nv",
+        "du",
+        "dv"
+      ],
+      "additionalProperties": false
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Project registered voxels with the source scan geometry.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "project"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+              "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "volume"
+      ],
+      "additionalProperties": false
+    },
+    "Backproject": {
+      "title": "Backproject",
+      "description": "Apply the matched transpose with the source scan geometry.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "backproject"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "projections": {
+          "anyOf": [
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+              "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "projections"
+      ],
+      "additionalProperties": false
+    },
+    "Save": {
+      "title": "Save",
+      "description": "Stage the dataset and adjacent manifest.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "save"
+          ]
+        },
+        "source": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "force": {
+          "type": "boolean",
+          "default": false
+        },
+        "include_scan": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "Export": {
+      "title": "Export",
+      "description": "Stage the complete raw or TIFF export with its sidecars.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "export"
+          ]
+        },
+        "source": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "force": {
+          "type": "boolean",
+          "default": false
+        },
+        "dtype": {
+          "enum": [
+            "float32",
+            "uint16"
+          ],
+          "default": "float32"
+        },
+        "range": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prefix": {
+          "type": "string",
+          "default": "slice"
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "Select": {
+      "title": "Select",
+      "description": "Select ordered view indices.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "select"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "views": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "views"
+      ],
+      "additionalProperties": false
+    },
+    "Crop": {
+      "title": "Crop",
+      "description": "Crop half-open detector intervals.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "crop"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        },
+        "cols": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "rows",
+        "cols"
+      ],
+      "additionalProperties": false
+    },
+    "Bin": {
+      "title": "Bin",
+      "description": "Mean-bin both detector dimensions.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "bin"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "binning": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "binning"
+      ],
+      "additionalProperties": false
+    },
+    "Poses": {
+      "title": "Poses",
+      "description": "Replace the public six-column table or clear it.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "poses"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "poses": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "poses"
+      ],
+      "additionalProperties": false
+    },
+    "Combine": {
+      "title": "Combine",
+      "description": "Combine scans in the given order, retaining all input provenance.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "combine"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PathInput"
+              },
+              {
+                "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "path": "#/$defs/PathInput",
+                "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+              }
+            }
+          }
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "sources"
+      ],
+      "additionalProperties": false
+    },
+    "Plane": {
+      "title": "Plane",
+      "description": "Browse one plane from a registered volume.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "plane"
+          ]
+        },
+        "source": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+        },
+        "axis": {
+          "enum": [
+            "x",
+            "y",
+            "z"
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "axis",
+        "index"
+      ],
+      "additionalProperties": false
+    },
+    "Slice": {
+      "title": "Slice",
+      "description": "Select a plane from the specified full method.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "slice"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "method": {
+          "enum": [
+            "auto",
+            "cgls",
+            "fbp",
+            "fista",
+            "fourier",
+            "mlem",
+            "sirt",
+            "spdhg"
+          ],
+          "default": "auto"
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "region": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "enum": [
+                    "auto",
+                    "bbox",
+                    "cube",
+                    "cyl"
+                  ]
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "config": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FBPConfig"
+                },
+                {
+                  "$ref": "#/$defs/FourierConfig"
+                },
+                {
+                  "$ref": "#/$defs/CGLSConfig"
+                },
+                {
+                  "$ref": "#/$defs/FISTAConfig"
+                },
+                {
+                  "$ref": "#/$defs/SPDHGConfig"
+                },
+                {
+                  "$ref": "#/$defs/SIRTConfig"
+                },
+                {
+                  "$ref": "#/$defs/MLEMConfig"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "FBPConfig": "#/$defs/FBPConfig",
+                  "FourierConfig": "#/$defs/FourierConfig",
+                  "CGLSConfig": "#/$defs/CGLSConfig",
+                  "FISTAConfig": "#/$defs/FISTAConfig",
+                  "SPDHGConfig": "#/$defs/SPDHGConfig",
+                  "SIRTConfig": "#/$defs/SIRTConfig",
+                  "MLEMConfig": "#/$defs/MLEMConfig"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tv_weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nonnegative": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "warm_start": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "axis": {
+          "enum": [
+            "x",
+            "y",
+            "z"
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "axis",
+        "index"
+      ],
+      "additionalProperties": false
+    },
+    "CentreSweep": {
+      "title": "CentreSweep",
+      "description": "Reconstruct at signed horizontal offsets in detector pixels.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "centre_sweep"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "method": {
+          "enum": [
+            "auto",
+            "cgls",
+            "fbp",
+            "fista",
+            "fourier",
+            "mlem",
+            "sirt",
+            "spdhg"
+          ],
+          "default": "auto"
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "region": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "enum": [
+                    "auto",
+                    "bbox",
+                    "cube",
+                    "cyl"
+                  ]
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "config": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FBPConfig"
+                },
+                {
+                  "$ref": "#/$defs/FourierConfig"
+                },
+                {
+                  "$ref": "#/$defs/CGLSConfig"
+                },
+                {
+                  "$ref": "#/$defs/FISTAConfig"
+                },
+                {
+                  "$ref": "#/$defs/SPDHGConfig"
+                },
+                {
+                  "$ref": "#/$defs/SIRTConfig"
+                },
+                {
+                  "$ref": "#/$defs/MLEMConfig"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "FBPConfig": "#/$defs/FBPConfig",
+                  "FourierConfig": "#/$defs/FourierConfig",
+                  "CGLSConfig": "#/$defs/CGLSConfig",
+                  "FISTAConfig": "#/$defs/FISTAConfig",
+                  "SPDHGConfig": "#/$defs/SPDHGConfig",
+                  "SIRTConfig": "#/$defs/SIRTConfig",
+                  "MLEMConfig": "#/$defs/MLEMConfig"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tv_weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nonnegative": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "warm_start": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "devices": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "axis": {
+          "enum": [
+            "x",
+            "y",
+            "z"
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "centres": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "axis",
+        "index",
+        "centres"
+      ],
+      "additionalProperties": false
+    },
+    "CorrectionPreview": {
+      "title": "CorrectionPreview",
+      "description": "Inspect original view IDs and corrected rows in a binned half-open interval.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "correction_preview"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        },
+        "corrections": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BeamHardening"
+              },
+              {
+                "$ref": "#/$defs/Paganin"
+              },
+              {
+                "$ref": "#/$defs/RadialDistortion"
+              },
+              {
+                "$ref": "#/$defs/RejectViews"
+              },
+              {
+                "$ref": "#/$defs/Rings"
+              },
+              {
+                "$ref": "#/$defs/Stripes"
+              },
+              {
+                "$ref": "#/$defs/Zingers"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "BeamHardening": "#/$defs/BeamHardening",
+                "Paganin": "#/$defs/Paganin",
+                "RadialDistortion": "#/$defs/RadialDistortion",
+                "RejectViews": "#/$defs/RejectViews",
+                "Rings": "#/$defs/Rings",
+                "Stripes": "#/$defs/Stripes",
+                "Zingers": "#/$defs/Zingers"
+              }
+            }
+          },
+          "default": []
+        },
+        "epsilon": {
+          "type": "number",
+          "default": 1e-06
+        },
+        "views_per_batch": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "binning": {
+          "type": "integer",
+          "default": 1
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "RegionPreview": {
+      "title": "RegionPreview",
+      "description": "Estimate physical bounds and registered overlays.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "region_preview"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "Inspect": {
+      "title": "Inspect",
+      "description": "Read a file's inspection report.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "inspect"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "Open": {
+      "title": "Open",
+      "description": "Open a file with the named public loader.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "open"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "alignment",
+            "frames",
+            "reconstruction",
+            "scan",
+            "simulation"
+          ]
+        },
+        "flats": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "darks": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "angles": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "detector": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Detector"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pixel_size": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "grid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeclaredGeometry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "exposure_times": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "flat_exposure_times": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "data_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "image_key_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "angles_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "apply_poses": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "DeclaredGeometry": {
+      "title": "DeclaredGeometry",
+      "description": "Wire fields of DeclaredGeometry.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tilt": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tilt_about": {
+          "type": "string",
+          "default": "x"
+        },
+        "detector_roll": {
+          "type": "number",
+          "default": 0.0
+        },
+        "detector_pitch": {
+          "type": "number",
+          "default": 0.0
+        },
+        "detector_yaw": {
+          "type": "number",
+          "default": 0.0
+        },
+        "source_to_axis": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_to_detector": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "axis_offset": {
+          "type": "number",
+          "default": 0.0
+        },
+        "detector_center": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "Plan": {
+      "title": "Plan",
+      "description": "Resolve budgets, grids and placement estimates.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "plan"
+          ]
+        },
+        "operation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reconstruct"
+            },
+            {
+              "$ref": "#/$defs/Align"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "reconstruct": "#/$defs/Reconstruct",
+              "align": "#/$defs/Align"
+            }
+          }
+        }
+      },
+      "required": [
+        "type",
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "Validate": {
+      "title": "Validate",
+      "description": "Apply execution preflight to the proposed operation.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "validate"
+          ]
+        },
+        "operation": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Correct"
+                },
+                {
+                  "$ref": "#/$defs/Reconstruct"
+                },
+                {
+                  "$ref": "#/$defs/ReconstructSlabs"
+                },
+                {
+                  "$ref": "#/$defs/Align"
+                },
+                {
+                  "$ref": "#/$defs/Simulate"
+                },
+                {
+                  "$ref": "#/$defs/Project"
+                },
+                {
+                  "$ref": "#/$defs/Backproject"
+                },
+                {
+                  "$ref": "#/$defs/Save"
+                },
+                {
+                  "$ref": "#/$defs/Export"
+                },
+                {
+                  "$ref": "#/$defs/Select"
+                },
+                {
+                  "$ref": "#/$defs/Crop"
+                },
+                {
+                  "$ref": "#/$defs/Bin"
+                },
+                {
+                  "$ref": "#/$defs/Poses"
+                },
+                {
+                  "$ref": "#/$defs/Combine"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "correct": "#/$defs/Correct",
+                  "reconstruct": "#/$defs/Reconstruct",
+                  "reconstruct_slabs": "#/$defs/ReconstructSlabs",
+                  "align": "#/$defs/Align",
+                  "simulate": "#/$defs/Simulate",
+                  "project": "#/$defs/Project",
+                  "backproject": "#/$defs/Backproject",
+                  "save": "#/$defs/Save",
+                  "export": "#/$defs/Export",
+                  "select": "#/$defs/Select",
+                  "crop": "#/$defs/Crop",
+                  "bin": "#/$defs/Bin",
+                  "poses": "#/$defs/Poses",
+                  "combine": "#/$defs/Combine"
+                }
+              }
+            },
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Plane"
+                },
+                {
+                  "$ref": "#/$defs/Slice"
+                },
+                {
+                  "$ref": "#/$defs/CentreSweep"
+                },
+                {
+                  "$ref": "#/$defs/CorrectionPreview"
+                },
+                {
+                  "$ref": "#/$defs/RegionPreview"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "plane": "#/$defs/Plane",
+                  "slice": "#/$defs/Slice",
+                  "centre_sweep": "#/$defs/CentreSweep",
+                  "correction_preview": "#/$defs/CorrectionPreview",
+                  "region_preview": "#/$defs/RegionPreview"
+                }
+              }
+            },
+            {
+              "$ref": "#/$defs/Open"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "operation"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
