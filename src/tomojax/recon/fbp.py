@@ -26,6 +26,7 @@ from tomojax.core.validation import (
 )
 
 from ._fbp_weights import fbp_weights
+from ._host_arrays import finite_projections
 from .filters import fft_filter_rows, rfft_filter_array
 
 if TYPE_CHECKING:
@@ -398,11 +399,6 @@ def _fbp_accumulate_batch(
     )
 
 
-@jax.jit
-def _finite_projections(projections: jax.Array) -> jax.Array:
-    return jnp.all(jnp.isfinite(projections))
-
-
 def _fbp_from_resident(
     poses: np.ndarray,
     projections: jax.Array,
@@ -422,7 +418,7 @@ def _fbp_from_resident(
 ) -> jnp.ndarray:
     """Run projections already on the device without a host round trip."""
     projections = projections.astype(jnp.float32)
-    if check_finite and not bool(_finite_projections(projections)):
+    if check_finite and not bool(finite_projections(projections)):
         raise ValueError("fbp_host: projections must be finite in FP32")
     device = next(iter(projections.devices()))
     poses, view_scale, params = (

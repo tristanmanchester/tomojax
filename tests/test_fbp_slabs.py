@@ -70,3 +70,25 @@ def test_owned_fbp_slabs_survive_early_context_closure(backend):
     np.testing.assert_array_equal(
         first.projections, np.ones((4, first.rows.stop - first.rows.start, 17), np.float32)
     )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_fbp_rejects_nonfinite_input_even_outside_the_reconstructed_field(backend):
+    grid = Grid(3, 3, 9, 1, 1, 1)
+    detector = Detector(65, 9, 1, 1)
+    geometry = ParallelGeometry(grid, detector, [0, 90, 135])
+
+    def read(first, stop):
+        data = np.ones((3, stop - first, 65), np.float32)
+        data[0, 0, 0] = np.inf
+        return data, None
+
+    with (
+        closing(
+            reconstruct_slabs(
+                "fbp", geometry, grid, detector, read, config=FBPConfig(backend=backend)
+            )
+        ) as output,
+        pytest.raises(ValueError, match="projections must be finite"),
+    ):
+        next(output)

@@ -23,7 +23,7 @@ from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_detector, validate_projection_stack
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
-from ._host_arrays import ProjectionRows, validate_host_arrays
+from ._host_arrays import ProjectionRows, finite_projections, validate_host_arrays
 from .fbp import (
     FBPConfig,
     _fbp_from_host,  # pyright: ignore[reportPrivateUsage]
@@ -491,9 +491,11 @@ def fbp_slabs[T](
                 depth = max(1, depth // 2)
 
 
-def _finish[T](item: tuple[ReconstructionSlab[T], jax.Array]) -> ReconstructionSlab[T]:
-    slab, packed = item
+def _finish[T](item: tuple[ReconstructionSlab[T], jax.Array, jax.Array]) -> ReconstructionSlab[T]:
+    slab, packed, finite = item
     slab.volume = np.asarray(packed)
+    if not bool(finite):
+        raise ValueError("fbp_host: projections must be finite in FP32")
     if not np.isfinite(slab.volume).all():
         raise ValueError("FBP reconstruction must be finite in FP32")
     return slab
@@ -514,7 +516,7 @@ def _run_slabs[T](
     rows = local_detector.nv
     ramp = rfft_filter_array(config.filter, local_detector.nu, detector.du, jnp.float32)
     params = np.zeros((len(poses), 6), np.float32)
-    pending: list[tuple[ReconstructionSlab[T], jax.Array]] = []
+    pending: list[tuple[ReconstructionSlab[T], jax.Array, jax.Array]] = []
     try:
         for at in range(start, grid.nz, depth):
             stop = min(at + depth, grid.nz)
@@ -530,6 +532,8 @@ def _run_slabs[T](
             local_poses = poses.copy()
             if not integer:
                 local_poses[:, 2, 3] = (v - source_start) * detector.dv
+            finite = finite_projections(source)
+            finite.copy_to_host_async()
             volume = _fbp_from_host(
                 local_poses,
                 source,
@@ -543,7 +547,7 @@ def _run_slabs[T](
                 batch_size=min(32, len(poses)),
                 z_mode="integer" if integer else "fixed",
                 separable=True,
-                check_finite=True,
+                check_finite=False,
                 cache_filtered=backend == "cuda" and integer,
             )
             packed = volume[: stop - at]
@@ -551,11 +555,13 @@ def _run_slabs[T](
             slab = ReconstructionSlab(
                 at, stop, slice(source_start, source_stop), data, np.empty(0), context
             )
-            pending.append((slab, packed))
+            pending.append((slab, packed, finite))
             if len(pending) >= 2:
                 yield _finish(pending.pop(0))
         for item in pending:
             yield _finish(item)
     finally:
-        jax.block_until_ready([item[1] for item in pending])
+        for _, packed, finite in pending:
+            np.asarray(packed)
+            np.asarray(finite)
         pending.clear()

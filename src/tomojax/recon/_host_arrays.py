@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
-if TYPE_CHECKING:
-    import jax
+
+@jax.jit
+def finite_projections(projections: jax.Array) -> jax.Array:
+    return jnp.all(jnp.isfinite(projections))
 
 
 @dataclass(frozen=True)

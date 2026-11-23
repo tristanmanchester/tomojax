@@ -229,7 +229,7 @@ def corrected_row_source(
         raw = reader.read(first, stop)
         raw = raw.astype(raw.dtype.newbyteorder("="), copy=False)
         selected = (fields.flats[:, first:stop], fields.dark[first:stop], fields.usable[first:stop])
-        done = first_pass(
+        projections, nonpositive, nonfinite, above = first_pass(
             jax.device_put(raw),
             *device_interpolation,
             *(jax.device_put(np.ascontiguousarray(value)) for value in selected),
@@ -239,15 +239,17 @@ def corrected_row_source(
             fill_gaps=not bool(selected[2].all()),
             limit=limit,
         )
+        nonpositive.copy_to_host_async()
+        nonfinite.copy_to_host_async()
         flat = Correction(
             "flat_dark",
             records[0].settings,
             {
                 "pixels_without_light": int(np.count_nonzero(~selected[2])),
-                **_above(int(done[3]), raw.size, edge),
+                **_above(above, raw.size, edge),
             },
         )
-        return CorrectedRows(done[0], flat, steps, epsilon, (done[1], done[2]), raw)
+        return CorrectedRows(projections, flat, steps, epsilon, (nonpositive, nonfinite), raw)
 
     try:
         yield correct
@@ -299,8 +301,8 @@ def _correct_host_rows(
     return Corrected(output, (flat, *(s.record() for s in transmission), log, *rest), kept)
 
 
-def _above(count: int, size: int, edge: float | None) -> dict[str, float]:
+def _above(count: int | jax.Array, size: int, edge: float | None) -> dict[str, float]:
     """A band's counts above the stated linear range, when the camera states one."""
     if edge is None:
         return {}
-    return {"counts_above_linear_limit": count / size, "linear_limit_line_integral": edge}
+    return {"counts_above_linear_limit": int(count) / size, "linear_limit_line_integral": edge}
