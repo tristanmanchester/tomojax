@@ -23,7 +23,7 @@ from tomojax.core.validation import (
     validate_volume,
 )
 from tomojax.recon._axial_slabs import axial_slabs, independent_planes
-from tomojax.recon._chunks import Chunked, fixed_updates
+from tomojax.recon._chunks import Chunked, fixed_updates, partial_sweep
 from tomojax.recon._cone_slabs import RowReader, host_volumes
 from tomojax.recon._projection import (
     ConeModel,
@@ -170,6 +170,7 @@ _SIRT_STATIC = (
     "acceleration",
     "stream",
     "column_device",
+    "normalizer_device",
 )
 
 
@@ -200,6 +201,7 @@ def _segment(
     stream: bool,
     host_columns: jax.Array | None = None,
     column_device: jax.sharding.Sharding | None = None,
+    normalizer_device: jax.sharding.Sharding | None = None,
 ) -> Any:
     initial, support = pack_volume(initial, model), pack_volume(support, model)
     select = subset_operators(
@@ -243,7 +245,7 @@ def _segment(
         return state, (rows, columns)
 
     assert norms is not None
-    rows, columns = norms
+    rows, columns = norms if normalizer_device is None else jax.device_put(norms, normalizer_device)
 
     def update(step: jax.Array, x: jax.Array) -> jax.Array:
         index = step % subsets
@@ -291,6 +293,10 @@ def _sirt_program(
         _segment, poses, data, initial, support, det_grid, relaxation, lower, upper, **options
     )
     state, norms = segment(None, 0, 0, None)
+    if (device := options.get("normalizer_device")) is not None:
+        # Keep these maps with the host partitions between chunks. Their device
+        # copies then share the compiled workspace with the projector scratch.
+        norms = jax.block_until_ready(jax.device_put(norms, device.with_memory_kind("pinned_host")))
     result = fixed_updates(state, iterations, partial(segment, norms=norms), drive)
     return result.current if isinstance(result, _Momentum) else result
 
@@ -556,7 +562,7 @@ class SIRTCall:
             axial=axial,
         )
         poses = stack_view_poses(geometry, n)
-        host_columns, column_device = self._host_columns(
+        host_columns, column_device, normalizer_device = self._normalizer_storage(
             poses,
             grid=grid,
             detector=detector,
@@ -581,6 +587,7 @@ class SIRTCall:
                 cache_columns=cache_columns,
                 axial=axial, acceleration=cfg.acceleration, stream=stream,
                 host_columns=host_columns, column_device=column_device,
+                normalizer_device=normalizer_device,
             )  # fmt: skip
             if stream:
                 volume.block_until_ready()  # callbacks must finish before unregistering the source
@@ -592,7 +599,7 @@ class SIRTCall:
             "projector_backend": backend,
         }
 
-    def _host_columns(
+    def _normalizer_storage(
         self,
         poses: jax.Array,
         *,
@@ -603,8 +610,8 @@ class SIRTCall:
         model: Model,
         subsets: int,
         enabled: bool,
-    ) -> tuple[jax.Array | None, jax.sharding.Sharding | None]:
-        """Retain large exact maps on host, leaving small device caches unchanged."""
+    ) -> tuple[jax.Array | None, jax.sharding.Sharding | None, jax.sharding.Sharding | None]:
+        """Place cached columns and the normalization maps of memory-limited chunks."""
         host_columns = None
         column_device = None
         column_bytes = subsets * grid.nx * grid.ny * 4
@@ -634,7 +641,14 @@ class SIRTCall:
                 )
                 self.columns = jax.block_until_ready(jax.device_put(maps, host))
             host_columns = self.columns
-        return host_columns, column_device
+        normalizer_device = None
+        if (
+            partial_sweep.get() is not None
+            and progress.for_unit("iterations") is not None
+            and next(iter(poses.devices())).platform == "gpu"
+        ):
+            normalizer_device = poses.sharding
+        return host_columns, column_device, normalizer_device
 
     def _slabs(
         self,

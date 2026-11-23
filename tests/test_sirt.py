@@ -1,5 +1,6 @@
 """Normalized algebraic updates against a dense matched matrix."""
 
+from contextlib import nullcontext
 from dataclasses import replace
 import importlib
 
@@ -203,7 +204,10 @@ def test_public_sirt_converges_on_consistent_data(subsets):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize(("subsets", "acceleration"), [(1, False), (3, False), (1, True)])
-def test_axial_memory_slabs_preserve_the_full_constrained_solve(monkeypatch, subsets, acceleration):
+@pytest.mark.parametrize("watched", [False, True])
+def test_axial_memory_slabs_preserve_the_full_constrained_solve(
+    monkeypatch, subsets, acceleration, watched
+):
     import tomojax.backends
 
     grid = tj.Grid(5, 4, 3, 0.8, 1.2, 1.3, vol_center=(0.2, -0.3, 0.7))
@@ -223,7 +227,8 @@ def test_axial_memory_slabs_preserve_the_full_constrained_solve(monkeypatch, sub
     initial = truth * 0.1
     full, _ = sirt(geometry, grid, detector, data, init_x=initial, config=cfg)
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 1)
-    slabs, info = sirt(geometry, grid, detector, data, init_x=initial, config=cfg)
+    with tj.progress.watch(lambda _: None) if watched else nullcontext():
+        slabs, info = sirt(geometry, grid, detector, data, init_x=initial, config=cfg)
     assert info["host_slabs"] and isinstance(slabs, np.ndarray)
     np.testing.assert_allclose(slabs, full, atol=3e-6, rtol=3e-5)
 
