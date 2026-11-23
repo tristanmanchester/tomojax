@@ -4,19 +4,27 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from tomojax import progress
 from tomojax.core.host_volume import close_work_file, host_volume, scratch_directory
 from tomojax.core.operator_norm import bounds_settled
+from tomojax.errors import InvalidParameter
 from tomojax.wire.metrics import Metric
 
 from ._cuda_tv import proximal_host
 from ._noise_probe import gaussian_probe
 from ._tv_metric import raise_tv_weight
 from ._tv_ops import gradient_norm_squared
+
+if TYPE_CHECKING:
+    import jax
+
+    from tomojax.geometry import Grid, ScanGeometry
+
+    from .fista_tv import FISTAConfig
 
 
 class HostFista:
@@ -281,32 +289,32 @@ class HostFista:
         }
 
 
-def solve_on_host(
-    geometry, grid, detector, projections, runtime, *, out=None
-) -> tuple[np.ndarray, dict[str, Any], Any] | None:
-    """Select host state only when requested, or when the resident state cannot fit."""
+def needs_host_state(
+    grid: Grid,
+    projections: np.ndarray | jax.Array,
+    cfg: FISTAConfig,
+    batch: int,
+    *,
+    zero_start: bool,
+    stream: bool,
+    joseph: bool,
+) -> bool:
+    """Check the resident FISTA workspace against the current device memory sample."""
     from tomojax.backends import device_free_memory_bytes
-    from tomojax.core.cone import ConeModel
 
-    from ._cone_slabs import cone_problem, host_projections
-    from ._fista_owned import use_owned_fista
+    from ._fista_owned import store_residuals
 
-    projector, cfg = runtime.projector, runtime.config
-    if projector is None or projector[1] != "cuda" or runtime.split is not None:
-        if out is not None:
-            raise ValueError("fista_tv: out requires single-device CUDA Joseph projection")
-        return None
-    model, backend, batch = projector
-    if model != "joseph" and not isinstance(model, ConeModel):
-        if out is not None:
-            raise ValueError("fista_tv: out requires single-device CUDA Joseph projection")
-        return None
-    volumes = 2 if use_owned_fista(grid, projections, runtime) else 4
     free = device_free_memory_bytes()
+    if free is None:
+        return False
+    owned = store_residuals(
+        grid, projections, cfg, zero_start=zero_start, stream=stream, joseph=joseph
+    )
+    volumes = 2 if owned else 4
     need = volumes * 4 * grid.nx * grid.ny * grid.nz
-    need += (0 if runtime.stream else 2) * projections.size * 4
+    need += (0 if stream else 2) * projections.size * 4
     # Batch-sized measured, projected, residual and masked-residual storage.
-    need += 4 * 4 * min(batch, projections.shape[0]) * detector.nv * detector.nu
+    need += 4 * 4 * min(batch, projections.shape[0]) * projections.shape[1] * projections.shape[2]
     if cfg.iterations > 0 and cfg.tv_weight != 0 and cfg.tv_prox_iterations > 0:
         from ._tv_ops import cuda_tv_workspace_bytes
 
@@ -320,10 +328,80 @@ def solve_on_host(
             need += math.prod(np.shape(cfg.support))
         # The reference proximal keeps three dual fields plus primal workspace.
         need += 4 * 4 * grid.nx * grid.ny * grid.nz if scratch is None else scratch
-    if out is None and (free is None or need <= 0.85 * free):
+    return need > 0.85 * free
+
+
+def host_objective_error(cfg: FISTAConfig) -> InvalidParameter | None:
+    """Identify the field requiring a resident solve, if any."""
+    if cfg.support is None and cfg.regularizer.lower() == "tv":
         return None
-    if cfg.support is not None or cfg.regularizer != "tv":
-        raise ValueError("fista_tv: host volumes require TV and no support mask")
+    field = "support" if cfg.support is not None else "regularizer"
+    return InvalidParameter(
+        f"config.{field}", "fista_tv: host volumes require TV and no support mask"
+    )
+
+
+def check_fista_storage(
+    geometry: ScanGeometry,
+    grid: Grid,
+    projections: np.ndarray | jax.Array,
+    cfg: FISTAConfig,
+    *,
+    warm_start: bool,
+) -> None:
+    """Check resident-only objectives against the same placement decision as the CUDA solver."""
+    from tomojax.core.geometry.cone import is_cone_beam
+
+    from ._backend import reconstruction_backend
+    from .fista_tv import fista_view_batch, stream_fista_views
+
+    if cfg.devices is not None or (error := host_objective_error(cfg)) is None:
+        return
+    cone = is_cone_beam(geometry)
+    if reconstruction_backend(
+        cfg.backend, cone=cone, context="fista_tv"
+    ) == "cuda" and needs_host_state(
+        grid,
+        projections,
+        cfg,
+        fista_view_batch(cfg, projections.shape[0]),
+        zero_start=not warm_start,
+        stream=stream_fista_views(grid, projections, cfg),
+        joseph=not cone,
+    ):
+        raise error
+
+
+def solve_on_host(
+    geometry, grid, detector, projections, runtime, *, out=None
+) -> tuple[np.ndarray, dict[str, Any], Any] | None:
+    """Select host state only when requested, or when the resident state cannot fit."""
+    from tomojax.core.cone import ConeModel
+
+    from ._cone_slabs import cone_problem, host_projections
+
+    projector, cfg = runtime.projector, runtime.config
+    if projector is None or projector[1] != "cuda" or runtime.split is not None:
+        if out is not None:
+            raise ValueError("fista_tv: out requires single-device CUDA Joseph projection")
+        return None
+    model, backend, batch = projector
+    if model != "joseph" and not isinstance(model, ConeModel):
+        if out is not None:
+            raise ValueError("fista_tv: out requires single-device CUDA Joseph projection")
+        return None
+    if out is None and not needs_host_state(
+        grid,
+        projections,
+        cfg,
+        batch,
+        zero_start=runtime.x0 is None,
+        stream=runtime.stream,
+        joseph=model == "joseph",
+    ):
+        return None
+    if error := host_objective_error(cfg):
+        raise error
     from ._parallel_slabs import parallel_problem
 
     data = host_projections(projections, "fista_tv")

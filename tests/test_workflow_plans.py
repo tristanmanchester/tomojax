@@ -201,3 +201,25 @@ def test_host_fbp_preflight_uses_execution_row_windows(monkeypatch, cone, bad_ro
             with pytest.raises(tj.InvalidParameter) as error:
                 action(source, "fbp")
             assert error.value.path == "source"
+
+
+@pytest.mark.parametrize("field", ["support", "regularizer"])
+def test_fista_preflight_respects_host_solver_capabilities(monkeypatch, field):
+    from tomojax import recon
+
+    grid = tj.Grid(8, 8, 4, 1, 1, 1)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(7, 4, 1, 1), [0, 45, 90, 135])
+    source = tj.Scan(np.zeros((4, 4, 7), np.float32), geometry)
+    cfg = (
+        recon.FISTAConfig(support=np.ones((1, 8, 8), bool), iterations=1, stream=False)
+        if field == "support"
+        else recon.FISTAConfig(regularizer="huber_tv", iterations=1, stream=False)
+    )
+    monkeypatch.setattr("tomojax.recon._backend.cuda_backend", lambda: True)
+    monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda: 2**30)
+    resolve_reconstruction(source, "fista", config=cfg)
+    monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda: 1)
+    for action in (resolve_reconstruction, tj.reconstruct):
+        with pytest.raises(tj.InvalidParameter) as error:
+            action(source, "fista", config=cfg)
+        assert error.value.path == f"config.{field}"

@@ -249,6 +249,12 @@ def validate_reconstruction(
             check_angular_coverage(geometry, geometry.detector, views)
         except ValueError as err:
             raise InvalidParameter("warm_start" if warm_start else "method", str(err)) from err
+    if method == "fista" and projections is not None:
+        from tomojax.recon._fista_host import check_fista_storage
+
+        check_fista_storage(
+            geometry, grid, projections, cast("FISTAConfig", config), warm_start=warm_start
+        )
     if method == "fbp" and projections is not None:
         from tomojax.recon._fbp_storage import check_host_fbp_samples
 

@@ -27,7 +27,7 @@ from ._projection import least_squares_operators, projection_operators
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Grid
 
-    from .fista_tv import FistaRuntime
+    from .fista_tv import FISTAConfig, FistaRuntime
 
 
 class FistaResult(NamedTuple):
@@ -84,21 +84,21 @@ def _momentum(old, new, t, *, clipped):
     return jnp.maximum(z, 0) if clipped else z, tn
 
 
-def use_owned_fista(grid: Grid, projections, runtime: FistaRuntime) -> bool:
-    """Store residuals instead of another volume for the supported objective."""
-    if grid.nx * grid.ny * grid.nz <= projections.size:
-        return False
-    cfg, constraints = runtime.config, runtime.constraints
+def store_residuals(
+    grid: Grid, projections, cfg: FISTAConfig, *, zero_start: bool, stream: bool, joseph: bool
+) -> bool:
+    """Whether this objective and projection layout can keep residuals in place of two volumes."""
     return (
-        cfg.iterations > 0
-        and runtime.x0 is None
+        grid.nx * grid.ny * grid.nz > projections.size
+        and cfg.iterations > 0
+        and zero_start
         and cfg.tv_weight == 0
-        and runtime.volume_mask is None
-        and constraints.lower_bound == 0.0
-        and constraints.upper_bound is None
-        and not runtime.stream
-        and runtime.split is None
-        and runtime.projector[0] == "joseph"
+        and cfg.support is None
+        and cfg.lower_bound == 0.0
+        and cfg.upper_bound is None
+        and not stream
+        and cfg.devices is None
+        and joseph
     )
 
 

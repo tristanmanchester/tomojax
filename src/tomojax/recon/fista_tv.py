@@ -27,7 +27,7 @@ from tomojax.wire.metrics import Metric
 
 from ._chunks import Chunked
 from ._fista_initialization import first_gradient as estimate_first_gradient
-from ._fista_owned import FistaResult, FistaScanState, run_owned_fista, use_owned_fista
+from ._fista_owned import FistaResult, FistaScanState, run_owned_fista, store_residuals
 from ._noise import estimate_projection_noise
 from ._noise_probe import probe_gradient_rms
 from ._projection import (
@@ -326,15 +326,7 @@ def _prepare_fista_runtime(
     projector = _batched_projector(cfg, n_views, det_grid, geometry, detector)
     split = view_split(cfg.devices, n_views)
     announce(None if split is None else split.mesh.devices.flat, array=projections)
-    stream = (
-        split is None
-        and not isinstance(projections, jax.Array)
-        and (
-            bool(cfg.stream)
-            if cfg.stream is not None  # ~8 volumes of iterates, TV duals, scratch
-            else should_stream(projections, reserve_bytes=32 * grid.nx * grid.ny * grid.nz)
-        )
-    )
+    stream = stream_fista_views(grid, projections, cfg)
 
     metric = (
         resolve_tv_metric(
@@ -367,6 +359,31 @@ def _prepare_fista_runtime(
         projector=projector,
         stream=stream,
         split=split,
+    )
+
+
+def stream_fista_views(grid: Grid, projections: np.ndarray | jax.Array, cfg: FISTAConfig) -> bool:
+    """Reserve room for the iterate and TV workspace before placing a host measurement stack."""
+    return (
+        cfg.devices is None
+        and not isinstance(projections, jax.Array)
+        and (
+            cfg.stream
+            if cfg.stream is not None
+            else should_stream(projections, reserve_bytes=32 * grid.nx * grid.ny * grid.nz)
+        )
+    )
+
+
+def use_owned_fista(grid: Grid, projections: np.ndarray | jax.Array, runtime: FistaRuntime) -> bool:
+    """Apply the residual-storage policy with the solve's actual starting volume and projector."""
+    return store_residuals(
+        grid,
+        projections,
+        runtime.config,
+        zero_start=runtime.x0 is None,
+        stream=runtime.stream,
+        joseph=runtime.projector[0] == "joseph",
     )
 
 
