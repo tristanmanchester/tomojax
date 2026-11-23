@@ -448,3 +448,21 @@ def test_simulation_transcript_artifact_lineage(schema):
         finally:
             if proc.poll() is None:
                 proc.kill()
+
+
+def test_invalid_command_echoes_readable_id(client):
+    invalid, expected = map(
+        json.loads, (DOCS / "transcripts/invalid-command.jsonl").read_text().splitlines()
+    )
+    assert not client.schema.is_valid(invalid)
+    for raw_id in (invalid["id"], "", 31, None):
+        request = {**invalid, "id": raw_id}
+        client.proc.stdin.write(json.dumps(request).encode() + b"\n")
+        client.proc.stdin.flush()
+        error = client.read()
+        if raw_id == invalid["id"]:
+            assert error == expected
+        assert error["type"] == "protocol_error"
+        assert error["request"] == (raw_id if isinstance(raw_id, str) else None)
+    client.send("form-17", "status")
+    assert client.end("form-17")["type"] == "result"

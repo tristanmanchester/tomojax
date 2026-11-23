@@ -1,0 +1,2 @@
+{"id":"form-17","command":{"type":"missing"}}
+{"type":"protocol_error","kind":"invalid_request","message":"Invalid value 'missing' - at `$.command.type`","request":"form-17"}

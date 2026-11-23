@@ -728,8 +728,7 @@
         "request": {
           "anyOf": [
             {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             },
             {
               "type": "null"

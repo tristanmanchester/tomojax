@@ -146,7 +146,7 @@ class ProtocolError(Record, tag="protocol_error"):
 
     kind: Literal["invalid_request"]
     message: str
-    request: Id | None = None
+    request: str | None = None
 
 
 type Response = Ready | EventReply | ResultReply | ErrorReply | ProtocolError

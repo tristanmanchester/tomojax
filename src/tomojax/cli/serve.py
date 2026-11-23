@@ -78,6 +78,10 @@ class _Outbox:
         return 0
 
 
+class _RequestId(msgspec.Struct):
+    id: str
+
+
 class _Input:
     def __init__(self) -> None:
         self.buffer = bytearray()
@@ -91,7 +95,10 @@ class _Input:
                     try:
                         request = self.decode.decode(self.buffer)
                     except (msgspec.DecodeError, UnicodeDecodeError, RecursionError) as err:
-                        session.emit(e.ProtocolError("invalid_request", str(err)))
+                        rid = None
+                        with suppress(msgspec.DecodeError, UnicodeDecodeError, RecursionError):
+                            rid = msgspec.json.decode(self.buffer, type=_RequestId).id
+                        session.emit(e.ProtocolError("invalid_request", str(err), rid))
                     else:
                         session.admit(request)
                 self.buffer.clear()
