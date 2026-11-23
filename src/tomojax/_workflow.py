@@ -40,7 +40,7 @@ from tomojax._scan import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Generator, Iterator, Sequence
     from os import PathLike
 
     import jax
@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid, ScanGeometry
     from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig
     from tomojax.recon.api import MethodConfig
+    from tomojax.recon.types import ReconstructionSlab
 
 type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
 type Region = Literal["auto", "bbox", "cube", "cyl"] | RegionEstimate
@@ -796,8 +797,7 @@ def reconstruct_slabs(
     Returns
     -------
     contextlib.AbstractContextManager
-        Context manager yielding an iterator of ``(z_slice, Reconstruction)``
-        pairs; each ``z_slice`` indexes the requested grid.
+        Context manager yielding owned slabs paired with their z slices in the requested grid.
 
     Raises
     ------
@@ -812,28 +812,13 @@ def reconstruct_slabs(
     ...     for z_slice, recon in slabs:
     ...         print(z_slice, recon.volume.shape)
     """
-    from tomojax.geometry import ParallelGeometry
-    from tomojax.geometry.api import is_cone_beam
-    from tomojax.recon.api import method_config
-
-    cfg = method_config(method, config=config, warm_start=warm_start)
-    cone = is_cone_beam(frames.geometry)
-    if method not in {"fbp", "fourier", "sirt", "mlem"} or not (
-        type(frames.geometry) is ParallelGeometry or (cone and method == "fbp")
-    ):
-        raise ValueError(
-            "reconstruct_slabs requires cone FBP or unposed axial FBP/Fourier/SIRT/MLEM"
-        )
-    target = frames.geometry.grid if grid is None else grid
-    bound = bind_step_geometry(corrections, frames.geometry)
     return _reconstruct_slabs_context(
         frames,
         method,
-        target=target,
-        corrections=bound,
-        cfg=cfg,
-        cone=cone,
-        warm_start=bool(warm_start),
+        grid=grid,
+        corrections=corrections,
+        config=config,
+        warm_start=warm_start,
         epsilon=epsilon,
     )
 
@@ -843,86 +828,118 @@ def _reconstruct_slabs_context(
     frames: Frames,
     method: Literal["fbp", "fourier", "sirt", "mlem"],
     *,
-    target: Grid,
+    grid: Grid | None,
     corrections: Sequence[Step],
-    cfg: MethodConfig,
-    cone: bool,
-    warm_start: bool,
+    config: MethodConfig | None,
+    warm_start: bool | None,
     epsilon: float,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
-    from tomojax._scan import detector_window, rebuild
+    from tomojax import progress
     from tomojax.corrections.api import corrected_row_source
+    from tomojax.geometry import ParallelGeometry
+    from tomojax.geometry.api import is_cone_beam
+    from tomojax.recon.api import method_config, reconstruct_slabs as array_slabs
+
+    cone = is_cone_beam(frames.geometry)
+    with progress.task("reconstruct", "fdk" if cone else method, None, "slabs"):
+        cfg = method_config(method, config=config, warm_start=warm_start)
+        if method not in {"fbp", "fourier", "sirt", "mlem"} or not (
+            type(frames.geometry) is ParallelGeometry or (cone and method == "fbp")
+        ):
+            raise ValueError(
+                "reconstruct_slabs requires cone FBP or unposed axial FBP/Fourier/SIRT/MLEM"
+            )
+        target = frames.geometry.grid if grid is None else grid
+        bound = bind_step_geometry(corrections, frames.geometry)
+        with corrected_row_source(
+            frames.counts,
+            flats=frames.flats,
+            flat_positions=frames.flat_positions,
+            darks=frames.darks,
+            white_level=frames.white_level,
+            steps=bound,
+            epsilon=epsilon,
+            view_positions=frames.view_positions,
+            exposure_times=frames.exposure_times,
+            flat_exposure_times=frames.flat_exposure_times,
+            host=cone,
+            dark_source=frames.dark_source,
+            linear_limit=frames.linear_limit,
+        ) as source:
+
+            def read(first: int, stop: int):
+                corrected = source(first, stop)
+                return corrected.projections, corrected
+
+            completed = array_slabs(
+                method,
+                frames.geometry,
+                target,
+                frames.geometry.detector,
+                read,
+                config=cfg,
+                warm_start=bool(warm_start),
+            )
+            with (
+                closing(completed),
+                closing(_slab_results(completed, frames, target, method, cfg)) as output,
+            ):
+                yield output
+
+
+def _slab_results(
+    prepared: Iterator[ReconstructionSlab[Any]],
+    frames: Frames,
+    target: Grid,
+    method: str,
+    cfg: MethodConfig,
+) -> Generator[tuple[slice, Reconstruction]]:
+    """Assemble the scan and reconstruction for each completed, owned output slab."""
+    from tomojax import progress
+    from tomojax._scan import detector_window, rebuild
     from tomojax.geometry import grid_volume_origin
-    from tomojax.recon.api import reconstruct_slabs as array_slabs
 
     origin = grid_volume_origin(target)
-    with corrected_row_source(
-        frames.counts,
-        flats=frames.flats,
-        flat_positions=frames.flat_positions,
-        darks=frames.darks,
-        white_level=frames.white_level,
-        steps=corrections,
-        epsilon=epsilon,
-        view_positions=frames.view_positions,
-        exposure_times=frames.exposure_times,
-        flat_exposure_times=frames.flat_exposure_times,
-        host=cone,
-        dark_source=frames.dark_source,
-        linear_limit=frames.linear_limit,
-    ) as source:
-
-        def read(first: int, stop: int):
-            corrected = source(first, stop)
-            return corrected.projections, corrected
-
-        completed = array_slabs(
-            method,
-            frames.geometry,
-            target,
-            frames.geometry.detector,
-            read,
-            config=cfg,
-            warm_start=warm_start,
-        )
-        with closing(completed) as prepared:
-
-            def results():
-                for slab in prepared:
-                    block = replace(
-                        target,
-                        nz=slab.stop - slab.start,
-                        vol_center=None,
-                        vol_origin=(origin[0], origin[1], origin[2] + slab.start * target.vz),
-                    )
-                    geometry = rebuild(
-                        frames.geometry,
-                        grid=block,
-                        detector=detector_window(slab.rows, slice(None), frames.geometry.detector),
-                    )
-                    cropped = cropped_record(slab.rows, slice(None), frames.geometry.detector)
-                    scan = Scan(
-                        slab.projections,
-                        geometry,
-                        frames.name,
-                        (*frames.corrections, cropped, *slab.context.records),
-                        frames.source,
-                        view_positions=frames.view_positions,
-                    )
-                    info = {
-                        "config": cfg,
-                        "host_slabs": True,
-                        "source_rows": (slab.rows.start, slab.rows.stop),
-                        **slab.info,
-                    }
-                    yield (
-                        slice(slab.start, slab.stop),
-                        Reconstruction(slab.volume, scan.geometry, method, info, scan),
-                    )
-                    del slab, scan  # Do not retain device rows while preparing the next slab.
-
-            with closing(results()) as output:
-                yield output
+    with progress.outcome():
+        progress.check_cancelled()
+        for slab in prepared:
+            block = replace(
+                target,
+                nz=slab.stop - slab.start,
+                vol_center=None,
+                vol_origin=(origin[0], origin[1], origin[2] + slab.start * target.vz),
+            )
+            geometry = rebuild(
+                frames.geometry,
+                grid=block,
+                detector=detector_window(slab.rows, slice(None), frames.geometry.detector),
+            )
+            cropped = cropped_record(slab.rows, slice(None), frames.geometry.detector)
+            scan = Scan(
+                slab.projections,
+                geometry,
+                frames.name,
+                (*frames.corrections, cropped, *slab.context.records),
+                frames.source,
+                view_positions=frames.view_positions,
+            )
+            info = {
+                "config": cfg,
+                "host_slabs": True,
+                "source_rows": (slab.rows.start, slab.rows.stop),
+                **slab.info,
+            }
+            result = (
+                slice(slab.start, slab.stop),
+                Reconstruction(slab.volume, scan.geometry, method, info, scan),
+            )
+            last = slab.stop == target.nz
+            progress.step("slabs", remaining=0 if last else None)
+            yield result
+            del result
+            if not last:
+                progress.check_cancelled()
+            del slab, scan  # Do not retain device rows while preparing the next slab.
 
 
 def _estimate_center(scan: Scan) -> tuple[Scan, dict[str, object]]:

@@ -1,0 +1,75 @@
+"""Calling-thread progress for groups of corrections and bounded frame reads."""
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractContextManager, nullcontext, suppress
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from tomojax import progress
+
+from ._steps import step_name
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Sequence
+    from types import TracebackType
+
+    import jax
+
+    from ._steps import Step
+
+
+class HostCopies(AbstractContextManager["HostCopies"]):
+    """Join every submitted download before its producer releases its buffers."""
+
+    def __init__(self) -> None:
+        self.pending: dict[int, jax.Array] = {}
+
+    def start(self, batch: jax.Array) -> None:
+        self.pending[id(batch)] = batch
+        batch.copy_to_host_async()
+
+    def result(self, batch: jax.Array) -> np.ndarray:
+        host = np.asarray(batch)
+        del self.pending[id(batch)]
+        return host
+
+    def __exit__(
+        self,
+        kind: type[BaseException] | None,
+        error: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        for batch in self.pending.values():
+            # A failed device operation must not mask a handler's exception.
+            with suppress(Exception) if error is not None else nullcontext():
+                np.asarray(batch)
+        self.pending.clear()
+
+
+def correction_group(parts: Sequence[str | Step], batches: range, unit: str):
+    """Count one write or statistic per batch in a fused correction group."""
+    label = ", ".join(p if isinstance(p, str) else step_name(p) for p in parts)
+    return progress.task("correction", label, len(batches), unit)
+
+
+def view_batches(counts: Any, views: int, batch: int) -> Generator[tuple[int, int, np.ndarray]]:
+    """``(start, stop, frames)`` for each batch of views, the next read while one is used."""
+    starts = list(range(0, views, batch))
+
+    def read(start: int) -> np.ndarray:
+        frames = np.asarray(counts[start : min(start + batch, views)])
+        # Device arrays use native byte order; leave ordinary batches as views.
+        return frames.astype(frames.dtype.newbyteorder("="), copy=False)
+
+    with ThreadPoolExecutor(max_workers=1) as reader:
+        pending = reader.submit(read, starts[0]) if starts else None
+        for k, start in enumerate(starts):
+            progress.check_cancelled()
+            assert pending is not None
+            frames = pending.result()
+            if k + 1 < len(starts):
+                pending = reader.submit(read, starts[k + 1])
+            yield start, min(start + batch, views), frames

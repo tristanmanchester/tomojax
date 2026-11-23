@@ -17,7 +17,7 @@
   defaults (`tomojax reconstruct --method NAME --config-keys` filters to one method);
   explicit command-line options override the file.
 - Exit status is 0 on success, 1 on failure (for `inspect`, also when the
-  dataset is invalid or a preview fails) and 2 for a usage error.
+  dataset is invalid or a preview fails), 2 for a usage error, and 130 when a command is interrupted.
 - `tomojax --version` prints the version.
 
 The options match the Python API's keywords: `tomojax reconstruct --method cgls
@@ -87,9 +87,28 @@ and `--darks 0` suits only counts that are already dark-corrected.
 and `reconstruct` uses them. `previews/` then holds `slice_z.png`, `slice_y.png`, and
 `slice_x.png`. See the [lab cone-beam CT guide](../../../docs/lab-ct.md).
 
-For reconstruction, `--progress json` writes one flushed JSON record per line
-on stdout. An operational failure ends with an `error` record and exit 1.
-A first interrupt requests cancellation and exits 130 once work stops. An
-argument error uses exit 2 and prints usage on stderr. During execution, a
-non-zero exit without an `error` record or cancellation indicates an internal
-error. Its traceback is on stderr.
+## Follow or cancel a command
+
+`correct`, `align`, and `reconstruct` accept `--progress auto|bar|json|none`.
+The default, `auto`, displays a bar when stderr is a terminal. Use `bar` to
+force the display or `none` to silence it. Press Ctrl-C to cancel at the next
+batch, solver chunk, or alignment step. The command exits 130 after cleanup.
+A second Ctrl-C interrupts immediately.
+
+```bash
+tomojax reconstruct scan.nxs -o recon.nxs --method cgls --progress json > progress.jsonl
+```
+
+In JSON mode stdout contains one flushed JSON record per line. Logs, warnings,
+and tracebacks go to stderr. Each task has a `started` and a `finished` record.
+Use `task` and `parent` to follow nested operations. An `advanced` record counts
+completed work in the unit named by `started`. An unknown total is `null`,
+and a later advance can revise the total. Times are seconds since the watch began.
+The four record types and their fields are defined in the [JSON schema](../../../docs/progress.schema.json).
+
+A successful command exits 0. A file, value, or key error ends the stream with
+one `error` record and exits 1. Argument errors print usage on stderr and exit 2.
+This includes combining `align --dry-run` with `--progress json`. On cancellation,
+open tasks finish with status `cancelled`. An execution failure with a non-zero
+status and no `error` record, apart from interruption, indicates an internal
+error. Read its traceback on stderr.

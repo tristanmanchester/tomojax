@@ -30,7 +30,7 @@ def validate_tree(events, *, interrupted=False):
             seen.add(event.task)
             counts[event.task] = 0
         elif isinstance(event, progress.Advanced):
-            assert stack[-1] == event.task
+            assert event.task in stack
             assert counts[event.task] <= event.done
             assert event.total is None or event.done <= event.total
             counts[event.task] = event.done
@@ -242,7 +242,7 @@ def test_cli_json_records_arrive_during_reconstruction(tmp_path, cancel):
                 process.send_signal(signal.SIGINT)
         assert process.wait(timeout=60) == (130 if cancel else 0)
     validate_tree(events)
-    assert events[0].name == "reconstruct"
+    assert [e.name for e in events if isinstance(e, progress.Started)] == ["load", "reconstruct"]
     assert events[-1].status == ("cancelled" if cancel else "done")
     assert output.exists() != cancel
 
@@ -632,3 +632,350 @@ def test_alignment_keeps_image_poses_and_stops(alignment_scan, tolerance, counts
         assert [level["status"] for level in levels] == stops
     np.testing.assert_array_equal(result.image, reference.image)
     np.testing.assert_array_equal(result.scan.poses, reference.scan.poses)
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_load_reports_completed_views_and_fused_corrections(tmp_path, monkeypatch, interrupt):
+    import threading
+
+    from ._helpers import write_raw_nxtomo
+
+    path = tmp_path / "raw.nxs"
+    write_raw_nxtomo(path)
+    monkeypatch.setattr("tomojax.corrections._engine._SIMPLE_FRAME_BYTES", 16)
+    owner, events, token = get_ident(), [], progress.Cancel()
+    workers = set(threading.enumerate())
+
+    def observe(event):
+        assert get_ident() == owner
+        events.append(event)
+        if interrupt and isinstance(event, progress.Advanced):
+            token.cancel()
+
+    with progress.watch(observe, cancel=token):
+        if interrupt:
+            with pytest.raises(progress.Cancelled):
+                tj.load(path)
+        else:
+            result = tj.load(path)
+            np.testing.assert_allclose(result.projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
+    validate_tree(events)
+    load, correction = [e for e in events if isinstance(e, progress.Started)]
+    assert (load.name, load.total, load.unit) == ("load", None, "views")
+    assert (correction.name, correction.label, correction.total, correction.parent) == (
+        "correction",
+        "flat_dark, log",
+        2,
+        load.task,
+    )
+    reads = [
+        (e.done, e.total)
+        for e in events
+        if isinstance(e, progress.Advanced) and e.task == load.task
+    ]
+    writes = [
+        e.done for e in events if isinstance(e, progress.Advanced) and e.task == correction.task
+    ]
+    assert reads == ([(1, 2)] if interrupt else [(1, 2), (2, 2)])
+    assert writes == ([] if interrupt else [1, 2])
+    assert [e.status for e in events if isinstance(e, progress.Finished)] == [
+        "cancelled" if interrupt else "done"
+    ] * 2
+    assert set(threading.enumerate()) <= workers
+
+
+@pytest.mark.parametrize("interrupt", ["no", "cancel", "key error"])
+def test_psi_reads_report_written_batches_and_release_owned_mapping(
+    tmp_path, monkeypatch, interrupt
+):
+    from .test_psi_reader import _write_v73
+
+    phase = np.arange(7 * 4 * 6, dtype=np.float32).reshape(7, 4, 6)
+    path = tmp_path / "phase.mat"
+    _write_v73(path, phase, np.arange(7), 1e-6)
+    monkeypatch.setattr("tomojax.core.host_volume.host_available_memory_bytes", lambda: 1)
+    from tomojax.core import host_volume
+
+    original = host_volume.host_array
+    allocated = []
+
+    def allocate(*args, **kwargs):
+        array = original(*args, **kwargs)
+        allocated.append(array)
+        return array
+
+    monkeypatch.setattr(host_volume, "host_array", allocate)
+    events, stop, problem = [], progress.Cancel(), KeyError("reader observer")
+
+    def observe(event):
+        events.append(event)
+        if isinstance(event, progress.Advanced):
+            assert not allocated[0].base.closed
+            np.testing.assert_array_equal(allocated[0][: event.done], phase[: event.done])
+            if interrupt == "key error":
+                raise problem
+            if interrupt == "cancel":
+                stop.cancel()
+
+    with progress.watch(observe, cancel=stop):
+        if interrupt == "no":
+            result = tj.load(path)
+            np.testing.assert_array_equal(result.projections, phase)
+        else:
+            with pytest.raises(
+                KeyError if interrupt == "key error" else progress.Cancelled
+            ) as caught:
+                tj.load(path)
+            assert allocated[0].base.closed
+            if interrupt == "key error":
+                assert caught.value is problem
+    validate_tree(events, interrupted=interrupt == "key error")
+    assert [e.done for e in events if isinstance(e, progress.Advanced)] == (
+        [3, 6, 7] if interrupt == "no" else [3]
+    )
+    if interrupt != "key error":
+        assert events[-1].status == ("done" if interrupt == "no" else "cancelled")
+
+
+def test_corrections_report_each_executed_group_on_the_caller(monkeypatch):
+    from tomojax.corrections import BeamHardening, RejectViews, Stripes
+
+    grid = tj.Grid(8, 8, 4, 1, 1, 1)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(8, 4, 1, 1), np.arange(11))
+    frames = tj.Frames(np.full((11, 4, 8), 500, np.uint16), geometry, white_level=1000)
+    monkeypatch.setattr("tomojax.corrections._engine._BATCH_BYTES", 8 * 11 * 8)
+    steps = (Stripes(3), RejectViews(), BeamHardening((1.0,)), BeamHardening((1.0,)))
+    events, owner = [], get_ident()
+
+    def observe(event):
+        assert get_ident() == owner
+        events.append(event)
+
+    with progress.watch(observe):
+        result = frames.corrected(*steps, views_per_batch=3)
+    np.testing.assert_allclose(result.projections, np.log(2), rtol=1e-6)
+    validate_tree(events)
+    groups = [e for e in events if isinstance(e, progress.Started)]
+    assert [(e.label, e.unit) for e in groups] == [
+        ("flat_dark, log", "view batches"),
+        ("stripes", "row batches"),
+        ("reject_views", "view batches"),
+        ("beam_hardening, beam_hardening", "view batches"),
+    ]
+    for group in groups:
+        assert group.total == 4
+        assert [
+            e.done for e in events if isinstance(e, progress.Advanced) and e.task == group.task
+        ] == [1, 2, 3, 4]
+
+
+@pytest.mark.parametrize("end", ["early", "cancel", "last", "failed"])
+def test_slab_task_spans_the_open_iterator(end):
+    from dataclasses import replace
+
+    from tomojax.recon import SIRTConfig
+
+    grid = tj.Grid(6, 6, 11, 1, 1, 1)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(7, 11, 1, 1), np.arange(7))
+    frames = tj.Frames(np.full((7, 11, 7), 500, np.uint16), geometry, white_level=1000)
+    events, token = [], progress.Cancel()
+
+    def observe(event):
+        events.append(event)
+        if isinstance(event, progress.Advanced) and (
+            end == "cancel" or (end == "last" and event.done == 2)
+        ):
+            token.cancel()
+
+    target = replace(grid, vz=0.7) if end == "failed" else grid
+    with progress.watch(observe, cancel=token):
+        context = tj.reconstruct_slabs(
+            frames, "sirt", grid=target, config=SIRTConfig(backend="jax", iterations=2)
+        )
+        assert events == []
+        with context as slabs:
+            assert len(events) == 1 and events[0].name == "reconstruct"
+            if end == "failed":
+                with pytest.raises(ValueError, match="independent axial"):
+                    next(slabs)
+            else:
+                first, _ = next(slabs)
+                assert first == slice(0, 8)
+                if end == "cancel":
+                    with pytest.raises(progress.Cancelled):
+                        next(slabs)
+                elif end == "last":
+                    assert [part for part, _ in slabs] == [slice(8, 11)]
+            assert not any(isinstance(e, progress.Finished) for e in events)
+        validate_tree(events)
+    assert [e.done for e in events if isinstance(e, progress.Advanced)] == {
+        "cancel": [1],
+        "early": [1],
+        "last": [1, 2],
+        "failed": [],
+    }[end]
+    assert events[-1].status == {"cancel": "cancelled", "failed": "failed"}.get(end, "done")
+
+
+def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys):
+    import json
+
+    from tomojax.cli.main import main
+
+    from ._helpers import write_raw_nxtomo
+
+    source, output = tmp_path / "raw.nxs", tmp_path / "scan.nxs"
+    command = ["correct", str(source), "-o", str(output), "--progress", "json"]
+    assert main(command) == 1
+    missing = json.loads(capsys.readouterr().out)
+    assert (
+        missing["schema"] == 1
+        and missing["event"] == "error"
+        and missing["type"] == "FileNotFoundError"
+    )
+    write_raw_nxtomo(source)
+    with pytest.raises(SystemExit) as usage:
+        main([*command, "--binning", "0"])
+    assert usage.value.code == 2 and capsys.readouterr().out == ""
+    assert main(command) == 0
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert all(r.pop("schema") == 1 for r in records)
+    kinds = {
+        "started": progress.Started,
+        "advanced": progress.Advanced,
+        "finished": progress.Finished,
+    }
+    events = [kinds[r.pop("event")](**r) for r in records]
+    validate_tree(events)
+    assert [e.name for e in events if isinstance(e, progress.Started)] == ["load", "correction"]
+    np.testing.assert_allclose(tj.load(output).projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
+
+    assert main([*command, "--force", "--views", "99"]) == 1
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    error = records.pop()
+    assert error["event"] == "error" and error["type"] == "ValueError"
+    assert "99" in error["message"]
+    for record in records:
+        assert record.pop("schema") == 1
+    validate_tree([kinds[r.pop("event")](**r) for r in records])
+
+
+def test_observer_oom_during_a_slab_read_reaches_caller_without_retry(tmp_path):
+    from contextlib import closing
+
+    from tomojax.recon import SIRTConfig, api
+
+    from ._helpers import write_raw_nxtomo
+
+    path = tmp_path / "raw.nxs"
+    write_raw_nxtomo(path)
+    grid = tj.Grid(6, 6, 11, 1, 1, 1)
+    detector = tj.Detector(7, 11, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.arange(7))
+    events, reads = [], []
+    error = RuntimeError("out of memory")
+
+    def read(first, stop):
+        reads.append((first, stop))
+        tj.load(path)
+        raise AssertionError("a failed reader cannot produce a slab")
+
+    def observe(event):
+        events.append(event)
+        if isinstance(event, progress.Advanced):
+            raise error
+
+    slabs = api.reconstruct_slabs("sirt", geometry, grid, detector, read, config=SIRTConfig())
+    with progress.watch(observe), closing(slabs), pytest.raises(RuntimeError) as failure:
+        next(slabs)
+    validate_tree(events, interrupted=True)
+    assert failure.value is error and reads == [(0, 8)]
+    assert isinstance(events[-1], progress.Advanced)
+
+
+@pytest.mark.parametrize("at", [1, 4])
+def test_fused_row_correction_counts_completed_rows_and_joins_its_workers(monkeypatch, at):
+    import threading
+
+    from tomojax.corrections import Stripes
+
+    grid = tj.Grid(8, 8, 4, 1, 1, 1)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(8, 4, 1, 1), np.arange(11))
+    frames = tj.Frames(np.full((11, 4, 8), 500, np.uint16), geometry, white_level=1000)
+    monkeypatch.setattr("tomojax.corrections._engine._BATCH_BYTES", 8 * 11 * 8)
+    events, token, owner = [], progress.Cancel(), get_ident()
+    workers = set(threading.enumerate())
+
+    def observe(event):
+        assert get_ident() == owner
+        events.append(event)
+        if isinstance(event, progress.Advanced) and event.done == at:
+            token.cancel()
+
+    with progress.watch(observe, cancel=token):
+        if at == 1:
+            with pytest.raises(progress.Cancelled):
+                frames.corrected(Stripes(3))
+        else:
+            result = frames.corrected(Stripes(3))
+            np.testing.assert_allclose(result.projections, np.log(2), rtol=1e-6)
+    validate_tree(events)
+    assert len([e for e in events if isinstance(e, progress.Started)]) == 1
+    assert (events[0].label, events[0].unit, events[0].total) == (
+        "flat_dark, log, stripes",
+        "row batches",
+        4,
+    )
+    assert [e.done for e in events if isinstance(e, progress.Advanced)] == list(range(1, at + 1))
+    assert events[-1].status == ("cancelled" if at == 1 else "done")
+    assert set(threading.enumerate()) <= workers
+
+
+def test_cancelling_a_correction_drains_the_already_submitted_host_copy(monkeypatch):
+    import importlib
+
+    from tomojax.corrections import correct_frames
+
+    engine = importlib.import_module(correct_frames.__module__)
+    original = engine.first_pass
+    submitted, received = [], []
+
+    class Download:
+        def __init__(self, data):
+            self.data = data
+
+        def copy_to_host_async(self):
+            submitted.append(self)
+            self.data.copy_to_host_async()
+
+        def __array__(self, dtype=None, copy=None):
+            received.append(self)
+            return np.asarray(self.data, dtype=dtype)
+
+    def first_pass(*args, **kwargs):
+        result, *metrics = original(*args, **kwargs)
+        return Download(result), *metrics
+
+    monkeypatch.setattr(engine, "first_pass", first_pass)
+    token, events = progress.Cancel(), []
+
+    def observe(event):
+        events.append(event)
+        if isinstance(event, progress.Advanced):
+            assert len(submitted) == 2 and received == submitted[:1]
+            token.cancel()
+
+    with progress.watch(observe, cancel=token), pytest.raises(progress.Cancelled):
+        correct_frames(
+            np.ones((4, 2, 3)),
+            flats=None,
+            darks=None,
+            flat_positions=None,
+            white_level=2,
+            epsilon=1e-6,
+            steps=(),
+            views_per_batch=1,
+        )
+    validate_tree(events)
+    assert received == submitted
+    assert events[-1].status == "cancelled"

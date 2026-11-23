@@ -208,3 +208,42 @@ for shift in (-4, -2, 0, 2, 4):
 - **Laminography and TIFF stacks:** [real parallel and laminography scans](real-laminography.md).
 - **Lab cone-beam CT:** [lab cone-beam CT](lab-ct.md).
 - **Motion and setup-angle correction:** [align a scan](align-a-scan.md).
+
+## Watch a Python operation
+
+Use a watch around loading, correction, reconstruction, or alignment. The
+handler runs on the calling thread and must return quickly. The innermost
+watch receives the events. Each event is an immutable snapshot.
+
+```python
+import tomojax as tj
+from tomojax import progress
+
+stop = progress.Cancel()
+
+def report(event):
+    if isinstance(event, progress.Advanced):
+        print(event.task, event.done, event.total, dict(event.metrics))
+
+with progress.watch(report, cancel=stop):
+    scan = tj.load("scan.nxs")
+    result = tj.reconstruct(scan, "cgls")
+```
+
+Call `stop.cancel()` from the handler or another thread to request cancellation.
+The operation raises `progress.Cancelled` at the next work boundary and closes
+its files and workers. A caller-supplied output array can contain completed
+slabs. Cancellation requested on the last completed unit preserves the result.
+An exception raised by the handler reaches the caller and ends event delivery.
+
+Solver updates count full iterations, including a full sweep for subset methods.
+Alignment reports each completed Gauss–Newton step with its diagnostics.
+A raw scan can report views read while its correction group reports batches
+written. A single-dispatch read or solve can finish with no advances.
+For `tj.reconstruct_slabs`, the task spans the `with` block. Each yielded slab
+counts once, and leaving the block early closes the task.
+
+`progress.to_json(event)` returns the same dictionary that the CLI writes in
+JSON mode. Missing metrics and non-finite numbers become JSON null.
+See the [command-line guide](../src/tomojax/cli/README.md#follow-or-cancel-a-command)
+and the [record schema](progress.schema.json).

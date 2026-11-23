@@ -57,7 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  simulate -o OUTPUT [options]\n\n"
             "Commands refuse to replace an existing output without --force; "
             "`tomojax <command> --help` describes each one. Exit status: "
-            "0 success, 1 failure, 2 usage error.\n\n"
+            "0 success, 1 failure, 2 usage error, 130 interrupted.\n\n"
             "A lab CT scan from start to finish:\n"
             "  tomojax correct scan/scan.xtekct -o scan.nxs --darks 0\n"
             "  tomojax inspect scan.nxs\n"

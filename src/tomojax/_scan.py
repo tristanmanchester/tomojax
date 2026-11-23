@@ -140,7 +140,10 @@ class Scan:
         ValueError
             If a step needs raw counts or transmission, or settings are invalid.
         """
+        from tomojax import progress
         from tomojax.corrections import correct_projections
+
+        progress.check_cancelled()
 
         bound = bind_step_geometry(steps, self.geometry)
         done = correct_projections(self.projections, bound, views_per_batch=views_per_batch)

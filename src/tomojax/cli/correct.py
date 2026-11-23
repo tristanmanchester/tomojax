@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tomojax import progress
 from tomojax.cli._inputs import (
     PUBLIC as INPUTS,
     add_inputs,
@@ -21,7 +22,8 @@ from tomojax.cli._inputs import (
     load_keywords,
     validate_inputs,
 )
-from tomojax.cli._options import add_config, add_output, check_paths, fail, hide_expert
+from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
+from tomojax.cli._progress import add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
 
 _PUBLIC = (
     *INPUTS,
+    "--progress",
     "--views",
     "--crop",
     "--reject-views",
@@ -139,6 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--epsilon", type=float, default=1e-6, help="Floor of the flat field and transmission"
     )
+    add_progress(parser)
     hide_expert(parser, _PUBLIC)
     return parser
 
@@ -287,12 +291,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     declared = validate_inputs(parser, args)
     source, output = cast("str", args.data), cast("str", args.out)
     preview = cast("str | None", args.preview)
-    check_paths(
-        parser,
-        inputs=[source, *input_paths(args)],
-        outputs=[output, preview],
-        force=cast("bool", args.force),
-    )
     try:
         if cast("int", args.binning) < 1:
             raise ValueError("--binning must be at least 1")
@@ -302,16 +300,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         steps = _steps(args, settings)
     except ValueError as exc:
         parser.error(str(exc))
-    setup_logging()
-    try:
+
+    def run() -> None:
+        for path in [source, *input_paths(args)]:
+            if path is not None and not Path(path).exists():
+                raise FileNotFoundError(f"input not found: {path}")
+        check_paths(
+            parser,
+            inputs=[source, *input_paths(args)],
+            outputs=[output, preview],
+            force=cast("bool", args.force),
+        )
+        setup_logging()
+        progress.check_cancelled()
         scan = _corrected(source, args, declared, steps, crop_slices)
-    except (KeyError, ValueError, OSError) as exc:
-        return fail("correct", str(exc).strip("'\""))
-    tj.save(output, scan)
-    if preview is not None:
-        _ = save_projection_quicklook(Path(output), Path(preview))
-    print(f"wrote {output}: {scan!r}")
-    return 0
+        progress.check_cancelled()
+        tj.save(output, scan)
+        if preview is not None:
+            progress.check_cancelled()
+            _ = save_projection_quicklook(Path(output), Path(preview))
+        if args.progress != "json":
+            print(f"wrote {output}: {scan!r}")
+
+    return run_command("correct", args.progress, run)
 
 
 def _corrected(
@@ -331,6 +342,7 @@ def _corrected(
     select = cast("str | None", args.views)
     binning = cast("int", args.binning)
     keywords = load_keywords(args)
+    progress.check_cancelled()
     raw = is_raw_input(
         source,
         flats=keywords["flats"],
@@ -339,6 +351,7 @@ def _corrected(
         image_key_path=keywords["image_key_path"],
         angles_path=keywords["angles_path"],
     )
+    progress.check_cancelled()
     if not raw:
         has_paganin = any(s.domain == "transmission" for s in steps)
         if has_paganin:
@@ -348,6 +361,7 @@ def _corrected(
                 "Run tomojax correct on the raw acquisition to apply it."
             )
         scan = load_scan_with_declaration(source, declared=declared, **keywords)
+        progress.check_cancelled()
         if select is not None:
             scan = scan.selected(view_ranges(select, len(scan.angles)))
         if crop is not None:
@@ -357,8 +371,10 @@ def _corrected(
 
             steps.insert(0, Rings())
         scan = scan.corrected(*steps) if steps else scan
+        progress.check_cancelled()
         return scan.binned(binning)
     frames = load_raw_frames_with_declaration(source, declared=declared, **keywords)
+    progress.check_cancelled()
     if select is not None:
         frames = frames.selected(view_ranges(select, frames.views))
     if crop is not None:

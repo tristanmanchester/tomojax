@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TomoJAX progress record, version 1",
+  "$defs": {
+    "task": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "total": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "time": {
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "schema",
+        "event",
+        "task",
+        "parent",
+        "name",
+        "label",
+        "total",
+        "unit",
+        "time"
+      ],
+      "properties": {
+        "schema": {
+          "const": 1
+        },
+        "event": {
+          "const": "started"
+        },
+        "task": {
+          "$ref": "#/$defs/task"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/task"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "enum": [
+            "load",
+            "correction",
+            "reconstruct",
+            "align",
+            "level",
+            "refine"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "total": {
+          "$ref": "#/$defs/total"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "time": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "schema",
+        "event",
+        "task",
+        "done",
+        "total",
+        "metrics",
+        "time"
+      ],
+      "properties": {
+        "schema": {
+          "const": 1
+        },
+        "event": {
+          "const": "advanced"
+        },
+        "task": {
+          "$ref": "#/$defs/task"
+        },
+        "done": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "$ref": "#/$defs/total"
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "number",
+              "string",
+              "null"
+            ]
+          }
+        },
+        "time": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "schema",
+        "event",
+        "task",
+        "status",
+        "time"
+      ],
+      "properties": {
+        "schema": {
+          "const": 1
+        },
+        "event": {
+          "const": "finished"
+        },
+        "task": {
+          "$ref": "#/$defs/task"
+        },
+        "status": {
+          "enum": [
+            "done",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "time": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "schema",
+        "event",
+        "type",
+        "message"
+      ],
+      "properties": {
+        "schema": {
+          "const": 1
+        },
+        "event": {
+          "const": "error"
+        },
+        "type": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

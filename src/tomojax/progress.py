@@ -179,6 +179,7 @@ class _Task:
         self.name, self.unit = name, unit
         self.watcher = watcher
         self.id = next(watcher.ids)
+        self.status: _Status = "done"
         self.done = 0
         self.total = total
 
@@ -254,6 +255,20 @@ def check_cancelled() -> None:
 
 
 @contextmanager
+def outcome() -> Iterator[None]:
+    """Retain iterator failures until the owning operation's context exits."""
+    active = current_task.get()
+    try:
+        yield
+    except GeneratorExit:
+        raise
+    except BaseException as exc:
+        if active is not None:
+            active.status = "cancelled" if isinstance(exc, Cancelled) else "failed"
+        raise
+
+
+@contextmanager
 def task(name: str, label: str, total: int | None, unit: str) -> Iterator[None]:
     watcher = _watch.get()
     if watcher is None:
@@ -262,6 +277,9 @@ def task(name: str, label: str, total: int | None, unit: str) -> Iterator[None]:
     check_cancelled()
     parent = current_task.get()
     # Initializers, slab solves and alignment image updates belong to their owner.
+    if name == "correction" and parent is not None and parent.name != "load":
+        yield
+        return
     if (
         name == "reconstruct"
         and parent is not None
@@ -273,19 +291,13 @@ def task(name: str, label: str, total: int | None, unit: str) -> Iterator[None]:
     token = current_task.set(task)
     try:
         watcher.emit(Started, task.id, parent.id if parent else None, name, label, total, unit)
-        status: _Status = "done"
         try:
-            check_cancelled()
-            yield
-        except Cancelled:
-            status = "cancelled"
-            raise
-        except BaseException:
-            status = "failed"
-            raise
+            with outcome():
+                check_cancelled()
+                yield
         finally:
             if watcher.error is None:
-                watcher.emit(Finished, task.id, status)
+                watcher.emit(Finished, task.id, task.status)
     finally:
         current_task.reset(token)
 

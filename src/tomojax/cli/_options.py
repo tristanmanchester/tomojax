@@ -5,8 +5,7 @@ exist unless ``--force`` is given. ``--help`` lists the options most runs
 need; expert settings stay out of it. A command with ``--config`` takes them in
 that TOML file, whose keys ``--config-keys`` prints; the others take them as
 options that ``--help`` does not list. Exit status is 0 on
-success, 1 when the run fails and 2 for a usage error (including a missing
-input or an existing output).
+success, 1 on operational failure, 2 on usage errors and 130 on interruption.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ EXPERT_EPILOG = (
     "Expert settings are TOML keys for --config; --config-keys lists them with their defaults."
 )
 HIDDEN_EPILOG = "Expert options are accepted but not listed here; the documentation describes them."
-EXIT_STATUS = "Exit status: 0 success, 1 failure, 2 usage error."
+EXIT_STATUS = "Exit status: 0 success, 1 failure, 2 usage error, 130 interrupted."
 
 
 def add_output(parser: argparse.ArgumentParser, description: str) -> None:

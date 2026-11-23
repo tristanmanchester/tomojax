@@ -153,9 +153,7 @@ class Step:
         Correction
             Step name and JSON-compatible settings, with no findings yet.
         """
-        return Correction(
-            _snake(type(self).__name__), {k: _json(v) for k, v in asdict(self).items()}
-        )
+        return Correction(step_name(self), {k: _json(v) for k, v in asdict(self).items()})
 
 
 @dataclass(frozen=True)
@@ -978,7 +976,9 @@ def median_network(n: int) -> tuple[tuple[tuple[int, bool, int, int], ...], int]
     return tuple(reversed(needed)), output
 
 
-def _snake(name: str) -> str:
+def step_name(step: Step) -> str:
+    """The operation name shared by correction records and progress events."""
+    name = type(step).__name__
     return "".join(f"_{c.lower()}" if c.isupper() else c for c in name).lstrip("_")
 
 

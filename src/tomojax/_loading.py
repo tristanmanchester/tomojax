@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tomojax import progress
 from tomojax._data import calibration_issues, views_of
 from tomojax._loading_geometry import frame_geometry
 from tomojax._scan import (
@@ -32,6 +33,7 @@ from tomojax._scan import (
     rebuild,
     scan_from_record,
 )
+from tomojax.core.host_volume import discard_failed_outputs
 from tomojax.core.validation import view_indices
 
 if TYPE_CHECKING:
@@ -169,32 +171,40 @@ def load_scan_with_declaration(
     apply_poses: bool = True,
     declared: DeclaredGeometry | None = None,
 ) -> Scan:
-    file = Path(path)
-    if not file.exists():
-        raise FileNotFoundError(f"no such file: {file}")
-    paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
-    overrides: dict[str, Any] = {
-        "angles": angles,
-        "detector": detector,
-        "pixel_size": pixel_size,
-        "grid": grid,
-        "geometry": geometry,
-        "declared": declared,
-    }
-    discovered = _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides)
-    if discovered is None:
-        found = _line_integrals(file, **paths)
-        if found is not None:
-            return _record_scan(file, *found, apply_poses=apply_poses, **overrides)
-    frames = _frames(file, discovered, apply_poses=apply_poses, **paths, **overrides)
-    fields = _with_fields(
-        frames,
-        flats=flats,
-        darks=darks,
-        exposure_times=exposure_times,
-        flat_exposure_times=flat_exposure_times,
-    )
-    return _corrected_on_load(fields, file)
+    with discard_failed_outputs() as outputs, progress.task("load", str(path), None, "views"):
+        file = Path(path)
+        if not file.exists():
+            raise FileNotFoundError(f"no such file: {file}")
+        paths = {
+            "data_path": data_path,
+            "image_key_path": image_key_path,
+            "angles_path": angles_path,
+        }
+        overrides: dict[str, Any] = {
+            "angles": angles,
+            "detector": detector,
+            "pixel_size": pixel_size,
+            "grid": grid,
+            "geometry": geometry,
+            "declared": declared,
+        }
+        discovered = _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides)
+        if discovered is None:
+            found = _line_integrals(file, **paths)
+            if found is not None:
+                outputs.own(found[0].projections)
+                return _record_scan(file, *found, apply_poses=apply_poses, **overrides)
+        frames = _frames(file, discovered, apply_poses=apply_poses, **paths, **overrides)
+        fields = _with_fields(
+            frames,
+            flats=flats,
+            darks=darks,
+            exposure_times=exposure_times,
+            flat_exposure_times=flat_exposure_times,
+        )
+        scan = _corrected_on_load(fields, file)
+        outputs.own(scan.projections)
+        return scan
 
 
 def _line_integrals(file: Path, **paths: str | None) -> tuple[ProjectionDataset, np.ndarray] | None:
@@ -209,7 +219,9 @@ def _line_integrals(file: Path, **paths: str | None) -> tuple[ProjectionDataset,
         return None
     try:
         record = load_dataset(file)
-    except KeyError:  # not laid out as TomoJAX's: its frames, with what they need
+    except KeyError as exc:  # try the raw frame layout
+        if progress.handler_failed(exc):
+            raise
         return None
     discovered = None if located is None else located.image_key
     key = _saved_image_key(record) if discovered is None else discovered
@@ -423,6 +435,7 @@ class Frames:
         """
         from tomojax.corrections import correct_frames
 
+        progress.check_cancelled()
         bound = bind_step_geometry(steps, self.geometry)
         done = correct_frames(
             self.counts,
@@ -679,34 +692,40 @@ def load_raw_frames_with_declaration(
     apply_poses: bool = True,
     declared: DeclaredGeometry | None = None,
 ) -> Frames:
-    file = Path(path)
-    if not file.exists():
-        raise FileNotFoundError(f"no such file: {file}")
-    paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
-    overrides: dict[str, Any] = {
-        "angles": angles,
-        "detector": detector,
-        "pixel_size": pixel_size,
-        "grid": grid,
-        "geometry": geometry,
-        "declared": declared,
-    }
-    frames = _frames(
-        file,
-        _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides),
-        apply_poses=apply_poses,
-        **paths,
-        **overrides,
-    )
-    return _require_calibration(
-        _with_fields(
-            frames,
-            flats=flats,
-            darks=darks,
-            exposure_times=exposure_times,
-            flat_exposure_times=flat_exposure_times,
+    with discard_failed_outputs() as outputs, progress.task("load", str(path), None, "views"):
+        file = Path(path)
+        if not file.exists():
+            raise FileNotFoundError(f"no such file: {file}")
+        paths = {
+            "data_path": data_path,
+            "image_key_path": image_key_path,
+            "angles_path": angles_path,
+        }
+        overrides: dict[str, Any] = {
+            "angles": angles,
+            "detector": detector,
+            "pixel_size": pixel_size,
+            "grid": grid,
+            "geometry": geometry,
+            "declared": declared,
+        }
+        frames = _frames(
+            file,
+            _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides),
+            apply_poses=apply_poses,
+            **paths,
+            **overrides,
         )
-    )
+        outputs.own(frames.counts)
+        return _require_calibration(
+            _with_fields(
+                frames,
+                flats=flats,
+                darks=darks,
+                exposure_times=exposure_times,
+                flat_exposure_times=flat_exposure_times,
+            )
+        )
 
 
 def _frames(

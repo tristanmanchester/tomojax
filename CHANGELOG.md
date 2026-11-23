@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Loading, correction, reconstruction, and alignment report completed work through
+`tomojax.progress.watch`. A `progress.Cancel` token stops an operation at its
+next work boundary. The `correct`, `reconstruct`, and `align` commands support
+`--progress auto|bar|json|none` and cooperative interruption.
+
+The watch replaces the FISTA and SPDHG `callback=` argument, the tqdm
+`progress` extra, and the `TOMOJAX_PROGRESS` and `TOMOJAX_PROGRESS_LEAVE`
+environment variables. Use `--progress bar` in place of the former boolean CLI
+flag. Python and CLI examples are in the [quickstart](docs/quickstart.md#watch-a-python-operation).
+
 ## 1.0.0rc1 (2026-11-22)
 
 ### CGLS on the GPU holds only its own state

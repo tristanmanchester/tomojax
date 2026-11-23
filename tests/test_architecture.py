@@ -143,6 +143,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--binning": "Frames.corrected(binning=), or Scan.binned",
         "--views": "index ranges; Python calls Frames.selected",
         "--crop": "Y0:Y1,X0:X1; Python calls Frames.cropped",
+        "--progress": "progress.watch and its command-line rendering",
         "--reject-views": "the RejectViews step",
         "--zingers": "the Zingers step",
         "--stripes": "the Stripes step",

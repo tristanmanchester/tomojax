@@ -8,6 +8,7 @@ so a volume larger than memory never stays resident.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import math
 import mmap
 import os
@@ -20,7 +21,11 @@ import weakref
 
 import numpy as np
 
+from tomojax import progress
+
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from numpy.typing import DTypeLike
 
 _DESCRIPTORS: dict[int, int] = {}  # open files of the work volumes alive, by id
@@ -109,6 +114,37 @@ def scratch_directory(array: object) -> Path | None:
     """The directory of a file-backed array, where work volumes beside it belong; else None."""
     name = getattr(array, "filename", None)
     return None if name is None else Path(name).parent
+
+
+class HostOutputs:
+    """File-backed arrays owned by a producer until it returns them."""
+
+    def __init__(self) -> None:
+        self.files: list[weakref.ReferenceType[np.memmap]] = []
+
+    def own(self, array: object) -> None:
+        """Register a file-backed output made by this producer."""
+        if isinstance(array, np.memmap) and id(array) in _DESCRIPTORS:
+            self.files.append(weakref.ref(array))
+
+    def allocate(self, shape: tuple[int, ...]) -> np.ndarray:
+        """Allocate and register an output before filling it."""
+        progress.check_cancelled()
+        array = host_array(shape)
+        self.own(array)
+        return array
+
+
+@contextmanager
+def discard_failed_outputs() -> Iterator[HostOutputs]:
+    """Release the producer's temporary file mappings on error, even with a live traceback."""
+    outputs = HostOutputs()
+    try:
+        yield outputs
+    except BaseException:
+        for ref in outputs.files:
+            close_work_file(ref())
+        raise
 
 
 def host_array(

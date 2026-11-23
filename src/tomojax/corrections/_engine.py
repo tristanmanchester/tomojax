@@ -13,7 +13,7 @@ line integrals. Both paths materialise the final corrected host stack.
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import closing, nullcontext
 from functools import partial
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -22,14 +22,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.array_ops import mean_detector_pixels
-from tomojax.core.host_volume import host_array
+from tomojax.core.host_volume import discard_failed_outputs
 
+from ._batches import HostCopies, correction_group, view_batches
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 LOG = logging.getLogger(__name__)
 
@@ -131,6 +133,7 @@ def correct_frames(
     >>> result.projections.shape
     (2, 3, 4)
     """
+    progress.check_cancelled()
     views_per_batch = _validated_views_per_batch(views_per_batch)
     epsilon = positive_finite(epsilon, "epsilon")
     if isinstance(binning, bool) or not isinstance(binning, int | np.integer) or binning < 1:
@@ -161,55 +164,57 @@ def correct_frames(
     transmission_head, transmission_tail = _split_at_break(list(transmission_steps))
     limit = np.float32(np.inf if linear_limit is None else linear_limit[0])
     settings = {"epsilon": float(epsilon), "factor": binning, "limit": limit}
-    slab = _row_slab(counts, ordered, views_per_batch, binning)
-    if slab is not None:
-        out, tally = _correct_row_slabs(
-            counts,
-            fields,
-            interpolation,
-            tuple(line),
-            slab=slab,
-            transmission_steps=transmission_steps,
-            **settings,
-        )
-        kept, tail_records, head = np.arange(views), (), line
-    else:
-        # Binned on the device while the batches come back, unless the tail needs full frames.
-        factor = 1 if tail or transmission_tail else binning
-        out = host_array((views, rows // factor, cols // factor))
-        batch = views_per_batch or frame_batch_size(
-            views, rows, cols, (*counts_steps, *transmission_steps, *head)
-        )
-        tally = correct_view_batches(
-            counts, out, fields, interpolation, batch, counts_steps=counts_steps,
-            transmission_steps=tuple(transmission_head),
-            line_steps=() if transmission_tail else tuple(head),
-            epsilon=float(epsilon), factor=factor, take_log=not transmission_tail, limit=limit,
+    with discard_failed_outputs() as outputs:
+        slab = _row_slab(counts, ordered, views_per_batch, binning)
+        if slab is not None:
+            out, tally = _correct_row_slabs(
+                counts,
+                fields,
+                interpolation,
+                tuple(line),
+                slab=slab,
+                allocate=outputs.allocate,
+                transmission_steps=transmission_steps,
+                **settings,
+            )
+            kept, tail_records, head = np.arange(views), (), line
+        else:
+            # Binned on the device while the batches come back, unless the tail needs full frames.
+            factor = 1 if tail or transmission_tail else binning
+            out = outputs.allocate((views, rows // factor, cols // factor))
+            batch = views_per_batch or frame_batch_size(
+                views, rows, cols, (*counts_steps, *transmission_steps, *head)
+            )
+            tally = correct_view_batches(
+                counts, out, fields, interpolation, batch, counts_steps=counts_steps,
+                transmission_steps=tuple(transmission_head),
+                line_steps=() if transmission_tail else tuple(head),
+                epsilon=float(epsilon), factor=factor, take_log=not transmission_tail, limit=limit,
+            )  # fmt: skip
+            if transmission_tail:
+                out, _, _ = apply_steps(out, transmission_tail, views_per_batch)
+                above = tally[2]
+                out, tally = log_batches(out, tuple(head), epsilon, views_per_batch)
+                tally = np.append(tally, above)
+            out, kept, tail_records = apply_steps(out, tail, views_per_batch)
+            if (tail or transmission_tail) and binning > 1:
+                out = _binned(out, binning, views_per_batch, outputs.allocate)
+        if linear_limit is not None:
+            report_linear_limit(
+                field_record[0],
+                linear_limit,
+                fields,
+                view_scales,
+                float(tally[2]) / counts_size(counts),
+            )
+        found: dict[str, Json] = {"nonpositive_transmission": int(tally[0])}
+        log = Correction("log", {"epsilon": float(epsilon)}, found)
+        records = tuple(
+            [s.record() for s in counts_steps] + list(field_record)
+            + [s.record() for s in transmission_steps] + [log]
+            + [s.record() for s in head] + list(tail_records)
         )  # fmt: skip
-        if transmission_tail:
-            out, _, _ = apply_steps(out, transmission_tail, views_per_batch)
-            above = tally[2]
-            out, tally = log_batches(out, tuple(head), epsilon, views_per_batch)
-            tally = np.append(tally, above)
-        out, kept, tail_records = apply_steps(out, tail, views_per_batch)
-        if (tail or transmission_tail) and binning > 1:
-            out = _binned(out, binning, views_per_batch)
-    if linear_limit is not None:
-        report_linear_limit(
-            field_record[0],
-            linear_limit,
-            fields,
-            view_scales,
-            float(tally[2]) / counts_size(counts),
-        )
-    found: dict[str, Json] = {"nonpositive_transmission": int(tally[0])}
-    log = Correction("log", {"epsilon": float(epsilon)}, found)
-    records = tuple(
-        [s.record() for s in counts_steps] + list(field_record)
-        + [s.record() for s in transmission_steps] + [log]
-        + [s.record() for s in head] + list(tail_records)
-    )  # fmt: skip
-    return Corrected(out, records, kept)
+        return Corrected(out, records, kept)
 
 
 class Corrected(NamedTuple):
@@ -264,6 +269,7 @@ def correct_projections(
     >>> result.projections.shape
     (2, 3, 4)
     """
+    progress.check_cancelled()
     views_per_batch = _validated_views_per_batch(views_per_batch)
     ordered = ordered_steps(steps)
     if any(d != "line integrals" for d, _ in ordered):
@@ -438,6 +444,7 @@ def _moments(
     batch = max(1, (32 << 20) // (8 * shape[0] * shape[1]))
     total, squares = np.zeros(shape), np.zeros(shape)
     for start in range(0, count, batch):
+        progress.check_cancelled()
         which = slice(start, start + batch) if indices is None else indices[start : start + batch]
         values = np.asarray(frames[which], np.float64)
         if scales is not None:
@@ -601,24 +608,45 @@ def correct_view_batches(
     fill_gaps = not bool(fields.usable.all())
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
-        out[start:stop] = np.asarray(result)
+        progress.check_cancelled()
+        out[start:stop] = copies.result(result)
         tally[:] += [int(b) for b in bad]
         reject_nonfinite(int(bad[1]) if bad else 0, start, stop)
+        progress.step("view batches")
 
-    pending = None
-    for start, stop, raw in _batches(counts, counts.shape[0], batch):
-        done = first_pass(
-            jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop],
-            exposure_scale[start:stop], flats, dark, usable,
-            fill_gaps=fill_gaps,
-            **settings,
-        )  # fmt: skip
-        done[0].copy_to_host_async()
-        if pending is not None:  # the last batch comes back while this one runs
+    views = counts.shape[0]
+    load = progress.for_unit("views")
+    progress.remaining("views", views)
+    parts = (
+        *settings.get("counts_steps", ()),
+        "flat_dark",
+        *settings.get("transmission_steps", ()),
+        *(("log",) if settings["take_log"] else ()),
+        *settings.get("line_steps", ()),
+        *(("binned",) if settings.get("factor", 1) > 1 else ()),
+    )
+    with (
+        correction_group(parts, range(0, views, batch), "view batches"),
+        HostCopies() as copies,
+        closing(view_batches(counts, views, batch)) as batches,
+    ):
+        pending = None
+        for start, stop, raw in batches:
+            if load is not None:
+                load.advance(stop, {})
+            progress.check_cancelled()
+            done = first_pass(
+                jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop],
+                exposure_scale[start:stop], flats, dark, usable,
+                fill_gaps=fill_gaps,
+                **settings,
+            )  # fmt: skip
+            copies.start(done[0])
+            if pending is not None:  # the last batch comes back while this one runs
+                collect(*pending)
+            pending = (start, stop, *done)
+        if pending is not None:
             collect(*pending)
-        pending = (start, stop, *done)
-    if pending is not None:
-        collect(*pending)
     return tally
 
 
@@ -669,13 +697,17 @@ def log_batches(
     views, rows, cols = out.shape
     batch = views_per_batch or frame_batch_size(views, rows, cols, steps)
     tally = np.zeros(2, np.int64)
-    for first in range(0, views, batch):
-        done, nonpositive, bad = _log_transmission(
-            jnp.asarray(out[first : first + batch]), epsilon=epsilon, line_steps=steps
-        )
-        out[first : first + batch] = np.asarray(done)
-        tally += (int(nonpositive), int(bad))
-        reject_nonfinite(int(bad), first, min(first + batch, views))
+    starts = range(0, views, batch)
+    with correction_group(("log", *steps), starts, "view batches"):
+        for first in starts:
+            progress.check_cancelled()
+            done, nonpositive, bad = _log_transmission(
+                jnp.asarray(out[first : first + batch]), epsilon=epsilon, line_steps=steps
+            )
+            out[first : first + batch] = np.asarray(done)
+            tally += (int(nonpositive), int(bad))
+            reject_nonfinite(int(bad), first, min(first + batch, views))
+            progress.step("view batches")
     return out, tally
 
 
@@ -724,20 +756,23 @@ def _correct_row_slabs(
     steps: tuple[Step, ...],
     *,
     slab: int,
+    allocate: Callable[[tuple[int, ...]], np.ndarray],
     **settings: Any,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Correct and optionally bin slabs of whole rows: the corrected stack and the tally."""
     views, rows, cols = counts.shape
     factor = settings["factor"]
-    out = host_array((views, rows // factor, cols // factor))
+    out = allocate((views, rows // factor, cols // factor))
     flats, dark, usable = (jax.device_put(a) for a in (fields.flats, fields.dark, fields.usable))
     lo, hi, t, exposure_scale = (jax.device_put(q) for q in interpolation)
     tally = np.zeros(3, np.int64)
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
-        out[:, start // factor : stop // factor] = np.asarray(result)
+        progress.check_cancelled()
+        out[:, start // factor : stop // factor] = copies.result(result)
         tally[:] += [int(b) for b in bad]
         reject_nonfinite(int(bad[1]), 0, views)
+        progress.step("row batches")
 
     def read(start: int, stop: int) -> np.ndarray:
         frames = (
@@ -760,7 +795,7 @@ def _correct_row_slabs(
                 usable[start:stop], line_steps=steps,
                 fill_gaps=not bool(fields.usable[start:stop].all()), **settings,
             )  # fmt: skip
-            done[0].copy_to_host_async()
+            copies.start(done[0])
             if cpu:
                 jax.block_until_ready(done)
             return start, stop, *done
@@ -774,9 +809,22 @@ def _correct_row_slabs(
 
     pending = None
     # CPU calls need workers; accelerators already overlap queued work and host copies.
-    with ThreadPoolExecutor(max_workers=2) if cpu else nullcontext() as pool:
+    starts = range(0, rows - rows % factor, slab)
+    parts = (
+        "flat_dark",
+        *settings["transmission_steps"],
+        "log",
+        *steps,
+        *(("binned",) if factor > 1 else ()),
+    )
+    with (
+        correction_group(parts, starts, "row batches"),
+        HostCopies() as copies,
+        ThreadPoolExecutor(max_workers=2) if cpu else nullcontext() as pool,
+    ):
         submit = now if pool is None else pool.submit
-        for start in range(0, rows - rows % factor, slab):
+        for start in starts:
+            progress.check_cancelled()
             stop = min(start + slab, rows - rows % factor)
             # Lazy sources may share caches: read serially, with at most two bands live.
             done = submit(run, start, stop, read(start, stop))
@@ -788,13 +836,22 @@ def _correct_row_slabs(
     return out, tally
 
 
-def _binned(out: np.ndarray, factor: int, views_per_batch: int | None) -> np.ndarray:
+def _binned(
+    out: np.ndarray,
+    factor: int,
+    views_per_batch: int | None,
+    allocate: Callable[[tuple[int, ...]], np.ndarray],
+) -> np.ndarray:
     """The detector block means of ``out``, a batch of views at a time."""
     views, rows, cols = out.shape
     batch = views_per_batch or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
-    binned = host_array((views, rows // factor, cols // factor))
-    for start in range(0, views, batch):
-        binned[start : start + batch] = mean_detector_pixels(out[start : start + batch], factor)
+    binned = allocate((views, rows // factor, cols // factor))
+    starts = range(0, views, batch)
+    with correction_group(("binned",), starts, "view batches"):
+        for start in starts:
+            progress.check_cancelled()
+            binned[start : start + batch] = mean_detector_pixels(out[start : start + batch], factor)
+            progress.step("view batches")
     return binned
 
 
@@ -826,19 +883,22 @@ def apply_steps(
             i += 1
         elif step.selects_views:
             batch = views_per_batch or frame_batch_size(views, rows, cols, (step,))
-            stats = np.concatenate([
-                np.asarray(_statistic(step, jnp.asarray(out[v0 : v0 + batch])))
-                for v0 in range(0, views, batch)
-            ])  # fmt: skip
-            keep, found = step.select(stats, kept)
-            if not keep.any():
-                raise ValueError(f"{type(step).__name__} would reject every view")
-            if not keep.all():
-                out, kept = out[keep], kept[keep]
-                # Later steps planned from the geometry see only the retained views.
-                retained = np.flatnonzero(keep)
-                steps = (*steps[: i + 1], *(s.retained(retained) for s in steps[i + 1 :]))
-            records.append(Correction(step.record().name, step.record().settings, found))
+            starts = range(0, views, batch)
+            with correction_group((step,), starts, "view batches"):
+                stats = []
+                for v0 in starts:
+                    progress.check_cancelled()
+                    stats.append(np.asarray(_statistic(step, jnp.asarray(out[v0 : v0 + batch]))))
+                    progress.step("view batches")
+                keep, found = step.select(np.concatenate(stats), kept)
+                if not keep.any():
+                    raise ValueError(f"{type(step).__name__} would reject every view")
+                if not keep.all():
+                    out, kept = out[keep], kept[keep]
+                    # Later steps planned from the geometry see only the retained views.
+                    retained = np.flatnonzero(keep)
+                    steps = (*steps[: i + 1], *(s.retained(retained) for s in steps[i + 1 :]))
+                records.append(Correction(step.record().name, step.record().settings, found))
             i += 1
         else:
             j = i
@@ -846,8 +906,14 @@ def apply_steps(
                 j += 1
             run = tuple(steps[i:j])
             batch = views_per_batch or frame_batch_size(views, rows, cols, run)
-            for v0 in range(0, views, batch):
-                out[v0 : v0 + batch] = np.asarray(_apply(run, jnp.asarray(out[v0 : v0 + batch])))
+            starts = range(0, views, batch)
+            with correction_group(run, starts, "view batches"):
+                for v0 in starts:
+                    progress.check_cancelled()
+                    out[v0 : v0 + batch] = np.asarray(
+                        _apply(run, jnp.asarray(out[v0 : v0 + batch]))
+                    )
+                    progress.step("view batches")
             records.extend(s.record() for s in run)
             i = j
     return out, kept, tuple(records)
@@ -866,21 +932,38 @@ def _whole_rows(out: np.ndarray, step: Step) -> None:
                 _apply((step,), jnp.asarray(out[:, r0 : r0 + slab]))
             )
 
-    if (device.platform if device is not None else jax.default_backend()) == "cpu":
-        # Only integer offsets are queued. Each worker owns at most one slab's arrays.
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            list(pool.map(run, range(0, rows, slab)))
-        return
-    # Keep accelerator work asynchronous: workers add workspace, not useful parallelism.
-    pending = None
-    for r0 in range(0, rows, slab):
-        done = _apply((step,), jnp.asarray(out[:, r0 : r0 + slab]))
-        done.copy_to_host_async()
+    starts = range(0, rows, slab)
+    with correction_group((step,), starts, "row batches"), HostCopies() as copies:
+        if (device.platform if device is not None else jax.default_backend()) == "cpu":
+            # Only integer offsets are queued. Each worker owns at most one slab's arrays.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                pending = None
+                for r0 in starts:
+                    progress.check_cancelled()
+                    launched = pool.submit(run, r0)
+                    if pending is not None:
+                        pending.result()
+                        progress.step("row batches")
+                    pending = launched
+                if pending is not None:
+                    progress.check_cancelled()
+                    pending.result()
+                    progress.step("row batches")
+            return
+        # Keep accelerator work asynchronous: workers add workspace, not useful parallelism.
+        pending = None
+        for r0 in starts:
+            progress.check_cancelled()
+            done = _apply((step,), jnp.asarray(out[:, r0 : r0 + slab]))
+            copies.start(done)
+            if pending is not None:
+                out[:, pending[0] : pending[0] + slab] = copies.result(pending[1])
+                progress.step("row batches")
+            pending = (r0, done)
         if pending is not None:
-            out[:, pending[0] : pending[0] + slab] = np.asarray(pending[1])
-        pending = (r0, done)
-    if pending is not None:
-        out[:, pending[0] : pending[0] + slab] = np.asarray(pending[1])
+            progress.check_cancelled()
+            out[:, pending[0] : pending[0] + slab] = copies.result(pending[1])
+            progress.step("row batches")
 
 
 @partial(jax.jit, static_argnames=("step",))
@@ -893,22 +976,3 @@ def _apply(steps: tuple[Step, ...], batch: jax.Array) -> jax.Array:
     for step in steps:
         batch = step.apply(batch)
     return batch
-
-
-def _batches(counts: Any, views: int, batch: int) -> Any:
-    """``(start, stop, frames)`` for each batch of views, the next read while one is used."""
-    starts = list(range(0, views, batch))
-
-    def read(start: int) -> np.ndarray:
-        frames = np.asarray(counts[start : min(start + batch, views)])
-        # Device arrays use native byte order; leave ordinary batches as views.
-        return frames.astype(frames.dtype.newbyteorder("="), copy=False)
-
-    with ThreadPoolExecutor(max_workers=1) as reader:
-        pending = reader.submit(read, starts[0]) if starts else None
-        for k, start in enumerate(starts):
-            assert pending is not None
-            frames = pending.result()
-            if k + 1 < len(starts):
-                pending = reader.submit(read, starts[k + 1])
-            yield start, min(start + batch, views), frames

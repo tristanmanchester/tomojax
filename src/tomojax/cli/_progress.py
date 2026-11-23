@@ -24,22 +24,24 @@ def add_progress(parser: argparse.ArgumentParser) -> None:
 class _Bar:
     def __init__(self) -> None:
         self.path: dict[int, str] = {}
+        self.counts: dict[int, str] = {}
 
     def __call__(self, event: progress.Event) -> None:
-        detail = ""
         if isinstance(event, progress.Started):
             self.path[event.task] = event.label
+            self.counts[event.task] = ""
         elif isinstance(event, progress.Advanced):
             count = str(event.done) if event.total is None else f"{event.done}/{event.total}"
             metric = next(iter(event.metrics.items()), None)
             detail = f"  {count}"
             if metric is not None:
                 detail += f"  {metric[0]}={metric[1]}"
+            self.counts[event.task] = detail
         else:
-            del self.path[event.task]
+            del self.path[event.task], self.counts[event.task]
         line = " > ".join(self.path.values())
         if line:
-            line += f"{detail}  {event.time:.1f}s"
+            line += f"{self.counts[next(reversed(self.path))]}  {event.time:.1f}s"
         print(f"\r\033[2K{line}", end="", file=sys.stderr, flush=True)
 
 
