@@ -17,6 +17,7 @@
     "tomojax": 29,
     "tomojax.geometry": 13,
     "tomojax.evaluation": 2,
+    "tomojax.progress": 8,
     "tomojax.corrections": 15,
     "tomojax.forward": 3,
     "tomojax.recon": 21,
@@ -43,18 +44,18 @@
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 161,
     "src/tomojax/cli/simulate.py::_build_parser": 103,
-    "src/tomojax/recon/_cgls_jax.py::_solve": 169,
-    "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 120,
-    "src/tomojax/recon/_cgls_jax.py::cgls": 115,
+    "src/tomojax/recon/_cgls_jax.py::_solve": 146,
+    "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 101,
+    "src/tomojax/recon/_cgls_jax.py::cgls": 111,
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115,
     "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 116
   },
   "code_lines": {
-    "(modules)": 4185,
+    "(modules)": 4365,
     "_data": 2104,
     "alignment": 4435,
-    "backends": 260,
-    "cli": 2576,
+    "backends": 263,
+    "cli": 2667,
     "core": 9555,
     "corrections": 2836,
     "datasets": 1072,
@@ -63,11 +64,11 @@
     "io": 3933,
     "motion": 153,
     "nuisance": 232,
-    "recon": 13184
+    "recon": 13475
   },
   "cuda_kernels": 47,
   "cuda_switches": 34,
-  "environment_reads": 21,
+  "environment_reads": 20,
   "suppressions": {
     "noqa": 3,
     "type: ignore": 12,
@@ -84,7 +85,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 68,
+    "tiny": 67,
     "forwarders": 6,
     "chained": 4
   },

@@ -491,7 +491,7 @@ def test_fista_disabled_tv_does_not_evaluate_regularizer(monkeypatch, regularize
 
     monkeypatch.setattr(module, "isotropic_tv_value", disabled)
     monkeypatch.setattr(module, "huber_tv_value", disabled)
-    module._run_fista_scan.clear_cache()
+    module._run_fista_scan.unwatched.clear_cache()
     try:
         actual, info = fista(
             geometry,
@@ -513,7 +513,7 @@ def test_fista_disabled_tv_does_not_evaluate_regularizer(monkeypatch, regularize
         np.testing.assert_array_equal(actual, initial)
         np.testing.assert_array_equal(info["loss"], [0.0, 0.0])
     finally:
-        module._run_fista_scan.clear_cache()
+        module._run_fista_scan.unwatched.clear_cache()
 
 
 @pytest.mark.numerical

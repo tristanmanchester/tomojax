@@ -500,13 +500,16 @@ def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path)
 def test_cli_reports_a_missing_input_as_a_usage_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for command in (["inspect"], ["reconstruct", "-o", str(tmp_path / "r.nxs")]):
-        with pytest.raises(SystemExit) as exc:
-            main([*command, str(tmp_path / "missing.nxs")])
-        assert exc.value.code == 2
-        captured = capsys.readouterr()
-        assert "input not found" in captured.err
-        assert "Traceback" not in captured.err
+    missing = str(tmp_path / "missing.nxs")
+    with pytest.raises(SystemExit) as exc:
+        main(["inspect", missing])
+    assert exc.value.code == 2
+    assert "input not found" in capsys.readouterr().err
+    assert main(["reconstruct", missing, "-o", str(tmp_path / "r.nxs"), "--progress", "json"]) == 1
+    error = json.loads(capsys.readouterr().out)
+    assert error["event"] == "error"
+    assert error["type"] == "FileNotFoundError"
+    assert missing in error["message"]
 
 
 def test_simulate_cli_routes_loadable_synthetic_dataset(

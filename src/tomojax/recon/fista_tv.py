@@ -22,6 +22,7 @@ from tomojax.core.validation import (
 )
 
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
+from ._chunks import Chunked
 from ._fista_initialization import first_gradient as estimate_first_gradient
 from ._fista_owned import FistaResult, FistaScanState, run_owned_fista, use_owned_fista
 from ._noise import estimate_projection_noise
@@ -100,6 +101,53 @@ class FistaRuntime:
                 x, self.huber_delta, gradient_scale_xyz=scale
             )
         return self.metric.weight * isotropic_tv_value(x, gradient_scale_xyz=scale)
+
+    def automatic_metric(self, grid: Grid, detector: Detector) -> TVMetric:
+        """Resolve automatic strength through the same configured data transpose."""
+        assert self.metric is not None
+        assert self.noise_scale is not None
+        if detector.nv * detector.nu == 1:
+            return self.metric
+        model, backend, batch = self.projector
+        ops = ViewBatches(
+            self.poses,
+            grid,
+            detector,
+            self.detector_grid,
+            backend,
+            batch,
+            model,
+            "linear",
+            absolute_weights=False,
+        )
+        backproject = ops.backproject
+        rms = probe_gradient_rms(
+            self.poses,
+            grid,
+            detector,
+            backproject,
+            batch_size=batch,
+            shape=volume_shape(model, grid),
+            support=self.volume_mask,
+        )
+        return raise_tv_weight(self.metric, self.noise_scale * rms)
+
+    def initial_state(self, grid: Grid) -> FistaScanState:
+        """Build the feasible start and empty diagnostics inside the compiled solve."""
+        x0 = self.x0
+        if x0 is None:
+            x0 = jnp.zeros(volume_shape(self.projector[0], grid), dtype=jnp.float32)
+        x0 = _feasible_volume(jnp.asarray(x0, jnp.float32), self)
+        return FistaScanState(
+            x=x0,
+            z=x0,
+            t=jnp.float32(1.0),
+            loss=jnp.zeros((self.config.iterations,), dtype=jnp.float32),
+            prev_obj=jnp.float32(0.0),
+            streak=jnp.int32(0),
+            done=jnp.bool_(False),
+            iters_done=jnp.int32(0),
+        )
 
 
 @dataclass(kw_only=True)
@@ -357,55 +405,6 @@ def _data_term(
     return value_and_grad
 
 
-def _automatic_metric(grid: Grid, detector: Detector, runtime: FistaRuntime) -> TVMetric:
-    """Resolve automatic strength through the same configured data transpose."""
-    assert runtime.metric is not None
-    assert runtime.noise_scale is not None
-    if detector.nv * detector.nu == 1:
-        return runtime.metric
-    model, backend, batch = runtime.projector
-    ops = ViewBatches(
-        runtime.poses,
-        grid,
-        detector,
-        runtime.detector_grid,
-        backend,
-        batch,
-        model,
-        "linear",
-        absolute_weights=False,
-    )
-    backproject = ops.backproject
-    rms = probe_gradient_rms(
-        runtime.poses,
-        grid,
-        detector,
-        backproject,
-        batch_size=batch,
-        shape=volume_shape(model, grid),
-        support=runtime.volume_mask,
-    )
-    return raise_tv_weight(runtime.metric, runtime.noise_scale * rms)
-
-
-def _initial_fista_state(grid: Grid, runtime: FistaRuntime) -> FistaScanState:
-    """Build the feasible start and empty diagnostics inside the compiled solve."""
-    x0 = runtime.x0
-    if x0 is None:
-        x0 = jnp.zeros(volume_shape(runtime.projector[0], grid), dtype=jnp.float32)
-    x0 = _feasible_volume(jnp.asarray(x0, jnp.float32), runtime)
-    return FistaScanState(
-        x=x0,
-        z=x0,
-        t=jnp.float32(1.0),
-        loss=jnp.zeros((runtime.config.iterations,), dtype=jnp.float32),
-        prev_obj=jnp.float32(0.0),
-        streak=jnp.int32(0),
-        done=jnp.bool_(False),
-        iters_done=jnp.int32(0),
-    )
-
-
 def _feasible_volume(x: jax.Array, runtime: FistaRuntime) -> jax.Array:
     """Project starts and momentum onto the same constraints as the primal prox.
 
@@ -458,30 +457,10 @@ def _resident_runtime(runtime: FistaRuntime) -> FistaRuntime:
     return replace(runtime, projector=(storage, backend, batch), metric=metric)
 
 
-@functools.partial(jax.jit, static_argnames=("grid", "detector"))
-def _run_fista_scan(
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
-    runtime: FistaRuntime,
-) -> tuple[FistaResult, jax.Array, TVMetric | None]:
-    """Return the final state, Lipschitz constant and resolved regularization metric."""
-    runtime = _resident_runtime(runtime)
+def _fista_step(
+    grid: Grid, detector: Detector, projections: jax.Array, runtime: FistaRuntime, L: jax.Array
+) -> Callable[..., FistaScanState]:
     cfg = runtime.config
-    runtime = replace(
-        runtime,
-        metric=_automatic_metric(grid, detector, runtime)
-        if cfg.tv_weight is None
-        else runtime.metric,
-    )
-    L, first_value, first_gradient = runtime.lipschitz, None, None
-    if L is None:
-        L, first_value, first_gradient = estimate_first_gradient(
-            grid, detector, projections, runtime
-        )
-    # A zero data operator imposes no step-size restriction.
-    L = jnp.where(L == 0, 1e-6, L)
-
     val_and_grad = jax.jit(_data_term(grid, detector, projections, runtime))
     proximal = _fista_proximal(runtime, L)
 
@@ -519,26 +498,97 @@ def _run_fista_scan(
             iters_done=state.iters_done + jnp.int32(1),
         )
 
-    initial = _initial_fista_state(grid, runtime)
+    return step
+
+
+@functools.partial(jax.jit, static_argnames=("grid", "detector"))
+def _initialize_fista(
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    runtime: FistaRuntime,
+) -> tuple[FistaScanState, jax.Array, TVMetric | None]:
+    cfg = runtime.config
+    runtime = replace(
+        runtime,
+        metric=runtime.automatic_metric(grid, detector)
+        if cfg.tv_weight is None
+        else runtime.metric,
+    )
+    L, first_value, first_gradient = runtime.lipschitz, None, None
+    if L is None:
+        L, first_value, first_gradient = estimate_first_gradient(
+            grid, detector, projections, runtime
+        )
+    # A zero data operator imposes no step-size restriction.
+    L = jnp.where(L == 0, 1e-6, L)
+
+    initial = runtime.initial_state(grid)
     if cfg.iterations and first_gradient is not None:
         assert first_value is not None
         # Consume the cached gradient before the loop so its buffer can be reused.
-        initial = step(initial, (first_value, first_gradient))
+        initial = _fista_step(grid, detector, projections, runtime, L)(
+            initial, (first_value, first_gradient)
+        )
+
+    return initial, L, runtime.metric
+
+
+@functools.partial(jax.jit, static_argnames=("grid", "detector"), donate_argnames=("state",))
+def _advance_fista(
+    grid: Grid,
+    detector: Detector,
+    projections: jax.Array,
+    runtime: FistaRuntime,
+    L: jax.Array,
+    state: FistaScanState,
+    end: int,
+) -> FistaScanState:
+    step = _fista_step(grid, detector, projections, runtime, L)
+    cfg = runtime.config
+    tolerance = cfg.tolerance or 0.0
 
     def advance(_: int, state: FistaScanState) -> FistaScanState:
         if tolerance > 0 and cfg.patience > 0:
             return jax.lax.cond(state.done, lambda s: s, step, state)
         return step(state)
 
-    first = int(first_gradient is not None)
-    final = (
-        jax.lax.fori_loop(first, cfg.iterations, advance, initial) if cfg.iterations else initial
+    return jax.lax.fori_loop(state.iters_done, end, advance, state)
+
+
+def _fista_program(
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    runtime: FistaRuntime,
+    *,
+    drive: Callable[..., FistaScanState],
+) -> tuple[FistaResult, jax.Array, TVMetric | None]:
+    """Return the final state, Lipschitz constant and resolved regularization metric."""
+    runtime = _resident_runtime(runtime)
+    initial, L, metric = _initialize_fista(grid, detector, projections, runtime)
+    runtime = replace(runtime, metric=metric)
+
+    def advance(state: FistaScanState, end: int) -> FistaScanState:
+        return _advance_fista(grid, detector, projections, runtime, L, state, end)
+
+    def completed(state: FistaScanState) -> tuple[int, bool, dict[str, float]]:
+        count, stopped, loss = jax.device_get((state.iters_done, state.done, state.prev_obj))
+        return int(count), bool(stopped), {"loss": float(loss)}
+
+    iterations = runtime.config.iterations
+    final = drive(initial, iterations, advance, completed) if iterations else initial
+    loss = final.padded_loss()
+    return (
+        FistaResult(
+            pack_volume(final.x, runtime.projector[0]), final.z, loss, final.iters_done, final.done
+        ),
+        L,
+        metric,
     )
-    loss = jnp.where(jnp.arange(cfg.iterations) < final.iters_done, final.loss, final.prev_obj)
-    result = FistaResult(
-        pack_volume(final.x, runtime.projector[0]), final.z, loss, final.iters_done, final.done
-    )
-    return result, jnp.asarray(L, jnp.float32), runtime.metric
+
+
+_run_fista_scan = Chunked(_fista_program, static_argnames=("grid", "detector"))
 
 
 def fista(

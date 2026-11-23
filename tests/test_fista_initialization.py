@@ -105,3 +105,30 @@ def test_public_fista_partial_view_batches_run_under_global_x64():
     assert actual.dtype == np.float32
     np.testing.assert_allclose(actual, 3.0, rtol=3e-6)
     np.testing.assert_allclose(info["lipschitz"], 5.0, rtol=3e-6)
+
+
+@pytest.mark.parametrize("watched", [False, True])
+def test_zero_updates_return_feasible_start_and_empty_history(watched):
+    from contextlib import nullcontext
+
+    from tomojax import progress
+
+    grid, detector = Grid(4, 1, 1, 1, 1, 1), Detector(4, 1, 1, 1)
+    geometry = ParallelGeometry(grid, detector, [0.0])
+    initial = np.array([[[-1, 0.25, 0.75, 2]]], dtype=np.float32)
+    cfg = FISTAConfig(iterations=0, lower_bound=0, upper_bound=1, tv_weight=0.01, backend="jax")
+    events = []
+    with (
+        progress.watch(events.append) if watched else nullcontext(),
+        progress.task("reconstruct", "fista", 0, "iterations"),
+    ):
+        volume, info = fista(
+            geometry, grid, detector, np.ones((1, 1, 4), np.float32), init_x=initial, config=cfg
+        )
+    np.testing.assert_array_equal(volume, [[[0, 0.25, 0.75, 1]]])
+    assert info["loss"] == []
+    assert info["effective_iterations"] == 0
+    assert info["early_stop"] is False
+    assert [type(event) for event in events] == (
+        [progress.Started, progress.Finished] if watched else []
+    )

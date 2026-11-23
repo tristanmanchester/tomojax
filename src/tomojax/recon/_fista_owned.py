@@ -52,6 +52,11 @@ class FistaScanState(NamedTuple):
     done: jnp.ndarray
     iters_done: jnp.ndarray
 
+    @jax.jit
+    def padded_loss(self) -> jax.Array:
+        """Repeat the last observed loss through the unused iteration budget."""
+        return jnp.where(jnp.arange(self.loss.size) < self.iters_done, self.loss, self.prev_obj)
+
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
 def _residual(grid, detector, data, z, runtime):

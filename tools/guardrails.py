@@ -44,6 +44,7 @@ PUBLIC_PACKAGES = (
     "tomojax",
     "tomojax.geometry",
     "tomojax.evaluation",
+    "tomojax.progress",
     "tomojax.corrections",
     "tomojax.forward",
     "tomojax.recon",

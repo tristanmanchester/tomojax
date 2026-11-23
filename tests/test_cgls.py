@@ -16,7 +16,7 @@ from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeome
 from tomojax.recon import CGLSConfig, cgls
 
 # check-public-imports: allow-private
-from tomojax.recon._cgls_jax import _operators
+from tomojax.recon._cgls_jax import _operators, _run_cgls
 
 
 @pytest.mark.numerical
@@ -174,10 +174,7 @@ def test_zero_data_and_zero_iteration_limit_preserve_valid_results():
 
 
 def test_changed_data_geometry_and_budget_reuse_compiled_solver():
-    # check-public-imports: allow-private
-    from tomojax.recon._cgls_jax import _solve
-
-    _solve.clear_cache()
+    _run_cgls.unwatched.clear_cache()
     outputs = []
     for offset, iterations in [(0.0, 35), (7.0, 50)]:
         grid, detector, geometry, matrix = small_problem(offset)
@@ -197,7 +194,7 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
         np.testing.assert_allclose(result.ravel(), truth, rtol=2e-4, atol=2e-5)
         assert info["converged"]
         outputs.append(np.asarray(result))
-    assert _solve._cache_size() == 1
+    assert _run_cgls.unwatched._cache_size() == 1
     assert not np.allclose(*outputs)
 
 

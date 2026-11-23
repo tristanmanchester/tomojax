@@ -4,6 +4,7 @@ from collections.abc import Mapping
 import logging
 from typing import TYPE_CHECKING, cast
 
+from tomojax import progress
 from tomojax.core.host_volume import host_available_memory_bytes
 
 if TYPE_CHECKING:
@@ -14,6 +15,8 @@ LOG = logging.getLogger(__name__)
 
 def is_oom_error(exc: Exception) -> bool:
     """Whether ``exc`` is a device running out of memory, which smaller batches may avoid."""
+    if progress.handler_failed(exc):
+        return False
     msg = str(exc).lower()
     # cuFFT reports exhausted scratch memory as an INTERNAL plan-creation error.
     cufft_scratch = "fft_plan != nullptr" in msg and "cufft batched plan with scratch" in msg

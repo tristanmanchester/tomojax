@@ -86,3 +86,10 @@ and `--darks 0` suits only counts that are already dark-corrected.
 `align --fit center roll` estimates the cone detector's centre and roll,
 and `reconstruct` uses them. `previews/` then holds `slice_z.png`, `slice_y.png`, and
 `slice_x.png`. See the [lab cone-beam CT guide](../../../docs/lab-ct.md).
+
+For reconstruction, `--progress json` writes one flushed JSON record per line
+on stdout. An operational failure ends with an `error` record and exit 1.
+A first interrupt requests cancellation and exits 130 once work stops. An
+argument error uses exit 2 and prints usage on stderr. During execution, a
+non-zero exit without an `error` record or cancellation indicates an internal
+error. Its traceback is on stderr.

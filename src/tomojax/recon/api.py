@@ -339,10 +339,13 @@ def reconstruct_arrays(
         return fbp_volume(geometry, grid, detector, projections, cfg, det_grid, out)
     # The method name has ruled out the FBP and Fourier configurations above.
     iterative = cast("CGLSConfig | FISTAConfig | SPDHGConfig | SIRTConfig | MLEMConfig", cfg)
-    return _iterative_result(
-        method, geometry, grid, detector, projections, iterative, det_grid,
-        warm_start=warm_start, out=out,
-    )  # fmt: skip
+    from tomojax import progress
+
+    with progress.task("reconstruct", method, iterative.iterations, "iterations"):
+        return _iterative_result(
+            method, geometry, grid, detector, projections, iterative, det_grid,
+            warm_start=warm_start, out=out,
+        )  # fmt: skip
 
 
 def _iterative_result(

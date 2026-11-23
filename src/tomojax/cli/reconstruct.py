@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, fields, replace
+from functools import partial
 import logging
-import os
+from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -25,6 +26,7 @@ from tomojax._field_of_view import (
     zero_outside_cylinder,
 )
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
+from tomojax.cli._progress import add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -174,9 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Also write a JSON record of the run (inputs, settings, versions)",
     )
-    _ = p.add_argument(
-        "--progress", action="store_true", help="Show progress bars if tqdm is available"
-    )
+    add_progress(p)
     hide_expert(p, _PUBLIC, settings=_SETTINGS)
     return p
 
@@ -256,6 +256,23 @@ class _Run:
         given = {name: cast("object", getattr(self, name)) for name in _KEYWORDS}
         return {name: value for name, value in given.items() if value is not None}
 
+    def validate(
+        self,
+        parser: argparse.ArgumentParser,
+        args: argparse.Namespace,
+        metadata: Mapping[str, object],
+    ) -> MethodConfig | None:
+        if self.grid is not None and min(self.grid) < 1:
+            parser.error("--grid dimensions must be positive integers")
+        if not Path(self.data).exists():
+            raise FileNotFoundError(f"input not found: {self.data}")
+        outputs = [self.out, self.preview, self.manifest]
+        check_paths(parser, inputs=[self.data], outputs=outputs, force=cast("bool", args.force))
+        try:
+            return self.config(cast("dict[str, object]", metadata["settings"]))
+        except (TypeError, ValueError) as exc:
+            parser.error(str(exc))
+
     def config(self, settings: Mapping[str, object]) -> MethodConfig | None:
         """The method's configuration with the config file's ``settings``.
 
@@ -321,29 +338,29 @@ def _write_manifest(
     logging.info("Saved reproducibility manifest to %s", run.manifest)
 
 
-def main() -> None:
+def main() -> int:
     """Run ``tomojax reconstruct``."""
+    parser = build_parser()
+    args, metadata = parse_args_with_config(parser)
+    return run_command("reconstruct", args.progress, partial(_run, parser, args, metadata))
+
+
+def _run(
+    parser: argparse.ArgumentParser, args: argparse.Namespace, metadata: Mapping[str, object]
+) -> None:
     import tomojax as tj
+    from tomojax import progress
     from tomojax.cli._runtime import report_automatic
     from tomojax.core import log_jax_env, setup_logging
 
-    parser = build_parser()
-    args, metadata = parse_args_with_config(parser)
     run = _Run.of(args)
-    if run.grid is not None and min(run.grid) < 1:
-        parser.error("--grid dimensions must be positive integers")
-    outputs = [run.out, run.preview, run.manifest]
-    check_paths(parser, inputs=[run.data], outputs=outputs, force=cast("bool", args.force))
-    try:
-        config = run.config(cast("dict[str, object]", metadata["settings"]))
-    except (TypeError, ValueError) as exc:
-        parser.error(str(exc))
+    config = run.validate(parser, args, metadata)
     setup_logging()
     log_jax_env()
-    if cast("bool", args.progress):
-        os.environ["TOMOJAX_PROGRESS"] = "1"
+    progress.check_cancelled()
 
     scan = tj.load(run.data, apply_poses=run.apply_poses)
+    progress.check_cancelled()
     keywords = {name: cast("Any", getattr(run, name)) for name in _KEYWORDS}
     if run.grid is not None:
         shape = (run.grid[2], run.grid[1], run.grid[0])
@@ -353,11 +370,9 @@ def main() -> None:
             result = replace(
                 result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder)
             )
-    elif run.region is not None:
-        result = tj.reconstruct(
-            scan, run.method, grid=None, region=run.region, config=config, **keywords
-        )
     else:
+        if run.region is not None:
+            keywords["region"] = run.region
         result = tj.reconstruct(scan, run.method, grid=None, config=config, **keywords)
     report_automatic(result.info)
     source = scan.source
@@ -370,15 +385,19 @@ def main() -> None:
             "Fit one with tomojax align --fit center before reconstructing.",
             run.data,
         )
+    progress.check_cancelled()
     tj.save(run.out, result, include_scan=run.include_scan)
     if run.preview is not None:
         from tomojax.recon.quicklook import save_quicklook_png
 
+        progress.check_cancelled()
         _ = save_quicklook_png(run.preview, result.volume)
     if run.manifest is not None:
+        progress.check_cancelled()
         _write_manifest(args, metadata, scan, result, masked=run.region == "cyl")
-    print(f"wrote {run.out}: {result.method} volume {tuple(np.shape(result.volume))}")
+    if args.progress != "json":
+        print(f"wrote {run.out}: {result.method} volume {tuple(np.shape(result.volume))}")
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    raise SystemExit(main())

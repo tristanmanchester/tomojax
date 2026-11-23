@@ -23,6 +23,7 @@ from tomojax.core.validation import (
 )
 from tomojax.recon._cgls_host import solve_on_host
 from tomojax.recon._cgls_stopping import cancellation_magnitude, precision_stalled, termination
+from tomojax.recon._chunks import Chunked
 from tomojax.recon._data_term import project_residual
 from tomojax.recon._projection import (
     ConeModel,
@@ -32,7 +33,6 @@ from tomojax.recon._projection import (
 )
 from tomojax.recon._quadratic import gradient_energy, gradient_normal, regularization_normal
 from tomojax.recon._volume_storage import (
-    Model,
     initialize_volume,
     is_joseph,
     resident_model,
@@ -69,21 +69,6 @@ def _running(state: _State, *, max_iters: jax.Array, threshold: jax.Array) -> ja
     )
 
 
-def _checked_inputs(
-    poses: jax.Array,
-    data: jax.Array,
-    initial: jax.Array | None,
-    grid: Grid,
-    model: Model,
-) -> tuple[jax.Array, jax.Array]:
-    # Check inputs inside the solve: separate eager checks would each compile.
-    _, initial = initialize_volume(initial, model, grid)
-    finite = (
-        jnp.all(jnp.isfinite(data)) & jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(initial))
-    )
-    return initial, finite
-
-
 @partial(
     jax.jit,
     static_argnames=(
@@ -98,12 +83,11 @@ def _checked_inputs(
         "data_term",
     ),
 )
-def _solve(
+def _solve_initial(
     poses: jax.Array,
     data: jax.Array,
     initial: jax.Array | None,
     det_grid: tuple[jax.Array, jax.Array] | None,
-    max_iters: jax.Array,
     tolerance: jax.Array,
     absolute_tolerance: jax.Array,
     damping: jax.Array,
@@ -125,25 +109,12 @@ def _solve(
         poses, grid, detector, det_grid, backend, batch_size, model, interpolation,
         split=split,
     )  # fmt: skip
-    magnitude_adjoint = adjoint
-    if is_joseph(model) and interpolation == "cubic":
-        # Cubic convolution has negative lobes. A.T @ abs(residual) is not
-        # a cancellation bound: the roundoff estimate needs abs(A).T instead.
-        _, magnitude_adjoint = _operators(
-            poses,
-            grid,
-            detector,
-            det_grid,
-            backend,
-            batch_size,
-            model,
-            interpolation,
-            absolute_weights=True,
-            split=split,
-        )
-    initial, inputs_finite = _checked_inputs(poses, data, initial, grid, model)
+    # Check inputs inside the solve: separate eager checks would each compile.
+    _, initial = initialize_volume(initial, model, grid)
+    inputs_finite = (
+        jnp.all(jnp.isfinite(data)) & jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(initial))
+    )
     residual = project_residual(data if zero_start else data - forward(initial), data_term)
-    damp2 = damping * damping
     spacing = voxel_spacing(model, grid)
 
     penalty_gradient = partial(
@@ -168,6 +139,72 @@ def _solve(
         jnp.bool_(False),
         jnp.bool_(True),
         jnp.int32(0),
+    )
+    return state, gamma, threshold, inputs_finite
+
+
+@partial(
+    jax.jit,
+    donate_argnames=("state",),
+    static_argnames=(
+        "grid",
+        "detector",
+        "backend",
+        "batch_size",
+        "model",
+        "interpolation",
+        "split",
+        "data_term",
+    ),
+)
+def _solve(
+    state: _State,
+    gamma: jax.Array,
+    threshold: jax.Array,
+    poses: jax.Array,
+    data: jax.Array,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+    max_iters: jax.Array,
+    damping: jax.Array,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: str = "joseph",
+    interpolation: str = "linear",
+    gradient_damping: jax.Array | None = None,
+    split: ViewSplit | None = None,
+    data_term: DataTerm = "absolute",
+) -> _State:
+    forward, adjoint = _operators(
+        poses, grid, detector, det_grid, backend, batch_size, model, interpolation,
+        split=split,
+    )  # fmt: skip
+    magnitude_adjoint = adjoint
+    if is_joseph(model) and interpolation == "cubic":
+        # Cubic convolution has negative lobes. A.T @ abs(residual) is not
+        # a cancellation bound: the roundoff estimate needs abs(A).T instead.
+        _, magnitude_adjoint = _operators(
+            poses,
+            grid,
+            detector,
+            det_grid,
+            backend,
+            batch_size,
+            model,
+            interpolation,
+            absolute_weights=True,
+            split=split,
+        )
+    damp2 = damping * damping
+    spacing = voxel_spacing(model, grid)
+
+    penalty_gradient = partial(
+        regularization_normal,
+        spacing=spacing,
+        damping=damping,
+        gradient_damping=gradient_damping,
     )
 
     condition = partial(_running, max_iters=max_iters, threshold=threshold)
@@ -265,8 +302,7 @@ def _solve(
             state.residual_recomputations + verify.astype(jnp.int32),
         )
 
-    result = jax.lax.while_loop(condition, step, state)
-    return result, jnp.sqrt(gamma), threshold, inputs_finite
+    return jax.lax.while_loop(condition, step, state)
 
 
 @partial(
@@ -281,11 +317,10 @@ def _solve(
         "data_term",
     ),
 )
-def _solve_streamed(
+def _solve_streamed_initial(
     poses: jax.Array,
     key: jax.Array,
     initial: jax.Array | None,
-    max_iters: jax.Array,
     tolerance: jax.Array,
     absolute_tolerance: jax.Array,
     damping: jax.Array,
@@ -307,7 +342,7 @@ def _solve_streamed(
     ``A^T (y - A x) - R x``, under the same verification rules as ``_solve``.
     Only volume-sized arrays and one view batch occupy the device.
     """
-    normal, exact = normal_equation_operators(
+    _, exact = normal_equation_operators(
         poses,
         grid,
         detector,
@@ -318,7 +353,6 @@ def _solve_streamed(
         data_term=data_term,
     )
     initial, x0 = initialize_volume(initial, model, grid)
-    damp2 = damping * damping
     spacing = voxel_spacing(model, grid)
     penalty = partial(
         regularization_normal, spacing=spacing, damping=damping, gradient_damping=gradient_damping
@@ -339,7 +373,55 @@ def _solve_streamed(
         jnp.bool_(True),
         jnp.int32(0),
     )
+    return state, gamma, threshold, finite
 
+
+@partial(
+    jax.jit,
+    donate_argnames=("state",),
+    static_argnames=(
+        "grid",
+        "detector",
+        "backend",
+        "batch_size",
+        "model",
+        "interpolation",
+        "data_term",
+    ),
+)
+def _solve_streamed(
+    state: _State,
+    gamma: jax.Array,
+    threshold: jax.Array,
+    poses: jax.Array,
+    key: jax.Array,
+    max_iters: jax.Array,
+    damping: jax.Array,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: str,
+    interpolation: str,
+    gradient_damping: jax.Array | None = None,
+    data_term: DataTerm = "absolute",
+) -> _State:
+    normal, exact = normal_equation_operators(
+        poses,
+        grid,
+        detector,
+        backend,
+        batch_size,
+        model,
+        interpolation,
+        data_term=data_term,
+    )
+    damp2 = damping * damping
+    spacing = voxel_spacing(model, grid)
+    penalty = partial(
+        regularization_normal, spacing=spacing, damping=damping, gradient_damping=gradient_damping
+    )
     condition = partial(_running, max_iters=max_iters, threshold=threshold)
 
     def step(state: _State) -> _State:
@@ -407,8 +489,7 @@ def _solve_streamed(
             state.residual_recomputations + verify.astype(jnp.int32),
         )
 
-    result = jax.lax.while_loop(condition, step, state)
-    return result, jnp.sqrt(gamma), threshold, finite
+    return jax.lax.while_loop(condition, step, state)
 
 
 def _as_float32(array: object) -> jax.Array:
@@ -461,6 +542,109 @@ def _laid_out(
         return _as_float32(projections), poses, initial
     # Each device's views of the data; the poses and start on all, wherever they were.
     return split.place(projections), *split.everywhere((poses, initial))
+
+
+def _cgls_program(
+    poses,
+    data,
+    initial,
+    det_grid,
+    iterations,
+    tolerances,
+    damping,
+    *,
+    streamed,
+    grid,
+    detector,
+    backend,
+    batch_size,
+    model,
+    interpolation,
+    gradient_damping,
+    data_term,
+    split,
+    drive,
+):
+    options = {
+        "grid": grid,
+        "detector": detector,
+        "backend": backend,
+        "batch_size": batch_size,
+        "model": model,
+        "interpolation": interpolation,
+        "gradient_damping": gradient_damping,
+        "data_term": data_term,
+    }
+    if streamed:
+        state, first_gamma, threshold, finite = _solve_streamed_initial(
+            poses,
+            data,
+            initial,
+            *tolerances,
+            damping,
+            **options,
+        )
+
+        def advance(state, end):
+            return _solve_streamed(
+                state, first_gamma, threshold, poses, data, end, damping, **options
+            )
+    else:
+        state, first_gamma, threshold, finite = _solve_initial(
+            poses,
+            data,
+            initial,
+            det_grid,
+            *tolerances,
+            damping,
+            zero_start=initial is None,
+            split=split,
+            **options,
+        )
+
+        def advance(state, end):
+            return _solve(
+                state,
+                first_gamma,
+                threshold,
+                poses,
+                data,
+                det_grid,
+                end,
+                damping,
+                split=split,
+                **options,
+            )
+
+    def completed(state):
+        count, gamma, threshold_host, failed, roundoff = jax.device_get(
+            (state.iteration, state.gamma, threshold, state.failed, state.roundoff)
+        )
+        return (
+            int(count),
+            bool(failed or roundoff or gamma <= threshold_host * threshold_host),
+            {
+                "normal_residual_norm": float(np.sqrt(gamma)),
+            },
+        )
+
+    return drive(state, iterations, advance, completed), first_gamma, threshold, finite
+
+
+_run_cgls = Chunked(
+    _cgls_program,
+    static_argnames=(
+        "streamed",
+        "grid",
+        "detector",
+        "backend",
+        "batch_size",
+        "model",
+        "interpolation",
+        "data_term",
+        "split",
+    ),
+)
 
 
 def cgls(
@@ -519,33 +703,29 @@ def cgls(
         from tomojax.core.joseph import validate_plane_geometry
 
         validate_plane_geometry(poses, grid, detector)
-    budget = (
-        jnp.int32(iterations),
-        jnp.float32(cfg.tolerance),
-        jnp.float32(cfg.absolute_tolerance),
+    solve = partial(
+        _run_cgls,
+        grid=grid,
+        detector=detector,
+        backend=backend,
+        batch_size=batch,
+        model=model,
+        interpolation=cfg.interpolation,
+        data_term=cfg.data_term,
+        gradient_damping=jnp.float32(cfg.gradient_damping) if cfg.gradient_damping else None,
+        iterations=iterations,
+        tolerances=(jnp.float32(cfg.tolerance), jnp.float32(cfg.absolute_tolerance)),
+        damping=jnp.float32(cfg.damping),
+        streamed=stream,
+        split=split,
     )
-    options = {
-        "grid": grid,
-        "detector": detector,
-        "backend": backend,
-        "batch_size": batch,
-        "model": model,
-        "interpolation": cfg.interpolation,
-        "gradient_damping": jnp.float32(cfg.gradient_damping) if cfg.gradient_damping else None,
-        "data_term": cfg.data_term,
-    }
     if stream:
         with host_source(np.asarray(projections)) as key:
-            result, initial_norm, threshold, inputs_finite = _solve_streamed(
-                poses, key, initial, *budget, jnp.float32(cfg.damping), **options
-            )
+            result, initial_gamma, threshold, inputs_finite = solve(poses, key, initial, det_grid)
             jax.block_until_ready(result)
     else:
         data, poses, initial = _laid_out(split, projections, poses, initial)
-        result, initial_norm, threshold, inputs_finite = _solve(
-            poses, data, initial, det_grid, *budget, jnp.float32(cfg.damping),
-            zero_start=initial is None, split=split, **options,
-        )  # fmt: skip
+        result, initial_gamma, threshold, inputs_finite = solve(poses, data, initial, det_grid)
     finite, count, gamma, failed, roundoff, first_norm, tolerance, verified, recomputations = (
         jax.device_get(
             (
@@ -554,7 +734,7 @@ def cgls(
                 result.gamma,
                 result.failed,
                 result.roundoff,
-                initial_norm,
+                initial_gamma,
                 threshold,
                 result.residual_verified,
                 result.residual_recomputations,
@@ -573,7 +753,7 @@ def cgls(
         "normal_residual_norm": float(np.sqrt(gamma)),
         "normal_residual_is_recomputed": bool(verified),
         "residual_recomputations": int(recomputations),
-        "initial_normal_residual_norm": float(first_norm),
+        "initial_normal_residual_norm": float(np.sqrt(first_norm)),
         "normal_residual_tolerance": float(tolerance),
         "projector_backend": backend,
         "interpolation": cfg.interpolation if is_joseph(model) else None,

@@ -575,7 +575,10 @@ def reconstruct(
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     >>> recon = tj.reconstruct(scan, "cgls", iterations=50)  # doctest: +SKIP
     """
+    from tomojax import progress
     from tomojax.recon.api import method_config, reconstruct_arrays
+
+    progress.check_cancelled()
 
     settings = {
         "filter": filter,

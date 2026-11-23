@@ -441,6 +441,36 @@ class tomojax.evaluation.Split(
         views: 'slice | None' = None,
     ) -> 'Score'
 
+# tomojax.progress
+class tomojax.progress.Advanced(
+        task: 'int',
+        done: 'int',
+        total: 'int | None',
+        metrics: 'Mapping[str, _Metric]',
+        time: 'float',
+    ) -> None
+class tomojax.progress.Cancel() -> 'None'
+    .cancel(self) -> 'None'
+    .cancelled
+class tomojax.progress.Cancelled
+tomojax.progress.Event: TypeAliasType
+class tomojax.progress.Finished(task: 'int', status: '_Status', time: 'float') -> None
+class tomojax.progress.Started(
+        task: 'int',
+        parent: 'int | None',
+        name: 'str',
+        label: 'str',
+        total: 'int | None',
+        unit: 'str',
+        time: 'float',
+    ) -> None
+def tomojax.progress.to_json(event: 'Event') -> 'dict[str, object]'
+def tomojax.progress.watch(
+        handler: 'Callable[[Event], None]',
+        *,
+        cancel: 'Cancel | None' = None,
+    ) -> 'Iterator[None]'
+
 # tomojax.corrections
 class tomojax.corrections.BeamHardening(
         rates: 'tuple[float, ...]' = (1.0,),
