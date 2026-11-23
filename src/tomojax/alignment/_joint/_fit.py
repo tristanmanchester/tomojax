@@ -372,7 +372,7 @@ def fit_poses(
         binned, scale, noise = _read(measured, [dbin * b for b in bins])
         iterations = (config.coarse_iterations,) * (len(bins) - 1) + (config.iterations,)
         for b, outer in zip(bins, iterations, strict=True):
-            with progress.task("level", f"Binning {dbin * b}", outer, "steps"):
+            with progress.task("level", f"binning {dbin * b}", outer, "steps"):
                 y, precision, g, ops, cal = _level(
                     binned.pop(0),  # the level's arrays are its own from here
                     scale,
@@ -434,7 +434,7 @@ def fit_poses(
         assert prior is not None
         stage = {"ops": ops, "sigma": cal["sigma"], "last": levels[-1], "placement": placement}
         total = config.refine_iterations if prior.nlocal else 0
-        with progress.task("refine", "Refine poses", total, "updates"):
+        with progress.task("refine", "refine poses", total, "updates"):
             p, refinement, (offsets, energy) = refine(
                 x, p, y, precision, prior, **stage, config=config
             )

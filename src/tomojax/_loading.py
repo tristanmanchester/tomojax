@@ -171,7 +171,7 @@ def load_scan_with_declaration(
     apply_poses: bool = True,
     declared: DeclaredGeometry | None = None,
 ) -> Scan:
-    with discard_failed_outputs() as outputs, progress.task("load", str(path), None, "views"):
+    with discard_failed_outputs() as outputs, progress.task("load", "load scan", None, "views"):
         file = Path(path)
         if not file.exists():
             raise FileNotFoundError(f"no such file: {file}")
@@ -692,7 +692,7 @@ def load_raw_frames_with_declaration(
     apply_poses: bool = True,
     declared: DeclaredGeometry | None = None,
 ) -> Frames:
-    with discard_failed_outputs() as outputs, progress.task("load", str(path), None, "views"):
+    with discard_failed_outputs() as outputs, progress.task("load", "load frames", None, "views"):
         file = Path(path)
         if not file.exists():
             raise FileNotFoundError(f"no such file: {file}")

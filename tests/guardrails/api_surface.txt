@@ -458,7 +458,7 @@ class tomojax.progress.Finished(task: 'int', status: '_Status', time: 'float') -
 class tomojax.progress.Started(
         task: 'int',
         parent: 'int | None',
-        name: 'str',
+        name: '_Name',
         label: 'str',
         total: 'int | None',
         unit: 'str',

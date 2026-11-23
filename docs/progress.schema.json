@@ -60,10 +60,17 @@
             "align",
             "level",
             "refine"
-          ]
+          ],
+          "description": "Fixed operation name."
         },
         "label": {
-          "type": "string"
+          "type": "string",
+          "description": "Lower-case human text suitable for display.",
+          "examples": [
+            "binning 2",
+            "refine poses",
+            "cgls"
+          ]
         },
         "total": {
           "$ref": "#/$defs/total"
@@ -176,6 +183,41 @@
         }
       },
       "additionalProperties": false
+    }
+  ],
+  "examples": [
+    {
+      "schema": 1,
+      "event": "started",
+      "task": 2,
+      "parent": 1,
+      "name": "level",
+      "label": "binning 2",
+      "total": 4,
+      "unit": "steps",
+      "time": 0.1
+    },
+    {
+      "schema": 1,
+      "event": "started",
+      "task": 3,
+      "parent": 1,
+      "name": "refine",
+      "label": "refine poses",
+      "total": 5,
+      "unit": "updates",
+      "time": 1.2
+    },
+    {
+      "schema": 1,
+      "event": "started",
+      "task": 1,
+      "parent": null,
+      "name": "reconstruct",
+      "label": "cgls",
+      "total": 50,
+      "unit": "iterations",
+      "time": 0.0
     }
   ]
 }

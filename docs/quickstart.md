@@ -213,7 +213,10 @@ for shift in (-4, -2, 0, 2, 4):
 
 Use a watch around loading, correction, reconstruction, or alignment. The
 handler runs on the calling thread and must return quickly. The innermost
-watch receives the events. Each event is an immutable snapshot.
+watch receives the events. Each event is an immutable snapshot. On a
+`Started` event, use `name` to identify the operation and `label` for display.
+For example, a `level` task can have the label `binning 2`, and a
+`reconstruct` task can have the label `cgls`.
 
 ```python
 import tomojax as tj
