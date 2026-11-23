@@ -105,3 +105,44 @@ def test_fourier_rejects_rotational_pose_corrections_before_writing():
             scan.with_poses(poses), "fourier", config=FourierConfig(backend="numpy"), out=out
         )
     np.testing.assert_array_equal(out, 123)
+
+
+def test_preflight_reads_bounded_view_and_detector_row_batches():
+    from tomojax._planning import resolve_reconstruction
+
+    reads = []
+
+    class Recorded(np.ndarray):
+        def __getitem__(self, key):
+            batch = super().__getitem__(key)
+            reads.append(batch.size)
+            return batch
+
+    grid = tj.Grid(3, 3, 17, 1, 1, 1)
+    detector = tj.Detector(7, 101, 1, 1)
+    geom = tj.ParallelGeometry(grid, detector, np.arange(73) * 2.0)
+    data = np.full((73, 101, 7), np.nan, np.float32)
+    data[:, 42:59] = 1
+    resolve_reconstruction(tj.Scan(data.view(Recorded), geom), "fourier")
+    assert max(reads) < 73 * 7 * 17
+    assert sum(reads) == 73 * 7 * 17
+
+
+def test_preflight_uses_each_views_translated_rows_on_a_device():
+    from tomojax._planning import resolve_reconstruction
+
+    grid = tj.Grid(5, 5, 1, 1, 1, 1)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(7, 9, 1, 1), [130, 25, 80])
+    poses = np.zeros((3, 6), np.float32)
+    poses[:, 4] = [2.5, 0.5, -1.5]
+    measured = np.full((3, 9, 7), np.nan, np.float32)
+    for view, lower in enumerate((6, 4, 2)):
+        measured[view, lower : lower + 2] = 1
+    scan = tj.Scan(jax.device_put(measured), geometry).with_poses(poses)
+    resolve_reconstruction(scan, "fourier")
+    measured[0, 7, 2] = np.nan
+    with pytest.raises(tj.InvalidParameter) as err:
+        resolve_reconstruction(
+            tj.Scan(jax.device_put(measured), geometry).with_poses(poses), "fourier"
+        )
+    assert err.value.path == "source"

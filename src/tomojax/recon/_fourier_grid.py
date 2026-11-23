@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import functools
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
 from ._directions import group_repeats
+
+if TYPE_CHECKING:
+    import jax
 
 
 def next_fast_len(target: int) -> int:
@@ -91,8 +96,16 @@ def radial_coefficients(nu: int, nfft: int, du: float) -> tuple[np.ndarray, ...]
     return result
 
 
+def check_samples(samples: np.ndarray) -> None:
+    """Reject a nonfinite sampled FP32 detector value at its input field."""
+    if not np.isfinite(samples).all():
+        raise InvalidParameter(
+            "source", "fourier_reconstruct: sampled projection rows must be finite in FP32"
+        )
+
+
 def sample_projection_rows(
-    projections: np.ndarray,
+    projections: np.ndarray | jax.Array,
     order: np.ndarray,
     positions: np.ndarray,
 ) -> np.ndarray:
@@ -116,8 +129,12 @@ def sample_projection_rows(
     # copies instead of allocating weighted arrays and fancy-indexed output
     # temporaries for both interpolation neighbors.
     if np.all((fraction > 0) & (fraction < 1) & (indices >= 0) & (indices + 1 < nv)):
-        lower = np.asarray(projections[order[None, :], indices[:, None], :], np.float32)
-        upper = np.asarray(projections[order[None, :], (indices + 1)[:, None], :], np.float32)
+        lower = np.require(
+            projections[order[None, :], indices[:, None], :], np.float32, requirements=["W"]
+        )
+        upper = np.require(
+            projections[order[None, :], (indices + 1)[:, None], :], np.float32, requirements=["W"]
+        )
         np.multiply(lower, (1 - fraction)[:, None, None], out=lower)
         np.multiply(upper, fraction[:, None, None], out=upper)
         np.add(lower, upper, out=lower)
@@ -149,7 +166,7 @@ def rolled_row_window(
 
 
 def sample_rolled_rows(
-    projections: np.ndarray,
+    projections: np.ndarray | jax.Array,
     order: np.ndarray,
     positions: np.ndarray,
     roll_deg: float,
@@ -181,8 +198,6 @@ def sample_rolled_rows(
     last = stop - 1
     local_rows = np.arange(first - row_offset, stop - row_offset)
     band = np.asarray(projections[order[:, None], local_rows[None, :]], np.float32)
-    if not np.isfinite(band).all():
-        raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
     views = np.arange(len(order))[:, None]
     for row, height in enumerate(z):
         source_u, source_v = np.broadcast_arrays(
@@ -201,7 +216,8 @@ def sample_rolled_rows(
                 band_rows = np.where(valid, rows - first, 0).astype(np.int64)
                 band_columns = np.where(valid, columns, 0).astype(np.int64)
                 values = band[views, band_rows, band_columns]
-                out += np.where(valid, values * (row_weight * column_weight), np.float32(0))
+                weight = row_weight * column_weight
+                out += np.where(valid & (weight != 0), values * weight, np.float32(0))
     return result
 
 
@@ -216,7 +232,9 @@ def gather_per_view_rows(projections, order, positions):
     # A neighbour whose FP32 weight is zero does not contribute and is not read.
     valid[: len(lower)] &= fraction != 1
     valid[len(lower) :] &= fraction != 0
-    samples = np.asarray(projections[order[None, :], np.clip(rows, 0, nv - 1), :], np.float32)
+    samples = np.require(
+        projections[order[None, :], np.clip(rows, 0, nv - 1), :], np.float32, requirements=["W"]
+    )
     np.copyto(samples, 0, where=~valid[..., None])
     return samples, fraction
 

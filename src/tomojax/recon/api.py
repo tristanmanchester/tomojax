@@ -248,18 +248,9 @@ def validate_reconstruction(
         except ValueError as err:
             raise InvalidParameter("warm_start" if warm_start else "method", str(err)) from err
     if method == "fourier":
-        from tomojax.core.geometry.cone import require_parallel_beam
-        from tomojax.recon._fourier_grid import sorted_half_turn
-        from tomojax.recon.fourier import detector_translations
+        from tomojax.recon.fourier import check_fourier_inputs
 
-        try:
-            import numpy as np
-
-            require_parallel_beam(geometry, "fourier_reconstruct")
-            sorted_half_turn(np.asarray(geometry.angles))
-            detector_translations(geometry, views)
-        except ValueError as err:
-            raise InvalidParameter("method", str(err)) from err
+        check_fourier_inputs(geometry, grid, projections)
 
 
 def _check_solver_inputs(

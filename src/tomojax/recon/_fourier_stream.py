@@ -21,6 +21,7 @@ from ._fourier_backend import (
     resolve_fourier_backend,
 )
 from ._fourier_grid import (
+    check_samples,
     rolled_row_window,
     sample_projection_rows,
     sample_rolled_rows,
@@ -188,6 +189,7 @@ def _run_plan[T](
                     if roll
                     else sample_projection_rows(np.asarray(data), order, requested - first)
                 )
+                check_samples(raw)
                 if stop - at < plan.depth:
                     raw = np.pad(raw, ((0, plan.depth - (stop - at)), (0, 0), (0, 0)))
                 slab.volume = plan.reconstruct(raw, count=stop - at)

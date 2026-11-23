@@ -122,8 +122,9 @@ def test_auto_fourier_handles_missing_cupy_without_hiding_errors(monkeypatch):
     monkeypatch.setattr(jax, "devices", lambda _: [device])
     monkeypatch.setitem(sys.modules, "cupy", None)
     np.testing.assert_array_equal(tj.reconstruct(scan, "fourier").volume, expected.volume)
-    with pytest.raises(ImportError, match="requires"):
+    with pytest.raises(tj.InvalidParameter, match="requires") as error:
         tj.reconstruct(scan, "fourier", config=FourierConfig(backend="cupy"))
+    assert error.value.path == "config.backend"
     runtime = SimpleNamespace(getDevice=lambda: 1)
     cuda = SimpleNamespace(is_available=lambda: True, runtime=runtime)
     monkeypatch.setitem(sys.modules, "cupy", SimpleNamespace(cuda=cuda))

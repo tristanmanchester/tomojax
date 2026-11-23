@@ -16,13 +16,20 @@ from tomojax.errors import InvalidParameter
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
 from ._fourier_backend import FourierPlan, fourier_slab_depth, is_cuda_oom, resolve_fourier_backend
-from ._fourier_grid import sample_projection_rows, sample_rolled_rows, sorted_half_turn
+from ._fourier_grid import (
+    check_samples,
+    sample_projection_rows,
+    sample_rolled_rows,
+    sorted_half_turn,
+)
 from ._fourier_rows import ProjectionRows, prepare_projection_rows
 from ._host_arrays import validate_host_arrays
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from concurrent.futures import Future
+
+    import jax
 
     from tomojax.geometry import Detector, Grid, ScanGeometry
 
@@ -140,8 +147,8 @@ def fourier(
     ------
     ValueError
         If shapes, geometry or solver settings are incompatible with this method.
-    ImportError
-        If the requested CuPy backend is not installed.
+    InvalidParameter
+        If CuPy is unavailable or sampled measurements are nonfinite in FP32.
 
     Examples
     --------
@@ -156,7 +163,6 @@ def fourier(
     >>> volume.shape
     (1, 4, 4)
     """
-    require_parallel_beam(geometry, "fourier_reconstruct")
     cfg = FourierConfig() if config is None else config
     backend = resolve_fourier_backend(cfg.backend)
     nx, ny, nz = validate_grid(grid, "fourier_reconstruct grid")
@@ -164,21 +170,15 @@ def fourier(
     nviews, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fourier_reconstruct projections"
     )
-    origin = grid_volume_origin(grid)
-    if not np.isfinite([*origin, *detector.center]).all():
-        raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
-    order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
-    plan_detector, shifts, positions = _sampling_coordinates(geometry, grid, detector, order)
-    depth = fourier_slab_depth(grid, plan_detector, cfg.slices_per_batch, backend)
+    sampling = _sampling_coordinates(geometry, grid, detector)
+    depth = fourier_slab_depth(grid, sampling.detector, cfg.slices_per_batch, backend)
     output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
 
-    roll = float(getattr(geometry, "detector_roll", 0.0) or 0.0)
-    rolled = None if not roll else (roll, detector.dv / detector.du)
-
     def prepare(start: int) -> np.ndarray | ProjectionRows:
-        rows = positions[start : start + depth]
-        return _prepare_slab(projections, order, rows, depth, backend, rolled)
+        return sampling.sample(
+            projections, slice(start, start + depth), slice(None), depth, backend
+        )
 
     def write(start: int, volume: np.ndarray) -> None:
         stop = min(start + depth, grid.nz)
@@ -195,14 +195,14 @@ def fourier(
             )
             plan = FourierPlan(
                 grid,
-                plan_detector,
+                sampling.detector,
                 nviews,
-                flipped,
-                angles,
+                sampling.flipped,
+                sampling.angles,
                 depth,
                 backend,
                 async_transfers=overlap,
-                shifts=shifts,
+                shifts=sampling.shifts,
             )
             if overlap:
                 _run_host_pipeline(plan, grid.nz, depth, prepare, write)
@@ -225,13 +225,63 @@ def fourier(
         depth = max(1, depth // 2)
 
 
-def _sampling_coordinates(
-    geometry: ScanGeometry, grid: Grid, detector: Detector, order: np.ndarray
-) -> tuple[Detector, np.ndarray | None, np.ndarray]:
-    """Padded Fourier field and physical source rows for all requested slices."""
+@dataclass(frozen=True)
+class _Sampling:
+    detector: Detector
+    order: np.ndarray
+    flipped: np.ndarray
+    angles: tuple[float, ...]
+    shifts: np.ndarray | None
+    rows: np.ndarray
+    vertical: np.ndarray | None
+    rolled: tuple[float, float] | None
+
+    def sample(
+        self,
+        projections: np.ndarray | jax.Array,
+        slabs: slice,
+        views: slice,
+        depth: int,
+        backend: Literal["numpy", "cupy"],
+    ) -> np.ndarray | ProjectionRows:
+        positions = self.rows[slabs]
+        if self.vertical is not None:
+            positions = positions[:, None] + self.vertical[None, views]
+        return _prepare_slab(projections, self.order[views], positions, depth, backend, self.rolled)
+
+
+def check_fourier_inputs(
+    geometry: ScanGeometry, grid: Grid, projections: np.ndarray | jax.Array | None
+) -> None:
+    """Validate exactly the contributing FP32 samples, in bounded groups of views and planes."""
+    try:
+        sampling = _sampling_coordinates(geometry, grid, geometry.detector)
+    except ValueError as err:
+        raise InvalidParameter("method", str(err)) from err
+    if projections is None:
+        return
+    if projections.dtype.kind not in "buif":
+        raise InvalidParameter(
+            "source", "fourier_reconstruct: projections must be a real NumPy array"
+        )
+    for z in range(0, grid.nz, 8):
+        progress.check_cancelled()
+        depth = min(8, grid.nz - z)
+        for first in range(0, len(sampling.order), 32):
+            sampling.sample(
+                projections, slice(z, z + depth), slice(first, first + 32), depth, "numpy"
+            )
+
+
+def _sampling_coordinates(geometry: ScanGeometry, grid: Grid, detector: Detector) -> _Sampling:
+    """Resolve the physical detector rows, view order and translations shared by plan and run."""
+    require_parallel_beam(geometry, "fourier_reconstruct")
+    order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
     translations = detector_translations(geometry, len(order))
-    plan_detector, shifts = detector, None
+    plan_detector, shifts, vertical = detector, None, None
     origin = grid_volume_origin(grid)
+    if not np.isfinite([*origin, *detector.center]).all():
+        raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
         detector.nv - 1
     ) / 2
@@ -246,10 +296,14 @@ def _sampling_coordinates(
             shifts = (
                 translations[:, 0] + plan_detector.center[0] - detector.center[0]
             ) / detector.du
-        positions = positions[:, None] + translations[None, :, 1] / detector.dv
-    if not np.isfinite(positions).all():
+        vertical = translations[:, 1] / detector.dv
+    if not np.isfinite(positions).all() or (
+        vertical is not None and not np.isfinite(vertical).all()
+    ):
         raise ValueError("fourier_reconstruct: detector-row coordinates must be finite")
-    return plan_detector, shifts, positions
+    roll = float(getattr(geometry, "detector_roll", 0.0) or 0.0)
+    rolled = (roll, detector.dv / detector.du) if roll else None
+    return _Sampling(plan_detector, order, flipped, angles, shifts, positions, vertical, rolled)
 
 
 def detector_translations(geometry: ScanGeometry, nviews: int) -> np.ndarray | None:
@@ -277,7 +331,7 @@ def detector_translations(geometry: ScanGeometry, nviews: int) -> np.ndarray | N
 
 
 def _prepare_slab(
-    projections: np.ndarray,
+    projections: np.ndarray | jax.Array,
     order: np.ndarray,
     positions: np.ndarray,
     depth: int,
@@ -296,8 +350,7 @@ def _prepare_slab(
         )
     if isinstance(data, ProjectionRows):
         return data
-    if not np.isfinite(data).all():
-        raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
+    check_samples(data)
     if len(positions) < depth:
         data = np.pad(data, ((0, depth - len(positions)), (0, 0), (0, 0)))
     return data

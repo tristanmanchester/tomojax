@@ -686,3 +686,24 @@ def test_spdhg_seed_is_nonnegative_in_all_commands(worker, simulation):
             "invalid_parameter",
             "config.seed",
         )
+
+
+@pytest.mark.parametrize("bad_row", [2, 0])
+def test_fourier_preflight_checks_only_sampled_detector_rows(worker, tmp_path, bad_row):
+    grid = tj.Grid(5, 5, 1, 1, 1, 1, vol_center=(0, 0, 0.25))
+    geometry = tj.ParallelGeometry(grid, tj.Detector(7, 5, 1, 1), [12, 45, 90, 163])
+    data = np.ones((4, 5, 7), np.float32)
+    data[1, bad_row, 3] = np.nan
+    path = tmp_path / "fractional-row.nxs"
+    tj.save(path, tj.Scan(data, geometry))
+    recipe = dict(type="reconstruct", method="fourier", source=dict(type="path", path=str(path)))
+    for command in ("validate", "plan", "run"):
+        reply = worker(command, operation=recipe)
+        if bad_row == 0:  # z=0.25 lies one quarter of the way from row 2 to row 3.
+            assert reply["type"] == "result", reply
+        else:
+            assert reply["type"] == "error", reply
+            assert (reply["error"]["kind"], reply["error"]["path"]) == (
+                "invalid_parameter",
+                "source",
+            )

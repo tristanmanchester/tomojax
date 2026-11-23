@@ -7,7 +7,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from ._fourier_grid import gather_per_view_rows, sample_projection_rows
+from ._fourier_grid import check_samples, gather_per_view_rows, sample_projection_rows
 
 
 @dataclass
@@ -30,8 +30,7 @@ def prepare_projection_rows(projections, order, positions) -> np.ndarray | Proje
     """
     if positions.ndim == 2:
         samples, fraction = gather_per_view_rows(projections, order, positions)
-        if not np.isfinite(samples).all():
-            raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
+        check_samples(samples)
         count = len(positions)
         if np.all(fraction == 0):
             return samples[:count]
@@ -49,8 +48,7 @@ def prepare_projection_rows(projections, order, positions) -> np.ndarray | Proje
     lower = np.where(valid_lower, np.searchsorted(unique, indices), -1)
     upper = np.where(valid_upper, np.searchsorted(unique, indices + 1), -1)
     samples = np.asarray(projections[order[None, :], unique[:, None], :], dtype=np.float32)
-    if not np.isfinite(samples).all():
-        raise ValueError("fourier_reconstruct: sampled projection rows must be finite in FP32")
+    check_samples(samples)
     return ProjectionRows(samples, lower, upper, fraction)
 
 
