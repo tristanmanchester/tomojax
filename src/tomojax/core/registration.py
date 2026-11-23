@@ -22,11 +22,12 @@ length_unit = ContextVar("tomojax_preview_length", default="scan_length")
 
 
 source_geometry = ContextVar[Any]("tomojax_preview_geometry", default=None)
+output_xy_support = ContextVar[np.ndarray | None]("tomojax_output_xy_support", default=None)
 image_scale = ContextVar("tomojax_preview_scale", default=1.0)
 
 
 @contextmanager
-def registration(source: Any) -> Iterator[None]:
+def registration(source: Any, *, xy_support: np.ndarray | None = None) -> Iterator[None]:
     """Inherit the acquisition's units and coordinates for numerical checkpoints."""
     if not progress.previewing():
         yield
@@ -34,9 +35,11 @@ def registration(source: Any) -> Iterator[None]:
     unit = recorded_length_unit(source.source.geometry_metadata) if source.source else None
     u = length_unit.set(unit or "scan_length")
     g = source_geometry.set(source.geometry)
+    support = output_xy_support.set(xy_support)
     try:
         yield
     finally:
+        output_xy_support.reset(support)
         source_geometry.reset(g)
         length_unit.reset(u)
 
@@ -114,6 +117,10 @@ def registered_plane(
 ) -> progress.Sample:
     """Register a plane cut from a volume, retaining its missing coordinate."""
     axis = axes[i]
+    if (support := output_xy_support.get()) is not None:
+        # Volume arrays and the sampled planes are already in public ZYX order.
+        mask = support if i == 0 else support[index, :] if i == 1 else support[:, index]
+        plane = np.where(mask, plane, 0)
     coord = axis.coordinates
     assert isinstance(coord, Uniform)
     fixed = Fixed(axis.name, axis.frame, axis.unit, index, coord.origin + index * coord.spacing)

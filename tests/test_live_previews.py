@@ -76,8 +76,7 @@ def test_preview_rate_final_cancellation_and_disabled_cost(monkeypatch):
             if enabled:
                 control.cancel()
                 task.advance(5, {})
-                with pytest.raises(progress.Cancelled):
-                    progress.preview(sample, final=True)
+                progress.preview(sample, final=True)
         if not enabled:
             assert built == []
     assert built == [0, 1.01, 1.1]
@@ -152,3 +151,18 @@ def test_raw_iterative_slab_preview_contains_whole_sweep():
         np.testing.assert_array_equal(
             preview.arrays[axis].data, np.take(actual, actual.shape[i] // 2, axis=i)
         )
+
+
+def test_final_preview_includes_resolved_cylinder_support():
+    grid = tj.Grid(12, 12, 9, 1, 1, 1)
+    geom = tj.ParallelGeometry(
+        grid, tj.Detector(12, 9, 1, 1), np.linspace(0, 180, 19, endpoint=False)
+    )
+    scan = tj.Scan(np.random.default_rng(8).uniform(0.1, 2, (19, 9, 12)).astype("f"), geom)
+    events = []
+    with progress.watch(events.append, previews=True):
+        result = tj.reconstruct(scan, "sirt", region="cyl", iterations=2)
+    final = [e.arrays for e in events if isinstance(e, progress.Preview)][-1]
+    for i, axis in enumerate("zyx"):
+        expected = np.take(np.asarray(result.volume), result.grid.shape[i] // 2, axis=i)
+        np.testing.assert_array_equal(final[axis].data, expected)

@@ -485,9 +485,14 @@ def preview(build: Callable[[], dict[str, Sample]], *, final: bool = False) -> N
     now = monotonic() - watcher.pause_time
     if not final and now - watcher.last_preview < 1:
         return
-    check_cancelled()
-    arrays = build()
-    check_cancelled()
+    try:
+        check_cancelled()
+        arrays = build()
+        check_cancelled()
+    except Cancelled as exc:
+        if handler_failed(exc) or not (final or active.done == active.total):
+            raise
+        return
     watcher.last_preview = monotonic() - watcher.pause_time
     active.previewed = active.done
     watcher.emit(Preview, active.id, MappingProxyType(arrays))

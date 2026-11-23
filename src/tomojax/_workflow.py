@@ -594,7 +594,12 @@ def reconstruct_resolved(
     scan, method = plan.scan, plan.method
     if method not in {"fbp", "fourier"}:
         _suggest_binning(scan, "iterative reconstruction")
-    with registration(scan), progress.runtime() as actual:
+    xy_support = None
+    if plan.cylinder is not None and progress.previewing():
+        from tomojax._field_of_view import cylinder_support
+
+        xy_support = cylinder_support(replace(scan.grid, nz=1), plan.cylinder)[0]
+    with registration(scan, xy_support=xy_support), progress.runtime() as actual:
         volume, info = reconstruct_arrays(
             method,
             scan.geometry,

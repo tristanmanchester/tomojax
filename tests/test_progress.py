@@ -44,6 +44,8 @@ def validate_tree(events, *, interrupted=False):
         elif isinstance(event, progress.Placed):
             assert event.task == stack[-1]
             assert event.devices and len(set(event.devices)) == len(event.devices)
+        elif isinstance(event, progress.Preview):
+            assert event.task == stack[-1] and event.arrays
         elif isinstance(event, progress.Note):
             assert event.task == (stack[-1] if stack else None)
         elif isinstance(event, progress.Advanced):
@@ -175,8 +177,9 @@ def test_metric_snapshot_and_strict_json():
     }
 
 
+@pytest.mark.parametrize("previews", [False, True])
 @pytest.mark.parametrize("final", [False, True])
-def test_streamed_cancellation_on_advance(monkeypatch, final):
+def test_streamed_cancellation_on_advance(monkeypatch, final, previews):
     from tomojax.backends import host_stream
 
     reads = []
@@ -198,7 +201,7 @@ def test_streamed_cancellation_on_advance(monkeypatch, final):
             token.cancel()
 
     config = CGLSConfig(backend="jax", stream=True, views_per_batch=4, iterations=4, tolerance=0)
-    with progress.watch(handler, control=token):
+    with progress.watch(handler, control=token, previews=previews):
         if final:
             result = tj.reconstruct(subject, "cgls", config=config)
             assert result.info["effective_iterations"] == 4
