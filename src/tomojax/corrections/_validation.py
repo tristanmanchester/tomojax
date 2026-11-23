@@ -81,3 +81,25 @@ def positive_finite(value: float, name: str) -> float:
     if not np.isfinite(value) or value <= 0:
         raise InvalidParameter(name, f"{name} must be finite and positive, not {value!r}")
     return value
+
+
+def check_rows(rows: tuple[int, int], native_rows: int, binning: int) -> None:
+    """Check a half-open row interval in the binned output.
+
+    Parameters
+    ----------
+    rows : tuple of int
+        Requested start and exclusive stop.
+    native_rows : int
+        Native detector height.
+    binning : int
+        Number of native rows in an output row.
+
+    Raises
+    ------
+    InvalidParameter
+        If the interval lies outside complete detector blocks.
+    """
+    lower, upper = rows
+    if not 0 <= lower < upper <= native_rows // binning:
+        raise InvalidParameter("rows", "expected a nonempty interval of binned detector rows")

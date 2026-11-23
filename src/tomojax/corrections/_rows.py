@@ -64,7 +64,10 @@ def preview_window(
     tuple
         Native input interval and its locally registered correction steps.
     """
+    from ._validation import check_rows
+
     rows, cols = shape
+    check_rows((lower, upper), rows, factor)
     first, stop = lower * factor, upper * factor
     needed_first, needed_stop = first, stop
     for _, step in reversed(ordered_steps(steps)):
@@ -350,9 +353,7 @@ def _correct_host_rows(
     """Correct a host band with bounded raw reads and device workspaces."""
     rows = slice(first, stop)
     raw = counts[:, rows] if isinstance(counts, np.ndarray) else counts.window(rows, slice(None))
-    selected = Fields(
-        fields.flats[:, rows], fields.positions, fields.dark[rows], fields.usable[rows]
-    )
+    selected = fields.window(rows)
     output = np.empty(raw.shape, np.float32)
     batch = frame_batch_size(raw.shape[0], raw.shape[1], raw.shape[2], ())
     transmission = tuple(s for s in steps if s.domain == "transmission")

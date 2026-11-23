@@ -304,6 +304,7 @@ class Admission:
     def correct(self, operation: op.Correct | op.ReconstructSlabs) -> Work:
         from tomojax._loading import is_raw_input
         from tomojax.corrections.api import (
+            check_rows,
             check_scan_steps,
             positive_finite,
             validated_views_per_batch,
@@ -362,7 +363,7 @@ class Admission:
         positive_finite(operation.epsilon, "epsilon")
         check_binning(operation.binning, *item.counts.shape[1:])
         if isinstance(operation, op.CorrectionPreview):
-            interactive.check_rows(operation.rows, item.counts.shape[1], operation.binning)
+            check_rows(operation.rows, item.counts.shape[1], operation.binning)
             return partial(correction_product, operation, item, steps, settings, self.context)
         return partial(item.corrected, *steps, **settings)
 

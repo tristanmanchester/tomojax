@@ -546,6 +546,8 @@ def corrected_data(
     epsilon: float,
     views_per_batch: int | None,
     binning: int,
+    *,
+    output_rows: tuple[int, int] | None = None,
 ) -> corrections.Corrected:
     """Run the shared correction pipeline and retain its original acquisition indices."""
     from tomojax.corrections import correct_frames
@@ -575,6 +577,7 @@ def corrected_data(
             epsilon=epsilon,
             views_per_batch=views_per_batch,
             binning=binning,
+            output_rows=output_rows,
         )
 
 

@@ -56,6 +56,7 @@ def correct_frames(
     flat_exposure_times: np.ndarray | float | None = None,
     views_per_batch: int | None = None,
     binning: int = 1,
+    output_rows: tuple[int, int] | None = None,
     dark_source: str | None = None,
     linear_limit: tuple[float, str] | None = None,
 ) -> Corrected:
@@ -98,6 +99,9 @@ def correct_frames(
     binning : int, optional
         Positive detector-block side length for mean binning of the corrected line
         integrals. Default is 1; incomplete edge blocks are dropped.
+    output_rows : tuple of int or None, optional
+        Half-open interval in the binned detector. Calibration uses the original detector;
+        the selected corrections determine which native rows must be read.
     dark_source : str or None, optional
         What removed the dark before the counts were recorded (a camera that
         subtracts it, say), kept in the record as ``dark_removed_by`` in place of
@@ -141,12 +145,27 @@ def correct_frames(
     views, rows, cols = (int(s) for s in counts.shape)
     check_binning(binning, rows, cols)
     binning = int(binning)
+    band = slice(0, rows)
+    selected = slice(None)
+    if output_rows is not None:
+        from ._rows import preview_window
+
+        lower, upper = output_rows
+        band, steps = preview_window(steps, (rows, cols), lower, upper, binning)
+        selected = slice(lower - band.start // binning, upper - band.start // binning)
     ordered = ordered_steps(steps)
     view_scales, flat_scales = exposure_scales(exposure_times, flat_exposure_times, views, flats)
     fields, field_record = flat_fields(
         flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales,
         dark_source=dark_source,
     )  # fmt: skip
+    acquisition_fields, acquisition_counts = fields, counts
+    if band != slice(0, rows):
+        counts = (
+            counts.window(band, slice(None)) if hasattr(counts, "window") else counts[:, band, :]
+        )
+        fields = fields.window(band)
+        rows = counts.shape[1]
     if flat_scales is not None and exposure_times is not None:
         field_record[0].settings["sample_exposure_range_s"] = [
             float(np.min(exposure_times)),
@@ -204,7 +223,7 @@ def correct_frames(
             report_linear_limit(
                 field_record[0],
                 linear_limit,
-                fields,
+                acquisition_fields,
                 view_scales,
                 float(tally[2]) / counts_size(counts),
             )
@@ -215,10 +234,20 @@ def correct_frames(
             + [s.record() for s in transmission_steps] + [log]
             + [s.record() for s in head] + list(tail_records)
         )  # fmt: skip
+        if output_rows is not None:
+            out = np.array(out[:, selected], copy=True)
         if progress.previewing():
             with progress.task("correction", "central sinograms", None, ""):
                 progress.preview(
-                    lambda: correction_images(counts, out, kept, binning, "counts"), final=True
+                    lambda: correction_images(
+                        acquisition_counts,
+                        out,
+                        kept,
+                        binning,
+                        "counts",
+                        first_output_row=0 if output_rows is None else output_rows[0],
+                    ),
+                    final=True,
                 )
         return Corrected(out, records, kept)
 
@@ -327,6 +356,10 @@ class Fields:
         self, flats: np.ndarray, positions: np.ndarray, dark: np.ndarray, usable: np.ndarray
     ) -> None:
         self.flats, self.positions, self.dark, self.usable = flats, positions, dark, usable
+
+    def window(self, rows: slice) -> Fields:
+        """Select detector rows after resolving illumination on the whole acquisition."""
+        return Fields(self.flats[:, rows], self.positions, self.dark[rows], self.usable[rows])
 
 
 def flat_fields(

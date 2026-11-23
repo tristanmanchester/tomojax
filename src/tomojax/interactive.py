@@ -11,11 +11,9 @@ from tomojax import progress
 from tomojax._loading import corrected_data
 from tomojax._planning import ResolvedReconstruction, resolve_reconstruction
 from tomojax._region import RegionEstimate, estimate_region
-from tomojax._scan import Scan, bind_step_geometry, binned_geometry
+from tomojax._scan import Scan, binned_geometry
 from tomojax._workflow import reconstruct, reconstruct_resolved
-from tomojax.core.array_ops import check_binning
 from tomojax.core.registration import planes, recorded_length_unit
-from tomojax.corrections.api import preview_window
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import ConeSegments, grid_volume_origin
 from tomojax.recon import FBPConfig
@@ -260,13 +258,6 @@ class CorrectionBand:
     detector: Detector
 
 
-def check_rows(rows: tuple[int, int], native_rows: int, binning: int) -> None:
-    """Check the requested band against complete native detector blocks."""
-    lower, upper = rows
-    if not 0 <= lower < upper <= native_rows // binning:
-        raise InvalidParameter("rows", "expected a nonempty interval of binned detector rows")
-
-
 def correction_preview(
     frames: Frames,
     rows: tuple[int, int],
@@ -297,22 +288,12 @@ def correction_preview(
     CorrectionBand
         Native counts, binned line integrals and original input view indices.
     """
-    detector = frames.geometry.detector
-    check_binning(binning, detector.nv, detector.nu)
     low, high = rows
-    check_rows(rows, detector.nv, binning)
-    band, local = preview_window(
-        bind_step_geometry(steps, frames.geometry), (detector.nv, detector.nu), low, high, binning
-    )
-    subset = frames if band == slice(0, detector.nv) else frames.cropped(band, slice(None))
-    done = corrected_data(subset, local, epsilon, views_per_batch, binning)
+    done = corrected_data(frames, steps, epsilon, views_per_batch, binning, output_rows=rows)
     native = slice(low * binning, high * binning)
     counts = frames.counts
     before = (
         counts.window(native, slice(None))[:] if hasattr(counts, "window") else counts[:, native, :]
     )
-    after = done.projections[:, low - band.start // binning : high - band.start // binning, :]
     result_detector = binned_geometry(frames.geometry, binning).detector
-    return CorrectionBand(
-        np.array(before, copy=True), np.array(after, copy=True), done.kept, result_detector
-    )
+    return CorrectionBand(np.array(before, copy=True), done.projections, done.kept, result_detector)

@@ -616,6 +616,7 @@ def tomojax.corrections.correct_frames(
         flat_exposure_times: 'np.ndarray | float | None' = None,
         views_per_batch: 'int | None' = None,
         binning: 'int' = 1,
+        output_rows: 'tuple[int, int] | None' = None,
         dark_source: 'str | None' = None,
         linear_limit: 'tuple[float, str] | None' = None,
     ) -> 'Corrected'

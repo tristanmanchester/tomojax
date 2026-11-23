@@ -276,3 +276,17 @@ def test_plane_does_not_retain_the_full_mapped_reconstruction(monkeypatch, tmp_p
     gc.collect()
     np.testing.assert_array_equal(plane, full[:, :, 3])
     assert refs[0]() is None
+
+
+def test_dark_preview_band_uses_original_detector_illumination():
+    grid = tj.Grid(5, 5, 7, 1, 1, 1)
+    geom = tj.ParallelGeometry(grid, tj.Detector(9, 7, 1, 1), np.arange(5) * 31.0)
+    counts = np.arange(315, dtype=np.float32).reshape(5, 7, 9) + 30
+    flats = np.full((1, 7, 9), 500, np.float32)
+    flats[:, :2] = 10
+    frames = tj.Frames(counts, geom, flats=flats, darks=np.full_like(flats, 10))
+    expected = frames.corrected(binning=2).projections[:, :1]
+    result = correction_preview(frames, (0, 1), binning=2)
+    np.testing.assert_array_equal(result.after, expected)
+    with pytest.raises(ValueError, match="No detector pixels have resolved illumination"):
+        correction_preview(replace(frames, flats=np.full_like(flats, 10)), (0, 1), binning=2)

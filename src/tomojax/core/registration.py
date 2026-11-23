@@ -157,7 +157,13 @@ class SlabPlanes:
 
 
 def correction_images(
-    before: Any, after: np.ndarray, kept: np.ndarray, factor: int, domain: str
+    before: Any,
+    after: np.ndarray,
+    kept: np.ndarray,
+    factor: int,
+    domain: str,
+    *,
+    first_output_row: int = 0,
 ) -> dict[str, progress.Sample]:
     """Copy central native and corrected detector rows at their own registered coordinates."""
     geom = source_geometry.get()
@@ -178,6 +184,8 @@ def correction_images(
             pixels = data.window(slice(row, row + 1), slice(None))[:][:, 0, :]
         else:
             pixels = data[:, row, :]
+        if name == "after":
+            row += first_output_row
         angles = None if geom is None else np.asarray(geom.angles)[ids]
         view = Axis("view", "acquisition", "index" if angles is None else "degree", Uniform(0, 1))
         coords = ids if angles is None else angles
