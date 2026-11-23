@@ -79,7 +79,7 @@ class FBPHostConfig:
     fbp: FBPConfig = field(default_factory=FBPConfig)
 
 
-def _axial_depth(nz: int, requested: int | None) -> int:
+def axial_depth(nz: int, requested: int | None) -> int:
     """Balance automatic slabs without exceeding 16 slices or adding a slab."""
     if requested is not None:
         return min(requested, nz)
@@ -284,7 +284,7 @@ def fbp_host(
     backend = "cuda" if cuda and fbp_cfg.backend != "jax" else "jax"
     if type(geometry) is not ParallelGeometry:
         return _general_slabs(poses, grid, detector, projections, cfg, out, backend, slices, views)
-    depth = _axial_depth(grid.nz, slices)
+    depth = axial_depth(grid.nz, slices)
     local_grid, local_detector, first, step, integer = _slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = rfft_filter_array(fbp_cfg.filter, local_detector.nu, detector.du, jnp.float32)

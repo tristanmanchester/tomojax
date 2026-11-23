@@ -582,6 +582,88 @@ def _iterative_incore(
     return volume, {"config": cfg, "warm_start": warm_start, **record}
 
 
+def axial_fbp_plane(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: np.ndarray | jnp.ndarray,
+    cfg: FBPConfig,
+    index: int,
+) -> jnp.ndarray | np.ndarray | None:
+    """Use the full solver's view batches when a voxel plane takes one detector row.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Calibrated acquisition.
+    grid : Grid
+        Full output voxel grid.
+    detector : Detector
+        Original measured detector.
+    projections : numpy.ndarray or jax.Array
+        Input stack in view, row and column order.
+    cfg : FBPConfig
+        Full reconstruction's algorithm and device settings.
+    index : int
+        Requested axial plane on the output grid.
+
+    Returns
+    -------
+    array or None
+        Requested attenuation plane, or None when other rows can contribute.
+    """
+    import numpy as np
+
+    from tomojax.geometry import grid_volume_origin
+
+    from ._axial_slabs import independent_planes
+    from ._fbp_storage import too_large_for_the_device
+    from .fbp import parallel_fbp
+
+    if (
+        not independent_planes(geometry, grid, detector)
+        or _detector_grid(geometry, detector) is not None
+    ):
+        return None
+    if too_large_for_the_device(grid, cfg):
+        from dataclasses import replace
+
+        from ._fbp_storage import first_device
+        from .fbp_host import FBPHostConfig, axial_depth, fbp_host
+
+        depth = axial_depth(grid.nz, None)
+        first = index // depth * depth
+        ox, oy, oz = grid_volume_origin(grid)
+        slab = replace(
+            grid,
+            nz=min(depth, grid.nz - first),
+            vol_origin=(ox, oy, oz + first * grid.vz),
+            vol_center=None,
+        )
+        with first_device(cfg):
+            volume = fbp_host(
+                geometry,
+                slab,
+                detector,
+                projections,
+                config=FBPHostConfig(fbp=cfg, slices_per_batch=depth),
+            )
+        return volume[index - first]
+    # Compilers can fuse the z multiply-add and replace division by a reciprocal.
+    # Prove each operation exact in FP32 before removing interpolation neighbours.
+    pitch = float(np.float32(detector.dv))
+    z = index * pitch + float(np.float32(grid_volume_origin(grid)[2]))
+    centered = z - float(np.float32(detector.center[1]))
+    if (
+        np.frexp(pitch)[0] != 0.5
+        or float(np.float32(z)) != z
+        or float(np.float32(centered)) != centered
+        or centered / pitch != index - (detector.nv - 1) / 2
+    ):
+        return None
+    return parallel_fbp(geometry, grid, detector, projections, cfg, None, row=index)[0]
+
+
 def _detector_grid(
     geometry: Geometry, detector: Detector
 ) -> tuple[jnp.ndarray, jnp.ndarray] | None:
@@ -593,6 +675,7 @@ def _detector_grid(
 __all__ = [
     "MethodConfig",
     "Projector",
+    "axial_fbp_plane",
     "backproject",
     "clear_filter_caches",
     "default_fbp_scale",

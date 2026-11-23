@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from ._engine import (
@@ -25,12 +26,70 @@ from ._engine import (
     ordered_steps,
     reject_nonfinite,
 )
+from ._hardening import BeamHardening
 from ._records import Correction
-from ._steps import Step
+from ._steps import RadialDistortion, Step, Zingers, apply_radial_window, radial_coordinates
 from ._validation import positive_finite
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
+
+
+@dataclass(frozen=True)
+class _RadialWindow(RadialDistortion):
+    first: int
+
+    def apply(self, batch: jax.Array) -> jax.Array:
+        return apply_radial_window(self, batch, self.first)
+
+
+def preview_window(
+    steps: Sequence[Step], shape: tuple[int, int], lower: int, upper: int, factor: int
+) -> tuple[slice, tuple[Step, ...]]:
+    """Propagate complete native output blocks backwards across the ordered corrections.
+
+    Parameters
+    ----------
+    steps : sequence of Step
+        Corrections in their supplied order.
+    shape : tuple of int
+        Native detector rows and columns.
+    lower, upper : int
+        Half-open row bounds in the binned output.
+    factor : int
+        Native block size.
+
+    Returns
+    -------
+    tuple
+        Native input interval and its locally registered correction steps.
+    """
+    rows, cols = shape
+    first, stop = lower * factor, upper * factor
+    needed_first, needed_stop = first, stop
+    for _, step in reversed(ordered_steps(steps)):
+        if step.whole_rows or isinstance(step, BeamHardening):
+            continue
+        if isinstance(step, Zingers):
+            first, stop = max(0, first - step.size // 2), min(rows, stop + step.size // 2)
+        elif isinstance(step, RadialDistortion):
+            y, _ = radial_coordinates(step, first, stop, cols)
+            y = jnp.clip(y, 0, rows - 1)
+            first = int(jnp.floor(jnp.min(y)))
+            stop = min(rows, int(jnp.floor(jnp.max(y))) + 2)
+        else:
+            # Selection statistics, propagation and undeclared transforms need their full input.
+            first, stop = 0, rows
+        needed_first, needed_stop = min(first, needed_first), max(stop, needed_stop)
+    first = needed_first // factor * factor
+    stop = min(rows, (needed_stop + factor - 1) // factor * factor)
+    local = tuple(
+        _RadialWindow(center=step.center, coefficients=step.coefficients, first=first)
+        if first and isinstance(step, RadialDistortion)
+        else step
+        for step in steps
+    )
+    return slice(first, stop), local
 
 
 @dataclass

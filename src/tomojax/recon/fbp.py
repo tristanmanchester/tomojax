@@ -894,6 +894,20 @@ def fbp(
 
         return fdk(geometry, grid, detector, projections, config=fdk_config(cfg))
 
+    return parallel_fbp(geometry, grid, detector, projections, cfg, det_grid)
+
+
+def parallel_fbp(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray | np.ndarray,
+    cfg: FBPConfig,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    *,
+    row: int | None = None,
+) -> jnp.ndarray:
+    """Filter and backproject original view batches on the grid or one aligned axial row."""
     with progress.task("reconstruct", "fbp", None, "batches"):
         validate_fbp_geometry(geometry, grid, detector, "fbp")
         n_views, _, _ = validate_projection_stack(
@@ -922,6 +936,16 @@ def fbp(
         plan = _plan(
             geometry, grid, detector, T_all, proj, cfg, cuda=cuda, moved=motion is not None
         )
+        if row is not None:
+            # Original filter, weights, view partition and numerical batch size. The
+            # selected voxel plane and its measured row occupy local height zero.
+            ox, oy, _ = grid_volume_origin(grid)
+            plan = replace(
+                plan,
+                grid=replace(grid, nz=1, vol_origin=(ox, oy, 0.0), vol_center=None),
+                detector=replace(plan.detector, nv=1, center=(plan.detector.center[0], 0.0)),
+                projections=proj[:, row : row + 1, :],
+            )
         split = view_split(cfg.devices, n_views)
         if split is None:
             announce(array=proj)

@@ -440,34 +440,7 @@ class Frames:
         ValueError
             If calibration, correction settings or batch dimensions are invalid.
         """
-        from tomojax.corrections import correct_frames
-
-        progress.check_cancelled()
-        bound = bind_step_geometry(steps, self.geometry)
-        source = self.source.source_path if self.source is not None else None
-        reading = not isinstance(self.counts, np.ndarray)
-        with (
-            registration(self),
-            progress.task("load", Path(source).name, self.views, "views")
-            if reading and source is not None
-            else nullcontext(),
-        ):
-            done = correct_frames(
-                self.counts,
-                flats=self.flats,
-                flat_positions=self.flat_positions,
-                view_positions=self.view_positions,
-                exposure_times=self.exposure_times,
-                flat_exposure_times=self.flat_exposure_times,
-                darks=self.darks,
-                dark_source=self.dark_source,
-                linear_limit=self.linear_limit,
-                white_level=self.white_level,
-                steps=bound,
-                epsilon=epsilon,
-                views_per_batch=views_per_batch,
-                binning=binning,
-            )
+        done = corrected_data(self, steps, epsilon, views_per_batch, binning)
         everything = len(done.kept) == self.views
         geometry = self.geometry if everything else views_of(self.geometry, done.kept)
         geometry = binned_geometry(geometry, binning) if binning > 1 else geometry
@@ -564,6 +537,44 @@ class Frames:
                 else np.broadcast_to(self.exposure_times, (self.views,))[kept]
             ),
             corrections=(*self.corrections, cut("selected", views=kept.tolist())),
+        )
+
+
+def corrected_data(
+    frames: Frames,
+    steps: Sequence[corrections.Step],
+    epsilon: float,
+    views_per_batch: int | None,
+    binning: int,
+) -> corrections.Corrected:
+    """Run the shared correction pipeline and retain its original acquisition indices."""
+    from tomojax.corrections import correct_frames
+
+    progress.check_cancelled()
+    bound = bind_step_geometry(steps, frames.geometry)
+    source = frames.source.source_path if frames.source is not None else None
+    reading = not isinstance(frames.counts, np.ndarray)
+    with (
+        registration(frames),
+        progress.task("load", Path(source).name, frames.views, "views")
+        if reading and source is not None
+        else nullcontext(),
+    ):
+        return correct_frames(
+            frames.counts,
+            flats=frames.flats,
+            flat_positions=frames.flat_positions,
+            view_positions=frames.view_positions,
+            exposure_times=frames.exposure_times,
+            flat_exposure_times=frames.flat_exposure_times,
+            darks=frames.darks,
+            dark_source=frames.dark_source,
+            linear_limit=frames.linear_limit,
+            white_level=frames.white_level,
+            steps=bound,
+            epsilon=epsilon,
+            views_per_batch=views_per_batch,
+            binning=binning,
         )
 
 

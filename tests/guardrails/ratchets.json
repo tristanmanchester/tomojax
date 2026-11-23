@@ -18,6 +18,7 @@
     "tomojax.geometry": 13,
     "tomojax.evaluation": 2,
     "tomojax.progress": 13,
+    "tomojax.interactive": 6,
     "tomojax.corrections": 15,
     "tomojax.forward": 3,
     "tomojax.recon": 21,
@@ -25,8 +26,8 @@
     "tomojax.alignment": 1,
     "tomojax.datasets": 14,
     "tomojax.geometry.api": 12,
-    "tomojax.corrections.api": 5,
-    "tomojax.recon.api": 11,
+    "tomojax.corrections.api": 6,
+    "tomojax.recon.api": 12,
     "tomojax.io.api": 28,
     "tomojax.alignment.api": 4
   },
@@ -54,20 +55,20 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 5318,
+    "(modules)": 5535,
     "_data": 2153,
     "alignment": 4670,
     "backends": 263,
     "cli": 5607,
-    "core": 9844,
-    "corrections": 3049,
+    "core": 9849,
+    "corrections": 3103,
     "datasets": 1069,
     "forward": 404,
     "geometry": 908,
     "io": 3947,
     "motion": 153,
     "nuisance": 232,
-    "recon": 14148,
+    "recon": 14232,
     "wire": 266
   },
   "cuda_kernels": 47,
@@ -92,7 +93,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 66,
+    "tiny": 65,
     "forwarders": 5,
     "chained": 4
   },

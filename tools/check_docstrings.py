@@ -22,6 +22,7 @@ PUBLIC_MODULES = (
     "tomojax.geometry",
     "tomojax.evaluation",
     "tomojax.progress",
+    "tomojax.interactive",
     "tomojax.datasets",
     "tomojax.forward",
     "tomojax.forward.api",

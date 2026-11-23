@@ -7,6 +7,7 @@ type = layers
 layers =
     tomojax.cli
     tomojax.torch
+    tomojax.interactive
     tomojax._workflow
     tomojax._resources
     tomojax._smooth_alignment
@@ -40,6 +41,7 @@ type = forbidden
 allow_indirect_imports = True
 source_modules =
     tomojax.cli
+    tomojax.interactive
     tomojax._smooth_alignment
     tomojax._region
     tomojax._workflow
@@ -58,6 +60,7 @@ type = forbidden
 allow_indirect_imports = True
 source_modules =
     tomojax.cli
+    tomojax.interactive
     tomojax._smooth_alignment
     tomojax._region
     tomojax._workflow

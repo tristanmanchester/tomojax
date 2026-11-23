@@ -607,15 +607,29 @@ class RadialDistortion(Step):
         jax.Array
             Corrected transmission, retaining the input shape.
         """
-        _, rows, cols = batch.shape
-        x = jnp.arange(cols, dtype=jnp.float32)[None, :] - self.center[0]
-        y = jnp.arange(rows, dtype=jnp.float32)[:, None] - self.center[1]
-        radius = jnp.sqrt(x * x + y * y)
-        scale = jnp.zeros_like(radius)
-        for c in reversed(self.coefficients):  # Horner's rule
-            scale = scale * radius + c
-        at = (self.center[1] + scale * y, self.center[0] + scale * x)
-        return jax.vmap(lambda view: map_coordinates(view, at, order=1, mode="nearest"))(batch)
+        return apply_radial_window(self, batch, 0)
+
+
+def radial_coordinates(
+    step: RadialDistortion, first: int, stop: int, cols: int
+) -> tuple[jax.Array, jax.Array]:
+    """Backward map of the requested rows in native detector coordinates."""
+    x = jnp.arange(cols, dtype=jnp.float32)[None, :] - step.center[0]
+    y = jnp.arange(first, stop, dtype=jnp.float32)[:, None] - step.center[1]
+    radius = jnp.sqrt(x * x + y * y)
+    scale = jnp.zeros_like(radius)
+    for c in reversed(step.coefficients):  # Horner's rule
+        scale = scale * radius + c
+    return step.center[1] + scale * y, step.center[0] + scale * x
+
+
+def apply_radial_window(step: RadialDistortion, batch: jax.Array, first: int) -> jax.Array:
+    """Sample a cropped buffer with the same native map and bilinear neighbours."""
+    _, rows, cols = batch.shape
+    y, x = radial_coordinates(step, first, first + rows, cols)
+    # Round in the native frame before translation, as on the full detector.
+    at = (jax.lax.optimization_barrier(y) - first if first else y, x)
+    return jax.vmap(lambda view: map_coordinates(view, at, order=1, mode="nearest"))(batch)
 
 
 @dataclass(frozen=True)

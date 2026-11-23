@@ -494,6 +494,46 @@ def tomojax.progress.watch(
         previews: 'bool' = False,
     ) -> 'Iterator[None]'
 
+# tomojax.interactive
+class tomojax.interactive.CorrectionBand(
+        before: 'np.ndarray',
+        after: 'np.ndarray',
+        views: 'np.ndarray',
+        detector: 'Detector',
+    ) -> None
+class tomojax.interactive.RegionOverlay(
+        estimate: 'RegionEstimate',
+        bounds: 'tuple[tuple[float, float], tuple[float, float], tuple[float, float]]',
+        images: 'dict[str, progress.Sample]',
+    ) -> None
+def tomojax.interactive.centre_sweep(
+        scan: 'Scan',
+        axis: 'Axis',
+        index: 'int',
+        centres: 'Sequence[float]',
+        *,
+        method: 'Method' = 'auto',
+        **options: 'Any',
+    ) -> 'Any'
+def tomojax.interactive.correction_preview(
+        frames: 'Frames',
+        rows: 'tuple[int, int]',
+        *steps: 'Step',
+        *,
+        binning: 'int' = 1,
+        epsilon: 'float' = 1e-06,
+        views_per_batch: 'int | None' = None,
+    ) -> 'CorrectionBand'
+def tomojax.interactive.reconstruct_slice(
+        scan: 'Scan',
+        axis: 'Axis',
+        index: 'int',
+        *,
+        method: 'Method' = 'auto',
+        **options: 'Any',
+    ) -> 'Any'
+def tomojax.interactive.region_preview(scan: 'Scan') -> 'RegionOverlay'
+
 # tomojax.corrections
 class tomojax.corrections.BeamHardening(
         rates: 'tuple[float, ...]' = (1.0,),

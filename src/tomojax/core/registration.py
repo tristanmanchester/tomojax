@@ -75,10 +75,15 @@ def pose_columns(unit: str) -> tuple[Column, ...]:
 
 
 def planes(
-    volume: Any, grid: Grid, *, reversed_axes: bool = False, observed: Any = None
+    volume: Any,
+    grid: Grid,
+    *,
+    reversed_axes: bool = False,
+    observed: Any = None,
+    unit: str | None = None,
 ) -> dict[str, progress.Sample]:
     """Index first so only three planes leave the device, including private xyz storage."""
-    unit = length_unit.get()
+    unit = unit or length_unit.get()
     axes = volume_axes(grid, unit)
     images = {}
     for i, axis in enumerate(axes):

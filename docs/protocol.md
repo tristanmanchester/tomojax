@@ -45,6 +45,8 @@ Execution results include bounded `info` and an input manifest. Each manifest no
 
 ## Progress and array registration
 
+A centre sweep resolves `region` once on the input scan. Every centre uses that grid, its support and the same plane index. To reproduce a plane, shift the detector to the requested horizontal offset in input detector pixels and run a full reconstruction with the resolved `grid=`. Keep the resolved cylinder mask when requesting cylindrical support. All planes share one spatial registration, including repeated centres.
+
 The standalone v2 progress schema covers task start/end, completed work with nullable ETA, placement, notes, pause/resume, previews and CLI terminals. A note carries the innermost open task ID, or null for a watch-level message between operations. The worker's `progress.record` admits only nonterminal events. `placed` lists actual participating devices. Elapsed time and ETA use seconds. Error kinds are `input`, `invalid_parameter`, `out_of_memory`, `cancelled`, `superseded` and `internal`. Worker admission errors have their own envelope. A failure path such as `corrections[2].alpha` starts at the operation's parameters.
 
 Every descriptor carries shape, NumPy dtype, ordered axes, value unit/domain and storage. `npy` names a file, `hdf5` names a file and dataset, and `member` names a session handle and member. Session-produced npy files carry a release token. Client-owned npy and HDF5 inputs stay caller-owned. Array values travel outside JSON. Each axis gives a name, frame, unit, and either uniform coordinates or a reference to a one-dimensional vector of its coordinates. Coordinate order equals stored index order, including for irregularly selected views.
