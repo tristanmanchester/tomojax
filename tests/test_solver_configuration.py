@@ -43,9 +43,14 @@ def test_solvers_reject_invalid_counts_before_building_geometry(monkeypatch, sol
         pytest.fail("invalid configuration reached geometry construction")
 
     monkeypatch.setattr(module, "stack_view_poses", unexpected_geometry)
-    config = (FISTAConfig if solver == "fista" else SPDHGConfig)(**{field: value})
     with pytest.raises(ValueError, match=field):
-        (fista if solver == "fista" else spdhg)(geometry, grid, detector, data, config=config)
+        (fista if solver == "fista" else spdhg)(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=(FISTAConfig if solver == "fista" else SPDHGConfig)(**{field: value}),
+        )
 
 
 @pytest.mark.parametrize("value", [-1.0, np.inf, np.nan])
@@ -70,9 +75,14 @@ def test_solvers_reject_invalid_scalars_before_building_geometry(monkeypatch, so
         pytest.fail("invalid configuration reached geometry construction")
 
     monkeypatch.setattr(module, "stack_view_poses", unexpected_geometry)
-    config = (FISTAConfig if solver == "fista" else SPDHGConfig)(**{field: value})
     with pytest.raises(ValueError, match=field):
-        (fista if solver == "fista" else spdhg)(geometry, grid, detector, data, config=config)
+        (fista if solver == "fista" else spdhg)(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=(FISTAConfig if solver == "fista" else SPDHGConfig)(**{field: value}),
+        )
 
 
 @pytest.mark.parametrize(
@@ -90,9 +100,14 @@ def test_solvers_reject_invalid_scalars_before_building_geometry(monkeypatch, so
 )
 def test_solvers_reject_zero_sizes_and_steps(solver, field):
     grid, detector, geometry, data = _problem()
-    config = (FISTAConfig if solver == "fista" else SPDHGConfig)(**{field: 0})
     with pytest.raises(ValueError, match=field):
-        (fista if solver == "fista" else spdhg)(geometry, grid, detector, data, config=config)
+        (fista if solver == "fista" else spdhg)(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=(FISTAConfig if solver == "fista" else SPDHGConfig)(**{field: 0}),
+        )
 
 
 @pytest.mark.parametrize("field", ["tv_prox_iterations", "power_iterations", "patience"])
@@ -284,3 +299,30 @@ def test_fista_auto_step_is_finite_for_zero_operator(warm_start):
     np.testing.assert_array_equal(volume, np.zeros_like(initial))
     np.testing.assert_allclose(info["loss"], np.full(3, 0.5 * np.sum(data**2)), rtol=2e-6)
     assert np.isfinite(info["lipschitz"]) and info["lipschitz"] > 0
+
+
+@pytest.mark.parametrize(
+    ("name", "valid", "invalid", "field"),
+    [
+        ("FBPConfig", {"filter": " HANN "}, {"filter": "banana"}, "filter"),
+        ("CGLSConfig", {"damping": 0}, {"damping": -0.01}, "damping"),
+        (
+            "FISTAConfig",
+            {"huber_delta": 0, "regularizer": "tv"},
+            {"huber_delta": 0, "regularizer": "huber_tv"},
+            "huber_delta",
+        ),
+        ("SPDHGConfig", {"views_per_block": 1}, {"views_per_block": 0}, "views_per_block"),
+        ("SIRTConfig", {"subsets": 2}, {"subsets": 2, "acceleration": True}, "acceleration"),
+        ("MLEMConfig", {"iterations": 0}, {"iterations": -1}, "iterations"),
+        ("FourierConfig", {"slices_per_batch": 1}, {"slices_per_batch": 0}, "slices_per_batch"),
+    ],
+)
+def test_configs_reject_domain_errors_at_construction(name, valid, invalid, field):
+    from tomojax import InvalidParameter, recon
+
+    constructor = getattr(recon, name)
+    constructor(**valid)
+    with pytest.raises(InvalidParameter) as error:
+        constructor(**invalid)
+    assert error.value.path == field

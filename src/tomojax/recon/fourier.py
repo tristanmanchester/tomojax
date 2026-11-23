@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+import operator
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -11,6 +12,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_grid, validate_projection_stack
+from tomojax.errors import InvalidParameter
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
 from ._fourier_backend import FourierPlan, fourier_slab_depth, is_cuda_oom, resolve_fourier_backend
@@ -63,6 +65,16 @@ class FourierConfig:
 
     slices_per_batch: int | None = None
     backend: Literal["auto", "numpy", "cupy"] = "auto"
+
+    def __post_init__(self) -> None:
+        if self.backend not in ("auto", "numpy", "cupy"):
+            raise InvalidParameter(
+                "backend", "fourier_reconstruct: backend must be 'auto', 'numpy' or 'cupy'"
+            )
+        if self.slices_per_batch is not None and operator.index(self.slices_per_batch) < 1:
+            raise InvalidParameter(
+                "slices_per_batch", "fourier_reconstruct: slices_per_batch must be positive"
+            )
 
 
 @progress.task("reconstruct", "fourier", None, "slabs")

@@ -25,6 +25,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.array_ops import mean_detector_pixels
 from tomojax.core.host_volume import discard_failed_outputs
+from tomojax.errors import InvalidParameter
 
 from ._batches import HostCopies, correction_group, view_batches
 from ._records import Correction, Json
@@ -137,7 +138,9 @@ def correct_frames(
     views_per_batch = _validated_views_per_batch(views_per_batch)
     epsilon = positive_finite(epsilon, "epsilon")
     if isinstance(binning, bool) or not isinstance(binning, int | np.integer) or binning < 1:
-        raise ValueError(f"binning needs a whole factor of at least 1, not {binning!r}")
+        raise InvalidParameter(
+            "binning", f"binning needs a whole factor of at least 1, not {binning!r}"
+        )
     binning = int(binning)
     views, rows, cols = (int(s) for s in counts.shape)
     ordered = ordered_steps(steps)
@@ -299,14 +302,16 @@ def _validated_views_per_batch(value: int | None) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int | np.integer) or value <= 0:
-        raise ValueError(f"views_per_batch must be a positive integer, not {value!r}")
+        raise InvalidParameter(
+            "views_per_batch", f"views_per_batch must be a positive integer, not {value!r}"
+        )
     return int(value)
 
 
 def positive_finite(value: float, name: str) -> float:
     value = float(value)
     if not np.isfinite(value) or value <= 0:
-        raise ValueError(f"{name} must be finite and positive, not {value!r}")
+        raise InvalidParameter(name, f"{name} must be finite and positive, not {value!r}")
     return value
 
 

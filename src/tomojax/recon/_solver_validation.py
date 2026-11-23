@@ -10,6 +10,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.errors import InvalidParameter
+
 if TYPE_CHECKING:
     from .fista_tv import FISTAConfig
     from .spdhg_tv import SPDHGConfig
@@ -21,22 +23,24 @@ def _count(value: int, name: str, *, minimum: int, context: str) -> None:
     try:
         count = operator.index(value)
     except TypeError as error:
-        raise ValueError(message) from error
+        raise InvalidParameter(name, message) from error
     if isinstance(value, bool) or count < minimum:
-        raise ValueError(message)
+        raise InvalidParameter(name, message)
 
 
 def _weight(value: float, name: str, *, positive: bool = False, context: str) -> None:
     requirement = "positive" if positive else "nonnegative"
     if not math.isfinite(value) or value < 0 or (positive and value == 0):
-        raise ValueError(f"{context}: {name} must be finite and {requirement}")
+        raise InvalidParameter(name, f"{context}: {name} must be finite and {requirement}")
 
 
 def validate_fista_config(cfg: FISTAConfig) -> tuple[float | None, float | None]:
     """Check scalar settings and return normalized feasibility bounds."""
     context = "fista config"
     if cfg.data_term not in {"absolute", "per_view_contrast"}:
-        raise ValueError(f"{context}: data_term must be absolute or per_view_contrast")
+        raise InvalidParameter(
+            "data_term", f"{context}: data_term must be absolute or per_view_contrast"
+        )
     for name in ("iterations", "patience"):
         _count(getattr(cfg, name), name, minimum=0, context=context)
     for name in ("tv_prox_iterations", "power_iterations"):
@@ -57,12 +61,17 @@ def _fista_constraints(cfg: FISTAConfig) -> tuple[float | None, float | None]:
     lower = None if cfg.lower_bound is None else float(cfg.lower_bound)
     upper = None if cfg.upper_bound is None else float(cfg.upper_bound)
     if lower is not None and not math.isfinite(lower):
-        raise ValueError("fista constraints: lower_bound must be finite when provided")
+        raise InvalidParameter(
+            "lower_bound", "fista constraints: lower_bound must be finite when provided"
+        )
     if upper is not None and not math.isfinite(upper):
-        raise ValueError("fista constraints: upper_bound must be finite when provided")
+        raise InvalidParameter(
+            "upper_bound", "fista constraints: upper_bound must be finite when provided"
+        )
     if upper is not None and lower is not None and upper < lower:
-        raise ValueError(
-            "fista constraints: upper_bound must be greater than or equal to lower_bound"
+        raise InvalidParameter(
+            "upper_bound",
+            "fista constraints: upper_bound must be greater than or equal to lower_bound",
         )
     return lower, upper
 
@@ -71,7 +80,9 @@ def validate_spdhg_config(cfg: SPDHGConfig) -> None:
     """Check scalar settings, including independently optional step sizes."""
     context = "spdhg config"
     if cfg.data_term not in {"absolute", "per_view_contrast"}:
-        raise ValueError(f"{context}: data_term must be absolute or per_view_contrast")
+        raise InvalidParameter(
+            "data_term", f"{context}: data_term must be absolute or per_view_contrast"
+        )
     for name in ("iterations", "log_every"):
         _count(getattr(cfg, name), name, minimum=0, context=context)
     _count(cfg.views_per_block, "views_per_block", minimum=1, context=context)
@@ -79,7 +90,9 @@ def validate_spdhg_config(cfg: SPDHGConfig) -> None:
         _weight(cfg.tv_weight, "tv_weight", context=context)
     _weight(cfg.theta, "theta", context=context)
     if cfg.lower_bound is not None and not math.isfinite(float(cfg.lower_bound)):
-        raise ValueError(f"{context}: lower_bound must be finite when provided")
+        raise InvalidParameter(
+            "lower_bound", f"{context}: lower_bound must be finite when provided"
+        )
     for name in ("tau", "sigma_data", "sigma_tv"):
         value = getattr(cfg, name)
         if value is not None:

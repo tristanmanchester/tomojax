@@ -9,6 +9,8 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
+from tomojax.errors import InvalidParameter
+
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
 
@@ -109,6 +111,34 @@ class SimulationArtefacts:
         """
         return {key: _json_scalar(value) for key, value in asdict(self).items()}
 
+    def __post_init__(self) -> None:
+        for name in (
+            "dead_pixel_fraction",
+            "hot_pixel_fraction",
+            "zinger_fraction",
+            "stripe_fraction",
+            "dropped_view_fraction",
+        ):
+            value = float(getattr(self, name))
+            if not 0.0 <= value <= 1.0:
+                raise InvalidParameter(name, f"{name} must be in [0, 1], got {value}")
+
+        for name in (
+            "poisson_scale",
+            "gaussian_sigma",
+            "stripe_gain_sigma",
+            "detector_blur_sigma",
+        ):
+            value = float(getattr(self, name))
+            if value < 0.0:
+                raise InvalidParameter(name, f"{name} must be non-negative, got {value}")
+
+        if self.intensity_drift_mode not in {"none", "linear", "sinusoidal"}:
+            raise InvalidParameter(
+                "intensity_drift_mode",
+                "intensity_drift_mode must be one of 'none', 'linear', or 'sinusoidal'",
+            )
+
     def has_enabled(self) -> bool:
         """Return whether any artefact field will alter projections.
 
@@ -158,14 +188,8 @@ def normalise_simulation_artefacts(
 ) -> SimulationArtefacts:
     """Return validated explicit artefacts or the disabled default."""
     if artefacts is not None:
-        validate_simulation_artefacts(artefacts)
         return artefacts
     return SimulationArtefacts()
-
-
-def validate_simulation_artefacts(artefacts: SimulationArtefacts | None) -> None:
-    """Raise if an artefact configuration contains invalid parameter values."""
-    _validate_config(artefacts or SimulationArtefacts())
 
 
 def apply_simulation_artefacts(
@@ -181,7 +205,6 @@ def apply_simulation_artefacts(
     path while keeping all randomness explicit and reproducible.
     """
     cfg = artefacts or SimulationArtefacts()
-    validate_simulation_artefacts(cfg)
     metadata: ArtefactMetadata = {
         "enabled": cfg.has_enabled(),
         "seed": int(seed),
@@ -273,32 +296,6 @@ def apply_simulation_artefacts(
         metadata["dropped_view_count"] = int(count)
 
     return jnp.asarray(out.astype(original_dtype, copy=False)), metadata
-
-
-def _validate_config(cfg: SimulationArtefacts) -> None:
-    for name in (
-        "dead_pixel_fraction",
-        "hot_pixel_fraction",
-        "zinger_fraction",
-        "stripe_fraction",
-        "dropped_view_fraction",
-    ):
-        value = float(getattr(cfg, name))
-        if not 0.0 <= value <= 1.0:
-            raise ValueError(f"{name} must be in [0, 1], got {value}")
-
-    for name in (
-        "poisson_scale",
-        "gaussian_sigma",
-        "stripe_gain_sigma",
-        "detector_blur_sigma",
-    ):
-        value = float(getattr(cfg, name))
-        if value < 0.0:
-            raise ValueError(f"{name} must be non-negative, got {value}")
-
-    if cfg.intensity_drift_mode not in {"none", "linear", "sinusoidal"}:
-        raise ValueError("intensity_drift_mode must be one of 'none', 'linear', or 'sinusoidal'")
 
 
 def _rng(seed: int, artefact_name: str) -> np.random.Generator:

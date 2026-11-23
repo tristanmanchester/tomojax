@@ -631,7 +631,7 @@ class tomojax.recon.CGLSConfig(
     ) -> None
 class tomojax.recon.FBPConfig(
         *,
-        filter: 'str' = 'ramp',
+        filter: 'Filter' = 'ramp',
         scale: 'float | None' = None,
         backend: "Literal['auto', 'jax', 'cuda']" = 'auto',
         devices: 'Device | Sequence[Device] | None' = None,
@@ -644,7 +644,7 @@ class tomojax.recon.FBPHostConfig(
     ) -> None
 class tomojax.recon.FDKConfig(
         *,
-        filter: 'str' = 'ramp',
+        filter: 'Filter' = 'ramp',
         backend: 'ProjectorBackend' = 'auto',
         views_per_batch: 'int' = 64,
         devices: 'Device | Sequence[Device] | None' = None,

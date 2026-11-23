@@ -18,6 +18,7 @@ import numpy as np
 
 from tomojax._data import views_of
 from tomojax.core.robust import MAD_TO_SD
+from tomojax.errors import InvalidParameter
 from tomojax.geometry import (
     ConeGeometry,
     ConeSegments,
@@ -734,7 +735,9 @@ class Rings(Step):
 
     def __post_init__(self) -> None:
         if self.views is not None and (type(self.views) is not int or self.views < 2):
-            raise ValueError(f"Rings views must be an integer of at least 2, not {self.views!r}")
+            raise InvalidParameter(
+                "views", f"Rings views must be an integer of at least 2, not {self.views!r}"
+            )
         axis = mirror_axis(self.geometry)
         object.__setattr__(self, "_axis", axis)
         if axis is not None and isinstance(self.geometry, ParallelGeometry):

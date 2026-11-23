@@ -26,6 +26,8 @@ import jax.numpy as jnp
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 import numpy as np
 
+from tomojax.errors import InvalidParameter
+
 if TYPE_CHECKING:
     from jax.typing import ArrayLike
 
@@ -163,11 +165,11 @@ def as_devices(devices: Device | Sequence[Device] | None) -> tuple[Device, ...] 
         return None
     devices = tuple(devices) if isinstance(devices, Sequence) else (devices,)
     if not devices:
-        raise ValueError("devices must name at least one device")
+        raise InvalidParameter("devices", "devices must name at least one device")
     if len(set(devices)) != len(devices):
-        raise ValueError("devices must not name a device twice")
+        raise InvalidParameter("devices", "devices must not name a device twice")
     if len({d.platform for d in devices}) > 1:
-        raise ValueError("devices must all be of one platform (all GPUs, say)")
+        raise InvalidParameter("devices", "devices must all be of one platform (all GPUs, say)")
     return devices
 
 
@@ -182,7 +184,9 @@ def view_split(devices: Device | Sequence[Device] | None, n_views: int) -> ViewS
 def refuse_streaming(split: ViewSplit | None, stream: bool | None, context: str) -> None:
     """Raise if projections shared among devices are asked to stream: each holds its share."""
     if split is not None and stream:
-        raise ValueError(f"{context}: projections shared among devices cannot be streamed")
+        raise InvalidParameter(
+            "stream", f"{context}: projections shared among devices cannot be streamed"
+        )
 
 
 def pad_views(array: jax.Array, total: int, *, repeat: bool = False) -> jax.Array:

@@ -22,6 +22,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.errors import InvalidParameter
 from tomojax.geometry import grid_volume_origin
 from tomojax.recon._axial_slabs import independent_planes
 from tomojax.recon._chunks import Chunked, fixed_updates
@@ -121,6 +122,17 @@ class MLEMConfig:
     support: jax.Array | np.ndarray | None = None
     views_per_batch: int = 32
     backend: ProjectorBackend = "auto"
+
+    def __post_init__(self) -> None:
+        from ._projection import check_backend
+
+        check_backend(self.backend, "mlem")
+        for name, minimum in (("iterations", 0), ("subsets", 1), ("views_per_batch", 1)):
+            if operator.index(getattr(self, name)) < minimum:
+                raise InvalidParameter(
+                    name,
+                    "mlem: iterations must be nonnegative; subsets and views_per_batch positive",
+                )
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend", "batch_size", "model", "axial"))
@@ -439,18 +451,12 @@ def run_mlem(
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """Own workflow initialization inside the solver, never copying a private host start."""
     cfg = config
-    iterations, subsets, batch = map(
-        operator.index, (cfg.iterations, cfg.subsets, cfg.views_per_batch)
-    )
-    if iterations < 0 or subsets < 1 or batch < 1:
-        raise ValueError(
-            "mlem: iterations must be nonnegative; subsets and views_per_batch positive"
-        )
+    iterations, subsets, batch = cfg.iterations, cfg.subsets, cfg.views_per_batch
     validate_grid(grid, "mlem grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="mlem")
     validate_detector_grid(det_grid, detector, context="mlem")
     if subsets > n:
-        raise ValueError("mlem: subsets must not exceed the number of views")
+        raise InvalidParameter("subsets", "mlem: subsets must not exceed the number of views")
     if init_x is not None:
         validate_volume(init_x, grid, context="mlem", name="init_x")
     model, backend = resolve_geometry_projector(

@@ -5,15 +5,23 @@ from __future__ import annotations
 import functools
 import math
 import operator
+from typing import Literal, cast, get_args
 
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.errors import InvalidParameter
 
-def _normalize_filter_name(name: str | None) -> str:
+type Filter = Literal["ramp", "hann", "shepp-logan"]
+
+
+def normalize_filter(name: str | None) -> Filter:
     """Normalize filter names and preserve the default ramp fallback."""
     normalized = str(name or "").strip().lower()
-    return normalized or "ramp"
+    normalized = normalized or "ramp"
+    if normalized not in get_args(Filter.__value__):
+        raise InvalidParameter("filter", f"Unknown filter {name}")
+    return cast("Filter", normalized)
 
 
 @functools.lru_cache(maxsize=16)
@@ -39,13 +47,11 @@ def get_fbp_filter_np(name: str, nu: int, du: float, dtype_name: str) -> np.ndar
     impulse[odd] = -1.0 / (np.pi**2 * k[odd] ** 2 * du)
     spectrum = np.fft.rfft(impulse).real
     normalized_frequency = 2.0 * np.fft.rfftfreq(n)
-    filter_name = _normalize_filter_name(name)
+    filter_name = normalize_filter(name)
     if filter_name == "shepp-logan":
         spectrum *= np.sinc(normalized_frequency / 2.0)
     elif filter_name == "hann":
         spectrum *= 0.5 + 0.5 * np.cos(np.pi * normalized_frequency)
-    elif filter_name != "ramp":
-        raise ValueError(f"Unknown filter {name}")
     dtype = np.float64 if dtype_name in {"float64", "complex128"} else np.float32
     out = np.asarray(spectrum, dtype=dtype)
     out.setflags(write=False)

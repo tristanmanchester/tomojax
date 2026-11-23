@@ -172,6 +172,13 @@ class SPDHGConfig:
 
     stream: bool | None = None
 
+    def __post_init__(self) -> None:
+        from ._projection import check_backend
+
+        check_backend(self.backend, "spdhg")
+        validate_spdhg_config(self)
+        _ = validate_regularizer(self.regularizer, self.huber_delta, context="spdhg_tv config")
+
 
 jax.tree_util.register_dataclass(
     SPDHGConfig,

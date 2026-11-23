@@ -201,22 +201,22 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
 @pytest.mark.parametrize(
     ("bad_config", "message"),
     [
-        (CGLSConfig(iterations=-1), "iterations must be nonnegative"),
-        (CGLSConfig(views_per_batch=0), "views_per_batch positive"),
-        (CGLSConfig(tolerance=-0.1), "tolerance must be finite and nonnegative"),
-        (CGLSConfig(damping=np.inf), "damping must be finite and nonnegative"),
+        ({"iterations": -1}, "iterations must be nonnegative"),
+        ({"views_per_batch": 0}, "views_per_batch positive"),
+        ({"tolerance": -0.1}, "tolerance must be finite and nonnegative"),
+        ({"damping": np.inf}, "damping must be finite and nonnegative"),
         (
-            CGLSConfig(absolute_tolerance=np.nan),
+            {"absolute_tolerance": np.nan},
             "absolute_tolerance must be finite and nonnegative",
         ),
-        (CGLSConfig(backend="invalid"), "backend must be"),
-        (CGLSConfig(iterations=-1, backend="invalid"), "iterations must be nonnegative"),
+        ({"backend": "invalid"}, "backend must be"),
+        ({"iterations": -1, "backend": "invalid"}, "iterations must be nonnegative"),
     ],
 )
 def test_cgls_rejects_invalid_configuration(bad_config, message):
     grid, detector, geometry, _ = small_problem()
     with pytest.raises(ValueError, match=message):
-        cgls(geometry, grid, detector, jnp.zeros((5, 4, 5)), config=bad_config)
+        cgls(geometry, grid, detector, jnp.zeros((5, 4, 5)), config=CGLSConfig(**bad_config))
 
 
 def test_cgls_rejects_nonfinite_input():

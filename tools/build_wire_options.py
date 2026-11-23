@@ -61,7 +61,10 @@ def render() -> str:
             if not field.init:
                 continue
             annotation = str(field.type)
-            if field.name == "devices":
+            if annotation == "Filter":
+                # The domain constructor accepts spelling variants and reports a field path.
+                annotation = "str"
+            elif field.name == "devices":
                 annotation = "tuple[Id, ...] | None"
             elif field.name == "support":
                 annotation = "Storage | None"

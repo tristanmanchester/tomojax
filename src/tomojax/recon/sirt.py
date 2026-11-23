@@ -22,6 +22,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.errors import InvalidParameter
 from tomojax.recon._axial_slabs import axial_slabs, independent_planes
 from tomojax.recon._chunks import Chunked, fixed_updates
 from tomojax.recon._cone_slabs import RowReader, host_volumes
@@ -43,6 +44,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
+
+
+_CONTROL_ERROR = "sirt: iterations >= 0, views_per_batch >= 1 and 1 <= subsets <= views required"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -101,6 +105,24 @@ class SIRTConfig:
     support: jax.Array | np.ndarray | None = None
     views_per_batch: int = 64
     backend: ProjectorBackend = "auto"
+
+    def __post_init__(self) -> None:
+        from ._projection import check_backend
+
+        check_backend(self.backend, "sirt")
+        for name, minimum in (("iterations", 0), ("views_per_batch", 1), ("subsets", 1)):
+            if operator.index(getattr(self, name)) < minimum:
+                raise InvalidParameter(name, _CONTROL_ERROR)
+        if not math.isfinite(self.relaxation) or not 0 < self.relaxation < 2:
+            raise InvalidParameter("relaxation", "sirt: relaxation must be finite and in (0, 2)")
+        if self.acceleration and (self.subsets != 1 or self.relaxation > 1):
+            raise InvalidParameter(
+                "acceleration", "sirt: acceleration requires subsets=1 and relaxation <= 1"
+            )
+        lower = -np.inf if self.lower_bound is None else float(self.lower_bound)
+        upper = np.inf if self.upper_bound is None else float(self.upper_bound)
+        if lower > upper:
+            raise InvalidParameter("lower_bound", "sirt: lower_bound must not exceed upper_bound")
 
 
 def _inverse(value: jax.Array) -> jax.Array:
@@ -301,25 +323,6 @@ def _initial_volume(value: jax.Array | np.ndarray | None, *, stream: bool) -> ja
     return jax.block_until_ready(initial) if stream else initial
 
 
-def _parameters(cfg: SIRTConfig, n: int) -> tuple[int, int, int, float, float]:
-    """Validate iteration controls and bounds before choosing memory placement."""
-    iterations = operator.index(cfg.iterations)
-    subsets, batch = operator.index(cfg.subsets), operator.index(cfg.views_per_batch)
-    if iterations < 0 or batch < 1 or not 1 <= subsets <= n:
-        raise ValueError(
-            "sirt: iterations >= 0, views_per_batch >= 1 and 1 <= subsets <= views required"
-        )
-    if not math.isfinite(cfg.relaxation) or not 0 < cfg.relaxation < 2:
-        raise ValueError("sirt: relaxation must be finite and in (0, 2)")
-    if cfg.acceleration and (subsets != 1 or cfg.relaxation > 1):
-        raise ValueError("sirt: acceleration requires subsets=1 and relaxation <= 1")
-    lower = -np.inf if cfg.lower_bound is None else float(cfg.lower_bound)
-    upper = np.inf if cfg.upper_bound is None else float(cfg.upper_bound)
-    if lower > upper:
-        raise ValueError("sirt: lower_bound must not exceed upper_bound")
-    return iterations, subsets, batch, lower, upper
-
-
 def _storage(
     projections: jax.Array | np.ndarray,
     init_x: jax.Array | np.ndarray | None,
@@ -505,7 +508,11 @@ class SIRTCall:
             projections, detector, geometry=geometry, context="sirt"
         )
         validate_detector_grid(det_grid, detector, context="sirt")
-        iterations, subsets, batch, lower, upper = _parameters(cfg, n)
+        iterations, subsets, batch = cfg.iterations, cfg.subsets, cfg.views_per_batch
+        if subsets > n:
+            raise InvalidParameter("subsets", _CONTROL_ERROR)
+        lower = -np.inf if cfg.lower_bound is None else cfg.lower_bound
+        upper = np.inf if cfg.upper_bound is None else cfg.upper_bound
         for name, value in (("init_x", init_x), ("support", cfg.support)):
             if value is not None:
                 validate_volume(value, grid, context="sirt", name=name)

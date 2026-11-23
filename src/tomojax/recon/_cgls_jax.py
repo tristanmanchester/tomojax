@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from functools import partial
-import math
-import operator
 from typing import TYPE_CHECKING, NamedTuple
 
 import jax
@@ -39,7 +37,7 @@ from tomojax.recon._volume_storage import (
     restore_volume,
     voxel_spacing,
 )
-from tomojax.recon.cgls import CGLSConfig, resident_bytes, validate_model
+from tomojax.recon.cgls import CGLSConfig, resident_bytes
 from tomojax.wire.metrics import Metric
 
 if TYPE_CHECKING:
@@ -668,15 +666,7 @@ def cgls(
     host diagnostics and is not a differentiable reconstruction layer.
     """
     cfg = CGLSConfig() if config is None else config
-    # Validate settings before resolving the backend or selecting storage.
-    iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)
-    if iterations < 0 or batch < 1:
-        raise ValueError("cgls: iterations must be nonnegative and views_per_batch positive")
-    for name in ("tolerance", "absolute_tolerance", "damping", "gradient_damping"):
-        value = float(getattr(cfg, name))
-        if not math.isfinite(value) or value < 0:
-            raise ValueError(f"cgls: {name} must be finite and nonnegative")
-    validate_model(cfg)
+    iterations, batch = cfg.iterations, cfg.views_per_batch
     model, backend = resolve_geometry_projector(
         geometry, cfg.backend,
         detector=detector, det_grid=det_grid, context="cgls",

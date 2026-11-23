@@ -7,7 +7,7 @@ measurements remain host resident.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 import jax
 import jax.numpy as jnp
@@ -20,6 +20,7 @@ from tomojax.core.devices import VIEWS, ViewSplit, pad_views
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.joseph import affine_grid
 from tomojax.core.operator_norm import unit
+from tomojax.errors import InvalidParameter
 from tomojax.recon._cgls_stopping import cancellation_magnitude
 from tomojax.recon._data_term import project_residual
 from tomojax.recon._projection_batches import ViewBatches
@@ -35,6 +36,12 @@ if TYPE_CHECKING:
 type ProjectorBackend = Literal["auto", "jax", "cuda"]
 
 
+def check_backend(backend: str, context: str) -> None:
+    """Check the backend vocabulary before querying any device."""
+    if backend not in get_args(ProjectorBackend.__value__):
+        raise InvalidParameter("backend", f"{context}: backend must be 'auto', 'jax' or 'cuda'")
+
+
 def resolve_projector(
     backend: str,
     *,
@@ -47,11 +54,10 @@ def resolve_projector(
     The plane coefficients carry an affine detector grid, such as a rolled one, so
     every grid the library makes projects with the one model.
     """
-    if backend not in {"auto", "jax", "cuda"}:
-        raise ValueError(f"{context}: backend must be 'auto', 'jax' or 'cuda'")
+    check_backend(backend, context)
     if det_grid is not None and not (detector is not None and affine_grid(det_grid, detector)):
         raise ValueError(f"{context}: needs an affine detector grid (a shifted, rolled lattice)")
-    cuda = cuda_backend()
+    cuda = backend != "jax" and cuda_backend()
     if backend == "auto":
         backend = "cuda" if cuda else "jax"
     if backend == "cuda" and not cuda:
@@ -77,9 +83,8 @@ def resolve_geometry_projector(
         return resolve_projector(backend, det_grid=det_grid, detector=detector, context=context)
     if det_grid is not None:
         raise ValueError(f"{context}: cone-beam geometry needs the canonical detector grid")
-    if backend not in {"auto", "jax", "cuda"}:
-        raise ValueError(f"{context}: backend must be 'auto', 'jax' or 'cuda'")
-    cuda = use_cuda_cone()
+    check_backend(backend, context)
+    cuda = backend != "jax" and use_cuda_cone()
     if backend == "auto":
         backend = "cuda" if cuda else "jax"
     if backend == "cuda" and not cuda:

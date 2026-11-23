@@ -11,6 +11,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
 from tomojax import recon
+from tomojax.errors import InvalidParameter
 from tomojax.recon._fbp_storage import fbp_volume, fdk_config
 
 if TYPE_CHECKING:
@@ -121,13 +122,15 @@ def method_config(
     """
     name = _CONFIGS.get(method)
     if name is None:
-        raise ValueError(f"method must be one of {', '.join(_CONFIGS)}; got {method!r}")
+        raise InvalidParameter(
+            "method", f"method must be one of {', '.join(_CONFIGS)}; got {method!r}"
+        )
     kind = cast("type[MethodConfig]", getattr(recon, name))
     if warm_start and method in {"fbp", "fourier"}:
-        raise ValueError(f"method {method!r} does not take warm_start")
+        raise InvalidParameter("warm_start", f"method {method!r} does not take warm_start")
     if config is not None and not isinstance(config, kind):
-        raise ValueError(
-            f"method {method!r} takes a {kind.__name__}, not a {type(config).__name__}"
+        raise InvalidParameter(
+            "config", f"method {method!r} takes a {kind.__name__}, not a {type(config).__name__}"
         )
     resolved_settings = dict(settings)
     if "nonnegative" in resolved_settings:
@@ -140,7 +143,9 @@ def method_config(
                     "cgls is unconstrained" if method == "cgls" else "direct methods take no bounds"
                 )
             )
-            raise ValueError(f"method {method!r} does not take nonnegative ({detail})")
+            raise InvalidParameter(
+                "nonnegative", f"method {method!r} does not take nonnegative ({detail})"
+            )
         if nonnegative is not None:
             current = (
                 None
@@ -154,9 +159,10 @@ def method_config(
     names = sorted(item.name for item in fields(kind) if item.init)
     unknown = sorted(set(resolved_settings) - set(names))
     if unknown:
-        raise ValueError(
+        raise InvalidParameter(
+            unknown[0],
             f"method {method!r} does not take {', '.join(unknown)} "
-            f"({kind.__name__} has {', '.join(names)})"
+            f"({kind.__name__} has {', '.join(names)})",
         )
     base = kind() if config is None else config
     return replace(base, **resolved_settings) if resolved_settings else base

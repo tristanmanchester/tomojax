@@ -40,7 +40,7 @@ from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
 from tomojax.recon._fdk_coverage import full_turn_weights, reliability
 from tomojax.recon._fdk_cuda import backproject_cuda
 from tomojax.recon._host_arrays import validate_host_arrays
-from tomojax.recon.filters import get_fbp_filter_np
+from tomojax.recon.filters import Filter, get_fbp_filter_np, normalize_filter
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
@@ -83,12 +83,16 @@ class FDKConfig:
         devices divide the views and each hold the full volume.
     """
 
-    filter: str = "ramp"
+    filter: Filter = "ramp"
     backend: ProjectorBackend = "auto"
     views_per_batch: int = 64
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
+        from ._projection import check_backend
+
+        check_backend(self.backend, "fdk")
+        object.__setattr__(self, "filter", normalize_filter(self.filter))
         object.__setattr__(self, "devices", as_devices(self.devices))
 
 

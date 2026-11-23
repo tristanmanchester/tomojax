@@ -22,6 +22,7 @@ import numpy as np
 from scipy.fft import next_fast_len
 
 from tomojax.core.robust import MAD_TO_SD
+from tomojax.errors import InvalidParameter
 
 from ._records import Correction, Json
 
@@ -223,8 +224,8 @@ class Stripes(Step):
 
     def __post_init__(self) -> None:
         if int(self.width) != self.width or self.width < 3:
-            raise ValueError(
-                f"Stripes width must be a whole number of columns >= 3, not {self.width}"
+            raise InvalidParameter(
+                "width", f"Stripes width must be a whole number of columns >= 3, not {self.width}"
             )
         object.__setattr__(self, "width", int(self.width))
 
@@ -319,7 +320,7 @@ class RejectViews(Step):
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.z) or not self.z > 0:
-            raise ValueError(f"RejectViews z must be finite and positive, not {self.z}")
+            raise InvalidParameter("z", f"RejectViews z must be finite and positive, not {self.z}")
         object.__setattr__(self, "z", float(self.z))
 
     def statistic(self, batch: jax.Array) -> jax.Array:
@@ -491,9 +492,13 @@ class Zingers(Step):
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.threshold) or not self.threshold > 0:
-            raise ValueError(f"Zingers threshold must be finite and positive, not {self.threshold}")
+            raise InvalidParameter(
+                "threshold", f"Zingers threshold must be finite and positive, not {self.threshold}"
+            )
         if int(self.size) != self.size or self.size < 3 or self.size % 2 == 0:
-            raise ValueError(f"Zingers size must be an odd number of pixels >= 3, not {self.size}")
+            raise InvalidParameter(
+                "size", f"Zingers size must be an odd number of pixels >= 3, not {self.size}"
+            )
         object.__setattr__(self, "threshold", float(self.threshold))
         object.__setattr__(self, "size", int(self.size))
 
@@ -561,9 +566,13 @@ class RadialDistortion(Step):
         center = tuple(float(c) for c in self.center)
         coefficients = tuple(float(c) for c in self.coefficients)
         if len(center) != 2 or not np.isfinite(center).all():
-            raise ValueError("RadialDistortion center must be a finite (column, row) pair")
+            raise InvalidParameter(
+                "center", "RadialDistortion center must be a finite (column, row) pair"
+            )
         if not coefficients or not np.isfinite(coefficients).all():
-            raise ValueError("RadialDistortion coefficients must be nonempty and finite")
+            raise InvalidParameter(
+                "coefficients", "RadialDistortion coefficients must be nonempty and finite"
+            )
         object.__setattr__(self, "center", center)
         object.__setattr__(self, "coefficients", coefficients)
 
@@ -651,7 +660,9 @@ class Paganin(Step):
         for name in ("delta_beta", "distance", "energy_kev", "pixel_size"):
             value = float(getattr(self, name))
             if not np.isfinite(value) or not value > 0:
-                raise ValueError(f"Paganin {name} must be finite and positive, not {value}")
+                raise InvalidParameter(
+                    name, f"Paganin {name} must be finite and positive, not {value}"
+                )
             object.__setattr__(self, name, value)
 
     def workspace_pixels(self, rows: int, cols: int) -> int:

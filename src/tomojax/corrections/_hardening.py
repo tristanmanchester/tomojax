@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, ClassVar
 import numpy as np
 
 from tomojax.core import hardening as mixture
+from tomojax.errors import InvalidParameter
 
 from ._steps import Domain, Step
 
@@ -79,7 +80,9 @@ class BeamHardening(Step):
         if self.energy_kev is not None and not (
             np.isfinite(self.energy_kev) and self.energy_kev > 0
         ):
-            raise ValueError("BeamHardening energy_kev must be positive and finite")
+            raise InvalidParameter(
+                "energy_kev", "BeamHardening energy_kev must be positive and finite"
+            )
         rates, weights = mixture.normalise(
             tuple(self.rates), tuple(self.weights), unit_slope=self.energy_kev is None
         )

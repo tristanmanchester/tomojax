@@ -26,7 +26,7 @@ from tomojax.core.validation import (
 )
 
 from ._fbp_weights import fbp_weights
-from .filters import fft_filter_rows, rfft_filter_array
+from .filters import Filter, fft_filter_rows, normalize_filter, rfft_filter_array
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,12 +68,16 @@ class FBPConfig:
         devices divide the views and each hold the full volume.
     """
 
-    filter: str = "ramp"
+    filter: Filter = "ramp"
     scale: float | None = None
     backend: Literal["auto", "jax", "cuda"] = "auto"
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
+        from ._projection import check_backend
+
+        check_backend(self.backend, "fbp")
+        object.__setattr__(self, "filter", normalize_filter(self.filter))
         object.__setattr__(self, "devices", as_devices(self.devices))
 
 

@@ -39,6 +39,7 @@ from tomojax._scan import (
     source_of,
     with_grid,
 )
+from tomojax.errors import InvalidParameter
 from tomojax.progress import warn
 
 if TYPE_CHECKING:
@@ -335,7 +336,7 @@ def _reconstruct_in_region(
     from tomojax._region import RegionEstimate
 
     if grid is not None:
-        raise ValueError("pass grid= or region=, not both")
+        raise InvalidParameter("grid", "pass grid= or region=, not both")
     chosen, cylinder = region_grid(scan, region)
     result = reconstruct(
         scan, method, grid=chosen, out=out, config=config, devices=devices, **keywords
@@ -611,10 +612,11 @@ def reconstruct(
             chosen_method, _ = _select_automatic_method(scan)
             taking = _methods_taking(options)
             suggestion = f"pass an explicit method that takes them: {', '.join(taking)}"
-            raise ValueError(
+            raise InvalidParameter(
+                sorted(options)[0],
                 f"method='auto' would select {chosen_method!r} for this scan and does not take "
                 f"method-specific options ({', '.join(sorted(options))}); "
-                + (suggestion if taking else "no one method takes all of them")
+                + (suggestion if taking else "no one method takes all of them"),
             )
         options = {"grid": grid, "out": out, "devices": devices}
         return _automatic_reconstruct(scan, {k: v for k, v in options.items() if v is not None})
@@ -1093,20 +1095,23 @@ def align(
                 ]
             )
             if extra:
-                raise ValueError(
+                raise InvalidParameter(
+                    extra[0],
                     f'method="opposite-views" fits no image and takes no joint options '
-                    f"({', '.join(extra)})"
+                    f"({', '.join(extra)})",
                 )
             return _opposite_views(scan, fit)
         if method not in (None, "joint"):
-            raise ValueError(f"method is 'joint' or 'opposite-views', not {method!r}")
+            raise InvalidParameter(
+                "method", f"method is 'joint' or 'opposite-views', not {method!r}"
+            )
         config = replace(AlignConfig() if config is None else config, **supplied)
         cylinder = None
         if region is not None:
             from tomojax._field_of_view import region_grid
 
             if grid is not None:
-                raise ValueError("pass grid= or region=, not both")
+                raise InvalidParameter("grid", "pass grid= or region=, not both")
             grid, cylinder = region_grid(scan, region)
         from tomojax._smooth_alignment import align_poses
 
@@ -1130,7 +1135,9 @@ def align(
 def _opposite_views(scan: Scan, fit: str | tuple[str, ...]) -> Alignment:
     """``fit="center"`` from near-opposite views, without an image."""
     if fit not in ("center", ("center",)):
-        raise ValueError(f'method="opposite-views" fits fit="center" alone, not {fit!r}')
+        raise InvalidParameter(
+            "fit", f'method="opposite-views" fits fit="center" alone, not {fit!r}'
+        )
     centered, record = _estimate_center(scan)
     before, after = scan.detector.center[0], centered.detector.center[0]
     center = {"value": float(after), "change": float((after - before) / scan.detector.du)}

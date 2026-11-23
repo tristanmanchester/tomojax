@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import operator
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 from tomojax import progress
+from tomojax.errors import InvalidParameter
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from tomojax._typed_arrays import Device
     from tomojax.geometry import Detector, Geometry, Grid
 
-    from .types import DataTerm
+from .types import DataTerm
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -123,6 +124,27 @@ class CGLSConfig:
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
+        from ._projection import check_backend
+
+        iterations, batch = operator.index(self.iterations), operator.index(self.views_per_batch)
+        if iterations < 0 or batch < 1:
+            raise InvalidParameter(
+                "iterations" if iterations < 0 else "views_per_batch",
+                "cgls: iterations must be nonnegative and views_per_batch positive",
+            )
+        for name in ("tolerance", "absolute_tolerance", "damping", "gradient_damping"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0:
+                raise InvalidParameter(name, f"cgls: {name} must be finite and nonnegative")
+        if self.data_term not in get_args(DataTerm):
+            raise InvalidParameter(
+                "data_term", "cgls: data_term must be absolute or per_view_contrast"
+            )
+        if self.interpolation not in ("linear", "cubic"):
+            raise InvalidParameter(
+                "interpolation", "cgls: interpolation must be 'linear' or 'cubic'"
+            )
+        check_backend(self.backend, "cgls")
         if self.devices is not None:
             from tomojax.core.devices import as_devices
 
@@ -140,14 +162,6 @@ def resident_bytes(grid: Grid, projection_shape: Sequence[int]) -> int:
     """
     volume = grid.nx * grid.ny * grid.nz
     return 4 * (6 * volume + 4 * math.prod(projection_shape))
-
-
-def validate_model(cfg: CGLSConfig) -> None:
-    """Validate interpolation independently of the chosen execution runtime."""
-    if cfg.data_term not in {"absolute", "per_view_contrast"}:
-        raise ValueError("cgls: data_term must be absolute or per_view_contrast")
-    if cfg.interpolation not in {"linear", "cubic"}:
-        raise ValueError("cgls: interpolation must be 'linear' or 'cubic'")
 
 
 @progress.reports_iterations(CGLSConfig.iterations)
@@ -232,16 +246,6 @@ def cgls(
     (1, 4, 4)
     """
     cfg = CGLSConfig() if config is None else config
-    iterations, batch = operator.index(cfg.iterations), operator.index(cfg.views_per_batch)
-    if iterations < 0 or batch < 1:
-        raise ValueError("cgls: iterations must be nonnegative and views_per_batch positive")
-    for name in ("tolerance", "absolute_tolerance", "damping", "gradient_damping"):
-        value = float(getattr(cfg, name))
-        if not math.isfinite(value) or value < 0:
-            raise ValueError(f"cgls: {name} must be finite and nonnegative")
-    validate_model(cfg)
-    if cfg.backend not in {"auto", "jax", "cuda"}:
-        raise ValueError("cgls: backend must be 'auto', 'jax' or 'cuda'")
     from ._cgls_cuda import available, solve
 
     if out is None and available(geometry, projections, init_x, cfg, det_grid):

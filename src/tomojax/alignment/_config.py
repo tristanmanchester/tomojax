@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import math
+import operator
 from typing import Literal
+
+from tomojax.errors import InvalidParameter
 
 type Interpolation = Literal["linear", "cubic"]
 type Motion = Literal["independent", "smooth"]
@@ -114,12 +118,43 @@ class AlignConfig:
     refine_neighbors: int = 5
 
     def __post_init__(self) -> None:
+        for name in (
+            "iterations",
+            "coarse_iterations",
+            "image_iterations",
+            "min_iterations",
+            "initial_image_iterations",
+            "refine_iterations",
+            "refine_neighbors",
+        ):
+            if operator.index(getattr(self, name)) < 0:
+                raise InvalidParameter(name, f"{name} must be nonnegative")
+        for name in ("resolution", "knot_spacing", "max_voxels"):
+            if operator.index(getattr(self, name)) < 1:
+                raise InvalidParameter(name, f"{name} must be positive")
+        for name in (
+            "margin",
+            "image_tolerance",
+            "tolerance",
+            "image_tv_weight",
+            "loss_contrast_floor",
+            "refine_smoothing",
+        ):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise InvalidParameter(name, f"{name} must be finite and nonnegative")
         if self.motion not in ("independent", "smooth"):
-            raise ValueError(f'motion is "independent" or "smooth", not {self.motion!r}')
+            raise InvalidParameter(
+                "motion", f'motion is "independent" or "smooth", not {self.motion!r}'
+            )
         if not self.levels or self.levels[-1] != 1 or any(b < 1 for b in self.levels):
-            raise ValueError(f"levels are binnings of at least 1 ending at 1, not {self.levels}")
+            raise InvalidParameter(
+                "levels", f"levels are binnings of at least 1 ending at 1, not {self.levels}"
+            )
         if self.interpolation not in (None, "linear", "cubic"):
-            raise ValueError(f"interpolation is 'linear' or 'cubic', not {self.interpolation!r}")
+            raise InvalidParameter(
+                "interpolation", f"interpolation is 'linear' or 'cubic', not {self.interpolation!r}"
+            )
 
 
 def resolve_align_config(config: AlignConfig, fit: tuple[str, ...], *, cone: bool) -> AlignConfig:

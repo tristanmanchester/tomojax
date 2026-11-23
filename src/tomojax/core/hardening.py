@@ -24,6 +24,8 @@ import numpy as np
 from scipy.optimize import nnls
 from scipy.special import logsumexp
 
+from tomojax.errors import InvalidParameter
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -49,11 +51,19 @@ def normalise(
     k = np.asarray(rates, np.float64)
     w = np.asarray(weights, np.float64)
     if k.ndim != 1 or k.shape != w.shape or k.size == 0:
-        raise ValueError("rates and weights must be equal-length, nonempty sequences")
+        raise InvalidParameter(
+            "rates" if k.ndim != 1 or not k.size else "weights",
+            "rates and weights must be equal-length, nonempty sequences",
+        )
     if not (np.isfinite(k).all() and np.isfinite(w).all()):
-        raise ValueError("rates and weights must be finite")
+        raise InvalidParameter(
+            "rates" if not np.isfinite(k).all() else "weights", "rates and weights must be finite"
+        )
     if (k <= 0).any() or (w < 0).any() or w.sum() <= 0:
-        raise ValueError("rates must be positive, and weights nonnegative with a positive sum")
+        raise InvalidParameter(
+            "rates" if (k <= 0).any() else "weights",
+            "rates must be positive, and weights nonnegative with a positive sum",
+        )
     keep = w > 0
     k, w = k[keep], w[keep] / w[keep].sum()
     if unit_slope:

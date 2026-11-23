@@ -700,12 +700,18 @@ def test_invalid_inputs_rejected_before_output_written(invalid):
         out.flags.writeable = False
     elif invalid == "dtype":
         out = out.astype(np.float64)
-    elif invalid == "backend":
-        config = FourierConfig(backend="invalid")
-    elif invalid == "batch":
-        config = FourierConfig(slices_per_batch=0)
+    invalid_settings = {"backend": {"backend": "invalid"}, "batch": {"slices_per_batch": 0}}
     with pytest.raises((ValueError, TypeError), match="fourier"):
-        fourier(geometry, grid, detector, data, config=config, out=out)
+        fourier(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=FourierConfig(**invalid_settings[invalid])
+            if invalid in invalid_settings
+            else config,
+            out=out,
+        )
     np.testing.assert_array_equal(out, 123)
 
 

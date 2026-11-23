@@ -10,6 +10,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.errors import InvalidParameter
+
 from ._projection import posed
 
 _NAMES = ("center", "tilt", "roll", "translations", "rotations")
@@ -19,10 +21,10 @@ def parse_fit(fit):
     """Validate the public parameter selection and put it in a stable order."""
     names = (fit,) if isinstance(fit, str) else fit
     if not isinstance(names, tuple) or not names or any(not isinstance(n, str) for n in names):
-        raise ValueError("fit must be a name or a nonempty tuple of parameter names")
+        raise InvalidParameter("fit", "fit must be a name or a nonempty tuple of parameter names")
     if len(set(names)) != len(names) or any(n not in _NAMES for n in names):
-        raise ValueError(
-            "fit names are center, tilt, roll, translations and rotations; no duplicates"
+        raise InvalidParameter(
+            "fit", "fit names are center, tilt, roll, translations and rotations; no duplicates"
         )
     return tuple(n for n in _NAMES if n in names)
 

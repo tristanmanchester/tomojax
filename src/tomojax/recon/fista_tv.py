@@ -271,6 +271,11 @@ class FISTAConfig:
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
+        from ._projection import check_backend
+
+        check_backend(self.backend, "fista")
+        _ = validate_fista_config(self)
+        _ = validate_regularizer(self.regularizer, self.huber_delta, context="fista config")
         self.devices = as_devices(self.devices)
 
 

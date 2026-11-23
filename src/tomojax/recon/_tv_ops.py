@@ -12,6 +12,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.errors import InvalidParameter
+
 if TYPE_CHECKING:
     from .types import Regularizer
 
@@ -99,11 +101,15 @@ def validate_regularizer(
     """Validate a regulariser config and return its normalized name."""
     reg = str(regularizer).lower()
     if reg not in ("tv", "huber_tv"):
-        raise ValueError(f"{context}: regularizer must be 'tv' or 'huber_tv'; got {regularizer!r}")
+        raise InvalidParameter(
+            "regularizer", f"{context}: regularizer must be 'tv' or 'huber_tv'; got {regularizer!r}"
+        )
     if reg == "huber_tv":
         delta = float(huber_delta)
         if not math.isfinite(delta) or delta <= 0.0:
-            raise ValueError(f"{context}: huber_delta must be positive for huber_tv")
+            raise InvalidParameter(
+                "huber_delta", f"{context}: huber_delta must be positive for huber_tv"
+            )
     return cast("Regularizer", reg)
 
 
