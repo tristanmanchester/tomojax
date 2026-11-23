@@ -199,8 +199,11 @@ class Admission:
                     scan, operation.axis, operation.index, operation.centres, **options
                 )
             else:
-                plans = (resolve_reconstruction(scan, **options),)
-                interactive.plane_dimension(plans[0].scan.grid, operation.axis, operation.index)
+                plans = (
+                    resolve_reconstruction(
+                        scan, plane=(operation.axis, operation.index), **options
+                    ),
+                )
             compute = partial(slice_product, operation, plans, self.context)
             work = plans[0]
         else:

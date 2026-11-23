@@ -9,7 +9,12 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._loading import corrected_data
-from tomojax._planning import ResolvedReconstruction, resolve_grid, resolve_reconstruction
+from tomojax._planning import (
+    ResolvedReconstruction,
+    plane_dimension,
+    resolve_grid,
+    resolve_reconstruction,
+)
 from tomojax._region import RegionEstimate, estimate_region
 from tomojax._scan import Scan, binned_geometry
 from tomojax._workflow import reconstruct, reconstruct_resolved
@@ -39,16 +44,6 @@ __all__ = [
 
 
 type Axis = Literal["z", "y", "x"]
-
-
-def plane_dimension(grid: Grid, axis: Axis, index: int) -> int:
-    """Resolve an index against the original reconstruction grid."""
-    if axis not in ("x", "y", "z"):
-        raise InvalidParameter("axis", "plane axis must be x, y or z")
-    dimension = "zyx".index(axis)
-    if not 0 <= index < grid.shape[dimension]:
-        raise InvalidParameter("index", "plane index outside volume")
-    return dimension
 
 
 def resolved_slice(
@@ -97,7 +92,7 @@ def reconstruct_slice(
     numpy.ndarray or jax.Array
         Float32 attenuation in the remaining public array axes.
     """
-    plan = resolve_reconstruction(scan, method, **options)
+    plan = resolve_reconstruction(scan, method, plane=(axis, index), **options)
     return resolved_slice(plan, axis, index, warm_start=bool(options.get("warm_start")))
 
 
@@ -174,14 +169,15 @@ def resolve_sweep(
             "centres", "centres must be a nonempty sequence of finite detector offsets"
         )
     fixed_grid, cylinder, info = resolve_grid(scan, grid, region)
-    plane_dimension(fixed_grid or scan.grid, axis, index)
     plans = []
     for i, centre in enumerate(centres):
         progress.check_cancelled()
         shift = float(centre) * scan.detector.du - scan.detector.center[0]
         shifted = replace(scan, geometry=_shift_center(scan.geometry, shift))
         try:
-            plan = resolve_reconstruction(shifted, method, grid=fixed_grid, **options)
+            plan = resolve_reconstruction(
+                shifted, method, grid=fixed_grid, plane=(axis, index), **options
+            )
         except AngularCoverageError as err:
             raise InvalidParameter(f"centres[{i}]", str(err)) from err
         plans.append(replace(plan, cylinder=cylinder, info={**plan.info, **info}))

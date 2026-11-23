@@ -9,6 +9,7 @@ import msgspec
 import numpy as np
 
 from tomojax import interactive
+from tomojax._planning import plane_dimension
 from tomojax._scan import detector_window
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._handles import stage_array
@@ -45,7 +46,7 @@ def slice_product(
     sample = registered_plane(
         pixels,
         volume_axes(plan.scan.grid, unit),
-        interactive.plane_dimension(plan.scan.grid, axis, index),
+        plane_dimension(plan.scan.grid, axis, index),
         index,
         unit,
         leading_axes=leading,

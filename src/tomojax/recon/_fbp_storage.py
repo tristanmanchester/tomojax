@@ -73,12 +73,34 @@ def needs_fbp_slabs(geometry: Geometry, grid: Grid, free: int | None) -> bool:
     )
 
 
+def selected_slab(grid: Grid, index: int) -> tuple[Grid, int]:
+    """The full solver's host slab containing an independent axial plane, and its z offset."""
+    from dataclasses import replace
+
+    from tomojax.geometry import grid_volume_origin
+
+    from .fbp_host import axial_depth
+
+    depth = axial_depth(grid.nz, None)
+    first = index // depth * depth
+    ox, oy, oz = grid_volume_origin(grid)
+    slab = replace(
+        grid,
+        nz=min(depth, grid.nz - first),
+        vol_origin=(ox, oy, oz + first * grid.vz),
+        vol_center=None,
+    )
+    return slab, first
+
+
 def check_host_fbp_samples(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray | np.ndarray,
     cfg: FBPConfig,
+    *,
+    axial_index: int | None,
 ) -> None:
     """Check the measured rows each host slab will read, scanning overlapping windows once."""
     if not too_large_for_the_device(geometry, grid, cfg):
@@ -91,6 +113,7 @@ def check_host_fbp_samples(
     from tomojax.core.geometry.views import stack_view_poses
     from tomojax.geometry import ParallelGeometry
 
+    from ._axial_slabs import independent_planes
     from ._host_arrays import check_measurements
     from .fbp_host import axial_depth, axial_row_starts, slab_layout
     from .fdk import host_slab_ranges, storage_rows
@@ -100,6 +123,8 @@ def check_host_fbp_samples(
         slabs = host_slab_ranges(grid, as_devices(cfg.devices) or (None,), None)
         windows = [storage_rows(geometry, grid, detector, poses, lo, hi) for lo, hi in slabs]
     elif type(geometry) is ParallelGeometry:
+        if axial_index is not None and independent_planes(geometry, grid, detector):
+            grid, _ = selected_slab(grid, axial_index)
         depth = axial_depth(grid.nz, None)
         _, local, first, step, integer = slab_layout(grid, detector, depth)
         starts = axial_row_starts(

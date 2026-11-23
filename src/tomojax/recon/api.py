@@ -189,6 +189,7 @@ def validate_reconstruction(
     config: MethodConfig,
     *,
     warm_start: bool = False,
+    axial_index: int | None = None,
     projections: jnp.ndarray | np.ndarray | None = None,
 ) -> None:
     """Check resolved solver settings against the actual acquisition before dispatch.
@@ -205,6 +206,8 @@ def validate_reconstruction(
         Settings for the resolved method.
     warm_start : bool, optional
         Initialise an iterative solve with filtered backprojection.
+    axial_index : int or None, optional
+        Requested axial plane when validating a slice or sweep.
     projections : array-like or None, optional
         Loaded measurements for data-dependent checks and resident backend placement.
 
@@ -263,7 +266,12 @@ def validate_reconstruction(
         from tomojax.recon._fbp_storage import check_host_fbp_samples
 
         check_host_fbp_samples(
-            geometry, grid, geometry.detector, projections, cast("FBPConfig", config)
+            geometry,
+            grid,
+            geometry.detector,
+            projections,
+            cast("FBPConfig", config),
+            axial_index=axial_index,
         )
     if method == "fourier":
         from tomojax.recon.fourier import check_fourier_inputs
@@ -726,33 +734,20 @@ def axial_fbp_plane(
     from ._fbp_storage import too_large_for_the_device
     from .fbp import parallel_fbp
 
-    if (
-        not independent_planes(geometry, grid, detector)
-        or _detector_grid(geometry, detector) is not None
-    ):
+    if not independent_planes(geometry, grid, detector):
         return None
     if too_large_for_the_device(geometry, grid, cfg):
-        from dataclasses import replace
+        from ._fbp_storage import first_device, selected_slab
+        from .fbp_host import FBPHostConfig, fbp_host
 
-        from ._fbp_storage import first_device
-        from .fbp_host import FBPHostConfig, axial_depth, fbp_host
-
-        depth = axial_depth(grid.nz, None)
-        first = index // depth * depth
-        ox, oy, oz = grid_volume_origin(grid)
-        slab = replace(
-            grid,
-            nz=min(depth, grid.nz - first),
-            vol_origin=(ox, oy, oz + first * grid.vz),
-            vol_center=None,
-        )
+        slab, first = selected_slab(grid, index)
         with first_device(cfg):
             volume = fbp_host(
                 geometry,
                 slab,
                 detector,
                 projections,
-                config=FBPHostConfig(fbp=cfg, slices_per_batch=depth),
+                config=FBPHostConfig(fbp=cfg, slices_per_batch=slab.nz),
             )
         return volume[index - first].copy()
     # Compilers can fuse the z multiply-add and replace division by a reciprocal.

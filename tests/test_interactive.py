@@ -290,3 +290,30 @@ def test_dark_preview_band_uses_original_detector_illumination():
     np.testing.assert_array_equal(result.after, expected)
     with pytest.raises(ValueError, match="No detector pixels have resolved illumination"):
         correction_preview(replace(frames, flats=np.full_like(flats, 10)), (0, 1), binning=2)
+
+
+@pytest.mark.parametrize("sweep", [False, True], ids=["slice", "sweep"])
+def test_axial_host_plane_checks_only_its_selected_slab(monkeypatch, sweep):
+    from tomojax.recon.api import axial_fbp_plane
+
+    grid = tj.Grid(6, 6, 33, 1, 1, 1)
+    detector = tj.Detector(8, 33, 1, 1)
+    geo = tj.ParallelGeometry(grid, detector, np.arange(9) * 20.0)
+    data = np.random.default_rng(19).uniform(size=(9, 33, 8)).astype(np.float32)
+    data[3, 32, 5] = np.nan
+    source = tj.Scan(data, geo)
+    monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda **kw: 1)
+    expected = axial_fbp_plane(geo, grid, detector, data, tj.recon.FBPConfig(), 0)
+    assert np.isfinite(expected).all()
+
+    def plane(index):
+        return (
+            centre_sweep(source, "z", index, [0], method="fbp")[0]
+            if sweep
+            else reconstruct_slice(source, "z", index, method="fbp")
+        )
+
+    np.testing.assert_array_equal(plane(0), expected)
+    with pytest.raises(tj.InvalidParameter) as error:
+        plane(32)
+    assert error.value.path == "source"

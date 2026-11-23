@@ -31,6 +31,16 @@ class ResolvedReconstruction:
     info: dict[str, Any]
 
 
+def plane_dimension(grid: Grid, axis: str, index: int) -> int:
+    """Resolve an index against the original reconstruction grid."""
+    if axis not in ("x", "y", "z"):
+        raise InvalidParameter("axis", "plane axis must be x, y or z")
+    dimension = "zyx".index(axis)
+    if not 0 <= index < grid.shape[dimension]:
+        raise InvalidParameter("index", "plane index outside volume")
+    return dimension
+
+
 def resolve_grid(
     scan: Scan,
     grid: Grid | None,
@@ -59,6 +69,7 @@ def resolve_reconstruction(
     config: MethodConfig | None = None,
     warm_start: bool | None = None,
     devices: Any = None,
+    plane: tuple[str, int] | None = None,
     **settings: Any,
 ) -> ResolvedReconstruction:
     """Select the inverse, its grid and all solver settings once for plan and run."""
@@ -103,6 +114,9 @@ def resolve_reconstruction(
         settings["devices"] = devices
     cfg = method_config(method, config=config, warm_start=warm_start, **settings)
     scan = scan if grid is None else with_grid(scan, grid)
+    axial_index = (
+        plane[1] if plane is not None and plane_dimension(scan.grid, *plane) == 0 else None
+    )
     validate_reconstruction(
         method,
         scan.geometry,
@@ -110,6 +124,7 @@ def resolve_reconstruction(
         cfg,
         warm_start=bool(warm_start),
         projections=scan.projections,
+        axial_index=axial_index,
     )
     return ResolvedReconstruction(scan, method, cfg, cylinder, tuple(reasons), info)
 
