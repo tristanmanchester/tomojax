@@ -117,7 +117,11 @@ class Stub:
         else:
             value = p.Validated()
         context.snapshot(p.Snapshot(4.25, "cpu:0", "host", 1234, None, None))
-        return ex.Success(value, w.Info({}, {}), p.Provenance(type(command).__name__, {}, ()))
+        return ex.Success(
+            value,
+            w.Info({}, {}),
+            p.Provenance(type(command).__name__, {}, context.lineage(command)),
+        )
 
     def inspect(self, command, context):
         if command.path == "wait":
