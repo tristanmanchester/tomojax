@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.devices import ViewSplit, as_devices, refuse_streaming, view_split
 from tomojax.core.geometry.views import stack_view_poses
@@ -21,7 +22,6 @@ from tomojax.core.validation import (
     validate_volume,
 )
 
-from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._chunks import Chunked
 from ._fista_initialization import first_gradient as estimate_first_gradient
 from ._fista_owned import FistaResult, FistaScanState, run_owned_fista, use_owned_fista
@@ -591,6 +591,7 @@ def _fista_program(
 _run_fista_scan = Chunked(_fista_program, static_argnames=("grid", "detector"))
 
 
+@progress.reports_iterations(FISTAConfig.iterations)
 def fista(
     geometry: Geometry,
     grid: Grid,
@@ -599,17 +600,10 @@ def fista(
     *,
     init_x: jnp.ndarray | None = None,
     config: FISTAConfig | None = None,
-    callback: LossCallback | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Run FISTA with TV regularization using an explicit solver configuration.
-
-    If ``callback`` is provided, it fires on the first recorded loss sample and on
-    the final recorded loss sample. The callback arguments are ``(step, loss)``,
-    where ``step`` is the zero-based iteration index that produced ``loss``. When
-    early stopping truncates active iterations, the final callback reports the
-    last active iteration rather than the repeated padded tail entry.
 
     Parameters
     ----------
@@ -625,8 +619,6 @@ def fista(
         Initial volume of shape ``(nz, ny, nx)``; None starts from zero.
     config : FISTAConfig or None, optional
         Solver settings. None uses FISTAConfig defaults.
-    callback : callable or None, optional
-        Callback receiving ``(step, loss)`` at the first and last logged samples.
     det_grid : tuple of array-like or None, optional
         Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
         None uses the canonical detector grid.
@@ -710,7 +702,6 @@ def fista(
         }
     else:
         volume, info, metric = hosted
-        losses, count = info["loss"], info["effective_iterations"]
     resolved_weight = runtime.config.tv_weight
     if resolved_weight is None:
         assert metric is not None
@@ -738,7 +729,4 @@ def fista(
             "length_scale": None if runtime.metric is None else runtime.metric.length_scale,
         }
     )
-    if losses:
-        final_step = max(count - 1, 0)
-        emit_loss_callback_endpoints(callback, ((0, losses[0]), (final_step, losses[final_step])))
     return volume, info

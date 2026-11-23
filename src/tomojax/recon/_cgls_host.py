@@ -18,11 +18,11 @@ no projection-sized vector is retained. Absolute mode needs no additional sweep.
 
 from __future__ import annotations
 
-from contextlib import ExitStack
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.cone import ConeModel
 from tomojax.core.host_volume import fill, host_volume, scratch_directory
 
@@ -112,11 +112,7 @@ def solve(
             geometry, grid, detector, projections, poses=poses, batch=cfg.views_per_batch
         )
     solver = _HostCGLS(problem, cfg, initial, out)
-    with ExitStack() as resources:
-        if isinstance(projections, RowReader):
-            resources.callback(projections.close)
-        for volume in (solver.X, solver.G, solver.D, solver.W):
-            resources.callback(volume.close)
+    with problem.using(out, solver.X, solver.G, solver.D, solver.W):
         info = solver.run()
     volume = problem.result(solver.x)
     return volume, {**info, "projector_backend": backend}
@@ -390,6 +386,7 @@ class _HostCGLS:
             and gamma > threshold**2
             and not (state["failed"] or state["roundoff"])
         ):
+            progress.check_cancelled()
             energy, direction_norm2 = self.normal(beta)
             denominator = (
                 energy
@@ -412,6 +409,11 @@ class _HostCGLS:
                 restart, gamma_new = self.verify(gamma, gamma_new, threshold, state)
                 recomputations += 1
             count += 1
+            if (task := progress.for_unit("iterations")) is not None:
+                residual = gamma_new if np.isfinite(gamma_new) else gamma
+                self.problem.completed(
+                    task.advance, count, {"normal_residual_norm": float(np.sqrt(residual))}
+                )
             if not np.isfinite(gamma_new):
                 state["failed"] = True
                 break

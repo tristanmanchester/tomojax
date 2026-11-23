@@ -82,7 +82,7 @@ def test_compiled_solve_holds_its_state_and_bounded_scratch():
         config=SPDHGConfig(iterations=3, tv_weight=0.01, views_per_block=4, stream=False),
         det_grid=None,
     )
-    mem = _run_spdhg_scan.lower(grid, detector, runtime).compile().memory_analysis()
+    mem = _run_spdhg_scan.unwatched.lower(grid, detector, runtime).compile().memory_analysis()
     volume = 4 * grid.nx * grid.ny * grid.nz
     # Five volumes of state (the iterate, the accumulated backprojection, the TV dual's three
     # components), the data dual, and scratch of a block's projections and a few planes.

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.host_volume import fill, release_planes
 
 from ._cone_slabs import cone_problem, host_projections
@@ -72,14 +73,17 @@ def solve(
     xp = np if isinstance(x, np.ndarray) else problem.engine.xp
     _constrain(x, support, problem.plan.depth, nonnegative=warm_start, xp=xp)
     em = _HostEM(problem, x, updating=iterations > 0)
-    for _ in range(max(1, iterations)):
-        for group in range(subsets):
-            problem.sweep.run(
-                order[group::subsets], source=em.source, finish=em.finish, sink=em.sink,
-                transposed=int(em.updating), ones=True, keep=problem.keep,
-                prefetch=lambda k: em.volume.prefetch(*problem.plan.planes(k)),
-            )  # fmt: skip
-    em.volume.close()
+    with problem.using(out, em.volume):
+        for step in range(1, max(1, iterations) + 1):
+            progress.check_cancelled()
+            for group in range(subsets):
+                problem.sweep.run(
+                    order[group::subsets], source=em.source, finish=em.finish, sink=em.sink,
+                    transposed=int(em.updating), ones=True, keep=problem.keep,
+                    prefetch=lambda k: em.volume.prefetch(*problem.plan.planes(k)),
+                )  # fmt: skip
+            if iterations and (task := progress.for_unit("iterations")) is not None:
+                problem.completed(task.advance, step, {})
     for z0 in range(0, grid.nz, problem.plan.depth):
         z1 = min(grid.nz, z0 + problem.plan.depth)
         x[z0:z1, :, :] *= xp.asarray(np.unpackbits(em.seen[z0:z1, :, :], axis=2, count=grid.nx))

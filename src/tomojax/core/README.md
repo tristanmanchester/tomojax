@@ -18,7 +18,6 @@ The `tomojax.core` package root remains deliberately small:
 
 - `setup_logging(level="INFO")`
 - `log_jax_env()`
-- `progress_iter(iterable, total=None, desc="")`
 - `format_duration(seconds)`
 
 Numerical foundations are imported by their owning modules rather than re-exported
@@ -44,8 +43,7 @@ from the root:
 
 ## Dependencies
 
-`tomojax.core` may depend on standard library modules, NumPy, JAX, and optional
-runtime helpers such as tqdm. It must not depend on alignment, reconstruction,
+`tomojax.core` may depend on standard library modules, NumPy and JAX. It must not depend on alignment, reconstruction,
 datasets, I/O, or CLI packages. Optional backend discovery belongs in
 `tomojax.backends`; core projector code may call those resolvers, but higher
 workflow policy stays outside core.
@@ -53,7 +51,6 @@ workflow policy stays outside core.
 ## Invariants
 
 - Public imports go through `tomojax.core`, not private `_logging`.
-- Progress reporting is opt-in via `TOMOJAX_PROGRESS`.
 - Missing CUDA dependencies must not prevent CPU/reference execution.
 - Geometry and projector contracts are source-level foundations for the rest of
   the package, but the core root should not become a broad facade for them.

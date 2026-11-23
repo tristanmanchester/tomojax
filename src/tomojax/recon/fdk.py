@@ -28,6 +28,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.cone import ConeModel, use_cuda_cone
 from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry.base import grid_volume_origin
@@ -496,6 +497,7 @@ def _device_views(
     return upload_host(np.asarray(part, np.float32), device)
 
 
+@progress.task("reconstruct", "fdk", None, "batches")
 def fdk(
     geometry: Geometry,
     grid: Grid,
@@ -547,7 +549,8 @@ def fdk(
     )
     prep = _prepare(geometry, detector, n_views, cfg)
     coeff = prep.coefficients(geometry, grid, detector, stack_view_poses(geometry, n_views))
-    return _accumulate(grid, projections, prep, coeff, cfg.devices)
+    result = _accumulate(grid, projections, prep, coeff, cfg.devices)
+    return result.block_until_ready() if progress.for_unit("batches") is not None else result
 
 
 def _accumulate(
@@ -580,7 +583,10 @@ def _accumulate(
         # and backprojected.
         with ThreadPoolExecutor(max_workers=1) as copier:
             pending = copier.submit(read, 0)
+            task = progress.for_unit("batches")
             for index, start in enumerate(starts):
+                if task is not None:
+                    progress.check_cancelled()
                 batch = pending.result()
                 if index + 1 < len(starts):
                     pending = copier.submit(read, starts[index + 1])
@@ -591,6 +597,8 @@ def _accumulate(
                 )  # fmt: skip
                 # Keep only this batch and its prefetched successor live.
                 out.block_until_ready()
+                if task is not None:
+                    progress.step("batches", remaining=len(starts) - index - 1)
         return out
 
     split = view_split(devices, n_views)
@@ -745,6 +753,7 @@ def fdk_slabs[T](
             del projections, owned, context
 
 
+@progress.task("reconstruct", "fdk", None, "slabs")
 def fdk_host(
     geometry: Geometry,
     grid: Grid,
@@ -824,13 +833,10 @@ def fdk_host(
         depth = max(1, int(free // (3 * max(1, 4 * grid.nx * grid.ny))))
     depth = min(int(depth), grid.nz)
     slabs = [(z0, min(z0 + depth, grid.nz)) for z0 in range(0, grid.nz, depth)]
+    progress.remaining("slabs", len(slabs))
     poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
     work = _Slabs(geometry, grid, detector, projections, poses, result)
-    # Each device's slabs in turn, copied into ``result`` (slow for memmaps)
-    # while the next one runs.
-    with ThreadPoolExecutor(len(devices)) as writer, ThreadPoolExecutor(len(devices)) as pool:
-        shares = [slabs[k :: len(devices)] for k in range(len(devices))]
-        list(pool.map(partial(work.run, fdk=cfg.fdk, writer=writer), shares, devices))
+    work.write_all(slabs, devices, cfg.fdk)
     return result
 
 
@@ -863,6 +869,34 @@ class _Slabs:
             slab, views, prep.window(r0, r1), _window_coefficients(coeff, r0, z0), None
         )
 
+    def write_all(
+        self,
+        slabs: list[tuple[int, int]],
+        devices: Sequence[Device | None],
+        fdk: FDKConfig,
+    ) -> None:
+        """Schedule one slab per device and publish successful writes on the owner."""
+        with ThreadPoolExecutor(len(devices)) as writer, ThreadPoolExecutor(len(devices)) as pool:
+            workers = [
+                self.run(slabs[k :: len(devices)], device, fdk=fdk, writer=writer)
+                for k, device in enumerate(devices)
+            ]
+            written = []
+            for first in range(0, len(slabs), len(devices)):
+                progress.check_cancelled()
+                jobs = [pool.submit(next, worker) for worker in workers[: len(slabs) - first]]
+                for previous in written:
+                    previous.result()
+                written = [job.result() for job in jobs]
+                if progress.for_unit("slabs") is not None:
+                    for finished in written:
+                        progress.check_cancelled()
+                        finished.result()
+                        progress.step("slabs")
+                    written.clear()
+            for previous in written:
+                previous.result()
+
     def run(
         self,
         slabs: list[tuple[int, int]],
@@ -870,7 +904,7 @@ class _Slabs:
         *,
         fdk: FDKConfig,
         writer: Executor,
-    ) -> None:
+    ) -> Generator[Future[None], None, None]:
         """Reconstruct ``slabs`` in turn on ``device``, each stored by ``writer`` as the next runs.
 
         All of a slab's work stays on ``device``, its weights and coefficients
@@ -885,16 +919,12 @@ class _Slabs:
             coeff = prep.coefficients(
                 self.geometry, self.grid, self.detector, jnp.asarray(self.poses, jnp.float32)
             )
-        pending: Future[None] | None = None
         for z0, z1 in slabs:
             with jax.default_device(device):
                 volume = self.reconstruct(z0, z1, prep, coeff)
-            if pending is not None:
-                pending.result()
-            pending = writer.submit(self.store, z0, z1, volume)
+            written = writer.submit(self.store, z0, z1, volume)
             del volume
-        if pending is not None:
-            pending.result()
+            yield written
 
     def store(self, z0: int, z1: int, volume: jax.Array) -> None:
         copy_to_host(volume, self.result[z0:z1])

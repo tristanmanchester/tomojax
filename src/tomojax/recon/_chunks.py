@@ -1,6 +1,7 @@
 """Drive one donated JAX loop from the operation's calling thread."""
 
 from collections.abc import Callable
+from contextvars import ContextVar
 from functools import partial
 from time import monotonic
 from typing import Any
@@ -8,6 +9,9 @@ from typing import Any
 import jax
 
 from tomojax import progress
+
+# Until the last independent axial partition, no whole-volume sweep is finished.
+partial_sweep = ContextVar("tomojax_partial_sweep", default=False)
 
 
 def run_chunks[S](
@@ -33,7 +37,8 @@ def run_chunks[S](
         elapsed = monotonic() - start
         previous = done
         done, stopped, metrics = completed(state)
-        task.advance(done, metrics)
+        if not partial_sweep.get():
+            task.advance(done, metrics)
         if compiled:
             length = max(1, round(0.25 * (done - previous) / max(elapsed, 1e-9)))
         compiled = True
@@ -50,7 +55,22 @@ class Chunked[R]:
         )
 
     def __call__(self, *args: Any, **kwargs: Any) -> R:
-        task = progress.current_task.get()
+        task = progress.for_unit("iterations")
         if task is None:
             return self.unwatched(*args, **kwargs)
+        progress.check_cancelled()
         return self.program(*args, **kwargs, drive=partial(run_chunks, task=task))
+
+
+def fixed_updates(state, end, advance, drive, metrics=None):
+    """Report completed full sweeps with their absolute position in the original schedule."""
+
+    def update(carry, stop):
+        first, state = carry
+        return stop, advance(state, first, stop)
+
+    def completed(carry):
+        done, state = carry
+        return int(done), False, {} if metrics is None else metrics(state, int(done))
+
+    return drive((0, state), end, update, completed)[1]

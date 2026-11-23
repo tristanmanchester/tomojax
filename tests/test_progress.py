@@ -311,3 +311,194 @@ raise SystemExit(run_command('correct','auto',operation))
         output = terminal.read(4096)
     assert b"Reading views" in output and b"2/5" in output
     assert output.count(b"\r\x1b[2K") >= 3
+
+
+@pytest.mark.parametrize("method", ["sirt", "accelerated", "mlem", "spdhg", "spdhg-stream"])
+@pytest.mark.parametrize("seconds", [0.01, 0.25])
+def test_fixed_update_solvers_preserve_the_schedule(monkeypatch, method, seconds):
+    """The single-view problem repeated exactly on archived main on both devices."""
+    from itertools import count
+
+    from tomojax.recon import MLEMConfig, SIRTConfig, SPDHGConfig
+
+    grid = tj.Grid(6, 1, 3, 1, 1, 1)
+    detector = tj.Detector(6, 3, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, [0.0])
+    data = np.linspace(0.2, 1.7, 18, dtype=np.float32).reshape(1, 3, 6)
+    subject = tj.Scan(data, geometry)
+    options = {"iterations": 7, "backend": "jax"}
+    if method.startswith("spdhg"):
+        cfg = SPDHGConfig(
+            **options,
+            views_per_block=2,
+            log_every=2,
+            tv_weight=0.03,
+            stream=method.endswith("-stream"),
+        )
+        method = "spdhg"
+    elif method == "mlem":
+        cfg = MLEMConfig(**options, views_per_batch=2)
+    else:
+        cfg = SIRTConfig(**options, views_per_batch=2, acceleration=method == "accelerated")
+        method = "sirt"
+    reference = tj.reconstruct(subject, method, config=cfg)
+    monkeypatch.setattr("tomojax.recon._chunks.monotonic", count(step=seconds).__next__)
+    events = []
+    with progress.watch(events.append):
+        result = tj.reconstruct(subject, method, config=cfg)
+    validate_tree(events)
+    updates = [event for event in events if isinstance(event, progress.Advanced)]
+    assert [e.done for e in updates] == (list(range(1, 8)) if seconds == 0.25 else [1, 2, 7])
+    assert len(events) == len(updates) + 2
+    assert result.info["effective_iterations"] == updates[-1].done
+    np.testing.assert_array_equal(result.volume, reference.volume)
+    if method == "spdhg":
+        np.testing.assert_array_equal(result.info["loss"], reference.info["loss"])
+        for event in updates:
+            expected = reference.info["loss"][event.done - 1] if event.done % 2 == 0 else None
+            assert event.metrics["loss"] == expected
+    else:
+        # A single view through independent one-voxel rays measures the volume itself.
+        np.testing.assert_allclose(result.volume[:, 0, :], data[0], rtol=0, atol=2e-7)
+
+
+@pytest.mark.parametrize("failure", ["cancel", "handler"])
+def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
+    import os
+    from pathlib import Path
+    import threading
+
+    from tomojax.geometry import ConeBeam, ConeGeometry
+
+    grid = tj.Grid(5, 4, 9, 1, 1.1, 0.9)
+    detector = tj.Detector(8, 11, 1.6, 1.5, (0.3, -0.4))
+    geometry = ConeGeometry(
+        grid, detector, np.linspace(3, 363, 7, endpoint=False), ConeBeam(12, 26)
+    )
+    data = np.random.default_rng(56).uniform(size=(7, 11, 8)).astype(np.float32)
+    out = np.memmap(tmp_path / "output", np.float32, "w+", shape=(9, 4, 5))
+
+    def mapped_files():
+        files = []
+        for path in Path("/proc/self/fd").iterdir():
+            try:
+                name = os.readlink(path)
+            except FileNotFoundError:
+                continue
+            if str(tmp_path) in name:
+                files.append(name)
+        return sorted(files)
+
+    before = mapped_files()
+    workers = set(threading.enumerate())
+    failure_object = RuntimeError("out of memory")
+    token = progress.Cancel()
+    events = []
+
+    def handler(event):
+        events.append(event)
+        if isinstance(event, progress.Advanced):
+            assert event.done == 1
+            assert any("(deleted)" in name for name in mapped_files())
+            if failure == "handler":
+                raise failure_object
+            token.cancel()
+
+    with (
+        progress.watch(handler, cancel=token),
+        pytest.raises(RuntimeError if failure == "handler" else progress.Cancelled) as caught,
+    ):
+        tj.reconstruct(
+            tj.Scan(data, geometry),
+            "cgls",
+            out=out,
+            config=CGLSConfig(backend="jax", iterations=4, tolerance=0),
+        )
+    if failure == "handler":
+        assert caught.value is failure_object
+        assert isinstance(events[-1], progress.Advanced)
+    else:
+        assert events[-1].status == "cancelled"
+    validate_tree(events, interrupted=failure == "handler")
+    assert mapped_files() == before
+    assert not (set(threading.enumerate()) - workers)
+    assert np.any(out != 0)
+
+
+@pytest.mark.parametrize("method", ["fbp", "fdk", "fourier"])
+def test_slab_advance_observes_successfully_written_output(method):
+    from tomojax.geometry import ConeBeam, ConeGeometry
+    from tomojax.recon import (
+        FBPConfig,
+        FBPHostConfig,
+        FDKConfig,
+        FDKHostConfig,
+        FourierConfig,
+        fbp_host,
+        fdk_host,
+        fourier,
+    )
+
+    grid = tj.Grid(7, 5, 5, 1, 1, 1)
+    detector = tj.Detector(9, 5, 1, 1)
+    angles = np.linspace(0, 360 if method == "fdk" else 180, 16, endpoint=False)
+    if method == "fdk":
+        geometry = ConeGeometry(grid, detector, angles, ConeBeam(40, 60))
+        solve, config = fdk_host, FDKHostConfig(slices_per_batch=1, fdk=FDKConfig(backend="jax"))
+    else:
+        geometry = tj.ParallelGeometry(grid, detector, angles)
+        solve, config = (
+            (fbp_host, FBPHostConfig(slices_per_batch=1, fbp=FBPConfig(backend="jax")))
+            if method == "fbp"
+            else (fourier, FourierConfig(slices_per_batch=1, backend="numpy"))
+        )
+    out = np.full((5, 5, 7), np.nan, np.float32)
+    data = np.random.default_rng(17).random((16, 5, 9), dtype=np.float32)
+    stop = progress.Cancel()
+    events = []
+
+    def handler(event):
+        events.append(event)
+        if isinstance(event, progress.Advanced):
+            assert event.done == 1
+            assert np.isfinite(out[0]).all()
+            stop.cancel()
+
+    with progress.watch(handler, cancel=stop), pytest.raises(progress.Cancelled):
+        solve(geometry, grid, detector, data, config=config, out=out)
+    validate_tree(events)
+    assert events[0].label == method
+    assert events[-1].status == "cancelled"
+    assert np.isnan(out[-1]).all()
+
+
+@pytest.mark.parametrize("method", ["sirt", "accelerated", "mlem", "spdhg"])
+def test_chunked_schedules_on_overlapping_rays(method, monkeypatch):
+    """CPU's one-call result is exact. Multi-view GPU values varied on archived main."""
+    from itertools import count
+
+    from tomojax.recon import MLEMConfig, SIRTConfig, SPDHGConfig
+
+    subject = scan()
+    options = {"iterations": 7, "backend": "jax"}
+    config = {
+        "sirt": SIRTConfig(**options, subsets=3, views_per_batch=2),
+        "accelerated": SIRTConfig(**options, acceleration=True, views_per_batch=2),
+        "mlem": MLEMConfig(**options, subsets=3, views_per_batch=2),
+        "spdhg": SPDHGConfig(**options, views_per_block=2, tv_weight=0.03, log_every=2),
+    }[method]
+    if method == "accelerated":
+        method = "sirt"
+    reference = tj.reconstruct(subject, method, config=config)
+    monkeypatch.setattr("tomojax.recon._chunks.monotonic", count(step=0.25).__next__)
+    events = []
+    with progress.watch(events.append):
+        result = tj.reconstruct(subject, method, config=config)
+    validate_tree(events)
+    assert [e.done for e in events if isinstance(e, progress.Advanced)] == list(range(1, 8))
+    assert result.info["effective_iterations"] == reference.info["effective_iterations"] == 7
+    assert result.info.get("termination") == reference.info.get("termination")
+    if jax.default_backend() == "cpu":
+        np.testing.assert_array_equal(result.volume, reference.volume)
+        if method == "spdhg":
+            np.testing.assert_array_equal(result.info["loss"], reference.info["loss"])

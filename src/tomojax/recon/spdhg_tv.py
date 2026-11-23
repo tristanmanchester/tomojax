@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.host_stream import (
     host_buffer,
@@ -35,7 +36,7 @@ from tomojax.recon._projection import (
     resolve_geometry_projector,
 )
 
-from ._callbacks import LossCallback, emit_loss_callback_endpoints
+from ._chunks import Chunked, fixed_updates
 from ._data_term import project_residual
 from ._host_arrays import validate_host_views
 from ._noise import estimate_projection_noise
@@ -55,6 +56,8 @@ from ._tv_ops import (
 from ._volume_storage import Model, pack_volume, resident_model, restore_volume, volume_shape
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
     from .types import DataTerm, Regularizer
@@ -245,6 +248,7 @@ class _SPDHGResult:
         schedule = self.schedule
         return {
             "loss": np.asarray(self.losses).tolist(),
+            "effective_iterations": len(self.losses),
             "tau": float(step_sizes.tau),
             "sigma_data": float(step_sizes.sigma_data),
             "sigma_tv": float(step_sizes.sigma_tv),
@@ -331,6 +335,7 @@ def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
     )
 
 
+@functools.partial(jax.jit, static_argnames=("shape",))
 def _initial_spdhg_state(runtime: _SPDHGRuntime, shape: tuple[int, int, int]) -> _SPDHGScanState:
     cfg = runtime.config
     zeros = jnp.zeros(shape, jnp.float32)
@@ -537,30 +542,6 @@ def _prepare_spdhg_runtime(
     )
 
 
-def _spdhg_logged_steps(config: SPDHGConfig) -> list[int]:
-    if config.log_every <= 0:
-        return []
-    return list(range(config.log_every - 1, config.iterations, config.log_every))
-
-
-def _emit_spdhg_callback(
-    callback: LossCallback | None,
-    result: _SPDHGResult,
-    config: SPDHGConfig,
-) -> None:
-    logged_steps = _spdhg_logged_steps(config)
-    if not logged_steps:
-        return
-    losses_host = np.asarray(result.losses)
-    emit_loss_callback_endpoints(
-        callback,
-        (
-            (logged_steps[0], float(losses_host[logged_steps[0]])),
-            (logged_steps[-1], float(losses_host[logged_steps[-1]])),
-        ),
-    )
-
-
 # --------- main algorithm ----------
 
 
@@ -661,12 +642,37 @@ def _sweep(
     return p, x
 
 
-@functools.partial(jax.jit, static_argnames=("grid", "detector"))
-def _run_spdhg_scan(
+def _sampled_loss(
+    runtime: _SPDHGRuntime,
+    x: jax.Array,
+    pred: jax.Array,
+    data: jax.Array,
+    weights: jax.Array | None,
+    mask: jax.Array,
+) -> jax.Array:
+    """Unbiased data-block objective at the current primal, before its update."""
+    residual = _spdhg_data_residual(pred, data, weights, mask, runtime.config.data_term)
+    objective = 0.5 * jnp.vdot(residual, residual).real / runtime.schedule.selection_prob
+    if runtime.config.tv_weight != 0:
+        scales = runtime.storage_scales
+        regularizer = (
+            huber_tv_value(x, runtime.huber_delta, gradient_scale_xyz=scales)
+            if runtime.regularizer == "huber_tv"
+            else isotropic_tv_value(x, gradient_scale_xyz=scales)
+        )
+        objective = objective + runtime.metric.weight * regularizer
+    return objective.astype(jnp.float32)
+
+
+@functools.partial(jax.jit, static_argnames=("grid", "detector"), donate_argnames=("state",))
+def _advance_spdhg(
     grid: Grid,
     detector: Detector,
     runtime: _SPDHGRuntime,
-) -> tuple[jax.Array, jax.Array, tuple[jax.Array, ...], jax.Array]:
+    state: _SPDHGScanState,
+    first: int,
+    end: int,
+) -> _SPDHGScanState:
     cfg, schedule, step_sizes = runtime.config, runtime.schedule, runtime.step_sizes
     n_views, nv, nu = runtime.data_shape
     block_shape = (schedule.views_per_batch, nv, nu)
@@ -707,7 +713,7 @@ def _run_spdhg_scan(
             return state.y_data
         return jax.lax.dynamic_update_slice_in_dim(state.y_data, duals, start, axis=0)
 
-    def one_step(state: _SPDHGScanState, t: jnp.ndarray) -> tuple[_SPDHGScanState, None]:
+    def one_step(t: jnp.ndarray, state: _SPDHGScanState) -> _SPDHGScanState:
         size = schedule.views_per_batch
         start = schedule.block_ids[t] * size
         start_shifted = jnp.minimum(start, n_views - size)
@@ -732,24 +738,7 @@ def _run_spdhg_scan(
         do_log = (cfg.log_every > 0) & ((t + 1) % cfg.log_every == 0)
 
         def log_step() -> jnp.ndarray:
-            resid = _spdhg_data_residual(pred, y_chunk, w_chunk, row_mask, cfg.data_term)
-            # Blocks are selected uniformly, not in proportion to their view
-            # counts. The final partial block has the same selection weight.
-            data_est = 0.5 * jnp.vdot(resid, resid).real / schedule.selection_prob
-            objective = data_est
-            if cfg.tv_weight != 0:
-                if runtime.regularizer == "huber_tv":
-                    reg_value = huber_tv_value(
-                        state.x,
-                        runtime.huber_delta,
-                        gradient_scale_xyz=runtime.storage_scales,
-                    )
-                else:
-                    reg_value = isotropic_tv_value(
-                        state.x, gradient_scale_xyz=runtime.storage_scales
-                    )
-                objective = objective + runtime.metric.weight * reg_value
-            obj = objective.astype(jnp.float32)
+            obj = _sampled_loss(runtime, state.x, pred, y_chunk, w_chunk, row_mask)
             return state.losses.at[t].set(obj)
 
         # The objective at the current primal, before the sweep overwrites it.
@@ -770,16 +759,37 @@ def _run_spdhg_scan(
             p=p,
             s_data=s_data_new,
             losses=losses_new,
-        ), None
+        )
 
+    return jax.lax.fori_loop(first, end, one_step, state)
+
+
+def _spdhg_program(
+    grid: Grid, detector: Detector, runtime: _SPDHGRuntime, *, drive: Callable
+) -> tuple[jax.Array, jax.Array, tuple[jax.Array, ...], jax.Array]:
+    cfg = runtime.config
     initial = _initial_spdhg_state(runtime, volume_shape(runtime.projector[0], grid))
-    steps = jnp.arange(cfg.iterations)
-    final = jax.lax.scan(one_step, initial, steps)[0] if cfg.iterations else initial
+
+    def metrics(state: _SPDHGScanState, done: int) -> dict[str, float | None]:
+        if cfg.log_every and done and done % cfg.log_every == 0:
+            return {"loss": float(state.losses[done - 1])}
+        return {"loss": None}
+
+    advance = functools.partial(_advance_spdhg, grid, detector, runtime)
+    final = (
+        fixed_updates(initial, cfg.iterations, advance, drive, metrics)
+        if cfg.iterations
+        else initial
+    )
     # Return every large carry: a carry left out of the outputs becomes a temporary that
     # XLA keeps beside the loop's own copy, one more volume or data stack at the peak.
     return final.x, final.losses, final.p, final.y_data
 
 
+_run_spdhg_scan = Chunked(_spdhg_program, static_argnames=("grid", "detector"))
+
+
+@progress.reports_iterations(SPDHGConfig.iterations)
 def spdhg(
     geometry: Geometry,
     grid: Grid,
@@ -789,7 +799,6 @@ def spdhg(
     weights: jnp.ndarray | None = None,  # same shape as projections; 0 for unmeasured
     init_x: jnp.ndarray | None = None,
     config: SPDHGConfig | None = None,
-    callback: LossCallback | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, dict[str, object]]:
     """Reconstruct with stochastic primal-dual weighted L2 and TV updates.
@@ -805,13 +814,6 @@ def spdhg(
     Logged losses estimate the full objective at the primal image used
     for that iteration's data projection, with inverse block-selection weights.
     They are samples, not full-scan objectives of the returned primal image.
-
-    If ``callback`` is provided, it fires on the first logged objective sample and
-    on the final logged objective sample. The callback arguments are ``(step,
-    loss)``, where ``step`` is the zero-based iteration index that produced
-    ``loss``. Only iterations whose objective was recorded under ``config.log_every``
-    are eligible for callbacks; if a single logged sample exists, the callback
-    fires once.
 
     Parameters
     ----------
@@ -830,8 +832,6 @@ def spdhg(
         Initial volume of shape ``(nz, ny, nx)``; None starts from zero.
     config : SPDHGConfig or None, optional
         Solver settings. None uses SPDHGConfig defaults.
-    callback : callable or None, optional
-        Callback receiving ``(step, loss)`` at the first and last logged samples.
     det_grid : tuple of array-like or None, optional
         Explicit detector-coordinate arrays ``(u, v)``, each of shape ``(nv, nu)``.
         None uses the canonical detector grid.
@@ -904,5 +904,4 @@ def spdhg(
         resolved_tv_weight=runtime.resolved_tv_weight,
         effective_tv_weight=float(runtime.metric.weight),
     )
-    _emit_spdhg_callback(callback, result, runtime.config)
     return result.volume, result.info()

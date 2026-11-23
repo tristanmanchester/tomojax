@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.api import is_oom_error
 from tomojax.core.devices import as_devices
@@ -168,15 +169,21 @@ class _VolumeWriter:
 
         if self.pool is None:
             store()
+            progress.step("slabs")
             return
         if self.pending is not None:
             self.pending.result()
+            self.pending = None
+            progress.step("slabs")
+            progress.check_cancelled()
         self.pending = self.pool.submit(store)
 
     def __exit__(self, *args: object) -> None:
         try:
             if self.pending is not None:
                 self.pending.result()
+                if not args[0]:
+                    progress.step("slabs")
         finally:
             if self.pool is not None:
                 self.pool.shutdown(wait=True, cancel_futures=True)
@@ -196,6 +203,7 @@ def _output_memory(projections: np.ndarray | jax.Array, poses: jax.Array) -> int
     return device_free_memory_bytes(device=device) or 0
 
 
+@progress.task("reconstruct", "fbp", None, "slabs")
 def fbp_host(
     geometry: Geometry,
     grid: Grid,
@@ -289,8 +297,10 @@ def fbp_host(
         and (output.flags.f_contiguous or output.flags.c_contiguous)
         and slab_bytes <= _output_memory(projections, poses) // 4
     )
+    progress.remaining("slabs", -(-grid.nz // depth))
     with _VolumeWriter(enabled=enabled) as write:
         for start in range(0, grid.nz, depth):
+            progress.check_cancelled()
             v = first + start * step
             v_start = math.floor(v)
             if not integer:
@@ -353,6 +363,7 @@ def _general_slabs(
     ox, oy, oz = grid_volume_origin(grid)
     start = 0
     while start < grid.nz:
+        progress.check_cancelled()
         count = min(depth, grid.nz - start)
         # Keep the slab shape fixed at this depth, including the padded tail.
         slab = replace(grid, nz=depth, vol_origin=(ox, oy, oz + start * grid.vz), vol_center=None)
@@ -390,6 +401,7 @@ def _general_slabs(
         # Do not keep the preceding device slab alive while constructing the next.
         del volume
         start += count
+        progress.step("slabs", remaining=-(-(grid.nz - start) // depth))
     return output
 
 

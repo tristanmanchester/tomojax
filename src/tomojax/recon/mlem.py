@@ -6,12 +6,13 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 import operator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.geometry.views import stack_view_poses
@@ -23,6 +24,7 @@ from tomojax.core.validation import (
 )
 from tomojax.geometry import grid_volume_origin
 from tomojax.recon._axial_slabs import independent_planes
+from tomojax.recon._chunks import Chunked, fixed_updates
 from tomojax.recon._cone_slabs import RowReader, host_volumes
 from tomojax.recon._host_arrays import validate_host_views
 from tomojax.recon._projection import (
@@ -41,6 +43,8 @@ from tomojax.recon._volume_storage import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tomojax.geometry import Detector, Geometry, Grid
 
 _SENSITIVITY_CACHE_BYTES = 256 * 2**20
@@ -143,20 +147,20 @@ def _normalizer(
     return jax.lax.map(sensitivity, jnp.arange(indices.shape[0]))
 
 
-@partial(
-    jax.jit,
-    static_argnames=(
-        "grid",
-        "detector",
-        "backend",
-        "batch_size",
-        "model",
-        "cache",
-        "stream",
-        "axial",
-    ),
+_MLEM_STATIC = (
+    "grid",
+    "detector",
+    "backend",
+    "batch_size",
+    "model",
+    "cache",
+    "stream",
+    "axial",
 )
-def _solve(
+
+
+@partial(jax.jit, static_argnames=_MLEM_STATIC, donate_argnames=("state",))
+def _segment(
     poses: jax.Array,
     data: jax.Array,
     initial: jax.Array | None,
@@ -165,6 +169,9 @@ def _solve(
     valid: jax.Array,
     iterations: jax.Array,
     det_grid: tuple[jax.Array, jax.Array] | None,
+    state: tuple[jax.Array, jax.Array] | None,
+    first: int,
+    end: int,
     *,
     grid: Grid,
     detector: Detector,
@@ -175,7 +182,7 @@ def _solve(
     stream: bool,
     axial: bool,
     sensitivities: jax.Array | None = None,
-) -> tuple[jax.Array, jax.Array]:
+) -> Any:
     initial, support = pack_volume(initial, model), pack_volume(support, model)
     sensitivity, correction = poisson_operators(
         poses, grid, detector, det_grid, backend, batch_size, model, indices, valid, stream=stream
@@ -187,27 +194,38 @@ def _solve(
         sensitivity, _ = poisson_operators(
             poses, normal_grid, normal_detector, None, backend, batch_size, model, indices, valid
         )
-    shape = volume_shape(model, grid)
-    x = jnp.ones(shape, jnp.float32) if initial is None else initial
-    if support is not None:
-        x = jnp.where(support, x, 0.0)
-    inputs_valid = jnp.bool_(True) if stream else jnp.all(jnp.isfinite(data) & (data >= 0))
-    inputs_valid &= jnp.all(jnp.isfinite(x) & (x >= 0)) & jnp.all(jnp.isfinite(poses))
     subsets = indices.shape[0]
-    # A full subset stack on a large volume can exceed device memory. Retain
-    # only one current sensitivity in that case, independent of subset count.
-    if sensitivities is None and cache:
-        sensitivities = jax.lax.map(sensitivity, jnp.arange(subsets))
-    # A wholly unobserved voxel has no likelihood information: choose zero,
-    # not an arbitrary unit activity. Visibility must include every subset;
-    # a voxel missed by one subset can still be measured by another.
-    observed = jnp.zeros(shape, bool)
-    if sensitivities is not None:
-        # A stack-shaped > 0 comparison can retain a second full zero stack
-        # alongside the map's writable cache. Compare one volume at a time.
-        observed = jax.lax.fori_loop(
-            0, subsets, lambda i, seen: seen | (sensitivities[i] > 0), observed
-        )
+    if state is None:
+        shape = volume_shape(model, grid)
+        x = jnp.ones(shape, jnp.float32) if initial is None else initial
+        if support is not None:
+            x = jnp.where(support, x, 0.0)
+        inputs_valid = jnp.bool_(True) if stream else jnp.all(jnp.isfinite(data) & (data >= 0))
+        inputs_valid &= jnp.all(jnp.isfinite(x) & (x >= 0)) & jnp.all(jnp.isfinite(poses))
+        # A full subset stack on a large volume can exceed device memory. Retain
+        # only one current sensitivity in that case, independent of subset count.
+        if sensitivities is None and cache:
+            sensitivities = jax.lax.map(sensitivity, jnp.arange(subsets))
+        # A wholly unobserved voxel has no likelihood information: choose zero,
+        # not an arbitrary unit activity. Visibility must include every subset;
+        # a voxel missed by one subset can still be measured by another.
+        observed = jnp.zeros(shape, bool)
+        if sensitivities is not None:
+            # A stack-shaped > 0 comparison can retain a second full zero stack
+            # alongside the map's writable cache. Compare one volume at a time.
+            observed = jax.lax.fori_loop(
+                0, subsets, lambda i, seen: seen | (sensitivities[i] > 0), observed
+            )
+
+        if not cache:
+            observed = jax.lax.cond(
+                iterations == 0,
+                lambda: jax.lax.fori_loop(
+                    0, subsets, lambda i, seen: seen | (sensitivity(i) > 0), jnp.zeros(shape, bool)
+                ),
+                lambda: observed,
+            )
+        return (x, observed), inputs_valid, sensitivities
 
     def step(k: jax.Array, state: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
         volume, seen = state
@@ -217,19 +235,32 @@ def _solve(
         volume = volume * jnp.where(norm > 0, update / jnp.where(norm > 0, norm, 1), 1)
         return volume, seen if cache else seen | (norm > 0)
 
-    # Unseen voxels cannot affect any ray, so zeroing them can wait until the
-    # end. Collecting visibility from each uncached norm avoids an extra full
-    # backprojection pass, without dropping voxels missed by only one subset.
-    x, observed = jax.lax.fori_loop(0, iterations * subsets, step, (x, observed))
-    if not cache:
-        observed = jax.lax.cond(
-            iterations == 0,
-            lambda: jax.lax.fori_loop(
-                0, subsets, lambda i, seen: seen | (sensitivity(i) > 0), jnp.zeros(shape, bool)
-            ),
-            lambda: observed,
-        )
-    return jnp.where(observed, x, 0.0), inputs_valid
+    return jax.lax.fori_loop(first * subsets, end * subsets, step, state)
+
+
+def _mlem_program(
+    poses: jax.Array,
+    data: jax.Array,
+    initial: jax.Array | None,
+    support: jax.Array | None,
+    indices: jax.Array,
+    valid: jax.Array,
+    iterations: int,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+    *,
+    sensitivities: jax.Array | None = None,
+    drive: Callable,
+    **options: Any,
+) -> tuple[jax.Array, jax.Array]:
+    segment = partial(
+        _segment, poses, data, initial, support, indices, valid, iterations, det_grid, **options
+    )
+    state, good, norms = segment(None, 0, 0, sensitivities=sensitivities)
+    x, observed = fixed_updates(state, iterations, partial(segment, sensitivities=norms), drive)
+    return jnp.where(observed, x, 0.0), good
+
+
+_solve = Chunked(_mlem_program, static_argnames=_MLEM_STATIC)
 
 
 def _device(array: object) -> jax.Array:
@@ -299,7 +330,7 @@ def _run_device(
             norms.block_until_ready()
         volume, good = _solve(
             poses, data, initial, support,
-            device_indices, device_valid, jnp.int32(iterations), det_grid,
+            device_indices, device_valid, iterations, det_grid,
             grid=grid, detector=detector, backend=backend, batch_size=batch, model=model,
             cache=cache, stream=stream, axial=axial, sensitivities=norms,
         )  # fmt: skip
@@ -310,6 +341,7 @@ def _run_device(
     return restore_volume(volume, model)
 
 
+@progress.reports_iterations(MLEMConfig.iterations)
 def mlem(
     geometry: Geometry,
     grid: Grid,

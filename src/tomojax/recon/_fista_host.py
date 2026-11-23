@@ -8,7 +8,8 @@ from typing import Any
 
 import numpy as np
 
-from tomojax.core.host_volume import host_volume, scratch_directory
+from tomojax import progress
+from tomojax.core.host_volume import close_work_file, host_volume, scratch_directory
 from tomojax.core.operator_norm import bounds_settled
 
 from ._cuda_tv import proximal_host
@@ -238,46 +239,42 @@ class HostFista:
     def run(self) -> tuple[np.ndarray, dict[str, Any]]:
         """Run exactly the same stopping rule and retain the padded objective history."""
         cfg = self.cfg
-        with ExitStack() as closing:
-            for volume in (self.X, self.Z, self.G):
-                closing.callback(volume.close)
-            limit, at_zero = self.initialize()
-            losses, t, streak, done = [], np.float32(1), 0, False
-            zero = self.initial is None and self.lower <= 0 <= self.upper
-            for step in range(cfg.iterations):
-                loss = (
-                    0.0 if self.metric is None else float(self.metric.weight) * self.regularizer()
+        limit, at_zero = self.initialize()
+        losses, t, streak, done = [], np.float32(1), 0, False
+        zero = self.initial is None and self.lower <= 0 <= self.upper
+        for step in range(cfg.iterations):
+            progress.check_cancelled()
+            loss = 0.0 if self.metric is None else float(self.metric.weight) * self.regularizer()
+            gradient = step == 0 and zero
+            loss += (
+                at_zero if gradient else self.apply(self.Z, self.G, residual=True, step=1 / limit)
+            )
+            tn = np.float32((1 + np.sqrt(1 + 4 * t * t)) / 2)
+            self.update(limit, np.float32((t - 1) / tn), gradient=gradient)
+            if cfg.tolerance and cfg.patience:
+                small = (
+                    bool(losses)
+                    and abs(loss - losses[-1]) / max(abs(losses[-1]), 1e-6) <= cfg.tolerance
                 )
-                gradient = step == 0 and zero
-                loss += (
-                    at_zero
-                    if gradient
-                    else self.apply(self.Z, self.G, residual=True, step=1 / limit)
-                )
-                tn = np.float32((1 + np.sqrt(1 + 4 * t * t)) / 2)
-                self.update(limit, np.float32((t - 1) / tn), gradient=gradient)
-                if cfg.tolerance and cfg.patience:
-                    small = (
-                        bool(losses)
-                        and abs(loss - losses[-1]) / max(abs(losses[-1]), 1e-6) <= cfg.tolerance
-                    )
-                    streak = streak + 1 if small else 0
-                    done = streak >= cfg.patience
-                losses.append(loss)
-                t = tn
-                if done:
-                    break
-            count = len(losses)
-            losses.extend([losses[-1]] * (cfg.iterations - count) if losses else [])
-            return self.X.array, {
-                "loss": losses,
-                "lipschitz": limit,
-                "effective_iterations": count,
-                "early_stop": done,
-                "regularizer": cfg.regularizer,
-                "huber_delta": cfg.huber_delta,
-                "host_slabs": True,
-            }
+                streak = streak + 1 if small else 0
+                done = streak >= cfg.patience
+            losses.append(loss)
+            if (task := progress.for_unit("iterations")) is not None:
+                self.problem.completed(task.advance, len(losses), {"loss": loss})
+            t = tn
+            if done:
+                break
+        count = len(losses)
+        losses.extend([losses[-1]] * (cfg.iterations - count) if losses else [])
+        return self.X.array, {
+            "loss": losses,
+            "lipschitz": limit,
+            "effective_iterations": count,
+            "early_stop": done,
+            "regularizer": cfg.regularizer,
+            "huber_delta": cfg.huber_delta,
+            "host_slabs": True,
+        }
 
 
 def solve_on_host(
@@ -341,5 +338,9 @@ def solve_on_host(
         initial=initial,
         out=out,
     )
-    volume, info = solver.run()
+    with ExitStack() as resources:
+        if solver.initial is not initial:
+            resources.callback(close_work_file, solver.initial)
+        resources.enter_context(problem.using(out, solver.X, solver.Z, solver.G))
+        volume, info = solver.run()
     return problem.result(volume), info, solver.metric

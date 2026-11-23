@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.operator_norm import bounds_settled, collatz_ratio, unit
 
 from ._data_term import project_residual
@@ -156,6 +157,7 @@ def _zero_start(grid, detector, data, runtime):
         # The step-safe Collatz bound, once it meets the power estimate (see
         # tomojax.core.operator_norm.normal_upper_bound).
         while not bounds_settled(k, iterations, power, upper):
+            progress.check_cancelled()
             projected = _norm_forward(grid, detector, vector, runtime)
             projected.block_until_ready()
             # Hold the iterate on the host while the transpose needs the device.
@@ -169,6 +171,7 @@ def _zero_start(grid, detector, data, runtime):
             power, k = float(norm), k + 1
         vector.delete()
         limit = jnp.float32(upper * (1 + 8 * np.finfo(np.float32).eps) or 1e-6)
+    progress.check_cancelled()
     x = _first_step(gradient, limit)
     x.block_until_ready()
     return x, value, limit
@@ -184,7 +187,11 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
     streak, done = 0, False
     previous = float(first_value) if early and first_value is not None else None
     value = jnp.float32(0) if first_value is None else first_value
+    task = progress.for_unit("iterations")
+    if task is not None and first_value is not None:
+        task.advance(1, {"loss": float(first_value)})
     for _step in range(len(losses), cfg.iterations):
+        progress.check_cancelled()
         residual = _residual(grid, detector, data, z, runtime)
         value = 0.5 * jnp.vdot(residual, residual).real
         residual.block_until_ready()
@@ -193,6 +200,9 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
         z, t = _momentum(x, new, t, clipped=True)
         x = new
         losses.append(value)
+        if task is not None:
+            jax.block_until_ready((z, t))
+            task.advance(len(losses), {"loss": float(value)})
         if early:
             objective = float(value)
             small = (

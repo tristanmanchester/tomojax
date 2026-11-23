@@ -251,7 +251,6 @@ def test_zero_iteration_budget_keeps_initial_volume_and_logs_nothing(solver):
         config = FISTAConfig(iterations=0, tv_weight=0, lipschitz=10, tolerance=0)
     else:
         config = SPDHGConfig(iterations=0, tv_weight=0, tau=0.1, sigma_data=0.1, log_every=0)
-    calls = []
     volume, info = (fista if solver == "fista" else spdhg)(
         geometry,
         grid,
@@ -259,11 +258,9 @@ def test_zero_iteration_budget_keeps_initial_volume_and_logs_nothing(solver):
         data,
         init_x=initial,
         config=config,
-        callback=lambda *args: calls.append(args),
     )
     np.testing.assert_array_equal(volume, initial)
     assert info["loss"] == []
-    assert calls == []
 
 
 @pytest.mark.numerical

@@ -154,8 +154,23 @@ def host_volume(
         descriptor = os.open(handle.name, os.O_RDWR)
     # The descriptor keeps the unlinked file open for slab reads and writes.
     _DESCRIPTORS[id(array)] = descriptor
-    weakref.finalize(array, lambda key: os.close(_DESCRIPTORS.pop(key)), id(array))
+    weakref.finalize(array, _close_descriptor, id(array))
     return array
+
+
+def _close_descriptor(key: int) -> None:
+    descriptor = _DESCRIPTORS.pop(key, None)
+    if descriptor is not None:
+        os.close(descriptor)
+
+
+def close_work_file(array: object) -> None:
+    """Close a discarded private mapped volume even if an exception retains its frame."""
+    if isinstance(array, np.memmap) and id(array) in _DESCRIPTORS:
+        _close_descriptor(id(array))
+        mapping = array.base
+        assert isinstance(mapping, mmap.mmap)
+        mapping.close()
 
 
 def _require_room(shape: tuple[int, ...], directory: Path, dtype: DTypeLike = np.float32) -> None:

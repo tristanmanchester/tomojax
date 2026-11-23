@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 
 import numpy as np
 
+from tomojax import progress
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
 from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
@@ -62,7 +63,7 @@ def fourier_slab_depth(grid: Grid, detector: Detector, requested: int | None, ba
 
 def is_cuda_oom(error: Exception) -> bool:
     """Recognize allocator exhaustion without swallowing unrelated failures."""
-    if not isinstance(error, MemoryError):
+    if progress.handler_failed(error) or not isinstance(error, MemoryError):
         return False
     try:
         import cupy

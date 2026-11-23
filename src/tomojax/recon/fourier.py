@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_grid, validate_projection_stack
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
@@ -64,6 +65,7 @@ class FourierConfig:
     backend: Literal["auto", "numpy", "cupy"] = "auto"
 
 
+@progress.task("reconstruct", "fourier", None, "slabs")
 def fourier(
     geometry: ScanGeometry,
     grid: Grid,
@@ -173,6 +175,8 @@ def fourier(
         output[start:stop] = volume
 
     while True:
+        progress.check_cancelled()
+        progress.remaining("slabs", (grid.nz + depth - 1) // depth)
         try:
             overlap = (
                 backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES
@@ -192,8 +196,10 @@ def fourier(
                 _run_host_pipeline(plan, grid.nz, depth, prepare, write)
             else:
                 for start in range(0, grid.nz, depth):
+                    progress.check_cancelled()
                     count = min(depth, grid.nz - start)
                     write(start, plan.reconstruct(prepare(start), count=count))
+                    progress.step("slabs")
             return output
         except Exception as error:
             if backend != "cupy" or depth == 1 or not is_cuda_oom(error):
@@ -303,11 +309,14 @@ def _run_host_pipeline(
             volume = job.wait()[: min(depth, nz - start)]
             if written is not None:
                 written.result()
+                progress.step("slabs")
+                progress.check_cancelled()
             written = writer.submit(write, start, volume)
 
         prepared = reader.submit(prepare, 0)
         try:
             for start in range(0, nz, depth):
+                progress.check_cancelled()
                 try:
                     assert prepared is not None
                     data = prepared.result()
@@ -330,6 +339,7 @@ def _run_host_pipeline(
             pending.clear()
             if written is not None:
                 written.result()
+                progress.step("slabs")
         finally:
             # Drain GPU work even if an output write fails. Buffer owners stay
             # alive through their completion event; executors join host workers.

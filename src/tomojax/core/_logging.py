@@ -3,10 +3,6 @@ from __future__ import annotations
 import logging
 import math
 import os
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
 
 
 def setup_logging(level: str = "INFO") -> None:
@@ -32,47 +28,6 @@ def log_jax_env() -> None:
         )
     except Exception:  # pragma: no cover
         logging.info("JAX not available for logging")
-
-
-def _progress_enabled() -> bool:
-    v = os.environ.get("TOMOJAX_PROGRESS", "0").lower()
-    return v in ("1", "true", "yes", "on")
-
-
-def progress_iter[T](
-    iterable: Iterable[T],
-    *,
-    total: int | None = None,
-    desc: str = "",
-) -> Iterator[T]:
-    """Yield elements from iterable, showing a progress bar if enabled.
-
-    Enable by setting environment variable `TOMOJAX_PROGRESS=1` or calling CLIs with `--progress`.
-    Uses tqdm if available; otherwise prints occasional step counters.
-    """
-    if not _progress_enabled():
-        for x in iterable:
-            yield x
-        return
-    try:
-        from tqdm import tqdm  # type: ignore
-
-        leave = os.environ.get("TOMOJAX_PROGRESS_LEAVE", "0").lower() in ("1", "true", "yes", "on")
-        for x in tqdm(iterable, total=total, desc=desc, dynamic_ncols=True, leave=leave):
-            yield x
-    except Exception:
-        # Lightweight fallback: print at ~10% increments
-        if total is None:
-            for i, x in enumerate(iterable, 1):
-                if i == 1 or i % 10 == 0:
-                    logging.getLogger("tomojax").info("%s step %d", desc, i)
-                yield x
-        else:
-            step = max(1, total // 10)
-            for i, x in enumerate(iterable, 1):
-                if i in (1, total) or i % step == 0:
-                    logging.getLogger("tomojax").info("%s %d/%d", desc, i, total)
-                yield x
 
 
 def format_duration(seconds: float | None) -> str:

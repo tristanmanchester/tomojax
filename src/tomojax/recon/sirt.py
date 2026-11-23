@@ -7,12 +7,13 @@ from dataclasses import dataclass, replace
 from functools import partial
 import math
 import operator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
@@ -22,6 +23,7 @@ from tomojax.core.validation import (
     validate_volume,
 )
 from tomojax.recon._axial_slabs import axial_slabs, independent_planes
+from tomojax.recon._chunks import Chunked, fixed_updates
 from tomojax.recon._cone_slabs import RowReader, host_volumes
 from tomojax.recon._projection import (
     ConeModel,
@@ -106,11 +108,37 @@ def _inverse(value: jax.Array) -> jax.Array:
     return jnp.where(positive, 1.0 / jnp.where(positive, value, 1.0), 0.0)
 
 
+def _normalization(
+    select: Callable,
+    poses: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch: int,
+    model: Model,
+    subsets: int,
+    *,
+    axial: bool,
+) -> tuple[Callable, int, tuple[int, int, int]]:
+    """Use shared one-plane normalisers only for exactly independent axial rows."""
+    if not axial:
+        return select, detector.nv, volume_shape(model, grid)
+    from tomojax.geometry import grid_volume_origin
+
+    normal_grid = replace(grid, nz=1, vol_origin=(*grid_volume_origin(grid)[:2], 0.0))
+    normal_detector = replace(detector, nv=1, center=(detector.center[0], 0.0))
+    normalization = subset_operators(
+        poses, normal_grid, normal_detector, None, backend, batch, model, subsets
+    )
+    return normalization, 1, volume_shape(model, normal_grid)
+
+
 def _accelerated_steps(
     update: Callable[[jax.Array, jax.Array], jax.Array],
-    initial: jax.Array,
-    iterations: jax.Array,
-) -> jax.Array:
+    state: tuple[jax.Array, jax.Array, jax.Array],
+    first: int,
+    end: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
     # Row/column normalization bounds the spectrum by one in the C^-1 norm.
     # Box/support projection is coordinatewise in that norm, so the usual
     # FISTA recurrence applies with a relaxation of at most one.
@@ -123,35 +151,38 @@ def _accelerated_steps(
         momentum = (time - 1.0) / next_time
         return current, current + momentum * (current - previous), next_time
 
-    return jax.lax.fori_loop(0, iterations, step, (initial, initial, jnp.float32(1.0)))[0]
+    return jax.lax.fori_loop(first, end, step, state)
 
 
-@partial(
-    jax.jit,
-    static_argnames=(
-        "grid",
-        "detector",
-        "backend",
-        "batch",
-        "model",
-        "subsets",
-        "cache_columns",
-        "axial",
-        "acceleration",
-        "stream",
-        "column_device",
-    ),
+_SIRT_STATIC = (
+    "grid",
+    "detector",
+    "backend",
+    "batch",
+    "model",
+    "subsets",
+    "cache_columns",
+    "axial",
+    "acceleration",
+    "stream",
+    "column_device",
 )
-def _solve(
+
+
+@partial(jax.jit, static_argnames=_SIRT_STATIC, donate_argnames=("state",))
+def _segment(
     poses: jax.Array,
     data: jax.Array,
     initial: jax.Array | None,
     support: jax.Array | None,
     det_grid: tuple[jax.Array, jax.Array] | None,
-    iterations: jax.Array,
     relaxation: jax.Array,
     lower: jax.Array,
     upper: jax.Array,
+    state: jax.Array | tuple[jax.Array, jax.Array, jax.Array] | None,
+    first: int,
+    end: int,
+    norms: tuple[jax.Array | None, jax.Array | None] | None,
     *,
     grid: Grid,
     detector: Detector,
@@ -165,30 +196,19 @@ def _solve(
     stream: bool,
     host_columns: jax.Array | None = None,
     column_device: jax.sharding.Sharding | None = None,
-) -> jax.Array:
+) -> Any:
     initial, support = pack_volume(initial, model), pack_volume(support, model)
     select = subset_operators(
         poses, grid, detector, det_grid, backend, batch, model, subsets, stream=stream
     )
     shape = volume_shape(model, grid)
-    normalization = select
-    normal_rows = detector.nv
-    normal_shape = shape
-    if axial:
-        from tomojax.geometry import grid_volume_origin
-
-        normal_grid = replace(grid, nz=1, vol_origin=(*grid_volume_origin(grid)[:2], 0.0))
-        normal_detector = replace(detector, nv=1, center=(detector.center[0], 0.0))
-        normalization = subset_operators(
-            poses, normal_grid, normal_detector, None, backend, batch, model, subsets
-        )
-        normal_rows, normal_shape = 1, volume_shape(model, normal_grid)
+    normalization, normal_rows, normal_shape = _normalization(
+        select, poses, grid, detector, backend, batch, model, subsets, axial=axial
+    )
     mask = jnp.ones(shape, jnp.float32) if support is None else (support != 0).astype(jnp.float32)
 
     def constrain(x: jax.Array) -> jax.Array:
         return jnp.where(mask != 0, jnp.clip(x, lower, upper), 0.0)
-
-    initial = constrain(jnp.zeros(shape, jnp.float32) if initial is None else initial)
 
     def row_weights(index: jax.Array) -> jax.Array:
         forward, _, _ = (normalization if support is None else select)(index)
@@ -199,16 +219,25 @@ def _solve(
         count = (poses.shape[0] + subsets - 1) // subsets
         return _inverse(adjoint(jnp.ones((count, normal_rows, detector.nu), jnp.float32)))
 
-    rows = None if stream else jax.lax.map(row_weights, jnp.arange(subsets))
-    # Avoid storing a volume for every subset on large scans. The exact subset
-    # normalization is then recomputed at each update, not approximated by a
-    # rescaled full-scan normalization. Cone updates share its ray geometry
-    # with the residual transpose without sharing their accumulators.
-    columns = (
-        jax.lax.map(column_weights, jnp.arange(subsets))
-        if cache_columns and host_columns is None
-        else None
-    )
+    if state is None:
+        initial = constrain(jnp.zeros(shape, jnp.float32) if initial is None else initial)
+
+        rows = None if stream else jax.lax.map(row_weights, jnp.arange(subsets))
+        # Avoid storing a volume for every subset on large scans. The exact subset
+        # normalization is then recomputed at each update, not approximated by a
+        # rescaled full-scan normalization. Cone updates share its ray geometry
+        # with the residual transpose without sharing their accumulators.
+        columns = (
+            jax.lax.map(column_weights, jnp.arange(subsets))
+            if cache_columns and host_columns is None
+            else None
+        )
+
+        state = (initial, initial, jnp.float32(1)) if acceleration else initial
+        return state, (rows, columns)
+
+    assert norms is not None
+    rows, columns = norms
 
     def update(step: jax.Array, x: jax.Array) -> jax.Array:
         index = step % subsets
@@ -231,9 +260,34 @@ def _solve(
             gradient = residual_adjoint(x, data, row_weights, row_support=row_support)
         return constrain(x + relaxation * column * gradient)
 
-    if acceleration:
-        return _accelerated_steps(update, initial, iterations)
-    return jax.lax.fori_loop(0, iterations * subsets, update, initial)
+    if isinstance(state, tuple):
+        return _accelerated_steps(update, state, first, end)
+    return jax.lax.fori_loop(first * subsets, end * subsets, update, state)
+
+
+def _sirt_program(
+    poses: jax.Array,
+    data: jax.Array,
+    initial: jax.Array | None,
+    support: jax.Array | None,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+    iterations: int,
+    relaxation: jax.Array,
+    lower: jax.Array,
+    upper: jax.Array,
+    *,
+    drive: Callable,
+    **options: Any,
+) -> jax.Array:
+    segment = partial(
+        _segment, poses, data, initial, support, det_grid, relaxation, lower, upper, **options
+    )
+    state, norms = segment(None, 0, 0, None)
+    result = fixed_updates(state, iterations, partial(segment, norms=norms), drive)
+    return result[0] if options["acceleration"] else result
+
+
+_solve = Chunked(_sirt_program, static_argnames=_SIRT_STATIC)
 
 
 def _initial_volume(value: jax.Array | np.ndarray | None, *, stream: bool) -> jax.Array | None:
@@ -311,6 +365,7 @@ def _storage(
     return initial, stream, cache
 
 
+@progress.reports_iterations(SIRTConfig.iterations)
 def sirt(
     geometry: Geometry,
     grid: Grid,
@@ -512,7 +567,7 @@ class SIRTCall:
             volume = _solve(
                 poses, data, initial,
                 None if cfg.support is None else jnp.asarray(cfg.support),
-                det_grid, jnp.int32(iterations), jnp.float32(cfg.relaxation),
+                det_grid, iterations, jnp.float32(cfg.relaxation),
                 jnp.float32(lower), jnp.float32(upper), grid=grid, detector=detector,
                 backend=backend, batch=batch, model=model, subsets=subsets,
                 cache_columns=cache_columns,

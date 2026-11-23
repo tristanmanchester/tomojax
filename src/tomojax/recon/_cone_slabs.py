@@ -14,6 +14,7 @@ written one slab at a time.
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from functools import cache
 import math
@@ -26,6 +27,7 @@ import numpy as np
 from tomojax.core.cone import ConeModel
 from tomojax.core.host_volume import (
     check_rows,
+    close_work_file,
     fill,
     host_volume,
     read_at,
@@ -41,7 +43,7 @@ from ._host_arrays import validate_host_arrays
 from ._slab_engines import CudaEngine, Engine, JaxEngine, engine_for
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from tomojax.geometry import Detector, Geometry, Grid
 
@@ -295,14 +297,16 @@ class HostVolume:
 
     def close(self) -> None:
         """Wait for every write behind and stop the worker; a failed write raises here."""
-        while self._writes:
-            self._writes.pop(0).result()
-        if self._worker is not None:
-            self._worker.shutdown()
-            self._worker = None
-        if self._file is not None:
-            os.close(self._file[0])
-            self._file = None
+        try:
+            while self._writes:
+                self._writes.pop(0).result()
+        finally:
+            if self._worker is not None:
+                self._worker.shutdown()
+                self._worker = None
+            if self._file is not None:
+                os.close(self._file[0])
+                self._file = None
 
     def view(self, z0: int, z1: int) -> Any:
         """Planes ``[z0, z1)`` on the device as a contiguous ``(z1 - z0, ny, nx)`` array.
@@ -662,6 +666,37 @@ class ConeProblem:
             return self.engine.xp.zeros(shape, self.engine.xp.float32)
         return host_volume(shape, scratch_directory(iterate))
 
+    @contextmanager
+    def using(
+        self,
+        out: Any,
+        iterate: HostVolume,
+        *work: HostVolume,
+    ) -> Iterator[None]:
+        """Join slab workers before releasing their scratch files, including on failure."""
+        try:
+            with ExitStack() as resources:
+                if isinstance(self.data, RowReader):
+                    resources.callback(self.data.close)
+                resources.callback(iterate.close)
+                for volume in work:
+                    if volume is not iterate:
+                        resources.callback(close_work_file, volume.array)
+                        resources.callback(volume.close)
+                yield
+        except BaseException:
+            if out is None:
+                close_work_file(iterate.array)
+            raise
+
+    def completed(
+        self, publish: Callable[[int, dict[str, float]], None], done: int, metrics: dict[str, float]
+    ) -> None:
+        """Wait for the final slab's device update before publishing its diagnostics."""
+        if isinstance(self.engine, CudaEngine):
+            self.engine.xp.cuda.get_current_stream().synchronize()
+        publish(done, metrics)
+
     def result(self, volume: Any) -> Any:
         """The returned volume: a JAX array for a device volume, otherwise ``volume``.
 
@@ -671,8 +706,6 @@ class ConeProblem:
         """
         if isinstance(self.engine, CudaEngine):
             self.engine.xp.get_default_memory_pool().free_all_blocks()
-        if isinstance(self.data, RowReader):
-            self.data.close()
         return jax.dlpack.from_dlpack(volume) if self.on_device else volume
 
     @property

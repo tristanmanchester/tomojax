@@ -7,6 +7,8 @@ import math
 import operator
 from typing import TYPE_CHECKING, Literal
 
+from tomojax import progress
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -148,6 +150,7 @@ def validate_model(cfg: CGLSConfig) -> None:
         raise ValueError("cgls: interpolation must be 'linear' or 'cubic'")
 
 
+@progress.reports_iterations(CGLSConfig.iterations)
 def cgls(
     geometry: Geometry,
     grid: Grid,

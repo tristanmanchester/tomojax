@@ -9,6 +9,7 @@ import sys
 
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry
@@ -185,6 +186,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     eps = np.finfo(np.float32).eps
     direction = gradient.copy()
     while count < cfg.iterations and norm2 > tolerance**2 and not failed and not roundoff:
+        progress.check_cancelled()
         previous = norm2, verified
         gradient = None  # release the previous gradient before the transpose allocates the next
         step = _step(cp, ops, x, direction, residual, gamma, damp2, cfg.data_term)
@@ -226,6 +228,9 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
             else:
                 k["xpay"](gradient, gamma_new / gamma, direction)
             gamma = gamma_new
+        if (task := progress.for_unit("iterations")) is not None:
+            cp.cuda.get_current_stream().synchronize()
+            task.advance(count, {"normal_residual_norm": float(np.sqrt(norm2))})
     converged = bool(not failed and norm2 <= tolerance**2)
     info = {
         "effective_iterations": count,

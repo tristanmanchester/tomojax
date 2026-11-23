@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.host_volume import fill, release_planes
 
 from ._cone_slabs import Batch, cone_problem, host_projections
@@ -49,12 +50,14 @@ def solve(
         resident=0 if out is not None else 1 + cfg.acceleration,
     )  # fmt: skip
     solver = _HostSIRT(problem, cfg, bounds, initial, out)
-    for momentum in _momenta(cfg):
-        solver.momentum = momentum
-        for subset in range(cfg.subsets):
-            solver.update(np.arange(subset, projections.shape[0], cfg.subsets))
-    solver.volume.close()
-    solver.point.close()
+    with problem.using(out, solver.volume, solver.point):
+        for step, momentum in enumerate(_momenta(cfg), 1):
+            progress.check_cancelled()
+            solver.momentum = momentum
+            for subset in range(cfg.subsets):
+                solver.update(np.arange(subset, projections.shape[0], cfg.subsets))
+            if (task := progress.for_unit("iterations")) is not None:
+                problem.completed(task.advance, step, {})
     return problem.result(solver.x), {
         "effective_iterations": cfg.iterations,
         "subset_updates": cfg.iterations * cfg.subsets,

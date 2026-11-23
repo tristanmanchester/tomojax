@@ -11,8 +11,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.backends.api import is_oom_error
-from tomojax.core import progress_iter
 from tomojax.core.devices import as_devices, view_split
 from tomojax.core.geometry import Detector, Geometry, Grid, grid_volume_origin
 from tomojax.core.geometry.cone import is_cone_beam
@@ -505,8 +505,11 @@ def _fbp_from_host(
         return tuple(jax.device_put(np.asarray(a, np.float32)) for a in arrays)
 
     accum = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
+    task = progress.for_unit("batches")
     pending = batch(0)
     for start in range(0, n, b):
+        if task is not None:
+            progress.check_cancelled()
         current = pending
         # Dispatch is asynchronous: read and transfer the next batch while this one runs.
         accum = _fbp_accumulate_batch(
@@ -526,6 +529,9 @@ def _fbp_from_host(
             # step until it finishes: asynchronous submissions can otherwise
             # retain an unbounded number of input batches on the device.
             accum.block_until_ready()
+        if task is not None:
+            accum.block_until_ready()
+            progress.step("batches", remaining=(n - start - 1) // b)
     return accum
 
 
@@ -840,34 +846,35 @@ def fbp(
 
         return fdk(geometry, grid, detector, projections, config=fdk_config(cfg))
 
-    validate_fbp_geometry(geometry, grid, detector, cfg.scale, "fbp")
-    n_views, _, _ = validate_projection_stack(
-        projections,
-        detector,
-        geometry=geometry,
-        context="fbp projections",
-    )
-    validate_detector_grid(det_grid, detector, context="fbp det_grid")
-    # Host arrays (including memmaps) stream through the device batch by batch.
-    on_host = not isinstance(projections, jax.Array)
-    proj = projections if on_host else jnp.asarray(projections, dtype=jnp.float32)
-    # Precompute poses once
-    T_all = stack_view_poses(geometry, n_views)
-    validate_pose_stack(T_all, n_views, context="fbp geometry")
-    motion = None if det_grid is None else _lattice_motion(detector, det_grid)
-    if motion is not None:
-        # The same rays through the canonical lattice: one geometry-aware method.
-        T_all = jnp.matmul(jnp.asarray(motion), T_all, precision=jax.lax.Precision.HIGHEST)
-    cuda = all(
-        device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
-        for device in (T_all.devices() if on_host else proj.devices())
-    )
-    if cfg.backend == "cuda" and not cuda:
-        raise ValueError("CUDA FBP requires CUDA arrays")
-    plan = _plan(geometry, grid, detector, T_all, proj, cfg, cuda=cuda, moved=motion is not None)
-    split = view_split(cfg.devices, n_views)
-    whole = range(n_views)
-    acc = plan.backprojected(None, whole) if split is None else split.summed(plan.backprojected)
-    for _ in progress_iter(range(n_views), total=n_views, desc="FBP: views"):
-        pass
-    return acc
+    with progress.task("reconstruct", "fbp", None, "batches"):
+        validate_fbp_geometry(geometry, grid, detector, cfg.scale, "fbp")
+        n_views, _, _ = validate_projection_stack(
+            projections,
+            detector,
+            geometry=geometry,
+            context="fbp projections",
+        )
+        validate_detector_grid(det_grid, detector, context="fbp det_grid")
+        # Host arrays (including memmaps) stream through the device batch by batch.
+        on_host = not isinstance(projections, jax.Array)
+        proj = projections if on_host else jnp.asarray(projections, dtype=jnp.float32)
+        # Precompute poses once
+        T_all = stack_view_poses(geometry, n_views)
+        validate_pose_stack(T_all, n_views, context="fbp geometry")
+        motion = None if det_grid is None else _lattice_motion(detector, det_grid)
+        if motion is not None:
+            # The same rays through the canonical lattice: one geometry-aware method.
+            T_all = jnp.matmul(jnp.asarray(motion), T_all, precision=jax.lax.Precision.HIGHEST)
+        cuda = all(
+            device.platform == "gpu" and device.client.platform_version.lower().startswith("cuda")
+            for device in (T_all.devices() if on_host else proj.devices())
+        )
+        if cfg.backend == "cuda" and not cuda:
+            raise ValueError("CUDA FBP requires CUDA arrays")
+        plan = _plan(
+            geometry, grid, detector, T_all, proj, cfg, cuda=cuda, moved=motion is not None
+        )
+        split = view_split(cfg.devices, n_views)
+        whole = range(n_views)
+        acc = plan.backprojected(None, whole) if split is None else split.summed(plan.backprojected)
+        return acc.block_until_ready() if progress.for_unit("batches") is not None else acc

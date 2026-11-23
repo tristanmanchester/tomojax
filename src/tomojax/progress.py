@@ -5,12 +5,13 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
+from functools import wraps
 from itertools import count
 from math import isfinite
 from threading import Event as ThreadEvent, RLock
 from time import monotonic
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
@@ -174,7 +175,8 @@ _watch = ContextVar[_Watch | None]("tomojax_watch", default=None)
 
 
 class _Task:
-    def __init__(self, watcher: _Watch, total: int | None) -> None:
+    def __init__(self, watcher: _Watch, name: str, unit: str, total: int | None) -> None:
+        self.name, self.unit = name, unit
         self.watcher = watcher
         self.id = next(watcher.ids)
         self.done = 0
@@ -188,6 +190,29 @@ class _Task:
 
 
 current_task = ContextVar[_Task | None]("tomojax_task", default=None)
+
+
+def for_unit(unit: str) -> _Task | None:
+    """The active task when its owner is counting this unit of work."""
+    active = current_task.get()
+    return active if active is not None and active.unit == unit else None
+
+
+def remaining(unit: str, count: int) -> None:
+    """Update the remaining work after planning a batch or an allocation retry."""
+    active = for_unit(unit)
+    if active is not None:
+        active.total = active.done + count
+
+
+def step(unit: str, *, remaining: int | None = None) -> None:
+    """Complete one unit, updating the total if the remaining plan is known."""
+    active = for_unit(unit)
+    if active is not None:
+        done = active.done + 1
+        if remaining is not None:
+            active.total = done + remaining
+        active.advance(done, {})
 
 
 @contextmanager
@@ -235,8 +260,16 @@ def task(name: str, label: str, total: int | None, unit: str) -> Iterator[None]:
         yield
         return
     check_cancelled()
-    task = _Task(watcher, total)
     parent = current_task.get()
+    # Initializers, slab solves and alignment image updates belong to their owner.
+    if (
+        name == "reconstruct"
+        and parent is not None
+        and parent.name in {"reconstruct", "level", "refine"}
+    ):
+        yield
+        return
+    task = _Task(watcher, name, unit, total)
     token = current_task.set(task)
     try:
         watcher.emit(Started, task.id, parent.id if parent else None, name, label, total, unit)
@@ -255,6 +288,21 @@ def task(name: str, label: str, total: int | None, unit: str) -> Iterator[None]:
                 watcher.emit(Finished, task.id, status)
     finally:
         current_task.reset(token)
+
+
+def reports_iterations[F: Callable[..., Any]](default: int) -> Callable[[F], F]:
+    """Start an expert solver's task when it is called directly."""
+
+    def decorate(solve: F) -> F:
+        @wraps(solve)
+        def run(*args: Any, **kwargs: Any) -> Any:
+            iterations = getattr(kwargs.get("config"), "iterations", default)
+            with task("reconstruct", solve.__name__, iterations, "iterations"):
+                return solve(*args, **kwargs)
+
+        return cast("F", run)
+
+    return decorate
 
 
 def error_record(error: Exception) -> dict[str, object]:

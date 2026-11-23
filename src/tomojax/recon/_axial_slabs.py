@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
+from tomojax import progress
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
 if TYPE_CHECKING:
@@ -69,7 +70,10 @@ def axial_slabs(
     depth = 2 ** (fitting.bit_length() - 1)
     output = np.empty((grid.nz, grid.ny, grid.nx), np.float32)
     info = {}
+    from ._chunks import partial_sweep
+
     for start in range(0, grid.nz, depth):
+        progress.check_cancelled()
         stop = min(start + depth, grid.nz)
         nz = stop - start
         # Translate detector and volume together: every equal-sized slab has
@@ -79,12 +83,16 @@ def axial_slabs(
         local_geometry = ParallelGeometry(
             local_grid, local_detector, cast("ParallelGeometry", geometry).angles
         )
-        volume, info = solve(
-            local_geometry,
-            data[:, start:stop, :],
-            None if initial is None else initial[start:stop, :, :],
-            None if support is None else support[start:stop, :, :],
-        )
+        partition = partial_sweep.set(partial_sweep.get() or stop < grid.nz)
+        try:
+            volume, info = solve(
+                local_geometry,
+                data[:, start:stop, :],
+                None if initial is None else initial[start:stop, :, :],
+                None if support is None else support[start:stop, :, :],
+            )
+        finally:
+            partial_sweep.reset(partition)
         output[start:stop, :, :] = np.asarray(volume)
         # Do not retain the previous device slab while allocating the next.
         del volume

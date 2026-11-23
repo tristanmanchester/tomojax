@@ -47,16 +47,15 @@
     "src/tomojax/recon/_cgls_jax.py::_solve": 146,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 101,
     "src/tomojax/recon/_cgls_jax.py::cgls": 111,
-    "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115,
-    "src/tomojax/recon/spdhg_tv.py::_run_spdhg_scan": 116
+    "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "code_lines": {
-    "(modules)": 4365,
+    "(modules)": 4409,
     "_data": 2104,
     "alignment": 4435,
     "backends": 263,
     "cli": 2667,
-    "core": 9555,
+    "core": 9529,
     "corrections": 2836,
     "datasets": 1072,
     "forward": 404,
@@ -64,14 +63,14 @@
     "io": 3933,
     "motion": 153,
     "nuisance": 232,
-    "recon": 13475
+    "recon": 13688
   },
   "cuda_kernels": 47,
   "cuda_switches": 34,
-  "environment_reads": 20,
+  "environment_reads": 18,
   "suppressions": {
     "noqa": 3,
-    "type: ignore": 12,
+    "type: ignore": 11,
     "pyright: ignore": 12
   },
   "complex_functions": [
@@ -85,7 +84,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 67,
+    "tiny": 65,
     "forwarders": 6,
     "chained": 4
   },
