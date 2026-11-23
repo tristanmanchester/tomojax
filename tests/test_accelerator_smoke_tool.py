@@ -4,6 +4,7 @@ import builtins
 from collections.abc import Mapping, Sequence
 import importlib.util
 import json
+import os
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -39,6 +40,8 @@ def test_strict_cuda_preflight_fails_before_importing_jax(
 ) -> None:
     module = _load_smoke_accelerator()
     monkeypatch.setenv("TOMOJAX_REQUIRE_CUDA", "1")
+    # main() pins JAX to the CPU when the driver fails; keep that out of later tests' processes.
+    monkeypatch.setattr(os, "environ", dict(os.environ))
     monkeypatch.setattr(
         module,
         "_cuda_driver_preflight",

@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 import h5py
+import jax
 import numpy as np
 import pytest
 
@@ -25,6 +26,8 @@ def worker():
     ) as proc:
         try:
             ready = json.loads(proc.stdout.readline())
+            # The references below run in this process; the worker must use the same backend.
+            assert {d["platform"] for d in ready["devices"]} == {jax.default_backend()}, ready
             assert {"validate", "plan", "run", "plane", "inspect", "open"} <= set(
                 ready["capabilities"]
             )
