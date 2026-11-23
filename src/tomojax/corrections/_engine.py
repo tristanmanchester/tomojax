@@ -616,7 +616,6 @@ def correct_view_batches(
 
     views = counts.shape[0]
     load = progress.for_unit("views")
-    progress.remaining("views", views)
     parts = (
         *settings.get("counts_steps", ()),
         "flat_dark",
@@ -817,6 +816,7 @@ def _correct_row_slabs(
         *steps,
         *(("binned",) if factor > 1 else ()),
     )
+    load = progress.for_unit("views")
     with (
         correction_group(parts, starts, "row batches"),
         HostCopies() as copies,
@@ -827,7 +827,11 @@ def _correct_row_slabs(
             progress.check_cancelled()
             stop = min(start + slab, rows - rows % factor)
             # Lazy sources may share caches: read serially, with at most two bands live.
-            done = submit(run, start, stop, read(start, stop))
+            raw = read(start, stop)
+            if load is not None and stop == rows - rows % factor:
+                load.advance(views, {})
+                progress.check_cancelled()
+            done = submit(run, start, stop, raw)
             if pending is not None:
                 collect(*pending.result())
             pending = done

@@ -10,6 +10,7 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 from scipy.stats import chi2
 
+from tomojax import progress
 from tomojax.core.validation import validate_projection_stack, view_indices
 from tomojax.geometry import ParallelGeometry
 
@@ -415,43 +416,49 @@ def estimate_center_report(
         )
         for first, second, error in _sample_pairs(angles[eligible], detector.nu)
     ]
-    rows = np.linspace(0, detector.nv - 1, min(64, detector.nv)).round().astype(int)
-    groups = np.array_split(np.arange(len(rows)), min(8, len(rows)))
-    row_positions = np.asarray([np.mean(rows[group]) for group in groups])
-    pairs, row_offsets = [], []
-    if samples:
-        views = np.unique([i for first, second, _ in samples for i, _ in first + second])
-        data = np.asarray(projections[views[:, None], rows[None, :], :], np.float64)
-        for first, second, error in samples:
-            a = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in first))
-            b = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in second))
-            result = _paired_measurement(a, b, error)
-            if result is None:
-                continue
-            stat, alternatives, heights = result
-            pairs.append(
-                CenterPair(
-                    tuple(first),
-                    tuple(second),
-                    error,
-                    stat.offset_px,
-                    stat.sigma_px,
-                    stat.interval90_px,
-                    tuple(float(x) for x in alternatives),
-                    tuple(float(x) for x in heights),
+    with progress.task("opposite-views", "opposite view pairs", len(samples), "pairs"):
+        rows = np.linspace(0, detector.nv - 1, min(64, detector.nv)).round().astype(int)
+        groups = np.array_split(np.arange(len(rows)), min(8, len(rows)))
+        row_positions = np.asarray([np.mean(rows[group]) for group in groups])
+        pairs, row_offsets = [], []
+        if samples:
+            views = np.unique([i for first, second, _ in samples for i, _ in first + second])
+            data = np.asarray(projections[views[:, None], rows[None, :], :], np.float64)
+            for first, second, error in samples:
+                progress.check_cancelled()
+                a = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in first))
+                b = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in second))
+                result = _paired_measurement(a, b, error)
+                if result is None:
+                    progress.step("pairs")
+                    continue
+                stat, alternatives, heights = result
+                pairs.append(
+                    CenterPair(
+                        tuple(first),
+                        tuple(second),
+                        error,
+                        stat.offset_px,
+                        stat.sigma_px,
+                        stat.interval90_px,
+                        tuple(float(x) for x in alternatives),
+                        tuple(float(x) for x in heights),
+                    )
                 )
+                row_offsets.append(
+                    tuple(_paired_offset(a[group], b[group], error) for group in groups)
+                )
+                progress.step("pairs")
+        if not pairs:
+            raise ValueError(
+                'method="opposite-views" needs finite, nonconstant opposite projections. '
+                "Near-opposite pairs need angular neighbours within 2 degrees; "
+                "use finer angular sampling when subsampling views."
             )
-            row_offsets.append(tuple(_paired_offset(a[group], b[group], error) for group in groups))
-    if not pairs:
-        raise ValueError(
-            'method="opposite-views" needs finite, nonconstant opposite projections. '
-            "Near-opposite pairs need angular neighbours within 2 degrees; "
-            "use finer angular sampling when subsampling views."
+        return replace(
+            _center_summary(geometry, pairs, row_positions, row_offsets),
+            calibration_views=calibration_views,
         )
-    return replace(
-        _center_summary(geometry, pairs, row_positions, row_offsets),
-        calibration_views=calibration_views,
-    )
 
 
 def estimate_center(

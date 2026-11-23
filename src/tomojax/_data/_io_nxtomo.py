@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from itertools import product
 import json
+import math
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 import h5py
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.files import replaced_when_complete
 from tomojax.geometry.api import nominal_axis_unit_from_inputs
 
@@ -269,13 +271,16 @@ def _write_in_tiles(target: h5py.Dataset, source: np.ndarray | jax.Array) -> Non
         tile[axis] = min(
             target.shape[axis], max(1, budget // others // chunks[axis]) * chunks[axis]
         )
-    starts = (range(0, n, step) for n, step in zip(target.shape, tile, strict=True))
-    for start in product(*starts):
-        region = tuple(
-            slice(lo, min(lo + step, n))
-            for lo, step, n in zip(start, tile, target.shape, strict=True)
-        )
-        target[region] = np.asarray(source[region])
+    starts = tuple(range(0, n, step) for n, step in zip(target.shape, tile, strict=True))
+    with progress.task("write", _VOLUME, math.prod(map(len, starts)), "tiles"):
+        for start in product(*starts):
+            region = tuple(
+                slice(lo, min(lo + step, n))
+                for lo, step, n in zip(start, tile, target.shape, strict=True)
+            )
+            target[region] = np.asarray(source[region])
+            progress.step("tiles")
+            progress.check_cancelled()
 
 
 def _write_tomojax_metadata_sections(
@@ -337,6 +342,27 @@ def _write_alignment_metadata_section(
         align_grp.attrs["misalign_spec_json"] = json.dumps(meta.misalign_spec)
 
 
+def _read_projections(stack: Hdf5Frames) -> np.ndarray:
+    views, rows, cols = stack.shape
+    with progress.task("load", Path(stack.path).name, views, "views"):
+        active = progress.for_unit("views")
+        if active is None:
+            return np.asarray(stack)
+        step = max(1, _TILE_BYTES // max(1, rows * cols * stack.dtype.itemsize))
+        if step >= views:
+            result = np.asarray(stack)
+            active.advance(views, {})
+            progress.check_cancelled()
+            return result
+        result = np.empty(stack.shape, stack.dtype)
+        for start in range(0, views, step):
+            stop = min(views, start + step)
+            result[start:stop] = stack[start:stop]
+            active.advance(stop, {})
+            progress.check_cancelled()
+        return result
+
+
 def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     """Load an NXtomo dataset and TomoJAX extras.
 
@@ -391,7 +417,7 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
             image_key = np.zeros(n_views, np.int32)
         else:
             stack = Hdf5Frames.open(path, where)
-            proj = stack if lazy else np.asarray(stack)
+            proj = stack if lazy else _read_projections(stack)
             out["projections"] = proj
             n_views = proj.shape[0]
             image_key = _load_image_key(entry, n_views=n_views, path=path)

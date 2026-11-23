@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+from zipfile import ZipFile
+
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.files import replaced_when_complete
 
 from ._io_helpers import sizes_of
@@ -41,7 +45,26 @@ def _load_npz_dataset(path: str) -> LoadedDataset:
     with np.load(path, allow_pickle=True) as z:
         out: LoadedDataset = {}
         for k in z.files:
-            val = z[k]
+            if k == "projections" and progress.watching():
+                # NPZ stores one compressed NPY member per array. Its header
+                # supplies the view count before NumPy inflates the pixel data.
+                with ZipFile(path) as archive, archive.open("projections.npy") as stream:
+                    version = np.lib.format.read_magic(stream)
+                    header = (
+                        np.lib.format.read_array_header_1_0
+                        if version == (1, 0)
+                        else np.lib.format.read_array_header_2_0
+                    )
+                    shape, _, _ = header(stream)
+                views = shape[0] if shape else 0
+                with progress.task("load", Path(path).name, views, "views"):
+                    val = z[k]
+                    active = progress.for_unit("views")
+                    if active is not None:
+                        active.advance(views, {})
+                    progress.check_cancelled()
+            else:
+                val = z[k]
             key = "angles" if k == _ANGLES_KEY else k
             if isinstance(val, np.ndarray) and val.shape == () and val.dtype == object:
                 out[key] = val.item()

@@ -329,6 +329,11 @@ class _Task:
 current_task = ContextVar[_Task | None]("tomojax_task", default=None)
 
 
+def watching() -> bool:
+    """Whether the calling context has an active watch."""
+    return _watch.get() is not None
+
+
 def for_unit(unit: str) -> _Task | None:
     """The active task when its owner is counting this unit of work."""
     active = current_task.get()

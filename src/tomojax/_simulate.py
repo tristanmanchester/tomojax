@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 import numpy as np
 
+from tomojax import progress
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -148,29 +150,30 @@ def simulate_config(
     from tomojax._scan import scan_from_record
     from tomojax.io import ProjectionDataset
 
-    has_placement = (
-        grid is not None and (grid.vol_origin is not None or grid.vol_center is not None)
-    ) or (detector is not None and detector.center != (0.0, 0.0))
-    if has_placement:
-        data = _datasets.simulate(cfg, grid=grid, detector=detector)
-    else:
-        data = _datasets.simulate(cfg)
-    metadata = NXTomoMetadata.from_dataset(cast("Mapping[str, Any]", data))
-    metadata.volume = None
-    metadata.sample_name, metadata.source_name = cfg.phantom, "TomoJAX simulator"
-    metadata.source_type, metadata.source_probe = "simulation", "x-ray"
-    meta: dict[str, Any] = dict(metadata.geometry_meta or {})
-    meta["simulation_info"] = {
-        "phantom": cfg.phantom,
-        "seed": cfg.seed,
-        "geometry": cfg.geometry,
-        "simulation": data["meta"],
-    }
-    metadata.geometry_meta = meta
-    projections = np.asarray(data["projections"], np.float32)
-    record = ProjectionDataset.from_nxtomo(LoadedNXTomo(projections, metadata))
-    scan = scan_from_record(record, apply_poses=False)
-    return Simulation(scan=scan, phantom=np.asarray(data["volume"]))
+    with progress.task("simulate", cfg.phantom, None, ""):
+        has_placement = (
+            grid is not None and (grid.vol_origin is not None or grid.vol_center is not None)
+        ) or (detector is not None and detector.center != (0.0, 0.0))
+        if has_placement:
+            data = _datasets.simulate(cfg, grid=grid, detector=detector)
+        else:
+            data = _datasets.simulate(cfg)
+        metadata = NXTomoMetadata.from_dataset(cast("Mapping[str, Any]", data))
+        metadata.volume = None
+        metadata.sample_name, metadata.source_name = cfg.phantom, "TomoJAX simulator"
+        metadata.source_type, metadata.source_probe = "simulation", "x-ray"
+        meta: dict[str, Any] = dict(metadata.geometry_meta or {})
+        meta["simulation_info"] = {
+            "phantom": cfg.phantom,
+            "seed": cfg.seed,
+            "geometry": cfg.geometry,
+            "simulation": data["meta"],
+        }
+        metadata.geometry_meta = meta
+        projections = np.asarray(data["projections"], np.float32)
+        record = ProjectionDataset.from_nxtomo(LoadedNXTomo(projections, metadata))
+        scan = scan_from_record(record, apply_poses=False)
+        return Simulation(scan=scan, phantom=np.asarray(data["volume"]))
 
 
 def simulate(

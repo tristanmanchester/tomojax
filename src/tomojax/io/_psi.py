@@ -49,17 +49,19 @@ def read_psi_mat(path: Path) -> tuple[np.ndarray, np.ndarray, float, float, str]
         if not isinstance(stack, h5py.Dataset) or stack.ndim != 3:
             raise ValueError(f"{path}: aligned_phase_sinogram is not a 3D array")
         views, columns, rows = stack.shape  # MATLAB's [rows, columns, views], reversed
-        task = progress.for_unit("views")
-        progress.remaining("views", views)
-        projections = outputs.allocate((views, rows, columns))
-        # Whole chunks of views at a time: each compressed chunk spans several views.
-        step = (stack.chunks or (1,))[0]
-        for first in range(0, views, step):
-            progress.check_cancelled()
-            block = read_hdf5_array(stack, (slice(first, first + step), slice(None), slice(None)))
-            projections[first : first + step] = np.swapaxes(block, 1, 2)
-            if task is not None:
-                task.advance(min(views, first + step), {})
+        with progress.task("load", path.name, views, "views"):
+            task = progress.for_unit("views")
+            projections = outputs.allocate((views, rows, columns))
+            # Whole chunks of views at a time: each compressed chunk spans several views.
+            step = (stack.chunks or (1,))[0]
+            for first in range(0, views, step):
+                progress.check_cancelled()
+                block = read_hdf5_array(
+                    stack, (slice(first, first + step), slice(None), slice(None))
+                )
+                projections[first : first + step] = np.swapaxes(block, 1, 2)
+                if task is not None:
+                    task.advance(min(views, first + step), {})
         angles = np.asarray(file["rotation_angle"], np.float64).ravel()
         metres = 1e3  # the file's lengths in mm, every reader's unit
         pixel = float(np.asarray(file["pixel_size"]).item()) * metres

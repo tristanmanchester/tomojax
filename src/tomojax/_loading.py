@@ -9,6 +9,7 @@ Xradia acquisitions, or TIFFs.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
 import logging
 import numbers
@@ -171,7 +172,8 @@ def load_scan_with_declaration(
     apply_poses: bool = True,
     declared: DeclaredGeometry | None = None,
 ) -> Scan:
-    with discard_failed_outputs() as outputs, progress.task("load", str(path), None, "views"):
+    with discard_failed_outputs() as outputs:
+        progress.check_cancelled()
         file = Path(path)
         if not file.exists():
             raise FileNotFoundError(f"no such file: {file}")
@@ -437,22 +439,29 @@ class Frames:
 
         progress.check_cancelled()
         bound = bind_step_geometry(steps, self.geometry)
-        done = correct_frames(
-            self.counts,
-            flats=self.flats,
-            flat_positions=self.flat_positions,
-            view_positions=self.view_positions,
-            exposure_times=self.exposure_times,
-            flat_exposure_times=self.flat_exposure_times,
-            darks=self.darks,
-            dark_source=self.dark_source,
-            linear_limit=self.linear_limit,
-            white_level=self.white_level,
-            steps=bound,
-            epsilon=epsilon,
-            views_per_batch=views_per_batch,
-            binning=binning,
-        )
+        source = self.source.source_path if self.source is not None else None
+        reading = not isinstance(self.counts, np.ndarray)
+        with (
+            progress.task("load", Path(source).name, self.views, "views")
+            if reading and source is not None
+            else nullcontext()
+        ):
+            done = correct_frames(
+                self.counts,
+                flats=self.flats,
+                flat_positions=self.flat_positions,
+                view_positions=self.view_positions,
+                exposure_times=self.exposure_times,
+                flat_exposure_times=self.flat_exposure_times,
+                darks=self.darks,
+                dark_source=self.dark_source,
+                linear_limit=self.linear_limit,
+                white_level=self.white_level,
+                steps=bound,
+                epsilon=epsilon,
+                views_per_batch=views_per_batch,
+                binning=binning,
+            )
         everything = len(done.kept) == self.views
         geometry = self.geometry if everything else views_of(self.geometry, done.kept)
         geometry = binned_geometry(geometry, binning) if binning > 1 else geometry
@@ -692,7 +701,7 @@ def load_raw_frames_with_declaration(
     apply_poses: bool = True,
     declared: DeclaredGeometry | None = None,
 ) -> Frames:
-    with discard_failed_outputs() as outputs, progress.task("load", str(path), None, "views"):
+    with discard_failed_outputs() as outputs, progress.task("metadata", Path(path).name, None, ""):
         file = Path(path)
         if not file.exists():
             raise FileNotFoundError(f"no such file: {file}")

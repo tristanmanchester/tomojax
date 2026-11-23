@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
+from tomojax import progress
+
 if TYPE_CHECKING:
     from os import PathLike
 
@@ -58,9 +60,10 @@ def inspect(path: str | PathLike[str]) -> Inspection:
     from tomojax.io import validate_dataset
     from tomojax.io.api import inspect_dataset
 
-    issues = validate_dataset(Path(path))["issues"]
-    report = inspect_dataset(Path(path))
-    return cast("Inspection", {**report, "valid": not issues, "issues": issues})
+    with progress.task("inspect", Path(path).name, None, ""):
+        issues = validate_dataset(Path(path))["issues"]
+        report = inspect_dataset(Path(path))
+        return cast("Inspection", {**report, "valid": not issues, "issues": issues})
 
 
 def saved_volume_grid(
@@ -193,7 +196,9 @@ def _write_tiff_directory(
     staging.mkdir(parents=True, exist_ok=False)
     try:
         for z in range(nz):
+            progress.check_cancelled()
             iio.imwrite(staging / f"{prefix}_{z:05d}.tif", convert(plane(z)), extension=".tif")
+            progress.step("slices")
         _ = (staging / f"{prefix}.json").write_text(sidecar_text)
         if not out.exists():
             staging.replace(out)
@@ -229,45 +234,48 @@ def write_volume(
     from tomojax.core.files import replaced_when_complete
     from tomojax.geometry import grid_volume_origin
 
-    validated_range = validate_export_range(dtype, value_range)
-    nz = shape[0]
-    raw = out.suffix.lower() == ".raw"
-    low, high = (0.0, 1.0)
-    if dtype == "uint16":
-        low, high = _value_range(plane, nz) if validated_range is None else validated_range
+    with progress.task("export", out.name, shape[0], "slices"):
+        validated_range = validate_export_range(dtype, value_range)
+        nz = shape[0]
+        raw = out.suffix.lower() == ".raw"
+        low, high = (0.0, 1.0)
+        if dtype == "uint16":
+            low, high = _value_range(plane, nz) if validated_range is None else validated_range
 
-    def convert(values: np.ndarray) -> np.ndarray:
-        if dtype == "float32":
-            return values
-        scaled = (values - low) / (high - low) * 65535.0
-        return np.clip(np.round(scaled), 0, 65535).astype(np.uint16)
+        def convert(values: np.ndarray) -> np.ndarray:
+            if dtype == "float32":
+                return values
+            scaled = (values - low) / (high - low) * 65535.0
+            return np.clip(np.round(scaled), 0, 65535).astype(np.uint16)
 
-    info: dict[str, object] = {
-        "source": source,
-        "format": "raw" if raw else "tiff",
-        "dtype": dtype,
-        "shape_zyx": list(shape),
-        "voxel_size_xyz": list(voxel),
-        "byte_order": "little" if raw else None,
-        "value_range": [low, high] if dtype == "uint16" else None,
-        "slice_axis": "z, from the bottom of the volume",
-    }
-    if grid is not None:
-        info["vol_origin_xyz"] = list(grid_volume_origin(grid))
-        info["grid"] = grid.to_dict()
-    sidecar_text = json.dumps(info, indent=2) + "\n"
+        info: dict[str, object] = {
+            "source": source,
+            "format": "raw" if raw else "tiff",
+            "dtype": dtype,
+            "shape_zyx": list(shape),
+            "voxel_size_xyz": list(voxel),
+            "byte_order": "little" if raw else None,
+            "value_range": [low, high] if dtype == "uint16" else None,
+            "slice_axis": "z, from the bottom of the volume",
+        }
+        if grid is not None:
+            info["vol_origin_xyz"] = list(grid_volume_origin(grid))
+            info["grid"] = grid.to_dict()
+        sidecar_text = json.dumps(info, indent=2) + "\n"
 
-    if not raw:
-        return _write_tiff_directory(out, plane, convert, nz, prefix, sidecar_text)
-    parts = f"volume {np.prod(shape) * np.dtype(dtype).itemsize / 2**30:.1f} GiB"
-    little = np.dtype(dtype).newbyteorder("<")
-    with replaced_when_complete(out, parts) as temporary, temporary.open("wb") as stream:
-        for z in range(nz):
-            _ = stream.write(convert(plane(z)).astype(little).tobytes())
-    sidecar = out.with_suffix(".json")
-    with replaced_when_complete(sidecar, "sidecar") as temporary:
-        _ = temporary.write_text(sidecar_text)
-    return sidecar
+        if not raw:
+            return _write_tiff_directory(out, plane, convert, nz, prefix, sidecar_text)
+        parts = f"volume {np.prod(shape) * np.dtype(dtype).itemsize / 2**30:.1f} GiB"
+        little = np.dtype(dtype).newbyteorder("<")
+        with replaced_when_complete(out, parts) as temporary, temporary.open("wb") as stream:
+            for z in range(nz):
+                progress.check_cancelled()
+                _ = stream.write(convert(plane(z)).astype(little).tobytes())
+                progress.step("slices")
+        sidecar = out.with_suffix(".json")
+        with replaced_when_complete(sidecar, "sidecar") as temporary:
+            _ = temporary.write_text(sidecar_text)
+        return sidecar
 
 
 def _value_range(plane: Callable[[int], np.ndarray], nz: int) -> tuple[float, float]:

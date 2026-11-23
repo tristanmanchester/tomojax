@@ -19,10 +19,12 @@ from dataclasses import is_dataclass, replace
 import json
 import logging
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 import numpy as np
 
+from tomojax import progress
 from tomojax._loading import load
 from tomojax._scan import (
     Alignment,
@@ -267,53 +269,54 @@ def save(
     from tomojax.io import save_dataset
     from tomojax.io.api import replace_dataset
 
-    if isinstance(item, Scan):
-        record = record_of(item)
-    elif isinstance(item, Simulation):
-        record = record_of(item.scan)
-        record.volume = item.phantom
-        record.geometry_metadata["volume_role"] = "phantom"
-        record.geometry_metadata.pop("reconstruction_method", None)
-        record.geometry_metadata.pop("reconstruction_info", None)
-    elif isinstance(item, Reconstruction):
-        if item.scan is None and include_scan:
-            raise ValueError(
-                "this reconstruction was loaded without its scan: there is none to save"
+    with progress.task("save", Path(path).name, None, ""):
+        if isinstance(item, Scan):
+            record = record_of(item)
+        elif isinstance(item, Simulation):
+            record = record_of(item.scan)
+            record.volume = item.phantom
+            record.geometry_metadata["volume_role"] = "phantom"
+            record.geometry_metadata.pop("reconstruction_method", None)
+            record.geometry_metadata.pop("reconstruction_info", None)
+        elif isinstance(item, Reconstruction):
+            if item.scan is None and include_scan:
+                raise ValueError(
+                    "this reconstruction was loaded without its scan: there is none to save"
+                )
+            if item.scan is None:
+                record = geometry_record(item.geometry)
+                source = item.info.get("source")
+            else:
+                record = record_of(item.scan, grid=item.grid)
+                source = source_of(item.scan)
+                if not include_scan:
+                    record = replace_dataset(record, projections=None)
+            record.volume = item.volume
+            record.geometry_metadata["reconstruction_method"] = item.method
+            # As JSON, which the file's metadata is: a configuration as its fields, and
+            # what else JSON cannot hold as text.
+            record.geometry_metadata["reconstruction_info"] = json.loads(
+                json.dumps({**item.info, "source": source}, default=_json_value)
             )
-        if item.scan is None:
-            record = geometry_record(item.geometry)
-            source = item.info.get("source")
+        elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
+            record = record_of(item.scan)
+            record.volume = item.image
+            # The alignment made this volume: an earlier reconstruction's method
+            # and settings no longer describe it.
+            record.geometry_metadata.pop("reconstruction_method", None)
+            record.geometry_metadata.pop("reconstruction_info", None)
+            # The image's grid, which need not be the scan's: load_alignment/export read it back.
+            info = {**item.info} if item.grid is None else {**item.info, "working_grid": item.grid}
+            record.geometry_metadata["alignment_info"] = json.loads(
+                json.dumps(info, default=_json_value)
+            )
         else:
-            record = record_of(item.scan, grid=item.grid)
-            source = source_of(item.scan)
-            if not include_scan:
-                record = replace_dataset(record, projections=None)
-        record.volume = item.volume
-        record.geometry_metadata["reconstruction_method"] = item.method
-        # As JSON, which the file's metadata is: a configuration as its fields, and
-        # what else JSON cannot hold as text.
-        record.geometry_metadata["reconstruction_info"] = json.loads(
-            json.dumps({**item.info, "source": source}, default=_json_value)
-        )
-    elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
-        record = record_of(item.scan)
-        record.volume = item.image
-        # The alignment made this volume: an earlier reconstruction's method
-        # and settings no longer describe it.
-        record.geometry_metadata.pop("reconstruction_method", None)
-        record.geometry_metadata.pop("reconstruction_info", None)
-        # The image's grid, which need not be the scan's: load_alignment/export read it back.
-        info = {**item.info} if item.grid is None else {**item.info, "working_grid": item.grid}
-        record.geometry_metadata["alignment_info"] = json.loads(
-            json.dumps(info, default=_json_value)
-        )
-    else:
-        raise TypeError(
-            f"save takes a Scan, Reconstruction, Alignment or Simulation, not {type(item)}"
-        )
-    if not isinstance(item, Simulation):  # a scan loaded from a simulation carries its tag
-        _ = record.geometry_metadata.pop("volume_role", None)
-    save_dataset(path, record)
+            raise TypeError(
+                f"save takes a Scan, Reconstruction, Alignment or Simulation, not {type(item)}"
+            )
+        if not isinstance(item, Simulation):  # a scan loaded from a simulation carries its tag
+            _ = record.geometry_metadata.pop("volume_role", None)
+        save_dataset(path, record)
 
 
 def _reconstruct_in_region(
@@ -400,7 +403,8 @@ def project(
     """
     from tomojax.recon.api import project as _project
 
-    return _project(geometry, volume, grid=grid, devices=devices)
+    with progress.task("project", "project", None, ""):
+        return _project(geometry, volume, grid=grid, devices=devices)
 
 
 def backproject(
@@ -442,7 +446,8 @@ def backproject(
     """
     from tomojax.recon.api import backproject as _backproject
 
-    return _backproject(geometry, projections, grid=grid, devices=devices)
+    with progress.task("backproject", "backproject", None, ""):
+        return _backproject(geometry, projections, grid=grid, devices=devices)
 
 
 def reconstruct(
@@ -576,7 +581,6 @@ def reconstruct(
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     >>> recon = tj.reconstruct(scan, "cgls", iterations=50)  # doctest: +SKIP
     """
-    from tomojax import progress
     from tomojax.recon.api import method_config, reconstruct_arrays
 
     progress.check_cancelled()
@@ -834,7 +838,6 @@ def _reconstruct_slabs_context(
     warm_start: bool | None,
     epsilon: float,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
-    from tomojax import progress
     from tomojax.corrections.api import corrected_row_source
     from tomojax.geometry import ParallelGeometry
     from tomojax.geometry.api import is_cone_beam
@@ -895,7 +898,6 @@ def _slab_results(
     cfg: MethodConfig,
 ) -> Generator[tuple[slice, Reconstruction]]:
     """Assemble the scan and reconstruction for each completed, owned output slab."""
-    from tomojax import progress
     from tomojax._scan import detector_window, rebuild
     from tomojax.geometry import grid_volume_origin
 
@@ -1067,7 +1069,6 @@ def align(
     >>> result = tj.align(scan, config=AlignConfig(levels=(1,)))  # doctest: +SKIP
     >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP
     """
-    from tomojax import progress
     from tomojax._region import RegionEstimate
     from tomojax.alignment import AlignConfig
 

@@ -249,7 +249,9 @@ def test_cli_json_records_arrive_during_reconstruction(tmp_path, cancel):
                 process.send_signal(signal.SIGINT)
         assert process.wait(timeout=60) == (130 if cancel else 0)
     validate_tree(events)
-    assert [e.name for e in events if isinstance(e, progress.Started)] == ["load", "reconstruct"]
+    assert [e.name for e in events if isinstance(e, progress.Started)] == (
+        ["load", "reconstruct"] if cancel else ["load", "reconstruct", "save", "write"]
+    )
     assert events[-1].status == ("cancelled" if cancel else "done")
     assert output.exists() != cancel
 
@@ -668,7 +670,7 @@ def test_load_reports_completed_views_and_fused_corrections(tmp_path, monkeypatc
             np.testing.assert_allclose(result.projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
     validate_tree(events)
     load, correction = [e for e in events if isinstance(e, progress.Started)]
-    assert (load.name, load.total, load.unit) == ("load", None, "views")
+    assert (load.name, load.total, load.unit) == ("load", 2, "views")
     assert (correction.name, correction.label, correction.total, correction.parent) == (
         "correction",
         "flat_dark, log",
@@ -851,7 +853,12 @@ def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys
     }
     events = [kinds[r.pop("event")](**r) for r in records]
     validate_tree(events)
-    assert [e.name for e in events if isinstance(e, progress.Started)] == ["load", "correction"]
+    assert [e.name for e in events if isinstance(e, progress.Started)] == [
+        "metadata",
+        "load",
+        "correction",
+        "save",
+    ]
     np.testing.assert_allclose(tj.load(output).projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
 
     assert main([*command, "--force", "--views", "99"]) == 1
@@ -1120,3 +1127,72 @@ def test_metric_inventory_and_unknown_emission():
         pytest.raises(ValueError, match="undeclared.*typo"),
     ):
         progress.current_task.get().advance(1, {"typo": 1})
+
+
+@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
+def test_load_counts_completed_storage_reads(tmp_path, monkeypatch, suffix):
+    original = scan()
+    path = tmp_path / ("measurements" + suffix)
+    tj.save(path, original)
+    monkeypatch.setattr("tomojax._data._io_nxtomo._TILE_BYTES", 3 * 2 * 14 * 4)
+    events = []
+    with progress.watch(events.append):
+        loaded = tj.load(path)
+    validate_tree(events)
+    (task,) = [e for e in events if isinstance(e, progress.Started)]
+    assert (task.name, task.label, task.total, task.unit) == ("load", path.name, 13, "views")
+    assert [e.done for e in events if isinstance(e, progress.Advanced)] == (
+        [3, 6, 9, 12, 13] if suffix == ".nxs" else [13]
+    )
+    np.testing.assert_array_equal(loaded.projections, original.projections)
+
+
+def test_metadata_and_pixel_reads_have_distinct_lifetimes(tmp_path):
+    from ._helpers import write_raw_nxtomo
+
+    path = tmp_path / "exposure.nxs"
+    write_raw_nxtomo(path)
+    events = []
+    with progress.watch(events.append):
+        frames = tj.load_frames(path)
+    assert [(e.name, e.label) for e in events if isinstance(e, progress.Started)] == [
+        ("metadata", path.name)
+    ]
+    assert not any(isinstance(e, progress.Advanced) for e in events)
+    events.clear()
+    with progress.watch(events.append):
+        result = frames.corrected(views_per_batch=1)
+    load, correction = [e for e in events if isinstance(e, progress.Started)]
+    assert (load.label, load.total, correction.parent) == (path.name, 2, load.task)
+    assert [e.done for e in events if isinstance(e, progress.Advanced) and e.task == load.task] == [
+        1,
+        2,
+    ]
+    np.testing.assert_allclose(result.projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
+
+
+def test_public_operations_report_at_the_work(tmp_path):
+    events = []
+    path = tmp_path / "synthetic.nxs"
+    raw = tmp_path / "phantom.raw"
+    with progress.watch(events.append):
+        synthetic = tj.simulate("cube", size=8, n_views=4)
+        tj.save(path, synthetic)
+        tj.inspect(path)
+        projections = tj.project(synthetic.scan.geometry, synthetic.phantom)
+        tj.backproject(synthetic.scan.geometry, projections)
+        tj.export(raw, synthetic)
+    validate_tree(events)
+    roots = [e for e in events if isinstance(e, progress.Started) and e.parent is None]
+    assert [e.name for e in roots] == [
+        "simulate",
+        "save",
+        "inspect",
+        "project",
+        "backproject",
+        "export",
+    ]
+    assert [
+        e.done for e in events if isinstance(e, progress.Advanced) and e.task == roots[-1].task
+    ] == list(range(1, 9))
+    np.testing.assert_array_equal(np.fromfile(raw, "<f4").reshape(8, 8, 8), synthetic.phantom)

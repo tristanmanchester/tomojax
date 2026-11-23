@@ -12,6 +12,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter, gaussian_filter1d
 from scipy.signal.windows import tukey
 
+from tomojax import progress
 from tomojax._scan import Scan, describe, with_grid
 from tomojax.backends import device_free_memory_bytes
 from tomojax.geometry import Grid, stack_view_poses
@@ -310,42 +311,43 @@ def estimate_region(scan: Scan) -> RegionEstimate:
     >>> region = tj.estimate_region(scan)  # doctest: +SKIP
     >>> recon = tj.reconstruct(scan, "cgls", region=region)  # doctest: +SKIP
     """
-    if describe(scan.geometry)[0] != "lamino":
-        raise ValueError("estimate_region requires a calibrated laminography scan")
-    started = time.perf_counter()
-    device = _working_device(scan)
-    with jax.default_device(device):
-        available = device_free_memory_bytes(device=device) or 4 * 2**30
-        resident = isinstance(scan.projections, jax.Array) and scan.projections.devices() == {
-            device
+    with progress.task("estimate_region", scan.name, None, ""):
+        if describe(scan.geometry)[0] != "lamino":
+            raise ValueError("estimate_region requires a calibrated laminography scan")
+        started = time.perf_counter()
+        device = _working_device(scan)
+        with jax.default_device(device):
+            available = device_free_memory_bytes(device=device) or 4 * 2**30
+            resident = isinstance(scan.projections, jax.Array) and scan.projections.devices() == {
+                device
+            }
+            # Resident data is already charged to free memory; large host scans can stream.
+            data_bytes = 0 if resident else min(scan.projections.size * 4, available / 4)
+            budget = (0.6 * available - data_bytes) / 32
+            evidence = _focus_evidence(scan, budget)
+            span = evidence.grid.nz * evidence.grid.vz
+            width, probes = None, []
+            if evidence.isolated:
+                width, probes = _select_width(_score_supports(scan, evidence), span)
+            pitch = max(scan.detector.du, scan.detector.dv)
+            height = pitch * round(evidence.height / pitch) if width is not None else 0.0
+            depth = width if width is not None else span
+            grid = _budgeted_grid(scan, height, depth, pitch, budget)
+        info = {
+            "status": "conditional_cv_region" if width is not None else "broad_uncertain",
+            "isolated": evidence.isolated,
+            "focus_fwhm": evidence.fwhm,
+            "competitor_ratio": evidence.competitor,
+            "focus_z": evidence.z.tolist(),
+            "focus": evidence.focus.tolist(),
+            "probes": probes,
+            "requested_pitch": pitch,
+            "selected_pitch": grid.vz,
+            "preview_pitch": evidence.grid.vz,
+            "grid": asdict(grid),
+            "seconds": time.perf_counter() - started,
+            "warning": (
+                "Conditional reconstruction region, not a physical-support or accuracy certificate."
+            ),
         }
-        # Resident data is already charged to free memory; large host scans can stream.
-        data_bytes = 0 if resident else min(scan.projections.size * 4, available / 4)
-        budget = (0.6 * available - data_bytes) / 32
-        evidence = _focus_evidence(scan, budget)
-        span = evidence.grid.nz * evidence.grid.vz
-        width, probes = None, []
-        if evidence.isolated:
-            width, probes = _select_width(_score_supports(scan, evidence), span)
-        pitch = max(scan.detector.du, scan.detector.dv)
-        height = pitch * round(evidence.height / pitch) if width is not None else 0.0
-        depth = width if width is not None else span
-        grid = _budgeted_grid(scan, height, depth, pitch, budget)
-    info = {
-        "status": "conditional_cv_region" if width is not None else "broad_uncertain",
-        "isolated": evidence.isolated,
-        "focus_fwhm": evidence.fwhm,
-        "competitor_ratio": evidence.competitor,
-        "focus_z": evidence.z.tolist(),
-        "focus": evidence.focus.tolist(),
-        "probes": probes,
-        "requested_pitch": pitch,
-        "selected_pitch": grid.vz,
-        "preview_pitch": evidence.grid.vz,
-        "grid": asdict(grid),
-        "seconds": time.perf_counter() - started,
-        "warning": (
-            "Conditional reconstruction region, not a physical-support or accuracy certificate."
-        ),
-    }
-    return RegionEstimate(with_grid(scan, grid), info)
+        return RegionEstimate(with_grid(scan, grid), info)
