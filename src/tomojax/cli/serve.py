@@ -186,12 +186,6 @@ def serve(
             session.close()
 
 
-def _cpu_adapter(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Success:
-    if isinstance(command, op.Plane):
-        return ex.browse_plane(command, context)
-    raise ValueError("operation unavailable in this worker")
-
-
 def build_parser() -> argparse.ArgumentParser:
     """Describe the stdin/stdout command."""
     return argparse.ArgumentParser(prog="tomojax serve", description=__doc__)
@@ -222,16 +216,32 @@ def _ready() -> e.Ready:
         1,
         2,
         e.Versions(tomojax.__version__, jax.__version__, cuda, cupy),
-        ("describe", "devices", "status", "control", "close", "release", "shutdown", "plane"),
+        (
+            "describe",
+            "devices",
+            "status",
+            "control",
+            "close",
+            "release",
+            "shutdown",
+            "inspect",
+            "open",
+            "validate",
+            "plan",
+            "run",
+            "plane",
+        ),
         inventory,
     )
 
 
 def main() -> int:
-    """Start the worker with the installed plane adapter."""
+    """Start the worker with its production operation adapters."""
+    from tomojax.cli._adapters import execute
+
     build_parser().parse_args()
     return serve(
-        _cpu_adapter,
+        execute,
         ready=_ready,
         description=e.Description(
             msgspec.json.decode(

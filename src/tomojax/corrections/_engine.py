@@ -23,13 +23,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
-from tomojax.core.array_ops import mean_detector_pixels
+from tomojax.core.array_ops import check_binning, mean_detector_pixels
 from tomojax.core.host_volume import discard_failed_outputs
-from tomojax.errors import InvalidParameter
 
 from ._batches import HostCopies, correction_group, view_batches
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
+from ._validation import check_scan_steps, positive_finite, validated_views_per_batch
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -135,14 +135,11 @@ def correct_frames(
     (2, 3, 4)
     """
     progress.check_cancelled()
-    views_per_batch = _validated_views_per_batch(views_per_batch)
+    views_per_batch = validated_views_per_batch(views_per_batch)
     epsilon = positive_finite(epsilon, "epsilon")
-    if isinstance(binning, bool) or not isinstance(binning, int | np.integer) or binning < 1:
-        raise InvalidParameter(
-            "binning", f"binning needs a whole factor of at least 1, not {binning!r}"
-        )
-    binning = int(binning)
     views, rows, cols = (int(s) for s in counts.shape)
+    check_binning(binning, rows, cols)
+    binning = int(binning)
     ordered = ordered_steps(steps)
     view_scales, flat_scales = exposure_scales(exposure_times, flat_exposure_times, views, flats)
     fields, field_record = flat_fields(
@@ -273,15 +270,9 @@ def correct_projections(
     (2, 3, 4)
     """
     progress.check_cancelled()
-    views_per_batch = _validated_views_per_batch(views_per_batch)
+    views_per_batch = validated_views_per_batch(views_per_batch)
     ordered = ordered_steps(steps)
-    if any(d != "line integrals" for d, _ in ordered):
-        wrong = [type(s).__name__ for d, s in ordered if d != "line integrals"]
-        raise ValueError(
-            f"{', '.join(wrong)} act on detector counts or transmission, which a Scan of line "
-            "integrals no longer holds: load the frames with tomojax.load_frames and pass "
-            "them to Frames.corrected"
-        )
+    check_scan_steps(steps)
     out = np.array(projections, np.float32, copy=True)
     out, kept, records = apply_steps(out, [s for _, s in ordered], views_per_batch)
     return Corrected(out, records, kept)
@@ -296,23 +287,6 @@ def frame_batch_size(views: int, rows: int, cols: int, steps: Sequence[Step]) ->
     budget = _BATCH_BYTES if workspace else _SIMPLE_FRAME_BYTES
     pixels = rows * cols + workspace
     return max(1, min(views, budget // (4 * pixels)))
-
-
-def _validated_views_per_batch(value: int | None) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int | np.integer) or value <= 0:
-        raise InvalidParameter(
-            "views_per_batch", f"views_per_batch must be a positive integer, not {value!r}"
-        )
-    return int(value)
-
-
-def positive_finite(value: float, name: str) -> float:
-    value = float(value)
-    if not np.isfinite(value) or value <= 0:
-        raise InvalidParameter(name, f"{name} must be finite and positive, not {value!r}")
-    return value
 
 
 def ordered_steps(steps: Sequence[Step]) -> list[tuple[str, Step]]:

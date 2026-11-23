@@ -23,11 +23,11 @@ from ._engine import (
     linear_limit_edge,
     log_batches,
     ordered_steps,
-    positive_finite,
     reject_nonfinite,
 )
 from ._records import Correction
 from ._steps import Step
+from ._validation import positive_finite
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -102,6 +102,31 @@ class _RowReader:
     def close(self) -> None:
         self.pool.shutdown(wait=True, cancel_futures=True)
         self.current = self.future = None
+
+
+def slab_steps(steps: Sequence[Step]) -> list[tuple[str, Step]]:
+    """Check which corrections can run independently on complete detector rows.
+
+    Parameters
+    ----------
+    steps : sequence of Step
+        Proposed raw corrections.
+
+    Returns
+    -------
+    list of tuple
+        Domain and step pairs in pipeline order.
+    """
+    from tomojax.errors import InvalidParameter
+
+    for i, step in enumerate(steps):
+        if step.domain == "counts" or not step.whole_rows or step.selects_views:
+            raise InvalidParameter(
+                f"corrections[{i}]",
+                "streamed corrections require whole-row transmission or line-integral steps "
+                "without view selection",
+            )
+    return ordered_steps(steps)
 
 
 @contextmanager
@@ -179,14 +204,7 @@ def corrected_row_source(
     TypeError
         If counts lack detector-window access or a correction is not a Step.
     """
-    ordered = ordered_steps(steps)
-    if any(
-        domain == "counts" or not step.whole_rows or step.selects_views for domain, step in ordered
-    ):
-        raise ValueError(
-            "streamed corrections require whole-row transmission or line-integral steps "
-            "without view selection"
-        )
+    ordered = slab_steps(steps)
     if not isinstance(counts, np.ndarray) and not hasattr(counts, "window"):
         raise TypeError("streamed counts must be NumPy arrays or support detector windows")
     epsilon = positive_finite(epsilon, "epsilon")

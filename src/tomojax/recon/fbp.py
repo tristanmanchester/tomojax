@@ -25,6 +25,7 @@ from tomojax.core.validation import (
     validate_pose_stack,
     validate_projection_stack,
 )
+from tomojax.errors import InvalidParameter
 
 from ._fbp_weights import fbp_weights
 from ._host_arrays import ProjectionRows
@@ -70,6 +71,8 @@ class FBPConfig:
 
     def __post_init__(self) -> None:
         check_backend(self.backend, "fbp")
+        if self.scale is not None and not math.isfinite(self.scale):
+            raise InvalidParameter("scale", "fbp: scale must be finite")
         object.__setattr__(self, "filter", normalize_filter(self.filter))
         object.__setattr__(self, "devices", as_devices(self.devices))
 
@@ -102,12 +105,10 @@ def default_fbp_scale(n_views: int) -> float:
 
 
 def validate_fbp_geometry(
-    geometry: Geometry, grid: Grid, detector: Detector, scale: float | None, context: str
+    geometry: Geometry, grid: Grid, detector: Detector, context: str
 ) -> tuple[int, int, int]:
-    """Check the grid, placement, scale and angles before reading projections or poses."""
+    """Check the grid, placement and angles before reading projections or poses."""
     nx, ny, nz = validate_grid(grid, f"{context} grid")
-    if scale is not None and not math.isfinite(scale):
-        raise ValueError(f"{context}: scale must be finite")
     if not np.isfinite([*grid_volume_origin(grid), *detector.center]).all():
         raise ValueError(f"{context}: grid and detector placement must be finite")
     thetas = getattr(geometry, "angles", None)
@@ -845,7 +846,7 @@ def fbp(
         return fdk(geometry, grid, detector, projections, config=fdk_config(cfg))
 
     with progress.task("reconstruct", "fbp", None, "batches"):
-        validate_fbp_geometry(geometry, grid, detector, cfg.scale, "fbp")
+        validate_fbp_geometry(geometry, grid, detector, "fbp")
         n_views, _, _ = validate_projection_stack(
             projections,
             detector,

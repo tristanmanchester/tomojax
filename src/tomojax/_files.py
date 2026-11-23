@@ -161,6 +161,22 @@ def export(
     )
 
 
+def validate_export_options(
+    path: Path, dtype: str, value_range: Sequence[float] | None, prefix: str
+) -> tuple[float, float] | None:
+    """Check file naming and scaling before opening any output."""
+    from tomojax.errors import InvalidParameter
+
+    if path.suffix.lower() != ".raw" and (
+        not prefix or Path(prefix).name != prefix or prefix in (".", "..")
+    ):
+        raise InvalidParameter("prefix", "prefix must be a file name within the TIFF directory")
+    try:
+        return validate_export_range(dtype, value_range)
+    except ValueError as exc:
+        raise InvalidParameter("range", str(exc)) from exc
+
+
 def validate_export_range(
     dtype: str, value_range: Sequence[float] | None
 ) -> tuple[float, float] | None:
@@ -234,7 +250,7 @@ def write_volume(
     from tomojax.geometry import grid_volume_origin
 
     with progress.task("export", out.name, shape[0], "slices"):
-        validated_range = validate_export_range(dtype, value_range)
+        validated_range = validate_export_options(out, dtype, value_range, prefix)
         nz = shape[0]
         raw = out.suffix.lower() == ".raw"
         low, high = (0.0, 1.0)

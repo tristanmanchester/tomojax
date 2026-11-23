@@ -266,7 +266,7 @@ def fbp_host(
         raise ValueError("fbp_host: slices_per_batch and views_per_batch must be positive")
     if fbp_cfg.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("fbp_host: backend must be 'auto', 'jax' or 'cuda'")
-    shape = validate_fbp_geometry(geometry, grid, detector, fbp_cfg.scale, "fbp_host")
+    shape = validate_fbp_geometry(geometry, grid, detector, "fbp_host")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fbp_host projections"
     )
@@ -456,7 +456,7 @@ def fbp_slabs[T](
     """
     if type(geometry) is not ParallelGeometry:
         raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")
-    _ = validate_fbp_geometry(geometry, grid, detector, config.scale, "reconstruct_slabs")
+    _ = validate_fbp_geometry(geometry, grid, detector, "reconstruct_slabs")
     _ = validate_detector(detector, "reconstruct_slabs detector")
     if config.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("FBP backend must be 'auto', 'jax' or 'cuda'")

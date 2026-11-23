@@ -53,7 +53,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from tomojax import _region, corrections
-    from tomojax._smooth_alignment import CentreSelection
+    from tomojax._planning import ResolvedReconstruction
+    from tomojax._smooth_alignment import CentreSelection, JointSelection
     from tomojax.geometry import Detector
     from tomojax.recon.types import ReconstructionSlab
 else:
@@ -549,7 +550,6 @@ def reconstruct(
     >>> recon = tj.reconstruct(scan, "cgls", iterations=50)  # doctest: +SKIP
     """
     from tomojax._planning import resolve_reconstruction
-    from tomojax.recon.api import reconstruct_arrays
 
     progress.check_cancelled()
 
@@ -567,6 +567,15 @@ def reconstruct(
         seed=seed,
         devices=devices,
     )
+    return reconstruct_resolved(plan, warm_start=bool(warm_start), out=out)
+
+
+def reconstruct_resolved(
+    plan: ResolvedReconstruction, *, warm_start: bool, out: np.ndarray | None = None
+) -> Reconstruction:
+    """Execute the resolved method on its original selected support and grid."""
+    from tomojax.recon.api import reconstruct_arrays
+
     scan, method = plan.scan, plan.method
     if method not in {"fbp", "fourier"}:
         _suggest_binning(scan, "iterative reconstruction")
@@ -679,6 +688,39 @@ def reconstruct_slabs(
     )
 
 
+def slab_settings(
+    frames: Frames,
+    method: str,
+    *,
+    grid: Grid | None,
+    config: MethodConfig | None,
+    warm_start: bool | None,
+    corrections: Sequence[corrections.Step],
+    epsilon: float,
+):
+    """Resolve method, geometry and supported corrections before opening a raw row source."""
+    from tomojax.corrections.api import positive_finite, slab_steps
+    from tomojax.errors import InvalidParameter
+    from tomojax.geometry import ParallelGeometry
+    from tomojax.geometry.api import is_cone_beam
+    from tomojax.recon.api import method_config, validate_reconstruction
+
+    cone = is_cone_beam(frames.geometry)
+    cfg = method_config(method, config=config, warm_start=warm_start)
+    if method not in {"fbp", "fourier", "sirt", "mlem"} or not (
+        type(frames.geometry) is ParallelGeometry or (cone and method == "fbp")
+    ):
+        raise InvalidParameter(
+            "method", "reconstruct_slabs requires cone FBP or unposed axial FBP/Fourier/SIRT/MLEM"
+        )
+    target = frames.geometry.grid if grid is None else grid
+    validate_reconstruction(method, frames.geometry, target, cfg, slabs=True)
+    bound = bind_step_geometry(corrections, frames.geometry)
+    slab_steps(bound)
+    positive_finite(epsilon, "epsilon")
+    return target, cfg, bound, cone
+
+
 @contextmanager
 def _reconstruct_slabs_context(
     frames: Frames,
@@ -691,22 +733,20 @@ def _reconstruct_slabs_context(
     epsilon: float,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
     from tomojax.corrections.api import corrected_row_source
-    from tomojax.geometry import ParallelGeometry
-    from tomojax.geometry.api import is_cone_beam
-    from tomojax.recon.api import method_config, reconstruct_slabs as array_slabs
+    from tomojax.recon.api import reconstruct_slabs as array_slabs
 
-    cone = is_cone_beam(frames.geometry)
-    with progress.task("reconstruct", "fdk" if cone else method, None, "slabs"):
-        cfg = method_config(method, config=config, warm_start=warm_start)
-        if method not in {"fbp", "fourier", "sirt", "mlem"} or not (
-            type(frames.geometry) is ParallelGeometry or (cone and method == "fbp")
-        ):
-            raise ValueError(
-                "reconstruct_slabs requires cone FBP or unposed axial FBP/Fourier/SIRT/MLEM"
-            )
-        target = frames.geometry.grid if grid is None else grid
-        bound = bind_step_geometry(corrections, frames.geometry)
-        with corrected_row_source(
+    target, cfg, bound, cone = slab_settings(
+        frames,
+        method,
+        grid=grid,
+        config=config,
+        warm_start=warm_start,
+        corrections=corrections,
+        epsilon=epsilon,
+    )
+    with (
+        progress.task("reconstruct", "fdk" if cone else method, None, "slabs"),
+        corrected_row_source(
             frames.counts,
             flats=frames.flats,
             flat_positions=frames.flat_positions,
@@ -720,26 +760,27 @@ def _reconstruct_slabs_context(
             host=cone,
             dark_source=frames.dark_source,
             linear_limit=frames.linear_limit,
-        ) as source:
+        ) as source,
+    ):
 
-            def read(first: int, stop: int):
-                corrected = source(first, stop)
-                return corrected.projections, corrected
+        def read(first: int, stop: int):
+            corrected = source(first, stop)
+            return corrected.projections, corrected
 
-            completed = array_slabs(
-                method,
-                frames.geometry,
-                target,
-                frames.geometry.detector,
-                read,
-                config=cfg,
-                warm_start=bool(warm_start),
-            )
-            with (
-                closing(completed),
-                closing(_slab_results(completed, frames, target, method, cfg)) as output,
-            ):
-                yield output
+        completed = array_slabs(
+            method,
+            frames.geometry,
+            target,
+            frames.geometry.detector,
+            read,
+            config=cfg,
+            warm_start=bool(warm_start),
+        )
+        with (
+            closing(completed),
+            closing(_slab_results(completed, frames, target, method, cfg)) as output,
+        ):
+            yield output
 
 
 def _slab_results(
@@ -919,7 +960,7 @@ def align(
     >>> result = tj.align(scan, config=AlignConfig(levels=(1,)))  # doctest: +SKIP
     >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP
     """
-    from tomojax._smooth_alignment import CentreSelection, align_poses, resolve_alignment
+    from tomojax._smooth_alignment import resolve_alignment
 
     label = ", ".join(map(str, fit)) if isinstance(fit, tuple) else str(fit)
     with progress.task("align", label, None, "fit"):
@@ -937,29 +978,38 @@ def align(
             resolution=resolution,
             config=config,
         )
-        if isinstance(plan, CentreSelection):
-            with progress.runtime() as actual:
-                alignment = _opposite_views(scan, plan)
-            return replace(
-                alignment, info={**alignment.info, "placement": actual.record(slabbed=False)}
-            )
-        with progress.runtime() as actual:
-            result = align_poses(scan, fit=fit, plan=plan)
-        slabbed = any(
-            "host" in level["stacks"]["placement"].values()
-            for level in cast("Sequence[dict[str, Any]]", result.info.get("levels", ()))
-        )
-        grid, cylinder = plan.grid, plan.cylinder
-        assert result.scan is not None  # the alignment's corrected scan
-        image = result.volume
-        if cylinder is not None and image is not None and result.grid is not None:
-            from tomojax._field_of_view import zero_outside_cylinder
+        return align_resolved(scan, fit, plan)
 
-            image = zero_outside_cylinder(image, result.grid, cylinder)
-        # The fit's working grid belongs to its image; the scan keeps the caller's grid.
-        corrected = with_grid(result.scan, scan.grid if grid is None else grid)
-        info = {**result.info, **plan.info, "placement": actual.record(slabbed=slabbed)}
-        return Alignment(corrected, info, image, result.grid)
+
+def align_resolved(
+    scan: Scan, fit: str | tuple[str, ...], plan: CentreSelection | JointSelection
+) -> Alignment:
+    """Execute the selected centre or joint-image fit."""
+    from tomojax._smooth_alignment import CentreSelection, align_poses
+
+    if isinstance(plan, CentreSelection):
+        with progress.runtime() as actual:
+            alignment = _opposite_views(scan, plan)
+        return replace(
+            alignment, info={**alignment.info, "placement": actual.record(slabbed=False)}
+        )
+    with progress.runtime() as actual:
+        result = align_poses(scan, fit=fit, plan=plan)
+    slabbed = any(
+        "host" in level["stacks"]["placement"].values()
+        for level in cast("Sequence[dict[str, Any]]", result.info.get("levels", ()))
+    )
+    grid, cylinder = plan.grid, plan.cylinder
+    assert result.scan is not None  # the alignment's corrected scan
+    image = result.volume
+    if cylinder is not None and image is not None and result.grid is not None:
+        from tomojax._field_of_view import zero_outside_cylinder
+
+        image = zero_outside_cylinder(image, result.grid, cylinder)
+    # The fit's working grid belongs to its image; the scan keeps the caller's grid.
+    corrected = with_grid(result.scan, scan.grid if grid is None else grid)
+    info = {**result.info, **plan.info, "placement": actual.record(slabbed=slabbed)}
+    return Alignment(corrected, info, image, result.grid)
 
 
 def _opposite_views(scan: Scan, selection: CentreSelection) -> Alignment:

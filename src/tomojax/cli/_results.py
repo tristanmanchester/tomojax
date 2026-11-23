@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
     import tomojax as tj
 
-_VOLUME = "/entry/processing/tomojax/volume"
+VOLUME_DATASET = "/entry/processing/tomojax/volume"
 _PROJECTIONS = "/entry/instrument/detector/data"
 _ANGLES = "/entry/sample/transformations/rotation_angle"
 _POSES = "/entry/processing/tomojax/align/thetas"
@@ -87,7 +87,7 @@ def disk_volume(
     """Describe the export source in its recorded storage order, including legacy volumes."""
     from tomojax.cli.execution import volume_metadata
 
-    storage = Hdf5(str(path), _VOLUME)
+    storage = Hdf5(str(path), VOLUME_DATASET)
     if grid is None:
         disk_axes = tuple(Axis(a, "stored_volume", "index", Uniform(0, 1)) for a in axes)
         unit = "unspecified"
@@ -98,9 +98,8 @@ def disk_volume(
     return Array(storage, shape, dtype, disk_axes, unit, "attenuation")
 
 
-def scan_axes(scan: tj.Scan, view: Axis, unit: str) -> tuple[Axis, Axis, Axis]:
+def scan_axes(det: tj.Detector, view: Axis, unit: str) -> tuple[Axis, Axis, Axis]:
     """Pixel centres in the detector's local frame, in stored (view, v, u) order."""
-    det = scan.detector
     return (
         view,
         Axis("v", "detector", unit, Uniform(det.center[1] - (det.nv - 1) * det.dv / 2, det.dv)),
@@ -144,7 +143,7 @@ def saved_result(
         if grid is not None and volume is not None:
             arrays[key] = volume_metadata(
                 grid,
-                storage=files.reference(volume, _VOLUME),
+                storage=files.reference(volume, VOLUME_DATASET),
                 dtype=np.dtype(volume.dtype).str,
                 length_unit=unit,
             )
@@ -157,7 +156,7 @@ def saved_result(
                 files.reference(data, _PROJECTIONS),
                 data.shape,
                 np.dtype(data.dtype).str,
-                scan_axes(scan, view, unit),
+                scan_axes(scan.detector, view, unit),
                 "1",
                 "line_integrals",
             )

@@ -10,7 +10,7 @@ import numpy as np
 from tomojax._parameters import Method
 from tomojax._scan import Scan, with_grid
 from tomojax.errors import InvalidParameter
-from tomojax.recon.api import MethodConfig, method_config
+from tomojax.recon.api import MethodConfig, method_config, validate_reconstruction
 
 if TYPE_CHECKING:
     from tomojax._field_of_view import Cylinder
@@ -102,9 +102,9 @@ def resolve_reconstruction(
     if devices is not None:
         settings["devices"] = devices
     cfg = method_config(method, config=config, warm_start=warm_start, **settings)
-    return ResolvedReconstruction(
-        scan if grid is None else with_grid(scan, grid), method, cfg, cylinder, tuple(reasons), info
-    )
+    scan = scan if grid is None else with_grid(scan, grid)
+    validate_reconstruction(method, scan.geometry, scan.grid, cfg)
+    return ResolvedReconstruction(scan, method, cfg, cylinder, tuple(reasons), info)
 
 
 def _methods_taking(options: dict[str, Any]) -> list[str]:

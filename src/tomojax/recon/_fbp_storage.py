@@ -74,10 +74,14 @@ def fdk_config(cfg: FBPConfig) -> FDKConfig:
 
     FDK weights cone views exactly, so a constant ``scale`` is refused.
     """
+    from tomojax.errors import InvalidParameter
+
     from .fdk import FDKConfig
 
     if cfg.scale is not None:
-        raise ValueError("fbp: cone beams use FDK's exact view weights; leave scale as None")
+        raise InvalidParameter(
+            "config.scale", "fbp: cone beams use FDK's exact view weights; leave scale as None"
+        )
     return FDKConfig(filter=cfg.filter, backend=cfg.backend, devices=cfg.devices)
 
 

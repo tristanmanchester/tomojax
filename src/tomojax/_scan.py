@@ -16,7 +16,7 @@ import numpy as np
 
 from tomojax._data import views_of
 from tomojax._parameters import AnnotationModule
-from tomojax.core.array_ops import mean_detector_pixels
+from tomojax.core.array_ops import check_binning, mean_detector_pixels
 from tomojax.core.validation import view_indices
 from tomojax.geometry import (
     ConeGeometry,
@@ -405,26 +405,8 @@ class Scan:
         ValueError
             If scans are empty or their geometry and detector counts are incompatible.
         """
-        from tomojax.geometry import ConeSegments
-
-        if not scans:
-            raise ValueError("Scan.combine needs at least one scan")
-        grid = scans[0].grid
-        parts = []
-        trajectories = []
-        for scan in scans:
-            geometry = rebuild(scan.geometry, grid=grid)
-            parts.extend(_calibration_parts(geometry))
-            layout = geometry
-            while (base := getattr(layout, "base", None)) is not None:
-                layout = base
-            trajectories.extend(
-                layout.trajectory_lengths
-                if isinstance(layout, ConeSegments)
-                else (len(layout.angles),)
-            )
+        geometry = combined_geometry(scans)
         projections = np.concatenate([np.asarray(s.projections) for s in scans])
-        geometry = ConeSegments(tuple(parts), trajectory_lengths=tuple(trajectories))
         # Each scan keeps its own acquisition times; a restart marks the break.
         positions = np.concatenate([_positions(s) for s in scans])
         return cls(
@@ -460,8 +442,7 @@ class Scan:
         ValueError
             If binning is less than one or leaves no complete detector block.
         """
-        if binning < 1:
-            raise ValueError(f"binned needs a binning of at least 1, not {binning}")
+        check_binning(binning, self.detector.nv, self.detector.nu)
         if binning == 1:
             return self
         binned = mean_detector_pixels(np.asarray(self.projections, np.float32), binning)
@@ -494,6 +475,27 @@ class Scan:
         from tomojax._astra import to_astra
 
         return to_astra(np.asarray(self.projections), self.geometry, self.grid, self.detector)
+
+
+def combined_geometry(scans: Sequence[Scan]) -> ConeSegments:
+    """Resolve multi-orbit segments before allocating any combined projections."""
+    from tomojax.geometry import ConeSegments
+
+    if not scans:
+        raise ValueError("Scan.combine needs at least one scan")
+    grid = scans[0].grid
+    parts = []
+    trajectories = []
+    for scan in scans:
+        geometry = rebuild(scan.geometry, grid=grid)
+        parts.extend(_calibration_parts(geometry))
+        layout = geometry
+        while (base := getattr(layout, "base", None)) is not None:
+            layout = base
+        trajectories.extend(
+            layout.trajectory_lengths if isinstance(layout, ConeSegments) else (len(layout.angles),)
+        )
+    return ConeSegments(tuple(parts), trajectory_lengths=tuple(trajectories))
 
 
 def detector_window(rows: slice, cols: slice, detector: Detector) -> Callable[[Detector], Detector]:

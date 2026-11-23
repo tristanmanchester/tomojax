@@ -17,6 +17,22 @@ if TYPE_CHECKING:
     from .spdhg_tv import SPDHGConfig
 
 
+SIRT_CONTROL_ERROR = (
+    "sirt: iterations >= 0, views_per_batch >= 1 and 1 <= subsets <= views required"
+)
+
+
+def check_subset_count(method: str, subsets: int, views: int) -> None:
+    """Each ordered subset must receive at least one acquired view."""
+    if subsets > views:
+        message = (
+            SIRT_CONTROL_ERROR
+            if method == "sirt"
+            else "mlem: subsets must not exceed the number of views"
+        )
+        raise InvalidParameter("subsets", message)
+
+
 def _count(value: int, name: str, *, minimum: int, context: str) -> None:
     requirement = "nonnegative" if minimum == 0 else "positive"
     message = f"{context}: {name} must be a {requirement} integer"

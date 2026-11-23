@@ -33,6 +33,7 @@ from tomojax.recon._projection import (
     resolve_geometry_projector,
     subset_operators,
 )
+from tomojax.recon._solver_validation import SIRT_CONTROL_ERROR, check_subset_count
 from tomojax.recon._volume_storage import (
     Model,
     pack_volume,
@@ -45,9 +46,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
-
-
-_CONTROL_ERROR = "sirt: iterations >= 0, views_per_batch >= 1 and 1 <= subsets <= views required"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -111,7 +109,7 @@ class SIRTConfig:
         check_backend(self.backend, "sirt")
         for name, minimum in (("iterations", 0), ("views_per_batch", 1), ("subsets", 1)):
             if operator.index(getattr(self, name)) < minimum:
-                raise InvalidParameter(name, _CONTROL_ERROR)
+                raise InvalidParameter(name, SIRT_CONTROL_ERROR)
         if not math.isfinite(self.relaxation) or not 0 < self.relaxation < 2:
             raise InvalidParameter("relaxation", "sirt: relaxation must be finite and in (0, 2)")
         if self.acceleration and (self.subsets != 1 or self.relaxation > 1):
@@ -509,8 +507,7 @@ class SIRTCall:
         )
         validate_detector_grid(det_grid, detector, context="sirt")
         iterations, subsets, batch = cfg.iterations, cfg.subsets, cfg.views_per_batch
-        if subsets > n:
-            raise InvalidParameter("subsets", _CONTROL_ERROR)
+        check_subset_count("sirt", subsets, n)
         lower = -np.inf if cfg.lower_bound is None else cfg.lower_bound
         upper = np.inf if cfg.upper_bound is None else cfg.upper_bound
         for name, value in (("init_x", init_x), ("support", cfg.support)):

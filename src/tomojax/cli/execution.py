@@ -14,6 +14,7 @@ import tomojax as tj
 from tomojax._typed_arrays import device_id
 from tomojax.cli.operations import ExecutionInput, Plane, input_references
 from tomojax.cli.products import DataProduct, HandleProduct, PlaneResult, Provenance, Snapshot
+from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Fixed, Member, Npy, Storage, Uniform
 from tomojax.wire.progress import INFO_BYTES, Event, Info
 
@@ -178,25 +179,32 @@ def volume_metadata(grid: tj.Grid, *, storage: Storage, dtype: str, length_unit:
     return Array(storage, grid.shape, dtype, axes, f"1/{length_unit}", "attenuation")
 
 
-def browse_plane(operation: Plane, context: ExecutionContext) -> Success:
-    """Stage a single plane using the pinned array and its original registration."""
-    context.control.checkpoint()
+def plane_source(operation: Plane, context: ExecutionContext) -> tuple[RegisteredArray, int, Fixed]:
+    """Check the registered volume and resolve the source index without touching pixels."""
     lease = context.leases[operation.source]
     if not isinstance(lease.value, RegisteredArray):
-        raise ValueError("plane requires a registered volume member")
+        raise InvalidParameter("source", "plane requires a registered volume member")
     array = lease.value.metadata
     if tuple(axis.name for axis in array.axes) != ("z", "y", "x"):
-        raise ValueError("plane requires volume axes (z, y, x)")
+        raise InvalidParameter("source", "plane requires volume axes (z, y, x)")
     dimension = "zyx".index(operation.axis)
     axis = array.axes[dimension]
     if operation.index < 0 or operation.index >= array.shape[dimension]:
-        raise ValueError("plane index outside volume")
+        raise InvalidParameter("index", "plane index outside volume")
     if not isinstance(axis.coordinates, Uniform):
-        raise ValueError("volume grid requires uniform voxel spacing")
+        raise InvalidParameter("source", "volume grid requires uniform voxel spacing")
     coordinate = axis.coordinates.origin + operation.index * axis.coordinates.spacing
     fixed = Fixed(axis.name, axis.frame, axis.unit, operation.index, coordinate)
+    return lease.value, dimension, fixed
+
+
+def browse_plane(operation: Plane, context: ExecutionContext) -> Success:
+    """Stage a single plane using the pinned array and its original registration."""
+    context.control.checkpoint()
+    registered, dimension, fixed = plane_source(operation, context)
+    array = registered.metadata
     key = tuple(operation.index if i == dimension else slice(None) for i in range(3))
-    pixels = np.asarray(lease.value.data[key])
+    pixels = np.asarray(registered.data[key])
     stage = context.staging.array()
     with stage.path.open("wb") as stream:
         np.save(stream, pixels, allow_pickle=False)
@@ -212,7 +220,7 @@ def browse_plane(operation: Plane, context: ExecutionContext) -> Success:
     )
     manifest = Provenance(
         "plane",
-        {"axis": axis.name, "index": operation.index, "source": operation.source},
+        {"axis": operation.axis, "index": operation.index, "source": operation.source},
         context.lineage(operation),
     )
     return Success(PlaneResult(plane), Info({}, {}), manifest)

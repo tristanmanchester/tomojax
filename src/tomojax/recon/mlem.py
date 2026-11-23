@@ -35,6 +35,7 @@ from tomojax.recon._projection import (
     poisson_operators,
     resolve_geometry_projector,
 )
+from tomojax.recon._solver_validation import check_subset_count
 from tomojax.recon._volume_storage import (
     Model,
     is_joseph,
@@ -455,8 +456,7 @@ def run_mlem(
     validate_grid(grid, "mlem grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="mlem")
     validate_detector_grid(det_grid, detector, context="mlem")
-    if subsets > n:
-        raise InvalidParameter("subsets", "mlem: subsets must not exceed the number of views")
+    check_subset_count("mlem", subsets, n)
     if init_x is not None:
         validate_volume(init_x, grid, context="mlem", name="init_x")
     model, backend = resolve_geometry_projector(

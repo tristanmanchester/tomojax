@@ -10,6 +10,18 @@ if TYPE_CHECKING:
     import jax
 
 
+def check_binning(factor: int, rows: int, cols: int) -> None:
+    """Require at least one complete native detector block."""
+    from tomojax.errors import InvalidParameter
+
+    if isinstance(factor, bool) or not isinstance(factor, int | np.integer) or factor < 1:
+        raise InvalidParameter(
+            "binning", f"binning needs a whole factor of at least 1, not {factor!r}"
+        )
+    if factor > min(rows, cols):
+        raise InvalidParameter("binning", f"binning {factor} leaves no complete detector block")
+
+
 def mean_detector_pixels[T: (np.ndarray, jax.Array)](data: T, factor: int) -> T:
     """Average full detector blocks in FP32, dropping incomplete edge blocks.
 

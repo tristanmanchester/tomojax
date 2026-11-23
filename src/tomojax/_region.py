@@ -276,6 +276,14 @@ def _working_device(scan: Scan) -> Device:
     return next(iter(jnp.zeros(()).devices()))
 
 
+def check_region_geometry(scan: Scan) -> None:
+    """Check the estimator's applicability before any sampling."""
+    from tomojax.errors import InvalidParameter
+
+    if describe(scan.geometry)[0] != "lamino":
+        raise InvalidParameter("source", "estimate_region requires a calibrated laminography scan")
+
+
 def estimate_region(scan: Scan) -> RegionEstimate:
     """Select a reconstruction region from an already calibrated laminography scan.
 
@@ -313,8 +321,7 @@ def estimate_region(scan: Scan) -> RegionEstimate:
     >>> recon = tj.reconstruct(scan, "cgls", region=region)  # doctest: +SKIP
     """
     with progress.task("estimate_region", scan.name, None, ""):
-        if describe(scan.geometry)[0] != "lamino":
-            raise ValueError("estimate_region requires a calibrated laminography scan")
+        check_region_geometry(scan)
         started = time.perf_counter()
         device = _working_device(scan)
         announce((device,))

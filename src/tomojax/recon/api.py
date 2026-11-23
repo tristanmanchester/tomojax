@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     import jax.numpy as jnp
     import numpy as np
 
-    from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
+    from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, ScanGeometry
     from tomojax.recon._operators import Projector, backproject, project
     from tomojax.recon.cgls import CGLSConfig
     from tomojax.recon.fbp import FBPConfig, default_fbp_scale
@@ -166,6 +166,79 @@ def method_config(
         )
     base = kind() if config is None else config
     return replace(base, **resolved_settings) if resolved_settings else base
+
+
+def validate_reconstruction(
+    method: str, geometry: ScanGeometry, grid: Grid, config: MethodConfig, *, slabs: bool = False
+) -> None:
+    """Check resolved solver settings against the actual acquisition before dispatch.
+
+    Parameters
+    ----------
+    method : str
+        Resolved reconstruction method.
+    geometry : ScanGeometry
+        Calibrated views and detector.
+    grid : Grid
+        Working volume grid.
+    config : MethodConfig
+        Settings for the resolved method.
+    slabs : bool, optional
+        Require an independent streaming row source.
+
+    Raises
+    ------
+    InvalidParameter
+        If the method, support, view subsets or slab grid are incompatible.
+    """
+    from tomojax.core.geometry.cone import is_cone_beam
+    from tomojax.core.validation import (
+        validate_optional_broadcastable_shape,
+        validate_optional_same_shape,
+    )
+
+    views = len(geometry.angles)
+    if subsets := getattr(config, "subsets", None):
+        from tomojax.errors import within
+        from tomojax.recon._solver_validation import check_subset_count
+
+        with within("config"):
+            check_subset_count(method, subsets, views)
+    try:
+        check_support = (
+            validate_optional_same_shape
+            if method == "sirt"
+            else validate_optional_broadcastable_shape
+        )
+        check_support(
+            getattr(config, "support", None),
+            grid.shape,
+            context=method,
+            name="support",
+            fix="use a support mask broadcastable to shape (grid.nz, grid.ny, grid.nx).",
+        )
+    except ValueError as err:
+        raise InvalidParameter("config.support", str(err)) from err
+    if method == "fbp" and is_cone_beam(geometry):
+        fdk_config(cast("FBPConfig", config))
+    if method == "fourier":
+        from tomojax.core.geometry.cone import require_parallel_beam
+        from tomojax.recon.fourier import detector_translations
+
+        try:
+            require_parallel_beam(geometry, "fourier_reconstruct")
+            detector_translations(geometry, views)
+        except ValueError as err:
+            raise InvalidParameter("method", str(err)) from err
+    if slabs and method in {"sirt", "mlem"}:
+        from tomojax.recon._axial_slabs import independent_planes
+
+        if not independent_planes(geometry, grid, geometry.detector):
+            raise InvalidParameter(
+                "grid",
+                "iterative slabs require independent axial Joseph planes "
+                "(matching grid and detector rows)",
+            )
 
 
 def reconstruct_slabs[T](
@@ -490,4 +563,5 @@ __all__ = [
     "project",
     "reconstruct_arrays",
     "reconstruct_slabs",
+    "validate_reconstruction",
 ]

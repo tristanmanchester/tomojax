@@ -228,7 +228,7 @@ def _sampling_coordinates(
     geometry: ScanGeometry, grid: Grid, detector: Detector, order: np.ndarray
 ) -> tuple[Detector, np.ndarray | None, np.ndarray]:
     """Padded Fourier field and physical source rows for all requested slices."""
-    translations = _detector_translations(geometry, len(order))
+    translations = detector_translations(geometry, len(order))
     plan_detector, shifts = detector, None
     origin = grid_volume_origin(grid)
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
@@ -251,7 +251,7 @@ def _sampling_coordinates(
     return plan_detector, shifts, positions
 
 
-def _detector_translations(geometry: ScanGeometry, nviews: int) -> np.ndarray | None:
+def detector_translations(geometry: ScanGeometry, nviews: int) -> np.ndarray | None:
     """Extract physical detector-u/v translations without importing alignment.
 
     Nominal angles remain exact, including repeated/opposing directions; a

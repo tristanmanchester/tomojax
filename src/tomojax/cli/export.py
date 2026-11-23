@@ -14,6 +14,7 @@ import numpy as np
 
 from tomojax.cli._options import add_output, check_paths
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
+from tomojax.cli._results import VOLUME_DATASET
 from tomojax.io.api import saved_volume_axes
 
 if TYPE_CHECKING:
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 
     from tomojax.wire.progress import Result
 
-_VOLUME_PATH = "/entry/processing/tomojax/volume"
+
 _AXES_ATTR = "volume_axes_order"
 
 
@@ -103,7 +104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         check_paths(parser, inputs=[data], outputs=outputs, force=cast("bool", args.force))
         registered = {}
         with h5py.File(data, "r") as handle:
-            dataset = handle.get(_VOLUME_PATH)
+            dataset = handle.get(VOLUME_DATASET)
             if not isinstance(dataset, h5py.Dataset) or dataset.ndim != 3:
                 raise ValueError(
                     f"{data} holds no reconstructed volume; "
