@@ -193,9 +193,23 @@ def validate_export_range(
     return low, high
 
 
-def tiff_stack_entry(path: Path) -> bool:
-    """Whether an existing entry is replaced when exporting a TIFF stack."""
-    return path.is_file() and path.suffix.lower() in {".tif", ".tiff", ".json"}
+def _slice_name(prefix: str, index: int) -> str:
+    return f"{prefix}_{index:05d}.tif"
+
+
+def tiff_stack_entry(path: Path, staged: Path) -> bool:
+    """Replace staged entries and stale numbered slices belonging to their stack sidecar."""
+    if not (path.is_file() or path.is_symlink()):
+        return False
+    if (staged / path.name).is_file():
+        return True
+    prefix, _, digits = path.stem.rpartition("_")
+    return (
+        digits.isascii()
+        and digits.isdigit()
+        and path.name == _slice_name(prefix, int(digits))
+        and (staged / f"{prefix}.json").is_file()
+    )
 
 
 def _write_tiff_directory(
@@ -217,14 +231,14 @@ def _write_tiff_directory(
     try:
         for z in range(nz):
             progress.check_cancelled()
-            iio.imwrite(staging / f"{prefix}_{z:05d}.tif", convert(plane(z)), extension=".tif")
+            iio.imwrite(staging / _slice_name(prefix, z), convert(plane(z)), extension=".tif")
             progress.step("slices")
         _ = (staging / f"{prefix}.json").write_text(sidecar_text)
         if not out.exists():
             staging.replace(out)
         else:
             for stale in out.iterdir():
-                if tiff_stack_entry(stale):
+                if tiff_stack_entry(stale, staging):
                     stale.unlink()
             for item in staging.iterdir():
                 item.replace(out / item.name)

@@ -54,9 +54,7 @@ class Destination:
                 originals = self.work / "original"
                 originals.mkdir()
                 for entry in self.path.iterdir():
-                    if tiff_stack_entry(entry) or (
-                        entry.is_symlink() and (self.stage / entry.name).exists()
-                    ):
+                    if tiff_stack_entry(entry, self.stage):
                         backup = originals / entry.name
                         entry.replace(backup)
                         undo.callback(self.restore, backup, entry)

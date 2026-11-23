@@ -587,7 +587,7 @@ def test_alignment_save_reload_and_export_keep_scan_and_working_grids_distinct(
     assert sidecar["voxel_size_xyz"] == [1.0, 0.8, 1.2]
     assert sidecar["grid"] == work_grid.to_dict()
 
-    # Forced re-export with fewer slices and a new prefix cleans stale slices.
+    # A second prefix coexists with all slices of the original export.
     smaller = tj.Reconstruction(
         np.zeros((2, 4, 4), np.float32),
         tj.ParallelGeometry(tj.Grid(4, 4, 2, 1.0, 1.0, 1.0), detector, geometry.angles),
@@ -596,6 +596,10 @@ def test_alignment_save_reload_and_export_keep_scan_and_working_grids_distinct(
     )
     tj.export(slices_dir, smaller, prefix="small")
     assert sorted(p.name for p in slices_dir.iterdir()) == [
+        "slice.json",
+        "slice_00000.tif",
+        "slice_00001.tif",
+        "slice_00002.tif",
         "small.json",
         "small_00000.tif",
         "small_00001.tif",
