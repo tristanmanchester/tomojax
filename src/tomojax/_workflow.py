@@ -1050,60 +1050,63 @@ def align(
     >>> result = tj.align(scan, config=AlignConfig(levels=(1,)))  # doctest: +SKIP
     >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP
     """
+    from tomojax import progress
     from tomojax._region import RegionEstimate
     from tomojax.alignment import AlignConfig
 
-    settings = {
-        "motion": motion,
-        "iterations": iterations,
-        "image_iterations": image_iterations,
-        "tolerance": tolerance,
-        "interpolation": interpolation,
-        "resolution": resolution,
-    }
-    supplied = {name: value for name, value in settings.items() if value is not None}
-    if method == "opposite-views":
-        extra: list[str] = sorted(
-            [
-                *supplied,
-                *(["config"] if config is not None else []),
-                *(["grid"] if grid is not None else []),
-                *(["region"] if region is not None else []),
-            ]
-        )
-        if extra:
-            raise ValueError(
-                f'method="opposite-views" fits no image and takes no joint options '
-                f"({', '.join(extra)})"
+    label = ", ".join(map(str, fit)) if isinstance(fit, tuple) else str(fit)
+    with progress.task("align", label, None, "fit"):
+        settings = {
+            "motion": motion,
+            "iterations": iterations,
+            "image_iterations": image_iterations,
+            "tolerance": tolerance,
+            "interpolation": interpolation,
+            "resolution": resolution,
+        }
+        supplied = {name: value for name, value in settings.items() if value is not None}
+        if method == "opposite-views":
+            extra: list[str] = sorted(
+                [
+                    *supplied,
+                    *(["config"] if config is not None else []),
+                    *(["grid"] if grid is not None else []),
+                    *(["region"] if region is not None else []),
+                ]
             )
-        return _opposite_views(scan, fit)
-    if method not in (None, "joint"):
-        raise ValueError(f"method is 'joint' or 'opposite-views', not {method!r}")
-    config = replace(AlignConfig() if config is None else config, **supplied)
-    cylinder = None
-    if region is not None:
-        from tomojax._field_of_view import region_grid
+            if extra:
+                raise ValueError(
+                    f'method="opposite-views" fits no image and takes no joint options '
+                    f"({', '.join(extra)})"
+                )
+            return _opposite_views(scan, fit)
+        if method not in (None, "joint"):
+            raise ValueError(f"method is 'joint' or 'opposite-views', not {method!r}")
+        config = replace(AlignConfig() if config is None else config, **supplied)
+        cylinder = None
+        if region is not None:
+            from tomojax._field_of_view import region_grid
 
-        if grid is not None:
-            raise ValueError("pass grid= or region=, not both")
-        grid, cylinder = region_grid(scan, region)
-    from tomojax._smooth_alignment import align_poses
+            if grid is not None:
+                raise ValueError("pass grid= or region=, not both")
+            grid, cylinder = region_grid(scan, region)
+        from tomojax._smooth_alignment import align_poses
 
-    result = align_poses(scan, fit=fit, grid=grid, config=config)
-    assert result.scan is not None  # the alignment's corrected scan
-    image = result.volume
-    if cylinder is not None and image is not None and result.grid is not None:
-        from tomojax._field_of_view import zero_outside_cylinder
+        result = align_poses(scan, fit=fit, grid=grid, config=config)
+        assert result.scan is not None  # the alignment's corrected scan
+        image = result.volume
+        if cylinder is not None and image is not None and result.grid is not None:
+            from tomojax._field_of_view import zero_outside_cylinder
 
-        image = zero_outside_cylinder(image, result.grid, cylinder)
-    # The fit's working grid belongs to its image; the scan keeps the caller's grid.
-    corrected = with_grid(result.scan, scan.grid if grid is None else grid)
-    info = dict(result.info)
-    if region is not None:
-        info["region"] = region if isinstance(region, str) else "estimate"
-        if isinstance(region, RegionEstimate):
-            info["region_estimate"] = dict(region.info)
-    return Alignment(corrected, info, image, result.grid)
+            image = zero_outside_cylinder(image, result.grid, cylinder)
+        # The fit's working grid belongs to its image; the scan keeps the caller's grid.
+        corrected = with_grid(result.scan, scan.grid if grid is None else grid)
+        info = dict(result.info)
+        if region is not None:
+            info["region"] = region if isinstance(region, str) else "estimate"
+            if isinstance(region, RegionEstimate):
+                info["region_estimate"] = dict(region.info)
+        return Alignment(corrected, info, image, result.grid)
 
 
 def _opposite_views(scan: Scan, fit: str | tuple[str, ...]) -> Alignment:

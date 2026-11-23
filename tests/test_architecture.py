@@ -117,6 +117,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--progress": "terminal display",
     },
     "align": {
+        "--progress": "progress reporting",
         "--fit": ("align", "fit"),
         "--grid": ("align", "grid"),
         "--region": ("align", "region"),

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, replace
+from functools import partial
 import json
 import logging
+from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tomojax import progress
 from tomojax._field_of_view import (
     REGION_CHOICES,
     REGION_HELP,
@@ -18,6 +21,7 @@ from tomojax._field_of_view import (
     zero_outside_cylinder,
 )
 from tomojax.cli._options import EXIT_STATUS, add_config, add_force, check_paths
+from tomojax.cli._progress import add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -32,6 +36,7 @@ class _Args(argparse.Namespace):
     data: str
     out: str | None
     force: bool
+    progress: str
     fit: list[str]
     method: str
     motion: str | None
@@ -80,6 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
         "(optional with --dry-run)",
     )
     add_force(parser)
+    add_progress(parser)
     _ = parser.add_argument(
         "--fit",
         nargs="+",
@@ -258,6 +264,8 @@ def _validate_align_args(
     settings: Mapping[str, Any],
 ) -> AlignConfig | None:
     """Validate CLI and TOML arguments before loading scan data."""
+    if args.dry_run and args.progress == "json":
+        parser.error("--dry-run cannot write a plan with --progress json")
     if len(args.fit) != len(set(args.fit)):
         parser.error("--fit names must not repeat")
     if not args.dry_run and not args.out:
@@ -295,19 +303,32 @@ def _dry_run_plan(
     return plan
 
 
-def main() -> None:
+def main() -> int:
     """Run ``tomojax align``."""
-    import tomojax as tj
-    from tomojax.core import log_jax_env, setup_logging
-
     parser = build_parser()
     namespace, metadata = parse_args_with_config(parser)
     args = cast("_Args", namespace)
     settings = cast("dict[str, Any]", metadata["settings"])
     config = _validate_align_args(parser, args, settings)
+    return run_command("align", args.progress, partial(_run, parser, args, metadata, config))
+
+
+def _run(
+    parser: argparse.ArgumentParser,
+    args: _Args,
+    metadata: Mapping[str, Any],
+    config: AlignConfig | None,
+) -> None:
+    import tomojax as tj
+    from tomojax.core import log_jax_env, setup_logging
+
+    if not Path(args.data).exists():
+        raise FileNotFoundError(f"input not found: {args.data}")
     outputs = [] if args.dry_run else [args.out, args.manifest]
     check_paths(parser, inputs=[args.data], outputs=outputs, force=args.force)
+    progress.check_cancelled()
     scan = tj.load(args.data, apply_poses=args.apply_poses)
+    progress.check_cancelled()
     fit = tuple(args.fit)
     grid, cylinder = (None, None)
     if args.method == "joint" and (args.grid is not None or args.region is not None):
@@ -327,12 +348,14 @@ def main() -> None:
         if cylinder is not None and result.image is not None and result.grid is not None:
             masked_image = zero_outside_cylinder(result.image, result.grid, cylinder)
             result = replace(result, image=masked_image)
+    progress.check_cancelled()
     assert args.out is not None
     tj.save(args.out, result)
     logging.info("Saved alignment results to %s", args.out)
     if args.manifest is not None:
+        progress.check_cancelled()
         _write_manifest(args, metadata, scan, result, masked=cylinder is not None)
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    raise SystemExit(main())

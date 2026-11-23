@@ -25,6 +25,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.alignment._config import AlignConfig, resolve_align_config
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.joseph import validate_plane_geometry
@@ -119,6 +120,7 @@ def _read(measured, bins, views_per_batch=16):
     peak = np.float32(0)
     noise = Windows(measured.shape)
     for s in range(0, n, views_per_batch):
+        progress.check_cancelled()
         src = np.asarray(measured[s : s + views_per_batch], np.float32)
         finite = np.isfinite(src)
         filled = np.where(finite, src, 0)
@@ -278,6 +280,17 @@ def working_scale(grid, detector, *, keep_grid=False, magnification=1.0, config=
     return base, dbin, bins
 
 
+def _physical_frame(poses, grid, detector, native, lever, frames):
+    """The pose scales, and the per-view lab frame for cone-beam scans."""
+    if frames is None:
+        validate_plane_geometry(jnp.asarray(poses), grid, detector)
+        return np.asarray([1 / lever] * 3 + list(native)), None
+    frames = np.broadcast_to(np.asarray(frames, np.float64), (len(poses), 4, 3)).copy()
+    if not np.isfinite(frames).all():
+        raise ValueError("cone fitting needs finite (views, 4, 3) lab frames")
+    return cone_parameter_scales(poses, frames, grid, native), frames
+
+
 def fit_poses(
     projections,
     nominal_poses,
@@ -335,14 +348,7 @@ def fit_poses(
         # parameter moves its edge by about one pixel.
         lever = 0.5 * max(grid.nx * grid.vx, grid.ny * grid.vy) / native[0]
         parameters = Parameters(len(y0), fit, cone=frames is not None, lever=lever)
-        pose_scales = np.asarray([1 / lever] * 3 + list(native))
-        if frames is None:
-            validate_plane_geometry(jnp.asarray(poses), grid, detector)
-        else:
-            frames = np.broadcast_to(np.asarray(frames, np.float64), (len(poses), 4, 3)).copy()
-            if not np.isfinite(frames).all():
-                raise ValueError("cone fitting needs finite (views, 4, 3) lab frames")
-            pose_scales = cone_parameter_scales(poses, frames, grid, native)
+        pose_scales, frames = _physical_frame(poses, grid, detector, native, lever, frames)
         mag = _magnification(poses if declared_poses is None else declared_poses, frames)
         base, dbin, bins = working_scale(
             grid, detector, keep_grid=keep_grid, magnification=mag, config=config
@@ -366,66 +372,72 @@ def fit_poses(
         binned, scale, noise = _read(measured, [dbin * b for b in bins])
         iterations = (config.coarse_iterations,) * (len(bins) - 1) + (config.iterations,)
         for b, outer in zip(bins, iterations, strict=True):
-            y, precision, g, ops, cal = _level(
-                binned.pop(0),  # the level's arrays are its own from here
-                scale,
-                noise,
-                poses,
-                padded,
-                detector,
-                center,
-                dbin * b,
-                b,
-                lever=lever,
-                native=native,
-                frames=frames,
-                scales=pose_scales,
-                parameters=parameters,
-                detector_roll=detector_roll,
-                config=config,
-            )
-            # Only the angular size prior depends on the level's noise scale.
-            # Reuse the same physical translation prior and its compiled solves
-            # across levels when those rotation columns are absent.
-            if prior is None or "rotations" in parameters.fit:
-                prior = MotionPrior(
-                    len(y0),
-                    gauge,
-                    constraint=constraint,
-                    knot_spacing=(config.knot_spacing,) * pose_scales.shape[-1],
-                    delta=config.slip_scale,
-                    independent=config.motion == "independent",
+            with progress.task("level", f"Binning {dbin * b}", outer, "steps"):
+                y, precision, g, ops, cal = _level(
+                    binned.pop(0),  # the level's arrays are its own from here
+                    scale,
+                    noise,
+                    poses,
+                    padded,
+                    detector,
+                    center,
+                    dbin * b,
+                    b,
+                    lever=lever,
+                    native=native,
+                    frames=frames,
+                    scales=pose_scales,
                     parameters=parameters,
-                    rotation_scales=pose_scales,
-                    rotation_sigma_deg=config.rotation_sigma,
-                    noise_sigma=cal["sigma"],
-                    order=order,
+                    detector_roll=detector_roll,
+                    config=config,
                 )
-            x, p, y, record = solve(
-                y,
-                precision,
-                prior,
-                cal["tv_weight"],
-                cal["eps"],
-                ops=ops,
-                budget=Budget.of(config, outer),
-                x0=x,
-                p0=p,
-                pose_sigma=cal["sigma"],
-                delta=cal["delta"],
-                scales=cal["scales"],
-                placement=placement,
-            )
-            levels.append(
-                {
-                    "binning": dbin * b,
-                    "grid": asdict(g),
-                    **record,
-                }
-            )
+                # Only the angular size prior depends on the level's noise scale.
+                # Reuse the same physical translation prior and its compiled solves
+                # across levels when those rotation columns are absent.
+                if prior is None or "rotations" in parameters.fit:
+                    prior = MotionPrior(
+                        len(y0),
+                        gauge,
+                        constraint=constraint,
+                        knot_spacing=(config.knot_spacing,) * pose_scales.shape[-1],
+                        delta=config.slip_scale,
+                        independent=config.motion == "independent",
+                        parameters=parameters,
+                        rotation_scales=pose_scales,
+                        rotation_sigma_deg=config.rotation_sigma,
+                        noise_sigma=cal["sigma"],
+                        order=order,
+                    )
+                x, p, y, record = solve(
+                    y,
+                    precision,
+                    prior,
+                    cal["tv_weight"],
+                    cal["eps"],
+                    ops=ops,
+                    budget=Budget.of(config, outer),
+                    x0=x,
+                    p0=p,
+                    pose_sigma=cal["sigma"],
+                    delta=cal["delta"],
+                    scales=cal["scales"],
+                    placement=placement,
+                )
+                levels.append(
+                    {
+                        "binning": dbin * b,
+                        "grid": asdict(g),
+                        **record,
+                    }
+                )
         assert x is not None  # every schedule has at least one level
+        assert prior is not None
         stage = {"ops": ops, "sigma": cal["sigma"], "last": levels[-1], "placement": placement}
-        p, refinement, (offsets, energy) = refine(x, p, y, precision, prior, **stage, config=config)
+        total = config.refine_iterations if prior.nlocal else 0
+        with progress.task("refine", "Refine poses", total, "updates"):
+            p, refinement, (offsets, energy) = refine(
+                x, p, y, precision, prior, **stage, config=config
+            )
         table, changes = parameters.physical(np.asarray(p, np.float64), pose_scales)
         x = x[margin : margin + base.nz] / np.float32(cal["scale"])
     record = {

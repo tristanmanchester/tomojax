@@ -502,3 +502,133 @@ def test_chunked_schedules_on_overlapping_rays(method, monkeypatch):
         np.testing.assert_array_equal(result.volume, reference.volume)
         if method == "spdhg":
             np.testing.assert_array_equal(result.info["loss"], reference.info["loss"])
+
+
+@pytest.fixture(scope="module")
+def alignment_scan():
+    grid = tj.Grid(12, 10, 6, 1, 1, 1)
+    detector = tj.Detector(14, 8, 1, 1)
+    angles = np.linspace(0, 360, 18, endpoint=False)
+    geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=-25)
+    truth = np.zeros((6, 10, 12), np.float32)
+    truth[1:5, 2:6, 2:7] = 1
+    truth[2:4, 6:8, 7:10] = 0.6
+    data = np.array(tj.project(geometry, truth))
+    data[8:] = np.roll(data[8:], 1, axis=2)
+    data += np.random.default_rng(7).normal(0, 0.01, data.shape).astype(np.float32)
+    return tj.Scan(data, geometry)
+
+
+@pytest.mark.parametrize("end", ["complete", "cancel", "oom"])
+def test_alignment_reports_the_completed_step_record(alignment_scan, end):
+    import json
+
+    from tomojax.alignment import AlignConfig
+
+    events = []
+    token = progress.Cancel()
+    problem = RuntimeError("out of memory")
+
+    def observe(event):
+        json.dumps(progress.to_json(event), allow_nan=False)
+        events.append(event)
+        if isinstance(event, progress.Advanced):
+            if end == "oom":
+                raise problem
+            if end == "cancel":
+                token.cancel()
+
+    cfg = AlignConfig(
+        levels=(2, 1),
+        coarse_iterations=2,
+        iterations=2,
+        image_iterations=3,
+        initial_image_iterations=3,
+        refine_iterations=2,
+        tolerance=0,
+    )
+    with progress.watch(observe, cancel=token):
+        if end != "complete":
+            with pytest.raises(progress.Cancelled if end == "cancel" else RuntimeError) as caught:
+                tj.align(alignment_scan, grid=alignment_scan.grid, config=cfg)
+            validate_tree(events, interrupted=end == "oom")
+            assert len([e for e in events if isinstance(e, progress.Advanced)]) == 1
+            if end == "oom":
+                assert caught.value is problem
+                assert isinstance(events[-1], progress.Advanced)
+            else:
+                assert [e.status for e in events if isinstance(e, progress.Finished)] == [
+                    "cancelled",
+                    "cancelled",
+                ]
+            return
+        result = tj.align(alignment_scan, grid=alignment_scan.grid, config=cfg)
+    validate_tree(events)
+    started = [e for e in events if isinstance(e, progress.Started)]
+    assert [e.name for e in started] == ["align", "level", "level", "refine"]
+    assert started[0].label == "translations"
+    for task, level in zip(started[1:3], result.info["levels"], strict=True):
+        updates = [e for e in events if isinstance(e, progress.Advanced) and e.task == task.task]
+        assert updates and str(level["binning"]) in task.label
+        assert [e.done for e in updates] == list(range(1, len(level["steps"]) + 1))
+        assert all("undamped_proposed_pose_step_rms" in e.metrics for e in updates)
+        assert [dict(e.metrics) for e in updates] == level["steps"]
+    refine = [e for e in events if isinstance(e, progress.Advanced) and e.task == started[-1].task]
+    assert [e.done for e in refine] == list(range(1, 1 + len(result.info["refinement"]["steps"])))
+
+
+def test_align_json_distinguishes_usage_and_io_errors(tmp_path, capsys):
+    import json
+
+    from tomojax.cli.main import main
+
+    data = str(tmp_path / "missing.nxs")
+    with pytest.raises(SystemExit) as usage:
+        main(["align", data, "--dry-run", "--progress", "json"])
+    assert usage.value.code == 2
+    assert capsys.readouterr().out == ""
+    status = main(["align", data, "--progress", "json", "-o", str(tmp_path / "out.nxs")])
+    assert status == 1
+    assert json.loads(capsys.readouterr().out)["type"] == "FileNotFoundError"
+
+
+@pytest.mark.parametrize(
+    ("tolerance", "counts", "stops"),
+    [
+        (
+            0,
+            [2, 4, 1],
+            ["step_budget_reached", "step_budget_reached", "pose_steps_below_tolerance"],
+        ),
+        (
+            10,
+            [2, 2, 2],
+            ["pose_steps_below_tolerance", "pose_steps_below_tolerance", "step_budget_reached"],
+        ),
+    ],
+)
+def test_alignment_keeps_image_poses_and_stops(alignment_scan, tolerance, counts, stops):
+    """These budgets and stops repeated on archived main, including eight GPU runs."""
+    from tomojax.alignment import AlignConfig
+
+    cfg = AlignConfig(
+        levels=(2, 1),
+        coarse_iterations=2,
+        iterations=4,
+        image_iterations=3,
+        initial_image_iterations=3,
+        refine_iterations=2,
+        tolerance=tolerance,
+        min_iterations=2,
+    )
+    reference = tj.align(alignment_scan, grid=alignment_scan.grid, config=cfg)
+    events = []
+    with progress.watch(events.append):
+        result = tj.align(alignment_scan, grid=alignment_scan.grid, config=cfg)
+    validate_tree(events)
+    for sample in (reference, result):
+        levels = [*sample.info["levels"], sample.info["refinement"]]
+        assert [len(level["steps"]) for level in levels] == counts
+        assert [level["status"] for level in levels] == stops
+    np.testing.assert_array_equal(result.image, reference.image)
+    np.testing.assert_array_equal(result.scan.poses, reference.scan.poses)

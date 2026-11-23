@@ -17,6 +17,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
 from tomojax.alignment._config import AlignConfig
 from tomojax.core.robust import MAD_TO_SD
 
@@ -320,6 +321,8 @@ def refine(
         summary = ops.view_summary(ops.pad_poses(c), x, y, precision)
         summary = tuple(np.asarray(a) for a in summary)
     except jax.errors.JaxRuntimeError as err:
+        if progress.handler_failed(err):
+            raise
         raise unplaced(err, stacks) from err
     finally:
         stacks.close()
@@ -368,6 +371,7 @@ def _refine(
         [],
     )
     for it in range(iterations):
+        progress.check_cancelled()
         if it:
             stats = problem.objective.stats(ops.pad_poses(c), x, y, precision, problem.delta)
         result = problem.step(c, stats, f, lm)
@@ -377,5 +381,8 @@ def _refine(
         c, f, alpha, dc, lm = result
         step = _rms(alpha * prior.expand(dc))
         steps.append({"objective": f, "pose_step_rms": step, "line_step": alpha, "lm": lm})
+        if (task := progress.for_unit("updates")) is not None:
+            jax.block_until_ready(c)
+            task.advance(len(steps), {})
         lm = max(1e-5, lm * 0.5)
     return c, {"status": status, "steps": steps, "delta": problem.delta}

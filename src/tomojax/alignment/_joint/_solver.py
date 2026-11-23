@@ -20,6 +20,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
+
 from . import _common, _tv as tv
 from ._krylov import solve as krylov_solve
 from ._operators import profiled_residual, robust_value
@@ -705,6 +707,8 @@ def solve(
         _, c, record = _descend(level, c, x0, budget, pose_sigma, weight)
         x = stacks.take("x")  # the caller's now: the level's other storage is released
     except jax.errors.JaxRuntimeError as err:
+        if progress.handler_failed(err):
+            raise
         raise unplaced(err, stacks) from err
     finally:
         stacks.close()
@@ -724,6 +728,7 @@ def _descend(level, c, x0, budget, pose_sigma, weight):
     initial_objective = f
     history, lm, stable, status = [], budget.lm_initial, 0, "step_budget_reached"
     for it in range(budget.iterations):
+        progress.check_cancelled()
         if it:
             # Release the previous weights and columns first: two stack-sized sets
             # would not fit beside each other on a small device.
@@ -764,6 +769,9 @@ def _descend(level, c, x0, budget, pose_sigma, weight):
             lm = min(lm * 3, 1e6)
         undamped = _undamped_proposal(level, history[-1], x0, c0, linear, budget, pose_weight)
         history[-1]["undamped_proposed_pose_step_rms"] = undamped
+        if (task := progress.for_unit("steps")) is not None:
+            jax.block_until_ready((x, c))
+            task.advance(len(history), history[-1])
         stable = stable + 1 if undamped is not None and undamped < budget.tolerance else 0
         if stable >= 2 and it + 1 >= budget.min_iterations:
             status = "pose_steps_below_tolerance"

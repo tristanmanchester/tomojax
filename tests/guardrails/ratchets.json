@@ -34,7 +34,7 @@
     "inspect": 4,
     "correct": 33,
     "reconstruct": 19,
-    "align": 18,
+    "align": 19,
     "export": 6,
     "simulate": 18
   },
@@ -42,7 +42,7 @@
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
-    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 161,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 160,
     "src/tomojax/cli/simulate.py::_build_parser": 103,
     "src/tomojax/recon/_cgls_jax.py::_solve": 146,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 101,
@@ -50,11 +50,11 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "code_lines": {
-    "(modules)": 4409,
+    "(modules)": 4412,
     "_data": 2104,
-    "alignment": 4435,
+    "alignment": 4462,
     "backends": 263,
-    "cli": 2667,
+    "cli": 2690,
     "core": 9529,
     "corrections": 2836,
     "datasets": 1072,

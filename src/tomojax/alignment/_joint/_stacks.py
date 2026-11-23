@@ -46,7 +46,7 @@ import numpy as np
 
 from tomojax.backends.host_stream import host_source, read_block, write_block
 from tomojax.core.devices import block_fits, pool_stats
-from tomojax.core.host_volume import host_array
+from tomojax.core.host_volume import close_work_file, host_array
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -224,6 +224,7 @@ class LevelStacks:
             # The host stacks are held together, so the storage rule counts them together.
             beside = sum(self.sizes[n] for n in self.names if n not in self.placed)
             array = host_array(shape, dtype=dtype, copies=beside / max(1, self.sizes[name]))
+            self._keys.callback(close_work_file, array)
             if name in data:
                 array[...] = data[name]
             key = self._keys.enter_context(host_source(array))
