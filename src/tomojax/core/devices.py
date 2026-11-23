@@ -14,7 +14,7 @@ allocating it, is answered here once for every layer (:func:`block_fits`,
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -22,10 +22,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax
+from jax.core import Tracer
 import jax.numpy as jnp
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 import numpy as np
 
+from tomojax import progress
+from tomojax._typed_arrays import device_id
 from tomojax.errors import InvalidParameter
 
 if TYPE_CHECKING:
@@ -124,6 +127,7 @@ class ViewSplit:
                 return run(device, views)
 
         shares = self.shares()
+        announce(tuple(device for device, _ in shares))
         with ThreadPoolExecutor(len(shares)) as pool:
             parts = list(pool.map(on, shares))
         total = parts[0]
@@ -154,6 +158,27 @@ def sharing(devices: Device | Sequence[Device] | None) -> Iterator[None]:
 def shared_devices() -> tuple[Device, ...] | None:
     """The devices :func:`sharing` names, None outside it."""
     return _SHARING.get()
+
+
+def current_device() -> Device:
+    """The local dispatch device selected by JAX's default-device context."""
+    selected = jax.config.jax_default_device
+    if selected is None or isinstance(selected, str):
+        return next(iter(jax.local_devices(backend=selected)))
+    return selected
+
+
+def announce(devices: Iterable[Device] | None = None, *, array: object = None) -> None:
+    """Announce concrete placement on the coordinator, including cache hits."""
+    if progress.current_task.get() is None or isinstance(array, Tracer):
+        return
+    if devices is None:
+        devices = (
+            sorted(array.devices(), key=device_id)
+            if isinstance(array, jax.Array) and array.committed
+            else (current_device(),)
+        )
+    progress.placed(tuple(map(device_id, devices)))
 
 
 def as_devices(devices: Device | Sequence[Device] | None) -> tuple[Device, ...] | None:

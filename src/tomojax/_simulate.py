@@ -149,9 +149,11 @@ def simulate_config(
     from tomojax import datasets as _datasets
     from tomojax._data import LoadedNXTomo, NXTomoMetadata
     from tomojax._scan import scan_from_record
+    from tomojax.core.devices import announce
     from tomojax.io import ProjectionDataset
 
     with progress.task("simulate", cfg.phantom, None, ""):
+        announce()
         has_placement = (
             grid is not None and (grid.vol_origin is not None or grid.vol_center is not None)
         ) or (detector is not None and detector.center != (0.0, 0.0))

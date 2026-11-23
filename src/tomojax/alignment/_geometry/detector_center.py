@@ -417,6 +417,7 @@ def estimate_center_report(
         for first, second, error in _sample_pairs(angles[eligible], detector.nu)
     ]
     with progress.task("opposite-views", "opposite view pairs", len(samples), "pairs"):
+        progress.placed(("cpu:0",))
         rows = np.linspace(0, detector.nv - 1, min(64, detector.nv)).round().astype(int)
         groups = np.array_split(np.arange(len(rows)), min(8, len(rows)))
         row_positions = np.asarray([np.mean(rows[group]) for group in groups])

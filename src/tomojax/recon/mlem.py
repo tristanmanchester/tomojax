@@ -16,6 +16,7 @@ from tomojax import progress
 from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.host_stream import host_source, should_stream
+from tomojax.core.devices import announce
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
@@ -448,6 +449,7 @@ def run_mlem(
     out: np.ndarray | None = None,
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """Own workflow initialization inside the solver, never copying a private host start."""
+    announce(array=projections)
     cfg = config
     iterations, subsets, batch = cfg.iterations, cfg.subsets, cfg.views_per_batch
     validate_grid(grid, "mlem grid")

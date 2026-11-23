@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.backends.host_stream import host_source
-from tomojax.core.devices import ViewSplit, refuse_streaming, view_split
+from tomojax.core.devices import ViewSplit, announce, refuse_streaming, view_split
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
@@ -679,6 +679,7 @@ def cgls(
     if init_x is not None:
         validate_volume(init_x, grid, context="cgls", name="init_x")
     split, stream = _placement(cfg, projections, n, det_grid, grid=grid)
+    announce(None if split is None else split.mesh.devices.flat, array=projections)
     poses = stack_view_poses(geometry, n)
     validate_pose_stack(poses, n, context="cgls")
     hosted = solve_on_host(

@@ -27,6 +27,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.alignment._config import AlignConfig, resolve_align_config
+from tomojax.core.devices import announce
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.joseph import validate_plane_geometry
 from tomojax.recon.fista_tv import resolve_tv_metric
@@ -336,6 +337,7 @@ def fit_poses(
     """
     started = time.perf_counter()
     config = AlignConfig() if config is None else config
+    announce()
     with jax.enable_x64(True):
         y0 = np.asanyarray(projections)
         poses = np.asarray(nominal_poses, np.float32)

@@ -14,7 +14,7 @@ from jax.core import Tracer
 import jax.numpy as jnp
 
 from tomojax.backends import device_free_memory_bytes
-from tomojax.core.devices import as_devices, view_split
+from tomojax.core.devices import announce, as_devices, view_split
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.joseph import (
     PrivateJoseph,
@@ -198,6 +198,7 @@ class Projector:
         if self._split is not None:
             volume = self._split.everywhere(volume)
         volume = jnp.asarray(volume, jnp.float32)
+        announce(None if self._split is None else self._split.mesh.devices.flat, array=volume)
         private = self._private_call(volume, 0, volume.size + math.prod(self.projection_shape))
         projections = (private or self._forward)(volume)
         if self._split is not None:
@@ -228,6 +229,7 @@ class Projector:
         if squeezed:
             projections = projections[:, None, :]
         self._validate(projections, self.projection_shape, "backproject: projections")
+        announce(None if self._split is None else self._split.mesh.devices.flat, array=projections)
         if self._split is None:
             projections = jnp.asarray(projections, jnp.float32)
             elements = 2 * math.prod(self.volume_shape)

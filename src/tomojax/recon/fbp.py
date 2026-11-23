@@ -14,7 +14,7 @@ from tomojax import progress
 from tomojax._parameters import Filter, check_backend
 from tomojax._typed_arrays import Device
 from tomojax.backends.api import is_oom_error
-from tomojax.core.devices import as_devices, view_split
+from tomojax.core.devices import announce, as_devices, view_split
 from tomojax.core.geometry import Detector, Geometry, Grid, grid_volume_origin
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.parallel import ParallelGeometry
@@ -872,6 +872,8 @@ def fbp(
             geometry, grid, detector, T_all, proj, cfg, cuda=cuda, moved=motion is not None
         )
         split = view_split(cfg.devices, n_views)
+        if split is None:
+            announce(array=proj)
         whole = range(n_views)
         acc = plan.backprojected(None, whole) if split is None else split.summed(plan.backprojected)
         return acc.block_until_ready() if progress.for_unit("batches") is not None else acc

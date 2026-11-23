@@ -22,6 +22,7 @@ from tomojax.backends.host_stream import (
     should_stream,
     write_block,
 )
+from tomojax.core.devices import announce
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
@@ -466,6 +467,7 @@ def _prepare_spdhg_runtime(
     if init_x is not None:
         validate_volume(init_x, grid, context="spdhg_tv init_x", name="init_x")
 
+    announce(array=projections)
     poses = stack_view_poses(geometry, n_views)
     validate_pose_stack(poses, n_views, context="spdhg_tv geometry")
     projector = _batched_projector(cfg, det_grid, geometry, detector)

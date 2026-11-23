@@ -16,6 +16,7 @@ import numpy as np
 from tomojax import progress
 from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax.backends.host_stream import host_source, should_stream
+from tomojax.core.devices import announce
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
@@ -500,6 +501,7 @@ class SIRTCall:
         out: np.ndarray | None = None,
     ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
         """Solve this invocation, retaining normalizers across its axial slabs."""
+        announce(array=projections)
         cfg = SIRTConfig() if config is None else config
         validate_grid(grid, "sirt grid")
         n, _, _ = validate_projection_stack(

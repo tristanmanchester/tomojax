@@ -32,6 +32,7 @@ __all__ = [
     "Finished",
     "Note",
     "Paused",
+    "Placed",
     "Resumed",
     "Started",
     "to_json",
@@ -124,6 +125,25 @@ class Finished:
 
 
 @dataclass(frozen=True, slots=True)
+class Placed:
+    """The coordinator resolved the devices participating in a task.
+
+    Parameters
+    ----------
+    task : int
+        Active task identifier.
+    devices : tuple of str
+        Participating device IDs in coordinator order.
+    time : float
+        Monotonic seconds since the watch began.
+    """
+
+    task: int
+    devices: tuple[str, ...]
+    time: float
+
+
+@dataclass(frozen=True, slots=True)
 class Paused:
     """A task reached a pause checkpoint.
 
@@ -177,7 +197,7 @@ class Note:
     time: float
 
 
-type Event = Started | Advanced | Finished | Paused | Resumed | Note
+type Event = Started | Placed | Advanced | Finished | Paused | Resumed | Note
 type _State = Literal["running", "pause-requested", "paused"]
 
 
@@ -313,6 +333,7 @@ class _Task:
         self.status: _Status = "done"
         self.start = monotonic() - watcher.pause_time
         self.done = 0
+        self.devices: tuple[str, ...] = ()
         self.total = total
 
     def advance(self, done: int, metrics: Mapping[str, _Metric]) -> None:
@@ -355,6 +376,14 @@ def step(unit: str, *, remaining: int | None = None) -> None:
         if remaining is not None:
             active.total = done + remaining
         active.advance(done, {})
+
+
+def placed(devices: tuple[str, ...]) -> None:
+    """Report a change of placement within the current coordinator's task."""
+    active = current_task.get()
+    if active is not None and active.devices != devices:
+        active.devices = devices
+        active.watcher.emit(Placed, active.id, devices)
 
 
 def note(level: NoteLevel, message: str) -> None:

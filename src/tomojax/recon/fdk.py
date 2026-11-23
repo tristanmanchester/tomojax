@@ -31,7 +31,7 @@ import numpy as np
 from tomojax import progress
 from tomojax._parameters import check_backend
 from tomojax.core.cone import ConeModel, use_cuda_cone
-from tomojax.core.devices import as_devices, view_split
+from tomojax.core.devices import announce, as_devices, view_split
 from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.geometry.cone import cone_parts
 from tomojax.core.geometry.views import stack_view_poses
@@ -605,6 +605,8 @@ def _accumulate(
         return out
 
     split = view_split(devices, n_views)
+    if split is None:
+        announce()
     whole = range(n_views)
     return backprojected(None, whole) if split is None else split.summed(backprojected)
 
@@ -839,6 +841,10 @@ def fdk_host(
     progress.remaining("slabs", len(slabs))
     poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
     work = _Slabs(geometry, grid, detector, projections, poses, result)
+    if progress.watching():
+        announce(
+            tuple(d for d in devices[: len(slabs)] if d is not None) or jax.local_devices()[:1]
+        )
     work.write_all(slabs, devices, cfg.fdk)
     return result
 

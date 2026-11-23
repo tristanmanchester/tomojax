@@ -29,6 +29,9 @@ def validate_tree(events, *, interrupted=False):
             stack.append(event.task)
             seen.add(event.task)
             counts[event.task] = 0
+        elif isinstance(event, progress.Placed):
+            assert event.task == stack[-1]
+            assert event.devices and len(set(event.devices)) == len(event.devices)
         elif isinstance(event, progress.Note):
             assert event.task == (stack[-1] if stack else None)
         elif isinstance(event, progress.Advanced):
@@ -243,6 +246,7 @@ def test_cli_json_records_arrive_during_reconstruction(tmp_path, cancel):
                 continue
             cls = {
                 "started": progress.Started,
+                "placed": progress.Placed,
                 "advanced": progress.Advanced,
                 "finished": progress.Finished,
                 "note": progress.Note,
@@ -294,7 +298,12 @@ def test_watching_preserves_recurrence_and_stop(method):
         == result.info["effective_iterations"]
         == reference.info["effective_iterations"]
     )
-    assert len(events) == len(advances) + 2
+    assert [type(event) for event in events] == [
+        progress.Started,
+        progress.Placed,
+        *([progress.Advanced] * len(advances)),
+        progress.Finished,
+    ]
 
 
 def test_bar_redraws_on_a_terminal():
@@ -361,7 +370,12 @@ def test_fixed_update_solvers_preserve_the_schedule(monkeypatch, method, seconds
     validate_tree(events)
     updates = [event for event in events if isinstance(event, progress.Advanced)]
     assert [e.done for e in updates] == (list(range(1, 8)) if seconds == 0.25 else [1, 2, 7])
-    assert len(events) == len(updates) + 2
+    assert [type(event) for event in events] == [
+        progress.Started,
+        progress.Placed,
+        *([progress.Advanced] * len(updates)),
+        progress.Finished,
+    ]
     assert result.info["effective_iterations"] == updates[-1].done
     np.testing.assert_array_equal(result.volume, reference.volume)
     if method == "spdhg":
@@ -850,6 +864,7 @@ def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys
     assert all(r.pop("schema") == 2 for r in records)
     kinds = {
         "started": progress.Started,
+        "placed": progress.Placed,
         "advanced": progress.Advanced,
         "finished": progress.Finished,
         "note": progress.Note,
@@ -1201,3 +1216,55 @@ def test_public_operations_report_at_the_work(tmp_path):
         e.done for e in events if isinstance(e, progress.Advanced) and e.task == roots[-1].task
     ] == list(range(1, 9))
     np.testing.assert_array_equal(np.fromfile(raw, "<f4").reshape(8, 8, 8), synthetic.phantom)
+
+
+def test_device_placement_survives_projector_cache_and_gather():
+    import msgspec
+
+    from tomojax.wire import progress as wire
+
+    machines = jax.local_devices()
+    if len(machines) < 2:
+        pytest.skip("two devices required")
+    first, second = machines[1], machines[0]
+    source = scan()
+    voxels = np.ones(source.grid.shape, np.float32)
+    selected = (first, second)
+    expected = tuple(f"{d.platform}:{d.id}" for d in selected)
+    tj.project(source.geometry, voxels, devices=selected).block_until_ready()
+    with progress.watch((events := []).append):
+        data = tj.project(source.geometry, voxels, devices=selected)
+        adjoint = tj.backproject(source.geometry, data, devices=selected)
+        with jax.default_device(first):
+            tj.reconstruct(source, "sirt", iterations=1)
+    assert adjoint.devices() == {first}
+    placements = [e for e in events if isinstance(e, progress.Placed)]
+    assert [p.devices for p in placements] == [expected, expected, expected[:1]]
+    for p in placements:
+        sent = msgspec.convert(progress.to_json(p), type=wire.Placed)
+        assert sent.devices == p.devices and sent.task == p.task
+    validate_tree(events)
+
+
+def test_numpy_fourier_placement_uses_the_host():
+    from tomojax.recon import FourierConfig
+
+    # A host FFT isn't dispatched to the selected accelerator or virtual CPU device.
+    with jax.default_device(jax.local_devices()[-1]), progress.watch((events := []).append):
+        tj.reconstruct(scan(), "fourier", config=FourierConfig(backend="numpy"))
+    inverse = next(e for e in events if isinstance(e, progress.Started) and e.name == "reconstruct")
+    assert [
+        e.devices for e in events if isinstance(e, progress.Placed) and e.task == inverse.task
+    ] == [("cpu:0",)]
+
+
+def test_direct_view_shares_report_only_devices_with_assigned_views():
+    machines = jax.local_devices()
+    if len(machines) < 2:
+        pytest.skip("two devices required")
+    source = scan().selected([0])
+    with progress.watch((events := []).append):
+        tj.reconstruct(source, "fbp", devices=(machines[1], machines[0]))
+    assert [event.devices for event in events if isinstance(event, progress.Placed)] == [
+        (f"{machines[1].platform}:{machines[1].id}",)
+    ]

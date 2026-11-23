@@ -856,7 +856,8 @@ def _binned(
     batch = views_per_batch or max(1, min(views, _BATCH_BYTES // (4 * rows * cols)))
     binned = allocate((views, rows // factor, cols // factor))
     starts = range(0, views, batch)
-    with correction_group(("binned",), starts, "view batches"):
+    with progress.task("correction", "binned", len(starts), "view batches"):
+        progress.placed(("cpu:0",))
         for start in starts:
             progress.check_cancelled()
             binned[start : start + batch] = mean_detector_pixels(out[start : start + batch], factor)

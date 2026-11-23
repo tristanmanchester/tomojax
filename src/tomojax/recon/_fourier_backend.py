@@ -301,8 +301,11 @@ class FourierPlan:
                     "fourier_reconstruct: backend='cupy' requires tomojax[fourier-cuda12]"
                 ) from exc
             cuda = xp.cuda
+            if progress.watching():
+                progress.placed((f"gpu:{cuda.runtime.getDevice()}",))
         else:
             xp = np
+            progress.placed(("cpu:0",))
         self.xp = xp
         self.grid, self.detector = grid, detector
         self.source_views, self.depth = nviews, depth

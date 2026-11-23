@@ -15,6 +15,7 @@ from scipy.signal.windows import tukey
 from tomojax import progress
 from tomojax._scan import Scan, describe, with_grid
 from tomojax.backends import device_free_memory_bytes
+from tomojax.core.devices import announce
 from tomojax.geometry import Grid, stack_view_poses
 from tomojax.recon.api import backproject, project, reconstruct_arrays
 
@@ -316,6 +317,7 @@ def estimate_region(scan: Scan) -> RegionEstimate:
             raise ValueError("estimate_region requires a calibrated laminography scan")
         started = time.perf_counter()
         device = _working_device(scan)
+        announce((device,))
         with jax.default_device(device):
             available = device_free_memory_bytes(device=device) or 4 * 2**30
             resident = isinstance(scan.projections, jax.Array) and scan.projections.devices() == {

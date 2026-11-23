@@ -233,6 +233,7 @@ with progress.watch(report, control=stop):
 Call `stop.pause()` to hold work at its next checkpoint and `stop.resume()`
 to continue. The task emits `Paused` and `Resumed` on its owner thread.
 The ETA on advances uses active elapsed time and excludes the pause.
+A `Placed` event names the devices doing the work, in coordinator order.
 Call `stop.cancel()` from the handler or another thread to request cancellation.
 The operation raises `progress.Cancelled` at the next work boundary and closes
 its files and workers. A caller-supplied output array can contain completed

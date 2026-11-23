@@ -97,6 +97,8 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
                 free += pool.free_bytes()
             if resident_bytes(grid, projections.shape) > free:
                 return None
+        if progress.watching():
+            progress.placed((f"gpu:{cp.cuda.runtime.getDevice()}",))
         shape = validate_grid(grid, "cgls grid")[::-1]
         n, _, _ = validate_projection_stack(
             projections, detector, geometry=geometry, context="cgls"

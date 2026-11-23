@@ -468,6 +468,7 @@ tomojax.progress.Event: TypeAliasType
 class tomojax.progress.Finished(task: 'int', status: '_Status', time: 'float') -> None
 class tomojax.progress.Note(task: 'int | None', level: 'NoteLevel', message: 'str', time: 'float') -> None
 class tomojax.progress.Paused(task: 'int', time: 'float') -> None
+class tomojax.progress.Placed(task: 'int', devices: 'tuple[str, ...]', time: 'float') -> None
 class tomojax.progress.Resumed(task: 'int', time: 'float') -> None
 class tomojax.progress.Started(
         task: 'int',

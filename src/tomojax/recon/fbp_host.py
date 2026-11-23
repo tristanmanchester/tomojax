@@ -16,7 +16,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.api import is_oom_error
-from tomojax.core.devices import as_devices
+from tomojax.core.devices import announce, as_devices
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.host_transfer import copy_to_host, upload_host
@@ -271,6 +271,7 @@ def fbp_host(
         projections, detector, geometry=geometry, context="fbp_host projections"
     )
 
+    announce()
     poses = stack_view_poses(geometry, n_views)
     view_scale = _view_weights(poses, fbp_cfg.scale)[0]
     cuda = all(
@@ -462,6 +463,7 @@ def fbp_slabs[T](
     devices = as_devices(config.devices)
     context = jax.default_device(devices[0]) if devices else nullcontext()
     with context:
+        announce()
         poses = stack_view_poses(geometry, len(geometry.angles))
         cuda = all(
             d.platform == "gpu" and d.client.platform_version.lower().startswith("cuda")

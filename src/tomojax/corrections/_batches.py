@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import AbstractContextManager, nullcontext, suppress
+from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from tomojax import progress
+from tomojax.core.devices import announce
 
 from ._steps import step_name
 
@@ -49,10 +50,13 @@ class HostCopies(AbstractContextManager["HostCopies"]):
         self.pending.clear()
 
 
-def correction_group(parts: Sequence[str | Step], batches: range, unit: str):
+@contextmanager
+def correction_group(parts: Sequence[str | Step], batches: range, unit: str) -> Generator[None]:
     """Count one write or statistic per batch in a fused correction group."""
     label = ", ".join(p if isinstance(p, str) else step_name(p) for p in parts)
-    return progress.task("correction", label, len(batches), unit)
+    with progress.task("correction", label, len(batches), unit):
+        announce()
+        yield
 
 
 def view_batches(counts: Any, views: int, batch: int) -> Generator[tuple[int, int, np.ndarray]]:
