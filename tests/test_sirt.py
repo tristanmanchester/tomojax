@@ -13,6 +13,41 @@ from tomojax.geometry import ConeSegments
 from tomojax.recon import SIRTConfig, sirt
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize(("subsets", "acceleration"), [(4, False), (1, True)])
+def test_chunk_scratch_holds_one_gradient_and_two_view_batches(monkeypatch, subsets, acceleration):
+    from tomojax import progress
+
+    module = importlib.import_module("tomojax.recon.sirt")
+    segment = module._segment
+    temporary = []
+
+    def measured(*args, **kwargs):
+        if "norms" in kwargs and not temporary:
+            temporary.append(
+                segment.lower(*args, **kwargs).compile().memory_analysis().temp_size_in_bytes
+            )
+        return segment(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_segment", measured)
+    n, batch = 256, 64
+    grid, detector = tj.Grid(n, n, n, 1, 1, 1), tj.Detector(n, n, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, n, endpoint=False))
+    config = SIRTConfig(
+        iterations=2,
+        backend="cuda",
+        views_per_batch=batch,
+        subsets=subsets,
+        acceleration=acceleration,
+    )
+    with progress.watch(lambda _: None):
+        sirt(geometry, grid, detector, jnp.zeros((n, n, n), jnp.float32), config=config)
+    plane = n * n * np.dtype(np.float32).itemsize
+    # The pose and indexing buffers and the row/column slices fit in two axial planes.
+    assert len(temporary) == 1
+    assert temporary[0] <= (n + 2 * batch + 2) * plane
+
+
 def test_streamed_initialization_finishes_before_solve_workspace(monkeypatch):
     from tomojax.recon.sirt import _initial_volume
 

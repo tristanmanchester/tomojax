@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 import math
 import operator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -133,23 +133,27 @@ def _normalization(
     return normalization, 1, volume_shape(model, normal_grid)
 
 
+class _Momentum(NamedTuple):
+    previous: jax.Array
+    current: jax.Array
+    time: jax.Array
+    momentum: jax.Array
+
+
 def _accelerated_steps(
     update: Callable[[jax.Array, jax.Array], jax.Array],
-    state: tuple[jax.Array, jax.Array, jax.Array],
+    state: _Momentum,
     first: int,
     end: int,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
-    # Row/column normalization bounds the spectrum by one in the C^-1 norm.
-    # Box/support projection is coordinatewise in that norm, so the usual
-    # FISTA recurrence applies with a relaxation of at most one.
-    def step(
-        index: jax.Array, state: tuple[jax.Array, jax.Array, jax.Array]
-    ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        previous, extrapolated, time = state
-        current = update(index, extrapolated)
+) -> _Momentum:
+    # The C^-1 metric admits FISTA acceleration. Keep the two iterates: forming
+    # the extrapolate where it is projected avoids a full-volume carry copy.
+    def step(index: jax.Array, state: _Momentum) -> _Momentum:
+        previous, current, time, momentum = state
+        extrapolated = current + momentum * (current - previous)
+        new = update(index, extrapolated)
         next_time = (1.0 + jnp.sqrt(1.0 + 4.0 * time * time)) / 2.0
-        momentum = (time - 1.0) / next_time
-        return current, current + momentum * (current - previous), next_time
+        return _Momentum(current, new, next_time, (time - 1.0) / next_time)
 
     return jax.lax.fori_loop(first, end, step, state)
 
@@ -179,7 +183,7 @@ def _segment(
     relaxation: jax.Array,
     lower: jax.Array,
     upper: jax.Array,
-    state: jax.Array | tuple[jax.Array, jax.Array, jax.Array] | None,
+    state: jax.Array | _Momentum | None,
     first: int,
     end: int,
     norms: tuple[jax.Array | None, jax.Array | None] | None,
@@ -233,7 +237,9 @@ def _segment(
             else None
         )
 
-        state = (initial, initial, jnp.float32(1)) if acceleration else initial
+        state = (
+            _Momentum(initial, initial, jnp.float32(1), jnp.float32(0)) if acceleration else initial
+        )
         return state, (rows, columns)
 
     assert norms is not None
@@ -257,10 +263,12 @@ def _segment(
                 if columns is None
                 else columns[index]
             )
-            gradient = residual_adjoint(x, data, row_weights, row_support=row_support)
+            gradient = cast(
+                "jax.Array", residual_adjoint(x, data, row_weights, row_support=row_support)
+            )
         return constrain(x + relaxation * column * gradient)
 
-    if isinstance(state, tuple):
+    if isinstance(state, _Momentum):
         return _accelerated_steps(update, state, first, end)
     return jax.lax.fori_loop(first * subsets, end * subsets, update, state)
 
@@ -284,7 +292,7 @@ def _sirt_program(
     )
     state, norms = segment(None, 0, 0, None)
     result = fixed_updates(state, iterations, partial(segment, norms=norms), drive)
-    return result[0] if options["acceleration"] else result
+    return result.current if isinstance(result, _Momentum) else result
 
 
 _solve = Chunked(_sirt_program, static_argnames=_SIRT_STATIC)
