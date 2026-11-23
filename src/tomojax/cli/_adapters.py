@@ -13,7 +13,7 @@ import msgspec
 import numpy as np
 
 import tomojax as tj
-from tomojax import progress
+from tomojax import interactive, progress
 from tomojax._loading import load_raw_frames_with_declaration, load_scan_with_declaration
 from tomojax._planning import resolve_reconstruction
 from tomojax._resources import sample
@@ -24,6 +24,7 @@ from tomojax._workflow import align_resolved, reconstruct_resolved, validate_sav
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, source
 from tomojax.cli._handles import Root, handle, stage_array
+from tomojax.cli._interactive import correction_product, region_product, slice_product
 from tomojax.cli._options import check_destinations
 from tomojax.cli._plans import plan_product
 from tomojax.cli._results import VOLUME_DATASET, scan_axes, unit_of
@@ -32,9 +33,20 @@ from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
 from tomojax.wire.progress import Event, Preview
 
-type Work = Callable[[], Root | p.DataProduct]
+type Work = Callable[[], Root | p.DataProduct | ex.NewHandle]
 
-EXECUTABLE = (op.Inspect, op.Open, op.Validate, op.Plan, op.Run, op.Plane)
+EXECUTABLE = (
+    op.Inspect,
+    op.Open,
+    op.Validate,
+    op.Plan,
+    op.Run,
+    op.Plane,
+    op.Slice,
+    op.CentreSweep,
+    op.CorrectionPreview,
+    op.RegionPreview,
+)
 
 
 def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Success:
@@ -184,17 +196,16 @@ class Admission:
         else:
             reconstruction = resolve_reconstruction(scan, **options)
             if isinstance(operation, op.Slice):
-                if operation.index >= reconstruction.scan.grid.shape["zyx".index(operation.axis)]:
-                    raise InvalidParameter("index", "plane index outside volume")
-                if isinstance(operation, op.CentreSweep) and (
-                    not operation.centres or not np.isfinite(operation.centres).all()
-                ):
-                    raise InvalidParameter(
-                        "centres", "centres must be a nonempty sequence of finite detector offsets"
-                    )
-            compute = partial(
-                reconstruct_resolved, reconstruction, warm_start=bool(operation.warm_start)
-            )
+                interactive.plane_dimension(
+                    reconstruction.scan.grid, operation.axis, operation.index
+                )
+                if isinstance(operation, op.CentreSweep):
+                    interactive.check_centres(operation.centres)
+                compute = partial(slice_product, operation, reconstruction, self.context)
+            else:
+                compute = partial(
+                    reconstruct_resolved, reconstruction, warm_start=bool(operation.warm_start)
+                )
             work = reconstruction
         snapshots = sample(work)
         for snapshot in snapshots:
@@ -209,7 +220,7 @@ class Admission:
 
         scan = source(operation.source, self.context, kinds=(tj.Scan,))
         check_region_geometry(scan)
-        return p.Validated
+        return partial(region_product, scan, self.context)
 
     @prepare.register
     def project(self, operation: op.Project | op.Backproject) -> Work:
@@ -351,11 +362,8 @@ class Admission:
         positive_finite(operation.epsilon, "epsilon")
         check_binning(operation.binning, *item.counts.shape[1:])
         if isinstance(operation, op.CorrectionPreview):
-            low, high = operation.rows
-            if not (0 <= low < high <= item.counts.shape[1] // operation.binning):
-                raise InvalidParameter(
-                    "rows", "expected a nonempty interval of binned detector rows"
-                )
+            interactive.check_rows(operation.rows, item.counts.shape[1], operation.binning)
+            return partial(correction_product, operation, item, steps, settings, self.context)
         return partial(item.corrected, *steps, **settings)
 
     @prepare.register

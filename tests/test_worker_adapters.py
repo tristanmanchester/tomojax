@@ -412,3 +412,116 @@ def test_worker_publishes_and_releases_live_planes(worker, simulation):
             output(worker("release", artifact=storage["artifact"]))
             assert not path.exists()
     assert reply["value"]["type"] == "reconstruction"
+
+
+def test_slice_and_sweep_publish_fixed_input_registration(worker, tmp_path):
+    from dataclasses import replace
+
+    grid = tj.Grid(25, 25, 5, 1, 1, 1)
+    det = tj.Detector(25, 5, 1, 1)
+    geom = tj.ParallelGeometry(grid, det, np.arange(0, 180, 15))
+    data = np.random.default_rng(42).uniform(0.2, 1, (12, 5, 25)).astype(np.float32)
+    path = tmp_path / "centre.nxs"
+    tj.save(path, tj.Scan(data, geom))
+    source = dict(type="path", path=str(path))
+    request = dict(source=source, axis="z", index=2, method="fbp", region="bbox")
+    offsets = [0, 3, 0]
+    sweep = output(worker("centre_sweep", **request, centres=offsets))["value"]["planes"]
+    plane = output(worker("slice", **request))["value"]["plane"]
+    assert (
+        sweep["fixed"]
+        == plane["fixed"]
+        == [dict(name="z", frame="volume", unit="scan_length", index=2, coordinate=0)]
+    )
+    assert sweep["axes"][1:] == plane["axes"]
+    assert [a["name"] for a in plane["axes"]] == ["y", "x"]
+    assert all(
+        a["coordinates"] == dict(type="uniform", origin=-12, spacing=1) for a in plane["axes"]
+    )
+    coord = sweep["axes"][0]
+    assert (coord["name"], coord["unit"], coord["frame"]) == ("centre", "pixel", "detector")
+    np.testing.assert_array_equal(np.load(coord["coordinates"]["values"]["path"]), offsets)
+    pixels = np.load(sweep["storage"]["path"])
+    np.testing.assert_array_equal(pixels[0], np.load(plane["storage"]["path"]))
+    fixed = tj.reconstruct(tj.load(path), "fbp", region="bbox").grid
+    for i, centre in enumerate(offsets):
+        shifted = tj.Scan(data, replace(geom, detector=replace(det, center=(centre, 0))))
+        np.testing.assert_array_equal(
+            pixels[i], tj.reconstruct(shifted, "fbp", grid=fixed).volume[2]
+        )
+    for stored in (sweep["storage"], plane["storage"], coord["coordinates"]["values"]):
+        output(worker("release", artifact=stored["artifact"]))
+        assert not Path(stored["path"]).exists()
+
+
+def test_correction_preview_publishes_native_and_binned_pixel_centres(worker, tmp_path):
+    n, nv, nu = 13, 9, 11
+    angles = np.arange(n, dtype=float) * 13
+    detector = dict(nu=nu, nv=nv, du=0.75, dv=1.5, center=[0.6, -1.2])
+    data = np.random.default_rng(629).integers(470, 540, (n, nv, nu), dtype=np.uint16)
+    data[5, 6:] = 50
+    path = tmp_path / "raw.h5"
+    with h5py.File(path, "w") as file:
+        file["exchange/data"] = data
+        file["exchange/theta"] = angles
+    root = output(
+        worker(
+            "open",
+            kind="frames",
+            path=str(path),
+            detector=detector,
+            geometry=dict(kind="parallel"),
+            flats=1000,
+            darks=0,
+        )
+    )["value"]["handle"]
+    source = dict(type="member", handle=root, member="self")
+    args = dict(source=source, rows=[1, 3], binning=2, corrections=[dict(type="RejectViews")])
+    value = output(worker("correction_preview", **args))["value"]
+    keep = np.delete(np.arange(n), 5)
+    before, after, views = (value[k] for k in ("before", "after", "views"))
+    np.testing.assert_array_equal(np.load(before["storage"]["path"]), data[:, 2:6])
+    logs = -np.log(data[keep, 2:6, :10].astype("f") / 1000)
+    np.testing.assert_allclose(
+        np.load(after["storage"]["path"]), logs.reshape(12, 2, 2, 5, 2).mean(axis=(2, 4)), rtol=3e-7
+    )
+    np.testing.assert_array_equal(np.load(views["storage"]["path"]), keep)
+    for descriptor, ids, pitch, starts in (
+        (before, np.arange(n), (1.5, 0.75), (-4.2, -3.15)),
+        (after, keep, (3, 1.5), (-3.45, -2.775)),
+    ):
+        view, v, u = descriptor["axes"]
+        assert [view["name"], v["name"], u["name"]] == ["view", "v", "u"]
+        np.testing.assert_array_equal(np.load(view["coordinates"]["values"]["path"]), angles[ids])
+        for axis, step, start in zip((v, u), pitch, starts, strict=True):
+            assert axis["frame"] == "detector"
+            assert axis["coordinates"]["spacing"] == step
+            assert axis["coordinates"]["origin"] == pytest.approx(start)
+    assert views["axes"] == after["axes"][:1]
+
+
+def test_region_overlays_can_drive_another_reconstruction_and_close(worker, tmp_path):
+    grid = tj.Grid(11, 9, 5, 1, 1, 1)
+    geom = tj.LaminographyGeometry(grid, tj.Detector(11, 9, 1, 1), np.arange(0, 360, 15), tilt=36)
+    scan = tj.Scan(np.random.default_rng(106).uniform(0, 1, (24, 9, 11)).astype("f"), geom)
+    path = tmp_path / "region.nxs"
+    tj.save(path, scan)
+    source = dict(type="path", path=str(path))
+    region = output(worker("region_preview", source=source))
+    value = region["value"]
+    ref = dict(type="member", handle=value["handle"], member="self")
+    result = output(
+        worker("run", operation=dict(type="reconstruct", source=source, method="fbp", region=ref))
+    )
+    assert result["manifest"]["inputs"] == [region["manifest"]]
+    full = tj.reconstruct(tj.load(path), "fbp", grid=tj.Grid(**value["grid"])).volume
+    assert result["value"]["volume"]["shape"] == list(full.shape)
+    for dim, axis in enumerate("zyx"):
+        desc = value["arrays"][axis]
+        (fixed,) = desc["fixed"]
+        assert (fixed["name"], fixed["index"]) == (axis, full.shape[dim] // 2)
+        np.testing.assert_array_equal(
+            np.load(desc["storage"]["path"]), np.take(np.asarray(full), fixed["index"], axis=dim)
+        )
+    output(worker("close", handle=value["handle"]))
+    assert all(not Path(a["storage"]["path"]).exists() for a in value["arrays"].values())

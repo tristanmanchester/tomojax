@@ -104,7 +104,13 @@ def planes(
 
 
 def registered_plane(
-    plane: Any, axes: tuple[Axis, ...], i: int, index: int, unit: str
+    plane: Any,
+    axes: tuple[Axis, ...],
+    i: int,
+    index: int,
+    unit: str,
+    *,
+    leading_axes: tuple[Axis, ...] = (),
 ) -> progress.Sample:
     """Register a plane cut from a volume, retaining its missing coordinate."""
     axis = axes[i]
@@ -112,7 +118,11 @@ def registered_plane(
     assert isinstance(coord, Uniform)
     fixed = Fixed(axis.name, axis.frame, axis.unit, index, coord.origin + index * coord.spacing)
     return progress.Sample(
-        np.array(plane, copy=True), axes[:i] + axes[i + 1 :], f"1/{unit}", "attenuation", (fixed,)
+        np.array(plane, copy=True),
+        leading_axes + axes[:i] + axes[i + 1 :],
+        f"1/{unit}",
+        "attenuation",
+        (fixed,),
     )
 
 
