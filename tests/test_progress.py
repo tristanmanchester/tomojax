@@ -73,7 +73,7 @@ def test_chunk_stops_at_completed_work(other_thread):
     # check-public-imports: allow-private
     from tomojax.recon._chunks import run_chunks
 
-    token = progress.Cancel()
+    token = progress.Control()
     completed = []
     events = []
     owner = get_ident()
@@ -98,7 +98,7 @@ def test_chunk_stops_at_completed_work(other_thread):
 
     with (
         ThreadPoolExecutor(1) as pool,
-        progress.watch(handler, cancel=token),
+        progress.watch(handler, control=token),
         pytest.raises(progress.Cancelled),
         progress.task("reconstruct", "counter", 20, "updates"),
     ):
@@ -146,13 +146,14 @@ def test_metric_snapshot_and_strict_json():
     original["value"] = -1
     assert isinstance(event.metrics, MappingProxyType)
     assert progress.to_json(event) == {
-        "schema": 1,
+        "schema": 2,
         "event": "advanced",
         "task": 2,
         "done": 1,
         "total": 4,
         "metrics": {"loss": None, "value": 3},
         "time": 0.5,
+        "eta": None,
     }
 
 
@@ -170,7 +171,7 @@ def test_streamed_cancellation_on_advance(monkeypatch, final):
 
     monkeypatch.setattr(host_stream, "_SOURCES", Sources())
     events, observed = [], []
-    token = progress.Cancel()
+    token = progress.Control()
 
     def handler(event):
         events.append(event)
@@ -179,7 +180,7 @@ def test_streamed_cancellation_on_advance(monkeypatch, final):
             token.cancel()
 
     config = CGLSConfig(backend="jax", stream=True, views_per_batch=4, iterations=4, tolerance=0)
-    with progress.watch(handler, cancel=token):
+    with progress.watch(handler, control=token):
         if final:
             result = tj.reconstruct(subject, "cgls", config=config)
             assert result.info["effective_iterations"] == 4
@@ -231,7 +232,10 @@ def test_cli_json_records_arrive_during_reconstruction(tmp_path, cancel):
     with subprocess.Popen(command, stdout=subprocess.PIPE, text=True) as process:
         for line in process.stdout:
             record = json.loads(line)
-            assert record.pop("schema") == 1
+            assert record.pop("schema") == 2
+            if record["event"] == "error":
+                assert cancel and record["kind"] == "cancelled"
+                continue
             cls = {
                 "started": progress.Started,
                 "advanced": progress.Advanced,
@@ -392,7 +396,7 @@ def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
     before = mapped_files()
     workers = set(threading.enumerate())
     failure_object = RuntimeError("out of memory")
-    token = progress.Cancel()
+    token = progress.Control()
     events = []
 
     def handler(event):
@@ -405,7 +409,7 @@ def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
             token.cancel()
 
     with (
-        progress.watch(handler, cancel=token),
+        progress.watch(handler, control=token),
         pytest.raises(RuntimeError if failure == "handler" else progress.Cancelled) as caught,
     ):
         tj.reconstruct(
@@ -454,7 +458,7 @@ def test_slab_advance_observes_successfully_written_output(method):
         )
     out = np.full((5, 5, 7), np.nan, np.float32)
     data = np.random.default_rng(17).random((16, 5, 9), dtype=np.float32)
-    stop = progress.Cancel()
+    stop = progress.Control()
     events = []
 
     def handler(event):
@@ -464,7 +468,7 @@ def test_slab_advance_observes_successfully_written_output(method):
             assert np.isfinite(out[0]).all()
             stop.cancel()
 
-    with progress.watch(handler, cancel=stop), pytest.raises(progress.Cancelled):
+    with progress.watch(handler, control=stop), pytest.raises(progress.Cancelled):
         solve(geometry, grid, detector, data, config=config, out=out)
     validate_tree(events)
     assert events[0].label == method
@@ -526,7 +530,7 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
     from tomojax.alignment import AlignConfig
 
     events = []
-    token = progress.Cancel()
+    token = progress.Control()
     problem = RuntimeError("out of memory")
 
     def observe(event):
@@ -547,7 +551,7 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
         refine_iterations=2,
         tolerance=0,
     )
-    with progress.watch(observe, cancel=token):
+    with progress.watch(observe, control=token):
         if end != "complete":
             with pytest.raises(progress.Cancelled if end == "cancel" else RuntimeError) as caught:
                 tj.align(alignment_scan, grid=alignment_scan.grid, config=cfg)
@@ -589,7 +593,7 @@ def test_align_json_distinguishes_usage_and_io_errors(tmp_path, capsys):
     assert capsys.readouterr().out == ""
     status = main(["align", data, "--progress", "json", "-o", str(tmp_path / "out.nxs")])
     assert status == 1
-    assert json.loads(capsys.readouterr().out)["type"] == "FileNotFoundError"
+    assert json.loads(capsys.readouterr().out)["kind"] == "input"
 
 
 @pytest.mark.parametrize(
@@ -643,7 +647,7 @@ def test_load_reports_completed_views_and_fused_corrections(tmp_path, monkeypatc
     path = tmp_path / "raw.nxs"
     write_raw_nxtomo(path)
     monkeypatch.setattr("tomojax.corrections._engine._SIMPLE_FRAME_BYTES", 16)
-    owner, events, token = get_ident(), [], progress.Cancel()
+    owner, events, token = get_ident(), [], progress.Control()
     workers = set(threading.enumerate())
 
     def observe(event):
@@ -652,7 +656,7 @@ def test_load_reports_completed_views_and_fused_corrections(tmp_path, monkeypatc
         if interrupt and isinstance(event, progress.Advanced):
             token.cancel()
 
-    with progress.watch(observe, cancel=token):
+    with progress.watch(observe, control=token):
         if interrupt:
             with pytest.raises(progress.Cancelled):
                 tj.load(path)
@@ -705,7 +709,7 @@ def test_psi_reads_report_written_batches_and_release_owned_mapping(
         return array
 
     monkeypatch.setattr(host_volume, "host_array", allocate)
-    events, stop, problem = [], progress.Cancel(), KeyError("reader observer")
+    events, stop, problem = [], progress.Control(), KeyError("reader observer")
 
     def observe(event):
         events.append(event)
@@ -717,7 +721,7 @@ def test_psi_reads_report_written_batches_and_release_owned_mapping(
             if interrupt == "cancel":
                 stop.cancel()
 
-    with progress.watch(observe, cancel=stop):
+    with progress.watch(observe, control=stop):
         if interrupt == "no":
             result = tj.load(path)
             np.testing.assert_array_equal(result.projections, phase)
@@ -778,7 +782,7 @@ def test_slab_task_spans_the_open_iterator(end):
     grid = tj.Grid(6, 6, 11, 1, 1, 1)
     geometry = tj.ParallelGeometry(grid, tj.Detector(7, 11, 1, 1), np.arange(7))
     frames = tj.Frames(np.full((7, 11, 7), 500, np.uint16), geometry, white_level=1000)
-    events, token = [], progress.Cancel()
+    events, token = [], progress.Control()
 
     def observe(event):
         events.append(event)
@@ -788,7 +792,7 @@ def test_slab_task_spans_the_open_iterator(end):
             token.cancel()
 
     target = replace(grid, vz=0.7) if end == "failed" else grid
-    with progress.watch(observe, cancel=token):
+    with progress.watch(observe, control=token):
         context = tj.reconstruct_slabs(
             frames, "sirt", grid=target, config=SIRTConfig(backend="jax", iterations=2)
         )
@@ -828,18 +832,14 @@ def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys
     command = ["correct", str(source), "-o", str(output), "--progress", "json"]
     assert main(command) == 1
     missing = json.loads(capsys.readouterr().out)
-    assert (
-        missing["schema"] == 1
-        and missing["event"] == "error"
-        and missing["type"] == "FileNotFoundError"
-    )
+    assert missing["schema"] == 2 and missing["event"] == "error" and missing["kind"] == "input"
     write_raw_nxtomo(source)
     with pytest.raises(SystemExit) as usage:
         main([*command, "--binning", "0"])
     assert usage.value.code == 2 and capsys.readouterr().out == ""
     assert main(command) == 0
     records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert all(r.pop("schema") == 1 for r in records)
+    assert all(r.pop("schema") == 2 for r in records)
     kinds = {
         "started": progress.Started,
         "advanced": progress.Advanced,
@@ -853,10 +853,10 @@ def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys
     assert main([*command, "--force", "--views", "99"]) == 1
     records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     error = records.pop()
-    assert error["event"] == "error" and error["type"] == "ValueError"
+    assert error["event"] == "error" and error["kind"] == "input"
     assert "99" in error["message"]
     for record in records:
-        assert record.pop("schema") == 1
+        assert record.pop("schema") == 2
     validate_tree([kinds[r.pop("event")](**r) for r in records])
 
 
@@ -903,7 +903,7 @@ def test_fused_row_correction_counts_completed_rows_and_joins_its_workers(monkey
     geometry = tj.ParallelGeometry(grid, tj.Detector(8, 4, 1, 1), np.arange(11))
     frames = tj.Frames(np.full((11, 4, 8), 500, np.uint16), geometry, white_level=1000)
     monkeypatch.setattr("tomojax.corrections._engine._BATCH_BYTES", 8 * 11 * 8)
-    events, token, owner = [], progress.Cancel(), get_ident()
+    events, token, owner = [], progress.Control(), get_ident()
     workers = set(threading.enumerate())
 
     def observe(event):
@@ -912,7 +912,7 @@ def test_fused_row_correction_counts_completed_rows_and_joins_its_workers(monkey
         if isinstance(event, progress.Advanced) and event.done == at:
             token.cancel()
 
-    with progress.watch(observe, cancel=token):
+    with progress.watch(observe, control=token):
         if at == 1:
             with pytest.raises(progress.Cancelled):
                 frames.corrected(Stripes(3))
@@ -957,7 +957,7 @@ def test_cancelling_a_correction_drains_the_already_submitted_host_copy(monkeypa
         return Download(result), *metrics
 
     monkeypatch.setattr(engine, "first_pass", first_pass)
-    token, events = progress.Cancel(), []
+    token, events = progress.Control(), []
 
     def observe(event):
         events.append(event)
@@ -965,7 +965,7 @@ def test_cancelling_a_correction_drains_the_already_submitted_host_copy(monkeypa
             assert len(submitted) == 2 and received == submitted[:1]
             token.cancel()
 
-    with progress.watch(observe, cancel=token), pytest.raises(progress.Cancelled):
+    with progress.watch(observe, control=token), pytest.raises(progress.Cancelled):
         correct_frames(
             np.ones((4, 2, 3)),
             flats=None,
@@ -979,3 +979,74 @@ def test_cancelling_a_correction_drains_the_already_submitted_host_copy(monkeypa
     validate_tree(events)
     assert received == submitted
     assert events[-1].status == "cancelled"
+
+
+@pytest.mark.parametrize("action", ["resume", "cancel"])
+def test_control_blocks_inside_task_and_discount_paused_time(monkeypatch, action):
+    from threading import Event
+
+    clock = [10.0]
+    monkeypatch.setattr(progress, "monotonic", lambda: clock[0])
+    control = progress.Control()
+    events = []
+    paused = Event()
+
+    def observe(event):
+        events.append(event)
+        if isinstance(event, progress.Paused):
+            paused.set()
+
+    def run():
+        with progress.watch(observe, control=control), progress.task("load", "test", 4, "views"):
+            active = progress.current_task.get()
+            clock[0] += 1
+            active.advance(1, {})
+            control.pause()
+            assert control.state == "pause-requested"
+            progress.check_cancelled()
+            clock[0] += 1
+            active.advance(2, {})
+
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(run)
+        try:
+            assert paused.wait(5)
+            assert control.state == "paused" and not future.done()
+            clock[0] += 100
+        finally:
+            getattr(control, action)()
+        if action == "cancel":
+            with pytest.raises(progress.Cancelled):
+                future.result(timeout=5)
+        else:
+            future.result(timeout=5)
+    assert [e.eta for e in events if isinstance(e, progress.Advanced)] == (
+        [3.0, 2.0] if action == "resume" else [3.0]
+    )
+    assert [type(e) for e in events[2:-1]] == (
+        [progress.Paused, progress.Resumed, progress.Advanced]
+        if action == "resume"
+        else [progress.Paused]
+    )
+    assert events[-1].status == ("done" if action == "resume" else "cancelled")
+
+
+def test_error_kinds_use_structured_status_and_keep_parameter_path():
+    from tomojax.errors import classify, within
+
+    class Exhausted(jax.errors.JaxRuntimeError):
+        @property
+        def error_code(self):
+            return 8
+
+    assert classify(Exhausted("no message")).kind == "out_of_memory"
+    assert (
+        classify(jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")).kind == "internal"
+    )
+    wrapper = ValueError("solve could not allocate")
+    wrapper.__cause__ = MemoryError()
+    assert classify(wrapper).kind == "out_of_memory"
+    with pytest.raises(tj.InvalidParameter, match="unknown") as failure, within("config"):
+        raise tj.InvalidParameter("filter", "unknown")
+    assert classify(failure.value).path == "config.filter"
+    assert classify(failure.value).kind == "invalid_parameter"

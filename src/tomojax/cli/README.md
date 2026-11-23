@@ -104,11 +104,11 @@ and tracebacks go to stderr. Each task has a `started` and a `finished` record.
 Use `task` and `parent` to follow nested operations. An `advanced` record counts
 completed work in the unit named by `started`. An unknown total is `null`,
 and a later advance can revise the total. Times are seconds since the watch began.
-The four record types and their fields are defined in the [JSON schema](../../../docs/progress.schema.json).
+The [v2 JSON schema](../../../docs/protocol/progress.schema.json) defines the records.
 
-A successful command exits 0. A file, value, or key error ends the stream with
-one `error` record and exits 1. Argument errors print usage on stderr and exit 2.
-This includes combining `align --dry-run` with `--progress json`. On cancellation,
-open tasks finish with status `cancelled`. An execution failure with a non-zero
-status and no `error` record, apart from interruption, indicates an internal
-error. Read its traceback on stderr.
+A successful command exits 0. Operational failures emit an `error` with a
+machine-readable kind and exit 1. Cancellation closes active tasks, emits a
+`cancelled` error and exits 130. Internal exceptions emit an `internal` error
+and propagate with a traceback on stderr. Unexpected EOF before completion can
+indicate external process termination. Argument errors print usage on stderr
+and exit 2, including `align --dry-run` combined with `--progress json`.

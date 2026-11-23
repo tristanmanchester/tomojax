@@ -219,17 +219,20 @@ watch receives the events. Each event is an immutable snapshot.
 import tomojax as tj
 from tomojax import progress
 
-stop = progress.Cancel()
+stop = progress.Control()
 
 def report(event):
     if isinstance(event, progress.Advanced):
         print(event.task, event.done, event.total, dict(event.metrics))
 
-with progress.watch(report, cancel=stop):
+with progress.watch(report, control=stop):
     scan = tj.load("scan.nxs")
     result = tj.reconstruct(scan, "cgls")
 ```
 
+Call `stop.pause()` to hold work at its next checkpoint and `stop.resume()`
+to continue. The task emits `Paused` and `Resumed` on its owner thread.
+The ETA on advances uses active elapsed time and excludes the pause.
 Call `stop.cancel()` from the handler or another thread to request cancellation.
 The operation raises `progress.Cancelled` at the next work boundary and closes
 its files and workers. A caller-supplied output array can contain completed
@@ -246,4 +249,4 @@ counts once, and leaving the block early closes the task.
 `progress.to_json(event)` returns the same dictionary that the CLI writes in
 JSON mode. Missing metrics and non-finite numbers become JSON null.
 See the [command-line guide](../src/tomojax/cli/README.md#follow-or-cancel-a-command)
-and the [record schema](progress.schema.json).
+and the [record schema](protocol/progress.schema.json).

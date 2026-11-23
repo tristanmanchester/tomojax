@@ -87,6 +87,7 @@ class tomojax.Grid(
     .resampled(self, *, shape: 'tuple[int, int, int]') -> 'Grid'
     .shape
     .to_dict(self) -> 'GridDict'
+class tomojax.InvalidParameter(path: 'str', message: 'str') -> 'None'
 class tomojax.LaminographyGeometry(
         grid: 'Grid',
         detector: 'Detector',
@@ -448,13 +449,20 @@ class tomojax.progress.Advanced(
         total: 'int | None',
         metrics: 'Mapping[str, _Metric]',
         time: 'float',
+        eta: 'float | None' = None,
     ) -> None
-class tomojax.progress.Cancel() -> 'None'
+class tomojax.progress.Cancelled
+class tomojax.progress.Control() -> 'None'
     .cancel(self) -> 'None'
     .cancelled
-class tomojax.progress.Cancelled
+    .checkpoint(self) -> 'None'
+    .pause(self) -> 'None'
+    .resume(self) -> 'None'
+    .state
 tomojax.progress.Event: TypeAliasType
 class tomojax.progress.Finished(task: 'int', status: '_Status', time: 'float') -> None
+class tomojax.progress.Paused(task: 'int', time: 'float') -> None
+class tomojax.progress.Resumed(task: 'int', time: 'float') -> None
 class tomojax.progress.Started(
         task: 'int',
         parent: 'int | None',
@@ -468,7 +476,7 @@ def tomojax.progress.to_json(event: 'Event') -> 'dict[str, object]'
 def tomojax.progress.watch(
         handler: 'Callable[[Event], None]',
         *,
-        cancel: 'Cancel | None' = None,
+        control: 'Control | None' = None,
     ) -> 'Iterator[None]'
 
 # tomojax.corrections

@@ -27,6 +27,7 @@ layers =
     tomojax.geometry
     tomojax.core
     tomojax.progress
+    tomojax.errors
     tomojax.wire
 
 [importlinter:contract:cli-uses-align-facade]

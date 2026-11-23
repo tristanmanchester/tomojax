@@ -508,7 +508,7 @@ def test_cli_reports_a_missing_input_as_a_usage_error(
     assert main(["reconstruct", missing, "-o", str(tmp_path / "r.nxs"), "--progress", "json"]) == 1
     error = json.loads(capsys.readouterr().out)
     assert error["event"] == "error"
-    assert error["type"] == "FileNotFoundError"
+    assert error["kind"] == "input"
     assert missing in error["message"]
 
 

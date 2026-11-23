@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         reconstruct_slabs,
         save,
     )
+    from tomojax.errors import InvalidParameter
     from tomojax.geometry import (
         ConeBeam,
         ConeGeometry,
@@ -58,6 +59,7 @@ from tomojax._version import __version__
 _configure_jax_allocator_defaults()
 
 _SOURCES = {
+    "InvalidParameter": "tomojax.errors",
     "Projector": "tomojax.recon.api",
     "Alignment": "tomojax._scan",
     "Frames": "tomojax._loading",
@@ -95,6 +97,7 @@ __all__ = [
     "Detector",
     "Frames",
     "Grid",
+    "InvalidParameter",
     "LaminographyGeometry",
     "ParallelGeometry",
     "Projector",
