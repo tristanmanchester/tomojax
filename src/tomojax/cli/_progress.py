@@ -37,7 +37,7 @@ class _Bar:
             if metric is not None:
                 detail += f"  {metric[0]}={metric[1]}"
             self.counts[event.task] = detail
-        else:
+        elif isinstance(event, progress.Finished):
             del self.path[event.task], self.counts[event.task]
         line = " > ".join(self.path.values())
         if line:
@@ -47,7 +47,7 @@ class _Bar:
 
 def run_command(command: str, mode: str, operation: Callable[[], None]) -> int:
     """Run the command under one watch, restoring the caller's SIGINT policy."""
-    token = progress.Cancel()
+    token = progress.Control()
 
     def interrupt(_signum: int, _frame: FrameType | None) -> None:
         if token.cancelled:
@@ -61,16 +61,17 @@ def run_command(command: str, mode: str, operation: Callable[[], None]) -> int:
     handler = _Bar() if mode == "bar" or (mode == "auto" and sys.stderr.isatty()) else deliver
     previous = signal.signal(signal.SIGINT, interrupt)
     try:
-        with progress.watch(handler, cancel=token):
+        with progress.watch(handler, control=token):
             operation()
-    except progress.Cancelled:
-        return 130
-    except (OSError, ValueError, KeyError) as exc:
+    except Exception as exc:
+        record = progress.error_record(exc)
         if mode == "json":
-            print(json.dumps(progress.error_record(exc)), flush=True)
-        else:
+            print(json.dumps(record), flush=True)
+        elif record["kind"] != "cancelled":
             print(f"tomojax {command}: error: {exc}", file=sys.stderr)
-        return 1
+        if record["kind"] == "internal":
+            raise
+        return 130 if record["kind"] == "cancelled" else 1
     finally:
         signal.signal(signal.SIGINT, previous)
     return 0

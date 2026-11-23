@@ -8,15 +8,28 @@ from dataclasses import dataclass, fields
 from functools import wraps
 from itertools import count
 from math import isfinite
-from threading import Event as ThreadEvent, RLock
+from threading import Condition, RLock
 from time import monotonic
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from tomojax.errors import Cancelled, classify
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
 
-__all__ = ["Advanced", "Cancel", "Cancelled", "Event", "Finished", "Started", "to_json", "watch"]
+__all__ = [
+    "Advanced",
+    "Cancelled",
+    "Control",
+    "Event",
+    "Finished",
+    "Paused",
+    "Resumed",
+    "Started",
+    "to_json",
+    "watch",
+]
 
 type _Metric = float | int | str | None
 type _Status = Literal["done", "failed", "cancelled"]
@@ -69,6 +82,8 @@ class Advanced:
         Snapshot of scalar diagnostics for the completed work.
     time : float
         Monotonic seconds since the watch began.
+    eta : float or None, optional
+        Remaining active seconds at the measured completion rate.
     """
 
     task: int
@@ -76,6 +91,7 @@ class Advanced:
     total: int | None
     metrics: Mapping[str, _Metric]
     time: float
+    eta: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metrics", MappingProxyType(dict(self.metrics)))
@@ -100,22 +116,79 @@ class Finished:
     time: float
 
 
-type Event = Started | Advanced | Finished
+@dataclass(frozen=True, slots=True)
+class Paused:
+    """A task reached a pause checkpoint.
+
+    Parameters
+    ----------
+    task : int
+        Innermost active task.
+    time : float
+        Monotonic seconds since the watch began.
+    """
+
+    task: int
+    time: float
 
 
-class Cancelled(Exception):
-    """The operation stopped at a cancellation boundary."""
+@dataclass(frozen=True, slots=True)
+class Resumed:
+    """A paused task resumed computation.
+
+    Parameters
+    ----------
+    task : int
+        Innermost active task.
+    time : float
+        Monotonic seconds since the watch began.
+    """
+
+    task: int
+    time: float
 
 
-class Cancel:
-    """Request cancellation from any thread."""
+type Event = Started | Advanced | Finished | Paused | Resumed
+type _State = Literal["running", "pause-requested", "paused"]
+
+
+class Control:
+    """Coordinate pause, resume and cancellation between an owner and a controller."""
 
     def __init__(self) -> None:
-        self._signal = ThreadEvent()
+        self._condition = Condition()
+        self._state: _State = "running"
+        self._cancelled = False
+
+    def pause(self) -> None:
+        """Request a pause at the next checkpoint."""
+        with self._condition:
+            if self._state == "running" and not self._cancelled:
+                self._state = "pause-requested"
+
+    def resume(self) -> None:
+        """Wake the paused operation or withdraw a pending pause."""
+        with self._condition:
+            self._state = "running"
+            self._condition.notify_all()
 
     def cancel(self) -> None:
-        """Request cancellation at the next work boundary."""
-        self._signal.set()
+        """Request cancellation and wake a paused operation."""
+        with self._condition:
+            self._cancelled = True
+            self._condition.notify_all()
+
+    @property
+    def state(self) -> _State:
+        """Return the cooperative state of the active operation.
+
+        Returns
+        -------
+        str
+            Running, pause-requested or paused.
+        """
+        with self._condition:
+            return self._state
 
     @property
     def cancelled(self) -> bool:
@@ -124,9 +197,37 @@ class Cancel:
         Returns
         -------
         bool
-            True once the token has been set.
+            True once cancellation has been requested.
         """
-        return self._signal.is_set()
+        with self._condition:
+            return self._cancelled
+
+    def checkpoint(self) -> None:
+        """Block while paused or raise when cancelled.
+
+        Raises
+        ------
+        Cancelled
+            If the operation was cancelled.
+        """
+        while True:
+            with self._condition:
+                if self._cancelled:
+                    raise Cancelled()
+                if self._state == "running":
+                    return
+                self._state = "paused"
+            active = current_task.get()
+            start = monotonic()
+            if active is not None:
+                active.watcher.emit(Paused, active.id)
+            with self._condition:
+                self._condition.wait_for(lambda: self._cancelled or self._state != "paused")
+                if self._cancelled:
+                    raise Cancelled()
+            if active is not None:
+                active.watcher.pause_time += monotonic() - start
+                active.watcher.emit(Resumed, active.id)
 
 
 def to_json(event: Event) -> dict[str, object]:
@@ -148,24 +249,25 @@ def to_json(event: Event) -> dict[str, object]:
             key: None if isinstance(value, float) and not isfinite(value) else value
             for key, value in event.metrics.items()
         }
-    return {"schema": 1, "event": type(event).__name__.lower(), **record}
+    return {"schema": 2, "event": type(event).__name__.lower(), **record}
 
 
 class _Watch:
-    def __init__(self, handler: Callable[[Event], None], cancel: Cancel | None) -> None:
+    def __init__(self, handler: Callable[[Event], None], control: Control | None) -> None:
         self.handler = handler
-        self.cancel = cancel
+        self.control = control
+        self.pause_time = 0.0
         self.ids = count(1)
         self.start = monotonic()
         self.lock = RLock()
         self.error: BaseException | None = None
 
-    def emit(self, kind: Callable[..., Event], *args: object) -> None:
+    def emit(self, kind: Callable[..., Event], *args: object, **kwargs: object) -> None:
         with self.lock:
             if self.error is not None:
                 raise self.error
             try:
-                self.handler(kind(*args, time=monotonic() - self.start))
+                self.handler(kind(*args, time=monotonic() - self.start, **kwargs))
             except BaseException as exc:
                 self.error = exc
                 raise
@@ -180,6 +282,7 @@ class _Task:
         self.watcher = watcher
         self.id = next(watcher.ids)
         self.status: _Status = "done"
+        self.start = monotonic() - watcher.pause_time
         self.done = 0
         self.total = total
 
@@ -187,7 +290,9 @@ class _Task:
         if done < self.done or (self.total is not None and done > self.total):
             raise ValueError("completed work outside task bounds")
         self.done = done
-        self.watcher.emit(Advanced, self.id, done, self.total, metrics)
+        elapsed = monotonic() - self.watcher.pause_time - self.start
+        eta = (self.total - done) * elapsed / done if self.total is not None and done else None
+        self.watcher.emit(Advanced, self.id, done, self.total, metrics, eta=eta)
 
 
 current_task = ContextVar[_Task | None]("tomojax_task", default=None)
@@ -217,7 +322,7 @@ def step(unit: str, *, remaining: int | None = None) -> None:
 
 
 @contextmanager
-def watch(handler: Callable[[Event], None], *, cancel: Cancel | None = None) -> Iterator[None]:
+def watch(handler: Callable[[Event], None], *, control: Control | None = None) -> Iterator[None]:
     """Deliver events synchronously to a fast handler in the calling context.
 
     Parameters
@@ -225,7 +330,7 @@ def watch(handler: Callable[[Event], None], *, cancel: Cancel | None = None) -> 
     handler : callable
         Receives each event synchronously and must return quickly. An exception stops
         delivery and propagates to the caller.
-    cancel : Cancel or None, optional
+    control : Control or None, optional
         Token which another thread or the handler may set to stop the operation.
 
     Yields
@@ -233,7 +338,7 @@ def watch(handler: Callable[[Event], None], *, cancel: Cancel | None = None) -> 
     None
         The dynamic extent of this watch in the current context.
     """
-    token = _watch.set(_Watch(handler, cancel))
+    token = _watch.set(_Watch(handler, control))
     parent = current_task.set(None)
     try:
         yield
@@ -250,8 +355,8 @@ def handler_failed(exc: BaseException) -> bool:
 
 def check_cancelled() -> None:
     watcher = _watch.get()
-    if watcher is not None and watcher.cancel is not None and watcher.cancel.cancelled:
-        raise Cancelled()
+    if watcher is not None and watcher.control is not None:
+        watcher.control.checkpoint()
 
 
 @contextmanager
@@ -274,8 +379,9 @@ def task(name: str, label: str, total: int | None, unit: str) -> Iterator[None]:
     if watcher is None:
         yield
         return
-    check_cancelled()
     parent = current_task.get()
+    if parent is not None:
+        check_cancelled()
     # Initializers, slab solves and alignment image updates belong to their owner.
     if name == "correction" and parent is not None and parent.name != "load":
         yield
@@ -319,4 +425,6 @@ def reports_iterations[F: Callable[..., Any]](default: int) -> Callable[[F], F]:
 
 def error_record(error: Exception) -> dict[str, object]:
     """Encode a command failure using the same schema as progress events."""
-    return {"schema": 1, "event": "error", "type": type(error).__name__, "message": str(error)}
+    import msgspec
+
+    return msgspec.to_builtins(classify(error))

@@ -14,10 +14,10 @@
     "SimConfig": 31
   },
   "exported_names": {
-    "tomojax": 29,
+    "tomojax": 30,
     "tomojax.geometry": 13,
     "tomojax.evaluation": 2,
-    "tomojax.progress": 8,
+    "tomojax.progress": 10,
     "tomojax.corrections": 15,
     "tomojax.forward": 3,
     "tomojax.recon": 21,
@@ -50,11 +50,11 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "code_lines": {
-    "(modules)": 4462,
+    "(modules)": 4594,
     "_data": 2104,
     "alignment": 4462,
     "backends": 263,
-    "cli": 3731,
+    "cli": 3732,
     "core": 9561,
     "corrections": 2971,
     "datasets": 1072,
