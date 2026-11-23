@@ -6,18 +6,17 @@ from contextlib import ExitStack
 from pathlib import Path
 import shutil
 import tempfile
-from typing import TYPE_CHECKING, Any, get_args
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tomojax.core.registration import pose_columns, recorded_length_unit
 from tomojax.wire.arrays import (
     Array,
     Axis,
-    Column,
     Coordinates,
     Hdf5,
     Npy,
-    PoseColumn,
     Storage,
     Uniform,
 )
@@ -70,7 +69,6 @@ class TerminalFiles:
 def unit_of(item: tj.Scan | tj.Frames | tj.Reconstruction | None) -> str:
     """Return the recorded spatial unit or the wire name for uncalibrated lengths."""
     import tomojax as tj
-    from tomojax._scan import recorded_length_unit
 
     if isinstance(item, tj.Reconstruction):
         unit = item.length_unit
@@ -88,7 +86,6 @@ def disk_volume(
     meta: Mapping[str, Any],
 ) -> Array:
     """Describe the export source in its recorded storage order, including legacy volumes."""
-    from tomojax._scan import recorded_length_unit
     from tomojax.cli.execution import volume_metadata
 
     storage = Hdf5(str(path), VOLUME_DATASET)
@@ -172,10 +169,7 @@ def saved_result(
                 storage = files.reference(poses, _POSES if scan.poses is not None else None)
                 # NXtomo persists poses in FP32. Synthesised zero poses retain their NPY dtype.
                 dtype = np.dtype("float32").str if isinstance(storage, Hdf5) else poses.dtype.str
-                columns = tuple(
-                    Column(name, "degree" if i < 3 else unit)
-                    for i, name in enumerate(get_args(PoseColumn))
-                )
+                columns = pose_columns(unit)
                 arrays["poses"] = Array(
                     storage,
                     poses.shape,

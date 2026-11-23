@@ -471,6 +471,7 @@ class tomojax.progress.Finished(task: 'int', status: '_Status', time: 'float') -
 class tomojax.progress.Note(task: 'int | None', level: 'NoteLevel', message: 'str', time: 'float') -> None
 class tomojax.progress.Paused(task: 'int', time: 'float') -> None
 class tomojax.progress.Placed(task: 'int', devices: 'tuple[str, ...]', time: 'float') -> None
+class tomojax.progress.Preview(task: 'int', arrays: 'Mapping[str, Sample]', time: 'float') -> None
 class tomojax.progress.Resumed(task: 'int', time: 'float') -> None
 class tomojax.progress.Started(
         task: 'int',
@@ -481,11 +482,16 @@ class tomojax.progress.Started(
         unit: 'str',
         time: 'float',
     ) -> None
-def tomojax.progress.to_json(event: 'Event') -> 'dict[str, object]'
+def tomojax.progress.to_json(
+        event: 'Event',
+        *,
+        directory: 'str | Path | None' = None,
+    ) -> 'dict[str, object]'
 def tomojax.progress.watch(
         handler: 'Callable[[Event], None]',
         *,
         control: 'Control | None' = None,
+        previews: 'bool' = False,
     ) -> 'Iterator[None]'
 
 # tomojax.corrections

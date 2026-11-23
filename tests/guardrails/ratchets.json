@@ -17,7 +17,7 @@
     "tomojax": 30,
     "tomojax.geometry": 13,
     "tomojax.evaluation": 2,
-    "tomojax.progress": 12,
+    "tomojax.progress": 13,
     "tomojax.corrections": 15,
     "tomojax.forward": 3,
     "tomojax.recon": 21,
@@ -43,9 +43,10 @@
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
-    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 168,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 171,
     "src/tomojax/cli/reconstruct.py::build_parser": 101,
     "src/tomojax/cli/simulate.py::_build_parser": 104,
+    "src/tomojax/corrections/_engine.py::correct_frames": 103,
     "src/tomojax/recon/_cgls_jax.py::_solve": 146,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 101,
     "src/tomojax/recon/_cgls_jax.py::cgls": 104,
@@ -53,20 +54,20 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 5207,
+    "(modules)": 5318,
     "_data": 2153,
-    "alignment": 4637,
+    "alignment": 4670,
     "backends": 263,
-    "cli": 5612,
-    "core": 9677,
-    "corrections": 3038,
+    "cli": 5607,
+    "core": 9844,
+    "corrections": 3049,
     "datasets": 1069,
     "forward": 404,
     "geometry": 908,
     "io": 3947,
     "motion": 153,
     "nuisance": 232,
-    "recon": 14073,
+    "recon": 14148,
     "wire": 266
   },
   "cuda_kernels": 47,
@@ -78,6 +79,7 @@
     "pyright: ignore": 12
   },
   "complex_functions": [
+    "src/tomojax/cli/_adapters.py::C901::execute",
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
     "src/tomojax/core/_logging.py::PLR0911::format_duration",
     "src/tomojax/core/devices.py::C901::sum_batches",
@@ -96,7 +98,7 @@
   },
   "type_errors": {
     "reportArgumentType": 44,
-    "reportAttributeAccessIssue": 17,
+    "reportAttributeAccessIssue": 20,
     "reportCallIssue": 2,
     "reportIndexIssue": 6,
     "reportPrivateUsage": 15,
@@ -108,5 +110,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 129
+  "test_private_imports": 130
 }

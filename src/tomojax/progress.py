@@ -10,13 +10,20 @@ import inspect
 from itertools import count
 import logging
 from math import isfinite
+import os
+from pathlib import Path
+import tempfile
 from threading import Condition, RLock
 from time import monotonic
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 import warnings
 
+import msgspec
+import numpy as np
+
 from tomojax.errors import Cancelled, classify
+from tomojax.wire.arrays import Array, Axis, Column, Coordinates, Fixed, Npy
 from tomojax.wire.metrics import Metric
 from tomojax.wire.progress import NoteLevel
 
@@ -33,6 +40,7 @@ __all__ = [
     "Note",
     "Paused",
     "Placed",
+    "Preview",
     "Resumed",
     "Started",
     "to_json",
@@ -222,7 +230,56 @@ class Note:
     time: float
 
 
-type Event = Started | Placed | Advanced | Finished | Paused | Resumed | Note
+@dataclass(frozen=True, slots=True)
+class Sample:
+    """A small host image and its registration at a completed checkpoint."""
+
+    data: np.ndarray
+    axes: tuple[Axis, ...]
+    unit: str
+    domain: str
+    fixed: tuple[Fixed, ...] = ()
+    columns: tuple[Column, ...] = ()
+    coordinates: tuple[tuple[int, np.ndarray], ...] = ()
+
+    def store(self, write: Callable[[np.ndarray], Npy]) -> Array:
+        axes = list(self.axes)
+        for index, values in self.coordinates:
+            axes[index] = msgspec.structs.replace(
+                axes[index], coordinates=Coordinates(write(values))
+            )
+        return Array(
+            write(self.data),
+            self.data.shape,
+            self.data.dtype.str,
+            tuple(axes),
+            self.unit,
+            self.domain,
+            self.fixed,
+            self.columns,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Preview:
+    """Coherent small arrays copied at one completed checkpoint.
+
+    Parameters
+    ----------
+    task : int
+        Owning task identifier.
+    arrays : mapping
+        Named host images with axes, fixed coordinates and value units.
+    time : float
+        Monotonic seconds since the watch began.
+    """
+
+    task: int
+    arrays: Mapping[str, Sample]
+    time: float
+
+
+type Event = Started | Placed | Advanced | Finished | Paused | Resumed | Note | Preview
 type _State = Literal["running", "pause-requested", "paused"]
 
 
@@ -304,19 +361,53 @@ class Control:
                 active.watcher.emit(Resumed, active.id)
 
 
-def to_json(event: Event) -> dict[str, object]:
+def to_json(event: Event, *, directory: str | Path | None = None) -> dict[str, object]:
     """Return a versioned JSON-compatible record for an event.
 
     Parameters
     ----------
     event : Event
         Progress event to encode.
+    directory : str or pathlib.Path or None, optional
+        Consumer-owned directory for the NumPy arrays in a preview.
 
     Returns
     -------
     dict
         Versioned record suitable for strict JSON encoding.
     """
+    if isinstance(event, Preview):
+        if directory is None:
+            raise ValueError("encoding a preview requires its consumer directory")
+        files = []
+        try:
+
+            def write(data: np.ndarray) -> Npy:
+                with tempfile.NamedTemporaryFile(dir=directory, suffix=".tmp", delete=False) as f:
+                    temporary = Path(f.name)
+                    files.append(temporary)
+                    np.save(f, data, allow_pickle=False)
+                path = temporary.with_suffix(".npy")
+                os.link(temporary, path)
+                files.append(path)
+                temporary.unlink()
+                return Npy(str(path))
+
+            arrays = {
+                name: msgspec.to_builtins(sample.store(write))
+                for name, sample in event.arrays.items()
+            }
+        except BaseException:
+            for path in files:
+                path.unlink(missing_ok=True)
+            raise
+        return {
+            "schema": 2,
+            "event": "preview",
+            "task": event.task,
+            "time": event.time,
+            "arrays": arrays,
+        }
     record = {field.name: getattr(event, field.name) for field in fields(event)}
     if isinstance(event, Advanced):
         record["metrics"] = {
@@ -327,7 +418,11 @@ def to_json(event: Event) -> dict[str, object]:
 
 
 class _Watch:
-    def __init__(self, handler: Callable[[Event], None], control: Control | None) -> None:
+    def __init__(
+        self, handler: Callable[[Event], None], control: Control | None, *, previews: bool
+    ) -> None:
+        self.previews = previews
+        self.last_preview = float("-inf")
         self.handler = handler
         self.control = control
         self.pause_time = 0.0
@@ -358,6 +453,7 @@ class _Task:
         self.status: _Status = "done"
         self.start = monotonic() - watcher.pause_time
         self.done = 0
+        self.previewed = -1
         self.devices: tuple[str, ...] = ()
         self.total = total
 
@@ -373,6 +469,28 @@ class _Task:
 
 
 current_task = ContextVar[_Task | None]("tomojax_task", default=None)
+
+
+def previewing() -> bool:
+    watcher = _watch.get()
+    return watcher is not None and watcher.previews
+
+
+def preview(build: Callable[[], dict[str, Sample]], *, final: bool = False) -> None:
+    """Copy a coherent checkpoint only when a preview will be delivered."""
+    active = current_task.get()
+    if active is None or not active.watcher.previews or active.previewed == active.done:
+        return
+    watcher = active.watcher
+    now = monotonic() - watcher.pause_time
+    if not final and now - watcher.last_preview < 1:
+        return
+    check_cancelled()
+    arrays = build()
+    check_cancelled()
+    watcher.last_preview = monotonic() - watcher.pause_time
+    active.previewed = active.done
+    watcher.emit(Preview, active.id, MappingProxyType(arrays))
 
 
 def watching() -> bool:
@@ -561,7 +679,9 @@ _log_notes = _LogNotes()
 
 
 @contextmanager
-def watch(handler: Callable[[Event], None], *, control: Control | None = None) -> Iterator[None]:
+def watch(
+    handler: Callable[[Event], None], *, control: Control | None = None, previews: bool = False
+) -> Iterator[None]:
     """Deliver events synchronously to a fast handler in the calling context.
 
     Parameters
@@ -571,6 +691,8 @@ def watch(handler: Callable[[Event], None], *, control: Control | None = None) -
         delivery and propagates to the caller.
     control : Control or None, optional
         Token which another thread or the handler may set to stop the operation.
+    previews : bool, optional
+        Deliver registered preview arrays from completed numerical checkpoints.
 
     Yields
     ------
@@ -578,7 +700,7 @@ def watch(handler: Callable[[Event], None], *, control: Control | None = None) -
         The dynamic extent of this watch in the current context.
     """
     logging.getLogger("tomojax").addHandler(_log_notes)
-    token = _watch.set(_Watch(handler, control))
+    token = _watch.set(_Watch(handler, control, previews=previews))
     parent = current_task.set(None)
     try:
         yield

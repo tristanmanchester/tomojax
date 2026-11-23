@@ -25,6 +25,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.array_ops import check_binning, mean_detector_pixels
 from tomojax.core.host_volume import discard_failed_outputs
+from tomojax.core.registration import correction_images
 
 from ._batches import HostCopies, correction_group, view_batches
 from ._records import Correction, Json
@@ -214,6 +215,11 @@ def correct_frames(
             + [s.record() for s in transmission_steps] + [log]
             + [s.record() for s in head] + list(tail_records)
         )  # fmt: skip
+        if progress.previewing():
+            with progress.task("correction", "central sinograms", None, ""):
+                progress.preview(
+                    lambda: correction_images(counts, out, kept, binning, "counts"), final=True
+                )
         return Corrected(out, records, kept)
 
 
@@ -275,6 +281,11 @@ def correct_projections(
     check_scan_steps(steps)
     out = np.array(projections, np.float32, copy=True)
     out, kept, records = apply_steps(out, [s for _, s in ordered], views_per_batch)
+    if steps and progress.previewing():
+        with progress.task("correction", "central sinograms", None, ""):
+            progress.preview(
+                lambda: correction_images(projections, out, kept, 1, "line_integrals"), final=True
+            )
     return Corrected(out, records, kept)
 
 

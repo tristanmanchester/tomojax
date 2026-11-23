@@ -30,7 +30,7 @@ from tomojax.cli._results import VOLUME_DATASET, scan_axes, unit_of
 from tomojax.core.array_ops import check_binning
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
-from tomojax.wire.progress import Event
+from tomojax.wire.progress import Event, Preview
 
 type Work = Callable[[], Root | p.DataProduct]
 
@@ -51,7 +51,14 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
     manifest = p.Provenance(parameters.pop("type"), parameters, context.lineage(command))
 
     def event(record: progress.Event) -> None:
-        context.event(msgspec.convert(progress.to_json(record), type=Event))
+        if isinstance(record, progress.Preview):
+            arrays = {
+                name: sample.store(lambda a: stage_array(context, a))
+                for name, sample in record.arrays.items()
+            }
+            context.event(Preview(schema=2, task=record.task, time=record.time, arrays=arrays))
+        else:
+            context.event(msgspec.convert(progress.to_json(record), type=Event))
 
     def diagnostic(pointer: str, data: Any) -> Array:
         a = np.asarray(data)
@@ -60,7 +67,11 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
 
     for snapshot in sample():
         context.snapshot(snapshot)
-    with progress.watch(event, control=cast("progress.Control", context.control)):
+    with progress.watch(
+        event,
+        control=cast("progress.Control", context.control),
+        previews=isinstance(command, op.Run) and command.previews,
+    ):
         if isinstance(operation, op.Plane):
             if not isinstance(command, op.Validate):
                 return ex.browse_plane(operation, context)

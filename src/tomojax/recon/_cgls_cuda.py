@@ -15,6 +15,7 @@ from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.joseph_cuda import JosephCUDA
+from tomojax.core.registration import planes
 from tomojax.core.validation import validate_grid, validate_pose_stack, validate_projection_stack
 from tomojax.wire.metrics import Metric
 
@@ -120,7 +121,7 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
             if initial is None
             else cp.array(initial.transpose(2, 1, 0), dtype=cp.float32, order="C")
         )
-        result, info = _iterate(cp, ops, data, x, cfg, zero_start=initial is None)
+        result, info = _iterate(cp, ops, data, x, grid, cfg, zero_start=initial is None)
         volume = np.ascontiguousarray(cp.asnumpy(result).transpose(2, 1, 0))
         del ops, data, x, result
     # The solve returns host arrays, so none of its device memory outlives it:
@@ -172,7 +173,7 @@ def _all(cp, kernel, *args: object):
     return cp.equal(flag[0], np.int32(1))
 
 
-def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
+def _iterate(cp, ops, data, x, grid, cfg: CGLSConfig, *, zero_start: bool):
     with progress.preparing("initialise cgls"):
         k = _kernels(cp)
         residual = data.copy() if zero_start else data - ops.forward(x)
@@ -236,6 +237,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         if (task := progress.for_unit("iterations")) is not None:
             # The stopping statistics above already wait for the updated iterate.
             task.advance(count, {Metric.normal_residual_norm.name: float(np.sqrt(norm2))})
+            progress.preview(lambda: planes(x, grid, reversed_axes=True))
     converged = bool(not failed and norm2 <= tolerance**2)
     info = {
         "effective_iterations": count,
@@ -256,6 +258,8 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
         "damping": float(cfg.damping),
         "gradient_damping": 0.0,
     }
+    if count:
+        progress.preview(lambda: planes(x, grid, reversed_axes=True), final=True)
     return x, info
 
 

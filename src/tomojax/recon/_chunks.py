@@ -20,6 +20,7 @@ def run_chunks[S](
     end: int,
     advance: Callable[[S, int], S],
     completed: Callable[[S], tuple[int, bool, dict[str, float]]],
+    sample: Callable[[S], dict],
     *,
     task,
 ) -> S:
@@ -29,6 +30,8 @@ def run_chunks[S](
     done, stopped, metrics = completed(state)
     if done:
         task.advance(done, metrics)
+        if partial_sweep.get() is None:
+            progress.preview(lambda state=state: sample(state), final=stopped or done == end)
     length = 1
     compiled = False
     while done < end and not stopped:
@@ -41,6 +44,8 @@ def run_chunks[S](
         done, stopped, metrics = completed(state)
         if not partial_sweep.get():
             task.advance(done, metrics)
+            if partial_sweep.get() is None:
+                progress.preview(lambda state=state: sample(state), final=stopped or done == end)
         if compiled:
             length = max(1, round(0.25 * (done - previous) / max(elapsed, 1e-9)))
         compiled = True
@@ -64,14 +69,14 @@ class Chunked[R]:
         with ExitStack() as setup:
             setup.enter_context(progress.preparing("initialise solver"))
 
-            def drive(state, end, advance, completed):
+            def drive(state, end, advance, completed, sample):
                 setup.close()
-                return run_chunks(state, end, advance, completed, task=task)
+                return run_chunks(state, end, advance, completed, sample, task=task)
 
             return self.program(*args, **kwargs, drive=drive)
 
 
-def fixed_updates(state, end, advance, drive, metrics=None):
+def fixed_updates(state, end, advance, drive, sample, metrics=None):
     """Report completed full sweeps with their absolute position in the original schedule."""
 
     def update(carry, stop):
@@ -82,4 +87,4 @@ def fixed_updates(state, end, advance, drive, metrics=None):
         done, state = carry
         return int(done), False, {} if metrics is None else metrics(state, int(done))
 
-    return drive((0, state), end, update, completed)[1]
+    return drive((0, state), end, update, completed, lambda carry: sample(carry[1]))[1]

@@ -38,6 +38,7 @@ from tomojax._scan import (
     scan_from_record,
 )
 from tomojax.core.host_volume import discard_failed_outputs
+from tomojax.core.registration import registration
 from tomojax.core.validation import view_indices
 from tomojax.geometry import Detector, Grid, ScanGeometry
 
@@ -446,9 +447,10 @@ class Frames:
         source = self.source.source_path if self.source is not None else None
         reading = not isinstance(self.counts, np.ndarray)
         with (
+            registration(self),
             progress.task("load", Path(source).name, self.views, "views")
             if reading and source is not None
-            else nullcontext()
+            else nullcontext(),
         ):
             done = correct_frames(
                 self.counts,

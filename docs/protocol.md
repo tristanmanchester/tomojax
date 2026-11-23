@@ -90,6 +90,10 @@ Release takes only the issued artifact token. A successful release or handle clo
 
 ## Standalone commands
 
+Set `previews: true` on a `run` request to receive completed checkpoints as `preview` records. Reconstruction and alignment images contain central `z`, `y` and `x` planes. Alignment also reports per-view pose increments in the acquisition convention. Correction previews carry `before` and `after` sinograms on their own detector grids. An axis coordinate vector is itself a session artifact. Release these files after displaying them. Intermediate frames are limited to one per active second. The last completed state is delivered at the end, including early stopping.
+
+In Python, pass `previews=True` to `progress.watch` to receive small host arrays. To write a standalone JSON preview, pass the consumer directory to `progress.to_json(event, directory=path)`.
+
 An indeterminate `prepare` task brackets work on the calling thread that can include cache lookup, lowering, compilation or first execution. A warm run can report the same task.
 
 Pass `--progress json` to inspect, correct, reconstruct, align, simulate or export. Read one JSON object per stdout line. A successful invocation ends with `result`. Its `outputs` list includes each written file, and its `arrays` reference the stored data. Export reports the source volume in disk axis order and lists the converted files and sidecar. Inspect returns its report in `info.summary`. Auxiliary NumPy files for bulk diagnostics or NPZ members are caller-owned and live alongside the output. A scalar summary that exceeds the byte limit reports the number of omitted fields as `_omitted_fields`, giving method selection priority over solver histories.

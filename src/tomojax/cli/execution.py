@@ -15,7 +15,7 @@ from tomojax._typed_arrays import device_id
 from tomojax.cli.operations import ExecutionInput, Plane, input_references
 from tomojax.cli.products import DataProduct, HandleProduct, PlaneResult, Provenance, Snapshot
 from tomojax.errors import InvalidParameter
-from tomojax.wire.arrays import Array, Axis, Fixed, Member, Npy, Storage, Uniform
+from tomojax.wire.arrays import Array, Fixed, Member, Npy, Storage, Uniform
 from tomojax.wire.progress import INFO_BYTES, Event, Info
 
 if TYPE_CHECKING:
@@ -167,15 +167,9 @@ type Adapter[T: ExecutionInput] = Callable[[T, ExecutionContext], Success]
 
 def volume_metadata(grid: tj.Grid, *, storage: Storage, dtype: str, length_unit: str) -> Array:
     """Register a (z, y, x) volume using physical voxel-centre coordinates."""
-    from tomojax.geometry import grid_volume_origin
+    from tomojax.core.registration import volume_axes
 
-    origin = grid_volume_origin(grid)
-    axes = tuple(
-        Axis(name, "volume", length_unit, Uniform(start, pitch))
-        for name, start, pitch in zip(
-            "zyx", reversed(origin), (grid.vz, grid.vy, grid.vx), strict=True
-        )
-    )
+    axes = volume_axes(grid, length_unit)
     return Array(storage, grid.shape, dtype, axes, f"1/{length_unit}", "attenuation")
 
 

@@ -17,6 +17,7 @@ import numpy as np
 from tomojax._data import views_of
 from tomojax._parameters import AnnotationModule
 from tomojax.core.array_ops import check_binning, mean_detector_pixels
+from tomojax.core.registration import recorded_length_unit, registration
 from tomojax.core.validation import view_indices
 from tomojax.geometry import (
     ConeGeometry,
@@ -151,7 +152,8 @@ class Scan:
         progress.check_cancelled()
 
         bound = bind_step_geometry(steps, self.geometry)
-        done = correct_projections(self.projections, bound, views_per_batch=views_per_batch)
+        with registration(self):
+            done = correct_projections(self.projections, bound, views_per_batch=views_per_batch)
         everything = len(done.kept) == self.projections.shape[0]
         return replace(
             self,
@@ -878,12 +880,6 @@ def with_grid(scan: Scan, grid: Grid) -> Scan:
     if grid == scan.grid:
         return scan
     return replace(scan, geometry=rebuild(scan.geometry, grid=grid))
-
-
-def recorded_length_unit(meta: Mapping[str, Any]) -> str | None:
-    """Read the geometry's calibration unit from current or acquisition metadata."""
-    unit = meta.get("length_unit") or (meta.get("acquisition") or {}).get("length_unit")
-    return str(unit) if unit else None
 
 
 @dataclass(frozen=True)

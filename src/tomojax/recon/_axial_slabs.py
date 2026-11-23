@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 
 from tomojax import progress
+from tomojax.core.registration import planes
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
 if TYPE_CHECKING:
@@ -96,4 +97,6 @@ def axial_slabs(
         output[start:stop, :, :] = np.asarray(volume)
         # Do not retain the previous device slab while allocating the next.
         del volume
+    if info.get("effective_iterations") and partial_sweep.get() is None:
+        progress.preview(lambda: planes(output, grid), final=True)
     return output, {**info, "host_slabs": True, "slices_per_batch": depth}

@@ -263,6 +263,9 @@ class HostFista:
             if (task := progress.for_unit("iterations")) is not None:
                 self.problem.completed(task.advance, len(losses), {Metric.loss.name: loss})
             t = tn
+            progress.preview(
+                lambda: self.X.preview(self.plan.grid), final=done or step + 1 == cfg.iterations
+            )
             if done:
                 break
         count = len(losses)

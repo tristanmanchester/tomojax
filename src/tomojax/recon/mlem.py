@@ -40,6 +40,7 @@ from tomojax.recon._volume_storage import (
     Model,
     is_joseph,
     pack_volume,
+    preview_planes,
     resident_model,
     restore_volume,
     volume_shape,
@@ -269,7 +270,13 @@ def _mlem_program(
         _segment, poses, data, initial, support, indices, valid, iterations, det_grid, **options
     )
     state, good, norms = segment(None, 0, 0, sensitivities=sensitivities)
-    x, observed = fixed_updates(state, iterations, partial(segment, sensitivities=norms), drive)
+    x, observed = fixed_updates(
+        state,
+        iterations,
+        partial(segment, sensitivities=norms),
+        drive,
+        lambda s: preview_planes(s[0], options["model"], options["grid"], observed=s[1]),
+    )
     return jnp.where(observed, x, 0.0), good
 
 

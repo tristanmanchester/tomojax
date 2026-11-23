@@ -23,7 +23,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax import progress
+from tomojax.core.registration import length_unit, planes, pose_columns
 from tomojax.core.volume_layout import transpose_volume
+from tomojax.wire.arrays import Axis, Uniform
 
 from . import _common
 from ._parameters import Parameters
@@ -136,6 +139,23 @@ class Operators:
 
     # FP16 storage of the step's weights and columns; tests turn it off to check the calculus.
     _half = True
+
+    def preview(self, x, c):
+        """Working image and incremental per-view pose in public units."""
+        images = planes(x, self.grid)
+        table, _ = self.parameters.physical(np.asarray(c), np.asarray(self.scales[: self.n]))
+        table[:, :3] = np.rad2deg(table[:, :3])
+        images["poses"] = progress.Sample(
+            table,
+            (
+                Axis("view", "acquisition", "index", Uniform(0, 1)),
+                Axis("column", "pose", "index", Uniform(0, 1)),
+            ),
+            "mixed",
+            "poses",
+            columns=pose_columns(length_unit.get()),
+        )
+        return images
 
     def __init__(
         self,

@@ -22,6 +22,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.recon._volume_storage import preview_planes
 from tomojax.wire.metrics import Metric
 
 from ._chunks import Chunked
@@ -575,7 +576,17 @@ def _fista_program(
         return int(count), bool(stopped), {Metric.loss.name: float(loss)}
 
     iterations = runtime.config.iterations
-    final = drive(initial, iterations, advance, completed) if iterations else initial
+    final = (
+        drive(
+            initial,
+            iterations,
+            advance,
+            completed,
+            lambda s: preview_planes(s.x, runtime.projector[0], grid),
+        )
+        if iterations
+        else initial
+    )
     loss = final.padded_loss()
     return (
         FistaResult(

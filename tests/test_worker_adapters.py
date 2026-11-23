@@ -29,7 +29,7 @@ def worker():
                 ready["capabilities"]
             )
 
-            def call(command, **parameters):
+            def call(command, *, events=None, **parameters):
                 nonlocal request
                 request += 1
                 rid = str(request)
@@ -42,6 +42,8 @@ def worker():
                     assert row["request"] == rid
                     if row["type"] != "progress":
                         return row
+                    if events is not None:
+                        events.append(row["record"])
                 pytest.fail(f"unexpected EOF from worker, status {proc.poll()}")
 
             request = 0
@@ -386,3 +388,27 @@ def test_standalone_volume_keeps_its_recorded_unit_when_reopened_and_saved(
         if file == path:
             root = dict(type="member", handle=value["handle"], member="self")
             output(worker("run", operation=dict(type="save", source=root, path=str(destination))))
+
+
+def test_worker_publishes_and_releases_live_planes(worker, simulation):
+    events = []
+    scan = simulation["value"]["scan"]
+    reply = output(
+        worker(
+            "run",
+            events=events,
+            operation=dict(type="reconstruct", source=scan, method="sirt", iterations=2),
+            previews=True,
+        )
+    )
+    previews = [e for e in events if e["event"] == "preview"]
+    assert previews
+    for preview in previews:
+        for axis, array in preview["arrays"].items():
+            storage = array["storage"]
+            assert array["fixed"][0]["name"] == axis
+            path = Path(storage["path"])
+            assert np.load(path, allow_pickle=False).shape == tuple(array["shape"])
+            output(worker("release", artifact=storage["artifact"]))
+            assert not path.exists()
+    assert reply["value"]["type"] == "reconstruction"

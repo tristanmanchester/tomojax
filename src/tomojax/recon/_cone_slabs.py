@@ -37,6 +37,7 @@ from tomojax.core.host_volume import (
     slab_file,
     write_at,
 )
+from tomojax.core.registration import planes
 from tomojax.geometry import grid_volume_origin
 
 from ._host_arrays import validate_host_arrays
@@ -294,6 +295,12 @@ class HostVolume:
         """Start reading planes ``[z0, z1)`` of a file-backed volume."""
         if self._worker is not None and (z0, z1) not in self._reads:
             self._reads[z0, z1] = self._worker.submit(self._read, z0, z1)
+
+    def preview(self, grid: Grid):
+        """Read completed planes after this volume's last queued write."""
+        for write in self._writes:
+            write.result()
+        return planes(self.array, grid)
 
     def close(self) -> None:
         """Wait for every write behind and stop the worker; a failed write raises here."""

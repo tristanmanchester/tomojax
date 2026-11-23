@@ -417,11 +417,14 @@ class _HostCGLS:
                     count,
                     {Metric.normal_residual_norm.name: float(np.sqrt(residual))},
                 )
+            progress.preview(lambda: self.X.preview(self.plan.grid))
             if not np.isfinite(gamma_new):
                 state["failed"] = True
                 break
             beta = None if restart else gamma_new / gamma
             gamma, state["verified"] = gamma_new, verify
+        if count:
+            progress.preview(lambda: self.X.preview(self.plan.grid), final=True)
         return self.record(gamma, threshold, initial_norm, count, recomputations, state)
 
     def verify(

@@ -30,6 +30,7 @@ from tomojax.alignment._config import AlignConfig, resolve_align_config
 from tomojax.core.devices import announce
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.joseph import validate_plane_geometry
+from tomojax.core.registration import scaled_images
 from tomojax.recon.fista_tv import resolve_tv_metric
 
 from ._noise import MAX_SAMPLES, Windows, estimate_noise
@@ -420,8 +421,11 @@ def fit_poses(
         levels = []
         binned, scale, noise = _read(measured, bins)
         for level in schedule.levels:
-            with progress.task(
-                "level", f"binning {level.binning}", level.budget.iterations, "steps"
+            with (
+                scaled_images(scale),
+                progress.task(
+                    "level", f"binning {level.binning}", level.budget.iterations, "steps"
+                ),
             ):
                 y, precision, g, ops, cal = _level(
                     binned.pop(0),  # the level's arrays are its own from here
@@ -483,7 +487,7 @@ def fit_poses(
         assert prior is not None
         stage = {"ops": ops, "sigma": cal["sigma"], "last": levels[-1], "placement": placement}
         total = config.refine_iterations if prior.nlocal else 0
-        with progress.task("refine", "refine poses", total, "updates"):
+        with scaled_images(scale), progress.task("refine", "refine poses", total, "updates"):
             p, refinement, (offsets, energy) = refine(
                 x, p, y, precision, prior, **stage, config=config
             )

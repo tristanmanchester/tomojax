@@ -33,6 +33,7 @@ from tomojax.recon._quadratic import gradient_energy, gradient_normal, regulariz
 from tomojax.recon._volume_storage import (
     initialize_volume,
     is_joseph,
+    preview_planes,
     resident_model,
     restore_volume,
     voxel_spacing,
@@ -627,7 +628,12 @@ def _cgls_program(
             },
         )
 
-    return drive(state, iterations, advance, completed), first_gamma, threshold, finite
+    return (
+        drive(state, iterations, advance, completed, lambda s: preview_planes(s.x, model, grid)),
+        first_gamma,
+        threshold,
+        finite,
+    )
 
 
 _run_cgls = Chunked(

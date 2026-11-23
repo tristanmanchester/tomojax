@@ -39,13 +39,13 @@ from tomojax._scan import (
     geometry_record,
     rebuild,
     record_of,
-    recorded_length_unit,
     source_of,
     with_grid,
 )
 from tomojax._simulate import Simulation
 from tomojax._typed_arrays import Device
 from tomojax.alignment import AlignConfig
+from tomojax.core.registration import SlabPlanes, recorded_length_unit, registration
 from tomojax.geometry import Grid, ScanGeometry
 from tomojax.progress import warn
 from tomojax.recon.api import MethodConfig
@@ -594,7 +594,7 @@ def reconstruct_resolved(
     scan, method = plan.scan, plan.method
     if method not in {"fbp", "fourier"}:
         _suggest_binning(scan, "iterative reconstruction")
-    with progress.runtime() as actual:
+    with registration(scan), progress.runtime() as actual:
         volume, info = reconstruct_arrays(
             method,
             scan.geometry,
@@ -810,7 +810,10 @@ def _slab_results(
     from tomojax.geometry import grid_volume_origin
 
     origin = grid_volume_origin(target)
-    with progress.outcome():
+    previews = (
+        SlabPlanes(target) if progress.previewing() and getattr(cfg, "iterations", 0) else None
+    )
+    with registration(frames), progress.outcome():
         progress.check_cancelled()
         for slab in prepared:
             block = replace(
@@ -844,6 +847,10 @@ def _slab_results(
                 Reconstruction(slab.volume, scan.geometry, method, info, scan),
             )
             last = slab.stop == target.nz
+            if previews is not None:
+                previews.add(slab.start, slab.stop, slab.volume)
+                if last:
+                    progress.preview(previews.images, final=True)
             progress.step("slabs", remaining=0 if last else None)
             yield result
             del result
@@ -1003,12 +1010,12 @@ def align_resolved(
     from tomojax._smooth_alignment import CentreSelection, align_poses
 
     if isinstance(plan, CentreSelection):
-        with progress.runtime() as actual:
+        with registration(scan), progress.runtime() as actual:
             alignment = _opposite_views(scan, plan)
         return replace(
             alignment, info={**alignment.info, "placement": actual.record(slabbed=False)}
         )
-    with progress.runtime() as actual:
+    with registration(scan), progress.runtime() as actual:
         result = align_poses(scan, fit=fit, plan=plan)
     slabbed = any(
         "host" in level["stacks"]["placement"].values()

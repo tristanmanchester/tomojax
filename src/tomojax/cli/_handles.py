@@ -4,22 +4,21 @@ from __future__ import annotations
 
 from functools import partial
 import math
-from typing import Any, get_args
+from typing import Any
 
 import numpy as np
 
 import tomojax as tj
 from tomojax.cli import execution as ex, products as p
 from tomojax.cli._results import scan_axes, unit_of
+from tomojax.core.registration import pose_columns
 from tomojax.geometry.api import is_cone_beam
 from tomojax.wire.arrays import (
     Array,
     Axis,
-    Column,
     Coordinates,
     Member,
     Npy,
-    PoseColumn,
     Storage,
     Uniform,
 )
@@ -160,10 +159,7 @@ def bind_result(
             (view, Axis("column", "pose", "index", Uniform(0, 1))),
             "mixed",
             "poses",
-            columns=tuple(
-                Column(name, "degree" if i < 3 else unit)
-                for i, name in enumerate(get_args(PoseColumn))
-            ),
+            columns=pose_columns(unit),
         )
         product = p.Alignment(identifier, scan_ref, arrays["poses"], arrays.get("image"))
     members.update({k: ex.RegisteredArray(pixels[k], a) for k, a in arrays.items()})

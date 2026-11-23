@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax.core.registration import planes
 from tomojax.wire.metrics import Metric
 
 from . import _common, _tv as tv
@@ -423,6 +424,9 @@ class _Level:
                 jax.block_until_ready(state)
             self.stacks.update([("x", state[0])])
             task.advance(high, {})
+            progress.preview(
+                lambda state=state: planes(state[0], self.ops.grid), final=high == iterations
+            )
             progress.check_cancelled()
         return self.stacks["x"]
 
@@ -818,10 +822,13 @@ def _descend(level, c, x0, budget, pose_sigma, weight):
         if level_task is not None:
             jax.block_until_ready((x, c))
             level_task.advance(len(history), history[-1])
+            progress.preview(lambda x=x, c=c: level.ops.preview(x, c))
         stable = stable + 1 if undamped is not None and undamped < budget.tolerance else 0
         if stable >= 2 and it + 1 >= budget.min_iterations:
             status = "pose_steps_below_tolerance"
             break
+    if history:
+        progress.preview(lambda: level.ops.preview(x, c), final=True)
     final_prior = float(prior.value(c, pose_weight))
     final_image_prior = level.image_penalty(x)
     record = {

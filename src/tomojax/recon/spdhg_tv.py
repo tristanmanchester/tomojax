@@ -36,6 +36,7 @@ from tomojax.core.validation import (
 from tomojax.recon._projection import (
     resolve_geometry_projector,
 )
+from tomojax.recon._volume_storage import preview_planes
 from tomojax.wire.metrics import Metric
 
 from ._chunks import Chunked, fixed_updates
@@ -780,7 +781,14 @@ def _spdhg_program(
 
     advance = functools.partial(_advance_spdhg, grid, detector, runtime)
     final = (
-        fixed_updates(initial, cfg.iterations, advance, drive, metrics)
+        fixed_updates(
+            initial,
+            cfg.iterations,
+            advance,
+            drive,
+            lambda s: preview_planes(s.x, runtime.projector[0], grid),
+            metrics,
+        )
         if cfg.iterations
         else initial
     )

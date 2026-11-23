@@ -124,6 +124,7 @@ def test_chunk_stops_at_completed_work(other_thread):
             20,
             advance,
             lambda s: (int(s), False, {}),
+            lambda _: pytest.fail("built a disabled preview"),
             task=progress.current_task.get(),
         )
     validate_tree(events)
@@ -1314,3 +1315,27 @@ def test_load_labels_describe_the_input_even_if_open_fails(tmp_path, read, name)
         (name, path.name)
     ]
     assert events[-1].status == "failed"
+
+
+def test_alignment_preview_uses_the_completed_pose_and_working_image(alignment_scan):
+    from tomojax.alignment import AlignConfig
+
+    events = []
+    with progress.watch(events.append, previews=True):
+        result = tj.align(
+            alignment_scan,
+            grid=alignment_scan.grid,
+            config=AlignConfig(
+                levels=(1,),
+                iterations=2,
+                initial_image_iterations=2,
+                image_iterations=2,
+                refine_iterations=1,
+                tolerance=0,
+            ),
+        )
+    previews = [e for e in events if isinstance(e, progress.Preview)]
+    assert any(set(p.arrays) == set("xyz") for p in previews)
+    poses = previews[-1].arrays["poses"]
+    np.testing.assert_allclose(poses.data, result.poses, atol=1e-6, rtol=1e-6)
+    assert [column.unit for column in poses.columns] == ["degree"] * 3 + ["scan_length"] * 3

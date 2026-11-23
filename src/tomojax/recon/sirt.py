@@ -37,6 +37,7 @@ from tomojax.recon._solver_validation import SIRT_CONTROL_ERROR, check_subset_co
 from tomojax.recon._volume_storage import (
     Model,
     pack_volume,
+    preview_planes,
     resident_model,
     restore_volume,
     volume_shape,
@@ -316,7 +317,13 @@ def _sirt_program(
         # Keep these maps with the host partitions between chunks. Their device
         # copies then share the compiled workspace with the projector scratch.
         norms = jax.block_until_ready(jax.device_put(norms, device.with_memory_kind("pinned_host")))
-    result = fixed_updates(state, iterations, partial(segment, norms=norms), drive)
+
+    def sample(s: jax.Array | _Momentum) -> dict[str, progress.Sample]:
+        return preview_planes(
+            s.current if isinstance(s, _Momentum) else s, options["model"], options["grid"]
+        )
+
+    result = fixed_updates(state, iterations, partial(segment, norms=norms), drive, sample)
     return result.current if isinstance(result, _Momentum) else result
 
 

@@ -384,5 +384,8 @@ def _refine(
         if (task := progress.for_unit("updates")) is not None:
             jax.block_until_ready(c)
             task.advance(len(steps), {})
+            progress.preview(lambda c=c: ops.preview(x, c))
         lm = max(1e-5, lm * 0.5)
+    if steps:
+        progress.preview(lambda: ops.preview(x, c), final=True)
     return c, {"status": status, "steps": steps, "delta": problem.delta}

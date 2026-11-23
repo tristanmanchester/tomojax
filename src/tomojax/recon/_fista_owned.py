@@ -17,6 +17,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.core.operator_norm import bounds_settled, collatz_ratio, unit
+from tomojax.recon._volume_storage import preview_planes
 from tomojax.wire.metrics import Metric
 
 from ._data_term import project_residual
@@ -191,6 +192,7 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
     task = progress.for_unit("iterations")
     if task is not None and first_value is not None:
         task.advance(1, {Metric.loss.name: float(first_value)})
+        progress.preview(lambda x=x: preview_planes(x, runtime.projector[0], grid))
     for _step in range(len(losses), cfg.iterations):
         progress.check_cancelled()
         with progress.preparing("first fista update", _step - (first_value is not None)):
@@ -205,6 +207,7 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
         if task is not None:
             jax.block_until_ready((z, t))
             task.advance(len(losses), {Metric.loss.name: float(value)})
+            progress.preview(lambda x=x: preview_planes(x, runtime.projector[0], grid))
         if early:
             objective = float(value)
             small = (
@@ -218,6 +221,8 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
                 break
     jax.block_until_ready((x, z, t))
     count = len(losses)
+    if count:
+        progress.preview(lambda x=x: preview_planes(x, runtime.projector[0], grid), final=True)
     losses.extend([value] * (cfg.iterations - count))
     state = FistaResult(x, z, jnp.stack(losses), jnp.int32(count), jnp.bool_(done))
     return state, jnp.asarray(limit, jnp.float32)

@@ -10,6 +10,7 @@ import jax.numpy as jnp
 
 from tomojax.core.cone import ConeModel
 from tomojax.core.joseph import PrivateJoseph
+from tomojax.core.registration import planes
 from tomojax.core.volume_layout import transpose_volume
 
 if TYPE_CHECKING:
@@ -47,6 +48,13 @@ def volume_shape(model: Model, grid: Grid) -> tuple[int, int, int]:
 def pack_volume[T: jax.Array | None](volume: T, model: Model) -> T:
     """Make an owned private initial or support inside the compiled solve."""
     return cast("T", transpose_volume(volume)) if volume is not None and _private(model) else volume
+
+
+def preview_planes(
+    volume: jax.Array, model: Model, grid: Grid, *, observed: jax.Array | None = None
+):
+    """Extract central planes without unpacking a private device volume."""
+    return planes(volume, grid, reversed_axes=_private(model), observed=observed)
 
 
 def restore_volume(volume: jax.Array, model: Model) -> jax.Array:
