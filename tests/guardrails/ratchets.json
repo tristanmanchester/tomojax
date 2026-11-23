@@ -36,7 +36,8 @@
     "reconstruct": 19,
     "align": 19,
     "export": 7,
-    "simulate": 19
+    "simulate": 19,
+    "serve": 1
   },
   "long_files": {
     "src/tomojax/core/cone.py": 826
@@ -55,7 +56,7 @@
     "_data": 2153,
     "alignment": 4509,
     "backends": 263,
-    "cli": 4102,
+    "cli": 4799,
     "core": 9575,
     "corrections": 2997,
     "datasets": 1070,
@@ -86,7 +87,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 65,
+    "tiny": 67,
     "forwarders": 5,
     "chained": 4
   },

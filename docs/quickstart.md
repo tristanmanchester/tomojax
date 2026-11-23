@@ -217,7 +217,7 @@ watch receives the events. Each event is an immutable snapshot.
 
 ```python
 import tomojax as tj
-from tomojax import progress
+import tomojax.progress as progress
 
 stop = progress.Control()
 

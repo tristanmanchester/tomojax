@@ -54,7 +54,27 @@ The compact UTF-8 encoding of `info` is limited to 65,536 bytes. Bulk members ar
 
 Decode a line as `tomojax.cli.envelope.Request`. For a queued command the adapter receives its typed `ExecutionInput` and an `ExecutionContext`. The owner resolves and pins the input references before queuing and supplies the leases, control, event sink, immutable allocator snapshot sink and private staging allocator. Adapters return `Success` or raise. They may only write to paths supplied by staging. An array reservation has distinct private and eventual public paths. Output reservations within one admission form a durable group, including manifests.
 
-A returned `NewHandle` gives logical bytes, a pure `bind(id)` returning the published product and member map, and a disposal callback. The owner assigns the ID and checks the channel revision at commit. Losing the race discards staged files and unpublished resources. Disposal after successful registration waits for the last lease. The owner emits all worker terminal envelopes. Worker transport, admission limits, writer policy and durable commit implementation belong to the worker milestone.
+A returned `NewHandle` gives logical bytes, a pure `bind(id)` returning the published product and member map, and a disposal callback. The owner assigns the ID and checks the channel revision at commit. Losing the race discards staged files and unpublished resources. Disposal after successful registration waits for the last lease. The owner emits all worker terminal envelopes.
+
+## Driving the process
+
+Start `tomojax serve` with stdin and stdout pipes. Read `ready` before submitting commands and use its capability list for this build. Read stdout concurrently with writing stdin. The worker samples the device inventory at startup and answers `describe`, `devices` and `status` from memory. Allocator samples come from the executor. An empty allocator list means no sample has arrived. The latest sample for each (device, scope) includes its own timestamp. Handle sizes are logical bytes.
+
+Send at most 1 MiB of UTF-8 per request line, excluding its newline. Request and channel IDs are limited to 256 UTF-8 bytes. Up to 64 execution requests may be active or queued. A replacement that displaces a queued admission can enter a full queue. Immediate commands still work at the queue limit. Use a fresh process after 100,000 admitted IDs. Shutdown remains available at the ID limit. An unknown member, mismatched artifact token and path, duplicate ID, unavailable command or exhausted admission limit yields `protocol_error`. A rejected replacement leaves the prior channel revision in effect.
+
+Queued commands run in arrival order. A later admission on the same channel increments its revision, removes queued predecessors and wakes a running predecessor. Cancellation of queued work ends it immediately. Running work stops at a cooperative checkpoint, or at publication if it returns first. Pause moves running work through `pause-requested` to `paused` at a checkpoint. Resume withdraws a pending pause or wakes a paused request. A paused request holds its memory and the execution queue. Send `control` or `status` off-channel when observing existing work.
+
+The writer preserves record order. Consecutive pending `advanced` events for one request and task may collapse to the newest event. Previews and their coordinate files are published before their record and stay available for release, including when a newer revision supersedes the job. The worker discards stale preview callbacks and disposes of their private reservations when the adapter exits. A partially written line always finishes before another begins.
+
+On shutdown or stdin EOF, the worker closes admission, cancels outstanding work, wakes paused requests and joins the executor. Keep draining stdout through EOF to receive every terminal, including those after the shutdown acknowledgement. Broken stdout, more than 16 MiB of queued output in addition to the line being written, or two seconds without any writable pipe capacity during final drain means connection loss. The process exits with status 1 after cleanup. A draining client gets status 0. After an unexpected EOF, use the filesystem to check durable destinations whose terminals were lost.
+
+## Durable files
+
+Save and export adapters reserve a private staging location on the destination filesystem for each file or directory, including sidecars and manifests. The session serialises admission and publication. Cancellation or a higher channel revision admitted before the commit check discards the entire group and preserves existing destinations even with `force`. Once the session enters commit, it finishes the group and queues its terminal before admitting another command. Sending bytes on stdin alone does not establish which command won.
+
+Without `force`, an existing group member causes the commit to fail. With `force`, originals move to private backups while the group is installed. A missing manifest, failed rename or other install error rolls back earlier group members and returns an error. A failed restoration reports the location of the retained original for recovery. Use the successful terminal as the point to open all files. Other filesystem readers can observe individual renames during a group commit. Concurrent external writers and process or machine crashes have no multi-file transaction guarantee.
+
+Release takes only the issued artifact token. A successful release or handle close rejects new references immediately. Earlier admissions retain their leased storage through their terminal. Normal shutdown removes remaining private and published session files. Committed outputs remain caller-owned.
 
 ## Ownership after Milestone 0
 
