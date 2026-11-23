@@ -21,6 +21,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.wire.metrics import Metric
 
 from ._chunks import Chunked
 from ._fista_initialization import first_gradient as estimate_first_gradient
@@ -574,7 +575,7 @@ def _fista_program(
 
     def completed(state: FistaScanState) -> tuple[int, bool, dict[str, float]]:
         count, stopped, loss = jax.device_get((state.iters_done, state.done, state.prev_obj))
-        return int(count), bool(stopped), {"loss": float(loss)}
+        return int(count), bool(stopped), {Metric.loss.name: float(loss)}
 
     iterations = runtime.config.iterations
     final = drive(initial, iterations, advance, completed) if iterations else initial

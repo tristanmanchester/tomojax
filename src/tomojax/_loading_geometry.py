@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
-import warnings
 
 import numpy as np
 
@@ -29,6 +28,7 @@ from tomojax.io.api import (
     with_view_offsets,
     without_view_offsets,
 )
+from tomojax.progress import warn
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -212,7 +212,7 @@ def frame_geometry(
         )
     declares_geom = declared is not None and declared.kind is not None
     if (geometry is not None or declares_geom) and (message := dropped_offsets_message(record)):
-        warnings.warn(message, stacklevel=4)
+        warn(message, stacklevel=4)
     record = _vendor_corrections(
         record, applied=apply_poses and geometry is None and not declares_geom
     )

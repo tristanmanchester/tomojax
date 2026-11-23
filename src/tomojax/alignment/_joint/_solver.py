@@ -21,6 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax.wire.metrics import Metric
 
 from . import _common, _tv as tv
 from ._krylov import solve as krylov_solve
@@ -586,12 +587,14 @@ class _Level:
             change = float(jnp.sqrt(jnp.mean(jnp.sum((a * beta * dp) ** 2, axis=1))))
             explicit = bool(linear_step.residual_is_explicit)
             linear_record = {
-                "proposed_pose_step_rms": float(jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1)))),
-                "cg_residual_kind": "explicit" if explicit else "recursive",
-                "cg_status": "converged"
+                Metric.proposed_pose_step_rms.name: float(
+                    jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1)))
+                ),
+                Metric.cg_residual_kind.name: "explicit" if explicit else "recursive",
+                Metric.cg_status.name: "converged"
                 if explicit and float(cg_residual) <= self.image_tolerance
                 else "budget_exhausted",
-                "cg_matvecs": int(linear_step.matvecs),
+                Metric.cg_matvecs.name: int(linear_step.matvecs),
             }
             return (
                 a,
@@ -749,17 +752,17 @@ def _descend(level, c, x0, budget, pose_sigma, weight):
         valid, down = map(float, np.asarray(obstats))
         history.append(
             {
-                "objective": fn,
-                "pose_step_rms": change,
-                "line_step": a,
-                "pose_fraction": beta,
-                "lm": lm,
-                "gain_ratio": rho,
-                "predicted_reduction": predicted,
-                "cg_iterations": cg_steps,
-                "cg_relative_residual": cg_residual,
+                Metric.objective.name: fn,
+                Metric.pose_step_rms.name: change,
+                Metric.line_step.name: a,
+                Metric.pose_fraction.name: beta,
+                Metric.lm.name: lm,
+                Metric.gain_ratio.name: rho,
+                Metric.predicted_reduction.name: predicted,
+                Metric.cg_iterations.name: cg_steps,
+                Metric.cg_relative_residual.name: cg_residual,
                 **linear_record,
-                "fraction_downweighted": down / max(valid, 1),
+                Metric.fraction_downweighted.name: down / max(valid, 1),
             }
         )
         f = fn
@@ -768,7 +771,7 @@ def _descend(level, c, x0, budget, pose_sigma, weight):
         elif rho < 0.25 or a < 0.5:
             lm = min(lm * 3, 1e6)
         undamped = _undamped_proposal(level, history[-1], x0, c0, linear, budget, pose_weight)
-        history[-1]["undamped_proposed_pose_step_rms"] = undamped
+        history[-1][Metric.undamped_proposed_pose_step_rms.name] = undamped
         if (task := progress.for_unit("steps")) is not None:
             jax.block_until_ready((x, c))
             task.advance(len(history), history[-1])

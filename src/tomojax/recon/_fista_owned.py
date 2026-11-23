@@ -17,6 +17,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.core.operator_norm import bounds_settled, collatz_ratio, unit
+from tomojax.wire.metrics import Metric
 
 from ._data_term import project_residual
 from ._fista_initialization import power_start
@@ -189,7 +190,7 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
     value = jnp.float32(0) if first_value is None else first_value
     task = progress.for_unit("iterations")
     if task is not None and first_value is not None:
-        task.advance(1, {"loss": float(first_value)})
+        task.advance(1, {Metric.loss.name: float(first_value)})
     for _step in range(len(losses), cfg.iterations):
         progress.check_cancelled()
         residual = _residual(grid, detector, data, z, runtime)
@@ -202,7 +203,7 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
         losses.append(value)
         if task is not None:
             jax.block_until_ready((z, t))
-            task.advance(len(losses), {"loss": float(value)})
+            task.advance(len(losses), {Metric.loss.name: float(value)})
         if early:
             objective = float(value)
             small = (

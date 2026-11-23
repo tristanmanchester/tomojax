@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
-import warnings
 
 import numpy as np
 
@@ -12,6 +11,7 @@ from tomojax._scan import Reconstruction, describe, record_of, with_grid
 from tomojax.alignment._integration import cone_frames, fit_poses
 from tomojax.backends.api import is_oom_error
 from tomojax.geometry import stack_view_poses
+from tomojax.progress import warn
 
 if TYPE_CHECKING:
     from tomojax._scan import Scan
@@ -79,7 +79,7 @@ def _warn_about_views(report: dict) -> None:
         parts.append(f"{len(unusual)} views fit unusually badly ({_first(unusual)})")
     if not parts:
         return
-    warnings.warn(
+    warn(
         f"tj.align: {'; '.join(parts)}. The report is advisory: see info['report'] and "
         "'Check the result' in docs/align-a-scan.md.",
         stacklevel=3,

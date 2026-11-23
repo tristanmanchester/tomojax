@@ -1075,3 +1075,48 @@ def test_logger_notes_between_and_inside_operations(caplog):
         (2, "during save"),
     ]
     assert [r.getMessage() for r in caplog.records] == [n["message"] for n in notes]
+
+
+@pytest.mark.parametrize(
+    ("action", "count"), [("ignore", 0), ("always", 2), ("default", 1), ("module", 1), ("once", 1)]
+)
+def test_warning_notes_follow_filters_and_inner_watch(action, count):
+    import warnings
+
+    outer, inner = [], []
+    with warnings.catch_warnings(record=True) as ordinary, progress.watch(outer.append):
+        warnings.simplefilter(action)
+        with progress.watch(inner.append), progress.task("load", "test", None, "views"):
+            for _ in range(2):
+                progress.warn("message", stacklevel=1)
+    assert [e.message for e in inner if isinstance(e, progress.Note)] == ["message"] * count
+    assert len(ordinary) == count and not outer
+
+
+def test_promoted_and_unrelated_warnings():
+    import warnings
+
+    events = []
+    with progress.watch(events.append), warnings.catch_warnings(record=True) as ordinary:
+        warnings.simplefilter("always")
+        with ThreadPoolExecutor(1) as pool:
+            pool.submit(warnings.warn, "other thread").result()
+        warnings.simplefilter("error")
+        with pytest.raises(UserWarning, match="promoted"):
+            progress.warn("promoted", stacklevel=1)
+    assert not events and [str(w.message) for w in ordinary] == ["other thread"]
+
+
+def test_metric_inventory_and_unknown_emission():
+    from pathlib import Path
+
+    from tomojax.wire.metrics import table
+
+    doc = Path(__file__).resolve().parents[1] / "docs/progress-metrics.md"
+    assert doc.read_text() == "# Progress metrics\n\n" + table() + "\n"
+    with (
+        progress.watch(lambda event: None),
+        progress.task("align", "test", 1, "steps"),
+        pytest.raises(ValueError, match="undeclared.*typo"),
+    ):
+        progress.current_task.get().advance(1, {"typo": 1})

@@ -35,6 +35,7 @@ from tomojax.recon._projection import (
     ProjectorBackend,
     resolve_geometry_projector,
 )
+from tomojax.wire.metrics import Metric
 
 from ._chunks import Chunked, fixed_updates
 from ._data_term import project_residual
@@ -774,8 +775,8 @@ def _spdhg_program(
 
     def metrics(state: _SPDHGScanState, done: int) -> dict[str, float | None]:
         if cfg.log_every and done and done % cfg.log_every == 0:
-            return {"loss": float(state.losses[done - 1])}
-        return {"loss": None}
+            return {Metric.loss.name: float(state.losses[done - 1])}
+        return {Metric.loss.name: None}
 
     advance = functools.partial(_advance_spdhg, grid, detector, runtime)
     final = (

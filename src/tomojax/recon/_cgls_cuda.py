@@ -16,6 +16,7 @@ from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.joseph_cuda import JosephCUDA
 from tomojax.core.validation import validate_grid, validate_pose_stack, validate_projection_stack
+from tomojax.wire.metrics import Metric
 
 from ._cgls_stopping import cancellation_magnitude, precision_stalled, termination
 from ._data_term import project_residual
@@ -230,7 +231,7 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
             gamma = gamma_new
         if (task := progress.for_unit("iterations")) is not None:
             cp.cuda.get_current_stream().synchronize()
-            task.advance(count, {"normal_residual_norm": float(np.sqrt(norm2))})
+            task.advance(count, {Metric.normal_residual_norm.name: float(np.sqrt(norm2))})
     converged = bool(not failed and norm2 <= tolerance**2)
     info = {
         "effective_iterations": count,

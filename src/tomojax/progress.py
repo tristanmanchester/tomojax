@@ -6,20 +6,23 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from functools import wraps
+import inspect
 from itertools import count
 import logging
 from math import isfinite
 from threading import Condition, RLock
 from time import monotonic
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
+import warnings
 
 from tomojax.errors import Cancelled, classify
+from tomojax.wire.metrics import Metric
+from tomojax.wire.progress import NoteLevel
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
 
-    from tomojax.wire.progress import NoteLevel
 
 __all__ = [
     "Advanced",
@@ -315,6 +318,8 @@ class _Task:
     def advance(self, done: int, metrics: Mapping[str, _Metric]) -> None:
         if done < self.done or (self.total is not None and done > self.total):
             raise ValueError("completed work outside task bounds")
+        if unknown := metrics.keys() - Metric.__members__.keys():
+            raise ValueError(f"undeclared progress metrics: {sorted(unknown)}")
         self.done = done
         elapsed = monotonic() - self.watcher.pause_time - self.start
         eta = (self.total - done) * elapsed / done if self.total is not None and done else None
@@ -355,6 +360,46 @@ def note(level: NoteLevel, message: str) -> None:
         watcher.emit(Note, None if active is None else active.id, level, message)
 
 
+def warn(message: str, *, stacklevel: int) -> None:
+    """Issue a TomoJAX UserWarning at its public caller and report visible warnings.
+
+    Leave the interpreter in charge of filtering, repeat suppression, promotion to
+    exceptions, and delivery. Snapshot the two repeat keys because the first
+    delivery writes them into the caller's registry.
+    """
+    if _watch.get() is None:
+        warnings.warn(message, stacklevel=stacklevel + 1)
+        return
+    frame = inspect.currentframe()
+    for _ in range(stacklevel):
+        frame = frame.f_back if frame else None
+    namespace = frame.f_globals if frame else {}
+    lineno = frame.f_lineno if frame else 1
+    location = (message, UserWarning, lineno)
+    module_key = (message, UserWarning)
+    registry = namespace.setdefault("__warningregistry__", {})
+    version = registry.get("version")
+    seen_here, seen_module = registry.get(location), registry.get(module_key)
+    # Python 3.14 may keep catch_warnings filters in a context variable.
+    filters = getattr(warnings, "_get_filters", lambda: warnings.filters)()
+    module = namespace.get("__name__", "")
+    action = next(
+        (
+            action
+            for action, text, category, mod, line in filters
+            if issubclass(UserWarning, category)
+            and (not text or text.match(message))
+            and (not mod or mod.match(module))
+            and line in (0, lineno)
+        ),
+        getattr(warnings, "defaultaction", "default"),
+    )
+    warnings.warn(message, stacklevel=stacklevel + 1)
+    repeated = seen_here or (action in ("module", "once") and seen_module)
+    if action != "ignore" and (version != registry.get("version") or not repeated):
+        note("warning", message)
+
+
 class _LogNotes(logging.NullHandler):
     """Observe the TomoJAX logger hierarchy without serialising independent watches."""
 
@@ -381,7 +426,7 @@ class _LogNotes(logging.NullHandler):
         return True
 
 
-_LEVELS: tuple[NoteLevel, ...] = ("debug", "info", "warning", "error", "critical")
+_LEVELS = get_args(NoteLevel.__value__)
 _logging_watch = ContextVar[_Watch | None]("tomojax_logging_watch", default=None)
 _log_notes = _LogNotes()
 

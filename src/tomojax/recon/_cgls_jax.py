@@ -40,6 +40,7 @@ from tomojax.recon._volume_storage import (
     voxel_spacing,
 )
 from tomojax.recon.cgls import CGLSConfig, resident_bytes, validate_model
+from tomojax.wire.metrics import Metric
 
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
@@ -624,7 +625,7 @@ def _cgls_program(
             int(count),
             bool(failed or roundoff or gamma <= threshold_host * threshold_host),
             {
-                "normal_residual_norm": float(np.sqrt(gamma)),
+                Metric.normal_residual_norm.name: float(np.sqrt(gamma)),
             },
         )
 

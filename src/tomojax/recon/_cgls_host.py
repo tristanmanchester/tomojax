@@ -25,6 +25,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.cone import ConeModel
 from tomojax.core.host_volume import fill, host_volume, scratch_directory
+from tomojax.wire.metrics import Metric
 
 from ._cgls_stopping import precision_stalled, termination
 from ._cone_slabs import Batch, RowReader, cone_problem, host_projections, host_volumes
@@ -412,7 +413,9 @@ class _HostCGLS:
             if (task := progress.for_unit("iterations")) is not None:
                 residual = gamma_new if np.isfinite(gamma_new) else gamma
                 self.problem.completed(
-                    task.advance, count, {"normal_residual_norm": float(np.sqrt(residual))}
+                    task.advance,
+                    count,
+                    {Metric.normal_residual_norm.name: float(np.sqrt(residual))},
                 )
             if not np.isfinite(gamma_new):
                 state["failed"] = True

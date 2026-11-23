@@ -20,7 +20,6 @@ import json
 import logging
 import os
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
-import warnings
 
 import numpy as np
 
@@ -38,6 +37,7 @@ from tomojax._scan import (
     source_of,
     with_grid,
 )
+from tomojax.progress import warn
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator, Sequence
@@ -112,7 +112,7 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
         )
     scan = None if record.projections is None else load(path)
     if scan is None:
-        warnings.warn(
+        warn(
             f"{path} holds the reconstruction without its scan (saved without "
             "include_scan=True): its scan is None, and info['source'] names the projections",
             stacklevel=2,
@@ -1171,7 +1171,7 @@ def _suggest_binning(scan: Scan, work: str) -> None:
     if ratio < 2:
         return
     factor = int(ratio)
-    warnings.warn(
+    warn(
         f"the detector samples the rotation axis {ratio:.1f} times more finely than the "
         f"grid's voxels: scan.binned({factor}) makes {work} up to {factor * factor} times "
         "cheaper for little loss of detail",

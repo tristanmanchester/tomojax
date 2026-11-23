@@ -11,6 +11,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.host_volume import close_work_file, host_volume, scratch_directory
 from tomojax.core.operator_norm import bounds_settled
+from tomojax.wire.metrics import Metric
 
 from ._cuda_tv import proximal_host
 from ._noise_probe import gaussian_probe
@@ -260,7 +261,7 @@ class HostFista:
                 done = streak >= cfg.patience
             losses.append(loss)
             if (task := progress.for_unit("iterations")) is not None:
-                self.problem.completed(task.advance, len(losses), {"loss": loss})
+                self.problem.completed(task.advance, len(losses), {Metric.loss.name: loss})
             t = tn
             if done:
                 break
