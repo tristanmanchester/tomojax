@@ -58,7 +58,7 @@
     "alignment": 4637,
     "backends": 263,
     "cli": 5612,
-    "core": 9637,
+    "core": 9677,
     "corrections": 3038,
     "datasets": 1069,
     "forward": 404,
@@ -66,7 +66,7 @@
     "io": 3947,
     "motion": 153,
     "nuisance": 232,
-    "recon": 14015,
+    "recon": 14073,
     "wire": 266
   },
   "cuda_kernels": 47,
@@ -80,6 +80,7 @@
   "complex_functions": [
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
     "src/tomojax/core/_logging.py::PLR0911::format_duration",
+    "src/tomojax/core/devices.py::C901::sum_batches",
     "src/tomojax/datasets/_impl/artefacts.py::C901::apply_simulation_artefacts",
     "src/tomojax/datasets/_impl/artefacts.py::PLR0915::apply_simulation_artefacts",
     "src/tomojax/recon/_cgls_cuda.py::PLR0915::_iterate",
@@ -94,7 +95,7 @@
     "chained": 4
   },
   "type_errors": {
-    "reportArgumentType": 43,
+    "reportArgumentType": 44,
     "reportAttributeAccessIssue": 17,
     "reportCallIssue": 2,
     "reportIndexIssue": 6,

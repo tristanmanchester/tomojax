@@ -17,6 +17,7 @@ solvers, which model the cone geometry exactly.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -31,7 +32,7 @@ import numpy as np
 from tomojax import progress
 from tomojax._parameters import check_backend
 from tomojax.core.cone import ConeModel, use_cuda_cone
-from tomojax.core.devices import announce, as_devices, view_split
+from tomojax.core.devices import BatchRanges, announce, as_devices, sum_batches, view_split
 from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.geometry.cone import cone_parts
 from tomojax.core.geometry.views import stack_view_poses
@@ -584,7 +585,9 @@ def _accumulate(
     # filtering/backprojection executable, rather than compiling every origin.
     kernel_grid = replace(grid, vol_origin=None, vol_center=None)
 
-    def backprojected(device: Device | None, views: range) -> jax.Array:
+    def backprojected(
+        device: Device | None, views: range, groups: BatchRanges
+    ) -> Generator[jax.Array]:
         """The weighted backprojection of ``views``, on ``device`` (JAX's default for None)."""
         here = prep.on(device, views)
         share = jax.device_put(coeff[views.start : views.stop], device)
@@ -600,30 +603,37 @@ def _accumulate(
         # and backprojected.
         with ThreadPoolExecutor(max_workers=1) as copier:
             pending = copier.submit(read, 0)
-            task = progress.for_unit("batches")
-            for index, start in enumerate(starts):
-                if task is not None:
-                    progress.check_cancelled()
-                batch = pending.result()
-                if index + 1 < len(starts):
-                    pending = copier.submit(read, starts[index + 1])
-                with progress.preparing("dispatch cone backprojection", index):
-                    out = _fdk_batch(
-                        batch, start, share, here.cosine, here.weights, here.kernel, here.operator,
-                        out, grid=kernel_grid, detector=virtual, scale=prep.scale, cuda=prep.cuda,
-                        pad_lo=prep.pad_lo, pad_hi=prep.pad_hi,
-                    )  # fmt: skip
-                # Keep only this batch and its prefetched successor live.
-                out.block_until_ready()
-                if task is not None:
-                    progress.step("batches", remaining=len(starts) - index - 1)
-        return out
+            for group in groups(prep.batch):
+                for index in group:
+                    start = starts[index]
+                    batch = pending.result()
+                    if index + 1 < len(starts):
+                        pending = copier.submit(read, starts[index + 1])
+                    with progress.preparing("dispatch cone backprojection", index):
+                        out = _fdk_batch(
+                            batch,
+                            start,
+                            share,
+                            here.cosine,
+                            here.weights,
+                            here.kernel,
+                            here.operator,
+                            out,
+                            grid=kernel_grid,
+                            detector=virtual,
+                            scale=prep.scale,
+                            cuda=prep.cuda,
+                            pad_lo=prep.pad_lo,
+                            pad_hi=prep.pad_hi,
+                        )
+                    # Keep only this batch and its prefetched successor live.
+                    out.block_until_ready()
+                yield out
 
     split = view_split(devices, n_views)
     if split is None:
         announce()
-    whole = range(n_views)
-    return backprojected(None, whole) if split is None else split.summed(backprojected)
+    return sum_batches(split, n_views, prep.batch, backprojected)
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -5,7 +5,7 @@ volume, and the volumes are summed, so the transpose stays exact; only the order
 of that sum differs from one device. So that the shares are equal, the views are
 padded with copies of the last one that count for nothing. Compiled solvers run
 the shares in one ``shard_map``; FBP and FDK, host-driven loops, run each share
-in a thread of its own (:meth:`ViewSplit.summed`).
+in a thread of its own (:func:`sum_batches`).
 
 Whether one block of a size can be had on the GPU, from the allocator's figures or by
 allocating it, is answered here once for every layer (:func:`block_fits`,
@@ -14,11 +14,12 @@ allocating it, is answered here once for every layer (:func:`block_fits`,
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
+import math
 from typing import TYPE_CHECKING
 
 import jax
@@ -113,32 +114,71 @@ class ViewSplit:
             if k * per < self.n
         ]
 
-    def summed(self, run: Callable[[Device, range], jax.Array]) -> jax.Array:
-        """The sum, on :attr:`first`, of ``run(device, views)`` over :meth:`shares`.
 
-        Each device's ``run`` is a thread of its own, with that device JAX's
-        default, so host-driven loops (batches streamed from the host, CUDA
-        launches) keep every device busy at once.
-        """
-        runtime = progress.current_runtime.get()
+type BatchRanges = Callable[[int], Iterator[range]]
 
-        def on(share: tuple[Device, range]) -> jax.Array:
-            device, views = share
-            token = progress.current_runtime.set(runtime)
-            try:
-                with jax.default_device(device):
-                    return run(device, views)
-            finally:
-                progress.current_runtime.reset(token)
 
-        shares = self.shares()
+def sum_batches(
+    split: ViewSplit | None,
+    views: int,
+    batch_size: int,
+    partials: Callable[[Device | None, range, BatchRanges], Generator[jax.Array]],
+) -> jax.Array:
+    """Drive independent device accumulators to the same checkpoint, then report on the owner.
+
+    A share keeps its original view range, numerical batch and summation order.
+    If a share retries with smaller batches, it replays to the current view
+    boundary before it can yield another partial volume.
+    """
+    shares = [(None, range(views))] if split is None else split.shares()
+    if split is not None:
         announce(tuple(device for device, _ in shares))
-        with ThreadPoolExecutor(len(shares)) as pool:
-            parts = list(pool.map(on, shares))
-        total = parts[0]
-        for part in parts[1:]:
-            total = total + jax.device_put(part, self.first)
-        return total
+    counts = [math.ceil(len(share) / batch_size) for _, share in shares]
+    task = progress.for_unit("batches")
+    end = max(counts)
+    runtime = progress.current_runtime.get()
+
+    def ranges(length: int) -> BatchRanges:
+        def groups(size: int) -> Iterator[range]:
+            first, total = 0, math.ceil(length / size)
+            while first < total:
+                stop = min(total, math.ceil(end * batch_size / size))
+                yield range(first, stop)
+                first = stop
+
+        return groups
+
+    active = [partials(device, share, ranges(len(share))) for device, share in shares]
+    volumes: dict[int, jax.Array] = {}
+
+    def dispatch(index: int) -> tuple[int, jax.Array]:
+        device = shares[index][0]
+        token = progress.current_runtime.set(runtime)
+        try:
+            with jax.default_device(device) if device is not None else nullcontext():
+                return index, next(active[index])
+        finally:
+            progress.current_runtime.reset(token)
+
+    with ExitStack() as jobs:
+        for accumulator in active:
+            jobs.callback(accumulator.close)
+        pool = jobs.enter_context(ThreadPoolExecutor(len(shares))) if split is not None else None
+        for first, end in progress.chunks(max(counts)) if task is not None else [(0, max(counts))]:
+            indices = [index for index, count in enumerate(counts) if count > first]
+            with progress.preparing("dispatch backprojection", first):
+                results = map(dispatch, indices) if pool is None else pool.map(dispatch, indices)
+                for index, volume in results:
+                    if counts[index] <= end:
+                        volumes[index] = volume
+                    del volume
+            if task is not None:
+                task.total = sum(counts)
+                task.advance(sum(min(count, end) for count in counts), {})
+    total = volumes[0]
+    for index in range(1, len(shares)):
+        total = total + jax.device_put(volumes[index], shares[0][0])
+    return total
 
 
 # The devices a run's solvers share their views among, set by :func:`sharing`.

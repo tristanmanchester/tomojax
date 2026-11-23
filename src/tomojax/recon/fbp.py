@@ -1,6 +1,6 @@
 """Filtered-backprojection reconstruction routines."""
 
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 import math
@@ -14,7 +14,7 @@ from tomojax import progress
 from tomojax._parameters import Filter, check_backend
 from tomojax._typed_arrays import Device
 from tomojax.backends.api import is_oom_error
-from tomojax.core.devices import announce, as_devices, view_split
+from tomojax.core.devices import BatchRanges, announce, as_devices, sum_batches, view_split
 from tomojax.core.geometry import Detector, Geometry, Grid, grid_volume_origin
 from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.parallel import ParallelGeometry
@@ -267,6 +267,9 @@ def _run_fbp_streamed(
     z_mode: str,
     separable: bool,
     cache_filtered: bool = False,
+    accum: jax.Array | None = None,
+    first: int = 0,
+    stop: int | None = None,
 ) -> jnp.ndarray:
     """Bound filter batches; a bounded axial consumer may retain filtered rows."""
     n, nv, nu = projections.shape
@@ -306,10 +309,10 @@ def _run_fbp_streamed(
         )
 
     return jax.lax.fori_loop(
-        0,
-        (n + b - 1) // b,
+        first,
+        (n + b - 1) // b if stop is None else stop,
         step,
-        jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32),
+        jnp.zeros((grid.nz, grid.ny, grid.nx), dtype=jnp.float32) if accum is None else accum,
     )
 
 
@@ -485,6 +488,43 @@ def _fbp_from_host(
             check_finite=check_finite,
             cache_filtered=cache_filtered,
         )
+    return next(
+        _host_batches(
+            poses,
+            projections,
+            view_scale,
+            params,
+            spectrum,
+            arc_length,
+            grid=grid,
+            detector=detector,
+            backend=backend,
+            batch_size=batch_size,
+            separable=separable,
+            z_mode=z_mode,
+            check_finite=check_finite,
+            groups=lambda size: iter((range(math.ceil(projections.shape[0] / size)),)),
+        )
+    )
+
+
+def _host_batches(
+    poses: np.ndarray,
+    projections: np.ndarray | ProjectionRows,
+    view_scale: np.ndarray,
+    params: np.ndarray,
+    spectrum: jnp.ndarray,
+    arc_length: float,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    separable: bool,
+    z_mode: str,
+    check_finite: bool,
+    groups: BatchRanges,
+) -> Generator[jax.Array]:
     n = projections.shape[0]
     b = min(batch_size, n)
 
@@ -504,35 +544,31 @@ def _fbp_from_host(
         return tuple(jax.device_put(np.asarray(a, np.float32)) for a in arrays)
 
     accum = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32)
-    task = progress.for_unit("batches")
     pending = batch(0)
-    for start in range(0, n, b):
-        if task is not None:
-            progress.check_cancelled()
-        current = pending
-        # Dispatch is asynchronous: read and transfer the next batch while this one runs.
-        with progress.preparing("dispatch filtered backprojection", start):
-            accum = _fbp_accumulate_batch(
-                accum,
-                *current,
-                spectrum,
-                jnp.float32(arc_length),
-                grid=grid,
-                detector=detector,
-                backend=backend,
-                separable=separable,
-                z_mode=z_mode,
-            )
-        if start + b < n:
-            pending = batch(start + b)
-            # Prefetch overlaps this step, but do not enqueue another compute
-            # step until it finishes: asynchronous submissions can otherwise
-            # retain an unbounded number of input batches on the device.
-            accum.block_until_ready()
-        if task is not None:
-            accum.block_until_ready()
-            progress.step("batches", remaining=(n - start - 1) // b)
-    return accum
+    for group in groups(b):
+        for index in group:
+            start = index * b
+            current = pending
+            # Dispatch is asynchronous: read and transfer the next batch while this one runs.
+            with progress.preparing("dispatch filtered backprojection", start):
+                accum = _fbp_accumulate_batch(
+                    accum,
+                    *current,
+                    spectrum,
+                    jnp.float32(arc_length),
+                    grid=grid,
+                    detector=detector,
+                    backend=backend,
+                    separable=separable,
+                    z_mode=z_mode,
+                )
+            if start + b < n:
+                pending = batch(start + b)
+                # Prefetch overlaps this step, but do not enqueue another compute
+                # step until it finishes: asynchronous submissions can otherwise
+                # retain an unbounded number of input batches on the device.
+                accum.block_until_ready()
+        yield accum
 
 
 def supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
@@ -675,11 +711,13 @@ class _Plan:
     batch: int
     z_mode: str
 
-    def backprojected(self, device: Device | None, views: range) -> jnp.ndarray:
-        """The weighted backprojection of ``views``, on ``device`` (JAX's default for None).
-
-        Batches halve after an out-of-memory error until one view fits.
-        """
+    def backprojected(
+        self,
+        device: Device | None,
+        views: range,
+        groups: BatchRanges,
+    ) -> Generator[jax.Array]:
+        """The device's partial volume at the coordinator's completed view boundaries."""
         part, size = slice(views.start, views.stop), self.batch
         put = partial(jax.device_put, device=device)
         options = {
@@ -692,19 +730,27 @@ class _Plan:
         while True:
             try:
                 if isinstance(self.projections, jax.Array):
-                    with progress.preparing("dispatch filtered backprojection"):
+                    arrays = (
+                        put(self.poses[part]),
+                        put(self.projections[part]),
+                        put(jnp.asarray(self.view_scale[part])),
+                        put(jnp.asarray(self.params[part])),
+                        put(self.spectrum),
+                        jnp.float32(self.arc_length),
+                    )
+                    acc = None
+                    for group in groups(size):
                         acc = _run_fbp_streamed(
-                            put(self.poses[part]),
-                            put(self.projections[part]),
-                            put(jnp.asarray(self.view_scale[part])),
-                            put(jnp.asarray(self.params[part])),
-                            put(self.spectrum),
-                            jnp.float32(self.arc_length),
+                            *arrays,
                             batch_size=size,
+                            accum=acc,
+                            first=group.start,
+                            stop=None if group.stop * size >= len(views) else group.stop,
                             **options,
                         )
+                        yield acc.block_until_ready()
                 else:
-                    acc = _fbp_from_host(
+                    for acc in _host_batches(
                         np.asarray(self.poses, np.float32)[part],
                         self.projections[part],
                         self.view_scale[part],
@@ -712,12 +758,12 @@ class _Plan:
                         self.spectrum,
                         self.arc_length,
                         batch_size=size,
+                        groups=groups,
+                        check_finite=False,
                         **options,
-                    )
-                # Surface asynchronous allocation failures here, where a retry
-                # can use smaller batches.
-                acc.block_until_ready()
-                return acc
+                    ):
+                        yield acc.block_until_ready()
+                return
             except Exception as exc:
                 if size == 1 or not is_oom_error(exc):
                     raise
@@ -879,6 +925,5 @@ def fbp(
         split = view_split(cfg.devices, n_views)
         if split is None:
             announce(array=proj)
-        whole = range(n_views)
-        acc = plan.backprojected(None, whole) if split is None else split.summed(plan.backprojected)
+        acc = sum_batches(split, n_views, plan.batch, plan.backprojected)
         return acc.block_until_ready() if progress.for_unit("batches") is not None else acc
