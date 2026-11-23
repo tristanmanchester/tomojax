@@ -710,7 +710,7 @@ def axial_fbp_plane(
         or _detector_grid(geometry, detector) is not None
     ):
         return None
-    if too_large_for_the_device(grid, cfg):
+    if too_large_for_the_device(geometry, grid, cfg):
         from dataclasses import replace
 
         from ._fbp_storage import first_device

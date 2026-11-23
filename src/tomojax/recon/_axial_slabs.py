@@ -29,6 +29,7 @@ def independent_planes(geometry: Geometry, grid: Grid, detector: Detector) -> bo
     """Whether axial Joseph sampling is one identical 2D operator per plane."""
     return (
         type(geometry) is ParallelGeometry
+        and not geometry.detector_roll
         and grid.nz == detector.nv
         and grid.vz == detector.dv
         and grid_volume_origin(grid)[2] == detector.center[1] - (detector.nv - 1) * detector.dv / 2

@@ -8,19 +8,19 @@ from typing import TYPE_CHECKING, Any
 from tomojax.wire.resources import Placement, Snapshot
 
 if TYPE_CHECKING:
-    from tomojax.geometry import Detector, Grid
+    from tomojax.geometry import ScanGeometry
     from tomojax.recon.api import MethodConfig
 
 
 def inversion_storage(
     method: str,
     cfg: MethodConfig,
-    grid: Grid,
-    detector: Detector,
+    geometry: ScanGeometry,
     data: Any,
     snapshot: tuple[Snapshot, ...],
 ) -> Placement:
     """Estimate host and device bytes from the arrays and the current placement policy."""
+    grid, detector = geometry.grid, geometry.detector
     views, rows, cols = data.shape
     hosts = int(data.nbytes)
     projections = 4 * views * rows * cols
@@ -47,9 +47,18 @@ def inversion_storage(
         )
     # FBP reserves the remainder for projection, filtering and backprojection workspace.
     if method == "fbp":
-        from ._fbp_storage import volume_exceeds_room
+        from ._fbp_storage import needs_fbp_slabs
 
-        slabbed = volume_exceeds_room(grid, room)
+        slabbed = needs_fbp_slabs(geometry, grid, room)
+    elif method in {"sirt", "mlem"}:
+        from tomojax.core.geometry.cone import is_cone_beam
+
+        from ._axial_slabs import independent_planes
+
+        eligible = is_cone_beam(geometry) or (
+            grid.nz > 1 and independent_planes(geometry, grid, detector)
+        )
+        slabbed = eligible and room is not None and resident > room
     else:
         slabbed = bool(getattr(cfg, "stream", False)) or (room is not None and resident > room)
     from .fista_tv import FISTAConfig, fista_view_batch

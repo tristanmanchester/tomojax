@@ -35,7 +35,7 @@ def fbp_volume(
 
     if out is not None and det_grid is not None:
         raise ValueError("host output does not support explicit detector grids")
-    if out is not None or (det_grid is None and too_large_for_the_device(grid, config)):
+    if out is not None or (det_grid is None and too_large_for_the_device(geometry, grid, config)):
         volume = _host_fbp(
             geometry, grid, detector, projections, config, out=out, slab_planes=slab_planes
         )
@@ -54,19 +54,23 @@ def first_device(cfg: FBPConfig) -> AbstractContextManager[object]:
     return jax.default_device(devices[0]) if devices else nullcontext()
 
 
-def too_large_for_the_device(grid: Grid, cfg: FBPConfig) -> bool:
+def too_large_for_the_device(geometry: Geometry, grid: Grid, cfg: FBPConfig) -> bool:
     """Whether an FBP volume would take more than 40% of free device memory."""
     from tomojax.backends import device_free_memory_bytes
 
     # View-shared reconstruction holds the whole volume on every device.
     with first_device(cfg):
         free = device_free_memory_bytes()
-    return volume_exceeds_room(grid, free)
+    return needs_fbp_slabs(geometry, grid, free)
 
 
-def volume_exceeds_room(grid: Grid, free: int | None) -> bool:
-    """Reserve 60% of the available device memory for projection workspaces."""
-    return free is not None and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
+def needs_fbp_slabs(geometry: Geometry, grid: Grid, free: int | None) -> bool:
+    """Use host slabs for a canonical detector when the volume exceeds its device budget."""
+    return (
+        not getattr(geometry, "detector_roll", 0)
+        and free is not None
+        and 4 * grid.nx * grid.ny * grid.nz > 0.4 * free
+    )
 
 
 def fdk_config(cfg: FBPConfig) -> FDKConfig:

@@ -135,3 +135,23 @@ def test_explicit_fourier_backend_needs_cupy_at_preflight(monkeypatch):
     with pytest.raises(tj.InvalidParameter) as err:
         resolve_reconstruction(source, "fourier", config=FourierConfig(backend="cupy"))
     assert err.value.path == "config.backend"
+
+
+@pytest.mark.parametrize("method", ["fbp", "sirt", "mlem", "fourier"])
+@pytest.mark.parametrize("roll", [0.0, 18.0])
+def test_low_memory_plan_and_run_agree_on_rolled_slab_eligibility(monkeypatch, method, roll):
+    grid = tj.Grid(6, 6, 5, 1, 1, 1)
+    geom = tj.ParallelGeometry(
+        grid, tj.Detector(8, 5, 1, 1), np.arange(9) * 20.0, detector_roll=roll
+    )
+    subject = tj.Scan(np.ones((9, 5, 8), np.float32), geom)
+    options = {"iterations": 1} if method in ("mlem", "sirt") else {}
+    monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda **_: 1)
+    snapshot = (Snapshot(0, "cpu:0", "host", None, None, 1),)
+    planned = plan_product(
+        subject, resolve_reconstruction(subject, method, **options), snapshot=snapshot
+    )
+    actual = tj.reconstruct(subject, method, **options)
+    expected = "slabbed" if method == "fourier" or not roll else "resident"
+    assert actual.info["placement"]["strategy"] == expected
+    assert planned.placement.strategy == expected

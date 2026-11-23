@@ -24,7 +24,7 @@ A full-size synchrotron scan easily hits this limit (Diamond I13 159815 is 73 GB
 
 | Method | Projections | Volume |
 | --- | --- | --- |
-| FBP (parallel and laminography) | Streamed in view batches from host memory | Switches to host slabs above 40% of free VRAM |
+| FBP (parallel and laminography) | Streamed in view batches from host memory | Switches to host slabs above 40% of free VRAM with an unrolled detector |
 | Fourier (axial parallel only) | Read from host arrays or memmaps by row slab | Always built in host slabs |
 | FDK (cone beam) | Read from host memory by detector-row band when volume is in host slabs | Switches to host z-slabs above 40% of free VRAM |
 | CGLS | Streamed when resident data and solver state exceed free VRAM | Switches to host slabs automatically for cone beam and CUDA linear Joseph parallel/laminography |
@@ -63,15 +63,16 @@ Input projections and `out=` must not overlap (including separate mappings of th
 Geometry-specific slab behaviour:
 
 - **Cone-beam FDK:** processes z-slabs, filtering only the detector rows each slab projects onto. Use `fdk_host` with `FDKHostConfig(slices_per_batch=...)` for explicit slab depth (default uses about a third of free VRAM).
-- **Axial parallel FBP and Fourier:** processes axial z-slabs (at most 16 slices for FBP), reading only matching detector rows. C-ordered `(z, y, x)` keeps xy-planes contiguous on disk.
+- **Axial parallel FBP and Fourier with an unrolled detector:** processes axial z-slabs (at most 16 slices for FBP), reading only matching detector rows. C-ordered `(z, y, x)` keeps xy-planes contiguous on disk.
 - **Laminography and posed FBP:** processes x-slabs (sized to about half of free VRAM), streaming and filtering views per slab. Use `fbp_host` with `FBPHostConfig(slices_per_batch=...)` to override slab depth. A 1024³ laminography volume runs in [37 s on an 8 GB laptop GPU](measurements.md#scans-larger-than-the-gpu).
 
 ### Stream raw frames directly into slabs
 
-`Frames.corrected()` produces a complete corrected stack in host memory (or `TMPDIR`). When neither the corrected stack nor the volume fits comfortably, `tj.reconstruct_slabs` corrects only the detector-row band needed for each output slab:
+`Frames.corrected()` produces a complete corrected stack in host memory (or `TMPDIR`). `tj.reconstruct_slabs` uses the following storage strategies.
 
 - **Cone-beam FDK:** `tj.reconstruct_slabs(frames, "fbp")` keeps full-scan angular weights while correcting one row band at a time.
-- **Unposed axial parallel:** supports `"fbp"`, `"fourier"`, `"sirt"`, and `"mlem"` (with optional `config=` and `warm_start=True`). A full Diamond I12 scan (56.6 GB SIRT volume) ran in 24 minutes using [1.4 GB of VRAM](measurements.md#scans-larger-than-the-gpu).
+- **Unposed axial parallel with an unrolled detector:** supports `"fbp"`, `"fourier"`, `"sirt"`, and `"mlem"` (with optional `config=` and `warm_start=True`). A full Diamond I12 scan (56.6 GB SIRT volume) ran in 24 minutes using [1.4 GB of VRAM](measurements.md#scans-larger-than-the-gpu).
+- **Rolled parallel detector.** FBP, SIRT and MLEM require the full corrected projection stack in host memory and a resident volume on the compute device. The raw slab iterator returns the whole volume in one block. Fourier reads bounded bands of rotated detector rows and returns axial slabs.
 
 ```python
 import numpy as np
