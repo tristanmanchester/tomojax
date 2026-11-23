@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from functools import wraps
 from itertools import count
+import logging
 from math import isfinite
 from threading import Condition, RLock
 from time import monotonic
@@ -18,12 +19,15 @@ from tomojax.errors import Cancelled, classify
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
 
+    from tomojax.wire.progress import NoteLevel
+
 __all__ = [
     "Advanced",
     "Cancelled",
     "Control",
     "Event",
     "Finished",
+    "Note",
     "Paused",
     "Resumed",
     "Started",
@@ -148,7 +152,29 @@ class Resumed:
     time: float
 
 
-type Event = Started | Advanced | Finished | Paused | Resumed
+@dataclass(frozen=True, slots=True)
+class Note:
+    """A message from the watched code.
+
+    Parameters
+    ----------
+    task : int or None
+        Innermost task ID or None between operations.
+    level : str
+        Severity of the message.
+    message : str
+        Formatted log or warning text.
+    time : float
+        Monotonic seconds since the watch began.
+    """
+
+    task: int | None
+    level: NoteLevel
+    message: str
+    time: float
+
+
+type Event = Started | Advanced | Finished | Paused | Resumed | Note
 type _State = Literal["running", "pause-requested", "paused"]
 
 
@@ -321,6 +347,45 @@ def step(unit: str, *, remaining: int | None = None) -> None:
         active.advance(done, {})
 
 
+def note(level: NoteLevel, message: str) -> None:
+    """Deliver a message to the innermost watch in the calling context."""
+    watcher = _watch.get()
+    if watcher is not None:
+        active = current_task.get()
+        watcher.emit(Note, None if active is None else active.id, level, message)
+
+
+class _LogNotes(logging.NullHandler):
+    """Observe the TomoJAX logger hierarchy without serialising independent watches."""
+
+    def handle(self, record: logging.LogRecord) -> bool:
+        # Adding a handler normally disables logging's last-resort stderr handler.
+        # Preserve that delivery when this observer is the only reachable handler.
+        logger: logging.Logger | None = logging.getLogger(record.name)
+        while logger is not None:
+            if any(handler is not self for handler in logger.handlers):
+                break
+            logger = logger.parent if logger.propagate else None
+        else:
+            fallback = logging.lastResort
+            if fallback is not None and record.levelno >= fallback.level:
+                fallback.handle(record)
+        watcher = _watch.get()
+        if watcher is not None and _logging_watch.get() is not watcher:
+            token = _logging_watch.set(watcher)
+            try:
+                level = min(5, max(1, record.levelno // 10))
+                note(_LEVELS[level - 1], record.getMessage())
+            finally:
+                _logging_watch.reset(token)
+        return True
+
+
+_LEVELS: tuple[NoteLevel, ...] = ("debug", "info", "warning", "error", "critical")
+_logging_watch = ContextVar[_Watch | None]("tomojax_logging_watch", default=None)
+_log_notes = _LogNotes()
+
+
 @contextmanager
 def watch(handler: Callable[[Event], None], *, control: Control | None = None) -> Iterator[None]:
     """Deliver events synchronously to a fast handler in the calling context.
@@ -338,6 +403,7 @@ def watch(handler: Callable[[Event], None], *, control: Control | None = None) -
     None
         The dynamic extent of this watch in the current context.
     """
+    logging.getLogger("tomojax").addHandler(_log_notes)
     token = _watch.set(_Watch(handler, control))
     parent = current_task.set(None)
     try:

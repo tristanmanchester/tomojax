@@ -34,7 +34,7 @@ PUBLIC_MODULES = (
 # Immutable values and typing aliases cannot own docstrings. Their reference
 # entries live here so every export is covered by either numpydoc or this prose.
 PUBLIC_DATA = {
-    "tomojax.progress.Event": "A task start, advance, pause, resume or finish.",
+    "tomojax.progress.Event": "A task transition, completed work or watch message.",
     "tomojax.forward.api.ResidualFilterKind": "Residual filter: raw, lowpass_gaussian or "
     "bandpass_difference_of_gaussians.",
     "tomojax.forward.api.ResidualLossMode": "Residual loss: l2 or pseudo_huber.",

@@ -29,6 +29,8 @@ def validate_tree(events, *, interrupted=False):
             stack.append(event.task)
             seen.add(event.task)
             counts[event.task] = 0
+        elif isinstance(event, progress.Note):
+            assert event.task == (stack[-1] if stack else None)
         elif isinstance(event, progress.Advanced):
             assert event.task in stack
             assert counts[event.task] <= event.done
@@ -240,6 +242,7 @@ def test_cli_json_records_arrive_during_reconstruction(tmp_path, cancel):
                 "started": progress.Started,
                 "advanced": progress.Advanced,
                 "finished": progress.Finished,
+                "note": progress.Note,
             }[record.pop("event")]
             events.append(cls(**record))
             if cancel and isinstance(events[-1], progress.Advanced) and events[-1].done == 1:
@@ -844,6 +847,7 @@ def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys
         "started": progress.Started,
         "advanced": progress.Advanced,
         "finished": progress.Finished,
+        "note": progress.Note,
     }
     events = [kinds[r.pop("event")](**r) for r in records]
     validate_tree(events)
@@ -1050,3 +1054,24 @@ def test_error_kinds_use_structured_status_and_keep_parameter_path():
         raise tj.InvalidParameter("filter", "unknown")
     assert classify(failure.value).path == "config.filter"
     assert classify(failure.value).kind == "invalid_parameter"
+
+
+def test_logger_notes_between_and_inside_operations(caplog):
+    import logging
+
+    logger = logging.getLogger("tomojax.contract")
+    events = []
+    with progress.watch(events.append):
+        with progress.task("load", "first", None, "views"):
+            logger.warning("during %s", "load")
+        logger.warning("between operations")
+        with progress.task("save", "second", None, "files"):
+            logger.warning("during save")
+    validate_tree(events)
+    notes = [progress.to_json(e) for e in events if isinstance(e, progress.Note)]
+    assert [(n["task"], n["message"]) for n in notes] == [
+        (1, "during load"),
+        (None, "between operations"),
+        (2, "during save"),
+    ]
+    assert [r.getMessage() for r in caplog.records] == [n["message"] for n in notes]

@@ -306,8 +306,15 @@
           ]
         },
         "task": {
-          "type": "integer",
-          "exclusiveMinimum": 0
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "time": {
           "type": "number",

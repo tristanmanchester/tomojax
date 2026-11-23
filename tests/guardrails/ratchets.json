@@ -17,7 +17,7 @@
     "tomojax": 30,
     "tomojax.geometry": 13,
     "tomojax.evaluation": 2,
-    "tomojax.progress": 10,
+    "tomojax.progress": 11,
     "tomojax.corrections": 15,
     "tomojax.forward": 3,
     "tomojax.recon": 21,
@@ -50,7 +50,7 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "code_lines": {
-    "(modules)": 4594,
+    "(modules)": 4645,
     "_data": 2104,
     "alignment": 4462,
     "backends": 263,
@@ -64,7 +64,7 @@
     "motion": 153,
     "nuisance": 232,
     "recon": 13691,
-    "wire": 198
+    "wire": 203
   },
   "cuda_kernels": 47,
   "cuda_switches": 34,

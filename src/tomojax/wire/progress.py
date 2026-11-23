@@ -69,10 +69,15 @@ class Finished(Timed, tag="finished"):
     status: Literal["done", "failed", "cancelled"]
 
 
-class Note(Timed, tag="note"):
+type NoteLevel = Literal["debug", "info", "warning", "error", "critical"]
+
+
+class Note(Progress, tag="note"):
     """A message attributed to the active watch."""
 
-    level: Literal["debug", "info", "warning", "error", "critical"]
+    task: Positive | None
+    time: Seconds
+    level: NoteLevel
     message: str
 
 
