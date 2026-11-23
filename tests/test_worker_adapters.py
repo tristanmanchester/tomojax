@@ -670,3 +670,19 @@ def test_mlem_preflight_checks_the_measurement_domain(worker, tmp_path):
         reply = worker(command, operation=recipe)
         assert reply["type"] == "error", reply
         assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", "source")
+
+
+def test_spdhg_seed_is_nonnegative_in_all_commands(worker, simulation):
+    recipe = dict(
+        type="reconstruct",
+        method="spdhg",
+        source=simulation["value"]["scan"],
+        config=dict(type="SPDHGConfig", seed=-1, iterations=1),
+    )
+    for command in ("validate", "plan", "run"):
+        reply = worker(command, operation=recipe)
+        assert reply["type"] == "error", reply
+        assert (reply["error"]["kind"], reply["error"]["path"]) == (
+            "invalid_parameter",
+            "config.seed",
+        )
