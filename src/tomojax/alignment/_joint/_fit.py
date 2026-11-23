@@ -421,7 +421,7 @@ def fit_poses(
         binned, scale, noise = _read(measured, bins)
         for level in schedule.levels:
             with progress.task(
-                "level", f"Binning {level.binning}", level.budget.iterations, "steps"
+                "level", f"binning {level.binning}", level.budget.iterations, "steps"
             ):
                 y, precision, g, ops, cal = _level(
                     binned.pop(0),  # the level's arrays are its own from here
@@ -483,7 +483,7 @@ def fit_poses(
         assert prior is not None
         stage = {"ops": ops, "sigma": cal["sigma"], "last": levels[-1], "placement": placement}
         total = config.refine_iterations if prior.nlocal else 0
-        with progress.task("refine", "Refine poses", total, "updates"):
+        with progress.task("refine", "refine poses", total, "updates"):
             p, refinement, (offsets, energy) = refine(
                 x, p, y, precision, prior, **stage, config=config
             )

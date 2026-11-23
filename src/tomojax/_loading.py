@@ -179,7 +179,8 @@ def load_scan_with_declaration(
         progress.check_cancelled()
         file = Path(path)
         if not file.exists():
-            raise FileNotFoundError(f"no such file: {file}")
+            with progress.task("load", file.name, None, "views"):
+                raise FileNotFoundError(f"no such file: {file}")
         paths = {
             "data_path": data_path,
             "image_key_path": image_key_path,

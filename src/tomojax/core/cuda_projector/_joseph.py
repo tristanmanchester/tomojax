@@ -125,7 +125,12 @@ def adjoint_cuda(
                         c, y, x, grid=grid, interpolation=interpolation, z_fast=z_fast
                     ).reshape(shape)
                 return transpose_axial_vu_cuda(
-                    c, y, x, grid=grid, interpolation=interpolation, z_fast=z_fast
+                    c,
+                    y,
+                    None if accumulate is None else x,
+                    grid=grid,
+                    interpolation=interpolation,
+                    z_fast=z_fast,
                 )
 
             # Batch the complete decision, not only its callbacks: a batched

@@ -305,6 +305,9 @@ def subset_operators(
                     return selected.backproject_pair((residual, ones), start, batch, output)
                 return selected.backproject(residual, start, batch, output)
 
+            # A single transpose has no previous batch to accumulate.
+            if selected.count == 1 and not return_column:
+                return body(jnp.int32(0), None)
             initial = selected.zeros_volume()
             return jax.lax.fori_loop(
                 0, selected.count, body, (initial, initial) if return_column else initial

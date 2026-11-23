@@ -10,8 +10,8 @@ import jax
 
 from tomojax import progress
 
-# Until the last independent axial partition, no whole-volume sweep is finished.
-partial_sweep = ContextVar("tomojax_partial_sweep", default=False)
+# None outside an axial partition, false in its final slab, true while later slabs remain.
+partial_sweep = ContextVar[bool | None]("tomojax_partial_sweep", default=None)
 
 
 def run_chunks[S](

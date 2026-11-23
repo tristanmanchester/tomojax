@@ -289,18 +289,14 @@ def test_host_slabs_reject_overlapping_output_before_writing(tmp_path, mapping):
 )
 def test_host_slabs_reject_invalid_configuration(field, value):
     grid, detector, geometry, data = scan()
-    if field == "backend":
+    if field in ("backend", "scale"):
         from tomojax import InvalidParameter
 
-        with pytest.raises(InvalidParameter, match="fbp: backend") as error:
-            FBPConfig(backend=value)
-        assert error.value.path == "backend"
+        with pytest.raises(InvalidParameter, match=f"fbp: {field}") as error:
+            FBPConfig(**{field: value})
+        assert error.value.path == field
         return
-    config = (
-        FBPHostConfig(fbp=FBPConfig(scale=value))
-        if field == "scale"
-        else replace(FBPHostConfig(), **{field: value})
-    )
+    config = replace(FBPHostConfig(), **{field: value})
     with pytest.raises(ValueError, match="fbp_host"):
         fbp_host(geometry, grid, detector, data, config=config)
 

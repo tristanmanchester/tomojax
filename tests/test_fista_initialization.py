@@ -130,5 +130,5 @@ def test_zero_updates_return_feasible_start_and_empty_history(watched):
     assert info["effective_iterations"] == 0
     assert info["early_stop"] is False
     assert [type(event) for event in events] == (
-        [progress.Started, progress.Finished] if watched else []
+        [progress.Started, progress.Placed, progress.Finished] if watched else []
     )

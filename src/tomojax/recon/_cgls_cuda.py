@@ -187,9 +187,14 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
     roundoff, verified = False, True
     norm2 = float(gamma)
     eps = np.finfo(np.float32).eps
-    direction = gradient.copy()
+    direction = cp.empty_like(gradient)
+    restart, previous_gamma = True, gamma
     while count < cfg.iterations and norm2 > tolerance**2 and not failed and not roundoff:
         progress.check_cancelled()
+        if restart:
+            cp.copyto(direction, gradient)
+        else:
+            k["xpay"](gradient, gamma / previous_gamma, direction)
         previous = norm2, verified
         gradient = None  # release the previous gradient before the transpose allocates the next
         step = _step(cp, ops, x, direction, residual, gamma, damp2, cfg.data_term)
@@ -225,14 +230,9 @@ def _iterate(cp, ops, data, x, cfg: CGLSConfig, *, zero_start: bool):
             recomputations += 1
         if failed:
             norm2 = float(gamma)
-        else:
-            if restart:
-                cp.copyto(direction, gradient)
-            else:
-                k["xpay"](gradient, gamma_new / gamma, direction)
-            gamma = gamma_new
+        previous_gamma, gamma = gamma, gamma_new
         if (task := progress.for_unit("iterations")) is not None:
-            cp.cuda.get_current_stream().synchronize()
+            # The stopping statistics above already wait for the updated iterate.
             task.advance(count, {Metric.normal_residual_norm.name: float(np.sqrt(norm2))})
     converged = bool(not failed and norm2 <= tolerance**2)
     info = {

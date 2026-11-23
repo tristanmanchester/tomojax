@@ -24,6 +24,8 @@ def validate_tree(events, *, interrupted=False):
         assert event.time >= previous
         previous = event.time
         if isinstance(event, progress.Started):
+            if event.name in ("correction", "align", "level", "refine", "reconstruct"):
+                assert event.label == event.label.lower() and "_" not in event.label
             assert event.task not in seen
             assert event.parent == (stack[-1] if stack else None)
             stack.append(event.task)
@@ -315,7 +317,7 @@ def test_bar_redraws_on_a_terminal():
     code = """from tomojax import progress
 from tomojax.cli._progress import run_command
 def operation():
-    with progress.task('load','Reading views',5,'views'):
+    with progress.task('load','reading views',5,'views'):
         progress.current_task.get().advance(2,{})
 raise SystemExit(run_command('correct','auto',operation))
 """
@@ -330,7 +332,7 @@ raise SystemExit(run_command('correct','auto',operation))
         )
         assert process.stdout == b""
         output = terminal.read(4096)
-    assert b"Reading views" in output and b"2/5" in output
+    assert b"reading views" in output and b"2/5" in output
     assert output.count(b"\r\x1b[2K") >= 3
 
 
@@ -593,9 +595,11 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
     started = [e for e in events if isinstance(e, progress.Started)]
     assert [e.name for e in started] == ["align", "level", "level", "refine"]
     assert started[0].label == "translations"
+    assert started[-1].label == "refine poses"
     for task, level in zip(started[1:3], result.info["levels"], strict=True):
         updates = [e for e in events if isinstance(e, progress.Advanced) and e.task == task.task]
-        assert updates and str(level["binning"]) in task.label
+        assert task.label == f"binning {level['binning']}"
+        assert updates
         assert [e.done for e in updates] == list(range(1, len(level["steps"]) + 1))
         assert all("undamped_proposed_pose_step_rms" in e.metrics for e in updates)
         assert [dict(e.metrics) for e in updates] == level["steps"]
@@ -687,10 +691,10 @@ def test_load_reports_completed_views_and_fused_corrections(tmp_path, monkeypatc
             np.testing.assert_allclose(result.projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
     validate_tree(events)
     load, correction = [e for e in events if isinstance(e, progress.Started)]
-    assert (load.name, load.total, load.unit) == ("load", 2, "views")
+    assert (load.name, load.label, load.total, load.unit) == ("load", path.name, 2, "views")
     assert (correction.name, correction.label, correction.total, correction.parent) == (
         "correction",
-        "flat_dark, log",
+        "flat dark, log",
         2,
         load.task,
     )
@@ -783,10 +787,10 @@ def test_corrections_report_each_executed_group_on_the_caller(monkeypatch):
     validate_tree(events)
     groups = [e for e in events if isinstance(e, progress.Started)]
     assert [(e.label, e.unit) for e in groups] == [
-        ("flat_dark, log", "view batches"),
+        ("flat dark, log", "view batches"),
         ("stripes", "row batches"),
-        ("reject_views", "view batches"),
-        ("beam_hardening, beam_hardening", "view batches"),
+        ("reject views", "view batches"),
+        ("beam hardening, beam hardening", "view batches"),
     ]
     for group in groups:
         assert group.total == 4
@@ -953,7 +957,7 @@ def test_fused_row_correction_counts_completed_rows_and_joins_its_workers(monkey
     validate_tree(events)
     assert len([e for e in events if isinstance(e, progress.Started)]) == 1
     assert (events[0].label, events[0].unit, events[0].total) == (
-        "flat_dark, log, stripes",
+        "flat dark, log, stripes",
         "row batches",
         4,
     )
@@ -1268,3 +1272,16 @@ def test_direct_view_shares_report_only_devices_with_assigned_views():
     assert [event.devices for event in events if isinstance(event, progress.Placed)] == [
         (f"{machines[1].platform}:{machines[1].id}",)
     ]
+
+
+@pytest.mark.parametrize(("read", "name"), [(tj.load, "load"), (tj.load_frames, "metadata")])
+def test_load_labels_describe_the_input_even_if_open_fails(tmp_path, read, name):
+    events = []
+    path = tmp_path / "Missing_DATA.nxs"
+    with progress.watch(events.append), pytest.raises(FileNotFoundError, match=path.name):
+        read(path)
+    validate_tree(events)
+    assert [(e.name, e.label) for e in events if isinstance(e, progress.Started)] == [
+        (name, path.name)
+    ]
+    assert events[-1].status == "failed"

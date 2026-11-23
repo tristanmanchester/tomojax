@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 import math
 import operator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -26,7 +26,7 @@ from tomojax.core.validation import (
 )
 from tomojax.errors import InvalidParameter
 from tomojax.recon._axial_slabs import axial_slabs, independent_planes
-from tomojax.recon._chunks import Chunked, fixed_updates
+from tomojax.recon._chunks import Chunked, fixed_updates, partial_sweep
 from tomojax.recon._cone_slabs import RowReader, host_volumes
 from tomojax.recon._projection import (
     ConeModel,
@@ -152,23 +152,27 @@ def _normalization(
     return normalization, 1, volume_shape(model, normal_grid)
 
 
+class _Momentum(NamedTuple):
+    previous: jax.Array
+    current: jax.Array
+    time: jax.Array
+    momentum: jax.Array
+
+
 def _accelerated_steps(
     update: Callable[[jax.Array, jax.Array], jax.Array],
-    state: tuple[jax.Array, jax.Array, jax.Array],
+    state: _Momentum,
     first: int,
     end: int,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
-    # Row/column normalization bounds the spectrum by one in the C^-1 norm.
-    # Box/support projection is coordinatewise in that norm, so the usual
-    # FISTA recurrence applies with a relaxation of at most one.
-    def step(
-        index: jax.Array, state: tuple[jax.Array, jax.Array, jax.Array]
-    ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        previous, extrapolated, time = state
-        current = update(index, extrapolated)
+) -> _Momentum:
+    # The C^-1 metric admits FISTA acceleration. Keep the two iterates: forming
+    # the extrapolate where it is projected avoids a full-volume carry copy.
+    def step(index: jax.Array, state: _Momentum) -> _Momentum:
+        previous, current, time, momentum = state
+        extrapolated = current + momentum * (current - previous)
+        new = update(index, extrapolated)
         next_time = (1.0 + jnp.sqrt(1.0 + 4.0 * time * time)) / 2.0
-        momentum = (time - 1.0) / next_time
-        return current, current + momentum * (current - previous), next_time
+        return _Momentum(current, new, next_time, (time - 1.0) / next_time)
 
     return jax.lax.fori_loop(first, end, step, state)
 
@@ -185,6 +189,7 @@ _SIRT_STATIC = (
     "acceleration",
     "stream",
     "column_device",
+    "normalizer_device",
 )
 
 
@@ -198,7 +203,7 @@ def _segment(
     relaxation: jax.Array,
     lower: jax.Array,
     upper: jax.Array,
-    state: jax.Array | tuple[jax.Array, jax.Array, jax.Array] | None,
+    state: jax.Array | _Momentum | None,
     first: int,
     end: int,
     norms: tuple[jax.Array | None, jax.Array | None] | None,
@@ -215,6 +220,7 @@ def _segment(
     stream: bool,
     host_columns: jax.Array | None = None,
     column_device: jax.sharding.Sharding | None = None,
+    normalizer_device: jax.sharding.Sharding | None = None,
 ) -> Any:
     initial, support = pack_volume(initial, model), pack_volume(support, model)
     select = subset_operators(
@@ -252,11 +258,13 @@ def _segment(
             else None
         )
 
-        state = (initial, initial, jnp.float32(1)) if acceleration else initial
+        state = (
+            _Momentum(initial, initial, jnp.float32(1), jnp.float32(0)) if acceleration else initial
+        )
         return state, (rows, columns)
 
     assert norms is not None
-    rows, columns = norms
+    rows, columns = norms if normalizer_device is None else jax.device_put(norms, normalizer_device)
 
     def update(step: jax.Array, x: jax.Array) -> jax.Array:
         index = step % subsets
@@ -276,10 +284,12 @@ def _segment(
                 if columns is None
                 else columns[index]
             )
-            gradient = residual_adjoint(x, data, row_weights, row_support=row_support)
+            gradient = cast(
+                "jax.Array", residual_adjoint(x, data, row_weights, row_support=row_support)
+            )
         return constrain(x + relaxation * column * gradient)
 
-    if isinstance(state, tuple):
+    if isinstance(state, _Momentum):
         return _accelerated_steps(update, state, first, end)
     return jax.lax.fori_loop(first * subsets, end * subsets, update, state)
 
@@ -302,8 +312,12 @@ def _sirt_program(
         _segment, poses, data, initial, support, det_grid, relaxation, lower, upper, **options
     )
     state, norms = segment(None, 0, 0, None)
+    if (device := options.get("normalizer_device")) is not None:
+        # Keep these maps with the host partitions between chunks. Their device
+        # copies then share the compiled workspace with the projector scratch.
+        norms = jax.block_until_ready(jax.device_put(norms, device.with_memory_kind("pinned_host")))
     result = fixed_updates(state, iterations, partial(segment, norms=norms), drive)
-    return result[0] if options["acceleration"] else result
+    return result.current if isinstance(result, _Momentum) else result
 
 
 _solve = Chunked(_sirt_program, static_argnames=_SIRT_STATIC)
@@ -552,7 +566,7 @@ class SIRTCall:
             axial=axial,
         )
         poses = stack_view_poses(geometry, n)
-        host_columns, column_device = self._host_columns(
+        host_columns, column_device, normalizer_device = self._normalizer_storage(
             poses,
             grid=grid,
             detector=detector,
@@ -577,6 +591,7 @@ class SIRTCall:
                 cache_columns=cache_columns,
                 axial=axial, acceleration=cfg.acceleration, stream=stream,
                 host_columns=host_columns, column_device=column_device,
+                normalizer_device=normalizer_device,
             )  # fmt: skip
             if stream:
                 volume.block_until_ready()  # callbacks must finish before unregistering the source
@@ -588,7 +603,7 @@ class SIRTCall:
             "projector_backend": backend,
         }
 
-    def _host_columns(
+    def _normalizer_storage(
         self,
         poses: jax.Array,
         *,
@@ -599,8 +614,8 @@ class SIRTCall:
         model: Model,
         subsets: int,
         enabled: bool,
-    ) -> tuple[jax.Array | None, jax.sharding.Sharding | None]:
-        """Retain large exact maps on host, leaving small device caches unchanged."""
+    ) -> tuple[jax.Array | None, jax.sharding.Sharding | None, jax.sharding.Sharding | None]:
+        """Place cached columns and the normalization maps of memory-limited chunks."""
         host_columns = None
         column_device = None
         column_bytes = subsets * grid.nx * grid.ny * 4
@@ -630,7 +645,14 @@ class SIRTCall:
                 )
                 self.columns = jax.block_until_ready(jax.device_put(maps, host))
             host_columns = self.columns
-        return host_columns, column_device
+        normalizer_device = None
+        if (
+            partial_sweep.get() is not None
+            and progress.for_unit("iterations") is not None
+            and next(iter(poses.devices())).platform == "gpu"
+        ):
+            normalizer_device = poses.sharding
+        return host_columns, column_device, normalizer_device
 
     def _slabs(
         self,

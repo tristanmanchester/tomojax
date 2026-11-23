@@ -1,5 +1,6 @@
 """Normalized algebraic updates against a dense matched matrix."""
 
+from contextlib import nullcontext
 from dataclasses import replace
 import importlib
 
@@ -11,6 +12,41 @@ import pytest
 import tomojax as tj
 from tomojax.geometry import ConeSegments
 from tomojax.recon import SIRTConfig, sirt
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(("subsets", "acceleration"), [(4, False), (1, True)])
+def test_chunk_scratch_holds_one_gradient_and_two_view_batches(monkeypatch, subsets, acceleration):
+    from tomojax import progress
+
+    module = importlib.import_module("tomojax.recon.sirt")
+    segment = module._segment
+    temporary = []
+
+    def measured(*args, **kwargs):
+        if "norms" in kwargs and not temporary:
+            temporary.append(
+                segment.lower(*args, **kwargs).compile().memory_analysis().temp_size_in_bytes
+            )
+        return segment(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_segment", measured)
+    n, batch = 256, 64
+    grid, detector = tj.Grid(n, n, n, 1, 1, 1), tj.Detector(n, n, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, n, endpoint=False))
+    config = SIRTConfig(
+        iterations=2,
+        backend="cuda",
+        views_per_batch=batch,
+        subsets=subsets,
+        acceleration=acceleration,
+    )
+    with progress.watch(lambda _: None):
+        sirt(geometry, grid, detector, jnp.zeros((n, n, n), jnp.float32), config=config)
+    plane = n * n * np.dtype(np.float32).itemsize
+    # The pose and indexing buffers and the row/column slices fit in two axial planes.
+    assert len(temporary) == 1
+    assert temporary[0] <= (n + 2 * batch + 2) * plane
 
 
 def test_streamed_initialization_finishes_before_solve_workspace(monkeypatch):
@@ -168,7 +204,10 @@ def test_public_sirt_converges_on_consistent_data(subsets):
 
 @pytest.mark.numerical
 @pytest.mark.parametrize(("subsets", "acceleration"), [(1, False), (3, False), (1, True)])
-def test_axial_memory_slabs_preserve_the_full_constrained_solve(monkeypatch, subsets, acceleration):
+@pytest.mark.parametrize("watched", [False, True])
+def test_axial_memory_slabs_preserve_the_full_constrained_solve(
+    monkeypatch, subsets, acceleration, watched
+):
     import tomojax.backends
 
     grid = tj.Grid(5, 4, 3, 0.8, 1.2, 1.3, vol_center=(0.2, -0.3, 0.7))
@@ -188,7 +227,8 @@ def test_axial_memory_slabs_preserve_the_full_constrained_solve(monkeypatch, sub
     initial = truth * 0.1
     full, _ = sirt(geometry, grid, detector, data, init_x=initial, config=cfg)
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 1)
-    slabs, info = sirt(geometry, grid, detector, data, init_x=initial, config=cfg)
+    with tj.progress.watch(lambda _: None) if watched else nullcontext():
+        slabs, info = sirt(geometry, grid, detector, data, init_x=initial, config=cfg)
     assert info["host_slabs"] and isinstance(slabs, np.ndarray)
     np.testing.assert_allclose(slabs, full, atol=3e-6, rtol=3e-5)
 

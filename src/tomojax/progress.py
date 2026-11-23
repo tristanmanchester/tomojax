@@ -40,6 +40,24 @@ __all__ = [
 ]
 
 type _Metric = float | int | str | None
+type _Name = Literal[
+    "load",
+    "correction",
+    "reconstruct",
+    "align",
+    "level",
+    "refine",
+    "metadata",
+    "simulate",
+    "save",
+    "project",
+    "backproject",
+    "inspect",
+    "export",
+    "estimate_region",
+    "opposite-views",
+    "write",
+]
 type _Status = Literal["done", "failed", "cancelled"]
 
 
@@ -54,9 +72,9 @@ class Started:
     parent : int or None
         Enclosing task, if any.
     name : str
-        Operation name in the event vocabulary.
+        The operation or numerical stage identifier.
     label : str
-        Human-readable description.
+        Display text for the task, preserving file names.
     total : int or None
         Expected number of units, if known.
     unit : str
@@ -67,7 +85,7 @@ class Started:
 
     task: int
     parent: int | None
-    name: str
+    name: _Name
     label: str
     total: int | None
     unit: str
@@ -326,7 +344,7 @@ _watch = ContextVar[_Watch | None]("tomojax_watch", default=None)
 
 
 class _Task:
-    def __init__(self, watcher: _Watch, name: str, unit: str, total: int | None) -> None:
+    def __init__(self, watcher: _Watch, name: _Name, unit: str, total: int | None) -> None:
         self.name, self.unit = name, unit
         self.watcher = watcher
         self.id = next(watcher.ids)
@@ -567,7 +585,7 @@ def outcome() -> Iterator[None]:
 
 
 @contextmanager
-def task(name: str, label: str, total: int | None, unit: str) -> Iterator[None]:
+def task(name: _Name, label: str, total: int | None, unit: str) -> Iterator[None]:
     watcher = _watch.get()
     if watcher is None:
         yield
@@ -589,6 +607,8 @@ def task(name: str, label: str, total: int | None, unit: str) -> Iterator[None]:
     task = _Task(watcher, name, unit, total)
     token = current_task.set(task)
     try:
+        if name in ("correction", "align", "level", "refine", "reconstruct"):
+            label = label.replace("_", " ").lower()
         watcher.emit(Started, task.id, parent.id if parent else None, name, label, total, unit)
         try:
             with outcome():

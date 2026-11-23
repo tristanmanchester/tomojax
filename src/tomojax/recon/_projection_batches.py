@@ -143,7 +143,7 @@ class ViewBatches:
         return lambda start, batch: self.project(volume, start, batch)
 
     def backproject(
-        self, images: jax.Array, start: jax.Array, batch: jax.Array, output: jax.Array
+        self, images: jax.Array, start: jax.Array, batch: jax.Array, output: jax.Array | None
     ) -> jax.Array:
         """Return ``output`` plus the batch transpose; Joseph on CUDA adds in place."""
         del batch  # the coefficients at ``start`` carry the batch's geometry
@@ -155,7 +155,7 @@ class ViewBatches:
                 grid=grid,
                 detector=detector,
                 backend=self.cone_backend,
-                accumulate=output,
+                accumulate=self.zeros_volume() if output is None else output,
             )
         from tomojax.core.joseph import sum_backproject_planes
 

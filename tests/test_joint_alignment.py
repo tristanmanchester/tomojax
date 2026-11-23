@@ -329,7 +329,7 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         "fit": ["translations", "rotations"],
         "calibration": {},
         "detector_binning": 1,
-        "levels": [{"status": "step_budget_reached"}],
+        "levels": [{"status": "step_budget_reached", "stacks": {"placement": {}}}],
         "refinement": {"status": "pose_steps_below_tolerance"},
         "report": {"isolated_views": [], "unusual_views": [], "advisories": []},
     }
@@ -346,10 +346,11 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         detector_roll,
         config=None,
         view_positions,
-        declared_poses,
+        schedule,
     ):
         assert fit == ("translations", "rotations")
         assert frames is None and detector_roll == 0.3 and view_positions is None
+        assert schedule.detector_binning == 1
         assert projections is scan.projections
         assert working == grid and current_detector == detector and keep_grid is False
         np.testing.assert_allclose(nominal, before, atol=5e-7)
@@ -359,7 +360,12 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
     aligned = tj.align(scan, fit=("translations", "rotations"))
     assert aligned.scan.projections is scan.projections
     assert aligned.scan.detector == detector and aligned.scan.grid == grid
-    assert aligned.info == {**record, "method": "joint_volume_pose", "calibration": {}}
+    assert aligned.info == {
+        **record,
+        "method": "joint_volume_pose",
+        "calibration": {},
+        "placement": {"devices": (), "strategy": "resident", "retries": {}},
+    }
     np.testing.assert_allclose(
         stack_view_poses(aligned.scan.geometry, len(angles)), expected, atol=2e-6
     )

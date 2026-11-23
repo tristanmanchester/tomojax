@@ -101,7 +101,9 @@ tomojax reconstruct scan.nxs -o recon.nxs --method cgls --progress json > progre
 
 In JSON mode stdout contains one flushed JSON record per line. Logs, warnings,
 and tracebacks go to stderr. Each task has a `started` and a `finished` record.
-Use `task` and `parent` to follow nested operations. An `advanced` record counts
+Use `task` and `parent` to follow nested operations. The `name` field uses
+a fixed vocabulary. Display the lower-case `label`, such as `binning 2`
+for a `level` or `refine poses` for a `refine` task. An `advanced` record counts
 completed work in the unit named by `started`. An unknown total is `null`,
 and a later advance can revise the total. Times are seconds since the watch began.
 The [v2 JSON schema](../../../docs/protocol/progress.schema.json) defines the records.

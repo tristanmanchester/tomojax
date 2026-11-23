@@ -397,7 +397,8 @@ def _fbp_accumulate_batch(
 
 
 @jax.jit
-def _finite_projections(projections: jax.Array) -> jax.Array:
+def finite_projections(projections: jax.Array) -> jax.Array:
+    """Device validity flag for the measured FBP rows."""
     return jnp.all(jnp.isfinite(projections))
 
 
@@ -420,7 +421,7 @@ def _fbp_from_resident(
 ) -> jnp.ndarray:
     """Run projections already on the device without a host round trip."""
     projections = projections.astype(jnp.float32)
-    if check_finite and not bool(_finite_projections(projections)):
+    if check_finite and not bool(finite_projections(projections)):
         raise ValueError("fbp_host: projections must be finite in FP32")
     device = next(iter(projections.devices()))
     poses, view_scale, params = (
