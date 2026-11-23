@@ -100,3 +100,38 @@ def test_fourier_output_mapping_follows_escaped_buffer_views():
     del retained
     gc.collect()
     assert owner() is None
+
+
+@pytest.mark.gpu
+def test_raw_fourier_releases_ordered_rows_before_allocating_the_fft(monkeypatch):
+    import cupy as cp
+
+    import tomojax as tj
+    from tomojax.recon import FourierConfig
+
+    grid = tj.Grid(9, 9, 6, 1, 1, 1)
+    detector = tj.Detector(11, 6, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, [60, 0, 120])
+    frames = tj.Frames(np.full((3, 6, 11), 400, np.float32), geometry, white_level=1000)
+    contiguous, rfft = cp.ascontiguousarray, cp.fft.rfft
+    ordered = []
+    checks = []
+
+    def remember(array, *args, **kwargs):
+        result = contiguous(array, *args, **kwargs)
+        if result.shape == (2, 3, 11):
+            ordered.append(weakref.ref(result))
+        return result
+
+    def transform(array, *args, **kwargs):
+        assert ordered and all(ref() is None for ref in ordered)
+        checks.append(None)
+        return rfft(array, *args, **kwargs)
+
+    monkeypatch.setattr(cp, "ascontiguousarray", remember)
+    monkeypatch.setattr(cp.fft, "rfft", transform)
+    with tj.reconstruct_slabs(
+        frames, "fourier", config=FourierConfig(backend="cupy", slices_per_batch=2)
+    ) as slabs:
+        assert [section.stop for section, _ in slabs] == [2, 4, 6]
+    assert len(checks) == 3

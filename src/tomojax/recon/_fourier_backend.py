@@ -568,6 +568,8 @@ class FourierPlan:
                 )
                 rows = ProjectionRows(source, lower, upper, fraction)
                 raw, metadata = interpolate_projection_rows(rows, source, self.depth, xp)
+                # The ordered rows were allocated and last used on this compute stream.
+                del rows, source
                 volume = self._compute_volume(raw, len(positions))
                 computed = xp.cuda.Event()
                 computed.record()
@@ -578,7 +580,7 @@ class FourierPlan:
                 volume.get(out=host, stream=self.download, blocking=False)
                 downloaded = xp.cuda.Event()
                 downloaded.record()
-            return PendingSlab(host, downloaded, (data, source, raw, volume, computed, *metadata))
+            return PendingSlab(host, downloaded, (data, raw, volume, computed, *metadata))
         except BaseException:
             self.synchronize()
             raise
