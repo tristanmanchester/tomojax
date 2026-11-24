@@ -86,15 +86,12 @@ def hdf5_pixels(data, ranges):
         return out
 
 
-def source_bytes(stack, ranges, *, streaming=False):
+def source_bytes(stack, ranges):
     views, rows, cols = ranges
     if hasattr(stack, "read_bytes"):
-        return stack.read_bytes(ranges, streaming=streaming)
+        return stack.read_bytes(ranges)
     if hasattr(stack, "blocks"):
-        return sum(
-            source_bytes(block, tile, streaming=streaming)
-            for _, block, tile in block_windows(stack, ranges)
-        )
+        return sum(source_bytes(block, tile) for _, block, tile in block_windows(stack, ranges))
     if hasattr(stack, "window") and not hasattr(stack, "dataset"):
         # Some detectors expose complete rows even for a narrow column window.
         width = getattr(stack, "read_width", cols[-1] - cols[0] + 1)
@@ -116,15 +113,15 @@ class ProjectionTiles:
         self.dtype = np.dtype(np.float32) if raw else frames.counts.dtype
         self.shape = frames.counts.shape
 
-    def cost(self, ranges, *, streaming=False):
-        n = source_bytes(self.frames.counts, ranges, streaming=streaming)
+    def cost(self, ranges):
+        n = source_bytes(self.frames.counts, ranges)
         if self.raw:
             for field in (self.frames.flats, self.frames.darks):
                 if field is not None:
-                    n += source_bytes(field, (range(len(field)), *ranges[1:]), streaming=streaming)
+                    n += source_bytes(field, (range(len(field)), *ranges[1:]))
         return n
 
-    def read(self, ranges, budget, *, streaming=False):
+    def read(self, ranges, budget):
         spent = 0
 
         def check(n):
@@ -133,11 +130,11 @@ class ProjectionTiles:
 
         def read(stack, tile):
             nonlocal spent
-            spent += source_bytes(stack, tile, streaming=streaming)
+            spent += source_bytes(stack, tile)
             check(spent)
             return frame_pixels(stack, tile, budget)
 
-        check(self.cost(ranges, streaming=streaming))
+        check(self.cost(ranges))
         if self.raw:
             return corrected_tile(self.frames, ranges, read)
         return read(self.frames.counts, ranges)
@@ -145,7 +142,7 @@ class ProjectionTiles:
     def chunks(self, tile, budget):
         """Split statistical slabs until each sample and its calibration fit together."""
         try:
-            yield self.read(tile, budget, streaming=True)
+            yield self.read(tile, budget)
             return
         except ReadLimit:
             # Rows partition both sample and calibration reads, including gap interpolation.

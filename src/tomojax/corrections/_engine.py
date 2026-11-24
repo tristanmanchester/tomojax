@@ -400,7 +400,7 @@ def flat_fields(
         stack, variance, sets = np.full((1, *shape), level), np.zeros((1, *shape)), np.zeros(1)
         settings: dict[str, Any] = {"white_level": level, "darks": dark_frames}
     else:
-        _check_stack(flats, shape, "flats")
+        check_stack(flats, shape, "flats")
         where = np.zeros(len(flats)) if positions is None else np.asarray(positions, np.float64)
         if where.shape != (len(flats),) or not np.isfinite(where).all():
             raise ValueError(
@@ -447,7 +447,7 @@ def flat_fields(
     return fields, (Correction("flat_dark", settings, found),)
 
 
-def _check_stack(frames: Any, shape: tuple[int, int], name: str) -> None:
+def check_stack(frames: Any, shape: tuple[int, int], name: str) -> None:
     if len(frames.shape) != 3 or tuple(frames.shape[1:]) != shape or not len(frames):
         raise ValueError(
             f"{name} are {tuple(frames.shape)}; a nonempty stack of frames of {shape} is needed"
@@ -464,7 +464,7 @@ def _moments(
     offset: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """The mean of frames and the variance of that mean, in float64 over bounded batches."""
-    _check_stack(frames, shape, name)
+    check_stack(frames, shape, name)
     count = len(frames) if indices is None else len(indices)
     batch = max(1, (32 << 20) // (8 * shape[0] * shape[1]))
     total, squares = np.zeros(shape), np.zeros(shape)

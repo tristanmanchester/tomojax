@@ -435,9 +435,12 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     OSError
         If the input cannot be opened.
     """
+    return read_nxtomo(path, lazy=lazy, layout_only=False)
+
+
+def read_nxtomo(path: str, *, lazy: bool, layout_only: bool) -> LoadedNXTomo:
     out: LoadedDataset = {}
-    volume_raw: np.ndarray | None = None
-    volume_axes_attr: str | None = None
+    volume_np = None
 
     with read_hdf5(path) as f:
         entry = cast("h5py.Group", f["/entry"])
@@ -471,26 +474,31 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
         _load_grid_metadata(out, entry, path=path)
         _load_detector_metadata(out, entry, path=path)
         _load_source_metadata(out, entry)
-        volume_raw, volume_axes_attr = _load_processing_metadata(out, entry, path=path)
+        volume, volume_axes_attr = _load_processing_metadata(out, entry, path=path)
         _load_sample_metadata(out, entry)
 
-        if volume_raw is not None:
+        if volume is not None:
             volume_np, disk_order = _volume_in_internal_axes(
-                volume_raw, volume_axes_attr, path=path
+                volume, volume_axes_attr, path=path, layout_only=layout_only
             )
-            out["volume"] = volume_np
             out["disk_volume_axes_order"] = disk_order
-    return LoadedNXTomo.from_dataset(out)
+    payload = LoadedNXTomo.from_dataset(out)
+    payload.metadata.volume = volume_np
+    return payload
 
 
 def _volume_in_internal_axes(
-    volume_raw: np.ndarray, volume_axes_attr: str | None, *, path: str
+    volume: h5py.Dataset, volume_axes_attr: str | None, *, path: str, layout_only: bool
 ) -> tuple[np.ndarray, str]:
     """A saved volume in (z, y, x) order, with its disk order."""
     disk_axes = saved_volume_axes(volume_axes_attr, path)
-    volume_np = np.asarray(volume_raw)
+    volume_np = (
+        np.broadcast_to(np.zeros((), volume.dtype), volume.shape) if layout_only else volume[...]
+    )
     if disk_axes != "zyx":
-        volume_np = np.ascontiguousarray(volume_np.transpose(_volume_permutation(disk_axes)))
+        volume_np = volume_np.transpose(_volume_permutation(disk_axes))
+        if not layout_only:
+            volume_np = np.ascontiguousarray(volume_np)
     return volume_np, disk_axes
 
 

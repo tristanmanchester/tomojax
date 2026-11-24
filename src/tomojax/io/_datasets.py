@@ -643,13 +643,17 @@ def _dataset_issues(input_path: Path) -> list[str]:
             issues.insert(0, str(exc))
         return issues
     suffix = input_path.suffix.lower()
-    # An NPZ, a PSI .mat, or a reconstruction saved without its scan, is checked by reading it.
     whole = suffix in {".npz", ".mat"} or (
         suffix in _HDF5_SUFFIXES and saved_without_frames(input_path)
     )
     if whole:
         try:
-            load_dataset(input_path)
+            if suffix == ".npz":
+                from .projection_layout import saved_npz_layout
+
+                saved_npz_layout(input_path)
+            else:
+                load_dataset(input_path)
         except Exception as exc:
             return [str(exc)]
         return []

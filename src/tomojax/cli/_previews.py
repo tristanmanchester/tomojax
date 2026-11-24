@@ -19,6 +19,7 @@ from tomojax.io.api import (
     saved_volume_axes,
     saved_without_frames,
 )
+from tomojax.io.projection_layout import saved_npz_layout
 from tomojax.recon.quicklook import scale_to_uint8
 
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
@@ -30,12 +31,18 @@ def preview_paths(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
     """The previews :func:`write_previews` makes for ``path``, by name."""
     out = Path(out_dir)
     paths = {"projection": out / "projection.png"}
-    if not h5py.is_hdf5(path):
+    if Path(path).suffix.lower() == ".npz":
+        _, members = saved_npz_layout(Path(path))
+        volume, projections = "volume" in members, "projections" in members
+    elif h5py.is_hdf5(path):
+        with read_hdf5(path) as file:
+            volume = isinstance(file.get(_VOLUME_PATH), h5py.Dataset)
+        projections = not saved_without_frames(path)
+    else:
         return paths
-    with read_hdf5(path) as file:
-        if isinstance(file.get(_VOLUME_PATH), h5py.Dataset):
-            paths.update({f"slice_{axis}": out / f"slice_{axis}.png" for axis in _DISPLAY_AXES})
-    if saved_without_frames(path):  # a reconstruction saved without its scan
+    if volume:
+        paths.update({f"slice_{axis}": out / f"slice_{axis}.png" for axis in _DISPLAY_AXES})
+    if not projections:
         del paths["projection"]
     return paths
 
@@ -43,12 +50,26 @@ def preview_paths(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
 def write_previews(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
     """Write percentile-scaled PNG previews of ``path`` into ``out_dir``."""
     paths = preview_paths(path, out_dir)
-    raw = read_acquisition(path)
-    images = (
-        _hdf5_images(path)
-        if raw is None
-        else {"projection": numpy_float32_array(raw.counts[raw.counts.shape[0] // 2])}
-    )
+    if Path(path).suffix.lower() == ".npz":
+        record, members = saved_npz_layout(Path(path))
+        images = {}
+        if (stack := members.get("projections")) is not None:
+            key = record.image_key
+            samples = stack if key is None else stack.frames_at(key == 0)
+            images["projection"] = samples[len(samples) // 2]
+        if (volume := members.get("volume")) is not None:
+            for i, axis in enumerate("zyx"):
+                ranges = [range(n) for n in volume.shape]
+                mid = volume.shape[i] // 2
+                ranges[i] = range(mid, mid + 1)
+                images[f"slice_{axis}"] = volume.sampled(ranges).squeeze(axis=i)
+    else:
+        raw = read_acquisition(path)
+        images = (
+            _hdf5_images(path)
+            if raw is None
+            else {"projection": numpy_float32_array(raw.counts[raw.counts.shape[0] // 2])}
+        )
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     for name, image in images.items():
         write_image(paths[name], scale_to_uint8(image))

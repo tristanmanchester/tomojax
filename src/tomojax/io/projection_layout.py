@@ -7,10 +7,16 @@ from typing import Any
 import h5py
 import numpy as np
 
-from tomojax._data import Hdf5Frames, load_nxtomo, npz_projection_layout
+from tomojax._data import Hdf5Frames, npz_layout, read_nxtomo
 from tomojax.core.files import read_hdf5
 from tomojax.io._datasets import ProjectionDataset, psi_record
 from tomojax.io._hdf5_array import read_hdf5_array
+
+
+def saved_npz_layout(path: Path) -> tuple[ProjectionDataset, dict[str, Any]]:
+    """Read the archive metadata with sliceable sources for its saved arrays."""
+    payload, arrays = npz_layout(path)
+    return ProjectionDataset.from_nxtomo(payload, source_path=path), arrays
 
 
 def saved_projection_layout(path: Path) -> tuple[ProjectionDataset, Any]:
@@ -20,12 +26,11 @@ def saved_projection_layout(path: Path) -> tuple[ProjectionDataset, Any]:
         stack = Hdf5Frames.open(str(path), "aligned_phase_sinogram")
         return record, MatlabFrames(stack)
     if path.suffix.lower() == ".npz":
-        payload, stack = npz_projection_layout(path)
-    else:
-        payload = load_nxtomo(str(path), lazy=True)
-        stack = payload.projections
-        if stack is None:
-            raise ValueError(f"{path} holds a reconstruction saved without its scan")
+        record, members = saved_npz_layout(path)
+        return record, members.get("projections")
+    payload = read_nxtomo(str(path), lazy=True, layout_only=True)
+    stack = payload.projections
+    if stack is not None:
         shape = np.broadcast_to(np.zeros((), stack.dtype), stack.shape)
         payload = replace(payload, projections=shape)
     return ProjectionDataset.from_nxtomo(payload, source_path=path), stack

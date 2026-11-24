@@ -14,13 +14,24 @@ import numpy as np
 
 import tomojax as tj
 from tomojax import interactive, progress
-from tomojax._loading import load_raw_frames_with_declaration, load_scan_with_declaration
+from tomojax._loading import (
+    load_raw_frames_with_declaration,
+    load_scan_with_declaration,
+    projection_frames,
+)
 from tomojax._planning import resolve_reconstruction
 from tomojax._resources import sample
 from tomojax._scan import combined_geometry, describe
 from tomojax._simulate import build_sim_config, simulate_config
 from tomojax._smooth_alignment import resolve_alignment
-from tomojax._workflow import align_resolved, reconstruct_resolved, validate_save
+from tomojax._workflow import (
+    align_resolved,
+    alignment_from_record,
+    reconstruct_resolved,
+    reconstruction_from_record,
+    simulation_from_record,
+    validate_save,
+)
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, source
 from tomojax.cli._handles import Root, handle, stage_array
@@ -92,7 +103,12 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
                 ex.plane_source(operation, context)
                 item = p.Validated()
             else:
-                admission = Admission(context, manifest, isinstance(command, op.Plan))
+                admission = Admission(
+                    context,
+                    manifest,
+                    isinstance(command, op.Plan),
+                    isinstance(command, op.Validate),
+                )
                 work = admission.prepare(operation)
                 item = (
                     p.Validated(admission.details) if isinstance(command, op.Validate) else work()
@@ -186,6 +202,7 @@ class Admission:
     context: ex.ExecutionContext
     manifest: p.Provenance
     plan: bool
+    validating: bool
     details: dict[str, Any] = field(default_factory=dict)
 
     @singledispatchmethod
@@ -204,7 +221,9 @@ class Admission:
 
     @prepare.register
     def open(self, operation: op.Open) -> Work:
-        options = arguments(operation, self.context, omit=("path", "kind"))
+        options = arguments(
+            operation, self.context, omit=("path", "kind"), calibration_layout=self.validating
+        )
         declared = options.pop("geometry")
         if operation.kind in ("scan", "frames"):
             loader = (
@@ -212,7 +231,14 @@ class Admission:
                 if operation.kind == "scan"
                 else load_raw_frames_with_declaration
             )
-            item = loader(operation.path, declared=declared, **options)
+            work = partial(loader, operation.path, declared=declared, **options)
+            if self.validating:
+                item, _ = projection_frames(
+                    Path(operation.path),
+                    require_raw=operation.kind == "frames",
+                    declared=declared,
+                    **options,
+                )
         else:
             for field in msgspec.structs.fields(operation):
                 if (
@@ -227,11 +253,28 @@ class Admission:
                 "alignment": tj.load_alignment,
                 "simulation": tj.load_simulation,
             }[operation.kind]
-            item = load(operation.path)
-        self.details.update(
-            path=operation.path, kind=operation.kind, geometry=geometry_summary(item)
-        )
-        return lambda: item
+            work = partial(load, operation.path)
+            if self.validating:
+                from tomojax.io.projection_layout import saved_projection_layout
+
+                record, _ = saved_projection_layout(Path(operation.path))
+
+                def scan_layout(path):
+                    frames, _ = projection_frames(Path(path))
+                    shape = np.broadcast_to(np.float32(0), frames.counts.shape)
+                    return tj.Scan(shape, frames.geometry, source=frames.source)
+
+                build = {
+                    "reconstruction": reconstruction_from_record,
+                    "alignment": alignment_from_record,
+                    "simulation": simulation_from_record,
+                }[operation.kind]
+                item = build(operation.path, record, scan_layout)
+        if self.validating:
+            self.details.update(
+                path=operation.path, kind=operation.kind, geometry=geometry_summary(item)
+            )
+        return work
 
     @prepare.register
     def simulate(self, operation: op.Simulate) -> Work:

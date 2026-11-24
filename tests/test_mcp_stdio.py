@@ -971,3 +971,40 @@ def test_backproject_bare_path_matches_opened_projections(tmp_path, kind):
                 "backproject", source=scan, projections=f"{path}::/entry/instrument/detector/data"
             )
             assert literal["isError"] and "does not match" in literal["content"][0]["text"]
+
+
+def test_inspect_saved_npz_with_and_without_preview(tmp_path):
+    import base64
+    from io import BytesIO
+
+    import numpy as np
+    from PIL import Image
+
+    from tomojax.recon.quicklook import scale_to_uint8
+
+    sim = tj.simulate(size=8, n_views=12)
+    tj.save(tmp_path / "scan.npz", sim.scan)
+    tj.save(
+        tmp_path / "recon.npz",
+        tj.Reconstruction(sim.phantom, sim.scan.geometry, "example", {}, sim.scan),
+    )
+    with connection(tmp_path) as c:
+        for name in ("scan", "recon"):
+            for preview in (False, True):
+                reply = c.call("inspect", path=f"{name}.npz", preview=preview)
+                assert not reply["isError"], reply
+                report = reply["structuredContent"]
+                assert report["valid"] and report["angles"]["count"] == 12
+                assert report["projection"]["found"] == (name == "scan")
+                assert report["volume"]["found"] == (name == "recon")
+                assert [x["type"] for x in reply["content"]] == (
+                    ["text", "image"] if preview else ["text"]
+                )
+                if preview:
+                    pixels = sim.scan.projections[6] if name == "scan" else sim.phantom[4]
+                    with Image.open(
+                        BytesIO(base64.b64decode(reply["content"][1]["data"]))
+                    ) as image:
+                        np.testing.assert_equal(
+                            np.asarray(image), scale_to_uint8(np.asarray(pixels))
+                        )

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from itertools import chain
 import json
 from math import prod
 from pathlib import Path
@@ -79,13 +78,11 @@ class NpzFrames(FrameStack):
     strides: tuple[int, ...]
     offset: int
     compressed: bool
+    member: str
 
-    def read_bytes(self, ranges: tuple[range, ...], *, streaming: bool) -> int:
-        if streaming or not self.compressed:
-            return prod(map(len, ranges)) * self.dtype.itemsize
-        view, row, col = (r[-1] for r in ranges)
-        last = (int(self.frames[view]), self.first_row + row, self.first_col + col)
-        return sum(i * s for i, s in zip(last, self.strides, strict=True)) + self.dtype.itemsize
+    def read_bytes(self, ranges: tuple[range, ...]) -> int:
+        # Include axis indices, buffered offsets and the zip decoder's working space.
+        return prod(map(len, ranges)) * self.dtype.itemsize + 16 * sum(map(len, ranges)) + (1 << 20)
 
     def _read(self, indices, rows, cols):
         return self.read_indices(
@@ -101,67 +98,81 @@ class NpzFrames(FrameStack):
         )
 
     def read_indices(self, indices, rows, cols):
-        if np.any(np.diff(indices) < 0):
+        if np.any(np.diff(indices) <= 0):
             ordered, inverse = np.unique(indices, return_inverse=True)
             return self.read_indices(ordered, rows, cols)[inverse]
-        strides = self.strides
-        offsets = (
-            indices[:, None, None] * strides[0]
-            + rows[None, :, None] * strides[1]
-            + cols[None, None, :] * strides[2]
+        axes = (indices[:, None, None], rows[None, :, None], cols[None, None, :])
+        order = "C" if self.strides[0] >= self.strides[-1] else "F"
+        result = np.empty(tuple(map(len, (indices, rows, cols))), self.dtype, order=order)
+        iterator = np.nditer(
+            [*axes, result],
+            flags=["external_loop", "buffered", "zerosize_ok"],
+            op_flags=[["readonly"], ["readonly"], ["readonly"], ["writeonly"]],
+            buffersize=4096,
+            order=order,
         )
-        order = "C" if strides[0] >= strides[-1] else "F"
-        addresses = offsets.ravel(order=order)
-        result = np.empty(len(addresses), self.dtype)
-        with ZipFile(read_path(self.path)) as archive, archive.open("projections.npy") as stream:
-            # Stored members seek directly. Deflated members must decode gaps, so
-            # coalesce nearby samples into bounded reads while moving forward once.
-            boundaries = (
-                np.flatnonzero(np.diff(addresses) != self.dtype.itemsize) + 1
-                if not self.compressed
-                else ()
-            )
-            start = 0
-            for end in chain(boundaries, (len(addresses),)):
-                while start < end:
+        with ZipFile(read_path(self.path)) as archive, archive.open(self.member) as stream:
+            for v, r, c, target in iterator:
+                addresses = (
+                    self.offset + v * self.strides[0] + r * self.strides[1] + c * self.strides[2]
+                )
+                start = 0
+                while start < len(target):
+                    progress.check_cancelled()
                     first = int(addresses[start])
-                    stop = min(end, int(np.searchsorted(addresses, first + (1 << 20))))
+                    # ZipExtFile.seek inflates the entire skipped interval in one read.
+                    if self.compressed:
+                        while (gap := first - stream.tell()) > 0:
+                            if not stream.read(min(gap, 65536)):
+                                raise EOFError(f"truncated {self.member}")
+                            progress.check_cancelled()
+                    else:
+                        stream.seek(first)
+                    stop = addresses.searchsorted(first + 65536)
                     last = int(addresses[stop - 1]) + self.dtype.itemsize
-                    stream.seek(self.offset + first)
                     block = np.frombuffer(stream.read(last - first), self.dtype)
-                    result[start:stop] = block[
+                    target[start:stop] = block[
                         (addresses[start:stop] - first) // self.dtype.itemsize
                     ]
                     start = stop
-        return result.reshape(offsets.shape, order=order)
+        return result
 
 
-def npz_projection_layout(path: Path):
-    with ZipFile(read_path(path)) as archive, archive.open("projections.npy") as stream:
-        shape, fortran, dtype = array_header(stream)
-        if dtype.hasobject:
-            raise ValueError(f"{path}: object arrays are unsupported")
-        placeholder = np.broadcast_to(np.zeros((), dtype), shape)
-        payload = LoadedNXTomo.from_dataset(
-            _load_npz_dataset(archive, mapped={"projections": placeholder})
-        )
-        strides = np.cumprod(
-            (dtype.itemsize, *shape[:-1]) if fortran else (dtype.itemsize, *shape[:0:-1])
-        )
-        if len(shape) == 2:
-            shape = (shape[0], 1, shape[1])
-            strides = np.insert(strides, 1, 0)
-        stack = NpzFrames(
-            path,
-            tuple(map(int, strides if fortran else strides[::-1])),
-            stream.tell(),
-            archive.getinfo("projections.npy").compress_type != ZIP_STORED,
-            frames=np.arange(shape[0]),
-            rows=shape[1],
-            cols=shape[2],
-            dtype=dtype,
-        )
-        return payload, stack
+def npz_layout(path: Path):
+    """Describe saved arrays from NPY headers and decode only their metadata."""
+    stacks = {}
+    placeholders = {}
+    with ZipFile(read_path(path)) as archive:
+        for key in ("projections", "volume"):
+            member = key + ".npy"
+            if member not in archive.namelist():
+                continue
+            with archive.open(member) as stream:
+                shape, fortran, dtype = array_header(stream)
+                if len(shape) == 2 and key == "projections":
+                    shape = (shape[0], 1, shape[1])
+                if len(shape) != 3 or dtype.hasobject:
+                    raise ValueError(f"{path}: invalid {key} shape or dtype")
+                strides = np.cumprod(
+                    (dtype.itemsize, *shape[:-1]) if fortran else (dtype.itemsize, *shape[:0:-1])
+                )
+                stacks[key] = NpzFrames(
+                    path,
+                    tuple(map(int, strides if fortran else strides[::-1])),
+                    stream.tell(),
+                    archive.getinfo(member).compress_type != ZIP_STORED,
+                    member,
+                    frames=np.arange(shape[0]),
+                    rows=shape[1],
+                    cols=shape[2],
+                    dtype=dtype,
+                )
+                placeholders[key] = np.broadcast_to(np.zeros((), dtype), shape)
+        fields = _load_npz_dataset(archive, mapped=placeholders)
+        fields.pop("volume", None)
+        payload = LoadedNXTomo.from_dataset(fields)
+        payload.metadata.volume = placeholders.get("volume")
+        return payload, stacks
 
 
 def _load_npz_dataset(

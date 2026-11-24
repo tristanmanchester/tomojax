@@ -1072,7 +1072,7 @@ def test_projection_read_budgets_calibration_before_pixels(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("compressed", [False, True])
-def test_npz_read_cost_includes_deflated_prefix(tmp_path, compressed):
+def test_npz_reads_fortran_order_samples_past_tile_budget(tmp_path, compressed):
     from tests.worker_adapter import Stage, admitted
     from tomojax.cli import operations
 
@@ -1091,12 +1091,8 @@ def test_npz_read_cost_includes_deflated_prefix(tmp_path, compressed):
     roi = ((1, 2), (511, 512), (4095, 4097))
     stage = Stage(tmp_path)
     request = operations.Read(source=ref, roi=roi)
-    if compressed:
-        with pytest.raises(ValueError, match="16 MiB"):
-            admitted(request, None, stage, ref)
-    else:
-        admitted(request, None, stage, ref)
-        np.testing.assert_equal(np.load(stage.private).ravel(), [8, 12])
+    admitted(request, None, stage, ref)
+    np.testing.assert_equal(np.load(stage.private).ravel(), [8, 12])
     result = admitted(operations.Statistics(source=ref, roi=roi), None, stage, ref)
     assert result.mean == 10
 
@@ -1122,3 +1118,87 @@ def test_matlab_phase_read_maps_only_selected_samples(tmp_path, monkeypatch):
     np.testing.assert_equal(actual, phase[4:5, 1:4:2, 2:6])
     assert actual.dtype == np.float32
     assert sum(reads) == actual.size * phase.dtype.itemsize
+
+
+def test_compressed_npz_midpoint_and_pixel_have_bounded_peak_memory(tmp_path):
+    import tracemalloc
+
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+
+    geometry = tj.ParallelGeometry(
+        tj.Grid(8, 8, 8, 1, 1, 1), tj.Detector(512, 512, 1, 1), np.arange(48)
+    )
+    data = np.broadcast_to(np.arange(48, dtype=np.float32)[:, None, None], (48, 512, 512))
+    path = tmp_path / "large.npz"
+    tj.save(path, tj.Scan(data, geometry))
+    source = operations.PathInput(str(path))
+    stage = Stage(tmp_path)
+    for request, expected in (
+        (operations.Read(source=source, mode="projection"), data[24:25]),
+        (
+            operations.Read(source=source, roi=((24, 25), (15, 16), (87, 88))),
+            data[24:25, 15:16, 87:88],
+        ),
+    ):
+        tracemalloc.start()
+        try:
+            admitted(request, None, stage, source)
+            assert tracemalloc.get_traced_memory()[1] < 16 << 20
+        finally:
+            tracemalloc.stop()
+        np.testing.assert_array_equal(np.load(stage.private), expected)
+
+
+def test_validate_open_only_reads_calibration_metadata(tmp_path, monkeypatch):
+    from tests.test_io_workflows import _labelled_dataset
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+    from tomojax.io import save_dataset
+
+    path = tmp_path / "raw.nxs"
+    save_dataset(path, _labelled_dataset([4, 8, 2], [0, 1, 2]))
+    where = "/entry/instrument/detector/data"
+    reads = trace_detector_reads(monkeypatch, where)
+    events = []
+    validate = operations.Validate(operation=operations.Open(path=str(path), kind="scan"))
+
+    def run():
+        return admitted(validate, None, Stage(tmp_path), None, event=events.append)
+
+    assert run().details["geometry"]["views"] == 1
+    assert reads == []
+    assert not any(
+        getattr(e, "name", None) in ("load", "flat dark, log", "correct view batch") for e in events
+    )
+    save_dataset(path, _labelled_dataset([4, 2], [0, 2]))
+    with pytest.raises(ValueError, match="No flat"):
+        run()
+    path.unlink()
+    with pytest.raises(FileNotFoundError):
+        run()
+    assert reads == []
+
+
+@pytest.mark.parametrize("kind", ["scan", "simulation", "reconstruction"])
+def test_validate_open_skips_saved_detector_and_volume(tmp_path, monkeypatch, kind):
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+
+    sim = tj.simulate(size=8, n_views=12)
+    path = tmp_path / "saved.nxs"
+    if kind == "reconstruction":
+        recon = tj.Reconstruction(sim.phantom, sim.scan.geometry, "example", {}, sim.scan)
+        tj.save(path, recon, include_scan=True)
+    else:
+        tj.save(path, sim)
+    frames = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
+    volume = trace_detector_reads(monkeypatch, "/entry/processing/tomojax/volume")
+    result = admitted(
+        operations.Validate(operation=operations.Open(path=str(path), kind=kind)),
+        None,
+        Stage(tmp_path),
+        None,
+    )
+    assert result.details["geometry"]["views"] == 12
+    assert frames == volume == []

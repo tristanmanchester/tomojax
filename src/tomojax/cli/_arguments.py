@@ -28,7 +28,11 @@ def _constructors() -> dict[str, type]:
 
 
 def arguments(
-    record: Record, context: ex.ExecutionContext, *, omit: tuple[str, ...] = ()
+    record: Record,
+    context: ex.ExecutionContext,
+    *,
+    omit: tuple[str, ...] = (),
+    calibration_layout: bool = False,
 ) -> dict[str, Any]:
     """Construct option objects at their enclosing field and resolve bulk inputs."""
 
@@ -36,7 +40,9 @@ def arguments(
         if value is None:
             return None
         if isinstance(value, Member | Npy | Hdf5 | op.PathInput):
-            return read_reference(name, value, context)
+            return read_reference(
+                name, value, context, shape_only=calibration_layout and name in ("flats", "darks")
+            )
         if isinstance(value, Record):
             with within(name):
                 return _constructors()[type(value).__name__](**arguments(value, context))
@@ -71,11 +77,16 @@ def handle_member(name: str, value: Member, context: ex.ExecutionContext) -> Any
 
 
 def read_reference(
-    name: str, value: Member | Hdf5 | Npy | op.PathInput, context: ex.ExecutionContext
+    name: str,
+    value: Member | Hdf5 | Npy | op.PathInput,
+    context: ex.ExecutionContext,
+    *,
+    shape_only: bool,
 ) -> Any:
     """Resolve stored pixels, a scan geometry, or a region estimate at execution."""
     if isinstance(value, Member):
-        return handle_member(name, value, context)
+        member = handle_member(name, value, context)
+        return np.broadcast_to(np.zeros((), member.dtype), member.shape) if shape_only else member
     if isinstance(value, Npy):
         if value.artifact is not None:
             pinned = context.leases[value].value
@@ -88,7 +99,9 @@ def read_reference(
             data = file.get(value.dataset)
             if not isinstance(data, h5py.Dataset):
                 raise InvalidParameter(name, f"no dataset {value.dataset} in {value.path}")
-            return data[...]
+            return (
+                np.broadcast_to(np.zeros((), data.dtype), data.shape) if shape_only else data[...]
+            )
     if name == "projections":
         return tj.load(value.path).projections
     return saved_volume(Path(value.path), name)

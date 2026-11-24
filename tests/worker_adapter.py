@@ -6,11 +6,11 @@ from tomojax.cli._adapters import execute  # check-public-imports: allow-private
 from tomojax.wire import arrays
 
 
-def admitted(command, value, stage, ref):
+def admitted(command, value, stage, ref, *, event=lambda _: None):
     context = execution.ExecutionContext(
         {ref: execution.Lease(value, products.Provenance("open", {}, ()))},
         progress.Control(),
-        lambda _: None,
+        event,
         lambda _: None,
         stage,
     )

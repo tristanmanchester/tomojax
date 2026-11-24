@@ -6,8 +6,27 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
-from ._engine import Fields, correct_view_batches, exposure_scales, flat_fields, flat_weights
+from ._engine import (
+    Fields,
+    check_stack,
+    correct_view_batches,
+    exposure_scales,
+    flat_fields,
+    flat_weights,
+)
 from ._illumination import measured_neighbours
+
+
+def check_calibration_layout(frames: Any) -> None:
+    """Check calibration dimensions and exposure metadata before reading any counts."""
+    from ._validation import positive_finite
+
+    for name in ("flats", "darks"):
+        if (stack := getattr(frames, name)) is not None:
+            check_stack(stack, frames.counts.shape[1:], name)
+    if frames.white_level is not None:
+        positive_finite(frames.white_level, "white_level")
+    exposure_scales(frames.exposure_times, frames.flat_exposure_times, frames.views, frames.flats)
 
 
 def corrected_tile(
