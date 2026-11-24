@@ -1,4 +1,5 @@
 //! Bounded NPY/HDF5 selections and their physical registration. Called on the I/O thread.
+use std::path::Path;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -63,6 +64,7 @@ fn selection(
             let source = file
                 .dataset(dataset)
                 .map_err(|e| format!("Cannot read dataset {dataset}: {e}"))?;
+            check_virtual(&source, Path::new(path))?;
             let stored_shape = source.shape();
             // TomoJAX registers a line detector as (view,1,u), while its HDF5 source can be (view,u).
             let singleton_v =
@@ -431,4 +433,77 @@ pub(super) fn statistics(values: &[f32]) -> Result<Statistics, String> {
         histogram,
         window,
     })
+}
+
+/// HDF5 fills a virtual dataset's missing sources with its fill value; those are
+/// not measurements, so a virtual dataset reads only when its sources are there.
+fn check_virtual(dataset: &hdf5::Dataset, file: &Path) -> Result<(), String> {
+    let Ok(create) = dataset.dcpl() else {
+        return Ok(());
+    };
+    if create.layout() != hdf5::dataset::Layout::Virtual {
+        return Ok(());
+    }
+    let folder = file.parent().unwrap_or(Path::new("."));
+    for mapping in create.virtual_map() {
+        if mapping.src_filename == "." {
+            continue;
+        }
+        let named = Path::new(&mapping.src_filename);
+        // HDF5 also looks beside the virtual file for a source named absolutely.
+        let found = [folder.join(named)]
+            .into_iter()
+            .chain(named.file_name().map(|name| folder.join(name)))
+            .find(|path| path.is_file());
+        let readable = found.is_some_and(|path| {
+            hdf5::File::open(&path)
+                .and_then(|source| source.dataset(&mapping.src_dataset))
+                .is_ok()
+        });
+        if !readable {
+            return Err(format!(
+                "{}: missing virtual detector pixels in {}",
+                dataset.name(),
+                mapping.src_filename
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod virtual_tests {
+    use super::*;
+
+    #[test]
+    fn a_virtual_dataset_reads_only_when_its_sources_are_there() {
+        let directory = tempfile::tempdir().unwrap();
+        let pixels = directory.path().join("pixels.h5");
+        hdf5::File::create(&pixels)
+            .unwrap()
+            .new_dataset_builder()
+            .with_data(&[1.0f32, 2., 3.])
+            .create("data")
+            .unwrap();
+        let master = directory.path().join("scan.nxs");
+        hdf5::File::create(&master)
+            .unwrap()
+            .new_dataset::<f32>()
+            .shape(3)
+            .with_dcpl(|plist| plist.virtual_map("pixels.h5", "/data", 3, .., 3, ..))
+            .create("data")
+            .unwrap();
+        let check = || {
+            let file = hdf5::File::open(&master).unwrap();
+            check_virtual(&file.dataset("data").unwrap(), &master)
+        };
+        assert!(check().is_ok());
+        std::fs::remove_file(&pixels).unwrap();
+        // HDF5 would read the fill value; the reader refuses instead.
+        assert!(
+            check()
+                .unwrap_err()
+                .contains("missing virtual detector pixels")
+        );
+    }
 }

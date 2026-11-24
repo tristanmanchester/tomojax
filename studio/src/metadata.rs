@@ -271,12 +271,15 @@ fn only_per_frame(file: &hdf5::File, name: &str, frames: usize) -> Option<String
             } else if link == name
                 && let Ok(dataset) = group.dataset(&link)
                 && dataset.shape() == [frames]
+                && let Ok(info) = dataset.loc_info()
+                // Hard-linked aliases of one dataset count once.
+                && !found.iter().any(|(token, _)| *token == info.token)
             {
-                found.push(dataset.name());
+                found.push((info.token, dataset.name()));
             }
         }
     }
-    (found.len() == 1).then(|| found.remove(0))
+    (found.len() == 1).then(|| found.remove(0).1)
 }
 
 pub fn suggested_kind(report: &Value) -> &'static str {
@@ -571,7 +574,9 @@ fn stored_volume(
     let processing = file
         .group("/entry/processing/tomojax")
         .map_err(|error| error.to_string())?;
-    let order = string_attribute(&processing, "volume_axes_order")?.unwrap_or_else(|| "zyx".into());
+    // Without a recorded order the axes are unknown; TomoJAX won't guess either.
+    let order = string_attribute(&processing, "volume_axes_order")?
+        .ok_or("The stored volume records no axis order")?;
     let mut names: Vec<_> = order.chars().collect();
     names.sort_unstable();
     if names != ['x', 'y', 'z'] {
@@ -870,6 +875,41 @@ mod tests {
         assert_eq!(kind, "frames");
         assert_eq!(report["flats_darks"]["sample_count"], 2);
         assert!(!arrays.contains_key("projections"));
+
+        // A NeXus alias (a second hard link to the same keys) is still one dataset.
+        hdf5::File::open_rw(&path)
+            .unwrap()
+            .create_group("/entry/alias")
+            .unwrap()
+            .link_hard("/entry/data/image_key", "image_key")
+            .unwrap();
+        let (_, arrays, report) = quick_metadata(&path).unwrap().unwrap();
+        assert_eq!(report["flats_darks"]["sample_count"], 2);
+        assert!(!arrays.contains_key("projections"));
+    }
+
+    #[test]
+    fn a_stored_volume_without_an_axis_order_is_not_guessed() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("legacy.nxs");
+        {
+            let file = hdf5::File::create(&path).unwrap();
+            file.create_group("entry").unwrap();
+            file.create_group("/entry/processing")
+                .unwrap()
+                .create_group("tomojax")
+                .unwrap()
+                .new_dataset::<f32>()
+                .shape((4, 3, 4))
+                .create("volume")
+                .unwrap();
+        }
+        let error = inspection_arrays(
+            &json!({"volume":{"found":true},"projection":{"found":false}}),
+            &path,
+        )
+        .unwrap_err();
+        assert!(error.contains("axis order"), "{error}");
     }
 
     #[test]
