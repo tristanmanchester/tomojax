@@ -373,34 +373,35 @@ pub fn jobs_drawer(state: &AppState) -> El {
         rows = rows.child(super::progress::live(state, true));
     }
     if jobs.is_empty() {
-        rows = rows.child(help(
-            "No jobs are running. Queue an operation from Prepare or Reconstruct.",
-        ));
+        rows = rows.child(help("No active jobs"));
     }
     for job in jobs {
         rows = rows.child(job_row(state, job, true));
     }
+    // A popover under its top-bar trigger, sized to its content.
     col()
         .key("jobs-drawer")
-        .role("region")
-        .label("Background jobs")
+        .role("dialog")
+        .label("Activity")
         .w(440.)
-        .h(420.)
-        .pin(None, None, Some(18.), Some(42.))
+        .max_h(520.)
+        .pin(None, Some(70.), Some(18.), None)
         .radius(10.)
         .fill(paper())
         .shadow(8., 30., ink().alpha(0.18))
+        .modal(true, |s: &mut AppState| s.ui.jobs_open = false)
+        .focus_return("toggle-jobs")
         .child(
             row()
                 .h(55.)
                 .px(18.)
                 .gap(10.)
                 .items_center()
-                .child(strong("Background jobs", 15., ink()))
+                .child(strong("Activity", 15., ink()))
                 .child(spacer())
                 .child(icon_button(
                     "close-jobs",
-                    "Close jobs panel",
+                    "Close activity",
                     Icon::Close,
                     true,
                     |s, _| s.ui.jobs_open = false,
@@ -410,7 +411,7 @@ pub fn jobs_drawer(state: &AppState) -> El {
         .child(
             col()
                 .key("jobs-drawer-scroll")
-                .grow(1.)
+                .shrink()
                 .min_h(0.)
                 .w_full()
                 .scroll(ScrollSpec {
@@ -561,9 +562,15 @@ pub fn shortcuts(state: &AppState) -> El {
     let query = state.ui.shortcut_query.text.to_lowercase();
     let mut rows = col().gap(5.).padding(18.);
     for shortcut in state.model.shortcuts.iter().filter(|s| {
-        format!("{} {} {}", s.title, s.category, s.binding)
-            .to_lowercase()
-            .contains(&query)
+        format!(
+            "{} {} {} {}",
+            s.title,
+            s.category,
+            s.binding,
+            crate::preferences::binding_label(&s.binding)
+        )
+        .to_lowercase()
+        .contains(&query)
     }) {
         let selected = state.ui.editing_shortcut.as_deref() == Some(&shortcut.id);
         let mut item = col().gap(10.).py(10.).w_full();
@@ -583,7 +590,7 @@ pub fn shortcuts(state: &AppState) -> El {
                 .child(
                     action_button(
                         &format!("edit-shortcut-{}", shortcut.id),
-                        &shortcut.binding,
+                        &crate::preferences::binding_label(&shortcut.binding),
                         false,
                         true,
                         UiAction::BeginShortcutEdit(shortcut.id.clone()),
@@ -618,6 +625,16 @@ pub fn shortcuts(state: &AppState) -> El {
                         )
                         .grow(1.),
                     )
+                    .child(quiet_button(
+                        "record-shortcut",
+                        if state.ui.recording_shortcut {
+                            "Press keys…"
+                        } else {
+                            "Record"
+                        },
+                        state.ui.recording_shortcut,
+                        |s, _| s.ui.recording_shortcut = !s.ui.recording_shortcut,
+                    ))
                     .child(button(
                         "save-shortcut",
                         "Apply",

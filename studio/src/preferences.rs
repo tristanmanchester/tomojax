@@ -5,6 +5,68 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// The canonical binding text for a pressed key combination, or None while only modifiers are
+/// down or the key cannot be bound.
+pub fn chord_text(event: &rune::KeyEvent) -> Option<String> {
+    use rune::Key;
+    let key = match &event.key {
+        Key::Command(c) => char_name(*c),
+        Key::Text(text) if text.chars().count() == 1 => char_name(text.chars().next()?),
+        Key::Function(n) => format!("f{n}"),
+        Key::Enter => "enter".into(),
+        Key::Tab => "tab".into(),
+        Key::Backspace => "backspace".into(),
+        Key::Delete => "delete".into(),
+        Key::Insert => "insert".into(),
+        Key::Home => "home".into(),
+        Key::End => "end".into(),
+        Key::PageUp => "pageup".into(),
+        Key::PageDown => "pagedown".into(),
+        Key::Left => "left".into(),
+        Key::Right => "right".into(),
+        Key::Up => "up".into(),
+        Key::Down => "down".into(),
+        _ => return None,
+    };
+    let mods = &event.mods;
+    let mut text = String::new();
+    for (held, name) in [(mods.cmd, "mod"), (mods.alt, "alt"), (mods.shift, "shift")] {
+        if held {
+            text.push_str(name);
+            text.push('+');
+        }
+    }
+    text.push_str(&key);
+    rune::Chord::parse(&text).is_ok().then_some(text)
+}
+
+fn char_name(c: char) -> String {
+    let c = c.to_ascii_lowercase();
+    match c {
+        ' ' => "space".into(),
+        '+' => "plus".into(),
+        ',' => "comma".into(),
+        '-' => "minus".into(),
+        '=' => "equal".into(),
+        '.' => "period".into(),
+        '/' => "slash".into(),
+        '\\' => "backslash".into(),
+        '`' => "backquote".into(),
+        ';' => "semicolon".into(),
+        '\'' => "quote".into(),
+        '[' => "bracketleft".into(),
+        ']' => "bracketright".into(),
+        other => other.to_string(),
+    }
+}
+
+/// A binding as this platform writes it ("Ctrl+," or "⌘,").
+pub fn binding_label(binding: &str) -> String {
+    rune::Chord::parse(binding)
+        .map(|chord| chord.label())
+        .unwrap_or_else(|_| binding.to_owned())
+}
+
 pub const COMMANDS: &[(&str, &str, &str, &str)] = &[
     ("new", "New project", "Project", "mod+n"),
     ("open", "Open project", "Project", "mod+o"),
@@ -158,6 +220,32 @@ impl Preferences {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_pressed_combination_becomes_canonical_binding_text() {
+        use rune::{Key, KeyEvent, Mods};
+        let press = |key: Key, mods: Mods| crate::preferences::chord_text(&KeyEvent { key, mods });
+        let cmd = Mods {
+            cmd: true,
+            ctrl: true,
+            ..Default::default()
+        };
+        let cmd_shift = Mods { shift: true, ..cmd };
+        assert_eq!(
+            press(Key::Command('r'), cmd_shift).as_deref(),
+            Some("mod+shift+r")
+        );
+        assert_eq!(press(Key::Command(','), cmd).as_deref(), Some("mod+comma"));
+        assert_eq!(
+            press(Key::Function(5), Mods::default()).as_deref(),
+            Some("f5")
+        );
+        assert_eq!(press(Key::Escape, cmd), None);
+        assert_eq!(
+            crate::preferences::binding_label("mod+comma"),
+            rune::Chord::parse("mod+comma").unwrap().label()
+        );
+    }
+
     use super::*;
     #[test]
     fn conflicts_resolve_platform_aliases_and_reject_reserved_keys() {

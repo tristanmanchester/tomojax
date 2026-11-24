@@ -24,7 +24,20 @@ fn poll(state: &mut AppState, _: f64, tx: &mut Tx) -> bool {
     changed
 }
 fn key(state: &mut AppState, event: &KeyEvent, tx: &mut Tx) -> bool {
+    if state.ui.recording_shortcut {
+        if event.key == Key::Escape {
+            state.ui.recording_shortcut = false;
+        } else if let Some(chord) = preferences::chord_text(event) {
+            state.ui.shortcut_binding = rune::TextEdit::new(&chord);
+            state.ui.recording_shortcut = false;
+        }
+        return true;
+    }
     if event.key == Key::Escape {
+        if state.ui.jobs_open {
+            state.ui.jobs_open = false;
+            return true;
+        }
         if state.ui.palette_open || state.ui.shortcuts_open {
             state.ui.palette_open = false;
             state.ui.shortcuts_open = false;

@@ -136,6 +136,8 @@ pub struct UiState {
     pub shortcut_query: TextEdit,
     pub shortcut_binding: TextEdit,
     pub editing_shortcut: Option<String>,
+    /// The shortcut editor is waiting for a key combination.
+    pub recording_shortcut: bool,
     pub recipe_name: TextEdit,
     /// Keys are the schema's parameter names. Root initialises every visible edit.
     pub parameter_edits: BTreeMap<String, TextEdit>,
@@ -181,6 +183,7 @@ impl Default for UiState {
             shortcut_query: TextEdit::default(),
             shortcut_binding: TextEdit::default(),
             editing_shortcut: None,
+            recording_shortcut: false,
             recipe_name: TextEdit::new("Reconstruction recipe"),
             parameter_edits: BTreeMap::new(),
             parameter_choices: BTreeMap::new(),

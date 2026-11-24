@@ -276,7 +276,31 @@ pub fn telemetry(state: &AppState, job: &JobView, compact: bool, expanded: bool)
     };
     let mut body = col().gap(9.).w_full();
     let active = matches!(job.status, JobStatus::Running | JobStatus::Paused);
-    if active || expanded {
+    // A finished job's internal steps are a trace, shown on request.
+    let trace_open = state.ui.worker_trace.as_deref() == Some(job.id.as_str());
+    if !active && expanded && !compact {
+        let id = job.id.clone();
+        body = body.child(
+            quiet_button(
+                &format!("worker-trace-{}", job.id),
+                if trace_open {
+                    "Hide worker trace"
+                } else {
+                    "Show worker trace"
+                },
+                trace_open,
+                move |s, _| {
+                    s.ui.worker_trace = if s.ui.worker_trace.as_deref() == Some(id.as_str()) {
+                        None
+                    } else {
+                        Some(id.clone())
+                    }
+                },
+            )
+            .h(30.),
+        );
+    }
+    if active || (expanded && trace_open) {
         let tree = progress.tree();
         let mut tasks = col().key("current-task-tree").gap(9.).w_full();
         for (depth, task) in &tree {
