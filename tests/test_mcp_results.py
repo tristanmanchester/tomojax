@@ -157,7 +157,7 @@ def test_comparison_panels_use_one_pixel_mapping_and_label_each_plane():
     ]
     lo, hi = limits(panels)
     assert (lo, hi) == (0.0, 2.0)
-    picture = np.asarray(Image.open(BytesIO(montage(panels, (lo, hi)))))
+    picture = np.asarray(Image.open(BytesIO(montage(panels, [(lo, hi)] * len(panels)))))
     assert max(picture.shape) <= 1024 and picture.dtype == np.uint8
     assert picture[80, 220] == picture[80, 328 + 100] == 127
     assert picture[80, 100] == 0 and picture[80, 328 + 220] == 255

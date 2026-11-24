@@ -120,22 +120,27 @@ def plane(
         a["coordinates"]["type"] == "uniform" for a in axes
     ):
         aspect = abs(axes[0]["coordinates"]["spacing"] / axes[1]["coordinates"]["spacing"])
-    return Panel(title, pixels, tuple(labels), array["unit"], aspect)
+    return Panel(title, pixels, tuple(labels), array["unit"], aspect, array["domain"])
 
 
 def render(panels: list[Panel]) -> CallToolResult:
-    """Render all compared planes with the same limits."""
+    """Share intensity limits within each measured quantity and unit."""
     from tomojax.cli.mcp.tools import result
 
-    intensity = limits(panels)
+    groups = {(p.domain, p.unit) for p in panels}
+    ranges = {key: limits([p for p in panels if (p.domain, p.unit) == key]) for key in groups}
+    scales = [ranges[p.domain, p.unit] for p in panels]
     reply = result(
         {
-            "intensity_limits": intensity,
-            "panels": [{"array": p.title, "labels": p.labels, "unit": p.unit} for p in panels],
+            **({"intensity_limits": scales[0]} if len(groups) == 1 else {}),
+            "panels": [
+                {"array": p.title, "labels": p.labels, "unit": p.unit, "intensity_limits": scale}
+                for p, scale in zip(panels, scales, strict=True)
+            ],
         }
     )
     for i in range(0, len(panels), 3):
-        reply.content.append(image(montage(panels[i : i + 3], intensity)))
+        reply.content.append(image(montage(panels[i : i + 3], scales[i : i + 3])))
     return reply
 
 

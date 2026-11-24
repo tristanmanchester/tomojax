@@ -17,6 +17,7 @@ class Panel:
     labels: tuple[str, ...]
     unit: str
     aspect: float = 1.0
+    domain: str = ""
 
 
 def limits(panels: list[Panel]) -> tuple[float, float]:
@@ -35,21 +36,21 @@ def png(image: Image.Image) -> bytes:
     return stream.getvalue()
 
 
-def montage(panels: list[Panel], intensity: tuple[float, float]) -> bytes:
+def montage(panels: list[Panel], scales: list[tuple[float, float]]) -> bytes:
     """Draw up to three planes side by side, mapping equal intensities to equal greys."""
-    lo, hi = intensity
     labels = [
         [
             line
             for label in (p.title, *p.labels, f"limits [{lo:.5g}, {hi:.5g}] {p.unit}")
             for line in wrap(label, 49, max_lines=3, placeholder="...")
         ]
-        for p in panels
+        for p, (lo, hi) in zip(panels, scales, strict=True)
     ]
     width, height = 328, 240
     image = Image.new("L", (width * len(panels), height + 18 * max(map(len, labels)) + 10), 28)
     draw = ImageDraw.Draw(image)
     for i, (panel, lines) in enumerate(zip(panels, labels, strict=True)):
+        lo, hi = scales[i]
         data = panel.pixels.astype(float)
         scaled = (data - lo) / (hi - lo) if hi > lo else np.zeros_like(data)
         grey = np.uint8(np.nan_to_num(np.clip(scaled, 0, 1)) * 255)

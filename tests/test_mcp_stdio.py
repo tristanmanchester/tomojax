@@ -685,7 +685,9 @@ def test_correction_comparison_and_frame_profile(tmp_path):
         before, after = data["panels"]
         assert "native" in before["array"] and "corrected" in after["array"]
         assert before["labels"][1:] != after["labels"][1:]
-        assert data["intensity_limits"][0] < data["intensity_limits"][1]
+        np.testing.assert_allclose(before["intensity_limits"], np.percentile(counts[3], [1, 99]))
+        assert before["intensity_limits"] != after["intensity_limits"]
+        assert "intensity_limits" not in data
         profile = c.call(
             "view", source=frames, mode="profile", roi=[[3, 4], [0, 1], [2, 12]], stride=[1, 1, 2]
         )["structuredContent"]
