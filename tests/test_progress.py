@@ -615,7 +615,7 @@ def test_align_json_distinguishes_usage_and_io_errors(tmp_path, capsys):
 
     data = str(tmp_path / "missing.nxs")
     with pytest.raises(SystemExit) as usage:
-        main(["align", data, "--dry-run", "--progress", "json"])
+        main(["align", data, "--dry-run", "--progress", "json", "--fit", "everything"])
     assert usage.value.code == 2
     assert json.loads(capsys.readouterr().out)["event"] == "error"
     status = main(["align", data, "--progress", "json", "-o", str(tmp_path / "out.nxs")])

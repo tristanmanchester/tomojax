@@ -21,6 +21,8 @@ def _fmt_value(value: object, *, precision: int = 6) -> str:
 def format_inspection_report(report: InspectionReport) -> str:
     """Format an inspection report for terminal output.
 
+    Sections hold ``key: value`` lines, so the text is never cut or wrapped.
+
     Parameters
     ----------
     report : InspectionReport
@@ -33,125 +35,145 @@ def format_inspection_report(report: InspectionReport) -> str:
     """
     corrections = report["corrections"]
     geometry = report["geometry"]
-    lines = [
-        f"TomoJAX inspection: {report['input_path']}",
-        *_projection_lines(report["projection"]),
-        _angles_line(report["angles"]),
-        f"Geometry type: {_fmt_value(geometry['type'])}",
-        f"Geometry metadata: {'present' if geometry['meta_found'] else 'not found'}",
-        _detector_line(report["detector_metadata"]),
-        _flats_darks_line(report["flats_darks"]),
-        "Corrections: " + (", ".join(corrections) if corrections else "none recorded"),
-        _alignment_line(report["alignment"]),
-        _memory_line(report["memory_estimates"]),
-        _volume_line(report["volume"]),
+    sections = [
+        ("File", [("path", report["input_path"])]),
+        ("Projections", _projection_rows(report["projection"])),
+        ("Angles", _angle_rows(report["angles"])),
+        (
+            "Geometry and detector",
+            [
+                ("geometry", _fmt_value(geometry["type"])),
+                ("recorded geometry", "present" if geometry["meta_found"] else "not found"),
+                *_detector_rows(report["detector_metadata"]),
+            ],
+        ),
+        ("Calibration", [("flats and darks", _flats_darks_text(report["flats_darks"]))]),
+        ("Corrections", [("applied", ", ".join(corrections) if corrections else "none recorded")]),
+        ("Alignment", [("saved poses", _alignment_text(report["alignment"]))]),
+        ("Memory", _memory_rows(report["memory_estimates"])),
+        ("Volume", [("saved volume", _volume_text(report["volume"]))]),
     ]
+    lines: list[str] = []
+    for title, rows in sections:
+        width = max(len(key) for key, _ in rows)
+        lines.append(title)
+        lines.extend(f"  {key + ':':<{width + 1}} {value}" for key, value in rows)
     return "\n".join(lines)
 
 
-def _projection_lines(projection: Mapping[str, Any]) -> list[str]:
+def _projection_rows(projection: Mapping[str, Any]) -> list[tuple[str, str]]:
     if not projection["found"]:
-        return ["Projection shape: not found"]
+        return [("projections", "not found")]
     stats = projection["stats"]
     nonfinite = projection["nonfinite"]
+    detector = projection["detector_shape"] or {}
+    views, rows, columns = (projection["shape"] or [None, None, None])[:3]
+    shape = f"{views} views of {rows} x {columns} pixels" if detector else str(projection["shape"])
+    values = ", ".join(
+        f"{name} {_fmt_value(stats[key])}"
+        for name, key in (("min", "min"), ("1%", "p01"), ("median", "p50"), ("99%", "p99"))
+    )
+    values += f", max {_fmt_value(stats['max'])}, mean {_fmt_value(stats['mean'])}"
+    counts = (nonfinite["nan_count"], nonfinite["posinf_count"], nonfinite["neginf_count"])
+    bad = "none" if not any(counts) else "NaN {}, +inf {}, -inf {}".format(*counts)
     return [
-        f"Projection shape: {projection['shape']}",
-        f"Dtype: {projection['dtype']}",
-        f"Views: {projection['n_views']}",
-        f"Detector shape: {projection['detector_shape']}",
+        ("shape", shape),
+        ("dtype", str(projection["dtype"])),
+        ("values", values),
+        ("NaN and inf", bad),
+    ]
+
+
+def _angle_rows(angles: Mapping[str, Any]) -> list[tuple[str, str]]:
+    if not angles["found"]:
+        return [("angles", "not found")]
+    return [
+        ("coverage", f"{_fmt_value(angles['coverage'])} degrees"),
         (
-            "Stats: "
-            f"min={_fmt_value(stats['min'])}, "
-            f"p01={_fmt_value(stats['p01'])}, "
-            f"mean={_fmt_value(stats['mean'])}, "
-            f"p50={_fmt_value(stats['p50'])}, "
-            f"p99={_fmt_value(stats['p99'])}, "
-            f"max={_fmt_value(stats['max'])}"
-        ),
-        (
-            "NaN/Inf counts: "
-            f"nan={nonfinite['nan_count']}, "
-            f"+inf={nonfinite['posinf_count']}, "
-            f"-inf={nonfinite['neginf_count']}, "
-            f"inf_total={nonfinite['inf_count']}"
+            "range",
+            f"{_fmt_value(angles['min'])} to {_fmt_value(angles['max'])}, "
+            f"{angles['count']} angles ({_fmt_value(angles['units'])})",
         ),
     ]
 
 
-def _angles_line(angles: Mapping[str, Any]) -> str:
-    if not angles["found"]:
-        return "Angle coverage: not found"
-    return (
-        "Angle coverage: "
-        f"{_fmt_value(angles['coverage'])} deg "
-        f"(min={_fmt_value(angles['min'])}, "
-        f"max={_fmt_value(angles['max'])}, "
-        f"count={angles['count']}, "
-        f"units={_fmt_value(angles['units'])})"
-    )
-
-
-def _detector_line(detector: Mapping[str, Any]) -> str:
+def _detector_rows(detector: Mapping[str, Any]) -> list[tuple[str, str]]:
     if not detector["found"]:
-        return "Detector metadata: not found"
-    return (
-        "Detector metadata: "
-        f"nu={detector['nu']}, nv={detector['nv']}, "
-        f"du={detector['du']}, dv={detector['dv']}, "
-        f"center={detector['center']}"
+        return [("detector", "not found")]
+    centre = detector["center"]
+    centre_text = (
+        ", ".join(_fmt_value(c) for c in centre)
+        if isinstance(centre, list | tuple)
+        else str(centre)
     )
+    return [
+        ("detector", f"{detector['nu']} x {detector['nv']} pixels (u x v)"),
+        ("pixel size", f"{_fmt_value(detector['du'])} x {_fmt_value(detector['dv'])}"),
+        ("centre", f"({centre_text})"),
+    ]
 
 
-def _flats_darks_line(flats_darks: Mapping[str, Any]) -> str:
+def _flats_darks_text(flats_darks: Mapping[str, Any]) -> str:
     if flats_darks["flats_present"] or flats_darks["darks_present"]:
         return (
-            "Flats/darks: "
-            f"samples={flats_darks['sample_count']}, "
-            f"flats={flats_darks['flat_count']}, "
-            f"darks={flats_darks['dark_count']}, "
-            f"image_key={_fmt_value(flats_darks['image_key_path'])}"
+            f"{flats_darks['flat_count']} flats, {flats_darks['dark_count']} darks, "
+            f"{flats_darks['sample_count']} sample frames "
+            f"(image_key {_fmt_value(flats_darks['image_key_path'])})"
         )
     if flats_darks["image_key_found"]:
-        return (
-            "Flats/darks: not found "
-            f"(image_key={_fmt_value(flats_darks['image_key_path'])}; no flat/dark frames)"
-        )
-    return "Flats/darks: not found"
+        return f"none (image_key {_fmt_value(flats_darks['image_key_path'])} labels none)"
+    return "not found"
 
 
-def _alignment_line(alignment: Mapping[str, Any]) -> str:
+def _alignment_text(alignment: Mapping[str, Any]) -> str:
     if not alignment["found"]:
-        return "Alignment parameters: not found"
+        return "none"
     parts: list[str] = []
     if alignment["params_found"]:
-        parts.append(f"params shape={alignment['params_shape']}")
+        parts.append(f"pose table {alignment['params_shape']}")
     if alignment["angle_offset_found"]:
-        parts.append(f"angle_offset shape={alignment['angle_offset_shape']}")
+        parts.append(f"angle offsets {alignment['angle_offset_shape']}")
     if alignment["misalign_spec_found"]:
-        parts.append("misalign_spec present")
+        parts.append("misalignment spec")
     if alignment["gauge_fix_found"]:
-        parts.append("gauge_fix present")
-    return f"Alignment parameters: {', '.join(parts)}"
+        parts.append("gauge fix")
+    return ", ".join(parts)
 
 
-def _memory_line(memory: Mapping[str, Any]) -> str:
+def _memory_rows(memory: Mapping[str, Any]) -> list[tuple[str, str]]:
     if not memory["feasible"]:
-        return f"Memory estimates: not found ({memory['notes']})"
+        return [("volume working sets", f"not estimated ({memory['notes']})")]
     modes = memory["modes"]
-    return (
-        "Memory estimates: "
-        f"grid={memory['reconstruction_grid_shape']}, "
-        f"fbp_fp32={modes['fbp_fp32']['estimated_working_set_bytes']} bytes, "
-        f"fista_tv_fp32={modes['fista_tv_fp32']['estimated_working_set_bytes']} bytes, "
-        f"spdhg_tv_fp32={modes['spdhg_tv_fp32']['estimated_working_set_bytes']} bytes"
+    grid = " x ".join(str(n) for n in reversed(memory["reconstruction_grid_shape"]))
+    sets = ", ".join(
+        f"{name} {_size(modes[key]['estimated_working_set_bytes'])}"
+        for name, key in (
+            ("fbp", "fbp_fp32"),
+            ("fista", "fista_tv_fp32"),
+            ("spdhg", "spdhg_tv_fp32"),
+        )
     )
+    return [
+        ("volume working sets", f"{sets} for {grid} voxels"),
+        ("placement", "tomojax reconstruct INPUT --dry-run estimates a run's devices and memory"),
+    ]
 
 
-def _volume_line(volume: Mapping[str, Any]) -> str:
+def _size(count: int) -> str:
+    value = float(count)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TiB"  # pragma: no cover - the loop always returns
+
+
+def _volume_text(volume: Mapping[str, Any]) -> str:
     if not volume["found"]:
-        return "Volume: not found"
-    method = f", method={volume['method']}" if volume["method"] else ""
-    return f"Volume: shape={volume['shape']}, axes={volume['axes']}{method}"
+        return "none"
+    shape = " x ".join(str(n) for n in volume["shape"] or [])
+    method = f", {volume['method']}" if volume["method"] else ""
+    return f"{shape} ({volume['axes']}){method}"
 
 
 __all__ = ["format_inspection_report"]

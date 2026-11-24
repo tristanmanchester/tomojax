@@ -164,8 +164,9 @@ def test_cli_dry_run_reports_the_selection_without_fitting(monkeypatch, tmp_path
     scan, output = tmp_path / "scan.nxs", tmp_path / "aligned.nxs"
     tj.save(scan, _scan())
     calls = _fitter(monkeypatch)
-    assert main(["align", str(scan), "-o", str(output), "--fit", "center", "--dry-run"]) == 0
-    record = json.loads(capsys.readouterr().out)
+    argv = ["align", str(scan), "-o", str(output), "--fit", "center", "--dry-run"]
+    assert main([*argv, "--progress", "json"]) == 0
+    record = json.loads(capsys.readouterr().out.splitlines()[-1])["info"]["summary"]
     assert record["fit"] == ["center"] and record["bounded_working_grid"]
     assert not calls and not output.exists()
 

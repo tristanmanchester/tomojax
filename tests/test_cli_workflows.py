@@ -25,17 +25,19 @@ pytestmark = pytest.mark.surface
 
 def test_recon_cli_defaults_defer_policy_and_report_limitations(monkeypatch, tmp_path, caplog):
     import tomojax as tj
+    from tomojax import _workflow
 
     path, output, manifest = tmp_path / "scan.nxs", tmp_path / "result.nxs", tmp_path / "run.json"
     write_projection_dataset(path)
     automatic = {"status": "limited", "reasons": ["Rotation axis metadata is missing."]}
 
-    def automatic_result(scan, method, **kwargs):
-        assert method == "auto" and kwargs["grid"] is None and kwargs["config"] is None
+    def automatic_result(plan, *, out=None):
+        assert plan.info["automatic"]["method"] == plan.method  # the policy chose it
+        scan = plan.scan
         volume = np.zeros((scan.grid.nz, scan.grid.ny, scan.grid.nx), np.float32)
         return tj.Reconstruction(volume, scan.geometry, "fbp", {"automatic": automatic}, scan)
 
-    monkeypatch.setattr(tj, "reconstruct", automatic_result)
+    monkeypatch.setattr(_workflow, "reconstruct_resolved", automatic_result)
     assert main(["reconstruct", str(path), "-o", str(output), "--manifest", str(manifest)]) == 0
     assert load_dataset(output).volume is not None
     assert "Rotation axis metadata is missing" in caplog.text
@@ -211,20 +213,26 @@ def test_import_cli_converts_nxtomo_to_npz(tmp_path: Path) -> None:
 def _fake_reconstruct(
     monkeypatch: pytest.MonkeyPatch, error: Exception | None = None
 ) -> dict[str, object]:
-    """Make ``tj.reconstruct`` return zeros (or raise ``error``); record its call."""
+    """Record what the CLI asks the resolver for, and solve nothing (or raise ``error``)."""
     import tomojax
+    from tomojax import _planning, _workflow
 
     calls: dict[str, object] = {}
+    resolve = _planning.resolve_reconstruction
 
-    def fake(scan, method, *, grid, config, **keywords):
+    def recorded(scan, method="auto", **keywords):
+        calls.update(method=method, **keywords)
+        return resolve(scan, method, **keywords)
+
+    def fake(plan, *, out=None):
         if error is not None:
             raise error
-        calls.update(method=method, grid=grid, config=config, **keywords)
-        target_grid = scan.grid if grid is None else grid
-        volume = np.zeros(target_grid.shape, np.float32)
-        return tomojax.Reconstruction(volume, scan.geometry, method, {"config": config}, scan)
+        volume = np.zeros(plan.scan.grid.shape, np.float32)
+        info = {"config": plan.config, **plan.info}
+        return tomojax.Reconstruction(volume, plan.scan.geometry, plan.method, info, plan.scan)
 
-    monkeypatch.setattr(tomojax, "reconstruct", fake)
+    monkeypatch.setattr(_planning, "resolve_reconstruction", recorded)
+    monkeypatch.setattr(_workflow, "reconstruct_resolved", fake)
     return calls
 
 
@@ -238,9 +246,10 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert main([*args, "--grid", "4", "4", "2", "--iterations", "7", "--warm-start"]) == 0
 
     assert calls.pop("method") == "cgls"
-    assert (calls.pop("grid").nx, calls.pop("config").iterations) == (4, 50)
+    assert (calls.pop("shape"), calls.pop("config").iterations) == ((2, 4, 4), 50)
     # Options not given are left to the configuration.
     assert calls == {
+        "region": None,
         "filter": None,
         "iterations": 7,
         "tv_weight": None,
@@ -867,13 +876,19 @@ def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path
     proj[3] = np.exp(-((-x + 0.1) ** 2) / 0.2)
     tj.save(scan, tj.Scan(proj, geom))
 
-    assert main(["align", str(scan), "--dry-run"]) == 0
-    plan = json.loads(capsys.readouterr().out)
+    def document(*options):
+        assert main(["align", str(scan), "--dry-run", "--progress", "json", *options]) == 0
+        result = json.loads(capsys.readouterr().out.splitlines()[-1])
+        assert result["event"] == "result" and result["outputs"] == []
+        return result["info"]["summary"]
+
+    plan = document()
     assert plan["output_path"] is None and plan["method"] == "joint"
     assert plan["bounded_working_grid"] is True
-
-    assert main(["align", str(scan), "--dry-run", "--region", "auto"]) == 0
-    assert json.loads(capsys.readouterr().out)["bounded_working_grid"] is False
+    assert plan["type"] == "joint_plan" and plan["config"]["levels"]
+    assert document("--region", "auto")["bounded_working_grid"] is False
+    assert main(["align", str(scan), "--dry-run"]) == 0  # people get text
+    assert capsys.readouterr().out.startswith("method")
 
     for extra in (
         ["--fit", "translations"],

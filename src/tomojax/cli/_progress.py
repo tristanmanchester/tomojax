@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 import json
 import logging
 from pathlib import Path
@@ -27,6 +28,9 @@ if TYPE_CHECKING:
     from tomojax.cli._watch import WatchDirectory
 
 _PACKAGE = Path(progress.__file__).resolve().parent
+
+# What to try when this command runs out of memory, once it has a plan.
+memory_hint = ContextVar[str | None]("tomojax_cli_memory_hint", default=None)
 
 
 class ProgressParser(argparse.ArgumentParser):
@@ -208,6 +212,9 @@ def _failed(error: Exception, mode: str, prog: str) -> int:
     if kind == "cancelled":
         _console.report_cancelled(prog)
         return 130
+    if kind == "out_of_memory":
+        _console.report_error(prog, str(error), hint=memory_hint.get())
+        return 1
     # A KeyError's message without the quotes str() adds.
     unquoted = isinstance(error, KeyError) and len(error.args) == 1
     message, path = str(error.args[0] if unquoted else error), record.get("path")
@@ -238,6 +245,7 @@ def run_command(
 
     previous = signal.signal(signal.SIGINT, interrupt)
     shown, display = _handler(mode, token)
+    hint = memory_hint.set(None)
 
     def handler(event: progress.Event) -> None:
         if watch is not None:
@@ -261,5 +269,6 @@ def run_command(
     except Exception as exc:
         return _failed(exc, mode, prog)
     finally:
+        memory_hint.reset(hint)
         signal.signal(signal.SIGINT, previous)
     return 0

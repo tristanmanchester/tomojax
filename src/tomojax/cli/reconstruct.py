@@ -11,25 +11,22 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields
 from functools import partial
-import json
 import logging
 from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, cast, get_args
 
-import msgspec
 import numpy as np
 
 from tomojax._field_of_view import (
     REGION_CHOICES,
     REGION_HELP,
-    region_grid,
-    zero_outside_cylinder,
 )
 from tomojax._parameters import Filter, Method
 from tomojax.cli._options import add_config, add_force, check_paths, hide_expert
+from tomojax.cli._plans import announce, dry_run
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli._watch import admit_or_exit, watch_directory
 from tomojax.cli.config import parse_args_with_config
@@ -108,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_force(p)
     _ = p.add_argument(
-        "--dry-run", action="store_true", help="Print the reconstruction plan as JSON"
+        "--dry-run", action="store_true", help="Print the plan (method, grid, memory) and stop"
     )
     add_config(p, settings=_settings)
     _ = p.add_argument(
@@ -352,8 +349,6 @@ def main() -> int:
     """Run ``tomojax reconstruct``."""
     parser = build_parser()
     args, metadata = parse_args_with_config(parser)
-    if args.dry_run and args.progress == "json":
-        parser.error("--dry-run cannot write a plan with --progress json")
     if not args.dry_run and not args.out:
         parser.error("the following arguments are required: -o/--output")
     watch = watch_directory(args.watch_dir, "reconstruct", working=False)
@@ -385,25 +380,23 @@ def _run(
 
     scan = tj.load(run.data, apply_poses=run.apply_poses)
     progress.check_cancelled()
+    from tomojax._planning import resolve_reconstruction
+    from tomojax._workflow import reconstruct_resolved
+
     keywords = {name: cast("Any", getattr(run, name)) for name in _KEYWORDS}
-    grid, cylinder = None, None
-    if run.grid is not None:
-        shape = (run.grid[2], run.grid[1], run.grid[0])
-        grid, cylinder = region_grid(scan, run.region, shape=shape)
-    elif run.region is not None:
-        keywords["region"] = run.region
+    shape = None if run.grid is None else (run.grid[2], run.grid[1], run.grid[0])
+    work = resolve_reconstruction(
+        scan, run.method, region=run.region, shape=shape, config=config, **keywords
+    )
     if args.dry_run:
-        from tomojax._planning import resolve_reconstruction
         from tomojax.cli._plans import plan_product
 
-        work = resolve_reconstruction(scan, run.method, grid=grid, config=config, **keywords)
-        print(json.dumps(msgspec.to_builtins(plan_product(scan, work)), indent=2))
-        return None
+        return dry_run(args.progress, run.data, plan_product(scan, work), scan, work)
+    used = tuple(f for f, v in (("--region", run.region), ("--grid", run.grid)) if v is not None)
+    _ = announce("reconstruct", scan, work, used=used)
     assert run.out is not None
     with progress.previews() if watch is not None else nullcontext():
-        result = tj.reconstruct(scan, run.method, grid=grid, config=config, **keywords)
-    if cylinder is not None:
-        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
+        result = reconstruct_resolved(work)
     report_automatic(result.info)
     source = scan.source
     if (

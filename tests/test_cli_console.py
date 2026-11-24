@@ -83,7 +83,7 @@ def test_user_text_is_never_read_as_markup(tmp_path, capsys):
 
 
 def test_a_tomojax_bug_prints_a_traceback_and_where_to_report_it(monkeypatch, tmp_path, capsys):
-    import tomojax
+    from tomojax import _workflow
 
     scan = tmp_path / "scan.nxs"
     write_projection_dataset(scan)
@@ -91,7 +91,7 @@ def test_a_tomojax_bug_prints_a_traceback_and_where_to_report_it(monkeypatch, tm
     def broken(*_args, **_kwargs):
         raise TypeError("wrong internal call shape")
 
-    monkeypatch.setattr(tomojax, "reconstruct", broken)
+    monkeypatch.setattr(_workflow, "reconstruct_resolved", broken)
     argv = ["tomojax", "reconstruct", str(scan), "-o", str(tmp_path / "r.nxs")]
     monkeypatch.setattr(sys, "argv", argv)
     assert run() == 1
@@ -102,11 +102,12 @@ def test_a_tomojax_bug_prints_a_traceback_and_where_to_report_it(monkeypatch, tm
 
 
 def _noisy_reconstruct(monkeypatch):
-    """``tj.reconstruct`` that warns and logs from TomoJAX and from another package."""
+    """A solve that warns and logs from TomoJAX and from another package."""
     import tomojax
-    from tomojax import progress
+    from tomojax import _workflow, progress
 
-    def noisy(scan, method, *, grid, config, **_keywords):
+    def noisy(plan, *, out=None):
+        scan = plan.scan
         progress.warn("tomojax says check this", stacklevel=2)  # at the CLI's call
         logging.getLogger("tomojax.recon").info("tomojax info line")
         logging.getLogger("jax._src").warning("jax says watch out")
@@ -114,7 +115,7 @@ def _noisy_reconstruct(monkeypatch):
         volume = np.zeros((scan.grid.nz, scan.grid.ny, scan.grid.nx), np.float32)
         return tomojax.Reconstruction(volume, scan.geometry, "fbp", {}, scan)
 
-    monkeypatch.setattr(tomojax, "reconstruct", noisy)
+    monkeypatch.setattr(_workflow, "reconstruct_resolved", noisy)
 
 
 @pytest.mark.parametrize("mode", ["bar", "auto", "none", "json"])
