@@ -85,6 +85,7 @@ class Core:
     def __init__(self, supervisor: Supervisor) -> None:
         self.supervisor = supervisor
         self.bus = InMemorySubscriptionBus()
+        self.parts: dict[str, list[str]] = {}
         self.tasks = Tasks()
         self.server = Server(
             "tomojax",
@@ -93,7 +94,20 @@ class Core:
             extensions=[self.tasks],
             subscriptions=self.bus,
         )
+        self.server.resource("tomojax://result/{call}/{n}", mime_type="application/json")(
+            self.read_part
+        )
         self.install()
+
+    def read_part(self, call: str, n: int) -> dict[str, str | None]:
+        """Read successive chunks of the serialized original CallToolResult."""
+        chunks = self.parts.get(call, [])
+        if not 0 <= n < len(chunks):
+            raise ValueError("Unknown result part")
+        return {
+            "data": chunks[n],
+            "next": f"tomojax://result/{call}/{n + 1}" if n + 1 < len(chunks) else None,
+        }
 
     def install(self) -> list[str]:
         """Load all handlers before swapping the live tool registry."""

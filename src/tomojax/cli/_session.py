@@ -304,30 +304,30 @@ class Session:
             product = bound.product
         else:
             product = value
-        if isinstance(product, p.Files):
-            group = list(job.stages.outputs.values())
-            if self.external:
-                product = p.Files(product.paths, tuple(group))
-            else:
-                try:
-                    recovery = helper(group)
-                except OSError:
-                    # A killed helper may still own a journal and its backups.
-                    try:
-                        helper([])
-                    except OSError:
-                        job.stages.outputs.clear()
-                        raise
-                    raise
-                product = p.Files(product.paths, recovery=recovery)
+        group = list(job.stages.outputs.values())
+        if self.external and isinstance(product, p.Files):
+            product = p.Files(product.paths, tuple(group))
         result = p.Output(product, success.info, success.manifest)
         # Encode before changing any caller-owned destination.
         _ = msgspec.json.encode(result)
         with ExitStack() as undo:
             for token in tuple(job.stages.arrays):
                 self._publish(job, token, success.manifest, undo)
-            if self.external and isinstance(product, p.Files):
+            if isinstance(product, p.Files):
                 job.stages.outputs.clear()
+                if not self.external:
+                    try:
+                        recovery = helper(group)
+                    except OSError as err:
+                        # Recover before releasing any backup left by a killed helper.
+                        abandoned = tuple(str(Path(item.staged).parent.parent) for item in group)
+                        recovery = helper([], abandoned=abandoned)
+                        if recovery:
+                            raise OSError(f"{err}. Recovery: {recovery}") from err
+                        raise
+                    result = p.Output(
+                        p.Files(product.paths, recovery=recovery), success.info, success.manifest
+                    )
             undo.pop_all()
         if handle:
             self.handles[job.id] = handle

@@ -83,6 +83,7 @@ class Ready(Record, tag="ready"):
     versions: Versions
     capabilities: tuple[Id, ...]
     devices: tuple[Device, ...]
+    recovery: dict[str, list[str]] | None = None
 
 
 class ChannelRevision(Record):

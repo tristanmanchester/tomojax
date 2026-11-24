@@ -33,6 +33,7 @@ async def session(directory):
             sys.executable,
             str(Path(__file__).with_name("worker_fixture.py")),
             str(child.fileno()),
+            "--external",
         ),
         pass_fds=(child.fileno(),),
     )
@@ -417,5 +418,31 @@ def test_worker_loss_after_handoff_commits_real_volume(tmp_path, monkeypatch, op
         finally:
             await supervisor.close()
             ledger.close()
+
+    asyncio.run(run())
+
+
+def test_worker_loss_before_handoff_discards_every_stage(tmp_path):
+    async def run():
+        async with session(tmp_path) as (server, g, port):
+            opened = await g.request(dict(type="open", path="source", kind="reconstruction"))
+            ref = dict(type="member", handle=opened["value"]["handle"], member="self")
+            path = tmp_path / "volume.raw"
+            paths = [path, path.with_suffix(".json"), path.with_suffix(".manifest")]
+            for dest in paths:
+                dest.write_bytes(b"original")
+            _, job = g.submit(
+                dict(
+                    type="run",
+                    operation=dict(type="export", source=ref, path=str(path), force=True),
+                )
+            )
+            assert await asyncio.get_running_loop().sock_recv(port, 1) == b"G"
+            os.kill(g.process.pid, signal.SIGKILL)
+            with pytest.raises(workers.WorkerLost):
+                await job.result
+            assert sorted(server.report["discarded"]) == sorted(map(str, paths))
+            assert all(dest.read_bytes() == b"original" for dest in paths)
+            assert not list(tmp_path.glob(".tomojax-stage-*"))
 
     asyncio.run(run())

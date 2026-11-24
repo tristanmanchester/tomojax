@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,27 @@ if TYPE_CHECKING:
     from tomojax.cli.mcp.supervisor import Object
 
 TTL = 86_400
+HEARTBEAT = 25.0
+PROGRESS_INTERVAL = 1.0
+
+
+async def notify_progress(job: Activity, ctx: ServerRequestContext[Any, Any]) -> None:
+    """Sample the latest event independently of request admission and pipe draining."""
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    while True:
+        fresh = job.changed.is_set()
+        job.changed.clear()
+        elapsed = loop.time() - start
+        message, eta = job.status()
+        if not fresh:
+            message, eta = f"waiting: {next(reversed(job.stages.values()), 'worker')}", None
+        await ctx.session.report_progress(
+            elapsed, elapsed + eta if eta is not None else None, message
+        )
+        await asyncio.sleep(PROGRESS_INTERVAL)
+        with suppress(TimeoutError):
+            await asyncio.wait_for(job.changed.wait(), max(0, HEARTBEAT - PROGRESS_INTERVAL))
 
 
 class TaskParams(RequestParams):
@@ -83,7 +105,7 @@ class Tasks(Extension):
         if ctx.method == "tasks/get":
             fields = dict(task.fields)
             if fields["status"] == "working" and task.job.progress:
-                fields["statusMessage"] = str(task.job.progress.get("label") or task.job.progress)
+                fields["statusMessage"] = task.job.status()[0]
             return {**fields, "resultType": "complete"}
         if ctx.method == "tasks/cancel" and task.fields["status"] == "working":
             task.job.request_cancel()
@@ -97,7 +119,21 @@ class Tasks(Extension):
     ) -> Any:
         """Register before returning the handle. Legacy and short calls block normally."""
         if params.name not in self.eligible or not self.supports(ctx):
-            return await call_next(ctx)
+            job = Activity()
+            token = activity.set(job)
+            meta = ctx.meta or {}
+            notify = (
+                asyncio.create_task(notify_progress(job, ctx))
+                if meta.get("progress_token", meta.get("progressToken")) is not None
+                else None
+            )
+            try:
+                return await call_next(ctx)
+            finally:
+                activity.reset(token)
+                if notify:
+                    notify.cancel()
+                    await asyncio.gather(notify, return_exceptions=True)
         task_id = uuid4().hex
         now = datetime.now(UTC).isoformat()
         fields = {

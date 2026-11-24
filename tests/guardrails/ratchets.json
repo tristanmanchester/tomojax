@@ -28,7 +28,7 @@
     "tomojax.geometry.api": 12,
     "tomojax.corrections.api": 6,
     "tomojax.recon.api": 12,
-    "tomojax.io.api": 28,
+    "tomojax.io.api": 29,
     "tomojax.alignment.api": 4
   },
   "cli_flags": {
@@ -38,7 +38,7 @@
     "align": 19,
     "export": 7,
     "simulate": 19,
-    "serve": 1,
+    "serve": 2,
     "mcp": 1
   },
   "long_files": {
@@ -57,17 +57,17 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 5606,
-    "_data": 2153,
+    "(modules)": 5609,
+    "_data": 2181,
     "alignment": 4670,
     "backends": 273,
-    "cli": 7016,
+    "cli": 7811,
     "core": 9917,
     "corrections": 3139,
     "datasets": 1069,
     "forward": 404,
     "geometry": 908,
-    "io": 3947,
+    "io": 3949,
     "motion": 153,
     "nuisance": 232,
     "recon": 14912,
@@ -75,7 +75,7 @@
   },
   "cuda_kernels": 47,
   "cuda_switches": 34,
-  "environment_reads": 22,
+  "environment_reads": 23,
   "suppressions": {
     "noqa": 4,
     "type: ignore": 11,
@@ -83,7 +83,6 @@
   },
   "complex_functions": [
     "src/tomojax/cli/_adapters.py::C901::execute",
-    "src/tomojax/cli/_staging.py::C901::install",
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
     "src/tomojax/core/_logging.py::PLR0911::format_duration",
     "src/tomojax/core/devices.py::C901::sum_batches",

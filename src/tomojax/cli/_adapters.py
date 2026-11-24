@@ -27,7 +27,8 @@ from tomojax.cli._handles import Root, handle, stage_array
 from tomojax.cli._interactive import correction_product, region_product, slice_product
 from tomojax.cli._options import check_destinations
 from tomojax.cli._plans import plan_product
-from tomojax.cli._results import VOLUME_DATASET, scan_axes, unit_of
+from tomojax.cli._results import scan_axes, unit_of
+from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.array_ops import check_binning
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
@@ -96,6 +97,9 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
         for snapshot in sample():
             context.snapshot(snapshot)
         info = item.info if isinstance(item, tj.Reconstruction | tj.Alignment) else {}
+        if isinstance(item, tj.Alignment):
+            poses = np.asarray(item.poses)
+            info = {**info, "pose_rms": np.sqrt(np.mean(np.square(poses), axis=0)).tolist()}
         summary = ex.summarise(info, externalise=diagnostic)
         if isinstance(item, tj.Scan | tj.Frames | tj.Reconstruction | tj.Alignment | tj.Simulation):
             storage = None
@@ -344,10 +348,16 @@ class Admission:
             check_destinations(inputs, (path, sidecar), force=operation.force)
 
             def fill():
-                record = geometry_record(item.geometry, grid=grid, source=item.source)
+                record = geometry_record(
+                    item.geometry, name=item.name, grid=grid, source=item.source
+                )
                 record.geometry_metadata.pop("volume_role", None)
                 record.geometry_metadata.update(
-                    reconstruction_method=operation.method, length_unit=unit_of(item)
+                    reconstruction_method=operation.method,
+                    reconstruction_info={
+                        "host_slabs": True,
+                        "source": item.source.source_path if item.source else None,
+                    },
                 )
                 stage = self.context.staging.output(path, force=operation.force)
                 manifest = self.context.staging.output(sidecar, force=operation.force)

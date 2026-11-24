@@ -4,19 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from functools import partial
 from importlib import resources
 import json
+import os
 from pathlib import Path
 import re
 import tempfile
-from typing import TYPE_CHECKING, Any, Literal
+import time
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
-from mcp_types import CallToolResult, ImageContent, TextContent
+from mcp_types import CallToolResult, ImageContent, ResourceLink, TextContent
 import msgspec
 
 from tomojax.cli import operations as op, wire_options as w
-from tomojax.cli.mcp.supervisor import WorkerError
+from tomojax.cli.mcp.supervisor import WorkerError, activity
+from tomojax.cli.mcp.tools.budget import bounded
 from tomojax.cli.mcp.tools.references import PRIMARY, resolve, wire_arguments
+from tomojax.cli.mcp.tools.workflows import MODELS, forms
 from tomojax.wire.arrays import Id, Record
 
 if TYPE_CHECKING:
@@ -58,6 +63,7 @@ class Open(Record):
     image_key_path: str | None = None
     angles_path: str | None = None
     apply_poses: bool = True
+    dry_run: bool = False
     detail: Literal["summary", "full"] = "summary"
 
 
@@ -99,6 +105,13 @@ def schema(cls: type[Record], definitions: Object) -> Object:
                     if k in {"description", "x-unit", "x-choices"}
                 }
             )
+    for field, help_text in {
+        "config": "Expert settings. Use describe for the method's keys.",
+        "dry_run": "Validate inputs and return a plan for align or reconstruct.",
+        "detail": "Use full for the worker info and provenance when available.",
+    }.items():
+        if field in root["properties"]:
+            root["properties"][field]["description"] = help_text
     return {**root, **({"$defs": nested} if nested else {})}
 
 
@@ -137,18 +150,46 @@ def tree(path: Path) -> Object:
     return datasets
 
 
-async def inspect_directory(
-    path: Path, report: Callable[[Path], Awaitable[Object]]
-) -> CallToolResult:
-    """Collect recognised child acquisitions using the worker's format detection."""
-    found = {}
-    for child in sorted(path.iterdir()):
-        try:
-            found[str(child)] = await report(child)
-        except WorkerError as failure:
-            if failure.kind != "input":
-                raise
-    return result({"directory": str(path), "datasets": found})
+def inspect_directory(path: Path) -> CallToolResult:
+    """Summarise acquisition entry points and count TIFF frames in one directory pass."""
+    formats = {
+        ".xtekct": "Nikon",
+        ".txrm": "Zeiss",
+        ".txm": "Zeiss",
+        ".log": "acquisition log",
+        ".info": "acquisition metadata",
+        ".xml": "acquisition metadata",
+        ".npz": "NumPy archive",
+        ".mat": "PSI MATLAB acquisition",
+        **dict.fromkeys((".nxs", ".nx", ".hdf", ".hdf5", ".h5"), "HDF5"),
+    }
+    found: dict[str, str] = {}
+    subdirectories: list[str] = []
+    directory_count = frames = candidates = 0
+    with os.scandir(path) as entries:
+        for entry in entries:
+            suffix = Path(entry.name).suffix.lower()
+            if entry.is_dir():
+                directory_count += 1
+                if len(subdirectories) < 64:
+                    subdirectories.append(entry.name)
+            elif suffix in {".tiff", ".tif"} and entry.is_file():
+                frames += 1
+            elif suffix in formats and entry.is_file():
+                candidates += 1
+                if len(found) < 64:
+                    found[entry.path] = formats[suffix]
+    return result(
+        {
+            "directory": str(path),
+            "datasets": dict(sorted(found.items())),
+            "candidate_count": candidates,
+            "subdirectories": sorted(subdirectories),
+            "subdirectory_count": directory_count,
+            "tiff_files": frames,
+            "omitted": candidates - len(found),
+        }
+    )
 
 
 class Tools:
@@ -168,7 +209,7 @@ class Tools:
         for ref, record in self.ledger.live.items():
             handles[ref] = {
                 **record["summary"],
-                "bytes": state["handles"].get(record.get("worker")),
+                "bytes": record.get("bytes", state["handles"].get(record.get("worker"))),
             }
             if args.detail == "full":
                 handles[ref]["manifest"] = record.get("manifest")
@@ -186,8 +227,10 @@ class Tools:
 
     async def inspect(self, args: Inspect) -> CallToolResult:
         """Inspect through the worker with directory discovery and unrecognised-HDF5 fallback."""
-        g = await self.supervisor.worker()
         path = (self.supervisor.base / Path(args.path).expanduser()).resolve()
+        if path.is_dir():
+            return await asyncio.to_thread(inspect_directory, path)
+        g = await self.supervisor.worker()
 
         async def report(item: Path) -> Object:
             output = await g.request({"type": "inspect", "path": str(item)})
@@ -214,8 +257,6 @@ class Tools:
         except WorkerError as err:
             if err.kind != "input":
                 raise
-            if path.is_dir():
-                return await inspect_directory(path, report)
             datasets = await asyncio.to_thread(tree, path)
             if not datasets:
                 raise
@@ -235,9 +276,9 @@ class Tools:
 
     async def open(self, args: Open) -> CallToolResult:
         """Publish the external identity as part of accepting the open terminal."""
-        g = await self.supervisor.worker()
         command = msgspec.to_builtins(args)
         command.pop("detail")
+        command.pop("dry_run")
 
         path = resolve(args.path, base=self.supervisor.base, ledger=self.ledger, field="source")
         assert isinstance(path, dict)
@@ -252,39 +293,169 @@ class Tools:
             {"type": "open", **command}, op.Open, base=self.supervisor.base, ledger=self.ledger
         )
 
+        if args.dry_run:
+            return await self.dry_run(command, detail=args.detail)
+        return await self.execute(command, detail=args.detail, direct=True)
+
+    async def workflow(self, name: str, args: Record) -> CallToolResult:
+        """Resolve typed references before the worker pins them at admission."""
+        params = msgspec.to_builtins(args)
+        dry = params.pop("dry_run")
+        detail = params.pop("detail")
+        command = params["operation"] if name == "edit_scan" else {"type": name, **params}
+        model = MODELS[command["type"]]
+        if "path" in command:
+            destination = self.supervisor.base / Path(command["path"]).expanduser()
+            command["path"] = str(destination.parent.resolve() / destination.name)
+        config = command.get("config")
+        if config is not None and "type" not in config:
+            if model is op.Align:
+                config["type"] = "AlignConfig"
+            else:
+                configs = {
+                    cls.__name__.removesuffix("Config").lower(): cls.__name__
+                    for cls in get_args(op.Config.__value__)
+                }
+                method = command["method"]
+                if method not in configs:
+                    raise ValueError(
+                        "Choose a specific method or give config its type from describe."
+                    )
+                config["type"] = configs[method]
+        command = wire_arguments(command, model, base=self.supervisor.base, ledger=self.ledger)
+        # Validate nested expert keys here too, preserving their full field paths.
+        msgspec.convert(command, type=model)
+        if dry:
+            return await self.dry_run(command, detail=detail)
+        return await self.execute(command, detail=detail)
+
+    async def dry_run(self, command: Object, *, detail: str) -> CallToolResult:
+        """Use worker preflight and resolve a plan on the same generation."""
+        g = await self.supervisor.worker()
+        output = await g.request({"type": "validate", "operation": command})
+        if command["type"] in ("align", "reconstruct"):
+            output = await g.request({"type": "plan", "operation": command})
+        data = output["value"]
+        if detail == "full":
+            data.update(info=output["info"], manifest=output["manifest"])
+        return result(data)
+
+    async def execute(
+        self, command: Object, *, detail: str, direct: bool = False
+    ) -> CallToolResult:
+        """Accept outputs in their owning generation and link committed files."""
+        g = await self.supervisor.worker()
+        started = time.monotonic()
+
         def publish(output: Object) -> Object:
             value = output["value"]
             kind: str = value["type"]
-            primary = value.get(PRIMARY[kind]) or {}
-            summary = {
-                "kind": kind,
-                "shape": primary.get("shape"),
-                "unit": primary.get("unit"),
-                "path": command["path"],
-            }
-            alias = {"reconstruction": "recon", "alignment": "align", "simulation": "sim"}.get(
-                kind, kind
-            )
-            ref = self.ledger.issue(
-                alias,
-                {
-                    "kind": kind,
-                    "worker": value["handle"],
-                    "summary": summary,
-                    "manifest": output["manifest"],
-                },
-            )
-            data = {"handle": ref, **summary}
-            if args.detail == "full":
+            data: Object = {"kind": kind}
+            if kind == "files":
+                data.update(paths=value["paths"], recovery=value["recovery"])
+            else:
+                data = self.publish_handle(command, output)
+            if detail == "full":
                 data.update(info=output["info"], manifest=output["manifest"])
             return data
 
-        data = await g.request(command, accept=publish)
-        return result(
-            data,
-            text=f"{data['handle']} opened {data['path']}, "
-            f"shape {data['shape']}, units {data['unit']}.",
+        data = await g.request(
+            command if direct else {"type": "run", "operation": command}, accept=publish
         )
+        data["wall_seconds"] = round(time.monotonic() - started, 3)
+        job = activity.get()
+        if job:
+            data.update(devices=sorted(job.devices), notes=job.notes)
+        summary = [str(data.get("handle") or "Saved"), data["kind"]]
+        if data.get("shape"):
+            summary.append(" x ".join(map(str, data["shape"])) + " " + str(data["unit"]))
+        summary.extend(
+            f"{key} {data[key]}"
+            for key in ("method", "effective_iterations", "termination", "calibration")
+            if key in data
+        )
+        if auto := data.get("automatic"):
+            summary.extend(auto.get("reasons", []))
+        if recovery := data.get("recovery"):
+            summary.append(f"Commit recovery {recovery}")
+        summary.extend(data.get("paths", []))
+        summary.extend(data.get("devices", []))
+        summary.append(f"{data['wall_seconds']:g} s")
+        summary.extend(data.get("notes", []))
+        reply = result(data, text=" · ".join(summary))
+        for name in data.get("paths", []):
+            path = Path(name)
+            reply.content.append(
+                ResourceLink(type="resource_link", uri=path.as_uri(), name=path.name)
+            )
+        return reply
+
+    def publish_handle(self, command: Object, output: Object) -> Object:
+        """Issue the session identity while the accepting generation is still live."""
+        value = output["value"]
+        kind: str = value["type"]
+        array = value.get(PRIMARY.get(kind, kind)) or value.get("poses") or {}
+        info = output["info"]["summary"]
+        summary = {
+            "kind": kind,
+            "shape": array.get("shape"),
+            "unit": array.get("unit"),
+            "operation": command["type"],
+        }
+        if command["type"] == "open":
+            summary["path"] = command["path"]
+        for key in (
+            "method",
+            "calibration",
+            "automatic",
+            "effective_iterations",
+            "termination",
+            "converged",
+            "placement",
+        ):
+            if key in value or key in info:
+                summary[key] = value.get(key, info.get(key))
+        record = {
+            "kind": kind,
+            "summary": summary,
+            "manifest": output["manifest"],
+            "product": value,
+        }
+        if "handle" in value:
+            alias = {
+                "reconstruction": "recon",
+                "alignment": "align",
+                "simulation": "sim",
+            }.get(kind, kind)
+            record["worker"] = value["handle"]
+        else:
+            alias = "array"
+            record.update(array["storage"])
+            record["bytes"] = Path(record["path"]).stat().st_size
+            record["related"] = [
+                axis["coordinates"]["values"]["artifact"]
+                for axis in array["axes"]
+                if axis["coordinates"]["type"] == "coordinates"
+                and "artifact" in axis["coordinates"]["values"]
+            ]
+        ref = self.ledger.issue(alias, record)
+        data = {"handle": ref, **summary}
+        data["members"] = (
+            {
+                key: ref + "." + key
+                for key, item in value.items()
+                if isinstance(item, dict) and ("storage" in item or item.get("type") == "member")
+            }
+            if alias != "array"
+            else {}
+        )
+        if kind == "alignment":
+            data["poses"] = {
+                "shape": value["poses"]["shape"],
+                "columns": value["poses"]["columns"],
+                "rms": info.get("pose_rms"),
+            }
+        return data
 
     async def describe(self, args: Describe) -> CallToolResult:
         """Select operation and config keys from the running worker's real schema."""
@@ -340,7 +511,17 @@ class Tools:
                 self.ledger.closed(ref)
                 return reply
 
-            await g.request(command, accept=closed)
+            async def release() -> None:
+                await g.request(command, accept=closed)
+                for artifact in record.get("related", []):
+                    await g.request({"type": "release", "artifact": artifact})
+
+            closing = asyncio.create_task(release())
+            try:
+                await asyncio.shield(closing)
+            except asyncio.CancelledError:
+                closing.add_done_callback(lambda done: done.exception())
+                raise
         else:
             await g.request({"type": "control", "action": args.action, "target": args.target})
         return result({"action": args.action, "target": args.target})
@@ -370,25 +551,73 @@ def tool_error(name: str, err: ValueError | OSError, spec: Object) -> CallToolRe
     return result(data, text=f"{kind}: {message}. {next_step}", error=True)
 
 
+def workflow_output() -> Object:
+    """Describe handle, file, preflight, error and continuation responses."""
+    return {
+        "type": "object",
+        "properties": {
+            "handle": {"type": "string"},
+            "kind": {"type": "string"},
+            "members": {"type": "object"},
+            "paths": {"type": "array", "items": {"type": "string"}},
+            "recovery": {"type": "object"},
+            "type": {"type": "string"},
+            "wall_seconds": {"type": "number"},
+            "method": {"type": "string"},
+            "manifest": {"type": "object"},
+            "info": {"type": "object"},
+            "continuation": {"type": "string"},
+        },
+        "anyOf": [
+            {"required": [k]} for k in ("handle", "paths", "type", "message", "continuation")
+        ],
+    }
+
+
 def binding(
-    cls: type[Record], handler: Callable[..., Awaitable[CallToolResult]], definitions: Object
+    cls: type[Record],
+    handler: Callable[..., Awaitable[CallToolResult]],
+    definitions: Object,
+    *,
+    name: str | None = None,
+    parts: dict[str, list[str]] | None = None,
 ) -> Object:
     """Construct a plain tool record with msgspec validation and actionable errors."""
-    name = cls.__name__.lower()
+    name = name or cls.__name__.lower()
     spec = schema(cls, definitions)
 
     async def invoke(arguments: dict[str, Any]) -> CallToolResult:
         try:
-            return await handler(msgspec.convert(arguments, type=cls))
+            reply = await handler(msgspec.convert(arguments, type=cls))
         except (ValueError, OSError) as err:
-            return tool_error(name, err, spec)
+            reply = tool_error(name, err, spec)
+        job = activity.get()
+        if job and job.notes and reply.structured_content is not None:
+            reply.structured_content.setdefault("notes", job.notes)
+        return bounded(reply, parts) if parts is not None else reply
 
     return {
         "name": name,
-        "description": cls.__doc__,
+        "description": (cls.__doc__ or "")
+        + (
+            " Handles last until close, worker restart or server exit."
+            if name
+            in {
+                "correct",
+                "align",
+                "simulate",
+                "reconstruct",
+                "edit_scan",
+                "project",
+                "backproject",
+            }
+            else ""
+        ),
         "read_only": name in {"status", "inspect", "describe"},
         "schema": spec,
-        "output_schema": {"type": "object"},
+        "output_schema": workflow_output()
+        if name in {*MODELS, "edit_scan", "open"}
+        else {"type": "object"},
         "handler": invoke,
     }
 
@@ -400,6 +629,9 @@ def registry(core: Core) -> list[Object]:
         resources.files("tomojax.cli").joinpath("parameters.json").read_bytes()
     )["$defs"]
     return [
-        binding(cls, getattr(tools, cls.__name__.lower()), definitions)
+        binding(cls, getattr(tools, cls.__name__.lower()), definitions, parts=core.parts)
         for cls in (Status, Inspect, Open, Describe, Control)
+    ] + [
+        binding(cls, partial(tools.workflow, name), definitions, name=name, parts=core.parts)
+        for name, cls in forms().items()
     ]

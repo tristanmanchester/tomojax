@@ -45,10 +45,6 @@ def main() -> int:
         from tomojax.cli.mcp.scratch import scratch
 
         recovered = helper([])
-        if recovered:
-            import sys
-
-            print(recovered, file=sys.stderr, flush=True)
         cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-        with scratch(cache / "tomojax/gui", gui=True) as (index, _):
-            return run(reader, writer, index=index)
+        with scratch(cache / "tomojax/gui", gui=True, report=recovered) as (index, _):
+            return run(reader, writer, index=index, recovery=recovered)

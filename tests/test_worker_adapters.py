@@ -224,14 +224,20 @@ def test_raw_frames_stream_into_reopenable_slab_volume(worker, tmp_path):
         path=str(tmp_path / "slabs.nxs"),
         source=root,
         method="fbp",
+        grid=dict(nx=12, ny=11, nz=5, vx=1, vy=1, vz=1, vol_origin=[-5.0, -5.5, -2.0]),
         config=dict(type="FBPConfig", backend="jax"),
     )
     result = output(worker("run", operation=recipe))["value"]["paths"]
-    actual = tj.load_reconstruction(result[0]).volume
+    saved = tj.load_reconstruction(result[0])
+    assert saved.grid.vol_origin == (-5.0, -5.5, -2.0)
+    assert saved.info["source"] == str(raw)
+    actual = saved.volume
     frames = tj.load_frames(raw, detector=tj.Detector(13, 5, 1, 1), flats=1000, darks=10)
     from tomojax.recon import FBPConfig
 
-    expected = tj.reconstruct(frames.corrected(), "fbp", config=FBPConfig(backend="jax"))
+    expected = tj.reconstruct(
+        frames.corrected(), "fbp", grid=tj.Grid(**recipe["grid"]), config=FBPConfig(backend="jax")
+    )
     np.testing.assert_allclose(actual, expected.volume, rtol=2e-5, atol=3e-6)
     for command in ("validate", "run"):
         failed = worker(

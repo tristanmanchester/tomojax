@@ -35,11 +35,13 @@ def registry() -> Path:
     return Path(pwd.getpwuid(os.getuid()).pw_dir) / ".local/state/tomojax/commits"
 
 
-def prepare(group: list[Staged]) -> Journal:
+def prepare(group: list[Staged], root: Path) -> Journal:
     members = []
     directories: set[Path] = set()
     for item in group:
         dest, stage = Path(item.destination), Path(item.staged)
+        if dest.is_relative_to(root) or root.is_relative_to(dest):
+            raise ValueError(f"Destination overlaps the commit registry: {dest}")
         if not stage.exists():
             raise FileNotFoundError(f"missing staged output for {dest}")
         exists = os.path.lexists(dest)
@@ -117,6 +119,7 @@ def commit(
     with (root / "lock").open("ab") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         path = root / "journal.json"
+        path.with_suffix(".tmp").unlink(missing_ok=True)
         report = (
             resolve(path, msgspec.json.decode(path.read_bytes(), type=Journal))
             if path.exists()
@@ -129,24 +132,42 @@ def commit(
                 report.setdefault("discarded", []).append(str(marker.readlink()))
             remove(work)
         if group:
-            journal = prepare(group)
-            persist(path, journal)
-            try:
-                for name in journal.directories:
-                    Path(name).mkdir()
-                for member in journal.members:
-                    destination = Path(member.destination)
-                    if member.existed:
-                        destination.replace(member.backup)
-                    if member.staged:
-                        Path(member.staged).replace(destination)
-            except Exception as err:
-                restored = resolve(path, journal)
-                raise OSError(f"{err}. Restored: {restored['restored']}") from err
-            journal.committed = True
-            persist(path, journal)
-            resolve(path, journal)
+            install(group, path, report)
         return report
+
+
+def install(group: list[Staged], path: Path, report: dict[str, list[str]]) -> None:
+    """Install under the caller's lock. The on-disk marker decides the outcome."""
+    try:
+        journal = prepare(group, path.parent)
+        persist(path, journal)
+        for name in journal.directories:
+            Path(name).mkdir()
+        for member in journal.members:
+            destination = Path(member.destination)
+            if member.existed:
+                destination.replace(member.backup)
+            if member.staged:
+                Path(member.staged).replace(destination)
+        journal.committed = True
+        persist(path, journal)
+    except Exception as err:
+        if not path.exists():
+            for item in group:
+                remove(Path(item.staged).parent.parent)
+            raise
+        decision = msgspec.json.decode(path.read_bytes(), type=Journal)
+        recovered = resolve(path, decision)
+        if not decision.committed:
+            raise OSError(f"{err}. Restored: {recovered['restored']}") from err
+        report.update(recovered)
+        return
+    try:
+        resolve(path, journal)
+    except OSError as err:
+        # The decision is final. The next lock holder finishes cleanup.
+        report["confirmed"] = [member.destination for member in journal.members]
+        report["cleanup_pending"] = [str(err)]
 
 
 def helper(group: list[Staged], *, abandoned: tuple[str, ...] = ()) -> dict[str, list[str]]:

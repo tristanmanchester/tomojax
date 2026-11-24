@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 from uuid import uuid4
@@ -23,7 +24,7 @@ def replace(path, dest):
     global step
     step += 1
     mode = os.environ.get('FAULT')
-    if mode in ('fail', 'pause-fail') and path.name == 'second':
+    if mode in ('fail', 'pause-fail') and (path.name == 'second' or path.name.endswith('.manifest.json')):
         raise OSError('injected rename failure')
     result = original(path, dest)
     if mode == str(step) or (mode == 'rollback' and path.name.startswith('backup-')):
@@ -86,10 +87,81 @@ def group_at(root, names, generation):
     return group
 
 
+@pytest.fixture(scope="module")
+def slab_plan(tmp_path_factory):
+    """Generate real W5 stage plans without letting the worker install their contents."""
+    import h5py
+    import numpy as np
+
+    root = tmp_path_factory.mktemp("slab-worker")
+    raw = root / "raw.h5"
+    with h5py.File(raw, "w") as f:
+        f["exchange/data"] = np.random.default_rng(5).integers(
+            400, 950, size=(12, 4, 8), dtype=np.uint16
+        )
+        f["exchange/theta"] = np.arange(12) * 15
+    with subprocess.Popen(
+        [sys.executable, "-m", "tomojax.cli.main", "serve", "--commit", "supervisor"],
+        env={**os.environ, "TMPDIR": str(root), "JAX_PLATFORMS": "cpu"},
+        stdin=-1,
+        stdout=-1,
+        text=True,
+    ) as proc:
+        assert json.loads(proc.stdout.readline())["type"] == "ready"
+        serial = 0
+
+        def call(command):
+            nonlocal serial
+            serial += 1
+            proc.stdin.write(json.dumps({"id": str(serial), "command": command}) + "\n")
+            proc.stdin.flush()
+            while line := proc.stdout.readline():
+                row = json.loads(line)
+                if row["type"] != "progress":
+                    assert row["type"] == "result", row
+                    return row["result"]
+            pytest.fail("Worker exited while staging")
+
+        try:
+            opened = call(
+                dict(
+                    type="open",
+                    path=str(raw),
+                    kind="frames",
+                    flats=1000,
+                    darks=0,
+                    detector=dict(nu=8, nv=4, du=1, dv=1),
+                    geometry=dict(kind="parallel"),
+                )
+            )
+            source = dict(type="member", handle=opened["value"]["handle"], member="self")
+
+            def stage(path):
+                output = call(
+                    dict(
+                        type="run",
+                        operation=dict(
+                            type="reconstruct_slabs",
+                            method="fbp",
+                            source=source,
+                            path=str(path),
+                            force=True,
+                            config=dict(type="FBPConfig", backend="jax"),
+                        ),
+                    )
+                )
+                return output["value"]["plan"]
+
+            yield stage
+        finally:
+            proc.stdin.close()
+
+
 @pytest.mark.parametrize("fault", ["1", "2", "3", "4", "5", "6", "cleanup", "fail"])
-def test_group_decision_survives_crash(launch, tmp_path, fault):
-    names = ["first", "second"]
-    group = group_at(tmp_path, names, "new")
+def test_group_decision_survives_crash(launch, tmp_path, fault, slab_plan):
+    names = ["volume.nxs", "volume.nxs.manifest.json"]
+    group = slab_plan(tmp_path / names[0])
+    staged = {Path(item["destination"]).name: Path(item["staged"]).read_bytes() for item in group}
     for name in names:
         (tmp_path / name).write_text("old")
     failed = launch(group, fault=fault)
@@ -105,7 +177,10 @@ def test_group_decision_survives_crash(launch, tmp_path, fault):
         assert report["confirmed" if committed else "restored"] == [
             str(tmp_path / n) for n in names
         ]
-    assert all((tmp_path / name).read_text() == ("new" if committed else "old") for name in names)
+    assert all(
+        (tmp_path / name).read_bytes() == (staged[name] if committed else b"old") for name in names
+    )
+    assert all(not Path(item["staged"]).parent.parent.exists() for item in group)
     assert finish(launch()) == {}
 
 

@@ -202,7 +202,7 @@ def _executor_done(future: Future[None]) -> None:
         os._exit(1)
 
 
-def _ready() -> e.Ready:
+def _ready(recovery: dict[str, list[str]] | None = None) -> e.Ready:
     import jax
 
     from tomojax.cli._adapters import EXECUTABLE
@@ -240,10 +240,18 @@ def _ready() -> e.Ready:
             *(str(kind.__struct_config__.tag) for kind in EXECUTABLE),
         ),
         inventory,
+        recovery,
     )
 
 
-def run(stdin: int, stdout: int, *, external: bool = False, index: Path | None = None) -> int:
+def run(
+    stdin: int,
+    stdout: int,
+    *,
+    external: bool = False,
+    index: Path | None = None,
+    recovery: dict[str, list[str]] | None = None,
+) -> int:
     """Start the worker with its production operation adapters."""
     from tomojax.cli._adapters import execute
 
@@ -251,7 +259,7 @@ def run(stdin: int, stdout: int, *, external: bool = False, index: Path | None =
         execute,
         stdin=stdin,
         stdout=stdout,
-        ready=_ready,
+        ready=lambda: _ready(recovery),
         external=external,
         index=index,
         description=e.Description(

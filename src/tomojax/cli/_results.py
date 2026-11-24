@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.registration import pose_columns, recorded_length_unit
 from tomojax.wire.arrays import (
     Array,
@@ -27,7 +28,6 @@ if TYPE_CHECKING:
 
     import tomojax as tj
 
-VOLUME_DATASET = "/entry/processing/tomojax/volume"
 _PROJECTIONS = "/entry/instrument/detector/data"
 _ANGLES = "/entry/sample/transformations/rotation_angle"
 _POSES = "/entry/processing/tomojax/align/thetas"

@@ -32,7 +32,8 @@ def scratch(
                 abandoned.append(str(work))
             recovered = (helper if gui else commit)([], abandoned=tuple(abandoned))
             if report is not None:
-                report.update(recovered)
+                for state, destinations in recovered.items():
+                    report.setdefault(state, []).extend(destinations)
         shutil.rmtree(path)
 
     root.mkdir(parents=True, exist_ok=True, mode=0o700)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 import signal
 import sys
@@ -49,6 +49,41 @@ class Activity:
     progress: Object | None = None
     cancel: Callable[[], None] | None = None
     requested: bool = False
+    changed: asyncio.Event = field(default_factory=asyncio.Event)
+    stages: dict[int, str] = field(default_factory=dict)
+    devices: set[str] = field(default_factory=set)
+    notes: list[str] = field(default_factory=list)
+
+    def record(self, event: Object) -> None:
+        """Keep the active labels even when a newer worker event has no label."""
+        self.progress = event
+        kind = event["event"]
+        if kind == "started":
+            self.stages[event["task"]] = " ".join(filter(None, (event["name"], event["label"])))
+        elif kind == "finished":
+            self.stages.pop(event["task"], None)
+        elif kind == "note":
+            self.notes.append(event["message"])
+        elif kind == "placed":
+            self.devices.update(event["devices"])
+        self.changed.set()
+
+    def status(self) -> tuple[str, float | None]:
+        """Describe the innermost active stage and its latest estimate."""
+        event = self.progress or {}
+        label = next(reversed(self.stages.values()), "worker")
+        if event.get("event") != "advanced":
+            return f"waiting: {label}", None
+        eta = event.get("eta")
+        metrics = [f"{name} {value}" for name, value in event["metrics"].items()]
+        position = (
+            f"{event['done']}/{event['total']}"
+            if event.get("total") is not None
+            else str(event["done"])
+        )
+        if eta is not None:
+            metrics.append(f"eta {eta:g} s")
+        return " · ".join([f"{label} {position}", *metrics]), eta
 
     def request_cancel(self) -> None:
         """Carry an early cancellation across submission."""
@@ -167,7 +202,7 @@ class Generation:
         rid = row["request"]
         job = self.pending[rid]
         if row["type"] == "progress":
-            job.activity.progress = row["record"]
+            job.activity.record(row["record"])
             return
         del self.pending[rid]
         if job.deadline:
@@ -196,6 +231,10 @@ class Generation:
             group = msgspec.convert(files.pop("plan"), type=list[Staged])
             files["recovery"] = await asyncio.to_thread(commit, group)
             job.result.set_result(job.accept(value) if job.accept else value)
+        except OSError as err:
+            job.result.set_exception(
+                WorkerError({"kind": "input", "path": "path", "message": str(err)})
+            )
         except Exception as err:
             job.result.set_exception(err)
 
@@ -289,17 +328,25 @@ class Supervisor:
         while not self.closing:
             await self.launch.wait()
             g = self.current
+            recovered: dict[str, list[str]] = {}
             try:
                 recovered = await asyncio.to_thread(commit, [])
+                lease = scratch(self.cache, report=recovered)
+                path, fd = await asyncio.to_thread(lease.__enter__)
                 self.report.update(recovered)
-                with scratch(self.cache, report=self.report) as (path, fd):
+                try:
                     await self.serve_generation(g, path, fd)
+                finally:
+                    await asyncio.to_thread(lease.__exit__, None, None, None)
             except Exception as err:
                 g.stop(str(err))
             lost = self.ledger.lost()
-            self.report.update(reason=g.reason, lost=lost)
+            self.report = {**recovered, "reason": g.reason, "lost": lost}
             started = g.ready.done()
-            g.fail(f"{g.reason}. Lost references: {', '.join(lost) or 'none'}. Open inputs again.")
+            g.fail(
+                f"{g.reason}. Lost references: {', '.join(lost) or 'none'}. Open inputs again. "
+                "See status for recovered or discarded files."
+            )
             if not started:
                 # A broken installation should fail its first request, not spin on startup.
                 self.launch.clear()

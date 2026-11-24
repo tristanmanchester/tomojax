@@ -154,7 +154,7 @@ class Stub:
         return p.Inspection({"path": command.path})
 
 
-def worker(port):
+def worker(port, *, external=False):
     files = Path(__file__).resolve().parents[1] / "docs/protocol/transcripts/session.jsonl"
     ready = msgspec.convert(json.loads(files.read_text().splitlines()[0]), type=e.Ready)
     return serve(
@@ -163,9 +163,10 @@ def worker(port):
         stdout=1,
         ready=ready,
         description=e.Description({"large": "x" * 32768}),
+        external=external,
     )
 
 
 if __name__ == "__main__":
     with socket.socket(fileno=int(sys.argv[1])) as port:
-        raise SystemExit(worker(port))
+        raise SystemExit(worker(port, external="--external" in sys.argv))

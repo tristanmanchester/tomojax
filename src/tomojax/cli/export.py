@@ -14,7 +14,7 @@ import numpy as np
 
 from tomojax.cli._options import add_output, check_paths
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
-from tomojax.cli._results import VOLUME_DATASET
+from tomojax.cli.products import VOLUME_DATASET
 from tomojax.io.api import saved_volume_axes
 
 if TYPE_CHECKING:
