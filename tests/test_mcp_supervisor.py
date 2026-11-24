@@ -335,3 +335,87 @@ os._exit(0)
             ledger.lookup(ref)
     finally:
         ledger.close()
+
+
+@pytest.mark.parametrize("operation", ["reconstruct_slabs", "export"])
+def test_worker_loss_after_handoff_commits_real_volume(tmp_path, monkeypatch, operation):
+    import threading
+
+    import h5py
+    import numpy as np
+
+    import tomojax as tj
+    from tomojax.recon import FBPConfig
+
+    root = tmp_path / "registry"
+    root.mkdir()
+    entered = threading.Event()
+    commit = workers.commit
+
+    def install(group, **kwargs):
+        if group:
+            entered.set()
+        return commit(group, root=root, **kwargs)
+
+    monkeypatch.setattr(workers, "commit", install)
+    path = tmp_path / ("slabs.nxs" if operation == "reconstruct_slabs" else "volume.raw")
+
+    async def run():
+        ledger = Ledger(tmp_path / "state")
+        supervisor = workers.Supervisor(ledger, tmp_path, tmp_path / "cache")
+        try:
+            g = await supervisor.worker()
+            if operation == "export":
+                sim = await g.request({"type": "run", "operation": {"type": "simulate", "size": 8}})
+                ref = dict(type="member", handle=sim["value"]["handle"], member="self")
+                command = dict(type=operation, path=str(path), source=ref)
+                expected = tj.simulate(size=8).phantom
+            else:
+                raw = tmp_path / "input.h5"
+                with h5py.File(raw, "w") as f:
+                    f["exchange/data"] = np.random.default_rng(1).integers(
+                        300, 800, size=(12, 4, 8)
+                    )
+                    f["exchange/theta"] = np.arange(12) * 15
+                handle = await g.request(
+                    dict(
+                        type="open",
+                        kind="frames",
+                        path=str(raw),
+                        flats=1000,
+                        darks=0,
+                        detector=dict(nu=8, nv=4, du=1, dv=1),
+                        geometry=dict(kind="parallel"),
+                    )
+                )
+                command = dict(
+                    type=operation,
+                    path=str(path),
+                    source=dict(type="member", handle=handle["value"]["handle"], member="self"),
+                    method="fbp",
+                    config=dict(type="FBPConfig", backend="jax"),
+                )
+                frames = tj.load_frames(raw, detector=tj.Detector(8, 4, 1, 1), flats=1000, darks=0)
+                expected = tj.reconstruct(
+                    frames.corrected(), "fbp", config=FBPConfig(backend="jax")
+                ).volume
+            with (root / "lock").open("ab") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                job = asyncio.create_task(g.request(dict(type="run", operation=command)))
+                assert await asyncio.to_thread(entered.wait, 30)
+                os.kill(g.process.pid, signal.SIGKILL)
+                await asyncio.wait_for(g.exit.wait(), 5)
+                assert not path.exists()
+            reply = await asyncio.wait_for(job, 10)
+            assert str(path) in reply["value"]["paths"]
+            actual = (
+                tj.load_reconstruction(path).volume
+                if operation == "reconstruct_slabs"
+                else np.fromfile(path, dtype="<f4").reshape(expected.shape)
+            )
+            np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=3e-6)
+        finally:
+            await supervisor.close()
+            ledger.close()
+
+    asyncio.run(run())

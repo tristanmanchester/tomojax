@@ -1475,6 +1475,10 @@
             }
           }
         },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
         "method": {
           "enum": [
             "fbp",
@@ -1482,6 +1486,10 @@
             "mlem",
             "sirt"
           ]
+        },
+        "force": {
+          "type": "boolean",
+          "default": false
         },
         "grid": {
           "anyOf": [
@@ -1587,6 +1595,7 @@
       "required": [
         "type",
         "source",
+        "path",
         "method"
       ],
       "additionalProperties": false

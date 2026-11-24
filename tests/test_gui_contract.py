@@ -74,7 +74,7 @@ def test_fixed_client_transcripts(schemas, scenario):
         parents = results["b"]["manifest"]["inputs"]
         assert parents == [results["s"]["manifest"], results["p"]["manifest"]]
     if scenario == "raw-slabs":
-        assert results["v"]["value"]["volume"]["storage"]["type"] == "npy"
+        assert results["v"]["value"]["paths"][0] == "/data/slabs.nxs"
     if scenario == "saved-volume":
         assert results["open"]["value"]["scan"] is None
         assert results["browse"]["value"]["plane"]["fixed"][0]["coordinate"] == 9

@@ -98,7 +98,9 @@ class ReconstructSlabs(Record, tag="reconstruct_slabs"):
     """Consume each yielded slab into one staged disk-backed volume."""
 
     source: Source
+    path: Id
     method: Literal["fbp", "fourier", "sirt", "mlem"]
+    force: bool = False
     grid: w.Grid | None = None
     config: w.FBPConfig | w.FourierConfig | w.SIRTConfig | w.MLEMConfig | None = None
     corrections: tuple[Step, ...] = ()

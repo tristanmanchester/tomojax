@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import msgspec
+
 from tomojax.cli.wire_options import Grid
 from tomojax.wire import resources
 from tomojax.wire.arrays import Array, Count, Id, Member, Record
@@ -94,10 +96,20 @@ class Region(Record, tag="region"):
     arrays: dict[str, Array]
 
 
+class Staged(Record):
+    """Destination-local work owned by the committer after terminal acceptance."""
+
+    destination: Id
+    staged: Id
+    force: bool
+
+
 class Files(Record, tag="files"):
     """All committed output destinations, including adjacent manifests."""
 
     paths: tuple[Id, ...]
+    plan: tuple[Staged, ...] = ()
+    recovery: dict[str, list[str]] = msgspec.field(default_factory=dict)
 
 
 class Inspection(Record, tag="inspection"):

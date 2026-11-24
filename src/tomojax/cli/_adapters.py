@@ -322,32 +322,46 @@ class Admission:
             raw=raw,
         )
         if isinstance(operation, op.ReconstructSlabs):
-            settings = arguments(operation, self.context, omit=("source",))
+            from tomojax._scan import geometry_record
             from tomojax._workflow import slab_settings
+            from tomojax.io.api import dataset_output_format, slab_volume
             from tomojax.recon.api import validate_slab_grid
 
+            settings = arguments(operation, self.context, omit=("source", "path", "force"))
             grid, _, _ = slab_settings(item, **settings)
             validate_slab_grid(operation.method, item.geometry, grid, item.geometry.detector)
+            path = Path(operation.path)
+            if dataset_output_format(path) != "hdf5":
+                raise InvalidParameter(
+                    "path", "slab reconstruction requires a NeXus/HDF5 destination"
+                )
+            sidecar = path.with_name(path.name + ".manifest.json")
+            inputs = set(ancestor_paths(self.manifest.inputs)) | set(
+                storage_paths(self.manifest.parameters)
+            )
+            if isinstance(operation.source, op.PathInput):
+                inputs.add(Path(operation.source.path).resolve())
+            check_destinations(inputs, (path, sidecar), force=operation.force)
 
             def fill():
-                with tj.reconstruct_slabs(item, **settings) as slabs:
-                    stage = self.context.staging.array()
-                    volume = np.lib.format.open_memmap(
-                        stage.path, mode="w+", dtype=np.float32, shape=grid.shape
-                    )
+                record = geometry_record(item.geometry, grid=grid, source=item.source)
+                record.geometry_metadata.pop("volume_role", None)
+                record.geometry_metadata.update(
+                    reconstruction_method=operation.method, length_unit=unit_of(item)
+                )
+                stage = self.context.staging.output(path, force=operation.force)
+                manifest = self.context.staging.output(sidecar, force=operation.force)
+                with (
+                    slab_volume(stage, record.to_nxtomo_metadata(), grid.shape) as volume,
+                    tj.reconstruct_slabs(item, **settings) as slabs,
+                ):
+                    volume.attrs["long_name"] = "volume"
                     for interval, slab in slabs:
                         volume[interval] = slab.volume
                         del slab
                         self.context.control.checkpoint()
-                    volume.flush()
-                return p.Volume(
-                    ex.volume_metadata(
-                        grid,
-                        storage=stage.reference,
-                        dtype=volume.dtype.str,
-                        length_unit=unit_of(item),
-                    )
-                )
+                manifest.write_bytes(msgspec.json.encode(self.manifest) + b"\n")
+                return p.Files((str(path), str(sidecar)))
 
             return fill
 

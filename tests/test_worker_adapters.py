@@ -221,19 +221,22 @@ def test_raw_frames_stream_into_reopenable_slab_volume(worker, tmp_path):
     root = dict(type="member", handle=opened["handle"], member="self")
     recipe = dict(
         type="reconstruct_slabs",
+        path=str(tmp_path / "slabs.nxs"),
         source=root,
         method="fbp",
         config=dict(type="FBPConfig", backend="jax"),
     )
-    result = output(worker("run", operation=recipe))["value"]["volume"]
-    actual = np.load(result["storage"]["path"], mmap_mode="r")
+    result = output(worker("run", operation=recipe))["value"]["paths"]
+    actual = tj.load_reconstruction(result[0]).volume
     frames = tj.load_frames(raw, detector=tj.Detector(13, 5, 1, 1), flats=1000, darks=10)
     from tomojax.recon import FBPConfig
 
     expected = tj.reconstruct(frames.corrected(), "fbp", config=FBPConfig(backend="jax"))
     np.testing.assert_allclose(actual, expected.volume, rtol=2e-5, atol=3e-6)
     for command in ("validate", "run"):
-        failed = worker(command, operation={**recipe, "corrections": [dict(type="RejectViews")]})
+        failed = worker(
+            command, operation={**recipe, "force": True, "corrections": [dict(type="RejectViews")]}
+        )
         assert failed["error"]["path"] == "corrections[0]"
 
 

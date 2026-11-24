@@ -15,6 +15,7 @@ from tomojax._data._io_nxtomo import (
     save_nxtomo,
     saved_volume_axes,
     saved_without_frames,
+    slab_volume,
     validate_nxtomo,
 )
 from tomojax._data._io_types import LoadedNXTomo, NXTomoMetadata
@@ -38,6 +39,7 @@ __all__ = [
     "save_nxtomo",
     "saved_volume_axes",
     "saved_without_frames",
+    "slab_volume",
     "validate_nxtomo",
     "views_of",
 ]

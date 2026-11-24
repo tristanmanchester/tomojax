@@ -168,6 +168,8 @@ def serve(
     stdout: int,
     ready: e.Ready | Callable[[], e.Ready],
     description: e.Description,
+    external: bool = False,
+    index: Path | None = None,
 ) -> int:
     """Serve the process pipes until shutdown, EOF or loss of the output connection."""
     reader, writer = socket.socketpair()
@@ -180,7 +182,9 @@ def serve(
         writer.setblocking(False)
         box = _Outbox(writer)
         inventory = executor.submit(ready).result() if callable(ready) else ready
-        session = Session(Path(root), execute, box.send, inventory, description)
+        session = Session(
+            Path(root), execute, box.send, inventory, description, external=external, index=index
+        )
         box.send(inventory)
         running = executor.submit(session.work)
         running.add_done_callback(_executor_done)
@@ -239,7 +243,7 @@ def _ready() -> e.Ready:
     )
 
 
-def run(stdin: int, stdout: int) -> int:
+def run(stdin: int, stdout: int, *, external: bool = False, index: Path | None = None) -> int:
     """Start the worker with its production operation adapters."""
     from tomojax.cli._adapters import execute
 
@@ -248,6 +252,8 @@ def run(stdin: int, stdout: int) -> int:
         stdin=stdin,
         stdout=stdout,
         ready=_ready,
+        external=external,
+        index=index,
         description=e.Description(
             msgspec.json.decode(
                 resources.files("tomojax.cli").joinpath("parameters.json").read_bytes()

@@ -1801,6 +1801,10 @@
           },
           "description": "Raw detector frames for cone FDK or unposed axial parallel-beam geometry."
         },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
         "method": {
           "enum": [
             "fbp",
@@ -1815,6 +1819,10 @@
             "sirt",
             "mlem"
           ]
+        },
+        "force": {
+          "type": "boolean",
+          "default": false
         },
         "grid": {
           "anyOf": [
@@ -1925,6 +1933,7 @@
       "required": [
         "type",
         "source",
+        "path",
         "method"
       ],
       "additionalProperties": false,

@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec
 
+from tomojax.cli._commit import commit
 from tomojax.cli.mcp.scratch import scratch
+from tomojax.cli.products import Staged
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -74,6 +76,7 @@ class Generation:
     """A single worker's correlation namespace and admission state."""
 
     def __init__(self, prefix: int) -> None:
+        self.commits: set[asyncio.Task[None]] = set()
         self.prefix = prefix
         self.count = 0
         self.pending: dict[str, Pending] = {}
@@ -175,11 +178,26 @@ class Generation:
             if row["type"] != "result":
                 raise WorkerError(row.get("error", row))
             value = row["result"]
-            job.result.set_result(job.accept(value) if job.accept else value)
+            if value.get("value", {}).get("plan"):
+                task = asyncio.create_task(self.install(job, value))
+                self.commits.add(task)
+                task.add_done_callback(self.commits.discard)
+            else:
+                job.result.set_result(job.accept(value) if job.accept else value)
         except Exception as err:
             job.result.set_exception(err)
         if not self.pending and self.count >= ID_LIMIT - 128:
             self.stop("Worker request ID budget exhausted")
+
+    async def install(self, job: Pending, value: Object) -> None:
+        """Settle an accepted plan independently of worker death and client cancellation."""
+        try:
+            files = value["value"]
+            group = msgspec.convert(files.pop("plan"), type=list[Staged])
+            files["recovery"] = await asyncio.to_thread(commit, group)
+            job.result.set_result(job.accept(value) if job.accept else value)
+        except Exception as err:
+            job.result.set_exception(err)
 
     async def read(self, stream: asyncio.StreamReader) -> None:
         """Decode complete JSON lines without the asyncio readline size limit."""
@@ -218,7 +236,14 @@ class Supervisor:
         base: Path,
         cache: Path,
         *,
-        argv: tuple[str, ...] = (sys.executable, "-m", "tomojax.cli.main", "serve"),
+        argv: tuple[str, ...] = (
+            sys.executable,
+            "-m",
+            "tomojax.cli.main",
+            "serve",
+            "--commit",
+            "supervisor",
+        ),
         pass_fds: tuple[int, ...] = (),
     ) -> None:
         self.ledger = ledger
@@ -265,12 +290,14 @@ class Supervisor:
             await self.launch.wait()
             g = self.current
             try:
-                with scratch(self.cache) as (path, fd):
+                recovered = await asyncio.to_thread(commit, [])
+                self.report.update(recovered)
+                with scratch(self.cache, report=self.report) as (path, fd):
                     await self.serve_generation(g, path, fd)
             except Exception as err:
                 g.stop(str(err))
             lost = self.ledger.lost()
-            self.report = {"reason": g.reason, "lost": lost}
+            self.report.update(reason=g.reason, lost=lost)
             started = g.ready.done()
             g.fail(f"{g.reason}. Lost references: {', '.join(lost) or 'none'}. Open inputs again.")
             if not started:
@@ -327,5 +354,6 @@ class Supervisor:
             while await proc.stdout.read(65536):
                 pass
             await proc.wait()
+            await asyncio.gather(*g.commits)
             if stderr and not g.ready.done():
                 g.reason += ": " + stderr.decode(errors="replace")

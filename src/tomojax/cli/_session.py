@@ -15,6 +15,7 @@ import msgspec
 
 from tomojax import progress
 from tomojax.cli import envelope as e, execution as ex, operations as op, products as p
+from tomojax.cli._commit import helper
 from tomojax.cli._staging import Stages
 from tomojax.errors import classify
 from tomojax.wire import progress as w
@@ -74,7 +75,12 @@ class Session:
         emit: Callable[[e.Response], None],
         ready: e.Ready,
         description: e.Description,
+        *,
+        external: bool = False,
+        index: Path | None = None,
     ) -> None:
+        self.index = index or (root.parent if external else root)
+        self.external = external
         self.root = root
         self.execute = execute
         self.emit = emit
@@ -159,7 +165,7 @@ class Session:
                 cmd,
                 channel,
                 progress.Control(),
-                Stages(self.root),
+                Stages(self.root, self.index),
                 leases,
                 pins.pop_all(),
             )
@@ -298,13 +304,30 @@ class Session:
             product = bound.product
         else:
             product = value
+        if isinstance(product, p.Files):
+            group = list(job.stages.outputs.values())
+            if self.external:
+                product = p.Files(product.paths, tuple(group))
+            else:
+                try:
+                    recovery = helper(group)
+                except OSError:
+                    # A killed helper may still own a journal and its backups.
+                    try:
+                        helper([])
+                    except OSError:
+                        job.stages.outputs.clear()
+                        raise
+                    raise
+                product = p.Files(product.paths, recovery=recovery)
         result = p.Output(product, success.info, success.manifest)
         # Encode before changing any caller-owned destination.
         _ = msgspec.json.encode(result)
         with ExitStack() as undo:
             for token in tuple(job.stages.arrays):
                 self._publish(job, token, success.manifest, undo)
-            job.stages.commit()
+            if self.external and isinstance(product, p.Files):
+                job.stages.outputs.clear()
             undo.pop_all()
         if handle:
             self.handles[job.id] = handle
@@ -360,6 +383,7 @@ class Session:
         try:
             with job.lifetime:
                 job.stages.temporary.close()
+                job.stages.discard()
         except Exception:
             # The commit decision is final. Report cleanup failures to the operator.
             logging.exception("Failed to dispose resources for %s", job.id)
