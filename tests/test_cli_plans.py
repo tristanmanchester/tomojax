@@ -72,7 +72,7 @@ def test_a_run_resolves_once_and_says_what_it_will_do(monkeypatch, tmp_path, sca
         for r in map(json.loads, capsys.readouterr().out.splitlines())
         if r["event"] == "note"
     ]
-    assert any(n.startswith("reconstruct: sirt, 2 iterations · grid 16x16x16") for n in notes)
+    assert any(n.startswith("reconstruct: sirt, 2 iterations · 16x16x16 at 1 scan units · ") for n in notes)
 
 
 def test_running_out_of_memory_says_what_the_plan_needed(monkeypatch, tmp_path, scan_path, capsys):

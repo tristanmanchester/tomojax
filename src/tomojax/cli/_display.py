@@ -41,6 +41,7 @@ _DEPTH_SHOWN = 4
 _SUMMARY_DEPTH = 2
 _SUMMARY_SECONDS = 1.0  # quicker tasks leave no line
 _PERIOD = 0.1
+_BAR = 20  # progress bar width in cells
 
 
 def number(value: float) -> str:
@@ -197,24 +198,11 @@ class Display:
             return lines, rows[-_DEPTH_SHOWN:]
 
     def _table(self, rows: list[_Row]) -> Table:
-        table = Table.grid(padding=(0, 2))
-        table.add_column(no_wrap=True, overflow="ellipsis", max_width=48)
-        table.add_column(no_wrap=True)
-        table.add_column(no_wrap=True)
-        table.add_column(no_wrap=True, overflow="ellipsis")
-        table.add_column(no_wrap=True, style="dim")
+        cells = []
         for row in rows:
-            indent = "  " * (row.depth - 1)
-            bar = (
-                ProgressBar(total=max(row.total, 1), completed=row.done, width=24)
-                if row.total
-                else Text("")
-            )
             count = str(row.done) if row.total is None else f"{row.done}/{row.total}"
             if row.unit and (row.done or row.total):
                 count += f" {row.unit}"
-            if not (row.done or row.total):
-                count = ""
             metrics = "  ".join(
                 f"{METRICS[name][0]} {number(value)}{METRICS[name][1]}"
                 for name, value in row.metrics
@@ -222,7 +210,27 @@ class Display:
             timing = format_duration(row.elapsed)
             if row.eta is not None and (row.total is None or row.done < row.total):
                 timing += f" · {format_duration(row.eta)} left"
-            table.add_row(Text(f"{indent}{row.label}"), bar, count, metrics, timing)
+            label = f"{'  ' * (row.depth - 1)}{row.label}"
+            cells.append((label, row, count if row.done or row.total else "", metrics, timing))
+        # A narrow terminal shortens the metrics first: the rest keeps its width.
+        table = Table.grid(padding=(0, 2))
+        table.add_column(
+            no_wrap=True, min_width=min(32, max((len(c[0]) for c in cells), default=0))
+        )
+        table.add_column(no_wrap=True, width=_BAR)
+        table.add_column(no_wrap=True, min_width=max((len(c[2]) for c in cells), default=0))
+        table.add_column(ratio=1)  # the one column Rich may narrow
+        table.add_column(
+            no_wrap=True, style="dim", min_width=max((len(c[4]) for c in cells), default=0)
+        )
+        for label, row, count, metrics, timing in cells:
+            bar = (
+                ProgressBar(total=max(row.total, 1), completed=row.done, width=_BAR)
+                if row.total
+                else Text("")
+            )
+            shown = Text(metrics, no_wrap=True, overflow="ellipsis")
+            table.add_row(Text(label, overflow="ellipsis"), bar, count, shown, timing)
         return table
 
     def _draw(self) -> None:

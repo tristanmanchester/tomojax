@@ -137,16 +137,14 @@ def plan_header(command: str, scan: tj.Scan, work: Work, placement: Placement) -
         if iterations is not None:
             what += f", {iterations} iterations"
         grid = work.scan.grid
-        what += f" · grid {grid.nx}x{grid.ny}x{grid.nz} at {_length(grid.vx, unit)}"
+        what += f" · {grid.nx}x{grid.ny}x{grid.nz} at {_length(grid.vx, unit)}"
     else:
         bins = ", ".join(str(level.binning) for level in work.schedule.levels)
         what = f"joint fit at binning {bins}"
     devices = ", ".join(placement.devices)
-    return (
-        f"{command}: {what} · est. {placement.strategy} on {devices} · "
-        f"{size(placement.host_bytes + placement.device_bytes)} of "
-        f"{_available(placement)} available"
-    )
+    needed = size(placement.host_bytes + placement.device_bytes)
+    free = _available(placement)
+    return f"{command}: {what} · {placement.strategy} on {devices}, {needed} of {free}"
 
 
 __all__ = [
