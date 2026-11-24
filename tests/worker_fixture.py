@@ -13,7 +13,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.cli import envelope as e, execution as ex, operations as op, products as p
-from tomojax.cli.serve import serve
+from tomojax.cli._transport import serve  # check-public-imports: allow-private
 from tomojax.errors import InvalidParameter
 from tomojax.wire import arrays as a, progress as w
 
@@ -147,7 +147,13 @@ class Stub:
 def worker(port):
     files = Path(__file__).resolve().parents[1] / "docs/protocol/transcripts/session.jsonl"
     ready = msgspec.convert(json.loads(files.read_text().splitlines()[0]), type=e.Ready)
-    return serve(Stub(port).execute, ready=ready, description=e.Description({"large": "x" * 32768}))
+    return serve(
+        Stub(port).execute,
+        stdin=0,
+        stdout=1,
+        ready=ready,
+        description=e.Description({"large": "x" * 32768}),
+    )
 
 
 if __name__ == "__main__":
