@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 from functools import partial
 import json
@@ -23,6 +24,7 @@ from tomojax._field_of_view import (
 from tomojax._parameters import Fit
 from tomojax.cli._options import EXIT_STATUS, add_config, add_force, check_paths
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
+from tomojax.cli._watch import admit_or_exit, watch_directory
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
     from tomojax import Alignment, Grid, Scan
     from tomojax._workflow import Region
     from tomojax.alignment import AlignConfig
+    from tomojax.cli._watch import WatchDirectory
     from tomojax.wire.progress import Result
 
 LOG = logging.getLogger(__name__)
@@ -54,6 +57,7 @@ class _Args(argparse.Namespace):
     apply_poses: bool
     manifest: str | None
     dry_run: bool
+    watch_dir: str | None
 
 
 # The everyday settings: tj.align's keywords, each a field of AlignConfig.
@@ -89,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
         "(optional with --dry-run)",
     )
     add_force(parser)
-    add_progress(parser)
+    add_progress(parser, watch_dir=True)
     _ = parser.add_argument(
         "--fit",
         nargs="+",
@@ -321,7 +325,9 @@ def main() -> int:
     args = cast("_Args", namespace)
     settings = cast("dict[str, Any]", metadata["settings"])
     config = _validate_align_args(parser, args, settings)
-    return run_command("align", args.progress, partial(_run, parser, args, metadata, config))
+    watch = watch_directory(args.watch_dir, "align", working=True)
+    operation = partial(_run, parser, args, metadata, config, watch)
+    return run_command("align", args.progress, operation, watch=watch)
 
 
 def _run(
@@ -329,6 +335,7 @@ def _run(
     args: _Args,
     metadata: Mapping[str, Any],
     config: AlignConfig | None,
+    watch: WatchDirectory | None,
 ) -> Result | None:
     import tomojax as tj
 
@@ -336,6 +343,8 @@ def _run(
         raise FileNotFoundError(f"input not found: {args.data}")
     outputs = [] if args.dry_run else [args.out, args.manifest]
     check_paths(parser, inputs=[args.data], outputs=outputs, force=args.force)
+    related = (args.data, args.out, args.manifest, cast("str | None", metadata["config_path"]))
+    admit_or_exit(parser, watch, force=args.force, related=related)
     progress.check_cancelled()
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_cancelled()
@@ -347,12 +356,13 @@ def _run(
     if args.dry_run:
         print(json.dumps(_dry_run_plan(args, fit, scan, grid, config), indent=2, sort_keys=True))
         return None
-    if args.method == "opposite-views":
-        result = tj.align(scan, fit=fit, method="opposite-views")
-    elif args.grid is None:
-        result = tj.align(scan, fit=fit, region=args.region, config=config)
-    else:
-        result = tj.align(scan, fit=fit, grid=grid, config=config)
+    with progress.previews() if watch is not None else nullcontext():
+        if args.method == "opposite-views":
+            result = tj.align(scan, fit=fit, method="opposite-views")
+        elif args.grid is None:
+            result = tj.align(scan, fit=fit, region=args.region, config=config)
+        else:
+            result = tj.align(scan, fit=fit, grid=grid, config=config)
         if cylinder is not None and result.image is not None and result.grid is not None:
             masked_image = zero_outside_cylinder(result.image, result.grid, cylinder)
             result = replace(result, image=masked_image)

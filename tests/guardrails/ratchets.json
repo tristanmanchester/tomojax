@@ -34,8 +34,8 @@
   "cli_flags": {
     "inspect": 5,
     "correct": 34,
-    "reconstruct": 20,
-    "align": 19,
+    "reconstruct": 21,
+    "align": 20,
     "export": 7,
     "simulate": 19,
     "serve": 1
@@ -56,11 +56,11 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 5608,
+    "(modules)": 5621,
     "_data": 2153,
     "alignment": 4670,
     "backends": 273,
-    "cli": 6256,
+    "cli": 6749,
     "core": 9917,
     "corrections": 3139,
     "datasets": 1069,

@@ -10,6 +10,7 @@ options are; and saves the result with :func:`tomojax.save`.
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from dataclasses import dataclass, fields, replace
 from functools import partial
 import json
@@ -30,6 +31,7 @@ from tomojax._field_of_view import (
 from tomojax._parameters import Filter, Method
 from tomojax.cli._options import add_config, add_force, check_paths, hide_expert
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
+from tomojax.cli._watch import admit_or_exit, watch_directory
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -37,6 +39,7 @@ if TYPE_CHECKING:
 
     from tomojax import Reconstruction, Scan
     from tomojax._workflow import Region
+    from tomojax.cli._watch import WatchDirectory
     from tomojax.recon.api import MethodConfig
     from tomojax.wire.progress import Result
 
@@ -63,6 +66,7 @@ _PUBLIC = (
     "--include-scan",
     "--preview",
     "--manifest",
+    "--watch-dir",
     "--progress",
     "--dry-run",
 )
@@ -182,7 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Also write a JSON record of the run (inputs, settings, versions)",
     )
-    add_progress(p)
+    add_progress(p, watch_dir=True)
     hide_expert(p, _PUBLIC, settings=_SETTINGS)
     return p
 
@@ -352,11 +356,16 @@ def main() -> int:
         parser.error("--dry-run cannot write a plan with --progress json")
     if not args.dry_run and not args.out:
         parser.error("the following arguments are required: -o/--output")
-    return run_command("reconstruct", args.progress, partial(_run, parser, args, metadata))
+    watch = watch_directory(args.watch_dir, "reconstruct", working=False)
+    operation = partial(_run, parser, args, metadata, watch)
+    return run_command("reconstruct", args.progress, operation, watch=watch)
 
 
 def _run(
-    parser: argparse.ArgumentParser, args: argparse.Namespace, metadata: Mapping[str, object]
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    metadata: Mapping[str, object],
+    watch: WatchDirectory | None,
 ) -> Result | None:
     import tomojax as tj
     from tomojax import progress
@@ -364,6 +373,14 @@ def _run(
 
     run = _Run.of(args)
     config = run.validate(parser, args, metadata)
+    related = (
+        run.data,
+        run.out,
+        run.preview,
+        run.manifest,
+        cast("str | None", metadata["config_path"]),
+    )
+    admit_or_exit(parser, watch, force=cast("bool", args.force), related=related)
     progress.check_cancelled()
 
     scan = tj.load(run.data, apply_poses=run.apply_poses)
@@ -383,7 +400,8 @@ def _run(
         print(json.dumps(msgspec.to_builtins(plan_product(scan, work)), indent=2))
         return None
     assert run.out is not None
-    result = tj.reconstruct(scan, run.method, grid=grid, config=config, **keywords)
+    with progress.previews() if watch is not None else nullcontext():
+        result = tj.reconstruct(scan, run.method, grid=grid, config=config, **keywords)
     if cylinder is not None:
         result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
     report_automatic(result.info)
@@ -400,10 +418,11 @@ def _run(
     progress.check_cancelled()
     tj.save(run.out, result, include_scan=run.include_scan)
     if run.preview is not None:
-        from tomojax.recon.quicklook import save_quicklook_png
+        from tomojax.cli._images import save_volume_plane
 
         progress.check_cancelled()
-        _ = save_quicklook_png(run.preview, result.volume)
+        label = f"z plane · {result.method} · {Path(run.out).name}"
+        _ = save_volume_plane(Path(run.preview), result.volume, result.grid, "z", label)
     if run.manifest is not None:
         progress.check_cancelled()
         _write_manifest(args, metadata, scan, result, masked=run.region == "cyl")

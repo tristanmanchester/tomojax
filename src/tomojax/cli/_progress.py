@@ -24,6 +24,8 @@ from tomojax.wire.progress import Error, Result
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from tomojax.cli._watch import WatchDirectory
+
 _PACKAGE = Path(progress.__file__).resolve().parent
 
 
@@ -99,7 +101,14 @@ class ProgressParser(argparse.ArgumentParser):
         self.exit(2)
 
 
-def add_progress(parser: argparse.ArgumentParser) -> None:
+def add_progress(parser: argparse.ArgumentParser, *, watch_dir: bool = False) -> None:
+    """Add ``--progress`` and, for a command with previews, ``--watch-dir``."""
+    if watch_dir:
+        _ = parser.add_argument(
+            "--watch-dir",
+            metavar="DIR",
+            help="Rewrite PNGs of the central planes in DIR at each checkpoint of the solve",
+        )
     parser.add_argument(
         "--progress",
         choices=("auto", "bar", "json", "none"),
@@ -188,8 +197,37 @@ def _write_result(result: Result | int | None, command: str) -> None:
     print(msgspec.json.encode(result).decode(), flush=True)
 
 
-def run_command(command: str, mode: str, operation: Callable[[], Result | int | None]) -> int:
-    """Run the command under one watch, restoring the caller's SIGINT policy."""
+def _failed(error: Exception, mode: str, prog: str) -> int:
+    """Report a command's failure; return its exit status, or re-raise a TomoJAX bug."""
+    record = progress.error_record(error)
+    kind = record["kind"]
+    if mode == "json":
+        print(json.dumps(record), flush=True)
+    if kind == "internal":
+        raise error
+    if kind == "cancelled":
+        _console.report_cancelled(prog)
+        return 130
+    # A KeyError's message without the quotes str() adds.
+    unquoted = isinstance(error, KeyError) and len(error.args) == 1
+    message, path = str(error.args[0] if unquoted else error), record.get("path")
+    named = isinstance(path, str) and path and path not in message
+    _console.report_error(prog, message, hint=f"setting: {path}" if named else None)
+    return 1
+
+
+def run_command(
+    command: str,
+    mode: str,
+    operation: Callable[[], Result | int | None],
+    *,
+    watch: WatchDirectory | None = None,
+) -> int:
+    """Run the command under one watch, restoring the caller's SIGINT policy.
+
+    With ``watch``, preview checkpoints go to its images and not to the display or
+    the JSON stream.
+    """
     token = progress.Control()
     prog = f"tomojax {command}"
 
@@ -199,30 +237,29 @@ def run_command(command: str, mode: str, operation: Callable[[], Result | int | 
         token.cancel()
 
     previous = signal.signal(signal.SIGINT, interrupt)
-    handler, display = _handler(mode, token)
+    shown, display = _handler(mode, token)
+
+    def handler(event: progress.Event) -> None:
+        if watch is not None:
+            watch.observe(event)
+            if isinstance(event, progress.Preview):
+                return
+        shown(event)
+
     try:
-        with display, _owned_messages(mode), progress.watch(handler, control=token):
+        with (
+            display,
+            watch or nullcontext(),
+            _owned_messages(mode),
+            progress.watch(handler, control=token),
+        ):
             result = operation()
             if mode == "json":
                 _write_result(result, command)
             elif isinstance(result, int):
                 return result
     except Exception as exc:
-        record = progress.error_record(exc)
-        kind = record["kind"]
-        if mode == "json":
-            print(json.dumps(record), flush=True)
-        if kind == "internal":
-            raise
-        if kind == "cancelled":
-            _console.report_cancelled(prog)
-            return 130
-        # A KeyError's message without the quotes str() adds.
-        unquoted = isinstance(exc, KeyError) and len(exc.args) == 1
-        message, path = str(exc.args[0] if unquoted else exc), record.get("path")
-        named = isinstance(path, str) and path and path not in message
-        _console.report_error(prog, message, hint=f"setting: {path}" if named else None)
-        return 1
+        return _failed(exc, mode, prog)
     finally:
         signal.signal(signal.SIGINT, previous)
     return 0
