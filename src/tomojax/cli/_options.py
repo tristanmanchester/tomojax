@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
+    from tomojax.cli._progress import ProgressParser
+
 EXPERT_EPILOG = (
     "Expert settings are TOML keys for --config; --config-keys lists them with their defaults."
 )
@@ -177,21 +179,19 @@ def config_settings(parser: argparse.ArgumentParser) -> Mapping[str, object]:
 
 
 def check_paths(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     *,
     inputs: Iterable[str | Path | None] = (),
     outputs: Iterable[str | Path | None] = (),
     force: bool = False,
 ) -> None:
     """Exit with a usage error for missing inputs, colliding destinations, or existing outputs."""
-    from tomojax.cli._progress import ProgressParser
-
     resolved_inputs: set[Path] = set()
     for path in inputs:
         if path is not None:
             candidate = Path(path)
             if not candidate.exists():
-                if isinstance(parser, ProgressParser) and parser.json_output:
+                if parser.json_output:
                     raise FileNotFoundError(f"input not found: {path}")
                 parser.error(f"input not found: {path}")
             resolved_inputs.add(candidate.resolve())
@@ -200,9 +200,7 @@ def check_paths(
             resolved_inputs, (Path(p) for p in outputs if p is not None), force=force
         )
     except FileExistsError as exc:
-        if isinstance(parser, ProgressParser):
-            parser.fail(str(exc), hint="pass --force to replace it")
-        parser.error(str(exc))
+        parser.fail(str(exc), hint="pass --force to replace it")
     except ValueError as exc:
         parser.error(str(exc))
 

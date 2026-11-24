@@ -21,7 +21,7 @@ from tomojax._field_of_view import (
 from tomojax._parameters import Fit
 from tomojax.cli._options import EXIT_STATUS, add_config, add_force, check_paths
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
-from tomojax.cli._watch import admit_or_exit, watch_directory
+from tomojax.cli._watch import watch_directory
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -62,7 +62,7 @@ class _Args(argparse.Namespace):
 _SETTINGS = ("motion", "iterations", "image_iterations", "tolerance", "interpolation", "resolution")
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser() -> ProgressParser:
     """The ``tomojax align`` parser, with the same fit names as Python."""
     parser = ProgressParser(
         prog="tomojax align",
@@ -265,7 +265,7 @@ def _write_manifest(
 
 
 def _validate_align_args(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     args: _Args,
     settings: Mapping[str, Any],
 ) -> AlignConfig | None:
@@ -318,13 +318,13 @@ def main() -> int:
     args = cast("_Args", namespace)
     settings = cast("dict[str, Any]", metadata["settings"])
     config = _validate_align_args(parser, args, settings)
-    watch = watch_directory(args.watch_dir, "align", working=True)
+    watch = watch_directory(args.watch_dir, working=True)
     operation = partial(_run, parser, args, metadata, config, watch)
     return run_command("align", args.progress, operation, watch=watch)
 
 
 def _run(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     args: _Args,
     metadata: Mapping[str, Any],
     config: AlignConfig | None,
@@ -336,9 +336,6 @@ def _run(
         raise FileNotFoundError(f"input not found: {args.data}")
     outputs = [] if args.dry_run else [args.out, args.manifest]
     check_paths(parser, inputs=[args.data], outputs=outputs, force=args.force)
-    related = (args.data, args.out, args.manifest, cast("str | None", metadata["config_path"]))
-    if not args.dry_run:
-        admit_or_exit(parser, watch, force=args.force, related=related)
     progress.check_cancelled()
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_cancelled()

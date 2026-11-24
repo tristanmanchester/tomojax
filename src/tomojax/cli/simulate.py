@@ -38,7 +38,7 @@ _PUBLIC = (
 )
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser() -> ProgressParser:
     """Build the simulate command parser."""
     parser = ProgressParser(
         prog="tomojax simulate",
@@ -174,7 +174,7 @@ def _settings() -> dict[str, object]:
 
 
 def _validate_args(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     args: argparse.Namespace,
     settings: dict[str, object],
 ) -> None:

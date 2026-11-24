@@ -125,10 +125,8 @@ command exits 130 after cleanup. A second Ctrl-C interrupts immediately.
 
 `reconstruct --watch-dir DIR` and `align --watch-dir DIR` rewrite PNGs of the
 solve's central planes in DIR at each checkpoint (`slice_z.png`, `slice_y.png`,
-`slice_x.png`, and `poses.png` for an alignment), with `tomojax-watch.json`
-recording the command and how it ended. DIR must be new, empty or hold only an
-earlier run's images; `--force` replaces those. Keep an image viewer open on DIR to
-watch a long run converge.
+`slice_x.png`, and `poses.png` for an alignment). Keep an image viewer open on DIR
+to watch a long run converge.
 
 ```bash
 tomojax reconstruct scan.nxs -o recon.nxs --method cgls --progress json > progress.jsonl

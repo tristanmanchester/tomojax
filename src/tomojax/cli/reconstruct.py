@@ -28,7 +28,7 @@ from tomojax._parameters import Filter, Method
 from tomojax.cli._options import add_config, add_force, check_paths, hide_expert
 from tomojax.cli._plans import announce, dry_run
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
-from tomojax.cli._watch import admit_or_exit, watch_directory
+from tomojax.cli._watch import watch_directory
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -84,7 +84,7 @@ _EPILOG = (
 )
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser() -> ProgressParser:
     """The ``tomojax reconstruct`` parser; expert settings are the methods' configuration fields."""
     p = ProgressParser(
         prog="tomojax reconstruct",
@@ -265,7 +265,7 @@ class _Run:
 
     def validate(
         self,
-        parser: argparse.ArgumentParser,
+        parser: ProgressParser,
         args: argparse.Namespace,
         metadata: Mapping[str, object],
     ) -> MethodConfig | None:
@@ -351,13 +351,13 @@ def main() -> int:
     args, metadata = parse_args_with_config(parser)
     if not args.dry_run and not args.out:
         parser.error("the following arguments are required: -o/--output")
-    watch = watch_directory(args.watch_dir, "reconstruct", working=False)
+    watch = watch_directory(args.watch_dir, working=False)
     operation = partial(_run, parser, args, metadata, watch)
     return run_command("reconstruct", args.progress, operation, watch=watch)
 
 
 def _run(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     args: argparse.Namespace,
     metadata: Mapping[str, object],
     watch: WatchDirectory | None,
@@ -368,15 +368,6 @@ def _run(
 
     run = _Run.of(args)
     config = run.validate(parser, args, metadata)
-    related = (
-        run.data,
-        run.out,
-        run.preview,
-        run.manifest,
-        cast("str | None", metadata["config_path"]),
-    )
-    if not args.dry_run:
-        admit_or_exit(parser, watch, force=cast("bool", args.force), related=related)
     progress.check_cancelled()
 
     scan = tj.load(run.data, apply_poses=run.apply_poses)

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from functools import cache
 import math
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -190,16 +189,8 @@ def save_png(image: Image.Image, path: Path) -> Path:
     """Write ``image`` to ``path`` through ``.<name>.tmp`` beside it, moved on once whole."""
     temporary = path.with_name(f".{path.name}.tmp")
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with temporary.open("wb") as stream:
-            image.save(stream, format="PNG")
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.replace(path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-    return path
+    image.save(temporary, format="PNG")
+    return temporary.replace(path)
 
 
 def save_volume_plane(path: Path, volume: ArrayLike, grid: Grid, axis: str, label: str) -> Path:

@@ -22,12 +22,12 @@ if TYPE_CHECKING:
 
 def size(count: float) -> str:
     """A byte count in the largest binary unit that keeps it at or above one."""
-    value = float(count)
-    for unit in ("B", "KiB", "MiB", "GiB"):
-        if value < 1024 or unit == "GiB":
-            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
-        value /= 1024
-    return f"{value:.1f} TiB"  # pragma: no cover - the loop always returns
+    value, unit = float(count), "B"
+    for larger in ("KiB", "MiB", "GiB"):
+        if value < 1024:
+            break
+        value, unit = value / 1024, larger
+    return f"{value:.0f} B" if unit == "B" else f"{value:.1f} {unit}"
 
 
 def _unit(unit: str) -> str:

@@ -147,12 +147,7 @@ class _ForeignRecords(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         if record.name == "tomojax" or record.name.startswith("tomojax."):
             return
-        try:
-            message = record.getMessage()
-        except Exception:
-            self.handleError(record)
-            return
-        _console.report_warning(message, level=record.levelname.lower())
+        _console.report_warning(record.getMessage(), level=record.levelname.lower())
 
 
 @contextmanager

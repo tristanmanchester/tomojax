@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
-import os
-from pathlib import Path
 
 import h5py
 import numpy as np
@@ -64,21 +61,6 @@ def test_shared_limits_and_non_finite_values(images):
     assert image.tolist() == [[0, 0, 255]]
 
 
-def test_a_failed_write_leaves_the_old_image_and_no_temporary(tmp_path, monkeypatch, images):
-    target = tmp_path / "slice_z.png"
-    target.write_bytes(b"old")
-    picture = images.labelled(np.zeros((4, 4), np.uint8), "x")
-
-    def broken(*_args, **_kwargs):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(type(picture), "save", broken)
-    with pytest.raises(OSError, match="disk full"):
-        images.save_png(picture, target)
-    assert target.read_bytes() == b"old"
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["slice_z.png"]
-
-
 @pytest.fixture(scope="module")
 def scan(tmp_path_factory):
     path = tmp_path_factory.mktemp("scan") / "scan.nxs"
@@ -86,22 +68,13 @@ def scan(tmp_path_factory):
     return path
 
 
-def _status(directory: Path) -> dict:
-    return json.loads((directory / "tomojax-watch.json").read_text())
-
-
 @pytest.mark.parametrize("method", ["cgls", "fista"])
-def test_a_reconstruction_rewrites_its_planes_and_ends_done(tmp_path, scan, method, watching):
+def test_a_reconstruction_writes_its_central_planes(tmp_path, scan, method):
     watch = tmp_path / "watch"
     argv = ["reconstruct", str(scan), "-o", str(tmp_path / "r.nxs"), "--method", method]
     assert main([*argv, "--iterations", "6", "--watch-dir", str(watch)]) == 0
     names = sorted(p.name for p in watch.iterdir())
-    assert names == sorted(
-        [watching.LOCK, watching.STATUS, "slice_x.png", "slice_y.png", "slice_z.png"]
-    )
-    status = _status(watch)
-    assert status["status"] == "done" and status["checkpoints_written"] >= 1
-    assert "checkpoint" in status["last_checkpoint"]
+    assert names == ["slice_x.png", "slice_y.png", "slice_z.png"]
 
 
 def test_the_watched_volume_is_bit_identical(tmp_path, scan):
@@ -121,33 +94,6 @@ def test_an_alignment_writes_its_working_image_and_poses(tmp_path, scan):
     argv = ["align", str(scan), "-o", str(tmp_path / "a.nxs"), "--watch-dir", str(watch)]
     assert main([*argv, "--iterations", "2", "--image-iterations", "2"]) == 0
     assert {"slice_z.png", "poses.png"} <= {p.name for p in watch.iterdir()}
-    assert _status(watch)["status"] == "done"
-
-
-def test_no_update_means_no_image_and_a_status_that_says_so(tmp_path, scan):
-    watch = tmp_path / "watch"
-    argv = ["reconstruct", str(scan), "-o", str(tmp_path / "r.nxs"), "--method", "fbp"]
-    assert main([*argv, "--watch-dir", str(watch)]) == 0
-    assert not list(watch.glob("*.png"))
-    assert _status(watch)["status"] == "done, no preview"
-
-
-@pytest.mark.parametrize("command", ["reconstruct", "align"])
-def test_a_dry_run_leaves_the_watch_directory_alone(tmp_path, scan, command):
-    watch = tmp_path / "watch"
-    assert main([command, str(scan), "--dry-run", "--watch-dir", str(watch)]) == 0
-    assert not watch.exists()
-
-
-def test_reuse_removes_the_earlier_images(tmp_path, scan):
-    watch = tmp_path / "watch"
-    base = ["reconstruct", str(scan), "-o", str(tmp_path / "r.nxs"), "--watch-dir", str(watch)]
-    assert main([*base, "--method", "cgls", "--iterations", "3"]) == 0
-    assert list(watch.glob("*.png"))
-    with pytest.raises(SystemExit):  # earlier images need --force
-        main([*base, "--method", "fbp"])
-    assert main([*base, "--method", "fbp", "--force"]) == 0
-    assert not list(watch.glob("*.png"))
 
 
 def _sample():
@@ -155,13 +101,12 @@ def _sample():
     return progress.Sample(np.ones((8, 8), np.float32), plane, "1/mm", "attenuation")
 
 
-def test_cancelling_after_an_image_leaves_it_labelled_and_the_run_cancelled(tmp_path, watching):
+def test_cancelling_after_a_checkpoint_keeps_its_image(tmp_path, watching):
     from tomojax.cli._progress import run_command  # check-public-imports: allow-private
 
-    watch = watching.WatchDirectory(tmp_path / "watch", "reconstruct", working=False)
+    watch = watching.WatchDirectory(tmp_path / "watch", working=False)
 
     def operation():
-        watch.admit(force=False, related=())
         with progress.previews(), progress.task("solve", "cgls", 3, "iterations"):
             progress.current_task.get().advance(1, {})
             progress.preview(lambda: {"z": _sample()}, final=True)
@@ -169,71 +114,6 @@ def test_cancelling_after_an_image_leaves_it_labelled_and_the_run_cancelled(tmp_
 
     assert run_command("reconstruct", "none", operation, watch=watch) == 130
     assert (tmp_path / "watch" / "slice_z.png").exists()
-    status = _status(tmp_path / "watch")
-    assert status["status"] == "cancelled"
-    assert status["last_checkpoint"] == "cgls · checkpoint 1"
-
-
-def _admit(module, directory, *, force=False, related=()):
-    module.WatchDirectory(directory, "reconstruct", working=False).admit(
-        force=force, related=related
-    )
-
-
-def test_a_directory_with_other_files_is_refused_and_left_alone(tmp_path, watching):
-    directory = tmp_path / "watch"
-    directory.mkdir()
-    for name, text in ((watching.STATUS, "{}"), ("slice_z.png", "old"), ("notes.txt", "mine")):
-        (directory / name).write_text(text)
-    with pytest.raises(ValueError, match=r"holds other files \(notes.txt\)"):
-        _admit(watching, directory, force=True)
-    assert sorted(p.name for p in directory.iterdir()) == sorted(
-        [watching.STATUS, "slice_z.png", "notes.txt", watching.LOCK]
-    )
-
-
-def test_unrecorded_images_links_and_contained_inputs_are_refused(tmp_path, watching):
-    unrecorded = tmp_path / "a"
-    unrecorded.mkdir()
-    (unrecorded / "slice_z.png").write_text("someone's")
-    with pytest.raises(ValueError, match="no TomoJAX run recorded"):
-        _admit(watching, unrecorded, force=True)
-    linked = tmp_path / "b"
-    linked.mkdir()
-    (linked / watching.STATUS).write_text("{}")
-    (linked / "slice_z.png").symlink_to(tmp_path / "elsewhere.png")
-    with pytest.raises(ValueError, match="not a regular file"):
-        _admit(watching, linked, force=True)
-    holding = tmp_path / "c"
-    with pytest.raises(ValueError, match="contains the command's file"):
-        _admit(watching, holding, related=[holding / "scan.nxs"])
-
-
-def test_a_live_writer_keeps_out_a_forced_second_one(tmp_path, watching):
-    directory = tmp_path / "watch"
-    directory.mkdir()
-    handle = os.open(directory / watching.LOCK, os.O_RDWR | os.O_CREAT)
-    fcntl.flock(handle, fcntl.LOCK_EX)
-    try:
-        with pytest.raises(FileExistsError, match="another run"):
-            _admit(watching, directory, force=True)
-    finally:
-        os.close(handle)
-    _admit(watching, directory)  # a dead writer's lock needs no recovery
-
-
-@pytest.mark.parametrize(
-    "left", [["tomojax-watch.json", ".slice_z.png.tmp", "slice_y.png"], [".tomojax-watch.json.tmp"]]
-)
-def test_a_killed_run_leaves_a_directory_the_next_one_accepts(tmp_path, left, watching):
-    directory = tmp_path / "watch"
-    directory.mkdir()
-    for name in left:
-        (directory / name).write_text("partial")
-    _admit(watching, directory, force=True)
-    assert sorted(p.name for p in directory.iterdir()) == sorted(
-        {watching.LOCK, watching.STATUS, *left} & {watching.LOCK, watching.STATUS}
-    )
 
 
 def _records(capsys):

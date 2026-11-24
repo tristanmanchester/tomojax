@@ -455,11 +455,9 @@ def _detector_shape(prepared: _Prepared) -> tuple[int, int]:
 
 
 def _preview_band(
-    parser: argparse.ArgumentParser, prepared: _Prepared, rows: tuple[int, int] | None, binning: int
+    parser: ProgressParser, prepared: _Prepared, rows: tuple[int, int] | None, binning: int
 ) -> tuple[int, int]:
     """The output rows ``--preview`` draws: as asked, or up to 8 at the detector middle."""
-    from tomojax.cli._progress import ProgressParser
-
     height = _detector_shape(prepared)[0] // binning
     if rows is None:
         count = min(8, height)
@@ -467,9 +465,7 @@ def _preview_band(
         return lower, lower + count
     if rows[1] > height:
         message = f"--preview-rows {rows[0]}:{rows[1]} is past the {height} output rows"
-        if isinstance(parser, ProgressParser):
-            parser.fail(message, hint=f"choose rows below {height}")
-        parser.error(message)
+        parser.fail(message, hint=f"choose rows below {height}")
     return rows
 
 
