@@ -1,0 +1,358 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-23T17:49:48Z",
+  "title": "Design System: TomoJAX Terrarium",
+  "extensions": {
+    "colorMeta": {
+      "forest": {
+        "role": "primary",
+        "displayName": "Forest",
+        "tonalRamp": [
+          "oklch(15% 0.0369 159.51)",
+          "oklch(25% 0.0575 159.51)",
+          "oklch(35% 0.0626 159.51)",
+          "oklch(45% 0.0626 159.51)",
+          "oklch(60% 0.0626 159.51)",
+          "oklch(72% 0.0626 159.51)",
+          "oklch(84% 0.0392 159.51)",
+          "oklch(95% 0.0127 159.51)"
+        ]
+      },
+      "sage": {
+        "role": "primary",
+        "displayName": "Sage selection",
+        "tonalRamp": [
+          "oklch(15% 0.0100 137.03)",
+          "oklch(25% 0.0156 137.03)",
+          "oklch(35% 0.0170 137.03)",
+          "oklch(45% 0.0170 137.03)",
+          "oklch(60% 0.0170 137.03)",
+          "oklch(72% 0.0170 137.03)",
+          "oklch(84% 0.0106 137.03)",
+          "oklch(95% 0.0034 137.03)"
+        ]
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "Warm background",
+        "tonalRamp": [
+          "oklch(15% 0.0047 114.22)",
+          "oklch(25% 0.0073 114.22)",
+          "oklch(35% 0.0080 114.22)",
+          "oklch(45% 0.0080 114.22)",
+          "oklch(60% 0.0080 114.22)",
+          "oklch(72% 0.0080 114.22)",
+          "oklch(84% 0.0050 114.22)",
+          "oklch(95% 0.0016 114.22)"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "tonalRamp": [
+          "oklch(15% 0.0032 117.92)",
+          "oklch(25% 0.0049 117.92)",
+          "oklch(35% 0.0054 117.92)",
+          "oklch(45% 0.0054 117.92)",
+          "oklch(60% 0.0054 117.92)",
+          "oklch(72% 0.0054 117.92)",
+          "oklch(84% 0.0034 117.92)",
+          "oklch(95% 0.0011 117.92)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "tonalRamp": [
+          "oklch(15% 0.0058 125.68)",
+          "oklch(25% 0.0090 125.68)",
+          "oklch(35% 0.0098 125.68)",
+          "oklch(45% 0.0098 125.68)",
+          "oklch(60% 0.0098 125.68)",
+          "oklch(72% 0.0098 125.68)",
+          "oklch(84% 0.0061 125.68)",
+          "oklch(95% 0.0020 125.68)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Forest ink",
+        "tonalRamp": [
+          "oklch(15% 0.0191 159.79)",
+          "oklch(25% 0.0298 159.79)",
+          "oklch(35% 0.0324 159.79)",
+          "oklch(45% 0.0324 159.79)",
+          "oklch(60% 0.0324 159.79)",
+          "oklch(72% 0.0324 159.79)",
+          "oklch(84% 0.0203 159.79)",
+          "oklch(95% 0.0066 159.79)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Secondary ink",
+        "tonalRamp": [
+          "oklch(15% 0.0167 152.44)",
+          "oklch(25% 0.0261 152.44)",
+          "oklch(35% 0.0284 152.44)",
+          "oklch(45% 0.0284 152.44)",
+          "oklch(60% 0.0284 152.44)",
+          "oklch(72% 0.0284 152.44)",
+          "oklch(84% 0.0178 152.44)",
+          "oklch(95% 0.0058 152.44)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Quiet seam",
+        "tonalRamp": [
+          "oklch(15% 0.0098 133.83)",
+          "oklch(25% 0.0152 133.83)",
+          "oklch(35% 0.0165 133.83)",
+          "oklch(45% 0.0165 133.83)",
+          "oklch(60% 0.0165 133.83)",
+          "oklch(72% 0.0165 133.83)",
+          "oklch(84% 0.0104 133.83)",
+          "oklch(95% 0.0034 133.83)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Scientific surround",
+        "tonalRamp": [
+          "oklch(15% 0.0086 172.36)",
+          "oklch(25% 0.0133 172.36)",
+          "oklch(35% 0.0145 172.36)",
+          "oklch(45% 0.0145 172.36)",
+          "oklch(60% 0.0145 172.36)",
+          "oklch(72% 0.0145 172.36)",
+          "oklch(84% 0.0091 172.36)",
+          "oklch(95% 0.0029 172.36)"
+        ]
+      },
+      "canvas-ink": {
+        "role": "neutral",
+        "displayName": "Canvas text",
+        "tonalRamp": [
+          "oklch(15% 0.0070 133.38)",
+          "oklch(25% 0.0109 133.38)",
+          "oklch(35% 0.0118 133.38)",
+          "oklch(45% 0.0118 133.38)",
+          "oklch(60% 0.0118 133.38)",
+          "oklch(72% 0.0118 133.38)",
+          "oklch(84% 0.0074 133.38)",
+          "oklch(95% 0.0024 133.38)"
+        ]
+      },
+      "canvas-muted": {
+        "role": "neutral",
+        "displayName": "Canvas secondary text",
+        "tonalRamp": [
+          "oklch(15% 0.0118 152.73)",
+          "oklch(25% 0.0184 152.73)",
+          "oklch(35% 0.0200 152.73)",
+          "oklch(45% 0.0200 152.73)",
+          "oklch(60% 0.0200 152.73)",
+          "oklch(72% 0.0200 152.73)",
+          "oklch(84% 0.0125 152.73)",
+          "oklch(95% 0.0041 152.73)"
+        ]
+      },
+      "warning": {
+        "role": "semantic",
+        "displayName": "Warning",
+        "tonalRamp": [
+          "oklch(15% 0.0541 68.53)",
+          "oklch(25% 0.0843 68.53)",
+          "oklch(35% 0.0917 68.53)",
+          "oklch(45% 0.0917 68.53)",
+          "oklch(60% 0.0917 68.53)",
+          "oklch(72% 0.0917 68.53)",
+          "oklch(84% 0.0574 68.53)",
+          "oklch(95% 0.0186 68.53)"
+        ]
+      },
+      "error": {
+        "role": "semantic",
+        "displayName": "Error",
+        "tonalRamp": [
+          "oklch(15% 0.0723 30.70)",
+          "oklch(25% 0.1125 30.70)",
+          "oklch(35% 0.1224 30.70)",
+          "oklch(45% 0.1224 30.70)",
+          "oklch(60% 0.1224 30.70)",
+          "oklch(72% 0.1224 30.70)",
+          "oklch(84% 0.0767 30.70)",
+          "oklch(95% 0.0249 30.70)"
+        ]
+      },
+      "axis-z": {
+        "role": "semantic",
+        "displayName": "Z slice",
+        "tonalRamp": [
+          "oklch(15% 0.0401 148.79)",
+          "oklch(25% 0.0625 148.79)",
+          "oklch(35% 0.0680 148.79)",
+          "oklch(45% 0.0680 148.79)",
+          "oklch(60% 0.0680 148.79)",
+          "oklch(72% 0.0680 148.79)",
+          "oklch(84% 0.0426 148.79)",
+          "oklch(95% 0.0138 148.79)"
+        ]
+      },
+      "axis-y": {
+        "role": "semantic",
+        "displayName": "Y slice",
+        "tonalRamp": [
+          "oklch(15% 0.0372 75.55)",
+          "oklch(25% 0.0579 75.55)",
+          "oklch(35% 0.0630 75.55)",
+          "oklch(45% 0.0630 75.55)",
+          "oklch(60% 0.0630 75.55)",
+          "oklch(72% 0.0630 75.55)",
+          "oklch(84% 0.0394 75.55)",
+          "oklch(95% 0.0128 75.55)"
+        ]
+      },
+      "axis-x": {
+        "role": "semantic",
+        "displayName": "X slice",
+        "tonalRamp": [
+          "oklch(15% 0.0296 271.09)",
+          "oklch(25% 0.0461 271.09)",
+          "oklch(35% 0.0502 271.09)",
+          "oklch(45% 0.0502 271.09)",
+          "oklch(60% 0.0502 271.09)",
+          "oklch(72% 0.0502 271.09)",
+          "oklch(84% 0.0314 271.09)",
+          "oklch(95% 0.0102 271.09)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Specimen headline",
+        "purpose": "Active scientific asset."
+      },
+      "title": {
+        "displayName": "Inspector title",
+        "purpose": "Current contextual workspace."
+      },
+      "numeric": {
+        "displayName": "Tabular value",
+        "purpose": "Stable alignment while values change."
+      }
+    },
+    "shadows": [
+      {
+        "name": "dialog",
+        "value": "Rune shadow(14, 44, ink × 0.20)",
+        "purpose": "Command and shortcut dialogs."
+      },
+      {
+        "name": "jobs-drawer",
+        "value": "Rune shadow(8, 30, ink × 0.18)",
+        "purpose": "Background jobs above the active workspace."
+      }
+    ],
+    "motion": [
+      {
+        "name": "direct-manipulation",
+        "value": "Tx::instant()",
+        "purpose": "Image drag, wheel and pinch interaction."
+      },
+      {
+        "name": "render-refinement",
+        "value": "160 ms after interaction",
+        "purpose": "Restore volume rendering quality when manipulation stops."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "minimum-window",
+        "value": "1180 × 780 logical points"
+      },
+      {
+        "name": "compact-topbar",
+        "value": "1320 logical points"
+      },
+      {
+        "name": "default-window",
+        "value": "1540 × 980 logical points"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Native queue and project actions. Preview represents the visual primitive.",
+      "html": "<button class=\"ds-action ds-primary\">Queue reconstruction</button>",
+      "css": ".ds-action{font:600 12px Inter,sans-serif;height:36px;padding:0 12px;border-radius:6px;cursor:pointer}.ds-action:focus-visible{outline:2px solid #315D46;outline-offset:2px}.ds-action:active{filter:brightness(.93)}.ds-primary{background:#315D46;color:#FCFDF9;border:0}.ds-primary:hover{background:#426A55}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Supporting actions beside the primary workflow.",
+      "html": "<button class=\"ds-action ds-secondary\">Add scans</button>",
+      "css": ".ds-action{font:600 12px Inter,sans-serif;height:36px;padding:0 12px;border-radius:6px;cursor:pointer}.ds-action:focus-visible{outline:2px solid #315D46;outline-offset:2px}.ds-action:active{filter:brightness(.93)}.ds-secondary{background:#FCFDF9;color:#24382D;border:1px solid #DCE3D8}.ds-secondary:hover{background:#EFF2EB}"
+    },
+    {
+      "name": "Numeric field",
+      "kind": "input",
+      "refersTo": "text-field",
+      "description": "Persistent label, tabular value and explicit unit.",
+      "html": "<label class=\"ds-field\">Pixel size at sample<span class=\"ds-input\"><input aria-label=\"Pixel size at sample\" placeholder=\"Enter value\"><span>m</span></span></label>",
+      "css": ".ds-field{display:grid;gap:7px;font:400 11px Inter,sans-serif;color:#66776A;width:230px}.ds-input{display:flex;align-items:center;gap:5px;height:36px;padding:0 10px;border-radius:5px;border:1px solid #DCE3D8;background:#FCFDF9}.ds-input:focus-within{outline:1.5px solid #315D46}.ds-input input{width:100%;min-width:0;background:transparent;border:0;outline:0;color:#24382D;font:450 12px Inter,sans-serif;font-variant-numeric:tabular-nums}.ds-input:hover{border-color:#66776A}"
+    },
+    {
+      "name": "Workspace navigation",
+      "kind": "nav",
+      "description": "Five stable workspaces within one project.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Workspaces\"><button>Prepare</button><button>Reconstruct</button><button aria-current=\"page\">Explore</button><button>Compare</button><button>Jobs</button></nav>",
+      "css": ".ds-nav{display:flex;gap:7px;background:#FCFDF9;height:64px}.ds-nav button{position:relative;padding:0 12px;border:0;background:transparent;font:600 12px Inter,sans-serif;color:#66776A;cursor:pointer}.ds-nav button[aria-current]{color:#315D46}.ds-nav button[aria-current]:after{content:'';position:absolute;bottom:0;left:10px;right:10px;height:3px;border-radius:1.5px;background:#688E6E}.ds-nav button:hover{background:#F4F6F1}.ds-nav button:focus-visible{outline:2px solid #315D46;outline-offset:-3px}"
+    },
+    {
+      "name": "Processing record",
+      "kind": "card",
+      "description": "A bordered native job row with status and captured settings.",
+      "html": "<section class=\"ds-job\"><header><strong>Reconstruction</strong><span>Queued</span></header><p>Captured inputs and settings</p><button>Show captured settings</button></section>",
+      "css": ".ds-job{width:320px;padding:17px;background:#FCFDF9;border:1px solid #DCE3D8;border-radius:7px;font:400 11px Inter,sans-serif;color:#66776A}.ds-job header{display:flex;justify-content:space-between;gap:12px}.ds-job strong{font-size:12px;color:#24382D}.ds-job button{height:30px;border:1px solid #DCE3D8;border-radius:6px;background:#FCFDF9;color:#24382D;font:600 12px Inter,sans-serif}.ds-job button:hover{background:#F0F3EC}.ds-job button:focus-visible{outline:2px solid #315D46;outline-offset:2px}"
+    },
+    {
+      "name": "Linked scientific view",
+      "kind": "custom",
+      "refersTo": "selected-view",
+      "description": "A fitted scientific viewport with an axis label; data are supplied by the native compositor.",
+      "html": "<button class=\"ds-linked\" aria-label=\"Explore axial view\"><span class=\"ds-canvas\"></span><span class=\"ds-caption\">X · Y<span>Axial</span></span></button>",
+      "css": ".ds-linked{display:flex;flex-direction:column;width:220px;height:142px;padding:0;overflow:hidden;border:2px solid #315D46;border-radius:7px;background:#111A17;cursor:pointer}.ds-canvas{flex:1}.ds-caption{display:flex;justify-content:space-between;gap:6px;align-items:center;height:29px;padding:0 10px;background:#E2EADF;color:#315D46;font:600 10.5px Inter,sans-serif}.ds-caption span{color:#66776A;font-weight:400}.ds-linked:hover{border-color:#688E6E}.ds-linked:focus-visible{outline:2px solid #315D46;outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Terrarium",
+    "overview": "Terrarium is a light desktop workspace for sustained scientific work. Warm surfaces and restrained greens give the project and controls a consistent identity. Scientific images occupy dark, neutral canvases with their own clear labels and interaction hints.\n\nThe image remains the visual centre of the application. The project navigator explains where it came from; the inspector exposes the next useful operation. Keep controls compact enough for an expert workflow and separate groups with space, alignment and quiet seams.",
+    "keyCharacteristics": [
+      "Warm white chrome with forest actions and sage selections.",
+      "Large scientific canvases surrounded by stable project context.",
+      "Compact native controls with visible focus and explicit labels.",
+      "Tabular values and descriptive states rather than decorative metrics."
+    ],
+    "rules": [],
+    "dos": [
+      "Do preserve the image, source context and next action when adding a workspace.",
+      "Do label physical axes and units from scientific metadata.",
+      "Do keep primary actions visible when their inspector content scrolls.",
+      "Do use real data, worker events and stored provenance for scientific content.",
+      "Do check keyboard focus, long names and the minimum supported window size."
+    ],
+    "donts": [
+      "Don't turn display preferences into changes to quantitative data.",
+      "Don't imply registration when compared arrays use different grids or units.",
+      "Don't replace real scientific images or progress with illustrative placeholders.",
+      "Don't add shadows to persistent panels or decorate each control as a card.",
+      "Don't hide invalid input behind an apparently successful operation."
+    ]
+  }
+}

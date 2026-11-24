@@ -1,0 +1,43 @@
+[package]
+name = "tomojax-studio"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-only"
+publish = false
+
+[features]
+default = ["native-dialogs", "accessibility"]
+accessibility = ["rune/accessibility"]
+native-dialogs = ["rune/native-file-dialog"]
+
+[dependencies]
+rune = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16", default-features = false, features = ["embedded-fonts", "tooling", "metal-backend"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+wgpu = { version = "~30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "vulkan", "metal", "dx12"] }
+bytemuck = { version = "1.25", features = ["derive"] }
+hdf5 = { package = "hdf5-metno", version = "0.15", features = ["lzf"] }
+ndarray = "0.17"
+npyz = "0.9"
+memmap2 = "0.9"
+half = { version = "2", features = ["bytemuck"] }
+glam = "0.30"
+tempfile = "3"
+blake3 = "1"
+
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16" }
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -136,3 +136,6 @@ scorecard.png
 # Internal documentation
 docs/tomojax_article_roadmap.md
 .wrangler/
+
+# Native Studio build products; scientific project data remains outside source.
+/studio/target/

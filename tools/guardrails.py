@@ -61,7 +61,16 @@ EXPERT_MODULES = (
     "tomojax.io.api",
     "tomojax.alignment.api",
 )
-CLI_COMMANDS = ("inspect", "correct", "reconstruct", "align", "export", "simulate", "serve")
+CLI_COMMANDS = (
+    "inspect",
+    "correct",
+    "reconstruct",
+    "align",
+    "export",
+    "simulate",
+    "serve",
+    "studio",
+)
 # Files and functions longer than these are recorded with their length, which
 # may only fall: debt inside an already long one counts too.
 LONG_FILE_LINES = 800

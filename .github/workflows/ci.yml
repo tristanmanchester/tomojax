@@ -124,3 +124,68 @@ jobs:
         run: |
           uv run --no-project --python "${{ matrix.python }}" python tools/smoke_installed_wheel.py --extra cpu
           uv run --no-project --python "${{ matrix.python }}" python tools/smoke_installed_wheel.py --extra cpu --artifact sdist
+
+  studio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.1"
+      CARGO_BUILD_JOBS: "2"
+      TOMOJAX_TEST_PYTHON: ${{ github.workspace }}/.venv/bin/python
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install native build and graphics dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libhdf5-dev libfontconfig1-dev libxkbcommon-dev libwayland-dev libvulkan1 mesa-vulkan-drivers
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+
+      - name: Select software Vulkan adapter
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          manifests = sorted(Path("/usr/share/vulkan/icd.d").glob("lvp*.json"))
+          if not manifests:
+              raise SystemExit("Mesa lavapipe Vulkan manifest was not installed")
+          runtime = Path(os.environ["RUNNER_TEMP"]) / "tomojax-runtime"
+          runtime.mkdir(mode=0o700, exist_ok=True)
+          runtime.chmod(0o700)
+          with Path(os.environ["GITHUB_ENV"]).open("a") as env:
+              env.write(f"VK_ICD_FILENAMES={manifests[0]}\n")
+              env.write(f"XDG_RUNTIME_DIR={runtime}\n")
+              env.write(f"TOMOJAX_STUDIO_SETTINGS={runtime / 'settings.json'}\n")
+          PY
+
+      - name: Sync locked CPU environment
+        run: uv sync --locked --extra cpu --dev
+
+      - name: Native format and lint
+        run: |
+          cargo fmt --manifest-path studio/Cargo.toml --check
+          cargo clippy --locked --manifest-path studio/Cargo.toml --all-targets -- -D warnings
+
+      - name: Native state, UI and I/O tests
+        run: cargo test --locked --manifest-path studio/Cargo.toml
+
+      - name: Official worker and application workflows
+        run: |
+          cargo test --locked --manifest-path studio/Cargo.toml --test worker_contract -- --ignored
+          cargo test --locked --manifest-path studio/Cargo.toml --bin tomojax-studio real_application -- --ignored
+
+      - name: Scientific compositor pixels
+        run: cargo test --locked --manifest-path studio/Cargo.toml --lib volume::tests -- --ignored --test-threads=1

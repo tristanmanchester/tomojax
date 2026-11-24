@@ -1,0 +1,772 @@
+//! Interpret the public inspection report and the storage layout of committed NXtomo.
+//!
+//! Inspection intentionally omits some calibration. Never promote guessed voxel
+//! sizes or uncorrected file pixels into a registered reconstruction or scan.
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use serde_json::{Value, json};
+
+use crate::protocol::{ArrayDescriptor, Axis, Coordinates, Grid, Product, Storage};
+
+pub const PROJECTIONS: &str = "/entry/instrument/detector/data";
+pub const VOLUME: &str = "/entry/processing/tomojax/volume";
+pub const ANGLES: &str = "/entry/sample/transformations/rotation_angle";
+
+/// Suggested input kind, registered file arrays and the metadata-only report.
+pub type HeaderMetadata = (String, BTreeMap<String, ArrayDescriptor>, Value);
+
+/// Fast first-image metadata for standard NXtomo layouts. No pixel datasets or
+/// coordinate vectors are read; the full worker inspection remains an explicit audit.
+pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "h5" | "hdf5" | "hdf" | "nxs" | "nx") {
+        return Ok(None);
+    }
+    let file =
+        hdf5::File::open(path).map_err(|error| format!("Cannot read HDF5 headers: {error}"))?;
+    if !file.link_exists("/entry") {
+        return Ok(None);
+    }
+    let projection_path = [PROJECTIONS, "/entry/data/projections", "/entry/projections"]
+        .into_iter()
+        .find(|name| file.link_exists(name));
+    let has_volume = file.link_exists(VOLUME);
+    if projection_path.is_none() && !has_volume {
+        return Ok(None);
+    }
+    let entry = file.group("/entry").map_err(|error| error.to_string())?;
+    let (geometry, geometry_type) = if file.link_exists("/entry/geometry") {
+        let group = file
+            .group("/entry/geometry")
+            .map_err(|error| error.to_string())?;
+        (
+            json_attribute(&group, "geometry_meta_json")?,
+            string_attribute(&group, "type")?,
+        )
+    } else {
+        (Value::Null, None)
+    };
+    let detector = if file.link_exists("/entry/instrument/detector") {
+        json_attribute(
+            &file
+                .group("/entry/instrument/detector")
+                .map_err(|error| error.to_string())?,
+            "detector_meta_json",
+        )?
+    } else {
+        Value::Null
+    };
+    let mut projection = json!({"found":false,"path":null,"shape":null,"dtype":null});
+    if let Some(dataset) = projection_path {
+        let data = file.dataset(dataset).map_err(|error| error.to_string())?;
+        let stored = data.shape();
+        let shape = match stored.as_slice() {
+            [views, u] => vec![*views, 1, *u],
+            [views, v, u] => vec![*views, *v, *u],
+            _ => return Ok(None),
+        };
+        if shape.contains(&0) {
+            return Err("The projection dataset has an empty dimension".into());
+        }
+        let dtype = data.dtype().map_err(|error| error.to_string())?;
+        let bytes = shape
+            .iter()
+            .try_fold(dtype.size() as u64, |bytes, size| {
+                bytes.checked_mul(*size as u64)
+            })
+            .ok_or("Projection byte count overflow")?;
+        projection = json!({"found":true,"path":dataset,"shape":shape,"dtype":dtype.to_descriptor().map_err(|error|error.to_string())?.to_string(),
+            "n_views":shape[0],"detector_shape":{"nv":shape[1],"nu":shape[2]},"storage_bytes":bytes});
+    }
+    let angle_path = ["/entry/sample/rotation_angle", ANGLES]
+        .into_iter()
+        .find(|name| file.link_exists(name));
+    let angles = if let Some(dataset) = angle_path {
+        let values = file.dataset(dataset).map_err(|error| error.to_string())?;
+        let shape = values.shape();
+        if shape.len() != 1 {
+            return Ok(None);
+        }
+        json!({"found":true,"path":dataset,"count":shape[0],"units":string_attribute(&values,"units")?})
+    } else {
+        json!({"found":false,"path":null,"count":null,"units":null})
+    };
+    let volume = if has_volume {
+        let data = file.dataset(VOLUME).map_err(|error| error.to_string())?;
+        let group = file
+            .group("/entry/processing/tomojax")
+            .map_err(|error| error.to_string())?;
+        json!({"found":true,"shape":data.shape(),"axes":string_attribute(&group,"volume_axes_order")?.unwrap_or_else(||"zyx".into()),"method":geometry.get("reconstruction_method")})
+    } else {
+        json!({"found":false,"shape":null,"axes":null,"method":null})
+    };
+    let image_key = "/entry/instrument/detector/image_key";
+    let key_found = file.link_exists(image_key);
+    let flat_found = file.link_exists("/entry/instrument/detector/data_white");
+    let dark_found = file.link_exists("/entry/instrument/detector/data_dark");
+    let tomojax_grid = entry
+        .attr_names()
+        .map_err(|error| error.to_string())?
+        .iter()
+        .any(|name| name == "grid_meta_json");
+    let report = json!({"source":"header_only","input_path":path,
+        "projection":projection,"angles":angles,"volume":volume,
+        "geometry":{"found":geometry_type.is_some(),"type":geometry_type,"meta_found":geometry.is_object(),"meta_keys":geometry.as_object().map(|meta|meta.keys().collect::<Vec<_>>()).unwrap_or_default()},
+        "detector_metadata":{"found":detector.is_object(),"nu":detector.get("nu"),"nv":detector.get("nv"),"du":detector.get("du"),"dv":detector.get("dv"),"center":detector.get("det_center")},
+        "flats_darks":{"image_key_found":key_found,"image_key_path":if key_found{Some(image_key)}else{None},
+            "flats_present":if flat_found{Some(true)}else{None},"darks_present":if dark_found{Some(true)}else{None},"status":"Metadata only; image-key values have not been read"},
+        "alignment":{"found":file.link_exists("/entry/processing/tomojax/align"),"params_found":file.link_exists("/entry/processing/tomojax/align/thetas")}});
+    let mut kind = suggested_kind(&report).to_owned();
+    if kind == "scan" && !(tomojax_grid && detector.is_object()) {
+        kind = "frames".into();
+    }
+    let mut arrays = projection_arrays(&report, path)?;
+    let length_unit = geometry
+        .get("length_unit")
+        .or_else(|| geometry.pointer("/acquisition/length_unit"))
+        .and_then(Value::as_str)
+        .filter(|unit| !unit.is_empty())
+        .unwrap_or("scan_length");
+    if let Some(array) = arrays.get_mut("projections") {
+        for axis in &mut array.axes[1..] {
+            if axis.unit == "scan_length" {
+                axis.unit = length_unit.into();
+            }
+        }
+        // Raw HDF5 may interleave sample/calibration frames whose angle entries
+        // are undefined. Until the loader selects samples, show stored indices.
+        if kind == "frames" && key_found {
+            array.axes[0].unit = "index".into();
+            array.axes[0].coordinates = Coordinates::Uniform {
+                origin: 0.,
+                spacing: 1.,
+            };
+        }
+    }
+    if has_volume {
+        let (name, array) = stored_volume(&file, path, &geometry, length_unit)?;
+        arrays.insert(name, array);
+    }
+    Ok(Some((kind, arrays, report)))
+}
+
+/// A suggested loader, still editable when an acquisition's domain is ambiguous.
+pub fn suggested_kind(report: &Value) -> &'static str {
+    let keys = report
+        .pointer("/geometry/meta_keys")
+        .and_then(Value::as_array);
+    let has = |key: &str| keys.is_some_and(|items| items.iter().any(|v| v.as_str() == Some(key)));
+    if report
+        .pointer("/volume/method")
+        .is_some_and(Value::is_string)
+    {
+        "reconstruction"
+    } else if report.pointer("/volume/found").and_then(Value::as_bool) == Some(true)
+        && has("volume_role")
+        && has("simulation_info")
+    {
+        "simulation"
+    } else if has("alignment_info")
+        || report
+            .pointer("/alignment/params_found")
+            .and_then(Value::as_bool)
+            == Some(true)
+    {
+        "alignment"
+    } else if report.pointer("/volume/found").and_then(Value::as_bool) == Some(true) {
+        "reconstruction"
+    } else if has("corrections") {
+        // Corrected scans retain their original acquisition facts when saved.
+        // Those facts do not turn the persisted line integrals back into counts.
+        "scan"
+    } else if report
+        .pointer("/flats_darks/flats_present")
+        .and_then(Value::as_bool)
+        == Some(true)
+        || report
+            .pointer("/flats_darks/darks_present")
+            .and_then(Value::as_bool)
+            == Some(true)
+        || has("acquisition")
+    {
+        "frames"
+    } else {
+        "scan"
+    }
+}
+
+/// Read only small native HDF5 metadata, keeping existing volumes in place.
+pub fn inspection_arrays(
+    report: &Value,
+    path: &Path,
+) -> Result<BTreeMap<String, ArrayDescriptor>, String> {
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "h5" | "hdf5" | "hdf" | "nxs" | "nx") {
+        return Ok(BTreeMap::new());
+    }
+    let file =
+        hdf5::File::open(path).map_err(|error| format!("Cannot read dataset metadata: {error}"))?;
+    let geometry = if file.link_exists("/entry/geometry") {
+        let group = file
+            .group("/entry/geometry")
+            .map_err(|error| error.to_string())?;
+        json_attribute(&group, "geometry_meta_json")?
+    } else {
+        Value::Null
+    };
+    let length_unit = geometry
+        .get("length_unit")
+        .or_else(|| geometry.pointer("/acquisition/length_unit"))
+        .and_then(Value::as_str)
+        .filter(|unit| !unit.is_empty())
+        .unwrap_or("scan_length");
+    let mut arrays = projection_arrays(report, path)?;
+    if let Some(projections) = arrays.get_mut("projections") {
+        for axis in &mut projections.axes[1..] {
+            if axis.unit == "scan_length" {
+                axis.unit = length_unit.to_owned();
+            }
+        }
+    }
+    if file.link_exists(VOLUME) {
+        let (name, volume) = stored_volume(&file, path, &geometry, length_unit)?;
+        arrays.insert(name, volume);
+    }
+    Ok(arrays)
+}
+
+/// Direct file measurements, prior to any worker loader corrections or view selection.
+fn projection_arrays(
+    report: &Value,
+    path: &Path,
+) -> Result<BTreeMap<String, ArrayDescriptor>, String> {
+    let mut arrays = BTreeMap::new();
+    if report.pointer("/projection/found").and_then(Value::as_bool) != Some(true) {
+        return Ok(arrays);
+    }
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "h5" | "hdf5" | "hdf" | "nxs" | "nx") {
+        return Ok(arrays);
+    }
+    let projection = &report["projection"];
+    let dataset = projection["path"]
+        .as_str()
+        .filter(|p| p.starts_with('/'))
+        .ok_or("Inspection did not identify an HDF5 projection dataset")?;
+    let dimensions = projection["shape"]
+        .as_array()
+        .ok_or("Inspection has no projection shape")?;
+    let shape: Vec<usize> = dimensions
+        .iter()
+        .map(|v| {
+            v.as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or("Invalid projection dimension")
+        })
+        .collect::<Result<_, _>>()?;
+    if shape.len() != 3 || shape.contains(&0) {
+        return Err("Projection shape must be nonempty (view, v, u)".into());
+    }
+    let file = path.to_string_lossy().into_owned();
+    let angles = &report["angles"];
+    let view = match (angles["path"].as_str(), angles["units"].as_str()) {
+        (Some(dataset), Some(unit))
+            if dataset.starts_with('/') && angles["count"].as_u64() == Some(shape[0] as u64) =>
+        {
+            Axis {
+                name: "view".into(),
+                frame: "acquisition".into(),
+                unit: unit.into(),
+                coordinates: Coordinates::Coordinates {
+                    values: Storage::Hdf5 {
+                        path: file.clone(),
+                        dataset: dataset.into(),
+                    },
+                },
+            }
+        }
+        _ => Axis {
+            name: "view".into(),
+            frame: "acquisition".into(),
+            unit: "index".into(),
+            coordinates: Coordinates::Uniform {
+                origin: 0.0,
+                spacing: 1.0,
+            },
+        },
+    };
+    let detector = &report["detector_metadata"];
+    let centre = detector["center"].as_array();
+    let mut axes = vec![view];
+    for (name, index, pitch) in [("v", 1, "dv"), ("u", 0, "du")] {
+        let dimension = if name == "v" { shape[1] } else { shape[2] };
+        let calibrated = detector[pitch]
+            .as_f64()
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .zip(
+                centre
+                    .and_then(|c| c.get(index))
+                    .and_then(Value::as_f64)
+                    .filter(|v| v.is_finite()),
+            );
+        let (unit, origin, spacing) = match calibrated {
+            Some((spacing, centre)) => (
+                "scan_length",
+                centre - (dimension - 1) as f64 * spacing / 2.0,
+                spacing,
+            ),
+            None => ("pixel", 0.0, 1.0),
+        };
+        axes.push(Axis {
+            name: name.into(),
+            frame: "detector".into(),
+            unit: unit.into(),
+            coordinates: Coordinates::Uniform { origin, spacing },
+        });
+    }
+    arrays.insert(
+        "projections".into(),
+        ArrayDescriptor {
+            storage: Storage::Hdf5 {
+                path: file,
+                dataset: dataset.into(),
+            },
+            shape,
+            dtype: projection["dtype"]
+                .as_str()
+                .ok_or("Inspection has no stored dtype")?
+                .into(),
+            axes,
+            unit: "unspecified".into(),
+            domain: "stored_measurements".into(),
+            fixed: Vec::new(),
+            columns: Vec::new(),
+        },
+    );
+    Ok(arrays)
+}
+
+fn string_attribute(group: &hdf5::Location, name: &str) -> Result<Option<String>, String> {
+    use hdf5::types::{VarLenAscii, VarLenUnicode};
+    if !group
+        .attr_names()
+        .map_err(|error| error.to_string())?
+        .iter()
+        .any(|key| key == name)
+    {
+        return Ok(None);
+    }
+    let attribute = group.attr(name).map_err(|error| error.to_string())?;
+    let text = match attribute.read_scalar::<VarLenUnicode>() {
+        Ok(value) => value.as_str().to_owned(),
+        Err(_) => attribute
+            .read_scalar::<VarLenAscii>()
+            .map_err(|error| format!("Cannot decode {name}: {error}"))?
+            .as_str()
+            .to_owned(),
+    };
+    if text.len() > 1024 * 1024 {
+        return Err(format!("The {name} metadata exceed 1 MiB"));
+    }
+    Ok(Some(text))
+}
+
+fn json_attribute(group: &hdf5::Group, name: &str) -> Result<Value, String> {
+    string_attribute(group, name)?
+        .map(|text| {
+            serde_json::from_str(&text).map_err(|error| format!("Malformed {name}: {error}"))
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(Value::Null))
+}
+
+fn stored_volume(
+    file: &hdf5::File,
+    path: &Path,
+    geometry: &Value,
+    length_unit: &str,
+) -> Result<(String, ArrayDescriptor), String> {
+    use hdf5::types::TypeDescriptor;
+    let volume = file.dataset(VOLUME).map_err(|error| error.to_string())?;
+    let shape = volume.shape();
+    if shape.len() != 3 || shape.contains(&0) {
+        return Err("A stored volume must have three nonempty dimensions".into());
+    }
+    let dtype = volume
+        .dtype()
+        .and_then(|dtype| dtype.to_descriptor())
+        .map_err(|error| error.to_string())?;
+    if !matches!(
+        dtype,
+        TypeDescriptor::Float(_) | TypeDescriptor::Integer(_) | TypeDescriptor::Unsigned(_)
+    ) {
+        return Err(format!(
+            "The stored volume's {dtype} datatype is not a scalar image"
+        ));
+    }
+    let processing = file
+        .group("/entry/processing/tomojax")
+        .map_err(|error| error.to_string())?;
+    let order = string_attribute(&processing, "volume_axes_order")?.unwrap_or_else(|| "zyx".into());
+    let mut names: Vec<_> = order.chars().collect();
+    names.sort_unstable();
+    if names != ['x', 'y', 'z'] {
+        return Err("The stored volume axis order must contain x, y and z exactly once".into());
+    }
+    let entry = file.group("/entry").map_err(|error| error.to_string())?;
+    let recorded_grid = json_attribute(&entry, "grid_meta_json")?;
+    let grid_value = if geometry.get("reconstruction_method").is_none() {
+        geometry
+            .pointer("/alignment_info/working_grid")
+            .filter(|value| value.is_object())
+            .unwrap_or(&recorded_grid)
+    } else {
+        &recorded_grid
+    };
+    let grid = if grid_value.is_null() {
+        None
+    } else {
+        Some(
+            serde_json::from_value::<Grid>(grid_value.clone())
+                .map_err(|error| format!("Invalid stored voxel grid: {error}"))?,
+        )
+    };
+    let axes = if let Some(grid) = grid {
+        let sizes = [grid.nx, grid.ny, grid.nz];
+        let spacing = [grid.vx, grid.vy, grid.vz];
+        if sizes.contains(&0) || spacing.iter().any(|v| !v.is_finite() || *v <= 0.) {
+            return Err("Stored voxel counts and pitches must be finite and positive".into());
+        }
+        let centre = grid.vol_center.unwrap_or([0.; 3]);
+        let origin = grid.vol_origin.unwrap_or_else(|| {
+            std::array::from_fn(|i| centre[i] - (sizes[i] - 1) as f64 * spacing[i] / 2.)
+        });
+        if origin.iter().any(|v| !v.is_finite()) {
+            return Err("Stored voxel origin must be finite".into());
+        }
+        let mut axes = Vec::new();
+        for (dimension, name) in order.chars().enumerate() {
+            let coordinate = "xyz".find(name).expect("validated axis order");
+            if shape[dimension] != sizes[coordinate] {
+                return Err("The stored volume shape differs from its recorded voxel grid".into());
+            }
+            axes.push(Axis {
+                name: name.to_string(),
+                frame: "volume".into(),
+                unit: length_unit.into(),
+                coordinates: Coordinates::Uniform {
+                    origin: origin[coordinate],
+                    spacing: spacing[coordinate],
+                },
+            });
+        }
+        axes
+    } else {
+        order
+            .chars()
+            .map(|name| Axis {
+                name: name.to_string(),
+                frame: "stored_volume".into(),
+                unit: "index".into(),
+                coordinates: Coordinates::Uniform {
+                    origin: 0.,
+                    spacing: 1.,
+                },
+            })
+            .collect()
+    };
+    let registered = !grid_value.is_null();
+    let role = if geometry.get("volume_role").and_then(Value::as_str) == Some("phantom") {
+        "phantom"
+    } else if geometry.get("reconstruction_method").is_none()
+        && geometry.get("alignment_info").is_some()
+    {
+        "image"
+    } else {
+        "volume"
+    };
+    Ok((
+        role.into(),
+        ArrayDescriptor {
+            storage: Storage::Hdf5 {
+                path: path.to_string_lossy().into_owned(),
+                dataset: VOLUME.into(),
+            },
+            shape,
+            dtype: dtype.to_string(),
+            axes,
+            unit: if registered {
+                format!("1/{length_unit}")
+            } else {
+                "unspecified".into()
+            },
+            domain: "attenuation".into(),
+            fixed: Vec::new(),
+            columns: Vec::new(),
+        },
+    ))
+}
+
+/// Rebind the registration of a successfully saved product to its committed file.
+/// Call only after the official save terminal; this performs no filesystem writes.
+pub fn saved_arrays(
+    product: &Product,
+    path: &Path,
+    report: Option<&Value>,
+) -> Result<BTreeMap<String, ArrayDescriptor>, String> {
+    let mut arrays = BTreeMap::new();
+    let registered = match product {
+        Product::Scan { projections, .. } => Some(("projections", PROJECTIONS, projections)),
+        Product::Reconstruction { volume, .. } => Some(("volume", VOLUME, volume)),
+        Product::Simulation { phantom, .. } => Some(("phantom", VOLUME, phantom)),
+        Product::Alignment { image, .. } => image.as_ref().map(|array| ("image", VOLUME, array)),
+        _ => None,
+    };
+    let file = path.to_string_lossy().into_owned();
+    if let Some((name, dataset, array)) = registered {
+        let mut persisted = array.clone();
+        persisted.storage = Storage::Hdf5 {
+            path: file.clone(),
+            dataset: dataset.into(),
+        };
+        for axis in &mut persisted.axes {
+            if let Coordinates::Coordinates {
+                values: Storage::Member { member, .. },
+            } = &axis.coordinates
+            {
+                if member != "angles" {
+                    return Err(format!("No durable NXtomo coordinate mapping for {member}"));
+                }
+                axis.coordinates = Coordinates::Coordinates {
+                    values: Storage::Hdf5 {
+                        path: file.clone(),
+                        dataset: ANGLES.into(),
+                    },
+                };
+            }
+        }
+        arrays.insert(name.into(), persisted);
+    }
+    if !arrays.contains_key("projections")
+        && product.scan_source().is_some()
+        && let Some(report) = report
+        && let Some(mut projections) = inspection_arrays(report, path)?.remove("projections")
+    {
+        projections.unit = "1".into();
+        projections.domain = "line_integrals".into();
+        if let Some(unit) = product
+            .primary_array()
+            .and_then(|a| {
+                a.axes
+                    .iter()
+                    .find(|axis| matches!(axis.name.as_str(), "z" | "y" | "x"))
+            })
+            .map(|a| &a.unit)
+        {
+            for axis in &mut projections.axes[1..] {
+                if axis.unit == "scan_length" {
+                    axis.unit.clone_from(unit);
+                }
+            }
+        }
+        arrays.insert("projections".into(), projections);
+    }
+    Ok(arrays)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn quick_metadata_does_not_read_external_projection_pixels_or_claim_an_audit() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("scan.nxs");
+        let unavailable = directory.path().join("offline-projection-pixels.raw");
+        {
+            let file = hdf5::File::create(&path).unwrap();
+            let detector = file
+                .create_group("entry")
+                .unwrap()
+                .create_group("instrument")
+                .unwrap()
+                .create_group("detector")
+                .unwrap();
+            detector
+                .new_dataset::<f32>()
+                .shape((2, 3, 4))
+                .external(unavailable.to_str().unwrap(), 0, 96)
+                .create("data")
+                .unwrap();
+        }
+        assert!(!unavailable.exists());
+        let (kind, arrays, report) = quick_metadata(&path).unwrap().unwrap();
+        assert_eq!(kind, "frames");
+        assert_eq!(arrays["projections"].shape, [2, 3, 4]);
+        assert_eq!(report["source"], "header_only");
+        assert!(report.get("valid").is_none());
+        assert!(report["projection"].get("stats").is_none());
+        assert!(!unavailable.exists());
+    }
+
+    #[test]
+    fn existing_alignment_image_uses_its_working_grid_without_loading_voxels() {
+        use hdf5::types::VarLenUnicode;
+        use std::str::FromStr;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("alignment.nxs");
+        {
+            let file = hdf5::File::create(&path).unwrap();
+            let entry = file.create_group("entry").unwrap();
+            let geometry = entry.create_group("geometry").unwrap();
+            let processing = entry
+                .create_group("processing")
+                .unwrap()
+                .create_group("tomojax")
+                .unwrap();
+            let acquisition = json!({"nx":12,"ny":12,"nz":6,"vx":1.,"vy":1.,"vz":1.});
+            let meta = json!({"length_unit":"mm","alignment_info":{"working_grid":{
+                "nx":4,"ny":3,"nz":2,"vx":0.25,"vy":0.5,"vz":2.,
+                "vol_origin":[10.,20.,30.],"vol_center":[0.,0.,0.]}}});
+            for (group, key, text) in [
+                (&entry, "grid_meta_json", acquisition.to_string()),
+                (&geometry, "geometry_meta_json", meta.to_string()),
+                (&processing, "volume_axes_order", "zyx".into()),
+            ] {
+                group
+                    .new_attr::<VarLenUnicode>()
+                    .shape(())
+                    .create(key)
+                    .unwrap()
+                    .write_scalar(&VarLenUnicode::from_str(&text).unwrap())
+                    .unwrap();
+            }
+            processing
+                .new_dataset::<f32>()
+                .shape((2, 3, 4))
+                .create("volume")
+                .unwrap();
+        }
+        let arrays = inspection_arrays(
+            &json!({"volume":{"found":true},"projection":{"found":false}}),
+            &path,
+        )
+        .unwrap();
+        let image = &arrays["image"];
+        assert_eq!(image.shape, [2, 3, 4]);
+        assert_eq!(image.dtype, "float32");
+        assert_eq!(image.unit, "1/mm");
+        let expected = [("z", 30., 2.), ("y", 20., 0.5), ("x", 10., 0.25)];
+        for (axis, (name, origin, spacing)) in image.axes.iter().zip(expected) {
+            assert_eq!(axis.name, name);
+            assert_eq!(axis.unit, "mm");
+            assert_eq!(axis.coordinates, Coordinates::Uniform { origin, spacing });
+        }
+        let (kind, quick, report) = quick_metadata(&path).unwrap().unwrap();
+        assert_eq!(kind, "alignment");
+        assert_eq!(quick["image"], *image);
+        assert_eq!(report["source"], "header_only");
+        assert!(report.get("valid").is_none());
+    }
+
+    #[test]
+    fn direct_measurements_do_not_claim_loader_corrections_or_unrecorded_units() {
+        let report = json!({"projection":{"found":true,"path":"/raw","shape":[3,2,4],"dtype":"uint16"},
+            "angles":{"path":"/theta","units":"radian","count":3},
+            "detector_metadata":{"du":0.1,"dv":0.4,"center":[0.3,-0.2]}});
+        let arrays = projection_arrays(&report, Path::new("scan.h5")).unwrap();
+        let array = &arrays["projections"];
+        assert_eq!(array.domain, "stored_measurements");
+        assert_eq!(array.axes[0].unit, "radian");
+        assert_eq!(array.axes[1].unit, "scan_length");
+        assert_eq!(
+            array.axes[1].coordinates,
+            Coordinates::Uniform {
+                origin: -0.4,
+                spacing: 0.4
+            }
+        );
+        if let Coordinates::Uniform { origin, spacing } = array.axes[2].coordinates {
+            assert!((origin - 0.15).abs() < 1e-12);
+            assert_eq!(spacing, 0.1);
+        } else {
+            panic!("expected detector pixel coordinates");
+        }
+    }
+
+    #[test]
+    fn saved_product_retains_anisotropic_registration() {
+        let array = ArrayDescriptor {
+            storage: Storage::Member {
+                handle: "h".into(),
+                member: "volume".into(),
+            },
+            shape: vec![2, 3, 4],
+            dtype: "<f4".into(),
+            unit: "1/mm".into(),
+            domain: "attenuation".into(),
+            fixed: vec![],
+            columns: vec![],
+            axes: [("z", 8.0, 2.0), ("y", -3.0, 0.5), ("x", 7.0, -0.25)]
+                .map(|(name, origin, spacing)| Axis {
+                    name: name.into(),
+                    frame: "volume".into(),
+                    unit: "mm".into(),
+                    coordinates: Coordinates::Uniform { origin, spacing },
+                })
+                .to_vec(),
+        };
+        let product = Product::Reconstruction {
+            handle: "h".into(),
+            volume: array.clone(),
+            scan: None,
+            method: "fourier".into(),
+        };
+        let saved = saved_arrays(&product, Path::new("derived/result.nxs"), None).unwrap();
+        let volume = &saved["volume"];
+        assert_eq!(volume.axes, array.axes);
+        assert_eq!(volume.shape, array.shape);
+        assert_eq!(volume.unit, "1/mm");
+        assert_eq!(
+            volume.storage,
+            Storage::Hdf5 {
+                path: "derived/result.nxs".into(),
+                dataset: VOLUME.into()
+            }
+        );
+    }
+
+    #[test]
+    fn simulation_truth_is_not_misclassified_as_a_reconstruction() {
+        let mut report = json!({"volume":{"found":true,"method":null},"geometry":{"meta_keys":["simulation_info","volume_role"]}});
+        assert_eq!(suggested_kind(&report), "simulation");
+        report["volume"]["method"] = json!("fourier");
+        assert_eq!(suggested_kind(&report), "reconstruction");
+        assert!(
+            projection_arrays(&report, Path::new("volume.nxs"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn corrected_scan_retains_its_acquisition_history_without_becoming_raw_again() {
+        let report = json!({"volume":{"found":false},"geometry":{"meta_keys":["acquisition","corrections"]}});
+        assert_eq!(suggested_kind(&report), "scan");
+    }
+}
