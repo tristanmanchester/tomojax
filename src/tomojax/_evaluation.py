@@ -1,6 +1,7 @@
 """Fit and predict on disjoint acquisition partitions."""
 
 from dataclasses import asdict, dataclass, replace
+import gc
 import math
 
 import numpy as np
@@ -281,9 +282,16 @@ def prediction_score(split, test, held, recon, config):
 
 
 def score_candidate(domain, kind, settings, description, reference):
+    """Fit and score one candidate, releasing its volume before the next one starts.
+
+    Collecting cyclic garbage here frees device buffers that a solver's internal
+    reference cycles would otherwise hold until an arbitrary later collection.
+    """
     split, train, test = domain
     recon, held, config, diagnostics = fit_candidate(train, test, kind, settings, reference)
     score = prediction_score(split, test, held, recon, config)
+    del recon, held
+    gc.collect()
     return dict(
         candidate=description,
         **asdict(score),
