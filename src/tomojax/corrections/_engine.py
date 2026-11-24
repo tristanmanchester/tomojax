@@ -28,6 +28,7 @@ from tomojax.core.host_volume import discard_failed_outputs
 from tomojax.core.registration import correction_images
 
 from ._batches import HostCopies, correction_group, view_batches
+from ._illumination import interpolate_unmeasured
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
 from ._validation import check_scan_steps, positive_finite, validated_views_per_batch
@@ -372,6 +373,7 @@ def flat_fields(
     *,
     flat_scales: np.ndarray | None = None,
     dark_source: str | None = None,
+    require_light: bool = True,
 ) -> tuple[Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them.
 
@@ -434,7 +436,7 @@ def flat_fields(
         epsilon, 3 * np.sqrt(variance + dark_variance * dark_scale[:, None, None] ** 2)
     )
     usable = cast("np.ndarray", (np.isfinite(light) & (light > floor)).all(axis=0))
-    if not np.any(usable):
+    if require_light and not np.any(usable):
         raise ValueError(
             "No detector pixels have resolved illumination above the dark field: "
             "supply illuminated flats=... and matching darks=... (CLI --flats/--darks), "
@@ -547,6 +549,7 @@ def first_pass(
     line_steps: tuple[Step, ...] = (),
     factor: int = 1,
     fill_gaps: bool = True,
+    columns: jax.Array | None = None,
     take_log: bool = True,
     limit: jax.Array | float = jnp.inf,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
@@ -562,7 +565,7 @@ def first_pass(
     # gaps before any transmission step can spread the ratio of two noise values.
     transmission = jnp.where(usable, transmission, 1.0)
     if fill_gaps:
-        transmission = _interpolate_unmeasured(transmission, usable)
+        transmission = interpolate_unmeasured(transmission, usable, columns)
     for step in transmission_steps:
         transmission = step.apply(transmission)
     if not take_log:
@@ -592,28 +595,6 @@ def _log_transmission(
         p = step.apply(p)
     bad = jnp.sum(~jnp.isfinite(p))
     return (mean_detector_pixels(p, factor) if factor > 1 else p), nonpositive, bad
-
-
-def _interpolate_unmeasured(transmission: jax.Array, usable: jax.Array) -> jax.Array:
-    """Fill bracketed calibration gaps from the same view's measured neighbours.
-
-    Only columns between two measured pixels are interpolated. A row with no
-    measured pixels, and the unilluminated margins of any row, retain the neutral
-    transmission supplied by calibration. Measured pixels, including low-gain
-    ones, retain their calibrated transmission.
-    """
-    cols = transmission.shape[-1]
-    column = jnp.arange(cols)
-    left = jax.lax.associative_scan(jnp.maximum, jnp.where(usable, column, -1), axis=1)
-    right = jax.lax.associative_scan(
-        jnp.minimum, jnp.where(usable, column, cols), axis=1, reverse=True
-    )
-    lower = jnp.take_along_axis(transmission, jnp.clip(left, 0, cols - 1)[None], axis=2)
-    upper = jnp.take_along_axis(transmission, jnp.clip(right, 0, cols - 1)[None], axis=2)
-    weight = (column - left) / jnp.maximum(right - left, 1)
-    filled = lower + weight[None] * (upper - lower)
-    interior = ~usable & (left >= 0) & (right < cols)
-    return jnp.where(interior[None], filled, transmission)
 
 
 def correct_view_batches(

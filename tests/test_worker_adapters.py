@@ -946,3 +946,179 @@ def test_strided_window_reader_bounds_unsampled_work(tmp_path):
 
     result = read_frames(Frames(), data.shape, ((1, 12), (1, 711), (3, 2097)), (2, 8, 5), tmp_path)
     np.testing.assert_array_equal(result, data[1::2, 1::8, 3::5])
+
+
+def test_bare_projection_plane_reads_only_its_pixels(tmp_path, monkeypatch):
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+
+    sim = tj.simulate(size=8, n_views=24)
+    path = tmp_path / "large.nxs"
+    tj.save(path, sim.scan)
+    where = "/entry/instrument/detector/data"
+    with h5py.File(path, "r+") as f:
+        del f[where]
+        f[where] = f.create_dataset("large", shape=(24, 512, 512), dtype="f4", fillvalue=2)
+        f["/entry/instrument/detector"].attrs["detector_meta_json"] = json.dumps(
+            tj.Detector(512, 512, 1, 1).to_dict()
+        )
+    reads = trace_detector_reads(monkeypatch, where)
+    ref = operations.PathInput(str(path))
+    stage = Stage(tmp_path)
+    admitted(operations.Read(source=ref, metadata_only=True), None, stage, ref)
+    assert reads == []
+    with pytest.raises(ValueError, match="16 MiB"):
+        admitted(operations.Read(source=ref), None, stage, ref)
+    assert reads == []
+    admitted(operations.Read(source=ref, mode="projection", index=15), None, stage, ref)
+    plane = np.load(stage.private)
+    np.testing.assert_equal(plane, np.full((1, 512, 512), 2, np.float32))
+    assert sum(reads) == plane.nbytes
+
+
+def trace_detector_reads(monkeypatch, where):
+    reads = []
+    original, direct = h5py.Dataset.__getitem__, h5py.Dataset.read_direct
+
+    def get(data, key):
+        result = original(data, key)
+        if data.name == where:
+            reads.append(result.nbytes)
+        return result
+
+    def read(data, dest, source_sel=None, dest_sel=None):
+        direct(data, dest, source_sel, dest_sel)
+        if data.name == where:
+            reads.append(dest[dest_sel or (...,)].nbytes)
+
+    monkeypatch.setattr(h5py.Dataset, "__getitem__", get)
+    monkeypatch.setattr(h5py.Dataset, "read_direct", read)
+    return reads
+
+
+def test_project_saved_volume_skips_archived_scan(tmp_path, monkeypatch):
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+    from tomojax.wire.arrays import Member
+
+    sim = tj.simulate(size=8, n_views=12)
+    path = tmp_path / "archived.nxs"
+    recon = tj.Reconstruction(sim.phantom, sim.scan.geometry, "example", {}, sim.scan)
+    tj.save(path, recon, include_scan=True)
+    ref = Member("opened", "scan")
+    stage = Stage(tmp_path)
+    reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
+    project = operations.Project(source=ref, volume=operations.PathInput(str(path)))
+    admitted(operations.Run(operation=project), sim.scan, stage, ref)
+    np.testing.assert_allclose(np.load(stage.private), tj.project(sim.scan.geometry, sim.phantom))
+    assert reads == []
+
+
+@pytest.mark.parametrize("ext", ["npz", "nxs"])
+@pytest.mark.parametrize("gap", [False, True])
+def test_raw_projection_tile_uses_acquisition_positions(tmp_path, ext, gap, monkeypatch):
+    from tests.test_io_workflows import _labelled_dataset
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+    from tomojax.io import save_dataset
+
+    record = _labelled_dataset([1, 12, 4, 6, 8, 10, 36], [2, 1, 0, 0, 0, 0, 1])
+    record.projections = record.projections[:, :, :1] + np.arange(16, dtype=np.float32) ** 2
+    record.projections[2:6] += 0.2 * np.arange(16, dtype=np.float32)
+    record.detector = tj.Detector(16, 2, 1, 1)
+    if gap:
+        record.projections[[1, 6], :, 4:8] = 0  # its measured neighbours lie outside the ROI
+    path = tmp_path / f"drift.{ext}"
+    save_dataset(path, record)
+    expected = tj.load(path).projections[1:4:2, 1:, 5:16:5]
+    reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
+    ref = operations.PathInput(str(path))
+    stage = Stage(tmp_path)
+    admitted(
+        operations.Read(source=ref, roi=((1, 4), (1, 2), (5, 16)), stride=(2, 1, 5)),
+        None,
+        stage,
+        ref,
+    )
+    np.testing.assert_array_equal(np.load(stage.private), expected)
+    if ext == "nxs":
+        # Three selected columns of two samples, two flats and one dark. Finding
+        # a gap needs the full calibration row and two extra sample columns.
+        pixels = 3 * (2 + 2 + 1) + (3 * 16 + 2 * 2 if gap else 0)
+        assert sum(reads) == pixels * record.projections.dtype.itemsize
+
+
+def test_projection_read_budgets_calibration_before_pixels(tmp_path, monkeypatch):
+    from tests.test_io_workflows import _labelled_dataset
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+    from tomojax.io import save_dataset
+
+    record = _labelled_dataset([0, 4, 2], [2, 1, 0])
+    path = tmp_path / "raw.nxs"
+    save_dataset(path, record)
+    where = "/entry/instrument/detector/data"
+    with h5py.File(path, "r+") as file:
+        del file[where]
+        file.create_dataset(where, (3, 1536, 1536), dtype="f4")
+        file["/entry/instrument/detector"].attrs["detector_meta_json"] = json.dumps(
+            tj.Detector(1536, 1536, 1, 1).to_dict()
+        )
+    reads = trace_detector_reads(monkeypatch, where)
+    ref = operations.PathInput(str(path))
+    with pytest.raises(ValueError, match="16 MiB"):
+        admitted(operations.Read(source=ref), None, Stage(tmp_path), ref)
+    assert not reads
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+def test_npz_read_cost_includes_deflated_prefix(tmp_path, compressed):
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+
+    path = tmp_path / "wide.npz"
+    shape = (2, 512, 4097)
+    data = np.zeros(shape, dtype=np.float32, order="F")
+    data[1, -1, -2:] = (8, 12)
+    write = np.savez_compressed if compressed else np.savez
+    write(
+        path,
+        projections=data,
+        thetas_deg=[0, 90],
+        detector=json.dumps(tj.Detector(shape[2], shape[1], 1, 1).to_dict()),
+    )
+    ref = operations.PathInput(str(path))
+    roi = ((1, 2), (511, 512), (4095, 4097))
+    stage = Stage(tmp_path)
+    request = operations.Read(source=ref, roi=roi)
+    if compressed:
+        with pytest.raises(ValueError, match="16 MiB"):
+            admitted(request, None, stage, ref)
+    else:
+        admitted(request, None, stage, ref)
+        np.testing.assert_equal(np.load(stage.private).ravel(), [8, 12])
+    result = admitted(operations.Statistics(source=ref, roi=roi), None, stage, ref)
+    assert result.mean == 10
+
+
+def test_matlab_phase_read_maps_only_selected_samples(tmp_path, monkeypatch):
+    from tests.test_psi_reader import _write_v73
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+
+    phase = np.arange(7 * 4 * 6, dtype=np.float64).reshape(7, 4, 6)
+    path = tmp_path / "phase.mat"
+    _write_v73(path, phase, np.arange(7), 1e-6)
+    ref = operations.PathInput(str(path))
+    stage = Stage(tmp_path)
+    reads = trace_detector_reads(monkeypatch, "/aligned_phase_sinogram")
+    admitted(
+        operations.Read(source=ref, roi=((4, 5), (1, 4), (2, 6)), stride=(1, 2, 1)),
+        None,
+        stage,
+        ref,
+    )
+    actual = np.load(stage.private)
+    np.testing.assert_equal(actual, phase[4:5, 1:4:2, 2:6])
+    assert actual.dtype == np.float32
+    assert sum(reads) == actual.size * phase.dtype.itemsize

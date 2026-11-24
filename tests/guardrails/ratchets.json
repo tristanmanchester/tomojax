@@ -43,7 +43,7 @@
   },
   "long_files": {
     "src/tomojax/core/cone.py": 826,
-    "src/tomojax/corrections/_engine.py": 814
+    "src/tomojax/corrections/_engine.py": 802
   },
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 171,
@@ -57,17 +57,17 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 5844,
-    "_data": 2191,
+    "(modules)": 5930,
+    "_data": 2292,
     "alignment": 4672,
     "backends": 273,
-    "cli": 9807,
+    "cli": 10005,
     "core": 10095,
-    "corrections": 3139,
+    "corrections": 3242,
     "datasets": 1069,
     "forward": 404,
     "geometry": 908,
-    "io": 3977,
+    "io": 4037,
     "motion": 153,
     "nuisance": 232,
     "recon": 14937,

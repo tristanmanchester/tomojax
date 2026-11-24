@@ -23,6 +23,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._data import calibration_issues, views_of
+from tomojax._frame_sources import acquisition_frames, tiff_frames
 from tomojax._loading_geometry import frame_geometry
 from tomojax._parameters import AnnotationModule
 from tomojax._scan import (
@@ -41,6 +42,7 @@ from tomojax.core.host_volume import discard_failed_outputs
 from tomojax.core.registration import registration
 from tomojax.core.validation import view_indices
 from tomojax.geometry import Detector, Grid, ScanGeometry
+from tomojax.io.projection_layout import saved_projection_layout
 
 if TYPE_CHECKING:
     from tomojax import corrections
@@ -72,7 +74,8 @@ def is_raw_input(
     paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
     if read_acquisition(file, **paths) is not None:
         return True
-    return _line_integrals(file, **paths) is None
+    located = _located(file, **paths) if file.suffix.lower() in _HDF5 else None
+    return _line_integrals(file, located) is None
 
 
 def load(
@@ -195,9 +198,9 @@ def load_scan_with_declaration(
             "geometry": geometry,
             "declared": declared,
         }
-        discovered = _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides)
+        discovered, located = discover_frames(file, apply_poses=apply_poses, **paths, **overrides)
         if discovered is None:
-            found = _line_integrals(file, **paths)
+            found = _line_integrals(file, located)
             if found is not None:
                 outputs.own(found[0].projections)
                 return _record_scan(file, *found, apply_poses=apply_poses, **overrides)
@@ -214,14 +217,66 @@ def load_scan_with_declaration(
         return scan
 
 
-def _line_integrals(file: Path, **paths: str | None) -> tuple[ProjectionDataset, np.ndarray] | None:
+def discover_frames(
+    file: Path,
+    *,
+    apply_poses: bool,
+    data_path: str | None = None,
+    image_key_path: str | None = None,
+    angles_path: str | None = None,
+    **overrides: Any,
+) -> tuple[Frames | None, LocatedFrames | None]:
+    """Discover vendor frames first, then labelled HDF5 frames, before reading pixels."""
+    paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
+    frames = acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides)
+    if frames is None and (file.is_dir() or file.suffix.lower() in {".tif", ".tiff"}):
+        frames = tiff_frames(file, **overrides)
+    if frames is not None or file.suffix.lower() not in _HDF5:
+        return frames, None
+    located = _located(file, **paths)
+    if located is not None and located.raw:
+        frames = _hdf5_frames(file, located, apply_poses=apply_poses, **overrides)
+    return frames, located
+
+
+def projection_frames(file: Path) -> tuple[Frames, bool]:
+    """Describe a scan's sample pixels and whether their stored domain needs correction."""
+    frames, located = discover_frames(file, apply_poses=True, angles=None)
+    if frames is not None:
+        return _require_calibration(frames), True
+    try:
+        record, stack = saved_projection_layout(file)
+    except KeyError:
+        if located is None:
+            raise
+        frames = _hdf5_frames(file, located, apply_poses=True, angles=None)
+        return _require_calibration(frames), True
+    key, raw = sample_key(record, located)
+    if raw:
+        frames = (
+            _record_frames(file, record, apply_poses=True, stack=stack)
+            if located is None
+            else _hdf5_frames(file, located, apply_poses=True, angles=None)
+        )
+        return _require_calibration(frames), True
+    scan = scan_from_record(record, apply_poses=True)
+    geometry = scan.geometry
+    if np.any(key != 0):
+        kept = np.flatnonzero(key == 0)
+        stack = stack.frames_at(kept)
+        geometry = views_of(geometry, kept)
+    return Frames(stack, geometry, source=record), False
+
+
+def _line_integrals(
+    file: Path, located: LocatedFrames | None
+) -> tuple[ProjectionDataset, np.ndarray] | None:
     """A TomoJAX dataset of line integrals and its discovered key, or None for frames."""
     from tomojax.io import load_dataset
 
     suffix = file.suffix.lower()
     if file.is_dir() or suffix in {".tif", ".tiff"}:
         return None
-    located = _located(file, **paths) if suffix in _HDF5 else None
     if located is not None and located.raw:
         return None
     try:
@@ -230,13 +285,17 @@ def _line_integrals(file: Path, **paths: str | None) -> tuple[ProjectionDataset,
         if progress.handler_failed(exc):
             raise
         return None
+    key, raw = sample_key(record, located)
+    return None if raw else (record, key)
+
+
+def sample_key(record: ProjectionDataset, located: LocatedFrames | None) -> tuple[np.ndarray, bool]:
     discovered = None if located is None else located.image_key
     key = _saved_image_key(record) if discovered is None else discovered
-    if np.isin(key, (1, 2)).any() or np.issubdtype(
+    raw = np.isin(key, (1, 2)).any() or np.issubdtype(
         np.asarray(record.projections).dtype, np.integer
-    ):
-        return None  # detector counts: corrected like other frames
-    return record, key
+    )
+    return key, bool(raw)
 
 
 def _frames_in(record: ProjectionDataset, file: Path) -> np.ndarray:
@@ -740,7 +799,7 @@ def load_raw_frames_with_declaration(
         }
         frames = _frames(
             file,
-            _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides),
+            acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides),
             apply_poses=apply_poses,
             **paths,
             **overrides,
@@ -772,7 +831,7 @@ def _frames(
         return discovered
     suffix = file.suffix.lower()
     if file.is_dir() or suffix in {".tif", ".tiff"}:
-        return _tiff_frames(file, **overrides)
+        return tiff_frames(file, **overrides)
     if suffix in _HDF5:
         from tomojax.io.api import locate_frames
 
@@ -953,6 +1012,7 @@ def _record_frames(
     record: ProjectionDataset,
     *,
     apply_poses: bool,
+    stack: Any = None,
     angles: Sequence[float] | np.ndarray | None = None,
     detector: Detector | None = None,
     pixel_size: float | tuple[float, float] | None = None,
@@ -965,10 +1025,11 @@ def _record_frames(
     sample = key == 0
     if not sample.any():
         raise ValueError(f"{file} holds no sample frames (image_key 0)")
-    stack = samples = _frames_in(record, file)
+    stack = _frames_in(record, file) if stack is None else stack
+    samples = stack
     if not sample.all():
         frames = len(key)
-        samples = stack[sample]
+        samples = stack.frames_at(sample) if hasattr(stack, "frames_at") else stack[sample]
 
         def views(values: np.ndarray | None) -> np.ndarray | None:
             if values is None or np.ndim(values) == 0 or len(values) != frames:
@@ -981,7 +1042,9 @@ def _record_frames(
         metadata.image_key = None
         record = replace_dataset(
             record,
-            projections=samples,
+            projections=np.broadcast_to(np.zeros((), stack.dtype), samples.shape)
+            if hasattr(stack, "frames_at")
+            else samples,
             angles=views(record.angles),
             angle_offset=views(record.angle_offset),
             align_params=views(record.align_params),
@@ -997,87 +1060,23 @@ def _record_frames(
         apply_poses=apply_poses,
         declared=declared,
     )
-    flats = stack[key == 1] if (key == 1).any() else None
+
+    def labelled(label):
+        mask = key == label
+        if not mask.any():
+            return None
+        return stack.frames_at(mask) if hasattr(stack, "frames_at") else stack[mask]
+
+    flats = labelled(1)
     return Frames(
         samples,
         resolved,
         flats=flats,
-        darks=stack[key == 2] if (key == 2).any() else None,
+        darks=labelled(2),
         flat_positions=None if flats is None else np.cumsum(sample)[key == 1],
         name=record.sample_name or "sample",
         source=record,
     )
-
-
-def _acquisition_frames(
-    file: Path,
-    *,
-    data_path: str | None = None,
-    image_key_path: str | None = None,
-    angles_path: str | None = None,
-    **overrides: Any,
-) -> Frames | None:
-    from tomojax.io.api import read_acquisition
-
-    found = read_acquisition(
-        file, data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
-    )
-    if found is None:
-        return None
-    record, resolved = frame_geometry(found.record, **overrides)
-    return Frames(
-        counts=found.counts,
-        geometry=resolved,
-        flats=found.flats,
-        darks=found.darks,
-        flat_positions=found.flat_positions,
-        white_level=found.white_level,
-        view_positions=found.view_positions,
-        exposure_times=found.exposure_times,
-        flat_exposure_times=found.flat_exposure_times,
-        dark_source=found.dark_source,
-        linear_limit=found.linear_limit,
-        name=record.sample_name or "sample",
-        source=record,
-    )
-
-
-def _tiff_frames(
-    file: Path,
-    *,
-    angles: Sequence[float] | np.ndarray | None,
-    detector: Detector | None,
-    pixel_size: float | tuple[float, float] | None = None,
-    grid: Grid | None = None,
-    geometry: ScanGeometry | None = None,
-    declared: DeclaredGeometry | None = None,
-) -> Frames:
-    from tomojax.io import ProjectionDataset
-    from tomojax.io.api import read_tiff_frames
-
-    if geometry is not None and angles is None:
-        angles = np.asarray(cast("Any", geometry).angles)
-    if angles is None:
-        raise ValueError(
-            f"{file} is a TIFF stack, which holds no angles: pass angles=... (degrees), "
-            "or use tomojax correct --angles"
-        )
-    counts = read_tiff_frames(file, lazy=True)
-    views, rows, cols = counts.shape
-    angles = np.asarray(angles, np.float32)
-    if angles.shape != (views,):
-        raise ValueError(f"{file} has {views} frames but {angles.size} angles")
-    record = ProjectionDataset(
-        projections=np.broadcast_to(np.float32(0), counts.shape),
-        angles=angles,
-        detector=detector,
-        source_path=str(file),
-        source_format="tiff_stack",
-    )
-    record, resolved = frame_geometry(
-        record, pixel_size=pixel_size, grid=grid, geometry=geometry, declared=declared
-    )
-    return Frames(counts, resolved, source=record)
 
 
 __all__ = ["Frames", "load", "load_frames"]

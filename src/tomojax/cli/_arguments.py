@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import cache
+from pathlib import Path
 from typing import Any
 
 import h5py
@@ -13,10 +14,11 @@ import numpy as np
 import tomojax as tj
 from tomojax.cli import execution as ex, operations as op
 from tomojax.cli._parameter_types import option_types
+from tomojax.cli._results import stored_axes
+from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.devices import as_devices
-from tomojax.core.files import read_hdf5
+from tomojax.core.files import read_hdf5, read_path
 from tomojax.errors import InvalidParameter, within
-from tomojax.io import load_dataset
 from tomojax.wire.arrays import Hdf5, Member, Npy, Record
 
 
@@ -89,10 +91,24 @@ def read_reference(
             return data[...]
     if name == "projections":
         return tj.load(value.path).projections
-    volume = load_dataset(value.path).volume
-    if volume is None:
-        raise InvalidParameter(name, f"{value.path} holds no saved volume")
-    return volume
+    return saved_volume(Path(value.path), name)
+
+
+def saved_volume(path: Path, name: str) -> np.ndarray:
+    """Read only the requested volume, transposed into logical voxel order."""
+    if h5py.is_hdf5(path):
+        with read_hdf5(path) as file:
+            data = file.get(VOLUME_DATASET)
+            if isinstance(data, h5py.Dataset):
+                axes = stored_axes(file, path)
+                return np.asarray(data[...]).transpose(tuple(axes.index(a) for a in "zyx"))
+    elif path.suffix.lower() == ".npz":
+        with np.load(read_path(path), allow_pickle=False) as fields:
+            if "volume" in fields.files:
+                if str(fields.get("volume_axes_order", "")) != "zyx":
+                    raise ValueError(f"{path}: volume has no zyx axes tag")
+                return fields["volume"]
+    raise InvalidParameter(name, f"{path} holds no saved volume")
 
 
 def source(

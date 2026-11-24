@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 from contextlib import asynccontextmanager
-from math import ceil
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp_types import ImageContent, TextContent
@@ -13,6 +12,7 @@ import numpy as np
 from PIL import Image
 
 from tomojax.cli import operations as op
+from tomojax.cli._display import plane_windows
 from tomojax.cli.images import Panel, label_number, limits, montage, pose_plot, thumbnail
 from tomojax.cli.mcp.tools.references import resolve
 
@@ -224,46 +224,52 @@ async def view(tools: Tools, args: View) -> CallToolResult:
         return result(value["value"])
     if args.mode in ("profile", "pose_table", "pose_plot"):
         return await series(g, command, args.mode)
+    if args.mode != "difference":
+        async with temporary(
+            g, {**command, "mode": args.mode, "axis": args.axis, "index": args.index}
+        ) as v:
+            title = (
+                "Alignment working image " if args.source.endswith(".image") else ""
+            ) + args.source
+            panels = [
+                plane(
+                    item["array"],
+                    load(item["array"]),
+                    title,
+                    dim=item["dimension"],
+                    source_index=item["index"],
+                    sampling=item["sampling"],
+                )
+                for item in v["planes"]
+            ]
+            return await asyncio.to_thread(render, panels)
     meta = (await g.request({"type": "read", "source": src, "metadata_only": True}))["value"][
         "array"
     ]
     axes = [a["name"] for a in meta["axes"]]
-    if args.mode in ("projection", "sinogram") and meta["domain"] == "attenuation":
+    if not args.other:
+        raise ValueError("difference requires other")
+    source_b = reference(tools, args.other, args.mode)
+    second = (await g.request({"type": "read", "source": source_b, "metadata_only": True}))[
+        "value"
+    ]["array"]
+
+    def grid(m: Object) -> Object:
+        return {
+            "unit": m["unit"],
+            "axes": {a["name"]: (n, a) for n, a in zip(m["shape"], m["axes"], strict=True)},
+        }
+
+    if (
+        set(axes) != set("zyx")
+        or any(a["frame"] != "volume" for a in meta["axes"])
+        or grid(meta) != grid(second)
+    ):
         raise ValueError(
-            f"{args.source} is a volume. Select .projections on its scan or simulation, "
-            "or provide a detector dataset."
+            f"Difference requires equal volume grids. {args.source}: {grid(meta)}. "
+            f"{args.other}: {grid(second)}"
         )
-    other = None
-    if args.mode == "difference":
-        if not args.other:
-            raise ValueError("difference requires other")
-        source_b = reference(tools, args.other, args.mode)
-        second = (await g.request({"type": "read", "source": source_b, "metadata_only": True}))[
-            "value"
-        ]["array"]
-
-        def grid(m: Object) -> Object:
-            return {
-                "unit": m["unit"],
-                "axes": {a["name"]: (n, a) for n, a in zip(m["shape"], m["axes"], strict=True)},
-            }
-
-        if (
-            set(axes) != set("zyx")
-            or any(a["frame"] != "volume" for a in meta["axes"])
-            or grid(meta) != grid(second)
-        ):
-            raise ValueError(
-                f"Difference requires equal volume grids. {args.source}: {grid(meta)}. "
-                f"{args.other}: {grid(second)}"
-            )
-        other = (source_b, [axes.index(a["name"]) for a in second["axes"]])
-    if len(axes) == 2 and args.mode == "planes":
-        async with temporary(g, command) as v:
-            a = v["array"]
-            return render([plane(a, load(a), args.source)])
-    if len(axes) != 3:
-        raise ValueError(f"{args.mode} needs a three-dimensional array, got {axes}")
+    other = (source_b, [axes.index(a["name"]) for a in second["axes"]])
     return await plane_views(g, command, args, meta, other)
 
 
@@ -300,50 +306,19 @@ async def series(g: Generation, command: Object, mode: str) -> CallToolResult:
         return reply
 
 
-def display_sampling(
-    roi: list[tuple[int, int]], strides: tuple[int, ...]
-) -> tuple[list[int], tuple[str, ...]]:
-    """Bound display reads to 512 samples per axis on the requested sampling grid."""
-    factors = tuple(
-        ceil(len(range(lo, hi, step)) / 512) for (lo, hi), step in zip(roi, strides, strict=True)
-    )
-    steps = [step * factor for step, factor in zip(strides, factors, strict=True)]
-    label = f"stride {strides}, display subsampling {factors}"
-    return steps, (label,) if max(*strides, *factors) > 1 else ()
-
-
 async def plane_views(
-    g: Generation, command: Object, args: View, meta: Object, other: tuple[Object, list[int]] | None
+    g: Generation, command: Object, args: View, meta: Object, other: tuple[Object, list[int]]
 ) -> CallToolResult:
     """Choose display planes and read only their sampled hyperslabs."""
     axes = [a["name"] for a in meta["axes"]]
-    if args.axis is not None:
-        axis_names = [args.axis]
-    elif args.mode == "sinogram":
-        axis_names = ["v" if "v" in axes else axes[1]]
-    elif args.mode == "projection" or "view" in axes:
-        axis_names = ["view" if "view" in axes else axes[0]]
-    else:
-        axis_names = axes if args.index is None else [axes[0]]
     roi = args.roi if args.roi is not None else tuple((0, n) for n in meta["shape"])
-    strides = args.stride if args.stride is not None else (1,) * 3
+    strides = args.stride if args.stride is not None else (1,) * len(axes)
     if len(roi) != 3 or len(strides) != 3 or min(strides) < 1:
         raise ValueError("roi and stride need three dimensions and positive strides")
     panels = []
-    for axis in axis_names:
-        if axis not in axes:
-            raise ValueError(f"axis must be one of {axes}")
-        d = axes.index(axis)
-        selected = list(roi)
-        lo, hi = selected[d]
-        if not 0 <= lo < hi <= meta["shape"][d]:
-            raise ValueError(f"roi outside {meta['shape']}")
-        indices = range(lo, hi, strides[d])
-        index = indices[len(indices) // 2] if args.index is None else args.index
-        if not lo <= index < hi:
-            raise ValueError(f"index {index} outside {axis} interval [{lo}, {hi})")
-        selected[d] = (index, index + 1)
-        stride, sampling = display_sampling(selected, strides)
+    for d, index, selected, stride, sampling in plane_windows(
+        axes, meta["shape"], args.mode, args.axis, args.index, roi, strides
+    ):
         read = {**command, "roi": selected, "stride": stride}
         async with temporary(g, read) as v:
             a = v["array"]
@@ -351,17 +326,16 @@ async def plane_views(
             title = (
                 "Alignment working image " if args.source.endswith(".image") else ""
             ) + args.source
-            if other is not None:
-                source_b, order = other
-                read_b = {
-                    **read,
-                    "source": source_b,
-                    "roi": [selected[i] for i in order],
-                    "stride": [stride[i] for i in order],
-                }
-                async with temporary(g, read_b) as w:
-                    pixels = pixels.astype(float) - load(w["array"]).transpose(np.argsort(order))
-                    title += " minus " + str(args.other)
+            source_b, order = other
+            read_b = {
+                **read,
+                "source": source_b,
+                "roi": [selected[i] for i in order],
+                "stride": [stride[i] for i in order],
+            }
+            async with temporary(g, read_b) as w:
+                pixels = pixels.astype(float) - load(w["array"]).transpose(np.argsort(order))
+                title += " minus " + str(args.other)
             panels.append(plane(a, pixels, title, dim=d, source_index=index, sampling=sampling))
     return await asyncio.to_thread(render, panels)
 

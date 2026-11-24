@@ -62,6 +62,11 @@ class _ZeissFrames(FrameStack):
     exposures: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     @property
+    def read_width(self) -> int:
+        """Number of source columns decoded for each requested detector row."""
+        return self.image_shape[1]
+
+    @property
     def exposure_times(self) -> np.ndarray | None:
         """Recorded durations for this selection, in seconds."""
         return None if self.exposures is None else self.exposures[self.frames]
@@ -487,7 +492,9 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
         view_positions=view_positions,
         exposure_times=counts.exposure_times,
         flat_exposure_times=None if flats is None else flats.exposure_times,
-        darks=None if dark_source is None else np.zeros((1, *counts.image_shape), np.float32),
+        darks=None
+        if dark_source is None
+        else np.broadcast_to(np.float32(0), (1, *counts.image_shape)),
         dark_source=dark_source,
         linear_limit=linear_limit,
     )

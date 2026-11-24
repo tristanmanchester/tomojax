@@ -1,0 +1,53 @@
+"""Saved scan metadata and lazy sample storage in logical detector order."""
+
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import h5py
+import numpy as np
+
+from tomojax._data import Hdf5Frames, load_nxtomo, npz_projection_layout
+from tomojax.core.files import read_hdf5
+from tomojax.io._datasets import ProjectionDataset, psi_record
+from tomojax.io._hdf5_array import read_hdf5_array
+
+
+def saved_projection_layout(path: Path) -> tuple[ProjectionDataset, Any]:
+    """Read a geometry record with shape-only projections and the matching pixel source."""
+    if path.suffix.lower() == ".mat":
+        record = psi_record(path, layout_only=True)
+        stack = Hdf5Frames.open(str(path), "aligned_phase_sinogram")
+        return record, MatlabFrames(stack)
+    if path.suffix.lower() == ".npz":
+        payload, stack = npz_projection_layout(path)
+    else:
+        payload = load_nxtomo(str(path), lazy=True)
+        stack = payload.projections
+        if stack is None:
+            raise ValueError(f"{path} holds a reconstruction saved without its scan")
+        shape = np.broadcast_to(np.zeros((), stack.dtype), stack.shape)
+        payload = replace(payload, projections=shape)
+    return ProjectionDataset.from_nxtomo(payload, source_path=path), stack
+
+
+class MatlabFrames:
+    """MATLAB stores phase columns before rows. The scan loader exposes float32."""
+
+    dtype = np.dtype(np.float32)
+
+    def __init__(self, stored: Hdf5Frames) -> None:
+        self.stored = stored
+        self.storage_dtype = stored.dtype
+        self.shape = (len(stored), stored.cols, stored.rows)
+
+    def sampled(self, ranges: tuple[range, range, range]) -> np.ndarray:
+        """Read logical (view, row, column) indices from the MATLAB-ordered phase stack."""
+        views, rows, cols = ranges
+        selection = tuple(slice(r.start, r.stop, r.step) for r in (views, cols, rows))
+        with read_hdf5(self.stored.path, rdcc_nbytes=0) as file:
+            phase = file[self.stored.dataset]
+            assert isinstance(phase, h5py.Dataset)
+            return (
+                read_hdf5_array(phase, selection).transpose(0, 2, 1).astype(self.dtype, copy=False)
+            )

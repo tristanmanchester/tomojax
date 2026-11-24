@@ -69,6 +69,21 @@ class ArrayResult(Record, tag="array"):
     array: Array
 
 
+class DisplayPlane(Record):
+    """A sampled plane and its position on the original axes."""
+
+    array: Array
+    dimension: int | None
+    index: int
+    sampling: tuple[str, ...]
+
+
+class DisplayPlanes(Record, tag="display_planes"):
+    """Requested preview planes from a single source registration."""
+
+    planes: tuple[DisplayPlane, ...]
+
+
 class StatisticsResult(Record, tag="statistics"):
     """Distribution over finite samples. Empty finite populations have null moments."""
 
@@ -215,6 +230,7 @@ class Provenance(Record, omit_defaults=True):
 type HandleProduct = Scan | Frames | Reconstruction | Alignment | Simulation | Region
 type DataProduct = (
     Layout
+    | DisplayPlanes
     | ArrayResult
     | StatisticsResult
     | PlaneResult

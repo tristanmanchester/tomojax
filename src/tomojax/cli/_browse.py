@@ -17,10 +17,12 @@ import numpy as np
 
 import tomojax as tj
 from tomojax._files import saved_volume_grid
+from tomojax._loading import projection_frames
 from tomojax.cli import execution as ex, operations as op, products as p
-from tomojax.cli._frame_reads import frame_pixels
-from tomojax.cli._handles import handle, stage_array
-from tomojax.cli._results import disk_volume, stored_grid
+from tomojax.cli._display import plane_windows
+from tomojax.cli._frame_reads import ProjectionTiles, frame_pixels
+from tomojax.cli._handles import stage_array
+from tomojax.cli._results import disk_volume, scan_axes, stored_grid, unit_of
 from tomojax.core.files import read_hdf5, read_path
 from tomojax.errors import InvalidParameter
 from tomojax.io.api import mapped_npz
@@ -111,10 +113,14 @@ def saved_array(path: Path) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]
                     {},
                 )
             return
-    scan = tj.load(path)
-    projections = handle(scan).bind(str(path)).members["projections"]
-    assert isinstance(projections, ex.RegisteredArray)
-    yield projections.data, projections.metadata, {"view": np.asarray(scan.geometry.angles)}
+    frames, raw = projection_frames(path)
+    data = ProjectionTiles(frames, raw)
+    view = Axis("view", "acquisition", "degree", Coordinates(Member(str(path), "angles")))
+    axes = scan_axes(frames.geometry.detector, view, unit_of(frames))
+    meta = Array(
+        Member(str(path), "projections"), data.shape, data.dtype.str, axes, "1", "line_integrals"
+    )
+    yield data, meta, {"view": np.asarray(frames.geometry.angles)}
 
 
 def indexed(storage: Storage, data: Any) -> Array:
@@ -135,6 +141,8 @@ def window(shape: tuple[int, ...], request: op.Window) -> tuple[range, ...]:
 
 
 def pixels(data: Any, ranges: tuple[range, ...]) -> np.ndarray:
+    if isinstance(data, ProjectionTiles):
+        return data.read(ranges, READ_BYTES)
     if hasattr(data, "window"):
         return frame_pixels(data, ranges, READ_BYTES)
     keys = tuple(slice(r.start, r[-1] + 1, r.step) for r in ranges)
@@ -143,7 +151,7 @@ def pixels(data: Any, ranges: tuple[range, ...]) -> np.ndarray:
 
 def browse(
     request: op.Read | op.Statistics, context: ex.ExecutionContext
-) -> p.Layout | p.ArrayResult | p.StatisticsResult:
+) -> p.Layout | p.ArrayResult | p.DisplayPlanes | p.StatisticsResult:
     with source_array(request.source, context) as (data, meta, vectors):
         if np.dtype(meta.dtype).kind not in "biuf":
             raise InvalidParameter("source", f"expected real numeric data, got {meta.dtype}")
@@ -156,38 +164,61 @@ def browse(
             for axis in layout["axes"]:
                 axis["coordinates"].pop("values", None)
             return p.Layout(layout)
-        shape = tuple(map(len, ranges))
-        if math.prod(shape) * np.dtype(meta.dtype).itemsize > READ_BYTES:
-            raise InvalidParameter("roi", "read exceeds 16 MiB; use a stride or a smaller ROI")
-        axes = []
-        for axis, r in zip(meta.axes, ranges, strict=True):
-            coord = axis.coordinates
-            if isinstance(coord, Uniform):
-                selected = Uniform(coord.origin + r.start * coord.spacing, r.step * coord.spacing)
-            else:
-                if axis.name in vectors:
-                    values = vectors[axis.name][r.start : r.stop : r.step]
-                else:
-                    with source_array(coord.values, context) as (v, _, _):
-                        values = pixels(v, (r,))
-                selected = Coordinates(stage_array(context, values))
-            axes.append(msgspec.structs.replace(axis, coordinates=selected))
-        columns = meta.columns
-        domain = meta.domain
-        if columns and len(ranges[-1]) != len(columns):
-            columns, domain = (), "pose_components"
-        return p.ArrayResult(
-            Array(
-                stage_array(context, pixels(data, ranges)),
-                shape,
-                meta.dtype,
-                tuple(axes),
-                meta.unit,
-                domain,
-                meta.fixed,
-                columns,
+        if request.mode is None:
+            return p.ArrayResult(read_window(context, data, meta, vectors, ranges))
+        if request.mode in ("projection", "sinogram") and meta.domain == "attenuation":
+            raise InvalidParameter(
+                "source",
+                "Source is a volume. Select .projections on its scan or use a detector dataset.",
             )
-        )
+        planes = []
+        for dim, at, roi, stride, sampling in plane_windows(
+            [a.name for a in meta.axes],
+            meta.shape,
+            request.mode,
+            request.axis,
+            request.index,
+            tuple((r.start, r.stop) for r in ranges),
+            tuple(r.step for r in ranges),
+        ):
+            tile = tuple(range(lo, hi, step) for (lo, hi), step in zip(roi, stride, strict=True))
+            planes.append(
+                p.DisplayPlane(read_window(context, data, meta, vectors, tile), dim, at, sampling)
+            )
+        return p.DisplayPlanes(tuple(planes))
+
+
+def read_window(context, data, meta, vectors, ranges):
+    shape = tuple(map(len, ranges))
+    if math.prod(shape) * np.dtype(meta.dtype).itemsize > READ_BYTES:
+        raise InvalidParameter("roi", "read exceeds 16 MiB; use a stride or a smaller ROI")
+    axes = []
+    for axis, r in zip(meta.axes, ranges, strict=True):
+        coord = axis.coordinates
+        if isinstance(coord, Uniform):
+            selected = Uniform(coord.origin + r.start * coord.spacing, r.step * coord.spacing)
+        else:
+            if axis.name in vectors:
+                values = vectors[axis.name][r.start : r.stop : r.step]
+            else:
+                with source_array(coord.values, context) as (v, _, _):
+                    values = pixels(v, (r,))
+            selected = Coordinates(stage_array(context, values))
+        axes.append(msgspec.structs.replace(axis, coordinates=selected))
+    columns = meta.columns
+    domain = meta.domain
+    if columns and len(ranges[-1]) != len(columns):
+        columns, domain = (), "pose_components"
+    return Array(
+        stage_array(context, pixels(data, ranges)),
+        shape,
+        meta.dtype,
+        tuple(axes),
+        meta.unit,
+        domain,
+        meta.fixed,
+        columns,
+    )
 
 
 def statistics(request, context, data, meta, ranges):
@@ -210,15 +241,20 @@ def statistics(request, context, data, meta, ranges):
             tile = tuple(
                 r[start : start + n] for r, start, n in zip(ranges, origin, block, strict=True)
             )
-            chunk = pixels(data, tile).ravel()
-            finite = chunk[np.isfinite(chunk)].astype(np.float64)
-            n = len(finite)
-            if n:
-                finite.tofile(stream)
-                delta = float(finite.mean()) - mean
-                mean += delta * n / (count + n)
-                m2 += float(finite.var()) * n + delta**2 * count * n / (count + n)
-                count += n
+            chunks = (
+                data.chunks(tile, READ_BYTES)
+                if isinstance(data, ProjectionTiles)
+                else (pixels(data, tile),)
+            )
+            for chunk in chunks:
+                finite = chunk[np.isfinite(chunk)].astype(np.float64)
+                n = len(finite)
+                if n:
+                    finite.tofile(stream)
+                    delta = float(finite.mean()) - mean
+                    mean += delta * n / (count + n)
+                    m2 += float(finite.var()) * n + delta**2 * count * n / (count + n)
+                    count += n
         edges, histogram = (), ()
         values = dict.fromkeys(map(str, request.percentiles))
         if count:

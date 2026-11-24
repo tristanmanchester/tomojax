@@ -266,6 +266,9 @@ class Read(Window, tag="read", kw_only=True):
 
     source: Storage | PathInput
     metadata_only: bool = False
+    mode: Literal["projection", "sinogram", "planes"] | None = None
+    axis: str | None = None
+    index: int | None = None
 
 
 class Statistics(Window, tag="statistics", kw_only=True):

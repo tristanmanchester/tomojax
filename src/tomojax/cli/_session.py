@@ -435,6 +435,9 @@ class Session:
         elif isinstance(value, Record):
             for name in value.__struct_fields__:
                 self._register_arrays(getattr(value, name))
+        elif isinstance(value, tuple):
+            for item in value:
+                self._register_arrays(item)
         elif isinstance(value, dict):
             for item in value.values():
                 self._register_arrays(item)

@@ -54,6 +54,9 @@
                   "$ref": "#/$defs/Layout"
                 },
                 {
+                  "$ref": "#/$defs/DisplayPlanes"
+                },
+                {
                   "$ref": "#/$defs/ArrayResult"
                 },
                 {
@@ -103,6 +106,7 @@
                 "propertyName": "type",
                 "mapping": {
                   "layout": "#/$defs/Layout",
+                  "display_planes": "#/$defs/DisplayPlanes",
                   "array": "#/$defs/ArrayResult",
                   "statistics": "#/$defs/StatisticsResult",
                   "plane": "#/$defs/PlaneResult",
@@ -398,6 +402,65 @@
       "required": [
         "type",
         "array"
+      ],
+      "additionalProperties": false
+    },
+    "DisplayPlanes": {
+      "title": "DisplayPlanes",
+      "description": "Requested preview planes from a single source registration.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "display_planes"
+          ]
+        },
+        "planes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DisplayPlane"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "planes"
+      ],
+      "additionalProperties": false
+    },
+    "DisplayPlane": {
+      "title": "DisplayPlane",
+      "description": "A sampled plane and its position on the original axes.",
+      "type": "object",
+      "properties": {
+        "array": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "index": {
+          "type": "integer"
+        },
+        "sampling": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "array",
+        "dimension",
+        "index",
+        "sampling"
       ],
       "additionalProperties": false
     },

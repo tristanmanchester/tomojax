@@ -278,6 +278,43 @@
         "metadata_only": {
           "type": "boolean",
           "default": false
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "planes",
+                "projection",
+                "sinogram"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

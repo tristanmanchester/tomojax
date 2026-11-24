@@ -9,7 +9,7 @@ from tomojax._data._io_acquisition import (
     calibration_issues,
 )
 from tomojax._data._io_frames import Hdf5Frames, LocatedFrames, locate_frames
-from tomojax._data._io_npz import load_npz, mapped_npz, save_npz
+from tomojax._data._io_npz import load_npz, mapped_npz, npz_projection_layout, save_npz
 from tomojax._data._io_nxtomo import (
     load_nxtomo,
     save_nxtomo,
@@ -36,6 +36,7 @@ __all__ = [
     "load_nxtomo",
     "locate_frames",
     "mapped_npz",
+    "npz_projection_layout",
     "save_npz",
     "save_nxtomo",
     "saved_volume_axes",

@@ -420,7 +420,7 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
     if suffix == ".npz":
         return ProjectionDataset.from_nxtomo(load_npz(str(input_path)), source_path=input_path)
     if suffix == ".mat":
-        return _psi_record(input_path)
+        return psi_record(input_path)
     if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
         raise ValueError(
             "TIFF inputs require angle metadata; use load_tiff_stack(path, angles=...)"
@@ -428,11 +428,11 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
     raise ValueError(f"unsupported dataset format for {input_path}")
 
 
-def _psi_record(path: Path) -> ProjectionDataset:
+def psi_record(path: Path, *, layout_only: bool = False) -> ProjectionDataset:
     """A PSI cSAXS ptychographic tomography file's phase line integrals, as a parallel scan."""
     from tomojax.io._psi import read_psi_mat
 
-    projections, angles, pixel, wavelength, name = read_psi_mat(path)
+    projections, angles, pixel, wavelength, name = read_psi_mat(path, layout_only=layout_only)
     record = ProjectionDataset(
         projections=projections,
         angles=angles,
