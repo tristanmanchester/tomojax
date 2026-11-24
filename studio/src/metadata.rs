@@ -332,11 +332,19 @@ fn projection_arrays(
     if shape.len() != 3 || shape.contains(&0) {
         return Err("Projection shape must be nonempty (view, v, u)".into());
     }
+    // Registered for direct viewing only when every stored frame is a sample
+    // view; frames interleaved with flats and darks become viewable once the scan
+    // is opened and calibrated. A stored (view, u) line scan registers as
+    // (view, 1, u).
+    let samples = report
+        .pointer("/flats_darks/sample_count")
+        .and_then(Value::as_u64);
     let stored = hdf5::File::open(path).map_err(|error| error.to_string())?;
-    // The report describes the sample frames the loader selects. When the stored
-    // dataset holds more (interleaved flats and darks), it is not the projections
-    // as stored; the scan becomes viewable once opened and calibrated.
-    if stored.dataset(dataset).map(|d| d.shape()).ok() != Some(shape.clone()) {
+    let squeezed = |dims: &[usize]| dims.iter().copied().filter(|&n| n != 1).collect::<Vec<_>>();
+    let stored_shape = stored.dataset(dataset).map(|d| d.shape()).ok();
+    if samples.is_some_and(|n| n != shape[0] as u64)
+        || stored_shape.as_deref().map(squeezed) != Some(squeezed(&shape))
+    {
         return Ok(arrays);
     }
     let file = path.to_string_lossy().into_owned();
@@ -810,6 +818,10 @@ mod tests {
             .with_data(&[0.0f32, 0.5, 1.0])
             .create("unlabelled")
             .unwrap();
+        file.new_dataset::<u16>()
+            .shape((3, 4))
+            .create("line")
+            .unwrap();
         drop(file);
         // The worker reports converted degrees; the stored angles are radians.
         let report = |data: &str, angles: &str| {
@@ -817,11 +829,22 @@ mod tests {
             "angles":{"path":angles,"units":"degree","count":3},
             "detector_metadata":{"du":0.1,"dv":0.4,"center":[0.3,-0.2]}})
         };
-        // Sample frames interleaved with flats and darks are not the stored array.
+        // Sample frames interleaved with flats and darks are not the stored array,
+        // whether the report gives the sample stack or the whole stack.
         assert!(
             projection_arrays(&report("/with_flats", "/theta"), &path)
                 .unwrap()
                 .is_empty()
+        );
+        let mut whole = report("/raw", "/theta");
+        whole["flats_darks"] = json!({"sample_count": 2});
+        assert!(projection_arrays(&whole, &path).unwrap().is_empty());
+        // A stored (view, u) line scan registers as (view, 1, u).
+        let mut line = report("/line", "/theta");
+        line["projection"]["shape"] = json!([3, 1, 4]);
+        assert_eq!(
+            projection_arrays(&line, &path).unwrap()["projections"].shape,
+            [3, 1, 4]
         );
         let unlabelled = projection_arrays(&report("/raw", "/unlabelled"), &path).unwrap();
         assert_eq!(unlabelled["projections"].axes[0].unit, "index");

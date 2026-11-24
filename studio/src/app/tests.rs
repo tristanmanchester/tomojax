@@ -419,6 +419,28 @@ fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
         operation["grid"],
         json!({"nx":4,"ny":4,"nz":2,"vx":0.5,"vy":0.5,"vz":0.5,"vol_origin":[0.25,2.,-1.5]})
     );
+
+    // A volume in another length unit than the scan's geometry is refused.
+    let mut micrometres = saved.clone();
+    for axis in &mut micrometres.axes {
+        axis.unit = "um".into();
+    }
+    let mut detector = saved.clone();
+    detector.axes[1].unit = "mm".into();
+    let scan = Product::Scan {
+        handle: "scan".into(),
+        projections: detector,
+    };
+    let volume = Product::Volume {
+        volume: micrometres,
+    };
+    let error = jobs::fill_projection_array(
+        &mut serde_json::Map::new(),
+        [&scan, &volume].into_iter(),
+        "volume",
+    )
+    .unwrap_err();
+    assert!(error.contains("um") && error.contains("mm"), "{error}");
 }
 
 fn drive(state: &mut AppState, condition: impl Fn(&AppState) -> bool) {

@@ -1072,9 +1072,33 @@ pub(super) fn fill_projection_array<'a>(
     products: impl Iterator<Item = &'a Product> + Clone,
     key: &str,
 ) -> Result<bool, String> {
+    let scan_unit = products.clone().find_map(|product| match product {
+        Product::Scan { projections, .. } => projections
+            .axes
+            .get(1)
+            .map(|axis| axis.unit.clone())
+            .filter(|unit| !matches!(unit.as_str(), "pixel" | "index")),
+        _ => None,
+    });
     let Some((storage, descriptor)) = array_member(products, key) else {
         return Ok(false);
     };
+    // The worker reads the volume in the scan's length unit.
+    if key == "volume"
+        && let (Some(scan), Some(volume)) = (
+            scan_unit,
+            descriptor
+                .as_ref()
+                .and_then(|d| d.axes.first())
+                .map(|axis| &axis.unit),
+        )
+        && !matches!(volume.as_str(), "index" | "voxel")
+        && *volume != scan
+    {
+        return Err(format!(
+            "The volume is registered in {volume} and the scan in {scan}; reconstruct the volume from this scan's geometry"
+        ));
+    }
     operation.insert(
         key.into(),
         serde_json::to_value(storage).map_err(|e| e.to_string())?,

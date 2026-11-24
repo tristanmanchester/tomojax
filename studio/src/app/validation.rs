@@ -440,19 +440,18 @@ impl AppState {
             self.previews
                 .ensure_input(input.clone())
                 .map_err(|message| DraftError::new("source", message))?;
-            let source = match self.previews.source_ref(input) {
-                Ok(source) => source,
-                // Forward and back projection take their geometry from whichever
-                // input has a scan, as execution does; an array-only result
-                // supplies the volume or projections.
-                Err(_)
-                    if array_key.is_some()
-                        && matches!(self.previews.source_product(input), Ok(Some(_))) =>
-                {
-                    continue;
-                }
-                Err(message) => return Err(DraftError::new("source", message)),
-            };
+            // Forward and back projection take their geometry from the first input
+            // that holds a scan, as execution does; raw frames and array-only
+            // results don't supply it.
+            if array_key.is_some()
+                && matches!(self.previews.source_product(input), Ok(Some(product)) if product.scan_source().is_none())
+            {
+                continue;
+            }
+            let source = self
+                .previews
+                .source_ref(input)
+                .map_err(|message| DraftError::new("source", message))?;
             match source {
                 Some(source) => sources.push(source),
                 None => return Ok(None),

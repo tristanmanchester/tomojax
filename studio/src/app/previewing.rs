@@ -114,7 +114,13 @@ impl AppState {
             .map(|schema| &schema["properties"]);
         let inputs = if !processing || self.form_inputs_pending() {
             Vec::new()
-        } else if properties.is_some_and(|p| p.get("sources").is_some()) {
+        } else if properties.is_some_and(|p| {
+            ["sources", "volume", "projections"]
+                .iter()
+                .any(|key| p.get(*key).is_some())
+        }) {
+            // Multi-input forms (combine, forward and back projection) validate
+            // with every selected input open at once.
             self.current_form_inputs().to_vec()
         } else if properties.is_some_and(|p| p.get("source").is_some()) {
             self.current_form_input().into_iter().collect()
