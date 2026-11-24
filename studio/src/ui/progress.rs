@@ -300,7 +300,9 @@ pub fn telemetry(state: &AppState, job: &JobView, compact: bool, expanded: bool)
             .h(30.),
         );
     }
-    if active || (expanded && trace_open) {
+    // Convergence plots are results and always show; the internal steps are the trace.
+    let show_steps = active || trace_open;
+    if active || expanded {
         let tree = progress.tree();
         let mut tasks = col().key("current-task-tree").gap(9.).w_full();
         for (depth, task) in &tree {
@@ -418,7 +420,9 @@ pub fn telemetry(state: &AppState, job: &JobView, compact: bool, expanded: bool)
                     .child(histories.grow(2.).min_w(0.)),
             );
         } else {
-            body = body.child(tasks);
+            if show_steps {
+                body = body.child(tasks);
+            }
             if history_count > 0 {
                 body = body.child(histories);
             }

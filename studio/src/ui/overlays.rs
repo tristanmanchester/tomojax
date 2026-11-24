@@ -378,10 +378,11 @@ pub fn jobs_drawer(state: &AppState) -> El {
     for job in jobs {
         rows = rows.child(job_row(state, job, true));
     }
-    // A popover under its top-bar trigger, sized to its content.
+    // A panel under its top-bar trigger, sized to its content. It opens by itself when work is
+    // queued, so it never blocks the rest of the window; Escape or its close button dismisses it.
     col()
         .key("jobs-drawer")
-        .role("dialog")
+        .role("region")
         .label("Activity")
         .w(440.)
         .max_h(520.)
@@ -389,8 +390,6 @@ pub fn jobs_drawer(state: &AppState) -> El {
         .radius(10.)
         .fill(paper())
         .shadow(8., 30., ink().alpha(0.18))
-        .modal(true, |s: &mut AppState| s.ui.jobs_open = false)
-        .focus_return("toggle-jobs")
         .child(
             row()
                 .h(55.)
