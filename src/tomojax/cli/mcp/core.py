@@ -22,7 +22,6 @@ from tomojax import __version__
 from tomojax.cli.mcp.guidance import install_guidance
 from tomojax.cli.mcp.ledger import Ledger
 from tomojax.cli.mcp.parts import Parts
-from tomojax.cli.mcp.scratch import scratch_root
 from tomojax.cli.mcp.supervisor import Supervisor, WorkerLost, WorkerProtocolError
 from tomojax.cli.mcp.tasks import Tasks
 
@@ -160,9 +159,7 @@ class Core:
 async def run() -> None:
     """Start the worker concurrently with MCP discovery, then clean up both lifetimes."""
     base = Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
-    state = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
-    ledger = Ledger(state / "tomojax/mcp")
-    supervisor = Supervisor(ledger, base, scratch_root("mcp"))
+    supervisor = Supervisor(Ledger(), base)
     loop = asyncio.get_running_loop()
     terminate = asyncio.Event()
     loop.add_signal_handler(signal.SIGTERM, terminate.set)
@@ -179,9 +176,8 @@ async def run() -> None:
     finally:
         signal_task.cancel()
         await supervisor.close()
-        ledger.close()
         loop.remove_signal_handler(signal.SIGTERM)
         if terminate.is_set():
             # The SDK's stdin thread can still be blocked in readline. Honour
-            # termination once our process group and leases have been released.
+            # termination once the worker has been stopped.
             signal.raise_signal(signal.SIGTERM)

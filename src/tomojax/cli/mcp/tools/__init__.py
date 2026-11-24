@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 class Status(Record):
     """List live handles and job IDs.
 
-    Check device memory, worker versions and recovery details before starting or retrying a job.
+    Check device memory and worker versions before starting or retrying a job.
     """
 
     detail: Literal["summary", "full"] = "summary"
@@ -195,11 +195,9 @@ def tree(path: Path) -> Object:
     """List HDF5 dataset names, shapes and dtypes without loading their values."""
     import h5py
 
-    from tomojax.core.files import read_hdf5
-
     datasets = {}
     if path.is_file() and h5py.is_hdf5(path):
-        with read_hdf5(path) as file:
+        with h5py.File(path, "r") as file:
 
             def visit(name: str, item: Any) -> None:
                 if isinstance(item, h5py.Dataset):
@@ -272,8 +270,6 @@ def summary_text(data: Object) -> str:
     )
     if auto := data.get("automatic"):
         summary.extend(auto.get("reasons", []))
-    if recovery := data.get("recovery"):
-        summary.append(f"Commit recovery {recovery}")
     if (poses := data.get("poses")) and poses["rms"] is not None:
         rms = ", ".join(
             f"{column['name']} {value:.4g} {column['unit']}"
@@ -318,7 +314,7 @@ class Tools:
                 "jobs": state["requests"],
                 "handles": handles,
                 "python_namespace_bytes": state.get("python_namespace_bytes", 0),
-                "recovery": self.supervisor.report,
+                "worker_loss": self.supervisor.report,
             }
         )
 
@@ -478,9 +474,7 @@ class Tools:
             kind: str = value["type"]
             data: Object = {"kind": kind}
             if kind == "files":
-                data.update(
-                    output["info"]["summary"], paths=value["paths"], recovery=value["recovery"]
-                )
+                data.update(output["info"]["summary"], paths=value["paths"])
             else:
                 data = self.publish_handle(command, output)
             if detail == "full":
@@ -594,7 +588,6 @@ class Tools:
             "code": args.code,
             "reset": args.reset,
             "aliases": aliases,
-            "ledger": [str(self.ledger.path), self.ledger.owner],
         }
 
         def publish(output):
@@ -719,7 +712,6 @@ def workflow_output() -> Object:
             "kind": {"type": "string"},
             "members": {"type": "object"},
             "paths": {"type": "array", "items": {"type": "string"}},
-            "recovery": {"type": "object"},
             "type": {"type": "string"},
             "wall_seconds": {"type": "number"},
             "method": {"type": "string"},

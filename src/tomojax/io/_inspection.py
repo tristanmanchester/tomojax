@@ -34,7 +34,6 @@ from tomojax._typed_arrays import (
     true_count,
     unique_int_count_map,
 )
-from tomojax.core.files import read_hdf5
 from tomojax.io._acquisition import read_acquisition
 from tomojax.io._datasets import ProjectionDataset
 from tomojax.io._inspection_types import (
@@ -529,7 +528,7 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
     """
     input_path = Path(path)
     located = None if saved_without_frames(input_path) else locate_frames(str(input_path))
-    with read_hdf5(input_path) as file:
+    with h5py.File(input_path, "r") as file:
         projection_path = None if located is None else located.stack.dataset
         dataset = None if projection_path is None else _dataset_at(file, projection_path)
         projection = _projection_report(projection_path, dataset)

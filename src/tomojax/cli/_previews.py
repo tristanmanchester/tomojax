@@ -13,7 +13,6 @@ import h5py
 import numpy as np
 
 from tomojax._typed_arrays import write_image
-from tomojax.core.files import read_hdf5
 from tomojax.io.api import (
     locate_frames,
     read_acquisition,
@@ -36,7 +35,7 @@ def preview_paths(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
         _, members = saved_npz_layout(Path(path))
         volume, projections = "volume" in members, "projections" in members
     elif h5py.is_hdf5(path):
-        with read_hdf5(path) as file:
+        with h5py.File(path, "r") as file:
             volume = isinstance(file.get(_VOLUME_PATH), h5py.Dataset)
         projections = not saved_without_frames(path)
     else:
@@ -74,7 +73,7 @@ def write_previews(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
     else:
         paths = preview_paths(path, out_dir)
         if "slice_z" in paths:
-            with read_hdf5(path) as file:
+            with h5py.File(path, "r") as file:
                 images.update(_slices(file, path))
         if "projection" in paths:
             images["projection"] = _middle_projection(_projection_samples(file_path), file_path)

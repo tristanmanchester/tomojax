@@ -15,9 +15,7 @@ import msgspec
 
 from tomojax import progress
 from tomojax.cli import envelope as e, execution as ex, operations as op, products as p
-from tomojax.cli._commit import helper
 from tomojax.cli._staging import Stages
-from tomojax.cli.mcp.ledger import activate
 from tomojax.errors import classify
 from tomojax.wire import progress as w
 from tomojax.wire.arrays import Array, Coordinates, Member, Npy, Record
@@ -79,18 +77,13 @@ class Session:
         emit: Callable[[e.Response], None],
         ready: e.Ready,
         description: e.Description,
-        *,
-        external: bool = False,
-        index: Path | None = None,
     ) -> None:
-        self.index = index or (root.parent if external else root)
-        self.external = external
         self.root = root
         self.execute = execute
         self.emit = emit
         self.description = description
         self.ready = ready
-        self.namespace = ex.PythonNamespace()
+        self.namespace: dict[str, object] = {}
         self.namespace_bytes = 0
         self.seen: set[str] = set()
         self.revisions: dict[str, int] = {}
@@ -210,7 +203,7 @@ class Session:
                 cmd,
                 channel,
                 progress.Control(),
-                Stages(self.root, self.index),
+                Stages(self.root),
                 leases,
                 pins.pop_all(),
                 resources,
@@ -378,9 +371,6 @@ class Session:
     def _commit(self, job: Job, success: ex.Success) -> p.Output:
         with ExitStack() as undo:
             product, roots = self.bind_roots(job, success, undo)
-            group = list(job.stages.outputs.values())
-            if self.external and isinstance(product, p.Files):
-                product = p.Files(product.paths, tuple(group))
             result = p.Output(product, success.info, success.manifest)
             # Encode before changing any caller-owned destination.
             encoded = msgspec.json.encode(result)
@@ -391,29 +381,9 @@ class Session:
                 )
             for token in tuple(job.stages.arrays):
                 self._publish(job, token, success.manifest, undo)
-            if isinstance(product, p.Files):
-                job.stages.outputs.clear()
-                if not self.external:
-                    try:
-                        recovery = helper(group)
-                    except OSError as err:
-                        # Recover before releasing any backup left by a killed helper.
-                        abandoned = tuple(str(Path(item.staged).parent.parent) for item in group)
-                        recovery = helper([], abandoned=abandoned)
-                        if recovery:
-                            raise OSError(f"{err}. Recovery: {recovery}") from err
-                        raise
-                    result = p.Output(
-                        p.Files(product.paths, recovery=recovery), success.info, success.manifest
-                    )
+            job.stages.commit()
             self._register_arrays(result)
             self.name_arrays(job.id, product)
-            if (
-                isinstance(job.command, op.Python)
-                and job.command.ledger
-                and isinstance(product, p.PythonResult)
-            ):
-                activate(job.command.ledger, product.handles)
             self.handles.update(roots)
             undo.pop_all()
         return result
@@ -493,7 +463,6 @@ class Session:
         try:
             with job.lifetime:
                 job.stages.temporary.close()
-                job.stages.discard()
         except Exception:
             # The commit decision is final. Report cleanup failures to the operator.
             logging.exception("Failed to dispose resources for %s", job.id)

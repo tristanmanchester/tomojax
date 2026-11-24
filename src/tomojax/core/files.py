@@ -1,4 +1,4 @@
-"""File input tracking and atomic output replacement."""
+"""Virtual HDF5 source checks and atomic output replacement."""
 
 from __future__ import annotations
 
@@ -13,30 +13,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    import h5py
-
-
-# A worker executes one Python job at a time. Its code can load data on any thread.
-_input_recorders: dict[object, set[str]] = {}
-
-
-@contextmanager
-def record_inputs(paths: set[str]) -> Iterator[None]:
-    """Collect loader inputs across all threads for the duration of a worker call."""
-    token = object()
-    _input_recorders[token] = paths
-    try:
-        yield
-    finally:
-        del _input_recorders[token]
-
-
-def read_path[T: (str, Path)](path: T) -> T:
-    """Record the resolved input at the point of use, before the caller can change directory."""
-    for paths in tuple(_input_recorders.values()):
-        paths.add(str(Path(path).resolve()))
-    return path
 
 
 def virtual_mappings(data: Any) -> Iterator[Any]:
@@ -100,66 +76,6 @@ def virtual_source_paths(data: Any) -> dict[Path, list[Any]]:
             else source_file(here, source.file_name, "HDF5_VDS_PREFIX", prefix)
         )
         sources.setdefault(path, []).append(source)
-    return sources
-
-
-@contextmanager
-def read_hdf5(path: str | Path, **options: Any) -> Iterator[h5py.File]:
-    """Open a read-only file and record the worker's complete storage dependencies."""
-    import h5py
-
-    with h5py.File(path, "r", **options) as file:
-        record_hdf5_inputs(file)
-        yield file
-
-
-def record_hdf5_inputs(file: Any) -> None:
-    """Walk links and dataset storage metadata without reading pixel arrays."""
-    import h5py
-
-    if not _input_recorders:
-        return
-    pending = hdf5_sources(file)
-    root = read_path(Path(file.filename))
-    seen = {(root.resolve(), root.parent.resolve())}
-    while pending:
-        here = read_path(pending.pop())
-        identity = (here.resolve(), here.parent.resolve())
-        if identity in seen or not here.is_file():
-            continue
-        seen.add(identity)
-        try:
-            backing = h5py.File(here, "r")
-        except OSError:
-            continue  # A dangling link has no further dependencies.
-        with backing:
-            pending.update(hdf5_sources(backing))
-
-
-def hdf5_sources(file: Any) -> set[Path]:
-    """Record raw storage and return the HDF5 files linked from this container."""
-    import h5py
-
-    sources: set[Path] = set()
-    here = Path(file.filename)
-
-    def visit(name: str, link: Any) -> None:
-        if isinstance(link, cast("Any", h5py).ExternalLink):
-            sources.add(source_file(here, link.filename, "HDF5_EXT_PREFIX"))
-        elif isinstance(link, cast("Any", h5py).HardLink):
-            data = file[name]
-            if isinstance(data, h5py.Dataset):
-                layout = cast("Any", data)  # h5py stubs omit external and virtual layouts.
-                if layout.is_virtual:
-                    sources.update(virtual_source_paths(layout))
-                if layout.external:
-                    # The opened dataset's access plist includes HDF5_EXTFILE_PREFIX
-                    # with ${ORIGIN} expanded by HDF5 itself.
-                    prefix = os.fsdecode(layout.id.get_access_plist().get_efile_prefix())
-                    for filename, _, _ in layout.external:
-                        read_path(Path(prefix) / filename)
-
-    file.visititems_links(visit)
     return sources
 
 

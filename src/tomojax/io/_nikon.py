@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
-from tomojax.core.files import read_path
 from tomojax.core.geometry.base import Detector
 from tomojax.core.geometry.cone import ConeBeam
 from tomojax.core.geometry.transforms import align_u_to_v
@@ -35,7 +34,7 @@ LOG = logging.getLogger(__name__)
 def _parameters(path: Path) -> dict[str, str]:
     parser = configparser.ConfigParser(strict=False, interpolation=None)
     parser.optionxform = str  # pyright: ignore[reportAttributeAccessIssue]
-    text = read_path(path).read_text(encoding="utf-8-sig", errors="replace")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
     parser.read_string(text if text.lstrip().startswith("[") else "[XTekCT]\n" + text)
     section = next((s for s in parser.sections() if s.lower() == "xtekct"), None)
     if section is None:
@@ -69,7 +68,7 @@ def _beam_hardening(file: Path, params: dict[str, str]) -> dict[str, object] | N
     if profile.is_file():
         found = re.search(
             r"<BeamHardeningPreset>\s*(\d+)\s*</BeamHardeningPreset>",
-            read_path(profile).read_text(encoding="utf-8-sig", errors="replace"),
+            profile.read_text(encoding="utf-8-sig", errors="replace"),
         )
         if found:
             record["preset"] = int(found.group(1))
@@ -321,7 +320,7 @@ def read_nikon(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
     """Recognize the XTekCT section by content, irrespective of the file suffix."""
 
     def matches(file: Path) -> bool:
-        with read_path(file).open("rb") as source:
+        with file.open("rb") as source:
             header = source.read(4096).decode("utf-8-sig", errors="replace")
         return header.lstrip().lower().startswith("[xtekct]")
 

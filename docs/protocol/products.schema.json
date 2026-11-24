@@ -686,52 +686,11 @@
             "type": "string",
             "minLength": 1
           }
-        },
-        "plan": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Staged"
-          },
-          "default": []
-        },
-        "recovery": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "default": {}
         }
       },
       "required": [
         "type",
         "paths"
-      ],
-      "additionalProperties": false
-    },
-    "Staged": {
-      "title": "Staged",
-      "description": "Destination-local work owned by the committer after terminal acceptance.",
-      "type": "object",
-      "properties": {
-        "destination": {
-          "type": "string",
-          "minLength": 1
-        },
-        "staged": {
-          "type": "string",
-          "minLength": 1
-        },
-        "force": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "destination",
-        "staged",
-        "force"
       ],
       "additionalProperties": false
     },
@@ -1141,14 +1100,6 @@
           "items": {
             "$ref": "#/$defs/Provenance"
           }
-        },
-        "files": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "uniqueItems": true,
-          "default": []
         }
       },
       "required": [

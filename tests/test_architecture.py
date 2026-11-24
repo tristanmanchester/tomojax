@@ -100,7 +100,7 @@ _STANDARD_OPTIONS = {"-h", "--help", "-o", "--output", "--force", "--config", "-
 # Public CLI options and the Python keyword each one is, by command. An option
 # with no Python equivalent says why it is command-line only.
 _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
-    "serve": {"--commit": "select the process that installs staged files"},
+    "serve": {},
     "mcp": {},
     "reconstruct": {
         "--dry-run": "prints the resolved reconstruction plan",

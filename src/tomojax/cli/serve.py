@@ -14,9 +14,7 @@ if TYPE_CHECKING:
 
 def build_parser() -> argparse.ArgumentParser:
     """Describe the stdin/stdout command."""
-    parser = argparse.ArgumentParser(prog="tomojax serve", description=__doc__)
-    parser.add_argument("--commit", choices=("self", "supervisor"), default="self")
-    return parser
+    return argparse.ArgumentParser(prog="tomojax serve", description=__doc__)
 
 
 @contextmanager
@@ -35,15 +33,8 @@ def protocol_pipes() -> Iterator[tuple[int, int]]:
 
 def main() -> int:
     """Start the production worker on private descriptors."""
-    args = build_parser().parse_args()
+    build_parser().parse_args()
     with protocol_pipes() as (reader, writer):
         from tomojax.cli.transport import run
 
-        if args.commit == "supervisor":
-            return run(reader, writer, external=True)
-        from tomojax.cli._commit import helper
-        from tomojax.cli.mcp.scratch import scratch, scratch_root
-
-        recovered = helper([])
-        with scratch(scratch_root("gui"), gui=True, report=recovered) as (index, _):
-            return run(reader, writer, index=index, recovery=recovered)
+        return run(reader, writer)

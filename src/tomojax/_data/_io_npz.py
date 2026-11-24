@@ -13,7 +13,7 @@ from zipfile import ZIP_STORED, ZipFile
 import numpy as np
 
 from tomojax import progress
-from tomojax.core.files import read_path, replaced_when_complete
+from tomojax.core.files import replaced_when_complete
 from tomojax.core.host_volume import release
 
 from ._frame_stack import FrameStack
@@ -157,7 +157,7 @@ class NpzFrames(FrameStack):
         if self.reader is not None:
             yield self.reader
         else:
-            with ZipFile(read_path(self.path)) as archive, archive.open(self.member) as stream:
+            with ZipFile(self.path) as archive, archive.open(self.member) as stream:
                 yield MemberReader(stream, self.compressed)
 
     def sample_chunks(self, ranges):
@@ -228,7 +228,7 @@ def npz_layout(path: Path, *, resources: ExitStack | None = None, volume_only: b
     """Describe arrays from NPY headers. An optional request scope keeps their decoders open."""
     stacks = {}
     placeholders = {}
-    with ZipFile(read_path(path)) as archive, ExitStack() as local:
+    with ZipFile(path) as archive, ExitStack() as local:
         owner = local if resources is None else resources
         for key in ("volume",) if volume_only else ("projections", "volume"):
             member = key + ".npy"
@@ -311,5 +311,5 @@ def _load_npz_dataset(
 
 def load_npz(path: str) -> LoadedNXTomo:
     """Load a compressed NPZ payload using the same typed shape as NXtomo."""
-    with ZipFile(read_path(path)) as archive:
+    with ZipFile(path) as archive:
         return LoadedNXTomo.from_dataset(_load_npz_dataset(archive))

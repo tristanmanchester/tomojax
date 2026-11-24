@@ -17,7 +17,7 @@ from tomojax._scan import frame_output_grid
 from tomojax.cli import execution as ex, operations as op
 from tomojax.cli._parameter_types import option_types
 from tomojax.core.devices import as_devices
-from tomojax.core.files import read_hdf5, validate_virtual_pixels
+from tomojax.core.files import validate_virtual_pixels
 from tomojax.errors import InvalidParameter, within
 from tomojax.wire.arrays import Hdf5, Member, Npy, Record
 
@@ -97,7 +97,7 @@ def read_reference(
         data = np.load(value.path, mmap_mode="r", allow_pickle=False)
         return array_layout(data) if shape_only else data
     if isinstance(value, Hdf5):
-        with read_hdf5(value.path) as file:
+        with h5py.File(value.path, "r") as file:
             data = explicit_dataset(file, value, name)
             return hdf5_values(data, name, shape_only=shape_only)
     if name != "volume":

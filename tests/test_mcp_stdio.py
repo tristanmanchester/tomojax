@@ -109,12 +109,9 @@ class Client:
 
 @contextmanager
 def connection(directory, *, legacy=False, overlay=False, exit_code=0):
-    env = {
-        **os.environ,
-        "XDG_CACHE_HOME": str(directory / "cache"),
-        "XDG_STATE_HOME": str(directory / "state"),
-        "CLAUDE_PROJECT_DIR": str(directory),
-    }
+    scratch = directory / "cache"
+    scratch.mkdir(exist_ok=True)
+    env = {**os.environ, "TMPDIR": str(scratch), "CLAUDE_PROJECT_DIR": str(directory)}
     cmd = [sys.executable, "-m", "tomojax.cli.main", "mcp"]
     if overlay:
         code = """
@@ -278,13 +275,14 @@ def test_open_inspect_reload_subscription_and_worker_loss(tmp_path):
         assert failed["status"] == "failed"
         assert ref in failed["error"]["message"]
         state = c.call("status")["structuredContent"]
-        assert ref in state["recovery"]["lost"]
+        assert ref in state["worker_loss"]["lost"]
         assert not state["handles"]
-        assert "lost" in c.call("control", action="close", target=ref)["content"][0]["text"]
+        closed = c.call("control", action="close", target=ref)["content"][0]["text"]
+        assert "Unknown reference" in closed
         new = c.call("open", path="scan.nxs")["structuredContent"]["handle"]
         assert new != ref
         assert new in c.call("control", action="restart")["structuredContent"]["lost"]
-    assert not list((tmp_path / "cache/tomojax/mcp").glob("worker-*"))
+    assert not list((tmp_path / "cache").glob("tomojax-mcp-*"))
 
 
 def test_task_methods_cancel_race_and_expiry(tmp_path):
@@ -410,7 +408,7 @@ def test_sigterm_reaps_a_stopped_worker_with_stdin_open(tmp_path):
         c.process.terminate()
         assert c.process.wait(timeout=10) == -signal.SIGTERM
         assert not Path(f"/proc/{worker}").exists()
-        assert not list((tmp_path / "cache/tomojax/mcp").glob("worker-*"))
+        assert not list((tmp_path / "cache").glob("tomojax-mcp-*"))
 
 
 @pytest.mark.parametrize("size", [32, pytest.param(128, marks=pytest.mark.gpu)])
@@ -638,130 +636,6 @@ def test_client_cancellation_and_task_progress_scope(tmp_path):
         c.task("cancel", task["taskId"])
         assert c.terminal(task["taskId"])["status"] == "cancelled"
         assert all(row.get("params", {}).get("progressToken") != "handed-off" for row in c.inbox)
-
-
-def start_writer(server_kind, env, dest, processes, *, paused):
-    server = subprocess.Popen(
-        [sys.executable, "-m", "tomojax.cli.main", server_kind],
-        stdin=-1,
-        stdout=-1,
-        stderr=-1,
-        text=True,
-        env={**env, "PAUSE_INSTALL": "1" if paused else ""},
-    )
-    processes.append(server)
-    c = Client(server, legacy=False)
-    if server_kind == "serve":
-        ready = c.receive("type", "ready")
-        if not paused:
-            assert str(dest) in ready["recovery"]["restored"]
-
-    def send(name, args):
-        if server_kind == "mcp":
-            return c.send("tools/call", dict(name=name, arguments=args))
-        return c.send_worker(name, args)
-
-    def end(rid):
-        if server_kind == "mcp":
-            reply = c.receive("id", rid)["result"]
-            assert not reply["isError"], reply
-            return reply["structuredContent"]
-        return c.receive("request_terminal", rid)["result"]["value"]
-
-    if not paused and server_kind == "mcp":
-        assert str(dest) in c.call("status")["structuredContent"]["recovery"]["restored"]
-    size = 6 if paused else 8
-    handle = end(send("simulate", dict(size=size)))["handle"]
-    ref = handle if server_kind == "mcp" else dict(type="member", handle=handle, member="self")
-    return server, end, send("save", dict(source=ref, path=str(dest), force=True))
-
-
-@pytest.mark.parametrize("server_kind", ["serve", "mcp"])
-def test_native_worker_child_cannot_inherit_commit_lock(tmp_path, server_kind):
-    """Kill A mid-install while its worker's native child lives. B must recover and save."""
-    import signal
-
-    import numpy as np
-
-    # Replace only the uid home for the test processes. Pause the actual
-    # committer after its first install, and fork in the numerical worker while
-    # the lock is held. The native child keeps *all* inherited descriptors.
-    (tmp_path / "sitecustomize.py").write_text("""
-import os, pwd, sys, time
-from pathlib import Path
-root = Path(os.environ["COMMIT_TEST"])
-getpwuid = pwd.getpwuid
-def lookup(uid):
-    record = list(getpwuid(uid))
-    record[5] = str(root)
-    return pwd.struct_passwd(record)
-pwd.getpwuid = lookup
-if os.environ.get("PAUSE_INSTALL"):
-    rename = Path.replace
-    def replace(path, target):
-        result = rename(path, target)
-        if Path(target) == root / 'volume.nxs':
-            (root/'committer').write_text(str(os.getpid()))
-            import signal
-            signal.raise_signal(signal.SIGSTOP)
-        return result
-    Path.replace = replace
-    if 'serve' in sys.orig_argv:
-        import ctypes, threading
-        def fork_in_worker():
-            libc = ctypes.CDLL(None)
-            fork, sleep, exit_now = libc.fork, libc.sleep, libc._exit
-            while not (root/'committer').exists():
-                time.sleep(.005)
-            child = fork()
-            if child == 0:
-                sleep(45)
-                exit_now(0)
-            (root/'child').write_text(str(child))
-        threading.Thread(target=fork_in_worker, daemon=True).start()
-""")
-    env = {
-        **os.environ,
-        "PYTHONPATH": str(tmp_path),
-        "COMMIT_TEST": str(tmp_path),
-        "XDG_CACHE_HOME": str(tmp_path / "cache"),
-        "XDG_STATE_HOME": str(tmp_path / "state"),
-        "CLAUDE_PROJECT_DIR": str(tmp_path),
-        "JAX_PLATFORMS": "cpu",
-    }
-    (dest := tmp_path / "volume.nxs").write_bytes(b"original")
-    processes = []
-
-    child = None
-    try:
-        a, _, _ = start_writer(server_kind, env, dest, processes, paused=True)
-        deadline = time.monotonic() + 20
-        while not (tmp_path / "child").exists():
-            assert a.poll() is None and time.monotonic() < deadline
-            time.sleep(0.01)
-        committer = int((tmp_path / "committer").read_text())
-        child = int((tmp_path / "child").read_text())
-        if committer != a.pid:
-            a.kill()  # The GUI worker cannot recover its failed helper ahead of B.
-        os.kill(committer, signal.SIGKILL)
-        a.wait(timeout=5)
-        b, end, rid = start_writer(server_kind, env, dest, processes, paused=False)
-        assert str(dest) in end(rid)["paths"]
-        os.kill(child, 0)
-        b.stdin.close()
-        assert b.wait(timeout=10) == 0
-        with h5py.File(dest) as f:
-            np.testing.assert_array_equal(
-                f["/entry/processing/tomojax/volume"][:], tj.simulate(size=8).phantom
-            )
-        assert not (tmp_path / ".local/state/tomojax/commits/journal.json").exists()
-    finally:
-        if child:
-            os.kill(child, signal.SIGKILL)
-        for proc in processes:
-            if proc.poll() is None:
-                proc.kill()
-            proc.wait()
 
 
 def test_slab_destination_over_stdio(tmp_path):

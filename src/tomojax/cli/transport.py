@@ -168,8 +168,6 @@ def serve(
     stdout: int,
     ready: e.Ready | Callable[[], e.Ready],
     description: e.Description,
-    external: bool = False,
-    index: Path | None = None,
 ) -> int:
     """Serve the process pipes until shutdown, EOF or loss of the output connection."""
     reader, writer = socket.socketpair()
@@ -182,9 +180,7 @@ def serve(
         writer.setblocking(False)
         box = _Outbox(writer)
         inventory = executor.submit(ready).result() if callable(ready) else ready
-        session = Session(
-            Path(root), execute, box.send, inventory, description, external=external, index=index
-        )
+        session = Session(Path(root), execute, box.send, inventory, description)
         box.send(inventory)
         running = executor.submit(session.work)
         running.add_done_callback(_executor_done)
@@ -202,7 +198,7 @@ def _executor_done(future: Future[None]) -> None:
         os._exit(1)
 
 
-def _ready(recovery: dict[str, list[str]] | None = None) -> e.Ready:
+def _ready() -> e.Ready:
     import jax
 
     from tomojax.cli._adapters import EXECUTABLE
@@ -240,18 +236,10 @@ def _ready(recovery: dict[str, list[str]] | None = None) -> e.Ready:
             *(str(kind.__struct_config__.tag) for kind in EXECUTABLE),
         ),
         inventory,
-        recovery,
     )
 
 
-def run(
-    stdin: int,
-    stdout: int,
-    *,
-    external: bool = False,
-    index: Path | None = None,
-    recovery: dict[str, list[str]] | None = None,
-) -> int:
+def run(stdin: int, stdout: int) -> int:
     """Start the worker with its production operation adapters."""
     from tomojax.cli._adapters import execute
 
@@ -259,9 +247,7 @@ def run(
         execute,
         stdin=stdin,
         stdout=stdout,
-        ready=lambda: _ready(recovery),
-        external=external,
-        index=index,
+        ready=_ready,
         description=e.Description(
             msgspec.json.decode(
                 resources.files("tomojax.cli").joinpath("parameters.json").read_bytes()

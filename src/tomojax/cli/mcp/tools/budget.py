@@ -72,7 +72,7 @@ def bounded(reply: CallToolResult, parts: Parts) -> CallToolResult:
 
 
 def retain_fields(clipped: CallToolResult, fields: dict[str, Any]) -> None:
-    """Keep identifiers, affected files and recovery guidance ahead of verbose summaries."""
+    """Keep identifiers, affected files and next steps ahead of verbose summaries."""
     data = clipped.structured_content
     assert data is not None
     priority = (
@@ -80,7 +80,6 @@ def retain_fields(clipped: CallToolResult, fields: dict[str, Any]) -> None:
         "members",
         "handles",
         "paths",
-        "recovery",
         "next",
         "kind",
         "shape",

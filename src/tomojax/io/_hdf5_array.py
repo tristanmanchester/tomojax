@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from tomojax.core.files import record_hdf5_inputs
-
 if TYPE_CHECKING:
     import h5py
 
@@ -37,7 +35,6 @@ def read_hdf5_array(
     numpy.ndarray
         The selected values, in the dataset's dtype and axis order.
     """
-    record_hdf5_inputs(dataset.file)
     key = tuple(slice(None) for _ in dataset.shape) if selection is None else selection
     chunks = dataset.chunks
     dtype = dataset.dtype

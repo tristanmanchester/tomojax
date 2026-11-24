@@ -5,7 +5,6 @@ from collections.abc import Iterator, Mapping
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import fields, is_dataclass, replace
-from pathlib import Path
 from tempfile import TemporaryFile
 import traceback
 from types import FunctionType, MappingProxyType, ModuleType
@@ -22,11 +21,9 @@ from tomojax.cli import execution as ex, products as p
 from tomojax.cli._browse import READ_BYTES, indexed, ordered_tiles, pixels
 from tomojax.cli._capture import capture
 from tomojax.cli._handles import handle, stage_array
-from tomojax.cli._options import ancestor_paths
 from tomojax.cli.envelope import INLINE_LIMIT
 from tomojax.cli.images import Panel, limits, raster
-from tomojax.cli.mcp.ledger import reserve
-from tomojax.core.files import record_hdf5_inputs, record_inputs
+from tomojax.cli.mcp.ledger import new_reference
 from tomojax.wire.arrays import Member
 from tomojax.wire.progress import Info
 
@@ -79,8 +76,6 @@ def frozen_pixels(buf, *, shared):
             return np.broadcast_to(np.array(buf[distinct], copy=True), buf.shape)
         if not isinstance(buf, np.memmap):
             return np.array(buf, copy=True)
-    if isinstance(buf, h5py.Dataset):
-        record_hdf5_inputs(buf.file)
     if buf.dtype.hasobject or 0 in buf.shape:
         return np.array(buf[()], copy=True)
     with TemporaryFile() as stream:
@@ -121,9 +116,8 @@ def snapshot(value, *, issued, dependencies, source=None):
 class Registrations:
     """All Python-created products share the job's final publication decision."""
 
-    def __init__(self, context, ledger, issued) -> None:
+    def __init__(self, context, issued) -> None:
         self.context = context
-        self.ledger = ledger
         self.issued = issued
         self.roots = []
         self.products = {}
@@ -131,7 +125,7 @@ class Registrations:
 
     def register(self, item):
         if isinstance(item, np.ndarray | jax.Array):
-            name = reserve("array", self.ledger)
+            name = new_reference("array")
             a = np.asarray(item)
             self.products[name] = p.ArrayResult(indexed(stage_array(self.context, a), a))
         else:
@@ -145,17 +139,7 @@ class Registrations:
             kind = next((kind for cls, kind in kinds.items() if isinstance(item, cls)), None)
             if not kind:
                 raise ValueError("register expects a TomoJAX object or array")
-            name = reserve(kind, self.ledger)
-            scan = item if isinstance(item, tj.Scan | tj.Frames) else item.scan
-            provenance = getattr(item, "info", {}).get("source")
-            paths = (
-                scan.source.source_path if scan is not None and scan.source else None,
-                getattr(item, "source_path", None),
-                provenance.get("path") if isinstance(provenance, Mapping) else provenance,
-            )
-            self.context.namespace.sources.update(
-                str(Path(p).resolve()) for p in paths if isinstance(p, str)
-            )
+            name = new_reference(kind)
             dependencies = set()
             frozen = snapshot(item, issued=self.issued, dependencies=dependencies)
             self.roots.append((name, replace(handle(frozen), dependencies=tuple(dependencies))))
@@ -191,7 +175,6 @@ class HandleInputs(Mapping):
         if name not in self.values_by_name:
             job = self._job() or _active.get()
             lease = job.context.leases[ref]
-            job.context.namespace.sources.update(map(str, ancestor_paths((lease.provenance,))))
             if isinstance(ref, Member):
                 item = snapshot(lease.value, issued=job.issued, dependencies=set(), source=ref)
             else:
@@ -217,8 +200,7 @@ def execute_in_namespace(cmd, context):
     namespace = context.namespace
     if cmd.reset:
         namespace.clear()
-        namespace.sources.clear()
-    registrations = Registrations(context, cmd.ledger, {})
+    registrations = Registrations(context, {})
     token = _active.set(registrations)
     namespace.update(
         tj=tj,
@@ -253,7 +235,7 @@ def execute_in_namespace(cmd, context):
 def run_python(cmd, context):
     output = []
     try:
-        with capture() as output, record_inputs(context.namespace.sources):
+        with capture() as output:
             registrations, value = execute_in_namespace(cmd, context)
     except BaseException as err:
         frames = traceback.extract_tb(err.__traceback__)
@@ -265,15 +247,11 @@ def run_python(cmd, context):
         if len(msgspec.json.encode(detail)) > INLINE_LIMIT:
             raise ValueError("Python exception too large for the worker pipe") from err
         raise ValueError(detail) from err
-    # Persistent globals can retain copies or calculated values even after close.
-    # Flatten to unique paths so repeated Python registrations have bounded lineage.
     return ex.Success(
         p.PythonResult(
             output[0], output[1], value, registrations.products, tuple(registrations.images)
         ),
         Info({}, {}),
-        p.Provenance(
-            "python", {"code": cmd.code, "reset": cmd.reset}, (), context.namespace.sources.copy()
-        ),
+        p.Provenance("python", {"code": cmd.code, "reset": cmd.reset}, ()),
         tuple(registrations.roots),
     )

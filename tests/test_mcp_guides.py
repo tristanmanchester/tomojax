@@ -62,7 +62,7 @@ def test_workflow_prompts_and_live_resources(tmp_path):
         info = json.loads(read("tomojax://describe/reconstruct")["result"]["contents"][0]["text"])
         assert info == c.call("describe", operation="reconstruct")["structuredContent"]
         c.call("control", action="close", target=ref)
-        assert "closed" in read(uri)["error"]["message"]
+        assert "Unknown reference" in read(uri)["error"]["message"]
 
 
 def test_worked_python_routes(tmp_path):

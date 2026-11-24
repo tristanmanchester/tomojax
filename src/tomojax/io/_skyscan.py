@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 
-from tomojax.core.files import read_path
 from tomojax.geometry import ConeBeam
 
 from ._acquisition import RawAcquisition, metadata_candidates
@@ -16,12 +15,12 @@ from ._tiff import TiffFrames, tiff_files
 
 
 def _parameters(path: Path) -> configparser.ConfigParser | None:
-    with read_path(path).open("rb") as source:
+    with path.open("rb") as source:
         header = source.read(4096).decode("utf-8-sig", errors="replace")
     if not header.lstrip().startswith("[System]") or "Scanner=" not in header:
         return None
     parser = configparser.ConfigParser(interpolation=None)
-    parser.read_string(read_path(path).read_text(encoding="utf-8-sig", errors="replace"))
+    parser.read_string(path.read_text(encoding="utf-8-sig", errors="replace"))
     if not parser["System"].get("Scanner", "").lower().startswith("skyscan"):
         return None
     return parser
@@ -70,7 +69,7 @@ def _beam_hardening(file: Path, params: configparser.ConfigParser) -> dict[str, 
     log = file.with_name(f"{acquisition['Filename Prefix'].strip()}_rec.log")
     if log.is_file():
         reconstruction = configparser.ConfigParser(interpolation=None)
-        reconstruction.read_string(read_path(log).read_text(encoding="utf-8-sig", errors="replace"))
+        reconstruction.read_string(log.read_text(encoding="utf-8-sig", errors="replace"))
         for section in reconstruction.sections():
             for key, value in reconstruction[section].items():
                 if key.startswith("beam hardening"):

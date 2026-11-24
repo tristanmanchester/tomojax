@@ -11,7 +11,7 @@ from typing import Any, ClassVar, cast
 import h5py
 import numpy as np
 
-from tomojax.core.files import read_hdf5, validate_virtual_pixels
+from tomojax.core.files import validate_virtual_pixels
 
 from ._frame_stack import FrameStack
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
@@ -40,7 +40,7 @@ class Hdf5Frames(FrameStack):
     def open(cls, path: str, dataset: str) -> Hdf5Frames:
         """Every frame of ``dataset`` in ``path``."""
         path = str(Path(path).absolute())  # later reads must not depend on the working directory
-        with read_hdf5(path) as file:
+        with h5py.File(path, "r") as file:
             data = file[dataset]
             if not isinstance(data, h5py.Dataset) or data.ndim not in (2, 3):
                 raise ValueError(f"{path}:{dataset} is not a 2-D sinogram or 3-D stack of frames")
@@ -67,7 +67,7 @@ class Hdf5Frames(FrameStack):
         # Chunk caching can amplify a narrow read to the entire chunk even with
         # no compression. Filtered/virtual datasets retain their normal cache.
         cache = 0 if self._efficient_row_windows else None
-        with read_hdf5(self.path, rdcc_nbytes=cache) as file:
+        with h5py.File(self.path, "r", rdcc_nbytes=cache) as file:
             data: Any = file[self.dataset]
             if indices.size == 0:
                 return np.empty((0, self.rows, self.cols), self.dtype)
@@ -291,7 +291,7 @@ def locate_frames(
     OSError
         If the file cannot be opened.
     """
-    with read_hdf5(path) as file:
+    with h5py.File(path, "r") as file:
         where = data_path or next((p for p in _FRAME_PATHS if _dataset(file, p) is not None), None)
         gda = _gda_paths(file) if where is None else None
         where = where or (gda[0] if gda is not None else None)

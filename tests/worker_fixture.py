@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import resource
-import signal
 import socket
 import sys
 
@@ -127,24 +126,7 @@ class Stub:
     def inspect(self, command, context):
         if command.path == "wait":
             self.wait(context, "inspect", "input", None, "")
-        elif command.path == "detached-child":
-            read_fd, write_fd = os.pipe()
-            pid = os.fork()
-            if pid == 0:
-                os.setsid()
-                os.write(write_fd, b"D")
-                signal.pause()
-                os._exit(0)
-            os.close(write_fd)
-            assert os.read(read_fd, 1) == b"D"
-            os.close(read_fd)
-            return p.Inspection({"pid": pid})
         elif command.path == "executor-exit":
-            # Retain stdout in a descendant. The supervisor must notice leader
-            # exit and reap the group independently of EOF on the protocol pipe.
-            if os.fork() == 0:
-                signal.pause()
-                os._exit(0)
             raise SystemExit(3)
         elif command.path == "stderr":
             os.write(2, b"x" * (2 * 1024 * 1024))
@@ -166,7 +148,7 @@ class Stub:
         return p.Inspection({"path": command.path})
 
 
-def worker(port, *, external=False):
+def worker(port):
     files = Path(__file__).resolve().parents[1] / "docs/protocol/transcripts/session.jsonl"
     ready = msgspec.convert(json.loads(files.read_text().splitlines()[0]), type=e.Ready)
     return serve(
@@ -175,10 +157,9 @@ def worker(port, *, external=False):
         stdout=1,
         ready=ready,
         description=e.Description({"large": "x" * 32768}),
-        external=external,
     )
 
 
 if __name__ == "__main__":
     with socket.socket(fileno=int(sys.argv[1])) as port:
-        raise SystemExit(worker(port, external="--external" in sys.argv))
+        raise SystemExit(worker(port))

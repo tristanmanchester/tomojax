@@ -7,7 +7,6 @@ from pathlib import Path
 import h5py
 
 from tomojax._typed_arrays import numpy_float32_array, write_image
-from tomojax.core.files import read_hdf5
 from tomojax.recon.quicklook import scale_to_uint8
 
 type PathLike = str | Path
@@ -53,7 +52,7 @@ def save_projection_quicklook(input_path: PathLike, output_path: PathLike) -> Pa
     """
     in_path = Path(input_path)
     out_path = Path(output_path)
-    with read_hdf5(in_path) as file:
+    with h5py.File(in_path, "r") as file:
         dataset = _projection_dataset(file)
         if dataset is None:
             raise KeyError("Could not find projections dataset under /entry")

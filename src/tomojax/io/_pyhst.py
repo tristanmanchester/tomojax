@@ -12,7 +12,6 @@ from typing import Any
 
 import numpy as np
 
-from tomojax.core.files import read_path
 from tomojax.geometry import Detector, Grid
 
 from ._acquisition import RawAcquisition
@@ -21,7 +20,7 @@ from ._edf import EdfFrames
 
 
 def _parameters(path: Path) -> dict[str, str] | None:
-    with read_path(path).open("rb") as file:
+    with path.open("rb") as file:
         text = file.read(65536).decode("utf-8", errors="replace")
     fields = {
         key.strip().upper(): value.split("#", 1)[0].strip()
@@ -135,7 +134,7 @@ def read_pyhst(path: Path) -> RawAcquisition | None:
         raise ValueError(f"{path}: EDF image dimensions disagree with PyHST geometry")
     angle_file = fields.get("ANGLES_FILE", "None").strip("'\"")
     if angle_file != "None":
-        angles = np.loadtxt(read_path(_path(path, angle_file)), dtype=np.float32, ndmin=1)
+        angles = np.loadtxt(_path(path, angle_file), dtype=np.float32, ndmin=1)
     flats, darks, positions, view_positions, white = _calibration(path, fields, indices)
     record = ProjectionDataset(
         projections=np.broadcast_to(np.float32(0), counts.shape),

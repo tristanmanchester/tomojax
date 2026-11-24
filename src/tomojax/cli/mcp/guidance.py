@@ -85,7 +85,7 @@ def install_guidance(server: MCPServer, supervisor: Supervisor) -> None:
 
     @server.resource("tomojax://handle/{id}", mime_type="application/json")
     async def handle(id: str) -> dict[str, object]:  # noqa: A002 - SDK binds the URI variable by name.
-        """Read summary and provenance on the event loop that owns the SQLite ledger."""
+        """Read a live handle's summary and provenance."""
         try:
             record = supervisor.ledger.lookup(id)
         except ValueError as err:

@@ -21,7 +21,6 @@ from tomojax.cli._display import plane_windows
 from tomojax.cli._frame_reads import frame_pixels
 from tomojax.cli._handles import stage_array
 from tomojax.cli._results import disk_volume, stored_grid
-from tomojax.core.files import read_hdf5
 from tomojax.core.host_volume import host_array, release
 from tomojax.errors import InvalidParameter
 from tomojax.io.projection_layout import saved_npz_layout
@@ -61,7 +60,7 @@ def source_array(
             yield volume
         return
     if isinstance(source, Hdf5):
-        with read_hdf5(path) as file:
+        with h5py.File(path, "r") as file:
             data = explicit_dataset(file, source, "source")
             if (
                 "/" + source.dataset.lstrip("/") == p.VOLUME_DATASET
@@ -81,7 +80,7 @@ def source_array(
 def saved_volume(path: Path, field: str) -> Iterator[tuple[Any, Array]]:
     """Open only the volume and its registration in logical voxel order."""
     if h5py.is_hdf5(path):
-        with read_hdf5(path) as file:
+        with h5py.File(path, "r") as file:
             data = file.get(p.VOLUME_DATASET)
             if isinstance(data, h5py.Dataset):
                 grid, _, geom_meta, axes = stored_grid(file, path)

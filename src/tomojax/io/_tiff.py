@@ -14,7 +14,6 @@ import numpy as np
 from tifffile import TiffFile
 
 from tomojax._data import FrameStack
-from tomojax.core.files import read_path
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -133,9 +132,7 @@ class TiffFrames(FrameStack):
             # Some filesystems advertise multi-MiB blocks. Default buffering would
             # prefetch that much pixel data just to inspect each small TIFF header.
             with (
-                read_path(file).open(
-                    "rb", buffering=min(DEFAULT_BUFFER_SIZE, _BUFFER_LIMIT)
-                ) as stream,
+                file.open("rb", buffering=min(DEFAULT_BUFFER_SIZE, _BUFFER_LIMIT)) as stream,
                 TiffFile(stream) as tiff,
             ):
                 for index, page in enumerate(tiff.pages):
@@ -188,9 +185,7 @@ class TiffFrames(FrameStack):
             # Keep the same bounded read-ahead for sparse windows; large segment
             # reads still pass directly through BufferedReader without subdivision.
             with (
-                read_path(file).open(
-                    "rb", buffering=min(DEFAULT_BUFFER_SIZE, _BUFFER_LIMIT)
-                ) as stream,
+                file.open("rb", buffering=min(DEFAULT_BUFFER_SIZE, _BUFFER_LIMIT)) as stream,
                 TiffFile(stream) as tiff,
             ):  # one open per run of pages in a file
                 for destination, index in group:

@@ -38,7 +38,7 @@
     "align": 19,
     "export": 7,
     "simulate": 19,
-    "serve": 2,
+    "serve": 1,
     "mcp": 1
   },
   "long_files": {
@@ -56,17 +56,17 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 6113,
+    "(modules)": 6111,
     "_data": 2391,
     "alignment": 4672,
     "backends": 273,
-    "cli": 10257,
-    "core": 10116,
+    "cli": 9659,
+    "core": 10037,
     "corrections": 3203,
     "datasets": 1069,
     "forward": 404,
     "geometry": 908,
-    "io": 4060,
+    "io": 4038,
     "motion": 153,
     "nuisance": 232,
     "recon": 15035,
@@ -74,7 +74,7 @@
   },
   "cuda_kernels": 47,
   "cuda_switches": 34,
-  "environment_reads": 23,
+  "environment_reads": 21,
   "suppressions": {
     "noqa": 5,
     "type: ignore": 11,
@@ -82,6 +82,7 @@
   },
   "complex_functions": [
     "src/tomojax/cli/_adapters.py::C901::execute",
+    "src/tomojax/cli/_staging.py::C901::install",
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
     "src/tomojax/core/_logging.py::PLR0911::format_duration",
     "src/tomojax/core/devices.py::C901::sum_batches",

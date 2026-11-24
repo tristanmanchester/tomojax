@@ -138,20 +138,10 @@ class Region(Record, tag="region"):
     arrays: dict[str, Array]
 
 
-class Staged(Record):
-    """Destination-local work owned by the committer after terminal acceptance."""
-
-    destination: Id
-    staged: Id
-    force: bool
-
-
 class Files(Record, tag="files"):
     """All committed output destinations, including adjacent manifests."""
 
     paths: tuple[Id, ...]
-    plan: tuple[Staged, ...] = ()
-    recovery: dict[str, list[str]] = msgspec.field(default_factory=dict)
 
 
 class PythonResult(Record, tag="python"):
@@ -218,13 +208,12 @@ class Validated(Record, tag="validated"):
     details: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
-class Provenance(Record, omit_defaults=True):
+class Provenance(Record):
     """Ordered input tree, preserving repeated inputs to combine and their histories."""
 
     operation: Id
     parameters: dict[str, Any]
     inputs: tuple[Provenance, ...]
-    files: set[str] = msgspec.field(default_factory=set)
 
 
 type HandleProduct = Scan | Frames | Reconstruction | Alignment | Simulation | Region

@@ -349,23 +349,6 @@
           "items": {
             "$ref": "#/$defs/Device"
           }
-        },
-        "recovery": {
-          "anyOf": [
-            {
-              "type": "object",
-              "additionalProperties": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         }
       },
       "required": [

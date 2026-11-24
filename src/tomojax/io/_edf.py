@@ -8,7 +8,6 @@ from pathlib import Path
 import numpy as np
 
 from tomojax._data import FrameStack
-from tomojax.core.files import read_path
 
 _TYPES = {
     "UnsignedByte": "u1",
@@ -31,7 +30,7 @@ _TYPES = {
 
 def edf_header(path: Path) -> tuple[dict[str, str], int]:
     """Read an EDF ASCII header; no binary image data is decoded."""
-    with read_path(path).open("rb") as stream:
+    with path.open("rb") as stream:
         header = stream.read(512)
         if not header.lstrip().startswith(b"{"):
             raise ValueError(f"{path} is not an EDF image")
@@ -95,7 +94,7 @@ class EdfFrames(FrameStack):
         result = np.empty((len(indices), self.rows, self.cols), self.dtype)
         for destination, index in enumerate(indices):
             pixels = np.memmap(
-                read_path(self.files[index]),
+                self.files[index],
                 mode="r",
                 dtype=self.dtype,
                 offset=self.offsets[index],

@@ -16,7 +16,6 @@ from tomojax.cli._options import add_output, check_paths
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli._results import stored_grid
 from tomojax.cli.products import VOLUME_DATASET
-from tomojax.core.files import read_hdf5
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -95,7 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         outputs = [out, out.with_suffix(".json")] if raw else [out]
         check_paths(parser, inputs=[data], outputs=outputs, force=cast("bool", args.force))
         registered = {}
-        with read_hdf5(data) as handle:
+        with h5py.File(data, "r") as handle:
             dataset = handle.get(VOLUME_DATASET)
             if not isinstance(dataset, h5py.Dataset) or dataset.ndim != 3:
                 raise ValueError(

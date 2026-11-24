@@ -41,7 +41,6 @@ from tomojax.cli._plans import plan_product
 from tomojax.cli._results import scan_axes, unit_of
 from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.array_ops import check_binning
-from tomojax.core.files import read_hdf5, record_inputs
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
 from tomojax.wire.progress import Event, Preview
@@ -96,30 +95,25 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
             except BaseException as err:
                 raise ValueError(str(err)) from err
         manifest = provenance(command, operation, context)
-        with record_inputs(manifest.files):
-            if isinstance(operation, op.Plane):
-                if not isinstance(command, op.Validate):
-                    return ex.browse_plane(operation, context)
-                ex.plane_source(operation, context)
-                item = p.Validated()
-            else:
-                admission = Admission(
-                    context,
-                    manifest,
-                    isinstance(command, op.Plan),
-                    isinstance(command, op.Validate),
-                )
-                work = admission.prepare(operation)
-                item = (
-                    p.Validated(admission.details) if isinstance(command, op.Validate) else work()
-                )
+        if isinstance(operation, op.Plane):
+            if not isinstance(command, op.Validate):
+                return ex.browse_plane(operation, context)
+            ex.plane_source(operation, context)
+            item = p.Validated()
+        else:
+            admission = Admission(
+                context,
+                manifest,
+                isinstance(command, op.Plan),
+                isinstance(command, op.Validate),
+            )
+            work = admission.prepare(operation)
+            item = p.Validated(admission.details) if isinstance(command, op.Validate) else work()
         context.control.checkpoint()
         for snapshot in sample():
             context.snapshot(snapshot)
         info = result_info(item)
         if isinstance(item, p.Files):
-            # A lazy read during staging can resolve additional backing files.
-            check_destinations(set(ancestor_paths((manifest,))), map(Path, item.paths), force=True)
             info = admission.details
         summary = ex.summarise(info, externalise=diagnostic)
         if isinstance(item, tj.Scan | tj.Frames | tj.Reconstruction | tj.Alignment | tj.Simulation):
@@ -191,7 +185,7 @@ def saved_storage(path: str) -> Hdf5 | None:
     """Use a saved dataset directly only when it has canonical in-memory axis order."""
     if not h5py.is_hdf5(path):
         return None
-    with read_hdf5(path) as file:
+    with h5py.File(path, "r") as file:
         axes = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
         return Hdf5(path, VOLUME_DATASET) if axes in ("zyx", b"zyx") else None
 
