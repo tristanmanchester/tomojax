@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import resource
+import signal
 import socket
 import sys
 
@@ -126,6 +127,15 @@ class Stub:
     def inspect(self, command, context):
         if command.path == "wait":
             self.wait(context, "inspect", "input", None, "")
+        elif command.path == "executor-exit":
+            # Retain stdout in a descendant. The supervisor must notice leader
+            # exit and reap the group independently of EOF on the protocol pipe.
+            if os.fork() == 0:
+                signal.pause()
+                os._exit(0)
+            raise SystemExit(3)
+        elif command.path == "stderr":
+            os.write(2, b"x" * (2 * 1024 * 1024))
         elif command.path == "ticks":
             for done in range(1, 100):
                 context.event(w.Advanced(2, 1, done, done, 99, {}, None))

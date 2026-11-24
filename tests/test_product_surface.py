@@ -103,6 +103,7 @@ def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None
         "export",
         "simulate",
         "serve",
+        "mcp",
     )
     assert all(command.name in product_command_names() for command in PRODUCT_COMMANDS)
     assert main(["--help"]) == 0
@@ -134,8 +135,8 @@ def test_product_command_help_has_no_dev_story(capsys: pytest.CaptureFixture[str
         assert "par" + "ity" not in lowered
         # One shape for every command: INPUT, then -o OUTPUT guarded by --force.
         usage = captured.out.split("\n\n", 1)[0]
-        if command == "serve":
-            assert usage == "usage: tomojax serve [-h]"
+        if command in {"serve", "mcp"}:
+            assert usage == f"usage: tomojax {command} [-h]"
             continue
         if command != "simulate":
             assert "INPUT" in usage

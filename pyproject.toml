@@ -36,6 +36,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = ["mcp>=2.3,<3"]
 cpu = [
     "jax>=0.11.2",
 ]
@@ -71,6 +72,7 @@ benchmark = [
     "trimesh>=4,<5",
 ]
 dev = [
+    "mcp>=2.3,<3",  # Exercise the optional server in the development gates.
     "basedpyright>=1.34,<2",
     "import-linter>=2,<3",
     "numpydoc>=1.11,<2",

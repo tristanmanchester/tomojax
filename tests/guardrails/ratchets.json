@@ -38,7 +38,8 @@
     "align": 19,
     "export": 7,
     "simulate": 19,
-    "serve": 1
+    "serve": 1,
+    "mcp": 1
   },
   "long_files": {
     "src/tomojax/core/cone.py": 826,
@@ -60,7 +61,7 @@
     "_data": 2153,
     "alignment": 4670,
     "backends": 273,
-    "cli": 5752,
+    "cli": 7016,
     "core": 9917,
     "corrections": 3139,
     "datasets": 1069,
@@ -74,9 +75,9 @@
   },
   "cuda_kernels": 47,
   "cuda_switches": 34,
-  "environment_reads": 18,
+  "environment_reads": 22,
   "suppressions": {
-    "noqa": 3,
+    "noqa": 4,
     "type: ignore": 11,
     "pyright: ignore": 12
   },
@@ -97,7 +98,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 65,
+    "tiny": 66,
     "forwarders": 5,
     "chained": 4
   },
@@ -115,5 +116,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 130
+  "test_private_imports": 131
 }
