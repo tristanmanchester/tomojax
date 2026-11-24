@@ -11,12 +11,15 @@ from typing import Any, ClassVar, cast
 import h5py
 import numpy as np
 
+from tomojax.core.files import read_path
+
 from ._frame_stack import FrameStack
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
 
 
 def _check_virtual(data: Any, checked: set[tuple[str, str]] | None = None) -> None:
     """Do not let HDF5's VDS fill value stand in for absent detector pixels."""
+    _ = read_path(str(data.file.filename))  # the dataset may be an external link
     if not data.is_virtual:
         return
     checked = set() if checked is None else checked
@@ -33,7 +36,7 @@ def _check_virtual(data: Any, checked: set[tuple[str, str]] | None = None) -> No
         sources.setdefault(path, []).append(source)
     for path, mappings in sources.items():
         try:
-            with h5py.File(path, "r") as backing:
+            with h5py.File(read_path(path), "r") as backing:
                 for source in mappings:
                     pixels = cast(Any, backing[source.dset_name])
                     if source.src_space.get_select_type() == cast(Any, h5py).h5s.SEL_ALL:
@@ -75,7 +78,7 @@ class Hdf5Frames(FrameStack):
     def open(cls, path: str, dataset: str) -> Hdf5Frames:
         """Every frame of ``dataset`` in ``path``."""
         path = str(Path(path).absolute())  # later reads must not depend on the working directory
-        with h5py.File(path, "r") as file:
+        with h5py.File(read_path(path), "r") as file:
             data = file[dataset]
             if not isinstance(data, h5py.Dataset) or data.ndim not in (2, 3):
                 raise ValueError(f"{path}:{dataset} is not a 2-D sinogram or 3-D stack of frames")
@@ -102,7 +105,7 @@ class Hdf5Frames(FrameStack):
         # Chunk caching can amplify a narrow read to the entire chunk even with
         # no compression. Filtered/virtual datasets retain their normal cache.
         cache = 0 if self._efficient_row_windows else None
-        with h5py.File(self.path, "r", rdcc_nbytes=cache) as file:
+        with h5py.File(read_path(self.path), "r", rdcc_nbytes=cache) as file:
             data: Any = file[self.dataset]
             if indices.size == 0:
                 return np.empty((0, self.rows, self.cols), self.dtype)
@@ -315,7 +318,7 @@ def locate_frames(
     OSError
         If the file cannot be opened.
     """
-    with h5py.File(path, "r") as file:
+    with h5py.File(read_path(path), "r") as file:
         where = data_path or next((p for p in _FRAME_PATHS if _dataset(file, p) is not None), None)
         gda = _gda_paths(file) if where is None else None
         where = where or (gda[0] if gda is not None else None)

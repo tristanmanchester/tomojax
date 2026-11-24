@@ -23,7 +23,7 @@ from tomojax.cli._results import disk_volume, scan_axes, stored_grid
 from tomojax.core.registration import recorded_length_unit
 from tomojax.errors import InvalidParameter
 from tomojax.io import build_geometry_from_dataset_metadata
-from tomojax.io.api import load_nxtomo, mapped_npz
+from tomojax.io.api import load_nxtomo, locate_frames, mapped_npz
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage, Uniform
 
 READ_BYTES = 16 << 20
@@ -56,10 +56,12 @@ def source_array(
         return
     path = Path(source.path)
     if isinstance(source, op.PathInput) and h5py.is_hdf5(path):
+        if member == "projections":
+            stack = locate_frames(str(path)).stack
+            yield stack, indexed(Hdf5(str(path), stack.dataset), stack), {}
+            return
         with h5py.File(path, "r") as file:
-            if member == "projections":
-                source = Hdf5(str(path), "/entry/instrument/detector/data")
-            elif member == "volume" or p.VOLUME_DATASET in file:
+            if member == "volume" or p.VOLUME_DATASET in file:
                 source = Hdf5(str(path), p.VOLUME_DATASET)
     if isinstance(source, op.PathInput):
         yield from saved_array(path, member)

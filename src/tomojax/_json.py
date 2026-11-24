@@ -9,6 +9,8 @@ import math
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from tomojax.core.files import read_path
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -150,7 +152,7 @@ def read_json_object(path: Path) -> dict[str, JsonValue]:
     if not path.exists():
         raise FileNotFoundError(path)
     try:
-        data = cast("object", json.loads(path.read_text(encoding="utf-8")))
+        data = cast("object", json.loads(read_path(path).read_text(encoding="utf-8")))
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid JSON in {path}: {exc.msg}") from exc
     if not isinstance(data, dict):

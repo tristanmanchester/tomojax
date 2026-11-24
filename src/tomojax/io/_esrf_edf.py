@@ -9,6 +9,8 @@ from xml.etree import ElementTree
 
 import numpy as np
 
+from tomojax.core.files import read_path
+
 from ._acquisition import metadata_candidates
 from ._datasets import ProjectionDataset
 from ._edf import EdfFrames
@@ -20,7 +22,7 @@ if TYPE_CHECKING:
 def _metadata(path: Path) -> dict[str, str] | None:
     if not path.is_file():
         return None
-    with path.open("rb") as stream:
+    with read_path(path).open("rb") as stream:
         head = stream.read(65536)
     if head.lstrip().startswith(b"<"):
         try:

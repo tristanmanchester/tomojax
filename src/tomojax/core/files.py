@@ -1,4 +1,4 @@
-"""Files written whole: a write moves onto its name only once complete."""
+"""File input tracking and atomic output replacement."""
 
 from __future__ import annotations
 
@@ -12,6 +12,28 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+# A worker executes one Python job at a time. Its code can load data on any thread.
+_input_recorders: dict[object, set[Path]] = {}
+
+
+@contextmanager
+def record_inputs(paths: set[Path]) -> Iterator[None]:
+    """Collect loader inputs across all threads for the duration of a worker call."""
+    token = object()
+    _input_recorders[token] = paths
+    try:
+        yield
+    finally:
+        del _input_recorders[token]
+
+
+def read_path[T: (str, Path)](path: T) -> T:
+    """Record the resolved input at the point of use, before the caller can change directory."""
+    for paths in tuple(_input_recorders.values()):
+        paths.add(Path(path).resolve())
+    return path
 
 
 @contextmanager

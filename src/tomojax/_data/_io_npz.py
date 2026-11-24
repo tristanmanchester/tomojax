@@ -11,7 +11,7 @@ from zipfile import ZipFile
 import numpy as np
 
 from tomojax import progress
-from tomojax.core.files import replaced_when_complete
+from tomojax.core.files import read_path, replaced_when_complete
 
 from ._io_helpers import sizes_of
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata
@@ -98,7 +98,7 @@ def _load_npz_dataset(
 
 def load_npz(path: str) -> LoadedNXTomo:
     """Load a compressed NPZ payload using the same typed shape as NXtomo."""
-    with ZipFile(path) as archive:
+    with ZipFile(read_path(path)) as archive:
         return LoadedNXTomo.from_dataset(_load_npz_dataset(archive))
 
 
@@ -124,7 +124,7 @@ def mapped_npz(path: str, *, member: str | None = None) -> Iterator[LoadedNXTomo
     ValueError
         If the array or its saved volume axis declaration is invalid.
     """
-    with ZipFile(path) as archive, tempfile.TemporaryDirectory() as directory:
+    with ZipFile(read_path(path)) as archive, tempfile.TemporaryDirectory() as directory:
         key = member or ("volume" if "volume.npy" in archive.namelist() else "projections")
         if key + ".npy" not in archive.namelist():
             raise ValueError(f"{path}: no {key} array")

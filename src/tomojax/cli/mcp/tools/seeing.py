@@ -108,6 +108,7 @@ def plane(
     dim: int | None = None,
     index: int = 0,
     source_index: int | None = None,
+    sampling: tuple[str, ...] = (),
     roi: tuple[tuple[int, int], ...] | None = None,
 ) -> Panel:
     """Label the sampled plane in its own registration."""
@@ -137,7 +138,7 @@ def plane(
         a["coordinates"]["type"] == "uniform" for a in axes
     ):
         aspect = abs(axes[0]["coordinates"]["spacing"] / axes[1]["coordinates"]["spacing"])
-    return Panel(title, pixels, tuple(labels), array["unit"], aspect, array["domain"])
+    return Panel(title, pixels, (*labels, *sampling), array["unit"], aspect, array["domain"])
 
 
 def render(panels: list[Panel]) -> CallToolResult:
@@ -290,6 +291,18 @@ async def series(g: Generation, command: Object, mode: str) -> CallToolResult:
         return reply
 
 
+def display_sampling(
+    roi: list[tuple[int, int]], strides: tuple[int, ...]
+) -> tuple[list[int], tuple[str, ...]]:
+    """Bound display reads to 512 samples per axis on the requested sampling grid."""
+    factors = tuple(
+        ceil(len(range(lo, hi, step)) / 512) for (lo, hi), step in zip(roi, strides, strict=True)
+    )
+    steps = [step * factor for step, factor in zip(strides, factors, strict=True)]
+    label = f"stride {strides}, display subsampling {factors}"
+    return steps, (label,) if max(*strides, *factors) > 1 else ()
+
+
 async def plane_views(
     g: Generation, command: Object, args: View, meta: Object, other: tuple[Object, list[int]] | None
 ) -> CallToolResult:
@@ -316,13 +329,12 @@ async def plane_views(
         lo, hi = selected[d]
         if not 0 <= lo < hi <= meta["shape"][d]:
             raise ValueError(f"roi outside {meta['shape']}")
-        index = (lo + hi) // 2 if args.index is None else args.index
+        indices = range(lo, hi, strides[d])
+        index = indices[len(indices) // 2] if args.index is None else args.index
         if not lo <= index < hi:
             raise ValueError(f"index {index} outside {axis} interval [{lo}, {hi})")
         selected[d] = (index, index + 1)
-        stride = [
-            max(step, ceil((b - a) / 512)) for step, (a, b) in zip(strides, selected, strict=True)
-        ]
+        stride, sampling = display_sampling(selected, strides)
         read = {**command, "roi": selected, "stride": stride}
         async with temporary(g, read) as v:
             a = v["array"]
@@ -341,7 +353,7 @@ async def plane_views(
                 async with temporary(g, read_b) as w:
                     pixels = pixels.astype(float) - load(w["array"]).transpose(np.argsort(order))
                     title += " minus " + str(args.other)
-            panels.append(plane(a, pixels, title, dim=d, source_index=index))
+            panels.append(plane(a, pixels, title, dim=d, source_index=index, sampling=sampling))
     return await asyncio.to_thread(render, panels)
 
 

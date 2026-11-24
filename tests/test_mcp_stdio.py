@@ -894,3 +894,36 @@ def test_project_and_backproject_select_members_of_saved_npz(tmp_path):
         assert call("evaluate", source="sim.npz", **settings)["scores"][0]["mse"] == pytest.approx(
             expected_score
         )
+
+
+def test_backproject_discovers_nexus_projections(tmp_path):
+    import numpy as np
+
+    path = tmp_path / "simulation.nxs"
+    sim = tj.simulate(size=8, n_views=12)
+    tj.save(path, sim)
+    with h5py.File(path, "r+") as file:
+        del file["/entry/instrument/detector/data"]
+        file["other"] = np.zeros_like(sim.scan.projections)
+    with connection(tmp_path) as c:
+        scan = c.call("open", kind="scan", path=str(path))["structuredContent"]["handle"]
+        for src, expected in ((str(path), True), (f"{path}::/other", False)):
+            reply = c.call("backproject", source=scan, projections=src)
+            assert not reply["isError"], reply
+            array = reply["structuredContent"]["handle"]
+            value = c.call("python", code=f"bool(np.any(handles[{array!r}]))")
+            assert value["structuredContent"]["value"] is expected
+
+
+def test_projection_preview_keeps_requested_stride(tmp_path):
+    import numpy as np
+
+    with h5py.File(tmp_path / "stripes.h5", "w") as file:
+        file["data"] = np.tile(np.arange(1536) % 2, (1, 3, 1))
+    with connection(tmp_path) as c:
+        selected = dict(source="stripes.h5::/data", stride=[1, 1, 2])
+        stats = c.call("view", mode="statistics", **selected)["structuredContent"]
+        assert stats["mean"] == 0
+        (panel,) = c.call("view", mode="projection", **selected)["structuredContent"]["panels"]
+        assert panel["intensity_limits"] == [0, 0]
+        assert "stride (1, 1, 2), display subsampling (1, 1, 2)" in panel["labels"]

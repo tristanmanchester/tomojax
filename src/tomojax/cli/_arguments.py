@@ -11,7 +11,7 @@ import numpy as np
 
 import tomojax as tj
 from tomojax.cli import execution as ex, operations as op
-from tomojax.cli._browse import source_array
+from tomojax.cli._browse import pixels, source_array
 from tomojax.cli._parameter_types import option_types
 from tomojax.core.devices import as_devices
 from tomojax.errors import InvalidParameter, within
@@ -75,7 +75,7 @@ def read_reference(
             value = pinned
         return np.load(value.path, mmap_mode="r", allow_pickle=False)
     with source_array(value, context, member=name) as (data, meta, _):
-        return np.asarray(data[(slice(None),) * len(meta.shape)])
+        return pixels(data, tuple(map(range, meta.shape)))
 
 
 def source(

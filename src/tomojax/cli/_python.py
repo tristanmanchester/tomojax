@@ -25,6 +25,7 @@ from tomojax.cli._handles import handle, stage_array
 from tomojax.cli._options import ancestor_paths
 from tomojax.cli.images import Panel, limits, montage
 from tomojax.cli.mcp.ledger import reserve
+from tomojax.core.files import record_inputs
 from tomojax.wire.arrays import Member
 from tomojax.wire.progress import Info
 
@@ -235,7 +236,7 @@ def execute_in_namespace(cmd, context):
 def run_python(cmd, context):
     output = []
     try:
-        with capture() as output:
+        with capture() as output, record_inputs(context.namespace.sources):
             registrations, value = execute_in_namespace(cmd, context)
     except BaseException as err:
         frames = traceback.extract_tb(err.__traceback__)

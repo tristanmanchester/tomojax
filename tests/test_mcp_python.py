@@ -333,3 +333,37 @@ subset.views""",
         registered = python(c, "register(subset)")["value"]
         path.unlink()
         assert python(c, f"handles[{registered!r}].counts[0].tolist()")["value"] == [[9, 9], [9, 9]]
+
+
+def test_combined_scan_protects_both_python_inputs(tmp_path):
+    import tomojax as tj
+
+    scan = tj.simulate(size=8, n_views=12, geometry="cone").scan
+    for name in ("a.nxs", "b.nxs"):
+        tj.save(tmp_path / name, scan)
+    with connection(tmp_path) as c:
+        derived = python(c, "register(tj.Scan.combine([tj.load('a.nxs'), tj.load('b.nxs')]))")[
+            "value"
+        ]
+        for name in ("a.nxs", "b.nxs"):
+            reply = c.call("save", source=derived, path=name, force=True)
+            assert reply["isError"] and "differ from input" in reply["content"][0]["text"]
+            assert len(tj.load(tmp_path / name).angles) == 12
+
+
+def test_directly_imported_loader_protects_registered_scan(tmp_path):
+    import tomojax as tj
+
+    tj.save(tmp_path / "data.npz", tj.simulate(size=8, n_views=12).scan)
+    with connection(tmp_path) as c:
+        python(c, "from tomojax.io import load_dataset as read")
+        derived = python(
+            c,
+            """from concurrent.futures import ThreadPoolExecutor
+with ThreadPoolExecutor(1) as pool:
+    pixels = pool.submit(read, 'data.npz').result().projections
+geometry = tj.simulate(size=8, n_views=12).scan.geometry
+register(tj.Scan(pixels * 2, geometry))""",
+        )["value"]
+        reply = c.call("save", source=derived, path="data.npz", force=True)
+        assert reply["isError"] and "differ from input" in reply["content"][0]["text"]

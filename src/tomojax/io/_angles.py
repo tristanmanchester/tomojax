@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
+from tomojax.core.files import read_path
+
 
 def load_angles(path: str | Path) -> np.ndarray:
     """Load a nonempty, finite FP32 angle vector in degrees without reordering.
@@ -32,7 +34,7 @@ def load_angles(path: str | Path) -> np.ndarray:
     OSError
         If the file cannot be read.
     """
-    sidecar = Path(path)
+    sidecar = read_path(Path(path))
     if sidecar.suffix.lower() == ".npy":
         values = np.asarray(np.load(sidecar, allow_pickle=False), dtype=np.float32)
     else:

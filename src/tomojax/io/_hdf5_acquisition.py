@@ -14,6 +14,7 @@ import h5py
 import numpy as np
 
 from tomojax._data import locate_frames
+from tomojax.core.files import read_path
 
 from ._acquisition import RawAcquisition
 from ._datasets import ProjectionDataset
@@ -200,7 +201,7 @@ def read_hdf5_acquisition(
     """Recognise NXtomo/Data Exchange by their contents, never the file suffix."""
     if not path.is_file() or not h5py.is_hdf5(path):
         return None
-    with h5py.File(path, "r") as handle:
+    with h5py.File(read_path(path), "r") as handle:
         file: Any = handle
         layout = _layout(file, data_path)
         if layout is None:

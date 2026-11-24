@@ -9,6 +9,7 @@ import h5py
 import numpy as np
 
 from tomojax._data import Hdf5Frames
+from tomojax.core.files import read_path
 
 from ._datasets import ProjectionDataset
 from ._frame_blocks import FrameBlocks
@@ -245,6 +246,6 @@ def _read_sequence(root: Any, steps: list[Any]) -> RawAcquisition:
 
 
 def read_bliss(path: Path, *, data_path: str | None = None) -> RawAcquisition | None:
-    with h5py.File(path, "r") as file:
+    with h5py.File(read_path(path), "r") as file:
         selected = _sequence(file, data_path)
         return _read_sequence(*selected) if selected is not None else None

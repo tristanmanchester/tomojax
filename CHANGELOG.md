@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+New TomoJAX NPZ files store metadata as JSON. For safety, the reader rejects
+pickled object arrays, so it can no longer open older NPZ files with pickled
+metadata. To convert one, load it with the previous TomoJAX release and save
+it again as NeXus, for example with `tj.save("scan.nxs", tj.load("scan.npz"))`.
+
 Loading, correction, reconstruction, and alignment report completed work through
 `tomojax.progress.watch`. A `progress.Cancel` token stops an operation at its
 next work boundary. The `correct`, `reconstruct`, and `align` commands support

@@ -14,6 +14,7 @@ import numpy as np
 import olefile
 
 from tomojax._data import FrameStack
+from tomojax.core.files import read_path
 from tomojax.geometry import Detector
 
 from ._datasets import ProjectionDataset
@@ -68,7 +69,8 @@ class _ZeissFrames(FrameStack):
     def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
         result = np.empty((len(indices), self.rows, self.cols), self.dtype)
         source: Any
-        with _OleFile(self.path) if self.fat is None else Path(self.path).open("rb") as source:
+        path = read_path(self.path)
+        with _OleFile(path) if self.fat is None else Path(path).open("rb") as source:
             row_bytes = self.image_shape[1] * self.dtype.itemsize
             for destination, index in enumerate(indices):
                 offset, size = rows.start * row_bytes, self.rows * row_bytes
@@ -207,7 +209,7 @@ def _beam_hardening(container: Any, path: Path) -> dict[str, object] | None:
 def _is_ole(path: Path) -> bool:
     if not path.is_file():
         return False
-    with path.open("rb") as file:
+    with read_path(path).open("rb") as file:
         return file.read(8) == olefile.MAGIC
 
 
