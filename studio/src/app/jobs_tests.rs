@@ -243,6 +243,8 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     state.started = true;
     state.auto_demo = false;
     let input = source(&mut state, directory.path());
+    // The input stays selected, as it is when the job is submitted.
+    state.model.active_asset = Some(input.asset.clone());
     let job = Job::new("correct", json!({}), vec![input]);
     let id = job.id.clone();
     let path = state

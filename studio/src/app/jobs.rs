@@ -77,6 +77,14 @@ impl AppState {
                 .map(|id| project.capture(id)?.with_files_named_in(&parameters))
                 .collect::<Result<Vec<_>, _>>()?
         };
+        // Results are saved as datasets, which hold scans, not raw frames.
+        if matches!(operation, "crop" | "select")
+            && inputs.iter().any(|input| input.kind == "frames")
+        {
+            return Err(
+                "Raw frames can't be saved after cropping or selecting views. Run Corrections first, then crop or select views of the corrected scan.".into(),
+            );
+        }
         if operation == "simulate" {
             project
                 .document
@@ -463,6 +471,7 @@ impl AppState {
             }
             Pending::Execute(job) => {
                 if let Product::Inspection { report } = &output.value {
+                    let mut refresh = false;
                     let input = self
                         .project
                         .as_ref()
@@ -489,6 +498,7 @@ impl AppState {
                                     asset.arrays.remove("projections");
                                 }
                             }
+                            refresh = true;
                         }
                         asset.inspection = report.clone();
                         asset.issue = report
@@ -503,6 +513,10 @@ impl AppState {
                             });
                     }
                     self.complete_job(&job, None);
+                    if refresh {
+                        self.image_key.clear();
+                        self.refresh_images();
+                    }
                 } else if matches!(output.value, Product::Frames { .. })
                     && self.project.as_ref().is_some_and(|p| {
                         p.document
@@ -797,14 +811,22 @@ impl AppState {
         // A background result must not retarget an interactive form whose source
         // and latest intent are already captured. An explicit Keep is the user's
         // request to activate that newly durable result.
-        let activate = self.preview_context.active.is_none()
-            || self.project.as_ref().is_some_and(|project| {
-                project
-                    .document
-                    .jobs
-                    .iter()
-                    .any(|entry| entry.id == job && entry.kept_preview.is_some())
-            });
+        // Nor may it replace a selection the user has moved on to: the result
+        // becomes active only while its own inputs are still the selection.
+        let entry = self
+            .project
+            .as_ref()
+            .and_then(|project| project.document.jobs.iter().find(|entry| entry.id == job));
+        let kept = entry.is_some_and(|entry| entry.kept_preview.is_some());
+        let still_selected = entry.is_some_and(|entry| {
+            let inputs: Vec<_> = entry
+                .inputs
+                .iter()
+                .map(|input| input.asset.clone())
+                .collect();
+            self.selected_inputs() == inputs
+        });
+        let activate = kept || (self.preview_context.active.is_none() && still_selected);
         if let Some(project) = &self.project {
             for array in asset.arrays.values_mut() {
                 let store = |storage: &mut Storage| {

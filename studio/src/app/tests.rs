@@ -376,6 +376,45 @@ fn switching_projects_saves_the_latest_workspace_or_stays() {
 }
 
 #[test]
+fn a_finished_job_activates_its_result_only_while_its_inputs_are_selected() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    let first = ramp_volume(directory.path(), "first", 2);
+    let second = ramp_volume(directory.path(), "second", 2);
+    let project = state.project.as_mut().unwrap();
+    project.document.assets = vec![first.clone(), second.clone()];
+    let mut jobs = Vec::new();
+    for _ in 0..2 {
+        let job = project::Job::new(
+            "reconstruct",
+            json!({}),
+            vec![project.capture(&first.id).unwrap()],
+        );
+        jobs.push(job.id.clone());
+        project.document.jobs.push(job);
+    }
+    // The user has moved on to the second scan: its draft keeps its input.
+    state.model.selected_assets = [second.id.clone()].into();
+    state.model.active_asset = Some(second.id.clone());
+    state.complete_asset(&jobs[0], ramp_volume(directory.path(), "result-a", 2));
+    assert_eq!(
+        state.model.active_asset.as_deref(),
+        Some(second.id.as_str())
+    );
+    // While the job's own input is still selected, its result opens.
+    state.model.selected_assets = [first.id.clone()].into();
+    state.model.active_asset = Some(first.id.clone());
+    let result = ramp_volume(directory.path(), "result-b", 2);
+    let result_id = result.id.clone();
+    state.complete_asset(&jobs[1], result);
+    assert_eq!(
+        state.model.active_asset.as_deref(),
+        Some(result_id.as_str())
+    );
+}
+
+#[test]
 fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
     let directory = tempfile::tempdir().unwrap();
     let saved = ramp_volume(directory.path(), "forward", 2).arrays["volume"].clone();

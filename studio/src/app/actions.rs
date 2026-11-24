@@ -113,7 +113,11 @@ impl AppState {
                     Ok(Some(path))=>{
                         if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("npz")){s.model.error=Some("NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognised acquisition.".into());return;}
                         let mut scans:Vec<_>=std::fs::read_dir(&path).into_iter().flatten().filter_map(Result::ok).map(|e|e.path()).filter(|p|p.is_file()&&p.extension().is_some_and(|ext|matches!(ext.to_string_lossy().to_ascii_lowercase().as_str(),"nxs"|"nx"|"h5"|"hdf5"))).collect();
-                        scans.sort();s.import_paths(if scans.len()>1{scans}else{vec![path]});
+                        scans.sort();
+                        // A folder of NXtomo/HDF5 scans imports each scan; a folder of
+                        // TIFF frames is one acquisition.
+                        let frames=std::fs::read_dir(&path).into_iter().flatten().filter_map(Result::ok).any(|e|e.path().extension().is_some_and(|ext|matches!(ext.to_string_lossy().to_ascii_lowercase().as_str(),"tif"|"tiff")));
+                        s.import_paths(if !scans.is_empty()&&!frames{scans}else{vec![path]});
                     },Ok(None)=>{},Err(error)=>s.model.error=Some(error.to_string())});
             }
             UiAction::SelectAsset { id, extend } => {
