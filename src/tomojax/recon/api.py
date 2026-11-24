@@ -784,7 +784,7 @@ def predict_projections(
 
     if isinstance(config, recon.FBPConfig | recon.FourierConfig):
         return project(geometry, volume, grid=grid)
-    _, _, build, _ = matched_operators(
+    _, split, build, _ = matched_operators(
         geometry,
         grid,
         "evaluate",
@@ -793,7 +793,9 @@ def predict_projections(
         backend=config.backend,
     )
     forward, _ = build()
-    return forward(jnp.asarray(volume))
+    if split is None:
+        return forward(jnp.asarray(volume))
+    return split.take(forward(split.everywhere(jnp.asarray(volume))))
 
 
 def _detector_grid(

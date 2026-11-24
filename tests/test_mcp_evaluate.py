@@ -174,3 +174,28 @@ def test_raw_path_and_frames_handle_use_the_same_transmission_pipeline(tmp_path)
         assert path_score["count"] == handle_score["count"] == 4 * 8**2
         assert path_score["target_energy"] == pytest.approx(handle_score["target_energy"])
         assert path_score["mse"] == pytest.approx(handle_score["mse"], rel=2e-6)
+
+
+def test_cgls_predicts_odd_held_out_views_on_two_devices():
+    import jax
+
+    from tomojax.recon.api import predict_projections
+
+    devices = jax.devices()[:2]
+    if len(devices) < 2:
+        pytest.skip("requires two devices")
+    scan = tj.simulate(size=8, n_views=16).scan
+    _, train, test = evaluation.partitions(
+        scan, "interleaved", dict(stride=5, offset=2, guard=0), ()
+    )
+    predictions, volumes = [], []
+    for selected in (devices[:1], devices):
+        settings = dict(method="cgls", config=tj.recon.CGLSConfig(devices=selected, iterations=2))
+        fit, held, config, _ = evaluation.fit_candidate(train, test, "reconstruct", settings, {})
+        predictions.append(
+            np.asarray(predict_projections(held.geometry, fit.volume, grid=fit.grid, config=config))
+        )
+        volumes.append(np.asarray(fit.volume))
+    assert predictions[1].shape == (3, 8, 8)
+    np.testing.assert_allclose(predictions[1], predictions[0], atol=1e-5)
+    np.testing.assert_allclose(volumes[1], volumes[0], atol=1e-5)
