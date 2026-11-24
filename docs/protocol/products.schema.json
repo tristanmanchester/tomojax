@@ -797,13 +797,17 @@
     },
     "Validated": {
       "title": "Validated",
-      "description": "Successful shared preflight.",
+      "description": "Successful shared preflight, including resolved inputs and destinations.",
       "type": "object",
       "properties": {
         "type": {
           "enum": [
             "validated"
           ]
+        },
+        "details": {
+          "type": "object",
+          "default": {}
         }
       },
       "required": [

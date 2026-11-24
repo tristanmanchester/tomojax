@@ -32,7 +32,11 @@ PACKAGE = "tomojax.cli.mcp.tools"
 INSTRUCTIONS = """Use TomoJAX for parallel-beam CT, cone-beam CT and laminography.
 Start with inspect to identify an acquisition and open to load it. Use describe for
 parameter choices and units. status lists devices, current jobs and live data.
-Pass @kind-number-tag to reuse a handle or append .member to select a named array.
+A bare handle supplies the whole object to save/export, or the primary array to an array
+field (simulation phantom, reconstruction volume, alignment working image, scan projections).
+For a scan operation use a scan handle or .scan on a simulation, alignment or reconstruction.
+Select another array with .member, e.g. .poses (alpha, beta, phi in degrees, then x, z, y
+in the geometry length unit).
 Handles last until closed, worker restart or server exit. Use file.h5::/dataset for
 an HDF5 dataset and ./@name for a literal path. Relative paths use the project directory.
 The usual workflow is inspect, open, correct, align the centre, reconstruct, view slices

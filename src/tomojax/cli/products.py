@@ -155,7 +155,9 @@ class CentrePlan(Record, tag="opposite_views_plan"):
 
 
 class Validated(Record, tag="validated"):
-    """Successful shared preflight."""
+    """Successful shared preflight, including resolved inputs and destinations."""
+
+    details: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
 class Provenance(Record):

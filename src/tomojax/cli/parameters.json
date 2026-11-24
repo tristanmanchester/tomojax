@@ -2454,7 +2454,7 @@
             }
           ],
           "default": null,
-          "description": "Cone-beam distances; None uses three times the volume's physical extent and 1.5 times that.",
+          "description": "Cone source-to-axis distance. Defaults to three times the largest physical volume extent.",
           "x-unit": "geometry_length"
         },
         "source_to_detector": {
@@ -2467,7 +2467,7 @@
             }
           ],
           "default": null,
-          "description": "Cone-beam distances; None uses three times the volume's physical extent and 1.5 times that.",
+          "description": "Cone source-to-detector distance. Defaults to 1.5 times the source-to-axis distance.",
           "x-unit": "geometry_length"
         },
         "poisson_scale": {
@@ -3184,7 +3184,7 @@
     },
     "Poses": {
       "title": "Poses",
-      "description": "Replace the public six-column table or clear it.",
+      "description": "Replace poses (alpha, beta, phi in degrees, then x, z, y in length units) or clear them.",
       "type": "object",
       "properties": {
         "type": {
@@ -3236,7 +3236,7 @@
               "type": "null"
             }
           ],
-          "description": "Replacement (views, 6) correction table; None removes all corrections."
+          "description": "Replacement table (alpha, beta, phi in degrees, then x, z, y in geometry length units). None clears poses."
         }
       },
       "required": [

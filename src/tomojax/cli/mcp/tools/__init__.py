@@ -90,6 +90,27 @@ def result(data: Object, *, text: str | None = None, error: bool = False) -> Cal
     )
 
 
+DRY_HELP = {
+    "Open": "Validate the file and report the object kind, path and geometry.",
+    "Simulate": "Report the resolved view count, phantom shape and projection shape.",
+    "Align": "Resolve the fit method, working grids, budgets and placement.",
+    "Reconstruct": "Resolve the reconstruction method, grid, iterations and placement.",
+    "Save": "Report dataset and manifest paths and whether the destination exists.",
+    "Export": "Report destination existence, paths, slice count, and first and last filenames.",
+}
+
+
+def elapsed_samples(samples: list[Object]) -> list[Object]:
+    now = time.time()
+    return [
+        {
+            **{k: v for k, v in s.items() if k != "time"},
+            "seconds_ago": round(max(0, now - s["time"]), 3),
+        }
+        for s in samples
+    ]
+
+
 def schema(cls: type[Record], definitions: Object) -> Object:
     """Inline the root and enrich matching fields from the worker's parameter document."""
     generated = msgspec.json.schema(cls)
@@ -107,7 +128,10 @@ def schema(cls: type[Record], definitions: Object) -> Object:
             )
     for field, help_text in {
         "config": "Expert settings. Use describe for the method's keys.",
-        "dry_run": "Validate inputs and return a plan for align or reconstruct.",
+        "dry_run": DRY_HELP.get(
+            cls.__name__,
+            f"Validate the proposed {cls.__name__} operation and report its parameters.",
+        ),
         "detail": "Use full for the worker info and provenance when available.",
     }.items():
         if field in root["properties"]:
@@ -217,7 +241,7 @@ class Tools:
             {
                 "versions": ready["versions"],
                 "devices": ready["devices"],
-                "allocators": state["allocators"],
+                "allocators": elapsed_samples(state["allocators"]),
                 "jobs": state["requests"],
                 "handles": handles,
                 "python_namespace_bytes": 0,
@@ -336,6 +360,12 @@ class Tools:
         if command["type"] in ("align", "reconstruct"):
             output = await g.request({"type": "plan", "operation": command})
         data = output["value"]
+        if data["type"] == "validated":
+            data.update(operation=command["type"], **data.pop("details", {}))
+            if len(data) == 2:
+                data["parameters"] = command
+        elif placement := data.get("placement"):
+            placement["snapshot"] = elapsed_samples(placement["snapshot"])
         if detail == "full":
             data.update(info=output["info"], manifest=output["manifest"])
         return result(data)
@@ -352,7 +382,9 @@ class Tools:
             kind: str = value["type"]
             data: Object = {"kind": kind}
             if kind == "files":
-                data.update(paths=value["paths"], recovery=value["recovery"])
+                data.update(
+                    output["info"]["summary"], paths=value["paths"], recovery=value["recovery"]
+                )
             else:
                 data = self.publish_handle(command, output)
             if detail == "full":
@@ -371,7 +403,16 @@ class Tools:
             summary.append(" x ".join(map(str, data["shape"])) + " " + str(data["unit"]))
         summary.extend(
             f"{key} {data[key]}"
-            for key in ("method", "effective_iterations", "termination", "calibration")
+            for key in (
+                "method",
+                "effective_iterations",
+                "termination",
+                "geometry",
+                "calibration",
+                "slice_count",
+                "first_file",
+                "last_file",
+            )
             if key in data
         )
         if auto := data.get("automatic"):
@@ -407,6 +448,7 @@ class Tools:
         for key in (
             "method",
             "calibration",
+            "geometry",
             "automatic",
             "effective_iterations",
             "termination",

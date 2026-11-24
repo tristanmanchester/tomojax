@@ -2562,7 +2562,7 @@
     },
     "Poses": {
       "title": "Poses",
-      "description": "Replace the public six-column table or clear it.",
+      "description": "Replace poses (alpha, beta, phi in degrees, then x, z, y in length units) or clear them.",
       "type": "object",
       "properties": {
         "type": {

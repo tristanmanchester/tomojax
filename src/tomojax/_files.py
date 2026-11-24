@@ -136,6 +136,15 @@ def export(
     >>> import tomojax as tj
     >>> tj.export("slices", tj.load_reconstruction("recon.nxs"))  # doctest: +SKIP
     """
+    scan = reconstruction.scan
+    source = scan.source.source_path if scan is not None and scan.source else None
+    export_volume(
+        path, reconstruction, dtype=dtype, value_range=range, prefix=prefix, source=source
+    )
+
+
+def export_volume(path, reconstruction, *, dtype, value_range, prefix, source):
+    """Export registered pixels with the durable source known to the caller."""
     from tomojax._scan import Alignment
     from tomojax._simulate import Simulation
 
@@ -156,9 +165,10 @@ def export(
         (int(volume.shape[0]), int(volume.shape[1]), int(volume.shape[2])),
         (grid.vx, grid.vy, grid.vz),
         dtype=dtype,
-        value_range=range,
+        value_range=value_range,
         prefix=prefix,
         grid=grid,
+        source=source,
     )
 
 
@@ -240,7 +250,7 @@ def write_volume(
     dtype: str,
     value_range: Sequence[float] | None,
     prefix: str,
-    source: str | None = None,
+    source: str | dict[str, object] | None = None,
     grid: Grid | None = None,
 ) -> Path:
     """Write ``shape`` (z, y, x) z-planes, each ``plane(z)``, as TIFFs or one raw file.

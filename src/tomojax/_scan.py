@@ -304,7 +304,8 @@ class Scan:
         Parameters
         ----------
         poses : numpy.ndarray or None
-            Replacement (views, 6) correction table; None removes all corrections.
+            Replacement table (alpha, beta, phi in degrees, then x, z, y in geometry length units).
+            None clears poses.
 
         Returns
         -------

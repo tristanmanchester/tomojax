@@ -204,7 +204,7 @@ class Bin(Record, tag="bin"):
 
 
 class Poses(Record, tag="poses"):
-    """Replace the public six-column table or clear it."""
+    """Replace poses (alpha, beta, phi in degrees, then x, z, y in length units) or clear them."""
 
     source: Source
     poses: Storage | None

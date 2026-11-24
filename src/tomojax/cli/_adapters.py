@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial, singledispatchmethod
 from pathlib import Path
 from typing import Any, cast
@@ -17,7 +17,7 @@ from tomojax import interactive, progress
 from tomojax._loading import load_raw_frames_with_declaration, load_scan_with_declaration
 from tomojax._planning import resolve_reconstruction
 from tomojax._resources import sample
-from tomojax._scan import combined_geometry
+from tomojax._scan import combined_geometry, describe
 from tomojax._simulate import build_sim_config, simulate_config
 from tomojax._smooth_alignment import resolve_alignment
 from tomojax._workflow import align_resolved, reconstruct_resolved, validate_save
@@ -91,8 +91,9 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
             ex.plane_source(operation, context)
             item = p.Validated()
         else:
-            work = Admission(context, manifest, isinstance(command, op.Plan)).prepare(operation)
-            item = p.Validated() if isinstance(command, op.Validate) else work()
+            admission = Admission(context, manifest, isinstance(command, op.Plan))
+            work = admission.prepare(operation)
+            item = p.Validated(admission.details) if isinstance(command, op.Validate) else work()
         context.control.checkpoint()
         for snapshot in sample():
             context.snapshot(snapshot)
@@ -100,6 +101,19 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
         if isinstance(item, tj.Alignment):
             poses = np.asarray(item.poses)
             info = {**info, "pose_rms": np.sqrt(np.mean(np.square(poses), axis=0)).tolist()}
+        if isinstance(item, tj.Scan | tj.Frames | tj.Simulation | tj.Alignment | tj.Reconstruction):
+            info = {**info, "geometry": geometry_summary(item)}
+            if "calibration" in info:
+                info["calibration"] = {
+                    key: {
+                        **entry,
+                        "unit": info["geometry"]["center_unit"] if key == "center" else "degree",
+                        "change_unit": "pixel" if key == "center" else "degree",
+                    }
+                    for key, entry in info["calibration"].items()
+                }
+        if isinstance(item, p.Files):
+            info = admission.details
         summary = ex.summarise(info, externalise=diagnostic)
         if isinstance(item, tj.Scan | tj.Frames | tj.Reconstruction | tj.Alignment | tj.Simulation):
             storage = None
@@ -107,6 +121,21 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
                 storage = saved_storage(operation.path)
             return ex.Success(handle(item, volume_storage=storage), summary, manifest)
         return ex.Success(item, summary, manifest)
+
+
+def geometry_summary(item: Root) -> dict[str, Any]:
+    scan = item if isinstance(item, tj.Scan | tj.Frames) else item.scan
+    geometry = (
+        item.scan.geometry if isinstance(item, tj.Alignment | tj.Simulation) else item.geometry
+    )
+    angles = np.asarray(geometry.angles)
+    return {
+        "kind": describe(geometry)[0],
+        "center_uv": list(geometry.detector.center),
+        "center_unit": unit_of(item if isinstance(item, tj.Reconstruction) else scan),
+        "views": len(angles),
+        "angle_range_degree": [float(angles.min()), float(angles.max())],
+    }
 
 
 def saved_storage(path: str) -> Hdf5 | None:
@@ -125,6 +154,7 @@ class Admission:
     context: ex.ExecutionContext
     manifest: p.Provenance
     plan: bool
+    details: dict[str, Any] = field(default_factory=dict)
 
     @singledispatchmethod
     def prepare(self, operation: Record) -> Work:
@@ -160,11 +190,19 @@ class Admission:
                 "simulation": tj.load_simulation,
             }[operation.kind]
             item = load(operation.path)
+        self.details.update(
+            path=operation.path, kind=operation.kind, geometry=geometry_summary(item)
+        )
         return lambda: item
 
     @prepare.register
     def simulate(self, operation: op.Simulate) -> Work:
         grid, detector, cfg = build_sim_config(**arguments(operation, self.context))
+        self.details.update(
+            views=cfg.n_views,
+            phantom_shape=grid.shape,
+            projection_shape=(cfg.n_views, detector.nv, detector.nu),
+        )
         return partial(simulate_config, cfg, grid=grid, detector=detector)
 
     @prepare.register
@@ -417,6 +455,26 @@ class Admission:
                 raise InvalidParameter("source", "alignment holds no working image to export")
             if raw:
                 paths.append(path.with_suffix(".json"))
+        from tomojax._stack_files import slice_name
+
+        self.details.update(
+            paths=[str(p) for p in paths], destination_exists=path.exists() or path.is_symlink()
+        )
+        if isinstance(operation, op.Export):
+            grid = value.scan.grid if isinstance(value, tj.Simulation) else value.grid
+            assert grid is not None
+            nz = grid.nz
+            first, last = (
+                (path, path)
+                if raw
+                else (
+                    path / slice_name(operation.prefix, 0),
+                    path / slice_name(operation.prefix, nz - 1),
+                )
+            )
+            self.details.update(slice_count=nz, first_file=str(first), last_file=str(last))
+            if not raw:
+                self.details["paths"].append(str(path / f"{operation.prefix}.json"))
         check_destinations(set(ancestor_paths(self.manifest.inputs)), paths, force=operation.force)
 
         def write():
@@ -424,12 +482,21 @@ class Admission:
             if isinstance(operation, op.Save):
                 tj.save(staged[path], value, include_scan=operation.include_scan)
             else:
-                tj.export(
+                from tomojax._files import export_volume
+
+                producer = self.context.leases[operation.source].provenance
+                export_volume(
                     staged[path],
                     value,
                     dtype=operation.dtype,
-                    range=operation.range,
+                    value_range=operation.range,
                     prefix=operation.prefix,
+                    source=producer.parameters["path"]
+                    if producer.operation == "open"
+                    else {
+                        "member": msgspec.to_builtins(operation.source),
+                        "manifest": sidecar.name if raw else "../" + sidecar.name,
+                    },
                 )
                 if raw:
                     staged[path].with_suffix(".json").replace(staged[path.with_suffix(".json")])
