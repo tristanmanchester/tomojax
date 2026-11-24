@@ -17,7 +17,7 @@ from tomojax._scan import frame_output_grid
 from tomojax.cli import execution as ex, operations as op
 from tomojax.cli._parameter_types import option_types
 from tomojax.core.devices import as_devices
-from tomojax.core.files import read_hdf5
+from tomojax.core.files import read_hdf5, validate_virtual_pixels
 from tomojax.errors import InvalidParameter, within
 from tomojax.wire.arrays import Hdf5, Member, Npy, Record
 
@@ -98,15 +98,22 @@ def read_reference(
         return array_layout(data) if shape_only else data
     if isinstance(value, Hdf5):
         with read_hdf5(value.path) as file:
-            data = file.get(value.dataset)
-            if not isinstance(data, h5py.Dataset):
-                raise InvalidParameter(name, f"no dataset {value.dataset} in {value.path}")
+            data = explicit_dataset(file, value, name)
             return hdf5_values(data, name, shape_only=shape_only)
     if name != "volume":
         raise InvalidParameter(name, op.ACQUISITION_ARRAY_ERROR)
     from tomojax.cli._browse import project_volume
 
     return project_volume(Path(value.path), context, shape_only=shape_only)
+
+
+def explicit_dataset(file: h5py.File, ref: Hdf5, field: str) -> h5py.Dataset:
+    """Resolve a dataset and verify its virtual mappings before exposing its pixels."""
+    data = file.get(ref.dataset)
+    if not isinstance(data, h5py.Dataset):
+        raise InvalidParameter(field, f"no dataset {ref.dataset} in {ref.path}")
+    validate_virtual_pixels(data)
+    return data
 
 
 def array_layout(data: Any) -> np.ndarray:
@@ -117,7 +124,9 @@ def array_layout(data: Any) -> np.ndarray:
 def scan_layout(frames: tj.Frames, *, raw: bool) -> tj.Scan:
     """Represent the acquisition geometry without materialising line integrals."""
     return tj.Scan(
-        np.broadcast_to(np.float32(0), frames.counts.shape),
+        np.broadcast_to(
+            np.zeros((), np.float32 if raw else frames.counts.dtype), frames.counts.shape
+        ),
         frame_output_grid(frames.geometry, frames.source) if raw else frames.geometry,
         name=frames.name,
         corrections=frames.corrections,

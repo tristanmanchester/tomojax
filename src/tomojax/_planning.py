@@ -125,7 +125,8 @@ def resolve_reconstruction(
         scan.grid,
         cfg,
         warm_start=bool(warm_start),
-        projections=None if metadata_only else scan.projections,
+        projections=scan.projections,
+        check_samples=not metadata_only,
         axial_index=axial_index,
     )
     return ResolvedReconstruction(

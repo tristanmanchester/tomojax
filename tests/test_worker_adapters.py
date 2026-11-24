@@ -723,6 +723,19 @@ def test_fourier_execution_checks_only_sampled_detector_rows(worker, tmp_path, b
             )
 
 
+def test_fourier_dry_run_rejects_complex_projection_layout(worker, tmp_path):
+    geometry = tj.ParallelGeometry(
+        tj.Grid(4, 4, 2, 1, 1, 1), tj.Detector(4, 2, 1, 1), [0, 45, 90, 135]
+    )
+    path = tmp_path / "complex.npz"
+    tj.save(path, tj.Scan(np.ones((4, 2, 4), np.complex64), geometry))
+    operation = dict(type="reconstruct", method="fourier", source=dict(type="path", path=str(path)))
+    for command in ("validate", "plan", "run"):
+        error = worker(command, operation=operation)["error"]
+        assert (error["kind"], error["path"]) == ("invalid_parameter", "source")
+        assert "real NumPy array" in error["message"]
+
+
 @pytest.mark.parametrize("method", ["cgls", "fista", "spdhg", "sirt"])
 def test_iterative_execution_requires_finite_measurements(worker, tmp_path, method):
     grid = tj.Grid(4, 4, 2, 1, 1, 1)
@@ -791,6 +804,32 @@ def test_fdk_sweep_validates_each_requested_detector_centre(
             np.testing.assert_allclose(
                 pixels[0], tj.reconstruct(shifted, "fbp").volume[0], atol=1e-6
             )
+
+
+def test_explicit_virtual_dataset_rejects_missing_detector_block(worker, tmp_path):
+    shape = (12, 2, 8)
+    grid = tj.Grid(8, 8, 2, 1, 1, 1)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(8, 2, 1, 1), np.arange(12) * 15)
+    scan = tmp_path / "scan.npz"
+    tj.save(scan, tj.Scan(np.ones(shape, np.float32), geometry))
+    layout = h5py.VirtualLayout(shape, np.float32)
+    for first in (0, 6):
+        part = tmp_path / f"part{first}.h5"
+        with h5py.File(part, "w") as file:
+            file["pixels"] = np.ones((6, 2, 8), np.float32)
+            layout[first : first + 6] = h5py.VirtualSource(file["pixels"])
+    path = tmp_path / "detector.h5"
+    with h5py.File(path, "w") as file:
+        file.create_virtual_dataset("pixels", layout)
+    (tmp_path / "part6.h5").unlink()
+    source = dict(type="hdf5", path=str(path), dataset="/pixels")
+    operation = dict(
+        type="backproject", source=dict(type="path", path=str(scan)), projections=source
+    )
+    for reply in (worker("statistics", source=source), worker("run", operation=operation)):
+        assert reply["type"] == "error", reply
+        assert reply["error"]["kind"] == "input"
+        assert "part6.h5" in reply["error"]["message"]
 
 
 def test_hyperslab_limit_stride_and_exact_statistics(worker, tmp_path):

@@ -16,6 +16,7 @@ import numpy as np
 
 from tomojax._files import saved_volume_grid
 from tomojax.cli import execution as ex, operations as op, products as p
+from tomojax.cli._arguments import explicit_dataset
 from tomojax.cli._display import plane_windows
 from tomojax.cli._frame_reads import frame_pixels
 from tomojax.cli._handles import stage_array
@@ -61,9 +62,7 @@ def source_array(
         return
     if isinstance(source, Hdf5):
         with read_hdf5(path) as file:
-            data = file.get(source.dataset)
-            if not isinstance(data, h5py.Dataset):
-                raise InvalidParameter("source", f"no dataset {source.dataset} in {path}")
+            data = explicit_dataset(file, source, "source")
             if (
                 "/" + source.dataset.lstrip("/") == p.VOLUME_DATASET
                 and "volume_axes_order" in file["/entry/processing/tomojax"].attrs

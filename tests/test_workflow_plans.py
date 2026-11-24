@@ -225,9 +225,12 @@ def test_fista_preflight_respects_host_solver_capabilities(monkeypatch, field):
     monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda: 2**30)
     resolve_reconstruction(source, "fista", config=cfg)
     monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda: 1)
-    for action in (resolve_reconstruction, tj.reconstruct):
+    for action, options in (
+        (resolve_reconstruction, {"metadata_only": True}),
+        (tj.reconstruct, {}),
+    ):
         with pytest.raises(tj.InvalidParameter) as error:
-            action(source, "fista", config=cfg)
+            action(source, "fista", config=cfg, **options)
         assert error.value.path == f"config.{field}"
 
 

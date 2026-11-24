@@ -251,19 +251,23 @@ class _Sampling:
 
 
 def check_fourier_inputs(
-    geometry: ScanGeometry, grid: Grid, projections: np.ndarray | jax.Array | None
+    geometry: ScanGeometry,
+    grid: Grid,
+    projections: np.ndarray | jax.Array | None,
+    *,
+    check_samples: bool,
 ) -> None:
     """Validate exactly the contributing FP32 samples, in bounded groups of views and planes."""
     try:
         sampling = _sampling_coordinates(geometry, grid, geometry.detector)
     except ValueError as err:
         raise InvalidParameter("method", str(err)) from err
-    if projections is None:
-        return
-    if projections.dtype.kind not in "buif":
+    if projections is not None and projections.dtype.kind not in "buif":
         raise InvalidParameter(
             "source", "fourier_reconstruct: projections must be a real NumPy array"
         )
+    if projections is None or not check_samples:
+        return
     for z in range(0, grid.nz, 8):
         progress.check_cancelled()
         depth = min(8, grid.nz - z)

@@ -128,13 +128,16 @@ def partition_layout(data, kind, settings, steps, *, raw):
         np.arange(len(segments)) + 0.5 if data.view_positions is None else data.view_positions
     )
 
+    samples = data.counts if isinstance(data, tj.Frames) else data.projections
+    dtype = np.float32 if raw or steps else samples.dtype
+
     def layout(mask):
         ids = np.flatnonzero(mask)
         geometry = views_of(data.geometry, ids)
         bind_step_geometry(tuple(step.retained(ids) for step in steps), geometry)
         shape = (len(ids), *split.shape[1:])
         scan = tj.Scan(
-            np.broadcast_to(np.float32(0), shape),
+            np.broadcast_to(np.zeros((), dtype), shape),
             frame_output_grid(geometry, data.source) if raw else geometry,
             data.name,
             data.corrections,
