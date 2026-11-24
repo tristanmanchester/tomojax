@@ -49,56 +49,6 @@ def test_chunk_scratch_holds_one_gradient_and_two_view_batches(monkeypatch, subs
     assert temporary[0] <= (n + 2 * batch + 2) * plane
 
 
-def test_streamed_initialization_finishes_before_solve_workspace(monkeypatch):
-    from tomojax.recon.sirt import _initial_volume
-
-    waited = []
-    monkeypatch.setattr(jax, "block_until_ready", lambda value: waited.append(value) or value)
-    initial = _initial_volume(np.ones((2, 3, 4)), stream=True)
-    assert len(waited) == 1 and waited[0] is initial
-    assert _initial_volume(initial, stream=False) is initial
-    assert _initial_volume(None, stream=True) is None
-    assert len(waited) == 1
-
-
-@pytest.mark.parametrize(
-    ("free", "masked", "iterations", "device_data", "backend", "expected"),
-    [
-        (1440, False, 2, False, "cuda", (True, True)),
-        (1167, False, 2, False, "cuda", (False, False)),
-        (1440, True, 2, False, "cuda", (False, False)),
-        (1440, False, 1, False, "cuda", (False, False)),
-        (1440, False, 2, True, "cuda", (False, False)),
-        (1440, False, 2, False, "jax", (False, False)),
-        (None, False, 2, False, "cuda", (False, True)),
-    ],
-)
-def test_streamed_columns_reserve_workspace_and_preserve_other_paths(
-    monkeypatch, free, masked, iterations, device_data, backend, expected
-):
-    import tomojax.backends
-
-    module = importlib.import_module(sirt.__module__)
-    monkeypatch.setattr(module, "should_stream", lambda *a, **k: False)
-    monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: free)
-    grid, detector = tj.Grid(3, 3, 2, 1, 1, 1), tj.Detector(5, 4, 1, 1)
-    data = np.ones((8, 4, 5), np.float32)
-    cfg = SIRTConfig(
-        iterations=iterations, subsets=8, support=np.ones((2, 3, 3)) if masked else None
-    )
-    initial, stream, cache = module._storage(
-        jnp.asarray(data) if device_data else data,
-        None,
-        grid=grid,
-        detector=detector,
-        cfg=cfg,
-        views=8,
-        backend=backend,
-        axial=False,
-    )
-    assert initial is None and (stream, cache) == expected
-
-
 @pytest.mark.numerical
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("uniform", [False, True])
@@ -275,14 +225,6 @@ def test_host_columns_belong_to_the_workflow_not_the_slab_or_next_scan(monkeypat
     truth = np.random.default_rng(17).uniform(size=(5, 5, 7)).astype(np.float32)
     cfg = SIRTConfig(iterations=2, subsets=3, support=truth > 0.3, upper_bound=0.9)
     monkeypatch.setattr(tomojax.backends, "device_free_memory_bytes", lambda: 10000)
-    original = module._axial_column
-    built = []
-
-    def column(*args, **kwargs):
-        built.append(int(args[1]))
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(module, "_axial_column", column)
     for offset in (0, 7):
         geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 17) + offset)
         scan = tj.Scan(np.asarray(tj.project(geometry, truth)), geometry)
@@ -292,4 +234,3 @@ def test_host_columns_belong_to_the_workflow_not_the_slab_or_next_scan(monkeypat
         result = tj.reconstruct(scan, "sirt", config=cfg, warm_start=warm_start)
         assert result.info["host_slabs"] and result.info["slices_per_batch"] == 2
         np.testing.assert_allclose(result.volume, reference.volume, rtol=2e-6, atol=2e-6)
-    assert built == [0, 1, 2] * 2

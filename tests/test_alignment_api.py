@@ -34,7 +34,8 @@ def _fitter(monkeypatch, *, changes=None, poses=None):
         calls.append((projections, np.asarray(nominal), grid, detector, options))
         names = options["fit"]
         names = (names,) if isinstance(names, str) else names
-        table = np.zeros((len(nominal), 6)) if poses is None else poses
+        local = {"translations", "rotations"} & set(names)
+        table = poses if poses is not None else np.zeros((len(nominal), 6)) if local else None
         record = {
             "fit": list(names),
             "calibration": changes or {},
@@ -80,12 +81,21 @@ def test_global_fits_publish_the_named_calibration_and_hold_local_poses(monkeypa
     assert calls[0][4]["fit"] == name
     assert result.scan.projections is scan.projections
     assert set(result.info["calibration"]) == {name}
+    assert result.scan.poses is None
     np.testing.assert_array_equal(result.poses, 0)
     expected = {"center": (1.45, -1.05) if cone else 1.45, "tilt": 0.5, "roll": 0.75}[name]
     np.testing.assert_allclose(result.info["calibration"][name]["value"], expected, atol=2e-6)
     assert result.info["calibration"][name]["change"] == correction
     if name != "center":
         assert result.scan.detector.center == scan.detector.center
+
+
+def test_a_centre_and_roll_fit_keeps_fourier_as_the_automatic_method(monkeypatch):
+    scan = _scan()
+    _fitter(monkeypatch, changes={"center": 1.25, "roll": 0.75})
+    result = tj.align(scan, fit=("center", "roll"))
+    automatic = tj.reconstruct(result.scan).info["automatic"]
+    assert automatic["method"] == "fourier" and automatic["status"] == "ok"
 
 
 def test_default_fit_preserves_existing_rotations_and_uses_the_requested_grid(monkeypatch):
@@ -120,7 +130,7 @@ def test_fitted_global_geometry_round_trips_with_held_local_poses(
     loaded = tj.load(target)
     assert loaded.detector.center == result.scan.detector.center
     np.testing.assert_array_equal(loaded.projections, result.scan.projections)
-    np.testing.assert_array_equal(loaded.poses, 0)
+    assert loaded.poses is None
     np.testing.assert_allclose(
         stack_view_poses(loaded.geometry, 60), stack_view_poses(result.scan.geometry, 60), atol=2e-6
     )

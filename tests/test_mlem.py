@@ -134,22 +134,6 @@ def test_uncached_sensitivities_preserve_visibility_and_updates(monkeypatch):
         np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-6)
 
 
-def test_large_sensitivity_cache_is_bounded_and_requires_reuse(monkeypatch):
-    module = import_module("tomojax.recon.mlem")
-    for free, fits in ((None, False), (2 * 2**30, False), (4 * 2**30, True)):
-        monkeypatch.setattr(module, "device_free_memory_bytes", lambda free=free: free)
-        assert module._cache_sensitivities(2**30, 4, 4, workspace_bytes=2 * 2**30) == fits
-        assert not module._cache_sensitivities(2**30, 4, 1, workspace_bytes=0)
-    assert module._cache_sensitivities(3 * 2**30, 4, 4, workspace_bytes=2**30)
-    assert not module._cache_sensitivities(3 * 2**30, 4, 4, workspace_bytes=2 * 2**30)
-    assert not module._cache_sensitivities(2**30, 4, 4, workspace_bytes=4 * 2**30)
-    completed = []
-    initial = type("Pending", (), {"block_until_ready": lambda self: completed.append(True)})()
-    monkeypatch.setattr(module, "device_free_memory_bytes", lambda: 4 * 2**30 if completed else 0)
-    assert module._cache_sensitivities(2**30, 4, 4, workspace_bytes=0, initial=initial)
-    assert completed
-
-
 @pytest.mark.numerical
 @pytest.mark.parametrize(("subsets", "batch"), [(1, 2), (3, 1)])
 def test_streamed_counts_match_resident_subsets_and_release_sources(

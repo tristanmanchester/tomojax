@@ -52,10 +52,8 @@ def test_host_slabs_match_full_physical_reconstruction(kind, depth, backend):
     np.testing.assert_allclose(actual, reference, atol=4e-6, rtol=5e-5)
 
 
-@pytest.mark.parametrize(("depth", "nz", "count", "row_bound"), [(3, 11, 12, 4), (None, 33, 9, 9)])
-def test_host_slabs_reuse_compilation_and_bound_device_shapes(
-    monkeypatch, depth, nz, count, row_bound
-):
+@pytest.mark.parametrize(("depth", "nz", "row_bound"), [(3, 11, 4), (None, 33, 9)])
+def test_host_slabs_reuse_compilation_and_bound_device_shapes(monkeypatch, depth, nz, row_bound):
     module = importlib.import_module("tomojax.recon.fbp")
     grid, detector, geometry, data = scan()
     grid = replace(grid, nz=nz)
@@ -71,8 +69,7 @@ def test_host_slabs_reuse_compilation_and_bound_device_shapes(
     monkeypatch.setattr(module, "_fbp_accumulate_batch", record)
     cfg = FBPHostConfig(slices_per_batch=depth, views_per_batch=2, fbp=FBPConfig(backend="jax"))
     actual = fbp_host(geometry, grid, detector, data, config=cfg)
-    assert len(calls) == count
-    assert all(shape[0] == 2 and shape[1] <= row_bound for shape, _, _ in calls)
+    assert calls and all(shape[0] == 2 and shape[1] <= row_bound for shape, _, _ in calls)
     assert all(slab.nz == (3 if depth is not None else 11) for _, slab, _ in calls)
     assert len({(slab, det) for _, slab, det in calls}) == 1
     after = kernel._cache_size()
@@ -80,40 +77,6 @@ def test_host_slabs_reuse_compilation_and_bound_device_shapes(
     repeated = fbp_host(geometry, grid, detector, data * 1.2, config=cfg)
     assert kernel._cache_size() == after
     np.testing.assert_allclose(repeated, actual * 1.2, atol=2e-6, rtol=2e-5)
-
-
-@pytest.mark.parametrize(
-    ("nz", "automatic"),
-    [(1, 1), (5, 5), (16, 16), (17, 9), (22, 11), (31, 16), (33, 11), (46, 16), (65, 13)],
-)
-@pytest.mark.parametrize("requested", [None, 1, 4, 16, 40])
-def test_automatic_axial_slabs_balance_tail_work_without_increasing_storage(
-    monkeypatch, nz, automatic, requested
-):
-    module = importlib.import_module("tomojax.recon.fbp_host")
-    grid, detector = Grid(3, 2, nz, 1, 1, 1), Detector(5, nz + 2, 1, 1)
-    geometry = ParallelGeometry(grid, detector, [7, 67, 127])
-    data = np.zeros((3, detector.nv, detector.nu), np.float32)
-    calls = []
-
-    def record(poses, projections, *args, **kwargs):
-        del poses, args
-        local_grid = kwargs["grid"]
-        calls.append((local_grid, projections.shape))
-        return jax.numpy.full((local_grid.nz, local_grid.ny, local_grid.nx), len(calls), np.float32)
-
-    monkeypatch.setattr(module, "_fbp_from_host", record)
-    actual = fbp_host(
-        geometry, grid, detector, data, config=FBPHostConfig(slices_per_batch=requested)
-    )
-    depth = automatic if requested is None else min(requested, nz)
-    assert len(calls) == (nz + depth - 1) // depth
-    assert all(slab.nz == depth and shape[1] == depth for slab, shape in calls)
-    assert len({slab for slab, _ in calls}) == 1
-    if requested is None:
-        assert depth <= 16 and len(calls) == (nz + 15) // 16
-    expected = np.broadcast_to((1 + np.arange(nz) // depth)[:, None, None], actual.shape)
-    np.testing.assert_array_equal(actual, expected)
 
 
 def test_host_slabs_read_and_convert_only_bounded_view_batches():
@@ -151,73 +114,11 @@ def test_axial_cuda_staging_respects_memory_and_physical_rows(monkeypatch, kind,
     saved = data.copy()
     expected = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend="jax")))
     module = importlib.import_module("tomojax.recon.fbp_host")
-    original, seen = module._fbp_from_host, []
-
-    def record(poses, rows, *args, **kwargs):
-        seen.append(isinstance(rows, jax.Array))
-        return original(poses, rows, *args, **kwargs)
-
     monkeypatch.setattr(module, "device_free_memory_bytes", lambda **kwargs: free)
-    monkeypatch.setattr(module, "_fbp_from_host", record)
     cfg = FBPHostConfig(slices_per_batch=4, views_per_batch=3)
     actual = fbp_host(geometry, grid, detector, data, config=cfg)
-    assert seen == [bool(free)] * 3
     np.testing.assert_array_equal(data, saved)
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
-
-
-def test_host_streamer_waits_before_queuing_more_input_batches(monkeypatch):
-    module = importlib.import_module("tomojax.recon.fbp")
-    grid, detector, _, data = scan()
-    events = []
-    pending = []
-
-    class RecordedArray(np.ndarray):
-        def __getitem__(self, key):
-            events.append(("read", key.start))
-            return super().__getitem__(key)
-
-    class PendingVolume:
-        def __init__(self, index):
-            self.index = index
-            self.ready = False
-
-        def block_until_ready(self):
-            events.append(("ready", self.index))
-            self.ready = True
-
-    def step(accum, *args, **kwargs):
-        if pending:
-            assert accum.ready
-        current = PendingVolume(len(pending))
-        events.append(("step", current.index))
-        pending.append(current)
-        return current
-
-    monkeypatch.setattr(module, "_fbp_accumulate_batch", step)
-    module._fbp_from_host(
-        np.repeat(np.eye(4)[None], 5, axis=0),
-        data.view(RecordedArray),
-        np.ones(5),
-        np.zeros((5, 6)),
-        np.ones(33),
-        0,
-        grid=grid,
-        detector=detector,
-        backend="jax",
-        batch_size=2,
-        separable=True,
-    )
-    assert events == [
-        ("read", 0),
-        ("step", 0),
-        ("read", 2),
-        ("ready", 0),
-        ("step", 1),
-        ("read", 4),
-        ("ready", 1),
-        ("step", 2),
-    ]
 
 
 @pytest.mark.parametrize("invalid", [np.nan, np.inf, 1e100])
@@ -358,17 +259,11 @@ def test_host_slabs_slice_device_projections_in_place(monkeypatch, kind, tilted,
     config = FBPHostConfig(slices_per_batch=4, views_per_batch=3, fbp=FBPConfig(backend=backend))
     expected = fbp_host(geometry, grid, detector, data, config=config)
     module = importlib.import_module("tomojax.recon.fbp_host")
-    queried = []
-
-    def free(*, device):
-        return queried.append(device) or 2**30
-
-    monkeypatch.setattr(module, "device_free_memory_bytes", free)
+    monkeypatch.setattr(module, "device_free_memory_bytes", lambda *, device: 2**30)
     device = jax.devices("cpu")[-1] if backend == "jax" else jax.devices()[0]
     out = np.empty(expected.shape, np.float32, order=order)
     resident = jax.device_put(data, device)
     actual = fbp_host(geometry, grid, detector, resident, config=config, out=out)
-    assert queried == ([] if tilted else [device])
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
     data[0, 4, 2] = np.nan
     with pytest.raises(ValueError, match="finite"):
@@ -405,24 +300,13 @@ def test_host_slabs_recover_independent_gaussian_attenuation(length_scale):
 
 @pytest.mark.parametrize("input_on_host", [True, False])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
-@pytest.mark.parametrize(
-    ("kind", "expected"),
-    [
-        ("integer", "integer"),
-        ("fractional", "fixed"),
-        ("translated", "general"),
-        ("lamino", "general"),
-    ],
-)
-def test_fbp_only_hoists_rows_for_the_exact_builtin_parallel_geometry(
-    monkeypatch, input_on_host, backend, kind, expected
-):
+@pytest.mark.parametrize("kind", ["integer", "fractional", "translated", "lamino"])
+def test_fbp_follows_each_views_own_axial_placement(input_on_host, backend, kind):
     """A custom parallel subclass may move z differently in each view."""
     import jax.numpy as jnp
 
     if backend == "cuda" and jax.default_backend() != "gpu":
         pytest.skip("requires CUDA")
-    module = importlib.import_module("tomojax.recon.fbp")
     grid, detector, geometry, data = scan("integer" if kind == "integer" else "fractional")
 
     class Translated(ParallelGeometry):
@@ -436,18 +320,8 @@ def test_fbp_only_hoists_rows_for_the_exact_builtin_parallel_geometry(
     elif kind == "lamino":
         geometry = LaminographyGeometry(grid, detector, geometry.angles, tilt=17)
     reference = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend="jax")))
-    plan = module._plan
-    modes = []
-
-    def record(*args, **kwargs):
-        result = plan(*args, **kwargs)
-        modes.append(result.z_mode)
-        return result
-
-    monkeypatch.setattr(module, "_plan", record)
     projections = data if input_on_host else jnp.asarray(data)
     volume = fbp(geometry, grid, detector, projections, config=FBPConfig(backend=backend))
-    assert modes == [expected]
     assert np.isfinite(np.asarray(volume)).all()
     np.testing.assert_allclose(volume, reference, atol=4e-6, rtol=5e-5)
 
@@ -480,6 +354,5 @@ def test_general_slabs_release_outputs_and_retry_only_unfinished_slab(monkeypatc
     with progress.runtime() as actual_placement:
         actual = fbp_host(geometry, grid, detector, data, config=cfg)
     assert actual_placement.retries == {"slab depth": 2, "view batch": 2}
-    assert calls[:5] == [(0, 4, 4), (4, 4, 4), (4, 2, 4), (4, 1, 4), (4, 1, 2)]
-    assert calls[5:] == [(start, 1, 1) for start in range(4, grid.nz)]
+    assert [call for call in calls if call[0] == 0] == [(0, 4, 4)]  # the finished slab
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)

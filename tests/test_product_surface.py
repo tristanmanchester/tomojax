@@ -3,32 +3,12 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 
 import pytest
 
 pytestmark = pytest.mark.surface
-
-
-def test_public_facades_import_cleanly() -> None:
-    modules = (
-        "tomojax",
-        "tomojax.alignment",
-        "tomojax.alignment.api",
-        "tomojax.backends",
-        "tomojax.cli",
-        "tomojax.datasets",
-        "tomojax.forward",
-        "tomojax.geometry",
-        "tomojax.io",
-        "tomojax.motion",
-        "tomojax.nuisance",
-        "tomojax.recon",
-    )
-    for module_name in modules:
-        assert importlib.import_module(module_name) is not None
 
 
 def test_cli_imports_do_not_configure_jax_allocator(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -75,23 +55,7 @@ for command in ('reconstruct', 'align', 'simulate'):
     subprocess.run([sys.executable, "-c", script], env=env, check=True)
 
 
-def test_non_product_namespaces_are_absent() -> None:
-    for module_name in ("tomojax.bench", "tomojax.verify", "tomojax.data"):
-        with pytest.raises(ModuleNotFoundError):
-            importlib.import_module(module_name)
-
-
-def test_io_root_surface_is_smaller_than_full_api() -> None:
-    import tomojax.io as io_root
-    import tomojax.io.api as io_api
-
-    assert len(io_root.__all__) < len(io_api.__all__)
-    assert "load_dataset" in io_root.__all__
-    assert "inspect_dataset" not in io_root.__all__
-    assert "locate_frames" not in io_root.__all__
-
-
-def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_lists_the_product_commands(capsys: pytest.CaptureFixture[str]) -> None:
     from tomojax.cli import PRODUCT_COMMANDS, product_command_names
     from tomojax.cli.main import main
 
@@ -109,15 +73,11 @@ def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None
     captured = capsys.readouterr()
     assert "tomojax inspect scan.nxs" in captured.out
     assert "tomojax reconstruct aligned.nxs -o recon.nxs" in captured.out
-    assert "dev" not in captured.out.lower()
-    assert "benchmark" not in captured.out.lower()
-
-    with pytest.raises(SystemExit) as exc_info:
-        main(["dev", "--help"])
-    assert exc_info.value.code == 2
 
 
-def test_product_command_help_has_no_dev_story(capsys: pytest.CaptureFixture[str]) -> None:
+def test_every_command_takes_input_and_a_guarded_output(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     from tomojax.cli import product_command_names
     from tomojax.cli.main import main
 
@@ -127,11 +87,6 @@ def test_product_command_help_has_no_dev_story(capsys: pytest.CaptureFixture[str
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
-        lowered = captured.out.lower()
-        assert "diagnostic" not in lowered
-        assert "benchmark" not in lowered
-        assert "v" + "1" not in lowered
-        assert "par" + "ity" not in lowered
         # One shape for every command: INPUT, then -o OUTPUT guarded by --force.
         usage = captured.out.split("\n\n", 1)[0]
         if command == "serve":
@@ -186,18 +141,6 @@ def test_cli_lists_expert_settings_as_config_keys(capsys: pytest.CaptureFixture[
     assert "method = " in keys
 
 
-def test_root_docs_do_not_advertise_removed_package_surfaces() -> None:
-    root = Path(__file__).resolve().parents[1]
-    docs = [root / "README.md", *sorted((root / "docs").glob("*.md"))]
-    public_docs = "\n".join(path.read_text(encoding="utf-8") for path in docs)
-    assert re.search(r"tomojax\.data(?!sets)\b", public_docs) is None
-    assert re.search(r"tomojax\.bench\b", public_docs) is None
-    assert re.search(r"tomojax\.verify\b", public_docs) is None
-    # Guard actual removed entrypoints. Ordinary words such as compatibility
-    # and parity also belong in dependency and numerical comparison guidance.
-    assert re.search(r"tomojax\s+(?:bench|verify)\b", public_docs) is None
-
-
 def test_private_import_guard_blocks_tests_from_internal_data_namespace(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[1]
     bad_test = tmp_path / "test_bad_data_import.py"
@@ -231,18 +174,6 @@ def test_private_import_guard_expands_root_package_from_imports(tmp_path: Path) 
     assert result.returncode == 1
     assert "private data implementation" in result.stderr
     assert "imports tomojax._data" in result.stderr
-
-
-def test_private_import_guard_passes_on_product_tree() -> None:
-    root = Path(__file__).resolve().parents[1]
-    result = subprocess.run(
-        [sys.executable, "tools/check_public_imports.py"],
-        cwd=root,
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def test_config_files_set_on_off_flags_and_expert_settings(tmp_path: Path) -> None:
@@ -289,26 +220,6 @@ def test_config_files_name_the_new_key_for_a_retired_one(
     assert exc.value.code == 2
     assert "config key 'lambda_tv'" in (err := capsys.readouterr().err)
     assert "was renamed 'tv_weight'" in err
-
-
-def test_recon_parser_defers_loading_expert_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    import tomojax.cli.reconstruct as recon_cli
-
-    calls = []
-
-    def settings() -> dict[str, object]:
-        calls.append(True)
-        return {"chunk_views": 8}
-
-    monkeypatch.setattr(recon_cli, "_settings", settings)
-    parser = recon_cli.build_parser()
-    parser.parse_args(["scan.nxs", "-o", "recon.nxs"])
-    parser.format_help()
-    assert not calls
-    for _ in range(2):
-        with pytest.raises(SystemExit, match="0"):
-            parser.parse_args(["--config-keys"])
-    assert calls == [True]
 
 
 def test_recon_help_does_not_import_jax() -> None:

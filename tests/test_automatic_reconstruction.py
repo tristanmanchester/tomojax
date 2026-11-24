@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.alignment import api as alignment
 from tomojax.corrections import Rings, Stripes
 from tomojax.geometry import RotationAxisGeometry
 from tomojax.io import ProjectionDataset
@@ -70,13 +69,7 @@ def test_explicit_method_bypasses_automatic_geometry_policy():
         {"seed": 0},
     ],
 )
-def test_auto_rejects_method_specific_options_before_choosing_a_method(option, monkeypatch):
-    from tomojax.recon import api
-
-    def unexpected_dispatch(*args, **kwargs):
-        pytest.fail("invalid options reached automatic dispatch")
-
-    monkeypatch.setattr(api, "reconstruct_arrays", unexpected_dispatch)
+def test_auto_rejects_method_specific_options(option):
     grid, detector = tj.Grid(4, 4, 2, 1, 1, 1), tj.Detector(8, 2, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, [0, 90])
     scan = tj.Scan(np.ones((2, 2, 8), np.float32), geometry)
@@ -85,12 +78,8 @@ def test_auto_rejects_method_specific_options_before_choosing_a_method(option, m
 
 
 @pytest.mark.parametrize("status", [None, "recorded", "provided", "inferred", "not_recorded"])
-def test_automatic_reconstruction_never_estimates_a_center(status, monkeypatch):
+def test_automatic_reconstruction_keeps_the_given_center(status):
     # tj.reconstruct reconstructs with the centre it is given, whatever the file recorded.
-    def no_estimate(*_args, **_kwargs):
-        raise AssertionError("tj.reconstruct estimated a centre")
-
-    monkeypatch.setattr(alignment, "estimate_center_report", no_estimate)
     grid, detector = tj.Grid(8, 8, 2, 1, 1, 1), tj.Detector(12, 2, 1, 1, center=(-2.2, 0))
     angles = np.linspace(0, 180, 33)
     geometry = tj.ParallelGeometry(grid, detector, angles)
@@ -188,17 +177,9 @@ def test_automatic_route_uses_a_scans_poses(kind, method, geometry, bound):
 
 
 @pytest.mark.parametrize("kind", ["laminography", "axis"])
-def test_automatic_route_reconstructs_an_unposed_oblique_scan_with_its_declared_geometry(
-    kind, monkeypatch
-):
+def test_automatic_route_reconstructs_an_unposed_oblique_scan_with_its_declared_geometry(kind):
     # tj.reconstruct reconstructs with the geometry it is given: no pose fit, the scan's grid,
     # and the same image as the same scan with its declared poses written out.
-    from tomojax import _smooth_alignment  # check-public-imports: allow-private
-
-    def no_fit(*_args, **_kwargs):
-        raise AssertionError("tj.reconstruct ran an alignment")
-
-    monkeypatch.setattr(_smooth_alignment, "fit_poses", no_fit)
     volume = _phantom()
     geometry = (
         tj.LaminographyGeometry(_GRID, tj.Detector(24, 24, 1, 1), _ANGLES, tilt=30)

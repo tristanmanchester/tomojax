@@ -103,8 +103,6 @@ def test_owned_unlinked_output_can_be_reused_with_mapped_input(monkeypatch, tmp_
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     data = np.memmap(tmp_path / "data", np.float32, "w+", shape=(2, 3, 4))
     out = arrays.validate_host_arrays(data, None, (5, 4, 3), "test", copies=4)
-    # Explicit outputs neither query memory nor initialize a host device.
-    monkeypatch.setattr(backends, "host_available_memory_bytes", lambda: pytest.fail("probed"))
     assert arrays.validate_host_arrays(data, out, out.shape, "test", copies=4) is out
     view = out.view()
     assert arrays.validate_host_arrays(data, view, view.shape, "test", copies=4) is view

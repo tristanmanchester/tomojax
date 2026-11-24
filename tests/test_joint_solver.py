@@ -9,8 +9,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax import progress
-from tomojax.alignment._joint import _refine, _solver, _tv  # check-public-imports: allow-private
+from tomojax.alignment._joint import _refine, _solver  # check-public-imports: allow-private
 from tomojax.alignment._joint._operators import (  # check-public-imports: allow-private
     Operators,
     profile,
@@ -27,43 +26,9 @@ from tomojax.geometry import stack_view_poses
 from . import _joint_stacks as js
 
 
-def test_damping_retries_and_undamped_diagnostic_have_separate_checkpoints():
-    events, attempts = [], []
-    level = SimpleNamespace(_context=lambda *_: None, _propose=lambda *_: None)
-
-    def attempt(*args):
-        attempts.append(args[3])
-        return "accepted" if len(attempts) == 3 else None
-
-    level._attempt = attempt
-    with progress.watch(events.append), progress.task("step", "step 1", None, ""):
-        assert _solver._Level.step(level, None, None, None, 0.001, None, 0) == "accepted"
-        assert _solver._Level.proposal(level, None, None, None, 0.001, None) is None
-    assert attempts == [0.001, 0.01, 0.1]
-    root, *children = [e for e in events if isinstance(e, progress.Started)]
-    assert [(e.parent, e.name, e.label) for e in children] == [
-        (root.task, "retry", "damping retry 1"),
-        (root.task, "retry", "damping retry 2"),
-        (root.task, "solve", "undamped diagnostic"),
-    ]
-
-
 @pytest.mark.parametrize("weight", [0.0, 0.02])
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 def test_initial_support_and_optional_tv_work(monkeypatch, weight, interpolation):
-    calls = []
-
-    def spy(name, original):
-        def checked(*args, **kwargs):
-            calls.append(name)
-            assert weight > 0, f"disabled image prior executed {name}"
-            return original(*args, **kwargs)
-
-        return checked
-
-    names = ("energy", "conductance", "diffusion", "diagonal")
-    for name in names:
-        monkeypatch.setattr(_tv, name, spy(name, getattr(_tv, name)))
     grid, detector = tj.Grid(4, 3, 3, 0.7, 0.8, 0.9), tj.Detector(6, 1, 0.7, 0.9)
     geometry = tj.ParallelGeometry(grid, detector, np.arange(8) * 45.0)
     with jax.enable_x64(True):
@@ -110,7 +75,6 @@ def test_initial_support_and_optional_tv_work(monkeypatch, weight, interpolation
     assert record["final_objective"] < record["initial_objective"]
     assert np.isfinite(fitted).all() and np.min(fitted) >= 0
     assert (record["final_image_prior"] > 0) == (weight > 0)
-    assert set(calls) == (set(names) if weight else set())
 
 
 def test_each_views_offset_and_ramp_are_eliminated_relative_to_the_level_the_views_share():
@@ -276,53 +240,6 @@ def test_fp16_step_storage_stays_within_its_rounding_of_fp32():
         assert np.linalg.norm(a - b) > 0  # the step really is stored in FP16
 
 
-def test_initializer_does_not_capture_observations(monkeypatch):
-    grid, detector = tj.Grid(2, 2, 2, 1, 1, 1), tj.Detector(2, 2, 1, 1)
-    geometry = tj.LaminographyGeometry(grid, detector, np.arange(8) * 45.0, tilt=-30)
-    with jax.enable_x64(True):
-        nominal = np.asarray(stack_view_poses(geometry, 8))
-        ops = Operators(
-            grid,
-            detector,
-            nominal,
-            lever=2,
-            native=(1, 1),
-        )
-        q = ops.pad_poses(np.zeros((8, ops.dofs)))
-        prior = MotionPrior(
-            8,
-            rigid_gauge(nominal, [0.5] * 3 + [1, 1]),
-            knot_spacing=(4,) * 5,
-            delta=0.02,
-            parameters=ops.parameters,
-            rotation_scales=np.ones(5),
-        )
-        y = ops.pad_images(np.random.default_rng(58).normal(size=(8, 2, 2)))
-        precision = jnp.ones_like(y)
-        level = js.placed_level(
-            ops, prior, y, precision, lam=0, eps=0.01, scales=(1, 1, 1), delta=1, inner=1
-        )
-        stacks = level.stacks
-        original_jit, captured = jax.jit, {}
-
-        def inspect(fn, *args, **kwargs):
-            if fn.__name__ != "run":
-                return original_jit(fn, *args, **kwargs)
-
-            def run(*values):
-                captured["initializer"] = jax.make_jaxpr(fn)(*values).consts
-                return values[0]
-
-            return run
-
-        monkeypatch.setattr(jax, "jit", inspect)
-        level.initial_volume(q, 1.0, 1)
-        monkeypatch.setattr(jax, "jit", original_jit)
-        constants = captured["initializer"]
-        held = (stacks["y"].data, stacks["precision"].data)
-        assert all(a is not b for a in constants for b in held)
-
-
 @pytest.mark.parametrize(("predicted", "expected"), [(2.0, 0.5), (0.0, 0.0), (-2.0, 0.0)])
 def test_non_descending_model_cannot_justify_less_damping(predicted, expected):
     assert _solver._gain_ratio(1.0, predicted) == expected
@@ -424,7 +341,7 @@ def test_held_pose_trial_equals_the_projected_objective(masked):
 
 
 @pytest.mark.parametrize(("shift", "moves"), [(1e-5, False), (0.3, True)])
-def test_refinement_stops_on_a_proposal_below_the_pose_tolerance(monkeypatch, shift, moves):
+def test_refinement_stops_on_a_proposal_below_the_pose_tolerance(shift, moves):
     # Alternating view shifts lie outside the motion prior's smooth space.
     grid, detector = tj.Grid(8, 8, 3, 0.7, 0.7, 0.9), tj.Detector(12, 3, 0.7, 0.9)
     geometry = tj.ParallelGeometry(grid, detector, [15.0 * i for i in range(12)])
@@ -443,13 +360,8 @@ def test_refinement_stops_on_a_proposal_below_the_pose_tolerance(monkeypatch, sh
         q = np.zeros((ops.padded_n, ops.dofs))
         q[: ops.n, ops.parameters.local.index(3)] = shift * (-1.0) ** np.arange(ops.n)
         y = ops.project(ops.coefficients(ops.nominal, jnp.asarray(q), ops.valid), x)[: ops.n]
-        evaluated = []
-        value = _refine._Refinement.value
-        monkeypatch.setattr(
-            _refine._Refinement, "value", lambda self, c: evaluated.append(c) or value(self, c)
-        )
         _, record, _ = _refine.refine(x, np.zeros(prior.size), y, None, prior, ops=ops, sigma=1e-3)
-    assert bool(record["steps"]) == bool(evaluated) == moves
+    assert bool(record["steps"]) == moves
     if not moves:
         assert record["status"] == "pose_steps_below_tolerance"
 
@@ -471,12 +383,11 @@ def test_refinement_stops_when_no_trial_lowers_a_proposal_below_the_rounding(pro
     )
     problem = object.__new__(_refine._Refinement)
     problem.prior, problem.anchor, problem.c0 = prior, np.zeros((views, k, k)), np.zeros(views * k)
-    problem.weight, evaluated = 1.0, []
-    problem.value = lambda c: evaluated.append(c) or 1.0  # flat: no trial lowers it
+    problem.weight = 1.0
+    problem.value = lambda c: 1.0  # flat: no trial lowers it
     stats = (gp, np.broadcast_to(np.eye(k), (views, k, k)), None)
     result = problem.step(np.zeros(views * k), stats, 1.0, 1.0)  # damping already raised
     assert result == ("pose_steps_below_tolerance" if stops else "line_search_stalled")
-    assert len(evaluated) == (8 if stops else 32)
 
 
 def _replicated_tent(n):

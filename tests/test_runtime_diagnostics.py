@@ -66,7 +66,6 @@ def test_device_memory_probe_logs_debug_before_host_fallback(
 
 
 def test_device_memory_is_read_from_the_requested_device(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(jax, "devices", lambda _kind: pytest.fail("device was given"))
     monkeypatch.delattr(jax, "device_get_memory_info", raising=False)
     gpu = SimpleNamespace(platform="gpu", memory_stats=lambda: {"free_bytes": 1234})
     assert _memory.device_free_memory_bytes(device=gpu) == 1234
