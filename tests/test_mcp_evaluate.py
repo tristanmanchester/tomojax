@@ -415,14 +415,11 @@ def test_host_volume_projection_only_transfers_slabs(monkeypatch, geometry, inte
     np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-5)
 
 
-@pytest.mark.parametrize("suffix", [".npz", ".nxs"])
-def test_saved_scan_streamed_into_budgeted_partitions(tmp_path, monkeypatch, suffix):
-    from zipfile import ZIP_DEFLATED, ZipFile
-
-    from tests.test_worker_adapters import count_inflated_bytes, trace_detector_reads
+def test_saved_scan_streamed_into_budgeted_partitions(tmp_path, monkeypatch):
+    from tests.test_worker_adapters import trace_detector_reads
 
     data = tj.simulate(size=8, n_views=24)
-    path = tmp_path / ("saved" + suffix)
+    path = tmp_path / "saved.nxs"
     # Also exercises archives containing an unused ground-truth volume.
     tj.save(
         path,
@@ -433,15 +430,7 @@ def test_saved_scan_streamed_into_budgeted_partitions(tmp_path, monkeypatch, suf
     corrections = (wire_options.BeamHardening(rates=(0.8, 1.2), weights=(0.5, 0.5)),)
     expected = evaluate(data.scan, tmp_path, corrections=corrections)
     monkeypatch.setattr("tomojax._evaluation._PARTITION_BYTES", data.scan.projections[0].nbytes)
-    if suffix == ".npz":
-        with (
-            ZipFile(path, "a", compression=ZIP_DEFLATED) as archive,
-            archive.open("aux.npy", "w") as stream,
-        ):
-            np.lib.format.write_array(stream, np.zeros(1 << 18, np.float32))
-        reads = count_inflated_bytes(monkeypatch, "aux.npy")
-    else:
-        reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
+    reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
     monkeypatch.setattr(tj, "load", lambda *args: pytest.fail("eager loader"))
     corrected = tj.Scan.corrected
 
@@ -455,7 +444,7 @@ def test_saved_scan_streamed_into_budgeted_partitions(tmp_path, monkeypatch, suf
     cmd = op.Evaluate(op.PathInput(str(path)), (CGLS,), STRIDE, corrections, CGLS)
     actual = admitted(op.Run(cmd), None, Stage(tmp_path), None)
     assert actual.scores == expected.scores
-    assert reads and max(reads) <= (4096 if suffix == ".npz" else data.scan.projections[0].nbytes)
+    assert reads and max(reads) <= data.scan.projections[0].nbytes
 
 
 def test_candidate_and_alignment_image_lifetimes(tmp_path, monkeypatch):

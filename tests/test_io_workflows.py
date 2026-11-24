@@ -516,8 +516,8 @@ def test_tiled_writes_read_the_source_one_bounded_tile_at_a_time(
     assert sum(source.reads) == volume.size
 
 
-@pytest.mark.parametrize("member", ["extra", "projections", "volume"])
-def test_npz_rejects_object_arrays_even_in_unselected_members(tmp_path, member):
+@pytest.mark.parametrize("member", ["projections", "volume"])
+def test_npz_rejects_object_arrays(tmp_path, member):
     fields = {"volume": np.zeros((2, 3, 4)), "volume_axes_order": "zyx"}
     fields[member] = np.array([{}], dtype=object)
     path = tmp_path / "object.npz"

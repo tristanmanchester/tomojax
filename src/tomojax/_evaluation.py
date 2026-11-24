@@ -82,24 +82,21 @@ _PARTITION_BYTES = 32 << 20
 
 def _select_views(data, ids, *, raw):
     source = data.counts if isinstance(data, tj.Frames) else data.projections
-    if raw and hasattr(source, "frames_at") and not hasattr(source, "copy_views"):
+    if raw and hasattr(source, "frames_at"):
         return data.selected(ids)
     target = host_array((len(ids), *source.shape[1:]), dtype=source.dtype)
-    if hasattr(source, "copy_views"):
-        source.copy_views(ids, target)
-    else:
-        batch = max(1, _PARTITION_BYTES // (math.prod(source.shape[1:]) * source.dtype.itemsize))
-        for first in range(0, len(ids), batch):
-            progress.check_cancelled()
-            group = ids[first : first + batch]
-            if hasattr(source, "frames_at"):
-                target[first : first + len(group)] = source[group]
-            else:
-                for row, view in enumerate(group, first):
-                    target[row] = source[int(view)]
-            if isinstance(source, np.ndarray):
-                release_planes(source, int(group[0]), int(group[-1]) + 1)
-            release_planes(target, first, first + len(group))
+    batch = max(1, _PARTITION_BYTES // (math.prod(source.shape[1:]) * source.dtype.itemsize))
+    for first in range(0, len(ids), batch):
+        progress.check_cancelled()
+        group = ids[first : first + batch]
+        if hasattr(source, "frames_at"):
+            target[first : first + len(group)] = source[group]
+        else:
+            for row, view in enumerate(group, first):
+                target[row] = source[int(view)]
+        if isinstance(source, np.ndarray):
+            release_planes(source, int(group[0]), int(group[-1]) + 1)
+        release_planes(target, first, first + len(group))
     if isinstance(data, tj.Scan):
         return selected_scan(data, ids, target)
     fields = selected_frames(data, ids, target)

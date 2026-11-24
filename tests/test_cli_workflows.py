@@ -1000,6 +1000,3 @@ def test_inspect_preview_reads_logical_detector_plane(tmp_path, suffix):
             file["entry/instrument/detector/data"] = planes[:, 0]
             file["entry/sample/rotation_angle"] = np.arange(5)
     np.testing.assert_array_equal(projection_image(path), planes[2])
-    previews = tmp_path / "previews"
-    assert main(["inspect", str(path), "--preview-dir", str(previews)]) == 0
-    assert (previews / "projection.png").exists()

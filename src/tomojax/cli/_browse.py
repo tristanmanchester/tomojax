@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from itertools import product
 import math
 from pathlib import Path
@@ -91,17 +91,18 @@ def saved_volume(path: Path, field: str) -> Iterator[tuple[Any, Array]]:
                 )
                 return
     elif path.is_file() and path.suffix.lower() == ".npz":
-        with ExitStack() as resources:
-            record, arrays = saved_npz_layout(path, resources=resources, volume_only=True)
-            if (volume := arrays.get("volume")) is not None:
-                grid = saved_volume_grid(
-                    record.grid.to_dict() if record.grid else None, record.geometry_metadata
-                )
-                meta = disk_volume(
+        record, arrays = saved_npz_layout(path, volume_only=True)
+        if (volume := arrays.get("volume")) is not None:
+            grid = saved_volume_grid(
+                record.grid.to_dict() if record.grid else None, record.geometry_metadata
+            )
+            yield (
+                volume,
+                disk_volume(
                     path, grid, "zyx", volume.shape, volume.dtype.str, record.geometry_metadata
-                )
-                yield volume, meta
-                return
+                ),
+            )
+            return
     raise InvalidParameter(field, op.ACQUISITION_ARRAY_ERROR)
 
 
@@ -113,15 +114,12 @@ def project_volume(path: Path, context: ex.ExecutionContext, *, shape_only: bool
         # The projector consumes the full array. Stage it in bounded reads,
         # using the library's file-backed allocation for volumes larger than RAM.
         volume = host_array(meta.shape, dtype=meta.dtype)
-        if hasattr(data, "copy_views"):
-            data.copy_views(slice(None), volume)
-        else:
-            ranges = tuple(range(n) for n in meta.shape)
-            for tile in ordered_tiles(ranges, READ_BYTES // volume.itemsize):
-                context.control.checkpoint()
-                key = tuple(slice(r.start, r.stop) for r in tile)
-                volume[key] = data[key]
-                release(volume)
+        ranges = tuple(range(n) for n in meta.shape)
+        for tile in ordered_tiles(ranges, READ_BYTES // volume.itemsize):
+            context.control.checkpoint()
+            key = tuple(slice(r.start, r.stop) for r in tile)
+            volume[key] = data[key]
+            release(volume)
         return volume
 
 
@@ -187,17 +185,12 @@ def browse(
             tuple(range(lo, hi, s) for (lo, hi), s in zip(roi, stride, strict=True))
             for _, _, roi, stride, _ in windows
         ]
-        samples = (
-            data.sampled_windows(tiles) if hasattr(data, "sampled_windows") else [None] * len(tiles)
-        )
-        for (dim, at, _, _, sampling), tile, sampled in zip(windows, tiles, samples, strict=True):
-            planes.append(
-                p.DisplayPlane(read_window(context, data, meta, tile, sampled), dim, at, sampling)
-            )
+        for (dim, at, _, _, sampling), tile in zip(windows, tiles, strict=True):
+            planes.append(p.DisplayPlane(read_window(context, data, meta, tile), dim, at, sampling))
         return p.DisplayPlanes(tuple(planes))
 
 
-def read_window(context, data, meta, ranges, sampled=None):
+def read_window(context, data, meta, ranges):
     shape = tuple(map(len, ranges))
     if math.prod(shape) * np.dtype(meta.dtype).itemsize > READ_BYTES:
         raise InvalidParameter("roi", "read exceeds 16 MiB; use a stride or a smaller ROI")
@@ -216,7 +209,7 @@ def read_window(context, data, meta, ranges, sampled=None):
     if columns and len(ranges[-1]) != len(columns):
         columns, domain = (), "pose_components"
     return Array(
-        stage_array(context, pixels(data, ranges) if sampled is None else sampled),
+        stage_array(context, pixels(data, ranges)),
         shape,
         meta.dtype,
         tuple(axes),
@@ -236,14 +229,6 @@ def ordered_tiles(ranges, capacity):
     starts = (range(0, len(r), step) for r, step in zip(ranges, block, strict=True))
     for origin in product(*starts):
         yield tuple(r[start : start + n] for r, start, n in zip(ranges, origin, block, strict=True))
-
-
-def sample_chunks(data, ranges):
-    if hasattr(data, "sample_chunks"):
-        yield from data.sample_chunks(ranges)
-        return
-    for tile in ordered_tiles(ranges, READ_BYTES // 8):
-        yield pixels(data, tile)
 
 
 def exact_percentiles(samples, percentiles, low, high, control):
@@ -294,8 +279,9 @@ def statistics(request, context, data, meta, ranges):
     mean = m2 = 0.0
     low, high = math.inf, -math.inf
     with tempfile.TemporaryFile() as stream:
-        for chunk in sample_chunks(data, ranges):
+        for tile in ordered_tiles(ranges, READ_BYTES // 8):
             context.control.checkpoint()
+            chunk = pixels(data, tile)
             finite = chunk[np.isfinite(chunk)].astype(np.float64)
             n = len(finite)
             if n:

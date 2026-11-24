@@ -179,10 +179,17 @@ def preview_image(path: Path) -> ImageContent:
 
     from tomojax.cli import _images, _previews
 
-    pixels = _previews.projection_image(path)
-    if pixels is None:
-        (plane,) = _previews.saved_requests(path, None)[:1]
-        pixels = _previews.saved_plane(path, *plane)
+    if path.suffix.lower() == ".npz":
+        from tomojax.io.projection_layout import saved_npz_layout
+
+        _, arrays = saved_npz_layout(path)
+        stack = arrays.get("projections", arrays.get("volume"))  # (view, v, u) or (z, y, x)
+        pixels = stack[len(stack) // 2]
+    else:
+        pixels = _previews.projection_image(path)
+        if pixels is None:
+            (plane,) = _previews.saved_requests(path, None)[:1]
+            pixels = _previews.saved_plane(path, *plane)
     image = Image.fromarray(_images.to_uint8(pixels, _images.limits(pixels)))
     image.thumbnail((1024, 1024))
     buffer = BytesIO()

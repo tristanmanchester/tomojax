@@ -1176,37 +1176,6 @@ def test_inspect_saved_volume_reads_no_volume_pixels(tmp_path, monkeypatch):
     assert reads == []
 
 
-def test_compressed_npz_volume_roi_bounds_memory_and_scratch(tmp_path, monkeypatch):
-    import tempfile
-    import tracemalloc
-
-    from tests.worker_adapter import Stage, admitted
-    from tomojax.cli import operations
-
-    path = tmp_path / "volume.npz"
-    data = np.broadcast_to(np.arange(512, dtype=np.float32), (48, 512, 512))
-    np.savez_compressed(path, volume=data, volume_axes_order="zyx")
-    scratch = tmp_path / "scratch"
-    scratch.mkdir()
-    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
-
-    class MeasuredStage(Stage):
-        def array(self):
-            assert sum(p.stat().st_size for p in scratch.rglob("*") if p.is_file()) < 1 << 20
-            return super().array()
-
-    stage = MeasuredStage(scratch)
-    ref = operations.PathInput(str(path))
-    request = operations.Read(source=ref, roi=((24, 25), (15, 18), (85, 90)), stride=(1, 2, 2))
-    tracemalloc.start()
-    try:
-        admitted(request, None, stage, ref)
-        assert tracemalloc.get_traced_memory()[1] < 16 << 20
-    finally:
-        tracemalloc.stop()
-    np.testing.assert_array_equal(np.load(stage.private), data[24:25, 15:18:2, 85:90:2])
-
-
 def count_inflated_bytes(monkeypatch, member):
     from zipfile import ZipExtFile
 

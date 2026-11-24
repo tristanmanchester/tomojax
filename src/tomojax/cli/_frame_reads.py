@@ -10,8 +10,6 @@ import numpy as np
 def frame_pixels(data, ranges, budget):
     views, rows, cols = ranges
     selected = slice(views.start, views.stop, views.step)
-    if hasattr(data, "sampled"):
-        return data.sampled(ranges)
     if not hasattr(data, "window"):
         return np.asarray(data[tuple(slice(r.start, r.stop, r.step) for r in ranges)])
     if hasattr(data, "blocks"):

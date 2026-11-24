@@ -99,7 +99,9 @@ def projection_image(path: Path) -> np.ndarray | None:
     if raw is not None:
         samples = raw.counts
     elif path.suffix.lower() in (".mat", ".npz"):
-        _, samples = saved_projection_layout(path)
+        record, samples = saved_projection_layout(path)
+        if samples is not None and record.image_key is not None:
+            samples = samples[record.image_key == 0]
     else:
         samples = locate_frames(str(path)).samples  # (view, v, u), a single row included
     if samples is None or not samples.shape[0]:

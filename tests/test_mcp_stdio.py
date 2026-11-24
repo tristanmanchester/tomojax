@@ -850,7 +850,8 @@ def test_inspect_saved_npz_with_and_without_preview(tmp_path):
     import numpy as np
     from PIL import Image
 
-    from tomojax.recon.quicklook import scale_to_uint8
+    # check-public-imports: allow-private
+    from tomojax.cli._images import limits, to_uint8
 
     sim = tj.simulate(size=8, n_views=12)
     tj.save(tmp_path / "scan.npz", sim.scan)
@@ -871,10 +872,10 @@ def test_inspect_saved_npz_with_and_without_preview(tmp_path):
                     ["text", "image"] if preview else ["text"]
                 )
                 if preview:
-                    pixels = sim.scan.projections[6] if name == "scan" else sim.phantom[4]
+                    pixels = np.asarray(
+                        sim.scan.projections[6] if name == "scan" else sim.phantom[4]
+                    )
                     with Image.open(
                         BytesIO(base64.b64decode(reply["content"][1]["data"]))
                     ) as image:
-                        np.testing.assert_equal(
-                            np.asarray(image), scale_to_uint8(np.asarray(pixels))
-                        )
+                        np.testing.assert_equal(np.asarray(image), to_uint8(pixels, limits(pixels)))
