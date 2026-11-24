@@ -105,6 +105,8 @@ def test_alignment_plan_budgets_and_padded_levels_match_run(tmp_path, capsys):
         assert actual["iterations"] == planned["iterations"]
         assert actual["image_iterations"] == planned["image_iterations"]
     assert result.info["placement"]["devices"]
+    # A centre fit calibrates the geometry; it publishes no per-view table.
+    assert result.scan.poses is None and type(result.scan.geometry) is tj.ParallelGeometry
     assert (
         main(["align", str(path), "--method", "opposite-views", "--fit", "center", "--dry-run"])
         == 0

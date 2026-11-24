@@ -373,7 +373,8 @@ def fit_poses(
     the ``AlignConfig`` (None: its defaults).
     Returns the working-scale volume (nz, ny, nx), its grid, the (views, 6)
     pose table (alpha, beta, phi in radians; dx, dz, dy along lab x, z, y,
-    in the grid's length unit; dy is zero only for parallel rays) and a
+    in the grid's length unit; dy is zero only for parallel rays), or None when
+    ``fit`` selects no per-view parameters, and a
     record with the change in each fitted global, in native pixels and degrees, under
     ``calibration``.
     """
@@ -531,4 +532,4 @@ def fit_poses(
         ),
         "seconds": time.perf_counter() - started,
     }
-    return x, base, table, record
+    return x, base, table if parameters.local else None, record
