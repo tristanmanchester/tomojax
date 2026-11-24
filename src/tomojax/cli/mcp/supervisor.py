@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 type Object = dict[str, Any]
 FAST = {"status", "control", "close", "release", "describe", "devices"}
+PIPE_DRAIN_SECONDS = 1.0
 CANCEL_SECONDS = 30
 ID_LIMIT = 100_000
 
@@ -365,7 +366,9 @@ class Supervisor:
 
     async def serve_generation(self, g: Generation, path: Path, fd: int) -> None:
         """Monitor both process exit and protocol EOF, draining both pipes independently."""
-        proc = await asyncio.create_subprocess_exec(
+        loop = asyncio.get_running_loop()
+        transport, protocol = await loop.subprocess_exec(
+            lambda: asyncio.subprocess.SubprocessStreamProtocol(limit=65536, loop=loop),
             *self.argv,
             stdin=-1,
             stdout=-1,
@@ -375,6 +378,7 @@ class Supervisor:
             env={**os.environ, "TMPDIR": str(path)},
             pass_fds=(*self.pass_fds, fd),
         )
+        proc = asyncio.subprocess.Process(transport, protocol, loop)
         g.process = proc
         assert proc.stdout
         assert proc.stderr
@@ -387,7 +391,6 @@ class Supervisor:
 
         reader = asyncio.create_task(g.read(proc.stdout))
         errors = asyncio.create_task(drain(proc.stderr))
-        loop = asyncio.get_running_loop()
         pidfd = None
         try:
             # A fork can retain the pipes after the worker exits. Watch the leader
@@ -405,10 +408,16 @@ class Supervisor:
                 os.close(pidfd)
             with suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
-            await asyncio.gather(reader, errors, return_exceptions=True)
-            # A malformed record can end the decoder with unread bytes in its pipe.
-            while await proc.stdout.read(65536):
-                pass
+            try:
+                async with asyncio.timeout(PIPE_DRAIN_SECONDS):
+                    await asyncio.gather(reader, errors, return_exceptions=True)
+                    # A malformed record can end the decoder with unread bytes.
+                    while await proc.stdout.read(65536):
+                        pass
+            except TimeoutError:
+                # A detached descendant may still own the write ends. Process.wait()
+                # can depend on pipe disconnection even after the leader was reaped.
+                transport.close()
             await proc.wait()
             await asyncio.gather(*g.commits)
             if stderr and not g.ready.done():

@@ -127,6 +127,18 @@ class Stub:
     def inspect(self, command, context):
         if command.path == "wait":
             self.wait(context, "inspect", "input", None, "")
+        elif command.path == "detached-child":
+            read_fd, write_fd = os.pipe()
+            pid = os.fork()
+            if pid == 0:
+                os.setsid()
+                os.write(write_fd, b"D")
+                signal.pause()
+                os._exit(0)
+            os.close(write_fd)
+            assert os.read(read_fd, 1) == b"D"
+            os.close(read_fd)
+            return p.Inspection({"pid": pid})
         elif command.path == "executor-exit":
             # Retain stdout in a descendant. The supervisor must notice leader
             # exit and reap the group independently of EOF on the protocol pipe.

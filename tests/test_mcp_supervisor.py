@@ -446,3 +446,20 @@ def test_worker_loss_before_handoff_discards_every_stage(tmp_path):
             assert not list(tmp_path.glob(".tomojax-stage-*"))
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("action", ["restart", "close"])
+def test_retire_worker_with_detached_pipe_writer(tmp_path, action):
+    async def run():
+        async with session(tmp_path) as (server, g, _):
+            report = await g.request({"type": "inspect", "path": "detached-child"})
+            pid = report["value"]["report"]["pid"]
+            try:
+                async with asyncio.timeout(8):
+                    await getattr(server, action)()
+                assert g.retired.is_set()
+                os.kill(pid, 0)
+            finally:
+                os.kill(pid, signal.SIGKILL)
+
+    asyncio.run(run())
