@@ -63,37 +63,33 @@ impl AppState {
         }
         let parameters = forms::parameters(&self.ui, &self.catalog)?;
         let selected = self.selected_inputs();
-        // The form already captured these inputs on an I/O thread; capturing again
-        // here would walk large acquisitions on the UI thread.
-        let captured: Vec<_> = if self.form_inputs_pending() {
-            Vec::new()
+        if operation != "simulate" && selected.is_empty() {
+            return Err("Select a scan or result first".into());
+        }
+        // The form captures the selected inputs on an I/O thread; a job takes that
+        // capture, so large acquisitions are never walked on the UI thread.
+        let inputs = if operation == "simulate" {
+            vec![]
         } else {
-            self.current_form_inputs().to_vec()
+            let captured = self.current_form_inputs();
+            if self.form_inputs_pending()
+                || !captured
+                    .iter()
+                    .map(|input| &input.asset)
+                    .eq(selected.iter())
+            {
+                return Err("Reading the selected inputs; queue again in a moment".into());
+            }
+            captured
+                .iter()
+                .cloned()
+                .map(|input| input.with_files_named_in(&parameters))
+                .collect::<Result<Vec<_>, _>>()?
         };
         let project = self
             .project
             .as_mut()
             .ok_or("Create or open a project first")?;
-        if operation != "simulate" && selected.is_empty() {
-            return Err("Select a scan or result first".into());
-        }
-        let inputs = if operation == "simulate" {
-            vec![]
-        } else if captured
-            .iter()
-            .map(|input| &input.asset)
-            .eq(selected.iter())
-        {
-            captured
-                .into_iter()
-                .map(|input| input.with_files_named_in(&parameters))
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            selected
-                .iter()
-                .map(|id| project.capture(id)?.with_files_named_in(&parameters))
-                .collect::<Result<Vec<_>, _>>()?
-        };
         // Results are saved as datasets, which hold scans, not raw frames.
         if matches!(operation, "crop" | "select")
             && inputs.iter().any(|input| input.kind == "frames")

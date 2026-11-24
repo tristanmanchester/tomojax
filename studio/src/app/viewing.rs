@@ -175,6 +175,39 @@ impl AppState {
         }
     }
 
+    /// The two compared volumes, each with its stored axis for slice `axis`.
+    fn compared_volumes(&self, axis: usize) -> [Option<(ArrayDescriptor, usize)>; 2] {
+        [
+            self.model.compare_left.clone(),
+            self.model.compare_right.clone(),
+        ]
+        .map(|id| {
+            let descriptor = self
+                .project
+                .as_ref()?
+                .document
+                .asset(&id?)?
+                .volume()
+                .cloned()?;
+            let stored = descriptor
+                .axes
+                .iter()
+                .position(|a| a.name == ["z", "y", "x"][axis])
+                .unwrap_or(0);
+            Some((descriptor, stored))
+        })
+    }
+
+    /// How many slices along `axis` both compared volumes have, from their
+    /// registration (known before any image is read).
+    pub(super) fn compared_count(&self, axis: usize) -> Option<usize> {
+        self.compared_volumes(axis)
+            .iter()
+            .flatten()
+            .map(|(descriptor, stored)| descriptor.shape[*stored])
+            .min()
+    }
+
     /// The slice axis on screen: Compare's plane in Compare, else the main view's.
     pub(super) fn shown_axis(&self) -> Option<usize> {
         if self.ui.workspace == Workspace::Compare {
@@ -358,30 +391,12 @@ impl AppState {
         }
         // Both sides show the same index, so it is clamped to the shorter volume.
         let plane_axis = self.ui.compare_plane.axis().unwrap();
-        let compared = [
-            self.model.compare_left.clone(),
-            self.model.compare_right.clone(),
-        ]
-        .map(|id| {
-            let descriptor = self
-                .project
-                .as_ref()?
-                .document
-                .asset(&id?)?
-                .volume()
-                .cloned()?;
-            let axis = descriptor
-                .axes
-                .iter()
-                .position(|a| a.name == ["z", "y", "x"][plane_axis])
-                .unwrap_or(0);
-            Some((descriptor, axis))
-        });
-        let index = compared
-            .iter()
-            .flatten()
-            .map(|(descriptor, axis)| descriptor.shape[*axis].saturating_sub(1))
-            .fold(self.ui.display.indices[plane_axis], usize::min);
+        let compared = self.compared_volumes(plane_axis);
+        let index = self
+            .compared_count(plane_axis)
+            .map_or(self.ui.display.indices[plane_axis], |count| {
+                self.ui.display.indices[plane_axis].min(count.saturating_sub(1))
+            });
         // Keep the stored index on the shown slice, so the next step starts from it.
         if self.ui.workspace == Workspace::Compare && compared.iter().any(Option::is_some) {
             self.ui.display.indices[plane_axis] = index;

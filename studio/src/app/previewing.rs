@@ -91,6 +91,11 @@ impl AppState {
         let active = processing.then(|| kind(&self.ui.operation)).flatten();
         let mut changed = false;
         if self.preview_context.active != active {
+            // Leaving a preview's form stops its request, which would otherwise
+            // hold the durable queue with no control left to stop it.
+            if let Some(previous) = self.preview_context.active {
+                self.previews.clear(previous);
+            }
             self.preview_context.previous = None;
             self.preview_context.active = active;
             self.preview_context.arrays.clear();

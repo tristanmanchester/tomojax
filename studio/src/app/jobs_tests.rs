@@ -372,6 +372,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
                 "image_iterations":2,"refine_iterations":1,"tolerance":0.,"min_iterations":1}
         })),
     );
+    state.await_inputs();
     state.queue_operation("align").unwrap();
     let id = state
         .project
@@ -526,6 +527,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
             "config":{"type":"AlignConfig","levels":[1],"iterations":100,"initial_image_iterations":2,
                 "image_iterations":2,"refine_iterations":1,"tolerance":0.,"min_iterations":100}
         })));
+        runtime.state.await_inputs();
         runtime.state.queue_operation("align").unwrap();
         let capture_id = runtime
             .state

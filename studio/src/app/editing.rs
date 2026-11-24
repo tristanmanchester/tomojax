@@ -121,8 +121,34 @@ impl AppState {
         self.form_context.error.as_deref()
     }
 
-    pub(super) fn form_inputs_pending(&self) -> bool {
+    pub(crate) fn form_inputs_pending(&self) -> bool {
         self.form_context.pending
+    }
+}
+
+#[cfg(test)]
+impl AppState {
+    /// Waits, as the Queue button does, until the selected inputs are captured.
+    pub(super) fn await_inputs(&mut self) {
+        let limit = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        loop {
+            self.poll();
+            let selected = self.selected_inputs();
+            if !self.form_inputs_pending()
+                && self
+                    .current_form_inputs()
+                    .iter()
+                    .map(|input| &input.asset)
+                    .eq(selected.iter())
+            {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < limit,
+                "inputs were not captured"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 }
 

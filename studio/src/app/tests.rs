@@ -277,6 +277,8 @@ fn compared_volumes_of_different_depth_show_the_same_slice() {
     state.model.compare_right = Some(right.id.clone());
     state.project.as_mut().unwrap().document.assets = vec![left, right];
     state.ui.workspace = Workspace::Compare;
+    // The shared slice count is known from the registrations before any image loads.
+    assert_eq!(state.compared_count(0), Some(3));
     state.ui.display.indices[0] = 5;
     state.refresh_images();
     drive(&mut state, |state| {
@@ -974,6 +976,7 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
     assert!(project.resolve(&project.document.assets[0].path).is_file());
 
     state.set_operation("reconstruct", Some(&json!({"method":"fourier"})));
+    state.await_inputs();
     state.queue_operation("reconstruct").unwrap();
     // A later edit must have no effect on the queued command or resulting solver.
     state.set_operation(
@@ -1053,6 +1056,7 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
         state.model.selected_assets = [preview_source].into_iter().collect();
         state.set_operation(operation, Some(&parameters));
         let jobs_before = state.project.as_ref().unwrap().document.jobs.len();
+        state.await_inputs();
         state.queue_operation(operation).unwrap();
         drive(&mut state, |s| {
             s.model

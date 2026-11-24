@@ -1031,10 +1031,12 @@ fn footer(state: &AppState) -> El {
             let invalid = state
                 .current_validation_error(&state.ui.operation)
                 .is_some();
+            let reading = state.ui.operation != "simulate" && state.form_inputs_pending();
             let available = state.model.backend.ready
                 && (state.model.selection_count() > 0 || state.ui.operation == "simulate")
                 && state.model.active().is_none_or(|a| !a.missing)
-                && !invalid;
+                && !invalid
+                && !reading;
             if !available {
                 let reason = if !state.model.backend.ready {
                     if state.model.backend.status.is_empty() {
@@ -1046,6 +1048,8 @@ fn footer(state: &AppState) -> El {
                     "Reconnect the source to queue processing."
                 } else if invalid {
                     "Resolve the validation error to queue this operation."
+                } else if reading {
+                    "Reading the selected inputs…"
                 } else {
                     "Select inputs to queue this operation."
                 };

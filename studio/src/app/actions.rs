@@ -466,7 +466,7 @@ impl AppState {
                     let count = if self.ui.workspace == Workspace::Compare
                         && Some(axis) == self.ui.compare_plane.axis()
                     {
-                        self.model.comparison_count
+                        self.compared_count(axis).unwrap_or(0)
                     } else {
                         self.slice_count(axis)
                     };
