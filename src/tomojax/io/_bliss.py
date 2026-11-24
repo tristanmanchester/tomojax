@@ -9,7 +9,7 @@ import h5py
 import numpy as np
 
 from tomojax._data import Hdf5Frames
-from tomojax.core.files import read_dataset, read_path
+from tomojax.core.files import read_hdf5
 
 from ._datasets import ProjectionDataset
 from ._frame_blocks import FrameBlocks
@@ -49,7 +49,7 @@ def _text(value: Any) -> str:
 
 
 def _value(group: Any, key: str, default: Any = None) -> Any:
-    return read_dataset(group[key])[()] if key in group else default
+    return group[key][()] if key in group else default
 
 
 def _length(group: Any, key: str, *, default_unit: str) -> np.ndarray | None:
@@ -57,12 +57,12 @@ def _length(group: Any, key: str, *, default_unit: str) -> np.ndarray | None:
         return None
     data = group[key]
     unit = _text(data.attrs.get("unit", data.attrs.get("units", default_unit)))
-    return np.asarray(read_dataset(data)[()], np.float64) * _LENGTH_MM[unit]
+    return np.asarray(data[()], np.float64) * _LENGTH_MM[unit]
 
 
 def _category(entry: Any) -> int | None:
     if "technique/image_key" in entry:
-        return int(read_dataset(entry["technique/image_key"])[()])
+        return int(entry["technique/image_key"][()])
     title = _text(_value(entry, "title", ""))
     for key, starts in (
         (2, ("dark",)),
@@ -96,9 +96,7 @@ def _sequence(file: Any, data_path: str | None) -> tuple[Any, list[Any]] | None:
     if title not in {"tomo:basic", "tomo:fullturn", "tomo:fulltomo", "tomo:halfturn"}:
         raise ValueError(f"{root.name}: unsupported Bliss sequence {title!r}")
     if "measurement/scan_numbers" in root:
-        steps = [
-            root.file[f"{int(n)}.1"] for n in read_dataset(root["measurement/scan_numbers"])[()]
-        ]
+        steps = [root.file[f"{int(n)}.1"] for n in root["measurement/scan_numbers"][()]]
     else:
         # Older Bliss did not record child scan numbers. The next initialization
         # closes the sequence; numeric scan order is not lexicographic order.
@@ -149,7 +147,7 @@ def _rotation_series(data: Any, n: int) -> np.ndarray | None:
     if not isinstance(data, h5py.Dataset):
         return None
     data = cast(Any, data)  # h5py stubs omit Dataset.name.
-    angles = np.asarray(read_dataset(data)[()], np.float64)
+    angles = np.asarray(data[()], np.float64)
     if angles.shape != (n,) and not (n == 1 and angles.ndim == 0):
         return None
     unit = _text(data.attrs.get("unit", data.attrs.get("units", ""))).lower()
@@ -207,7 +205,7 @@ def _collect_steps(root: Any, steps: list[Any]):
             n += len(stack)
         elif kind == 1:
             positions.extend([n] * len(stack))
-    if n != int(read_dataset(root["technique/scan/tomo_n"])[()]):
+    if n != int(root["technique/scan/tomo_n"][()]):
         raise ValueError(f"{root.name}: projection count does not match Bliss tomo_n")
     return blocks, np.concatenate(angles), np.asarray(positions, np.float64)
 
@@ -248,6 +246,6 @@ def _read_sequence(root: Any, steps: list[Any]) -> RawAcquisition:
 
 
 def read_bliss(path: Path, *, data_path: str | None = None) -> RawAcquisition | None:
-    with h5py.File(read_path(path), "r") as file:
+    with read_hdf5(path) as file:
         selected = _sequence(file, data_path)
         return _read_sequence(*selected) if selected is not None else None

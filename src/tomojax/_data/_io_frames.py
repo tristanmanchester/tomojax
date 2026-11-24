@@ -11,7 +11,7 @@ from typing import Any, ClassVar, cast
 import h5py
 import numpy as np
 
-from tomojax.core.files import read_dataset, read_path
+from tomojax.core.files import read_hdf5, validate_virtual_pixels
 
 from ._frame_stack import FrameStack
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
@@ -40,14 +40,14 @@ class Hdf5Frames(FrameStack):
     def open(cls, path: str, dataset: str) -> Hdf5Frames:
         """Every frame of ``dataset`` in ``path``."""
         path = str(Path(path).absolute())  # later reads must not depend on the working directory
-        with h5py.File(read_path(path), "r") as file:
+        with read_hdf5(path) as file:
             data = file[dataset]
             if not isinstance(data, h5py.Dataset) or data.ndim not in (2, 3):
                 raise ValueError(f"{path}:{dataset} is not a 2-D sinogram or 3-D stack of frames")
             n, cols = int(data.shape[0]), int(data.shape[-1])
             rows = 1 if data.ndim == 2 else int(data.shape[1])
             layout = cast(Any, data)  # h5py's typing omits the storage layout
-            read_dataset(layout, require_pixels=True)
+            validate_virtual_pixels(layout)
             # Unfiltered data supports direct reads of partial chunks. __getitem__
             # bypasses the chunk cache so narrow windows do not fetch whole frames.
             windows = not layout.is_virtual and layout.id.get_create_plist().get_nfilters() == 0
@@ -67,8 +67,8 @@ class Hdf5Frames(FrameStack):
         # Chunk caching can amplify a narrow read to the entire chunk even with
         # no compression. Filtered/virtual datasets retain their normal cache.
         cache = 0 if self._efficient_row_windows else None
-        with h5py.File(read_path(self.path), "r", rdcc_nbytes=cache) as file:
-            data: Any = read_dataset(file[self.dataset])
+        with read_hdf5(self.path, rdcc_nbytes=cache) as file:
+            data: Any = file[self.dataset]
             if indices.size == 0:
                 return np.empty((0, self.rows, self.cols), self.dtype)
             detector = (cols,) if data.ndim == 2 else (rows, cols)
@@ -291,7 +291,7 @@ def locate_frames(
     OSError
         If the file cannot be opened.
     """
-    with h5py.File(read_path(path), "r") as file:
+    with read_hdf5(path) as file:
         where = data_path or next((p for p in _FRAME_PATHS if _dataset(file, p) is not None), None)
         gda = _gda_paths(file) if where is None else None
         where = where or (gda[0] if gda is not None else None)
@@ -349,7 +349,7 @@ def locate_frames(
         returns = 0
         if key is not None and control is not None and control.shape == (frames,):
             # ESRF marks return (alignment) images -1 here while image_key calls them samples.
-            marked = np.asarray(read_dataset(control)[()]) == -1
+            marked = np.asarray(control[()]) == -1
             key, returns = np.where(marked, 3, key), int(np.count_nonzero(marked))
         acquisition, units_override = _gda_metadata(file, gda, where, key_at, angles_at)
         angles = (
@@ -396,7 +396,7 @@ def _read(file: h5py.File, where: str, path: str) -> np.ndarray:
     found = _dataset(file, where)
     if found is None:
         raise KeyError(f"{path} has no dataset {where!r}")
-    return np.asarray(read_dataset(found)[()])
+    return np.asarray(found[()])
 
 
 def _degrees(

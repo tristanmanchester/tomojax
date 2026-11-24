@@ -43,6 +43,8 @@ from tomojax.core.validation import view_indices
 from tomojax.geometry import Detector, Grid, ScanGeometry
 
 if TYPE_CHECKING:
+    import jax
+
     from tomojax import corrections
     from tomojax._loading_geometry import DeclaredGeometry
     from tomojax.corrections import Correction
@@ -1040,6 +1042,16 @@ def _acquisition_frames(
         name=record.sample_name or "sample",
         source=record,
     )
+
+
+def load_hdf5_projections(path: Path) -> np.ndarray | jax.Array:
+    """Load an acquisition's line integrals, or the sample views of a simple array file."""
+    from tomojax.io.api import locate_frames
+
+    frames = _acquisition_frames(path)
+    if frames is not None:
+        return _corrected_on_load(frames, path).projections
+    return locate_frames(str(path)).samples[:]
 
 
 def _tiff_frames(

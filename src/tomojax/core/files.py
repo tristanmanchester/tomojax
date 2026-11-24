@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 import errno
 import os
 from pathlib import Path
@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    import h5py
 
 
 # A worker executes one Python job at a time. Its code can load data on any thread.
@@ -65,46 +67,100 @@ def virtual_mappings(data: Any) -> Iterator[Any]:
             yield source._replace(file_name=filename, dset_name=dataset, vspace=space)
 
 
+def source_file(here: Path, filename: str, variable: str, prefix: str = "") -> Path:
+    """Follow HDF5's external-link and virtual-file search order."""
+    import h5py
+
+    name = Path(filename)
+    candidates = []
+    if name.is_absolute():
+        candidates.append(name)
+        name = Path(name.name)
+    parents = [Path(p) for p in os.environ.get(variable, "").split(os.pathsep) if p]
+    if prefix:
+        parents.append(Path(prefix))
+    parents.extend((here.parent, Path.cwd(), here.resolve().parent))
+    candidates.extend(parent / name for parent in parents)
+    for candidate in dict.fromkeys(candidates):
+        if candidate.is_file():
+            with suppress(OSError), h5py.File(candidate, "r"):
+                return candidate
+    return here.parent / name
+
+
 def virtual_source_paths(data: Any) -> dict[Path, list[Any]]:
-    """Resolve VDS names using HDF5's access prefix, file directory and cwd."""
+    """Group VDS mappings by the physical file selected by HDF5."""
     sources: dict[Path, list[Any]] = {}
     here = Path(data.file.filename)
     prefix = os.fsdecode(data.id.get_access_plist().get_virtual_prefix())
-    parents = [Path(prefix)] if prefix else []
-    parents.extend((here.parent, Path.cwd()))
     for source in virtual_mappings(data):
-        name = Path(source.file_name)
-        if name.is_absolute() and not name.exists():
-            name = Path(name.name)
-        candidates = (parent / name for parent in parents)
         path = (
             here
             if source.file_name == "."
-            else next((file for file in candidates if file.is_file()), here.parent / name)
+            else source_file(here, source.file_name, "HDF5_VDS_PREFIX", prefix)
         )
         sources.setdefault(path, []).append(source)
     return sources
 
 
-def backing_datasets(data: Any, *, require_pixels: bool) -> Iterator[Any]:
-    """Visit mapped datasets, optionally rejecting missing detector pixels before a scan."""
+@contextmanager
+def read_hdf5(path: str | Path, **options: Any) -> Iterator[h5py.File]:
+    """Open a read-only file and record the worker's complete storage dependencies."""
     import h5py
 
-    for path, mappings in virtual_source_paths(data).items():
+    with h5py.File(path, "r", **options) as file:
+        record_hdf5_inputs(file)
+        yield file
+
+
+def record_hdf5_inputs(file: Any) -> None:
+    """Walk links and dataset storage metadata without reading pixel arrays."""
+    import h5py
+
+    if not _input_recorders:
+        return
+    pending = hdf5_sources(file)
+    root = read_path(Path(file.filename))
+    seen = {(root.resolve(), root.parent.resolve())}
+    while pending:
+        here = read_path(pending.pop())
+        identity = (here.resolve(), here.parent.resolve())
+        if identity in seen or not here.is_file():
+            continue
+        seen.add(identity)
         try:
-            with h5py.File(read_path(path), "r") as backing:
-                for source in mappings:
-                    pixels = backing.get(source.dset_name)
-                    if not isinstance(pixels, h5py.Dataset):
-                        if require_pixels:
-                            raise KeyError(source.dset_name)
-                        continue  # missing sources contribute the VDS fill value
-                    if require_pixels:
-                        validate_mapping(path, source, pixels)
-                    yield pixels
-        except (OSError, KeyError) as exc:
-            if require_pixels:
-                raise ValueError(f"{data.name}: missing virtual detector pixels in {path}") from exc
+            backing = h5py.File(here, "r")
+        except OSError:
+            continue  # A dangling link has no further dependencies.
+        with backing:
+            pending.update(hdf5_sources(backing))
+
+
+def hdf5_sources(file: Any) -> set[Path]:
+    """Record raw storage and return the HDF5 files linked from this container."""
+    import h5py
+
+    sources: set[Path] = set()
+    here = Path(file.filename)
+
+    def visit(name: str, link: Any) -> None:
+        if isinstance(link, cast("Any", h5py).ExternalLink):
+            sources.add(source_file(here, link.filename, "HDF5_EXT_PREFIX"))
+        elif isinstance(link, cast("Any", h5py).HardLink):
+            data = file[name]
+            if isinstance(data, h5py.Dataset):
+                layout = cast("Any", data)  # h5py stubs omit external and virtual layouts.
+                if layout.is_virtual:
+                    sources.update(virtual_source_paths(layout))
+                if layout.external:
+                    # The opened dataset's access plist includes HDF5_EXTFILE_PREFIX
+                    # with ${ORIGIN} expanded by HDF5 itself.
+                    prefix = os.fsdecode(layout.id.get_access_plist().get_efile_prefix())
+                    for filename, _, _ in layout.external:
+                        read_path(Path(prefix) / filename)
+
+    file.visititems_links(visit)
+    return sources
 
 
 def validate_mapping(path: Path, source: Any, pixels: Any) -> None:
@@ -122,22 +178,28 @@ def validate_mapping(path: Path, source: Any, pixels: Any) -> None:
         raise ValueError(f"{path}:{source.dset_name}: missing virtual detector pixels")
 
 
-def read_dataset[T](
-    dataset: T, *, require_pixels: bool = False, seen: set[tuple[str, str]] | None = None
-) -> T:
-    """Record resolved datasets and their VDS inputs without materialising their pixels."""
-    if not (_input_recorders or require_pixels):
-        return dataset
-    data = cast("Any", dataset)  # h5py stubs omit VDS mappings.
-    filename = read_path(str(data.file.filename))
-    if data.is_virtual:
-        seen = set() if seen is None else seen
-        identity = (str(Path(filename).resolve()), data.name)
-        if identity not in seen:
-            seen.add(identity)
-            for source in backing_datasets(data, require_pixels=require_pixels):
-                read_dataset(source, require_pixels=require_pixels, seen=seen)
-    return dataset
+def validate_virtual_pixels(data: Any, seen: set[tuple[str, str]] | None = None) -> None:
+    """Check every physical source of a virtual detector before accepting the stack."""
+    import h5py
+
+    if not data.is_virtual:
+        return
+    seen = set() if seen is None else seen
+    identity = (str(Path(data.file.filename).resolve()), data.name)
+    if identity in seen:
+        return
+    seen.add(identity)
+    for path, mappings in virtual_source_paths(data).items():
+        try:
+            with h5py.File(path, "r") as backing:
+                for source in mappings:
+                    pixels = backing.get(source.dset_name)
+                    if not isinstance(pixels, h5py.Dataset):
+                        raise KeyError(source.dset_name)
+                    validate_mapping(path, source, pixels)
+                    validate_virtual_pixels(pixels, seen)
+        except (OSError, KeyError) as exc:
+            raise ValueError(f"{data.name}: missing virtual detector pixels in {path}") from exc
 
 
 @contextmanager

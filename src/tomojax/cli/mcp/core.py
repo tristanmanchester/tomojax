@@ -21,6 +21,7 @@ from mcp_types import CallToolResult, ToolAnnotations
 from tomojax import __version__
 from tomojax.cli.mcp.guidance import install_guidance
 from tomojax.cli.mcp.ledger import Ledger
+from tomojax.cli.mcp.scratch import scratch_root
 from tomojax.cli.mcp.supervisor import Supervisor, WorkerLost, WorkerProtocolError
 from tomojax.cli.mcp.tasks import Tasks
 
@@ -164,9 +165,8 @@ async def run() -> None:
     """Start the worker concurrently with MCP discovery, then clean up both lifetimes."""
     base = Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
     state = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
-    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     ledger = Ledger(state / "tomojax/mcp")
-    supervisor = Supervisor(ledger, base, cache / "tomojax/mcp")
+    supervisor = Supervisor(ledger, base, scratch_root("mcp"))
     loop = asyncio.get_running_loop()
     terminate = asyncio.Event()
     loop.add_signal_handler(signal.SIGTERM, terminate.set)

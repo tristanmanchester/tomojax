@@ -12,6 +12,7 @@ import h5py
 import numpy as np
 
 from tomojax._typed_arrays import numpy_float32_array, write_image
+from tomojax.core.files import read_hdf5
 from tomojax.io.api import (
     locate_frames,
     read_acquisition,
@@ -31,7 +32,7 @@ def preview_paths(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
     paths = {"projection": out / "projection.png"}
     if not h5py.is_hdf5(path):
         return paths
-    with h5py.File(path, "r") as file:
+    with read_hdf5(path) as file:
         if isinstance(file.get(_VOLUME_PATH), h5py.Dataset):
             paths.update({f"slice_{axis}": out / f"slice_{axis}.png" for axis in _DISPLAY_AXES})
     if saved_without_frames(path):  # a reconstruction saved without its scan
@@ -57,12 +58,12 @@ def write_previews(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
 def _hdf5_images(path: str | Path) -> dict[str, np.ndarray]:
     images: dict[str, np.ndarray] = {}
     if saved_without_frames(path):  # a reconstruction saved without its scan
-        with h5py.File(path, "r") as file:
+        with read_hdf5(path) as file:
             return _slices(file, path)
     samples = locate_frames(str(path)).samples
     if not len(samples):
         raise ValueError(f"{path} holds no sample projections")
-    with h5py.File(path, "r") as file:
+    with read_hdf5(path) as file:
         projections = cast("h5py.Dataset", file[samples.dataset])
         images["projection"] = numpy_float32_array(
             projections[int(samples.frames[len(samples) // 2])]

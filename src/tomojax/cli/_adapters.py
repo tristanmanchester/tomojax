@@ -30,7 +30,7 @@ from tomojax.cli._plans import plan_product
 from tomojax.cli._results import scan_axes, unit_of
 from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.array_ops import check_binning
-from tomojax.core.files import record_inputs
+from tomojax.core.files import read_hdf5, record_inputs
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
 from tomojax.wire.progress import Event, Preview
@@ -174,7 +174,7 @@ def saved_storage(path: str) -> Hdf5 | None:
     """Use a saved dataset directly only when it has canonical in-memory axis order."""
     if not h5py.is_hdf5(path):
         return None
-    with h5py.File(path, "r") as file:
+    with read_hdf5(path) as file:
         axes = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
         return Hdf5(path, VOLUME_DATASET) if axes in ("zyx", b"zyx") else None
 

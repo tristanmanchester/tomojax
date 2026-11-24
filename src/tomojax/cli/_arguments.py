@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from functools import cache
+from pathlib import Path
 from typing import Any
 
+import h5py
 import jax
 import msgspec
 import numpy as np
 
 import tomojax as tj
+from tomojax._loading import load_hdf5_projections
 from tomojax.cli import execution as ex, operations as op
 from tomojax.cli._browse import pixels, source_array
 from tomojax.cli._parameter_types import option_types
@@ -74,6 +77,8 @@ def read_reference(
                 raise InvalidParameter(name, "expected an admitted NumPy file")
             value = pinned
         return np.load(value.path, mmap_mode="r", allow_pickle=False)
+    if name == "projections" and isinstance(value, op.PathInput) and h5py.is_hdf5(value.path):
+        return load_hdf5_projections(Path(value.path))
     with source_array(value, context, member=name) as (data, meta, _):
         return pixels(data, tuple(map(range, meta.shape)))
 

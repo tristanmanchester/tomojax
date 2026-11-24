@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 
 from tomojax import progress
-from tomojax.core.files import read_path, replaced_when_complete
+from tomojax.core.files import read_hdf5, replaced_when_complete
 from tomojax.geometry.api import nominal_axis_unit_from_inputs
 
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees
@@ -439,7 +439,7 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     volume_raw: np.ndarray | None = None
     volume_axes_attr: str | None = None
 
-    with h5py.File(read_path(path), "r") as f:
+    with read_hdf5(path) as f:
         entry = cast("h5py.Group", f["/entry"])
         det_grp = _detector_group(entry)
         if det_grp is not None and "data" in det_grp:
@@ -507,7 +507,7 @@ def saved_without_frames(path: str | PathLike[str]) -> bool:
     bool
         True when the file holds a saved volume and no stack of frames.
     """
-    with h5py.File(read_path(os.fspath(path)), "r") as file:
+    with read_hdf5(os.fspath(path)) as file:
         return _without_frames(file)
 
 
@@ -573,7 +573,7 @@ def validate_nxtomo(path: str) -> ValidationReport:
     """
     report: ValidationReport = {"issues": []}
     try:
-        with h5py.File(read_path(path), "r") as f:
+        with read_hdf5(path) as f:
             if "/entry" not in f:
                 report["issues"].append("Missing /entry")
                 return report

@@ -905,9 +905,12 @@ def test_backproject_discovers_nexus_projections(tmp_path):
     with h5py.File(path, "r+") as file:
         del file["/entry/instrument/detector/data"]
         file["other"] = np.zeros_like(sim.scan.projections)
+    plain = tmp_path / "arrays.h5"
+    with h5py.File(plain, "w") as file:
+        file["/entry/projections"] = sim.scan.projections
     with connection(tmp_path) as c:
         scan = c.call("open", kind="scan", path=str(path))["structuredContent"]["handle"]
-        for src, expected in ((str(path), True), (f"{path}::/other", False)):
+        for src, expected in ((str(path), True), (str(plain), True), (f"{path}::/other", False)):
             reply = c.call("backproject", source=scan, projections=src)
             assert not reply["isError"], reply
             array = reply["structuredContent"]["handle"]
@@ -960,3 +963,21 @@ def test_backproject_selects_sample_frames_only_for_bare_paths(tmp_path, suffix)
             "backproject", source=source, projections=f"{path}::/entry/instrument/detector/data"
         )
         assert literal["isError"] and "does not match" in literal["content"][0]["text"]
+
+
+def test_backproject_bliss_projection_blocks(tmp_path):
+    from tests.test_esrf_readers import _write_bliss_sequence
+
+    path = tmp_path / "sequence.h5"
+    _write_bliss_sequence(path, "measurement/hrsrot")
+    with connection(tmp_path) as c:
+        scan = c.call("open", path=path.name)["structuredContent"]["handle"]
+        volumes = []
+        for ref in (path.name, f"{scan}.projections"):
+            result = c.call("backproject", source=scan, projections=ref)
+            assert not result["isError"], result
+            volumes.append(result["structuredContent"]["handle"])
+        actual, expected = volumes
+        assert c.call("python", code=f"np.array_equal(handles[{actual!r}], handles[{expected!r}])")[
+            "structuredContent"
+        ]["value"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import fcntl
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -13,6 +14,11 @@ from tomojax.cli._commit import commit, helper
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+def scratch_root(client: str) -> Path:
+    """Return this client's worker storage under the TomoJAX cache directory."""
+    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "tomojax" / client
 
 
 @contextmanager

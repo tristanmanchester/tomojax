@@ -25,7 +25,7 @@ from tomojax.cli._options import ancestor_paths
 from tomojax.cli.envelope import INLINE_LIMIT
 from tomojax.cli.images import Panel, limits, raster
 from tomojax.cli.mcp.ledger import reserve
-from tomojax.core.files import read_dataset, record_inputs
+from tomojax.core.files import record_hdf5_inputs, record_inputs
 from tomojax.wire.arrays import Member
 from tomojax.wire.progress import Info
 
@@ -86,16 +86,16 @@ def snapshot(value, *, issued, dependencies, source=None):
             # Copy that metadata; indexing the private descriptor reads owned pixels.
             copy = deepcopy(buf)
         elif isinstance(buf, jax.Array):
-            copy = buf if shared else buf.copy().block_until_ready()
+            copy = buf.copy().block_until_ready()
         else:
             if isinstance(buf, np.ndarray):
                 copy = (
                     np.asarray(memoryview(buf).toreadonly()) if shared else np.array(buf, copy=True)
                 )
             else:
-                copy = np.array(
-                    (read_dataset(buf) if isinstance(buf, h5py.Dataset) else buf)[:], copy=True
-                )
+                if isinstance(buf, h5py.Dataset):
+                    record_hdf5_inputs(buf.file)
+                copy = np.array(buf[:], copy=True)
             copy.flags.writeable = False
         memo[id(buf)] = copy
         if source is not None:

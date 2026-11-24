@@ -3,6 +3,7 @@
 import base64
 from io import BytesIO
 import json
+import os
 import subprocess
 import sys
 import time
@@ -374,7 +375,7 @@ register(tj.Scan(pixels * 2, geometry))""",
 
 
 @pytest.mark.parametrize("block_names", [False, True])
-def test_save_protects_linked_volume_pixels(tmp_path, block_names):
+def test_save_protects_linked_volume_pixels(tmp_path, block_names, monkeypatch):
     import h5py
     import numpy as np
 
@@ -385,6 +386,12 @@ def test_save_protects_linked_volume_pixels(tmp_path, block_names):
     tj.save(volume, tj.Reconstruction(sim.phantom, sim.scan.geometry, "test", {}, sim.scan))
     detector = tmp_path / "detector"
     detector.mkdir()
+    parts_dir = detector if block_names else tmp_path / "vds-sources"
+    if not block_names:
+        parts_dir.mkdir()
+        monkeypatch.setenv(
+            "HDF5_VDS_PREFIX", str(tmp_path / "absent") + os.pathsep + str(parts_dir)
+        )
     dataset = "/entry/processing/tomojax/volume"
     with h5py.File(volume, "r+") as nexus, h5py.File(detector / "virtual.h5", "w") as virtual:
         pixels = nexus[dataset][...]
@@ -392,7 +399,7 @@ def test_save_protects_linked_volume_pixels(tmp_path, block_names):
         parts = len(pixels) if block_names else 2
         for index, slab in enumerate(np.array_split(pixels, parts)):
             name = f"part{index}.h5"
-            with h5py.File(detector / name, "w") as backing:
+            with h5py.File(parts_dir / name, "w") as backing:
                 backing["pixels"] = slab
             if not block_names:
                 start = index * len(slab)
@@ -412,8 +419,12 @@ def test_save_protects_linked_volume_pixels(tmp_path, block_names):
         ]
         registered = python(c, f"register(tj.load_reconstruction({volume.name!r}))")["value"]
         for handle in (typed, registered):
-            for path in ("part0.h5", f"part{parts - 1}.h5", "virtual.h5"):
-                reply = c.call("save", source=handle, path=str(detector / path), force=True)
+            for path in (
+                parts_dir / "part0.h5",
+                parts_dir / f"part{parts - 1}.h5",
+                detector / "virtual.h5",
+            ):
+                reply = c.call("save", source=handle, path=str(path), force=True)
                 assert reply["isError"] and "differ from input" in reply["content"][0]["text"]
     with h5py.File(volume) as nexus:
         np.testing.assert_array_equal(nexus[dataset][...], pixels)
@@ -433,3 +444,68 @@ def test_large_python_images_and_value_keep_worker_alive(tmp_path):
         assert reply["isError"] and "too large" in reply["content"][0]["text"]
         assert python(c, f"[list(handles), int(handles[{saved!r}].sum())]")["value"] == [[saved], 3]
         assert len(list((tmp_path / "cache").rglob("*.npy"))) == 1
+
+
+def test_donating_python_handle_buffer_preserves_worker_volumes(tmp_path):
+    with connection(tmp_path) as c:
+        sim = c.call("simulate", size=8, n_views=12)["structuredContent"]["handle"]
+        recon = c.call("reconstruct", source=f"{sim}.scan", method="fbp")["structuredContent"][
+            "handle"
+        ]
+        registered = python(
+            c,
+            f"""import jax
+r = handles[{recon!r}]
+duplicate = register(r)
+_ = jax.jit(lambda x: x + 1, donate_argnums=(0,))(r.volume).block_until_ready()
+assert r.volume.is_deleted()
+duplicate""",
+        )["value"]
+        for handle in (recon, registered):
+            stats = c.call("view", source=f"{handle}.volume", mode="statistics")
+            assert not stats["isError"], stats
+            assert stats["structuredContent"]["count"] == 8**3
+
+
+@pytest.mark.parametrize("layout", ["raw", "geometry"])
+def test_save_protects_hdf5_scan_dependencies(tmp_path, monkeypatch, layout):
+    import h5py
+
+    import tomojax as tj
+
+    scan = tmp_path / "scan.nxs"
+    storage = tmp_path / "sources"
+    storage.mkdir()
+    backing = storage / "backing.h5"
+    tj.save(scan, tj.simulate(size=8, n_views=12).scan)
+    with h5py.File(scan, "r+") as file:
+        if layout == "raw":
+            name = "/entry/instrument/detector/data"
+            pixels = file[name][:]
+            del file[name]
+            file.create_dataset(
+                name,
+                shape=pixels.shape,
+                dtype=pixels.dtype,
+                external=[(backing.name, 0, pixels.nbytes)],
+            )
+            backing.write_bytes(pixels.tobytes())
+            monkeypatch.setenv("HDF5_EXTFILE_PREFIX", "${ORIGIN}/sources")
+        else:
+            with h5py.File(backing, "w") as external:
+                file.copy("/entry/geometry", external)
+            del file["/entry/geometry"]
+            with h5py.File(storage / "links.h5", "w") as links:
+                links["geometry"] = h5py.ExternalLink("backing.h5", "/geometry")
+            file["/entry/geometry"] = h5py.ExternalLink("sources/links.h5", "/geometry")
+    protected = [backing] if layout == "raw" else [backing, storage / "links.h5"]
+    originals = {path: path.read_bytes() for path in protected}
+    with connection(tmp_path) as c:
+        opened = c.call("open", path=scan.name)
+        assert not opened["isError"], opened
+        for path, original in originals.items():
+            reply = c.call(
+                "save", source=opened["structuredContent"]["handle"], path=str(path), force=True
+            )
+            assert reply["isError"] and "differ from input" in reply["content"][0]["text"]
+            assert path.read_bytes() == original

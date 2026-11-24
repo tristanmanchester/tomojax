@@ -17,7 +17,7 @@ import h5py
 import numpy as np
 
 from tomojax import progress
-from tomojax.core.files import read_dataset, read_path
+from tomojax.core.files import read_hdf5, read_path
 from tomojax.core.host_volume import discard_failed_outputs
 from tomojax.io._hdf5_array import read_hdf5_array
 
@@ -43,7 +43,7 @@ def read_psi_mat(path: Path) -> tuple[np.ndarray, np.ndarray, float, float, str]
 
         names = [name for name, _, _ in whosmat(path)]
         raise ValueError(_missing(path, names))
-    with discard_failed_outputs() as outputs, h5py.File(read_path(path), "r") as file:
+    with discard_failed_outputs() as outputs, read_hdf5(path) as file:
         if "aligned_phase_sinogram" not in file:
             raise ValueError(_missing(path, list(file)))
         stack = file["aligned_phase_sinogram"]
@@ -63,10 +63,10 @@ def read_psi_mat(path: Path) -> tuple[np.ndarray, np.ndarray, float, float, str]
                 projections[first : first + step] = np.swapaxes(block, 1, 2)
                 if task is not None:
                     task.advance(min(views, first + step), {})
-        angles = np.asarray(read_dataset(file["rotation_angle"]), np.float64).ravel()
+        angles = np.asarray(file["rotation_angle"], np.float64).ravel()
         metres = 1e3  # the file's lengths in mm, every reader's unit
-        pixel = float(np.asarray(read_dataset(file["pixel_size"])).item()) * metres
-        wavelength = float(np.asarray(read_dataset(file["lambda"])).item()) * metres
+        pixel = float(np.asarray(file["pixel_size"]).item()) * metres
+        wavelength = float(np.asarray(file["lambda"]).item()) * metres
         if len(angles) != views:
             raise ValueError(f"{path}: {len(angles)} rotation angles for {views} projections")
         return projections, angles, pixel, wavelength, path.stem

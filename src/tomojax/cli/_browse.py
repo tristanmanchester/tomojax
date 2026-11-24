@@ -20,11 +20,11 @@ from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._frame_reads import frame_pixels
 from tomojax.cli._handles import stage_array
 from tomojax.cli._results import disk_volume, scan_axes, stored_grid
-from tomojax.core.files import read_dataset
+from tomojax.core.files import read_hdf5
 from tomojax.core.registration import recorded_length_unit
 from tomojax.errors import InvalidParameter
 from tomojax.io import build_geometry_from_dataset_metadata
-from tomojax.io.api import load_nxtomo, locate_frames, mapped_npz
+from tomojax.io.api import load_nxtomo, mapped_npz
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage, Uniform
 
 READ_BYTES = 16 << 20
@@ -57,22 +57,17 @@ def source_array(
         return
     path = Path(source.path)
     if isinstance(source, op.PathInput) and h5py.is_hdf5(path):
-        if member == "projections":
-            stack = locate_frames(str(path)).samples
-            yield stack, indexed(Hdf5(str(path), stack.dataset), stack), {}
-            return
-        with h5py.File(path, "r") as file:
+        with read_hdf5(path) as file:
             if member == "volume" or p.VOLUME_DATASET in file:
                 source = Hdf5(str(path), p.VOLUME_DATASET)
     if isinstance(source, op.PathInput):
         yield from saved_array(path, member)
         return
     if isinstance(source, Hdf5):
-        with h5py.File(path, "r") as file:
+        with read_hdf5(path) as file:
             data = file.get(source.dataset)
             if not isinstance(data, h5py.Dataset):
                 raise InvalidParameter("source", f"no dataset {source.dataset} in {path}")
-            read_dataset(data)
             if "/" + source.dataset.lstrip("/") == p.VOLUME_DATASET:
                 grid, _, geom_meta, axes = stored_grid(file, path)
                 volume = SavedVolume(data, axes)

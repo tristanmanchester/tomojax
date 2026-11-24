@@ -6,7 +6,7 @@ from typing import cast
 import h5py
 import numpy as np
 
-from tomojax.core.files import read_dataset, read_path
+from tomojax.core.files import read_hdf5
 
 
 def frame_pixels(data, ranges, budget):
@@ -21,8 +21,8 @@ def frame_pixels(data, ranges, budget):
             slice(offset + r.start, offset + r[-1] + 1, r.step)
             for r, offset in ((rows, data.first_row), (cols, data.first_col))
         )
-        with h5py.File(read_path(data.path), "r", rdcc_nbytes=0) as file:
-            dataset = cast("h5py.Dataset", read_dataset(file[data.dataset]))
+        with read_hdf5(data.path, rdcc_nbytes=0) as file:
+            dataset = cast("h5py.Dataset", file[data.dataset])
             if dataset.ndim == 2:
                 detector = detector[1:]
             shape = tuple(map(len, ranges))

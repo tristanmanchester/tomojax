@@ -42,9 +42,8 @@ def main() -> int:
         if args.commit == "supervisor":
             return run(reader, writer, external=True)
         from tomojax.cli._commit import helper
-        from tomojax.cli.mcp.scratch import scratch
+        from tomojax.cli.mcp.scratch import scratch, scratch_root
 
         recovered = helper([])
-        cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-        with scratch(cache / "tomojax/gui", gui=True, report=recovered) as (index, _):
+        with scratch(scratch_root("gui"), gui=True, report=recovered) as (index, _):
             return run(reader, writer, index=index, recovery=recovered)

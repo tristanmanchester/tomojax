@@ -193,9 +193,11 @@ def tree(path: Path) -> Object:
     """List HDF5 dataset names, shapes and dtypes without loading their values."""
     import h5py
 
+    from tomojax.core.files import read_hdf5
+
     datasets = {}
     if path.is_file() and h5py.is_hdf5(path):
-        with h5py.File(path, "r") as file:
+        with read_hdf5(path) as file:
 
             def visit(name: str, item: Any) -> None:
                 if isinstance(item, h5py.Dataset):
