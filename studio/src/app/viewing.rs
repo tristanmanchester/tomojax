@@ -109,6 +109,10 @@ impl AppState {
     /// previous asset's pixels, window, slices and sinogram row don't carry over)
     /// and an Open & calibrate form takes its kind. Selection is the caller's.
     pub(super) fn activate(&mut self, id: String) {
+        // Activating the active asset again keeps its view and drafts.
+        if self.model.active_asset.as_ref() == Some(&id) {
+            return;
+        }
         self.ui.rename = None;
         self.model.active_asset = Some(id);
         self.image_key.clear();
@@ -714,6 +718,7 @@ impl AppState {
                 zoom: self.ui.display.zoom,
                 window: display.window,
                 colormap: display.colormap,
+                invert: display.invert,
                 opacity: self.ui.display.density,
                 threshold: self.ui.display.threshold,
                 lighting: self.ui.display.lighting > 0.,

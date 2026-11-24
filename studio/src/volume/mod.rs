@@ -23,6 +23,9 @@ pub struct VolumeSettings {
     pub zoom: f32,
     pub window: Option<[f32; 2]>,
     pub colormap: ColorMap,
+    /// Reverses the colour ramp; opacity still follows the values, so dense
+    /// material stays visible.
+    pub invert: bool,
     pub threshold: f32,
     pub opacity: f32,
     /// An empty list selects the colormap/threshold ramp; sorted points define a custom LUT.
@@ -46,6 +49,7 @@ impl Default for VolumeSettings {
             zoom: 1.,
             window: None,
             colormap: ColorMap::Bone,
+            invert: false,
             threshold: 0.08,
             opacity: 1.,
             transfer: vec![],

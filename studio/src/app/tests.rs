@@ -752,8 +752,10 @@ fn a_reconnected_result_keeps_its_registration_on_the_new_file() {
         inside.arrays["volume"].storage,
         npy("derived/result.npy".into())
     );
-    assert!(project::is_data_file(std::path::Path::new("scan.nxs")));
-    assert!(!project::is_data_file(std::path::Path::new("run.01")));
+    // Whether a source is a folder is recorded at import, whatever its name.
+    let folder = directory.path().join("sample.raw");
+    std::fs::create_dir(&folder).unwrap();
+    assert!(Asset::input(folder, false).folder);
     assert!(matches!(
         &volume.axes[0].coordinates,
         crate::protocol::Coordinates::Coordinates { values } if *values == npy(elsewhere.join("result-axis0.npy"))
@@ -762,6 +764,26 @@ fn a_reconnected_result_keeps_its_registration_on_the_new_file() {
     let mut import = ramp_volume(directory.path(), "import", 2);
     import.relink(moved, &root);
     assert!(import.arrays.is_empty());
+}
+
+#[test]
+fn activating_the_active_asset_keeps_its_calibration_draft() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    let scan = ramp_volume(directory.path(), "scan", 2);
+    let id = scan.id.clone();
+    state.project.as_mut().unwrap().document.assets.push(scan);
+    state.activate(id.clone());
+    state.set_operation("open", None);
+    state
+        .ui
+        .parameter_edits
+        .get_mut("pixel_size")
+        .unwrap()
+        .replace_text("0.65");
+    state.activate(id);
+    assert_eq!(state.ui.parameter_edits["pixel_size"].text, "0.65");
 }
 
 #[test]

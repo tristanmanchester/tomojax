@@ -342,7 +342,8 @@ fn transfer_table(settings: &VolumeSettings) -> Vec<u16> {
             let density = ((t - settings.threshold.clamp(0., 0.99))
                 / (1. - settings.threshold.clamp(0., 0.99)))
             .clamp(0., 1.);
-            (color_at(settings.colormap, t), density.powf(1.7))
+            let shade = if settings.invert { 1. - t } else { t };
+            (color_at(settings.colormap, shade), density.powf(1.7))
         } else {
             let upper = points
                 .partition_point(|p| p.position < t)
@@ -365,4 +366,27 @@ fn transfer_table(settings: &VolumeSettings) -> Vec<u16> {
         );
     }
     table
+}
+
+#[cfg(test)]
+mod invert_tests {
+    use super::*;
+
+    #[test]
+    fn inverting_reverses_the_colours_but_keeps_dense_material_opaque() {
+        let plain = transfer_table(&VolumeSettings::default());
+        let inverted = transfer_table(&VolumeSettings {
+            invert: true,
+            ..Default::default()
+        });
+        let texel = |table: &[u16], i: usize| -> [f32; 4] {
+            std::array::from_fn(|c| half::f16::from_bits(table[i * 4 + c]).to_f32())
+        };
+        // The densest value's colour is the plain table's lowest colour...
+        assert_eq!(texel(&inverted, 255)[..3], texel(&plain, 0)[..3]);
+        // ...and every value keeps its opacity.
+        for i in [0, 128, 255] {
+            assert_eq!(texel(&inverted, i)[3], texel(&plain, i)[3]);
+        }
+    }
 }
