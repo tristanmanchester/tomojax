@@ -135,17 +135,7 @@ impl AppState {
                 // The active asset is always one of the selected ones: removing it
                 // from the selection makes the next selected asset active.
                 if extend && self.model.selected_assets.remove(&id) {
-                    if self.model.active_asset.as_ref() == Some(&id) {
-                        let next = if self.model.selected_assets.is_empty() {
-                            None
-                        } else {
-                            self.selected_inputs().first().cloned()
-                        };
-                        match next {
-                            Some(next) => self.activate(next),
-                            None => self.model.active_asset = None,
-                        }
-                    }
+                    self.settle_active();
                 } else {
                     self.model.selected_assets.insert(id.clone());
                     self.activate(id);
@@ -206,9 +196,7 @@ impl AppState {
                     }
                 }
                 self.model.selected_assets.remove(&id);
-                if self.model.active_asset.as_deref() == Some(id.as_str()) {
-                    self.model.active_asset = None;
-                }
+                self.settle_active();
                 self.ui.confirm_remove = None;
                 self.imaging.invalidate();
                 self.image_key.clear();
@@ -223,12 +211,34 @@ impl AppState {
                 self.mark_dirty();
             }
             UiAction::RelinkAsset(id) => {
-                tx.open_file(FileDialogOptions{title:"Reconnect the original data file".into(),..Default::default()},move|s:&mut AppState,result,_|match result{
-                    Ok(Some(path))=>{
-                        if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("npz")){s.model.error=Some("NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognised acquisition.".into());return;}
-                        let mut reread=true;if let Some(project)=&mut s.project{let path=project.stored_path(&path);let root=project.root.clone();if let Some(asset)=project.document.asset_mut(&id){asset.relink(path,&root);reread = !asset.is_result();}}
-                        s.model.measurements.retain(|measurement|measurement.asset!=id);s.imaging.invalidate();if reread{s.start_metadata(&id);}s.image_key.clear();s.mark_dirty();s.refresh_model();s.refresh_images();
-                    },Ok(None)=>{},Err(error)=>s.model.error=Some(error.to_string())});
+                // An acquisition imported as a folder (a TIFF stack, frames beside a
+                // header) is reconnected by choosing its folder.
+                let folder = self
+                    .project
+                    .as_ref()
+                    .and_then(|project| project.document.asset(&id))
+                    .is_some_and(|asset| asset.path.extension().is_none());
+                let reconnect = move |s: &mut AppState,
+                                      result: rune::FileDialogResult,
+                                      _: &mut Tx| match result {
+                    Ok(Some(path)) => s.relink(&id, &path),
+                    Ok(None) => {}
+                    Err(error) => s.model.error = Some(error.to_string()),
+                };
+                let title = if folder {
+                    "Reconnect the acquisition folder"
+                } else {
+                    "Reconnect the original data file"
+                };
+                let options = FileDialogOptions {
+                    title: title.into(),
+                    ..Default::default()
+                };
+                if folder {
+                    tx.open_folder(options, reconnect);
+                } else {
+                    tx.open_file(options, reconnect);
+                }
             }
             UiAction::SetWorkspace(workspace) => self.set_workspace(workspace),
             UiAction::SetMainView(plane) => {

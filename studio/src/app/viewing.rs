@@ -127,6 +127,67 @@ impl AppState {
         self.refresh_images();
     }
 
+    /// Points asset `id` at `path`, chosen by the user after its data moved.
+    pub(super) fn relink(&mut self, id: &str, path: &Path) {
+        if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
+        {
+            self.model.error = Some(
+                "NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognised acquisition."
+                    .into(),
+            );
+            return;
+        }
+        let mut reread = true;
+        if let Some(project) = &mut self.project {
+            let path = project.stored_path(path);
+            let root = project.root.clone();
+            if let Some(asset) = project.document.asset_mut(id) {
+                asset.relink(path, &root);
+                reread = !asset.is_result();
+            }
+        }
+        self.model
+            .measurements
+            .retain(|measurement| measurement.asset != id);
+        self.imaging.invalidate();
+        if reread {
+            self.start_metadata(id);
+        }
+        self.image_key.clear();
+        self.mark_dirty();
+        self.refresh_model();
+        self.refresh_images();
+    }
+
+    /// Restores the rule between selection and the active asset after the
+    /// selection changed: the active asset is one of the selected ones (the
+    /// first in project order when it left), or nothing is active when nothing
+    /// is selected.
+    pub(super) fn settle_active(&mut self) {
+        if self
+            .model
+            .active_asset
+            .as_ref()
+            .is_some_and(|id| self.model.selected_assets.contains(id))
+        {
+            return;
+        }
+        let next = if self.model.selected_assets.is_empty() {
+            None
+        } else {
+            self.selected_inputs().first().cloned()
+        };
+        match next {
+            Some(id) => self.activate(id),
+            None => {
+                self.model.active_asset = None;
+                self.image_key.clear();
+            }
+        }
+    }
+
     /// Records what a read of asset `id`'s file found (the header reader or the
     /// worker's inspection), then brings the view up to date: an Open & calibrate
     /// form still on the old kind follows the new one, and an active asset seen

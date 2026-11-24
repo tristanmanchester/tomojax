@@ -655,13 +655,29 @@ fn a_copied_import_opens_with_its_own_kind_and_a_fresh_window() {
     let mut scan = Asset::input(copy.clone(), true);
     scan.kind = "scan".into();
     let id = scan.id.clone();
+    let selection = state.selected_inputs();
     state.local_event(LocalEvent::Copied {
         asset: scan,
         result: Ok(copy),
+        selection,
     });
     assert_eq!(state.model.active_asset.as_deref(), Some(id.as_str()));
     assert_eq!(state.applied_window, None);
     assert_eq!(state.ui.parameter_choices["kind"], "scan");
+
+    // A copy that finishes after the user moved on is added, not opened.
+    let started = state.selected_inputs();
+    let other = directory.path().join("other.nxs");
+    std::fs::write(&other, b"another scan").unwrap();
+    state.model.selected_assets.clear();
+    state.model.active_asset = None;
+    state.local_event(LocalEvent::Copied {
+        asset: Asset::input(other.clone(), true),
+        result: Ok(other),
+        selection: started,
+    });
+    assert_eq!(state.model.active_asset, None);
+    assert_eq!(state.project.as_ref().unwrap().document.assets.len(), 3);
 }
 
 #[test]
@@ -711,15 +727,28 @@ fn a_reconnected_result_keeps_its_registration_on_the_new_file() {
     let root = directory.path().join("project");
     let mut result = ramp_volume(directory.path(), "result", 2);
     result.parent = Some("source".into());
-    let moved = directory.path().join("moved.npy");
+    // A companion coordinate file beside the result.
+    let axis = directory.path().join("result-axis0.npy");
+    result.arrays.get_mut("volume").unwrap().axes[0].coordinates =
+        crate::protocol::Coordinates::Coordinates {
+            values: crate::protocol::Storage::Npy {
+                path: axis.to_string_lossy().into(),
+                artifact: None,
+            },
+        };
+    let elsewhere = directory.path().join("elsewhere");
+    let moved = elsewhere.join("result.npy");
     result.relink(moved.clone(), &root);
-    assert_eq!(
-        result.arrays["volume"].storage,
-        crate::protocol::Storage::Npy {
-            path: moved.to_string_lossy().into(),
-            artifact: None,
-        }
-    );
+    let npy = |path: std::path::PathBuf| crate::protocol::Storage::Npy {
+        path: path.to_string_lossy().into(),
+        artifact: None,
+    };
+    let volume = &result.arrays["volume"];
+    assert_eq!(volume.storage, npy(moved.clone()));
+    assert!(matches!(
+        &volume.axes[0].coordinates,
+        crate::protocol::Coordinates::Coordinates { values } if *values == npy(elsewhere.join("result-axis0.npy"))
+    ));
     // An import's registration is read again from the new file.
     let mut import = ramp_volume(directory.path(), "import", 2);
     import.relink(moved, &root);

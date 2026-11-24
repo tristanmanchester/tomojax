@@ -127,7 +127,12 @@ impl Asset {
             }
         };
         let old = resolve(&self.path);
-        let new = path.to_string_lossy().into_owned();
+        let new = resolve(&path);
+        // Files that sat beside the old file (a sweep's coordinates) moved with it.
+        let (old_folder, new_folder) = (
+            old.parent().map(Path::to_owned),
+            new.parent().map(Path::to_owned),
+        );
         self.path = path;
         self.managed = false;
         self.issue = None;
@@ -138,9 +143,19 @@ impl Asset {
         let repoint = |storage: &mut crate::protocol::Storage| {
             if let crate::protocol::Storage::Hdf5 { path, .. }
             | crate::protocol::Storage::Npy { path, .. } = storage
-                && resolve(Path::new(path.as_str())) == old
             {
-                *path = new.clone();
+                let stored = resolve(Path::new(path.as_str()));
+                let moved = if stored == old {
+                    Some(new.clone())
+                } else {
+                    old_folder
+                        .as_ref()
+                        .zip(new_folder.as_ref())
+                        .and_then(|(from, to)| Some(to.join(stored.strip_prefix(from).ok()?)))
+                };
+                if let Some(moved) = moved {
+                    *path = moved.to_string_lossy().into();
+                }
             }
         };
         for array in self.arrays.values_mut() {

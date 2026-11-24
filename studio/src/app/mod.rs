@@ -73,6 +73,8 @@ enum LocalEvent {
     Copied {
         asset: Asset,
         result: Result<PathBuf, String>,
+        /// The selection when the copy started; the copy opens only if it stands.
+        selection: Vec<String>,
     },
     Persisted {
         job: String,
@@ -393,17 +395,26 @@ impl AppState {
             LocalEvent::FormCaptured { generation, result } => {
                 self.form_context.complete(generation, result);
             }
-            LocalEvent::Copied { mut asset, result } => {
+            LocalEvent::Copied {
+                mut asset,
+                result,
+                selection,
+            } => {
                 self.copying = self.copying.saturating_sub(1);
                 match result {
                     Ok(path) => {
+                        // Like a finished job, a finished copy opens only while the
+                        // user hasn't moved on to other assets since it started.
+                        let unchanged = self.selected_inputs() == selection;
                         if let Some(project) = &mut self.project {
                             asset.path = project.stored_path(&path);
                             asset.managed = true;
                             let id = asset.id.clone();
                             project.document.assets.push(asset);
-                            self.model.selected_assets = [id.clone()].into();
-                            self.activate(id.clone());
+                            if unchanged {
+                                self.model.selected_assets = [id.clone()].into();
+                                self.activate(id.clone());
+                            }
                             self.mark_dirty();
                             self.start_metadata(&id);
                         }
@@ -727,6 +738,7 @@ impl AppState {
             return;
         }
         let mut metadata = Vec::new();
+        let selection = self.selected_inputs();
         for path in paths {
             if path
                 .extension()
@@ -757,9 +769,14 @@ impl AppState {
             if self.ui.import_copy {
                 let inputs = project.root.join("inputs").join(&asset.id);
                 self.copying += 1;
+                let selection = selection.clone();
                 self.spawn_local(Some(IMPORT_COPY.into()), move |cancelled| {
                     let result = copy_acquisition(&path, &inputs, &cancelled);
-                    LocalEvent::Copied { asset, result }
+                    LocalEvent::Copied {
+                        asset,
+                        result,
+                        selection,
+                    }
                 });
             } else {
                 asset.path = project.stored_path(&path);

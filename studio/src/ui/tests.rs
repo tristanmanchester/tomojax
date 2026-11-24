@@ -865,4 +865,10 @@ fn the_active_asset_stays_in_the_selection() {
     select(&mut rt, &first);
     assert!(rt.state.model.selected_assets.is_empty());
     assert_eq!(rt.state.model.active_asset, None);
+    // Removing the active asset from the project activates what stays selected.
+    select(&mut rt, &first);
+    select(&mut rt, &second_id);
+    let removed = second_id.clone();
+    rt.update(move |s, tx| s.dispatch(UiAction::RemoveAsset(removed), tx));
+    assert_eq!(rt.state.model.active_asset.as_deref(), Some(first.as_str()));
 }
