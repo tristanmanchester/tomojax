@@ -42,6 +42,8 @@ EXECUTABLE = (
     op.Validate,
     op.Plan,
     op.Run,
+    op.Read,
+    op.Statistics,
     op.Plane,
     op.Slice,
     op.CentreSweep,
@@ -103,15 +105,8 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
             info = {**info, "pose_rms": np.sqrt(np.mean(np.square(poses), axis=0)).tolist()}
         if isinstance(item, tj.Scan | tj.Frames | tj.Simulation | tj.Alignment | tj.Reconstruction):
             info = {**info, "geometry": geometry_summary(item)}
-            if "calibration" in info:
-                info["calibration"] = {
-                    key: {
-                        **entry,
-                        "unit": info["geometry"]["center_unit"] if key == "center" else "degree",
-                        "change_unit": "pixel" if key == "center" else "degree",
-                    }
-                    for key, entry in info["calibration"].items()
-                }
+            if calibration := info["geometry"].get("calibration"):
+                info["calibration"] = calibration
         if isinstance(item, p.Files):
             info = admission.details
         summary = ex.summarise(info, externalise=diagnostic)
@@ -129,13 +124,30 @@ def geometry_summary(item: Root) -> dict[str, Any]:
         item.scan.geometry if isinstance(item, tj.Alignment | tj.Simulation) else item.geometry
     )
     angles = np.asarray(geometry.angles)
-    return {
+    summary: dict[str, Any] = {
         "kind": describe(geometry)[0],
         "center_uv": list(geometry.detector.center),
         "center_unit": unit_of(item if isinstance(item, tj.Reconstruction) else scan),
         "views": len(angles),
         "angle_range_degree": [float(angles.min()), float(angles.max())],
     }
+    metadata = scan.source.geometry_metadata if scan is not None and scan.source else {}
+    info = (
+        item.info
+        if isinstance(item, tj.Alignment | tj.Reconstruction)
+        else metadata.get("alignment_info", {})
+    )
+    calibration = info.get("calibration", {})
+    if isinstance(calibration, dict) and calibration:
+        summary["calibration"] = {
+            key: {
+                **entry,
+                "unit": summary["center_unit"] if key == "center" else "degree",
+                "change_unit": "pixel" if key == "center" else "degree",
+            }
+            for key, entry in calibration.items()
+        }
+    return summary
 
 
 def saved_storage(path: str) -> Hdf5 | None:
@@ -159,6 +171,12 @@ class Admission:
     @singledispatchmethod
     def prepare(self, operation: Record) -> Work:
         raise ValueError(f"operation unavailable: {operation.__struct_config__.tag}")
+
+    @prepare.register
+    def browse(self, operation: op.Read | op.Statistics) -> Work:
+        from tomojax.cli._browse import browse
+
+        return partial(browse, operation, self.context)
 
     @prepare.register
     def inspect(self, operation: op.Inspect) -> Work:
@@ -455,26 +473,11 @@ class Admission:
                 raise InvalidParameter("source", "alignment holds no working image to export")
             if raw:
                 paths.append(path.with_suffix(".json"))
-        from tomojax._stack_files import slice_name
-
         self.details.update(
             paths=[str(p) for p in paths], destination_exists=path.exists() or path.is_symlink()
         )
         if isinstance(operation, op.Export):
-            grid = value.scan.grid if isinstance(value, tj.Simulation) else value.grid
-            assert grid is not None
-            nz = grid.nz
-            first, last = (
-                (path, path)
-                if raw
-                else (
-                    path / slice_name(operation.prefix, 0),
-                    path / slice_name(operation.prefix, nz - 1),
-                )
-            )
-            self.details.update(slice_count=nz, first_file=str(first), last_file=str(last))
-            if not raw:
-                self.details["paths"].append(str(path / f"{operation.prefix}.json"))
+            self.details.update(export_summary(operation, value, path, self.details["paths"]))
         check_destinations(set(ancestor_paths(self.manifest.inputs)), paths, force=operation.force)
 
         def write():
@@ -501,12 +504,22 @@ class Admission:
                 if raw:
                     staged[path].with_suffix(".json").replace(staged[path.with_suffix(".json")])
             staged[sidecar].write_bytes(msgspec.json.encode(self.manifest) + b"\n")
-            outputs = [str(p) for p in paths]
-            if isinstance(operation, op.Export) and not raw:
-                outputs.append(str(path / f"{operation.prefix}.json"))
-            return p.Files(tuple(outputs))
+            return p.Files(tuple(self.details["paths"]))
 
         return write
+
+
+def export_summary(operation: op.Export, value, path: Path, paths: list[str]) -> dict[str, Any]:
+    from tomojax._stack_files import slice_name
+
+    grid = value.scan.grid if isinstance(value, tj.Simulation) else value.grid
+    assert grid is not None
+    first = last = path
+    if path.suffix.lower() != ".raw":
+        first = path / slice_name(operation.prefix, 0)
+        last = path / slice_name(operation.prefix, grid.nz - 1)
+        paths.append(str(path / f"{operation.prefix}.json"))
+    return {"slice_count": grid.nz, "first_file": str(first), "last_file": str(last)}
 
 
 def ancestor_paths(ancestors: tuple[p.Provenance, ...]) -> Iterator[Path]:

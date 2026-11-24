@@ -217,6 +217,28 @@ class Combine(Record, tag="combine"):
     name: str | None = None
 
 
+class Window(Record):
+    """Half-open ROI in storage axis order. Omitted bounds select the whole array."""
+
+    roi: tuple[tuple[int, int], ...] | None = None
+    stride: tuple[int, ...] | None = None
+
+
+class Read(Window, tag="read", kw_only=True):
+    """Copy a registered hyperslab (up to 16 MiB), or return only its registration."""
+
+    source: Storage | PathInput
+    metadata_only: bool = False
+
+
+class Statistics(Window, tag="statistics", kw_only=True):
+    """Exact finite-value statistics over an optionally strided ROI."""
+
+    source: Storage | PathInput
+    percentiles: tuple[float, ...] = (1, 5, 50, 95, 99)
+    bins: int = 32
+
+
 class Plane(Record, tag="plane"):
     """Browse one plane from a registered volume."""
 
@@ -288,7 +310,7 @@ class Validate(Record, tag="validate"):
     operation: Workflow | Interactive | Open
 
 
-type ExecutionInput = Run | Interactive | Inspect | Open | Plan | Validate
+type ExecutionInput = Read | Statistics | Run | Interactive | Inspect | Open | Plan | Validate
 
 
 def input_references(command: ExecutionInput) -> tuple[Member | Npy, ...]:

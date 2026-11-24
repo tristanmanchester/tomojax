@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+import shutil
+import tempfile
 from zipfile import ZipFile
 
 import numpy as np
@@ -41,10 +45,14 @@ def save_npz(
         np.savez_compressed(stream, **payload)
 
 
-def _load_npz_dataset(path: str) -> LoadedDataset:
+def _load_npz_dataset(path: str, *, mapped: dict[str, np.ndarray] | None = None) -> LoadedDataset:
     with np.load(path, allow_pickle=True) as z:
         out: LoadedDataset = {}
         for k in z.files:
+            if mapped is not None and k in ("projections", "volume"):
+                if k in mapped:
+                    out[k] = mapped[k]
+                continue
             if k == "projections" and progress.watching():
                 # NPZ stores one compressed NPY member per array. Its header
                 # supplies the view count before NumPy inflates the pixel data.
@@ -78,3 +86,32 @@ def _load_npz_dataset(path: str) -> LoadedDataset:
 def load_npz(path: str) -> LoadedNXTomo:
     """Load a compressed NPZ payload using the same typed shape as NXtomo."""
     return LoadedNXTomo.from_dataset(_load_npz_dataset(path))
+
+
+@contextmanager
+def mapped_npz(path: str) -> Iterator[LoadedNXTomo]:
+    """Map the primary array of a TomoJAX NPZ file for bounded random reads.
+
+    Parameters
+    ----------
+    path : str
+        Saved TomoJAX NPZ dataset.
+
+    Yields
+    ------
+    LoadedNXTomo
+        The stored volume (z, y, x), or projections (view, v, u) for a scan,
+        with metadata. The temporary pixel file lasts for the context's lifetime.
+
+    Raises
+    ------
+    ValueError
+        If the array or its saved volume axis declaration is invalid.
+    """
+    with ZipFile(path) as archive, tempfile.TemporaryDirectory() as directory:
+        key = "volume" if "volume.npy" in archive.namelist() else "projections"
+        filename = Path(directory) / "pixels.npy"
+        with archive.open(key + ".npy") as src, filename.open("wb") as dest:
+            shutil.copyfileobj(src, dest, length=1024 * 1024)
+        pixels = np.load(filename, mmap_mode="r", allow_pickle=False)
+        yield LoadedNXTomo.from_dataset(_load_npz_dataset(path, mapped={key: pixels}))

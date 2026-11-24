@@ -43,7 +43,15 @@ def test_generated_contract_is_current():
 
 @pytest.mark.parametrize(
     "scenario",
-    ["saved-volume", "alignment-scan", "simulation", "edit-combine", "raw-slabs", "session"],
+    [
+        "browse",
+        "saved-volume",
+        "alignment-scan",
+        "simulation",
+        "edit-combine",
+        "raw-slabs",
+        "session",
+    ],
 )
 def test_fixed_client_transcripts(schemas, scenario):
     pending = {}

@@ -51,6 +51,15 @@
             {
               "anyOf": [
                 {
+                  "$ref": "#/$defs/Layout"
+                },
+                {
+                  "$ref": "#/$defs/ArrayResult"
+                },
+                {
+                  "$ref": "#/$defs/StatisticsResult"
+                },
+                {
                   "$ref": "#/$defs/PlaneResult"
                 },
                 {
@@ -87,6 +96,9 @@
               "discriminator": {
                 "propertyName": "type",
                 "mapping": {
+                  "layout": "#/$defs/Layout",
+                  "array": "#/$defs/ArrayResult",
+                  "statistics": "#/$defs/StatisticsResult",
                   "plane": "#/$defs/PlaneResult",
                   "projections": "#/$defs/Projections",
                   "volume": "#/$defs/Volume",
@@ -358,6 +370,124 @@
         "grid",
         "bounds",
         "arrays"
+      ],
+      "additionalProperties": false
+    },
+    "Layout": {
+      "title": "Layout",
+      "description": "Dimensions, units and coordinate sampling, without allocating or issuing pixels.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "layout"
+          ]
+        },
+        "array": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "array"
+      ],
+      "additionalProperties": false
+    },
+    "ArrayResult": {
+      "title": "ArrayResult",
+      "description": "Registered hyperslab or metadata for the original source.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "array"
+          ]
+        },
+        "array": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        }
+      },
+      "required": [
+        "type",
+        "array"
+      ],
+      "additionalProperties": false
+    },
+    "StatisticsResult": {
+      "title": "StatisticsResult",
+      "description": "Distribution over finite samples. Empty finite populations have null moments.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "statistics"
+          ]
+        },
+        "count": {
+          "type": "integer"
+        },
+        "non_finite": {
+          "type": "integer"
+        },
+        "mean": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "std": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "percentiles": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "histogram": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "count",
+        "non_finite",
+        "mean",
+        "std",
+        "percentiles",
+        "edges",
+        "histogram",
+        "unit"
       ],
       "additionalProperties": false
     },

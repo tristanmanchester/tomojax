@@ -86,6 +86,8 @@ def test_global_fits_publish_the_named_calibration_and_hold_local_poses(monkeypa
     assert result.info["calibration"][name]["change"] == correction
     if name == "center":
         assert type(result.scan.geometry) is type(scan.geometry)
+        if not cone:
+            assert tj.reconstruct(result.scan).info["automatic"]["method"] == "fourier"
     if name != "center":
         assert result.scan.detector.center == scan.detector.center
 

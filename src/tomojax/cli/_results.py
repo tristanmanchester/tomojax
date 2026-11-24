@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+import json
 from pathlib import Path
 import shutil
 import tempfile
 from typing import TYPE_CHECKING, Any
 
+import h5py
 import numpy as np
 
 from tomojax.cli.products import VOLUME_DATASET
@@ -75,6 +77,30 @@ def unit_of(item: tj.Scan | tj.Frames | tj.Reconstruction | None) -> str:
     else:
         unit = recorded_length_unit(item.source.geometry_metadata) if item and item.source else None
     return unit or "scan_length"
+
+
+def _decode(value: object, default: str) -> str:
+    if value is None:
+        return default
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
+def stored_grid(handle: h5py.File, path: Path) -> tuple[tj.Grid | None, dict, dict, str]:
+    """Read volume placement and disk axis order without touching its pixels."""
+    from tomojax._files import saved_volume_grid
+    from tomojax.io.api import saved_volume_axes
+
+    grid_meta = json.loads(_decode(handle["/entry"].attrs.get("grid_meta_json"), "{}"))
+    geom_group = handle.get("/entry/geometry")
+    geom_meta = (
+        json.loads(_decode(geom_group.attrs.get("geometry_meta_json"), "{}"))
+        if isinstance(geom_group, h5py.Group)
+        else {}
+    )
+    grid = saved_volume_grid(grid_meta, geom_meta)
+    attribute = handle["/entry/processing/tomojax"].attrs.get("volume_axes_order")
+    axes = saved_volume_axes(None if attribute is None else _decode(attribute, ""), path)
+    return grid, grid_meta, geom_meta, axes
 
 
 def disk_volume(

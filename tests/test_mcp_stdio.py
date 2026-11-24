@@ -337,11 +337,14 @@ def test_reconstruction_chain_matches_direct_api(tmp_path, size):
     def data(name, **params):
         reply = c.call(name, **params)
         assert not reply["isError"], reply["content"][0]["text"]
+        if name in ("align", "reconstruct") and not params.get("dry_run"):
+            assert any(block["type"] == "image" for block in reply["content"])
         return reply["structuredContent"]
 
     with connection(tmp_path) as c:
         acquisition = dict(phantom="shepp", size=size, n_views=size * 2, rotation=360)
-        assert data("simulate", **acquisition, dry_run=True)["type"] == "validated"
+        simulated = data("simulate", **acquisition, dry_run=True)
+        assert simulated["views"] == size * 2 and simulated["phantom_shape"] == [size] * 3
         sim = data("simulate", **acquisition)
         scan = sim["members"]["scan"]
         settings = dict(source=scan, fit="center", method="opposite-views")
@@ -357,6 +360,7 @@ def test_reconstruction_chain_matches_direct_api(tmp_path, size):
             "result.nxs.manifest.json",
         ]
         if size == 32:
+            check_sweep_and_difference(c, data, scan, volume)
             corrected = data("correct", source=scan)
             edited = data(
                 "edit_scan", operation=dict(type="select", source=corrected["handle"], views=[1, 3])
@@ -367,6 +371,12 @@ def test_reconstruction_chain_matches_direct_api(tmp_path, size):
                 back = data("backproject", source=scan, projections=array["handle"])
                 assert back["shape"] == [size] * 3
                 data("control", action="close", target=array["handle"])
+            plan = data("export", source=volume["handle"], path="stack", dry_run=True)
+            assert plan["slice_count"] == size and plan["destination_exists"] is False
+            written = data("export", source=volume["handle"], path="stack")
+            assert Path(written["first_file"]).is_file() and Path(written["last_file"]).is_file()
+            sidecar = json.loads((tmp_path / "stack/slice.json").read_text())
+            assert (tmp_path / "stack" / sidecar["source"]["manifest"]).is_file()
             assert data("export", source=volume["handle"], path="export.raw")["paths"]
             assert (
                 data("open", path="result.nxs", kind="reconstruction", dry_run=True)["type"]
@@ -622,3 +632,62 @@ def test_slab_destination_over_stdio(tmp_path):
         assert projected["structuredContent"]["shape"] == [12, 5, 8]
         error = c.call("reconstruct_slabs", **args)
         assert error["isError"]
+
+
+def check_sweep_and_difference(c, data, scan, volume):
+    sweep = c.call(
+        "preview",
+        operation=dict(
+            type="centre_sweep",
+            axis="z",
+            index=8,
+            centres=[-1, 0, 1],
+            source=scan,
+            method="fbp",
+        ),
+    )
+    assert [b["type"] for b in sweep["content"]] == ["text", "image"]
+    assert len(sweep["structuredContent"]["panels"]) == 3
+    same = data("view", source=volume["handle"], other="result.nxs", mode="difference")
+    assert same["intensity_limits"] == [0, 0]
+    smaller = data("simulate", size=16, n_views=16)
+    mismatch = c.call("view", source=volume["handle"], mode="difference", other=smaller["handle"])
+    assert mismatch["isError"] and all(
+        ref in mismatch["content"][0]["text"] for ref in (volume["handle"], smaller["handle"])
+    )
+
+
+def test_correction_comparison_and_frame_profile(tmp_path):
+    import h5py
+    import numpy as np
+
+    counts = np.arange(6 * 8 * 12, dtype=np.float32).reshape(6, 8, 12) / 600 + 0.1
+    with h5py.File(tmp_path / "raw.h5", "w") as file:
+        file["exchange/data"] = counts
+        file["exchange/theta"] = np.arange(6) * 10.0
+    with connection(tmp_path) as c:
+        opened = c.call(
+            "open",
+            path="raw.h5",
+            kind="frames",
+            flats=2,
+            darks=0,
+            pixel_size=1,
+            geometry={"kind": "parallel"},
+        )
+        frames = opened["structuredContent"]["handle"]
+        reply = c.call(
+            "preview",
+            operation=dict(type="correction_preview", source=frames, rows=[0, 4], binning=2),
+        )
+        assert [b["type"] for b in reply["content"]] == ["text", "image"]
+        data = reply["structuredContent"]
+        before, after = data["panels"]
+        assert "native" in before["array"] and "corrected" in after["array"]
+        assert before["labels"][1:] != after["labels"][1:]
+        assert data["intensity_limits"][0] < data["intensity_limits"][1]
+        profile = c.call(
+            "view", source=frames, mode="profile", roi=[[3, 4], [0, 1], [2, 12]], stride=[1, 1, 2]
+        )["structuredContent"]
+        np.testing.assert_allclose(profile["profile"], counts[3, 0, 2::2])
+        assert len(profile["coordinates"]) == 5

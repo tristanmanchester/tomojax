@@ -28,7 +28,7 @@
     "tomojax.geometry.api": 12,
     "tomojax.corrections.api": 6,
     "tomojax.recon.api": 12,
-    "tomojax.io.api": 29,
+    "tomojax.io.api": 30,
     "tomojax.alignment.api": 4
   },
   "cli_flags": {
@@ -57,20 +57,20 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 5609,
-    "_data": 2181,
-    "alignment": 4670,
+    "(modules)": 5625,
+    "_data": 2201,
+    "alignment": 4672,
     "backends": 273,
-    "cli": 7811,
+    "cli": 8732,
     "core": 9917,
     "corrections": 3139,
     "datasets": 1069,
     "forward": 404,
     "geometry": 908,
-    "io": 3949,
+    "io": 3950,
     "motion": 153,
     "nuisance": 232,
-    "recon": 14912,
+    "recon": 14901,
     "wire": 266
   },
   "cuda_kernels": 47,
@@ -115,5 +115,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 131
+  "test_private_imports": 132
 }

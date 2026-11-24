@@ -66,12 +66,21 @@ def test_each_wire_field_has_a_tool_owner():
     records = tools.registry(SimpleNamespace(supervisor=SimpleNamespace(ledger=None), parts={}))
     schemas = {row["name"]: row["schema"] for row in records}
     interactive = {
-        op.Plane: "M3 view",
+        op.Plane: "view",
         op.CentreSweep: "M3 preview",
         op.Slice: "M3 preview",
         op.CorrectionPreview: "M3 preview",
         op.RegionPreview: "M3 preview",
     }
+    for cls in (op.Slice, op.CentreSweep, op.CorrectionPreview, op.RegionPreview):
+        assert (
+            set(cls.__struct_fields__)
+            <= schemas["preview"]["$defs"][cls.__name__]["properties"].keys()
+        )
+    for cls in (op.Read, op.Statistics):
+        assert (
+            set(cls.__struct_fields__) - {"metadata_only"} <= schemas["view"]["properties"].keys()
+        )
     assert set(interactive) == set(get_args(op.Interactive.__value__))
     assert set(get_args(op.ExecutionInput.__value__)) == {
         op.Open,
@@ -80,6 +89,8 @@ def test_each_wire_field_has_a_tool_owner():
         op.Validate,
         op.Run,
         op.Interactive,
+        op.Read,
+        op.Statistics,
     }
     assert op.Run.__struct_fields__ == ("operation", "previews")  # previews owned by M3 panels
     for wrapper in (op.Plan, op.Validate):
@@ -135,3 +146,19 @@ def test_progress_monotonicity_stage_labels_and_heartbeat(monkeypatch):
             await asyncio.gather(monitor, return_exceptions=True)
 
     asyncio.run(run())
+
+
+def test_comparison_panels_use_one_pixel_mapping_and_label_each_plane():
+    from tomojax.cli._images import Panel, limits, montage  # check-public-imports: allow-private
+
+    panels = [
+        Panel("Before", np.array([[0.0, 1.0], [0.0, 1.0]]), ("z[1] = 2 mm",), "count"),
+        Panel("After", np.array([[1.0, 2.0], [1.0, 2.0]]), ("z[1] = 2 mm",), "1"),
+    ]
+    lo, hi = limits(panels)
+    assert (lo, hi) == (0.0, 2.0)
+    picture = np.asarray(Image.open(BytesIO(montage(panels, (lo, hi)))))
+    assert max(picture.shape) <= 1024 and picture.dtype == np.uint8
+    assert picture[80, 220] == picture[80, 328 + 100] == 127
+    assert picture[80, 100] == 0 and picture[80, 328 + 220] == 255
+    assert (picture[240:, :328] > 128).any() and (picture[240:, 328:] > 128).any()

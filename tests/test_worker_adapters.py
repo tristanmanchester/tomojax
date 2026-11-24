@@ -788,3 +788,53 @@ def test_fdk_sweep_validates_each_requested_detector_centre(
             np.testing.assert_allclose(
                 pixels[0], tj.reconstruct(shifted, "fbp").volume[0], atol=1e-6
             )
+
+
+def test_hyperslab_limit_stride_and_exact_statistics(worker, tmp_path):
+    path = tmp_path / "stack.h5"
+    with h5py.File(path, "w") as f:
+        f.create_dataset("large", shape=(2049, 2049), dtype="f4", fillvalue=1)
+        x = np.arange(72, dtype="f4").reshape(6, 3, 4)
+        x[1, 1, 2] = np.nan
+        x[3, 2, 0] = np.inf
+        f["small"] = x
+    source = dict(type="hdf5", path=str(path), dataset="/large")
+    refused = worker("read", source=source)["error"]
+    assert refused["path"] == "roi" and "16 MiB" in refused["message"]
+    a = output(worker("read", source=source, stride=[16, 8]))["value"]["array"]
+    assert np.load(a["storage"]["path"]).shape == (129, 257)
+    assert a["axes"][1]["coordinates"]["spacing"] == 8
+    source["dataset"] = "/small"
+    params = dict(source=source, roi=[[1, 6], [1, 3], [0, 4]], stride=[2, 1, 2])
+    slab = x[1:6:2, 1:3, ::2]
+    stats = output(worker("statistics", **params, percentiles=[0, 25, 100], bins=3))["value"]
+    finite = slab[np.isfinite(slab)]
+    assert stats["non_finite"] == 2 and stats["count"] == finite.size
+    assert stats["mean"] == pytest.approx(finite.mean())
+    assert stats["std"] == pytest.approx(finite.std())
+    np.testing.assert_allclose(
+        list(stats["percentiles"].values()), np.percentile(finite, [0, 25, 100])
+    )
+    assert stats["histogram"] == np.histogram(finite, bins=3)[0].tolist()
+    first = output(worker("read", **params))["value"]["array"]
+    np.testing.assert_equal(np.load(first["storage"]["path"]), slab)
+    again = output(worker("read", source=first["storage"], roi=[[1, 2], [0, 2], [0, 2]]))["value"][
+        "array"
+    ]
+    assert again["axes"][0]["coordinates"] == dict(type="uniform", origin=3.0, spacing=2.0)
+    np.testing.assert_equal(np.load(again["storage"]["path"]), slab[1:2])
+
+
+@pytest.mark.parametrize("ext", ["nxs", "npz"])
+def test_saved_file_registered_reads(worker, tmp_path, ext):
+    sim = tj.simulate(size=8, n_views=12)
+    for root, pixels, names in (
+        (sim, sim.phantom, "zyx"),
+        (sim.scan, sim.scan.projections, ("view", "v", "u")),
+    ):
+        path = tmp_path / f"data.{ext}"
+        tj.save(path, root)
+        source = dict(type="path", path=str(path))
+        a = output(worker("read", source=source, stride=[2, 1, 2]))["value"]["array"]
+        assert [axis["name"] for axis in a["axes"]] == list(names)
+        np.testing.assert_allclose(np.load(a["storage"]["path"]), np.asarray(pixels)[::2, :, ::2])

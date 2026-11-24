@@ -80,6 +80,7 @@ class Lease:
 
     value: HandleValue | Npy
     provenance: Provenance
+    metadata: Array | None = None
 
 
 @dataclass(frozen=True)

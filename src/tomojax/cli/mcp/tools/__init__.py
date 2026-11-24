@@ -19,6 +19,7 @@ import msgspec
 
 from tomojax.cli import operations as op, wire_options as w
 from tomojax.cli.mcp.supervisor import WorkerError, activity
+from tomojax.cli.mcp.tools import seeing
 from tomojax.cli.mcp.tools.budget import bounded
 from tomojax.cli.mcp.tools.references import PRIMARY, resolve, wire_arguments
 from tomojax.cli.mcp.tools.workflows import MODELS, forms
@@ -324,9 +325,11 @@ class Tools:
     async def workflow(self, name: str, args: Record) -> CallToolResult:
         """Resolve typed references before the worker pins them at admission."""
         params = msgspec.to_builtins(args)
-        dry = params.pop("dry_run")
-        detail = params.pop("detail")
-        command = params["operation"] if name == "edit_scan" else {"type": name, **params}
+        dry = params.pop("dry_run", False)
+        detail = params.pop("detail", "summary")
+        command = (
+            params["operation"] if name in ("edit_scan", "preview") else {"type": name, **params}
+        )
         model = MODELS[command["type"]]
         if "path" in command:
             destination = self.supervisor.base / Path(command["path"]).expanduser()
@@ -349,6 +352,26 @@ class Tools:
         command = wire_arguments(command, model, base=self.supervisor.base, ledger=self.ledger)
         # Validate nested expert keys here too, preserving their full field paths.
         msgspec.convert(command, type=model)
+        if name == "preview":
+            g = await self.supervisor.worker()
+            if model is op.RegionPreview:
+
+                def publish(output):
+                    value = output["value"]
+                    data = self.publish_handle(command, output)
+                    return {
+                        "summary": {**data, "grid": value["grid"], "bounds": value["bounds"]},
+                        "value": value,
+                    }
+
+                published = await g.request(command, accept=publish)
+                data, value = published["summary"], published["value"]
+                reply = seeing.render(seeing.preview_panels(value))
+                r = result({**data, **(reply.structured_content or {})})
+                r.content.extend(reply.content[1:])
+                return r
+            async with seeing.temporary(g, command) as value:
+                return await asyncio.to_thread(lambda: seeing.render(seeing.preview_panels(value)))
         if dry:
             return await self.dry_run(command, detail=detail)
         return await self.execute(command, detail=detail)
@@ -429,6 +452,8 @@ class Tools:
             reply.content.append(
                 ResourceLink(type="resource_link", uri=path.as_uri(), name=path.name)
             )
+        if command["type"] in ("align", "reconstruct"):
+            await seeing.default_panels(self, data, reply)
         return reply
 
     def publish_handle(self, command: Object, output: Object) -> Object:
@@ -655,7 +680,7 @@ def binding(
             }
             else ""
         ),
-        "read_only": name in {"status", "inspect", "describe"},
+        "read_only": name in {"status", "inspect", "describe", "view", "preview"},
         "schema": spec,
         "output_schema": workflow_output()
         if name in {*MODELS, "edit_scan", "open"}
@@ -670,10 +695,14 @@ def registry(core: Core) -> list[Object]:
     definitions = msgspec.json.decode(
         resources.files("tomojax.cli").joinpath("parameters.json").read_bytes()
     )["$defs"]
-    return [
-        binding(cls, getattr(tools, cls.__name__.lower()), definitions, parts=core.parts)
-        for cls in (Status, Inspect, Open, Describe, Control)
-    ] + [
-        binding(cls, partial(tools.workflow, name), definitions, name=name, parts=core.parts)
-        for name, cls in forms().items()
-    ]
+    return (
+        [
+            binding(cls, getattr(tools, cls.__name__.lower()), definitions, parts=core.parts)
+            for cls in (Status, Inspect, Open, Describe, Control)
+        ]
+        + [binding(seeing.View, partial(seeing.view, tools), definitions, parts=core.parts)]
+        + [
+            binding(cls, partial(tools.workflow, name), definitions, name=name, parts=core.parts)
+            for name, cls in forms().items()
+        ]
+    )

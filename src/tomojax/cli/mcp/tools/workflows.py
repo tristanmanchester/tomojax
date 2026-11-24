@@ -32,6 +32,7 @@ type Steps = tuple[
 DETAIL = ("detail", Literal["summary", "full"], "summary")
 DRY = ("dry_run", bool, False)
 EDIT = (op.Select, op.Crop, op.Bin, op.Poses, op.Combine)
+PREVIEWS = (op.Slice, op.CentreSweep, op.CorrectionPreview, op.RegionPreview)
 MODELS = {
     str(model.__struct_config__.tag): model
     for model in (
@@ -45,6 +46,7 @@ MODELS = {
         op.Save,
         op.Export,
         *EDIT,
+        *PREVIEWS,
     )
 }
 REFERENCES = {
@@ -82,7 +84,7 @@ def form(model: type[Record], *, tagged: bool = False) -> type[Record]:
 
 def forms() -> dict[str, type[Record]]:
     """Expose one tool per workflow and a tagged operation for scan edits."""
-    models = {name: form(cls) for name, cls in MODELS.items() if cls not in EDIT}
+    models = {name: form(cls) for name, cls in MODELS.items() if cls not in (*EDIT, *PREVIEWS)}
     edit = reduce(or_, (form(cls, tagged=True) for cls in EDIT))
     models["edit_scan"] = cast(
         "type[Record]",
@@ -93,6 +95,16 @@ def forms() -> dict[str, type[Record]]:
             namespace={
                 "__doc__": "Select, crop, bin, replace poses or combine scans into a new handle."
             },
+        ),
+    )
+    preview = reduce(or_, (form(cls, tagged=True) for cls in PREVIEWS))
+    models["preview"] = cast(
+        "type[Record]",
+        msgspec.defstruct(
+            "Preview",
+            [("operation", preview)],
+            bases=(Record,),
+            namespace={"__doc__": "Render a slice, centre sweep, correction or reusable region."},
         ),
     )
     return models

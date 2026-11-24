@@ -57,6 +57,31 @@ class Simulation(Record, tag="simulation"):
     phantom: Array
 
 
+class Layout(Record, tag="layout"):
+    """Dimensions, units and coordinate sampling, without allocating or issuing pixels."""
+
+    array: dict[str, Any]
+
+
+class ArrayResult(Record, tag="array"):
+    """Registered hyperslab or metadata for the original source."""
+
+    array: Array
+
+
+class StatisticsResult(Record, tag="statistics"):
+    """Distribution over finite samples. Empty finite populations have null moments."""
+
+    count: int
+    non_finite: int
+    mean: float | None
+    std: float | None
+    percentiles: dict[str, float | None]
+    edges: tuple[float, ...]
+    histogram: tuple[int, ...]
+    unit: str
+
+
 class PlaneResult(Record, tag="plane"):
     """One registered plane."""
 
@@ -170,7 +195,10 @@ class Provenance(Record):
 
 type HandleProduct = Scan | Frames | Reconstruction | Alignment | Simulation | Region
 type DataProduct = (
-    PlaneResult
+    Layout
+    | ArrayResult
+    | StatisticsResult
+    | PlaneResult
     | Projections
     | Volume
     | Sweep

@@ -19,7 +19,7 @@ from tomojax.cli._commit import helper
 from tomojax.cli._staging import Stages
 from tomojax.errors import classify
 from tomojax.wire import progress as w
-from tomojax.wire.arrays import Coordinates, Member, Npy
+from tomojax.wire.arrays import Array, Coordinates, Member, Npy, Record
 
 
 @dataclass
@@ -44,6 +44,7 @@ class Artifact:
     path: Path
     resource: Resource
     manifest: p.Provenance
+    metadata: Array | None = None
 
 
 @dataclass
@@ -147,10 +148,18 @@ class Session:
     def _pin(self, rid: str, cmd: op.ExecutionInput, channel: e.ChannelRevision | None) -> Job:
         with ExitStack() as pins:
             leases: dict[Member | Npy, ex.Lease] = {}
-            for ref in dict.fromkeys(op.input_references(cmd)):
+            pending = list(op.input_references(cmd))
+            while pending:
+                ref = pending.pop()
+                if ref in leases:
+                    continue
+                metadata = None
                 if isinstance(ref, Member):
                     handle = self.handles[ref.handle]
                     leases[ref] = ex.Lease(handle.bound.members[ref.member], handle.manifest)
+                    member = leases[ref].value
+                    if isinstance(member, ex.RegisteredArray):
+                        metadata = member.metadata
                     handle.resource.pin(pins)
                     for token in handle.artifacts.intersection(self.artifacts):
                         self.artifacts[token].resource.pin(pins)
@@ -159,7 +168,15 @@ class Session:
                     if str(artifact.path) != ref.path:
                         raise ValueError("artifact path differs from issued path")
                     artifact.resource.pin(pins)
-                    leases[ref] = ex.Lease(ref, artifact.manifest)
+                    metadata = artifact.metadata
+                    leases[ref] = ex.Lease(ref, artifact.manifest, metadata)
+                if metadata and isinstance(cmd, op.Read):
+                    pending.extend(
+                        ax.coordinates.values
+                        for ax in metadata.axes
+                        if isinstance(ax.coordinates, Coordinates)
+                        and isinstance(ax.coordinates.values, Member | Npy)
+                    )
             return Job(
                 rid,
                 cmd,
@@ -329,9 +346,21 @@ class Session:
                         p.Files(product.paths, recovery=recovery), success.info, success.manifest
                     )
             undo.pop_all()
+        self._register_arrays(result)
         if handle:
             self.handles[job.id] = handle
         return result
+
+    def _register_arrays(self, value: object) -> None:
+        if isinstance(value, Array):
+            if isinstance(value.storage, Npy) and value.storage.artifact in self.artifacts:
+                self.artifacts[value.storage.artifact].metadata = value
+        elif isinstance(value, Record):
+            for name in value.__struct_fields__:
+                self._register_arrays(getattr(value, name))
+        elif isinstance(value, dict):
+            for item in value.values():
+                self._register_arrays(item)
 
     def _publish(self, job: Job, token: str, manifest: p.Provenance, undo: ExitStack) -> None:
         public = job.stages.publish_array(token)
@@ -373,6 +402,7 @@ class Session:
                             if isinstance(ref, Npy) and ref.artifact in job.stages.arrays:
                                 assert ref.artifact is not None
                                 self._publish(job, ref.artifact, manifest, undo)
+                    self._register_arrays(event.arrays)
                     self.emit(e.EventReply(job.id, job.channel, event))
                     undo.pop_all()
                 return

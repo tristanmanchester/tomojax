@@ -43,7 +43,9 @@ def resolve(
                 raise ValueError(f"{ref} names an array, not an object with members")
             return {"type": "npy", "path": record["path"], "artifact": record["artifact"]}
         if not member:
-            member = "self" if field == "source" else PRIMARY[record["kind"]]
+            member = "self" if field == "source" else PRIMARY.get(record["kind"])
+            if member is None:
+                raise ValueError(f"{ref} has no primary array")
         return {"type": "member", "handle": record["worker"], "member": member}
     filename, separator, dataset = value.partition("::/")
     path = str((base / Path(filename).expanduser()).resolve())

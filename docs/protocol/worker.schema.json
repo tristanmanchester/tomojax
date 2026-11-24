@@ -81,6 +81,12 @@
                 {
                   "anyOf": [
                     {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Read"
+                    },
+                    {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Statistics"
+                    },
+                    {
                       "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Run"
                     },
                     {
@@ -99,6 +105,8 @@
                   "discriminator": {
                     "propertyName": "type",
                     "mapping": {
+                      "read": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Read",
+                      "statistics": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Statistics",
                       "run": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Run",
                       "inspect": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Inspect",
                       "open": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Open",

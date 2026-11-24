@@ -4,7 +4,7 @@ The dataset entry points users call are exported by :mod:`tomojax.io`; raw
 frames are read with :func:`tomojax.load_frames`.
 """
 
-from tomojax._data import slab_volume
+from tomojax._data import mapped_npz, slab_volume
 from tomojax._json import JsonValue, normalize_json, read_json_object
 from tomojax.io._acquisition import read_acquisition
 from tomojax.io._angles import load_angles
@@ -49,6 +49,7 @@ __all__ = [
     "load_angles",
     "load_nxtomo",
     "locate_frames",
+    "mapped_npz",
     "normalize_json",
     "projection_stats",
     "read_acquisition",

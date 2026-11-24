@@ -34,6 +34,12 @@
     {
       "anyOf": [
         {
+          "$ref": "#/$defs/Read"
+        },
+        {
+          "$ref": "#/$defs/Statistics"
+        },
+        {
           "$ref": "#/$defs/Run"
         },
         {
@@ -52,6 +58,8 @@
       "discriminator": {
         "propertyName": "type",
         "mapping": {
+          "read": "#/$defs/Read",
+          "statistics": "#/$defs/Statistics",
           "run": "#/$defs/Run",
           "inspect": "#/$defs/Inspect",
           "open": "#/$defs/Open",
@@ -62,6 +70,216 @@
     }
   ],
   "$defs": {
+    "Read": {
+      "title": "Read",
+      "description": "Copy a registered hyperslab (up to 16 MiB), or return only its registration.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "read"
+          ]
+        },
+        "roi": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "items": false
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stride": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "$ref": "#/$defs/PathInput"
+            }
+          ]
+        },
+        "metadata_only": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "PathInput": {
+      "title": "PathInput",
+      "description": "File input opened on the execution queue.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "path"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "Statistics": {
+      "title": "Statistics",
+      "description": "Exact finite-value statistics over an optionally strided ROI.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "statistics"
+          ]
+        },
+        "roi": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "items": false
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stride": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "$ref": "#/$defs/PathInput"
+            }
+          ]
+        },
+        "percentiles": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": [
+            1,
+            5,
+            50,
+            95,
+            99
+          ]
+        },
+        "bins": {
+          "type": "integer",
+          "default": 32
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "additionalProperties": false
+    },
     "Run": {
       "title": "Run",
       "description": "Execute a workflow.",
@@ -239,27 +457,6 @@
       "required": [
         "type",
         "source"
-      ],
-      "additionalProperties": false
-    },
-    "PathInput": {
-      "title": "PathInput",
-      "description": "File input opened on the execution queue.",
-      "type": "object",
-      "properties": {
-        "type": {
-          "enum": [
-            "path"
-          ]
-        },
-        "path": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "type",
-        "path"
       ],
       "additionalProperties": false
     },
