@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 import logging
 from pathlib import Path
@@ -18,6 +18,7 @@ import msgspec
 
 from tomojax import progress
 from tomojax.cli import _console
+from tomojax.cli._display import Display
 from tomojax.wire.progress import Error, Result
 
 if TYPE_CHECKING:
@@ -107,46 +108,24 @@ def add_progress(parser: argparse.ArgumentParser) -> None:
     )
 
 
-class _Bar:
-    def __init__(self) -> None:
-        self.path: dict[int, str] = {}
-        self.counts: dict[int, str] = {}
-
-    def __call__(self, event: progress.Event) -> None:
-        if isinstance(event, progress.Note):
-            if event.level != "debug":
-                print("\r\033[2K", end="", file=sys.stderr, flush=True)
-                _console.report_warning(event.message, level=event.level)
-        elif isinstance(event, progress.Started):
-            self.path[event.task] = event.label
-            self.counts[event.task] = ""
-        elif isinstance(event, progress.Advanced):
-            count = str(event.done) if event.total is None else f"{event.done}/{event.total}"
-            metric = next(iter(event.metrics.items()), None)
-            detail = f"  {count}"
-            if metric is not None:
-                detail += f"  {metric[0]}={metric[1]}"
-            self.counts[event.task] = detail
-        elif isinstance(event, progress.Finished):
-            del self.path[event.task], self.counts[event.task]
-        line = " > ".join(self.path.values())
-        if line:
-            line += f"{self.counts[next(reversed(self.path))]}  {event.time:.1f}s"
-        print(f"\r\033[2K{line}", end="", file=sys.stderr, flush=True)
-
-
-def _handler(mode: str) -> Callable[[progress.Event], None]:
-    if mode == "bar" or (mode == "auto" and sys.stderr.isatty()):
-        return _Bar()
+def _handler(mode: str, token: progress.Control) -> tuple[Callable[[progress.Event], None], Any]:
+    """The watch handler for ``mode``, and the context that runs its display."""
     if mode == "json":
-        return lambda e: print(json.dumps(progress.to_json(e), allow_nan=False), flush=True)
+
+        def printer(event: progress.Event) -> None:
+            print(json.dumps(progress.to_json(event), allow_nan=False), flush=True)
+
+        return printer, nullcontext()
+    if mode == "bar" or (mode == "auto" and sys.stderr.isatty()):
+        display = Display(token, live=sys.stderr.isatty())
+        return display, display
 
     def quiet(event: progress.Event) -> None:
         """Without a display, notes of warning level and above still reach stderr."""
         if isinstance(event, progress.Note) and event.level not in ("debug", "info"):
             _console.report_warning(event.message, level=event.level)
 
-    return quiet
+    return quiet, nullcontext()
 
 
 class _ForeignRecords(logging.Handler):
@@ -220,8 +199,9 @@ def run_command(command: str, mode: str, operation: Callable[[], Result | int | 
         token.cancel()
 
     previous = signal.signal(signal.SIGINT, interrupt)
+    handler, display = _handler(mode, token)
     try:
-        with _owned_messages(mode), progress.watch(_handler(mode), control=token):
+        with display, _owned_messages(mode), progress.watch(handler, control=token):
             result = operation()
             if mode == "json":
                 _write_result(result, command)
@@ -232,8 +212,6 @@ def run_command(command: str, mode: str, operation: Callable[[], Result | int | 
         kind = record["kind"]
         if mode == "json":
             print(json.dumps(record), flush=True)
-        if mode in ("bar", "auto") and sys.stderr.isatty():
-            print("\r\033[2K", end="", file=sys.stderr, flush=True)
         if kind == "internal":
             raise
         if kind == "cancelled":

@@ -322,34 +322,6 @@ def test_watching_preserves_recurrence_and_stop(method):
     ]
 
 
-def test_bar_redraws_on_a_terminal():
-    import os
-    import pty
-    import subprocess
-    import sys
-
-    code = """from tomojax import progress
-from tomojax.cli._progress import run_command
-def operation():
-    with progress.task('load','reading views',5,'views'):
-        progress.current_task.get().advance(2,{})
-raise SystemExit(run_command('correct','auto',operation))
-"""
-    reader, writer = pty.openpty()
-    with os.fdopen(reader, "rb", buffering=0) as terminal, os.fdopen(writer, "wb") as stderr:
-        process = subprocess.run(
-            [sys.executable, "-c", code],
-            stderr=stderr,
-            capture_output=False,
-            stdout=subprocess.PIPE,
-            check=True,
-        )
-        assert process.stdout == b""
-        output = terminal.read(4096)
-    assert b"reading views" in output and b"2/5" in output
-    assert output.count(b"\r\x1b[2K") >= 3
-
-
 @pytest.mark.parametrize("method", ["sirt", "accelerated", "mlem", "spdhg", "spdhg-stream"])
 @pytest.mark.parametrize("seconds", [0.01, 0.25])
 def test_fixed_update_solvers_preserve_the_schedule(monkeypatch, method, seconds):

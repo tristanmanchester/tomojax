@@ -38,7 +38,9 @@ def test_an_existing_output_names_force_and_the_one_line_usage(tmp_path, capsys)
     ]
     assert "\x1b[" not in err  # no colour off a terminal
     # JSON gets the message alone; the hint is for people.
-    captured = _usage_error(capsys, ["reconstruct", str(scan), "-o", str(out), "--progress", "json"])
+    captured = _usage_error(
+        capsys, ["reconstruct", str(scan), "-o", str(out), "--progress", "json"]
+    )
     assert json.loads(captured.out)["message"] == f"output already exists: {out}"
 
 
@@ -80,9 +82,7 @@ def test_user_text_is_never_read_as_markup(tmp_path, capsys):
     assert f"input not found: {missing}" in capsys.readouterr().err
 
 
-def test_a_tomojax_bug_prints_a_traceback_and_where_to_report_it(
-    monkeypatch, tmp_path, capsys
-):
+def test_a_tomojax_bug_prints_a_traceback_and_where_to_report_it(monkeypatch, tmp_path, capsys):
     import tomojax
 
     scan = tmp_path / "scan.nxs"
@@ -146,8 +146,8 @@ def test_every_warning_and_log_record_appears_once(monkeypatch, tmp_path, capsys
             "records no rotation centre",
         ):
             assert text.count(message) == 1, (mode, message, text)
-        # Info lines are shown only with the live display (and as JSON records).
-        expected_info = 1 if mode in ("bar", "json") else 0
+        # Info lines are shown only with live rows on a terminal, and as JSON records.
+        expected_info = 1 if mode == "json" else 0
         assert text.count("tomojax info line") == expected_info, (mode, text)
         if mode == "json":
             assert "tomojax says check this" in captured.out
