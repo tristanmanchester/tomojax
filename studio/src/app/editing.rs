@@ -21,9 +21,21 @@ impl FormContext {
         }
         self.pending = false;
         match result {
-            Ok(inputs) => self.inputs = inputs,
-            Err(error) => self.error = Some(error),
+            Ok(inputs) => {
+                self.inputs = inputs;
+                self.error = None;
+            }
+            Err(error) => {
+                self.inputs.clear();
+                self.error = Some(error);
+            }
         }
+    }
+
+    /// Captures the inputs again on the next poll (after a failure: the source
+    /// may be back).
+    pub(super) fn retry(&mut self) {
+        self.key.clear();
     }
 }
 

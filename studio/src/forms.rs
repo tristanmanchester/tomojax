@@ -125,7 +125,7 @@ fn scalar_schema(schema: &Value) -> &Value {
 }
 
 /// Whether a schema, or one of its alternatives, takes JSON of type `kind`
-/// ("array" or "object"; a `$ref` is a structured object).
+/// ("array", "object" or "string"; a `$ref` is a structured object).
 fn accepts(schema: &Value, kind: &str) -> bool {
     schema.get("type").and_then(Value::as_str) == Some(kind)
         || (kind == "object" && schema.get("$ref").is_some())
@@ -460,6 +460,12 @@ pub fn parameters_detailed(ui: &UiState, catalog: &SchemaCatalog) -> Result<Valu
                 .is_some_and(|v| v.as_array().is_some_and(|a| a.iter().all(Value::is_string)))
         {
             Value::String(text.into())
+        } else if let Ok(value) = serde_json::from_str::<Value>(text) {
+            value
+        } else if accepts(&p.schema, "string") {
+            // A field that also takes text (a flats or darks file path) takes it
+            // as typed, with or without JSON quotes.
+            Value::String(text.into())
         } else {
             serde_json::from_str::<Value>(text).map_err(|_| {
                 DraftError::new(
@@ -621,6 +627,20 @@ mod tests {
             parameters_detailed(&ui, &catalog).unwrap_err().path,
             "corrections"
         );
+    }
+
+    #[test]
+    fn a_recipe_path_survives_the_form() {
+        let catalog = SchemaCatalog::new(
+            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        let mut ui = UiState::default();
+        let recipe = serde_json::json!({"kind": "frames", "flats": "/data/flat field.tif"});
+        initialise(&mut ui, &catalog, "open", Some(&recipe));
+        let parameters = parameters_detailed(&ui, &catalog).unwrap();
+        assert_eq!(parameters["flats"], "/data/flat field.tif");
     }
 
     #[test]

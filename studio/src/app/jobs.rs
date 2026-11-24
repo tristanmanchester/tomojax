@@ -71,6 +71,10 @@ impl AppState {
         let inputs = if operation == "simulate" {
             vec![]
         } else {
+            if let Some(error) = self.form_input_error().map(str::to_owned) {
+                self.form_context.retry();
+                return Err(error);
+            }
             let captured = self.current_form_inputs();
             if self.form_inputs_pending()
                 || !captured

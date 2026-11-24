@@ -457,12 +457,10 @@ impl AppState {
                 self.model.error = Some(error.clone());
             }
         }
+        // From the registrations, so the slider's range is right before either
+        // side has loaded.
         self.model.comparison_count = self
-            .model
-            .comparison_planes
-            .iter()
-            .filter_map(|p| p.as_ref().map(|p| p.count))
-            .min()
+            .compared_count(self.ui.compare_plane.axis().unwrap_or(0))
             .unwrap_or(0);
         self.model.comparison_index = requested;
         if let Some(volume) = self.imaging.volume(8) {
