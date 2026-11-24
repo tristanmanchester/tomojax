@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import os
 from pathlib import Path
@@ -96,12 +97,15 @@ def resolve(path: Path, journal: Journal) -> dict[str, list[str]]:
             if os.path.lexists(backup):
                 remove(dest)
                 backup.replace(dest)
-            elif not member.existed:
+            elif not member.existed and member.staged and not os.path.lexists(member.staged):
                 remove(dest)
         for name in reversed(journal.directories):
             directory = Path(name)
-            if directory.exists():
+            try:
                 directory.rmdir()
+            except OSError as err:
+                if err.errno not in (errno.ENOENT, errno.ENOTDIR, errno.ENOTEMPTY, errno.EEXIST):
+                    raise
     for item in journal.group:
         remove(Path(item.staged).parent.parent)
     path.unlink()

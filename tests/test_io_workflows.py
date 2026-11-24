@@ -113,15 +113,13 @@ def test_dataset_roundtrips_npz_and_converts_to_nxtomo(tmp_path: Path) -> None:
 
 
 def test_files_keep_their_angle_and_detector_center_keys(tmp_path: Path) -> None:
-    # An .npz in the layout earlier versions wrote: angles under `thetas_deg`
-    # and the detector centre under `det_center`.
     old_path = tmp_path / "old.npz"
     detector = {"nu": 4, "nv": 2, "du": 1.0, "dv": 1.0, "det_center": [0.5, -1.0]}
     np.savez_compressed(
         old_path,
         projections=np.zeros((2, 2, 4), np.float32),
         thetas_deg=np.asarray([0.0, 90.0], np.float32),
-        detector=detector,  # pyright: ignore[reportArgumentType]
+        detector=json.dumps(detector),
         geometry_type="parallel",
     )
 
@@ -133,9 +131,9 @@ def test_files_keep_their_angle_and_detector_center_keys(tmp_path: Path) -> None
     npz_path, nxs_path = tmp_path / "new.npz", tmp_path / "new.nxs"
     save_dataset(npz_path, loaded)
     save_dataset(nxs_path, loaded)
-    with np.load(npz_path, allow_pickle=True) as saved:
+    with np.load(npz_path, allow_pickle=False) as saved:
         np.testing.assert_allclose(saved["thetas_deg"], [0.0, 90.0])
-        assert saved["detector"].item()["det_center"] == [0.5, -1.0]
+        assert json.loads(saved["detector"].item())["det_center"] == [0.5, -1.0]
     with h5py.File(nxs_path, "r") as saved:
         angles = saved["/entry/sample/transformations/rotation_angle"][()]
         np.testing.assert_allclose(angles, [0.0, 90.0])
@@ -399,7 +397,7 @@ def test_single_sinogram_npz_load_infers_one_slice_and_saves_fixed_rank(tmp_path
         source,
         projections=data,
         thetas_deg=[0.0, 60.0, 120.0],
-        detector=Detector(10, 1, 0.7, 0.9).to_dict(),
+        detector=json.dumps(Detector(10, 1, 0.7, 0.9).to_dict()),
     )
     scan = tj.load(source)
     assert (scan.grid.nx, scan.grid.ny, scan.grid.nz) == (10, 10, 1)
@@ -427,7 +425,7 @@ def test_npz_volume_round_trips_and_an_untagged_one_is_refused(tmp_path: Path):
     save_dataset(tmp_path / "new.npz", saved)
     np.testing.assert_array_equal(load_dataset(tmp_path / "new.npz").volume, volume)
 
-    with np.load(tmp_path / "new.npz", allow_pickle=True) as stored:
+    with np.load(tmp_path / "new.npz", allow_pickle=False) as stored:
         fields = {key: stored[key] for key in stored.files if key != "volume_axes_order"}
     fields["volume"] = volume.transpose(2, 1, 0)  # the same shape, read wrongly
     np.savez_compressed(tmp_path / "old.npz", **fields)
@@ -516,3 +514,17 @@ def test_tiled_writes_read_the_source_one_bounded_tile_at_a_time(
         np.testing.assert_array_equal(target[()], volume)
     assert len(source.reads) > 1 and max(source.reads) * 4 <= 4000
     assert sum(source.reads) == volume.size
+
+
+@pytest.mark.parametrize("member", ["extra", "projections", "volume"])
+def test_npz_rejects_object_arrays_even_in_unselected_members(tmp_path, member):
+    from tomojax.io.api import mapped_npz
+
+    fields = {"volume": np.zeros((2, 3, 4)), "volume_axes_order": "zyx"}
+    fields[member] = np.array([{}], dtype=object)
+    path = tmp_path / "object.npz"
+    np.savez(path, **fields)
+    with pytest.raises(ValueError, match="(?i)object"):
+        load_dataset(path)
+    with pytest.raises(ValueError, match="(?i)object|Python objects"), mapped_npz(str(path)):
+        pass

@@ -233,3 +233,20 @@ def test_waiting_writer_follows_first_decision(tmp_path, launch, fail):
     finally:
         a.kill()
         a.wait()
+
+
+def test_recover_new_tiff_directory_containing_another_stage(launch, tmp_path):
+    dest = tmp_path / "slices"
+    stage = tmp_path / "work/new/slices"
+    stage.mkdir(parents=True)
+    (stage / "slice_000.tif").write_bytes(b"old job")
+    process = launch([dict(destination=str(dest), staged=str(stage), force=False)], fault="2")
+    process.communicate(timeout=15)
+    assert process.returncode != 0 and dest.is_dir()
+
+    second = group_at(dest, ["other"], "new job")
+    restored = finish(launch(second))
+    assert restored["restored"] == [str(dest / "slice_000.tif")]
+    assert list(dest.iterdir()) == [dest / "other"]
+    assert (dest / "other").read_text() == "new job"
+    assert finish(launch()) == {}

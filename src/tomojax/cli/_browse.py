@@ -45,7 +45,7 @@ class SavedVolume:
 
 @contextmanager
 def source_array(
-    source: Storage | op.PathInput, context: ex.ExecutionContext
+    source: Storage | op.PathInput, context: ex.ExecutionContext, *, member: str | None = None
 ) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]]:
     """Keep HDF5 open only while its selected datasets are in use."""
     if isinstance(source, Member):
@@ -57,10 +57,12 @@ def source_array(
     path = Path(source.path)
     if isinstance(source, op.PathInput) and h5py.is_hdf5(path):
         with h5py.File(path, "r") as file:
-            if p.VOLUME_DATASET in file:
+            if member == "projections":
+                source = Hdf5(str(path), "/entry/instrument/detector/data")
+            elif member == "volume" or p.VOLUME_DATASET in file:
                 source = Hdf5(str(path), p.VOLUME_DATASET)
     if isinstance(source, op.PathInput):
-        yield from saved_array(path)
+        yield from saved_array(path, member)
         return
     if isinstance(source, Hdf5):
         with h5py.File(path, "r") as file:
@@ -83,11 +85,13 @@ def source_array(
     yield data, (lease and lease.metadata) or indexed(source, data), {}
 
 
-def saved_array(path: Path) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]]:
+def saved_array(
+    path: Path, member: str | None
+) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]]:
     """Read the primary member of a saved volume or projection stack."""
     with ExitStack() as files:
         saved = (
-            files.enter_context(mapped_npz(str(path)))
+            files.enter_context(mapped_npz(str(path), member=member))
             if path.suffix.lower() == ".npz"
             else load_nxtomo(str(path), lazy=True)
         )

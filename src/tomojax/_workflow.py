@@ -138,6 +138,7 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
         info=dict(info) if isinstance(info, dict) else {},
         scan=scan,
         length_unit=recorded_length_unit(meta),
+        source_path=str(Path(path).resolve()),
     )
 
 

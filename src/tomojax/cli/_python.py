@@ -6,9 +6,11 @@ from collections.abc import Iterator, Mapping
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import fields, is_dataclass, replace
+from pathlib import Path
 import traceback
 from types import FunctionType, MappingProxyType, ModuleType
 from typing import Any
+from weakref import ref as weakref
 
 import h5py
 import jax
@@ -37,7 +39,9 @@ def buffers(value, seen, *, metadata=False):
     ):
         yield value
         return
-    if isinstance(value, dict | MappingProxyType):
+    if isinstance(value, HandleInputs):
+        children = value.values_by_name.values()
+    elif isinstance(value, dict | MappingProxyType):
         children = value.values()
     elif isinstance(value, list | tuple | set | frozenset):
         children = value
@@ -76,7 +80,11 @@ def snapshot(value, *, issued, dependencies, source=None):
         if source is None and owner is not None:
             dependencies.add(owner)
         shared = source is not None or owner is not None
-        if isinstance(buf, jax.Array):
+        if source is not None and hasattr(type(buf), "frames_at"):
+            # Frame stacks hold only a storage descriptor and a frame selection.
+            # Copy that metadata; indexing the private descriptor reads owned pixels.
+            copy = deepcopy(buf)
+        elif isinstance(buf, jax.Array):
             copy = buf if shared else buf.copy().block_until_ready()
         else:
             if isinstance(buf, np.ndarray):
@@ -120,6 +128,16 @@ class Registrations:
             if not kind:
                 raise ValueError("register expects a TomoJAX object or array")
             name = reserve(kind, self.ledger)
+            scan = item if isinstance(item, tj.Scan | tj.Frames) else item.scan
+            provenance = getattr(item, "info", {}).get("source")
+            paths = (
+                scan.source.source_path if scan is not None and scan.source else None,
+                getattr(item, "source_path", None),
+                provenance.get("path") if isinstance(provenance, Mapping) else provenance,
+            )
+            self.context.namespace.sources.update(
+                Path(p).resolve() for p in paths if isinstance(p, str)
+            )
             dependencies = set()
             frozen = snapshot(item, issued=self.issued, dependencies=dependencies)
             self.roots.append((name, replace(handle(frozen), dependencies=tuple(dependencies))))
@@ -145,24 +163,36 @@ def show(array):
 class HandleInputs(Mapping):
     """Remember accessed source files across arbitrary transformations in Python."""
 
-    def __init__(self, values, paths, sources) -> None:
-        self.values_by_name = values
-        self.paths = paths
-        self.sources = sources
+    def __init__(self, aliases, job) -> None:
+        self._aliases = MappingProxyType(aliases)
+        self._job = weakref(job)
+        self.values_by_name = {}
 
     def __getitem__(self, name) -> Any:
-        item = self.values_by_name[name]
-        self.sources.update(self.paths[name])
-        return item
+        ref = self._aliases[name]
+        if name not in self.values_by_name:
+            job = self._job() or _active.get()
+            lease = job.context.leases[ref]
+            job.context.namespace.sources.update(ancestor_paths((lease.provenance,)))
+            if isinstance(ref, Member):
+                item = snapshot(lease.value, issued=job.issued, dependencies=set(), source=ref)
+            else:
+                item = np.load(ref.path, mmap_mode="r", allow_pickle=False)
+                job.issued[id(item)] = (item, ref)
+            self.values_by_name[name] = item
+        return self.values_by_name[name]
+
+    def __contains__(self, name) -> bool:
+        return name in self._aliases
 
     def copy(self) -> dict[str, Any]:
         return dict(self)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self.values_by_name)
+        return iter(self._aliases)
 
     def __len__(self) -> int:
-        return len(self.values_by_name)
+        return len(self._aliases)
 
 
 def execute_in_namespace(cmd, context):
@@ -170,24 +200,12 @@ def execute_in_namespace(cmd, context):
     if cmd.reset:
         namespace.clear()
         namespace.sources.clear()
-    pinned = {}
-    paths = {}
-    issued = {}
-    for name, ref in cmd.aliases.items():
-        paths[name] = tuple(ancestor_paths((context.leases[ref].provenance,)))
-        if isinstance(ref, Member):
-            pinned[name] = snapshot(
-                context.leases[ref].value, issued=issued, dependencies=set(), source=ref
-            )
-        else:
-            pinned[name] = np.load(ref.path, mmap_mode="r", allow_pickle=False)
-            issued[id(pinned[name])] = (pinned[name], ref)
-    registrations = Registrations(context, cmd.ledger, issued)
+    registrations = Registrations(context, cmd.ledger, {})
     token = _active.set(registrations)
     namespace.update(
         tj=tj,
         np=np,
-        handles=MappingProxyType(HandleInputs(pinned, paths, namespace.sources)),
+        handles=HandleInputs(cmd.aliases, registrations),
         register=register,
         show=show,
     )

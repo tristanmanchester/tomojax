@@ -184,7 +184,7 @@ class Project(Record, tag="project"):
     """Project registered voxels with the source scan geometry."""
 
     source: Source
-    volume: Storage
+    volume: Storage | PathInput
     grid: w.Grid | None = None
     devices: tuple[Id, ...] | None = None
 
@@ -193,7 +193,7 @@ class Backproject(Record, tag="backproject"):
     """Apply the matched transpose with the source scan geometry."""
 
     source: Source
-    projections: Storage
+    projections: Storage | PathInput
     grid: w.Grid | None = None
     devices: tuple[Id, ...] | None = None
 

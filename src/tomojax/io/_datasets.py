@@ -157,7 +157,7 @@ class ProjectionDataset:
     misalign_spec : dict or None, optional
         Simulation misalignment record; angles already include simulated offsets.
     source_path : str or None, optional
-        Original input path.
+        Absolute input path retained as provenance.
     source_format : str or None, optional
         Original container format.
     sample_name : str or None, optional
@@ -180,6 +180,10 @@ class ProjectionDataset:
     source_format: str | None = None
     sample_name: str | None = None
     _metadata: NXTomoMetadata | None = field(default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.source_path is not None:
+            self.source_path = str(Path(self.source_path).resolve())
 
     @classmethod
     def from_nxtomo(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+import json
 from pathlib import Path
 import shutil
 import tempfile
@@ -19,6 +20,16 @@ from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata
 # versions wrote it, so it stays.
 _ANGLES_KEY = "thetas_deg"
 _AXES_KEY = "volume_axes_order"
+_JSON_FIELDS = {
+    "grid",
+    "detector",
+    "source",
+    "geometry_meta",
+    "align_gauge",
+    "geometry_calibration",
+    "misalign_spec",
+    "simulation_artefacts",
+}
 
 
 def save_npz(
@@ -42,60 +53,65 @@ def save_npz(
         payload[_AXES_KEY] = "zyx"
     parts = sizes_of(projections, metadata.volume)
     with replaced_when_complete(path, parts) as temporary, temporary.open("wb") as stream:
-        np.savez_compressed(stream, **payload)
+        arrays = {k: json.dumps(v) if k in _JSON_FIELDS else v for k, v in payload.items()}
+        np.savez_compressed(stream, allow_pickle=False, **arrays)
 
 
-def _load_npz_dataset(path: str, *, mapped: dict[str, np.ndarray] | None = None) -> LoadedDataset:
-    with np.load(path, allow_pickle=True) as z:
-        out: LoadedDataset = {}
-        for k in z.files:
-            if mapped is not None and k in ("projections", "volume"):
-                if k in mapped:
-                    out[k] = mapped[k]
-                continue
-            if k == "projections" and progress.watching():
-                # NPZ stores one compressed NPY member per array. Its header
-                # supplies the view count before NumPy inflates the pixel data.
-                with ZipFile(path) as archive, archive.open("projections.npy") as stream:
-                    version = np.lib.format.read_magic(stream)
-                    header = (
-                        np.lib.format.read_array_header_1_0
-                        if version == (1, 0)
-                        else np.lib.format.read_array_header_2_0
-                    )
-                    shape, _, _ = header(stream)
-                views = shape[0] if shape else 0
-                with progress.task("load", Path(path).name, views, "views"):
-                    val = z[k]
-                    active = progress.for_unit("views")
-                    if active is not None:
-                        active.advance(views, {})
-                    progress.check_cancelled()
-            else:
-                val = z[k]
-            key = "angles" if k == _ANGLES_KEY else k
-            if isinstance(val, np.ndarray) and val.shape == () and val.dtype == object:
-                out[key] = val.item()
-            else:
-                out[key] = val
+def _load_npz_dataset(
+    archive: ZipFile, *, mapped: dict[str, np.ndarray] | None = None
+) -> LoadedDataset:
+    out: LoadedDataset = dict(mapped or {})
+    for member in archive.infolist():
+        k = member.filename.removesuffix(".npy")
+        with archive.open(member) as stream:
+            if k in ("projections", "volume"):
+                version = np.lib.format.read_magic(stream)
+                header = (
+                    np.lib.format.read_array_header_1_0
+                    if version == (1, 0)
+                    else np.lib.format.read_array_header_2_0
+                )
+                shape, _, dtype = header(stream)
+                if dtype.hasobject:
+                    raise ValueError(f"{archive.filename}: object arrays are unsupported")
+                if mapped is not None:
+                    continue
+                stream.seek(0)
+                if k == "projections" and progress.watching():
+                    views = shape[0] if shape else 0
+                    with progress.task("load", Path(str(archive.filename)).name, views, "views"):
+                        out[k] = np.lib.format.read_array(stream, allow_pickle=False)
+                        if active := progress.for_unit("views"):
+                            active.advance(views, {})
+                        progress.check_cancelled()
+                    continue
+            val = np.lib.format.read_array(stream, allow_pickle=False)
+            out["angles" if k == _ANGLES_KEY else k] = (
+                json.loads(val.item()) if k in _JSON_FIELDS else val
+            )
     if "volume" in out and str(out.pop(_AXES_KEY, "")) != "zyx":
-        raise ValueError(f"{path}: volume has no zyx axes tag; declare it or re-export the file")
+        raise ValueError(
+            f"{archive.filename}: volume has no zyx axes tag; declare it or re-export the file"
+        )
     return out
 
 
 def load_npz(path: str) -> LoadedNXTomo:
     """Load a compressed NPZ payload using the same typed shape as NXtomo."""
-    return LoadedNXTomo.from_dataset(_load_npz_dataset(path))
+    with ZipFile(path) as archive:
+        return LoadedNXTomo.from_dataset(_load_npz_dataset(archive))
 
 
 @contextmanager
-def mapped_npz(path: str) -> Iterator[LoadedNXTomo]:
+def mapped_npz(path: str, *, member: str | None = None) -> Iterator[LoadedNXTomo]:
     """Map the primary array of a TomoJAX NPZ file for bounded random reads.
 
     Parameters
     ----------
     path : str
         Saved TomoJAX NPZ dataset.
+    member : str or None, optional
+        Select volume or projections. By default prefer the stored volume.
 
     Yields
     ------
@@ -109,9 +125,15 @@ def mapped_npz(path: str) -> Iterator[LoadedNXTomo]:
         If the array or its saved volume axis declaration is invalid.
     """
     with ZipFile(path) as archive, tempfile.TemporaryDirectory() as directory:
-        key = "volume" if "volume.npy" in archive.namelist() else "projections"
+        key = member or ("volume" if "volume.npy" in archive.namelist() else "projections")
+        if key + ".npy" not in archive.namelist():
+            raise ValueError(f"{path}: no {key} array")
         filename = Path(directory) / "pixels.npy"
         with archive.open(key + ".npy") as src, filename.open("wb") as dest:
             shutil.copyfileobj(src, dest, length=1024 * 1024)
         pixels = np.load(filename, mmap_mode="r", allow_pickle=False)
-        yield LoadedNXTomo.from_dataset(_load_npz_dataset(path, mapped={key: pixels}))
+        fields = _load_npz_dataset(archive, mapped={key: pixels})
+        fields.pop("volume", None)
+        dataset = LoadedNXTomo.from_dataset(fields)
+        dataset.metadata.volume = pixels if key == "volume" else None
+        yield dataset

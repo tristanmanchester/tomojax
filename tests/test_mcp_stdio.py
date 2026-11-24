@@ -864,3 +864,33 @@ def test_correction_comparison_and_frame_profile(tmp_path):
         )["structuredContent"]
         np.testing.assert_allclose(profile["profile"], counts[3, 0, 2::2])
         assert len(profile["coordinates"]) == 5
+
+
+def test_project_and_backproject_select_members_of_saved_npz(tmp_path):
+    def call(name, **params):
+        reply = c.call(name, **params)
+        assert not reply["isError"], reply
+        return reply["structuredContent"]
+
+    with connection(tmp_path) as c:
+        sim = call("simulate", size=8, n_views=12)
+        scan = sim["members"]["scan"]
+        call("save", source=sim["handle"], path="sim.npz")
+        for tool, field, member in (
+            ("project", "volume", "phantom"),
+            ("backproject", "projections", "projections"),
+        ):
+            actual = call(tool, source=scan, **{field: "sim.npz"})["handle"]
+            expected = call(tool, source=scan, **{field: sim["handle"] + "." + member})["handle"]
+            assert call(
+                "python", code=f"np.array_equal(handles[{actual!r}], handles[{expected!r}])"
+            )["value"]
+        for source in (sim["members"]["phantom"], "sim.npz"):
+            stats = call("view", source=source, mode="statistics")
+            assert stats["count"] == 8**3
+        candidate = {"type": "reconstruct", "method": "cgls", "iterations": 2}
+        settings = {"reference": candidate, "candidates": [candidate]}
+        expected_score = call("evaluate", source=scan, **settings)["scores"][0]["mse"]
+        assert call("evaluate", source="sim.npz", **settings)["scores"][0]["mse"] == pytest.approx(
+            expected_score
+        )

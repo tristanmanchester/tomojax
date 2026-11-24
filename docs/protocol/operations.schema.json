@@ -3006,23 +3006,30 @@
         "volume": {
           "anyOf": [
             {
-              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
             },
             {
-              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
-            },
-            {
-              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+              "$ref": "#/$defs/PathInput"
             }
-          ],
-          "discriminator": {
-            "propertyName": "type",
-            "mapping": {
-              "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
-              "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
-              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
-            }
-          }
+          ]
         },
         "grid": {
           "anyOf": [
@@ -3088,23 +3095,30 @@
         "projections": {
           "anyOf": [
             {
-              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
             },
             {
-              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
-            },
-            {
-              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+              "$ref": "#/$defs/PathInput"
             }
-          ],
-          "discriminator": {
-            "propertyName": "type",
-            "mapping": {
-              "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
-              "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
-              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
-            }
-          }
+          ]
         },
         "grid": {
           "anyOf": [

@@ -3550,23 +3550,30 @@
         "volume": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Npy"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
             },
             {
-              "$ref": "#/$defs/Hdf5"
-            },
-            {
-              "$ref": "#/$defs/Member"
+              "$ref": "#/$defs/PathInput"
             }
           ],
-          "discriminator": {
-            "propertyName": "type",
-            "mapping": {
-              "npy": "#/$defs/Npy",
-              "hdf5": "#/$defs/Hdf5",
-              "member": "#/$defs/Member"
-            }
-          },
           "description": "Volume in (z, y, x) order."
         },
         "grid": {
@@ -3644,23 +3651,30 @@
         "projections": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Npy"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
             },
             {
-              "$ref": "#/$defs/Hdf5"
-            },
-            {
-              "$ref": "#/$defs/Member"
+              "$ref": "#/$defs/PathInput"
             }
           ],
-          "discriminator": {
-            "propertyName": "type",
-            "mapping": {
-              "npy": "#/$defs/Npy",
-              "hdf5": "#/$defs/Hdf5",
-              "member": "#/$defs/Member"
-            }
-          },
           "description": "Line integrals in (view, v, u) order, or (view, u) for a single slice."
         },
         "grid": {

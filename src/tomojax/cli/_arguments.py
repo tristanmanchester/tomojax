@@ -31,7 +31,7 @@ def arguments(
     def decode(name: str, value: Any) -> Any:
         if value is None:
             return None
-        if isinstance(value, Member | Npy | Hdf5):
+        if isinstance(value, Member | Npy | Hdf5 | op.PathInput):
             return read_reference(name, value, context)
         if isinstance(value, Record):
             with within(name):
@@ -54,7 +54,9 @@ def arguments(
     }
 
 
-def read_reference(name: str, value: Member | Hdf5 | Npy, context: ex.ExecutionContext) -> Any:
+def read_reference(
+    name: str, value: Member | Hdf5 | Npy | op.PathInput, context: ex.ExecutionContext
+) -> Any:
     """Resolve stored pixels, a scan geometry, or a region estimate at execution."""
     if isinstance(value, Member):
         member = context.leases[value].value
@@ -72,7 +74,7 @@ def read_reference(name: str, value: Member | Hdf5 | Npy, context: ex.ExecutionC
                 raise InvalidParameter(name, "expected an admitted NumPy file")
             value = pinned
         return np.load(value.path, mmap_mode="r", allow_pickle=False)
-    with source_array(value, context) as (data, meta, _):
+    with source_array(value, context, member=name) as (data, meta, _):
         return np.asarray(data[(slice(None),) * len(meta.shape)])
 
 

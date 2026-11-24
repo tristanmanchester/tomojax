@@ -282,3 +282,54 @@ def test_python_subset_preserves_acquisition_path_across_calls(tmp_path):
             reply = c.call("save", source=derived, path=str(path), force=True, dry_run=dry_run)
             assert reply["isError"] and "differ from input" in reply["content"][0]["text"]
         assert len(tj.load(path).angles) == 12
+
+
+def test_registered_direct_load_protects_original_acquisition(tmp_path):
+    import tomojax as tj
+
+    path = tmp_path / "input.nxs"
+    tj.save(path, tj.simulate(size=8, n_views=12).scan)
+    with connection(tmp_path) as c:
+        python(c, "subset = tj.load('input.nxs').selected(slice(0, 6))")
+        derived = python(c, "import os\nos.chdir('..')\nregister(subset)")["value"]
+        reply = c.call("save", source=derived, path=str(path), force=True)
+        assert reply["isError"] and "differ from input" in reply["content"][0]["text"]
+    assert len(tj.load(path).angles) == 12
+
+
+def test_registered_volume_retains_acquisition_and_volume_paths(tmp_path):
+    import tomojax as tj
+
+    acquisition = tmp_path / "input.nxs"
+    volume = tmp_path / "volume.nxs"
+    tj.save(acquisition, tj.simulate(size=8, n_views=12).scan)
+    tj.save(volume, tj.reconstruct(tj.load(acquisition), "fbp"))
+    with connection(tmp_path) as c:
+        handle = python(c, "register(tj.load_reconstruction('volume.nxs'))")["value"]
+        for dest in (acquisition, volume):
+            reply = c.call("save", source=handle, path=str(dest), force=True)
+            assert reply["isError"] and "differ from input" in reply["content"][0]["text"]
+
+
+def test_python_keeps_lazy_frames_offline_until_indexed(tmp_path):
+    from tests._helpers import write_raw_nxtomo
+
+    path = tmp_path / "raw.nxs"
+    write_raw_nxtomo(path)
+    with connection(tmp_path) as c:
+        ref = c.call("open", path=str(path), kind="frames")["structuredContent"]["handle"]
+        offline = path.rename(tmp_path / "offline.nxs")
+        assert python(c, "40+2")["value"] == 42
+        subset = python(
+            c,
+            f"""from concurrent.futures import ThreadPoolExecutor
+with ThreadPoolExecutor(1) as pool:
+    subset = pool.submit(handles.__getitem__, {ref!r}).result().selected([1])
+subset.views""",
+        )
+        assert subset["value"] == 1
+        offline.rename(path)
+        assert python(c, "subset.counts[0].tolist()")["value"] == [[9, 9], [9, 9]]
+        registered = python(c, "register(subset)")["value"]
+        path.unlink()
+        assert python(c, f"handles[{registered!r}].counts[0].tolist()")["value"] == [[9, 9], [9, 9]]

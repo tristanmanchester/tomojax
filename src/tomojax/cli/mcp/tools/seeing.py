@@ -6,7 +6,6 @@ import asyncio
 import base64
 from contextlib import asynccontextmanager
 from math import ceil
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp_types import ImageContent, TextContent
@@ -72,13 +71,25 @@ def artifacts(value: Any) -> Iterator[str]:
 @asynccontextmanager
 async def temporary(g: Generation, command: Object) -> AsyncIterator[Object]:
     """Hold worker-owned pixels and coordinate vectors until rendering finishes."""
-    output = await g.request(command)
-    value = output["value"]
+    finished: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+    def accept(output: Object) -> Object:
+        value = output["value"]
+        tokens = set(artifacts(value))
+
+        def release(_finished: asyncio.Future[None]) -> None:
+            if not g.exit.is_set():
+                for token in tokens:
+                    _, ack = g.submit({"type": "release", "artifact": token})
+                    ack.result.add_done_callback(lambda future: future.exception())
+
+        finished.add_done_callback(release)
+        return value
+
     try:
-        yield value
+        yield await g.request(command, accept=accept)
     finally:
-        for token in set(artifacts(value)):
-            await g.request({"type": "release", "artifact": token})
+        finished.set_result(None)
 
 
 def coordinates(axis: Object, length: int) -> np.ndarray:
@@ -184,14 +195,8 @@ def reference(tools: Tools, name: str, mode: str) -> Object:
     """Resolve the source by storage type and requested member."""
     if name.startswith("@") and "." not in name and mode.startswith("pose_"):
         name += ".poses"
-    src = resolve(name, base=tools.supervisor.base, ledger=tools.ledger)
+    src = resolve(name, base=tools.supervisor.base, ledger=tools.ledger, field="saved_array")
     assert isinstance(src, dict)
-    if (
-        src["type"] == "npy"
-        and not src.get("artifact")
-        and Path(src["path"]).suffix.lower() != ".npy"
-    ):
-        src["type"] = "path"
     return src
 
 

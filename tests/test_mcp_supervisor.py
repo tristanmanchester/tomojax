@@ -463,3 +463,56 @@ def test_retire_worker_with_detached_pipe_writer(tmp_path, action):
                 os.kill(pid, signal.SIGKILL)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("cancel_first", [True, False])
+def test_cancelled_view_releases_pixels_and_coordinates(tmp_path, monkeypatch, cancel_first):
+    from tomojax.cli.mcp.tools.seeing import temporary
+
+    async def run():
+        ledger = Ledger(tmp_path / "state")
+        supervisor = workers.Supervisor(ledger, tmp_path, tmp_path / "cache")
+        try:
+            g = await supervisor.worker()
+            sim = await g.request({"type": "run", "operation": {"type": "simulate", "size": 8}})
+            source = dict(type="member", handle=sim["value"]["handle"], member="projections")
+
+            async def render():
+                async with temporary(g, {"type": "read", "source": source}):
+                    pytest.fail("cancelled read reached renderer")
+
+            receive = g.receive
+            files = []
+
+            def cancel_at_terminal(row):
+                array = row.get("result", {}).get("value", {}).get("array")
+                if not array:
+                    receive(row)
+                    return
+                files.extend(
+                    [
+                        Path(array["storage"]["path"]),
+                        Path(array["axes"][0]["coordinates"]["values"]["path"]),
+                    ]
+                )
+                assert all(path.is_file() for path in files)
+                if cancel_first:
+                    task.cancel()
+                    asyncio.get_running_loop().call_soon(receive, row)
+                else:
+                    receive(row)
+                    task.cancel()
+
+            monkeypatch.setattr(g, "receive", cancel_at_terminal)
+            task = asyncio.create_task(render())
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            async with asyncio.timeout(5):
+                while any(path.exists() for path in files):
+                    await g.request({"type": "status"})
+            assert len(files) == 2
+        finally:
+            await supervisor.close()
+            ledger.close()
+
+    asyncio.run(run())

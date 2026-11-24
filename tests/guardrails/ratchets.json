@@ -57,17 +57,17 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 5840,
-    "_data": 2201,
+    "(modules)": 5842,
+    "_data": 2221,
     "alignment": 4672,
     "backends": 273,
-    "cli": 9695,
+    "cli": 9724,
     "core": 9917,
     "corrections": 3139,
     "datasets": 1069,
     "forward": 404,
     "geometry": 908,
-    "io": 3950,
+    "io": 3954,
     "motion": 153,
     "nuisance": 232,
     "recon": 14937,
@@ -102,7 +102,7 @@
     "chained": 4
   },
   "type_errors": {
-    "reportArgumentType": 44,
+    "reportArgumentType": 43,
     "reportAttributeAccessIssue": 20,
     "reportCallIssue": 2,
     "reportIndexIssue": 6,

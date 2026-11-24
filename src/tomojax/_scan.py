@@ -910,6 +910,8 @@ class Reconstruction:
     length_unit : str or None, optional
         Unit of grid coordinates and poses. An attached scan supplies its recorded
         unit. A standalone volume retains the unit stored in its file.
+    source_path : str or None, optional
+        File from which the volume was loaded, when present.
     """
 
     volume: np.ndarray | jax.Array
@@ -918,6 +920,7 @@ class Reconstruction:
     info: Mapping[str, object]
     scan: Scan | None = None
     length_unit: str | None = field(default=None, kw_only=True)
+    source_path: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         from tomojax.errors import InvalidParameter
