@@ -18,25 +18,16 @@ if TYPE_CHECKING:
     from .spdhg_tv import SPDHGConfig
 
 
-SIRT_CONTROL_ERROR = (
-    "sirt: iterations >= 0, views_per_batch >= 1 and 1 <= subsets <= views required"
-)
-
-
 def check_subset_count(method: str, subsets: int, views: int) -> None:
     """Each ordered subset must receive at least one acquired view."""
     if subsets > views:
-        message = (
-            SIRT_CONTROL_ERROR
-            if method == "sirt"
-            else "mlem: subsets must not exceed the number of views"
-        )
+        message = f"{method}: subsets must not exceed the number of views ({views}), got {subsets}"
         raise InvalidParameter("subsets", message)
 
 
-def _count(value: int, name: str, *, minimum: int, context: str) -> None:
+def check_count(value: int, name: str, *, minimum: int, context: str) -> None:
     requirement = "nonnegative" if minimum == 0 else "positive"
-    message = f"{context}: {name} must be a {requirement} integer"
+    message = f"{context}: {name} must be a {requirement} integer, got {value!r}"
     try:
         count = operator.index(value)
     except TypeError as error:
@@ -62,11 +53,11 @@ def validate_fista_config(cfg: FISTAConfig) -> tuple[float | None, float | None]
             "data_term", f"{context}: data_term must be absolute or per_view_contrast"
         )
     for name in ("iterations", "patience"):
-        _count(getattr(cfg, name), name, minimum=0, context=context)
+        check_count(getattr(cfg, name), name, minimum=0, context=context)
     for name in ("tv_prox_iterations", "power_iterations"):
-        _count(getattr(cfg, name), name, minimum=1, context=context)
+        check_count(getattr(cfg, name), name, minimum=1, context=context)
     if cfg.views_per_batch is not None:
-        _count(cfg.views_per_batch, "views_per_batch", minimum=1, context=context)
+        check_count(cfg.views_per_batch, "views_per_batch", minimum=1, context=context)
     if cfg.tv_weight is not None:
         _weight(cfg.tv_weight, "tv_weight", context=context)
     if cfg.lipschitz is not None:
@@ -104,8 +95,8 @@ def validate_spdhg_config(cfg: SPDHGConfig) -> None:
             "data_term", f"{context}: data_term must be absolute or per_view_contrast"
         )
     for name in ("iterations", "log_every", "seed"):
-        _count(getattr(cfg, name), name, minimum=0, context=context)
-    _count(cfg.views_per_block, "views_per_block", minimum=1, context=context)
+        check_count(getattr(cfg, name), name, minimum=0, context=context)
+    check_count(cfg.views_per_block, "views_per_block", minimum=1, context=context)
     if cfg.tv_weight is not None:
         _weight(cfg.tv_weight, "tv_weight", context=context)
     _weight(cfg.theta, "theta", context=context)

@@ -107,6 +107,8 @@ def publish_calibration(scan, fitted, corrections, *, native_pixel_size):
     """
     geometry = _calibrated_geometry(nominal_geometry(scan.geometry), corrections, native_pixel_size)
     calibration = _calibration_values(geometry, tuple(corrections))
+    if fitted is None:
+        return replace(scan, geometry=geometry).with_poses(scan.poses), calibration
     table = np.array(fitted, np.float64, copy=True)  # rotations in radians
     previous = scan.poses
     if previous is not None:
