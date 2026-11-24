@@ -66,6 +66,7 @@ class Task:
     job: Activity
     runner: asyncio.Task[None]
     expiry: asyncio.TimerHandle
+    started: float
 
 
 class Tasks(Extension):
@@ -105,9 +106,14 @@ class Tasks(Extension):
             raise MCPError(code=-32602, message="Unknown or expired task ID")
         if ctx.method == "tasks/get":
             fields = dict(task.fields)
-            if fields["status"] == "working" and task.job.updated:
-                fields["lastUpdatedAt"] = task.job.updated.isoformat()
-                fields["statusMessage"] = task.job.status()[0]
+            if fields["status"] == "working":
+                message, eta = task.job.status()
+                if task.job.updated:
+                    fields["lastUpdatedAt"] = task.job.updated.isoformat()
+                    fields["statusMessage"] = message
+                elapsed = asyncio.get_running_loop().time() - task.started
+                if elapsed + (eta or 0) > 60:
+                    fields["pollIntervalMs"] = 10_000
             return {**fields, "resultType": "complete"}
         if ctx.method == "tasks/cancel" and task.fields["status"] == "working":
             task.job.request_cancel()
@@ -149,7 +155,7 @@ class Tasks(Extension):
             "createdAt": now,
             "lastUpdatedAt": now,
             "ttlMs": TTL * 1000,
-            "pollIntervalMs": 10000,
+            "pollIntervalMs": 2_000,
         }
         job = Activity()
 
@@ -189,11 +195,13 @@ class Tasks(Extension):
             if uri := content.get("continuation"):
                 self.parts.pop(uri.split("/")[-2], None)
 
+        loop = asyncio.get_running_loop()
         self.store[task_id] = Task(
             fields,
             job,
             asyncio.create_task(finish()),
-            asyncio.get_running_loop().call_later(TTL, expire),
+            loop.call_later(TTL, expire),
+            loop.time(),
         )
         return {**fields, "resultType": "task"}
 

@@ -165,6 +165,8 @@ def registry(core):
         base = core.supervisor.base
         if args.mode in ("wait", "finishing"):
             activity.get().record(dict(event="started", task=1, name="fit", label="centre"))
+            if args.mode == "finishing":
+                activity.get().record(dict(event="advanced", done=1, total=100, metrics={}, eta=90))
             (base / "entered").touch()
             while not (base / "finish").exists():
                 if activity.get().requested and args.mode == "wait":
@@ -308,8 +310,13 @@ def test_task_methods_cancel_race_and_expiry(tmp_path):
         assert c.terminal(failure)["result"]["isError"]
         assert c.task("cancel", failure)["resultType"] == "complete"
         assert c.terminal(failure)["status"] == "completed"
+        c.call("status")
+        paged = c.call("python", code="print('x' * 18000)", tasks=True)
+        page = c.terminal(paged["taskId"])["result"]["structuredContent"]["continuation"]
+        assert "result" in c.rpc("resources/read", {"uri": page})
         time.sleep(task["ttlMs"] / 1000)
         assert c.rpc("tasks/get", {"taskId": tid}, tasks=True)["error"]["code"] == -32602
+        assert "error" in c.rpc("resources/read", {"uri": page})
 
 
 def test_task_progress_outlives_handoff_and_completion_wins_cancel(tmp_path):
@@ -339,7 +346,8 @@ def test_task_progress_outlives_handoff_and_completion_wins_cancel(tmp_path):
             event = c.receive("method", "notifications/progress")
             assert event["params"]["progressToken"] == "blocking"
         working = c.task("get", tid)
-        assert working["statusMessage"] == "waiting: fit centre"
+        assert working["statusMessage"] == "fit centre 1/100 · eta 90 s"
+        assert working["pollIntervalMs"] == 10_000
         assert working["lastUpdatedAt"] > task["createdAt"]
         assert "result" not in working
         assert c.task("cancel", tid) == ACK
@@ -357,7 +365,7 @@ def test_worker_tasks_use_production_tools_and_ttl(tmp_path):
     with connection(tmp_path) as c:
         task = c.call("simulate", tasks=True, size=16, n_views=32, rotation=360)
         assert task["resultType"] == "task" and task["ttlMs"] == 86_400_000
-        assert task["pollIntervalMs"] == 10_000
+        assert task["pollIntervalMs"] == 2_000
         simulation = c.terminal(task["taskId"])["result"]["structuredContent"]
         args = dict(source=simulation["members"]["scan"], method="opposite-views", fit="center")
         assert c.call("align", tasks=True, dry_run=True, **args)["resultType"] == "complete"
