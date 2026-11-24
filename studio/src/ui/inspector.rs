@@ -901,18 +901,22 @@ fn comparison(state: &AppState) -> El {
         )
         .w_full(),
     );
-    col()
-        .gap(18.)
-        .child(section("Results", pickers))
-        .child(separator())
-        .child(toggle(
-            "link-comparison",
-            "Share display window",
-            state.ui.compare_linked,
-            true,
-            |s, tx| s.dispatch(UiAction::SetCompareLinked(!s.ui.compare_linked), tx),
-        ))
-        .child(display(state))
+    let mut body = col().gap(18.).child(section("Results", pickers));
+    // A difference is drawn on its own window, symmetric about zero; the left
+    // result's histogram and window don't describe it.
+    if state.ui.compare_mode != CompareMode::Difference {
+        body = body
+            .child(separator())
+            .child(toggle(
+                "link-comparison",
+                "Share display window",
+                state.ui.compare_linked,
+                true,
+                |s, tx| s.dispatch(UiAction::SetCompareLinked(!s.ui.compare_linked), tx),
+            ))
+            .child(display(state));
+    }
+    body
 }
 
 /// A compact picker for one side of the comparison; the list opens in place.

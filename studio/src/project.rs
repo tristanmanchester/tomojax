@@ -166,6 +166,8 @@ impl Asset {
                     repoint(values);
                 }
             }
+            // Paths inside the project stay relative, so the project can move.
+            array.relative_to(root);
         }
     }
 
@@ -472,6 +474,18 @@ impl CapturedInput {
 /// Whether a file holds its whole acquisition. Parameter and header files (Nikon
 /// `.xtekct`, SkyScan `.log`, ESRF `.edf`/`.par`) are read together with the frames
 /// beside them.
+/// Whether a path names a data file Studio imports (by extension), rather than an
+/// acquisition folder, whose name can contain dots of its own.
+pub fn is_data_file(path: &Path) -> bool {
+    holds_whole_acquisition(path)
+        || path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "xtekct" | "log" | "xml" | "info" | "vol" | "edf" | "par" | "raw"
+            )
+        })
+}
+
 pub fn holds_whole_acquisition(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
         matches!(

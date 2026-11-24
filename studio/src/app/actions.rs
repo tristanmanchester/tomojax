@@ -217,7 +217,7 @@ impl AppState {
                     .project
                     .as_ref()
                     .and_then(|project| project.document.asset(&id))
-                    .is_some_and(|asset| asset.path.extension().is_none());
+                    .is_some_and(|asset| !project::is_data_file(&asset.path));
                 let reconnect = move |s: &mut AppState,
                                       result: rune::FileDialogResult,
                                       _: &mut Tx| match result {

@@ -745,6 +745,15 @@ fn a_reconnected_result_keeps_its_registration_on_the_new_file() {
     };
     let volume = &result.arrays["volume"];
     assert_eq!(volume.storage, npy(moved.clone()));
+    // Reconnected inside the project, its paths stay relative so the project can move.
+    let mut inside = result.clone();
+    inside.relink(root.join("derived/result.npy"), &root);
+    assert_eq!(
+        inside.arrays["volume"].storage,
+        npy("derived/result.npy".into())
+    );
+    assert!(project::is_data_file(std::path::Path::new("scan.nxs")));
+    assert!(!project::is_data_file(std::path::Path::new("run.01")));
     assert!(matches!(
         &volume.axes[0].coordinates,
         crate::protocol::Coordinates::Coordinates { values } if *values == npy(elsewhere.join("result-axis0.npy"))
