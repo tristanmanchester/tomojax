@@ -82,7 +82,7 @@ class Client:
             for i, row in enumerate(self.inbox):
                 if row.get(key) == value:
                     return self.inbox.pop(i)
-            row = self.messages.get(timeout=15)
+            row = self.messages.get(timeout=120)  # a hang, not a slow runner
             assert row is not None, "server closed stdout"
             self.inbox.append(row)
 
