@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import re
-import tempfile
 import time
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
@@ -173,19 +172,21 @@ def schema(cls: type[Record], definitions: Object) -> Object:
 
 
 def preview_image(path: Path) -> ImageContent:
-    """Read a central projection or volume slice using the CLI's orientation and scaling."""
+    """The central projection, or the central z slice of a volume saved without its scan."""
     from io import BytesIO
 
     from PIL import Image
 
-    from tomojax.cli._previews import write_previews
+    from tomojax.cli import _images, _previews
 
-    with tempfile.TemporaryDirectory() as directory:
-        previews = write_previews(path, directory)
-        with Image.open(next(iter(previews.values()))) as image:
-            image.thumbnail((1024, 1024))
-            buffer = BytesIO()
-            image.save(buffer, format="PNG")
+    pixels = _previews.projection_image(path)
+    if pixels is None:
+        (plane,) = _previews.saved_requests(path, None)[:1]
+        pixels = _previews.saved_plane(path, *plane)
+    image = Image.fromarray(_images.to_uint8(pixels, _images.limits(pixels)))
+    image.thumbnail((1024, 1024))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
     return ImageContent(
         type="image", mime_type="image/png", data=base64.b64encode(buffer.getvalue()).decode()
     )

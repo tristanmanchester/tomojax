@@ -71,7 +71,9 @@ def region_grid(
     except ValueError as exc:
         if region != "auto":
             raise ValueError(f"region={region!r} could not be applied") from exc
-        logging.warning("region='auto' could not be applied; using the scan's grid: %s", exc)
+        logging.getLogger(__name__).warning(
+            "region='auto' could not be applied; using the scan's grid: %s", exc
+        )
         first = last = None
     if first is not None and last is not None:
         if region in {"cube", "cyl"}:

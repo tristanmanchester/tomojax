@@ -82,11 +82,16 @@ def build_calibrated_geometry_metadata_patch(
 
     det_u = variables.get("det_u_px")
     det_v = variables.get("det_v_px")
-    if det_u is not None:
-        det_center[0] = det_center[0] + _real(det_u.value, field="det_u_px") * detector_patch["du"]
-    if det_v is not None:
-        det_center[1] = det_center[1] + _real(det_v.value, field="det_v_px") * detector_patch["dv"]
-    detector_patch["det_center"] = det_center
+    shift = (
+        0.0 if det_u is None else _real(det_u.value, field="det_u_px") * detector_patch["du"],
+        0.0 if det_v is None else _real(det_v.value, field="det_v_px") * detector_patch["dv"],
+    )
+    detector_patch["det_center"] = [det_center[0] + shift[0], det_center[1] + shift[1]]
+    # A segmented geometry's own detectors move with it, keeping their offsets.
+    for entry in cast("list[dict[str, Any]]", geometry_meta_patch.get("cone_segments") or []):
+        if isinstance(entry.get("detector"), dict):
+            u, v = _detector_center(entry["detector"])
+            entry["detector"] = {**entry["detector"], "det_center": [u + shift[0], v + shift[1]]}
 
     roll = variables.get("detector_roll")
     if roll is not None:

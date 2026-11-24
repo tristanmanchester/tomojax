@@ -101,24 +101,23 @@ def publish_calibration(scan, fitted, corrections, *, native_pixel_size):
     corrections from the joint fit. The returned calibration has the same names:
     centre is the final physical detector centre (u, or u/v for cone); tilt is
     the signed lab inclination ``atan2(axis_y, axis_z)`` in degrees; roll is the
-    final detector angle from u towards v, also in degrees. Different cone
+    final detector angle from u towards v, also in degrees. ``fitted`` is None
+    when the fit selected no per-view parameters. Different cone
     arrangements report their final values in segment order when those differ.
     The returned scan retains its input projections and existing lab translations.
     """
     geometry = _calibrated_geometry(nominal_geometry(scan.geometry), corrections, native_pixel_size)
     calibration = _calibration_values(geometry, tuple(corrections))
-    if fitted is None:
-        return replace(scan, geometry=geometry).with_poses(scan.poses), calibration
-    table = np.array(fitted, np.float64, copy=True)  # rotations in radians
-    previous = scan.poses
+    previous = scan.poses  # degrees, as the published table
+    if fitted is None:  # no per-view parameters were fitted: the scan keeps its own
+        return replace(scan, geometry=geometry).with_poses(previous), calibration
+    table = np.concatenate([np.degrees(fitted[:, :3]), fitted[:, 3:]], axis=1)
     if previous is not None:
-        previous = np.concatenate([np.radians(previous[:, :3]), previous[:, 3:]], axis=1)
         table[:, 3:] += previous[:, 3:]
         if np.any(table[:, :3]):
-            before = Rotation.from_euler("YXZ", previous[:, [1, 0, 2]])
-            update = Rotation.from_euler("YXZ", table[:, [1, 0, 2]])
-            table[:, :3] = (before * update).as_euler("YXZ")[:, [1, 0, 2]]
+            before = Rotation.from_euler("YXZ", previous[:, [1, 0, 2]], degrees=True)
+            update = Rotation.from_euler("YXZ", table[:, [1, 0, 2]], degrees=True)
+            table[:, :3] = (before * update).as_euler("YXZ", degrees=True)[:, [1, 0, 2]]
         else:
             table[:, :3] = previous[:, :3]
-    table[:, :3] = np.degrees(table[:, :3])  # the public table's unit
     return replace(scan, geometry=geometry).with_poses(table), calibration

@@ -29,7 +29,7 @@ from tomojax._frame_sources import (
     selected_frames,
     tiff_frames,
 )
-from tomojax._loading_geometry import frame_geometry
+from tomojax._loading_geometry import centre_of, centred, frame_geometry
 from tomojax._parameters import AnnotationModule
 from tomojax._scan import (
     Scan,
@@ -179,6 +179,7 @@ def load_scan_with_declaration(
     apply_poses: bool = True,
     **overrides: Any,
 ) -> Scan:
+    centre, overrides["declared"] = centre_of(overrides.get("declared"))
     with discard_failed_outputs() as outputs:
         progress.check_cancelled()
         file = Path(path)
@@ -196,7 +197,8 @@ def load_scan_with_declaration(
             found = _line_integrals(file, located)
             if found is not None:
                 outputs.own(found[0].projections)
-                return _record_scan(file, *found, apply_poses=apply_poses, **overrides)
+                scan = _record_scan(file, *found, apply_poses=apply_poses, **overrides)
+                return centred(scan, centre)
         frames = _frames(file, discovered, apply_poses=apply_poses, **paths, **overrides)
         fields = _with_fields(
             frames,
@@ -207,7 +209,7 @@ def load_scan_with_declaration(
         )
         scan = _corrected_on_load(fields, file)
         outputs.own(scan.projections)
-        return scan
+        return centred(scan, centre)
 
 
 def discover_frames(
@@ -253,6 +255,7 @@ def projection_frames(
     """Resolve geometry and calibration for a scan without reading its detector pixels."""
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
+    centre, overrides["declared"] = centre_of(overrides.get("declared"))
     settings = dict(apply_poses=apply_poses, angles=angles, **overrides)
     frames, located = discover_frames(
         file,
@@ -265,7 +268,7 @@ def projection_frames(
     if frames is None:
         frames, raw = stored_frames(file, located, require_raw=require_raw, **settings)
         if not raw:
-            return frames, False
+            return centred(frames, centre), False
     fields = _with_fields(
         frames,
         flats=flats,
@@ -277,7 +280,7 @@ def projection_frames(
 
     _require_calibration(fields)
     check_calibration_layout(fields)
-    return fields, True
+    return centred(fields, centre), True
 
 
 def stored_frames(file, located, *, require_raw, apply_poses, **overrides: Any):
@@ -796,6 +799,7 @@ def load_raw_frames_with_declaration(
     apply_poses: bool = True,
     **overrides: Any,
 ) -> Frames:
+    centre, overrides["declared"] = centre_of(overrides.get("declared"))
     with discard_failed_outputs() as outputs, progress.task("metadata", Path(path).name, None, ""):
         file = Path(path)
         if not file.exists():
@@ -814,15 +818,14 @@ def load_raw_frames_with_declaration(
             **overrides,
         )
         outputs.own(frames.counts)
-        return _require_calibration(
-            _with_fields(
-                frames,
-                flats=flats,
-                darks=darks,
-                exposure_times=exposure_times,
-                flat_exposure_times=flat_exposure_times,
-            )
+        fields = _with_fields(
+            frames,
+            flats=flats,
+            darks=darks,
+            exposure_times=exposure_times,
+            flat_exposure_times=flat_exposure_times,
         )
+        return centred(_require_calibration(fields), centre)
 
 
 def _frames(

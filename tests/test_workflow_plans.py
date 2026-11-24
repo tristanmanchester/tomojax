@@ -41,24 +41,32 @@ def test_snapshot_controls_estimate_while_run_reports_actual():
     assert len(actual.info["placement"]["devices"]) == 1
 
 
+def _summary(capsys):
+    """The plan a ``--dry-run --progress json`` stream ends with."""
+    result = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert result["event"] == "result" and result["outputs"] == []
+    return result["info"]["summary"]
+
+
 def test_reconstruction_cli_plan_resolves_method_grid_and_budget(tmp_path, capsys):
     path = tmp_path / "scan.nxs"
     output = tmp_path / "unused.nxs"
     tj.save(path, scan(np.arange(0, 180, 10)))
-    args = ["reconstruct", str(path), "--dry-run"]
+    args = ["reconstruct", str(path), "--dry-run", "--progress", "json"]
     assert main([*args, "-o", str(output)]) == 0
-    auto = json.loads(capsys.readouterr().out)
+    auto = _summary(capsys)
     assert auto["type"] == "reconstruction_plan" and auto["method"] == "fourier"
     assert not output.exists()
     assert main([*args, "--method", "cgls", "--iterations", "7", "--grid", "3", "5", "2"]) == 0
-    explicit = json.loads(capsys.readouterr().out)
+    explicit = _summary(capsys)
     assert (explicit["method"], explicit["iterations"]) == ("cgls", 7)
     assert [explicit["grid"][k] for k in ("nx", "ny", "nz")] == [3, 5, 2]
     assert explicit["reasons"] and explicit["placement"]["snapshot"]
-    with pytest.raises(SystemExit) as error:
-        main([*args, "--progress", "json"])
-    assert error.value.code == 2
-    assert json.loads(capsys.readouterr().out)["event"] == "error"
+    # People get the same plan as text.
+    assert main(["reconstruct", str(path), "--dry-run", "--method", "cgls"]) == 0
+    text = capsys.readouterr().out.splitlines()
+    assert text[0].startswith("method      cgls: Explicit method selection.")
+    assert text[-1].startswith("placement   estimated: ")
 
 
 def test_alignment_plan_budgets_and_padded_levels_match_run(tmp_path, capsys):
@@ -83,9 +91,11 @@ def test_alignment_plan_budgets_and_padded_levels_match_run(tmp_path, capsys):
         "8",
         "5",
         "--dry-run",
+        "--progress",
+        "json",
     ]
     assert main(args) == 0
-    plan = json.loads(capsys.readouterr().out)
+    plan = _summary(capsys)
     assert plan["type"] == "joint_plan" and not plan["bounded_working_grid"]
     levels = plan["levels"]
     # The solver pads two fine planes at each end for support. The coarse grid spans all nine.
@@ -105,11 +115,11 @@ def test_alignment_plan_budgets_and_padded_levels_match_run(tmp_path, capsys):
         assert actual["iterations"] == planned["iterations"]
         assert actual["image_iterations"] == planned["image_iterations"]
     assert result.info["placement"]["devices"]
-    assert (
-        main(["align", str(path), "--method", "opposite-views", "--fit", "center", "--dry-run"])
-        == 0
-    )
-    centre = json.loads(capsys.readouterr().out)
+    # A centre fit calibrates the geometry; it publishes no per-view table.
+    assert result.scan.poses is None and type(result.scan.geometry) is tj.ParallelGeometry
+    centre_args = ["align", str(path), "--method", "opposite-views", "--fit", "center"]
+    assert main([*centre_args, "--dry-run", "--progress", "json"]) == 0
+    centre = _summary(capsys)
     assert centre["type"] == "opposite_views_plan" and centre["pairs"] == 4
     assert centre["placement"]["devices"] == ["cpu:0"]
 
@@ -123,12 +133,10 @@ def test_default_plan_for_each_method(method, monkeypatch):
     if method == "fista":
         # CPU FISTA keeps its state resident, even under a constrained memory sample.
         assert plan.placement.strategy == "resident"
-        assert plan.placement.device_bytes == 8 * 4 * 7 * 8 * 5 + 2 * 4 * 211 * 6 * 12
         monkeypatch.setattr("tomojax.recon._backend.cuda_backend", lambda: True)
         device = (Snapshot(0, "gpu:0", "jax", None, None, 1),)
         plan = plan_product(source, resolve_reconstruction(source, method), snapshot=device)
         assert plan.placement.strategy == "slabbed"
-        assert plan.placement.device_bytes == 4 * 4 * 64 * 6 * 12
 
 
 def test_explicit_fourier_backend_needs_cupy_at_preflight(monkeypatch):

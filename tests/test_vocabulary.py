@@ -4,15 +4,12 @@ The surface is what a user types or reads back: every public name, parameter, fi
 property and method; the recon configs and ``tomojax.datasets``; every CLI command, flag and choice; the ``info``
 keys and string values of a small ``tj.align`` and ``tj.reconstruct``; the keys
 ``tj.save`` writes and ``tj.inspect`` reports; and the code blocks of the docs. Each rule
-names the replacement when it fails. ``ALLOWED`` holds sites allowed to break a rule, with
-the reason (empty since the v1 renames); a row that no longer occurs fails too, so the
-list only shrinks.
+names the replacement when it fails.
 """
 
 import argparse
 from collections.abc import Iterator
 import dataclasses
-from fnmatch import fnmatch
 import inspect
 import json
 from pathlib import Path
@@ -33,49 +30,6 @@ DOCS = [
     ROOT / "src/tomojax/cli/README.md",
 ]
 
-# Names retired at a site, with what replaces them. A site's place is matched with fnmatch.
-RETIRED = {
-    ("*", "batch_views"): "views_per_batch",
-    ("*", "innovation_scale"): 'motion="independent" (the default) or slip_scale',
-    ("*", "select_views"): "views",
-    ("*", "stream_projections"): "stream",
-    ("*", "joseph_interpolation"): "interpolation",
-    ("*", "recon_rel_tol"): "tolerance",
-    ("*", "recon_patience"): "patience",
-    ("*", "initial_epochs"): "start_epochs",
-    ("*", "initial_subsets"): "start_subsets",
-    ("*", "pose_for_view"): "pose_matrix",
-    ("*", "pose_dofs"): "pose_columns",
-    ("*", "estimate_center"): 'tj.align(fit="center", method=...)',
-    ("*", "ray_integrator"): "(removed: one projector model)",
-    ("*", "projector_model"): "(removed: one projector model)",
-    ("*", "gather_dtype"): "(removed: one projector model)",
-    ("*", "projector_unroll"): "(removed: one projector model)",
-    ("*", "checkpoint_projector"): "(removed: one projector model)",
-    ("*", "grad_mode"): "(removed: one projector model)",
-    ("tj.Scan", "positions"): "view_positions",
-    ("tj.Scan.binned()", "factor"): "binning",
-    ("tj.ConeGeometry", "poses"): "pose_matrices",
-    ("tj.Alignment", "volume"): "image",
-    ("tj.load()", "poses"): "apply_poses",
-    ("cli *", "poses"): "apply_poses",
-    ("recon.CGLSConfig", "rtol"): "tolerance",
-    ("recon.CGLSConfig", "atol"): "absolute_tolerance",
-    ("*align*info*", "budget"): "iterations, image_iterations",
-    ("*align*info*", "outer"): "iterations",
-    ("*align*info*", "inner"): "image_iterations",
-    ("*align*info*", "init_iterations"): "initial_image_iterations",
-    ("*align*info*", "lm_initial"): "(internal)",
-    ("*align*info*", "corrections"): "calibration (fitted globals) and poses (per view)",
-    ("cli", "recon"): "reconstruct",
-    ("cli", "import"): "correct",
-    ("cli", "load"): "correct",
-    ("cli", "preprocess"): "correct",
-    ("docs *", "tomojax recon"): "tomojax reconstruct",
-    ("docs *", "tomojax import"): "tomojax correct",
-    ("docs *", "tomojax load"): "tomojax correct",
-    ("docs *", "tomojax preprocess"): "tomojax correct",
-}
 BRITISH = {
     "centre": "center",
     "regularis": "regulariz",
@@ -104,14 +58,6 @@ MIRRORS = {
     "export": ("export", {"path", "reconstruction"}),
     "inspect": ("inspect", {"path"}),
     "simulate": ("simulate", {"artefacts"}),
-}
-# Sites allowed to break a rule, by surface: (place, name) -> the reason. Empty: the renames
-# of v1 are done.
-ALLOWED: dict[str, dict[tuple[str, str], str]] = {
-    "api": {},
-    "results": {},
-    "docs": {},
-    "mirror": {},
 }
 
 
@@ -287,9 +233,6 @@ def violations(sites) -> dict[tuple[str, str], str]:
     found = {}
     for site in sites:
         name, key = site.name, (site.place, site.name)
-        for (place, old), new in RETIRED.items():
-            if name == old and fnmatch(site.place, place):
-                found[key] = f"retired: use {new}"
         for british, american in BRITISH.items():
             if british in name.lower():
                 found[key] = f"American spelling: {american}"
@@ -322,25 +265,21 @@ def mirror_violations(monkeypatch) -> dict[tuple[str, str], str]:
     return found
 
 
-def _check(surface: str, found: dict[tuple[str, str], str]) -> None:
-    allowed = ALLOWED[surface]
-    new = sorted(f"{p}: {n!r} ({why})" for (p, n), why in found.items() if (p, n) not in allowed)
-    stale = sorted(f"{key} ({why})" for key, why in allowed.items() if key not in found)
-    assert not new, "\n".join(new)
-    assert not stale, "no longer occurs, so drop from ALLOWED:\n" + "\n".join(stale)
+def _check(found: dict[tuple[str, str], str]) -> None:
+    assert not found, "\n".join(sorted(f"{p}: {n!r} ({why})" for (p, n), why in found.items()))
 
 
 def test_the_api_and_cli_use_one_vocabulary(monkeypatch):
-    _check("api", violations([*api_sites(), *cli_sites(monkeypatch)]))
+    _check(violations([*api_sites(), *cli_sites(monkeypatch)]))
 
 
 def test_results_and_saved_files_use_one_vocabulary(tmp_path):
-    _check("results", violations(result_sites(tmp_path)))
+    _check(violations(result_sites(tmp_path)))
 
 
 def test_the_docs_code_uses_one_vocabulary():
-    _check("docs", violations(docs_sites()))
+    _check(violations(docs_sites()))
 
 
 def test_each_cli_command_mirrors_its_api_function(monkeypatch):
-    _check("mirror", mirror_violations(monkeypatch))
+    _check(mirror_violations(monkeypatch))

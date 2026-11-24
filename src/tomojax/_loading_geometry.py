@@ -9,7 +9,7 @@ with ``detector_center_status="not_recorded"``; fit a centre explicitly with
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, cast, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, get_args
 
 import numpy as np
 
@@ -288,3 +288,44 @@ def frame_geometry(
     record = record.with_parallel_detector() if geometry is None else record
     resolved = geometry if geometry is not None else geometry_of(record, apply_poses=apply_poses)
     return record, frame_output_grid(resolved, record)
+
+
+class Located(Protocol):
+    """A scan or frames: a geometry and the record it came from."""
+
+    __dataclass_fields__: ClassVar[dict[str, Any]]
+
+    @property
+    def geometry(self) -> ScanGeometry: ...
+
+    @property
+    def source(self) -> ProjectionDataset | None: ...
+
+
+def centre_of(
+    declared: DeclaredGeometry | None,
+) -> tuple[tuple[float, float] | None, DeclaredGeometry | None]:
+    """A declaration's detector centre, and the declaration without it.
+
+    The centre is applied after everything else has resolved, as an edit of the
+    loaded geometry (:func:`centred`); a declaration of nothing else is dropped.
+    """
+    if declared is None or declared.detector_center is None:
+        return None, declared
+    rest = replace(declared, detector_center=None)
+    return declared.detector_center, (None if rest.kind is None else rest)
+
+
+def centred[T: Located](item: T, centre: tuple[float, float] | None) -> T:
+    """``item`` with its first detector centred at ``centre`` and every segment moved alike."""
+    if centre is None:
+        return item
+    from tomojax._scan import shifted_center
+
+    u, v = item.geometry.detector.center
+    geometry = shifted_center(item.geometry, centre[0] - u, centre[1] - v)
+    source = item.source
+    if source is not None:
+        meta = {**source.geometry_metadata, "detector_center_status": "provided"}
+        source = replace_dataset(source, geometry_metadata=meta)
+    return replace(item, geometry=geometry, source=source)

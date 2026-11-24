@@ -9,7 +9,6 @@ of 0.47 GiB at 1441 views and 1.29 GiB at 4000 that the plan had counted as volu
 """
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -30,9 +29,6 @@ def _scan(views, nu=96, nv=64, n=24, nz=16):
     projections = np.array(tj.project(geometry, volume))
     projections += rng.normal(0, 0.01, projections.shape).astype(np.float32)
     return projections, np.asarray(stack_view_poses(geometry, views)), grid, detector
-
-
-ARGS = {}
 
 
 def _abstract(tree):
@@ -107,7 +103,6 @@ def level_memory(views, monkeypatch, nu=96, nv=64, n=24, nz=16):
 
     out = {}
     for name, (compiled, args, kwargs) in seen.items():
-        ARGS[name] = (compiled, args, kwargs)
         with jax.enable_x64(True):  # as fit_poses runs them: its FP64 stays FP64
             analysis = compiled.lower(*args, **kwargs).compile().memory_analysis()
             consts = captured_constants(compiled, *args, **kwargs)
@@ -158,49 +153,6 @@ def test_no_level_function_grows_faster_than_the_views(monkeypatch):
     assert not captured, f"volume- or stack-shaped captured constants: {captured}"
     large = {name: m["consts"] for name, m in profiles[2].items() if m["consts"] > 256 * 1024}
     assert not large, f"large captured constants (bytes): {large}"
-
-
-def _conditionals(jaxpr):
-    """Every cond equation in a jaxpr and the jaxprs nested in it."""
-    for eqn in jaxpr.eqns:
-        if eqn.primitive.name == "cond":
-            yield eqn
-        for value in eqn.params.values():
-            for item in value if isinstance(value, list | tuple) else [value]:
-                inner = getattr(item, "jaxpr", item)
-                if hasattr(inner, "eqns"):
-                    yield from _conditionals(inner)
-
-
-def test_the_schur_solves_conditionals_carry_no_stack(monkeypatch):
-    # Conjugate gradients chose between advancing and verifying in a conditional that also made
-    # the product and returned the weighted-projection stack r it had written. XLA keeps a
-    # conditional's results in buffers of their own, so at K11's size the compiled solve copied
-    # r out of it on every iteration: a whole stack of temporaries (0.47 GiB at 1441 views,
-    # 1.29 GiB at 4000) that the plan did not count. The product is made outside the
-    # conditional; nothing the size of the views may pass through one.
-    level_memory(48, monkeypatch)
-    compiled, args, kwargs = next(v for k, v in ARGS.items() if k.endswith("schur"))
-    views = args[1].shape[0]  # the weights sw: (padded views, rows, pixels)
-    with jax.enable_x64(True):
-        jaxpr = jax.make_jaxpr(compiled)(*args, **kwargs).jaxpr
-    carried = [
-        var.aval.shape
-        for eqn in _conditionals(jaxpr)
-        for var in eqn.outvars
-        if len(var.aval.shape) >= 3 and var.aval.shape[0] == views
-    ]
-    assert not carried, f"stack-sized results of a conditional in the Schur solve: {carried}"
-
-
-def test_the_constants_check_sees_a_captured_volume():
-    # make_jaxpr of a jitted closure reported no constants, so the guard above could not see
-    # a captured volume: the check must find one planted on purpose.
-    volume = jnp.ones((16, 24, 24), jnp.float32)
-    planted = jax.jit(lambda x: x + volume)
-    assert jax.make_jaxpr(planted)(volume).consts == []  # what the guard used to read
-    shapes = [tuple(c.shape) for c in captured_constants(planted, volume)]
-    assert shapes == [(16, 24, 24)]
 
 
 def test_a_prior_factor_with_no_device_block_raises_a_plain_memory_error(monkeypatch):

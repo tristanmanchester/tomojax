@@ -116,6 +116,7 @@ def resolve_alignment(
     grid: Grid | None = None,
     region: RegionName | RegionEstimate | None = None,
     config: AlignConfig | None = None,
+    shape: tuple[int, int, int] | None = None,
     **settings: Any,
 ) -> JointSelection | CentreSelection:
     """Resolve the method-specific work without sampling projections."""
@@ -131,7 +132,13 @@ def resolve_alignment(
     if method == "opposite-views":
         extras = sorted(
             key
-            for key, value in {**supplied, "config": config, "grid": grid, "region": region}.items()
+            for key, value in {
+                **supplied,
+                "config": config,
+                "grid": grid,
+                "region": region,
+                "shape": shape,
+            }.items()
             if value is not None
         )
         if extras:
@@ -149,7 +156,7 @@ def resolve_alignment(
         raise InvalidParameter("method", f"method is 'joint' or 'opposite-views', not {method!r}")
     _ = parse_fit(fit)
     config = replace(AlignConfig() if config is None else config, **supplied)
-    grid, cylinder, info = resolve_grid(scan, grid, region)
+    grid, cylinder, info = resolve_grid(scan, grid, region, shape=shape)
     if grid is not None:
         scan = with_grid(scan, grid)
     acquisition = (

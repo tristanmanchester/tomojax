@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 
 from tomojax.cli import operations as op
-from tomojax.cli._display import plane_windows
+from tomojax.cli._planes import plane_windows
 from tomojax.cli.images import Panel, label_number, limits, montage, pose_plot, thumbnail
 from tomojax.cli.mcp.tools.references import resolve
 

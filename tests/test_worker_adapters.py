@@ -1339,3 +1339,32 @@ def test_operator_path_source_uses_its_geometry_without_loading_pixels(tmp_path,
     admitted(operations.Run(operation=operations.Project(source=ref, volume=ref)), None, stage, ref)
     assert reads == []
     np.testing.assert_allclose(np.load(stage.private), expected, atol=1e-5)
+
+
+@pytest.mark.parametrize("binning", [1, 2])
+@pytest.mark.parametrize("by", ["path", "handle"])
+def test_correction_preview_of_a_scan_labels_its_input_as_line_integrals(
+    worker, tmp_path, binning, by
+):
+    from tomojax.corrections import Stripes
+
+    grid = tj.Grid(8, 8, 6, 1, 1, 1)
+    geometry = tj.ParallelGeometry(grid, tj.Detector(8, 6, 1, 1), np.arange(12) * 15.0)
+    data = np.random.default_rng(3).uniform(0, 1, (12, 6, 8)).astype(np.float32)
+    path = tmp_path / "scan.nxs"
+    tj.save(path, tj.Scan(data, geometry))
+    if by == "path":
+        source = dict(type="path", path=str(path))
+    else:
+        opened = output(worker("open", kind="scan", path=str(path)))["value"]["handle"]
+        source = dict(type="member", handle=opened, member="self")
+    args = dict(
+        source=source, rows=[1, 2], binning=binning, corrections=[dict(type="Stripes", width=3)]
+    )
+    value = output(worker("correction_preview", **args))["value"]
+    before, after = value["before"], value["after"]
+    assert (before["domain"], before["unit"]) == ("line_integrals", "1")
+    expected = (
+        tj.Scan(data, geometry).corrected(Stripes(width=3)).binned(binning).projections[:, 1:2]
+    )
+    np.testing.assert_allclose(np.load(after["storage"]["path"]), expected, rtol=1e-6, atol=1e-6)

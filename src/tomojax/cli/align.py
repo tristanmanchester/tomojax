@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 from functools import partial
-import json
 import logging
 from pathlib import Path
 import sys
@@ -17,21 +17,24 @@ from tomojax import progress
 from tomojax._field_of_view import (
     REGION_CHOICES,
     REGION_HELP,
-    region_grid,
-    zero_outside_cylinder,
 )
 from tomojax._parameters import Fit
 from tomojax.cli._options import EXIT_STATUS, add_config, add_force, check_paths
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
+from tomojax.cli._watch import watch_directory
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from tomojax import Alignment, Grid, Scan
+    from tomojax import Alignment, Scan
+    from tomojax._smooth_alignment import CentreSelection, JointSelection
     from tomojax._workflow import Region
     from tomojax.alignment import AlignConfig
+    from tomojax.cli._watch import WatchDirectory
     from tomojax.wire.progress import Result
+
+LOG = logging.getLogger(__name__)
 
 
 class _Args(argparse.Namespace):
@@ -52,13 +55,14 @@ class _Args(argparse.Namespace):
     apply_poses: bool
     manifest: str | None
     dry_run: bool
+    watch_dir: str | None
 
 
 # The everyday settings: tj.align's keywords, each a field of AlignConfig.
 _SETTINGS = ("motion", "iterations", "image_iterations", "tolerance", "interpolation", "resolution")
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser() -> ProgressParser:
     """The ``tomojax align`` parser, with the same fit names as Python."""
     parser = ProgressParser(
         prog="tomojax align",
@@ -87,7 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
         "(optional with --dry-run)",
     )
     add_force(parser)
-    add_progress(parser)
+    add_progress(parser, watch_dir=True)
     _ = parser.add_argument(
         "--fit",
         nargs="+",
@@ -155,7 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the fit selection and grid as JSON without aligning",
+        help="Print the plan (levels, grids, estimated memory) and stop; JSON with --progress json",
     )
     return parser
 
@@ -257,17 +261,15 @@ def _write_manifest(
     }
     manifest = build_manifest("tomojax align", list(sys.argv), args, payload)
     save_manifest(str(args.manifest), manifest)
-    logging.info("Saved alignment manifest to %s", args.manifest)
+    LOG.info("Saved alignment manifest to %s", args.manifest)
 
 
 def _validate_align_args(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     args: _Args,
     settings: Mapping[str, Any],
 ) -> AlignConfig | None:
     """Validate CLI and TOML arguments before loading scan data."""
-    if args.dry_run and args.progress == "json":
-        parser.error("--dry-run cannot write a plan with --progress json")
     if len(args.fit) != len(set(args.fit)):
         parser.error("--fit names must not repeat")
     if not args.dry_run and not args.out:
@@ -287,29 +289,26 @@ def _dry_run_plan(
     args: _Args,
     fit: tuple[str, ...],
     scan: Scan,
-    grid: Grid | None,
-    config: AlignConfig | None,
+    work: JointSelection | CentreSelection,
+    plan: object,
 ) -> dict[str, object]:
-    """Return the JSON summary for ``tomojax align --dry-run``."""
+    """Return the JSON document of ``tomojax align --dry-run``."""
     import msgspec
 
-    from tomojax._smooth_alignment import resolve_alignment
-    from tomojax.cli._plans import plan_product
-
-    work = resolve_alignment(scan, fit=fit, method=args.method, grid=grid, config=config)
-    plan: dict[str, object] = {
-        **msgspec.to_builtins(plan_product(scan, work)),
+    document: dict[str, object] = {
+        **msgspec.to_builtins(plan),
         "input_path": args.data,
         "output_path": args.out,
         "fit": list(fit),
         "method": args.method,
     }
-    if args.method == "joint":
-        assert config is not None
-        plan["config"] = asdict(config)
-        plan["grid"] = (scan.grid if grid is None else grid).to_dict()
-        plan["bounded_working_grid"] = grid is None
-    return plan
+    from tomojax._smooth_alignment import JointSelection
+
+    if isinstance(work, JointSelection):
+        document["config"] = asdict(work.config)
+        document["grid"] = (scan.grid if work.grid is None else work.grid).to_dict()
+        document["bounded_working_grid"] = work.grid is None
+    return document
 
 
 def main() -> int:
@@ -319,17 +318,19 @@ def main() -> int:
     args = cast("_Args", namespace)
     settings = cast("dict[str, Any]", metadata["settings"])
     config = _validate_align_args(parser, args, settings)
-    return run_command("align", args.progress, partial(_run, parser, args, metadata, config))
+    watch = watch_directory(args.watch_dir, working=True)
+    operation = partial(_run, parser, args, metadata, config, watch)
+    return run_command("align", args.progress, operation, watch=watch)
 
 
 def _run(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     args: _Args,
     metadata: Mapping[str, Any],
     config: AlignConfig | None,
+    watch: WatchDirectory | None,
 ) -> Result | None:
     import tomojax as tj
-    from tomojax.core import log_jax_env, setup_logging
 
     if not Path(args.data).exists():
         raise FileNotFoundError(f"input not found: {args.data}")
@@ -338,37 +339,37 @@ def _run(
     progress.check_cancelled()
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_cancelled()
+    from tomojax._smooth_alignment import JointSelection, resolve_alignment
+    from tomojax._workflow import align_resolved, alignment_task
+    from tomojax.cli._plans import announce, dry_run, plan_product
+
     fit = tuple(args.fit)
-    grid, cylinder = (None, None)
-    if args.method == "joint" and (args.grid is not None or args.region is not None):
-        shape = None if args.grid is None else (args.grid[2], args.grid[1], args.grid[0])
-        grid, cylinder = region_grid(scan, args.region, shape=shape)
-    if args.dry_run:
-        print(json.dumps(_dry_run_plan(args, fit, scan, grid, config), indent=2, sort_keys=True))
-        return None
-    setup_logging()
-    log_jax_env()
-    if args.method == "opposite-views":
-        result = tj.align(scan, fit=fit, method="opposite-views")
-    elif args.grid is None:
-        result = tj.align(scan, fit=fit, region=args.region, config=config)
-    else:
-        result = tj.align(scan, fit=fit, grid=grid, config=config)
-        if cylinder is not None and result.image is not None and result.grid is not None:
-            masked_image = zero_outside_cylinder(result.image, result.grid, cylinder)
-            result = replace(result, image=masked_image)
+    shape = None if args.grid is None else (args.grid[2], args.grid[1], args.grid[0])
+    with alignment_task(fit):
+        work = resolve_alignment(
+            scan, fit=fit, method=args.method, region=args.region, shape=shape, config=config
+        )
+        if args.dry_run:
+            plan = plan_product(scan, work)
+            document = _dry_run_plan(args, fit, scan, work, plan)
+            return dry_run(args.progress, args.data, plan, scan, work, document=document)
+        used = tuple(f for f, v in (("--region", args.region), ("--grid", args.grid)) if v)
+        _ = announce("align", scan, work, used=used)
+        with progress.previews() if watch is not None else nullcontext():
+            result = align_resolved(scan, fit, work)
     progress.check_cancelled()
     assert args.out is not None
     tj.save(args.out, result)
-    logging.info("Saved alignment results to %s", args.out)
     if args.manifest is not None:
         progress.check_cancelled()
-        _write_manifest(args, metadata, scan, result, masked=cylinder is not None)
+        masked = isinstance(work, JointSelection) and work.cylinder is not None
+        _write_manifest(args, metadata, scan, result, masked=masked)
     if args.progress == "json":
         from tomojax.cli._results import saved_result
 
         outputs = tuple(p for p in (args.out, args.manifest) if p is not None)
         return saved_result(args.out, result, method=args.method, outputs=outputs)
+    print(f"wrote {args.out}: {', '.join(fit)} fit, {len(scan.angles)} views")
     return None
 
 

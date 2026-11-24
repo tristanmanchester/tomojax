@@ -14,6 +14,7 @@ from tomojax.cli.wire_options import Grid
 
 if TYPE_CHECKING:
     from tomojax._scan import Scan
+    from tomojax.wire.progress import Result
 
 
 def plan_product(
@@ -51,3 +52,64 @@ def plan_product(
         msgspec.convert(work.scan.grid, type=Grid, from_attributes=True),
         placement,
     )
+
+
+def announce(
+    command: str,
+    scan: Scan,
+    work: CentreSelection | JointSelection | ResolvedReconstruction,
+    *,
+    used: tuple[str, ...] = (),
+) -> p.CentrePlan | p.JointPlan | p.ReconPlan:
+    """Estimate the plan, say what the run will do, and keep a memory hint for a failure.
+
+    ``used`` names the options the command was given (``--region``, ``--grid``), which
+    the hint then does not suggest again. Returns the plan record.
+    """
+    from tomojax import progress
+    from tomojax.cli._plan_view import plan_header, size
+    from tomojax.cli._progress import memory_hint
+
+    plan = plan_product(scan, work)
+    placement = plan.placement
+    progress.note("info", plan_header(command, scan, work, placement))
+    available = [s.available for s in placement.snapshot if s.available is not None]
+    estimate = f"the plan estimated {size(placement.host_bytes)} on the host"
+    if placement.device_bytes:
+        estimate += f" and {size(placement.device_bytes)} on the device"
+    if available:
+        estimate += f", with {size(min(available))} available"
+    options = [
+        option
+        for option, given in (("--region cyl", "--region"), ("a smaller --grid", "--grid"))
+        if given not in used
+    ]
+    options.append("binning the scan first (tomojax correct IN -o OUT --binning 2)")
+    memory_hint.set(f"{estimate}; try {', or '.join(options)}")
+    return plan
+
+
+def dry_run(
+    mode: str,
+    source: str,
+    plan: p.CentrePlan | p.JointPlan | p.ReconPlan,
+    scan: Scan,
+    work: CentreSelection | JointSelection | ResolvedReconstruction,
+    *,
+    document: dict[str, object] | None = None,
+) -> Result | None:
+    """Show ``--dry-run``'s plan: text, or the JSON document as the stream's result.
+
+    ``document`` replaces the plan record as the JSON summary (an alignment adds its
+    paths, fit and configuration).
+    """
+    from pathlib import Path
+
+    from tomojax.cli._plan_view import plan_text
+    from tomojax.cli._results import report_result
+
+    if mode == "json":
+        summary = msgspec.to_builtins(plan) if document is None else document
+        return report_result(Path(source), (), summary)
+    print(plan_text(scan, work, plan.placement))
+    return None

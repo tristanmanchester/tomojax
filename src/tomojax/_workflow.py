@@ -603,12 +603,8 @@ def reconstruct_resolved(
     scan, method = plan.scan, plan.method
     if method not in {"fbp", "fourier"}:
         _suggest_binning(scan, "iterative reconstruction")
-    xy_support = None
-    if plan.cylinder is not None and progress.previewing():
-        from tomojax._field_of_view import cylinder_support
-
-        xy_support = cylinder_support(replace(scan.grid, nz=1), plan.cylinder)[0]
-    with registration(scan, xy_support=xy_support), progress.runtime() as actual:
+    radius = None if plan.cylinder is None else plan.cylinder.radius
+    with registration(scan, cylinder_radius=radius), progress.runtime() as actual:
         volume, info = reconstruct_arrays(
             method,
             scan.geometry,
@@ -1001,8 +997,7 @@ def align(
     """
     from tomojax._smooth_alignment import resolve_alignment
 
-    label = ", ".join(map(str, fit)) if isinstance(fit, tuple) else str(fit)
-    with progress.task("align", label, None, "fit"):
+    with alignment_task(fit):
         plan = resolve_alignment(
             scan,
             fit=fit,
@@ -1020,6 +1015,12 @@ def align(
         return align_resolved(scan, fit, plan)
 
 
+def alignment_task(fit: str | tuple[str, ...]) -> AbstractContextManager[None]:
+    """The outer progress task of one alignment, around its resolution and its fit."""
+    label = ", ".join(map(str, fit)) if isinstance(fit, tuple) else str(fit)
+    return progress.task("align", label, None, "fit")
+
+
 def align_resolved(
     scan: Scan, fit: str | tuple[str, ...], plan: CentreSelection | JointSelection
 ) -> Alignment:
@@ -1032,7 +1033,8 @@ def align_resolved(
         return replace(
             alignment, info={**alignment.info, "placement": actual.record(slabbed=False)}
         )
-    with registration(scan), progress.runtime() as actual:
+    radius = None if plan.cylinder is None else plan.cylinder.radius
+    with registration(scan, cylinder_radius=radius), progress.runtime() as actual:
         result = align_poses(scan, fit=fit, plan=plan)
     slabbed = any(
         "host" in level["stacks"]["placement"].values()

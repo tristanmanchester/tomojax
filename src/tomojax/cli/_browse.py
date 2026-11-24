@@ -17,9 +17,9 @@ import numpy as np
 from tomojax._files import saved_volume_grid
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import explicit_dataset
-from tomojax.cli._display import plane_windows
 from tomojax.cli._frame_reads import frame_pixels
 from tomojax.cli._handles import stage_array
+from tomojax.cli._planes import plane_windows
 from tomojax.cli._results import disk_volume, stored_grid
 from tomojax.core.host_volume import host_array, release
 from tomojax.errors import InvalidParameter

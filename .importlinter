@@ -1,5 +1,6 @@
 [importlinter]
 root_package = tomojax
+include_external_packages = True
 
 [importlinter:contract:layers]
 name = Layer direction
@@ -71,3 +72,30 @@ source_modules =
     tomojax._astra
 forbidden_modules =
     tomojax.core.geometry
+
+[importlinter:contract:rich-stays-in-the-cli]
+name = Only the console script imports Rich, never the library or the worker
+type = forbidden
+allow_indirect_imports = True
+source_modules =
+    tomojax.progress
+    tomojax.errors
+    tomojax.wire
+    tomojax.core
+    tomojax.geometry
+    tomojax.recon
+    tomojax.io
+    tomojax.alignment
+    tomojax.corrections
+    tomojax._workflow
+    tomojax._loading
+    tomojax.interactive
+    tomojax.cli.serve
+    tomojax.cli._session
+    tomojax.cli.envelope
+    tomojax.cli.execution
+    tomojax.cli.operations
+    tomojax.cli._adapters
+forbidden_modules =
+    rich
+    rich_argparse

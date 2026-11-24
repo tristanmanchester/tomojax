@@ -55,7 +55,7 @@ Run a small synthetic reconstruction from the environment directory:
 ```bash
 .venv/bin/tomojax simulate -o synthetic.nxs --size 32 --n-views 60
 .venv/bin/tomojax reconstruct synthetic.nxs -o recon.nxs
-.venv/bin/tomojax inspect recon.nxs --preview previews
+.venv/bin/tomojax inspect recon.nxs --preview-dir previews
 ```
 
 `inspect` prints `Valid: yes` and writes three central slice previews to `previews/`. Commands refuse to overwrite existing files unless you pass `--force`. Prefix with `JAX_PLATFORMS=cpu` or `JAX_PLATFORMS=cuda` to pin the backend.
