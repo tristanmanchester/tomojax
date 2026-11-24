@@ -41,6 +41,20 @@ Implementation details to keep in mind when sizing large runs:
 
 See [memory measurements](measurements.md#memory) for peak VRAM across solvers on an 8 GB GPU.
 
+## Plan and watch a long run
+
+`--dry-run` resolves a run without starting it. It prints the method and why it was chosen, the grid, and the estimated memory against the memory available:
+
+```bash
+tomojax reconstruct scan.nxs --method cgls --dry-run
+```
+
+A run prints the same plan in one line as it starts. If it then runs out of memory, the error says what the plan needed and which options would shrink it. `--watch-dir DIR` rewrites images of the solve's central planes in DIR at each checkpoint, so an image viewer open on DIR shows a long reconstruction or alignment converging:
+
+```bash
+tomojax reconstruct scan.nxs -o recon.nxs --method cgls --watch-dir watch
+```
+
 ## Reconstruct a volume larger than the GPU
 
 For FBP, FDK, Fourier, cone CGLS/SIRT/MLEM, and CUDA Joseph parallel/laminography CGLS and FISTA-TV, passing a writable C-ordered `float32` memmap as `out=` forces host-slab execution and writes directly to disk without allocating a second full volume:

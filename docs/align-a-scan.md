@@ -55,6 +55,22 @@ For cone data, `"center"` also fits detector-v, though the data constrain it wea
 
 For a quick axial parallel estimate without reconstructing a volume, run `tj.align(scan, fit="center", method="opposite-views")`, which matches near-opposite views directly (its result has no `image`).
 
+### Check the centre by eye
+
+A centre sweep reconstructs one slice at each of several detector centres, so you can pick the sharpest:
+
+```bash
+tomojax inspect scan.nxs --preview-dir sweep --centres -20:20:2 --slice z=300
+```
+
+`--centres` takes `START:STOP:STEP` or a comma list, in detector pixels from the detector middle. `sweep/centre_sweep.png` shows every candidate on the same grey scale, with the centre the file records outlined. `inspect` lists each candidate with its centre in the pixel size's unit, and the command that applies one:
+
+```bash
+tomojax correct scan.nxs -o centred.nxs --detector-center U V
+```
+
+`--detector-center` sets the first detector's centre and moves every other detector of a segmented scan by the same amount. In Python, `tj.interactive.centre_sweep(scan, "z", 300, centres)` returns the planes as one array.
+
 ## Drift and slips
 
 Sample motion between views doubles or smears features by varying amounts depending on when each view was acquired. `fit="translations"` tracks both gradual drift and sudden slips.

@@ -36,7 +36,11 @@ Without a recorded grid, cone scans default to one voxel per detector pixel at t
 
 ### Artefact corrections
 
-Pass `--stripes WIDTH`, `--rings`, or `--zingers` to `tomojax correct` (or `Stripes`, `Rings`, `Zingers`, `BeamHardening` to `frames.corrected(...)` in Python). For beam-hardening linearisation with an explicit polynomial or X-ray spectrum, see [beam hardening](../src/tomojax/corrections/README.md#beam-hardening); vendor beam-hardening parameters are kept in metadata unapplied.
+Pass `--stripes WIDTH`, `--rings`, or `--zingers` to `tomojax correct` (or `Stripes`, `Rings`, `Zingers`, `BeamHardening` to `frames.corrected(...)` in Python). To try settings before correcting the whole scan, add `--dry-run --preview band.png`: it corrects a band of rows, writes their sinograms before and after the steps and the difference, and writes no scan.
+
+```bash
+tomojax correct scan/scan.xtekct --darks 0 --stripes 9 --rings --dry-run --preview band.png
+``` For beam-hardening linearisation with an explicit polynomial or X-ray spectrum, see [beam hardening](../src/tomojax/corrections/README.md#beam-hardening); vendor beam-hardening parameters are kept in metadata unapplied.
 
 ### Zeiss Xradia preview
 
@@ -76,7 +80,7 @@ A wrong detector centre doubles features, while detector roll introduces height-
 tomojax align scan.nxs -o calibrated.nxs --fit center roll
 ```
 
-For cone data, `"center"` fits detector-u and detector-v offsets in the detector frame (distinct from `ConeBeam.axis_offset`), `"roll"` fits detector roll, and adding `"tilt"` fits the rotation-axis tilt. Source distances, pitch, and yaw stay fixed. Compare slices across several heights against an unaligned reconstruction.
+For cone data, `"center"` fits detector-u and detector-v offsets in the detector frame (distinct from `ConeBeam.axis_offset`), `"roll"` fits detector roll, and adding `"tilt"` fits the rotation-axis tilt. Source distances, pitch, and yaw stay fixed. Compare slices across several heights against an unaligned reconstruction, or sweep the centre and choose it by eye (see [check the centre by eye](align-a-scan.md#check-the-centre-by-eye)).
 
 ## Reconstruct
 
