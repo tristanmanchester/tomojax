@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     import jax.numpy as jnp
@@ -64,6 +65,90 @@ def too_large_for_the_device(geometry: Geometry, grid: Grid, cfg: FBPConfig) -> 
     return needs_fbp_slabs(geometry, grid, free)
 
 
+def device_free(cfg: FBPConfig) -> int | None:
+    """Free memory on the configuration's first device (or JAX's default), sampled now.
+
+    Parameters
+    ----------
+    cfg : FBPConfig
+        Settings naming the devices, if any.
+
+    Returns
+    -------
+    int or None
+        Free bytes, or None when the allocator does not report them.
+    """
+    from tomojax.backends import device_free_memory_bytes
+
+    with first_device(cfg):
+        return device_free_memory_bytes()
+
+
+@dataclass(frozen=True)
+class AxialRoute:
+    """How one axial FBP plane is computed, decided once from a single memory sample.
+
+    Parameters
+    ----------
+    kind : {"slab", "row", "full"}
+        The host slab holding the plane, one detector row on the device, or the whole
+        volume.
+    host : bool
+        Whether the full solver would use host slabs.
+    """
+
+    kind: Literal["slab", "row", "full"]
+    host: bool
+
+
+def axial_plane_route(
+    geometry: Geometry, grid: Grid, detector: Detector, index: int, free: int | None
+) -> AxialRoute:
+    """Decide, without solving, how the axial plane ``index`` will be reconstructed.
+
+    Parameters
+    ----------
+    geometry : Geometry
+        Calibrated acquisition.
+    grid : Grid
+        Full output voxel grid.
+    detector : Detector
+        Measured detector.
+    index : int
+        Requested axial plane on the output grid.
+    free : int or None
+        Free device memory, sampled once by the caller (:func:`device_free`).
+
+    Returns
+    -------
+    AxialRoute
+        The plane's route and the full solver's placement.
+    """
+    import numpy as np
+
+    from tomojax.geometry import grid_volume_origin
+
+    from ._axial_slabs import independent_planes
+
+    host = needs_fbp_slabs(geometry, grid, free)
+    if not independent_planes(geometry, grid, detector):
+        return AxialRoute("full", host)
+    if host:
+        return AxialRoute("slab", host)
+    # Compilers can fuse the z multiply-add and replace division by a reciprocal.
+    # Prove each operation exact in FP32 before removing interpolation neighbours.
+    pitch = float(np.float32(detector.dv))
+    z = index * pitch + float(np.float32(grid_volume_origin(grid)[2]))
+    centered = z - float(np.float32(detector.center[1]))
+    exact = (
+        np.frexp(pitch)[0] == 0.5
+        and float(np.float32(z)) == z
+        and float(np.float32(centered)) == centered
+        and centered / pitch == index - (detector.nv - 1) / 2
+    )
+    return AxialRoute("row" if exact else "full", host)
+
+
 def needs_fbp_slabs(geometry: Geometry, grid: Grid, free: int | None) -> bool:
     """Use host slabs for a canonical detector when the volume exceeds its device budget."""
     return (
@@ -101,9 +186,13 @@ def check_host_fbp_samples(
     cfg: FBPConfig,
     *,
     axial_index: int | None,
+    host: bool | None = None,
 ) -> None:
-    """Check the measured rows each host slab will read, scanning overlapping windows once."""
-    if not too_large_for_the_device(geometry, grid, cfg):
+    """Check the measured rows each host slab will read, scanning overlapping windows once.
+
+    ``host`` is a placement decided earlier; None decides it from free memory now.
+    """
+    if not (too_large_for_the_device(geometry, grid, cfg) if host is None else host):
         return
 
     import numpy as np

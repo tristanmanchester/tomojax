@@ -25,14 +25,17 @@ if TYPE_CHECKING:
 
 
 def slice_product(
-    command: op.Slice, plans: tuple[ResolvedReconstruction, ...], context: ex.ExecutionContext
+    command: op.Slice,
+    work: ResolvedReconstruction | interactive.SweepPlan,
+    context: ex.ExecutionContext,
 ) -> p.PlaneResult | p.Sweep:
     """Stage one spatial registration, optionally with signed detector coordinates."""
-    plan = plans[0]
+    plan = work.template if isinstance(work, interactive.SweepPlan) else work
     axis, index = command.axis, command.index
     write = partial(stage_array, context)
     if isinstance(command, op.CentreSweep):
-        pixels = interactive.resolved_sweep(plans, axis, index)
+        assert isinstance(work, interactive.SweepPlan)
+        pixels = interactive.resolved_sweep(work)
         leading = (
             Axis("centre", "detector", "pixel", Coordinates(write(np.asarray(command.centres)))),
         )

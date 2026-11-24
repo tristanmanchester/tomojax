@@ -10,7 +10,15 @@ import numpy as np
 from tomojax._parameters import Method
 from tomojax._scan import Scan, with_grid
 from tomojax.errors import InvalidParameter
-from tomojax.recon.api import MethodConfig, method_config, validate_reconstruction
+from tomojax.recon import FBPConfig
+from tomojax.recon.api import (
+    AxialRoute,
+    MethodConfig,
+    axial_plane_route,
+    device_free,
+    method_config,
+    validate_reconstruction,
+)
 
 if TYPE_CHECKING:
     from tomojax._field_of_view import Cylinder
@@ -30,6 +38,7 @@ class ResolvedReconstruction:
     reasons: tuple[str, ...]
     info: dict[str, Any]
     warm_start: bool
+    route: AxialRoute | None = None  # how one requested axial FBP plane is made
 
 
 def plane_dimension(grid: Grid, axis: str, index: int) -> int:
@@ -125,6 +134,11 @@ def resolve_reconstruction(
     axial_index = (
         plane[1] if plane is not None and plane_dimension(scan.grid, *plane) == 0 else None
     )
+    route = None
+    if axial_index is not None and method == "fbp" and isinstance(cfg, FBPConfig):
+        # One memory sample decides the plane's route, for validation and execution alike.
+        free = device_free(cfg)
+        route = axial_plane_route(scan.geometry, scan.grid, scan.detector, axial_index, free)
     validate_reconstruction(
         method,
         scan.geometry,
@@ -133,9 +147,10 @@ def resolve_reconstruction(
         warm_start=bool(warm_start),
         projections=scan.projections,
         axial_index=axial_index,
+        host=None if route is None else route.host,
     )
     return ResolvedReconstruction(
-        scan, method, cfg, cylinder, tuple(reasons), info, bool(warm_start)
+        scan, method, cfg, cylinder, tuple(reasons), info, bool(warm_start), route
     )
 
 

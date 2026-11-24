@@ -6,13 +6,11 @@ import subprocess
 import sys
 
 import h5py
-import imageio.v3 as iio
 import numpy as np
 import pytest
 
 from tomojax.cli.main import main
 from tomojax.io import load_dataset, save_dataset
-from tomojax.recon.quicklook import scale_to_uint8
 
 from ._helpers import (
     make_projection_dataset,
@@ -151,7 +149,7 @@ def test_inspect_cli_previews_a_reconstruction(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     names = sorted(p.name for p in previews.iterdir())
-    assert names == ["projection.png", "slice_x.png", "slice_y.png", "slice_z.png"]
+    assert names == ["projection.png", "slice_x_2.png", "slice_y_2.png", "slice_z_1.png"]
     with pytest.raises(SystemExit) as exc_info:
         main(["inspect", str(path), "--preview-dir", str(previews)])
     assert exc_info.value.code == 2
@@ -495,15 +493,17 @@ def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path)
         group.create_dataset("volume", data=volume)
         group.attrs["volume_axes_order"] = "xyz"
 
-    assert main(["inspect", str(path), "--preview-dir", str(previews)]) == 0
+    from tomojax.cli import _previews  # check-public-imports: allow-private
 
+    assert main(["inspect", str(path), "--preview-dir", str(previews)]) == 0
     # Central slices, displayed as (y, x), (z, x) and (z, y).
-    for name, plane in (
-        ("slice_z", volume[:, :, 2].T),
-        ("slice_y", volume[:, 2, :].T),
-        ("slice_x", volume[1, :, :].T),
+    for axis, index, plane in (
+        ("z", 2, volume[:, :, 2].T),
+        ("y", 2, volume[:, 2, :].T),
+        ("x", 1, volume[1, :, :].T),
     ):
-        np.testing.assert_array_equal(iio.imread(previews / f"{name}.png"), scale_to_uint8(plane))
+        assert (previews / f"slice_{axis}_{index}.png").exists()
+        np.testing.assert_array_equal(_previews.saved_plane(path, axis, index), plane)
 
 
 def test_cli_reports_a_missing_input_as_a_usage_error(
@@ -612,9 +612,10 @@ def test_inspect_and_preview_share_raw_acquisition_discovery(tmp_path, capsys, l
     assert report["flats_darks"]["sample_count"] == 2
     assert report["flats_darks"]["flat_count"] == report["flats_darks"]["dark_count"] == 1
     assert report["flats_darks"]["image_key_path"] == key_path
-    np.testing.assert_array_equal(
-        iio.imread(previews / "projection.png"), scale_to_uint8(sample * 2)
-    )
+    from tomojax.cli import _previews  # check-public-imports: allow-private
+
+    assert (previews / "projection.png").exists()
+    np.testing.assert_array_equal(_previews.projection_image(path), sample * 2)
 
 
 @pytest.mark.parametrize("roi", [None, "auto", "cyl"])

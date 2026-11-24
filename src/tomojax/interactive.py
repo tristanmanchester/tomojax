@@ -22,10 +22,10 @@ from tomojax.core.registration import planes, recorded_length_unit
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import grid_volume_origin
 from tomojax.recon import FBPConfig
-from tomojax.recon.api import AngularCoverageError, axial_fbp_plane
+from tomojax.recon.api import AngularCoverageError, AxialRoute, axial_fbp_plane
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from tomojax._loading import Frames
     from tomojax._parameters import Method, RegionName
@@ -35,11 +35,17 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CorrectionBand",
+    "PlanePlan",
     "RegionOverlay",
+    "SweepPlan",
     "centre_sweep",
     "correction_preview",
+    "plan_planes",
+    "planes_of",
     "reconstruct_slice",
     "region_preview",
+    "resolve_sweep",
+    "sweep_planes",
 ]
 
 
@@ -49,10 +55,12 @@ type Axis = Literal["z", "y", "x"]
 def resolved_slice(plan: ResolvedReconstruction, axis: Axis, index: int) -> Any:
     """Select the plane after resolving options and any volume support on the full grid."""
     dim = plane_dimension(plan.scan.grid, axis, index)
-    if axis == "z" and plan.method == "fbp" and isinstance(plan.config, FBPConfig):
+    if axis == "z" and plan.route is not None and plan.route.kind != "full":
         scan = plan.scan
+        config = plan.config
+        assert isinstance(config, FBPConfig)
         value = axial_fbp_plane(
-            scan.geometry, scan.grid, scan.detector, scan.projections, plan.config, index
+            scan.geometry, scan.grid, scan.detector, scan.projections, config, index, plan.route
         )
         if value is not None:
             if plan.cylinder is not None:
@@ -65,6 +73,94 @@ def resolved_slice(plan: ResolvedReconstruction, axis: Axis, index: int) -> Any:
     key: list[slice | int] = [slice(None)] * 3
     key[dim] = index
     return result.volume[tuple(key)].copy()
+
+
+@dataclass(frozen=True)
+class PlanePlan:
+    """How requested planes are made: each on its own, or all from one full solve.
+
+    Parameters
+    ----------
+    requests : tuple
+        The distinct ``(axis, index)`` planes, in the order first requested.
+    plans : tuple
+        One resolved plane each, when every plane has its own route; else empty.
+    full : ResolvedReconstruction or None
+        The one full reconstruction every plane is cut from, when any plane needs it.
+    """
+
+    requests: tuple[tuple[Axis, int], ...]
+    plans: tuple[ResolvedReconstruction, ...]
+    full: ResolvedReconstruction | None
+
+
+def plan_planes(
+    scan: Scan, requests: Sequence[tuple[Axis, int]], *, method: Method = "auto", **options: Any
+) -> PlanePlan:
+    """Resolve several planes, sharing one full solve when any of them needs one.
+
+    Every index is checked before anything runs. A plane only an axial FBP route can
+    make on its own; any other plane makes the whole set a single full reconstruction,
+    validated on the whole volume.
+
+    Parameters
+    ----------
+    scan : Scan
+        Input projections and calibrated geometry.
+    requests : sequence of (axis, index)
+        Planes to make; repeats are made once.
+    method : str, optional
+        Public reconstruction method.
+    **options : dict
+        Keyword arguments to the reconstruction resolver.
+
+    Returns
+    -------
+    PlanePlan
+        The planes' routes, or the single full reconstruction.
+    """
+    distinct: tuple[tuple[Axis, int], ...] = tuple(
+        dict.fromkeys((axis, int(index)) for axis, index in requests)
+    )
+    if not distinct:
+        raise InvalidParameter("requests", "request at least one plane")
+    plans = []
+    for i, (axis, index) in enumerate(distinct):  # each index is checked before any solve
+        try:
+            plans.append(resolve_reconstruction(scan, method, plane=(axis, index), **options))
+        except InvalidParameter as err:
+            raise InvalidParameter(f"requests[{i}].{err.path}", str(err)) from err
+    if all(plan.route is not None and plan.route.kind != "full" for plan in plans):
+        return PlanePlan(distinct, tuple(plans), None)
+    # A full solve makes every plane, so its validation covers the whole volume.
+    return PlanePlan(distinct, (), resolve_reconstruction(scan, method, **options))
+
+
+def planes_of(plan: PlanePlan) -> list[Any]:
+    """The planes of ``plan`` in its request order, solving the full volume at most once.
+
+    Parameters
+    ----------
+    plan : PlanePlan
+        Planes resolved by :func:`plan_planes`.
+
+    Returns
+    -------
+    list of array
+        Float32 attenuation planes, one per distinct request.
+    """
+    if plan.full is None:
+        return [
+            resolved_slice(resolved, axis, index)
+            for resolved, (axis, index) in zip(plan.plans, plan.requests, strict=True)
+        ]
+    volume = reconstruct_resolved(plan.full).volume
+    images = []
+    for axis, index in plan.requests:
+        key: list[slice | int] = [slice(None)] * 3
+        key["zyx".index(axis)] = index
+        images.append(np.asarray(volume[tuple(key)]).copy())
+    return images
 
 
 def reconstruct_slice(
@@ -129,8 +225,62 @@ def centre_sweep(
     numpy.ndarray or jax.Array
         Float32 attenuation with a leading centre coordinate, in the supplied order.
     """
-    plans = resolve_sweep(scan, axis, index, centres, method=method, **options)
-    return resolved_sweep(plans, axis, index)
+    return resolved_sweep(resolve_sweep(scan, axis, index, centres, method=method, **options))
+
+
+@dataclass(frozen=True)
+class SweepPlan:
+    """A validated centre sweep: one template plan and each candidate's route.
+
+    A candidate's shifted geometry is rebuilt only when it runs, so a long sweep over a
+    segmented scan holds one candidate's geometry at a time.
+
+    Parameters
+    ----------
+    template : ResolvedReconstruction
+        The first candidate's plan; the others differ only in detector centre and route.
+    axis, index : str, int
+        The swept plane.
+    centres : tuple of float
+        Detector centre positions in pixels from the detector middle, in order.
+    routes : tuple
+        Each candidate's axial route, or None.
+    """
+
+    template: ResolvedReconstruction
+    axis: Axis
+    index: int
+    centres: tuple[float, ...]
+    routes: tuple[AxialRoute | None, ...]
+
+    @property
+    def full_solves(self) -> int:
+        """How many candidates need a full reconstruction rather than one plane.
+
+        Returns
+        -------
+        int
+            Candidates without their own axial route.
+        """
+        return sum(route is None or route.kind == "full" for route in self.routes)
+
+    def candidate(self, i: int) -> ResolvedReconstruction:
+        """Candidate ``i``'s plan, its geometry shifted from the template's.
+
+        Parameters
+        ----------
+        i : int
+            Candidate ordinal.
+
+        Returns
+        -------
+        ResolvedReconstruction
+            The candidate's plan with its own detector centre and route.
+        """
+        template = self.template
+        du = (self.centres[i] - self.centres[0]) * template.scan.detector.du
+        scan = replace(template.scan, geometry=shifted_center(template.scan.geometry, du))
+        return replace(template, scan=scan, route=self.routes[i])
 
 
 def resolve_sweep(
@@ -143,14 +293,47 @@ def resolve_sweep(
     grid: Grid | None = None,
     region: RegionName | RegionEstimate | None = None,
     **options: Any,
-) -> tuple[ResolvedReconstruction, ...]:
-    """Resolve support on the input and validate the actual acquisition for each requested plane."""
+) -> SweepPlan:
+    """Resolve support on the input and validate the actual acquisition for each candidate.
+
+    Only each candidate's route is kept; its shifted geometry is rebuilt when it runs.
+
+    Parameters
+    ----------
+    scan : Scan
+        Input projections and calibrated geometry.
+    axis : {"z", "y", "x"}
+        Dimension held fixed in the swept plane.
+    index : int
+        Zero-based plane index on the resolved grid.
+    centres : sequence of float
+        Detector centre positions in pixels from the detector middle.
+    method : str, optional
+        Public reconstruction method.
+    grid : Grid or None, optional
+        Output grid shared by every candidate.
+    region : str, RegionEstimate or None, optional
+        Region resolved once on the input scan.
+    **options : dict
+        Further keyword arguments to the reconstruction resolver.
+
+    Returns
+    -------
+    SweepPlan
+        The validated sweep.
+
+    Raises
+    ------
+    InvalidParameter
+        If the centres are empty or not finite, or a candidate fails validation.
+    """
     if len(centres) == 0 or not np.isfinite(centres).all():
         raise InvalidParameter(
             "centres", "centres must be a nonempty sequence of finite detector offsets"
         )
     fixed_grid, cylinder, info = resolve_grid(scan, grid, region)
-    plans = []
+    template = None
+    routes = []
     for i, centre in enumerate(centres):
         progress.check_cancelled()
         shift = float(centre) * scan.detector.du - scan.detector.center[0]
@@ -161,23 +344,37 @@ def resolve_sweep(
             )
         except AngularCoverageError as err:
             raise InvalidParameter(f"centres[{i}]", str(err)) from err
-        plans.append(replace(plan, cylinder=cylinder, info={**plan.info, **info}))
-    return tuple(plans)
+        routes.append(plan.route)
+        if template is None:
+            template = replace(plan, cylinder=cylinder, info={**plan.info, **info})
+    assert template is not None
+    return SweepPlan(template, axis, index, tuple(float(c) for c in centres), tuple(routes))
 
 
-def resolved_sweep(
-    plans: Sequence[ResolvedReconstruction],
-    axis: Axis,
-    index: int,
-) -> Any:
-    """Execute the validated acquisitions in order, keeping only their requested planes."""
+def sweep_planes(plan: SweepPlan) -> Iterator[Any]:
+    """Each candidate's plane in order, one candidate in memory at a time.
+
+    Parameters
+    ----------
+    plan : SweepPlan
+        A sweep validated by :func:`resolve_sweep`.
+
+    Yields
+    ------
+    array
+        Float32 attenuation of the swept plane at each candidate centre.
+    """
+    for i in range(len(plan.centres)):
+        progress.check_cancelled()
+        yield resolved_slice(plan.candidate(i), plan.axis, plan.index)
+
+
+def resolved_sweep(plan: SweepPlan) -> Any:
+    """Execute the validated candidates in order and stack their planes."""
     import jax
     import jax.numpy as jnp
 
-    images = []
-    for plan in plans:
-        progress.check_cancelled()
-        images.append(resolved_slice(plan, axis, index))
+    images = list(sweep_planes(plan))
     return jnp.stack(images) if isinstance(images[0], jax.Array) else np.stack(images)
 
 
