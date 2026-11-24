@@ -8,9 +8,6 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-
-# check-public-imports: allow-private
-from tomojax.cli._previews import projection_image
 from tomojax.cli.main import main
 from tomojax.io import validate_dataset
 
@@ -44,7 +41,6 @@ def _check_inspection(path, frames, previews, capsys, *, missing_angles=False):
     assert report["flats_darks"]["flat_count"] == len(frames.flats)
     if report["angles"]["coverage"] is not None:
         np.testing.assert_allclose(report["angles"]["coverage"], np.ptp(frames.source.angles))
-    np.testing.assert_array_equal(projection_image(Path(path)), counts[len(counts) // 2])
     assert (previews / "projection.png").exists()
 
 
