@@ -254,10 +254,10 @@ impl AppState {
             (4, PlaneKind::Projection),
             (5, PlaneKind::Sinogram),
         ] {
-            if let Some(plane) = self.imaging.plane(slot) {
-                self.model.planes.insert(kind, plane_view(plane));
-            } else if let ImagingStatus::Error(error) = self.imaging.status(slot) {
+            if let ImagingStatus::Error(error) = self.imaging.status(slot) {
                 self.model.error = Some(error.clone());
+            } else if let Some(plane) = self.imaging.plane(slot) {
+                self.model.planes.insert(kind, plane_view(plane));
             }
         }
         self.model.comparison_planes =
@@ -1008,6 +1008,12 @@ impl AppState {
                             Some([pitch("x")?, pitch("y")?, pitch("z")?])
                         });
                         AssetView {
+                            export: match a.kind.as_str() {
+                                "reconstruction" | "simulation" => Export::Volume,
+                                "alignment" if a.volume().is_some() => Export::Volume,
+                                "scan" | "frames" | "alignment" => Export::Dataset,
+                                _ => Export::Array,
+                            },
                             id: a.id.clone(),
                             name: a.name.clone(),
                             kind: if a.volume().is_some() {

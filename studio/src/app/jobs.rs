@@ -638,7 +638,13 @@ impl AppState {
         }
     }
 
-    fn result_asset(&self, job_id: &str, id: &str, path: &Path, output: &Output) -> Asset {
+    pub(super) fn result_asset(
+        &self,
+        job_id: &str,
+        id: &str,
+        path: &Path,
+        output: &Output,
+    ) -> Asset {
         let job = self
             .project
             .as_ref()
@@ -651,7 +657,18 @@ impl AppState {
         let mut asset = Asset::input(self.project.as_ref().unwrap().stored_path(path), true);
         asset.id = id.into();
         asset.kind = output.value.kind().into();
-        asset.parent = job.inputs.first().map(|i| i.asset.clone());
+        // A back projection's parent is the input whose projections it used, which
+        // Explore shows beside the volume: a selected projection result wins.
+        let source = (job.operation == "backproject")
+            .then(|| {
+                job.inputs.iter().find(|input| {
+                    matches!(registered_array(input), Some(Product::Projections { .. }))
+                })
+            })
+            .flatten();
+        asset.parent = source
+            .or(job.inputs.first())
+            .map(|input| input.asset.clone());
         asset.simulated = job.operation == "simulate"
             || job.inputs.iter().any(|i| {
                 self.project

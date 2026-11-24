@@ -308,7 +308,11 @@ impl Imaging {
                     };
                     self.record(&event.request, &asset, event.cache_hit, event.finished);
                 }
-                Err(error) => slot.status = ImagingStatus::Error(error),
+                // The previous pixels are no longer the requested plane.
+                Err(error) => {
+                    slot.asset = None;
+                    slot.status = ImagingStatus::Error(error);
+                }
             }
             changed = true;
         }

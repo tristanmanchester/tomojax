@@ -975,14 +975,14 @@ fn result_picker(state: &AppState, side: usize, title: &str, selected: Option<&s
 fn export_format(state: &AppState) -> El {
     let mut choices = row().gap(4.);
     let format = state.model.export_format(&state.ui.export_format);
-    let formats: &[(&str, &str)] = if state.model.tiff_export() {
-        &[
+    let formats: &[(&str, &str)] = match format {
+        "array" => &[("array", "NPY bundle")],
+        _ if state.model.tiff_export() => &[
             ("nxs", "NXtomo"),
             ("float32", "TIFF 32"),
             ("uint16", "TIFF 16"),
-        ]
-    } else {
-        &[("nxs", "NXtomo")]
+        ],
+        _ => &[("nxs", "NXtomo")],
     };
     for &(value, title) in formats {
         choices = choices.child(choice(
@@ -1060,6 +1060,7 @@ fn footer(state: &AppState) -> El {
                     match state.model.export_format(&state.ui.export_format) {
                         "float32" => "Export TIFF (float32)",
                         "uint16" => "Export TIFF (uint16)",
+                        "array" => "Export NPY bundle",
                         _ => "Export NXtomo",
                     },
                     Icon::Export,

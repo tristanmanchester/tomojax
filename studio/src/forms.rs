@@ -124,13 +124,15 @@ fn scalar_schema(schema: &Value) -> &Value {
     schema
 }
 
-/// Whether a schema, or one of its alternatives, is an array.
-fn accepts_array(schema: &Value) -> bool {
-    schema.get("type").and_then(Value::as_str) == Some("array")
+/// Whether a schema, or one of its alternatives, takes JSON of type `kind`
+/// ("array" or "object"; a `$ref` is a structured object).
+fn accepts(schema: &Value, kind: &str) -> bool {
+    schema.get("type").and_then(Value::as_str) == Some(kind)
+        || (kind == "object" && schema.get("$ref").is_some())
         || schema
             .get("anyOf")
             .and_then(Value::as_array)
-            .is_some_and(|alternatives| alternatives.iter().any(accepts_array))
+            .is_some_and(|alternatives| alternatives.iter().any(|a| accepts(a, kind)))
 }
 
 fn label(key: &str) -> String {
@@ -474,11 +476,12 @@ pub fn parameters_detailed(ui: &UiState, catalog: &SchemaCatalog) -> Result<Valu
                 format!("{} needs an integer", label(&p.name)),
             ));
         }
-        // A scalar-or-pair field (a detector pixel size) also takes [u, v].
-        let pair = value.as_array().is_some_and(|items| {
-            items.len() == 2 && items.iter().all(Value::is_number) && accepts_array(&p.schema)
-        });
-        if ty == "number" && !value.is_number() && !pair {
+        // A field whose schema also takes an array or an object (a [u, v] pixel
+        // size, a storage reference to per-view exposure times) accepts that JSON;
+        // the worker validates it.
+        let alternative = (value.is_array() && accepts(&p.schema, "array"))
+            || (value.is_object() && accepts(&p.schema, "object"));
+        if ty == "number" && !value.is_number() && !alternative {
             return Err(DraftError::new(
                 &p.name,
                 format!("{} needs a number", label(&p.name)),
@@ -624,10 +627,15 @@ mod tests {
         let mut ui = UiState::default();
         initialise(&mut ui, &catalog, "open", None);
         ui.parameter_choices.insert("kind".into(), "frames".into());
+        // A storage reference for per-view exposure times.
+        ui.parameter_edits
+            .get_mut("exposure_times")
+            .unwrap()
+            .replace_text(r#"{"type":"npy","path":"/data/exposures.npy"}"#);
         for (text, expected) in [
             ("0.5", Some(serde_json::json!(0.5))),
             ("[0.5, 0.75]", Some(serde_json::json!([0.5, 0.75]))),
-            ("[1, 2, 3]", None),
+            ("\"wide\"", None),
         ] {
             ui.parameter_edits
                 .get_mut("pixel_size")
@@ -635,7 +643,11 @@ mod tests {
                 .replace_text(text);
             let parameters = parameters_detailed(&ui, &catalog);
             match expected {
-                Some(value) => assert_eq!(parameters.unwrap()["pixel_size"], value, "{text}"),
+                Some(value) => {
+                    let parameters = parameters.unwrap();
+                    assert_eq!(parameters["pixel_size"], value, "{text}");
+                    assert_eq!(parameters["exposure_times"]["type"], "npy");
+                }
                 None => assert_eq!(parameters.unwrap_err().path, "pixel_size", "{text}"),
             }
         }

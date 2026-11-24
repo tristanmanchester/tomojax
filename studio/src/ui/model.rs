@@ -284,16 +284,14 @@ impl UiModel {
             .iter()
             .find(|asset| Some(&asset.id) == self.active_asset.as_ref())
     }
-    /// The export format that applies to the active result: the worker writes
-    /// TIFF slices of volumes only, so a scan exports as NXtomo.
+    /// The export format that applies to the active result: TIFF slices are
+    /// written for volumes only, and an array-only result exports as NPY.
     pub fn export_format<'a>(&self, chosen: &'a str) -> &'a str {
-        if self
-            .active()
-            .is_some_and(|asset| asset.kind == AssetKind::Scan)
-        {
-            "nxs"
-        } else {
-            chosen
+        match self.active().map(|asset| asset.export) {
+            Some(Export::Volume) | None if chosen != "array" => chosen,
+            Some(Export::Volume) | None => "nxs",
+            Some(Export::Dataset) => "nxs",
+            Some(Export::Array) => "array",
         }
     }
     pub fn tiff_export(&self) -> bool {
@@ -349,8 +347,20 @@ impl AssetKind {
         }
     }
 }
+/// What Explore can export a result as.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Export {
+    /// A scan or frames: an NXtomo dataset.
+    #[default]
+    Dataset,
+    /// A reconstruction, simulation or alignment image: NXtomo or TIFF slices.
+    Volume,
+    /// An array-only result: a registered NPY bundle.
+    Array,
+}
 #[derive(Clone, Debug, Default)]
 pub struct AssetView {
+    pub export: Export,
     pub id: String,
     pub name: String,
     pub kind: AssetKind,

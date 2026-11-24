@@ -519,6 +519,70 @@ fn corrections_edited_as_json_survive_reopening() {
 }
 
 #[test]
+fn a_back_projection_belongs_to_the_projections_it_used() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    let scan = ramp_volume(directory.path(), "scan", 2);
+    let mut forward = ramp_volume(directory.path(), "forward", 2);
+    forward.kind = "projections".into();
+    let array = forward.arrays.remove("volume").unwrap();
+    forward.arrays.insert("projections".into(), array.clone());
+    let project = state.project.as_mut().unwrap();
+    project.document.assets = vec![scan.clone(), forward.clone()];
+    let job = project::Job::new(
+        "backproject",
+        json!({}),
+        vec![
+            project.capture(&scan.id).unwrap(),
+            project.capture(&forward.id).unwrap(),
+        ],
+    );
+    let id = job.id.clone();
+    project.document.jobs.push(job);
+    let output = Output {
+        value: Product::Volume { volume: array },
+        info: crate::protocol::Info {
+            summary: Default::default(),
+            arrays: Default::default(),
+        },
+        manifest: crate::protocol::Provenance {
+            operation: "backproject".into(),
+            parameters: json!({}),
+            inputs: vec![],
+        },
+    };
+    let result = state.result_asset(
+        &id,
+        "result-volume",
+        &directory.path().join("v.npy"),
+        &output,
+    );
+    assert_eq!(result.parent.as_deref(), Some(forward.id.as_str()));
+}
+
+#[test]
+fn export_offers_what_each_kind_of_result_can_be_written_as() {
+    let mut model = crate::ui::model::UiModel {
+        active_asset: Some("a".into()),
+        ..Default::default()
+    };
+    for (export, chosen, expected) in [
+        (Export::Dataset, "float32", "nxs"),
+        (Export::Volume, "float32", "float32"),
+        (Export::Volume, "array", "nxs"),
+        (Export::Array, "float32", "array"),
+    ] {
+        model.assets = vec![AssetView {
+            id: "a".into(),
+            export,
+            ..Default::default()
+        }];
+        assert_eq!(model.export_format(chosen), expected, "{export:?} {chosen}");
+    }
+}
+
+#[test]
 fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
     let directory = tempfile::tempdir().unwrap();
     let saved = ramp_volume(directory.path(), "forward", 2).arrays["volume"].clone();
