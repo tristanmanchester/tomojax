@@ -61,7 +61,7 @@
     "_data": 2201,
     "alignment": 4672,
     "backends": 273,
-    "cli": 9504,
+    "cli": 9695,
     "core": 9917,
     "corrections": 3139,
     "datasets": 1069,
@@ -70,7 +70,7 @@
     "io": 3950,
     "motion": 153,
     "nuisance": 232,
-    "recon": 14935,
+    "recon": 14937,
     "wire": 266
   },
   "cuda_kernels": 47,

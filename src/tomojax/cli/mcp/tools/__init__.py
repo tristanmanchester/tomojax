@@ -247,6 +247,42 @@ def inspect_directory(path: Path) -> CallToolResult:
     )
 
 
+def summary_text(data: Object) -> str:
+    """One readable line: identity, shape, method, geometry, files, devices and time."""
+    summary = [str(data.get("handle") or "Saved"), data["kind"]]
+    if data.get("shape"):
+        summary.append(" x ".join(map(str, data["shape"])) + " " + str(data["unit"]))
+    summary.extend(
+        f"{key} {data[key]}"
+        for key in (
+            "method",
+            "effective_iterations",
+            "termination",
+            "geometry",
+            "calibration",
+            "slice_count",
+            "first_file",
+            "last_file",
+        )
+        if key in data
+    )
+    if auto := data.get("automatic"):
+        summary.extend(auto.get("reasons", []))
+    if recovery := data.get("recovery"):
+        summary.append(f"Commit recovery {recovery}")
+    if (poses := data.get("poses")) and poses["rms"] is not None:
+        rms = ", ".join(
+            f"{column['name']} {value:.4g} {column['unit']}"
+            for column, value in zip(poses["columns"], poses["rms"], strict=True)
+        )
+        summary.append(f"pose RMS {rms}")
+    summary.extend(data.get("paths", []))
+    summary.extend(data.get("devices", []))
+    summary.append(f"{data['wall_seconds']:g} s")
+    summary.extend(data.get("notes", []))
+    return " · ".join(summary)
+
+
 class Tools:
     """Translate agent input and worker outputs for the installed workflows."""
 
@@ -454,38 +490,7 @@ class Tools:
         job = activity.get()
         if job:
             data.update(devices=sorted(job.devices), notes=job.notes)
-        summary = [str(data.get("handle") or "Saved"), data["kind"]]
-        if data.get("shape"):
-            summary.append(" x ".join(map(str, data["shape"])) + " " + str(data["unit"]))
-        summary.extend(
-            f"{key} {data[key]}"
-            for key in (
-                "method",
-                "effective_iterations",
-                "termination",
-                "geometry",
-                "calibration",
-                "slice_count",
-                "first_file",
-                "last_file",
-            )
-            if key in data
-        )
-        if auto := data.get("automatic"):
-            summary.extend(auto.get("reasons", []))
-        if recovery := data.get("recovery"):
-            summary.append(f"Commit recovery {recovery}")
-        if (poses := data.get("poses")) and poses["rms"] is not None:
-            rms = ", ".join(
-                f"{column['name']} {value:.4g} {column['unit']}"
-                for column, value in zip(poses["columns"], poses["rms"], strict=True)
-            )
-            summary.append(f"pose RMS {rms}")
-        summary.extend(data.get("paths", []))
-        summary.extend(data.get("devices", []))
-        summary.append(f"{data['wall_seconds']:g} s")
-        summary.extend(data.get("notes", []))
-        reply = result(data, text=" · ".join(summary))
+        reply = result(data, text=summary_text(data))
         for name in data.get("paths", []):
             path = Path(name)
             reply.content.append(
