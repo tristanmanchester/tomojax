@@ -466,20 +466,32 @@ fn split_and_difference_combine_pixels_only_on_a_shared_grid() {
     };
     let left = plane([1., 2., 3., 4.], "mm^-1");
     let right = plane([10., 20., 30., 40.], "mm^-1");
+    let same = [[0., 1.], [0., 1.]];
     assert_eq!(
-        &*left.split(&right, 0.5).unwrap().values,
+        &*left.split(&right, 0.5, same).unwrap().values,
         &[1., 2., 30., 40.]
     );
     assert_eq!(
-        &*left.split(&right, 0.).unwrap().values,
+        &*left.split(&right, 0., same).unwrap().values,
         &[10., 20., 30., 40.]
     );
-    assert_eq!(&*left.split(&right, 1.).unwrap().values, &[1., 2., 3., 4.]);
+    assert_eq!(
+        &*left.split(&right, 1., same).unwrap().values,
+        &[1., 2., 3., 4.]
+    );
+    // Each side keeps its own window: the right's [0, 40] maps onto the left's [0, 4].
+    assert_eq!(
+        &*left
+            .split(&right, 0.5, [[0., 4.], [0., 40.]])
+            .unwrap()
+            .values,
+        &[1., 2., 3., 4.]
+    );
     assert_eq!(
         &*left.difference(&right).unwrap().values,
         &[-9., -18., -27., -36.]
     );
     let other_unit = plane([10., 20., 30., 40.], "1/scan_length");
-    assert!(left.split(&other_unit, 0.5).is_none());
+    assert!(left.split(&other_unit, 0.5, same).is_none());
     assert!(left.difference(&other_unit).is_none());
 }

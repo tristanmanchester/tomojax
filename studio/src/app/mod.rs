@@ -96,6 +96,9 @@ enum LocalEvent {
     },
 }
 
+/// Plane ids of the two compared images, the split fraction and both windows, as bits.
+type SplitKey = ([u64; 2], u32, Vec<u32>);
+
 pub struct AppState {
     pub ui: UiState,
     pub model: UiModel,
@@ -125,7 +128,7 @@ pub struct AppState {
     last_context: Value,
     difference: Option<([u64; 2], std::sync::Arc<crate::imaging::PlaneData>)>,
     /// The Split composite and the (left, right, curtain) it was built from.
-    split: Option<(([u64; 2], u32), std::sync::Arc<crate::imaging::PlaneData>)>,
+    split: Option<(SplitKey, std::sync::Arc<crate::imaging::PlaneData>)>,
     /// Project names read once from each recent project's manifest.
     recent_names: std::collections::HashMap<PathBuf, String>,
     applied_window: Option<[f32; 2]>,
@@ -765,14 +768,22 @@ impl AppState {
             }
             let mut asset = Asset::input(path.clone(), false);
             if self.ui.import_copy {
-                let target = project
-                    .root
-                    .join("inputs")
-                    .join(&asset.id)
-                    .join(path.file_name().unwrap_or_default());
+                let inputs = project.root.join("inputs").join(&asset.id);
+                let file_name = path.file_name().unwrap_or_default().to_owned();
+                let (source, target, opened) = match path.parent() {
+                    Some(folder) if path.is_file() && !holds_whole_acquisition(&path) => {
+                        let copy = inputs.join(folder.file_name().unwrap_or_default());
+                        let opened = copy.join(&file_name);
+                        (folder.to_owned(), copy, opened)
+                    }
+                    _ => {
+                        let copy = inputs.join(&file_name);
+                        (path.clone(), copy.clone(), copy)
+                    }
+                };
                 self.copying += 1;
                 self.spawn_local(None, move |cancelled| {
-                    let result = stage_copy_input(&path, &target, &cancelled).map(|()| target);
+                    let result = stage_copy_input(&source, &target, &cancelled).map(|()| opened);
                     LocalEvent::Copied { asset, result }
                 });
             } else {
@@ -884,6 +895,18 @@ impl AppState {
         }
         self.imaging.shutdown();
     }
+}
+
+/// Whether a chosen file holds its whole acquisition. Parameter and header files
+/// (Nikon `.xtekct`, SkyScan `.log`, ESRF `.edf`/`.par`) are read together with the
+/// frames beside them, so copying one into a project copies its folder.
+fn holds_whole_acquisition(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        matches!(
+            e.to_ascii_lowercase().as_str(),
+            "nx" | "nxs" | "h5" | "hdf" | "hdf5" | "npy" | "tif" | "tiff" | "txrm" | "txm" | "mat"
+        )
+    })
 }
 
 fn stage_copy_input(

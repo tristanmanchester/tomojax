@@ -476,6 +476,15 @@ pub fn parameters_detailed(ui: &UiState, catalog: &SchemaCatalog) -> Result<Valu
     Ok(Value::Object(result))
 }
 
+/// "reconstruction" → "Reconstruction": schema values shown as labels.
+fn sentence(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,13 +713,4 @@ mod tests {
             .replace_text("7");
         assert_ne!(plan_signature(&ui, &catalog), before);
     }
-}
-
-/// "reconstruction" → "Reconstruction": schema values shown as labels.
-fn sentence(text: &str) -> String {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
 }

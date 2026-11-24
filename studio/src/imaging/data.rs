@@ -127,10 +127,21 @@ impl PlaneData {
     }
 
     /// Left samples up to `fraction` of the width, right samples after it, on a shared grid.
-    pub fn split(&self, right: &Self, fraction: f32) -> Option<Self> {
+    ///
+    /// The composite is drawn with the left window, so right samples are mapped from
+    /// `windows[1]` onto `windows[0]` to keep the right side's own contrast.
+    pub fn split(&self, right: &Self, fraction: f32, windows: [[f32; 2]; 2]) -> Option<Self> {
         let edge = (fraction.clamp(0., 1.) * self.shape[1] as f32).round() as usize;
         let columns = self.shape[1];
-        self.composite(right, move |i, a, b| if i % columns < edge { a } else { b })
+        let [[left_low, left_high], [right_low, right_high]] = windows;
+        let scale = (left_high - left_low) / (right_high - right_low);
+        self.composite(right, move |i, a, b| {
+            if i % columns < edge {
+                a
+            } else {
+                left_low + (b - right_low) * scale
+            }
+        })
     }
 
     fn composite(&self, right: &Self, f: impl Fn(usize, f32, f32) -> f32) -> Option<Self> {

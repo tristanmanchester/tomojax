@@ -35,8 +35,13 @@ impl AppState {
                 | UiAction::SetSinogramRow(_)
                 | UiAction::SetCrosshair { .. }
         );
+        // The split composite bakes in both display windows.
+        let window_change = matches!(action, UiAction::ApplyWindow | UiAction::AutoWindow);
         if let Err(error) = self.action(action, tx) {
             self.model.error = Some(error);
+        }
+        if window_change && self.ui.compare_mode == CompareMode::Split {
+            self.refresh_plane_model();
         }
         if !display_only {
             self.refresh_model();

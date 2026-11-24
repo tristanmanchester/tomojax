@@ -200,26 +200,34 @@ impl AppState {
             self.imaging.clear(4);
             self.imaging.clear(5);
         }
-        for (slot, id) in [
-            (6, self.model.compare_left.clone()),
-            (7, self.model.compare_right.clone()),
-        ] {
-            let descriptor = id.and_then(|id| {
-                self.project
-                    .as_ref()?
-                    .document
-                    .asset(&id)?
-                    .volume()
-                    .cloned()
-            });
-            if let Some(descriptor) = descriptor {
-                let axis = descriptor
-                    .axes
-                    .iter()
-                    .position(|a| a.name == ["z", "y", "x"][self.ui.compare_plane.axis().unwrap()])
-                    .unwrap_or(0);
-                let index = self.ui.display.indices[self.ui.compare_plane.axis().unwrap()]
-                    .min(descriptor.shape[axis].saturating_sub(1));
+        // Both sides show the same index, so it is clamped to the shorter volume.
+        let plane_axis = self.ui.compare_plane.axis().unwrap();
+        let compared = [
+            self.model.compare_left.clone(),
+            self.model.compare_right.clone(),
+        ]
+        .map(|id| {
+            let descriptor = self
+                .project
+                .as_ref()?
+                .document
+                .asset(&id?)?
+                .volume()
+                .cloned()?;
+            let axis = descriptor
+                .axes
+                .iter()
+                .position(|a| a.name == ["z", "y", "x"][plane_axis])
+                .unwrap_or(0);
+            Some((descriptor, axis))
+        });
+        let index = compared
+            .iter()
+            .flatten()
+            .map(|(descriptor, axis)| descriptor.shape[*axis].saturating_sub(1))
+            .fold(self.ui.display.indices[plane_axis], usize::min);
+        for (slot, compared) in [6, 7].into_iter().zip(compared) {
+            if let Some((descriptor, axis)) = compared {
                 if let Err(error) =
                     self.imaging
                         .request_plane(slot, self.resolved(&descriptor), axis, index, 1024)
@@ -357,11 +365,18 @@ impl AppState {
         if self.ui.workspace == Workspace::Compare
             && self.ui.compare_mode == CompareMode::Split
             && let (Some(left), Some(right)) = (self.imaging.plane(6), self.imaging.plane(7))
+            && let (Some(left_window), Some(right_window)) =
+                (self.compare_window(6), self.compare_window(7))
         {
-            let key = ([left.id, right.id], self.ui.compare_split.to_bits());
+            let windows = [left_window, right_window];
+            let key = (
+                [left.id, right.id],
+                self.ui.compare_split.to_bits(),
+                windows.as_flattened().iter().map(|v| v.to_bits()).collect(),
+            );
             if self.split.as_ref().is_none_or(|(old, _)| *old != key) {
                 self.split = left
-                    .split(right, self.ui.compare_split)
+                    .split(right, self.ui.compare_split, windows)
                     .map(|plane| (key, std::sync::Arc::new(plane)));
             }
         } else {

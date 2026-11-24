@@ -174,14 +174,13 @@ impl AppState {
                     self.refresh_images();
                     changed = true;
                 }
-                if message.is_none() && self.preview_context.suppressed.as_ref() != Some(&signature)
-                {
-                    if let Err(error) =
+                if message.is_none()
+                    && self.preview_context.suppressed.as_ref() != Some(&signature)
+                    && let Err(error) =
                         self.previews
                             .request(kind, input.clone(), parameters.clone())
-                    {
-                        message = Some(error);
-                    }
+                {
+                    message = Some(error);
                 }
                 let plan_signature = forms::plan_signature(&self.ui, &self.catalog);
                 let plan_input = serde_json::to_value(&input).expect("captured preview input");

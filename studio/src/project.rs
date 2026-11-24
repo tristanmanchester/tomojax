@@ -259,6 +259,22 @@ impl CapturedInput {
                 }
             }
         }
+        // Loader settings can name calibration files (flats, darks, angles); the
+        // worker reads them when the job runs, so they are inputs too.
+        let mut references = Vec::new();
+        referenced_files(&asset.open_parameters, &mut references);
+        for (file, typed) in references {
+            let resolved = absolute(Path::new(&file));
+            if resolved == path
+                || storage_fingerprints.contains_key(&resolved)
+                || (!typed
+                    && !resolved.is_file()
+                    && !(Path::new(&file).is_absolute() && resolved.is_dir()))
+            {
+                continue;
+            }
+            storage_fingerprints.insert(resolved.clone(), Fingerprint::read(&resolved)?);
+        }
         Ok(Self {
             asset: asset.id.clone(),
             name: asset.name.clone(),
@@ -430,8 +446,41 @@ impl Job {
                     }
                 }
             }
+            // Calibration files from the loader settings.
+            for (path, expected) in &input.storage_fingerprints {
+                if !checked.contains(path.as_path()) && Fingerprint::read(path)? != *expected {
+                    return Err(format!(
+                        "{} changed after submission ({}). Review the input and submit a new job.",
+                        input.name,
+                        path.display()
+                    ));
+                }
+            }
         }
         Ok(())
+    }
+}
+
+/// Files named in loader settings: typed `npy`/`hdf5` storage references (`true`),
+/// and bare strings that may be paths (`false`; kept only if such a file exists).
+fn referenced_files(value: &Value, out: &mut Vec<(String, bool)>) {
+    match value {
+        Value::Object(map) => {
+            if let (Some("npy" | "hdf5"), Some(path)) = (
+                map.get("type").and_then(Value::as_str),
+                map.get("path").and_then(Value::as_str),
+            ) {
+                out.push((path.to_owned(), true));
+            }
+            for (key, item) in map {
+                if !matches!(key.as_str(), "type" | "path") {
+                    referenced_files(item, out);
+                }
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|item| referenced_files(item, out)),
+        Value::String(text) => out.push((text.clone(), false)),
+        _ => {}
     }
 }
 
@@ -927,6 +976,32 @@ mod tests {
         assert!(project.changed().is_err());
         assert!(project.save_error.is_some());
         assert!(project.flush().is_err());
+    }
+
+    #[test]
+    fn calibration_files_named_in_loader_settings_are_captured_inputs() {
+        let directory = tempfile::tempdir().unwrap();
+        let frames = directory.path().join("frames.h5");
+        let flat = directory.path().join("flat.tif");
+        let dark = directory.path().join("dark.npy");
+        for (path, bytes) in [(&frames, "frames"), (&flat, "flat"), (&dark, "dark")] {
+            fs::write(path, bytes).unwrap();
+        }
+        let mut asset = Asset::input(frames, false);
+        asset.open_parameters = json!({
+            "kind": "frames",
+            "flats": flat,
+            "darks": {"type": "npy", "path": dark},
+        });
+        let job = Job::new(
+            "correct",
+            json!({}),
+            vec![CapturedInput::from_asset(&asset, directory.path()).unwrap()],
+        );
+        assert_eq!(job.inputs[0].storage_fingerprints.len(), 2);
+        assert!(job.check_inputs().is_ok());
+        fs::write(&flat, "replaced flat field").unwrap();
+        assert!(job.check_inputs().unwrap_err().contains("flat.tif"));
     }
 
     #[test]

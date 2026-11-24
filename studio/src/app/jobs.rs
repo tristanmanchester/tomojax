@@ -61,15 +61,11 @@ impl AppState {
             return Err(error);
         }
         let parameters = forms::parameters(&self.ui, &self.catalog)?;
+        let selected = self.selected_inputs();
         let project = self
             .project
             .as_mut()
             .ok_or("Create or open a project first")?;
-        let selected: Vec<_> = if self.model.selected_assets.is_empty() {
-            self.model.active_asset.iter().cloned().collect()
-        } else {
-            self.model.selected_assets.iter().cloned().collect()
-        };
         if operation != "simulate" && selected.is_empty() {
             return Err("Select a scan or result first".into());
         }

@@ -28,13 +28,14 @@ impl FormContext {
 }
 
 impl AppState {
-    pub(super) fn poll_form_context(&mut self) -> bool {
-        let Some(project) = &self.project else {
-            return false;
-        };
-        let mut selected: Vec<_> = if self.model.selected_assets.is_empty() {
-            self.model.active_asset.iter().cloned().collect()
-        } else {
+    /// The selected assets in project order, or the active asset when nothing is
+    /// selected. Preflight and submission both use this order: the first input
+    /// sets the geometry or grid for multi-input operations.
+    pub(super) fn selected_inputs(&self) -> Vec<String> {
+        if self.model.selected_assets.is_empty() {
+            return self.model.active_asset.iter().cloned().collect();
+        }
+        self.project.as_ref().map_or_else(Vec::new, |project| {
             project
                 .document
                 .assets
@@ -42,6 +43,13 @@ impl AppState {
                 .filter(|asset| self.model.selected_assets.contains(&asset.id))
                 .map(|asset| asset.id.clone())
                 .collect()
+        })
+    }
+
+    pub(super) fn poll_form_context(&mut self) -> bool {
+        let mut selected = self.selected_inputs();
+        let Some(project) = &self.project else {
+            return false;
         };
         let selected_count = selected.len();
         if let Some(active) = &self.model.active_asset

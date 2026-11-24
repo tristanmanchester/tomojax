@@ -122,7 +122,7 @@ fn registered_projection_fixture() -> (tempfile::TempDir, AppState) {
     let path = directory.path().join("projections.npy");
     let mut file = std::fs::File::create(&path).unwrap();
     let mut header = "{'descr': '<f4', 'fortran_order': False, 'shape': (4, 5, 8), }".to_owned();
-    while (10 + header.len() + 1) % 64 != 0 {
+    while !(10 + header.len() + 1).is_multiple_of(64) {
         header.push(' ');
     }
     header.push('\n');
@@ -231,6 +231,79 @@ fn window_fields_show_the_rendered_range_without_overwriting_unfinished_edits() 
     assert_eq!(state.ui.display.window_low.text, "-");
     assert_eq!(state.ui.display.window_high.text, "2.5");
     assert!(state.applied_window.is_none());
+}
+
+/// A z-ramp float32 volume of `depth` × 4 × 4 samples, registered as a result.
+fn ramp_volume(directory: &Path, name: &str, depth: usize) -> Asset {
+    use std::io::Write;
+    let path = directory.join(format!("{name}.npy"));
+    let mut file = std::fs::File::create(&path).unwrap();
+    let mut header =
+        format!("{{'descr': '<f4', 'fortran_order': False, 'shape': ({depth}, 4, 4), }}");
+    while !(10 + header.len() + 1).is_multiple_of(64) {
+        header.push(' ');
+    }
+    header.push('\n');
+    file.write_all(b"\x93NUMPY\x01\x00").unwrap();
+    file.write_all(&(header.len() as u16).to_le_bytes())
+        .unwrap();
+    file.write_all(header.as_bytes()).unwrap();
+    for z in 0..depth {
+        for _ in 0..16 {
+            file.write_all(&(z as f32).to_le_bytes()).unwrap();
+        }
+    }
+    drop(file);
+    let axis = |name: &str| json!({"name":name,"frame":"sample","unit":"mm","coordinates":{"type":"uniform","origin":0.,"spacing":1.}});
+    let descriptor = serde_json::from_value(json!({
+        "shape":[depth,4,4], "dtype":"<f4", "unit":"1", "domain":"attenuation",
+        "storage":{"type":"npy","path":path},
+        "axes":[axis("z"), axis("y"), axis("x")],"fixed":[],"columns":[]
+    }))
+    .unwrap();
+    let mut asset = Asset::input(path, false);
+    asset.arrays.insert("volume".into(), descriptor);
+    asset
+}
+
+#[test]
+fn compared_volumes_of_different_depth_show_the_same_slice() {
+    let directory = tempfile::tempdir().unwrap();
+    let left = ramp_volume(directory.path(), "deep", 6);
+    let right = ramp_volume(directory.path(), "shallow", 3);
+    let mut state = AppState::init();
+    state.project = Some(Project::open(directory.path(), true).unwrap());
+    state.model.compare_left = Some(left.id.clone());
+    state.model.compare_right = Some(right.id.clone());
+    state.project.as_mut().unwrap().document.assets = vec![left, right];
+    state.ui.workspace = Workspace::Compare;
+    state.ui.display.indices[0] = 5;
+    state.refresh_images();
+    drive(&mut state, |state| {
+        state.imaging.plane(6).is_some() && state.imaging.plane(7).is_some()
+    });
+    // The shared index stops at the shallower volume's last slice on both sides.
+    for slot in [6, 7] {
+        let plane = state.imaging.plane(slot).unwrap();
+        assert_eq!(plane.index, 2, "slot {slot}");
+        assert_eq!(plane.statistics.max, 2.);
+    }
+    assert_eq!(state.model.comparison_index, 2);
+    assert_eq!(state.model.comparison_count, 3);
+}
+
+#[test]
+fn multi_input_jobs_take_inputs_in_project_order_not_id_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(directory.path(), true).unwrap());
+    let mut first = ramp_volume(directory.path(), "imported", 2);
+    first.id = "scan-z".into();
+    let mut second = ramp_volume(directory.path(), "simulated", 2);
+    second.id = "result-a".into();
+    state.project.as_mut().unwrap().document.assets = vec![first, second];
+    state.model.selected_assets = ["result-a".to_owned(), "scan-z".to_owned()].into();
+    assert_eq!(state.selected_inputs(), ["scan-z", "result-a"]);
 }
 
 fn drive(state: &mut AppState, condition: impl Fn(&AppState) -> bool) {
@@ -744,6 +817,43 @@ fn source_copy_never_recurses_into_its_project_or_overwrites_existing_data() {
     );
     assert!(stage_copy_input(&source, &destination, &cancelled).is_err());
     assert_eq!(std::fs::read(source.join("view.tif")).unwrap(), b"pixels");
+}
+
+#[test]
+fn copying_a_parameter_file_brings_its_frames_and_a_container_comes_alone() {
+    let directory = tempfile::tempdir().unwrap();
+    let nikon = directory.path().join("nikon-scan");
+    let hdf5 = directory.path().join("beamline");
+    for folder in [&nikon, &hdf5] {
+        std::fs::create_dir(folder).unwrap();
+    }
+    std::fs::write(nikon.join("scan.xtekct"), b"[XTekCT]").unwrap();
+    std::fs::write(nikon.join("scan_0001.tif"), b"pixels").unwrap();
+    std::fs::write(hdf5.join("scan.nxs"), b"container").unwrap();
+    std::fs::write(hdf5.join("unrelated.nxs"), b"other scan").unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    state.ui.import_copy = true;
+    state.import_paths(vec![nikon.join("scan.xtekct"), hdf5.join("scan.nxs")]);
+    drive(&mut state, |state| {
+        state.copying == 0 && state.project.as_ref().unwrap().document.assets.len() == 2
+    });
+    let project = state.project.as_ref().unwrap();
+    let copied: Vec<_> = project
+        .document
+        .assets
+        .iter()
+        .map(|asset| project.resolve(&asset.path))
+        .collect();
+    let xtekct = copied.iter().find(|p| p.ends_with("scan.xtekct")).unwrap();
+    assert!(xtekct.starts_with(&project.root));
+    assert_eq!(
+        std::fs::read(xtekct.with_file_name("scan_0001.tif")).unwrap(),
+        b"pixels"
+    );
+    let nxs = copied.iter().find(|p| p.ends_with("scan.nxs")).unwrap();
+    assert!(nxs.starts_with(&project.root));
+    assert!(!nxs.with_file_name("unrelated.nxs").exists());
 }
 
 #[test]
