@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import fcntl
 import os
@@ -22,12 +23,20 @@ class Member(msgspec.Struct):
     staged: str | None
     backup: str
     existed: bool
+    force: bool
+    identity: tuple[int, int, int] | None
+
+
+class Directory(msgspec.Struct):
+    destination: str
+    staged: str
+    inode: int
 
 
 class Journal(msgspec.Struct):
     group: list[Staged]
     members: list[Member]
-    directories: list[str]
+    directories: list[Directory]
     committed: bool = False
 
 
@@ -38,7 +47,7 @@ def registry() -> Path:
 
 def prepare(group: list[Staged], root: Path) -> Journal:
     members = []
-    directories: set[Path] = set()
+    directories: dict[Path, Directory] = {}
     for item in group:
         dest, stage = Path(item.destination), Path(item.staged)
         if dest.is_relative_to(root) or root.is_relative_to(dest):
@@ -50,23 +59,75 @@ def prepare(group: list[Staged], root: Path) -> Journal:
             raise FileExistsError(f"{dest} exists. Pass force to replace it.")
         if exists and not dest.is_symlink() and dest.is_dir() != stage.is_dir():
             raise ValueError(f"incompatible destination type: {dest}")
-        directories.update(p for p in dest.parents if not p.exists())
-        entries: dict[Path, Path | None] = {dest: stage}
-        if stage.is_dir() and not dest.is_symlink():
-            if exists:
-                entries = {p: None for p in dest.iterdir() if tiff_stack_entry(p, stage)}
-            else:
-                directories.add(dest)
-                entries = {}
-            entries.update({dest / p.name: p for p in stage.iterdir()})
+        for parent in dest.parents:
+            if not parent.exists() and parent not in directories:
+                empty = stage.parent.parent / f"directory-{len(directories)}"
+                empty.mkdir()
+                directories[parent] = Directory(str(parent), str(empty), empty.stat().st_ino)
+        entries = output_entries(dest, stage, exists=exists)
+        whole_tree = stage.is_dir() and not exists
+        if whole_tree:
+            directories[dest] = Directory(str(dest), str(stage), stage.stat().st_ino)
         for path, new in entries.items():
-            if path != dest and path.is_dir() and not path.is_symlink():
-                raise IsADirectoryError(str(path))
             backup = stage.parent.parent / f"backup-{len(members)}"
             members.append(
-                Member(str(path), str(new) if new else None, str(backup), os.path.lexists(path))
+                Member(
+                    str(path),
+                    str(new) if new and not whole_tree else None,
+                    str(backup),
+                    item.force and os.path.lexists(path),
+                    item.force,
+                    file_identity(new) if new else None,
+                )
             )
-    return Journal(group, members, sorted(map(str, directories), key=lambda s: len(Path(s).parts)))
+    return Journal(
+        group, members, [directories[p] for p in sorted(directories, key=lambda p: len(p.parts))]
+    )
+
+
+def output_entries(dest: Path, stage: Path, *, exists: bool) -> dict[Path, Path | None]:
+    """Include stale slices when replacing an existing TIFF stack."""
+    if not stage.is_dir() or (exists and dest.is_symlink()):
+        return {dest: stage}
+    entries: dict[Path, Path | None] = {}
+    if exists:
+        entries.update((p, None) for p in dest.iterdir() if tiff_stack_entry(p, stage))
+    for child in stage.iterdir():
+        path = dest / child.name
+        if exists and path.is_dir() and not path.is_symlink():
+            raise IsADirectoryError(str(path))
+        entries[path] = child
+    return entries
+
+
+def file_identity(path: Path) -> tuple[int, int, int]:
+    st = path.lstat()
+    return st.st_dev, st.st_ino, st.st_mtime_ns
+
+
+_RENAME_NOREPLACE = 1
+_AT_FDCWD = -100
+_renameat2 = getattr(ctypes.CDLL(None, use_errno=True), "renameat2", None)
+
+
+def no_replace(stage: Path, dest: Path) -> None:
+    """Publish a staged name only if the destination is still free."""
+    if _renameat2 is not None:
+        result = _renameat2(
+            _AT_FDCWD, os.fsencode(stage), _AT_FDCWD, os.fsencode(dest), _RENAME_NOREPLACE
+        )
+        if result == 0:
+            return
+        code = ctypes.get_errno()
+        if code not in (errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP):
+            raise OSError(code, os.strerror(code), str(dest))
+    if stage.is_dir() and not stage.is_symlink():
+        raise OSError(f"Atomic directory install requires renameat2(RENAME_NOREPLACE): {dest}")
+    try:
+        os.link(stage, dest, follow_symlinks=False)
+    except FileExistsError as err:
+        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), str(dest)) from err
+    stage.unlink()
 
 
 def remove(path: Path) -> None:
@@ -90,19 +151,42 @@ def persist(path: Path, journal: Journal) -> None:
         os.close(fd)
 
 
+def undo_member(member: Member) -> None:
+    dest, backup = Path(member.destination), Path(member.backup)
+    claimed = backup.with_suffix(".rollback")
+    # Claim the name before disposing of it. A concurrent replacement between
+    # lstat and rename must survive too, including a crash during this step.
+    if not os.path.lexists(claimed):
+        try:
+            if member.identity == file_identity(dest):
+                dest.replace(claimed)
+        except (FileNotFoundError, NotADirectoryError):
+            pass
+    if os.path.lexists(claimed) and member.identity != file_identity(claimed):
+        restore(claimed, dest)
+    if os.path.lexists(backup):
+        restore(backup, dest)
+
+
+def restore(saved: Path, dest: Path) -> None:
+    """Finish a no-replace restore interrupted between link and unlink."""
+    try:
+        no_replace(saved, dest)
+    except FileExistsError:
+        if not os.path.samestat(saved.lstat(), dest.lstat()):
+            raise
+        saved.unlink()
+
+
 def resolve(path: Path, journal: Journal) -> dict[str, list[str]]:
     if not journal.committed:
         for member in reversed(journal.members):
-            dest, backup = Path(member.destination), Path(member.backup)
-            if os.path.lexists(backup):
-                remove(dest)
-                backup.replace(dest)
-            elif not member.existed and member.staged and not os.path.lexists(member.staged):
-                remove(dest)
-        for name in reversed(journal.directories):
-            directory = Path(name)
+            undo_member(member)
+        for entry in reversed(journal.directories):
+            directory = Path(entry.destination)
             try:
-                directory.rmdir()
+                if not os.path.lexists(entry.staged) and directory.lstat().st_ino == entry.inode:
+                    directory.rmdir()
             except OSError as err:
                 if err.errno not in (errno.ENOENT, errno.ENOTDIR, errno.ENOTEMPTY, errno.EEXIST):
                     raise
@@ -140,19 +224,27 @@ def commit(
         return report
 
 
+def publish(journal: Journal) -> None:
+    for directory in journal.directories:
+        no_replace(Path(directory.staged), Path(directory.destination))
+    for member in journal.members:
+        destination = Path(member.destination)
+        if member.existed:
+            destination.replace(member.backup)
+        if member.staged:
+            stage = Path(member.staged)
+            if member.force:
+                stage.replace(destination)
+            else:
+                no_replace(stage, destination)
+
+
 def install(group: list[Staged], path: Path, report: dict[str, list[str]]) -> None:
     """Install under the caller's lock. The on-disk marker decides the outcome."""
     try:
         journal = prepare(group, path.parent)
         persist(path, journal)
-        for name in journal.directories:
-            Path(name).mkdir()
-        for member in journal.members:
-            destination = Path(member.destination)
-            if member.existed:
-                destination.replace(member.backup)
-            if member.staged:
-                Path(member.staged).replace(destination)
+        publish(journal)
         journal.committed = True
         persist(path, journal)
     except Exception as err:
@@ -163,7 +255,12 @@ def install(group: list[Staged], path: Path, report: dict[str, list[str]]) -> No
         decision = msgspec.json.decode(path.read_bytes(), type=Journal)
         recovered = resolve(path, decision)
         if not decision.committed:
-            raise OSError(f"{err}. Restored: {recovered['restored']}") from err
+            message = (
+                f"destination appeared: {err.filename}"
+                if isinstance(err, FileExistsError)
+                else str(err)
+            )
+            raise OSError(f"{message}. Restored: {recovered['restored']}") from err
         report.update(recovered)
         return
     try:

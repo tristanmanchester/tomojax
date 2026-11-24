@@ -26,14 +26,36 @@ def replace(path, dest):
     mode = os.environ.get('FAULT')
     if mode in ('fail', 'pause-fail') and (path.name == 'second' or path.name.endswith('.manifest.json')):
         raise OSError('injected rename failure')
+    if mode == 'before-decision' and step == 2:
+        os._exit(88)
     result = original(path, dest)
-    if mode == str(step) or (mode == 'rollback' and path.name.startswith('backup-')):
+    if mode in ('publish-file', 'publish-directory') and step == 1:
+        foreign = Path(os.environ['TEST_HOME'], 'output')
+        if mode == 'publish-directory':
+            foreign.mkdir()
+            foreign = foreign / 'foreign.tif'
+        foreign.write_bytes(b'other job')
+    if mode == str(step) or (mode == 'rollback' and Path(dest).suffix == '.rollback'):
         os._exit(88)
     if mode in ('pause', 'pause-fail') and step == 1:
         Path(os.environ['TEST_HOME'], 'locked').write_text(str(os.getpid()))
         signal.raise_signal(signal.SIGSTOP)
     return result
 Path.replace = replace
+if os.environ.get('FAULT', '').startswith('fallback'):
+    import ctypes
+    original_symbol = ctypes.CDLL.__getattr__
+    def symbol(lib, name):
+        if name == 'renameat2':
+            raise AttributeError(name)
+        return original_symbol(lib, name)
+    ctypes.CDLL.__getattr__ = symbol
+    if os.environ['FAULT'] == 'fallback-crash':
+        link = os.link
+        def interrupted_link(*args, **kwargs):
+            link(*args, **kwargs)
+            os._exit(88)
+        os.link = interrupted_link
 import shutil
 rmtree = shutil.rmtree
 def remove(path, *a, **kw):
@@ -240,7 +262,9 @@ def test_recover_new_tiff_directory_containing_another_stage(launch, tmp_path):
     stage = tmp_path / "work/new/slices"
     stage.mkdir(parents=True)
     (stage / "slice_000.tif").write_bytes(b"old job")
-    process = launch([dict(destination=str(dest), staged=str(stage), force=False)], fault="2")
+    process = launch(
+        [dict(destination=str(dest), staged=str(stage), force=False)], fault="before-decision"
+    )
     process.communicate(timeout=15)
     assert process.returncode != 0 and dest.is_dir()
 
@@ -250,3 +274,61 @@ def test_recover_new_tiff_directory_containing_another_stage(launch, tmp_path):
     assert list(dest.iterdir()) == [dest / "other"]
     assert (dest / "other").read_text() == "new job"
     assert finish(launch()) == {}
+
+
+@pytest.mark.parametrize("directory", [False, True])
+def test_destination_appears_after_journal(launch, tmp_path, directory):
+    group = group_at(tmp_path, ["output"], "our job")
+    group[0]["force"] = False
+    stage = Path(group[0]["staged"])
+    if directory:
+        stage.unlink()
+        stage.mkdir()
+        (stage / "slice_000.tif").write_bytes(b"our job")
+    process = launch(group, fault="publish-directory" if directory else "publish-file")
+    _, error = process.communicate(timeout=15)
+    assert process.returncode and b"destination appeared" in error
+    dest = tmp_path / "output"
+    if directory:
+        assert list(dest.iterdir()) == [dest / "foreign.tif"]
+        dest = dest / "foreign.tif"
+    assert dest.read_bytes() == b"other job"
+    assert finish(launch()) == {}
+
+
+def test_recovery_preserves_replaced_output(launch, tmp_path):
+    group = group_at(tmp_path, ["output"], "our job")
+    group[0]["force"] = False
+    process = launch(group, fault="before-decision")
+    process.communicate(timeout=15)
+    assert process.returncode != 0
+    dest = tmp_path / "output"
+    assert dest.read_text() == "our job"
+    foreign = tmp_path / "other"
+    foreign.write_text("other job")
+    foreign.replace(dest)
+    finish(launch())
+    assert dest.read_text() == "other job"
+
+
+def test_link_fallback_and_interrupted_install(launch, tmp_path):
+    for fault in ("fallback-crash", "fallback"):
+        group = group_at(tmp_path, ["output"], "ours")
+        group[0]["force"] = False
+        proc = launch(group, fault=fault)
+        if fault == "fallback-crash":
+            proc.communicate(timeout=15)
+            assert proc.returncode != 0 and (tmp_path / "output").read_text() == "ours"
+            finish(launch())
+            assert not (tmp_path / "output").exists()
+        else:
+            finish(proc)
+            assert (tmp_path / "output").read_text() == "ours"
+
+    stage = tmp_path / "work/new/slices"
+    stage.mkdir(parents=True)
+    dest = tmp_path / "slices"
+    proc = launch([dict(destination=str(dest), staged=str(stage), force=False)], fault="fallback")
+    _, error = proc.communicate(timeout=15)
+    assert proc.returncode and b"directory install requires renameat2" in error
+    assert not dest.exists()
