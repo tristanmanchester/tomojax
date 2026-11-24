@@ -13,10 +13,16 @@ import time
 import pytest
 
 from tomojax import progress
-from tomojax.cli import _display
-from tomojax.cli._display import Display
 
 pytestmark = pytest.mark.surface
+
+
+@pytest.fixture(name="displays")
+def display_module():
+    """The display module under test (a white-box test of its internals)."""
+    from tomojax.cli import _display  # check-public-imports: allow-private
+
+    return _display
 
 
 def _run_on_a_terminal(code: str) -> tuple[bytes, bytes]:
@@ -77,9 +83,9 @@ def _drawn(capsys, display):
     return capsys.readouterr().err
 
 
-def test_finished_tasks_at_the_top_two_levels_leave_a_line(capsys, monkeypatch):
-    monkeypatch.setattr(_display, "_SUMMARY_SECONDS", 1.0)
-    display = Display(progress.Control(), live=False)
+def test_finished_tasks_at_the_top_two_levels_leave_a_line(capsys, monkeypatch, displays):
+    monkeypatch.setattr(displays, "_SUMMARY_SECONDS", 1.0)
+    display = displays.Display(progress.Control(), live=False)
     _events(
         display,
         progress.Started(1, None, "align", "translations", None, "fit", 0.0),
@@ -102,8 +108,8 @@ def test_finished_tasks_at_the_top_two_levels_leave_a_line(capsys, monkeypatch):
     ]
 
 
-def test_notes_appear_once_and_info_only_with_live_rows(capsys):
-    quiet = Display(progress.Control(), live=False)
+def test_notes_appear_once_and_info_only_with_live_rows(capsys, displays):
+    quiet = displays.Display(progress.Control(), live=False)
     _events(
         quiet,
         progress.Note(None, "info", "an info line", 0.0),
@@ -116,15 +122,15 @@ def test_notes_appear_once_and_info_only_with_live_rows(capsys):
     assert _drawn(capsys, quiet) == ""
 
 
-def test_cancelling_is_announced_once(capsys):
+def test_cancelling_is_announced_once(capsys, displays):
     token = progress.Control()
-    display = Display(token, live=False)
+    display = displays.Display(token, live=False)
     token.cancel()
     assert "cancelling at the next checkpoint" in _drawn(capsys, display)
     assert _drawn(capsys, display) == ""
 
 
-def test_the_handler_never_waits_for_drawing(monkeypatch):
+def test_the_handler_never_waits_for_drawing(monkeypatch, displays):
     release = threading.Event()
     drawing = threading.Event()
 
@@ -133,8 +139,8 @@ def test_the_handler_never_waits_for_drawing(monkeypatch):
             drawing.set()
             release.wait(5)
 
-    monkeypatch.setattr(_display._console, "console", lambda **_kwargs: Blocked())
-    display = Display(progress.Control(), live=False)
+    monkeypatch.setattr(displays._console, "console", lambda **_kwargs: Blocked())
+    display = displays.Display(progress.Control(), live=False)
     with display:
         display(progress.Note(None, "warning", "start drawing", 0.0))
         assert drawing.wait(2)  # the display thread is stuck in a slow print
@@ -145,10 +151,10 @@ def test_the_handler_never_waits_for_drawing(monkeypatch):
         release.set()
 
 
-def test_bar_off_a_terminal_prints_finished_tasks_and_warnings_only(capsys, monkeypatch):
-    from tomojax.cli._progress import run_command
+def test_bar_off_a_terminal_prints_finished_tasks_and_warnings_only(capsys, monkeypatch, displays):
+    from tomojax.cli._progress import run_command  # check-public-imports: allow-private
 
-    monkeypatch.setattr(_display, "_SUMMARY_SECONDS", 0.0)
+    monkeypatch.setattr(displays, "_SUMMARY_SECONDS", 0.0)
 
     def operation():
         with progress.task("solve", "sirt", 2, "iterations"):

@@ -9,7 +9,6 @@ import pytest
 
 import tomojax as tj
 from tomojax import progress
-from tomojax.cli._plan_view import plan_text
 from tomojax.cli.main import main
 from tomojax.wire.resources import Placement, Snapshot
 
@@ -25,7 +24,8 @@ def scan_path(tmp_path_factory):
 
 def test_plan_text_names_the_method_grid_and_estimated_memory(scan_path):
     from tomojax._planning import resolve_reconstruction
-    from tomojax.cli._plans import plan_product
+    from tomojax.cli._plan_view import plan_text  # check-public-imports: allow-private
+    from tomojax.cli._plans import plan_product  # check-public-imports: allow-private
 
     scan = tj.load(scan_path)
     work = resolve_reconstruction(scan, "fista", region="cyl", iterations=7)
@@ -72,7 +72,9 @@ def test_a_run_resolves_once_and_says_what_it_will_do(monkeypatch, tmp_path, sca
         for r in map(json.loads, capsys.readouterr().out.splitlines())
         if r["event"] == "note"
     ]
-    assert any(n.startswith("reconstruct: sirt, 2 iterations · 16x16x16 at 1 scan units · ") for n in notes)
+    assert any(
+        n.startswith("reconstruct: sirt, 2 iterations · 16x16x16 at 1 scan units · ") for n in notes
+    )
 
 
 def test_running_out_of_memory_says_what_the_plan_needed(monkeypatch, tmp_path, scan_path, capsys):
