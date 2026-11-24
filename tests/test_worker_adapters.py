@@ -1317,3 +1317,25 @@ def test_open_dry_run_omits_unread_angle_range(tmp_path, monkeypatch):
     assert result.details["geometry"]["views"] == 1
     assert "angle_range_degree" not in result.details["geometry"]
     assert not reads
+
+
+def test_operator_path_source_uses_its_geometry_without_loading_pixels(tmp_path, monkeypatch):
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+
+    # A reconstruction archived with its aligned scan, used as both source and volume.
+    sim = tj.simulate(size=8, n_views=10)
+    poses = np.zeros((10, 6), np.float32)
+    poses[:, 0] = np.linspace(-0.4, 0.4, 10)
+    poses[:, 3] = np.linspace(-0.6, 0.6, 10)
+    scan = sim.scan.with_poses(poses)
+    path = tmp_path / "aligned.nxs"
+    volume = np.asarray(sim.phantom, np.float32)
+    tj.save(path, tj.Reconstruction(volume, scan.geometry, "example", {}, scan), include_scan=True)
+    expected = tj.project(tj.load(path).geometry, volume)
+    reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
+    ref = operations.PathInput(str(path))
+    stage = Stage(tmp_path)
+    admitted(operations.Run(operation=operations.Project(source=ref, volume=ref)), None, stage, ref)
+    assert reads == []
+    np.testing.assert_allclose(np.load(stage.private), expected, atol=1e-5)

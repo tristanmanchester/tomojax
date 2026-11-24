@@ -422,8 +422,9 @@ class Admission:
 
     @prepare.register
     def project(self, operation: op.Project | op.Backproject) -> Work:
+        """Apply an operator in the source's geometry; a path source never loads its pixels."""
         options = arguments(operation, self.context, omit=("source",), layout_only=self.validating)
-        scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=self.validating)
+        scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=True)
         grid = options["grid"] or scan.grid
         forward = isinstance(operation, op.Project)
         name = "volume" if forward else "projections"
