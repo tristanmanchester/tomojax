@@ -65,7 +65,6 @@ class Job:
     stages: Stages
     leases: dict[Member | Npy, ex.Lease]
     lifetime: ExitStack
-    resources: dict[Member | Npy, tuple[Resource, ...]]
     published: set[str] = field(default_factory=set)
 
 
@@ -159,7 +158,6 @@ class Session:
     def _pin(self, rid: str, cmd: op.ExecutionInput, channel: e.ChannelRevision | None) -> Job:
         with ExitStack() as pins:
             leases: dict[Member | Npy, ex.Lease] = {}
-            resources: dict[Member | Npy, tuple[Resource, ...]] = {}
             pending = list(op.input_references(cmd))
             if isinstance(cmd, op.Python):
                 cmd = self.python_inputs(cmd)
@@ -175,22 +173,16 @@ class Session:
                     member = leases[ref].value
                     if isinstance(member, ex.RegisteredArray):
                         metadata = member.metadata
-                    resources[ref] = (
-                        handle.resource,
-                        *(
-                            self.artifacts[token].resource
-                            for token in handle.artifacts.intersection(self.artifacts)
-                        ),
-                    )
+                    handle.resource.pin(pins)
+                    for token in handle.artifacts.intersection(self.artifacts):
+                        self.artifacts[token].resource.pin(pins)
                 elif ref.artifact:
                     artifact = self.artifacts[ref.artifact]
                     if str(artifact.path) != ref.path:
                         raise ValueError("artifact path differs from issued path")
-                    resources[ref] = (artifact.resource,)
+                    artifact.resource.pin(pins)
                     metadata = artifact.metadata
                     leases[ref] = ex.Lease(ref, artifact.manifest, metadata)
-                for resource in resources[ref]:
-                    resource.pin(pins)
                 if metadata and isinstance(cmd, op.Read):
                     pending.extend(
                         ax.coordinates.values
@@ -206,7 +198,6 @@ class Session:
                 Stages(self.root),
                 leases,
                 pins.pop_all(),
-                resources,
             )
 
     def _accept(self, rid: str, channel: e.ChannelRevision | None) -> None:
@@ -339,9 +330,7 @@ class Session:
                     logging.exception("Failed to dispose unpublished handle for %s", job.id)
             self._finish(job, e.ErrorReply(job.id, job.channel, error))
 
-    def bind_roots(
-        self, job: Job, success: ex.Success, undo: ExitStack
-    ) -> tuple[p.Product, dict[str, Handle]]:
+    def bind_roots(self, job: Job, success: ex.Success) -> tuple[p.Product, dict[str, Handle]]:
         """Build every handle descriptor before installing the first root or artifact."""
         value = success.value
         roots = {}
@@ -355,14 +344,8 @@ class Session:
             product = value
         for name, root in success.roots:
             bound = root.bind(name)
-            lifetime = ExitStack()
-            undo.callback(lifetime.close)
-            lifetime.callback(root.dispose)
-            for ref in root.dependencies:
-                for resource in job.resources[ref]:
-                    resource.pin(lifetime)
             roots[name] = Handle(
-                bound, success.manifest, root.logical_bytes, Resource(lifetime.close), set()
+                bound, success.manifest, root.logical_bytes, Resource(root.dispose), set()
             )
             assert isinstance(product, p.PythonResult)
             product.handles[name] = bound.product
@@ -370,7 +353,7 @@ class Session:
 
     def _commit(self, job: Job, success: ex.Success) -> p.Output:
         with ExitStack() as undo:
-            product, roots = self.bind_roots(job, success, undo)
+            product, roots = self.bind_roots(job, success)
             result = p.Output(product, success.info, success.manifest)
             # Encode before changing any caller-owned destination.
             encoded = msgspec.json.encode(result)

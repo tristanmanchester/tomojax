@@ -56,17 +56,17 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 6219,
-    "_data": 2391,
+    "(modules)": 6216,
+    "_data": 2189,
     "alignment": 4670,
     "backends": 273,
-    "cli": 11217,
+    "cli": 10997,
     "core": 10053,
     "corrections": 3204,
     "datasets": 1069,
     "forward": 404,
     "geometry": 913,
-    "io": 4058,
+    "io": 4057,
     "motion": 153,
     "nuisance": 232,
     "recon": 15037,
@@ -115,5 +115,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 136
+  "test_private_imports": 137
 }

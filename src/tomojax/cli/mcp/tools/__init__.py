@@ -183,8 +183,8 @@ def preview_image(path: Path) -> ImageContent:
         from tomojax.io.projection_layout import saved_npz_layout
 
         _, arrays = saved_npz_layout(path)
-        stack = arrays.get("projections", arrays.get("volume"))  # (view, v, u) or (z, y, x)
-        pixels = stack[len(stack) // 2]
+        stack = arrays["projections" if "projections" in arrays else "volume"]
+        pixels = stack[len(stack) // 2]  # the central view, or the central z plane
     else:
         pixels = _previews.projection_image(path)
         if pixels is None:

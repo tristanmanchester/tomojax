@@ -3,8 +3,9 @@
 The last expression is the result. Variables persist until reset or restart.
 Use the handle IDs from status as dictionary keys. For example,
 `scan = handles[scan_id]` reads a scan and `scan = handles[simulation_id].scan`
-reads a simulation's acquisition. Handle arrays are read-only. Register a new
-object to use it in typed tools. Registration takes a snapshot immediately.
+reads a simulation's acquisition. These are the worker's own objects, so
+derive new arrays from them and leave theirs unchanged. Register a new object
+to use it in typed tools.
 Use `show(plane)` to return a PNG. The examples below assume a parallel scan.
 
 ## Direct solver

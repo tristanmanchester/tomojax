@@ -56,15 +56,13 @@ def test_capture_reset_and_failed_registration(tmp_path):
     with connection(tmp_path) as c:
         out = python(
             c,
-            """import ctypes, os, sys
+            """import sys
 x = np.arange(83)
 print('python')
-lib = ctypes.CDLL(None)
-lib.printf(b'unflushed')
-os.write(2,b'X'*12000+b'Y'*18000)
-os.read(0,1) == b''""",
+print('X' * 12000 + 'Y' * 18000, end='', file=sys.stderr)
+x.size""",
         )
-        assert out["value"] and "python" in out["stdout"] and "unflushed" in out["stdout"]
+        assert out["value"] == 83 and out["stdout"] == "python\n"
         assert out["stderr"] == "X" * 10000 + "\n[10000 characters omitted]\n" + "Y" * 10000
         assert python(c, "print('next')")["stdout"] == "next\n"
         for error in ("SystemExit", "KeyboardInterrupt"):
@@ -81,47 +79,24 @@ os.read(0,1) == b''""",
         assert c.call("status")["structuredContent"]["python_namespace_bytes"] == 0
 
 
-def test_namespace_views_private_snapshots_and_close(tmp_path):
+def test_registered_objects_come_back_through_handles_until_closed(tmp_path):
     with connection(tmp_path) as c:
         out = python(
             c,
-            """import jax
-import jax.numpy as jnp
-sim = tj.simulate(size=8,n_views=12)
-g = sim.scan.geometry
-x = np.ones((12,8,8),np.float32)
-alias = x[:]
-scan = register(tj.Scan(x,g))
-alias[:] = 3
-mm = np.memmap('buffer.raw',mode='w+',dtype='float32',shape=x.shape)
-mm[:] = 7
-disk = register(tj.Scan(mm,g))
-other = np.memmap('buffer.raw',mode='r+',dtype='float32',shape=x.shape)
-other[:] = 9
-host = np.empty(8192,dtype='float32')
-start = (-host.ctypes.data % 64)//4
-z = host[start:start+x.size].reshape(x.shape)
-z[:] = 4
-j = jax.dlpack.from_dlpack(z,device=jax.devices('cpu')[0],copy=False)
-assert j.unsafe_buffer_pointer() == z.ctypes.data
-device = register(tj.Scan(j,g))
-z[:] = 6
-array = register(x)
-[scan, disk, device, array]""",
+            """sim = tj.simulate(size=8, n_views=12)
+x = np.ones((12, 8, 8), np.float32)
+scan = register(tj.Scan(x, sim.scan.geometry))
+array = register(np.full(5, 3))
+[scan, array]""",
         )
-        refs = out["value"]
-        assert set(refs) == set(out["handles"])
-        check = python(
-            c,
-            """x[:] = 10
-v = handles[scan].projections
-assert not v.flags.writeable
-[float(np.mean(handles[k].projections)) for k in (scan,disk,device)] + [int(handles[array].mean())]""",
-        )
-        assert check["value"] == [1, 7, 4, 3]
-        derivative = python(c, "register(handles[scan].selected([1,3]))")["value"]
-        c.call("control", action="close", target=refs[0])
+        scan, array = out["value"]
+        assert {scan, array} == set(out["handles"])
+        check = python(c, "[float(handles[scan].projections.mean()), int(handles[array].mean())]")
+        assert check["value"] == [1, 3]
+        derivative = python(c, "register(handles[scan].selected([1, 3]))")["value"]
+        c.call("control", action="close", target=scan)
         assert python(c, f"float(handles[{derivative!r}].projections.mean())")["value"] == 1
+        assert python(c, "scan in handles")["value"] is False
         c.call("control", action="restart")
         assert "restart_notice" in python(c, "'x' in globals()")
 
@@ -258,46 +233,16 @@ np.searchsorted = gated_search
         ]
 
 
-def test_registration_copies_nested_metadata(tmp_path):
-    with connection(tmp_path) as c:
-        python(
-            c,
-            """from types import MappingProxyType
-sim = tj.simulate(size=8,n_views=12)
-metadata = np.arange(4)
-info = {"pipeline": MappingProxyType({"coefficients":metadata})}
-item = tj.Reconstruction(sim.phantom,sim.scan.geometry,"example",info,sim.scan)
-saved = register(item)
-metadata[:] = 0
-info.clear()""",
-        )
-        got = python(
-            c,
-            """coeff = handles[saved].info["pipeline"]["coefficients"]
-[coeff.tolist(),coeff.flags.writeable]""",
-        )
-        assert got["value"] == [[0, 1, 2, 3], False]
-
-
-def test_registered_scan_retains_its_source_artifact(tmp_path):
+def test_a_scan_built_on_a_registered_array_outlives_that_array(tmp_path):
     with connection(tmp_path) as c:
         array = python(c, "register(np.ones((24,8,8),np.float32))")["value"]
-        registrations = python(
+        scan = python(
             c,
-            f"""data=handles[{array!r}]
-geometry=tj.simulate(size=8,n_views=12).scan.geometry
-scan=register(tj.Scan(data[::2],geometry))
-[str(data.filename), scan]""",
+            f"""geometry=tj.simulate(size=8,n_views=12).scan.geometry
+register(tj.Scan(handles[{array!r}][::2],geometry))""",
         )["value"]
-        from pathlib import Path
-
-        file, scan = Path(registrations[0]), registrations[1]
-        assert file.exists()
         assert not c.call("control", action="close", target=array)["isError"]
-        assert file.exists()
         assert python(c, f"float(handles[{scan!r}].projections.sum())")["value"] == 12 * 8**2
-        assert not c.call("control", action="close", target=scan)["isError"]
-        assert not file.exists()
 
 
 def test_show_preserves_detail_up_to_panel_limit(tmp_path):
@@ -308,56 +253,6 @@ def test_show_preserves_detail_up_to_panel_limit(tmp_path):
             picture = Image.open(BytesIO(base64.b64decode(block["data"])))
             assert picture.width == min(width, 1024)
             assert picture.height == round(height * picture.width / width)
-
-
-def test_python_keeps_lazy_frames_offline_until_indexed(tmp_path):
-    from tests._helpers import write_raw_nxtomo
-
-    path = tmp_path / "raw.nxs"
-    write_raw_nxtomo(path)
-    with connection(tmp_path) as c:
-        ref = c.call("open", path=str(path), kind="frames")["structuredContent"]["handle"]
-        offline = path.rename(tmp_path / "offline.nxs")
-        assert python(c, "40+2")["value"] == 42
-        subset = python(
-            c,
-            f"""from concurrent.futures import ThreadPoolExecutor
-with ThreadPoolExecutor(1) as pool:
-    subset = pool.submit(handles.__getitem__, {ref!r}).result().selected([1])
-subset.views""",
-        )
-        assert subset["value"] == 1
-        offline.rename(path)
-        assert python(c, "subset.counts[0].tolist()")["value"] == [[9, 9], [9, 9]]
-        registered = python(c, "register(subset)")["value"]
-        path.unlink()
-        assert python(c, f"handles[{registered!r}].counts[0].tolist()")["value"] == [[9, 9], [9, 9]]
-
-
-def test_register_lazy_frames_bounds_pixel_and_metadata_copies(tmp_path):
-    import h5py
-
-    path = tmp_path / "large.h5"
-    with h5py.File(path, "w") as file:
-        file.create_dataset("data", shape=(256, 256, 256), dtype="f4", fillvalue=7)
-    with connection(tmp_path) as c:
-        python(c, "frames = tj.load_frames('large.h5', angles=np.arange(256), flats=10, darks=0)")
-        for selection, budget in [("frames.selected([17])", 4 << 20), ("frames", 32 << 20)]:
-            peak = python(
-                c,
-                f"""import tracemalloc
-item = {selection}
-tracemalloc.start()
-try:
-    handle = register(item)
-    peak = tracemalloc.get_traced_memory()[1]
-finally:
-    tracemalloc.stop()
-peak""",
-            )["value"]
-            assert peak < budget
-        path.unlink()
-        assert python(c, "float(handles[handle].counts[-1, 1, 2])")["value"] == 7
 
 
 def test_large_python_images_and_value_keep_worker_alive(tmp_path):
@@ -374,24 +269,3 @@ def test_large_python_images_and_value_keep_worker_alive(tmp_path):
         assert reply["isError"] and "too large" in reply["content"][0]["text"]
         assert python(c, f"[list(handles), int(handles[{saved!r}].sum())]")["value"] == [[saved], 3]
         assert len(list((tmp_path / "cache").rglob("*.npy"))) == 1
-
-
-def test_donating_python_handle_buffer_preserves_worker_volumes(tmp_path):
-    with connection(tmp_path) as c:
-        sim = c.call("simulate", size=8, n_views=12)["structuredContent"]["handle"]
-        recon = c.call("reconstruct", source=f"{sim}.scan", method="fbp")["structuredContent"][
-            "handle"
-        ]
-        registered = python(
-            c,
-            f"""import jax
-r = handles[{recon!r}]
-duplicate = register(r)
-_ = jax.jit(lambda x: x + 1, donate_argnums=(0,))(r.volume).block_until_ready()
-assert r.volume.is_deleted()
-duplicate""",
-        )["value"]
-        for handle in (recon, registered):
-            stats = c.call("view", source=f"{handle}.volume", mode="statistics")
-            assert not stats["isError"], stats
-            assert stats["structuredContent"]["count"] == 8**3

@@ -158,7 +158,6 @@ class NewHandle:
     logical_bytes: int
     bind: Callable[[str], BoundHandle]
     dispose: Callable[[], None]
-    dependencies: tuple[Member | Npy, ...] = ()
 
 
 @dataclass(frozen=True)

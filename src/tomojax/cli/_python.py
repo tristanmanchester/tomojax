@@ -1,25 +1,21 @@
-"""Execute a trusted Python call against pinned, read-only session inputs."""
+"""Execute a trusted Python call against the session's handles."""
 
 import ast
 from collections.abc import Iterator, Mapping
-from contextvars import ContextVar
-from copy import deepcopy
-from dataclasses import fields, is_dataclass, replace
-from tempfile import TemporaryFile
+from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import fields, is_dataclass
+from io import StringIO
 import traceback
-from types import FunctionType, MappingProxyType, ModuleType
+from types import FunctionType, ModuleType
 from typing import Any
-from weakref import ref as weakref
 
-import h5py
 import jax
 import msgspec
 import numpy as np
 
 import tomojax as tj
 from tomojax.cli import execution as ex, products as p
-from tomojax.cli._browse import READ_BYTES, indexed, ordered_tiles, pixels
-from tomojax.cli._capture import capture
+from tomojax.cli._browse import indexed
 from tomojax.cli._handles import handle, stage_array
 from tomojax.cli.envelope import INLINE_LIMIT
 from tomojax.cli.images import Panel, limits, raster
@@ -27,98 +23,39 @@ from tomojax.cli.mcp.ledger import new_reference
 from tomojax.wire.arrays import Member
 from tomojax.wire.progress import Info
 
+_KINDS = {
+    tj.Scan: "scan",
+    tj.Frames: "frames",
+    tj.Simulation: "sim",
+    tj.Reconstruction: "recon",
+    tj.Alignment: "align",
+}
+_SHOWN = 10000  # characters kept from each end of a captured stream
 
-def buffers(value, seen, *, metadata=False):
-    """Walk array storage without descending into imported modules or user functions."""
+
+def array_bytes(value, seen) -> int:
+    """Bytes of the arrays reachable from ``value`` through containers and dataclasses."""
     if id(value) in seen or isinstance(value, type | ModuleType | FunctionType):
-        return
+        return 0
     seen.add(id(value))
-    if isinstance(value, np.ndarray | jax.Array | jax.Device | h5py.Dataset) or hasattr(
-        type(value), "frames_at"
-    ):
-        yield value
-        return
-    if isinstance(value, HandleInputs):
-        children = value.values_by_name.values()
-    elif isinstance(value, dict | MappingProxyType):
+    if isinstance(value, np.ndarray | jax.Array):
+        return value.nbytes
+    if isinstance(value, dict):
         children = value.values()
     elif isinstance(value, list | tuple | set | frozenset):
         children = value
     elif is_dataclass(value):
         children = (getattr(value, f.name) for f in fields(value))
-    elif metadata and hasattr(value, "__dict__"):
-        children = vars(value).values()
     else:
-        return
-    for child in children:
-        yield from buffers(child, seen, metadata=metadata)
-    if isinstance(value, MappingProxyType):
-        yield value
-
-
-def owner_of(buffer, issued):
-    # NumPy views may point straight at a base a few levels below the array
-    # passed to the user. Only trace owners imported from this job's leases.
-    while buffer is not None:
-        if entry := issued.get(id(buffer)):
-            return entry[1]
-        buffer = buffer.base if isinstance(buffer, np.ndarray) else None
-    return None
-
-
-def frozen_pixels(buf, *, shared):
-    if isinstance(buf, np.ndarray):
-        if shared:
-            return np.asarray(memoryview(buf).toreadonly())
-        if 0 in buf.strides:
-            # A read-only broadcast may still have a writable base in the namespace.
-            distinct = tuple(slice(1) if stride == 0 else slice(None) for stride in buf.strides)
-            return np.broadcast_to(np.array(buf[distinct], copy=True), buf.shape)
-        if not isinstance(buf, np.memmap):
-            return np.array(buf, copy=True)
-    if buf.dtype.hasobject or 0 in buf.shape:
-        return np.array(buf[()], copy=True)
-    with TemporaryFile() as stream:
-        for tile in ordered_tiles(tuple(map(range, buf.shape)), READ_BYTES // buf.dtype.itemsize):
-            tj.progress.check_cancelled()
-            pixels(buf, tile).tofile(stream)
-        return np.memmap(stream, buf.dtype, "r", shape=buf.shape)
-
-
-def snapshot(value, *, issued, dependencies, source=None):
-    memo = {}
-    for buf in buffers(value, set(), metadata=True):
-        if isinstance(buf, MappingProxyType):
-            memo[id(buf)] = MappingProxyType(deepcopy(dict(buf), memo))
-            continue
-        if isinstance(buf, jax.Device):
-            memo[id(buf)] = buf
-            continue
-        owner = owner_of(buf, issued)
-        if source is None and owner is not None:
-            dependencies.add(owner)
-        shared = source is not None or owner is not None
-        if source is not None and hasattr(type(buf), "frames_at"):
-            # Frame stacks hold only a storage descriptor and a frame selection.
-            # Copy that metadata; indexing the private descriptor reads owned pixels.
-            copy = deepcopy(buf)
-        elif isinstance(buf, jax.Array):
-            copy = buf.copy().block_until_ready()
-        else:
-            copy = frozen_pixels(buf, shared=shared)
-            copy.flags.writeable = False
-        memo[id(buf)] = copy
-        if source is not None:
-            issued[id(copy)] = (copy, source)
-    return deepcopy(value, memo)
+        return 0
+    return sum(array_bytes(child, seen) for child in children)
 
 
 class Registrations:
-    """All Python-created products share the job's final publication decision."""
+    """The handles, arrays and images one Python call publishes when it succeeds."""
 
-    def __init__(self, context, issued) -> None:
+    def __init__(self, context) -> None:
         self.context = context
-        self.issued = issued
         self.roots = []
         self.products = {}
         self.images = []
@@ -128,21 +65,12 @@ class Registrations:
             name = new_reference("array")
             a = np.asarray(item)
             self.products[name] = p.ArrayResult(indexed(stage_array(self.context, a), a))
-        else:
-            kinds = {
-                tj.Scan: "scan",
-                tj.Frames: "frames",
-                tj.Simulation: "sim",
-                tj.Reconstruction: "recon",
-                tj.Alignment: "align",
-            }
-            kind = next((kind for cls, kind in kinds.items() if isinstance(item, cls)), None)
-            if not kind:
-                raise ValueError("register expects a TomoJAX object or array")
-            name = new_reference(kind)
-            dependencies = set()
-            frozen = snapshot(item, issued=self.issued, dependencies=dependencies)
-            self.roots.append((name, replace(handle(frozen), dependencies=tuple(dependencies))))
+            return name
+        kind = next((kind for cls, kind in _KINDS.items() if isinstance(item, cls)), None)
+        if not kind:
+            raise ValueError("register expects a TomoJAX object or array")
+        name = new_reference(kind)
+        self.roots.append((name, handle(item)))
         return name
 
     def show(self, array):
@@ -150,44 +78,18 @@ class Registrations:
         self.images.append(stage_array(self.context, raster(panel, *limits([panel]))))
 
 
-_active: ContextVar[Registrations] = ContextVar("python_registrations")
-
-
-def register(item):
-    """Resolve at call time so aliases in the persistent namespace remain usable."""
-    return _active.get().register(item)
-
-
-def show(array):
-    _active.get().show(array)
-
-
 class HandleInputs(Mapping):
-    """Remember accessed source files across arbitrary transformations in Python."""
+    """The session's handles and arrays by reference, read when indexed."""
 
-    def __init__(self, aliases, job) -> None:
-        self._aliases = MappingProxyType(aliases)
-        self._job = weakref(job)
-        self.values_by_name = {}
+    def __init__(self, aliases, leases) -> None:
+        self._aliases = aliases
+        self._leases = leases
 
     def __getitem__(self, name) -> Any:
         ref = self._aliases[name]
-        if name not in self.values_by_name:
-            job = self._job() or _active.get()
-            lease = job.context.leases[ref]
-            if isinstance(ref, Member):
-                item = snapshot(lease.value, issued=job.issued, dependencies=set(), source=ref)
-            else:
-                item = np.load(ref.path, mmap_mode="r", allow_pickle=False)
-                job.issued[id(item)] = (item, ref)
-            self.values_by_name[name] = item
-        return self.values_by_name[name]
-
-    def __contains__(self, name) -> bool:
-        return name in self._aliases
-
-    def copy(self) -> dict[str, Any]:
-        return dict(self)
+        if isinstance(ref, Member):
+            return self._leases[ref].value
+        return np.load(ref.path, mmap_mode="r", allow_pickle=False)
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._aliases)
@@ -200,14 +102,13 @@ def execute_in_namespace(cmd, context):
     namespace = context.namespace
     if cmd.reset:
         namespace.clear()
-    registrations = Registrations(context, {})
-    token = _active.set(registrations)
+    registrations = Registrations(context)
     namespace.update(
         tj=tj,
         np=np,
-        handles=HandleInputs(cmd.aliases, registrations),
-        register=register,
-        show=show,
+        handles=HandleInputs(cmd.aliases, context.leases),
+        register=registrations.register,
+        show=registrations.show,
     )
     try:
         tree = ast.parse(cmd.code, filename="<python>")
@@ -217,39 +118,45 @@ def execute_in_namespace(cmd, context):
         if expr is not None:
             value = eval(compile(ast.Expression(expr.value), "<python>", "eval"), namespace)
         if isinstance(value, np.ndarray | jax.Array):
-            value = register(value)
+            value = registrations.register(value)
         value = msgspec.to_builtins(value.item() if isinstance(value, np.generic) else value)
         return registrations, value
     finally:
-        _active.reset(token)
         for key in ("handles", "register", "show"):
             namespace.pop(key, None)
-        context.measure(
-            sum(
-                getattr(a, "nbytes", 0)
-                for a in buffers({k: v for k, v in namespace.items() if k != "__builtins__"}, set())
-            )
-        )
+        kept = {k: v for k, v in namespace.items() if k != "__builtins__"}
+        context.measure(array_bytes(kept, set()))
+
+
+def _clip(text: str) -> str:
+    missing = len(text) - 2 * _SHOWN
+    if missing <= 0:
+        return text
+    return f"{text[:_SHOWN]}\n[{missing} characters omitted]\n{text[-_SHOWN:]}"
 
 
 def run_python(cmd, context):
-    output = []
+    out, err = StringIO(), StringIO()
     try:
-        with capture() as output:
+        with redirect_stdout(out), redirect_stderr(err):
             registrations, value = execute_in_namespace(cmd, context)
-    except BaseException as err:
-        frames = traceback.extract_tb(err.__traceback__)
+    except BaseException as error:
+        frames = traceback.extract_tb(error.__traceback__)
         start = next((i for i, f in enumerate(frames) if f.filename == "<python>"), len(frames))
         message = "".join(
-            traceback.format_list(frames[start:]) + traceback.format_exception_only(err)
+            traceback.format_list(frames[start:]) + traceback.format_exception_only(error)
         )
-        detail = "".join(output) + message
+        detail = _clip(out.getvalue()) + _clip(err.getvalue()) + message
         if len(msgspec.json.encode(detail)) > INLINE_LIMIT:
-            raise ValueError("Python exception too large for the worker pipe") from err
-        raise ValueError(detail) from err
+            raise ValueError("Python exception too large for the worker pipe") from error
+        raise ValueError(detail) from error
     return ex.Success(
         p.PythonResult(
-            output[0], output[1], value, registrations.products, tuple(registrations.images)
+            _clip(out.getvalue()),
+            _clip(err.getvalue()),
+            value,
+            registrations.products,
+            tuple(registrations.images),
         ),
         Info({}, {}),
         p.Provenance("python", {"code": cmd.code, "reset": cmd.reset}, ()),

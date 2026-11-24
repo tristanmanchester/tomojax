@@ -105,7 +105,7 @@ The server runs one worker process with one queue, so GPU jobs run one after ano
 
 ## Files
 
-`save`, `export` and `reconstruct_slabs` refuse to replace an existing file unless the call sets `force`, and never overwrite their own inputs. Each write completes in full or not at all: if the server or its worker dies during a write, the next start restores the files that were there before.
+`save`, `export` and `reconstruct_slabs` refuse to replace an existing file unless the call sets `force`, and never overwrite their own inputs. Each output is written beside its destination and moved into place once whole.
 
 ## Python
 
