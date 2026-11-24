@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+from importlib import resources
 import os
 from pathlib import Path
 import signal
@@ -101,7 +102,17 @@ class Core:
         self.server.resource("tomojax://result/{call}/{n}", mime_type="application/json")(
             self.read_part
         )
+        self.server.resource("tomojax://guide/{topic}", mime_type="text/markdown")(self.guide)
         self.install()
+
+    def guide(self, topic: str) -> str:
+        """Read worked examples shipped with this installation."""
+        guides = resources.files("tomojax.cli.mcp").joinpath("guides")
+        topics = ("python", "solvers", "geometry", "calibration")
+        if topic not in topics:
+            raise ValueError("Unknown guide. Start with tomojax://guide/python.")
+        selected = topics if topic == "python" else (topic,)
+        return "\n\n".join(guides.joinpath(name + ".md").read_text().strip() for name in selected)
 
     def read_part(self, call: str, n: int) -> dict[str, str | None]:
         """Read successive chunks of the serialized original CallToolResult."""

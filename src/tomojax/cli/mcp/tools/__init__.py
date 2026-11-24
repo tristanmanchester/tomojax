@@ -69,7 +69,7 @@ class Open(Record):
 
 
 class Python(Record):
-    """Run trusted local Python with tj, np, handles, register and show."""
+    """Run trusted local Python with handles, register and show. See tomojax://guide/python."""
 
     code: str = ""
     reset: bool = False
