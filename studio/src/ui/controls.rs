@@ -33,6 +33,7 @@ pub enum Icon {
     Tree,
     Inspector,
     Edit,
+    Remove,
     Alert,
 }
 
@@ -174,6 +175,11 @@ pub fn icon(kind: Icon, size: f32, colour: Color) -> El {
                 [4., 20.],
             ],
             vec![[13.5, 7.5], [16.5, 10.5]],
+        ],
+        Icon::Remove => vec![
+            vec![[4., 7.], [20., 7.]],
+            vec![[9., 7.], [9., 4.], [15., 4.], [15., 7.]],
+            vec![[6., 7.], [7., 20.], [17., 20.], [18., 7.]],
         ],
         Icon::Inspector => vec![
             vec![[3., 4.], [21., 4.], [21., 20.], [3., 20.], [3., 4.]],

@@ -770,3 +770,70 @@ fn the_top_bar_names_the_project_only_while_the_navigator_is_hidden() {
         assert_eq!(shown, 1, "tree_open={tree_open}");
     }
 }
+
+#[test]
+fn removing_an_asset_needs_confirmation_and_leaves_its_file_on_disk() {
+    let (_directory, state) = viewing_state();
+    let id = state.model.assets[0].id.clone();
+    let path = state
+        .project
+        .as_ref()
+        .unwrap()
+        .resolve(&state.project.as_ref().unwrap().document.assets[0].path);
+    let mut rt = runtime(state, (1540., 980.));
+    click(&mut rt, "remove-asset");
+    assert_eq!(rt.state.ui.confirm_remove.as_deref(), Some(id.as_str()));
+    assert!(
+        rt.state
+            .project
+            .as_ref()
+            .unwrap()
+            .document
+            .asset(&id)
+            .is_some()
+    );
+    rt.frame(0.5);
+    click(&mut rt, "confirm-remove-asset");
+    assert!(
+        rt.state
+            .project
+            .as_ref()
+            .unwrap()
+            .document
+            .asset(&id)
+            .is_none()
+    );
+    assert!(path.exists());
+}
+
+#[test]
+fn an_asset_used_by_a_queued_job_cannot_be_removed() {
+    let (_directory, mut state) = viewing_state();
+    let id = state.model.assets[0].id.clone();
+    let project = state.project.as_mut().unwrap();
+    let input = project.capture(&id).unwrap();
+    project.document.jobs.push(crate::project::Job::new(
+        "reconstruct",
+        serde_json::json!({}),
+        vec![input],
+    ));
+    state.ui.confirm_remove = Some(id.clone());
+    let mut rt = runtime(state, (1540., 980.));
+    click(&mut rt, "confirm-remove-asset");
+    assert!(
+        rt.state
+            .project
+            .as_ref()
+            .unwrap()
+            .document
+            .asset(&id)
+            .is_some()
+    );
+    assert!(
+        rt.state
+            .model
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("Cancel the job first"))
+    );
+}

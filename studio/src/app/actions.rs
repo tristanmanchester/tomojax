@@ -172,6 +172,50 @@ impl AppState {
                 self.ui.rename = None;
                 self.mark_dirty();
             }
+            UiAction::RemoveAsset(id) => {
+                let project = self
+                    .project
+                    .as_mut()
+                    .ok_or("Create or open a project first")?;
+                if project.document.jobs.iter().any(|job| {
+                    job.status.active() && job.inputs.iter().any(|input| input.asset == id)
+                }) {
+                    return Err(
+                        "A queued or running job uses this asset. Cancel the job first.".into(),
+                    );
+                }
+                // Only the project's reference goes; files on disk stay where they are.
+                project.document.assets.retain(|asset| asset.id != id);
+                for asset in &mut project.document.assets {
+                    if asset.parent.as_deref() == Some(id.as_str()) {
+                        asset.parent = None;
+                    }
+                }
+                self.model
+                    .measurements
+                    .retain(|measurement| measurement.asset != id);
+                for side in [&mut self.model.compare_left, &mut self.model.compare_right] {
+                    if side.as_deref() == Some(id.as_str()) {
+                        *side = None;
+                    }
+                }
+                self.model.selected_assets.remove(&id);
+                if self.model.active_asset.as_deref() == Some(id.as_str()) {
+                    self.model.active_asset = None;
+                }
+                self.ui.confirm_remove = None;
+                self.imaging.invalidate();
+                self.image_key.clear();
+                self.mark_dirty();
+            }
+            UiAction::RemoveRecipe(id) => {
+                let project = self
+                    .project
+                    .as_mut()
+                    .ok_or("Create or open a project first")?;
+                project.document.recipes.retain(|recipe| recipe.id != id);
+                self.mark_dirty();
+            }
             UiAction::RelinkAsset(id) => {
                 tx.open_file(FileDialogOptions{title:"Reconnect the original data file".into(),..Default::default()},move|s:&mut AppState,result,_|match result{
                     Ok(Some(path))=>{

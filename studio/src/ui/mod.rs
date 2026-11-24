@@ -304,18 +304,32 @@ fn project_tree(state: &AppState) -> El {
             .child(separator().mt(18.))
             .child(strong("Recipes", 11., muted()).px(8.).pt(15.).pb(8.));
         for recipe in &state.model.recipes {
-            let id = recipe.id.clone();
+            let (apply, remove) = (recipe.id.clone(), recipe.id.clone());
             listing = listing.child(
-                button(
-                    &format!("recipe-{}", recipe.id),
-                    &recipe.name,
-                    false,
-                    true,
-                    move |s, tx| s.dispatch(UiAction::ApplyRecipe(id.clone()), tx),
-                )
-                .w_full()
-                .justify_start()
-                .help(&recipe.summary),
+                row()
+                    .gap(4.)
+                    .w_full()
+                    .items_center()
+                    .child(
+                        button(
+                            &format!("recipe-{}", recipe.id),
+                            &recipe.name,
+                            false,
+                            true,
+                            move |s, tx| s.dispatch(UiAction::ApplyRecipe(apply.clone()), tx),
+                        )
+                        .grow(1.)
+                        .min_w(0.)
+                        .justify_start()
+                        .help(&recipe.summary),
+                    )
+                    .child(icon_button(
+                        &format!("remove-recipe-{}", recipe.id),
+                        "Remove recipe",
+                        Icon::Remove,
+                        true,
+                        move |s, tx| s.dispatch(UiAction::RemoveRecipe(remove.clone()), tx),
+                    )),
             );
         }
     }
@@ -443,19 +457,30 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
                 .help(&asset.name),
         );
     }
-    if active && asset.operation.is_some() && !renaming {
-        let (id, current) = (asset.id.clone(), asset.name.clone());
+    let confirming = state.ui.confirm_remove.as_deref() == Some(asset.id.as_str());
+    if active && !renaming && !confirming {
+        if asset.operation.is_some() {
+            let (id, current) = (asset.id.clone(), asset.name.clone());
+            name = name.child(icon_button(
+                "rename-result",
+                "Rename result",
+                Icon::Edit,
+                true,
+                move |s, tx| {
+                    s.ui.rename = Some((id.clone(), rune::TextEdit::new(&current)));
+                    tx.focus("result-name", true);
+                },
+            ));
+        }
+        let id = asset.id.clone();
         name = name.child(icon_button(
-            "rename-result",
-            "Rename result",
-            Icon::Edit,
+            "remove-asset",
+            "Remove from project",
+            Icon::Remove,
             true,
-            move |s, tx| {
-                s.ui.rename = Some((id.clone(), rune::TextEdit::new(&current)));
-                tx.focus("result-name", true);
-            },
+            move |s, _| s.ui.confirm_remove = Some(id.clone()),
         ));
-    } else if selected && !renaming {
+    } else if selected && !renaming && !confirming {
         name = name.child(icon(Icon::Check, 13., forest()));
     }
     let subtitle = if asset.missing {
@@ -512,6 +537,29 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
             )
             .pl(if has_children { 47. } else { 22. }),
         );
+    if confirming {
+        return item.child(
+            row()
+                .gap(6.)
+                .pl(22.)
+                .child(
+                    action_button(
+                        "confirm-remove-asset",
+                        "Remove from project",
+                        true,
+                        true,
+                        UiAction::RemoveAsset(asset.id.clone()),
+                    )
+                    .h(30.),
+                )
+                .child(
+                    quiet_button("cancel-remove-asset", "Cancel", false, |s, _| {
+                        s.ui.confirm_remove = None
+                    })
+                    .h(30.),
+                ),
+        );
+    }
     if renaming {
         let valid = state
             .ui
