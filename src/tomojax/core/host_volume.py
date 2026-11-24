@@ -9,6 +9,7 @@ so a volume larger than memory never stays resident.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 import math
 import mmap
 import os
@@ -126,6 +127,10 @@ def scratch_directory(array: object) -> Path | None:
     return None if name is None else Path(name).parent
 
 
+# A consumer retaining multiple intermediate stacks may set a smaller resident limit.
+resident_limit = ContextVar[int | None]("host_array_resident_limit", default=None)
+
+
 class HostOutputs:
     """File-backed arrays owned by a producer until it returns them."""
 
@@ -170,7 +175,10 @@ def host_array(
     """
     available = host_available_memory_bytes()
     need = copies * math.prod(shape) * np.dtype(dtype).itemsize
-    large = available is not None and need > 0.5 * available
+    limit = resident_limit.get()
+    large = (available is not None and need > 0.5 * available) or (
+        limit is not None and need > limit
+    )
     return host_volume(shape, Path(tempfile.gettempdir()) if large else None, dtype=dtype)
 
 
@@ -317,7 +325,8 @@ def release(array: np.ndarray, start: int = 0, stop: int | None = None) -> None:
     process's resident memory. Other arrays are left alone.
     """
     mapping = getattr(array, "_mmap", None)
-    if mapping is None:
+    # Dropping private dirty pages of a copy-on-write input would undo its edits.
+    if mapping is None or getattr(array, "mode", None) == "c":
         return
     first = start - start % mmap.PAGESIZE
     mapping.madvise(mmap.MADV_DONTNEED, first, min(len(mapping), stop or len(mapping)) - first)
@@ -325,12 +334,15 @@ def release(array: np.ndarray, start: int = 0, stop: int | None = None) -> None:
 
 def release_planes(array: np.ndarray, z0: int, z1: int) -> None:
     """:func:`release` the z planes ``[z0, z1)`` of a C-ordered memmap."""
-    mapping = getattr(array, "_mmap", None)
-    if mapping is None or not array.flags.c_contiguous:
+    owner = mapped_storage(array)
+    if owner is None or not array.flags.c_contiguous:
+        return
+    mapping = getattr(owner, "_mmap", None)
+    if mapping is None:
         return
     planes = array[z0:z1, :, :]
     first = planes.ctypes.data - np.frombuffer(mapping, np.uint8).ctypes.data
-    release(array, first, first + planes.nbytes)
+    release(owner, first, first + planes.nbytes)
 
 
 def fill(target: Any, initial: Any, *, depth: int = 32) -> Any:

@@ -779,18 +779,29 @@ def predict_projections(
         Predicted line integrals in (view, v, u) order.
     """
     import jax.numpy as jnp
+    import numpy as np
 
-    from tomojax.recon._operators import matched_operators, project
+    from tomojax.recon._fbp_storage import first_device
+    from tomojax.recon._operators import matched_operators
+    from tomojax.recon._prediction import host_prediction
 
-    if isinstance(config, recon.FBPConfig | recon.FourierConfig):
-        return project(geometry, volume, grid=grid)
+    analytic = isinstance(config, recon.FBPConfig | recon.FourierConfig)
+    if isinstance(volume, np.ndarray):
+        with first_device(config):
+            return host_prediction(
+                geometry,
+                volume,
+                grid,
+                backend="auto" if analytic else config.backend,
+                interpolation=getattr(config, "interpolation", "linear"),
+            )
     _, split, build, _ = matched_operators(
         geometry,
         grid,
         "evaluate",
-        getattr(config, "devices", None),
+        None if analytic else getattr(config, "devices", None),
         interpolation=getattr(config, "interpolation", "linear"),
-        backend=config.backend,
+        backend="auto" if analytic else config.backend,
     )
     forward, _ = build()
     if split is None:

@@ -13,12 +13,10 @@ import numpy as np
 
 from ._engine import (
     Corrected,
-    Fields,
     apply_steps,
     correct_view_batches,
     exposure_scales,
     first_pass,
-    flat_fields,
     flat_weights,
     frame_batch_size,
     linear_limit_edge,
@@ -26,6 +24,7 @@ from ._engine import (
     ordered_steps,
     reject_nonfinite,
 )
+from ._fields import Fields, flat_fields
 from ._hardening import BeamHardening
 from ._records import Correction
 from ._steps import RadialDistortion, Step, Zingers, apply_radial_window, radial_coordinates

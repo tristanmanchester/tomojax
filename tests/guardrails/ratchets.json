@@ -42,8 +42,7 @@
     "mcp": 1
   },
   "long_files": {
-    "src/tomojax/core/cone.py": 826,
-    "src/tomojax/corrections/_engine.py": 802
+    "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 171,
@@ -57,20 +56,20 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 6050,
-    "_data": 2401,
+    "(modules)": 6108,
+    "_data": 2424,
     "alignment": 4672,
     "backends": 273,
-    "cli": 10174,
-    "core": 10104,
-    "corrections": 3260,
+    "cli": 10198,
+    "core": 10116,
+    "corrections": 3307,
     "datasets": 1069,
     "forward": 404,
     "geometry": 908,
     "io": 4078,
     "motion": 153,
     "nuisance": 232,
-    "recon": 14948,
+    "recon": 15028,
     "wire": 266
   },
   "cuda_kernels": 47,

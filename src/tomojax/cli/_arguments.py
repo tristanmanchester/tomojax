@@ -104,9 +104,7 @@ def read_reference(
             data = file.get(value.dataset)
             if not isinstance(data, h5py.Dataset):
                 raise InvalidParameter(name, f"no dataset {value.dataset} in {value.path}")
-            return (
-                np.broadcast_to(np.zeros((), data.dtype), data.shape) if shape_only else data[...]
-            )
+            return hdf5_values(data, name, shape_only=shape_only)
     if name == "projections":
         return tj.load(value.path).projections
     return saved_volume(Path(value.path), name)
@@ -150,3 +148,29 @@ def source(
             field, f"{ref.handle}.{ref.member} must be a {' or '.join(k.__name__ for k in kinds)}"
         )
     return item
+
+
+_SUPPORT_BYTES = 32 << 20
+
+
+def hdf5_values(data: h5py.Dataset, name: str, *, shape_only: bool) -> np.ndarray:
+    """Keep volume-sized support masks in seekable host storage."""
+    if shape_only:
+        return np.broadcast_to(np.zeros((), data.dtype), data.shape)
+    if name == "support" and data.nbytes > _SUPPORT_BYTES:
+        from tempfile import gettempdir
+
+        from tomojax import progress
+        from tomojax.core.host_volume import host_volume, release
+
+        mask = host_volume(data.shape, Path(gettempdir()), dtype=data.dtype)
+        plane = mask[0:1].nbytes
+        batch = max(1, _SUPPORT_BYTES // plane)
+        for start in range(0, len(mask), batch):
+            progress.check_cancelled()
+            stop = min(len(mask), start + batch)
+            selection = slice(start, stop)
+            data.read_direct(mask, selection, selection)
+            release(mask, start * plane, stop * plane)
+        return mask
+    return np.asarray(data[...])

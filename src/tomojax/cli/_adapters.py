@@ -300,9 +300,9 @@ class Admission:
 
     @prepare.register
     def evaluate(self, operation: op.Evaluate) -> Work:
-        from tomojax._evaluation import evaluate, local_motion, partition_layout, partitions
+        from tomojax._evaluation import local_motion, partition_layout, partitions, score_candidate
 
-        if self.validating and isinstance(operation.source, op.PathInput):
+        if isinstance(operation.source, op.PathInput):
             data, raw = projection_frames(Path(operation.source.path))
         else:
             data = source(operation.source, self.context, kinds=(tj.Scan, tj.Frames), raw=None)
@@ -320,29 +320,21 @@ class Admission:
             domain = (
                 partition_layout(data, kind, spec, steps, raw=raw)
                 if self.validating
-                else partitions(data, kind, spec, steps)
+                else partitions(data, kind, spec, steps, raw=raw)
             )
         except InvalidParameter:
             raise
         except ValueError as err:
             raise InvalidParameter("split", str(err)) from err
-        candidates = [
-            (
-                setting.__struct_config__.tag,
-                arguments(setting, self.context, layout_only=self.validating),
-                msgspec.to_builtins(setting),
-            )
-            for setting in operation.candidates
-        ]
-        reference = arguments(operation.reference, self.context, layout_only=self.validating)
+        reference = partial(arguments, operation.reference, self.context)
         train = domain[1].scan
-        for action, settings, _ in candidates:
-            if action == "align":
+        for setting in operation.candidates:
+            settings = arguments(setting, self.context, layout_only=True)
+            if isinstance(setting, op.AlignSettings):
                 local_motion(settings)
                 resolve_alignment(train, **settings)
-                resolve_reconstruction(train, metadata_only=self.validating, **reference)
-            else:
-                resolve_reconstruction(train, metadata_only=self.validating, **settings)
+                settings = reference(layout_only=True)
+            resolve_reconstruction(train, metadata_only=self.validating, **settings)
         self.details.update(
             split_fingerprint=domain[0].fingerprint,
             training_views=len(domain[1].indices),
@@ -351,7 +343,16 @@ class Admission:
         return lambda: p.Evaluation(
             domain[0].fingerprint,
             msgspec.to_builtins(operation.reference),
-            evaluate(domain, candidates, reference),
+            tuple(
+                score_candidate(
+                    domain,
+                    setting.__struct_config__.tag,
+                    arguments(setting, self.context),
+                    msgspec.to_builtins(setting),
+                    reference,
+                )
+                for setting in operation.candidates
+            ),
         )
 
     @prepare.register

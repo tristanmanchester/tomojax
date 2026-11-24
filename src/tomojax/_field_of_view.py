@@ -6,7 +6,7 @@ It is ``region=`` of :func:`tomojax.reconstruct` and :func:`tomojax.align`, and
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from typing import TYPE_CHECKING, Any, cast, get_args
 
@@ -133,11 +133,20 @@ def zero_outside_cylinder(
     in_place: bool = False,
 ) -> np.ndarray:
     """``volume`` with the voxels outside ``cylinder`` set to zero."""
-    mask = cylinder_support(grid, cylinder)
-    if in_place and isinstance(volume, np.ndarray):
-        volume[~mask] = 0
-        return volume
-    return np.where(mask, np.asarray(volume), 0)
+    from tomojax.core.host_volume import host_array, release_planes
+
+    outside = ~cylinder_support(replace(grid, nz=1), cylinder)[0]
+    out = (
+        volume
+        if in_place and isinstance(volume, np.ndarray) and volume.flags.writeable
+        else host_array(grid.shape, dtype=volume.dtype)
+    )
+    for z in range(grid.nz):
+        if out is not volume:
+            out[z] = volume[z]
+        out[z, outside] = 0
+        release_planes(out, z, z + 1)
+    return out
 
 
 def _window(grid: Grid, first: np.ndarray, last: np.ndarray) -> Grid:

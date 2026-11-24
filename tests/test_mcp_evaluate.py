@@ -92,10 +92,14 @@ def test_prediction_batches_match_single_batch_and_release_before_next(
 
     monkeypatch.setattr(api, "predict_projections", measured)
     monkeypatch.setattr(
-        "tomojax._evaluation._PREDICTION_BYTES", 32 * scan.detector.nv * scan.detector.nu * 4
+        "tomojax._evaluation._PREDICTION_BYTES", 7 * scan.detector.nv * scan.detector.nu * 4
     )
-    assert evaluate(scan, tmp_path, **settings).scores == reference.scores
-    assert len(batches) == 2 and max(batches) == 32
+    (actual,) = evaluate(scan, tmp_path, **settings).scores
+    (expected,) = reference.scores
+    assert actual["count"] == expected["count"]
+    assert actual["target_energy"] == expected["target_energy"]
+    assert actual["mse"] == pytest.approx(expected["mse"], rel=3e-6)
+    assert len(batches) > 2 and max(batches) == 7
     assert previous() is None
 
 
@@ -252,17 +256,16 @@ def test_orbit_boundaries_follow_trajectories_not_calibration_segments(tmp_path,
     scan = tj.simulate(size=8, n_views=24, geometry="cone", rotation=360).scan
     parts = tuple(scan.selected(np.arange(start, start + 6)).geometry for start in range(0, 24, 6))
     segmented = replace(scan, geometry=ConeSegments(parts, trajectory_lengths=(12, 12)))
-    selected = []
-    select = tj.Scan.selected
+    scored = []
+    score = Split.score
 
-    def record(scan, ids):
-        if scan is segmented:
-            selected.append(ids)
-        return select(scan, ids)
+    def record(split, prediction, target, *, views):
+        scored.append(views.start)
+        return score(split, prediction, target, views=views)
 
-    monkeypatch.setattr(tj.Scan, "selected", record)
+    monkeypatch.setattr(Split, "score", record)
     evaluate(segmented, tmp_path, split=op.Angular(75, 30, period=180))
-    assert selected[1].tolist() == [5, 6, 17, 18]
+    assert scored == [5, 6, 17, 18]
     with pytest.raises(tj.InvalidParameter, match="inside its acquisition segment"):
         evaluate(segmented, tmp_path, split=op.Angular(165, 30))
 
@@ -366,3 +369,214 @@ def run_limited_evaluation(directory):
     resource.setrlimit(resource.RLIMIT_DATA, (limit, resource.getrlimit(resource.RLIMIT_DATA)[1]))
     result = evaluate(scan, root, **args)
     assert result.scores == reference.scores
+
+
+@pytest.mark.parametrize(
+    ("geometry", "interpolation"),
+    [("cone", "linear"), ("lamino", "cubic"), ("parallel", "analytic")],
+)
+def test_host_volume_projection_only_transfers_slabs(monkeypatch, geometry, interpolation):
+    import jax.numpy as jnp
+
+    from tomojax.recon import CGLSConfig, FBPConfig
+
+    scan = tj.simulate(size=9, n_views=13, geometry=geometry).scan
+    volume = np.random.default_rng(87).normal(size=scan.grid.shape).astype(np.float32)
+    config = FBPConfig() if interpolation == "analytic" else CGLSConfig(interpolation=interpolation)
+    if interpolation == "analytic":
+        expected = tj.project(scan.geometry, jnp.asarray(volume), grid=scan.grid)
+
+        def forbid_volume_copy(*args, **kwargs):
+            pytest.fail("analytic scoring requested the projector's private volume layout")
+
+        monkeypatch.setattr(tj.Projector, "__call__", forbid_volume_copy)
+        resident = api.predict_projections(
+            scan.geometry, jnp.asarray(volume), grid=scan.grid, config=config
+        )
+        np.testing.assert_allclose(resident, expected, rtol=2e-5, atol=2e-5)
+    else:
+        expected = api.predict_projections(
+            scan.geometry, jnp.asarray(volume), grid=scan.grid, config=config
+        )
+    plane = volume[0].nbytes
+    monkeypatch.setattr("tomojax.recon._prediction._SLAB_BYTES", 2 * plane)
+    upload = jnp.asarray
+    transfers = []
+
+    def checked(array, *args, **kwargs):
+        if isinstance(array, np.ndarray) and np.shares_memory(array, volume):
+            transfers.append(array.nbytes)
+            assert array.nbytes <= 2 * plane
+        return upload(array, *args, **kwargs)
+
+    monkeypatch.setattr(jnp, "asarray", checked)
+    actual = api.predict_projections(scan.geometry, volume, grid=scan.grid, config=config)
+    assert sum(transfers) == volume.nbytes
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-5)
+
+
+@pytest.mark.parametrize("suffix", [".npz", ".nxs"])
+def test_saved_scan_streamed_into_budgeted_partitions(tmp_path, monkeypatch, suffix):
+    from zipfile import ZIP_DEFLATED, ZipFile
+
+    from tests.test_worker_adapters import count_inflated_bytes, trace_detector_reads
+
+    data = tj.simulate(size=8, n_views=24)
+    path = tmp_path / ("saved" + suffix)
+    # Also exercises archives containing an unused ground-truth volume.
+    tj.save(
+        path,
+        tj.Simulation(
+            replace(data.scan, projections=np.asfortranarray(data.scan.projections)), data.phantom
+        ),
+    )
+    corrections = (wire_options.BeamHardening(rates=(0.8, 1.2), weights=(0.5, 0.5)),)
+    expected = evaluate(data.scan, tmp_path, corrections=corrections)
+    monkeypatch.setattr("tomojax._evaluation._PARTITION_BYTES", data.scan.projections[0].nbytes)
+    if suffix == ".npz":
+        with (
+            ZipFile(path, "a", compression=ZIP_DEFLATED) as archive,
+            archive.open("aux.npy", "w") as stream,
+        ):
+            np.lib.format.write_array(stream, np.zeros(1 << 18, np.float32))
+        reads = count_inflated_bytes(monkeypatch, "aux.npy")
+    else:
+        reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
+    monkeypatch.setattr(tj, "load", lambda *args: pytest.fail("eager loader"))
+    corrected = tj.Scan.corrected
+
+    def check_storage(scan, *args, **kwargs):
+        assert isinstance(scan.projections, np.memmap)
+        result = corrected(scan, *args, **kwargs)
+        assert isinstance(result.projections, np.memmap)
+        return result
+
+    monkeypatch.setattr(tj.Scan, "corrected", check_storage)
+    cmd = op.Evaluate(op.PathInput(str(path)), (CGLS,), STRIDE, corrections, CGLS)
+    actual = admitted(op.Run(cmd), None, Stage(tmp_path), None)
+    assert actual.scores == expected.scores
+    assert reads and max(reads) <= (4096 if suffix == ".npz" else data.scan.projections[0].nbytes)
+
+
+def test_candidate_and_alignment_image_lifetimes(tmp_path, monkeypatch):
+    from tomojax import _evaluation
+
+    scan = tj.simulate(size=8, n_views=24).scan
+    volumes = []
+    fit = _evaluation.reconstruct_resolved
+
+    def reconstruct(plan):
+        assert all(ref() is None for ref in volumes)
+        result = fit(plan)
+        volumes.append(weakref.ref(result.volume))
+        return result
+
+    def align(scan, **kwargs):
+        assert all(ref() is None for ref in volumes)
+        image = np.zeros(scan.grid.shape, dtype=np.float32)
+        volumes.append(weakref.ref(image))
+        return tj.Alignment(scan, {"method": "joint", "calibration": {}}, image, scan.grid)
+
+    monkeypatch.setattr(_evaluation, "reconstruct_resolved", reconstruct)
+    monkeypatch.setattr(tj, "align", align)
+    evaluate(scan, tmp_path, candidates=(CGLS, op.AlignSettings(fit="center"), CGLS))
+    assert len(volumes) == 4 and all(ref() is None for ref in volumes)
+
+
+def test_raw_partitions_stage_counts_and_only_transfer_bracketing_flats(tmp_path, monkeypatch):
+    import jax
+
+    scan = tj.simulate(size=8, n_views=24).scan
+    positions = np.arange(24, dtype=float)
+    levels = 100 + positions[:, None, None] + np.zeros((24, 8, 8))
+    data = np.asarray(scan.projections) * 0.1
+    frames = tj.Frames(
+        levels * np.exp(-data),
+        scan.geometry,
+        flats=levels,
+        flat_positions=positions,
+        view_positions=positions,
+        linear_limit=(200, "camera"),
+    )
+    reference = evaluate(replace(scan, projections=data), tmp_path)
+    plane = data[0].nbytes
+    monkeypatch.setattr("tomojax._evaluation._PARTITION_BYTES", plane)
+    monkeypatch.setattr("tomojax.corrections._engine._SIMPLE_FRAME_BYTES", plane)
+    transfer = jax.device_put
+    corrected = tj.Frames.corrected
+
+    def check_transfer(array, *args, **kwargs):
+        if isinstance(array, np.ndarray) and array.ndim == 3:
+            assert len(array) <= 2
+        return transfer(array, *args, **kwargs)
+
+    def check_partition(frames, *steps):
+        assert isinstance(frames.counts, np.memmap)
+        result = corrected(frames, *steps)
+        assert isinstance(result.projections, np.memmap)
+        return result
+
+    def run(frames, *steps):
+        with monkeypatch.context() as transfers:
+            transfers.setattr(jax, "device_put", check_transfer)
+            return check_partition(frames, *steps)
+
+    monkeypatch.setattr(tj.Frames, "corrected", run)
+    actual = evaluate(frames, tmp_path)
+    assert actual.scores[0]["mse"] == pytest.approx(reference.scores[0]["mse"], rel=3e-6)
+
+
+def test_support_masks_are_staged_only_during_their_fit(tmp_path, monkeypatch):
+    import h5py
+
+    from tomojax.wire.arrays import Hdf5
+
+    scan = tj.simulate(size=8, n_views=24).scan
+    path = tmp_path / "masks.h5"
+    with h5py.File(path, "w") as f:
+        f["mask"] = np.ones(scan.grid.shape, dtype=bool)
+    setting = op.ReconstructSettings(
+        method="sirt", config=wire_options.SIRTConfig(support=Hdf5(str(path), "mask"), iterations=1)
+    )
+    monkeypatch.setattr("tomojax.cli._arguments._SUPPORT_BYTES", 64)
+    masks = []
+    read = h5py.Dataset.read_direct
+
+    def track(dataset, dest, source_sel, dest_sel):
+        assert isinstance(dest, np.memmap) and dest[dest_sel].nbytes <= 64
+        if not masks or masks[-1]() is not dest:
+            assert all(ref() is None for ref in masks)
+            masks.append(weakref.ref(dest))
+        return read(dataset, dest, source_sel, dest_sel)
+
+    monkeypatch.setattr(h5py.Dataset, "read_direct", track)
+    result = evaluate(scan, tmp_path, candidates=(setting, setting))
+    assert len(masks) == 2 and result.scores[0] == result.scores[1]
+
+
+def test_partitioning_preserves_copy_on_write_input(tmp_path):
+    scan = tj.simulate(size=8, n_views=24).scan
+    path = tmp_path / "source.npy"
+    np.save(path, np.zeros_like(scan.projections))
+    overlay = np.load(path, mmap_mode="c")
+    overlay[:] = scan.projections
+    expected = evaluate(scan, tmp_path)
+    result = evaluate(replace(scan, projections=np.asarray(overlay)), tmp_path)
+    assert result.scores == expected.scores
+    np.testing.assert_array_equal(overlay, scan.projections)
+
+
+def test_saved_matlab_evaluation_reads_only_selected_phase_views(tmp_path, monkeypatch):
+    from tests.test_psi_reader import _write_v73
+    from tests.test_worker_adapters import trace_detector_reads
+
+    path = tmp_path / "phase.mat"
+    pixels = np.random.default_rng(74).normal(size=(24, 5, 8))
+    _write_v73(path, pixels, np.arange(24) * 7.5, 1e-3)
+    expected = evaluate(tj.load(path), tmp_path)
+    reads = trace_detector_reads(monkeypatch, "/aligned_phase_sinogram")
+    cmd = op.Evaluate(op.PathInput(str(path)), (CGLS,), STRIDE, (), CGLS)
+    actual = admitted(op.Run(cmd), None, Stage(tmp_path), None)
+    assert actual.scores == expected.scores
+    assert max(reads) == pixels[0].nbytes
+    assert sum(reads) < pixels.nbytes

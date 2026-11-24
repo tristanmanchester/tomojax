@@ -7,13 +7,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from ._engine import (
-    Fields,
-    check_stack,
     correct_view_batches,
     exposure_scales,
-    flat_fields,
     flat_weights,
 )
+from ._fields import Fields, check_stack, flat_fields
 from ._illumination import measured_neighbours
 
 

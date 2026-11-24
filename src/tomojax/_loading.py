@@ -23,7 +23,12 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._data import calibration_issues, read_nxtomo, views_of
-from tomojax._frame_sources import acquisition_frames, line_integral_frames, tiff_frames
+from tomojax._frame_sources import (
+    acquisition_frames,
+    line_integral_frames,
+    selected_frames,
+    tiff_frames,
+)
 from tomojax._loading_geometry import frame_geometry
 from tomojax._parameters import AnnotationModule
 from tomojax._scan import (
@@ -610,23 +615,11 @@ class Frames:
             If the selection is empty, out of bounds or not ordered as required.
         """
         kept = view_indices(views, self.views)
-        at = np.arange(self.views) + 0.5 if self.view_positions is None else self.view_positions
         counts = self.counts
         counts = (
             counts.frames_at(kept) if hasattr(counts, "frames_at") else np.asarray(counts)[kept]
         )
-        return replace(
-            self,
-            counts=counts,
-            geometry=views_of(self.geometry, kept),
-            view_positions=np.asarray(at, np.float64)[kept],
-            exposure_times=(
-                None
-                if self.exposure_times is None
-                else np.broadcast_to(self.exposure_times, (self.views,))[kept]
-            ),
-            corrections=(*self.corrections, cut("selected", views=kept.tolist())),
-        )
+        return selected_frames(self, kept, counts)
 
 
 def corrected_data(

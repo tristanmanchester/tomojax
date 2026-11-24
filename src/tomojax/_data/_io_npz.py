@@ -16,6 +16,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.core.files import read_path, replaced_when_complete
+from tomojax.core.host_volume import release
 
 from ._frame_stack import FrameStack
 from ._io_helpers import sizes_of
@@ -138,6 +139,20 @@ class NpzFrames(FrameStack):
     @property
     def order(self):
         return "C" if self.strides[0] >= self.strides[-1] else "F"
+
+    def copy_views(self, ids, out):
+        """Inflate this partition once in file order, including Fortran-ordered members."""
+        flat = (out if self.order == "C" else out.T).flat
+        selected = self.selection((range(len(self)), range(self.rows), range(self.cols)))
+        written = 0
+        for _, target, values in self.chunks([(selected[0][ids], *selected[1:])]):
+            flat[target] = values
+            written += values.nbytes
+            # Fortran input scatters one decoder block over many mapped pages.
+            if written >= (8 << 20) or self.order == "F":
+                release(out)
+                written = 0
+        release(out)
 
     def read_windows(self, selections):
         outputs = [
@@ -290,24 +305,33 @@ def _load_npz_dataset(
     archive: ZipFile, *, mapped: dict[str, np.ndarray] | None = None
 ) -> LoadedDataset:
     out: LoadedDataset = dict(mapped or {})
+    known = {
+        *NXTomoMetadata.__dataclass_fields__,
+        _ANGLES_KEY,
+        _AXES_KEY,
+        "source",
+        "projections",
+        "disk_volume_axes_order",
+    }
     for member in archive.infolist():
         k = member.filename.removesuffix(".npy")
         if mapped is not None and k in mapped:
             continue
         with archive.open(member) as stream:
-            if k in ("projections", "volume"):
-                shape, _, dtype = array_header(stream)
-                if dtype.hasobject:
+            if k not in known:
+                if array_header(stream)[2].hasobject:
                     raise ValueError(f"{archive.filename}: object arrays are unsupported")
+                continue
+            if k == "projections" and progress.watching():
+                shape, _, _ = array_header(stream)
                 stream.seek(0)
-                if k == "projections" and progress.watching():
-                    views = shape[0] if shape else 0
-                    with progress.task("load", Path(str(archive.filename)).name, views, "views"):
-                        out[k] = np.lib.format.read_array(stream, allow_pickle=False)
-                        if active := progress.for_unit("views"):
-                            active.advance(views, {})
-                        progress.check_cancelled()
-                    continue
+                views = shape[0] if shape else 0
+                with progress.task("load", Path(str(archive.filename)).name, views, "views"):
+                    out[k] = np.lib.format.read_array(stream, allow_pickle=False)
+                    if active := progress.for_unit("views"):
+                        active.advance(views, {})
+                    progress.check_cancelled()
+                continue
             val = np.lib.format.read_array(stream, allow_pickle=False)
             out["angles" if k == _ANGLES_KEY else k] = (
                 json.loads(val.item()) if k in _JSON_FIELDS else val

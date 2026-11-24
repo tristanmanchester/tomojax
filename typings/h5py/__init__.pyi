@@ -38,6 +38,10 @@ class Dataset:
     shape: tuple[int, ...]
     chunks: tuple[int, ...] | None
     ndim: int
+    nbytes: int
+    def read_direct(
+        self, dest: np.ndarray, source_sel: object = ..., dest_sel: object = ...
+    ) -> None: ...
     size: int | None
     dtype: np.dtype[Any]
     def __getitem__(self, key: object) -> object: ...

@@ -631,7 +631,7 @@ def reconstruct_resolved(
     if plan.cylinder is not None:
         from tomojax._field_of_view import zero_outside_cylinder
 
-        volume = zero_outside_cylinder(volume, scan.grid, plan.cylinder, in_place=out is not None)
+        volume = zero_outside_cylinder(volume, scan.grid, plan.cylinder, in_place=True)
     return Reconstruction(volume, scan.geometry, method, {**info, **plan.info}, scan)
 
 
@@ -1044,7 +1044,7 @@ def align_resolved(
     if cylinder is not None and image is not None and result.grid is not None:
         from tomojax._field_of_view import zero_outside_cylinder
 
-        image = zero_outside_cylinder(image, result.grid, cylinder)
+        image = zero_outside_cylinder(image, result.grid, cylinder, in_place=True)
     # The fit's working grid belongs to its image; the scan keeps the caller's grid.
     corrected = with_grid(result.scan, scan.grid if grid is None else grid)
     info = {**result.info, **plan.info, "placement": actual.record(slabbed=slabbed)}

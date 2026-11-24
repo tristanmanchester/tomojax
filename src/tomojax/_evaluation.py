@@ -1,20 +1,20 @@
 """Fit and predict on disjoint acquisition partitions."""
 
 from dataclasses import asdict, dataclass, replace
-from pathlib import Path
-import tempfile
+import math
 
 import numpy as np
 
 import tomojax as tj
 from tomojax import progress
 from tomojax._data import views_of
+from tomojax._frame_sources import selected_frames
 from tomojax._planning import resolve_reconstruction
 from tomojax._scan import bind_step_geometry, frame_output_grid, selected_scan, with_grid
 from tomojax._smooth_alignment import transfer_alignment
 from tomojax._workflow import reconstruct_resolved
 from tomojax.core.geometry.cone import segments_of
-from tomojax.core.host_volume import host_volume, mapped_storage, release_planes
+from tomojax.core.host_volume import host_array, release_planes, resident_limit
 from tomojax.errors import InvalidParameter
 from tomojax.evaluation import Score, Split
 from tomojax.recon import api
@@ -76,18 +76,42 @@ def native_split(data, kind, settings):
     return split, segments
 
 
-def _select_views(data, ids):
-    if not isinstance(data, tj.Scan) or mapped_storage(data.projections) is None:
+_PARTITION_BYTES = 32 << 20
+
+
+def _select_views(data, ids, *, raw):
+    source = data.counts if isinstance(data, tj.Frames) else data.projections
+    if raw and hasattr(source, "frames_at") and not hasattr(source, "copy_views"):
         return data.selected(ids)
-    source = data.projections
-    target = host_volume(
-        (len(ids), *source.shape[1:]), Path(tempfile.gettempdir()), dtype=source.dtype
+    target = host_array((len(ids), *source.shape[1:]), dtype=source.dtype)
+    if hasattr(source, "copy_views"):
+        source.copy_views(ids, target)
+    else:
+        batch = max(1, _PARTITION_BYTES // (math.prod(source.shape[1:]) * source.dtype.itemsize))
+        for first in range(0, len(ids), batch):
+            progress.check_cancelled()
+            group = ids[first : first + batch]
+            if hasattr(source, "frames_at"):
+                target[first : first + len(group)] = source[group]
+            else:
+                for row, view in enumerate(group, first):
+                    target[row] = source[int(view)]
+            if isinstance(source, np.ndarray):
+                release_planes(source, int(group[0]), int(group[-1]) + 1)
+            release_planes(target, first, first + len(group))
+    if isinstance(data, tj.Scan):
+        return selected_scan(data, ids, target)
+    fields = selected_frames(data, ids, target)
+    if raw:
+        return fields
+    return tj.Scan(
+        target,
+        fields.geometry,
+        fields.name,
+        fields.corrections,
+        fields.source,
+        fields.view_positions,
     )
-    for row, view in enumerate(ids):
-        progress.check_cancelled()
-        target[row] = source[view]
-        release_planes(target, row, row + 1)
-    return selected_scan(data, ids, target)
 
 
 def partition_layout(data, kind, settings, steps, *, raw):
@@ -122,12 +146,12 @@ def partition_layout(data, kind, settings, steps, *, raw):
     return split, layout(split.train), layout(split.test)
 
 
-def partitions(data, kind, settings, steps):
+def partitions(data, kind, settings, steps, *, raw):
     split, segments = native_split(data, kind, settings)
 
     def partition(mask):
         ids = np.flatnonzero(mask)
-        selected = _select_views(data, ids)
+        selected = _select_views(data, ids, raw=raw)
         scan = (
             selected.corrected(*(step.retained(ids) for step in steps))
             if steps or isinstance(selected, tj.Frames)
@@ -139,7 +163,11 @@ def partitions(data, kind, settings, steps):
         ids = ids[kept]
         return Partition(scan, ids, segments[ids])
 
-    train_part, test_part = partition(split.train.ravel()), partition(split.test.ravel())
+    token = resident_limit.set(_PARTITION_BYTES)
+    try:
+        train_part, test_part = partition(split.train.ravel()), partition(split.test.ravel())
+    finally:
+        resident_limit.reset(token)
     for group in np.unique(test_part.segments):
         fit = train_part.indices[train_part.segments == group]
         held = test_part.indices[test_part.segments == group]
@@ -199,7 +227,8 @@ def fit_candidate(train, test, kind, settings, reference):
             "fit_levels": report.get("levels", []) if isinstance(report, dict) else [],
         }
         scan = with_grid(fit.scan, train.scan.grid)
-        settings = reference
+        del fit
+        settings = reference()
     plan = resolve_reconstruction(scan, **settings)
     recon = reconstruct_resolved(plan)
     return (
@@ -223,9 +252,9 @@ def prediction_score(split, test, held, recon, config):
     batch = max(1, _PREDICTION_BYTES // (detector.nv * detector.nu * np.dtype(np.float32).itemsize))
     views = len(test.indices)
     # XLA may round the same rays differently at a different vector width.
-    # Keep the native block and shift its tail as the one-shot forward does.
+    # Keep the native width when it fits, shifting the tail like the one-shot forward.
     native = prediction_block_views(held.geometry, config) if batch < views else None
-    batch = native or batch
+    batch = min(native, batch) if native else batch
     score = Score(0, 0, 0, 0)
     for first in range(0, views, batch):
         progress.check_cancelled()
@@ -243,23 +272,19 @@ def prediction_score(split, test, held, recon, config):
                 test.scan.projections[i : i + 1],
                 views=slice(k, k + 1),
             )
+        release_planes(test.scan.projections, first, stop)
         del predicted
     return score
 
 
-def evaluate(domain, candidates, reference):
+def score_candidate(domain, kind, settings, description, reference):
     split, train, test = domain
-    rows = []
-    for kind, settings, description in candidates:
-        recon, held, config, diagnostics = fit_candidate(train, test, kind, settings, reference)
-        score = prediction_score(split, test, held, recon, config)
-        rows.append(
-            dict(
-                candidate=description,
-                **asdict(score),
-                mse=score.mse,
-                relative_l2=score.relative_l2,
-                diagnostic=diagnostics,
-            )
-        )
-    return tuple(rows)
+    recon, held, config, diagnostics = fit_candidate(train, test, kind, settings, reference)
+    score = prediction_score(split, test, held, recon, config)
+    return dict(
+        candidate=description,
+        **asdict(score),
+        mse=score.mse,
+        relative_l2=score.relative_l2,
+        diagnostic=diagnostics,
+    )

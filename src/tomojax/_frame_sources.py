@@ -107,3 +107,23 @@ def tiff_frames(
         record, pixel_size=pixel_size, grid=grid, geometry=geometry, declared=declared
     )
     return Frames(counts, resolved, source=record)
+
+
+def selected_frames(frames: Frames, kept: np.ndarray, counts: Any) -> Frames:
+    """Attach selected sample storage while preserving calibration coordinates."""
+    from tomojax._data import views_of
+    from tomojax._scan import cut
+
+    at = np.arange(frames.views) + 0.5 if frames.view_positions is None else frames.view_positions
+    return replace(
+        frames,
+        counts=counts,
+        geometry=views_of(frames.geometry, kept),
+        view_positions=np.asarray(at, np.float64)[kept],
+        exposure_times=(
+            None
+            if frames.exposure_times is None
+            else np.broadcast_to(frames.exposure_times, (frames.views,))[kept]
+        ),
+        corrections=(*frames.corrections, cut("selected", views=kept.tolist())),
+    )

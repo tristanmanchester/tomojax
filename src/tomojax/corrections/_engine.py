@@ -16,7 +16,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import closing, nullcontext
 from functools import partial
 import logging
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -24,10 +24,11 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.core.array_ops import check_binning, mean_detector_pixels
-from tomojax.core.host_volume import discard_failed_outputs
+from tomojax.core.host_volume import discard_failed_outputs, release_planes
 from tomojax.core.registration import correction_images
 
-from ._batches import HostCopies, correction_group, view_batches
+from ._batches import HostCopies, copy_projections, correction_group, view_batches
+from ._fields import Fields, batch_fields, flat_fields
 from ._illumination import interpolate_unmeasured
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
@@ -309,7 +310,7 @@ def correct_projections(
     views_per_batch = validated_views_per_batch(views_per_batch)
     ordered = ordered_steps(steps)
     check_scan_steps(steps)
-    out = np.array(projections, np.float32, copy=True)
+    out = copy_projections(projections, steps)
     out, kept, records = apply_steps(out, [s for _, s in ordered], views_per_batch)
     if steps and progress.previewing():
         with progress.task("correction", "central sinograms", None, ""):
@@ -344,142 +345,6 @@ def ordered_steps(steps: Sequence[Step]) -> list[tuple[str, Step]]:
         if step.whole_rows and step.domain == "counts":
             raise ValueError("whole-row corrections act on transmission or line integrals")
     return [(d, s) for d in DOMAINS for s in steps if s.domain == d]
-
-
-class Fields:
-    """Dark-subtracted illumination sets, their positions and the additive dark field.
-
-    ``flats`` has shape ``(sets, rows, columns)`` in counts, or counts per second
-    when exposures are supplied. ``usable`` marks pixels with measured illumination.
-    """
-
-    def __init__(
-        self, flats: np.ndarray, positions: np.ndarray, dark: np.ndarray, usable: np.ndarray
-    ) -> None:
-        self.flats, self.positions, self.dark, self.usable = flats, positions, dark, usable
-
-    def window(self, rows: slice) -> Fields:
-        """Select detector rows after resolving illumination on the whole acquisition."""
-        return Fields(self.flats[:, rows], self.positions, self.dark[rows], self.usable[rows])
-
-
-def flat_fields(
-    flats: Any,
-    positions: np.ndarray | None,
-    darks: Any,
-    white_level: float | None,
-    shape: tuple[int, int],
-    epsilon: float,
-    *,
-    flat_scales: np.ndarray | None = None,
-    dark_source: str | None = None,
-    require_light: bool = True,
-) -> tuple[Fields, tuple[Correction, ...]]:
-    """The mean flat of each set, the mean dark, and the record of them.
-
-    A pixel is usable where the flat exceeds the dark by at least ``epsilon`` and
-    three standard errors of the two calibration means. Elsewhere the ratio is
-    noise: ``first_pass`` interpolates interior gaps along each detector row and
-    takes pixels outside its measured span as no absorption.
-    At least one pixel must have measured illumination: without one, neither
-    a transmission ratio nor an interpolation is determined by the calibration.
-    An entirely unresolved calibration raises an input error, not an empty scan.
-    """
-    if darks is None and flats is not None:
-        LOG.warning("no dark fields: correcting with a dark field of zero")
-    zero = np.zeros(shape)
-    dark, dark_variance = (zero, zero) if darks is None else _moments(darks, shape, "darks")
-    dark_frames = 0 if darks is None or dark_source is not None else len(darks)
-    if flats is None:
-        if white_level is None:
-            raise ValueError(
-                "no flat fields: pass flats=... (frames of the beam without the object, or "
-                "the counts of an unattenuated pixel)"
-            )
-        level = positive_finite(white_level, "white_level")
-        stack, variance, sets = np.full((1, *shape), level), np.zeros((1, *shape)), np.zeros(1)
-        settings: dict[str, Any] = {"white_level": level, "darks": dark_frames}
-    else:
-        check_stack(flats, shape, "flats")
-        where = np.zeros(len(flats)) if positions is None else np.asarray(positions, np.float64)
-        if where.shape != (len(flats),) or not np.isfinite(where).all():
-            raise ValueError(
-                f"flat_positions needs one finite position for each of the {len(flats)} flats"
-            )
-        sets = np.unique(where)
-        moments = [
-            _moments(
-                flats,
-                shape,
-                "flats",
-                None if len(sets) == 1 else np.flatnonzero(where == p),
-                scales=flat_scales,
-                offset=dark if flat_scales is not None else None,
-            )
-            for p in sets
-        ]
-        stack, variance = (np.stack(part) for part in zip(*moments, strict=True))
-        settings = {"flats": len(flats), "darks": dark_frames, "flat_sets": len(sets)}
-        if flat_scales is not None:
-            settings["flat_exposure_times"] = (1 / flat_scales).tolist()
-        if len(sets) > 1:
-            settings["flat_positions"] = [float(p) for p in sets]
-    if dark_source is not None:
-        settings["dark_removed_by"] = dark_source
-    light = stack - dark if flat_scales is None else stack
-    dark_scale = (
-        np.ones(len(sets))
-        if flat_scales is None
-        else np.asarray([np.mean(flat_scales[where == p]) for p in sets])
-    )
-    floor = np.maximum(
-        epsilon, 3 * np.sqrt(variance + dark_variance * dark_scale[:, None, None] ** 2)
-    )
-    usable = cast("np.ndarray", (np.isfinite(light) & (light > floor)).all(axis=0))
-    if require_light and not np.any(usable):
-        raise ValueError(
-            "No detector pixels have resolved illumination above the dark field: "
-            "supply illuminated flats=... and matching darks=... (CLI --flats/--darks), "
-            "or include an illuminated detector region in the crop"
-        )
-    found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(~usable))}
-    fields = Fields(light.astype(np.float32), sets, dark.astype(np.float32), usable)
-    return fields, (Correction("flat_dark", settings, found),)
-
-
-def check_stack(frames: Any, shape: tuple[int, int], name: str) -> None:
-    if len(frames.shape) != 3 or tuple(frames.shape[1:]) != shape or not len(frames):
-        raise ValueError(
-            f"{name} are {tuple(frames.shape)}; a nonempty stack of frames of {shape} is needed"
-        )
-
-
-def _moments(
-    frames: Any,
-    shape: tuple[int, int],
-    name: str,
-    indices: np.ndarray | None = None,
-    *,
-    scales: np.ndarray | None = None,
-    offset: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """The mean of frames and the variance of that mean, in float64 over bounded batches."""
-    check_stack(frames, shape, name)
-    count = len(frames) if indices is None else len(indices)
-    batch = max(1, (32 << 20) // (8 * shape[0] * shape[1]))
-    total, squares = np.zeros(shape), np.zeros(shape)
-    for start in range(0, count, batch):
-        progress.check_cancelled()
-        which = slice(start, start + batch) if indices is None else indices[start : start + batch]
-        values = np.asarray(frames[which], np.float64)
-        if scales is not None:
-            values = (values - (0 if offset is None else offset)) * scales[which, None, None]
-        total += values.sum(axis=0)
-        squares += np.einsum("ijk,ijk->jk", values, values)
-    mean = total / count
-    if count == 1:
-        return mean, np.zeros(shape)
-    return mean, np.maximum(0.0, squares - total * mean) / (count * (count - 1))
 
 
 def exposure_scales(
@@ -606,7 +471,8 @@ def correct_view_batches(
     **settings: Any,
 ) -> np.ndarray:
     """Run ``first_pass`` over batches of views into ``out``; the tally of what it found."""
-    flats, dark, usable = (jax.device_put(a) for a in (fields.flats, fields.dark, fields.usable))
+    dark, usable = jax.device_put(fields.dark), jax.device_put(fields.usable)
+    resident = jax.device_put(fields.flats) if fields.flats.nbytes <= _SIMPLE_FRAME_BYTES else None
     lo, hi, t, exposure_scale = interpolation
     tally = np.zeros(3, np.int64)  # non-positive transmission, non-finite, above linear limit
     fill_gaps = not bool(fields.usable.all())
@@ -614,6 +480,7 @@ def correct_view_batches(
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
         progress.check_cancelled()
         out[start:stop] = copies.result(result)
+        release_planes(out, start, stop)
         tally[:] += [int(b) for b in bad]
         reject_nonfinite(int(bad[1]) if bad else 0, start, stop)
         progress.step("view batches")
@@ -639,8 +506,9 @@ def correct_view_batches(
                 load.advance(stop, {})
             progress.check_cancelled()
             with progress.preparing("correct view batch", start):
+                flats, a, b = batch_fields(fields, resident, lo[start:stop], hi[start:stop])
                 done = first_pass(
-                    jnp.asarray(raw), lo[start:stop], hi[start:stop], t[start:stop],
+                    jnp.asarray(raw), a, b, t[start:stop],
                     exposure_scale[start:stop], flats, dark, usable,
                     fill_gaps=fill_gaps,
                     **settings,
@@ -661,9 +529,14 @@ def counts_size(counts: Any) -> int:
 
 def linear_limit_edge(limit: float, fields: Fields, view_scales: np.ndarray) -> float:
     """The median line integral of a count at ``limit``: -log((limit - dark) x scale / flat)."""
-    light = fields.flats[:, fields.usable].astype(np.float64)
-    ratio = (limit - fields.dark[fields.usable]) * float(np.median(view_scales)) / light
-    return float(np.median(-np.log(np.maximum(ratio, np.finfo(np.float64).tiny))))
+    from tomojax.core.host_volume import host_array
+
+    values = host_array((len(fields.flats), int(fields.usable.sum())), dtype=np.float64)
+    numerator = (limit - fields.dark[fields.usable]) * float(np.median(view_scales))
+    for row, flat in zip(values, fields.flats, strict=True):
+        ratio = numerator / flat[fields.usable].astype(np.float64)
+        row[:] = -np.log(np.maximum(ratio, np.finfo(np.float64).tiny))
+    return float(np.median(values.reshape(-1), overwrite_input=True))
 
 
 def report_linear_limit(
@@ -767,7 +640,8 @@ def _correct_row_slabs(
     views, rows, cols = counts.shape
     factor = settings["factor"]
     out = allocate((views, rows // factor, cols // factor))
-    flats, dark, usable = (jax.device_put(a) for a in (fields.flats, fields.dark, fields.usable))
+    dark, usable = jax.device_put(fields.dark), jax.device_put(fields.usable)
+    flats = fields.flats
     lo, hi, t, exposure_scale = (jax.device_put(q) for q in interpolation)
     tally = np.zeros(3, np.int64)
 
@@ -925,6 +799,7 @@ def apply_steps(
                     out[v0 : v0 + batch] = np.asarray(
                         _apply(run, jnp.asarray(out[v0 : v0 + batch]))
                     )
+                    release_planes(out, v0, v0 + batch)
                     progress.step("view batches")
             records.extend(s.record() for s in run)
             i = j

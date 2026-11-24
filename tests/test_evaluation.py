@@ -118,3 +118,21 @@ def test_interleaved_split_holds_out_exactly_the_offset_views(offset):
     held = np.flatnonzero(np.broadcast_to(split.test, (24, 2, 31))[:, 0, 0])
     np.testing.assert_array_equal(held, np.arange(offset, 24, 4))
     assert not np.broadcast_to(split.train, (24, 2, 31))[held].any()
+
+
+def test_high_resolution_view_scores_in_bounded_pixel_blocks(monkeypatch):
+    split = Split.interleaved((2, 127, 129), stride=2)
+    target = np.random.default_rng(12).normal(size=(1, 127, 129)).astype(np.float32)
+    prediction = target * 1.1
+    monkeypatch.setattr("tomojax.evaluation._SCORE_PIXELS", 79)
+    check = np.isfinite
+
+    def bounded(values):
+        assert values.size <= 79
+        return check(values)
+
+    with monkeypatch.context() as m:
+        m.setattr(np, "isfinite", bounded)
+        score = split.score(prediction, target, views=slice(0, 1))
+    residual = prediction.astype(float) - target
+    assert score.squared_error == pytest.approx(np.sum(residual**2), rel=1e-12)
