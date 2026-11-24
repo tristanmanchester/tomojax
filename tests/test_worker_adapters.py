@@ -875,8 +875,25 @@ def test_saved_volume_axes_in_operators_and_roi(worker, tmp_path, axes):
     )
 
 
+def read_frames(stack, shape, roi, stride, tmp_path):
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import execution, operations
+    from tomojax.wire import arrays
+
+    ref = arrays.Member("frames", "counts")
+    axes = tuple(arrays.Axis(k, "array", "index", arrays.Uniform(0, 1)) for k in ("view", "v", "u"))
+    meta = arrays.Array(ref, shape, stack.dtype.str, axes, "counts", "counts")
+    stage = Stage(tmp_path)
+    admitted(
+        operations.Read(source=ref, roi=roi, stride=stride),
+        execution.RegisteredArray(stack, meta),
+        stage,
+        ref,
+    )
+    return np.load(stage.private)
+
+
 def test_strided_lazy_frames_read_only_sampled_hdf5_pixels(tmp_path, monkeypatch):
-    from tomojax.cli._browse import pixels  # check-public-imports: allow-private
     from tomojax.io.api import locate_frames
 
     path = tmp_path / "frames.h5"
@@ -901,17 +918,14 @@ def test_strided_lazy_frames_read_only_sampled_hdf5_pixels(tmp_path, monkeypatch
 
     monkeypatch.setattr(h5py.Dataset, "read_direct", record_direct)
     monkeypatch.setattr(h5py.Dataset, "__getitem__", record)
-    ranges = (range(7), range(3, 59, 8), range(2, 59, 4))
-    got = pixels(stack, ranges)
+    got = read_frames(stack, stack.shape, ((0, 7), (3, 59), (2, 59)), (1, 8, 4), tmp_path)
     np.testing.assert_array_equal(got, data[1:15:2, 5:61:8, 3:60:4])
     assert sum(reads) == got.size
 
 
-def test_strided_window_reader_bounds_unsampled_work(monkeypatch):
-    from tomojax.cli import _browse as browse  # check-public-imports: allow-private
-
-    data = np.arange(12 * 71 * 97, dtype=np.uint16).reshape(12, 71, 97)
-    budget = 1024
+def test_strided_window_reader_bounds_unsampled_work(tmp_path):
+    data = np.arange(12 * 711 * 2097, dtype=np.uint16).reshape(12, 711, 2097)
+    budget = 16 << 20
 
     class Frames:
         dtype = data.dtype
@@ -925,6 +939,5 @@ def test_strided_window_reader_bounds_unsampled_work(monkeypatch):
 
             return Window()
 
-    monkeypatch.setattr(browse, "READ_BYTES", budget)
-    result = browse.pixels(Frames(), (range(1, 12, 2), range(1, 71, 8), range(3, 97, 5)))
+    result = read_frames(Frames(), data.shape, ((1, 12), (1, 711), (3, 2097)), (2, 8, 5), tmp_path)
     np.testing.assert_array_equal(result, data[1::2, 1::8, 3::5])

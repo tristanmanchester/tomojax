@@ -37,7 +37,7 @@ def main() -> int:
     """Start the production worker on private descriptors."""
     args = build_parser().parse_args()
     with protocol_pipes() as (reader, writer):
-        from tomojax.cli._transport import run
+        from tomojax.cli.transport import run
 
         if args.commit == "supervisor":
             return run(reader, writer, external=True)

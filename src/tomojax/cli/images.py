@@ -12,6 +12,8 @@ from PIL import Image, ImageDraw
 
 @dataclass(frozen=True)
 class Panel:
+    """A labelled 2D image with its pixel aspect ratio, physical unit and domain."""
+
     title: str
     pixels: np.ndarray
     labels: tuple[str, ...]
@@ -26,6 +28,7 @@ def label_number(value: float) -> str:
 
 
 def limits(panels: list[Panel]) -> tuple[float, float]:
+    """Choose shared intensity limits from the finite pixels of all panels."""
     finite = np.concatenate([p.pixels[np.isfinite(p.pixels)] for p in panels])
     if not finite.size:
         return 0, 1
@@ -36,6 +39,7 @@ def limits(panels: list[Panel]) -> tuple[float, float]:
 
 
 def png(image: Image.Image) -> bytes:
+    """Encode an image as PNG bytes for display."""
     stream = BytesIO()
     image.save(stream, "PNG")
     return stream.getvalue()

@@ -157,7 +157,7 @@ def test_progress_monotonicity_stage_labels_and_heartbeat(monkeypatch):
 
 
 def test_comparison_panels_use_one_pixel_mapping_and_label_each_plane():
-    from tomojax.cli._images import Panel, limits, montage  # check-public-imports: allow-private
+    from tomojax.cli.images import Panel, limits, montage
 
     panels = [
         Panel("Before", np.array([[0.0, 1.0], [0.0, 1.0]]), ("z[1] = 2 mm",), "count"),
@@ -173,7 +173,7 @@ def test_comparison_panels_use_one_pixel_mapping_and_label_each_plane():
 
 
 def test_roundoff_in_panel_labels():
-    from tomojax.cli._images import label_number  # check-public-imports: allow-private
+    from tomojax.cli.images import label_number
 
     assert label_number(-3.5527e-15) == "0"
     assert label_number(-0.000025) == "-2.5e-05"

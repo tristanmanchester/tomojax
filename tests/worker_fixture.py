@@ -14,7 +14,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.cli import envelope as e, execution as ex, operations as op, products as p
-from tomojax.cli._transport import serve  # check-public-imports: allow-private
+from tomojax.cli.transport import serve
 from tomojax.errors import InvalidParameter
 from tomojax.wire import arrays as a, progress as w
 

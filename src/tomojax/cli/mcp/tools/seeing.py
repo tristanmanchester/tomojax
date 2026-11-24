@@ -13,7 +13,7 @@ from mcp_types import ImageContent, TextContent
 import numpy as np
 
 from tomojax.cli import operations as op
-from tomojax.cli._images import Panel, label_number, limits, montage, pose_plot
+from tomojax.cli.images import Panel, label_number, limits, montage, pose_plot
 from tomojax.cli.mcp.tools.references import resolve
 
 if TYPE_CHECKING:

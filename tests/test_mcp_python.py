@@ -35,7 +35,7 @@ def test_import_output_and_private_protocol():
 import os,sys
 class Reporter:
     def find_spec(self, fullname, *args):
-        if fullname == 'tomojax.cli._transport':
+        if fullname == 'tomojax.cli.transport':
             os.write(1,b'native import log')
 sys.meta_path.insert(0,Reporter())
 from tomojax.cli.main import main

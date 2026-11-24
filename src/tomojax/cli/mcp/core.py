@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 PACKAGE = "tomojax.cli.mcp.tools"
 # Presentation modules the tools import. Reload re-imports them with the tool
 # package; wire and worker modules change only with a worker restart.
-RELOADED = (PACKAGE, "tomojax.cli._images", "tomojax.cli._previews", "tomojax.cli.mcp.guidance")
+RELOADED = (PACKAGE, "tomojax.cli.images", "tomojax.cli._previews", "tomojax.cli.mcp.guidance")
 
 
 def _reloaded(name: str) -> bool:

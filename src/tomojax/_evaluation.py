@@ -12,7 +12,7 @@ from tomojax._workflow import reconstruct_resolved
 from tomojax.core.geometry.cone import segments_of
 from tomojax.errors import InvalidParameter
 from tomojax.evaluation import Score, Split
-from tomojax.recon.api import predict_projections
+from tomojax.recon import api
 
 
 @dataclass
@@ -168,7 +168,7 @@ def evaluate(domain, candidates, reference):
     for kind, settings, description in candidates:
         recon, held, config, diagnostics = fit_candidate(train, test, kind, settings, reference)
         predicted = np.asarray(
-            predict_projections(held.geometry, recon.volume, grid=recon.grid, config=config)
+            api.predict_projections(held.geometry, recon.volume, grid=recon.grid, config=config)
         )
         score: Score = sum(
             (

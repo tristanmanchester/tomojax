@@ -29,7 +29,7 @@ class _Core:
 
 
 def test_reload_reimports_the_panel_renderer_with_the_tools():
-    before = importlib.import_module("tomojax.cli._images")
+    before = importlib.import_module("tomojax.cli.images")
 
     def install() -> list[str]:
         importlib.import_module("tomojax.cli.mcp.tools")
@@ -37,24 +37,24 @@ def test_reload_reimports_the_panel_renderer_with_the_tools():
 
     fake = _Core(install)
     asyncio.run(Core.reload(fake))  # pyright: ignore[reportArgumentType]
-    after = sys.modules["tomojax.cli._images"]
+    after = sys.modules["tomojax.cli.images"]
     assert after is not before
-    assert vars(tomojax.cli)["_images"] is after
+    assert vars(tomojax.cli)["images"] is after
     assert len(fake.bus.events) == 1
 
 
 def test_failed_reload_restores_every_module_it_removed():
-    before = importlib.import_module("tomojax.cli._images")
+    before = importlib.import_module("tomojax.cli.images")
     tools = importlib.import_module("tomojax.cli.mcp.tools")
 
     def install() -> list[str]:
-        importlib.import_module("tomojax.cli._images")
+        importlib.import_module("tomojax.cli.images")
         raise ImportError("broken checkout")
 
     fake = _Core(install)
     with pytest.raises(ImportError, match="broken checkout"):
         asyncio.run(Core.reload(fake))  # pyright: ignore[reportArgumentType]
-    assert sys.modules["tomojax.cli._images"] is before
-    assert vars(tomojax.cli)["_images"] is before
+    assert sys.modules["tomojax.cli.images"] is before
+    assert vars(tomojax.cli)["images"] is before
     assert sys.modules["tomojax.cli.mcp.tools"] is tools
     assert not fake.bus.events

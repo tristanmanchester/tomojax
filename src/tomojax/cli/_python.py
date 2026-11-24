@@ -20,8 +20,8 @@ from tomojax.cli import execution as ex, products as p
 from tomojax.cli._browse import indexed
 from tomojax.cli._capture import capture
 from tomojax.cli._handles import handle, stage_array
-from tomojax.cli._images import Panel, limits, montage
 from tomojax.cli._options import ancestor_paths
+from tomojax.cli.images import Panel, limits, montage
 from tomojax.cli.mcp.ledger import reserve
 from tomojax.wire.arrays import Member
 from tomojax.wire.progress import Info
