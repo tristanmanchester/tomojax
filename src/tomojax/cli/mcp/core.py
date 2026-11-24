@@ -30,6 +30,15 @@ if TYPE_CHECKING:
     from tomojax.cli.mcp.supervisor import Object
 
 PACKAGE = "tomojax.cli.mcp.tools"
+# Presentation modules the tools import. Reload re-imports them with the tool
+# package; wire and worker modules change only with a worker restart.
+RELOADED = (PACKAGE, "tomojax.cli._images", "tomojax.cli._previews", "tomojax.cli.mcp.guidance")
+
+
+def _reloaded(name: str) -> bool:
+    return any(name == root or name.startswith(root + ".") for root in RELOADED)
+
+
 INSTRUCTIONS = """Use TomoJAX for parallel-beam CT, cone-beam CT and laminography.
 Start with inspect to identify an acquisition and open to load it. Use describe for
 parameter choices and units. status lists devices, current jobs and live data.
@@ -124,9 +133,7 @@ class Core:
 
     async def reload(self) -> Object:
         """Publish a fresh registry on the existing subscription bus."""
-        previous = {
-            k: v for k, v in sys.modules.items() if k == PACKAGE or k.startswith(PACKAGE + ".")
-        }
+        previous = {k: v for k, v in sys.modules.items() if _reloaded(k)}
         # A fresh bytecode cache ensures even same-size edits in one second
         # load from source. This synchronous import does not modify the checkout.
         with tempfile.TemporaryDirectory() as cache:
@@ -139,10 +146,13 @@ class Core:
                 names = self.install()
             except Exception:
                 for name in tuple(sys.modules):
-                    if name == PACKAGE or name.startswith(PACKAGE + "."):
+                    if _reloaded(name):
                         del sys.modules[name]
                 sys.modules.update(previous)
-                vars(sys.modules["tomojax.cli.mcp"])["tools"] = previous[PACKAGE]
+                for name, module in previous.items():
+                    parent, _, child = name.rpartition(".")
+                    if parent in sys.modules:
+                        setattr(sys.modules[parent], child, module)
                 raise
             finally:
                 sys.pycache_prefix = old_cache
