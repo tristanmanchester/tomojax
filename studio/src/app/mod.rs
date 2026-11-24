@@ -769,21 +769,9 @@ impl AppState {
             let mut asset = Asset::input(path.clone(), false);
             if self.ui.import_copy {
                 let inputs = project.root.join("inputs").join(&asset.id);
-                let file_name = path.file_name().unwrap_or_default().to_owned();
-                let (source, target, opened) = match path.parent() {
-                    Some(folder) if path.is_file() && !holds_whole_acquisition(&path) => {
-                        let copy = inputs.join(folder.file_name().unwrap_or_default());
-                        let opened = copy.join(&file_name);
-                        (folder.to_owned(), copy, opened)
-                    }
-                    _ => {
-                        let copy = inputs.join(&file_name);
-                        (path.clone(), copy.clone(), copy)
-                    }
-                };
                 self.copying += 1;
                 self.spawn_local(None, move |cancelled| {
-                    let result = stage_copy_input(&source, &target, &cancelled).map(|()| opened);
+                    let result = copy_acquisition(&path, &inputs, &cancelled);
                     LocalEvent::Copied { asset, result }
                 });
             } else {
@@ -897,16 +885,71 @@ impl AppState {
     }
 }
 
-/// Whether a chosen file holds its whole acquisition. Parameter and header files
-/// (Nikon `.xtekct`, SkyScan `.log`, ESRF `.edf`/`.par`) are read together with the
-/// frames beside them, so copying one into a project copies its folder.
-fn holds_whole_acquisition(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-        matches!(
-            e.to_ascii_lowercase().as_str(),
-            "nx" | "nxs" | "h5" | "hdf" | "hdf5" | "npy" | "tif" | "tiff" | "txrm" | "txm" | "mat"
-        )
-    })
+/// Copies everything a chosen input is read from into `inputs` and returns the
+/// copy to open. A header file brings its folder; an HDF5 file brings the files
+/// it links to, at the same relative paths.
+fn copy_acquisition(
+    path: &Path,
+    inputs: &Path,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<PathBuf, String> {
+    let name = path.file_name().unwrap_or_default();
+    let folder = path.parent().filter(|_| path.is_file());
+    let Some(folder) = folder else {
+        let copy = inputs.join(name);
+        return stage_copy_input(path, &copy, cancelled).map(|()| copy);
+    };
+    if !project::holds_whole_acquisition(path) {
+        let copy = inputs.join(folder.file_name().unwrap_or_default());
+        return stage_copy_input(folder, &copy, cancelled).map(|()| copy.join(name));
+    }
+    // Links outside the file's folder are left to resolve to the originals.
+    let linked: Vec<PathBuf> = crate::metadata::linked_files(path)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|file| Some(file.strip_prefix(folder).ok()?.to_owned()))
+        .collect();
+    if linked.is_empty() {
+        let copy = inputs.join(name);
+        return stage_copy_input(path, &copy, cancelled).map(|()| copy);
+    }
+    let copy = inputs.join(folder.file_name().unwrap_or_default());
+    let members: Vec<PathBuf> = std::iter::once(PathBuf::from(name)).chain(linked).collect();
+    stage_copy_members(folder, &members, &copy, cancelled).map(|()| copy.join(name))
+}
+
+/// Copies `members` (relative to `folder`) into a new `destination` folder.
+fn stage_copy_members(
+    folder: &Path,
+    members: &[PathBuf],
+    destination: &Path,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<(), String> {
+    check_cancel(cancelled)?;
+    let before = members
+        .iter()
+        .map(|member| project::Fingerprint::read(&folder.join(member)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let staging = destination.with_extension(format!("{}-partial", project::new_id("copy")));
+    let result = members
+        .iter()
+        .try_for_each(|member| copy_input(&folder.join(member), &staging.join(member), cancelled))
+        .and_then(|()| {
+            for (member, before) in members.iter().zip(&before) {
+                if project::Fingerprint::read(&folder.join(member))? != *before {
+                    return Err("The acquisition changed while it was being copied. Import it again after acquisition has finished.".into());
+                }
+            }
+            check_cancel(cancelled)?;
+            if destination.exists() {
+                return Err("The copy destination already exists".into());
+            }
+            std::fs::rename(&staging, destination).map_err(|e| e.to_string())
+        });
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    result
 }
 
 fn stage_copy_input(

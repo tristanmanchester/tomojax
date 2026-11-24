@@ -122,6 +122,45 @@ pub struct Fingerprint {
     pub tree_digest: Option<String>,
 }
 impl Fingerprint {
+    /// The other entries in `file`'s folder, without descending into subfolders.
+    pub fn read_siblings(file: &Path) -> Result<Self, String> {
+        let folder = file.parent().ok_or("The input has no containing folder")?;
+        let mut entries = fs::read_dir(folder)
+            .map_err(|e| format!("{}: {e}", folder.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        entries.sort_by_key(|entry| entry.file_name());
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"tomojax-sibling-metadata-v1\0");
+        let mut bytes = 0u64;
+        for entry in entries {
+            let meta = fs::symlink_metadata(entry.path())
+                .map_err(|e| format!("{}: {e}", entry.path().display()))?;
+            // A project kept in the acquisition's folder rewrites its manifest.
+            if meta.is_dir() || entry.file_name().to_string_lossy().starts_with(MANIFEST) {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.as_encoded_bytes();
+            hash.update(&(name.len() as u64).to_le_bytes());
+            hash.update(name);
+            hash.update(&meta.len().to_le_bytes());
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos());
+            hash.update(&modified.unwrap_or_default().to_le_bytes());
+            bytes = bytes.saturating_add(meta.len());
+        }
+        Ok(Self {
+            bytes,
+            modified_ns: None,
+            directory: true,
+            tree_digest: Some(hash.finalize().to_hex().to_string()),
+        })
+    }
+
     pub fn read(path: &Path) -> Result<Self, String> {
         let meta = fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
         if meta.file_type().is_symlink() {
@@ -221,6 +260,9 @@ pub struct CapturedInput {
     pub arrays: BTreeMap<String, ArrayDescriptor>,
     #[serde(default)]
     pub storage_fingerprints: BTreeMap<PathBuf, Fingerprint>,
+    /// The files beside a parameter or header file, which its loader reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub siblings: Option<Fingerprint>,
 }
 
 impl CapturedInput {
@@ -259,23 +301,14 @@ impl CapturedInput {
                 }
             }
         }
-        // Loader settings can name calibration files (flats, darks, angles); the
-        // worker reads them when the job runs, so they are inputs too.
-        let mut references = Vec::new();
-        referenced_files(&asset.open_parameters, &mut references);
-        for (file, typed) in references {
-            let resolved = absolute(Path::new(&file));
-            if resolved == path
-                || storage_fingerprints.contains_key(&resolved)
-                || (!typed
-                    && !resolved.is_file()
-                    && !(Path::new(&file).is_absolute() && resolved.is_dir()))
-            {
-                continue;
-            }
-            storage_fingerprints.insert(resolved.clone(), Fingerprint::read(&resolved)?);
-        }
-        Ok(Self {
+        // Parameter and header files (Nikon, SkyScan, ESRF) are read with the
+        // frames beside them, so those frames are part of the input.
+        let siblings = if path.is_file() && !holds_whole_acquisition(&path) {
+            Some(Fingerprint::read_siblings(&path)?)
+        } else {
+            None
+        };
+        Self {
             asset: asset.id.clone(),
             name: asset.name.clone(),
             kind: asset.kind.clone(),
@@ -284,8 +317,43 @@ impl CapturedInput {
             open_parameters: asset.open_parameters.clone(),
             arrays,
             storage_fingerprints,
-        })
+            siblings,
+        }
+        .with_files_named_in(&asset.open_parameters)
     }
+
+    /// Fingerprints the files that loader or job settings name (flats, darks,
+    /// angles): the worker reads them when the job runs, so they are inputs too.
+    /// Only absolute paths are captured; the worker resolves relative ones itself.
+    pub fn with_files_named_in(mut self, settings: &Value) -> Result<Self, String> {
+        let mut references = Vec::new();
+        referenced_files(settings, &mut references);
+        for (file, typed) in references {
+            let file = PathBuf::from(file);
+            if !file.is_absolute()
+                || file == self.path
+                || self.storage_fingerprints.contains_key(&file)
+                || (!typed && !file.exists())
+            {
+                continue;
+            }
+            let fingerprint = Fingerprint::read(&file)?;
+            self.storage_fingerprints.insert(file, fingerprint);
+        }
+        Ok(self)
+    }
+}
+
+/// Whether a file holds its whole acquisition. Parameter and header files (Nikon
+/// `.xtekct`, SkyScan `.log`, ESRF `.edf`/`.par`) are read together with the frames
+/// beside them.
+pub fn holds_whole_acquisition(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        matches!(
+            e.to_ascii_lowercase().as_str(),
+            "nx" | "nxs" | "h5" | "hdf" | "hdf5" | "npy" | "tif" | "tiff" | "txrm" | "txm" | "mat"
+        )
+    })
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -410,7 +478,11 @@ impl Job {
                 return Err("NPZ inputs are not supported by the native workspace; use NXtomo/HDF5 or a recognised acquisition".into());
             }
             let current = Fingerprint::read(&input.path)?;
-            if current != input.fingerprint {
+            if current != input.fingerprint
+                || input.siblings.as_ref().is_some_and(|siblings| {
+                    Fingerprint::read_siblings(&input.path).ok().as_ref() != Some(siblings)
+                })
+            {
                 return Err(format!(
                     "{} changed after submission. Review the input and submit a new job.",
                     input.name
@@ -1002,6 +1074,37 @@ mod tests {
         assert!(job.check_inputs().is_ok());
         fs::write(&flat, "replaced flat field").unwrap();
         assert!(job.check_inputs().unwrap_err().contains("flat.tif"));
+    }
+
+    #[test]
+    fn frames_beside_a_header_file_and_job_calibration_files_are_inputs() {
+        let directory = tempfile::tempdir().unwrap();
+        let header = directory.path().join("scan.xtekct");
+        let frame = directory.path().join("scan_0001.tif");
+        let flat = directory.path().join("flat.tif");
+        for (path, bytes) in [(&header, "header"), (&frame, "pixels"), (&flat, "flat")] {
+            fs::write(path, bytes).unwrap();
+        }
+        let asset = Asset::input(header, false);
+        let settings = json!({"flats": flat, "darks": "relative-dark.tif"});
+        let input = CapturedInput::from_asset(&asset, directory.path())
+            .unwrap()
+            .with_files_named_in(&settings)
+            .unwrap();
+        // Absolute paths only: the worker resolves relative ones itself.
+        assert_eq!(
+            input.storage_fingerprints.keys().collect::<Vec<_>>(),
+            [&flat]
+        );
+        let job = Job::new("open", settings, vec![input]);
+        assert!(job.check_inputs().is_ok());
+        fs::write(directory.path().join("project.tomojax.json"), "{}").unwrap();
+        assert!(
+            job.check_inputs().is_ok(),
+            "a project manifest is not a frame"
+        );
+        fs::write(&frame, "re-exported pixels").unwrap();
+        assert!(job.check_inputs().is_err());
     }
 
     #[test]

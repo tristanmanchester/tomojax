@@ -4,7 +4,7 @@
 //! sizes or uncorrected file pixels into a registered reconstruction or scan.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -157,6 +157,66 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
 }
 
 /// A suggested loader, still editable when an acquisition's domain is ambiguous.
+/// The other files an HDF5 file reads through external links or virtual datasets,
+/// such as an NXtomo master's detector files.
+pub fn linked_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    let file = hdf5::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let own = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let folder = own.parent().unwrap_or(Path::new("/")).to_owned();
+    let mut found = std::collections::BTreeSet::new();
+    let mut groups = vec![(*file).clone()];
+    let mut visited = 0usize;
+    while let Some(group) = groups.pop() {
+        // Hard-linked groups can form cycles; real files have far fewer groups.
+        visited += 1;
+        if visited > 100_000 {
+            break;
+        }
+        let mut links = Vec::new();
+        group
+            .iter_visit_default(|name, info| {
+                links.push((name.to_owned(), info.link_type));
+                Ok(())
+            })
+            .map_err(|e| e.to_string())?;
+        for (name, kind) in links {
+            match kind {
+                // Opening the linked object reports the file it lives in.
+                hdf5::LinkType::External => {
+                    let target = group
+                        .dataset(&name)
+                        .map(|d| d.filename())
+                        .or_else(|_| group.group(&name).map(|g| g.filename()));
+                    if let Ok(target) = target
+                        && let Ok(target) = std::fs::canonicalize(&target)
+                    {
+                        found.insert(target);
+                    }
+                }
+                hdf5::LinkType::Hard => {
+                    if let Ok(child) = group.group(&name) {
+                        groups.push(child);
+                    } else if let Ok(dataset) = group.dataset(&name)
+                        && let Ok(create) = dataset.dcpl()
+                    {
+                        for mapping in create.virtual_map() {
+                            if mapping.src_filename != "."
+                                && let Ok(source) =
+                                    std::fs::canonicalize(folder.join(&mapping.src_filename))
+                            {
+                                found.insert(source);
+                            }
+                        }
+                    }
+                }
+                hdf5::LinkType::Soft => {}
+            }
+        }
+    }
+    found.remove(&own);
+    Ok(found.into_iter().collect())
+}
+
 pub fn suggested_kind(report: &Value) -> &'static str {
     let keys = report
         .pointer("/geometry/meta_keys")

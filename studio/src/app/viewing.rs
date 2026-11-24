@@ -226,6 +226,10 @@ impl AppState {
             .flatten()
             .map(|(descriptor, axis)| descriptor.shape[*axis].saturating_sub(1))
             .fold(self.ui.display.indices[plane_axis], usize::min);
+        // Keep the stored index on the shown slice, so the next step starts from it.
+        if compared.iter().any(Option::is_some) {
+            self.ui.display.indices[plane_axis] = index;
+        }
         for (slot, compared) in [6, 7].into_iter().zip(compared) {
             if let Some((descriptor, axis)) = compared {
                 if let Err(error) =
@@ -647,10 +651,14 @@ impl AppState {
                     });
                     return Ok(());
                 }
+                // The samples whose centres lie inside the drawn box.
                 let a: [usize; 2] =
-                    std::array::from_fn(|i| pixels[0][i].min(pixels[1][i]).floor() as usize);
+                    std::array::from_fn(|i| pixels[0][i].min(pixels[1][i]).ceil() as usize);
                 let b: [usize; 2] =
-                    std::array::from_fn(|i| pixels[0][i].max(pixels[1][i]).ceil() as usize);
+                    std::array::from_fn(|i| pixels[0][i].max(pixels[1][i]).floor() as usize);
+                if a[0] > b[0] || a[1] > b[1] {
+                    return Err("Drag a box that covers at least one sample".into());
+                }
                 let (mut n, mut mean, mut m2, mut min, mut max) =
                     (0usize, 0f64, 0f64, f32::INFINITY, f32::NEG_INFINITY);
                 for row in a[0]..=b[0].min(data.shape[0] - 1) {

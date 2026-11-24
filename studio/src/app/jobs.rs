@@ -74,7 +74,7 @@ impl AppState {
         } else {
             selected
                 .iter()
-                .map(|id| project.capture(id))
+                .map(|id| project.capture(id)?.with_files_named_in(&parameters))
                 .collect::<Result<Vec<_>, _>>()?
         };
         if operation == "simulate" {

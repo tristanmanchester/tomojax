@@ -290,6 +290,10 @@ fn compared_volumes_of_different_depth_show_the_same_slice() {
     }
     assert_eq!(state.model.comparison_index, 2);
     assert_eq!(state.model.comparison_count, 3);
+    assert_eq!(
+        state.ui.display.indices[0], 2,
+        "the next step starts from the shown slice"
+    );
 }
 
 #[test]
@@ -304,6 +308,32 @@ fn multi_input_jobs_take_inputs_in_project_order_not_id_order() {
     state.project.as_mut().unwrap().document.assets = vec![first, second];
     state.model.selected_assets = ["result-a".to_owned(), "scan-z".to_owned()].into();
     assert_eq!(state.selected_inputs(), ["scan-z", "result-a"]);
+}
+
+#[test]
+fn region_statistics_use_only_samples_whose_centres_are_inside_the_box() {
+    let directory = tempfile::tempdir().unwrap();
+    let volume = ramp_volume(directory.path(), "volume", 3);
+    let mut state = AppState::init();
+    state.project = Some(Project::open(directory.path(), true).unwrap());
+    state.model.active_asset = Some(volume.id.clone());
+    state.project.as_mut().unwrap().document.assets = vec![volume];
+    state.ui.main_view = PlaneKind::Axial;
+    state.refresh_images();
+    drive(&mut state, |state| state.imaging.plane(1).is_some());
+    state.ui.inspect_tool = InspectTool::Region;
+    // Samples 0.2–1.8 on a 4 × 4 slice hold one sample centre, (1, 1).
+    let uv = |pixel: f32| (pixel + 0.5) / 4.;
+    state
+        .measure(PlaneKind::Axial, [uv(0.2); 2], [uv(1.8); 2], true)
+        .unwrap();
+    let region = state.model.measurements.last().unwrap();
+    assert!(region.detail.starts_with("1 samples"), "{}", region.detail);
+    assert!(
+        state
+            .measure(PlaneKind::Axial, [uv(0.2); 2], [uv(0.8); 2], true)
+            .is_err()
+    );
 }
 
 fn drive(state: &mut AppState, condition: impl Fn(&AppState) -> bool) {
@@ -854,6 +884,38 @@ fn copying_a_parameter_file_brings_its_frames_and_a_container_comes_alone() {
     let nxs = copied.iter().find(|p| p.ends_with("scan.nxs")).unwrap();
     assert!(nxs.starts_with(&project.root));
     assert!(!nxs.with_file_name("unrelated.nxs").exists());
+}
+
+#[test]
+fn copying_an_nxtomo_master_brings_the_detector_files_it_links_to() {
+    let directory = tempfile::tempdir().unwrap();
+    let raw = directory.path().join("raw");
+    std::fs::create_dir_all(raw.join("detector")).unwrap();
+    hdf5::File::create(raw.join("detector/pixels.h5"))
+        .unwrap()
+        .new_dataset_builder()
+        .with_data(&[1.0f32, 2., 3.])
+        .create("data")
+        .unwrap();
+    hdf5::File::create(raw.join("scan.nxs"))
+        .unwrap()
+        .link_external("detector/pixels.h5", "/data", "data")
+        .unwrap();
+    std::fs::write(raw.join("other-scan.nxs"), b"another acquisition").unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    state.ui.import_copy = true;
+    state.import_paths(vec![raw.join("scan.nxs")]);
+    drive(&mut state, |state| {
+        state.copying == 0 && !state.project.as_ref().unwrap().document.assets.is_empty()
+    });
+    let project = state.project.as_ref().unwrap();
+    let master = project.resolve(&project.document.assets[0].path);
+    assert!(master.starts_with(&project.root));
+    assert!(!master.with_file_name("other-scan.nxs").exists());
+    let linked = hdf5::File::open(&master).unwrap().dataset("data").unwrap();
+    assert!(std::path::Path::new(&linked.filename()).starts_with(&project.root));
+    assert_eq!(linked.read_raw::<f32>().unwrap(), [1., 2., 3.]);
 }
 
 #[test]
