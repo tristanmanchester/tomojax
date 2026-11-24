@@ -635,7 +635,7 @@ impl AppState {
             "sagittal" => UiAction::SetMainView(PlaneKind::Sagittal),
             "volume" => UiAction::SetMainView(PlaneKind::Volume),
             "previous" | "next" => UiAction::StepSlice {
-                axis: self.ui.main_view.axis().unwrap_or(0),
+                axis: self.shown_axis().unwrap_or(0),
                 delta: if id == "previous" { -1 } else { 1 },
             },
             "undo" => UiAction::Undo,

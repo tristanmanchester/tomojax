@@ -787,6 +787,16 @@ fn activating_the_active_asset_keeps_its_calibration_draft() {
 }
 
 #[test]
+fn slice_shortcuts_step_the_plane_on_screen() {
+    let mut state = AppState::init();
+    state.ui.main_view = PlaneKind::Axial;
+    assert_eq!(state.shown_axis(), Some(0));
+    state.ui.workspace = Workspace::Compare;
+    state.ui.compare_plane = PlaneKind::Coronal;
+    assert_eq!(state.shown_axis(), Some(1));
+}
+
+#[test]
 fn view_undo_stays_with_its_project() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();

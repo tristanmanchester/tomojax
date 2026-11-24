@@ -165,6 +165,15 @@ impl AppState {
         self.refresh_images();
     }
 
+    /// The slice axis on screen: Compare's plane in Compare, else the main view's.
+    pub(super) fn shown_axis(&self) -> Option<usize> {
+        if self.ui.workspace == Workspace::Compare {
+            self.ui.compare_plane.axis()
+        } else {
+            self.ui.main_view.axis()
+        }
+    }
+
     /// Restores the rule between selection and the active asset after the
     /// selection changed: the active asset is one of the selected ones (the
     /// first in project order when it left), or nothing is active when nothing
