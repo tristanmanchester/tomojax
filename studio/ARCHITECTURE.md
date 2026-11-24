@@ -111,8 +111,13 @@ across a null sample. Pose rows are virtualised.
 
 ## Storage and recovery
 
-The project manifest is a versioned JSON document. Studio serialises a snapshot;
-a coalescing background writer atomically replaces the manifest. Acknowledgements
+The version 2 manifest stores a result's editable name on its asset record.
+Opening a version 1 project translates generated result names using the submitted
+operation and input. Job inputs and worker provenance retain their original values.
+Studio restores the active asset and view on reopen. Without a valid active asset
+it selects the newest result, or the newest acquisition in a project without results.
+
+Studio serialises a snapshot. A coalescing background writer atomically replaces the manifest. Acknowledgements
 carry generations so an older save cannot clear a newer dirty state. The writer
 holds an OS lock for its lifetime. An unsupported manifest version is rejected
 without rewriting it. Both reading and writing enforce the existing 32 MiB

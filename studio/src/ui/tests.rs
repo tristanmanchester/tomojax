@@ -473,3 +473,172 @@ fn job_controls_stay_visible_above_a_long_expanded_history() {
     click(&mut runtime, &format!("job-details-{id}"));
     assert!(runtime.state.ui.selected_job.is_none());
 }
+
+#[test]
+fn processing_menu_routes_each_operation_to_one_workspace() {
+    let (_dir, state) = project_state();
+    let mut rt = runtime(state, (1540., 980.));
+    let mut seen = std::collections::BTreeSet::new();
+    for (tab, mandatory, excluded) in [
+        ("prepare", "correct", "reconstruct"),
+        ("reconstruct", "slice", "open"),
+    ] {
+        click(&mut rt, &format!("workspace-{tab}"));
+        click(&mut rt, "operation-selector");
+        let keys = rt
+            .elements()
+            .into_iter()
+            .filter(|e| !e.exiting)
+            .filter_map(|e| e.key)
+            .collect::<Vec<_>>();
+        assert!(keys.contains(&format!("operation-{mandatory}")));
+        assert!(
+            !keys.contains(&format!("operation-{excluded}")),
+            "{tab}: {keys:?}"
+        );
+        for key in keys
+            .iter()
+            .filter_map(|k| k.strip_prefix("operation-"))
+            .filter(|key| !matches!(*key, "menu" | "selector"))
+        {
+            assert!(seen.insert(key.to_owned()), "duplicate operation {key}");
+        }
+    }
+    assert_eq!(
+        seen.len(),
+        crate::operations::GROUPS
+            .iter()
+            .map(|g| g.operations.len())
+            .sum::<usize>()
+    );
+}
+
+#[test]
+fn filter_picker_and_solver_fields_follow_the_submitted_method() {
+    let (_dir, mut state) = project_state();
+    state.set_workspace(Workspace::Reconstruct);
+    state.set_operation(
+        "reconstruct",
+        Some(&serde_json::json!({"method":"fbp","filter":"hann","iterations":12})),
+    );
+    let mut rt = runtime(state, (1540., 980.));
+    click(&mut rt, "parameter-filter");
+    find(&rt, "parameter-filter-shepp-logan");
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|e| e.key.as_deref() == Some("parameter-iterations"))
+    );
+    let parameters =
+        |state: &AppState| crate::forms::parameters(&state.ui, &state.catalog).unwrap();
+    assert_eq!(parameters(&rt.state)["filter"], "hann");
+    assert!(parameters(&rt.state).get("iterations").is_none());
+    rt.state
+        .ui
+        .parameter_choices
+        .insert("method".into(), "fista".into());
+    rt.invalidate();
+    rt.frame(0.1);
+    find(&rt, "parameter-iterations");
+    find(&rt, "parameter-tv_weight");
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some("parameter-filter"))
+    );
+    assert_eq!(parameters(&rt.state)["iterations"], 12);
+    assert!(parameters(&rt.state).get("filter").is_none());
+}
+
+#[test]
+fn navigator_rename_survives_reopen_without_changing_the_job_or_provenance() {
+    let (dir, mut state) = viewing_state();
+    let doc = &mut state.project.as_mut().unwrap().document;
+    let asset = &mut doc.assets[0];
+    let id = asset.id.clone();
+    let provenance = crate::protocol::Provenance {
+        operation: "simulate".into(),
+        parameters: serde_json::json!({"phantom":"cube"}),
+        inputs: vec![],
+    };
+    asset.provenance = Some(provenance);
+    let before = serde_json::to_value(&asset.provenance).unwrap();
+    let mut job =
+        crate::project::Job::new("simulate", serde_json::json!({"phantom":"cube"}), vec![]);
+    job.result = Some(id.clone());
+    job.status = crate::project::JobStatus::Completed;
+    doc.jobs.push(job);
+    let jobs = serde_json::to_value(&doc.jobs).unwrap();
+    state.model.assets[0].operation = Some("simulate".into());
+    let mut rt = runtime(state, (1180., 780.));
+    click(&mut rt, "rename-result");
+    rt.state
+        .ui
+        .rename
+        .as_mut()
+        .unwrap()
+        .1
+        .replace_text(" Calibration sphere ");
+    rt.frame(0.1);
+    click(&mut rt, "save-result-name");
+    rt.state.shutdown();
+    drop(rt);
+    let project = Project::open(dir.path(), false).unwrap();
+    let result = project.document.asset(&id).unwrap();
+    assert_eq!(result.name, "Calibration sphere");
+    assert_eq!(serde_json::to_value(&result.provenance).unwrap(), before);
+    assert_eq!(serde_json::to_value(&project.document.jobs).unwrap(), jobs);
+}
+
+#[test]
+fn contextual_tools_and_named_toolbar_controls_fit_the_workspace() {
+    for (kind, control) in [
+        (PlaneKind::Volume, "clip-2"),
+        (PlaneKind::Axial, "tool-distance"),
+    ] {
+        let (_dir, mut state) = viewing_state();
+        state.ui.main_view = kind;
+        let rt = runtime(state, (1180., 780.));
+        let element = find(&rt, control);
+        assert!(element.visible[3] >= 24.);
+        for (key, name) in [
+            ("toggle-inspector", "Inspector"),
+            ("toggle-jobs", "Activity"),
+            ("shortcut-settings", "Shortcuts"),
+        ] {
+            let e = find(&rt, key);
+            assert_eq!(e.label.as_deref(), Some(name));
+            assert!(e.visible[0] + e.visible[2] <= 1180. && e.visible[3] >= 32.);
+        }
+        find(&rt, "export-result");
+    }
+}
+
+#[test]
+fn explorer_labels_physical_pitch_and_keeps_one_save_status() {
+    let (_dir, mut state) = viewing_state();
+    state.model.assets[0].voxel_pitch = Some([0.5, 0.75, 2.]);
+    state.model.assets[0].units = "mm".into();
+    let rt = runtime(state, (1540.,980.));
+    let elements = rt.elements();
+    assert!(elements.iter().filter_map(|e| e.text.as_deref()).any(|text| text.contains("Voxel size 0.5 × 0.75 × 2 mm")));
+    let saved = elements.iter().filter(|e| e.text.as_deref()==Some("Project saved")).collect::<Vec<_>>();
+    assert_eq!(saved.len(),1);
+    assert!(saved[0].rect[1] >= 950.);
+    assert!(elements.iter().any(|e| e.text.as_deref()==Some("Explore") && e.path.contains("inspector")));
+}
+
+#[test]
+fn job_row_shows_one_status_and_preserves_stage_detail() {
+    let (_dir, mut state) = project_state();
+    state.ui.workspace = Workspace::Jobs;
+    state.model.jobs.push(JobView {
+        id:"result-job".into(),name:"Specimen · FBP".into(),operation:"Reconstruction".into(),
+        status:JobStatus::Completed,stage:"Complete".into(),..Default::default()
+    });
+    let mut rt = runtime(state, (1540.,980.));
+    assert_eq!(rt.elements().iter().filter(|e| e.text.as_deref()==Some("Complete")).count(),1);
+    rt.update(|s,_| s.model.jobs[0].stage="Plan ready".into());
+    rt.frame(0.1);
+    assert!(rt.elements().iter().any(|e| e.text.as_deref()==Some("Plan ready")));
+}

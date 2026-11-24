@@ -8,7 +8,7 @@ colors:
   paper: "#FCFDF9"
   panel: "#F0F3EC"
   ink: "#24382D"
-  muted: "#66776A"
+  muted: "#596A5D"
   line: "#DCE3D8"
   canvas: "#111A17"
   canvas-ink: "#EDF2EA"
@@ -139,6 +139,7 @@ numbers use tabular figures in the same family. The headline and title roles
 establish the active specimen and inspector. Body and label roles carry controls
 and technical context without uppercase section ornaments.
 
+Functional text starts at 11 points with line height at 1.35 times the font size.
 Use semibold for actions, selected navigation and short headings. Keep explanatory
 text regular. Truncate long asset names in dense lists, and expose the complete
 name or path through native help. Wrap explanations, validation errors and
@@ -151,7 +152,7 @@ The default window is 1540 × 980 points; the minimum is 1180 × 780. The topbar
 points wide, and the status line is 28 points high. The image workspace takes the
 remaining space. Navigator and inspector can be hidden independently.
 
-Below 1320 points, the command search button becomes an icon and navigation
+Below 1320 points, the command search label shortens to Search and navigation
 spacing contracts. The inspector scrolls internally while its primary action
 stays visible. Its paired fields shrink within the available width; labels and
 input text must never overlap their neighbour. The project tree, jobs list and

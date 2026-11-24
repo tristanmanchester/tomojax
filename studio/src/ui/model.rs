@@ -14,6 +14,13 @@ pub enum Workspace {
     Jobs,
 }
 impl Workspace {
+    pub fn for_operation(id: &str) -> Self {
+        if crate::operations::lookup(id).is_some_and(|(group, _)| group.reconstruction) {
+            Self::Reconstruct
+        } else {
+            Self::Prepare
+        }
+    }
     pub const ALL: [Self; 5] = [
         Self::Prepare,
         Self::Reconstruct,
@@ -28,31 +35,6 @@ impl Workspace {
             Self::Explore => "Explore",
             Self::Compare => "Compare",
             Self::Jobs => "Jobs",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PrepareTab {
-    #[default]
-    Import,
-    Corrections,
-    Geometry,
-    Alignment,
-}
-impl PrepareTab {
-    pub const ALL: [Self; 4] = [
-        Self::Import,
-        Self::Corrections,
-        Self::Geometry,
-        Self::Alignment,
-    ];
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::Import => "Import",
-            Self::Corrections => "Corrections",
-            Self::Geometry => "Geometry",
-            Self::Alignment => "Alignment",
         }
     }
 }
@@ -119,7 +101,6 @@ impl PlaneKind {
 
 pub struct UiState {
     pub workspace: Workspace,
-    pub prepare_tab: PrepareTab,
     pub main_view: PlaneKind,
     pub preview_array: String,
     pub preview_span: TextEdit,
@@ -132,6 +113,7 @@ pub struct UiState {
     pub import_copy: bool,
     pub compare_linked: bool,
     pub asset_query: TextEdit,
+    pub rename: Option<(String, TextEdit)>,
     pub command_query: TextEdit,
     pub shortcut_query: TextEdit,
     pub shortcut_binding: TextEdit,
@@ -157,7 +139,6 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             workspace: Workspace::Explore,
-            prepare_tab: PrepareTab::Import,
             main_view: PlaneKind::Volume,
             preview_array: "after".into(),
             preview_span: TextEdit::new("8"),
@@ -170,6 +151,7 @@ impl Default for UiState {
             import_copy: false,
             compare_linked: true,
             asset_query: TextEdit::default(),
+            rename: None,
             command_query: TextEdit::default(),
             shortcut_query: TextEdit::default(),
             shortcut_binding: TextEdit::default(),
@@ -248,7 +230,6 @@ pub struct UiModel {
     pub parameters: Vec<ParameterView>,
     pub validation: crate::app::validation::ValidationView,
     pub preview: Option<PreviewView>,
-    pub operations: Vec<OperationView>,
     pub backend: BackendView,
     pub planes: BTreeMap<PlaneKind, PlaneView>,
     pub preview_choices: Vec<(String, String)>,
@@ -333,7 +314,7 @@ pub struct AssetView {
     pub parent: Option<String>,
     pub path: String,
     pub shape: Vec<usize>,
-    pub spacing: Vec<f64>,
+    pub voxel_pitch: Option<[f64; 3]>,
     pub units: String,
     pub missing: bool,
     pub status: String,
@@ -370,7 +351,7 @@ impl JobStatus {
 pub struct JobView {
     pub id: String,
     pub name: String,
-    pub asset_name: String,
+    pub inputs: String,
     pub operation: String,
     pub status: JobStatus,
     pub stage: String,
@@ -401,13 +382,6 @@ pub struct RecipeView {
     pub name: String,
     pub operation: String,
     pub summary: String,
-}
-#[derive(Clone, Debug, Default)]
-pub struct OperationView {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub enabled: bool,
 }
 #[derive(Clone, Debug, Default)]
 pub struct BackendView {
@@ -508,8 +482,8 @@ pub enum UiAction {
     },
     SelectAllAssets,
     RelinkAsset(String),
+    RenameResult,
     SetWorkspace(Workspace),
-    SetPrepareTab(PrepareTab),
     SetMainView(PlaneKind),
     SetPreviewArray(String),
     Simulate,

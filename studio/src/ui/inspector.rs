@@ -6,15 +6,21 @@ use crate::protocol::{Grid, Placement, Product};
 use rune::{El, ScrollSpec, Shape, TextEdit, canvas, col, el, row};
 
 pub fn view(state: &AppState) -> El {
-    let title = match state.ui.workspace {
-        Workspace::Explore => "Inspect",
-        Workspace::Compare => "Compare",
-        other => other.title(),
-    };
+    let title = state.ui.workspace.title();
     let mut body = col().w_full().gap(18.);
     if let Some(asset) = state.model.active().filter(|a| a.missing) {
-        body=body.child(help("Source not found."))
-            .child(action_button("relink-inspector","Reconnect source",true,true,UiAction::RelinkAsset(asset.id.clone())).w_full())
+        body = body
+            .child(help("Source not found."))
+            .child(
+                action_button(
+                    "relink-inspector",
+                    "Reconnect source",
+                    true,
+                    true,
+                    UiAction::RelinkAsset(asset.id.clone()),
+                )
+                .w_full(),
+            )
             .child(separator());
     }
     body = body.child(match state.ui.workspace {
@@ -54,66 +60,40 @@ pub fn view(state: &AppState) -> El {
 
 fn processing(state: &AppState) -> El {
     let mut body = col().gap(18.).w_full();
-    if state.ui.workspace == Workspace::Prepare {
-        let mut tabs = col().gap(5.);
-        for pair in PrepareTab::ALL.chunks(2) {
-            let mut line = row().gap(5.);
-            for &tab in pair {
-                line = line.child(choice(
-                    &format!("prepare-{}", tab.title().to_lowercase()),
-                    tab.title(),
-                    state.ui.prepare_tab == tab,
-                    true,
-                    UiAction::SetPrepareTab(tab),
-                ));
-            }
-            tabs = tabs.child(line);
-        }
-        body = body.child(tabs);
-        if state.ui.prepare_tab == PrepareTab::Import {
-            body = body
-                .child(
-                    row()
-                        .gap(8.)
-                        .child(
-                            action_button(
-                                "inspector-import-files",
-                                "Add files",
-                                false,
-                                true,
-                                UiAction::ImportFiles,
-                            )
-                            .grow(1.),
-                        )
-                        .child(
-                            action_button(
-                                "inspector-import-folder",
-                                "Add folder",
-                                false,
-                                true,
-                                UiAction::ImportFolder,
-                            )
-                            .grow(1.),
-                        ),
-                )
-                .child(toggle(
-                    "copy-imports",
-                    "Copy sources into the project",
-                    state.ui.import_copy,
-                    true,
-                    |s, _| s.ui.import_copy = !s.ui.import_copy,
-                ));
-        }
-    }
     body = body.child(operation_selector(state));
-    if let Some(operation) = state
-        .model
-        .operations
-        .iter()
-        .find(|o| o.id == state.ui.operation)
-        && !operation.description.is_empty()
-    {
-        body = body.child(help(&operation.description));
+    if state.ui.operation == "open" {
+        body = body
+            .child(
+                row()
+                    .gap(8.)
+                    .child(
+                        action_button(
+                            "inspector-import-files",
+                            "Add files",
+                            false,
+                            true,
+                            UiAction::ImportFiles,
+                        )
+                        .grow(1.),
+                    )
+                    .child(
+                        action_button(
+                            "inspector-import-folder",
+                            "Add folder",
+                            false,
+                            true,
+                            UiAction::ImportFolder,
+                        )
+                        .grow(1.),
+                    ),
+            )
+            .child(toggle(
+                "copy-imports",
+                "Copy sources into the project",
+                state.ui.import_copy,
+                true,
+                |s, _| s.ui.import_copy = !s.ui.import_copy,
+            ));
     }
     body = body.child(validation_summary(state));
     if state.model.preview.is_some() {
@@ -122,7 +102,10 @@ fn processing(state: &AppState) -> El {
     let mut params = col().gap(15.);
     let mut advanced = 0;
     for parameter in &state.model.parameters {
-        if parameter.advanced {
+        if !crate::forms::applies(&state.ui, &state.catalog, &parameter.name) {
+            continue;
+        }
+        if state.advanced_parameter(parameter) {
             advanced += 1;
             if !state.ui.advanced_open {
                 continue;
@@ -166,10 +149,28 @@ fn processing(state: &AppState) -> El {
             .child(separator())
             .child(property("Selected inputs", selection.to_string()));
     }
-    body.child(separator())
-        .child(section("Reuse these settings",col().gap(10.)
-            .child(field("recipe-name",&state.ui.recipe_name,"Recipe name","",|s|&mut s.ui.recipe_name))
-            .child(action_button("save-recipe","Save recipe",false,state.model.backend.ready,UiAction::SaveRecipe).w_full())))
+    body.child(separator()).child(section(
+        "Reuse these settings",
+        col()
+            .gap(10.)
+            .child(field(
+                "recipe-name",
+                &state.ui.recipe_name,
+                "Recipe name",
+                "",
+                |s| &mut s.ui.recipe_name,
+            ))
+            .child(
+                action_button(
+                    "save-recipe",
+                    "Save recipe",
+                    false,
+                    state.model.backend.ready,
+                    UiAction::SaveRecipe,
+                )
+                .w_full(),
+            ),
+    ))
 }
 
 fn validation_summary(state: &AppState) -> El {
@@ -189,7 +190,7 @@ fn validation_summary(state: &AppState) -> El {
         .gap(6.)
         .child(label(&validation.message, 11., tone).wrap());
     if !validation.scope.is_empty() {
-        content = content.child(label(&validation.scope, 10.5, muted()).wrap());
+        content = content.child(label(&validation.scope, 11., muted()).wrap());
     }
     for issue in &validation.issues {
         if let Some(control) = &issue.control {
@@ -230,7 +231,7 @@ fn plan_details(state: &AppState, plan: &Product) -> El {
             grid,
             placement,
         } => {
-            content = content.child(property("Method", method));
+            content = content.child(property("Method", crate::operations::method_name(method)));
             if let Some(iterations) = iterations {
                 content = content.child(property("Iteration limit", iterations.to_string()));
             }
@@ -275,14 +276,14 @@ fn plan_grid(state: &AppState, grid: &Grid) -> El {
         if asset.units.is_empty() {
             "source length unit"
         } else {
-            &asset.units
+            unit_name(&asset.units)
         }
     });
     col()
         .w_full()
         .gap(7.)
         .child(property(
-            "Grid · XYZ",
+            "Grid (x × y × z)",
             format!("{} × {} × {}", grid.nx, grid.ny, grid.nz),
         ))
         .child(property(
@@ -362,7 +363,7 @@ pub(super) fn field_errors(state: &AppState, control: &str, field: El) -> El {
         .child(field);
     for issue in issues {
         content = content.child(
-            label(format!("{}: {}", issue.path, issue.message), 10.5, error())
+            label(format!("{}: {}", issue.path, issue.message), 11., error())
                 .key(format!("validation-message-{}", issue.path))
                 .role("alert")
                 .wrap(),
@@ -372,12 +373,7 @@ pub(super) fn field_errors(state: &AppState, control: &str, field: El) -> El {
 }
 
 fn operation_selector(state: &AppState) -> El {
-    let title = state
-        .model
-        .operations
-        .iter()
-        .find(|o| o.id == state.ui.operation)
-        .map_or(state.ui.operation.as_str(), |o| o.name.as_str());
+    let title = crate::operations::title(&state.ui.operation);
     let mut selector = col()
         .w_full()
         .gap(7.)
@@ -392,24 +388,30 @@ fn operation_selector(state: &AppState) -> El {
         );
     if state.ui.operation_menu {
         let mut options = col().gap(3.).padding(5.);
-        for op in &state.model.operations {
-            let id = op.id.clone();
-            options = options.child(
-                button(
-                    &format!("operation-{}", op.id),
-                    &op.name,
-                    false,
-                    true,
-                    move |s, tx| {
-                        s.ui.operation_menu = false;
-                        s.dispatch(UiAction::SetOperation(id.clone()), tx);
-                    },
-                )
-                .h(31.)
-                .w_full()
-                .justify_start()
-                .help(&op.description),
-            );
+        for group in crate::operations::GROUPS
+            .iter()
+            .filter(|group| group.reconstruction == (state.ui.workspace == Workspace::Reconstruct))
+        {
+            options = options.child(strong(group.title, 11., muted()).px(8.).pt(8.));
+            for op in group.operations {
+                let id = op.id;
+                options = options.child(
+                    button(
+                        &format!("operation-{}", op.id),
+                        op.title,
+                        false,
+                        true,
+                        move |s, tx| {
+                            s.ui.operation_menu = false;
+                            s.dispatch(UiAction::SetOperation(id.into()), tx);
+                        },
+                    )
+                    .h(31.)
+                    .w_full()
+                    .justify_start()
+                    .help(op.help),
+                );
+            }
         }
         selector = selector.child(
             col()
@@ -470,7 +472,7 @@ fn parameter_field(state: &AppState, parameter: &ParameterView) -> El {
         content = col()
             .gap(5.)
             .child(content)
-            .child(label(&parameter.help, 10.5, muted()).wrap());
+            .child(label(&parameter.help, 11., muted()).wrap());
     }
     field_errors(state, &format!("parameter-{}", parameter.name), content)
 }
@@ -561,7 +563,6 @@ fn explore(state: &AppState) -> El {
         }
         content = content.child(section("Correction preview", choices));
     }
-    content = content.child(display(state));
     if kind == PlaneKind::Volume {
         content = content.child(separator()).child(section(
             "Volume appearance",
@@ -648,7 +649,7 @@ fn explore(state: &AppState) -> El {
                                 measurement.index + 1,
                                 measurement.detail
                             ),
-                            10.5,
+                            11.,
                             muted(),
                         )
                         .wrap(),
@@ -669,6 +670,7 @@ fn explore(state: &AppState) -> El {
             );
         }
     }
+    content = content.child(separator()).child(display(state));
     if let Some(plane) = state.model.planes.get(&kind)
         && let Some(stats) = &plane.statistics
     {
@@ -680,10 +682,7 @@ fn explore(state: &AppState) -> El {
                 .child(property("Maximum", compact_number(stats.max)))
                 .child(property("Mean", compact_number(stats.mean)))
                 .child(property("Standard deviation", compact_number(stats.std)))
-                .child(help(format!(
-                    "{} sampled pixels",
-                    stats.sampled_pixels
-                ))),
+                .child(help(format!("{} sampled pixels", stats.sampled_pixels))),
         ));
     }
     content.child(separator()).child(export_format(state))
@@ -706,7 +705,14 @@ fn display(state: &AppState) -> El {
         body = body.child(histogram(plane));
     }
     if let Some(plane) = info.filter(|p| !p.units.is_empty()) {
-        body = body.child(label(format!("Value unit: {}", plane.units), 10.5, muted()).wrap());
+        body = body.child(
+            label(
+                format!("Values in {}", unit_name(&plane.units)),
+                11.,
+                muted(),
+            )
+            .wrap(),
+        );
     }
     body = body
         .child(
@@ -838,7 +844,7 @@ fn histogram(plane: &PlaneView) -> El {
                             .copied()
                             .unwrap_or(plane.range[0]),
                     ),
-                    10.,
+                    11.,
                     muted(),
                 ))
                 .child(number(
@@ -849,7 +855,7 @@ fn histogram(plane: &PlaneView) -> El {
                             .copied()
                             .unwrap_or(plane.range[1]),
                     ),
-                    10.,
+                    11.,
                     muted(),
                 )),
         )
@@ -926,7 +932,9 @@ fn export_format(state: &AppState) -> El {
     }
     let mut export = col().gap(9.).child(choices);
     if state.ui.export_format == "uint16" {
-        export = export.child(help("16-bit TIFF rescales values to integers over a percentile range."));
+        export = export.child(help(
+            "16-bit TIFF rescales values to integers over a percentile range.",
+        ));
     }
     section("Export", export)
 }

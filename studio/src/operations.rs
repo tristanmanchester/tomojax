@@ -159,6 +159,8 @@ pub fn method_name(id: &str) -> String {
     match id {
         "auto" => "Automatic".into(),
         "fourier" => "Fourier".into(),
+        "joint" => "Joint alignment".into(),
+        "opposite-views" => "Opposite views".into(),
         _ => id.to_uppercase(),
     }
 }

@@ -1,5 +1,5 @@
 //! Shared native controls. Each interactive surface carries its name and focus state.
-use rune::{Color, El, Phase, Shape, TextEdit, TextStyle, Tx, canvas, col, el, row, text_input};
+use rune::{Color, El, Phase, Shape, TextEdit, Tx, canvas, col, el, row, text_input};
 
 use super::{model::UiAction, tokens::*};
 use crate::AppState;
@@ -11,6 +11,7 @@ pub enum Icon {
     Search,
     Cube,
     Layers,
+    Sinogram,
     Compare,
     Jobs,
     Play,
@@ -26,11 +27,9 @@ pub enum Icon {
     Fit,
     Plus,
     Minus,
-    Sliders,
     Undo,
     Redo,
     Refresh,
-    Keyboard,
     Tree,
     Alert,
 }
@@ -70,6 +69,20 @@ pub fn icon(kind: Icon, size: f32, colour: Color) -> El {
             vec![[3., 8.], [12., 13.], [21., 8.]],
             vec![[12., 13.], [12., 22.]],
         ],
+        Icon::Sinogram => [-0.9, 0.25, 1.6]
+            .into_iter()
+            .map(|phase| {
+                (0..=24)
+                    .map(|step| {
+                        let view = step as f32 / 24.;
+                        [
+                            12. + 8. * (std::f32::consts::PI * view + phase).cos(),
+                            3. + 18. * view,
+                        ]
+                    })
+                    .collect()
+            })
+            .collect(),
         Icon::Layers => vec![
             vec![[3., 7.], [12., 2.], [21., 7.], [12., 12.], [3., 7.]],
             vec![[3., 12.], [12., 17.], [21., 12.]],
@@ -118,14 +131,6 @@ pub fn icon(kind: Icon, size: f32, colour: Color) -> El {
             ],
             vec![[8., 16.], [16., 8.]],
         ],
-        Icon::Sliders => vec![
-            vec![[4., 6.], [20., 6.]],
-            vec![[4., 12.], [20., 12.]],
-            vec![[4., 18.], [20., 18.]],
-            vec![[9., 3.], [9., 9.]],
-            vec![[15., 9.], [15., 15.]],
-            vec![[8., 15.], [8., 21.]],
-        ],
         Icon::Fit => vec![
             vec![[4., 9.], [4., 4.], [9., 4.]],
             vec![[15., 4.], [20., 4.], [20., 9.]],
@@ -152,16 +157,6 @@ pub fn icon(kind: Icon, size: f32, colour: Color) -> El {
                 [20., 16.],
             ],
             vec![[20., 2.], [20., 8.], [14., 8.]],
-        ],
-        Icon::Keyboard => vec![
-            vec![[2., 5.], [22., 5.], [22., 19.], [2., 19.], [2., 5.]],
-            vec![[6., 9.], [7., 9.]],
-            vec![[11., 9.], [12., 9.]],
-            vec![[16., 9.], [17., 9.]],
-            vec![[6., 13.], [7., 13.]],
-            vec![[11., 13.], [12., 13.]],
-            vec![[16., 13.], [17., 13.]],
-            vec![[7., 16.], [17., 16.]],
         ],
         Icon::Tree => vec![
             vec![[3., 4.], [21., 4.], [21., 20.], [3., 20.], [3., 4.]],
@@ -342,7 +337,7 @@ fn input_hint(
         .border(1., line())
         .focus_within_ring(1.5, 0., forest())
         .child(
-            text_input(value, TextStyle::new(12., 450.).features("'tnum' 1"))
+            text_input(value, type_style(12., 450.).features("'tnum' 1"))
                 .key(key)
                 .label(title)
                 .color(ink())
@@ -502,6 +497,14 @@ pub fn slider(
 
 pub fn status_dot(colour: Color) -> El {
     el().size(6., 6.).radius(3.).fill(colour)
+}
+
+pub fn unit_name(unit: &str) -> &str {
+    match unit {
+        "scan_length" => "scan length units",
+        "1/scan_length" => "per scan length unit",
+        other => other,
+    }
 }
 
 pub fn compact_number(value: f64) -> String {

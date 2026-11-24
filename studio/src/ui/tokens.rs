@@ -23,7 +23,7 @@ pub fn ink() -> Color {
     color("#24382D")
 }
 pub fn muted() -> Color {
-    color("#66776A")
+    color("#596A5D")
 }
 pub fn line() -> Color {
     color("#DCE3D8")
@@ -47,14 +47,34 @@ pub fn axis(index: usize) -> Color {
     [color("#94BE9A"), color("#D6B991"), color("#A9B4D6")][index % 3]
 }
 
+pub fn type_style(size: f32, weight: f32) -> TextStyle {
+    let size = size.max(11.);
+    TextStyle::new(size, weight).lh(size * 1.35)
+}
+
 pub fn label(value: impl Into<String>, size: f32, colour: Color) -> El {
-    text(value).font(TextStyle::new(size, 400.0)).color(colour)
+    text(value).font(type_style(size, 400.0)).color(colour)
 }
 pub fn strong(value: impl Into<String>, size: f32, colour: Color) -> El {
-    text(value).font(TextStyle::new(size, 600.0)).color(colour)
+    text(value).font(type_style(size, 600.0)).color(colour)
 }
 pub fn number(value: impl Into<String>, size: f32, colour: Color) -> El {
     text(value)
-        .font(TextStyle::new(size, 450.0).features("'tnum' 1"))
+        .font(type_style(size, 450.0).features("'tnum' 1"))
         .color(colour)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn functional_type_and_muted_colour_meet_the_design_floor() {
+        assert_eq!(muted(), color("#596A5D"));
+        for (requested, expected) in [(8.5, 11.), (11., 11.), (24., 24.)] {
+            let style = type_style(requested, 450.);
+            assert_eq!(style.size, expected);
+            assert_eq!(style.line_px(), expected * 1.35);
+        }
+    }
 }

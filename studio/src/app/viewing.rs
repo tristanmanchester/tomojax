@@ -6,7 +6,7 @@ use crate::volume::{RenderItem, VolumeSettings};
 impl AppState {
     pub(super) fn default_view(&self) -> PlaneKind {
         if self.active_volume().is_some() {
-            return PlaneKind::Volume;
+            return PlaneKind::Axial;
         }
         [PlaneKind::Axial, PlaneKind::Coronal, PlaneKind::Sagittal]
             .into_iter()
@@ -325,10 +325,12 @@ impl AppState {
             self.model.compare_right.as_ref(),
         ]
         .map(|id| id.and_then(|id| self.project.as_ref()?.document.asset(id)?.volume()));
-        self.model.comparison_note=match descriptors {
-            [Some(a),Some(b)] if a.shape!=b.shape||a.axes!=b.axes||a.unit!=b.unit=>Some("Grids differ: slices are matched by index, not position".into()),
-            [Some(_),Some(_)]=>Some("Matching registered grids · shared axial index".into()),
-            _=>Some("Choose two reconstructed volumes".into()),
+        self.model.comparison_note = match descriptors {
+            [Some(a), Some(b)] if a.shape != b.shape || a.axes != b.axes || a.unit != b.unit => {
+                Some("Grids differ: slices are matched by index, not position".into())
+            }
+            [Some(_), Some(_)] => Some("Matching registered grids · shared axial index".into()),
+            _ => Some("Choose two reconstructed volumes".into()),
         };
         self.prefill_window();
     }
@@ -513,7 +515,7 @@ impl AppState {
                 let distance = data.distance(pixels[0], pixels[1])?;
                 (
                     "Distance",
-                    format!("{distance:.4} {}", data.axes[0].unit),
+                    format!("{distance:.4} {}", crate::ui::unit_name(&data.axes[0].unit)),
                     "Pixel-centre coordinates".into(),
                 )
             }
@@ -556,7 +558,7 @@ impl AppState {
                 }
                 (
                     "Region",
-                    format!("μ {mean:.5} {}", data.value_unit),
+                    format!("μ {mean:.5} {}", crate::ui::unit_name(&data.value_unit)),
                     format!(
                         "{} samples · σ {:.5} · range {:.5}–{:.5}{}",
                         n,
@@ -827,17 +829,19 @@ impl AppState {
                             .or_else(|| a.projections())
                             .or_else(|| a.arrays.values().find(|array| array.shape.len() >= 2));
                         let shape = array.map(|a| a.shape.clone()).unwrap_or_default();
-                        let spacing = array
-                            .map(|a| {
-                                a.axes
-                                    .iter()
-                                    .map(|axis| match axis.coordinates {
-                                        Coordinates::Uniform { spacing, .. } => spacing.abs(),
-                                        _ => 1.,
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
+                        let voxel_pitch = a.volume().and_then(|volume| {
+                            let pitch = |name: &str| {
+                                let axis = volume.axes.iter().find(|axis| axis.name == name)?;
+                                if volume.axes.iter().any(|other| other.unit != axis.unit) {
+                                    return None;
+                                }
+                                match axis.coordinates {
+                                    Coordinates::Uniform { spacing, .. } => Some(spacing.abs()),
+                                    _ => None,
+                                }
+                            };
+                            Some([pitch("x")?, pitch("y")?, pitch("z")?])
+                        });
                         AssetView {
                             id: a.id.clone(),
                             name: a.name.clone(),
@@ -853,7 +857,7 @@ impl AppState {
                             parent: a.parent.clone(),
                             path: p.resolve(&a.path).to_string_lossy().into(),
                             shape,
-                            spacing,
+                            voxel_pitch,
                             units: array
                                 .and_then(|a| a.axes.last())
                                 .map(|a| a.unit.clone())
@@ -878,13 +882,13 @@ impl AppState {
                             ),
                             method: a.method.clone(),
                             simulated: a.simulated,
-                            operation: p
+                            operation: if a.is_result() {p
                                 .document
                                 .jobs
                                 .iter()
                                 .find(|job| job.result.as_deref() == Some(&a.id))
                                 .map(|job| job.operation.clone())
-                                .or_else(|| a.provenance.as_ref().map(|p| p.operation.clone())),
+                                .or_else(|| a.provenance.as_ref().map(|p| p.operation.clone()))} else {None},
                         }
                     })
                     .collect()
@@ -899,14 +903,19 @@ impl AppState {
                         .iter()
                         .map(|j| JobView {
                             id: j.id.clone(),
-                            name: j.name.clone(),
-                            asset_name: j
+                            name: j
+                                .result
+                                .as_ref()
+                                .and_then(|id| p.document.asset(id))
+                                .map(|asset| asset.name.clone())
+                                .unwrap_or_else(|| j.subject()),
+                            inputs: j
                                 .inputs
                                 .iter()
-                                .map(|i| i.name.clone())
+                                .map(|input| input.name.as_str())
                                 .collect::<Vec<_>>()
                                 .join(", "),
-                            operation: j.operation.clone(),
+                            operation: j.display_operation(),
                             status: match j.status {
                                 project::JobStatus::Queued => JobStatus::Queued,
                                 project::JobStatus::Running => JobStatus::Running,
@@ -986,15 +995,6 @@ impl AppState {
                     .collect()
             })
             .unwrap_or_default();
-        self.model.operations = forms::OPERATIONS
-            .iter()
-            .map(|(id, name, description)| OperationView {
-                id: (*id).into(),
-                name: (*name).into(),
-                description: (*description).into(),
-                enabled: true,
-            })
-            .collect();
         self.model.commands = crate::preferences::COMMANDS
             .iter()
             .map(|(id, title, category, default)| CommandView {
@@ -1079,7 +1079,12 @@ fn plane_view(plane: &crate::imaging::PlaneData) -> PlaneView {
             plane
                 .fixed
                 .iter()
-                .map(|fixed| format!(" · {} {:.4} {}", fixed.name, fixed.coordinate, fixed.unit))
+                .map(|fixed| format!(
+                    " · {} {:.4} {}",
+                    fixed.name,
+                    fixed.coordinate,
+                    crate::ui::unit_name(&fixed.unit)
+                ))
                 .collect::<String>()
         ),
         range: [statistics.min as f64, statistics.max as f64],

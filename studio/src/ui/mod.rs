@@ -12,6 +12,7 @@ mod tokens;
 mod viewer;
 
 use crate::AppState;
+pub(crate) use controls::unit_name;
 use controls::*;
 use model::*;
 use rune::{Cx, El, ScrollSpec, col, el, row};
@@ -97,7 +98,7 @@ fn topbar(state: &AppState, narrow: bool) -> El {
         .gap(12.)
         .items_center()
         .fill(paper())
-        .child(icon(Icon::Layers, 27., forest()))
+        .child(icon(Icon::Sinogram, 27., forest()))
         .child(strong("TomoJAX", 19., ink()).min_w(94.));
     if state.model.project.is_some() {
         bar = bar.child(icon_button(
@@ -159,59 +160,37 @@ fn topbar(state: &AppState, narrow: bool) -> El {
                 .help(&project.path),
         );
     }
-    if narrow {
-        bar = bar.child(icon_button(
-            "command-palette",
-            "Search commands",
-            Icon::Search,
-            true,
-            |s, tx| s.dispatch(UiAction::ShowPalette, tx),
-        ));
-    } else {
-        bar = bar.child(
-            button(
-                "command-palette",
-                "Search commands",
-                false,
-                true,
-                |s, tx| s.dispatch(UiAction::ShowPalette, tx),
-            )
-            .child(icon(Icon::Search, 14., muted())),
-        );
-    }
-    bar = bar.child(icon_button(
+    bar = bar.child(button(
+        "command-palette", if narrow {"Search"} else {"Search commands"}, false, true,
+        |s,tx| s.dispatch(UiAction::ShowPalette,tx)
+    ).help("Search commands"));
+    bar = bar.child(button(
         "shortcut-settings",
-        "Keyboard shortcuts",
-        Icon::Keyboard,
+        "Shortcuts",
+        false,
         true,
         |s, tx| s.dispatch(UiAction::ShowShortcuts, tx),
     ));
     if state.model.project.is_some() {
         let count = state.model.active_jobs();
-        let mut jobs = icon_button(
-            "toggle-jobs",
-            "Show background jobs",
-            Icon::Jobs,
-            true,
-            |s, _| s.ui.jobs_open = !s.ui.jobs_open,
-        );
-        if count > 0 {
-            jobs = jobs.child(
-                el().size(15., 15.)
-                    .radius(7.5)
-                    .fill(forest())
-                    .center()
-                    .pin(None, Some(-2.), Some(-2.), None)
-                    .child(number(count.to_string(), 9., paper())),
-            );
+        let title = if count == 0 {
+            "Activity".into()
+        } else {
+            format!("Activity ({count})")
+        };
+        if state.ui.workspace != Workspace::Jobs {
+            bar = bar
+                .child(button("toggle-jobs", &title, false, true, |s, _| {
+                    s.ui.jobs_open = !s.ui.jobs_open
+                }))
+                .child(button(
+                    "toggle-inspector",
+                    "Inspector",
+                    false,
+                    true,
+                    |s, _| s.ui.inspector_open = !s.ui.inspector_open,
+                ));
         }
-        bar = bar.child(jobs).child(icon_button(
-            "toggle-inspector",
-            "Show or hide inspector",
-            Icon::Sliders,
-            true,
-            |s, _| s.ui.inspector_open = !s.ui.inspector_open,
-        ));
     }
     bar
 }
@@ -290,9 +269,7 @@ fn project_tree(state: &AppState) -> El {
         .gap(3.)
         .w_full();
     if state.model.assets.is_empty() {
-        listing = listing.child(
-            help("No scans").padding(8.),
-        );
+        listing = listing.child(help("No scans").padding(8.));
     } else if query.is_empty() {
         for asset in state.model.assets.iter().filter(|a| {
             a.parent
@@ -370,38 +347,11 @@ fn project_tree(state: &AppState) -> El {
         );
     }
     tree.child(
-        col()
-            .padding(18.)
-            .gap(8.)
-            .child(separator())
-            .child(
-                row()
-                    .gap(7.)
-                    .items_center()
-                    .child(status_dot(if project.save_error.is_some() {
-                        error()
-                    } else {
-                        forest()
-                    }))
-                    .child(label(
-                        if project.save_error.is_some() {
-                            "Autosave failed"
-                        } else if project.saving {
-                            "Saving project…"
-                        } else if project.dirty {
-                            "Changes pending"
-                        } else {
-                            "Project saved"
-                        },
-                        10.5,
-                        muted(),
-                    )),
-            )
-            .child(
-                label(&project.path, 10., muted())
-                    .truncate_middle()
-                    .help(&project.path),
-            ),
+        col().padding(18.).gap(8.).child(separator()).child(
+            label(&project.path, 11., muted())
+                .truncate_middle()
+                .help(&project.path),
+        ),
     )
 }
 
@@ -451,8 +401,6 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
             )
             .size(18., 24.),
         );
-    } else {
-        name = name.child(el().size(18., 24.).inert());
     }
     name = name
         .child(icon(
@@ -477,11 +425,7 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
     let subtitle = if asset.missing {
         "Source missing".to_owned()
     } else if let Some(operation) = &asset.operation {
-        crate::forms::OPERATIONS
-            .iter()
-            .find(|entry| entry.0 == operation)
-            .map(|entry| entry.1.to_owned())
-            .unwrap_or_else(|| operation.replace('_', " "))
+        crate::operations::title(operation).to_owned()
     } else if asset.simulated {
         format!("Simulated {}", asset.kind.title().to_lowercase())
     } else if !asset.status.is_empty() {
@@ -489,7 +433,7 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
     } else {
         asset.kind.title().to_owned()
     };
-    col()
+    let item = col()
         .key(format!("asset-{}", asset.id))
         .role("treeitem")
         .label(&asset.name)
@@ -530,17 +474,89 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
                 10.5,
                 if asset.missing { error() } else { muted() },
             )
-            .pl(47.),
-        )
+            .pl(if has_children { 47. } else { 22. }),
+        );
+    if active && asset.operation.is_some() {
+        if let Some((id, draft)) = &state.ui.rename
+            && id == &asset.id
+        {
+            return col().w_full().child(item).child(
+                col()
+                    .padding(6.)
+                    .gap(6.)
+                    .child(field("result-name", draft, "Result name", "", |s| {
+                        &mut s.ui.rename.as_mut().unwrap().1
+                    }))
+                    .child(
+                        row()
+                            .gap(6.)
+                            .child(action_button(
+                                "save-result-name",
+                                "Save",
+                                true,
+                                !draft.text.trim().is_empty(),
+                                UiAction::RenameResult,
+                            ))
+                            .child(button(
+                                "cancel-result-name",
+                                "Cancel",
+                                false,
+                                true,
+                                |s, _| s.ui.rename = None,
+                            )),
+                    ),
+            );
+        } else {
+            let id = asset.id.clone();
+            let name = asset.name.clone();
+            return col().w_full().child(item).child(button(
+                "rename-result",
+                "Rename result",
+                false,
+                true,
+                move |s, tx| {
+                    s.ui.rename = Some((id.clone(), rune::TextEdit::new(&name)));
+                    tx.focus("result-name", true);
+                    tx.scroll_into_view("result-name");
+                },
+            ));
+        }
+    }
+    item
 }
 
 fn welcome(state: &AppState) -> El {
-    let mut content=col().w(520.).max_w(650.).gap(20.)
-        .child(icon(Icon::Layers,42.,forest()))
-        .child(strong("TomoJAX Studio",30.,ink()))
-        .child(row().gap(10.).pt(7.)
-            .child(action_button("new-project","Create a project",true,true,UiAction::NewProject).h(42.))
-            .child(action_button("open-project-welcome","Open project",false,true,UiAction::OpenProject).h(42.)));
+    let mut content = col()
+        .w(520.)
+        .max_w(650.)
+        .gap(20.)
+        .child(icon(Icon::Sinogram, 42., forest()))
+        .child(strong("TomoJAX Studio", 30., ink()))
+        .child(
+            row()
+                .gap(10.)
+                .pt(7.)
+                .child(
+                    action_button(
+                        "new-project",
+                        "Create a project",
+                        true,
+                        true,
+                        UiAction::NewProject,
+                    )
+                    .h(42.),
+                )
+                .child(
+                    action_button(
+                        "open-project-welcome",
+                        "Open project",
+                        false,
+                        true,
+                        UiAction::OpenProject,
+                    )
+                    .h(42.),
+                ),
+        );
     if !state.model.recent_projects.is_empty() {
         content = content
             .child(separator().mt(18.))
@@ -613,13 +629,27 @@ fn statusbar(state: &AppState) -> El {
         } else {
             muted()
         }))
-        .child(label(status, 10.5, muted()).shrink().min_w(0.).truncate())
+        .child(label(status, 11., muted()).shrink().min_w(0.).truncate())
         .child(spacer());
+    if let Some(project) = &state.model.project {
+        let (text, tone) = if project.save_error.is_some() {
+            ("Autosave failed", error())
+        } else if project.saving {
+            ("Saving project…", muted())
+        } else if project.dirty {
+            ("Changes pending", muted())
+        } else {
+            ("Project saved", muted())
+        };
+        bar = bar.child(
+            label(text, 11., tone).help(project.save_error.as_deref().unwrap_or(&project.path)),
+        );
+    }
     if !state.model.render_quality.is_empty() {
-        bar = bar.child(label(&state.model.render_quality, 10., muted()));
+        bar = bar.child(label(&state.model.render_quality, 11., muted()));
     }
     if !state.model.backend.device.is_empty() {
-        bar = bar.child(label(&state.model.backend.device, 10., muted()).pl(12.));
+        bar = bar.child(label(&state.model.backend.device, 11., muted()).pl(12.));
     }
     bar
 }

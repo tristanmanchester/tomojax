@@ -129,6 +129,7 @@ impl AppState {
                 } else {
                     self.model.selected_assets.insert(id.clone());
                 }
+                self.ui.rename = None;
                 self.model.active_asset = Some(id);
                 self.image_key.clear();
                 self.ui.display.indices = [0; 3];
@@ -152,6 +153,25 @@ impl AppState {
                     .map(|p| p.document.assets.iter().map(|a| a.id.clone()).collect())
                     .unwrap_or_default();
             }
+            UiAction::RenameResult => {
+                let (id, draft) = self
+                    .ui
+                    .rename
+                    .as_ref()
+                    .ok_or("Select a result to rename.")?;
+                let name = draft.text.trim();
+                if name.is_empty() {
+                    return Err("Enter a result name.".into());
+                }
+                let asset = self
+                    .project
+                    .as_mut()
+                    .and_then(|p| p.document.asset_mut(id)).filter(|a| a.is_result())
+                    .ok_or("Select a result to rename.")?;
+                asset.name = name.into();
+                self.ui.rename = None;
+                self.mark_dirty();
+            }
             UiAction::RelinkAsset(id) => {
                 tx.open_file(FileDialogOptions{title:"Reconnect the original data file".into(),..Default::default()},move|s:&mut AppState,result,_|match result{
                     Ok(Some(path))=>{
@@ -160,24 +180,7 @@ impl AppState {
                         s.model.measurements.retain(|measurement|measurement.asset!=id);s.imaging.invalidate();s.start_metadata(&id);s.image_key.clear();s.mark_dirty();s.refresh_model();s.refresh_images();
                     },Ok(None)=>{},Err(error)=>s.model.error=Some(error.to_string())});
             }
-            UiAction::SetWorkspace(workspace) => {
-                self.ui.workspace = workspace;
-                if workspace == Workspace::Reconstruct && self.ui.operation != "reconstruct" {
-                    self.set_operation("reconstruct", None);
-                }
-            }
-            UiAction::SetPrepareTab(tab) => {
-                self.ui.prepare_tab = tab;
-                self.set_operation(
-                    match tab {
-                        PrepareTab::Import => "open",
-                        PrepareTab::Corrections => "correct",
-                        PrepareTab::Geometry => "poses",
-                        PrepareTab::Alignment => "align",
-                    },
-                    None,
-                );
-            }
+            UiAction::SetWorkspace(workspace) => self.set_workspace(workspace),
             UiAction::SetMainView(plane) => {
                 self.remember_view();
                 self.ui.main_view = plane;
@@ -262,11 +265,7 @@ impl AppState {
                     .cloned()
                     .ok_or("Recipe not found")?;
                 self.set_operation(&recipe.operation, Some(&recipe.parameters));
-                self.ui.workspace = if recipe.operation == "reconstruct" {
-                    Workspace::Reconstruct
-                } else {
-                    Workspace::Prepare
-                };
+                self.set_workspace(Workspace::for_operation(&recipe.operation));
             }
             UiAction::PauseJob(id) => self.control_job(&id, "pause")?,
             UiAction::ResumeJob(id) => self.control_job(&id, "resume")?,
@@ -532,6 +531,11 @@ impl AppState {
             "folder" => UiAction::ImportFolder,
             "palette" => UiAction::ShowPalette,
             "shortcuts" => UiAction::ShowShortcuts,
+            "documentation" => {
+                return tx
+                    .open_url("https://tomojax.dev/")
+                    .map_err(|_| "Could not open the browser. Visit tomojax.dev.".into());
+            }
             "prepare" => UiAction::SetWorkspace(Workspace::Prepare),
             "reconstruct" => UiAction::SetWorkspace(Workspace::Reconstruct),
             "explore" => UiAction::SetWorkspace(Workspace::Explore),

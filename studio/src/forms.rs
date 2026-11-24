@@ -54,100 +54,6 @@ pub fn field_issue(ui: &UiState, parameters: &[ParameterView], error: DraftError
     }
 }
 
-pub const OPERATIONS: &[(&str, &str, &str)] = &[
-    (
-        "open",
-        "Open & calibrate",
-        "Read a scan or raw acquisition with explicit calibration",
-    ),
-    (
-        "inspect",
-        "Inspect acquisition",
-        "Run the full TomoJAX audit and projection statistics",
-    ),
-    (
-        "correct",
-        "Corrections",
-        "Normalise raw intensity, remove artefacts and retrieve phase",
-    ),
-    (
-        "reconstruct",
-        "Reconstruction",
-        "Reconstruct the scan using a TomoJAX solver",
-    ),
-    (
-        "align",
-        "Alignment",
-        "Fit acquisition geometry and per-view motion",
-    ),
-    (
-        "simulate",
-        "Simulation",
-        "Generate a registered scan and its ground-truth phantom",
-    ),
-    (
-        "crop",
-        "Crop detector",
-        "Select half-open detector row and column ranges",
-    ),
-    ("bin", "Bin detector", "Mean-bin detector pixels"),
-    (
-        "select",
-        "Select views",
-        "Retain an ordered list of acquisition views",
-    ),
-    (
-        "poses",
-        "Edit poses",
-        "Replace or clear the registered six-column pose table",
-    ),
-    (
-        "combine",
-        "Combine scans",
-        "Combine selected scans with ordered provenance",
-    ),
-    (
-        "reconstruct_slabs",
-        "Slab reconstruction",
-        "Write a reconstruction in bounded-memory slabs",
-    ),
-    (
-        "slice",
-        "Slice preview",
-        "Reconstruct a registered preview slice",
-    ),
-    (
-        "centre_sweep",
-        "Centre sweep",
-        "Compare signed centre offsets in detector pixels",
-    ),
-    (
-        "correction_preview",
-        "Correction preview",
-        "Compare original and corrected detector rows",
-    ),
-    (
-        "region_preview",
-        "Estimate support",
-        "Estimate physical object bounds",
-    ),
-    (
-        "plan",
-        "Plan reconstruction",
-        "Resolve method, grid, memory estimates and device placement",
-    ),
-    (
-        "project",
-        "Forward project",
-        "Project a selected volume using scan geometry",
-    ),
-    (
-        "backproject",
-        "Backproject",
-        "Apply the matched transpose to projection data",
-    ),
-];
-
 pub fn definition(operation: &str) -> String {
     if operation == "plan" {
         return "Reconstruct".into();
@@ -349,8 +255,17 @@ pub fn initialise(
                         v => v.to_string(),
                     },
                     label: match v {
+                        Value::String(s) if p.name == "method" => crate::operations::method_name(s),
+                        Value::String(s) if s == "auto" => "Automatic".into(),
+                        Value::String(s) if p.name == "filter" => match s.as_str() {
+                            "ramp" => "Ramp",
+                            "hann" => "Hann",
+                            "shepp-logan" => "Shepp–Logan",
+                            other => other,
+                        }
+                        .into(),
                         Value::String(s) => s.replace('_', " "),
-                        Value::Null => "Automatic / default".into(),
+                        Value::Null => "Default".into(),
                         Value::Bool(true) => "Enabled".into(),
                         Value::Bool(false) => "Disabled".into(),
                         v => v.to_string(),
@@ -435,6 +350,42 @@ pub fn refresh_catalog(ui: &mut UiState, catalog: &SchemaCatalog) -> Vec<Paramet
     views
 }
 
+pub fn method_setting(ui: &UiState, name: &str) -> bool {
+    matches!(
+        ui.operation.as_str(),
+        "reconstruct" | "plan" | "slice" | "centre_sweep"
+    ) && matches!(
+        name,
+        "filter" | "iterations" | "tv_weight" | "nonnegative" | "warm_start"
+    )
+}
+
+pub fn applies(ui: &UiState, catalog: &SchemaCatalog, name: &str) -> bool {
+    if !method_setting(ui, name) {
+        return true;
+    }
+    let method = ui
+        .parameter_choices
+        .get("method")
+        .map_or("auto", String::as_str);
+    if method == "auto" {
+        return true;
+    }
+    if name == "warm_start" {
+        return !matches!(method, "fbp" | "fourier");
+    }
+    let config = format!("{method}Config");
+    catalog.document()["$defs"].as_object().and_then(|defs| defs.iter().find(|(key, _)| key.eq_ignore_ascii_case(&config)).map(|(_, schema)| schema)).is_none_or(|schema| {
+        schema["properties"]
+            .get(if name == "nonnegative" {
+                "lower_bound"
+            } else {
+                name
+            })
+            .is_some()
+    })
+}
+
 pub fn parameters(ui: &UiState, catalog: &SchemaCatalog) -> Result<Value, String> {
     parameters_detailed(ui, catalog).map_err(|error| error.message)
 }
@@ -443,6 +394,9 @@ pub fn parameters_detailed(ui: &UiState, catalog: &SchemaCatalog) -> Result<Valu
     let mut result = Map::new();
     for p in catalog.parameters(&definition(&ui.operation)) {
         if ["source", "sources", "path", "force"].contains(&p.name.as_str()) {
+            continue;
+        }
+        if !applies(ui, catalog, &p.name) {
             continue;
         }
         if p.name == "corrections" {

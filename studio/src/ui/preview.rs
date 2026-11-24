@@ -8,7 +8,10 @@ pub fn controls(state: &AppState) -> El {
     let Some(preview) = &state.model.preview else {
         return el();
     };
-    let mut body = col().key("interactive-preview-controls").gap(12.).w_full()
+    let mut body = col()
+        .key("interactive-preview-controls")
+        .gap(12.)
+        .w_full()
         .child(separator())
         .child(strong("Interactive preview", 13., ink()));
     if matches!(preview.operation.as_str(), "slice" | "centre_sweep") {
@@ -69,7 +72,7 @@ pub fn controls(state: &AppState) -> El {
                         )
                         .w(62.),
                     )
-                    .child(label("input px", 10., muted())),
+                    .child(label("input px", 11., muted())),
             );
     }
     if let Some(path) = &preview.error_path {
@@ -222,7 +225,7 @@ pub fn status_bar(state: &AppState) -> El {
                 .revision
                 .map(|v| format!("revision {v}"))
                 .unwrap_or_default(),
-            10.,
+            11.,
             muted(),
         ))
 }

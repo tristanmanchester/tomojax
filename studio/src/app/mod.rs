@@ -107,7 +107,7 @@ pub struct AppState {
     pub(crate) validation: validation::Controller,
     preview_context: previewing::PreviewContext,
     engine: Option<Engine>,
-    catalog: SchemaCatalog,
+    pub(crate) catalog: SchemaCatalog,
     pending: HashMap<String, Pending>,
     control_watch: Option<ControlWatch>,
     imports: VecDeque<String>,
@@ -139,10 +139,8 @@ pub struct AppState {
 impl AppState {
     pub fn init() -> Self {
         let catalog = SchemaCatalog::new(
-            serde_json::from_str(include_str!(
-                "../../../docs/protocol/operations.schema.json"
-            ))
-            .expect("bundled protocol schema"),
+            serde_json::from_str(include_str!("../../../src/tomojax/cli/parameters.json"))
+                .expect("bundled protocol schema"),
         )
         .expect("schema definitions");
         let (local_send, local_receive) = mpsc::channel();
@@ -250,6 +248,34 @@ impl AppState {
             || self.live.loading()
             || self.validation_pending()
             || self.engine.as_ref().is_some_and(|e| e.ready().is_none())
+    }
+
+    pub fn advanced_parameter(&self, parameter: &ParameterView) -> bool {
+        parameter.advanced
+            || (self
+                .ui
+                .parameter_choices
+                .get("method")
+                .is_some_and(|method| method == "auto")
+                && forms::method_setting(&self.ui, &parameter.name))
+    }
+
+    pub fn set_workspace(&mut self, workspace: Workspace) {
+        self.ui.workspace = workspace;
+        self.ui.operation_menu = false;
+        self.ui.choice_menu = None;
+        if matches!(workspace, Workspace::Prepare | Workspace::Reconstruct)
+            && Workspace::for_operation(&self.ui.operation) != workspace
+        {
+            self.set_operation(
+                if workspace == Workspace::Prepare {
+                    "open"
+                } else {
+                    "reconstruct"
+                },
+                None,
+            );
+        }
     }
 
     pub fn set_operation(&mut self, operation: &str, values: Option<&Value>) {
@@ -640,7 +666,33 @@ impl AppState {
         self.ui = UiState::default();
         self.imaging.invalidate();
         self.restore_workspace(&context);
-        self.centre_sinogram = context.active.is_none();
+        self.set_workspace(self.ui.workspace);
+        let document = &self.project.as_ref().unwrap().document;
+        self.model
+            .selected_assets
+            .retain(|id| document.asset(id).is_some());
+        if context
+            .active
+            .as_ref()
+            .and_then(|id| document.asset(id))
+            .is_none()
+        {
+            let newest = document.assets.iter().max_by_key(|asset| {
+                (
+                    asset.is_result(),
+                    asset.created,
+                )
+            });
+            self.model.active_asset = newest.map(|asset| asset.id.clone());
+            if let Some(id) = &self.model.active_asset {
+                self.model.selected_assets.insert(id.clone());
+            }
+            self.ui.display = DisplayState::default();
+            self.restore_view(&project::Workspace::default());
+            self.ui.main_view = self.default_view();
+            self.ui.display.indices = self.volume_dimensions().unwrap_or_default().map(|n| n / 2);
+            self.centre_sinogram = true;
+        }
         self.image_key.clear();
         self.last_context = Value::Null;
         self.model.error = None;
@@ -684,7 +736,9 @@ impl AppState {
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
             {
-                self.model.error=Some("NPZ files can't be imported. Use NXtomo/HDF5 or an acquisition folder.".into());
+                self.model.error = Some(
+                    "NPZ files can't be imported. Use NXtomo/HDF5 or an acquisition folder.".into(),
+                );
                 continue;
             }
             let path = match std::fs::canonicalize(&path) {
@@ -726,7 +780,6 @@ impl AppState {
             }
         }
         self.ui.workspace = Workspace::Prepare;
-        self.ui.prepare_tab = PrepareTab::Import;
         self.set_operation("open", None);
         self.mark_dirty();
         self.refresh_model();

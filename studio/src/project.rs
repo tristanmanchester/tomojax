@@ -81,6 +81,10 @@ impl Asset {
             open_parameters: Value::Null,
         }
     }
+    pub fn is_result(&self) -> bool {
+        self.parent.is_some() || self.provenance.as_ref().is_some_and(|record| record.operation != "open")
+    }
+
     pub fn volume(&self) -> Option<&ArrayDescriptor> {
         ["volume", "phantom", "image"]
             .iter()
@@ -611,6 +615,12 @@ impl Project {
                     renamed.insert(asset.id.clone(), asset.name.clone());
                 }
             }
+            // A v1 offline filter was a text field; a connected worker used a picker.
+            // Keep the actual saved value as the initial choice in either case.
+            let workspace = &mut document.workspace;
+            if let Some(filter) = workspace.parameters["filter"].as_str() {
+                workspace.draft_choices.insert("filter".into(), filter.into());
+            }
             document.version = 2;
         }
         if document.version != 2 {
@@ -809,10 +819,13 @@ mod tests {
         p.document.assets = vec![simulation, reconstruction];
         p.document.jobs = vec![sim_job, job];
         p.document.version = 1;
+        p.document.workspace.parameters = json!({"method":"fbp", "filter":"hann"});
+        p.document.workspace.draft_choices.insert("filter".into(), String::new());
         p.changed().unwrap();
         p.flush().unwrap();
         drop(p);
         let mut p = Project::open(dir.path(), false).unwrap();
+        assert_eq!(p.document.workspace.draft_choices["filter"], "hann");
         assert_eq!(p.document.assets[0].name, "Random shapes phantom");
         assert_eq!(p.document.assets[1].name, "Random shapes phantom · FBP");
         assert_eq!(p.document.jobs[1].inputs[0].name, "Phantom · simulate");

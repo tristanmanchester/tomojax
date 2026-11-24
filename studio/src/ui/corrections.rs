@@ -330,22 +330,21 @@ pub fn view(state: &AppState) -> El {
             .parameter_edits
             .get("corrections")
             .unwrap_or(&fallback);
-        body = body
-            .child(super::inspector::field_errors(
-                state,
+        body = body.child(super::inspector::field_errors(
+            state,
+            "corrections-json",
+            field(
                 "corrections-json",
-                field(
-                    "corrections-json",
-                    value,
-                    "Ordered correction objects",
-                    "JSON",
-                    |s| {
-                        s.ui.parameter_edits
-                            .entry("corrections".into())
-                            .or_default()
-                    },
-                ),
-            ));
+                value,
+                "Ordered correction objects",
+                "JSON",
+                |s| {
+                    s.ui.parameter_edits
+                        .entry("corrections".into())
+                        .or_default()
+                },
+            ),
+        ));
     } else {
         let steps = draft(&state.ui).unwrap_or_default();
         for preset in PRESETS {
@@ -401,7 +400,7 @@ pub fn view(state: &AppState) -> El {
                 .filter_map(|step| step["type"].as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            body = body.child(label(format!("Order: {order}"), 10.5, muted()).wrap());
+            body = body.child(label(format!("Order: {order}"), 11., muted()).wrap());
         }
     }
     body.child(button("corrections-mode",if json_mode{"Use guided controls"}else{"Edit corrections as JSON"},false,true,move|s,_|{

@@ -280,6 +280,7 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
         project.document.jobs[0].error
     );
     assert_eq!(project.document.assets.len(), 1);
+    assert_eq!(project.document.assets[0].name, "Shepp phantom");
     assert!(project.document.assets[0].volume().is_some());
     assert!(project.document.assets[0].projections().is_some());
     assert!(project.resolve(&project.document.assets[0].path).is_file());
@@ -316,6 +317,8 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
         project.document.assets[1].method.as_deref(),
         Some("fourier")
     );
+    assert_eq!(project.document.assets[1].name, "Shepp phantom · Fourier");
+    assert_eq!(state.ui.main_view, PlaneKind::Axial);
     let volume = project.document.assets[1].volume().unwrap();
     assert_eq!(volume.shape, [16, 16, 16]);
     assert!(
@@ -810,4 +813,50 @@ fn changed_input_is_rejected_before_a_computed_result_is_accepted() {
     assert!(project.document.jobs[0].result.is_none());
     assert_eq!(project.document.assets.len(), 1);
     state.shutdown();
+}
+
+#[test]
+fn reopening_uses_the_saved_view_or_centres_the_newest_result() {
+    let (directory, mut original) = registered_projection_fixture();
+    let document = &mut original.project.as_mut().unwrap().document;
+    let scan = document.assets[0].clone();
+    let mut result = scan.clone();
+    result.id = "volume-result".into();
+    result.parent = Some(scan.id.clone());
+    let mut volume = result.arrays.remove("projections").unwrap();
+    for (axis, name) in volume.axes.iter_mut().zip(["z", "y", "x"]) {
+        axis.name = name.into();
+        axis.frame = "volume".into();
+        axis.unit = "mm".into();
+    }
+    result.arrays.insert("volume".into(), volume);
+    document.assets.push(result.clone());
+    document.assets[0].created = result.created + 1;
+    document.assets[0].provenance = Some(crate::protocol::Provenance {
+        operation: "open".into(), parameters: json!({}), inputs: vec![],
+    });
+    original.shutdown();
+    drop(original);
+    for active in [None, Some("removed"), Some(&scan.id)] {
+        let mut project = Project::open(directory.path(), false).unwrap();
+        project.document.workspace.active = active.map(str::to_owned);
+        project.document.workspace.view = "Sinogram".into();
+        project.document.workspace.sinogram = 1;
+        project.changed().unwrap();
+        project.flush().unwrap();
+        drop(project);
+        let mut reopened = AppState::init();
+        reopened.open_project(directory.path(), false).unwrap();
+        if active == Some(scan.id.as_str()) {
+            assert_eq!(reopened.model.active_asset.as_ref(), Some(&scan.id));
+            assert_eq!(reopened.ui.main_view, PlaneKind::Sinogram);
+            assert_eq!(reopened.ui.display.sinogram_row, 1);
+        } else {
+            assert_eq!(reopened.model.active_asset.as_ref(), Some(&result.id));
+            assert!(reopened.model.selected_assets.contains(&result.id));
+            assert_eq!(reopened.ui.main_view, PlaneKind::Axial);
+            assert_eq!(reopened.ui.display.indices, [2, 2, 4]);
+        }
+        reopened.shutdown();
+    }
 }

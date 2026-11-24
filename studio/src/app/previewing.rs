@@ -52,12 +52,7 @@ impl AppState {
         if !self.model.backend.ready {
             return Err("Wait for the TomoJAX worker to become ready".into());
         }
-        if !matches!(
-            self.ui.workspace,
-            Workspace::Prepare | Workspace::Reconstruct
-        ) {
-            self.ui.workspace = Workspace::Reconstruct;
-        }
+        self.ui.workspace = Workspace::for_operation(operation);
         self.preview_context.suppressed = None;
         if self.ui.operation != operation {
             self.set_operation(operation, None);

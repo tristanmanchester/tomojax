@@ -88,20 +88,24 @@ pub fn workspace(state: &AppState) -> El {
                 })
                 .child(image(state, thumb, thumb.mark(), false))
                 .child(
-                    row()
-                        .h(29.)
+                    col()
+                        .h(39.)
                         .w_full()
                         .px(10.)
-                        .gap(6.)
-                        .items_center()
+                        .justify_center()
                         .fill(sage())
-                        .child(strong(axes_label(state, thumb), 10.5, forest()))
-                        .child(spacer())
+                        .child(
+                            strong(thumb.title(), 11., forest())
+                                .shrink()
+                                .min_w(0.)
+                                .truncate()
+                                .help(axes_label(state, thumb)),
+                        )
                         .child(number(
                             state.model.planes.get(&thumb).map_or(String::new(), |p| {
                                 format!("{} / {}", p.index + 1, p.count)
                             }),
-                            10.,
+                            11.,
                             muted(),
                         )),
                 ),
@@ -120,14 +124,16 @@ fn heading(state: &AppState) -> El {
             .child(strong("Select a scan or result", 23., ink()));
     };
     let mut details = Vec::new();
-    if let Some(method) = &asset.method {
-        details.push(method.clone());
+    if let Some(method) = asset.method.as_deref().map(crate::operations::method_name)
+        && !asset.name.split(" · ").any(|part| part == method)
+    {
+        details.push(method);
     }
     let dimensions = [PlaneKind::Sagittal, PlaneKind::Coronal, PlaneKind::Axial]
         .map(|plane| state.model.planes.get(&plane).map_or(0, |p| p.count));
     if asset.kind == AssetKind::Volume && dimensions.iter().all(|&n| n > 0) {
         details.push(format!(
-            "{} × {} × {} · XYZ",
+            "{} × {} × {} voxels",
             dimensions[0], dimensions[1], dimensions[2]
         ));
     } else if !asset.shape.is_empty() {
@@ -139,6 +145,20 @@ fn heading(state: &AppState) -> El {
                 .collect::<Vec<_>>()
                 .join(" × "),
         );
+    }
+    if let Some([x, y, z]) = asset.voxel_pitch {
+        let pitch = if x == y && y == z {
+            compact_number(x)
+        } else {
+            format!(
+                "{} × {} × {}",
+                compact_number(x),
+                compact_number(y),
+                compact_number(z)
+            )
+        };
+        let unit = if asset.units == "scan_length" {"(scan units)"} else {unit_name(&asset.units)};
+        details.push(format!("Voxel size {pitch} {unit}"));
     }
     if asset.simulated {
         details.push("simulated".into());
@@ -172,7 +192,7 @@ fn heading(state: &AppState) -> El {
                 .gap(7.)
                 .items_center()
                 .child(status_dot(forest()))
-                .child(label(&asset.status, 10.5, forest())),
+                .child(label(&asset.status, 11., forest())),
         );
     }
     title.min_h(58.)
@@ -187,7 +207,7 @@ fn image_toolbar(state: &AppState, kind: PlaneKind) -> El {
         .items_center()
         .fill(canvas_bg())
         .child(strong(kind.title(), 12., canvas_ink()))
-        .child(label(axes_label(state, kind), 10.5, canvas_muted()))
+        .child(label(axes_label(state, kind), 11., canvas_muted()))
         .child(spacer());
     let volume_available = state
         .model
@@ -227,7 +247,7 @@ fn image_toolbar(state: &AppState, kind: PlaneKind) -> El {
         .child(
             number(
                 format!("{:.0}%", state.ui.display.zoom * 100.),
-                10.5,
+                11.,
                 canvas_muted(),
             )
             .min_w(34.),
@@ -436,7 +456,7 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
     area = area.child(surface);
     if interactive && state.model.render_loading {
         area = area.child(
-            label("Refining preview…", 10.5, canvas_ink())
+            label("Refining preview…", 11., canvas_ink())
                 .px(10.)
                 .py(7.)
                 .fill(canvas_bg().alpha(0.85))
@@ -449,7 +469,7 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
 
 fn axes_label(state: &AppState, kind: PlaneKind) -> String {
     if kind == PlaneKind::Volume {
-        return "X · Y · Z".into();
+        return String::new();
     }
     state
         .model
@@ -457,11 +477,13 @@ fn axes_label(state: &AppState, kind: PlaneKind) -> String {
         .get(&kind)
         .filter(|p| p.axes.iter().all(|name| !name.is_empty()))
         .map(|p| {
-            format!(
-                "{} · {}",
-                p.axes[1].to_uppercase(),
-                p.axes[0].to_uppercase()
-            )
+            let axis = |s: &str| match s {
+                "u" => "detector column".into(),
+                "v" => "detector row".into(),
+                "view" => "view".into(),
+                _ => s.to_uppercase(),
+            };
+            format!("{} × {}", axis(&p.axes[1]), axis(&p.axes[0]))
         })
         .unwrap_or_else(|| kind.axes().into())
 }
@@ -556,11 +578,11 @@ fn image_footer(state: &AppState, kind: PlaneKind) -> El {
             .px(15.)
             .items_center()
             .gap(10.)
-            .child(label("Drag to orbit · Scroll to zoom", 10., canvas_muted()))
+            .child(label("Drag to orbit · Scroll to zoom", 11., canvas_muted()))
             .child(spacer())
             .child(label(
                 info.map_or("", |p| p.quality.as_str()),
-                10.,
+                11.,
                 canvas_muted(),
             ));
     }
@@ -612,16 +634,28 @@ fn compare(state: &AppState) -> El {
         .min_w(0.)
         .w_full()
         .h_full()
-        .child(
-            col()
-                .gap(6.)
-                .child(strong("Compare results", 24., ink())),
-        );
+        .child(col().gap(6.).child(strong("Compare results", 24., ink())));
     if left.is_none() || right.is_none() {
-        return main.child(el().grow(1.).min_h(0.).center().child(col().gap(16.).max_w(390.).center()
-            .child(icon(Icon::Compare,36.,forest())).child(strong("Choose two results",20.,ink()))
-            .child(help("Select two volumes in the navigator or the inspector."))
-            .child(action_button("compare-selection","Compare selection",true,state.model.selection_count()>=2,UiAction::CompareSelection))));
+        return main.child(
+            el().grow(1.).min_h(0.).center().child(
+                col()
+                    .gap(16.)
+                    .max_w(390.)
+                    .center()
+                    .child(icon(Icon::Compare, 36., forest()))
+                    .child(strong("Choose two results", 20., ink()))
+                    .child(help(
+                        "Select two volumes in the navigator or the inspector.",
+                    ))
+                    .child(action_button(
+                        "compare-selection",
+                        "Compare selection",
+                        true,
+                        state.model.selection_count() >= 2,
+                        UiAction::CompareSelection,
+                    )),
+            ),
+        );
     }
     if let Some(note) = &state.model.comparison_note {
         main = main.child(help(note));
@@ -650,9 +684,9 @@ fn compare(state: &AppState) -> El {
                         .h(30.)
                         .px(12.)
                         .items_center()
-                        .child(label("Axial slice", 10., canvas_muted()))
+                        .child(label("Axial slice", 11., canvas_muted()))
                         .child(spacer())
-                        .child(label(&asset.units, 10., canvas_muted())),
+                        .child(label(unit_name(&asset.units), 11., canvas_muted())),
                 ),
         );
     }
@@ -661,13 +695,46 @@ fn compare(state: &AppState) -> El {
 }
 
 fn empty_project(state: &AppState) -> El {
-    el().key("empty-project").grow(1.).min_h(0.).min_w(0.).center().padding(36.)
-        .child(col().max_w(480.).gap(18.)
-            .child(icon(Icon::Folder,36.,forest()))
-            .child(strong("No scans in this project",27.,ink()))
-            .child(row().gap(10.)
-                .child(action_button("empty-add-scans","Add scans",true,true,UiAction::ImportFiles))
-                .child(action_button("empty-add-folder","Add folder",false,true,UiAction::ImportFolder)))
-            .child(separator().mt(10.))
-            .child(action_button("empty-simulate","Simulate a scan",false,state.model.backend.ready,UiAction::Simulate).max_w(190.)))
+    el().key("empty-project")
+        .grow(1.)
+        .min_h(0.)
+        .min_w(0.)
+        .center()
+        .padding(36.)
+        .child(
+            col()
+                .max_w(480.)
+                .gap(18.)
+                .child(icon(Icon::Folder, 36., forest()))
+                .child(strong("No scans in this project", 27., ink()))
+                .child(
+                    row()
+                        .gap(10.)
+                        .child(action_button(
+                            "empty-add-scans",
+                            "Add scans",
+                            true,
+                            true,
+                            UiAction::ImportFiles,
+                        ))
+                        .child(action_button(
+                            "empty-add-folder",
+                            "Add folder",
+                            false,
+                            true,
+                            UiAction::ImportFolder,
+                        )),
+                )
+                .child(separator().mt(10.))
+                .child(
+                    action_button(
+                        "empty-simulate",
+                        "Simulate a scan",
+                        false,
+                        state.model.backend.ready,
+                        UiAction::Simulate,
+                    )
+                    .max_w(190.),
+                ),
+        )
 }

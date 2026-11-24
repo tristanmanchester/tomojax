@@ -1,7 +1,7 @@
 //! Job visibility and keyboard fluency without taking the specimen out of context.
 use super::{controls::*, model::*, tokens::*};
 use crate::AppState;
-use rune::{El, ScrollSpec, TextStyle, col, el, row, text_input};
+use rune::{El, ScrollSpec, col, el, row, text_input};
 
 pub fn jobs_workspace(state: &AppState) -> El {
     let mut content = col()
@@ -27,9 +27,23 @@ pub fn jobs_workspace(state: &AppState) -> El {
                 )),
         );
     if state.model.jobs.is_empty() {
-        return content.child(el().grow(1.).center().child(col().max_w(390.).gap(16.).center()
-            .child(icon(Icon::Jobs,36.,forest())).child(strong("No jobs submitted",21.,ink()))
-            .child(action_button("jobs-start","Prepare reconstruction",true,true,UiAction::SetWorkspace(Workspace::Reconstruct)))));
+        return content.child(
+            el().grow(1.).center().child(
+                col()
+                    .max_w(390.)
+                    .gap(16.)
+                    .center()
+                    .child(icon(Icon::Jobs, 36., forest()))
+                    .child(strong("No jobs submitted", 21., ink()))
+                    .child(action_button(
+                        "jobs-start",
+                        "Prepare reconstruction",
+                        true,
+                        true,
+                        UiAction::SetWorkspace(Workspace::Reconstruct),
+                    )),
+            ),
+        );
     }
     if state.live.frame().is_some() || state.live.loading() || state.live.error().is_some() {
         content = content.child(super::progress::live(state, false));
@@ -249,7 +263,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
                 .min_w(0.)
                 .gap(5.)
                 .child(strong(&job.name, 12., ink()).truncate().help(&job.name))
-                .child(label(&job.asset_name, 11., muted()).truncate()),
+                .child(label(&job.operation, 11., muted()).truncate()),
         )
         .child(label(job.status.title(), 11., job_colour(job.status)));
     if !compact && let Some(elapsed) = &job.elapsed {
@@ -258,7 +272,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
     if !compact {
         heading = heading.child(label(
             if expanded { "Hide details" } else { "Details" },
-            10.,
+            11.,
             forest(),
         ));
     }
@@ -268,9 +282,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
         .min_w(0.)
         .padding(if compact { 13. } else { 17. })
         .gap(12.)
-        .radius(7.)
-        .fill(paper())
-        .border(1., line())
+        .child(separator())
         .child(
             row()
                 .gap(14.)
@@ -296,7 +308,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
                 )
                 .child(job_actions(job, compact)),
         );
-    if !job.stage.is_empty() {
+    if !job.stage.is_empty() && job.stage != job.status.title() {
         body = body.child(label(&job.stage, 11., muted()).wrap());
     }
     if let Some(progress) = job
@@ -317,7 +329,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
                 )
                 .child(number(
                     format!("{:.0}%", progress.clamp(0., 1.) * 100.),
-                    10.,
+                    11.,
                     muted(),
                 )),
         );
@@ -326,12 +338,15 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
         body = body.child(label(error, 11.5, tokens::error()).wrap());
     }
     body = body.child(super::progress::telemetry(state, job, compact, expanded));
-    if expanded && !job.settings.is_empty() {
+    if expanded && (!job.settings.is_empty() || !job.inputs.is_empty()) {
         let mut details =
             col()
                 .gap(8.)
                 .child(separator())
                 .child(strong("Captured settings", 11., muted()));
+        if !job.inputs.is_empty() {
+            details = details.child(property("Inputs", &job.inputs));
+        }
         for (name, value) in &job.settings {
             details = details.child(property(name, value));
         }
@@ -433,8 +448,7 @@ pub fn command_palette(state: &AppState) -> El {
     let commands = matching_commands(state);
     let mut results = col().gap(3.).padding(8.);
     if commands.is_empty() {
-        results = results
-            .child(help("No matching commands").padding(18.));
+        results = results.child(help("No matching commands").padding(18.));
     }
     for (index, command) in commands.into_iter().enumerate() {
         let selected = index == state.ui.command_index;
@@ -459,12 +473,12 @@ pub fn command_palette(state: &AppState) -> El {
                     s.dispatch(UiAction::RunCommand(id.clone()), tx)
                 })
                 .child(strong(&command.title, 12., ink()))
-                .child(label(&command.category, 10.5, muted()))
+                .child(label(&command.category, 11., muted()))
                 .child(spacer())
                 .child(number(&command.binding, 11., muted())),
         );
     }
-    let search = text_input(&state.ui.command_query, TextStyle::new(15., 400.))
+    let search = text_input(&state.ui.command_query, type_style(15., 400.))
         .key("command-search")
         .label("Search commands")
         .placeholder("Search commands, workspaces and actions…", muted())
@@ -527,7 +541,7 @@ pub fn command_palette(state: &AppState) -> El {
         .child(
             label(
                 "Arrow keys to choose  ·  Enter to run  ·  Escape to close",
-                10.5,
+                11.,
                 muted(),
             )
             .px(20.)
@@ -564,7 +578,7 @@ pub fn shortcuts(state: &AppState) -> El {
                         .grow(1.)
                         .min_w(0.)
                         .child(strong(&shortcut.title, 12., ink()))
-                        .child(label(&shortcut.category, 10.5, muted())),
+                        .child(label(&shortcut.category, 11., muted())),
                 )
                 .child(
                     action_button(
@@ -626,13 +640,61 @@ pub fn shortcuts(state: &AppState) -> El {
         }
         rows = rows.child(item).child(separator());
     }
-    let mut panel=col().key("shortcuts-dialog").role("dialog").label("Keyboard shortcuts").w(720.).h(640.).radius(12.).fill(paper())
-        .shadow(14.,44.,ink().alpha(0.2)).modal(true,|s:&mut AppState|s.ui.shortcuts_open=false).focus_return("shortcut-settings")
-        .child(col().padding(24.).gap(16.)
-            .child(row().gap(12.).items_center().child(strong("Keyboard shortcuts",23.,ink())).child(spacer())
-                .child(icon_button("close-shortcuts","Close keyboard shortcuts",Icon::Close,true,|s,_|s.ui.shortcuts_open=false)))
-            .child(search_input("shortcut-search",&state.ui.shortcut_query,"Find a shortcut",|s|&mut s.ui.shortcut_query)))
-        .child(separator()).child(col().key("shortcuts-scroll").grow(1.).min_h(0.).w_full().scroll(ScrollSpec { stick_bottom: false }).child(rows));
+    let mut panel = col()
+        .key("shortcuts-dialog")
+        .role("dialog")
+        .label("Keyboard shortcuts")
+        .w(720.)
+        .h(640.)
+        .radius(12.)
+        .fill(paper())
+        .shadow(14., 44., ink().alpha(0.2))
+        .modal(true, |s: &mut AppState| s.ui.shortcuts_open = false)
+        .focus_return("shortcut-settings")
+        .child(
+            col()
+                .padding(24.)
+                .gap(16.)
+                .child(
+                    row()
+                        .gap(12.)
+                        .items_center()
+                        .child(strong("Keyboard shortcuts", 23., ink()))
+                        .child(spacer())
+                        .child(action_button(
+                            "documentation",
+                            "Documentation",
+                            false,
+                            true,
+                            UiAction::RunCommand("documentation".into()),
+                        ))
+                        .child(icon_button(
+                            "close-shortcuts",
+                            "Close keyboard shortcuts",
+                            Icon::Close,
+                            true,
+                            |s, _| s.ui.shortcuts_open = false,
+                        )),
+                )
+                .child(search_input(
+                    "shortcut-search",
+                    &state.ui.shortcut_query,
+                    "Find a shortcut",
+                    |s| &mut s.ui.shortcut_query,
+                )),
+        )
+        .child(separator())
+        .child(
+            col()
+                .key("shortcuts-scroll")
+                .grow(1.)
+                .min_h(0.)
+                .w_full()
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(rows),
+        );
     if let Some(error) = &state.model.shortcut_error {
         panel = panel.child(
             label(error, 12., tokens::error())
@@ -645,7 +707,7 @@ pub fn shortcuts(state: &AppState) -> El {
     panel = panel.child(separator()).child(
         label(
             "Format: mod+shift+r. mod is Ctrl, or Cmd on macOS.",
-            10.5,
+            11.,
             muted(),
         )
         .wrap()

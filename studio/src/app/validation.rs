@@ -492,12 +492,9 @@ impl AppState {
         if issue.control.as_deref() == Some("corrections-json") {
             crate::ui::corrections::reveal_json(&mut self.ui);
         }
-        if self
-            .model
-            .parameters
-            .iter()
-            .any(|parameter| parameter.name == issue.parameter && parameter.advanced)
-        {
+        if self.model.parameters.iter().any(|parameter| {
+            parameter.name == issue.parameter && self.advanced_parameter(parameter)
+        }) {
             self.ui.advanced_open = true;
         }
         let highlighted = issue.control.is_some();

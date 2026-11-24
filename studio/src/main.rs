@@ -7,7 +7,7 @@ mod ui;
 pub use app::AppState;
 use rune::{AppSpec, Key, KeyEvent, Tx};
 use tomojax_studio::{
-    engine, imaging, live, metadata, previews, progress, project, protocol, volume,
+    engine, imaging, live, metadata, operations, previews, progress, project, protocol, volume,
 };
 use ui::model::{PlaneKind, UiAction, Workspace};
 
@@ -28,6 +28,9 @@ fn key(state: &mut AppState, event: &KeyEvent, tx: &mut Tx) -> bool {
         if state.ui.palette_open || state.ui.shortcuts_open {
             state.ui.palette_open = false;
             state.ui.shortcuts_open = false;
+            return true;
+        }
+        if state.ui.rename.take().is_some() {
             return true;
         }
         return false;
@@ -88,11 +91,8 @@ fn app_spec() -> AppSpec<AppState> {
         poll: Some(poll),
         on_key: Some(key),
         scenes: &[
-            ("prepare", |s| s.ui.workspace = Workspace::Prepare),
-            ("reconstruct", |s| {
-                s.ui.workspace = Workspace::Reconstruct;
-                s.set_operation("reconstruct", None);
-            }),
+            ("prepare", |s| s.set_workspace(Workspace::Prepare)),
+            ("reconstruct", |s| s.set_workspace(Workspace::Reconstruct)),
             ("explore", |s| s.ui.workspace = Workspace::Explore),
             ("compare", |s| s.ui.workspace = Workspace::Compare),
             ("jobs", |s| s.ui.workspace = Workspace::Jobs),

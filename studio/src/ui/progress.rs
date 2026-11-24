@@ -71,7 +71,7 @@ pub fn live(state: &AppState, compact: bool) -> El {
                 .gap(3.)
                 .w_full()
                 .fill(sage())
-                .child(strong(title, 10., forest()))
+                .child(strong(title, 11., forest()))
                 .child(
                     number(
                         if compact {
@@ -79,7 +79,7 @@ pub fn live(state: &AppState, compact: bool) -> El {
                         } else {
                             coordinate.clone()
                         },
-                        10.,
+                        11.,
                         muted(),
                     )
                     .truncate()
@@ -87,10 +87,15 @@ pub fn live(state: &AppState, compact: bool) -> El {
                 );
             if !compact {
                 let [low, high] = plane.statistics.window;
-                caption = caption.child(number(format!("Auto window {low:.3}–{high:.3}"), 9., muted())
-                    .key(format!("live-window-{axis}"))
-                    .truncate()
-                    .help(format!("Automatic display window: {low} to {high} {}", plane.value_unit)));
+                caption = caption.child(
+                    number(format!("Auto window {low:.3}–{high:.3}"), 11., muted())
+                        .key(format!("live-window-{axis}"))
+                        .truncate()
+                        .help(format!(
+                            "Automatic display window: {low} to {high} {}",
+                            plane.value_unit
+                        )),
+                );
             }
             slices = slices.child(
                 col()
@@ -138,15 +143,15 @@ pub fn live(state: &AppState, compact: bool) -> El {
                 .px(8.)
                 .items_center()
                 .fill(sage())
-                .child(strong("View", 10., forest()).w(44.));
+                .child(strong("View", 11., forest()).w(44.));
             for column in &poses.columns {
                 headings = headings.child(
                     col()
                         .gap(4.)
                         .grow(1.)
                         .min_w(0.)
-                        .child(strong(&column.name, 10., forest()).truncate())
-                        .child(label(&column.unit, 8.5, muted()).truncate())
+                        .child(strong(&column.name, 11., forest()).truncate())
+                        .child(label(&column.unit, 11., muted()).truncate())
                         .help(format!("{} · {}", column.name, column.unit)),
                 );
             }
@@ -205,7 +210,7 @@ pub fn live(state: &AppState, compact: bool) -> El {
                                                                 poses.axes[0]
                                                                     .coordinate(index as f64)
                                                             ),
-                                                            9.5,
+                                                            11.,
                                                             muted(),
                                                         )
                                                         .w(44.),
@@ -215,7 +220,7 @@ pub fn live(state: &AppState, compact: bool) -> El {
                                                         cells = cells.child(
                                                             number(
                                                                 format!("{value:.6}"),
-                                                                9.5,
+                                                                11.,
                                                                 ink(),
                                                             )
                                                             .grow(1.)
@@ -240,7 +245,7 @@ pub fn live(state: &AppState, compact: bool) -> El {
                         "View coordinates: {} · {}",
                         poses.axes[0].frame, poses.axes[0].unit
                     ),
-                    10.,
+                    11.,
                     muted(),
                 )
                 .wrap(),
@@ -289,7 +294,7 @@ pub fn telemetry(state: &AppState, job: &JobView, compact: bool, expanded: bool)
                         .gap(10.)
                         .items_center()
                         .child(label(task.title(), 11., ink()).wrap().grow(1.).min_w(0.))
-                        .child(number(count, 10., muted())),
+                        .child(number(count, 11., muted())),
                 );
             if let Some(fraction) = task.fraction() {
                 line_view = line_view.child(
@@ -313,7 +318,7 @@ pub fn telemetry(state: &AppState, job: &JobView, compact: bool, expanded: bool)
                             ""
                         }
                     ),
-                    10.,
+                    11.,
                     muted(),
                 ));
             }
@@ -329,7 +334,7 @@ pub fn telemetry(state: &AppState, job: &JobView, compact: bool, expanded: bool)
                             .gap(9.)
                             .items_center()
                             .child(
-                                label(metric.name.replace('_', " "), 10., muted())
+                                label(metric.name.replace('_', " "), 11., muted())
                                     .grow(1.)
                                     .min_w(0.)
                                     .wrap(),
@@ -339,7 +344,7 @@ pub fn telemetry(state: &AppState, job: &JobView, compact: bool, expanded: bool)
                                     "{value} {}",
                                     metric.unit.as_deref().unwrap_or("unit not declared")
                                 ),
-                                10.,
+                                11.,
                                 ink(),
                             )),
                     );
@@ -519,7 +524,7 @@ fn plot_paths(samples: &[MetricSample], point_budget: usize) -> Vec<Vec<(u64, f6
 fn metric_plot(metric: &MetricHistory, title: &str) -> El {
     let mut plot = col().gap(5.).child(strong(title, 11., ink())).child(label(
         metric.unit.as_deref().unwrap_or("unit not declared"),
-        10.,
+        11.,
         muted(),
     ));
     let mut first = u64::MAX;
@@ -559,7 +564,7 @@ fn metric_plot(metric: &MetricHistory, title: &str) -> El {
         shape = shape.stroke(path, 1.3, forest());
     }
     plot = plot
-        .child(label(format!("Range {low:.4}–{high:.4}"), 10., muted()))
+        .child(label(format!("Range {low:.4}–{high:.4}"), 11., muted()))
         .child(
             canvas(shape)
                 .key(format!("metric-plot-{}", metric.name))
@@ -574,8 +579,8 @@ fn metric_plot(metric: &MetricHistory, title: &str) -> El {
         .child(
             row()
                 .justify_between()
-                .child(number(format!("step {first}"), 10., muted()))
-                .child(number(last.to_string(), 10., muted())),
+                .child(number(format!("step {first}"), 11., muted()))
+                .child(number(last.to_string(), 11., muted())),
         );
     plot
 }

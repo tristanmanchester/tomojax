@@ -12,6 +12,7 @@ pub const COMMANDS: &[(&str, &str, &str, &str)] = &[
     ("folder", "Import folder", "Project", "mod+shift+i"),
     ("palette", "Search commands", "Workspace", "mod+k"),
     ("shortcuts", "Keyboard shortcuts", "Workspace", "mod+comma"),
+    ("documentation", "Open documentation", "Help", "f1"),
     ("prepare", "Prepare workspace", "Workspace", "mod+1"),
     ("reconstruct", "Reconstruct workspace", "Workspace", "mod+2"),
     ("explore", "Explore workspace", "Workspace", "mod+3"),
