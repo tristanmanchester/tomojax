@@ -1,5 +1,6 @@
 """Bounded detector reads for the worker's logical (view, row, column) selections."""
 
+from contextlib import nullcontext
 from itertools import product
 from math import prod
 from typing import cast
@@ -113,6 +114,13 @@ class SampleTiles:
         self.dtype = np.dtype(np.float32) if calibration is not None else samples.dtype
         self.shape = samples.shape
 
+    def cache(self, ranges):
+        if self.calibration is not None and hasattr(self.samples, "cached_rows"):
+            return self.samples.cached_rows(
+                ranges, (self.calibration.flats, self.calibration.darks)
+            )
+        return nullcontext()
+
     def cost(self, ranges):
         n = source_bytes(self.samples, ranges)
         if self.calibration is not None:
@@ -136,7 +144,8 @@ class SampleTiles:
 
         check(self.cost(ranges))
         if self.calibration is not None:
-            return corrected_tile(self.calibration, ranges, read)
+            with self.cache(ranges):
+                return corrected_tile(self.calibration, ranges, read)
         return read(self.samples, ranges)
 
     def chunks(self, tile, budget):

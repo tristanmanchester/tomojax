@@ -234,6 +234,7 @@ def projection_frames(
     file: Path,
     *,
     require_raw=False,
+    layout=None,
     apply_poses=True,
     flats=None,
     darks=None,
@@ -258,6 +259,7 @@ def projection_frames(
         **settings,
     )
     if frames is None:
+        settings["layout"] = layout
         frames, raw = stored_frames(file, located, require_raw=require_raw, **settings)
         if not raw:
             return frames, False
@@ -275,12 +277,12 @@ def projection_frames(
     return fields, True
 
 
-def stored_frames(file, located, *, require_raw, apply_poses, **overrides: Any):
+def stored_frames(file, located, *, require_raw, apply_poses, layout=None, **overrides: Any):
     settings = dict(apply_poses=apply_poses, **overrides)
     if located is not None and require_raw:
         return _hdf5_frames(file, located, layout_only=True, **settings), True
     try:
-        record, stack = saved_projection_layout(file)
+        record, stack = layout if layout is not None else saved_projection_layout(file)
     except KeyError:
         if located is None:
             raise

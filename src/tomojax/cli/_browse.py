@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from itertools import product
 import math
 from pathlib import Path
@@ -56,7 +56,8 @@ def source_array(
         return
     path = Path(source.path)
     if isinstance(source, op.PathInput):
-        yield from saved_array(path)
+        with ExitStack() as resources:
+            yield from saved_array(path, resources)
         return
     if isinstance(source, Hdf5):
         with read_hdf5(path) as file:
@@ -74,8 +75,11 @@ def source_array(
     yield data, (lease and lease.metadata) or indexed(source, data), {}
 
 
-def saved_array(path: Path) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]]:
+def saved_array(
+    path: Path, resources: ExitStack
+) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]]:
     """Browse saved volumes in logical axis order or the opened scan's line integrals."""
+    layout = None
     if h5py.is_hdf5(path):
         with read_hdf5(path) as file:
             data = file.get(p.VOLUME_DATASET)
@@ -89,7 +93,7 @@ def saved_array(path: Path) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]
                 )
                 return
     elif path.suffix.lower() == ".npz":
-        record, arrays = saved_npz_layout(path)
+        record, arrays = saved_npz_layout(path, resources=resources)
         if (volume := arrays.get("volume")) is not None:
             grid = saved_volume_grid(
                 record.grid.to_dict() if record.grid else None, record.geometry_metadata
@@ -97,10 +101,14 @@ def saved_array(path: Path) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]
             meta = disk_volume(
                 path, grid, "zyx", volume.shape, volume.dtype.str, record.geometry_metadata
             )
-            yield SampleTiles(volume), meta, {}
+            yield volume, meta, {}
             return
-    frames, raw = projection_frames(path)
-    data = SampleTiles(frames.counts, frames if raw else None)
+        layout = record, arrays.get("projections")
+    frames, raw = projection_frames(path, layout=layout)
+    counts = frames.counts
+    data = (
+        counts if layout is not None and not raw else SampleTiles(counts, frames if raw else None)
+    )
     view = Axis("view", "acquisition", "degree", Coordinates(Member(str(path), "angles")))
     axes = scan_axes(frames.geometry.detector, view, unit_of(frames))
     meta = Array(
@@ -158,23 +166,34 @@ def browse(
                 "Source is a volume. Select .projections on its scan or use a detector dataset.",
             )
         planes = []
-        for dim, at, roi, stride, sampling in plane_windows(
-            [a.name for a in meta.axes],
-            meta.shape,
-            request.mode,
-            request.axis,
-            request.index,
-            tuple((r.start, r.stop) for r in ranges),
-            tuple(r.step for r in ranges),
-        ):
-            tile = tuple(range(lo, hi, step) for (lo, hi), step in zip(roi, stride, strict=True))
+        windows = list(
+            plane_windows(
+                [a.name for a in meta.axes],
+                meta.shape,
+                request.mode,
+                request.axis,
+                request.index,
+                tuple((r.start, r.stop) for r in ranges),
+                tuple(r.step for r in ranges),
+            )
+        )
+        tiles = [
+            tuple(range(lo, hi, s) for (lo, hi), s in zip(roi, stride, strict=True))
+            for _, _, roi, stride, _ in windows
+        ]
+        samples = (
+            data.sampled_windows(tiles) if hasattr(data, "sampled_windows") else [None] * len(tiles)
+        )
+        for (dim, at, _, _, sampling), tile, sampled in zip(windows, tiles, samples, strict=True):
             planes.append(
-                p.DisplayPlane(read_window(context, data, meta, vectors, tile), dim, at, sampling)
+                p.DisplayPlane(
+                    read_window(context, data, meta, vectors, tile, sampled), dim, at, sampling
+                )
             )
         return p.DisplayPlanes(tuple(planes))
 
 
-def read_window(context, data, meta, vectors, ranges):
+def read_window(context, data, meta, vectors, ranges, sampled=None):
     shape = tuple(map(len, ranges))
     if math.prod(shape) * np.dtype(meta.dtype).itemsize > READ_BYTES:
         raise InvalidParameter("roi", "read exceeds 16 MiB; use a stride or a smaller ROI")
@@ -196,7 +215,7 @@ def read_window(context, data, meta, vectors, ranges):
     if columns and len(ranges[-1]) != len(columns):
         columns, domain = (), "pose_components"
     return Array(
-        stage_array(context, pixels(data, ranges)),
+        stage_array(context, pixels(data, ranges) if sampled is None else sampled),
         shape,
         meta.dtype,
         tuple(axes),
@@ -207,40 +226,46 @@ def read_window(context, data, meta, vectors, ranges):
     )
 
 
-def statistics(request, context, data, meta, ranges):
-    """Spool finite samples for exact quantiles while bounding source reads and resident buffers."""
-    if not 1 <= request.bins <= 4096:
-        raise InvalidParameter("bins", "choose 1 to 4096 histogram bins")
-    if any(not 0 <= q <= 100 for q in request.percentiles):
-        raise InvalidParameter("percentiles", "percentiles must be between 0 and 100")
+def sample_chunks(data, ranges):
+    if hasattr(data, "sample_chunks"):
+        yield from data.sample_chunks(ranges)
+        return
     block = [1] * len(ranges)
     capacity = READ_BYTES // 8
     for i in reversed(range(len(ranges))):
         block[i] = max(1, min(capacity, len(ranges[i])))
         capacity //= block[i]
     starts = (range(0, len(r), step) for r, step in zip(ranges, block, strict=True))
-    count = 0
-    mean = m2 = 0.0
-    with tempfile.TemporaryFile() as stream:
+    with data.cache(ranges) if isinstance(data, SampleTiles) else nullcontext():
         for origin in product(*starts):
-            context.control.checkpoint()
             tile = tuple(
                 r[start : start + n] for r, start, n in zip(ranges, origin, block, strict=True)
             )
-            chunks = (
-                data.chunks(tile, READ_BYTES)
-                if isinstance(data, SampleTiles)
-                else (pixels(data, tile),)
-            )
-            for chunk in chunks:
-                finite = chunk[np.isfinite(chunk)].astype(np.float64)
-                n = len(finite)
-                if n:
-                    finite.tofile(stream)
-                    delta = float(finite.mean()) - mean
-                    mean += delta * n / (count + n)
-                    m2 += float(finite.var()) * n + delta**2 * count * n / (count + n)
-                    count += n
+            if isinstance(data, SampleTiles):
+                yield from data.chunks(tile, READ_BYTES)
+            else:
+                yield pixels(data, tile)
+
+
+def statistics(request, context, data, meta, ranges):
+    """Spool finite samples for exact quantiles while bounding source reads and resident buffers."""
+    if not 1 <= request.bins <= 4096:
+        raise InvalidParameter("bins", "choose 1 to 4096 histogram bins")
+    if any(not 0 <= q <= 100 for q in request.percentiles):
+        raise InvalidParameter("percentiles", "percentiles must be between 0 and 100")
+    count = 0
+    mean = m2 = 0.0
+    with tempfile.TemporaryFile() as stream:
+        for chunk in sample_chunks(data, ranges):
+            context.control.checkpoint()
+            finite = chunk[np.isfinite(chunk)].astype(np.float64)
+            n = len(finite)
+            if n:
+                finite.tofile(stream)
+                delta = float(finite.mean()) - mean
+                mean += delta * n / (count + n)
+                m2 += float(finite.var()) * n + delta**2 * count * n / (count + n)
+                count += n
         edges, histogram = (), ()
         values = dict.fromkeys(map(str, request.percentiles))
         if count:

@@ -5,6 +5,7 @@ Slices are read plane by plane, so previews of large reconstructions stay cheap.
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from pathlib import Path
 from typing import cast
 
@@ -49,35 +50,45 @@ def preview_paths(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
 
 def write_previews(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
     """Write percentile-scaled PNG previews of ``path`` into ``out_dir``."""
-    paths = preview_paths(path, out_dir)
     images = {}
-    samples = None
-    if Path(path).suffix.lower() == ".npz":
-        record, members = saved_npz_layout(Path(path))
-        if (stack := members.get("projections")) is not None:
-            key = record.image_key
-            samples = stack if key is None else stack.frames_at(key == 0)
-        if (volume := members.get("volume")) is not None:
-            for i, axis in enumerate("zyx"):
-                ranges = [range(n) for n in volume.shape]
-                mid = volume.shape[i] // 2
-                ranges[i] = range(mid, mid + 1)
-                images[f"slice_{axis}"] = volume.sampled(ranges).squeeze(axis=i)
+    file_path = Path(path)
+    if file_path.suffix.lower() == ".npz":
+        with ExitStack() as resources:
+            record, members = saved_npz_layout(file_path, resources=resources)
+            if (stack := members.get("projections")) is not None:
+                key = record.image_key
+                samples = stack if key is None else stack.frames_at(key == 0)
+                images["projection"] = _middle_projection(samples, file_path)
+            if (volume := members.get("volume")) is not None:
+                windows = []
+                for i in range(3):
+                    ranges = [range(n) for n in volume.shape]
+                    mid = volume.shape[i] // 2
+                    ranges[i] = range(mid, mid + 1)
+                    windows.append(ranges)
+                planes = volume.sampled_windows(windows)
+                images.update(
+                    {f"slice_{axis}": planes[i].squeeze(i) for i, axis in enumerate("zyx")}
+                )
+        paths = {name: Path(out_dir) / f"{name}.png" for name in images}
     else:
+        paths = preview_paths(path, out_dir)
         if "slice_z" in paths:
             with read_hdf5(path) as file:
                 images.update(_slices(file, path))
         if "projection" in paths:
-            samples = _projection_samples(Path(path))
-    if samples is not None:
-        views = samples.shape[0]
-        if not views:
-            raise ValueError(f"{path} holds no sample projections")
-        images["projection"] = samples[views // 2]
+            images["projection"] = _middle_projection(_projection_samples(file_path), file_path)
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     for name, image in images.items():
         write_image(paths[name], scale_to_uint8(image))
     return paths
+
+
+def _middle_projection(samples, path):
+    views = samples.shape[0]
+    if not views:
+        raise ValueError(f"{path} holds no sample projections")
+    return samples[views // 2]
 
 
 def _projection_samples(path: Path):

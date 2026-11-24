@@ -1244,3 +1244,100 @@ def test_compressed_npz_volume_roi_bounds_memory_and_scratch(tmp_path, monkeypat
     finally:
         tracemalloc.stop()
     np.testing.assert_array_equal(np.load(stage.private), data[24:25, 15:18:2, 85:90:2])
+
+
+def count_inflated_bytes(monkeypatch, member):
+    from zipfile import ZipExtFile
+
+    sizes = []
+    original = ZipExtFile._read1
+
+    def count(stream, n):
+        block = original(stream, n)
+        if stream.name == member:
+            sizes.append(len(block))
+        return block
+
+    monkeypatch.setattr(ZipExtFile, "_read1", count)
+    return sizes
+
+
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_compressed_npz_windows_inflate_member_once(tmp_path, monkeypatch, order):
+    from zipfile import ZipFile
+
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+
+    data = np.array(
+        np.arange(32 * 256 * 1024, dtype="f4").reshape(32, 256, 1024) % 251, order=order
+    )
+    data[1, 1, 1] = np.nan
+    path = tmp_path / "volume.npz"
+    np.savez_compressed(path, volume=data, volume_axes_order="zyx")
+    with ZipFile(path) as archive:
+        size = archive.getinfo("volume.npy").file_size
+    inflated = count_inflated_bytes(monkeypatch, "volume.npy")
+    ref = operations.PathInput(str(path))
+    roi = ((1, 32), (1, 256), (1, 1024))
+    request = operations.Statistics(
+        source=ref, roi=roi, stride=(1, 1, 2), percentiles=(25, 90), bins=7
+    )
+    stats = admitted(request, None, Stage(tmp_path), ref)
+    assert 0 < sum(inflated) <= size and max(inflated) <= 16 << 20
+    selected = data[1:, 1:, 1::2]
+    finite = selected[np.isfinite(selected)].astype(np.float64)
+    assert stats.count == finite.size and stats.non_finite == 1
+    assert stats.mean == pytest.approx(finite.mean())
+    assert stats.std == pytest.approx(finite.std())
+    np.testing.assert_allclose(list(stats.percentiles.values()), np.percentile(finite, (25, 90)))
+    counts, edges = np.histogram(finite, bins=7)
+    np.testing.assert_array_equal(stats.histogram, counts)
+    np.testing.assert_allclose(stats.edges, edges)
+
+    stage = Stage(tmp_path)
+    inflated.clear()
+    admitted(operations.Read(source=ref, roi=roi, stride=(1, 1, 2)), None, stage, ref)
+    assert 0 < sum(inflated) <= size
+    np.testing.assert_array_equal(np.load(stage.private), selected)
+
+    files = []
+
+    class PlaneStage(Stage):
+        def array(self):
+            self.private = tmp_path / f"plane-{len(files)}.npy"
+            files.append(self.private)
+            return super().array()
+
+    inflated.clear()
+    admitted(operations.Read(source=ref, mode="planes"), None, PlaneStage(tmp_path), ref)
+    assert 0 < sum(inflated) <= size
+    expected = (data[16:17, :, ::2], data[:, 128:129, ::2], data[:, :, 512:513])
+    for file, plane in zip(files, expected, strict=True):
+        np.testing.assert_array_equal(np.load(file), plane)
+
+
+def test_compressed_npz_calibration_reads_member_once(tmp_path, monkeypatch):
+    from zipfile import ZipFile
+
+    from tests.test_io_workflows import _labelled_dataset
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations
+    from tomojax.io import save_dataset
+
+    record = _labelled_dataset([1, 12, 4, 6, 8, 10, 36], [2, 1, 0, 0, 0, 0, 1])
+    record.projections = np.broadcast_to(record.projections[:, :1, :1], (7, 256, 128)).copy()
+    record.projections[[1, 6], :, 24:32] = 0
+    record.detector = tj.Detector(128, 256, 1, 1)
+    path = tmp_path / "raw.npz"
+    save_dataset(path, record)
+    expected = np.asarray(tj.load(path).projections)[1::2, 3::17, 26::11]
+    ref = operations.PathInput(str(path))
+    roi = ((1, 4), (3, 256), (26, 128))
+    with ZipFile(path) as archive:
+        size = archive.getinfo("projections.npy").file_size
+    inflated = count_inflated_bytes(monkeypatch, "projections.npy")
+    stage = Stage(tmp_path)
+    admitted(operations.Read(source=ref, roi=roi, stride=(2, 17, 11)), None, stage, ref)
+    assert 0 < sum(inflated) <= size
+    np.testing.assert_array_equal(np.load(stage.private), expected)

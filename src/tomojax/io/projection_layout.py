@@ -1,5 +1,6 @@
 """Saved scan metadata and lazy sample storage in logical detector order."""
 
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -13,9 +14,11 @@ from tomojax.io._datasets import ProjectionDataset, psi_record
 from tomojax.io._hdf5_array import read_hdf5_array
 
 
-def saved_npz_layout(path: Path) -> tuple[ProjectionDataset, dict[str, Any]]:
+def saved_npz_layout(
+    path: Path, *, resources: ExitStack | None = None
+) -> tuple[ProjectionDataset, dict[str, Any]]:
     """Read the archive metadata with sliceable sources for its saved arrays."""
-    payload, arrays = npz_layout(path)
+    payload, arrays = npz_layout(path, resources=resources)
     return ProjectionDataset.from_nxtomo(payload, source_path=path), arrays
 
 
