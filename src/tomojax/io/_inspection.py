@@ -36,7 +36,7 @@ from tomojax._typed_arrays import (
 )
 from tomojax.core.files import read_hdf5
 from tomojax.io._acquisition import read_acquisition
-from tomojax.io._datasets import ProjectionDataset, load_dataset
+from tomojax.io._datasets import ProjectionDataset
 from tomojax.io._inspection_types import (
     AlignmentReport,
     AnglesReport,
@@ -51,7 +51,7 @@ from tomojax.io._inspection_types import (
     VolumeReport,
     WorkingSetEstimate,
 )
-from tomojax.io.projection_layout import saved_npz_layout
+from tomojax.io.projection_layout import saved_npz_layout, saved_projection_layout
 
 type PathLike = str | Path
 
@@ -285,27 +285,23 @@ def _angles_report(file: h5py.File, located: LocatedFrames | None) -> AnglesRepo
     else:
         path, values, keys = located.angles_path, located.angles, located.image_key
         dataset = None if path is None else _dataset_at(file, path)
-    if dataset is None or values is None:
-        return {
-            "found": False,
-            "path": None,
-            "count": None,
-            "units": None,
-            "min": None,
-            "max": None,
-            "coverage": None,
-        }
+    units = None if dataset is None else _attr_to_str(dataset.attrs.get("units"))
+    return _angle_summary(values, keys, path, units)
 
-    # Discovery has already converted radians and known GDA command units.
-    samples = np.ones(values.shape, dtype=bool) if keys is None else keys == 0
-    finite = values[np.isfinite(values) & samples]
-    units = _attr_to_str(dataset.attrs.get("units"))
+
+def _angle_summary(
+    values: np.ndarray | None, keys: np.ndarray | None, path: str | None, units: str | None
+) -> AnglesReport:
+    samples = np.asarray([]) if values is None else values
+    if keys is not None and samples.size:
+        samples = samples[keys == 0]
+    finite = samples[np.isfinite(samples)]
     low = float(finite.min()) if finite.size else None
     high = float(finite.max()) if finite.size else None
     return {
-        "found": True,
+        "found": bool(values is not None and values.size),
         "path": path,
-        "count": int(values.size),
+        "count": None if values is None else int(values.size),
         "units": units,
         "min": low,
         "max": high,
@@ -586,15 +582,7 @@ def _record_report(
         "schema_version": 1,
         "input_path": str(path),
         "projection": projection,
-        "angles": {
-            "found": bool(len(angles)),
-            "path": acquisition.get("angles_path"),
-            "count": len(angles),
-            "units": "deg",
-            "min": float(angles.min()) if len(angles) else None,
-            "max": float(angles.max()) if len(angles) else None,
-            "coverage": float(np.ptp(angles)) if len(angles) else None,
-        },
+        "angles": _angle_summary(angles, record.image_key, acquisition.get("angles_path"), "deg"),
         "geometry": {
             "found": True,
             "type": record.geometry_type,
@@ -671,8 +659,8 @@ def inspect_dataset(path: PathLike) -> InspectionReport:
             dark_count=int(np.count_nonzero(key == 2)),
         )
     if Path(path).suffix.lower() == ".mat":  # PSI cSAXS phase line integrals
-        record = load_dataset(path)
-        return _record_report(path, record, cast("_ProjectionStack", record.projections))
+        record, samples = saved_projection_layout(Path(path))
+        return _record_report(path, record, samples)
     raw = read_acquisition(path)
     if raw is None:
         return inspect_nxtomo(Path(path))

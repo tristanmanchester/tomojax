@@ -106,17 +106,17 @@ class ReadLimit(InvalidParameter):
         super().__init__("roi", "read exceeds 16 MiB; use a stride or a smaller ROI")
 
 
-class ProjectionTiles:
-    def __init__(self, frames, raw) -> None:
-        self.frames = frames
-        self.raw = raw
-        self.dtype = np.dtype(np.float32) if raw else frames.counts.dtype
-        self.shape = frames.counts.shape
+class SampleTiles:
+    def __init__(self, samples, calibration=None) -> None:
+        self.samples = samples
+        self.calibration = calibration
+        self.dtype = np.dtype(np.float32) if calibration is not None else samples.dtype
+        self.shape = samples.shape
 
     def cost(self, ranges):
-        n = source_bytes(self.frames.counts, ranges)
-        if self.raw:
-            for field in (self.frames.flats, self.frames.darks):
+        n = source_bytes(self.samples, ranges)
+        if self.calibration is not None:
+            for field in (self.calibration.flats, self.calibration.darks):
                 if field is not None:
                     n += source_bytes(field, (range(len(field)), *ranges[1:]))
         return n
@@ -135,9 +135,9 @@ class ProjectionTiles:
             return frame_pixels(stack, tile, budget)
 
         check(self.cost(ranges))
-        if self.raw:
-            return corrected_tile(self.frames, ranges, read)
-        return read(self.frames.counts, ranges)
+        if self.calibration is not None:
+            return corrected_tile(self.calibration, ranges, read)
+        return read(self.samples, ranges)
 
     def chunks(self, tile, budget):
         """Split statistical slabs until each sample and its calibration fit together."""

@@ -965,3 +965,23 @@ def test_inspect_json_prints_even_if_preview_fails(tmp_path: Path, capsys) -> No
     assert payload["valid"] is True
     assert payload["preview_error"]
     assert "preview failed" in captured.err
+
+
+@pytest.mark.parametrize("suffix", [".nxs", ".mat"])
+def test_inspect_preview_reads_logical_detector_plane(tmp_path, suffix):
+    from tests.test_psi_reader import _write_v73
+
+    path = tmp_path / ("scan" + suffix)
+    rows = 1 if suffix == ".nxs" else 3
+    planes = np.arange(5 * rows * 7, dtype=np.float32).reshape(5, rows, 7) ** 2
+    if suffix == ".mat":
+        _write_v73(path, planes, np.arange(5), 1e-6)
+    else:
+        with h5py.File(path, "w") as file:
+            file["entry/instrument/detector/data"] = planes[:, 0]
+            file["entry/sample/rotation_angle"] = np.arange(5)
+    previews = tmp_path / "previews"
+    assert main(["inspect", str(path), "--preview-dir", str(previews)]) == 0
+    np.testing.assert_array_equal(
+        iio.imread(previews / "projection.png"), scale_to_uint8(planes[2])
+    )

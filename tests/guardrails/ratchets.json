@@ -28,7 +28,7 @@
     "tomojax.geometry.api": 12,
     "tomojax.corrections.api": 6,
     "tomojax.recon.api": 13,
-    "tomojax.io.api": 30,
+    "tomojax.io.api": 29,
     "tomojax.alignment.api": 4
   },
   "cli_flags": {
@@ -58,16 +58,16 @@
   },
   "code_lines": {
     "(modules)": 5958,
-    "_data": 2310,
+    "_data": 2288,
     "alignment": 4672,
     "backends": 273,
-    "cli": 10079,
+    "cli": 10061,
     "core": 10095,
     "corrections": 3260,
     "datasets": 1069,
     "forward": 404,
     "geometry": 908,
-    "io": 4087,
+    "io": 4075,
     "motion": 153,
     "nuisance": 232,
     "recon": 14937,

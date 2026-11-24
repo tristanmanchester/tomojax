@@ -518,13 +518,23 @@ def test_tiled_writes_read_the_source_one_bounded_tile_at_a_time(
 
 @pytest.mark.parametrize("member", ["extra", "projections", "volume"])
 def test_npz_rejects_object_arrays_even_in_unselected_members(tmp_path, member):
-    from tomojax.io.api import mapped_npz
-
     fields = {"volume": np.zeros((2, 3, 4)), "volume_axes_order": "zyx"}
     fields[member] = np.array([{}], dtype=object)
     path = tmp_path / "object.npz"
     np.savez(path, **fields)
     with pytest.raises(ValueError, match="(?i)object"):
         load_dataset(path)
-    with pytest.raises(ValueError, match="(?i)object|Python objects"), mapped_npz(str(path)):
-        pass
+    with pytest.raises(ValueError, match="(?i)object|dtype"):
+        tj.inspect(path)
+
+
+def test_npz_inspection_reports_finite_sample_angle_range(tmp_path):
+    path = tmp_path / "raw.npz"
+    np.savez_compressed(
+        path,
+        projections=np.zeros((5, 1, 8), np.float32),
+        thetas_deg=[180, 5, np.nan, 90, 180],
+        image_key=[1, 0, 0, 0, 2],
+    )
+    angles = tj.inspect(path)["angles"]
+    assert (angles["count"], angles["min"], angles["max"], angles["coverage"]) == (5, 5, 90, 85)

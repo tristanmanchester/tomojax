@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 from math import prod
 from pathlib import Path
-import shutil
-import tempfile
 from zipfile import ZIP_STORED, ZipFile
 
 import numpy as np
@@ -212,40 +208,3 @@ def load_npz(path: str) -> LoadedNXTomo:
     """Load a compressed NPZ payload using the same typed shape as NXtomo."""
     with ZipFile(read_path(path)) as archive:
         return LoadedNXTomo.from_dataset(_load_npz_dataset(archive))
-
-
-@contextmanager
-def mapped_npz(path: str, *, member: str | None = None) -> Iterator[LoadedNXTomo]:
-    """Map the primary array of a TomoJAX NPZ file for bounded random reads.
-
-    Parameters
-    ----------
-    path : str
-        Saved TomoJAX NPZ dataset.
-    member : str or None, optional
-        Select volume or projections. By default prefer the stored volume.
-
-    Yields
-    ------
-    LoadedNXTomo
-        The stored volume (z, y, x), or projections (view, v, u) for a scan,
-        with metadata. The temporary pixel file lasts for the context's lifetime.
-
-    Raises
-    ------
-    ValueError
-        If the array or its saved volume axis declaration is invalid.
-    """
-    with ZipFile(read_path(path)) as archive, tempfile.TemporaryDirectory() as directory:
-        key = member or ("volume" if "volume.npy" in archive.namelist() else "projections")
-        if key + ".npy" not in archive.namelist():
-            raise ValueError(f"{path}: no {key} array")
-        filename = Path(directory) / "pixels.npy"
-        with archive.open(key + ".npy") as src, filename.open("wb") as dest:
-            shutil.copyfileobj(src, dest, length=1024 * 1024)
-        pixels = np.load(filename, mmap_mode="r", allow_pickle=False)
-        fields = _load_npz_dataset(archive, mapped={key: pixels})
-        fields.pop("volume", None)
-        dataset = LoadedNXTomo.from_dataset(fields)
-        dataset.metadata.volume = pixels if key == "volume" else None
-        yield dataset

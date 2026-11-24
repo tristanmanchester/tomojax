@@ -39,12 +39,16 @@ def saved_projection_layout(path: Path) -> tuple[ProjectionDataset, Any]:
 class MatlabFrames:
     """MATLAB stores phase columns before rows. The scan loader exposes float32."""
 
+    ndim = 3
     dtype = np.dtype(np.float32)
 
     def __init__(self, stored: Hdf5Frames) -> None:
         self.stored = stored
         self.storage_dtype = stored.dtype
         self.shape = (len(stored), stored.cols, stored.rows)
+
+    def __getitem__(self, views: int | slice) -> np.ndarray:
+        return self.stored[views].swapaxes(-1, -2).astype(self.dtype, copy=False)
 
     def sampled(self, ranges: tuple[range, range, range]) -> np.ndarray:
         """Read logical (view, row, column) indices from the MATLAB-ordered phase stack."""

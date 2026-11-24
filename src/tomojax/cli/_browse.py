@@ -9,23 +9,21 @@ import math
 from pathlib import Path
 import tempfile
 from typing import Any
-from zipfile import ZipFile
 
 import h5py
 import msgspec
 import numpy as np
 
-import tomojax as tj
 from tomojax._files import saved_volume_grid
 from tomojax._loading import projection_frames
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._display import plane_windows
-from tomojax.cli._frame_reads import ProjectionTiles, frame_pixels
+from tomojax.cli._frame_reads import SampleTiles, frame_pixels
 from tomojax.cli._handles import stage_array
 from tomojax.cli._results import disk_volume, scan_axes, stored_grid, unit_of
-from tomojax.core.files import read_hdf5, read_path
+from tomojax.core.files import read_hdf5
 from tomojax.errors import InvalidParameter
-from tomojax.io.api import mapped_npz
+from tomojax.io.projection_layout import saved_npz_layout
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage, Uniform
 
 READ_BYTES = 16 << 20
@@ -91,30 +89,18 @@ def saved_array(path: Path) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]
                 )
                 return
     elif path.suffix.lower() == ".npz":
-        with ZipFile(read_path(path)) as archive:
-            has_volume = "volume.npy" in archive.namelist()
-        if has_volume:
-            with mapped_npz(str(path), member="volume") as saved:
-                meta = saved.metadata
-                data = meta.volume
-                assert data is not None
-                grid_meta = meta.grid.to_dict() if isinstance(meta.grid, tj.Grid) else meta.grid
-                grid = saved_volume_grid(grid_meta, meta.geometry_meta)
-                yield (
-                    data,
-                    disk_volume(
-                        path,
-                        grid,
-                        "zyx",
-                        data.shape,
-                        np.dtype(data.dtype).str,
-                        meta.geometry_meta or {},
-                    ),
-                    {},
-                )
+        record, arrays = saved_npz_layout(path)
+        if (volume := arrays.get("volume")) is not None:
+            grid = saved_volume_grid(
+                record.grid.to_dict() if record.grid else None, record.geometry_metadata
+            )
+            meta = disk_volume(
+                path, grid, "zyx", volume.shape, volume.dtype.str, record.geometry_metadata
+            )
+            yield SampleTiles(volume), meta, {}
             return
     frames, raw = projection_frames(path)
-    data = ProjectionTiles(frames, raw)
+    data = SampleTiles(frames.counts, frames if raw else None)
     view = Axis("view", "acquisition", "degree", Coordinates(Member(str(path), "angles")))
     axes = scan_axes(frames.geometry.detector, view, unit_of(frames))
     meta = Array(
@@ -141,7 +127,7 @@ def window(shape: tuple[int, ...], request: op.Window) -> tuple[range, ...]:
 
 
 def pixels(data: Any, ranges: tuple[range, ...]) -> np.ndarray:
-    if isinstance(data, ProjectionTiles):
+    if isinstance(data, SampleTiles):
         return data.read(ranges, READ_BYTES)
     if hasattr(data, "window"):
         return frame_pixels(data, ranges, READ_BYTES)
@@ -243,7 +229,7 @@ def statistics(request, context, data, meta, ranges):
             )
             chunks = (
                 data.chunks(tile, READ_BYTES)
-                if isinstance(data, ProjectionTiles)
+                if isinstance(data, SampleTiles)
                 else (pixels(data, tile),)
             )
             for chunk in chunks:

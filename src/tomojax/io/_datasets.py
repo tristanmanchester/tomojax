@@ -648,12 +648,9 @@ def _dataset_issues(input_path: Path) -> list[str]:
     )
     if whole:
         try:
-            if suffix == ".npz":
-                from .projection_layout import saved_npz_layout
+            from .projection_layout import saved_projection_layout
 
-                saved_npz_layout(input_path)
-            else:
-                load_dataset(input_path)
+            saved_projection_layout(input_path)
         except Exception as exc:
             return [str(exc)]
         return []
