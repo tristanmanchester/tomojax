@@ -809,6 +809,26 @@ fn the_zoom_readout_is_the_zoom_the_3d_camera_shows() {
 }
 
 #[test]
+fn each_submission_is_followed_by_a_fresh_input_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    let scan = ramp_volume(directory.path(), "scan", 2);
+    let id = scan.id.clone();
+    let path = scan.path.clone();
+    state.project.as_mut().unwrap().document.assets.push(scan);
+    state.model.selected_assets = [id.clone()].into();
+    state.model.active_asset = Some(id);
+    state.await_inputs();
+    let before = state.current_form_inputs()[0].fingerprint.clone();
+    // The source changes after the capture, as the submission is made.
+    std::fs::write(&path, b"re-exported").unwrap();
+    state.form_context.retry();
+    state.await_inputs();
+    assert_ne!(state.current_form_inputs()[0].fingerprint, before);
+}
+
+#[test]
 fn view_undo_stays_with_its_project() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();

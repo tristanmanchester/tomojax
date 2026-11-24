@@ -116,6 +116,10 @@ impl AppState {
                     .push(Job::new(operation, parameters.clone(), vec![input]));
             }
         }
+        // The next job takes a fresh capture, read in the background: a source
+        // that changed since this one (so its job will ask for a new submission)
+        // is fingerprinted anew rather than resubmitted with the old fingerprint.
+        self.form_context.retry();
         self.mark_dirty();
         self.ui.jobs_open = true;
         self.model.status = "Submitted settings are captured with each job".into();
