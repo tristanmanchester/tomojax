@@ -112,7 +112,7 @@ impl AppState {
                 tx.open_folder(FileDialogOptions{title:"Import an acquisition folder or a folder of NXtomo scans".into(),..Default::default()},|s:&mut AppState,result,_|match result{
                     Ok(Some(path))=>{
                         if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("npz")){s.model.error=Some("NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognised acquisition.".into());return;}
-                        let mut scans:Vec<_>=std::fs::read_dir(&path).into_iter().flatten().filter_map(Result::ok).map(|e|e.path()).filter(|p|p.is_file()&&p.extension().is_some_and(|ext|matches!(ext.to_string_lossy().to_ascii_lowercase().as_str(),"nxs"|"nx"|"h5"|"hdf5"))).collect();
+                        let mut scans:Vec<_>=std::fs::read_dir(&path).into_iter().flatten().filter_map(Result::ok).map(|e|e.path()).filter(|p|p.is_file()&&crate::metadata::is_hdf5(p)).collect();
                         scans.sort();
                         // A folder of NXtomo/HDF5 scans imports each scan; a folder of
                         // TIFF frames is one acquisition.
@@ -725,7 +725,16 @@ impl AppState {
             "export"
         };
         let params = if op == "save" {
-            json!({"path":path,"include_scan":true})
+            // A reconstruction saved without its scan has none to include.
+            let scan = input.kind != "reconstruction"
+                || self
+                    .project
+                    .as_ref()
+                    .and_then(|p| p.document.asset(&input.asset))
+                    .is_none_or(|asset| {
+                        asset.inspection.pointer("/projection/found") != Some(&Value::Bool(false))
+                    });
+            json!({"path":path,"include_scan":scan})
         } else {
             json!({"path":path,"dtype":if format=="uint16"{"uint16"}else{"float32"}})
         };

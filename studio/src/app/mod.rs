@@ -481,7 +481,9 @@ impl AppState {
                                 asset.kind = kind;
                                 asset.inspection = report;
                                 asset.issue = None;
-                                asset.arrays.clear();
+                                // Arrays already registered came from the worker, which
+                                // knows their units and domain; the header read fills in
+                                // the rest (imports and relinks start with none).
                                 self.model
                                     .measurements
                                     .retain(|measurement| measurement.asset != id);
@@ -504,7 +506,7 @@ impl AppState {
                                             store(values);
                                         }
                                     }
-                                    asset.arrays.insert(key, array);
+                                    asset.arrays.entry(key).or_insert(array);
                                 }
                             }
                         }

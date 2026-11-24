@@ -415,6 +415,55 @@ fn a_finished_job_activates_its_result_only_while_its_inputs_are_selected() {
 }
 
 #[test]
+fn header_metadata_keeps_worker_registered_arrays() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    let mut result = ramp_volume(directory.path(), "corrected", 2);
+    let mut authoritative = result.arrays["volume"].clone();
+    authoritative.domain = "line_integrals".into();
+    result
+        .arrays
+        .insert("projections".into(), authoritative.clone());
+    let id = result.id.clone();
+    state.project.as_mut().unwrap().document.assets.push(result);
+    let mut header = authoritative.clone();
+    header.domain = "stored_measurements".into();
+    let mut arrays = std::collections::BTreeMap::new();
+    arrays.insert("projections".to_owned(), header);
+    state.local_event(LocalEvent::Metadata {
+        asset: id.clone(),
+        result: Ok(Some(("scan".into(), arrays, json!({})))),
+    });
+    let asset = state.project.as_ref().unwrap().document.asset(&id).unwrap();
+    assert_eq!(asset.arrays["projections"].domain, "line_integrals");
+}
+
+#[test]
+fn exporting_a_standalone_reconstruction_leaves_out_the_scan_it_lacks() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    let mut volume = ramp_volume(directory.path(), "recon", 2);
+    volume.kind = "reconstruction".into();
+    volume.inspection = json!({"projection": {"found": false}});
+    let id = volume.id.clone();
+    let project = state.project.as_mut().unwrap();
+    project.document.assets.push(volume);
+    let input = project.capture(&id).unwrap();
+    state.queue_export(input, directory.path().join("export.nxs"), "nxs");
+    let job = state
+        .project
+        .as_ref()
+        .unwrap()
+        .document
+        .jobs
+        .last()
+        .unwrap();
+    assert_eq!(job.parameters["include_scan"], false);
+}
+
+#[test]
 fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
     let directory = tempfile::tempdir().unwrap();
     let saved = ramp_volume(directory.path(), "forward", 2).arrays["volume"].clone();

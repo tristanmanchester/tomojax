@@ -109,22 +109,29 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     let image_key = "/entry/instrument/detector/image_key";
     let key_found = file.link_exists(image_key);
     // NXtomo image keys mark sample (0), flat (1) and dark (2) frames, and
-    // `image_key_control` also marks return and alignment images (-1); the keys are
-    // one small integer per frame.
-    let control = "/entry/instrument/detector/image_key_control";
-    let keys = [control, image_key]
-        .into_iter()
-        .find(|name| file.link_exists(name));
-    let sample_count = match keys {
-        Some(name) => {
-            let keys = file
-                .dataset(name)
-                .and_then(|keys| keys.read_raw::<i64>())
-                .map_err(|error| error.to_string())?;
-            Some(keys.iter().filter(|&&key| key == 0).count())
+    // `image_key_control` marks return and alignment images (-1) to leave out, as
+    // the worker does; the keys are one small integer per frame.
+    let read_keys = |name: &str| -> Result<Option<Vec<i64>>, String> {
+        if !file.link_exists(name) {
+            return Ok(None);
         }
-        None => None,
+        file.dataset(name)
+            .and_then(|keys| keys.read_raw::<i64>())
+            .map(Some)
+            .map_err(|error| error.to_string())
     };
+    let control = read_keys("/entry/instrument/detector/image_key_control")?;
+    let sample_count = read_keys(image_key)?.map(|keys| {
+        keys.iter()
+            .enumerate()
+            .filter(|&(i, &key)| {
+                key == 0
+                    && control
+                        .as_ref()
+                        .is_none_or(|control| control.get(i) != Some(&-1))
+            })
+            .count()
+    });
     let flat_found = file.link_exists("/entry/instrument/detector/data_white");
     let dark_found = file.link_exists("/entry/instrument/detector/data_dark");
     let tomojax_grid = entry
@@ -778,20 +785,20 @@ mod tests {
         assert_eq!(report["flats_darks"]["sample_count"], 2);
         assert!(!arrays.contains_key("projections"));
 
-        // ESRF files mark return images with -1 in image_key_control.
+        // ESRF files also mark return images with -1 in image_key_control; the
+        // image keys still give the flats and darks.
         {
             let file = hdf5::File::open_rw(&path).unwrap();
             let detector = file.group("/entry/instrument/detector").unwrap();
-            detector.unlink("image_key").unwrap();
             detector
                 .new_dataset_builder()
-                .with_data(&[0i32, 0, -1, 0])
+                .with_data(&[0i32, 1, 2, -1])
                 .create("image_key_control")
                 .unwrap();
         }
         let (kind, arrays, report) = quick_metadata(&path).unwrap().unwrap();
         assert_eq!(kind, "frames");
-        assert_eq!(report["flats_darks"]["sample_count"], 3);
+        assert_eq!(report["flats_darks"]["sample_count"], 1);
         assert!(!arrays.contains_key("projections"));
     }
 
