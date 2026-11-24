@@ -1,98 +1,308 @@
-"""Preview PNGs of a dataset: its central projection and the volume's central slices.
+"""``inspect --preview-dir``: a dataset's central projection, slices and centre sweep as PNGs.
 
-Slices are read plane by plane, so previews of large reconstructions stay cheap.
+A saved reconstruction's planes are read from the file, plane by plane. A scan's
+planes are reconstructed: each plane on its own where axial FBP allows, otherwise
+one full reconstruction cut into every requested plane. A centre sweep runs one
+candidate at a time and keeps only small thumbnails for its contact sheet.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+import math
 from pathlib import Path
-from typing import cast
+import re
+from typing import TYPE_CHECKING, Literal, cast
 
 import h5py
 import numpy as np
 
-from tomojax._typed_arrays import numpy_float32_array, write_image
+from tomojax import progress
+from tomojax.cli import _images
 from tomojax.io.api import (
     locate_frames,
     read_acquisition,
     saved_volume_axes,
     saved_without_frames,
 )
-from tomojax.recon.quicklook import scale_to_uint8
+from tomojax.io.projection_layout import saved_projection_layout
+from tomojax.wire.arrays import Axis as Registered, Uniform
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from PIL import Image
+
+    import tomojax as tj
+
+type Axis = Literal["z", "y", "x"]
 
 _VOLUME_PATH = "/entry/processing/tomojax/volume"
-# Each slice is displayed with these axes as (rows, columns).
-_DISPLAY_AXES = {"z": ("y", "x"), "y": ("z", "x"), "x": ("z", "y")}
+_NUMBER = r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?"
+_SPEC = re.compile(rf"^{_NUMBER}(:{_NUMBER}:{_NUMBER}|(,{_NUMBER})*)$")
+_PIXELS = (Registered("row", "image", "px", Uniform(0, 1)),) * 2  # samples kept as they are
+LISTING = "inspect-previews.json"
 
 
-def preview_paths(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
-    """The previews :func:`write_previews` makes for ``path``, by name."""
-    out = Path(out_dir)
-    paths = {"projection": out / "projection.png"}
+def parse_slice(text: str) -> tuple[Axis, int]:
+    """``AXIS=INDEX`` as an axis and a plane index."""
+    axis, sep, index = text.partition("=")
+    if not sep or axis not in ("z", "y", "x") or not index.isdigit():
+        raise ValueError(f"--slice takes AXIS=INDEX with AXIS z, y or x, not {text!r}")
+    return cast("Axis", axis), int(index)
+
+
+def parse_centres(text: str) -> tuple[float, ...]:
+    """``START:STOP:STEP`` (STOP included when on the step grid) or a comma list."""
+    if not is_centres_value(text):
+        raise ValueError(
+            f"--centres takes START:STOP:STEP or a comma list of numbers, not {text!r}"
+        )
+    if ":" not in text:
+        return tuple(float(part) for part in text.split(","))
+    start, stop, step = (float(part) for part in text.split(":"))
+    if not step > 0 or stop < start:
+        raise ValueError(f"--centres {text}: STEP must be positive and STOP at least START")
+    count = math.floor((stop - start) / step + 1e-9) + 1
+    return tuple(round(start + i * step, 12) for i in range(count))
+
+
+def is_centres_value(text: str) -> bool:
+    """Whether ``text`` is a ``--centres`` value, so a leading minus is not an option."""
+    return _SPEC.match(text) is not None
+
+
+@dataclass
+class Previews:
+    """What a preview run wrote, in the order it was asked for."""
+
+    files: dict[str, str] = field(default_factory=dict)
+    slice_requests: list[dict[str, object]] = field(default_factory=list)
+    sweep: list[dict[str, object]] = field(default_factory=list)
+    apply: dict[str, object] | None = None
+    notes: list[str] = field(default_factory=list)
+
+
+def has_saved_volume(path: Path) -> bool:
+    """Whether ``path`` is a TomoJAX file holding a reconstructed volume."""
     if not h5py.is_hdf5(path):
-        return paths
+        return False
     with h5py.File(path, "r") as file:
-        if isinstance(file.get(_VOLUME_PATH), h5py.Dataset):
-            paths.update({f"slice_{axis}": out / f"slice_{axis}.png" for axis in _DISPLAY_AXES})
-    if saved_without_frames(path):  # a reconstruction saved without its scan
-        del paths["projection"]
-    return paths
+        return isinstance(file.get(_VOLUME_PATH), h5py.Dataset)
 
 
-def write_previews(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
-    """Write percentile-scaled PNG previews of ``path`` into ``out_dir``."""
-    paths = preview_paths(path, out_dir)
+def projection_image(path: Path) -> np.ndarray | None:
+    """The central sample projection, or None for a reconstruction saved without frames."""
+    if has_saved_volume(path) and saved_without_frames(path):
+        return None
     raw = read_acquisition(path)
-    images = (
-        _hdf5_images(path)
-        if raw is None
-        else {"projection": numpy_float32_array(raw.counts[raw.counts.shape[0] // 2])}
-    )
-    Path(out_dir).mkdir(parents=True, exist_ok=True)
-    for name, image in images.items():
-        write_image(paths[name], scale_to_uint8(image))
-    return paths
-
-
-def _hdf5_images(path: str | Path) -> dict[str, np.ndarray]:
-    images: dict[str, np.ndarray] = {}
-    if saved_without_frames(path):  # a reconstruction saved without its scan
-        with h5py.File(path, "r") as file:
-            return _slices(file, path)
-    located = locate_frames(str(path))
-    samples = (
-        located.stack.frames
-        if located.image_key is None
-        else np.flatnonzero(located.image_key == 0)
-    )
-    if not len(samples):
+    if raw is not None:
+        samples = raw.counts
+    elif path.suffix.lower() in (".mat", ".npz"):
+        record, samples = saved_projection_layout(path)
+        if samples is not None and record.image_key is not None:
+            samples = samples[record.image_key == 0]
+    else:
+        samples = locate_frames(str(path)).samples  # (view, v, u), a single row included
+    if samples is None or not samples.shape[0]:
         raise ValueError(f"{path} holds no sample projections")
+    return np.asarray(samples[samples.shape[0] // 2], np.float32)
+
+
+def _saved_shape(path: Path) -> tuple[str, tuple[int, ...]]:
     with h5py.File(path, "r") as file:
-        projections = cast("h5py.Dataset", file[located.stack.dataset])
-        images["projection"] = numpy_float32_array(projections[int(samples[len(samples) // 2])])
-        images.update(_slices(file, path))
-    return images
+        volume = cast("h5py.Dataset", file[_VOLUME_PATH])
+        attribute = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
+        order = saved_volume_axes(None if attribute is None else str(attribute), path).lower()
+        return order, tuple(int(n) for n in volume.shape)
 
 
-def _slices(file: h5py.File, path: str | Path) -> dict[str, np.ndarray]:
-    """The saved volume's central slices, by name; none without a volume."""
-    volume = file.get(_VOLUME_PATH)
-    if not isinstance(volume, h5py.Dataset):
-        return {}
-    attribute = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
-    axes = saved_volume_axes(None if attribute is None else str(attribute), path)
-    return {f"slice_{axis}": _central_slice(volume, axes, axis) for axis in "zyx"}
+def saved_plane(path: Path, axis: Axis, index: int) -> np.ndarray:
+    """Plane ``index`` across ``axis`` of a saved volume, shown as (z, y, x) minus ``axis``."""
+    order, _ = _saved_shape(path)
+    with h5py.File(path, "r") as file:
+        volume = cast("h5py.Dataset", file[_VOLUME_PATH])
+        key: list[int | slice] = [slice(None)] * 3
+        key[order.index(axis)] = index
+        plane = np.asarray(volume[tuple(key)], np.float32)
+    remaining = [a for a in order if a != axis]
+    return np.transpose(plane, [remaining.index(a) for a in "zyx" if a != axis])
 
 
-def _central_slice(volume: h5py.Dataset, axes: str, axis: str) -> np.ndarray:
-    axes = axes.lower()
-    if sorted(axes) != ["x", "y", "z"]:
-        raise ValueError(f"unsupported saved volume axes {axes!r}")
-    selection: list[int | slice] = [slice(None)] * 3
-    selection[axes.index(axis)] = int(volume.shape[axes.index(axis)]) // 2
-    plane = np.asarray(cast("np.ndarray", volume[tuple(selection)]), dtype=np.float32)
-    remaining = [a for a in axes if a != axis]
-    return np.transpose(plane, [remaining.index(a) for a in _DISPLAY_AXES[axis]])
+def _picture(image: np.ndarray, label: str) -> Image.Image:
+    """``image`` as it was sampled (capped or enlarged), scaled and labelled."""
+    shape = (int(image.shape[0]), int(image.shape[1]))
+    shown = _images.resample(image, _images.display_shape(shape, _PIXELS, _images.PLANE_SIDE))
+    return _images.labelled(_images.to_uint8(shown, _images.limits(shown)), label)
 
 
-__all__ = ["preview_paths", "write_previews"]
+def destinations(
+    directory: Path,
+    wanted: Sequence[tuple[Axis, int]],
+    centres: Sequence[float],
+    *,
+    projection: bool,
+    listing: bool,
+) -> list[Path]:
+    """The files a preview run will write in ``directory``."""
+    names = [slice_name(axis, index) for axis, index in dict.fromkeys(wanted)]
+    names += [centre_name(i, len(centres), c) for i, c in enumerate(centres)]
+    extra = {"centre_sweep.png": bool(centres), "projection.png": projection, LISTING: listing}
+    return [directory / name for name in [*names, *(n for n, written in extra.items() if written)]]
+
+
+def slice_name(axis: str, index: int) -> str:
+    """The file of plane ``index`` across ``axis``."""
+    return f"slice_{axis}_{index}.png"
+
+
+def centre_name(ordinal: int, count: int, centre: float) -> str:
+    """The file of sweep candidate ``ordinal``: unique even for repeated centres."""
+    width = max(2, len(str(count - 1)))
+    return f"centre_{ordinal:0{width}d}_{centre:+.2f}px.png"
+
+
+def saved_requests(
+    path: Path, requests: Sequence[tuple[Axis, int]] | None
+) -> list[tuple[Axis, int]]:
+    """The planes of a saved reconstruction to show (its central planes by default), checked."""
+    order, shape = _saved_shape(path)
+    sizes = dict(zip(order, shape, strict=True))
+    central: list[tuple[Axis, int]] = [(axis, sizes[axis] // 2) for axis in ("z", "y", "x")]
+    wanted = list(requests or central)
+    for axis, index in wanted:
+        if not 0 <= index < sizes[axis]:
+            raise ValueError(f"--slice {axis}={index} is past the volume's {sizes[axis]} planes")
+    return wanted
+
+
+def write_saved_slices(
+    path: Path, directory: Path, wanted: Sequence[tuple[Axis, int]], out: Previews
+) -> None:
+    """Read and write the ``wanted`` planes of a saved reconstruction."""
+    for axis, index in dict.fromkeys(wanted):
+        name = slice_name(axis, index)
+        plane = saved_plane(path, axis, index)
+        _images.save_png(_picture(plane, f"{axis} = {index} · saved volume"), directory / name)
+        out.files[name] = str(directory / name)
+    for axis, index in wanted:
+        out.slice_requests.append(
+            {"axis": axis, "index": index, "path": str(directory / slice_name(axis, index))}
+        )
+
+
+def write_scan_slices(
+    scan: tj.Scan, directory: Path, wanted: Sequence[tuple[Axis, int]], out: Previews
+) -> None:
+    """Reconstruct the ``wanted`` planes of a scan by FBP, which makes an axial plane alone."""
+    from tomojax import interactive
+    from tomojax.cli._results import unit_of
+    from tomojax.core.registration import registered_plane, volume_axes
+
+    distinct = list(dict.fromkeys(wanted))
+    grid, unit = scan.grid, unit_of(scan)
+    planes = interactive.reconstruct_slices(scan, distinct, method="fbp")
+    for (axis, index), pixels in zip(distinct, planes, strict=True):
+        dim = "zyx".index(axis)
+        sample = registered_plane(np.asarray(pixels), volume_axes(grid, unit), dim, index, unit)
+        name = slice_name(axis, index)
+        image = _images.sample_image(sample)
+        label = f"{axis} = {index} · fbp reconstruction of the scan"
+        _images.save_png(
+            _images.labelled(_images.to_uint8(image, _images.limits(image)), label),
+            directory / name,
+        )
+        out.files[name] = str(directory / name)
+    for axis, index in wanted:
+        out.slice_requests.append(
+            {"axis": axis, "index": index, "path": str(directory / slice_name(axis, index))}
+        )
+
+
+def write_sweep(
+    scan: tj.Scan,
+    source: Path,
+    directory: Path,
+    centres: Sequence[float],
+    plane: tuple[Axis, int] | None,
+    out: Previews,
+) -> None:
+    """Reconstruct ``plane`` at each candidate centre: one image each and a contact sheet."""
+    from tomojax import interactive
+    from tomojax.cli._results import unit_of
+
+    axis, index = plane or ("z", scan.grid.nz // 2)
+    plans = interactive.resolve_sweep(scan, axis, index, centres, method="fbp")
+    count, du = len(centres), scan.detector.du
+    unit = unit_of(scan)
+    shown_unit = "scan units" if unit == "scan_length" else unit
+    recorded = scan.detector.center[0] / du
+    progress.note("info", f"centre sweep: {count} candidates on the {axis} = {index} plane")
+    columns = math.ceil(math.sqrt(count))
+    cell = max(32, min(256, _images.SHEET_SIDE // columns))
+    thumbs: list[np.ndarray] = []
+    bounds: list[tuple[float, float]] = []
+    for ordinal, (centre, pixels) in enumerate(
+        zip(centres, interactive.sweep_planes(plans, axis, index), strict=True)
+    ):
+        image = np.asarray(pixels, np.float32)
+        name = centre_name(ordinal, count, centre)
+        label = f"centre {centre:+.2f} px ({centre * du:+.4g} {shown_unit}) · {axis} = {index}"
+        _images.save_png(_picture(image, label), directory / name)
+        out.files[name] = str(directory / name)
+        out.sweep.append(
+            {
+                "ordinal": ordinal,
+                "centre_px": centre,
+                "centre_length": centre * du,
+                "path": str(directory / name),
+            }
+        )
+        rows, cols = image.shape
+        scale = cell / max(rows, cols)
+        thumbs.append(
+            _images.resample(image, (max(1, round(rows * scale)), max(1, round(cols * scale))))
+        )
+        bounds.append(_images.limits(image))
+    shared = (min(low for low, _ in bounds), max(high for _, high in bounds))
+    panels = []
+    for thumb, entry in zip(thumbs, out.sweep, strict=True):
+        centre = cast("float", entry["centre_px"])
+        panel = _images.labelled(_images.to_uint8(thumb, shared), f"{centre:+.2f} px")
+        panels.append(
+            _images.outlined(panel) if math.isclose(centre, recorded, abs_tol=1e-6) else panel
+        )
+    sheet = _images.sheet(panels, columns=columns)
+    if not any(math.isclose(c, recorded, abs_tol=1e-6) for c in centres):
+        sheet = _images.labelled(
+            np.asarray(sheet), f"recorded centre {recorded:+.2f} px (not swept)"
+        )
+    _images.save_png(sheet, directory / "centre_sweep.png")
+    out.files["centre_sweep.png"] = str(directory / "centre_sweep.png")
+    v = scan.detector.center[1]
+    out.apply = {
+        "command": f"tomojax correct {source} -o centred.nxs --detector-center U {v:g}",
+        "u_per_pixel": du,
+        "v": v,
+        "unit": shown_unit,
+        "recorded_px": recorded,
+    }
+
+
+__all__ = [
+    "LISTING",
+    "Previews",
+    "centre_name",
+    "destinations",
+    "has_saved_volume",
+    "is_centres_value",
+    "parse_centres",
+    "parse_slice",
+    "projection_image",
+    "saved_plane",
+    "saved_requests",
+    "slice_name",
+    "write_saved_slices",
+    "write_scan_slices",
+    "write_sweep",
+]

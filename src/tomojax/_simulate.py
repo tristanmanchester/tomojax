@@ -229,9 +229,10 @@ def simulate(
         Rotation range in degrees; None uses 180 for parallel rays and 360 otherwise.
     tilt : float or None, optional
         Rotation axis tilt in degrees; None uses 30 for laminography and 0 otherwise.
-    source_to_axis, source_to_detector : float or None, optional
-        Cone-beam distances; None uses three times the volume's physical extent
-        and 1.5 times that.
+    source_to_axis : float or None, optional
+        Cone source-to-axis distance. Defaults to three times the largest physical volume extent.
+    source_to_detector : float or None, optional
+        Cone source-to-detector distance. Defaults to 1.5 times the source-to-axis distance.
     poisson_scale : float, optional
         Poisson noise, drawing counts of the value times this (higher is quieter);
         0 adds none. Default is 0.0.

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+`tomojax mcp` runs a Model Context Protocol server over stdio, so an AI agent such
+as Claude Code can inspect, open, correct, align, reconstruct, simulate, evaluate
+and export scans, see results as labelled slice panels, and run Python against the
+loaded data. Install it with the `mcp` extra. See [Use TomoJAX from an AI
+agent](docs/mcp.md).
+
+New TomoJAX NPZ files store metadata as JSON. For safety, the reader rejects
+pickled object arrays, so it can no longer open older NPZ files with pickled
+metadata. To convert one, load it with the previous TomoJAX release and save
+it again as NeXus, for example with `tj.save("scan.nxs", tj.load("scan.npz"))`.
+
 Loading, correction, reconstruction, and alignment report completed work through
 `tomojax.progress.watch`. A `progress.Cancel` token stops an operation at its
 next work boundary. The `correct`, `reconstruct`, and `align` commands support
@@ -11,6 +22,12 @@ The watch replaces the FISTA and SPDHG `callback=` argument, the tqdm
 `progress` extra, and the `TOMOJAX_PROGRESS` and `TOMOJAX_PROGRESS_LEAVE`
 environment variables. Use `--progress bar` in place of the former boolean CLI
 flag. Python and CLI examples are in the [quickstart](docs/quickstart.md#watch-a-python-operation).
+
+A joint fit of centre, tilt or roll alone no longer attaches an all-zero per-view pose
+table to `result.scan`: the scan keeps the poses it had, or none. A parallel scan after
+`tj.align(scan, fit="center")` is therefore unposed, and `tj.reconstruct` with
+`method="auto"` selects Fourier inversion for it, as it does for the input scan, instead of
+FBP. `result.poses` is still a complete table, zero where nothing moved.
 
 ## 1.0.0rc1 (2026-11-22)
 

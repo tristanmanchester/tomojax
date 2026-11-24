@@ -9,12 +9,14 @@ from tomojax._data._io_acquisition import (
     calibration_issues,
 )
 from tomojax._data._io_frames import Hdf5Frames, LocatedFrames, locate_frames
-from tomojax._data._io_npz import load_npz, save_npz
+from tomojax._data._io_npz import load_npz, npz_layout, save_npz
 from tomojax._data._io_nxtomo import (
     load_nxtomo,
+    read_nxtomo,
     save_nxtomo,
     saved_volume_axes,
     saved_without_frames,
+    slab_volume,
     validate_nxtomo,
 )
 from tomojax._data._io_types import LoadedNXTomo, NXTomoMetadata
@@ -34,10 +36,13 @@ __all__ = [
     "load_npz",
     "load_nxtomo",
     "locate_frames",
+    "npz_layout",
+    "read_nxtomo",
     "save_npz",
     "save_nxtomo",
     "saved_volume_axes",
     "saved_without_frames",
+    "slab_volume",
     "validate_nxtomo",
     "views_of",
 ]

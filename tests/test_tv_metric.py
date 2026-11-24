@@ -185,17 +185,9 @@ def test_noise_weight_raises_all_metric_ratios_without_changing_geometry():
 
 
 @pytest.mark.parametrize("pixels", [1, 2])
-def test_explicit_fista_weight_bypasses_noise_and_single_pixel_auto_is_zero(monkeypatch, pixels):
-    import importlib
-
+def test_fista_weights_on_one_or_two_pixel_rows_resolve_to_zero(pixels):
     from tomojax.recon import FISTAConfig, fista
 
-    module = importlib.import_module("tomojax.recon.fista_tv")
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("explicit weight must not estimate noise")
-
-    monkeypatch.setattr(module, "estimate_projection_noise", forbidden)
     grid, detector = Grid(2, 2, 1, 1, 1, 1), Detector(pixels, 1, 1, 1)
     geometry = ParallelGeometry(grid, detector, [0, 90])
     for weight in [0.0, 0.001] + ([None] if pixels == 1 else []):

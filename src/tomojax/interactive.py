@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, is_dataclass, replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -16,21 +16,21 @@ from tomojax._planning import (
     resolve_reconstruction,
 )
 from tomojax._region import RegionEstimate, estimate_region
-from tomojax._scan import Scan, binned_geometry
+from tomojax._scan import Scan, bind_step_geometry, binned_geometry, shifted_center
 from tomojax._workflow import reconstruct, reconstruct_resolved
 from tomojax.core.registration import planes, recorded_length_unit
 from tomojax.errors import InvalidParameter
-from tomojax.geometry import ConeSegments, grid_volume_origin
+from tomojax.geometry import grid_volume_origin
 from tomojax.recon import FBPConfig
 from tomojax.recon.api import AngularCoverageError, axial_fbp_plane
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from tomojax._loading import Frames
     from tomojax._parameters import Method, RegionName
     from tomojax.corrections import Step
-    from tomojax.geometry import Detector, Grid, ScanGeometry
+    from tomojax.geometry import Detector, Grid
 
 
 __all__ = [
@@ -39,6 +39,7 @@ __all__ = [
     "centre_sweep",
     "correction_preview",
     "reconstruct_slice",
+    "reconstruct_slices",
     "region_preview",
 ]
 
@@ -46,25 +47,76 @@ __all__ = [
 type Axis = Literal["z", "y", "x"]
 
 
+def _axial_plane(plan: ResolvedReconstruction, axis: Axis, index: int) -> Any:
+    """The plane on its own, where axial FBP can make it without the rest of the volume."""
+    if axis != "z" or plan.method != "fbp" or not isinstance(plan.config, FBPConfig):
+        return None
+    scan = plan.scan
+    value = axial_fbp_plane(
+        scan.geometry, scan.grid, scan.detector, scan.projections, plan.config, index
+    )
+    if value is not None and plan.cylinder is not None:
+        from tomojax._field_of_view import cylinder_support
+
+        mask = cylinder_support(replace(scan.grid, nz=1), plan.cylinder)[0]
+        value = np.where(mask, value, 0)
+    return value
+
+
+def _cut(volume: Any, axis: Axis, index: int) -> Any:
+    key: list[slice | int] = [slice(None)] * 3
+    key["zyx".index(axis)] = index
+    return volume[tuple(key)].copy()
+
+
 def resolved_slice(plan: ResolvedReconstruction, axis: Axis, index: int) -> Any:
     """Select the plane after resolving options and any volume support on the full grid."""
-    dim = plane_dimension(plan.scan.grid, axis, index)
-    if axis == "z" and plan.method == "fbp" and isinstance(plan.config, FBPConfig):
-        scan = plan.scan
-        value = axial_fbp_plane(
-            scan.geometry, scan.grid, scan.detector, scan.projections, plan.config, index
-        )
-        if value is not None:
-            if plan.cylinder is not None:
-                from tomojax._field_of_view import cylinder_support
+    _ = plane_dimension(plan.scan.grid, axis, index)
+    value = _axial_plane(plan, axis, index)
+    if value is not None:
+        return value
+    return _cut(reconstruct_resolved(plan).volume, axis, index)
 
-                mask = cylinder_support(replace(scan.grid, nz=1), plan.cylinder)[0]
-                value = np.where(mask, value, 0)
-            return value
-    result = reconstruct_resolved(plan)
-    key: list[slice | int] = [slice(None)] * 3
-    key[dim] = index
-    return result.volume[tuple(key)].copy()
+
+def reconstruct_slices(
+    scan: Scan, requests: Sequence[tuple[Axis, int]], *, method: Method = "auto", **options: Any
+) -> list[Any]:
+    """Reconstruct several planes, sharing one full solve when any of them needs one.
+
+    Every index is checked before anything runs. Axial FBP planes that take one
+    detector row each are made on their own; otherwise one full reconstruction is
+    cut into every requested plane.
+
+    Parameters
+    ----------
+    scan : Scan
+        Input projections and calibrated geometry.
+    requests : sequence of (axis, index)
+        Planes to make.
+    method : str, optional
+        Public reconstruction method.
+    **options : dict
+        Keyword arguments to the reconstruction resolver.
+
+    Returns
+    -------
+    list of array
+        Float32 attenuation planes, one per request, in order.
+    """
+    if not requests:
+        raise InvalidParameter("requests", "request at least one plane")
+    plans = [resolve_reconstruction(scan, method, plane=plane, **options) for plane in requests]
+    if all(axis == "z" for axis, _ in requests):
+        images = []
+        for plan, (axis, index) in zip(plans, requests, strict=True):
+            value = _axial_plane(plan, axis, index)
+            if value is None:
+                break
+            images.append(value)
+        else:
+            return images
+    volume = reconstruct_resolved(resolve_reconstruction(scan, method, **options)).volume
+    return [np.asarray(_cut(volume, axis, index)) for axis, index in requests]
 
 
 def reconstruct_slice(
@@ -92,23 +144,6 @@ def reconstruct_slice(
     """
     plan = resolve_reconstruction(scan, method, plane=(axis, index), **options)
     return resolved_slice(plan, axis, index)
-
-
-def _shift_center(geometry: ScanGeometry, shift: float) -> ScanGeometry:
-    """Translate each calibrated detector horizontally, keeping poses and panel orientations."""
-    if isinstance(geometry, ConeSegments):
-        return replace(
-            geometry, segments=tuple(_shift_center(part, shift) for part in geometry.segments)
-        )
-    if not is_dataclass(geometry) or isinstance(geometry, type):
-        raise TypeError(f"cannot shift a {type(geometry).__name__} geometry")
-    if base := getattr(geometry, "base", None):
-        return replace(geometry, base=_shift_center(base, shift))
-    detector = geometry.detector
-    return replace(
-        geometry,
-        detector=replace(detector, center=(detector.center[0] + shift, detector.center[1])),
-    )
 
 
 def centre_sweep(
@@ -161,7 +196,7 @@ def resolve_sweep(
     region: RegionName | RegionEstimate | None = None,
     **options: Any,
 ) -> tuple[ResolvedReconstruction, ...]:
-    """Resolve support on the input and validate the actual acquisition for each requested plane."""
+    """Resolve support on the input and validate the actual acquisition for each candidate."""
     if len(centres) == 0 or not np.isfinite(centres).all():
         raise InvalidParameter(
             "centres", "centres must be a nonempty sequence of finite detector offsets"
@@ -171,7 +206,7 @@ def resolve_sweep(
     for i, centre in enumerate(centres):
         progress.check_cancelled()
         shift = float(centre) * scan.detector.du - scan.detector.center[0]
-        shifted = replace(scan, geometry=_shift_center(scan.geometry, shift))
+        shifted = replace(scan, geometry=shifted_center(scan.geometry, shift))
         try:
             plan = resolve_reconstruction(
                 shifted, method, grid=fixed_grid, plane=(axis, index), **options
@@ -182,19 +217,19 @@ def resolve_sweep(
     return tuple(plans)
 
 
-def resolved_sweep(
-    plans: Sequence[ResolvedReconstruction],
-    axis: Axis,
-    index: int,
-) -> Any:
-    """Execute the validated acquisitions in order, keeping only their requested planes."""
+def sweep_planes(plans: Sequence[ResolvedReconstruction], axis: Axis, index: int) -> Iterator[Any]:
+    """Each candidate's plane in order, one candidate in memory at a time."""
+    for plan in plans:
+        progress.check_cancelled()
+        yield resolved_slice(plan, axis, index)
+
+
+def resolved_sweep(plans: Sequence[ResolvedReconstruction], axis: Axis, index: int) -> Any:
+    """Execute the validated candidates in order and stack their planes."""
     import jax
     import jax.numpy as jnp
 
-    images = []
-    for plan in plans:
-        progress.check_cancelled()
-        images.append(resolved_slice(plan, axis, index))
+    images = list(sweep_planes(plans, axis, index))
     return jnp.stack(images) if isinstance(images[0], jax.Array) else np.stack(images)
 
 
@@ -246,28 +281,32 @@ def region_preview(scan: Scan) -> RegionOverlay:
 
 @dataclass(frozen=True)
 class CorrectionBand:
-    """Native input counts, binned output line integrals and retained source-view indices.
+    """The input rows, the corrected binned rows and the views kept, for a row band.
 
     Parameters
     ----------
     before : numpy.ndarray
-        Native counts across the requested complete blocks.
+        The input across the requested complete blocks: counts of raw frames, or the
+        line integrals of a scan.
     after : numpy.ndarray
         Line integrals on the selected binned rows.
     views : numpy.ndarray
         Indices of retained views in the input acquisition.
     detector : Detector
         Full binned detector used to register the output rows.
+    domain : {"counts", "line_integrals"}, optional
+        What ``before`` holds.
     """
 
     before: np.ndarray
     after: np.ndarray
     views: np.ndarray
     detector: Detector
+    domain: Literal["counts", "line_integrals"] = "counts"
 
 
 def correction_preview(
-    frames: Frames,
+    source: Frames | Scan,
     rows: tuple[int, int],
     *steps: Step,
     binning: int = 1,
@@ -276,10 +315,15 @@ def correction_preview(
 ) -> CorrectionBand:
     """Correct complete native blocks for a half-open interval in the binned output.
 
+    The rows equal the same rows of a full correction followed by binning: rows
+    the band does not hold are read when a step needs them (Paganin's propagation,
+    view rejection's statistics).
+
     Parameters
     ----------
-    frames : Frames
-        Raw acquisition with calibration and exposure metadata.
+    source : Frames or Scan
+        Raw acquisition with calibration and exposure metadata, or a scan of line
+        integrals for the steps that act on them.
     rows : tuple of int
         First binned row and exclusive stop.
     *steps : Step
@@ -287,21 +331,38 @@ def correction_preview(
     binning : int, optional
         Width and height of a native detector block.
     epsilon : float, optional
-        Lower bound for flat and transmission values.
+        Lower bound for flat and transmission values (raw frames).
     views_per_batch : int or None, optional
         Maximum number of views in a correction batch.
 
     Returns
     -------
     CorrectionBand
-        Native counts, binned line integrals and original input view indices.
+        The input rows, binned line integrals and original input view indices.
     """
     low, high = rows
-    done = corrected_data(frames, steps, epsilon, views_per_batch, binning, output_rows=rows)
     native = slice(low * binning, high * binning)
-    counts = frames.counts
+    result_detector = binned_geometry(source.geometry, binning).detector
+    if isinstance(source, Scan):
+        from tomojax.core.array_ops import check_binning, mean_detector_pixels
+        from tomojax.corrections import correct_projections
+        from tomojax.corrections.api import check_rows, check_scan_steps, preview_window
+
+        projections = np.asarray(source.projections)
+        _, height, width = projections.shape
+        check_binning(binning, height, width)
+        check_rows(rows, height, binning)
+        check_scan_steps(steps)
+        bound = bind_step_geometry(steps, source.geometry)  # as Scan.corrected binds them
+        band, local = preview_window(bound, (height, width), low, high, binning)
+        done = correct_projections(projections[:, band], local, views_per_batch=views_per_batch)
+        first = band.start // binning
+        binned = mean_detector_pixels(done.projections, binning)[:, low - first : high - first]
+        before = np.array(projections[:, native], copy=True)
+        return CorrectionBand(before, binned, done.kept, result_detector, "line_integrals")
+    done = corrected_data(source, steps, epsilon, views_per_batch, binning, output_rows=rows)
+    counts = source.counts
     before = (
         counts.window(native, slice(None))[:] if hasattr(counts, "window") else counts[:, native, :]
     )
-    result_detector = binned_geometry(frames.geometry, binning).detector
     return CorrectionBand(np.array(before, copy=True), done.projections, done.kept, result_detector)

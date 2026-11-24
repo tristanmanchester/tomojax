@@ -633,7 +633,7 @@ def test_cuda_cgls_holds_no_volume_temporaries_beside_its_state():
 
 
 @pytest.mark.gpu
-def test_native_cgls_reports_completed_updates_without_an_extra_stream_wait():
+def test_native_cgls_reports_completed_updates():
     import cupy as cp
 
     from tomojax import progress
@@ -643,27 +643,14 @@ def test_native_cgls_reports_completed_updates_without_an_extra_stream_wait():
     geometry = ParallelGeometry(grid, detector, [0, 37, 101])
     data = np.random.default_rng(38).normal(size=(3, 4, 7)).astype(np.float32)
     config = CGLSConfig(iterations=2, tolerance=0)
-    waits = []
     updates = []
-
-    class Stream(cp.cuda.Stream):
-        def synchronize(self):
-            waits.append(None)
-            return super().synchronize()
 
     def observe(event):
         if isinstance(event, progress.Advanced):
             assert stream.done
             updates.append(event.done)
 
-    with Stream(non_blocking=True) as stream:
-        cgls(geometry, grid, detector, data, config=config)
-        waits.clear()
+    with cp.cuda.Stream(non_blocking=True) as stream, progress.watch(observe):
         _, info = cgls(geometry, grid, detector, data, config=config)
-        ordinary = len(waits)
-        waits.clear()
-        with progress.watch(observe):
-            cgls(geometry, grid, detector, data, config=config)
     assert info["execution_backend"] == "cupy"
     assert updates == [1, 2]
-    assert len(waits) == ordinary

@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import msgspec
+
 from tomojax.cli.wire_options import Grid
 from tomojax.wire import resources
-from tomojax.wire.arrays import Array, Count, Id, Member, Record
+from tomojax.wire.arrays import Array, Count, Id, Member, Npy, Record
 from tomojax.wire.progress import Info
+
+VOLUME_DATASET = "/entry/processing/tomojax/volume"
 
 Placement = resources.Placement
 Snapshot = resources.Snapshot
@@ -51,6 +55,46 @@ class Simulation(Record, tag="simulation"):
     handle: Id
     scan: Member
     phantom: Array
+
+
+class Layout(Record, tag="layout"):
+    """Dimensions, units and coordinate sampling, without allocating or issuing pixels."""
+
+    array: dict[str, Any]
+
+
+class ArrayResult(Record, tag="array"):
+    """Registered hyperslab or metadata for the original source."""
+
+    array: Array
+
+
+class DisplayPlane(Record):
+    """A sampled plane and its position on the original axes."""
+
+    array: Array
+    dimension: int | None
+    index: int
+    sampling: tuple[str, ...]
+
+
+class DisplayPlanes(Record, tag="display_planes"):
+    """Requested preview planes from a single source registration."""
+
+    planes: tuple[DisplayPlane, ...]
+
+
+class StatisticsResult(Record, tag="statistics"):
+    """Distribution over finite samples. Empty finite populations have null moments."""
+
+    count: int
+    non_finite: int
+    mean: float | None
+    std: float | None
+    percentiles: dict[str, float | None]
+    edges: tuple[float, ...]
+    histogram: tuple[int, ...]
+    unit: str
 
 
 class PlaneResult(Record, tag="plane"):
@@ -100,6 +144,24 @@ class Files(Record, tag="files"):
     paths: tuple[Id, ...]
 
 
+class PythonResult(Record, tag="python"):
+    """Captured streams, last expression, registered products and rendered images."""
+
+    stdout: str
+    stderr: str
+    value: Any
+    handles: dict[str, HandleProduct | ArrayResult]
+    images: tuple[Npy, ...]
+
+
+class Evaluation(Record, tag="evaluation"):
+    """Additive held-out scores on a frozen native detector split."""
+
+    split_fingerprint: str
+    reference: dict[str, Any]
+    scores: tuple[dict[str, Any], ...]
+
+
 class Inspection(Record, tag="inspection"):
     """The public inspection report."""
 
@@ -141,7 +203,9 @@ class CentrePlan(Record, tag="opposite_views_plan"):
 
 
 class Validated(Record, tag="validated"):
-    """Successful shared preflight."""
+    """Successful shared preflight, including resolved inputs and destinations."""
+
+    details: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
 class Provenance(Record):
@@ -154,12 +218,18 @@ class Provenance(Record):
 
 type HandleProduct = Scan | Frames | Reconstruction | Alignment | Simulation | Region
 type DataProduct = (
-    PlaneResult
+    Layout
+    | DisplayPlanes
+    | ArrayResult
+    | StatisticsResult
+    | PlaneResult
     | Projections
     | Volume
     | Sweep
     | CorrectionResult
     | Files
+    | PythonResult
+    | Evaluation
     | Inspection
     | ReconPlan
     | JointPlan

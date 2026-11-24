@@ -157,7 +157,7 @@ class ProjectionDataset:
     misalign_spec : dict or None, optional
         Simulation misalignment record; angles already include simulated offsets.
     source_path : str or None, optional
-        Original input path.
+        Absolute input path retained as provenance.
     source_format : str or None, optional
         Original container format.
     sample_name : str or None, optional
@@ -180,6 +180,10 @@ class ProjectionDataset:
     source_format: str | None = None
     sample_name: str | None = None
     _metadata: NXTomoMetadata | None = field(default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.source_path is not None:
+            self.source_path = str(Path(self.source_path).resolve())
 
     @classmethod
     def from_nxtomo(
@@ -416,7 +420,7 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
     if suffix == ".npz":
         return ProjectionDataset.from_nxtomo(load_npz(str(input_path)), source_path=input_path)
     if suffix == ".mat":
-        return _psi_record(input_path)
+        return psi_record(input_path)
     if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
         raise ValueError(
             "TIFF inputs require angle metadata; use load_tiff_stack(path, angles=...)"
@@ -424,11 +428,11 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
     raise ValueError(f"unsupported dataset format for {input_path}")
 
 
-def _psi_record(path: Path) -> ProjectionDataset:
+def psi_record(path: Path, *, layout_only: bool = False) -> ProjectionDataset:
     """A PSI cSAXS ptychographic tomography file's phase line integrals, as a parallel scan."""
     from tomojax.io._psi import read_psi_mat
 
-    projections, angles, pixel, wavelength, name = read_psi_mat(path)
+    projections, angles, pixel, wavelength, name = read_psi_mat(path, layout_only=layout_only)
     record = ProjectionDataset(
         projections=projections,
         angles=angles,
@@ -639,13 +643,14 @@ def _dataset_issues(input_path: Path) -> list[str]:
             issues.insert(0, str(exc))
         return issues
     suffix = input_path.suffix.lower()
-    # An NPZ, a PSI .mat, or a reconstruction saved without its scan, is checked by reading it.
     whole = suffix in {".npz", ".mat"} or (
         suffix in _HDF5_SUFFIXES and saved_without_frames(input_path)
     )
     if whole:
         try:
-            load_dataset(input_path)
+            from .projection_layout import saved_projection_layout
+
+            saved_projection_layout(input_path)
         except Exception as exc:
             return [str(exc)]
         return []

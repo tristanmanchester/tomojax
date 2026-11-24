@@ -116,6 +116,7 @@ def resolve_alignment(
     grid: Grid | None = None,
     region: RegionName | RegionEstimate | None = None,
     config: AlignConfig | None = None,
+    shape: tuple[int, int, int] | None = None,
     **settings: Any,
 ) -> JointSelection | CentreSelection:
     """Resolve the method-specific work without sampling projections."""
@@ -131,7 +132,13 @@ def resolve_alignment(
     if method == "opposite-views":
         extras = sorted(
             key
-            for key, value in {**supplied, "config": config, "grid": grid, "region": region}.items()
+            for key, value in {
+                **supplied,
+                "config": config,
+                "grid": grid,
+                "region": region,
+                "shape": shape,
+            }.items()
             if value is not None
         )
         if extras:
@@ -149,7 +156,7 @@ def resolve_alignment(
         raise InvalidParameter("method", f"method is 'joint' or 'opposite-views', not {method!r}")
     _ = parse_fit(fit)
     config = replace(AlignConfig() if config is None else config, **supplied)
-    grid, cylinder, info = resolve_grid(scan, grid, region)
+    grid, cylinder, info = resolve_grid(scan, grid, region, shape=shape)
     if grid is not None:
         scan = with_grid(scan, grid)
     acquisition = (
@@ -170,3 +177,35 @@ def resolve_alignment(
         scan.grid, scan.detector, declared, frames, keep_grid=grid is not None, config=config
     )
     return JointSelection(grid, config, cylinder, info, schedule, frames)
+
+
+def transfer_alignment(train, test, alignment, *, training_segments, held_segments, local):
+    """Apply fitted globals and segment-interpolated local updates to unseen views."""
+    from scipy.spatial.transform import Rotation
+
+    from tomojax.alignment._calibration import publish_calibration
+
+    corrections = {key: entry["change"] for key, entry in alignment.info["calibration"].items()}
+    fitted = None
+    if local:
+        # publish_calibration composes old * delta and adds lab translations.
+        delta = np.array(alignment.poses, dtype=float, copy=True)
+        previous = train.poses
+        rotations = Rotation.from_euler("YXZ", delta[:, [1, 0, 2]], degrees=True)
+        if previous is not None:
+            rotations = (
+                Rotation.from_euler("YXZ", previous[:, [1, 0, 2]], degrees=True).inv() * rotations
+            )
+            delta[:, 3:] -= previous[:, 3:]
+        delta[:, :3] = rotations.as_euler("YXZ")[:, [1, 0, 2]]
+        fitted = np.empty((len(held_segments), 6))
+        for group in np.unique(held_segments):
+            a, b = training_segments == group, held_segments == group
+            for col in range(6):
+                fitted[b, col] = np.interp(
+                    test.view_positions[b], train.view_positions[a], delta[a, col]
+                )
+    detector = test.detector
+    return publish_calibration(
+        test, fitted, corrections, native_pixel_size=(detector.du, detector.dv)
+    )[0]

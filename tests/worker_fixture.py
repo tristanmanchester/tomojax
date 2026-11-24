@@ -13,7 +13,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.cli import envelope as e, execution as ex, operations as op, products as p
-from tomojax.cli.serve import serve
+from tomojax.cli.transport import serve
 from tomojax.errors import InvalidParameter
 from tomojax.wire import arrays as a, progress as w
 
@@ -126,6 +126,10 @@ class Stub:
     def inspect(self, command, context):
         if command.path == "wait":
             self.wait(context, "inspect", "input", None, "")
+        elif command.path == "executor-exit":
+            raise SystemExit(3)
+        elif command.path == "stderr":
+            os.write(2, b"x" * (2 * 1024 * 1024))
         elif command.path == "ticks":
             for done in range(1, 100):
                 context.event(w.Advanced(2, 1, done, done, 99, {}, None))
@@ -147,7 +151,13 @@ class Stub:
 def worker(port):
     files = Path(__file__).resolve().parents[1] / "docs/protocol/transcripts/session.jsonl"
     ready = msgspec.convert(json.loads(files.read_text().splitlines()[0]), type=e.Ready)
-    return serve(Stub(port).execute, ready=ready, description=e.Description({"large": "x" * 32768}))
+    return serve(
+        Stub(port).execute,
+        stdin=0,
+        stdout=1,
+        ready=ready,
+        description=e.Description({"large": "x" * 32768}),
+    )
 
 
 if __name__ == "__main__":

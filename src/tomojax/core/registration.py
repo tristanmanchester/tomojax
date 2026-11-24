@@ -22,24 +22,28 @@ length_unit = ContextVar("tomojax_preview_length", default="scan_length")
 
 
 source_geometry = ContextVar[Any]("tomojax_preview_geometry", default=None)
-output_xy_support = ContextVar[np.ndarray | None]("tomojax_output_xy_support", default=None)
+output_cylinder = ContextVar[float | None]("tomojax_output_cylinder", default=None)
 image_scale = ContextVar("tomojax_preview_scale", default=1.0)
 
 
 @contextmanager
-def registration(source: Any, *, xy_support: np.ndarray | None = None) -> Iterator[None]:
-    """Inherit the acquisition's units and coordinates for numerical checkpoints."""
+def registration(source: Any, *, cylinder_radius: float | None = None) -> Iterator[None]:
+    """Inherit the acquisition's units and coordinates for numerical checkpoints.
+
+    With ``cylinder_radius``, every plane is zeroed outside that cylinder about the
+    rotation axis, on its own grid: an alignment's working levels included.
+    """
     if not progress.previewing():
         yield
         return
     unit = recorded_length_unit(source.source.geometry_metadata) if source.source else None
     u = length_unit.set(unit or "scan_length")
     g = source_geometry.set(source.geometry)
-    support = output_xy_support.set(xy_support)
+    support = output_cylinder.set(cylinder_radius)
     try:
         yield
     finally:
-        output_xy_support.reset(support)
+        output_cylinder.reset(support)
         source_geometry.reset(g)
         length_unit.reset(u)
 
@@ -117,12 +121,12 @@ def registered_plane(
 ) -> progress.Sample:
     """Register a plane cut from a volume, retaining its missing coordinate."""
     axis = axes[i]
-    if (support := output_xy_support.get()) is not None:
-        # Volume arrays and the sampled planes are already in public ZYX order.
-        mask = support if i == 0 else support[index, :] if i == 1 else support[:, index]
-        plane = np.where(mask, plane, 0)
     coord = axis.coordinates
     assert isinstance(coord, Uniform)
+    if (radius := output_cylinder.get()) is not None:
+        plane = np.where(
+            _inside(radius, axes, i, coord.origin + index * coord.spacing, plane), plane, 0
+        )
     fixed = Fixed(axis.name, axis.frame, axis.unit, index, coord.origin + index * coord.spacing)
     return progress.Sample(
         np.array(plane, copy=True),
@@ -131,6 +135,23 @@ def registered_plane(
         "attenuation",
         (fixed,),
     )
+
+
+def _inside(radius: float, axes: tuple[Axis, ...], i: int, fixed: float, plane: Any) -> np.ndarray:
+    """True where ``plane`` (axis ``i`` of zyx fixed at ``fixed``) lies inside the cylinder."""
+
+    def centres(k: int, count: int) -> np.ndarray:
+        coordinates = axes[k].coordinates
+        assert isinstance(coordinates, Uniform)
+        return coordinates.origin + np.arange(count) * coordinates.spacing
+
+    rows, columns = np.shape(plane)[-2:]
+    x = np.asarray(fixed) if i == 2 else centres(2, columns)
+    y = np.asarray(fixed) if i == 1 else centres(1, rows if i == 0 else columns)
+    tolerance = 8 * np.finfo(np.float64).eps * radius
+    # hypot avoids squaring physical lengths, which can underflow or overflow.
+    inside = np.hypot(x[None, :], y[:, None]) if i == 0 else np.hypot(x, y)[None, :]
+    return inside <= radius + tolerance
 
 
 class SlabPlanes:

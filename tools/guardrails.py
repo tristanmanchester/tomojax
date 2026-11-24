@@ -69,6 +69,7 @@ CLI_COMMANDS = (
     "export",
     "simulate",
     "serve",
+    "mcp",
     "studio",
 )
 # Files and functions longer than these are recorded with their length, which

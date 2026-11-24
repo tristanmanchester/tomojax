@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tomojax": {
+      "command": "uvx",
+      "args": ["--from", "tomojax[mcp,cuda12,spectra]", "tomojax", "mcp"]
+    }
+  }
+}

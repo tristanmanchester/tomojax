@@ -123,6 +123,7 @@ class tomojax.Reconstruction(
         scan: 'Scan | None' = None,
         *,
         length_unit: 'str | None' = None,
+        source_path: 'str | None' = None,
     ) -> None
     .grid
 class tomojax.RegionEstimate(scan: 'Scan', info: 'Mapping[str, object]') -> None
@@ -500,6 +501,7 @@ class tomojax.interactive.CorrectionBand(
         after: 'np.ndarray',
         views: 'np.ndarray',
         detector: 'Detector',
+        domain: "Literal['counts', 'line_integrals']" = 'counts',
     ) -> None
 class tomojax.interactive.RegionOverlay(
         estimate: 'RegionEstimate',
@@ -516,7 +518,7 @@ def tomojax.interactive.centre_sweep(
         **options: 'Any',
     ) -> 'Any'
 def tomojax.interactive.correction_preview(
-        frames: 'Frames',
+        source: 'Frames | Scan',
         rows: 'tuple[int, int]',
         *steps: 'Step',
         *,
@@ -532,6 +534,13 @@ def tomojax.interactive.reconstruct_slice(
         method: 'Method' = 'auto',
         **options: 'Any',
     ) -> 'Any'
+def tomojax.interactive.reconstruct_slices(
+        scan: 'Scan',
+        requests: 'Sequence[tuple[Axis, int]]',
+        *,
+        method: 'Method' = 'auto',
+        **options: 'Any',
+    ) -> 'list[Any]'
 def tomojax.interactive.region_preview(scan: 'Scan') -> 'RegionOverlay'
 
 # tomojax.corrections

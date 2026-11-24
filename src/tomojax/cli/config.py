@@ -8,7 +8,9 @@ import sys
 import tomllib
 from typing import TYPE_CHECKING, cast
 
+from tomojax.cli import _console
 from tomojax.cli._options import config_settings, options
+from tomojax.cli._progress import ProgressParser
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -18,7 +20,7 @@ ConfigValue = object
 
 
 def parse_args_with_config(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     argv: Sequence[str] | None = None,
     *,
     required: Sequence[str] = (),
@@ -32,10 +34,7 @@ def parse_args_with_config(
     have no option; they are returned as written, under ``"settings"``.
     """
     raw_argv = list(sys.argv[1:] if argv is None else argv)
-    from tomojax.cli._progress import ProgressParser
-
-    if isinstance(parser, ProgressParser):
-        parser.set_invocation(raw_argv)
+    parser.set_invocation(raw_argv)
     config_path = _discover_config_path(parser, raw_argv)
     config_values: dict[str, ConfigValue] = {}
     config_defaults: dict[str, ConfigValue] = {}
@@ -69,11 +68,9 @@ def parse_args_with_config(
 
 
 def _discover_config_path(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     argv: Sequence[str],
 ) -> Path | None:
-    from tomojax.cli._progress import ProgressParser
-
     config_parser = ProgressParser(add_help=False, prog=parser.prog, allow_abbrev=False)
     config_parser.set_invocation(list(argv))
     _ = config_parser.add_argument("--config", default=None)
@@ -85,7 +82,7 @@ def _discover_config_path(
 
 
 def _load_config_file(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     path: Path,
 ) -> dict[str, ConfigValue]:
     suffix = path.suffix.lower()
@@ -126,7 +123,7 @@ _RETIRED_KEYS = {
 
 
 def _validate_config_keys(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     path: Path,
     values: Mapping[str, ConfigValue],
 ) -> None:
@@ -137,14 +134,16 @@ def _validate_config_keys(
             parser.error(f"config key '{key}' in {path} was renamed '{new}'")
     unknown = sorted(str(key) for key in values if str(key) not in valid_keys)
     if unknown:
-        parser.error(
-            f"unknown config key(s) in {path}: {', '.join(unknown)}. "
-            f"Valid keys: {', '.join(sorted(valid_keys))}"
-        )
+        message = f"unknown config key(s) in {path}: {', '.join(unknown)}"
+        listing = f"{parser.prog} --config-keys lists every key"
+        close = _console.suggest(unknown[0], valid_keys)
+        hint = f"did you mean {close}? {listing}" if close else listing
+        full = f"{message}. Valid keys: {', '.join(sorted(valid_keys))}"
+        parser.fail(full, hint=hint, display=message)
 
 
 def _coerce_config_defaults(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     path: Path,
     values: Mapping[str, ConfigValue],
 ) -> dict[str, ConfigValue]:
@@ -164,7 +163,7 @@ def _coerce_config_defaults(
 
 
 def _config_actions_by_dest(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
 ) -> dict[str, argparse.Action]:
     actions: dict[str, argparse.Action] = {}
     for action in options(parser):
@@ -177,7 +176,7 @@ def _config_actions_by_dest(
 
 
 def _explicit_cli_dests(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     argv: Sequence[str],
 ) -> set[str]:
     option_to_dest: dict[str, str] = {}
@@ -242,7 +241,7 @@ def _coerce_scalar(action: argparse.Action, value: ConfigValue) -> ConfigValue:
 
 
 def _validate_choices(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     path: Path,
     dest: str,
     action: argparse.Action,
@@ -263,7 +262,7 @@ def _validate_choices(
 
 
 def _validate_required(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     args: argparse.Namespace,
     required: Sequence[str],
 ) -> None:

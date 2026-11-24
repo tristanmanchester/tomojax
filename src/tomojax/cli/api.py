@@ -21,6 +21,7 @@ PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand("export", "Write a reconstruction as TIFF slices or a raw file."),
     CliCommand("simulate", "Write a synthetic scan of a phantom."),
     CliCommand("serve", "Serve a GUI session over JSON Lines."),
+    CliCommand("mcp", "Serve tomography tools over MCP stdio."),
     CliCommand("studio", "Open the native tomography project workspace."),
 )
 

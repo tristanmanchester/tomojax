@@ -466,3 +466,26 @@ def test_invalid_command_echoes_readable_id(client):
         assert error["request"] == (raw_id if isinstance(raw_id, str) else None)
     client.send("form-17", "status")
     assert client.end("form-17")["type"] == "result"
+
+
+def test_adapter_import_cannot_read_or_write_protocol():
+    program = """
+import os, sys
+class Probe:
+    def find_spec(self, fullname, *args):
+        if fullname == 'tomojax.cli._adapters':
+            assert os.read(0, 1) == b''
+            os.write(1, b'library output')
+sys.meta_path.insert(0, Probe())
+from tomojax.cli.main import main
+sys.exit(main(['serve']))
+"""
+    raw = subprocess.run(
+        [sys.executable, "-c", program],
+        input=b'{"id":"q","command":{"type":"shutdown"}}\n',
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+    assert b"library output" in raw.stderr
+    assert [json.loads(line)["type"] for line in raw.stdout.splitlines()] == ["ready", "result"]

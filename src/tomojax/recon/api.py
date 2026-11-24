@@ -191,6 +191,7 @@ def validate_reconstruction(
     warm_start: bool = False,
     axial_index: int | None = None,
     projections: jnp.ndarray | np.ndarray | None = None,
+    check_samples: bool = True,
 ) -> None:
     """Check resolved solver settings against the actual acquisition before dispatch.
 
@@ -209,7 +210,9 @@ def validate_reconstruction(
     axial_index : int or None, optional
         Requested axial plane when validating a slice or sweep.
     projections : array-like or None, optional
-        Loaded measurements for data-dependent checks and resident backend placement.
+        Projection array or layout for storage and device placement checks.
+    check_samples : bool, optional
+        Inspect measurement values when projections contain acquired samples.
 
     Raises
     ------
@@ -224,7 +227,7 @@ def validate_reconstruction(
     )
 
     validate_acquisition(geometry, grid, geometry.detector, method)
-    _check_solver_inputs(method, geometry, config, projections)
+    _check_solver_inputs(method, geometry, config, projections, check_samples=check_samples)
     views = len(geometry.angles)
     if subsets := getattr(config, "subsets", None):
         from tomojax.errors import within
@@ -262,7 +265,7 @@ def validate_reconstruction(
         check_fista_storage(
             geometry, grid, projections, cast("FISTAConfig", config), warm_start=warm_start
         )
-    if method == "fbp" and projections is not None:
+    if method == "fbp" and projections is not None and check_samples:
         from tomojax.recon._fbp_storage import check_host_fbp_samples
 
         check_host_fbp_samples(
@@ -276,7 +279,7 @@ def validate_reconstruction(
     if method == "fourier":
         from tomojax.recon.fourier import check_fourier_inputs
 
-        check_fourier_inputs(geometry, grid, projections)
+        check_fourier_inputs(geometry, grid, projections, check_samples=check_samples)
 
 
 def _check_solver_inputs(
@@ -284,6 +287,8 @@ def _check_solver_inputs(
     geometry: ScanGeometry,
     config: MethodConfig,
     projections: jnp.ndarray | np.ndarray | None,
+    *,
+    check_samples: bool,
 ) -> None:
     """Check interpolation, accelerator placement and measured values for this inverse."""
     from tomojax.core.geometry.cone import is_cone_beam
@@ -318,7 +323,7 @@ def _check_solver_inputs(
             if method == "fbp" and isinstance(projections, jax.Array)
             else None,
         )
-    if method not in {"fourier", "fbp"} and projections is not None:
+    if method not in {"fourier", "fbp"} and projections is not None and check_samples:
         from tomojax.recon._host_arrays import check_measurements
 
         check_measurements(projections, method)
@@ -757,6 +762,58 @@ def axial_fbp_plane(
     return parallel_fbp(geometry, grid, detector, projections, cfg, None, row=index)[0]
 
 
+def predict_projections(
+    geometry: ScanGeometry, volume: np.ndarray | jnp.ndarray, *, grid: Grid, config: MethodConfig
+) -> jnp.ndarray:
+    """Project a reconstruction with the fitted method's detector lattice and interpolation.
+
+    Parameters
+    ----------
+    geometry : ScanGeometry
+        Acquisition geometry of the views to predict.
+    volume : array
+        Reconstructed attenuation in (z, y, x) order.
+    grid : Grid
+        Physical sampling of the reconstruction.
+    config : MethodConfig
+        Resolved reconstruction settings, including CGLS interpolation.
+
+    Returns
+    -------
+    jax.Array
+        Predicted line integrals in (view, v, u) order.
+    """
+    import jax.numpy as jnp
+    import numpy as np
+
+    from tomojax.recon._fbp_storage import first_device
+    from tomojax.recon._operators import matched_operators
+    from tomojax.recon._prediction import host_prediction
+
+    analytic = isinstance(config, recon.FBPConfig | recon.FourierConfig)
+    if isinstance(volume, np.ndarray):
+        with first_device(config):
+            return host_prediction(
+                geometry,
+                volume,
+                grid,
+                backend="auto" if analytic else config.backend,
+                interpolation=getattr(config, "interpolation", "linear"),
+            )
+    _, split, build, _ = matched_operators(
+        geometry,
+        grid,
+        "evaluate",
+        None if analytic else getattr(config, "devices", None),
+        interpolation=getattr(config, "interpolation", "linear"),
+        backend="auto" if analytic else config.backend,
+    )
+    forward, _ = build()
+    if split is None:
+        return forward(jnp.asarray(volume))
+    return split.take(forward(split.everywhere(jnp.asarray(volume))))
+
+
 def _detector_grid(
     geometry: Geometry, detector: Detector
 ) -> tuple[jnp.ndarray, jnp.ndarray] | None:
@@ -773,6 +830,7 @@ __all__ = [
     "clear_filter_caches",
     "default_fbp_scale",
     "method_config",
+    "predict_projections",
     "project",
     "reconstruct_arrays",
     "reconstruct_slabs",

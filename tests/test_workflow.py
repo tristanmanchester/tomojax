@@ -660,3 +660,24 @@ def test_load_frames_honours_apply_poses_false(tmp_path: Path) -> None:
     assert with_poses.poses is not None
     np.testing.assert_allclose(with_poses.poses, poses, atol=1e-5)
     assert nominal.poses is None
+
+
+def test_host_cylinder_uses_one_mask_plane_and_keeps_solver_output(
+    cylinder_scan, cylinder_mask, monkeypatch
+):
+    from tomojax import _field_of_view
+    from tomojax.recon import api
+
+    build_mask = _field_of_view.cylinder_support
+
+    def planar(grid, cylinder):
+        assert grid.nz == 1
+        return build_mask(grid, cylinder)
+
+    monkeypatch.setattr(_field_of_view, "cylinder_support", planar)
+
+    volume = np.ones(cylinder_scan.grid.shape, np.float32)
+    monkeypatch.setattr(api, "reconstruct_arrays", lambda *args, **kwargs: (volume, {}))
+    result = tj.reconstruct(cylinder_scan, "fbp", region="cyl")
+    assert result.volume is volume
+    np.testing.assert_array_equal(result.volume, np.broadcast_to(cylinder_mask, volume.shape))

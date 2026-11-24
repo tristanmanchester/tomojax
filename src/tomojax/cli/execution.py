@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields, is_dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import msgspec
 import numpy as np
@@ -80,6 +80,7 @@ class Lease:
 
     value: HandleValue | Npy
     provenance: Provenance
+    metadata: Array | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,8 @@ class ExecutionContext:
     event: Callable[[Event], None]
     snapshot: Callable[[Snapshot], None]
     staging: Staging
+    namespace: dict[str, Any]
+    measure: Callable[[int], None]
 
     def __init__[K: Member | Npy](
         self,
@@ -119,12 +122,16 @@ class ExecutionContext:
         event: Callable[[Event], None],
         snapshot: Callable[[Snapshot], None],
         staging: Staging,
+        namespace: dict[str, Any] | None = None,
+        measure: Callable[[int], None] = lambda _: None,
     ) -> None:
         object.__setattr__(self, "leases", MappingProxyType(dict(leases)))
         object.__setattr__(self, "control", control)
         object.__setattr__(self, "event", event)
         object.__setattr__(self, "snapshot", snapshot)
         object.__setattr__(self, "staging", staging)
+        object.__setattr__(self, "namespace", {} if namespace is None else namespace)
+        object.__setattr__(self, "measure", measure)
 
     def lineage(self, command: ExecutionInput) -> tuple[Provenance, ...]:
         """Return each pinned producer in command order, including repeated references."""
@@ -160,6 +167,7 @@ class Success:
     value: DataProduct | NewHandle
     info: Info
     manifest: Provenance
+    roots: tuple[tuple[str, NewHandle], ...] = ()
 
 
 type Adapter[T: ExecutionInput] = Callable[[T, ExecutionContext], Success]

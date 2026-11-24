@@ -31,6 +31,13 @@ type Config = (
 type Region = RegionName | Member
 
 
+ACQUISITION_ARRAY_ERROR = (
+    "An acquisition path cannot supply an array. Use open and select .projections, or use "
+    "kind=frames and .counts for raw counts. Use preview with correction_preview for corrected "
+    "rows, or inspect with preview=true for a first look."
+)
+
+
 class PathInput(Record, tag="path"):
     """File input opened on the execution queue."""
 
@@ -77,10 +84,9 @@ class Correct(Record, tag="correct"):
     binning: int = 1
 
 
-class Reconstruct(Record, tag="reconstruct"):
+class ReconstructSettings(Record, tag="reconstruct", kw_only=True):
     """Reconstruct the supplied scan on its resolved grid."""
 
-    source: Source
     method: Method = "auto"
     grid: w.Grid | None = None
     region: Region | None = None
@@ -94,11 +100,19 @@ class Reconstruct(Record, tag="reconstruct"):
     devices: tuple[Id, ...] | None = None
 
 
+class Reconstruct(ReconstructSettings, tag="reconstruct"):
+    """Reconstruct the supplied scan on its resolved grid."""
+
+    source: Source
+
+
 class ReconstructSlabs(Record, tag="reconstruct_slabs"):
     """Consume each yielded slab into one staged disk-backed volume."""
 
     source: Source
+    path: Id
     method: Literal["fbp", "fourier", "sirt", "mlem"]
+    force: bool = False
     grid: w.Grid | None = None
     config: w.FBPConfig | w.FourierConfig | w.SIRTConfig | w.MLEMConfig | None = None
     corrections: tuple[Step, ...] = ()
@@ -106,10 +120,9 @@ class ReconstructSlabs(Record, tag="reconstruct_slabs"):
     epsilon: float = 1e-6
 
 
-class Align(Record, tag="align"):
+class AlignSettings(Record, tag="align", kw_only=True):
     """Return geometry-corrected scan and fitted pose table."""
 
-    source: Source
     fit: str | tuple[str, ...] = "translations"
     grid: w.Grid | None = None
     region: Region | None = None
@@ -121,6 +134,39 @@ class Align(Record, tag="align"):
     interpolation: Literal["linear", "cubic"] | None = None
     resolution: int | None = None
     config: w.AlignConfig | None = None
+
+
+class Align(AlignSettings, tag="align"):
+    """Return geometry-corrected scan and fitted pose table."""
+
+    source: Source
+
+
+class Interleaved(Record, tag="interleaved"):
+    """Hold out regularly spaced views with optional neighbouring guard views."""
+
+    stride: int = 5
+    offset: int = 2
+    guard: int = 0
+
+
+class Angular(Record, tag="angular"):
+    """Hold out an interior angular block with guards in degrees."""
+
+    start: float
+    width: float
+    guard: float = 0
+    period: float = 360
+
+
+class Evaluate(Record, tag="evaluate"):
+    """Score settings against shared held-out line integrals. Corrections run per partition."""
+
+    source: Source
+    candidates: tuple[ReconstructSettings | AlignSettings, ...]
+    split: Interleaved | Angular = Interleaved()
+    corrections: tuple[Step, ...] = ()
+    reference: ReconstructSettings = ReconstructSettings(method="cgls", iterations=30)
 
 
 class Simulate(Record, tag="simulate"):
@@ -145,7 +191,7 @@ class Project(Record, tag="project"):
     """Project registered voxels with the source scan geometry."""
 
     source: Source
-    volume: Storage
+    volume: Storage | PathInput
     grid: w.Grid | None = None
     devices: tuple[Id, ...] | None = None
 
@@ -154,7 +200,7 @@ class Backproject(Record, tag="backproject"):
     """Apply the matched transpose with the source scan geometry."""
 
     source: Source
-    projections: Storage
+    projections: Storage | PathInput
     grid: w.Grid | None = None
     devices: tuple[Id, ...] | None = None
 
@@ -202,7 +248,7 @@ class Bin(Record, tag="bin"):
 
 
 class Poses(Record, tag="poses"):
-    """Replace the public six-column table or clear it."""
+    """Replace poses (alpha, beta, phi in degrees, then x, z, y in length units) or clear them."""
 
     source: Source
     poses: Storage | None
@@ -213,6 +259,31 @@ class Combine(Record, tag="combine"):
 
     sources: tuple[Source, ...]
     name: str | None = None
+
+
+class Window(Record):
+    """Half-open ROI in storage axis order. Omitted bounds select the whole array."""
+
+    roi: tuple[tuple[int, int], ...] | None = None
+    stride: tuple[int, ...] | None = None
+
+
+class Read(Window, tag="read", kw_only=True):
+    """Copy a registered hyperslab (up to 16 MiB), or return only its registration."""
+
+    source: Storage | PathInput
+    metadata_only: bool = False
+    mode: Literal["projection", "sinogram", "planes"] | None = None
+    axis: str | None = None
+    index: int | None = None
+
+
+class Statistics(Window, tag="statistics", kw_only=True):
+    """Exact finite-value statistics over an optionally strided ROI."""
+
+    source: Storage | PathInput
+    percentiles: tuple[float, ...] = (1, 5, 50, 95, 99)
+    bins: int = 32
 
 
 class Plane(Record, tag="plane"):
@@ -250,6 +321,7 @@ class RegionPreview(Record, tag="region_preview"):
 
 type Workflow = (
     Correct
+    | Evaluate
     | Reconstruct
     | ReconstructSlabs
     | Align
@@ -286,7 +358,17 @@ class Validate(Record, tag="validate"):
     operation: Workflow | Interactive | Open
 
 
-type ExecutionInput = Run | Interactive | Inspect | Open | Plan | Validate
+class Python(Record, tag="python"):
+    """Run code with an admission snapshot of the live objects and arrays."""
+
+    code: str = ""
+    reset: bool = False
+    aliases: dict[str, Member | Npy] = msgspec.field(default_factory=dict)
+
+
+type ExecutionInput = (
+    Python | Read | Statistics | Run | Interactive | Inspect | Open | Plan | Validate
+)
 
 
 def input_references(command: ExecutionInput) -> tuple[Member | Npy, ...]:

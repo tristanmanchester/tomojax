@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from referencing import Registry, Resource
 
+from tests.worker_adapter import Stage, execute
 import tomojax as tj
 from tomojax import progress
 from tomojax.cli import envelope, execution, operations, products
@@ -43,7 +44,16 @@ def test_generated_contract_is_current():
 
 @pytest.mark.parametrize(
     "scenario",
-    ["saved-volume", "alignment-scan", "simulation", "edit-combine", "raw-slabs", "session"],
+    [
+        "browse",
+        "saved-volume",
+        "alignment-scan",
+        "simulation",
+        "edit-combine",
+        "evaluate-python",
+        "raw-slabs",
+        "session",
+    ],
 )
 def test_fixed_client_transcripts(schemas, scenario):
     pending = {}
@@ -74,7 +84,7 @@ def test_fixed_client_transcripts(schemas, scenario):
         parents = results["b"]["manifest"]["inputs"]
         assert parents == [results["s"]["manifest"], results["p"]["manifest"]]
     if scenario == "raw-slabs":
-        assert results["v"]["value"]["volume"]["storage"]["type"] == "npy"
+        assert results["v"]["value"]["paths"][0] == "/data/slabs.nxs"
     if scenario == "saved-volume":
         assert results["open"]["value"]["scan"] is None
         assert results["browse"]["value"]["plane"]["fixed"][0]["coordinate"] == 9
@@ -140,15 +150,6 @@ def test_terminals_and_invalid_admission_have_distinct_wire_shapes(schemas):
         ),
     ):
         assert not schemas["worker"].is_valid(dict(id="q", command=command))
-
-
-class Stage:
-    def __init__(self, root):
-        self.private = root / "staged"
-        self.public = root / "published.npy"
-
-    def array(self):
-        return execution.ArrayStage(self.private, arrays.Npy(str(self.public), "issued-token"))
 
 
 class Control:
@@ -434,8 +435,6 @@ def test_result_summary_keeps_selection_when_solver_history_exceeds_budget():
 
 @pytest.mark.parametrize("adapter", ["stub", "cpu"])
 def test_backprojection_accepts_the_admitted_artifact_after_its_producer_closes(tmp_path, adapter):
-    from tomojax.cli._adapters import execute  # check-public-imports: allow-private
-
     grid = tj.Grid(4, 3, 2, 1.0, 1.0, 1.0)
     detector = tj.Detector(5, 2, 1.0, 1.0)
     geometry = tj.ParallelGeometry(grid, detector, [0.0, 47.0, 123.0])

@@ -18,7 +18,7 @@
     "tomojax.geometry": 13,
     "tomojax.evaluation": 2,
     "tomojax.progress": 13,
-    "tomojax.interactive": 6,
+    "tomojax.interactive": 7,
     "tomojax.corrections": 15,
     "tomojax.forward": 3,
     "tomojax.recon": 21,
@@ -26,24 +26,24 @@
     "tomojax.alignment": 1,
     "tomojax.datasets": 14,
     "tomojax.geometry.api": 12,
-    "tomojax.corrections.api": 6,
-    "tomojax.recon.api": 12,
-    "tomojax.io.api": 28,
+    "tomojax.corrections.api": 7,
+    "tomojax.recon.api": 13,
+    "tomojax.io.api": 29,
     "tomojax.alignment.api": 4
   },
   "cli_flags": {
-    "inspect": 5,
-    "correct": 34,
-    "reconstruct": 20,
-    "align": 19,
+    "inspect": 7,
+    "correct": 36,
+    "reconstruct": 21,
+    "align": 20,
     "export": 7,
     "simulate": 19,
     "serve": 1,
+    "mcp": 1,
     "studio": 3
   },
   "long_files": {
-    "src/tomojax/core/cone.py": 826,
-    "src/tomojax/corrections/_engine.py": 814
+    "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 171,
@@ -57,27 +57,27 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 5606,
-    "_data": 2153,
+    "(modules)": 6216,
+    "_data": 2189,
     "alignment": 4670,
     "backends": 273,
-    "cli": 5826,
-    "core": 9917,
-    "corrections": 3139,
+    "cli": 11071,
+    "core": 10053,
+    "corrections": 3204,
     "datasets": 1069,
     "forward": 404,
-    "geometry": 908,
-    "io": 3947,
+    "geometry": 913,
+    "io": 4057,
     "motion": 153,
     "nuisance": 232,
-    "recon": 14912,
+    "recon": 15037,
     "wire": 266
   },
   "cuda_kernels": 47,
   "cuda_switches": 34,
-  "environment_reads": 19,
+  "environment_reads": 22,
   "suppressions": {
-    "noqa": 3,
+    "noqa": 5,
     "type: ignore": 11,
     "pyright: ignore": 12
   },
@@ -98,15 +98,15 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 65,
+    "tiny": 64,
     "forwarders": 5,
     "chained": 4
   },
   "type_errors": {
-    "reportArgumentType": 44,
-    "reportAttributeAccessIssue": 20,
+    "reportArgumentType": 42,
+    "reportAttributeAccessIssue": 18,
     "reportCallIssue": 2,
-    "reportIndexIssue": 6,
+    "reportIndexIssue": 5,
     "reportPrivateUsage": 15,
     "reportReturnType": 5,
     "reportTypedDictNotRequiredAccess": 3
@@ -116,5 +116,5 @@
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 130
+  "test_private_imports": 137
 }

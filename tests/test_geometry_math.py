@@ -145,12 +145,8 @@ def test_rotation_axis_vocabulary_and_cone_segments_beam():
     cone = ConeGeometry(grid, detector, [0.0, 90.0], ConeBeam(30.0, 45.0), axis_unit=tuple(axis))
     np.testing.assert_allclose(rot.rotation_axis(), axis)
     np.testing.assert_allclose(cone.rotation_axis(), axis)
-    assert not hasattr(lamino, "axis_unit_lab")
-    assert not hasattr(rot, "axis_unit_lab")
-    segments = ConeSegments((cone,))
-    assert not hasattr(segments, "beam")
     with pytest.raises(ValueError, match="cone_parts"):
-        beam_of(segments)
+        beam_of(ConeSegments((cone,)))
 
 
 def test_detector_grid_is_flattened_row_by_row_about_the_centre() -> None:

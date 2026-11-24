@@ -12,6 +12,22 @@ import tempfile
 
 from _smoke_workflow import verify_workflow_outputs, workflow_steps
 
+MCP_SMOKE = """
+import asyncio
+import os
+import sys
+from mcp import Client, StdioServerParameters
+
+async def smoke():
+    server = StdioServerParameters(command=sys.argv[1], args=["mcp"], env=dict(os.environ))
+    async with Client(server) as client:
+        result = await client.get_prompt("reconstruct-scan")
+        assert result.messages and "reconstruct" in result.messages[0].content.text
+        print("Installed MCP server returned the reconstruction guide")
+
+asyncio.run(smoke())
+"""
+
 
 def _clean_env(*, extra: str, root: Path) -> dict[str, str]:
     env = dict(os.environ)
@@ -19,6 +35,8 @@ def _clean_env(*, extra: str, root: Path) -> dict[str, str]:
         _ = env.pop(key, None)
     env.update(
         PYTHONNOUSERSITE="1",
+        XDG_STATE_HOME=str(root / "state"),
+        XDG_CACHE_HOME=str(root / "cache"),
         JAX_PLATFORMS="cuda" if extra == "cuda12" else "cpu",
         TOMOJAX_JAX_CACHE_DIR=str(root / "jax-cache"),
         JAX_COMPILATION_CACHE_DIR=str(root / "jax-cache"),
@@ -74,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         install = ["uv", "pip", "install", "--no-cache", "--python", str(python)]
         if args.find_links is not None:
             install += ["--offline", "--no-index", "--find-links", str(args.find_links.resolve())]
-        _run([*install, f"{artifact}[{args.extra}]"], cwd=root, env=env)
+        _run([*install, f"{artifact}[{args.extra},mcp]"], cwd=root, env=env)
         _run(["uv", "pip", "check", "--python", str(python)], cwd=root, env=env)
         _run(
             [
@@ -89,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             env=env,
         )
         _run([str(tomojax), "--help"], cwd=work, env=env)
+        _run([str(python), "-c", MCP_SMOKE, str(tomojax)], cwd=work, env=env)
         _run(
             [
                 str(python),
@@ -123,7 +142,10 @@ def main(argv: list[str] | None = None) -> int:
             cwd=work,
             env=env,
         )
-        print(f"Installed {artifact.name}[{args.extra}] and reconstructed successfully", flush=True)
+        print(
+            f"Installed {artifact.name}[{args.extra},mcp] and reconstructed successfully",
+            flush=True,
+        )
     return 0
 
 

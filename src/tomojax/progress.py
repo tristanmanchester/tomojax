@@ -476,6 +476,25 @@ def previewing() -> bool:
     return watcher is not None and watcher.previews
 
 
+@contextmanager
+def previews() -> Iterator[None]:
+    """Deliver preview arrays to the active watch for the duration of the block.
+
+    A client that wants previews of one stage only (the solve, not the loading
+    before it) watches without them and turns them on around that stage. Task
+    identifiers, parents and cancellation span the whole watch.
+    """
+    watcher = _watch.get()
+    if watcher is None:
+        yield
+        return
+    before, watcher.previews = watcher.previews, True
+    try:
+        yield
+    finally:
+        watcher.previews = before
+
+
 def preview(build: Callable[[], dict[str, Sample]], *, final: bool = False) -> None:
     """Copy a coherent checkpoint only when a preview will be delivered."""
     active = current_task.get()

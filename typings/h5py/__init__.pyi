@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, MutableMapping
+from collections.abc import Callable, Iterator, MutableMapping
 from pathlib import Path
 from typing import Any, Protocol, overload
 
@@ -38,6 +38,10 @@ class Dataset:
     shape: tuple[int, ...]
     chunks: tuple[int, ...] | None
     ndim: int
+    nbytes: int
+    def read_direct(
+        self, dest: np.ndarray, source_sel: object = ..., dest_sel: object = ...
+    ) -> None: ...
     size: int | None
     dtype: np.dtype[Any]
     def __getitem__(self, key: object) -> object: ...
@@ -45,6 +49,7 @@ class Dataset:
     def astype(self, dtype: DTypeLike) -> Dataset: ...
 
 class Group:
+    def visititems(self, func: Callable[[str, Dataset | Group], None]) -> None: ...
     attrs: AttributeManager
     @overload
     def get(self, name: str, default: None = None) -> Dataset | Group | None: ...

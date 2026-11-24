@@ -14,16 +14,13 @@ import numpy as np
 
 from tomojax.cli._options import add_output, check_paths
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
-from tomojax.cli._results import VOLUME_DATASET
-from tomojax.io.api import saved_volume_axes
+from tomojax.cli._results import stored_grid
+from tomojax.cli.products import VOLUME_DATASET
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tomojax.wire.progress import Result
-
-
-_AXES_ATTR = "volume_axes_order"
 
 
 def _build_parser() -> ProgressParser:
@@ -63,12 +60,6 @@ def _build_parser() -> ProgressParser:
     return parser
 
 
-def _decode(value: object, default: str) -> str:
-    if value is None:
-        return default
-    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
-
-
 def _z_slice(dataset: h5py.Dataset, axes: str, z: int) -> np.ndarray:
     """The ``(ny, nx)`` slice at height ``z`` of a volume stored with ``axes``."""
     selection: list[int | slice] = [slice(None)] * 3
@@ -80,7 +71,7 @@ def _z_slice(dataset: h5py.Dataset, axes: str, z: int) -> np.ndarray:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the export command: :func:`tomojax.export`, reading the volume a slice at a time."""
-    from tomojax._files import saved_volume_grid, validate_export_range, write_volume
+    from tomojax._files import validate_export_range, write_volume
 
     parser = _build_parser()
     parser.set_invocation(list(sys.argv[1:] if argv is None else argv))
@@ -110,16 +101,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{data} holds no reconstructed volume; "
                     "reconstruct it with tomojax reconstruct",
                 )
-            grid_meta = json.loads(_decode(handle["/entry"].attrs.get("grid_meta_json"), "{}"))
-            geom_group = handle.get("/entry/geometry")
-            geom_meta = (
-                json.loads(_decode(geom_group.attrs.get("geometry_meta_json"), "{}"))
-                if isinstance(geom_group, h5py.Group)
-                else {}
-            )
-            grid = saved_volume_grid(grid_meta, geom_meta)
-            attribute = handle["/entry/processing/tomojax"].attrs.get(_AXES_ATTR)
-            axes = saved_volume_axes(None if attribute is None else _decode(attribute, ""), data)
+            grid, grid_meta, geom_meta, axes = stored_grid(handle, data)
             shape = {axis: int(n) for axis, n in zip(axes, dataset.shape, strict=True)}
             voxel = (
                 (grid.vx, grid.vy, grid.vz)

@@ -46,15 +46,21 @@ def resolve_grid(
     scan: Scan,
     grid: Grid | None,
     region: RegionName | RegionEstimate | None,
+    *,
+    shape: tuple[int, int, int] | None = None,
 ) -> tuple[Grid | None, Cylinder | None, dict[str, Any]]:
-    """Resolve the support and keep its physical mask and provenance together."""
-    if region is None:
-        return grid, None, {}
+    """Resolve the support and keep its physical mask and provenance together.
+
+    ``shape`` (``(nz, ny, nx)``) resamples the chosen region, or the scan's grid, to
+    those voxel counts over the same physical extent; it replaces ``grid``.
+    """
     from tomojax._field_of_view import region_grid
 
-    if grid is not None:
-        raise InvalidParameter("grid", "pass grid= or region=, not both")
-    chosen, cylinder = region_grid(scan, region)
+    if grid is not None and (region is not None or shape is not None):
+        raise InvalidParameter("grid", "pass grid= or region= and shape=, not both")
+    if region is None:
+        return (grid if shape is None else scan.grid.resampled(shape=shape)), None, {}
+    chosen, cylinder = region_grid(scan, region, shape=shape)
     info: dict[str, Any] = {"region": region if isinstance(region, str) else "estimate"}
     if not isinstance(region, str):
         info["region_estimate"] = dict(region.info)
@@ -71,10 +77,12 @@ def resolve_reconstruction(
     warm_start: bool | None = None,
     devices: Any = None,
     plane: tuple[str, int] | None = None,
+    metadata_only: bool = False,
+    shape: tuple[int, int, int] | None = None,
     **settings: Any,
 ) -> ResolvedReconstruction:
     """Select the inverse, its grid and all solver settings once for plan and run."""
-    grid, cylinder, info = resolve_grid(scan, grid, region)
+    grid, cylinder, info = resolve_grid(scan, grid, region, shape=shape)
     if cylinder is not None:
         info["cylindrical_output_mask"] = True
     settings = {k: v for k, v in settings.items() if v is not None}
@@ -125,6 +133,7 @@ def resolve_reconstruction(
         cfg,
         warm_start=bool(warm_start),
         projections=scan.projections,
+        check_samples=not metadata_only,
         axial_index=axial_index,
     )
     return ResolvedReconstruction(

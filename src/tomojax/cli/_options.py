@@ -13,11 +13,13 @@ from __future__ import annotations
 import argparse
 from functools import cached_property
 from pathlib import Path
-import sys
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+
+    from tomojax.cli._progress import ProgressParser
+    from tomojax.cli.products import Provenance
 
 EXPERT_EPILOG = (
     "Expert settings are TOML keys for --config; --config-keys lists them with their defaults."
@@ -66,7 +68,6 @@ def hide_expert(
             action.help = argparse.SUPPRESS
     ending = f"{settings.rstrip()}\n{EXIT_STATUS}"
     parser.epilog = ending if parser.epilog is None else f"{parser.epilog}\n\n{ending}"
-    parser.formatter_class = argparse.RawDescriptionHelpFormatter
 
 
 class _ConfigKeys(argparse.Action):
@@ -179,21 +180,19 @@ def config_settings(parser: argparse.ArgumentParser) -> Mapping[str, object]:
 
 
 def check_paths(
-    parser: argparse.ArgumentParser,
+    parser: ProgressParser,
     *,
     inputs: Iterable[str | Path | None] = (),
     outputs: Iterable[str | Path | None] = (),
     force: bool = False,
 ) -> None:
     """Exit with a usage error for missing inputs, colliding destinations, or existing outputs."""
-    from tomojax.cli._progress import ProgressParser
-
     resolved_inputs: set[Path] = set()
     for path in inputs:
         if path is not None:
             candidate = Path(path)
             if not candidate.exists():
-                if isinstance(parser, ProgressParser) and parser.json_output:
+                if parser.json_output:
                     raise FileNotFoundError(f"input not found: {path}")
                 parser.error(f"input not found: {path}")
             resolved_inputs.add(candidate.resolve())
@@ -201,8 +200,34 @@ def check_paths(
         check_destinations(
             resolved_inputs, (Path(p) for p in outputs if p is not None), force=force
         )
-    except (FileExistsError, ValueError) as exc:
+    except FileExistsError as exc:
+        parser.fail(str(exc), hint="pass --force to replace it")
+    except ValueError as exc:
         parser.error(str(exc))
+
+
+def ancestor_paths(ancestors: tuple[Provenance, ...]) -> Iterator[Path]:
+    """Identify caller-owned source files in a durable output's input history."""
+    for node in ancestors:
+        if node.operation == "open":
+            yield Path(node.parameters["path"]).resolve()
+            for field in ("flats", "darks"):
+                if isinstance(path := node.parameters.get(field), str):
+                    yield Path(path).resolve()
+        yield from storage_paths(node.parameters)
+        yield from ancestor_paths(node.inputs)
+
+
+def storage_paths(value: object) -> Iterator[Path]:
+    if isinstance(value, dict):
+        if value.get("type") in {"path", "npy", "hdf5"}:
+            yield Path(value["path"]).resolve()
+        else:
+            for option in value.values():
+                yield from storage_paths(option)
+    elif isinstance(value, tuple | list):
+        for option in value:
+            yield from storage_paths(option)
 
 
 def check_destinations(inputs: set[Path], outputs: Iterable[Path], *, force: bool) -> None:
@@ -218,13 +243,7 @@ def check_destinations(inputs: set[Path], outputs: Iterable[Path], *, force: boo
         if any(src.is_relative_to(resolved) for src in inputs):
             raise InvalidParameter("path", f"output path must differ from input path: {path}")
         if not force and (path.exists() or path.is_symlink()):
-            raise FileExistsError(f"output already exists: {path} (pass --force to replace it)")
-
-
-def fail(command: str, message: str) -> int:
-    """Report a run failure on stderr and return exit status 1."""
-    print(f"tomojax {command}: error: {message}", file=sys.stderr)
-    return 1
+            raise FileExistsError(f"output already exists: {path}")
 
 
 __all__ = [
@@ -234,7 +253,6 @@ __all__ = [
     "add_output",
     "check_paths",
     "config_settings",
-    "fail",
     "hide_expert",
     "options",
 ]

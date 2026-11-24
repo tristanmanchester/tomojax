@@ -9,6 +9,8 @@ from tomojax.cli.products import Output, Snapshot
 from tomojax.wire.arrays import Count, Id, Positive, Record
 from tomojax.wire.progress import Error, Event
 
+INLINE_LIMIT = 8 << 20  # Leave space in the worker outbox for framing and queued replies.
+
 
 class Describe(Record, tag="describe"):
     """Return cached form descriptions."""
@@ -123,6 +125,7 @@ class StatusReport(Record, tag="status"):
     requests: dict[str, Literal["queued", "running", "pause-requested", "paused"]]
     handles: dict[str, Count]
     allocators: tuple[Snapshot, ...]
+    python_namespace_bytes: Count = 0
 
 
 class Ack(Record, tag="ack"):

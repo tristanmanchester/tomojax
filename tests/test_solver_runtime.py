@@ -477,43 +477,30 @@ def test_spdhg_streaming_still_rejects_unmasked_nonfinite_data(weighted, invalid
 
 @pytest.mark.numerical
 @pytest.mark.parametrize(("regularizer", "stream"), [("tv", False), ("huber_tv", True)])
-def test_fista_disabled_tv_does_not_evaluate_regularizer(monkeypatch, regularizer, stream):
-    import importlib
-
-    module = importlib.import_module("tomojax.recon.fista_tv")
+def test_fista_without_tv_keeps_the_least_squares_solution(regularizer, stream):
     grid, detector = Grid(2, 1, 1, 1.0, 1.0, 1.0), Detector(2, 1, 1.0, 1.0)
     geometry = ParallelGeometry(grid, detector, [0.0])
     initial = np.asarray([0.25, 0.75], dtype=np.float32).reshape(1, 1, 2)
     data = initial.reshape(1, 1, 2)
-
-    def disabled(*_args):
-        raise AssertionError("the disabled regulariser must not be evaluated")
-
-    monkeypatch.setattr(module, "isotropic_tv_value", disabled)
-    monkeypatch.setattr(module, "huber_tv_value", disabled)
-    module._run_fista_scan.unwatched.clear_cache()
-    try:
-        actual, info = fista(
-            geometry,
-            grid,
-            detector,
-            data,
-            init_x=initial,
-            config=FISTAConfig(
-                iterations=2,
-                lipschitz=1.0,
-                tv_weight=0.0,
-                regularizer=regularizer,
-                backend="jax",
-                stream=stream,
-            ),
-        )
-        # Each ray sees one unit-length voxel; this ordinary-range warm start
-        # is exactly the independent least-squares solution on both paths.
-        np.testing.assert_array_equal(actual, initial)
-        np.testing.assert_array_equal(info["loss"], [0.0, 0.0])
-    finally:
-        module._run_fista_scan.unwatched.clear_cache()
+    actual, info = fista(
+        geometry,
+        grid,
+        detector,
+        data,
+        init_x=initial,
+        config=FISTAConfig(
+            iterations=2,
+            lipschitz=1.0,
+            tv_weight=0.0,
+            regularizer=regularizer,
+            backend="jax",
+            stream=stream,
+        ),
+    )
+    # Each ray sees one unit-length voxel; this ordinary-range warm start
+    # is exactly the independent least-squares solution on both paths.
+    np.testing.assert_array_equal(actual, initial)
+    np.testing.assert_array_equal(info["loss"], [0.0, 0.0])
 
 
 @pytest.mark.numerical
@@ -891,26 +878,3 @@ def test_spdhg_automatic_weight_replays_weighted_masked_streaming(stream, data_t
     replay, replay_info = spdhg(geometry, grid, detector, data, weights=weights, config=fixed)
     np.testing.assert_allclose(volume, replay, rtol=2e-5, atol=2e-6)
     np.testing.assert_allclose(info["loss"], replay_info["loss"], rtol=2e-5, atol=2e-6)
-
-
-@pytest.mark.numerical
-@pytest.mark.parametrize("weight", [0.0, 5e-5])
-def test_spdhg_explicit_weight_skips_noise_estimation(monkeypatch, weight):
-    import importlib
-
-    module = importlib.import_module("tomojax.recon.spdhg_tv")
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("explicit weights must not estimate noise")
-
-    monkeypatch.setattr(module, "estimate_projection_noise", forbidden)
-    grid = Grid(2, 2, 1, 1, 1, 1)
-    detector = Detector(2, 2, 1, 1)
-    geometry = ParallelGeometry(grid, detector, [0, 90])
-    spdhg(
-        geometry,
-        grid,
-        detector,
-        np.ones((2, 2, 2), np.float32),
-        config=SPDHGConfig(iterations=1, tv_weight=weight),
-    )

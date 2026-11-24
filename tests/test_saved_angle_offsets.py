@@ -74,7 +74,7 @@ def test_public_scan_load_does_not_hide_malformed_saved_angle_offsets(
             del handle[key]
             handle.create_dataset(key, data=offsets)
     else:
-        with np.load(path, allow_pickle=True) as saved:
+        with np.load(path, allow_pickle=False) as saved:
             arrays = {key: saved[key] for key in saved.files}
         arrays["angle_offset"] = offsets
         np.savez_compressed(path, **arrays)

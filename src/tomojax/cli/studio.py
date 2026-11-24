@@ -30,7 +30,7 @@ def main() -> int:
     source = None if args.input is None else Path(args.input).expanduser().resolve(strict=True)
     native = Path(__file__).resolve().parents[3] / "studio"
     manifest = native / "Cargo.toml"
-    executable = "tomojax-studio.exe" if sys.platform == "win32" else "tomojax-studio"
+    executable = "tomojax-studio"
     built = native / "target" / "release" / executable
     if args.build:
         if not manifest.is_file():
