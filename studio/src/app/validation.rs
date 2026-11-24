@@ -245,6 +245,11 @@ impl AppState {
                 return changed;
             }
         };
+        if !self.model.backend.ready {
+            changed |= self.validation.status(Phase::Waiting, "Waiting for TomoJAX");
+            self.model.validation = self.validation.view.clone();
+            return changed;
+        }
         if !self.validation.settled(now) {
             self.model.validation = self.validation.view.clone();
             return changed;

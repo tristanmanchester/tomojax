@@ -99,6 +99,9 @@ impl PlaneKind {
     }
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum CompareMode { #[default] Pair, Split, Difference }
+
 pub struct UiState {
     pub workspace: Workspace,
     pub main_view: PlaneKind,
@@ -112,6 +115,10 @@ pub struct UiState {
     pub advanced_open: bool,
     pub import_copy: bool,
     pub compare_linked: bool,
+    pub compare_plane: PlaneKind,
+    pub compare_mode: CompareMode,
+    pub compare_cursor: [f32;2],
+    pub worker_trace: Option<String>,
     pub asset_query: TextEdit,
     pub rename: Option<(String, TextEdit)>,
     pub command_query: TextEdit,
@@ -150,6 +157,10 @@ impl Default for UiState {
             advanced_open: false,
             import_copy: false,
             compare_linked: true,
+            compare_plane: PlaneKind::Axial,
+            compare_mode: CompareMode::Pair,
+            compare_cursor: [0.5;2],
+            worker_trace: None,
             asset_query: TextEdit::default(),
             rename: None,
             command_query: TextEdit::default(),
@@ -547,6 +558,11 @@ pub enum UiAction {
     SetDensity(f32),
     SetThreshold(f32),
     SetLighting(f32),
+    SwapComparison,
+    ComparePlane(PlaneKind),
+    CompareMode(CompareMode),
+    SetExportFormat(String),
+    RemoveMeasurement(String),
     SetCompareLeft(String),
     SetCompareRight(String),
     CompareSelection,

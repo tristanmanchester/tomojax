@@ -549,7 +549,7 @@ fn parameter_choice(state: &AppState, parameter: &ParameterView) -> El {
 
 fn explore(state: &AppState) -> El {
     let kind = state.ui.main_view;
-    let mut content = col().gap(18.);
+    let mut sections: Vec<El> = Vec::new();
     if !state.model.preview_choices.is_empty() {
         let mut choices = row().gap(6.).w_full();
         for (value, title) in &state.model.preview_choices {
@@ -561,10 +561,11 @@ fn explore(state: &AppState) -> El {
                 UiAction::SetPreviewArray(value.clone()),
             ));
         }
-        content = content.child(section("Correction preview", choices));
+        sections.push(section("Correction preview", choices));
     }
+    // The view's own tools lead so they stay visible at the minimum window size.
     if kind == PlaneKind::Volume {
-        content = content.child(separator()).child(section(
+        sections.push(section(
             "Volume appearance",
             col()
                 .gap(10.)
@@ -604,13 +605,12 @@ fn explore(state: &AppState) -> El {
                 move |value| UiAction::SetClip { axis, value },
             ));
         }
-        content = content
-            .child(separator())
-            .child(section("Clip the volume", clipping));
+        sections.push(section("Clip the volume", clipping));
     } else if kind.axis().is_some() {
         let enabled = state.model.preview.is_none()
             && state.model.planes.get(&kind).is_some_and(|p| p.available);
-        content=content.child(separator()).child(section("Measure and inspect",col().gap(12.)
+        let mut measure = col().gap(12.);
+        measure = measure
             .child(row().gap(4.)
                 .child(choice("tool-navigate","Navigate",state.ui.inspect_tool==InspectTool::Navigate,enabled,UiAction::SetInspectTool(InspectTool::Navigate)))
                 .child(choice("tool-distance","Distance",state.ui.inspect_tool==InspectTool::Distance,enabled,UiAction::SetInspectTool(InspectTool::Distance)))
@@ -619,14 +619,14 @@ fn explore(state: &AppState) -> El {
                 InspectTool::Navigate if state.model.active().is_some_and(|a|a.kind==AssetKind::Volume)&&[PlaneKind::Axial,PlaneKind::Coronal,PlaneKind::Sagittal].iter().all(|p|state.model.planes.get(p).is_some_and(|p|p.available))=>"Drag to place the linked crosshair. Middle-drag pans; the wheel moves through slices.",
                 InspectTool::Navigate=>"Middle-drag pans; the wheel moves through the available planes.",
                 InspectTool::Distance=>"Drag between two points in the slice to measure their calibrated distance.",
-                InspectTool::Region=>"Drag a rectangular region to inspect its sampled values."}}))));
+                InspectTool::Region=>"Drag a rectangular region to inspect its sampled values."}}));
         for measurement in state
             .model
             .measurements
             .iter()
             .filter(|m| state.model.active_asset.as_ref() == Some(&m.asset))
         {
-            content = content.child(
+            measure = measure.child(
                 col()
                     .gap(5.)
                     .child(
@@ -639,7 +639,12 @@ fn explore(state: &AppState) -> El {
                                     .shrink()
                                     .min_w(0.)
                                     .truncate(),
-                            ),
+                            ).child({
+                                let id = measurement.id.clone();
+                                icon_button(&format!("remove-measurement-{id}"), "Remove measurement", Icon::Close, true, move |s, tx| {
+                                    s.dispatch(UiAction::RemoveMeasurement(id.clone()), tx)
+                                })
+                            }),
                     )
                     .child(
                         label(
@@ -656,25 +661,26 @@ fn explore(state: &AppState) -> El {
                     ),
             );
         }
-        if !state.model.measurements.is_empty() {
-            content = content.child(
+        if state.model.measurements.iter().any(|m| Some(&m.asset)==state.model.active_asset.as_ref()) {
+            measure = measure.child(
                 action_button(
                     "clear-measurements",
-                    "Clear all measurements",
+                    "Clear measurements",
                     false,
                     true,
                     UiAction::ClearMeasurements,
                 )
                 .w_full()
-                .help("Remove measurements from every asset in this project."),
+                .help("Remove measurements from this asset."),
             );
         }
+        sections.push(section("Measure", measure));
     }
-    content = content.child(separator()).child(display(state));
+    sections.push(display(state));
     if let Some(plane) = state.model.planes.get(&kind)
         && let Some(stats) = &plane.statistics
     {
-        content = content.child(separator()).child(section(
+        sections.push(section(
             "Sampled image values",
             col()
                 .gap(10.)
@@ -685,7 +691,15 @@ fn explore(state: &AppState) -> El {
                 .child(help(format!("{} sampled pixels", stats.sampled_pixels))),
         ));
     }
-    content.child(separator()).child(export_format(state))
+    sections.push(export_format(state));
+    let mut content = col().gap(18.);
+    for (index, section) in sections.into_iter().enumerate() {
+        if index > 0 {
+            content = content.child(separator());
+        }
+        content = content.child(section);
+    }
+    content
 }
 
 fn display(state: &AppState) -> El {
@@ -707,7 +721,7 @@ fn display(state: &AppState) -> El {
     if let Some(plane) = info.filter(|p| !p.units.is_empty()) {
         body = body.child(
             label(
-                format!("Values in {}", unit_name(&plane.units)),
+                format!("Unit: {}", unit_name(&plane.units)),
                 11.,
                 muted(),
             )
@@ -718,18 +732,18 @@ fn display(state: &AppState) -> El {
         .child(
             row()
                 .gap(8.)
-                .child(field(
+                .child(submit_field(
                     "window-low",
                     &state.ui.display.window_low,
                     "Minimum",
-                    "",
+                    UiAction::ApplyWindow,
                     |s| &mut s.ui.display.window_low,
                 ))
-                .child(field(
+                .child(submit_field(
                     "window-high",
                     &state.ui.display.window_high,
                     "Maximum",
-                    "",
+                    UiAction::ApplyWindow,
                     |s| &mut s.ui.display.window_high,
                 )),
         )

@@ -31,6 +31,8 @@ pub enum Icon {
     Redo,
     Refresh,
     Tree,
+    Inspector,
+    Edit,
     Alert,
 }
 
@@ -162,6 +164,14 @@ pub fn icon(kind: Icon, size: f32, colour: Color) -> El {
             vec![[3., 4.], [21., 4.], [21., 20.], [3., 20.], [3., 4.]],
             vec![[9., 4.], [9., 20.]],
         ],
+        Icon::Edit => vec![
+            vec![[4., 20.], [5., 16.], [16., 5.], [19., 8.], [8., 19.], [4., 20.]],
+            vec![[13.5, 7.5], [16.5, 10.5]],
+        ],
+        Icon::Inspector => vec![
+            vec![[3., 4.], [21., 4.], [21., 20.], [3., 20.], [3., 4.]],
+            vec![[15., 4.], [15., 20.]],
+        ],
         Icon::Alert => vec![
             vec![[12., 3.], [22., 21.], [2., 21.], [12., 3.]],
             vec![[12., 9.], [12., 14.]],
@@ -226,6 +236,30 @@ pub fn button(
         )
 }
 
+/// A borderless text button for secondary chrome such as the top bar.
+pub fn quiet_button(
+    key: &str,
+    title: &str,
+    selected: bool,
+    f: impl Fn(&mut AppState, &mut Tx) + 'static,
+) -> El {
+    row()
+        .key(key)
+        .role("button")
+        .label(title)
+        .focusable(true)
+        .h(36.)
+        .px(10.)
+        .center()
+        .radius(6.)
+        .fill(if selected { sage() } else { Color::TRANSPARENT })
+        .hover(forest().alpha(0.06))
+        .press(ink().alpha(0.09))
+        .focus_ring(2., 2., forest())
+        .on_press_tx(f)
+        .child(strong(title, 12., if selected { forest() } else { ink() }).truncate())
+}
+
 pub fn action_button(key: &str, title: &str, primary: bool, enabled: bool, action: UiAction) -> El {
     button(key, title, primary, enabled, move |s, tx| {
         s.dispatch(action.clone(), tx)
@@ -237,6 +271,16 @@ pub fn icon_button(
     title: &str,
     glyph: Icon,
     enabled: bool,
+    f: impl Fn(&mut AppState, &mut Tx) + 'static,
+) -> El {
+    tinted_icon_button(key,title,glyph,enabled,muted(),f)
+}
+pub fn tinted_icon_button(
+    key: &str,
+    title: &str,
+    glyph: Icon,
+    enabled: bool,
+    tint: Color,
     f: impl Fn(&mut AppState, &mut Tx) + 'static,
 ) -> El {
     el().key(key)
@@ -257,7 +301,7 @@ pub fn icon_button(
                 f(s, tx)
             }
         })
-        .child(icon(glyph, 17., muted()))
+        .child(icon(glyph, 17., tint))
 }
 
 pub fn toggle(
@@ -317,7 +361,7 @@ pub fn search_input(
     input_hint(key, value, title, "", title, edit)
 }
 
-fn input_hint(
+pub fn input_hint(
     key: &str,
     value: &TextEdit,
     title: &str,
@@ -325,6 +369,34 @@ fn input_hint(
     placeholder: &str,
     edit: impl for<'a> Fn(&'a mut AppState) -> &'a mut TextEdit + 'static,
 ) -> El {
+    text_field(key, value, title, suffix, placeholder, None, edit)
+}
+
+/// A single-line text field; `submit` runs when Enter is pressed in it.
+fn text_field(
+    key: &str,
+    value: &TextEdit,
+    title: &str,
+    suffix: &str,
+    placeholder: &str,
+    submit: Option<UiAction>,
+    edit: impl for<'a> Fn(&'a mut AppState) -> &'a mut TextEdit + 'static,
+) -> El {
+    let mut editor = text_input(value, type_style(12., 450.).features("'tnum' 1"))
+        .key(key)
+        .label(title)
+        .color(ink())
+        .single_line()
+        .placeholder(placeholder, muted())
+        .h_full()
+        .py(9.)
+        .grow(1.)
+        .min_w(0.)
+        .w_full()
+        .on_edit(edit);
+    if let Some(action) = submit {
+        editor = editor.on_submit(move |s: &mut AppState, tx| s.dispatch(action.clone(), tx));
+    }
     let mut field = row()
         .h(36.)
         .w_full()
@@ -336,20 +408,7 @@ fn input_hint(
         .fill(paper())
         .border(1., line())
         .focus_within_ring(1.5, 0., forest())
-        .child(
-            text_input(value, type_style(12., 450.).features("'tnum' 1"))
-                .key(key)
-                .label(title)
-                .color(ink())
-                .single_line()
-                .placeholder(placeholder, muted())
-                .h_full()
-                .py(9.)
-                .grow(1.)
-                .min_w(0.)
-                .w_full()
-                .on_edit(edit),
-        );
+        .child(editor);
     if !suffix.is_empty() {
         field = field.child(label(suffix, 11., muted()));
     }
@@ -363,6 +422,32 @@ pub fn field(
     suffix: &str,
     edit: impl for<'a> Fn(&'a mut AppState) -> &'a mut TextEdit + 'static,
 ) -> El {
+    labelled(title, input(key, value, title, suffix, edit))
+}
+
+/// An unlabelled input that runs `submit` when Enter is pressed.
+pub fn submit_input(
+    key: &str,
+    value: &TextEdit,
+    title: &str,
+    submit: UiAction,
+    edit: impl for<'a> Fn(&'a mut AppState) -> &'a mut TextEdit + 'static,
+) -> El {
+    text_field(key, value, title, "", "", Some(submit), edit)
+}
+
+/// A labelled field that runs `submit` when Enter is pressed.
+pub fn submit_field(
+    key: &str,
+    value: &TextEdit,
+    title: &str,
+    submit: UiAction,
+    edit: impl for<'a> Fn(&'a mut AppState) -> &'a mut TextEdit + 'static,
+) -> El {
+    labelled(title, text_field(key, value, title, "", "", Some(submit), edit))
+}
+
+fn labelled(title: &str, control: El) -> El {
     col()
         .w_full()
         .shrink()
@@ -370,7 +455,7 @@ pub fn field(
         .min_h(57.)
         .gap(7.)
         .child(label(title, 11., muted()).wrap())
-        .child(input(key, value, title, suffix, edit))
+        .child(control)
 }
 
 pub fn section(title: &str, body: El) -> El {
@@ -436,6 +521,30 @@ pub fn slider(
     enabled: bool,
     action: impl Fn(f32) -> UiAction + Clone + 'static,
 ) -> El {
+    slider_on(false, key, title, value, formatted, enabled, action)
+}
+
+/// A slider drawn on the dark scientific canvas.
+pub fn canvas_slider(
+    key: &str,
+    title: &str,
+    value: f32,
+    formatted: &str,
+    enabled: bool,
+    action: impl Fn(f32) -> UiAction + Clone + 'static,
+) -> El {
+    slider_on(true, key, title, value, formatted, enabled, action)
+}
+
+fn slider_on(
+    dark: bool,
+    key: &str,
+    title: &str,
+    value: f32,
+    formatted: &str,
+    enabled: bool,
+    action: impl Fn(f32) -> UiAction + Clone + 'static,
+) -> El {
     let value = value.clamp(0., 1.);
     let drag_action = action.clone();
     let key_action = action.clone();
@@ -454,7 +563,7 @@ pub fn slider(
         .focus_ring(1.5, 1., forest())
         .on_drag(move |s: &mut AppState, drag, tx| {
             if enabled && matches!(drag.phase, Phase::Down | Phase::Move) {
-                s.dispatch(drag_action((drag.x / drag.w.max(1.)).clamp(0., 1.)), tx);
+                s.dispatch(drag_action(((drag.x-6.) / (drag.w-12.).max(1.)).clamp(0., 1.)), tx);
             }
         })
         .on_step(move |s: &mut AppState, step, tx| {
@@ -468,7 +577,7 @@ pub fn slider(
             }
         })
         .child(
-            el().h(4.).w_full().fill(line()).radius(2.).child(
+            el().h(4.).w_full().px(6.).fill(if dark { canvas_muted().alpha(0.35) } else { line() }).radius(2.).child(
                 el().h_full()
                     .w_frac(value)
                     .fill(color("#82A68A"))
@@ -489,8 +598,8 @@ pub fn slider(
         .child(
             row()
                 .justify_between()
-                .child(label(title, 11., muted()))
-                .child(number(formatted, 11., muted())),
+                .child(label(title, 11., if dark { canvas_muted() } else { muted() }))
+                .child(number(formatted, 11., if dark { canvas_ink() } else { muted() })),
         )
         .child(track)
 }
@@ -501,8 +610,8 @@ pub fn status_dot(colour: Color) -> El {
 
 pub fn unit_name(unit: &str) -> &str {
     match unit {
-        "scan_length" => "scan length units",
-        "1/scan_length" => "per scan length unit",
+        "scan_length" => "scan unit",
+        "1/scan_length" => "1/scan unit",
         other => other,
     }
 }

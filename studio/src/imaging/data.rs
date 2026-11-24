@@ -111,6 +111,13 @@ pub struct PlaneData {
 }
 
 impl PlaneData {
+    /// Subtract registered display samples. Callers verify the full volume grids first.
+    pub fn difference(&self, right: &Self) -> Option<Self> {
+        if self.shape != right.shape || self.source_shape != right.source_shape || self.fixed != right.fixed || self.value_unit != right.value_unit || self.domain != right.domain {return None;}
+        let values: Arc<[f32]> = self.values.iter().zip(right.values.iter()).map(|(a,b)| a-b).collect();
+        let statistics = super::reader::statistics(&values).ok()?;
+        Some(Self {id: super::reader::identity(), values, statistics, ..self.clone()})
+    }
     pub fn aspect(&self) -> f32 {
         let ratio =
             if self.axes[0].unit == self.axes[1].unit && self.axes[0].frame == self.axes[1].frame {

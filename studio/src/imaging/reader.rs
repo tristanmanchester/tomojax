@@ -8,7 +8,7 @@ use super::{AxisScale, PlaneData, Statistics, VolumeData, npy::Npy};
 use crate::protocol::{ArrayDescriptor, Axis, Coordinates, Fixed, Storage};
 use hdf5::{Hyperslab, SliceOrIndex};
 
-fn identity() -> u64 {
+pub(super) fn identity() -> u64 {
     static ID: AtomicU64 = AtomicU64::new(1);
     ID.fetch_add(1, Ordering::Relaxed)
 }

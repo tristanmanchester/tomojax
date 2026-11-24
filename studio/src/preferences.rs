@@ -16,7 +16,7 @@ pub const COMMANDS: &[(&str, &str, &str, &str)] = &[
     ("prepare", "Prepare workspace", "Workspace", "mod+1"),
     ("reconstruct", "Reconstruct workspace", "Workspace", "mod+2"),
     ("explore", "Explore workspace", "Workspace", "mod+3"),
-    ("compare", "Compare selected results", "Workspace", "mod+4"),
+    ("compare", "Compare workspace", "Workspace", "mod+4"),
     ("jobs", "Jobs workspace", "Workspace", "mod+5"),
     ("queue", "Queue current operation", "Processing", "mod+r"),
     (

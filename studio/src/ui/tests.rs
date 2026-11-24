@@ -621,7 +621,7 @@ fn explorer_labels_physical_pitch_and_keeps_one_save_status() {
     state.model.assets[0].units = "mm".into();
     let rt = runtime(state, (1540.,980.));
     let elements = rt.elements();
-    assert!(elements.iter().filter_map(|e| e.text.as_deref()).any(|text| text.contains("Voxel size 0.5 × 0.75 × 2 mm")));
+    assert!(elements.iter().filter_map(|e| e.text.as_deref()).any(|text| text.contains("voxels of 0.5 × 0.75 × 2 mm")));
     let saved = elements.iter().filter(|e| e.text.as_deref()==Some("Project saved")).collect::<Vec<_>>();
     assert_eq!(saved.len(),1);
     assert!(saved[0].rect[1] >= 950.);

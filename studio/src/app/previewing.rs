@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(super) struct PreviewContext {
     pub active: Option<PreviewKind>,
+    previous: Option<(String,PlaneKind,std::sync::Arc<crate::imaging::PlaneData>)>,
     pub arrays: BTreeMap<String, ArrayDescriptor>,
     pub(super) signature: String,
     retained: String,
@@ -26,6 +27,11 @@ pub(crate) fn kind(operation: &str) -> Option<PreviewKind> {
 }
 
 impl AppState {
+    pub(crate) fn pending_preview_plane(&self) -> Option<&std::sync::Arc<crate::imaging::PlaneData>> {
+        let (source,view,data) = self.preview_context.previous.as_ref()?;
+        let preview=self.model.preview.as_ref()?;
+        (self.model.active_asset.as_ref()==Some(source) && *view==self.ui.main_view && !preview.has_image && matches!(preview.phase,PreviewPhase::Debouncing|PreviewPhase::Opening|PreviewPhase::Queued|PreviewPhase::Running)).then_some(data)
+    }
     pub(super) fn disconnect_interactive(&mut self) {
         self.previews.disconnected();
         self.preview_context.arrays.clear();
@@ -73,6 +79,7 @@ impl AppState {
         let active = processing.then(|| kind(&self.ui.operation)).flatten();
         let mut changed = false;
         if self.preview_context.active != active {
+            self.preview_context.previous=None;
             self.preview_context.active = active;
             self.preview_context.arrays.clear();
             self.preview_context.displayed = None;
@@ -129,6 +136,9 @@ impl AppState {
             if let (Some(input), Ok(parameters)) = (input, parameters) {
                 let signature = json!([input, parameters, kind.operation()]).to_string();
                 if signature != self.preview_context.signature {
+                    if self.preview_context.displayed.is_some() && self.previews.current(kind).is_some_and(|c| c.input.asset==input.asset && c.input.fingerprint==input.fingerprint) {
+                        self.preview_context.previous = self.imaging.plane(self.ui.main_view.mark()).map(|data|(input.asset.clone(),self.ui.main_view,data.clone()));
+                    }
                     self.preview_context.signature = signature.clone();
                     self.preview_context.arrays.clear();
                     self.preview_context.displayed = None;
@@ -188,6 +198,7 @@ impl AppState {
                         Product::Region { arrays, .. } => arrays.clone(),
                         _ => BTreeMap::new(),
                     };
+                    self.preview_context.previous=None;
                     self.preview_context.displayed = Some(current.request.clone());
                     self.ui.display.indices = [0; 3];
                     self.centre_sinogram = true;

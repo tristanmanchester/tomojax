@@ -98,7 +98,7 @@ fn topbar(state: &AppState, narrow: bool) -> El {
         .gap(12.)
         .items_center()
         .fill(paper())
-        .child(icon(Icon::Sinogram, 27., forest()))
+        .child(icon(Icon::Layers, 27., forest()))
         .child(strong("TomoJAX", 19., ink()).min_w(94.));
     if state.model.project.is_some() {
         bar = bar.child(icon_button(
@@ -150,7 +150,8 @@ fn topbar(state: &AppState, narrow: bool) -> El {
         navigation = navigation.child(tab);
     }
     bar = bar.child(navigation).child(spacer());
-    if let Some(project) = &state.model.project {
+    // The navigator header names the project; the bar repeats it only while the navigator is hidden.
+    if let Some(project) = state.model.project.as_ref().filter(|_| !state.ui.tree_open) {
         bar = bar.child(
             label(&project.name, 12., ink())
                 .min_w(0.)
@@ -164,33 +165,26 @@ fn topbar(state: &AppState, narrow: bool) -> El {
         "command-palette", if narrow {"Search"} else {"Search commands"}, false, true,
         |s,tx| s.dispatch(UiAction::ShowPalette,tx)
     ).help("Search commands"));
-    bar = bar.child(button(
-        "shortcut-settings",
-        "Shortcuts",
-        false,
-        true,
-        |s, tx| s.dispatch(UiAction::ShowShortcuts, tx),
-    ));
-    if state.model.project.is_some() {
+    bar = bar.child(quiet_button("shortcut-settings", "Shortcuts", state.ui.shortcuts_open, |s, tx| {
+        s.dispatch(UiAction::ShowShortcuts, tx)
+    }));
+    if state.model.project.is_some() && state.ui.workspace != Workspace::Jobs {
         let count = state.model.active_jobs();
         let title = if count == 0 {
             "Activity".into()
         } else {
-            format!("Activity ({count})")
+            format!("Activity · {count}")
         };
-        if state.ui.workspace != Workspace::Jobs {
-            bar = bar
-                .child(button("toggle-jobs", &title, false, true, |s, _| {
+        bar = bar
+            .child(
+                quiet_button("toggle-jobs", &title, state.ui.jobs_open, |s, _| {
                     s.ui.jobs_open = !s.ui.jobs_open
-                }))
-                .child(button(
-                    "toggle-inspector",
-                    "Inspector",
-                    false,
-                    true,
-                    |s, _| s.ui.inspector_open = !s.ui.inspector_open,
-                ));
-        }
+                })
+                .label("Activity"),
+            )
+            .child(icon_button("toggle-inspector", "Inspector", Icon::Inspector, true, |s, _| {
+                s.ui.inspector_open = !s.ui.inspector_open
+            }));
     }
     bar
 }
@@ -411,15 +405,31 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
             },
             15.,
             if active { forest() } else { muted() },
-        ))
-        .child(
-            strong(&asset.name, 12., ink())
+        ));
+    let renaming = state.ui.rename.as_ref().is_some_and(|(id, _)| id == &asset.id);
+    if let Some((_, draft)) = state.ui.rename.as_ref().filter(|_| renaming) {
+        name = name.child(
+            submit_input("result-name", draft, "Result name", UiAction::RenameResult, |s| {
+                &mut s.ui.rename.as_mut().unwrap().1
+            })
+            .grow(1.),
+        );
+    } else {
+        name = name.child(
+            strong(tree_label(state, asset), 12., ink())
                 .grow(1.)
                 .min_w(0.)
                 .truncate()
                 .help(&asset.name),
         );
-    if selected {
+    }
+    if active && asset.operation.is_some() && !renaming {
+        let (id, current) = (asset.id.clone(), asset.name.clone());
+        name = name.child(icon_button("rename-result", "Rename result", Icon::Edit, true, move |s, tx| {
+            s.ui.rename = Some((id.clone(), rune::TextEdit::new(&current)));
+            tx.focus("result-name", true);
+        }));
+    } else if selected && !renaming {
         name = name.child(icon(Icon::Check, 13., forest()));
     }
     let subtitle = if asset.missing {
@@ -476,53 +486,30 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
             )
             .pl(if has_children { 47. } else { 22. }),
         );
-    if active && asset.operation.is_some() {
-        if let Some((id, draft)) = &state.ui.rename
-            && id == &asset.id
-        {
-            return col().w_full().child(item).child(
-                col()
-                    .padding(6.)
-                    .gap(6.)
-                    .child(field("result-name", draft, "Result name", "", |s| {
-                        &mut s.ui.rename.as_mut().unwrap().1
-                    }))
-                    .child(
-                        row()
-                            .gap(6.)
-                            .child(action_button(
-                                "save-result-name",
-                                "Save",
-                                true,
-                                !draft.text.trim().is_empty(),
-                                UiAction::RenameResult,
-                            ))
-                            .child(button(
-                                "cancel-result-name",
-                                "Cancel",
-                                false,
-                                true,
-                                |s, _| s.ui.rename = None,
-                            )),
-                    ),
-            );
-        } else {
-            let id = asset.id.clone();
-            let name = asset.name.clone();
-            return col().w_full().child(item).child(button(
-                "rename-result",
-                "Rename result",
-                false,
-                true,
-                move |s, tx| {
-                    s.ui.rename = Some((id.clone(), rune::TextEdit::new(&name)));
-                    tx.focus("result-name", true);
-                    tx.scroll_into_view("result-name");
-                },
-            ));
-        }
+    if renaming {
+        let valid = state.ui.rename.as_ref().is_some_and(|(_, d)| !d.text.trim().is_empty());
+        return item.child(
+            row()
+                .gap(6.)
+                .pl(22.)
+                .child(action_button("save-result-name", "Save", true, valid, UiAction::RenameResult).h(30.))
+                .child(quiet_button("cancel-result-name", "Cancel", false, |s, _| s.ui.rename = None).h(30.)),
+        );
     }
     item
+}
+
+/// A child result is listed under its parent, so the parent's name prefix is dropped there.
+/// The full name stays in the header and the tooltip; a custom name is shown as typed.
+fn tree_label<'a>(state: &AppState, asset: &'a AssetView) -> &'a str {
+    asset
+        .parent
+        .as_ref()
+        .and_then(|parent| state.model.assets.iter().find(|a| &a.id == parent))
+        .and_then(|parent| asset.name.strip_prefix(parent.name.as_str()))
+        .and_then(|rest| rest.strip_prefix(" · "))
+        .filter(|rest| !rest.is_empty())
+        .unwrap_or(&asset.name)
 }
 
 fn welcome(state: &AppState) -> El {
