@@ -14,7 +14,7 @@ import h5py
 import numpy as np
 
 from tomojax._data import locate_frames
-from tomojax.core.files import read_path
+from tomojax.core.files import read_dataset, read_path
 
 from ._acquisition import RawAcquisition
 from ._datasets import ProjectionDataset
@@ -50,7 +50,7 @@ def _length(file: Any, path: str) -> float | None:
     # Without a recorded length unit, a physical pitch is not established.
     if unit not in _MM:
         return None
-    value = float(np.asarray(data[()]).item()) * _MM[unit]
+    value = float(np.asarray(read_dataset(data)[()]).item()) * _MM[unit]
     return value if np.isfinite(value) else None
 
 
@@ -62,7 +62,11 @@ def _entries(file: Any) -> list[str]:
 
     def visit(name: str, entry: Any, *, inherited: bool) -> None:
         definition = entry.get("definition")
-        label = definition[()] if definition is not None else entry.attrs.get("definition", "")
+        label = (
+            read_dataset(definition)[()]
+            if definition is not None
+            else entry.attrs.get("definition", "")
+        )
         declared = _text(label) == "NXtomo"
         scope = inherited or declared
         identity = (entry.id, scope)
@@ -147,7 +151,7 @@ def _metadata(file: Any, layout: str, where: str) -> dict[str, Any]:
             ("source", "/measurement/instrument/source/name"),
         ):
             if path in file:
-                acquisition[field] = _text(file[path][()])
+                acquisition[field] = _text(read_dataset(file[path])[()])
     else:
         prefix = (
             where.rsplit("/", 2)[0] + "/instrument/detector/"
@@ -239,7 +243,7 @@ def read_hdf5_acquisition(
             if name == "data_exchange"
             else "/" + where.strip("/").split("/")[0] + "/sample/name"
         )
-        sample_name = _text(file[sample_path][()]) if sample_path in file else None
+        sample_name = _text(read_dataset(file[sample_path])[()]) if sample_path in file else None
     stack = located.stack
     key_values = located.image_key
     key_values = np.zeros(len(stack), np.int32) if key_values is None else key_values

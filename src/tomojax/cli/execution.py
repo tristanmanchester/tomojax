@@ -108,7 +108,7 @@ class PythonNamespace(dict[str, Any]):
 
     def __init__(self) -> None:
         super().__init__()
-        self.sources: set[Path] = set()
+        self.sources: set[str] = set()
 
 
 @dataclass(frozen=True)

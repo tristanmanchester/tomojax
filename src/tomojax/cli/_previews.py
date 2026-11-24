@@ -59,17 +59,14 @@ def _hdf5_images(path: str | Path) -> dict[str, np.ndarray]:
     if saved_without_frames(path):  # a reconstruction saved without its scan
         with h5py.File(path, "r") as file:
             return _slices(file, path)
-    located = locate_frames(str(path))
-    samples = (
-        located.stack.frames
-        if located.image_key is None
-        else np.flatnonzero(located.image_key == 0)
-    )
+    samples = locate_frames(str(path)).samples
     if not len(samples):
         raise ValueError(f"{path} holds no sample projections")
     with h5py.File(path, "r") as file:
-        projections = cast("h5py.Dataset", file[located.stack.dataset])
-        images["projection"] = numpy_float32_array(projections[int(samples[len(samples) // 2])])
+        projections = cast("h5py.Dataset", file[samples.dataset])
+        images["projection"] = numpy_float32_array(
+            projections[int(samples.frames[len(samples) // 2])]
+        )
         images.update(_slices(file, path))
     return images
 

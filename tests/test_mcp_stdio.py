@@ -927,3 +927,36 @@ def test_projection_preview_keeps_requested_stride(tmp_path):
         (panel,) = c.call("view", mode="projection", **selected)["structuredContent"]["panels"]
         assert panel["intensity_limits"] == [0, 0]
         assert "stride (1, 1, 2), display subsampling (1, 1, 2)" in panel["labels"]
+
+
+@pytest.mark.parametrize("suffix", ["nxs", "npz"])
+def test_backproject_selects_sample_frames_only_for_bare_paths(tmp_path, suffix):
+    import numpy as np
+
+    scan = tj.simulate(size=8, n_views=13).scan
+    path = tmp_path / f"samples.{suffix}"
+    tj.save(path, scan)
+    if suffix == "nxs":
+        with h5py.File(path, "r+") as file:
+            file["/entry/instrument/detector/image_key"][4] = 3
+    else:
+        with np.load(path) as saved:
+            fields = dict(saved)
+        fields["image_key"] = np.zeros(13, np.int32)
+        fields["image_key"][4] = 3
+        np.savez(path, **fields)
+    with connection(tmp_path) as c:
+        source = c.call("open", path=path.name)["structuredContent"]["handle"]
+        actual, expected = (
+            c.call("backproject", source=source, projections=ref)["structuredContent"]["handle"]
+            for ref in (path.name, f"{source}.projections")
+        )
+        assert c.call("python", code=f"np.array_equal(handles[{actual!r}], handles[{expected!r}])")[
+            "structuredContent"
+        ]["value"]
+        if suffix != "nxs":
+            return
+        literal = c.call(
+            "backproject", source=source, projections=f"{path}::/entry/instrument/detector/data"
+        )
+        assert literal["isError"] and "does not match" in literal["content"][0]["text"]

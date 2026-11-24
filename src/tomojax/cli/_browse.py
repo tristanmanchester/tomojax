@@ -20,6 +20,7 @@ from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._frame_reads import frame_pixels
 from tomojax.cli._handles import stage_array
 from tomojax.cli._results import disk_volume, scan_axes, stored_grid
+from tomojax.core.files import read_dataset
 from tomojax.core.registration import recorded_length_unit
 from tomojax.errors import InvalidParameter
 from tomojax.io import build_geometry_from_dataset_metadata
@@ -57,7 +58,7 @@ def source_array(
     path = Path(source.path)
     if isinstance(source, op.PathInput) and h5py.is_hdf5(path):
         if member == "projections":
-            stack = locate_frames(str(path)).stack
+            stack = locate_frames(str(path)).samples
             yield stack, indexed(Hdf5(str(path), stack.dataset), stack), {}
             return
         with h5py.File(path, "r") as file:
@@ -71,6 +72,7 @@ def source_array(
             data = file.get(source.dataset)
             if not isinstance(data, h5py.Dataset):
                 raise InvalidParameter("source", f"no dataset {source.dataset} in {path}")
+            read_dataset(data)
             if "/" + source.dataset.lstrip("/") == p.VOLUME_DATASET:
                 grid, _, geom_meta, axes = stored_grid(file, path)
                 volume = SavedVolume(data, axes)
@@ -122,6 +124,9 @@ def saved_array(
                 saved.geometry_inputs(), apply_poses=True
             )
             angles = np.asarray(geometry.angles)
+            if member == "projections" and meta.image_key is not None and np.any(meta.image_key):
+                samples = meta.image_key == 0
+                data, angles = data[samples], angles[samples]
             view = Axis(
                 "view",
                 "acquisition",

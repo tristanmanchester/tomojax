@@ -7,7 +7,7 @@ from pathlib import Path
 import h5py
 
 from tomojax._typed_arrays import numpy_float32_array, write_image
-from tomojax.core.files import read_path
+from tomojax.core.files import read_dataset, read_path
 from tomojax.recon.quicklook import scale_to_uint8
 
 type PathLike = str | Path
@@ -23,7 +23,7 @@ def _projection_dataset(file: h5py.File) -> h5py.Dataset | None:
     for path in _PROJECTION_PATHS:
         obj = file.get(path)
         if isinstance(obj, h5py.Dataset):
-            return obj
+            return read_dataset(obj)
     return None
 
 

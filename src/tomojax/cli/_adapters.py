@@ -25,11 +25,12 @@ from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, source
 from tomojax.cli._handles import Root, handle, stage_array
 from tomojax.cli._interactive import correction_product, region_product, slice_product
-from tomojax.cli._options import ancestor_paths, check_destinations, storage_paths
+from tomojax.cli._options import ancestor_paths, check_destinations
 from tomojax.cli._plans import plan_product
 from tomojax.cli._results import scan_axes, unit_of
 from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.array_ops import check_binning
+from tomojax.core.files import record_inputs
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
 from tomojax.wire.progress import Event, Preview
@@ -84,20 +85,25 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
             except BaseException as err:
                 raise ValueError(str(err)) from err
         manifest = provenance(command, operation, context)
-        if isinstance(operation, op.Plane):
-            if not isinstance(command, op.Validate):
-                return ex.browse_plane(operation, context)
-            ex.plane_source(operation, context)
-            item = p.Validated()
-        else:
-            admission = Admission(context, manifest, isinstance(command, op.Plan))
-            work = admission.prepare(operation)
-            item = p.Validated(admission.details) if isinstance(command, op.Validate) else work()
+        with record_inputs(manifest.files):
+            if isinstance(operation, op.Plane):
+                if not isinstance(command, op.Validate):
+                    return ex.browse_plane(operation, context)
+                ex.plane_source(operation, context)
+                item = p.Validated()
+            else:
+                admission = Admission(context, manifest, isinstance(command, op.Plan))
+                work = admission.prepare(operation)
+                item = (
+                    p.Validated(admission.details) if isinstance(command, op.Validate) else work()
+                )
         context.control.checkpoint()
         for snapshot in sample():
             context.snapshot(snapshot)
         info = result_info(item)
         if isinstance(item, p.Files):
+            # A lazy read during staging can resolve additional backing files.
+            check_destinations(set(ancestor_paths((manifest,))), map(Path, item.paths), force=True)
             info = admission.details
         summary = ex.summarise(info, externalise=diagnostic)
         if isinstance(item, tj.Scan | tj.Frames | tj.Reconstruction | tj.Alignment | tj.Simulation):
@@ -455,11 +461,7 @@ class Admission:
                     "path", "slab reconstruction requires a NeXus/HDF5 destination"
                 )
             sidecar = path.with_name(path.name + ".manifest.json")
-            inputs = set(ancestor_paths(self.manifest.inputs)) | set(
-                storage_paths(self.manifest.parameters)
-            )
-            if isinstance(operation.source, op.PathInput):
-                inputs.add(Path(operation.source.path).resolve())
+            inputs = set(ancestor_paths((self.manifest,)))
             check_destinations(inputs, (path, sidecar), force=operation.force)
 
             def fill():
@@ -537,7 +539,7 @@ class Admission:
         )
         if isinstance(operation, op.Export):
             self.details.update(export_summary(operation, value, path, self.details["paths"]))
-        check_destinations(set(ancestor_paths(self.manifest.inputs)), paths, force=operation.force)
+        check_destinations(set(ancestor_paths((self.manifest,))), paths, force=operation.force)
 
         def write():
             staged = {p: self.context.staging.output(p, force=operation.force) for p in paths}

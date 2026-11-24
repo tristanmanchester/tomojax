@@ -8,7 +8,7 @@ import msgspec
 
 from tomojax.cli.wire_options import Grid
 from tomojax.wire import resources
-from tomojax.wire.arrays import Array, Count, Id, Member, Record
+from tomojax.wire.arrays import Array, Count, Id, Member, Npy, Record
 from tomojax.wire.progress import Info
 
 VOLUME_DATASET = "/entry/processing/tomojax/volume"
@@ -146,7 +146,7 @@ class PythonResult(Record, tag="python"):
     stderr: str
     value: Any
     handles: dict[str, HandleProduct | ArrayResult]
-    images: tuple[str, ...]
+    images: tuple[Npy, ...]
 
 
 class Evaluation(Record, tag="evaluation"):
@@ -203,12 +203,13 @@ class Validated(Record, tag="validated"):
     details: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
-class Provenance(Record):
+class Provenance(Record, omit_defaults=True):
     """Ordered input tree, preserving repeated inputs to combine and their histories."""
 
     operation: Id
     parameters: dict[str, Any]
     inputs: tuple[Provenance, ...]
+    files: set[str] = msgspec.field(default_factory=set)
 
 
 type HandleProduct = Scan | Frames | Reconstruction | Alignment | Simulation | Region

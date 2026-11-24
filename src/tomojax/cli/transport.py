@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from concurrent.futures import Future
 
 _LINE = 1024 * 1024
-_BACKLOG = 16 * 1024 * 1024
+_BACKLOG = 2 * e.INLINE_LIMIT
 _DRAIN = 2.0
 
 

@@ -18,16 +18,20 @@ pytestmark = pytest.mark.surface
 def python(c, code="", **kwargs):
     reply = c.call("python", code=code, **kwargs)
     assert not reply["isError"], reply
-    data = reply["structuredContent"]
-    if uri := data.get("continuation"):
-        chunks = []
-        while uri:
-            item = c.rpc("resources/read", {"uri": uri})["result"]["contents"][0]
-            chunk = json.loads(item["text"])
-            chunks.append(chunk["data"])
-            uri = chunk["next"]
-        data = json.loads("".join(chunks))["structuredContent"]
-    return data
+    return full_result(c, reply)["structuredContent"]
+
+
+def full_result(c, reply):
+    uri = reply["structuredContent"].get("continuation")
+    if not uri:
+        return reply
+    chunks = []
+    while uri:
+        item = c.rpc("resources/read", {"uri": uri})["result"]["contents"][0]
+        chunk = json.loads(item["text"])
+        chunks.append(chunk["data"])
+        uri = chunk["next"]
+    return json.loads("".join(chunks))
 
 
 def test_import_output_and_private_protocol():
@@ -367,3 +371,65 @@ register(tj.Scan(pixels * 2, geometry))""",
         )["value"]
         reply = c.call("save", source=derived, path="data.npz", force=True)
         assert reply["isError"] and "differ from input" in reply["content"][0]["text"]
+
+
+@pytest.mark.parametrize("block_names", [False, True])
+def test_save_protects_linked_volume_pixels(tmp_path, block_names):
+    import h5py
+    import numpy as np
+
+    import tomojax as tj
+
+    sim = tj.simulate(size=8, n_views=12)
+    volume = tmp_path / "recon.nxs"
+    tj.save(volume, tj.Reconstruction(sim.phantom, sim.scan.geometry, "test", {}, sim.scan))
+    detector = tmp_path / "detector"
+    detector.mkdir()
+    dataset = "/entry/processing/tomojax/volume"
+    with h5py.File(volume, "r+") as nexus, h5py.File(detector / "virtual.h5", "w") as virtual:
+        pixels = nexus[dataset][...]
+        layout = h5py.VirtualLayout(pixels.shape, pixels.dtype, maxshape=(None, *pixels.shape[1:]))
+        parts = len(pixels) if block_names else 2
+        for index, slab in enumerate(np.array_split(pixels, parts)):
+            name = f"part{index}.h5"
+            with h5py.File(detector / name, "w") as backing:
+                backing["pixels"] = slab
+            if not block_names:
+                start = index * len(slab)
+                layout[start : start + len(slab)] = h5py.VirtualSource(
+                    name, "/pixels", shape=slab.shape
+                )
+        if block_names:
+            layout[: h5py.h5s.UNLIMITED] = h5py.VirtualSource(
+                "part%b.h5", "/pixels", shape=(1, *pixels.shape[1:])
+            )
+        virtual.create_virtual_dataset("volume", layout)
+        del nexus[dataset]
+        nexus[dataset] = h5py.ExternalLink("detector/virtual.h5", "/volume")
+    with connection(tmp_path) as c:
+        typed = c.call("open", path=volume.name, kind="reconstruction")["structuredContent"][
+            "handle"
+        ]
+        registered = python(c, f"register(tj.load_reconstruction({volume.name!r}))")["value"]
+        for handle in (typed, registered):
+            for path in ("part0.h5", f"part{parts - 1}.h5", "virtual.h5"):
+                reply = c.call("save", source=handle, path=str(detector / path), force=True)
+                assert reply["isError"] and "differ from input" in reply["content"][0]["text"]
+    with h5py.File(volume) as nexus:
+        np.testing.assert_array_equal(nexus[dataset][...], pixels)
+
+
+def test_large_python_images_and_value_keep_worker_alive(tmp_path):
+    with connection(tmp_path) as c:
+        saved = python(c, "register(np.arange(3))")["value"]
+        reply = c.call(
+            "python",
+            code="rng=np.random.default_rng(1)\nfor i in range(14): show(rng.random((1024,1024)))",
+        )
+        assert not reply["isError"] and reply["structuredContent"]["continuation"]
+        images = [item for item in full_result(c, reply)["content"] if item["type"] == "image"]
+        assert len(images) == 14 and sum(len(item["data"]) for item in images) > 16 << 20
+        reply = c.call("python", code="show(np.eye(3))\nregister(np.arange(7))\n'x' * (17 << 20)")
+        assert reply["isError"] and "too large" in reply["content"][0]["text"]
+        assert python(c, f"[list(handles), int(handles[{saved!r}].sum())]")["value"] == [[saved], 3]
+        assert len(list((tmp_path / "cache").rglob("*.npy"))) == 1

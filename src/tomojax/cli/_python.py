@@ -1,7 +1,6 @@
 """Execute a trusted Python call against pinned, read-only session inputs."""
 
 import ast
-import base64
 from collections.abc import Iterator, Mapping
 from contextvars import ContextVar
 from copy import deepcopy
@@ -23,9 +22,10 @@ from tomojax.cli._browse import indexed
 from tomojax.cli._capture import capture
 from tomojax.cli._handles import handle, stage_array
 from tomojax.cli._options import ancestor_paths
-from tomojax.cli.images import Panel, limits, montage
+from tomojax.cli.envelope import INLINE_LIMIT
+from tomojax.cli.images import Panel, limits, raster
 from tomojax.cli.mcp.ledger import reserve
-from tomojax.core.files import record_inputs
+from tomojax.core.files import read_dataset, record_inputs
 from tomojax.wire.arrays import Member
 from tomojax.wire.progress import Info
 
@@ -93,7 +93,9 @@ def snapshot(value, *, issued, dependencies, source=None):
                     np.asarray(memoryview(buf).toreadonly()) if shared else np.array(buf, copy=True)
                 )
             else:
-                copy = np.array(buf[:], copy=True)
+                copy = np.array(
+                    (read_dataset(buf) if isinstance(buf, h5py.Dataset) else buf)[:], copy=True
+                )
             copy.flags.writeable = False
         memo[id(buf)] = copy
         if source is not None:
@@ -137,7 +139,7 @@ class Registrations:
                 provenance.get("path") if isinstance(provenance, Mapping) else provenance,
             )
             self.context.namespace.sources.update(
-                Path(p).resolve() for p in paths if isinstance(p, str)
+                str(Path(p).resolve()) for p in paths if isinstance(p, str)
             )
             dependencies = set()
             frozen = snapshot(item, issued=self.issued, dependencies=dependencies)
@@ -146,7 +148,7 @@ class Registrations:
 
     def show(self, array):
         panel = Panel("Python", np.asarray(array), (), "unspecified")
-        self.images.append(base64.b64encode(montage([panel], [limits([panel])])).decode())
+        self.images.append(stage_array(self.context, raster(panel, *limits([panel]))))
 
 
 _active: ContextVar[Registrations] = ContextVar("python_registrations")
@@ -174,7 +176,7 @@ class HandleInputs(Mapping):
         if name not in self.values_by_name:
             job = self._job() or _active.get()
             lease = job.context.leases[ref]
-            job.context.namespace.sources.update(ancestor_paths((lease.provenance,)))
+            job.context.namespace.sources.update(map(str, ancestor_paths((lease.provenance,))))
             if isinstance(ref, Member):
                 item = snapshot(lease.value, issued=job.issued, dependencies=set(), source=ref)
             else:
@@ -244,15 +246,19 @@ def run_python(cmd, context):
         message = "".join(
             traceback.format_list(frames[start:]) + traceback.format_exception_only(err)
         )
-        raise ValueError("".join(output) + message) from err
+        detail = "".join(output) + message
+        if len(msgspec.json.encode(detail)) > INLINE_LIMIT:
+            raise ValueError("Python exception too large for the worker pipe") from err
+        raise ValueError(detail) from err
     # Persistent globals can retain copies or calculated values even after close.
     # Flatten to unique paths so repeated Python registrations have bounded lineage.
-    sources = [{"type": "path", "path": str(path)} for path in sorted(context.namespace.sources)]
     return ex.Success(
         p.PythonResult(
             output[0], output[1], value, registrations.products, tuple(registrations.images)
         ),
         Info({}, {}),
-        p.Provenance("python", {"code": cmd.code, "reset": cmd.reset, "sources": sources}, ()),
+        p.Provenance(
+            "python", {"code": cmd.code, "reset": cmd.reset}, (), context.namespace.sources.copy()
+        ),
         tuple(registrations.roots),
     )

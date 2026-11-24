@@ -210,6 +210,7 @@ def check_paths(
 def ancestor_paths(ancestors: tuple[Provenance, ...]) -> Iterator[Path]:
     """Identify caller-owned source files in a durable output's input history."""
     for node in ancestors:
+        yield from map(Path, node.files)
         if node.operation == "open":
             yield Path(node.parameters["path"]).resolve()
             for field in ("flats", "darks"):

@@ -608,12 +608,12 @@ class Tools:
                 value["restart_notice"] = "Worker restart cleared the preceding namespace."
             return value
 
-        value = await g.request(command, accept=publish)
-        images = value.pop("images")
-        reply = result(value)
-        for png in images:
-            reply.content.append(ImageContent(type="image", mime_type="image/png", data=png))
-        return reply
+        async with seeing.temporary(g, command, publish_python=publish) as value:
+            images = value.pop("images")
+            reply = result(value)
+            for ref in images:
+                reply.content.append(await asyncio.to_thread(seeing.python_image, ref))
+            return reply
 
     async def describe(self, args: Describe) -> CallToolResult:
         """Select operation and config keys from the running worker's real schema."""

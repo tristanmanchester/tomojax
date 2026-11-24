@@ -383,7 +383,12 @@ class Session:
                 product = p.Files(product.paths, tuple(group))
             result = p.Output(product, success.info, success.manifest)
             # Encode before changing any caller-owned destination.
-            _ = msgspec.json.encode(result)
+            encoded = msgspec.json.encode(result)
+            if isinstance(product, p.PythonResult) and len(encoded) > e.INLINE_LIMIT:
+                raise ValueError(
+                    "Python result too large for the worker pipe. "
+                    "Return a smaller value or register arrays."
+                )
             for token in tuple(job.stages.arrays):
                 self._publish(job, token, success.manifest, undo)
             if isinstance(product, p.Files):

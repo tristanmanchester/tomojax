@@ -735,7 +735,7 @@
         "images": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
           }
         }
       },
@@ -1078,6 +1078,14 @@
           "items": {
             "$ref": "#/$defs/Provenance"
           }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "default": []
         }
       },
       "required": [

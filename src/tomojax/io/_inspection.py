@@ -29,7 +29,7 @@ from tomojax._typed_arrays import (
     true_count,
     unique_int_count_map,
 )
-from tomojax.core.files import read_path
+from tomojax.core.files import read_dataset, read_path
 from tomojax.io._acquisition import read_acquisition
 from tomojax.io._datasets import ProjectionDataset, load_dataset
 from tomojax.io._inspection_types import (
@@ -270,7 +270,7 @@ def _angles_report(file: h5py.File, located: LocatedFrames | None) -> AnglesRepo
     if located is None:  # a reconstruction without its frames: the geometry's angles
         path = next((p for p in ROTATION_ANGLE_PATHS if p in file), None)
         dataset = None if path is None else _dataset_at(file, path)
-        values = None if dataset is None else np.asarray(dataset[...], np.float64)
+        values = None if dataset is None else np.asarray(read_dataset(dataset)[...], np.float64)
         keys = None
     else:
         path, values, keys = located.angles_path, located.angles, located.image_key

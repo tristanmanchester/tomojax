@@ -10,13 +10,14 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from mcp_types import ImageContent, TextContent
 import numpy as np
+from PIL import Image
 
 from tomojax.cli import operations as op
-from tomojax.cli.images import Panel, label_number, limits, montage, pose_plot
+from tomojax.cli.images import Panel, label_number, limits, montage, pose_plot, thumbnail
 from tomojax.cli.mcp.tools.references import resolve
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    from collections.abc import AsyncIterator, Callable, Iterator
 
     from mcp_types import CallToolResult
 
@@ -55,6 +56,12 @@ def image(data: bytes) -> ImageContent:
     return ImageContent(type="image", mime_type="image/png", data=base64.b64encode(data).decode())
 
 
+def python_image(ref: Object) -> ImageContent:
+    """Render a snapshot staged by show() with its own intensity limits."""
+    pixels = np.load(ref["path"], mmap_mode="r", allow_pickle=False)
+    return image(thumbnail(Image.fromarray(pixels)))
+
+
 def artifacts(value: Any) -> Iterator[str]:
     """Collect temporary files, including nonuniform coordinates."""
     if isinstance(value, dict):
@@ -69,13 +76,15 @@ def artifacts(value: Any) -> Iterator[str]:
 
 
 @asynccontextmanager
-async def temporary(g: Generation, command: Object) -> AsyncIterator[Object]:
+async def temporary(
+    g: Generation, command: Object, *, publish_python: Callable[[Object], Object] | None = None
+) -> AsyncIterator[Object]:
     """Hold worker-owned pixels and coordinate vectors until rendering finishes."""
     finished: asyncio.Future[None] = asyncio.get_running_loop().create_future()
 
     def accept(output: Object) -> Object:
         value = output["value"]
-        tokens = set(artifacts(value))
+        tokens = set(artifacts(value["images"] if publish_python else value))
 
         def release(_finished: asyncio.Future[None]) -> None:
             if not g.exit.is_set():
@@ -84,7 +93,7 @@ async def temporary(g: Generation, command: Object) -> AsyncIterator[Object]:
                     ack.result.add_done_callback(lambda future: future.exception())
 
         finished.add_done_callback(release)
-        return value
+        return publish_python(output) if publish_python else value
 
     try:
         yield await g.request(command, accept=accept)

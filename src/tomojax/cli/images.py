@@ -45,19 +45,24 @@ def png(image: Image.Image) -> bytes:
     return stream.getvalue()
 
 
+def raster(panel: Panel, lo: float, hi: float) -> Image.Image:
+    """Map panel intensities to the display range before resizing."""
+    data = panel.pixels.astype(float)
+    scaled = (data - lo) / (hi - lo) if hi > lo else np.zeros_like(data)
+    grey = np.uint8(np.nan_to_num(np.clip(scaled, 0, 1)) * 255)
+    return Image.fromarray(grey)
+
+
+def thumbnail(image: Image.Image) -> bytes:
+    """Fit an unlabelled image into a single MCP panel."""
+    image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+    return png(image)
+
+
 def montage(panels: list[Panel], scales: list[tuple[float, float]]) -> bytes:
     """Draw up to three planes side by side, mapping equal intensities to equal greys."""
-
-    def raster(panel: Panel, lo: float, hi: float) -> Image.Image:
-        data = panel.pixels.astype(float)
-        scaled = (data - lo) / (hi - lo) if hi > lo else np.zeros_like(data)
-        grey = np.uint8(np.nan_to_num(np.clip(scaled, 0, 1)) * 255)
-        return Image.fromarray(grey)
-
     if len(panels) == 1 and not panels[0].labels:
-        image = raster(panels[0], *scales[0])
-        image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-        return png(image)
+        return thumbnail(raster(panels[0], *scales[0]))
 
     labels = [
         [

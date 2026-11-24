@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, cast
 import h5py
 import numpy as np
 
+from tomojax.core.files import read_dataset
+
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
 from ._io_types import JsonObject, LoadedDataset, SourceInfo
 from .geometry_meta import normalize_geometry_type
@@ -120,7 +122,9 @@ def _load_image_key(entry: h5py.Group, *, n_views: int, path: str) -> np.ndarray
             path,
         )
         return np.zeros((n_views,), dtype=np.int32)
-    return checked_image_key(np.asarray(det_grp["image_key"][...]), frames=n_views, path=path)
+    return checked_image_key(
+        np.asarray(read_dataset(det_grp["image_key"])[...]), frames=n_views, path=path
+    )
 
 
 def _load_rotation_angles(
@@ -133,7 +137,7 @@ def _load_rotation_angles(
         raise ValueError(f"{path}: rotation angles must be a dataset")
     units = _attr_to_str(angles.attrs.get("units"), default="") or ""
     return angles_in_degrees(
-        np.asarray(angles[...]), units, frames=n_views, path=path, image_key=image_key
+        np.asarray(read_dataset(angles)[...]), units, frames=n_views, path=path, image_key=image_key
     ).astype(np.float32)
 
 
@@ -211,7 +215,7 @@ def _pixel_size(group: h5py.Group | None, name: str) -> float | None:
     found = None if group is None else group.get(name)
     if not isinstance(found, h5py.Dataset) or found.size != 1:
         return None
-    value = float(np.asarray(found[()]).reshape(-1)[0])
+    value = float(np.asarray(read_dataset(found)[()]).reshape(-1)[0])
     return value if np.isfinite(value) and value > 0 else None
 
 
@@ -225,7 +229,7 @@ def _load_source_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
     source_info: SourceInfo = {}
     for key in ("name", "type", "probe"):
         if key in source_grp:
-            source_info[key] = _attr_to_str(source_grp[key][()])
+            source_info[key] = _attr_to_str(read_dataset(source_grp[key])[()])
     if not source_info:
         return
     out["source"] = source_info
@@ -256,7 +260,7 @@ def _load_processing_metadata(
     if tomojax_grp is None:
         return None, None
 
-    volume_raw = tomojax_grp["volume"][...] if "volume" in tomojax_grp else None
+    volume_raw = read_dataset(tomojax_grp["volume"])[...] if "volume" in tomojax_grp else None
     volume_axes_attr = _attr_to_str(tomojax_grp.attrs.get("volume_axes_order"))
 
     frame_attr = tomojax_grp.attrs.get("frame")
@@ -268,9 +272,9 @@ def _load_processing_metadata(
     align_grp = tomojax_grp.get("align")
     if align_grp is not None:
         if "thetas" in align_grp:
-            out["align_params"] = align_grp["thetas"][...]
+            out["align_params"] = read_dataset(align_grp["thetas"])[...]
         if "angle_offset" in align_grp:
-            out["angle_offset"] = align_grp["angle_offset"][...]
+            out["angle_offset"] = read_dataset(align_grp["angle_offset"])[...]
     for group, attr, key, context in _PROCESSING_JSON_SECTIONS:
         section = tomojax_grp.get(group)
         if section is None:
@@ -285,4 +289,4 @@ def _load_processing_metadata(
 def _load_sample_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
     sample_grp = entry.get("sample")
     if sample_grp is not None and "name" in sample_grp:
-        out["sample_name"] = _attr_to_str(sample_grp["name"][()], default=None)
+        out["sample_name"] = _attr_to_str(read_dataset(sample_grp["name"])[()], default=None)
