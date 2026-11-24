@@ -58,7 +58,8 @@ reads data from other files (external links, virtual datasets or external raw
 storage) can't be copied; import it without copying.
 
 Standard NXtomo/HDF5 metadata and the first scientific views load independently
-of the numerical worker. **Inspect dataset** requests TomoJAX's full inspection,
+of the numerical worker. A virtual detector stack, assembled from other files,
+is viewed once **Open & calibrate** has opened it through TomoJAX. **Inspect dataset** requests TomoJAX's full inspection,
 including its projection statistics; this can take longer on a large scan.
 Other supported acquisition formats use TomoJAX's existing inspection and loading
 paths. Raw or vendor acquisitions that need calibration become directly viewable
