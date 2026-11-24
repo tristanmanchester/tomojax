@@ -84,11 +84,7 @@ impl AppState {
             {
                 return Err("Reading the selected inputs; queue again in a moment".into());
             }
-            captured
-                .iter()
-                .cloned()
-                .map(|input| input.with_files_named_in(&parameters))
-                .collect::<Result<Vec<_>, _>>()?
+            captured.to_vec()
         };
         let project = self
             .project

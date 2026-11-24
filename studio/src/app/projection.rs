@@ -68,17 +68,6 @@ impl ProjectionRoles {
         }
         .ok_or("Select a scan to supply the geometry")?;
         let descriptor = array.as_ref().and_then(|array| array.descriptor.as_ref());
-        if key == "volume"
-            && let (Some(volume), Some(scan)) = (
-                descriptor.and_then(length_unit),
-                scan_length_unit(products[geometry]),
-            )
-            && volume != scan
-        {
-            return Err(format!(
-                "The volume is registered in {volume} and the scan in {scan}; reconstruct the volume from this scan's geometry"
-            ));
-        }
         let grid = (key == "volume" && parameters.get("grid").is_none_or(Value::is_null))
             .then(|| descriptor.and_then(registered_grid))
             .flatten();
@@ -183,27 +172,6 @@ fn array_source(products: &[&Product], key: &str) -> Option<ArraySource> {
             .min_by_key(|(rank, source)| (*rank, source.index))
             .map(|(_, source)| source)
     })
-}
-
-/// A registered volume's length unit, when its axes carry one.
-fn length_unit(volume: &ArrayDescriptor) -> Option<&str> {
-    volume
-        .axes
-        .first()
-        .map(|axis| axis.unit.as_str())
-        .filter(|unit| !matches!(*unit, "index" | "voxel"))
-}
-
-/// The length unit of a scan's calibrated detector, when it has one.
-fn scan_length_unit(product: &Product) -> Option<&str> {
-    match product {
-        Product::Scan { projections, .. } => projections
-            .axes
-            .get(1)
-            .map(|axis| axis.unit.as_str())
-            .filter(|unit| !matches!(*unit, "pixel" | "index")),
-        _ => None,
-    }
 }
 
 /// The grid of a volume registered with uniform (z, y, x) voxel-centre axes.

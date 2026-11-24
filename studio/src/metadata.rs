@@ -111,10 +111,10 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     // leave out. They are found as the worker finds them: at the detector, else
     // the file's only per-frame dataset named `image_key`.
     let frames = projection["n_views"].as_u64().map(|n| n as usize);
-    let image_key: Option<Vec<String>> = ["/entry/instrument/detector/image_key"]
+    let image_key = ["/entry/instrument/detector/image_key"]
         .into_iter()
         .find(|name| file.link_exists(name))
-        .map(|name| vec![name.to_owned()])
+        .map(str::to_owned)
         .or_else(|| frames.and_then(|frames| only_per_frame(&file, "image_key", frames)));
     let key_found = image_key.is_some();
     let read_keys = |name: &str| -> Result<Option<Vec<i64>>, String> {
@@ -127,17 +127,10 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
             .map_err(|error| error.to_string())
     };
     let sample_count = match &image_key {
-        Some(paths) => {
-            // The control sits beside one of the keys' paths.
-            let mut control = None;
-            for path in paths {
-                let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
-                control = read_keys(&format!("{folder}/image_key_control"))?;
-                if control.is_some() {
-                    break;
-                }
-            }
-            read_keys(&paths[0])?.map(|keys| {
+        Some(path) => {
+            let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+            let control = read_keys(&format!("{folder}/image_key_control"))?;
+            read_keys(path)?.map(|keys| {
                 keys.iter()
                     .enumerate()
                     .filter(|&(i, &key)| {
@@ -162,7 +155,7 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
         "projection":projection,"angles":angles,"volume":volume,
         "geometry":{"found":geometry_type.is_some(),"type":geometry_type,"meta_found":geometry.is_object(),"meta_keys":geometry.as_object().map(|meta|meta.keys().collect::<Vec<_>>()).unwrap_or_default()},
         "detector_metadata":{"found":detector.is_object(),"nu":detector.get("nu"),"nv":detector.get("nv"),"du":detector.get("du"),"dv":detector.get("dv"),"center":detector.get("det_center")},
-        "flats_darks":{"image_key_found":key_found,"image_key_path":image_key.as_ref().map(|paths| &paths[0]),
+        "flats_darks":{"image_key_found":key_found,"image_key_path":image_key,
             "sample_count":sample_count,
             "flats_present":if flat_found{Some(true)}else{None},"darks_present":if dark_found{Some(true)}else{None}},
         "alignment":{"found":file.link_exists("/entry/processing/tomojax/align"),"params_found":file.link_exists("/entry/processing/tomojax/align/thetas")}});
@@ -254,18 +247,11 @@ pub fn reads_other_files(path: &Path) -> Result<bool, String> {
     Ok(false)
 }
 
-/// The paths of the file's only dataset named `name` holding one value per
-/// frame: one dataset, which hard links can give several paths.
-fn only_per_frame(file: &hdf5::File, name: &str, frames: usize) -> Option<Vec<String>> {
-    let mut found: Vec<(hdf5::LocationToken, Vec<String>)> = Vec::new();
+/// The path of the file's only dataset named `name` holding one value per frame.
+fn only_per_frame(file: &hdf5::File, name: &str, frames: usize) -> Option<String> {
+    let mut found = Vec::new();
     let mut groups = vec![file.group("/").ok()?];
-    let mut visited = 0usize;
     while let Some(group) = groups.pop() {
-        // Hard-linked groups can form cycles; real files have far fewer groups.
-        visited += 1;
-        if visited > 100_000 {
-            break;
-        }
         let mut links = Vec::new();
         let _ = group.iter_visit_default(|link, info| {
             if info.link_type == hdf5::LinkType::Hard {
@@ -279,21 +265,12 @@ fn only_per_frame(file: &hdf5::File, name: &str, frames: usize) -> Option<Vec<St
             } else if link == name
                 && let Ok(dataset) = group.dataset(&link)
                 && dataset.shape() == [frames]
-                && let Ok(info) = dataset.loc_info()
             {
-                let path = format!("{}/{link}", group.name().trim_end_matches('/'));
-                match found.iter_mut().find(|(token, _)| *token == info.token) {
-                    Some((_, paths)) => paths.push(path),
-                    None => found.push((info.token, vec![path])),
-                }
+                found.push(dataset.name());
             }
         }
     }
-    (found.len() == 1).then(|| {
-        let mut paths = found.remove(0).1;
-        paths.sort();
-        paths
-    })
+    (found.len() == 1).then(|| found.remove(0))
 }
 
 pub fn suggested_kind(report: &Value) -> &'static str {
@@ -889,29 +866,6 @@ mod tests {
         assert_eq!(kind, "frames");
         assert_eq!(report["flats_darks"]["sample_count"], 2);
         assert!(!arrays.contains_key("projections"));
-
-        // A NeXus alias (a second hard link to the same keys) is still one dataset.
-        hdf5::File::open_rw(&path)
-            .unwrap()
-            .create_group("/entry/alias")
-            .unwrap()
-            .link_hard("/entry/data/image_key", "image_key")
-            .unwrap();
-        let (_, arrays, report) = quick_metadata(&path).unwrap().unwrap();
-        assert_eq!(report["flats_darks"]["sample_count"], 2);
-        assert!(!arrays.contains_key("projections"));
-
-        // A control beside any of the keys' paths leaves out its return frames.
-        hdf5::File::open_rw(&path)
-            .unwrap()
-            .group("/entry/data")
-            .unwrap()
-            .new_dataset_builder()
-            .with_data(&[0i32, 0, -1, 0])
-            .create("image_key_control")
-            .unwrap();
-        let (_, _, report) = quick_metadata(&path).unwrap().unwrap();
-        assert_eq!(report["flats_darks"]["sample_count"], 1);
     }
 
     #[test]
