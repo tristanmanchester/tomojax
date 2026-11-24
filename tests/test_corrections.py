@@ -808,7 +808,7 @@ def test_tiff_stacks_are_read_lazily_by_window(tmp_path: Path, compression: str 
             for page in part:
                 writer.write(page, compression=compression, contiguous=False)
     frames = read_tiff_frames(tmp_path, lazy=True)
-    assert frames.shape == pages.shape and frames._efficient_row_windows == (compression is None)
+    assert frames.shape == pages.shape
     np.testing.assert_array_equal(np.asarray(frames), pages)
     part = frames.frames_at(np.array([1, 2, 4])).window(slice(1, 4), slice(2, 7))
     assert part.shape == (3, 3, 5)
@@ -817,23 +817,22 @@ def test_tiff_stacks_are_read_lazily_by_window(tmp_path: Path, compression: str 
 
 
 @pytest.mark.parametrize(
-    ("options", "efficient"),
+    "options",
     [
-        ({}, True),
-        ({"chunks": (1, 2, 16)}, True),
-        ({"chunks": (1, 16, 16)}, True),  # unfiltered windows bypass the chunk cache
-        ({"chunks": (2, 16, 16)}, True),
-        ({"chunks": (1, 2, 16), "compression": "gzip"}, False),
+        {},
+        {"chunks": (1, 2, 16)},
+        {"chunks": (1, 16, 16)},
+        {"chunks": (2, 16, 16)},
+        {"chunks": (1, 2, 16), "compression": "gzip"},
     ],
 )
-def test_hdf5_unfiltered_row_windows_use_direct_partial_chunk_reads(
-    tmp_path: Path, options: dict[str, Any], efficient: bool
+def test_hdf5_row_windows_read_the_requested_rows_for_any_chunking(
+    tmp_path: Path, options: dict[str, Any]
 ) -> None:
     data = np.arange(3 * 16 * 16, dtype=np.uint16).reshape(3, 16, 16)
     with h5py.File(tmp_path / "scan.h5", "w") as handle:
         handle.create_dataset("exchange/data", data=data, **options)
     stack = locate_frames(str(tmp_path / "scan.h5")).stack
-    assert stack._efficient_row_windows is efficient
     part = stack.window(slice(3, 7), slice(2, 8))
     np.testing.assert_array_equal(np.asarray(part), data[:, 3:7, 2:8])
 

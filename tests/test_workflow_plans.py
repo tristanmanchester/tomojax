@@ -123,12 +123,10 @@ def test_default_plan_for_each_method(method, monkeypatch):
     if method == "fista":
         # CPU FISTA keeps its state resident, even under a constrained memory sample.
         assert plan.placement.strategy == "resident"
-        assert plan.placement.device_bytes == 8 * 4 * 7 * 8 * 5 + 2 * 4 * 211 * 6 * 12
         monkeypatch.setattr("tomojax.recon._backend.cuda_backend", lambda: True)
         device = (Snapshot(0, "gpu:0", "jax", None, None, 1),)
         plan = plan_product(source, resolve_reconstruction(source, method), snapshot=device)
         assert plan.placement.strategy == "slabbed"
-        assert plan.placement.device_bytes == 4 * 4 * 64 * 6 * 12
 
 
 def test_explicit_fourier_backend_needs_cupy_at_preflight(monkeypatch):

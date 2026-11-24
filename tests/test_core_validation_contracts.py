@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -93,5 +91,11 @@ def test_grid_and_detector_hold_plain_numbers_from_numpy_metadata() -> None:
         Grid(nx=64.5, ny=1, nz=1, vx=1.0, vy=1.0, vz=1.0)
 
 
-def test_transfer_guard_context_returns_noop_when_disabled() -> None:
-    assert isinstance(transfer_guard_context("off"), type(nullcontext()))
+def test_transfer_guard_context_blocks_implicit_transfers_unless_off() -> None:
+    with transfer_guard_context("off"):
+        _ = jnp.asarray(np.ones(2)) + 1
+    with (
+        transfer_guard_context("disallow"),
+        pytest.raises(jax.errors.JaxRuntimeError, match="Disallowed"),
+    ):
+        _ = jnp.asarray(np.ones(2)) + 1

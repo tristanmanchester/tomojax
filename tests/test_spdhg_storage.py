@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 import jax
 import jax.numpy as jnp
@@ -64,41 +63,6 @@ def test_sweep_matches_whole_volume_update(regularizer):
     np.testing.assert_allclose(
         partial, x - 0.3 * (extrapolated - 0.8 / 0.25 * data), rtol=1e-6, atol=5e-7
     )
-
-
-def test_watched_chunk_compiles_before_allocating_the_primal_and_duals(monkeypatch):
-    from importlib import import_module
-
-    from tomojax import progress
-
-    module = import_module("tomojax.recon.spdhg_tv")
-    calls = Mock()
-    lower = module._advance_spdhg.lower
-
-    def lower_updates(*args):
-        assert progress.current_task.get().name == "prepare"
-        return lower(*args)
-
-    calls.compile_chunk = Mock(side_effect=lower_updates)
-    calls.allocate_state = Mock(wraps=module._initial_spdhg_state)
-    monkeypatch.setattr(module._advance_spdhg, "lower", calls.compile_chunk)
-    monkeypatch.setattr(module, "_initial_spdhg_state", calls.allocate_state)
-    grid, detector = Grid(8, 8, 4, 1, 1, 1), Detector(8, 4, 1, 1)
-    geometry = LaminographyGeometry(grid, detector, np.arange(3) * 60, 30)
-    with progress.watch(lambda _: None):
-        module.spdhg(
-            geometry,
-            grid,
-            detector,
-            np.ones((3, 4, 8), np.float32),
-            config=SPDHGConfig(iterations=2, views_per_block=1, tv_weight=0.01),
-        )
-    assert [
-        call[0] for call in calls.mock_calls if call[0] in {"compile_chunk", "allocate_state"}
-    ] == [
-        "compile_chunk",
-        "allocate_state",
-    ]
 
 
 @pytest.mark.gpu

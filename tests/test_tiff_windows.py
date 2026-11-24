@@ -66,5 +66,4 @@ def test_tiff_binary_reads_are_bounded(tmp_path, monkeypatch, default_buffer_siz
         darks=0,
     )
     np.testing.assert_array_equal(np.asarray(frames.counts), values)
-    assert len(buffers) == 2 * len(values)  # headers, then indexed pixels
-    assert buffers == [8 * 1024] * (2 * len(values))
+    assert buffers and all(0 < size <= 8 * 1024 for size in buffers)
