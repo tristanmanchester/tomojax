@@ -813,7 +813,7 @@ fn display(state: &AppState) -> El {
             |s, tx| s.dispatch(UiAction::SetInvert(!s.ui.display.invert), tx),
         ));
     section(
-        if comparison {
+        if comparison && !state.ui.compare_linked {
             "Left display window"
         } else {
             "Display window"
@@ -881,41 +881,27 @@ fn histogram(plane: &PlaneView) -> El {
 }
 
 fn comparison(state: &AppState) -> El {
-    let mut content = col().gap(16.);
-    for (left, title, selected) in [
-        (true, "Left result", &state.model.compare_left),
-        (false, "Right result", &state.model.compare_right),
+    let mut pickers = col().gap(10.);
+    for (side, title, selected) in [
+        (0, "Left", &state.model.compare_left),
+        (1, "Right", &state.model.compare_right),
     ] {
-        let mut choices = col().gap(5.);
-        for asset in state
-            .model
-            .assets
-            .iter()
-            .filter(|a| a.kind == AssetKind::Volume && !a.missing)
-        {
-            choices = choices.child(
-                action_button(
-                    &format!(
-                        "compare-{}-{}",
-                        if left { "left" } else { "right" },
-                        asset.id
-                    ),
-                    &asset.name,
-                    selected.as_ref() == Some(&asset.id),
-                    true,
-                    if left {
-                        UiAction::SetCompareLeft(asset.id.clone())
-                    } else {
-                        UiAction::SetCompareRight(asset.id.clone())
-                    },
-                )
-                .w_full()
-                .justify_start(),
-            );
-        }
-        content = content.child(section(title, choices));
+        pickers = pickers.child(result_picker(state, side, title, selected.as_deref()));
     }
-    content
+    pickers = pickers.child(
+        action_button(
+            "swap-comparison",
+            "Swap left and right",
+            false,
+            true,
+            UiAction::SwapComparison,
+        )
+        .w_full(),
+    );
+    col()
+        .gap(18.)
+        .child(section("Results", pickers))
+        .child(separator())
         .child(toggle(
             "link-comparison",
             "Share display window",
@@ -923,10 +909,92 @@ fn comparison(state: &AppState) -> El {
             true,
             |s, tx| s.dispatch(UiAction::SetCompareLinked(!s.ui.compare_linked), tx),
         ))
-        .child(separator())
         .child(display(state))
-        .child(separator())
-        .child(export_format(state))
+}
+
+/// A compact picker for one side of the comparison; the list opens in place.
+fn result_picker(state: &AppState, side: usize, title: &str, selected: Option<&str>) -> El {
+    let key = if side == 0 { "left" } else { "right" };
+    let current = state
+        .model
+        .assets
+        .iter()
+        .find(|a| Some(a.id.as_str()) == selected)
+        .map_or("Choose a volume", |a| a.name.as_str());
+    let open = state.ui.compare_menu == Some(side);
+    let mut picker = col()
+        .w_full()
+        .gap(6.)
+        .child(label(title, 11., muted()))
+        .child(
+            button(
+                &format!("compare-{key}"),
+                current,
+                false,
+                true,
+                move |s, _| {
+                    s.ui.compare_menu = if s.ui.compare_menu == Some(side) {
+                        None
+                    } else {
+                        Some(side)
+                    }
+                },
+            )
+            .w_full()
+            .justify_between()
+            .child(icon(if open { Icon::Up } else { Icon::Down }, 14., muted())),
+        );
+    if open {
+        let mut options = col()
+            .gap(2.)
+            .padding(4.)
+            .radius(6.)
+            .border(1., line())
+            .fill(paper());
+        for asset in state
+            .model
+            .assets
+            .iter()
+            .filter(|a| a.kind == AssetKind::Volume && !a.missing)
+        {
+            let chosen = Some(asset.id.as_str()) == selected;
+            let action = if side == 0 {
+                UiAction::SetCompareLeft(asset.id.clone())
+            } else {
+                UiAction::SetCompareRight(asset.id.clone())
+            };
+            options = options.child(
+                row()
+                    .key(format!("compare-{key}-{}", asset.id))
+                    .role("option")
+                    .label(&asset.name)
+                    .checked(chosen)
+                    .focusable(true)
+                    .h(32.)
+                    .px(8.)
+                    .gap(8.)
+                    .items_center()
+                    .radius(4.)
+                    .fill(if chosen { sage() } else { paper() })
+                    .hover(forest().alpha(0.06))
+                    .focus_ring(1.5, 0., forest())
+                    .on_press_tx(move |s: &mut AppState, tx| s.dispatch(action.clone(), tx))
+                    .child(
+                        strong(&asset.name, 12., ink())
+                            .grow(1.)
+                            .min_w(0.)
+                            .truncate(),
+                    )
+                    .child(if chosen {
+                        icon(Icon::Check, 13., forest())
+                    } else {
+                        el()
+                    }),
+            );
+        }
+        picker = picker.child(options);
+    }
+    picker
 }
 
 fn export_format(state: &AppState) -> El {
@@ -1009,11 +1077,15 @@ fn footer(state: &AppState) -> El {
                 .child(icon(Icon::Play, 14., paper())),
             );
         }
-        Workspace::Explore | Workspace::Compare => {
+        Workspace::Explore => {
             content = content.child(
                 action_button(
                     "export-result",
-                    "Export volume or slices",
+                    match state.ui.export_format.as_str() {
+                        "float32" => "Export TIFF (float32)",
+                        "uint16" => "Export TIFF (uint16)",
+                        _ => "Export NXtomo",
+                    },
                     true,
                     state.model.active().is_some(),
                     UiAction::Export(state.ui.export_format.clone()),
@@ -1023,7 +1095,7 @@ fn footer(state: &AppState) -> El {
                 .child(icon(Icon::Export, 15., paper())),
             );
         }
-        Workspace::Jobs => {}
+        Workspace::Compare | Workspace::Jobs => return el(),
     }
     col().w_full().child(separator()).child(content)
 }

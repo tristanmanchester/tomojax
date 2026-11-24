@@ -472,6 +472,11 @@ impl AppState {
                 std::mem::swap(&mut self.model.compare_left, &mut self.model.compare_right)
             }
             UiAction::CompareMode(mode) => self.ui.compare_mode = mode,
+            UiAction::SetCompareSplit(fraction) => {
+                if fraction.is_finite() {
+                    self.ui.compare_split = fraction.clamp(0., 1.);
+                }
+            }
             UiAction::ComparePlane(plane) => self.ui.compare_plane = plane,
             UiAction::SetExportFormat(format) => self.ui.export_format = format,
             UiAction::RemoveMeasurement(id) => self
@@ -480,9 +485,11 @@ impl AppState {
                 .retain(|m| m.id != id || Some(&m.asset) != self.model.active_asset.as_ref()),
             UiAction::SetCompareLeft(id) => {
                 self.model.compare_left = Some(id);
+                self.ui.compare_menu = None;
             }
             UiAction::SetCompareRight(id) => {
                 self.model.compare_right = Some(id);
+                self.ui.compare_menu = None;
             }
             UiAction::CompareSelection => {
                 let ids: Vec<_> = self.model.selected_assets.iter().cloned().collect();

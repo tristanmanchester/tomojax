@@ -440,3 +440,46 @@ fn explicit_source_refresh_reloads_a_replaced_file_at_the_same_path() {
     assert_eq!(images.plane(1).unwrap().sample(2, 3), Some(999.));
     images.shutdown();
 }
+
+#[test]
+fn split_and_difference_combine_pixels_only_on_a_shared_grid() {
+    let plane = |values: [f32; 4], unit: &str| super::PlaneData {
+        id: 1,
+        values: values.to_vec().into(),
+        shape: [1, 4],
+        source_shape: [1, 4],
+        axes: ["y", "x"].map(|name| super::AxisScale {
+            name: name.into(),
+            frame: "world".into(),
+            unit: "mm".into(),
+            origin: 0.,
+            spacing: 1.,
+            coordinates: None,
+        }),
+        fixed: vec![],
+        index: 0,
+        count: 1,
+        value_unit: unit.into(),
+        domain: "attenuation".into(),
+        stride: 1,
+        statistics: reader::statistics(&values).unwrap(),
+    };
+    let left = plane([1., 2., 3., 4.], "mm^-1");
+    let right = plane([10., 20., 30., 40.], "mm^-1");
+    assert_eq!(
+        &*left.split(&right, 0.5).unwrap().values,
+        &[1., 2., 30., 40.]
+    );
+    assert_eq!(
+        &*left.split(&right, 0.).unwrap().values,
+        &[10., 20., 30., 40.]
+    );
+    assert_eq!(&*left.split(&right, 1.).unwrap().values, &[1., 2., 3., 4.]);
+    assert_eq!(
+        &*left.difference(&right).unwrap().values,
+        &[-9., -18., -27., -36.]
+    );
+    let other_unit = plane([10., 20., 30., 40.], "1/scan_length");
+    assert!(left.split(&other_unit, 0.5).is_none());
+    assert!(left.difference(&other_unit).is_none());
+}

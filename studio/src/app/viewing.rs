@@ -337,7 +337,8 @@ impl AppState {
             [Some(_), Some(_)] => None,
             _ => Some("Choose two reconstructed volumes".into()),
         };
-        if self.model.comparison_note.is_some() && self.ui.compare_mode == CompareMode::Difference {
+        // Split and Difference combine pixels, so they need one shared grid.
+        if self.model.comparison_note.is_some() && self.ui.compare_mode != CompareMode::Pair {
             self.ui.compare_mode = CompareMode::Pair;
         }
         if self.ui.workspace == Workspace::Compare
@@ -353,7 +354,24 @@ impl AppState {
         } else {
             self.difference = None;
         }
+        if self.ui.workspace == Workspace::Compare
+            && self.ui.compare_mode == CompareMode::Split
+            && let (Some(left), Some(right)) = (self.imaging.plane(6), self.imaging.plane(7))
+        {
+            let key = ([left.id, right.id], self.ui.compare_split.to_bits());
+            if self.split.as_ref().is_none_or(|(old, _)| *old != key) {
+                self.split = left
+                    .split(right, self.ui.compare_split)
+                    .map(|plane| (key, std::sync::Arc::new(plane)));
+            }
+        } else {
+            self.split = None;
+        }
         self.prefill_window();
+    }
+
+    pub(crate) fn split_ready(&self) -> bool {
+        self.split.is_some()
     }
 
     pub(crate) fn difference_ready(&self) -> bool {
@@ -480,11 +498,30 @@ impl AppState {
             });
         }
         if let Some((_, data)) = &self.difference {
+            // Symmetric about zero, in grey, so no change reads as mid-grey.
+            let reach = data
+                .statistics
+                .min
+                .abs()
+                .max(data.statistics.max.abs())
+                .max(f32::EPSILON);
             items.push(RenderItem::Plane {
                 mark: 10,
                 data: data.clone(),
                 display: DisplaySettings {
-                    window: None,
+                    window: Some([-reach, reach]),
+                    colormap: crate::imaging::ColorMap::Gray,
+                    invert: false,
+                    ..display.clone()
+                },
+            });
+        }
+        if let Some((_, data)) = &self.split {
+            items.push(RenderItem::Plane {
+                mark: 12,
+                data: data.clone(),
+                display: DisplaySettings {
+                    window: self.compare_window(6),
                     ..display.clone()
                 },
             });

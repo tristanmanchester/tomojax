@@ -668,3 +668,105 @@ fn job_row_shows_one_status_and_preserves_stage_detail() {
             .any(|e| e.text.as_deref() == Some("Plan ready"))
     );
 }
+
+fn comparison_state(note: Option<&str>) -> (TempDir, AppState) {
+    let (directory, mut state) = viewing_state();
+    state.ui.workspace = Workspace::Compare;
+    let mut second = state.model.assets[0].clone();
+    second.id = "second-result".into();
+    second.name = "Other registered result".into();
+    state.model.compare_left = Some(state.model.assets[0].id.clone());
+    state.model.compare_right = Some(second.id.clone());
+    state.model.assets.push(second);
+    state.model.comparison_note = note.map(str::to_owned);
+    (directory, state)
+}
+
+#[test]
+fn compare_switches_planes_and_modes_and_offers_no_export() {
+    let (_directory, state) = comparison_state(None);
+    let rt = runtime(state, (1540., 980.));
+    for key in [
+        "compare-plane-axial",
+        "compare-plane-coronal",
+        "compare-plane-sagittal",
+        "compare-mode-side-by-side",
+        "compare-mode-split",
+        "compare-mode-difference",
+        "swap-comparison",
+    ] {
+        assert!(find(&rt, key).focusable, "{key}");
+    }
+    assert!(
+        rt.elements()
+            .iter()
+            .all(|e| e.key.as_deref() != Some("export-result"))
+    );
+}
+
+#[test]
+fn split_and_difference_need_one_shared_grid() {
+    let (_directory, state) = comparison_state(Some(
+        "Grids differ: slices are matched by index, not position",
+    ));
+    let rt = runtime(state, (1540., 980.));
+    assert!(find(&rt, "compare-mode-side-by-side").focusable);
+    for key in ["compare-mode-split", "compare-mode-difference"] {
+        assert!(!find(&rt, key).focusable, "{key}");
+    }
+}
+
+#[test]
+fn result_picker_lists_volumes_in_place_and_closes_on_choice() {
+    let (_directory, state) = comparison_state(None);
+    let mut rt = runtime(state, (1540., 980.));
+    click(&mut rt, "compare-right");
+    assert_eq!(rt.state.ui.compare_menu, Some(1));
+    rt.frame(0.5); // let the list finish appearing before pressing an option
+    let left_id = rt.state.model.compare_left.clone().unwrap();
+    click(&mut rt, &format!("compare-right-{left_id}"));
+    assert_eq!(
+        rt.state.model.compare_right.as_deref(),
+        Some(left_id.as_str())
+    );
+    assert_eq!(rt.state.ui.compare_menu, None);
+}
+
+#[test]
+fn child_results_drop_the_parent_prefix_and_custom_names_stay_whole() {
+    let (_directory, mut state) = viewing_state();
+    let parent = state.model.assets[0].clone();
+    for (id, name) in [
+        ("derived", format!("{} · FBP", parent.name)),
+        ("custom", "Best slice set".into()),
+    ] {
+        state.model.assets.push(AssetView {
+            id: id.into(),
+            name,
+            kind: AssetKind::Volume,
+            parent: Some(parent.id.clone()),
+            operation: Some("reconstruct".into()),
+            ..Default::default()
+        });
+    }
+    let rt = runtime(state, (1540., 980.));
+    let texts: Vec<String> = rt.elements().into_iter().filter_map(|e| e.text).collect();
+    assert!(texts.iter().any(|t| t == "FBP"));
+    assert!(texts.iter().any(|t| t == "Best slice set"));
+}
+
+#[test]
+fn the_top_bar_names_the_project_only_while_the_navigator_is_hidden() {
+    for tree_open in [true, false] {
+        let (_directory, mut state) = viewing_state();
+        state.ui.tree_open = tree_open;
+        let name = state.model.project.as_ref().unwrap().name.clone();
+        let rt = runtime(state, (1540., 980.));
+        let shown = rt
+            .elements()
+            .iter()
+            .filter(|e| e.text.as_deref() == Some(name.as_str()))
+            .count();
+        assert_eq!(shown, 1, "tree_open={tree_open}");
+    }
+}

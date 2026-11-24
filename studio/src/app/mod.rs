@@ -124,6 +124,8 @@ pub struct AppState {
     startup_input: Option<PathBuf>,
     last_context: Value,
     difference: Option<([u64; 2], std::sync::Arc<crate::imaging::PlaneData>)>,
+    /// The Split composite and the (left, right, curtain) it was built from.
+    split: Option<(([u64; 2], u32), std::sync::Arc<crate::imaging::PlaneData>)>,
     applied_window: Option<[f32; 2]>,
     window_prefill: Option<[String; 2]>,
     centre_sinogram: bool,
@@ -175,6 +177,7 @@ impl AppState {
             startup_input: std::env::var_os("TOMOJAX_STUDIO_INPUT").map(PathBuf::from),
             last_context: Value::Null,
             difference: None,
+            split: None,
             applied_window: None,
             window_prefill: Some([String::new(), String::new()]),
             centre_sinogram: true,

@@ -123,6 +123,10 @@ pub struct UiState {
     pub compare_plane: PlaneKind,
     pub compare_mode: CompareMode,
     pub compare_cursor: [f32; 2],
+    /// Curtain position in Split mode, as a fraction of the image width from the left.
+    pub compare_split: f32,
+    /// The open result picker in Compare: 0 left, 1 right.
+    pub compare_menu: Option<usize>,
     pub worker_trace: Option<String>,
     pub asset_query: TextEdit,
     pub rename: Option<(String, TextEdit)>,
@@ -165,6 +169,8 @@ impl Default for UiState {
             compare_plane: PlaneKind::Axial,
             compare_mode: CompareMode::Pair,
             compare_cursor: [0.5; 2],
+            compare_split: 0.5,
+            compare_menu: None,
             worker_trace: None,
             asset_query: TextEdit::default(),
             rename: None,
@@ -566,6 +572,7 @@ pub enum UiAction {
     SwapComparison,
     ComparePlane(PlaneKind),
     CompareMode(CompareMode),
+    SetCompareSplit(f32),
     SetExportFormat(String),
     RemoveMeasurement(String),
     SetCompareLeft(String),

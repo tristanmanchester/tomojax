@@ -112,20 +112,37 @@ pub struct PlaneData {
 
 impl PlaneData {
     /// Subtract registered display samples. Callers verify the full volume grids first.
+    /// Whether two planes sample the same grid, so they can be combined pixel by pixel.
+    pub fn same_grid(&self, other: &Self) -> bool {
+        self.shape == other.shape
+            && self.source_shape == other.source_shape
+            && self.fixed == other.fixed
+            && self.value_unit == other.value_unit
+            && self.domain == other.domain
+    }
+
+    /// Left minus right, on a shared grid.
     pub fn difference(&self, right: &Self) -> Option<Self> {
-        if self.shape != right.shape
-            || self.source_shape != right.source_shape
-            || self.fixed != right.fixed
-            || self.value_unit != right.value_unit
-            || self.domain != right.domain
-        {
+        self.composite(right, |_, a, b| a - b)
+    }
+
+    /// Left samples up to `fraction` of the width, right samples after it, on a shared grid.
+    pub fn split(&self, right: &Self, fraction: f32) -> Option<Self> {
+        let edge = (fraction.clamp(0., 1.) * self.shape[1] as f32).round() as usize;
+        let columns = self.shape[1];
+        self.composite(right, move |i, a, b| if i % columns < edge { a } else { b })
+    }
+
+    fn composite(&self, right: &Self, f: impl Fn(usize, f32, f32) -> f32) -> Option<Self> {
+        if !self.same_grid(right) {
             return None;
         }
         let values: Arc<[f32]> = self
             .values
             .iter()
             .zip(right.values.iter())
-            .map(|(a, b)| a - b)
+            .enumerate()
+            .map(|(i, (a, b))| f(i, *a, *b))
             .collect();
         let statistics = super::reader::statistics(&values).ok()?;
         Some(Self {

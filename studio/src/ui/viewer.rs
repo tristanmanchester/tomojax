@@ -221,32 +221,21 @@ fn image_toolbar(state: &AppState, kind: PlaneKind) -> El {
         .get(&PlaneKind::Volume)
         .is_some_and(|p| p.available);
     if volume_available {
-        let mut modes = row().gap(2.);
-        for (view, title) in [(PlaneKind::Volume, "3D"), (PlaneKind::Axial, "Slice")] {
-            let selected = (kind == PlaneKind::Volume) == (view == PlaneKind::Volume);
-            let mode = el()
-                .key(if view == PlaneKind::Volume {
-                    "show-volume"
-                } else {
-                    "show-slice"
-                })
-                .role("radio")
-                .label(title)
-                .checked(selected)
-                .focusable(true)
-                .focus_ring(1.5, 0., canvas_muted())
-                .h(28.)
-                .px(8.)
-                .center()
-                .radius(4.)
-                .fill(if selected { forest() } else { canvas_bg() })
-                .on_press_tx(move |s: &mut AppState, tx| {
-                    s.dispatch(UiAction::SetMainView(view), tx)
-                })
-                .child(strong(title, 11., canvas_ink()));
-            modes = modes.child(mode);
-        }
-        toolbar = toolbar.child(modes);
+        let volume = kind == PlaneKind::Volume;
+        toolbar = toolbar.child(canvas_segments(vec![
+            Segment::new(
+                "show-volume",
+                "3D",
+                volume,
+                UiAction::SetMainView(PlaneKind::Volume),
+            ),
+            Segment::new(
+                "show-slice",
+                "Slice",
+                !volume,
+                UiAction::SetMainView(PlaneKind::Axial),
+            ),
+        ]));
     }
     toolbar
         .child(tinted_icon_button(
@@ -265,6 +254,79 @@ fn image_toolbar(state: &AppState, kind: PlaneKind) -> El {
             canvas_muted(),
             |s, tx| s.dispatch(UiAction::Redo, tx),
         ))
+        .child(zoom_controls(state))
+}
+
+/// One option of a segmented control drawn on the dark canvas.
+struct Segment {
+    key: String,
+    title: String,
+    selected: bool,
+    enabled: bool,
+    action: UiAction,
+}
+
+impl Segment {
+    fn new(
+        key: impl Into<String>,
+        title: impl Into<String>,
+        selected: bool,
+        action: UiAction,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            title: title.into(),
+            selected,
+            enabled: true,
+            action,
+        }
+    }
+    fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
+fn canvas_segments(segments: Vec<Segment>) -> El {
+    let mut group = row().gap(2.).role("radiogroup");
+    for segment in segments {
+        let Segment {
+            key,
+            title,
+            selected,
+            enabled,
+            action,
+        } = segment;
+        group = group.child(
+            el().key(key)
+                .role("radio")
+                .label(&title)
+                .checked(selected)
+                .focusable(enabled)
+                .disabled(!enabled)
+                .focus_ring(1.5, 0., canvas_muted())
+                .h(28.)
+                .px(8.)
+                .center()
+                .radius(4.)
+                .fill(if selected { forest() } else { canvas_bg() })
+                .hover(canvas_ink().alpha(0.06))
+                .opacity(if enabled { 1. } else { 0.4 })
+                .on_press_tx(move |s: &mut AppState, tx| {
+                    if enabled {
+                        s.dispatch(action.clone(), tx)
+                    }
+                })
+                .child(strong(title, 11., canvas_ink())),
+        );
+    }
+    group
+}
+
+fn zoom_controls(state: &AppState) -> El {
+    row()
+        .gap(10.)
+        .items_center()
         .child(tinted_icon_button(
             "zoom-out",
             "Zoom out",
@@ -300,13 +362,15 @@ fn image_toolbar(state: &AppState, kind: PlaneKind) -> El {
 }
 
 pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) -> El {
-    let comparison = matches!(mark, 6 | 7 | 10);
+    let comparison = matches!(mark, 6 | 7 | 10 | 12);
     let info = if comparison {
         state.model.comparison_planes[usize::from(mark == 7)].as_ref()
     } else {
         state.model.planes.get(&kind)
     };
-    let available = info.is_some_and(|p| p.available) && (mark != 10 || state.difference_ready());
+    let available = info.is_some_and(|p| p.available)
+        && (mark != 10 || state.difference_ready())
+        && (mark != 12 || state.split_ready());
     let mut area = el()
         .key(format!("canvas-area-{mark}"))
         .grow(1.)
@@ -400,6 +464,13 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
         };
         surface = surface.aspect_fit(ratio);
     }
+    if mark == 12 {
+        surface = surface.child(curtain(
+            state.ui.compare_split,
+            state.ui.display.zoom,
+            state.ui.display.pan,
+        ));
+    }
     if comparison {
         surface = surface.child(cursor_lines(
             state.ui.compare_cursor,
@@ -465,6 +536,10 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
                             },
                             tx,
                         );
+                    } else if mark == 12 {
+                        let u = drag.x / drag.w.max(1.);
+                        let split = (u - 0.5 - s.ui.display.pan[0]) / s.ui.display.zoom + 0.5;
+                        s.dispatch(UiAction::SetCompareSplit(split), tx);
                     } else if comparison {
                         s.ui.compare_cursor = std::array::from_fn(|i| {
                             let pos = [drag.x / drag.w.max(1.), drag.y / drag.h.max(1.)][i];
@@ -596,6 +671,16 @@ fn crosshair(state: &AppState, kind: PlaneKind, interactive: bool) -> El {
     };
     cursor_lines([u, v], zoom, pan, kind)
 }
+/// The Split curtain, in the same zoomed and panned frame as the image.
+fn curtain(split: f32, zoom: f32, pan: [f32; 2]) -> El {
+    let u = ((split - 0.5) * zoom + 0.5 + pan[0]) * 100.;
+    let mut shape = Shape::new().view_box(100., 100.);
+    if (0.0..=100.).contains(&u) {
+        shape = shape.stroke(vec![[u, 0.], [u, 100.]], 0.35, canvas_ink().alpha(0.85));
+    }
+    canvas(shape).w_full().h_full().absolute(0., 0.).inert()
+}
+
 fn cursor_lines([u, v]: [f32; 2], zoom: f32, pan: [f32; 2], kind: PlaneKind) -> El {
     let u = ((u - 0.5) * zoom + 0.5 + pan[0]) * 100.;
     let v = ((v - 0.5) * zoom + 0.5 + pan[1]) * 100.;
@@ -681,7 +766,9 @@ fn image_footer(state: &AppState, kind: PlaneKind) -> El {
         .child(
             label(
                 if state.ui.workspace == Workspace::Compare {
-                    ""
+                    state.model.comparison_planes[0]
+                        .as_ref()
+                        .map_or("", |p| p.quality.as_str())
                 } else {
                     info.map_or("", |p| p.quality.as_str())
                 },
@@ -720,7 +807,7 @@ fn compare(state: &AppState) -> El {
         .assets
         .iter()
         .find(|a| Some(&a.id) == state.model.compare_right.as_ref());
-    let mut main = col()
+    let main = col()
         .key("compare-workspace")
         .padding(20.)
         .gap(16.)
@@ -751,41 +838,115 @@ fn compare(state: &AppState) -> El {
             ),
         );
     }
+    let (left, right) = (left.expect("checked"), right.expect("checked"));
+    let plane = state.ui.compare_plane;
+    let mode = state.ui.compare_mode;
+    let shared_grid = state.model.comparison_note.is_none();
+    let planes = [PlaneKind::Axial, PlaneKind::Coronal, PlaneKind::Sagittal]
+        .into_iter()
+        .map(|p| {
+            Segment::new(
+                format!("compare-plane-{}", p.title().to_lowercase()),
+                p.title(),
+                p == plane,
+                UiAction::ComparePlane(p),
+            )
+        })
+        .collect();
+    let modes = [
+        (CompareMode::Pair, "Side by side"),
+        (CompareMode::Split, "Split"),
+        (CompareMode::Difference, "Difference"),
+    ]
+    .into_iter()
+    .map(|(m, title)| {
+        Segment::new(
+            format!("compare-mode-{}", title.to_lowercase().replace(' ', "-")),
+            title,
+            m == mode,
+            UiAction::CompareMode(m),
+        )
+        .enabled(m == CompareMode::Pair || shared_grid)
+    })
+    .collect();
+    let mut toolbar = row()
+        .h(42.)
+        .w_full()
+        .px(14.)
+        .gap(12.)
+        .items_center()
+        .fill(canvas_bg())
+        .child(canvas_segments(planes))
+        .child(spacer())
+        .child(canvas_segments(modes))
+        .child(zoom_controls(state));
     if let Some(note) = &state.model.comparison_note {
-        main = main.child(help(note));
-    }
-    let mut pair = row().gap(12.).grow(1.).min_h(0.).min_w(0.);
-    for (asset, mark) in [(left, 6), (right, 7)] {
-        let asset = asset.expect("comparison pair checked");
-        pair = pair.child(
-            col()
-                .grow(1.)
-                .min_w(0.)
-                .min_h(0.)
-                .radius(8.)
-                .clip_rounded(8.)
-                .fill(canvas_bg())
-                .child(
-                    row().h(39.).px(12.).items_center().child(
-                        strong(&asset.name, 12., canvas_ink())
-                            .truncate()
-                            .help(&asset.name),
-                    ),
-                )
-                .child(image(state, PlaneKind::Axial, mark, false))
-                .child(
-                    row()
-                        .h(30.)
-                        .px(12.)
-                        .items_center()
-                        .child(label("Axial slice", 11., canvas_muted()))
-                        .child(spacer())
-                        .child(label(unit_name(&asset.units), 11., canvas_muted())),
-                ),
+        toolbar = toolbar.child(
+            label(note, 11., canvas_muted())
+                .truncate()
+                .max_w(260.)
+                .help(note),
         );
     }
-    main.child(pair)
-        .child(image_footer(state, PlaneKind::Axial))
+    let caption = |text: String| {
+        row().h(36.).px(12.).gap(12.).items_center().child(
+            strong(text, 12., canvas_ink())
+                .truncate()
+                .min_w(0.)
+                .shrink(),
+        )
+    };
+    let body = match mode {
+        CompareMode::Pair => {
+            let mut pair = row().gap(2.).grow(1.).min_h(0.).min_w(0.);
+            for (asset, mark) in [(left, 6), (right, 7)] {
+                pair = pair.child(
+                    col()
+                        .grow(1.)
+                        .min_w(0.)
+                        .min_h(0.)
+                        .fill(canvas_bg())
+                        .child(caption(asset.name.clone()).help(&asset.name))
+                        .child(image(state, plane, mark, true)),
+                );
+            }
+            pair
+        }
+        CompareMode::Split => col()
+            .grow(1.)
+            .min_h(0.)
+            .min_w(0.)
+            .fill(canvas_bg())
+            .child(
+                caption(left.name.clone()).child(spacer()).child(
+                    strong(&right.name, 12., canvas_ink())
+                        .truncate()
+                        .min_w(0.)
+                        .shrink(),
+                ),
+            )
+            .child(image(state, plane, 12, true)),
+        CompareMode::Difference => col()
+            .grow(1.)
+            .min_h(0.)
+            .min_w(0.)
+            .fill(canvas_bg())
+            .child(caption(format!("{} − {}", left.name, right.name)))
+            .child(image(state, plane, 10, true)),
+    };
+    main.child(
+        col()
+            .key("compare-canvas")
+            .grow(1.)
+            .min_h(0.)
+            .min_w(0.)
+            .radius(10.)
+            .clip_rounded(10.)
+            .fill(canvas_bg())
+            .child(toolbar)
+            .child(body)
+            .child(image_footer(state, plane)),
+    )
 }
 
 fn empty_project(state: &AppState) -> El {
