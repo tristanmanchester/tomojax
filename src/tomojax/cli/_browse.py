@@ -17,6 +17,7 @@ import numpy as np
 import tomojax as tj
 from tomojax._files import saved_volume_grid
 from tomojax.cli import execution as ex, operations as op, products as p
+from tomojax.cli._frame_reads import frame_pixels
 from tomojax.cli._handles import stage_array
 from tomojax.cli._results import disk_volume, scan_axes, stored_grid
 from tomojax.core.registration import recorded_length_unit
@@ -156,11 +157,9 @@ def window(shape: tuple[int, ...], request: op.Window) -> tuple[range, ...]:
 
 
 def pixels(data: Any, ranges: tuple[range, ...]) -> np.ndarray:
-    keys = tuple(slice(r.start, r.stop, r.step) for r in ranges)
     if hasattr(data, "window"):
-        views, rows, cols = keys
-        block = data.window(slice(rows.start, rows.stop), slice(cols.start, cols.stop))[views]
-        return block[:, :: rows.step, :: cols.step]
+        return frame_pixels(data, ranges, READ_BYTES)
+    keys = tuple(slice(r.start, r[-1] + 1, r.step) for r in ranges)
     return np.asarray(data[keys])
 
 

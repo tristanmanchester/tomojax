@@ -873,3 +873,58 @@ def test_saved_volume_axes_in_operators_and_roi(worker, tmp_path, axes):
     assert output(worker("statistics", **args))["value"]["mean"] == pytest.approx(
         x[2:4, :7:2, 3:4].mean()
     )
+
+
+def test_strided_lazy_frames_read_only_sampled_hdf5_pixels(tmp_path, monkeypatch):
+    from tomojax.cli._browse import pixels  # check-public-imports: allow-private
+    from tomojax.io.api import locate_frames
+
+    path = tmp_path / "frames.h5"
+    data = np.arange(15 * 64 * 64, dtype=np.uint16).reshape(15, 64, 64)
+    with h5py.File(path, "w") as f:
+        f["/entry/instrument/detector/data"] = data
+    stack = (
+        locate_frames(str(path)).stack.window(slice(2, 61), slice(1, 60)).frames_at(slice(1, 15, 2))
+    )
+    reads = []
+    original = h5py.Dataset.__getitem__
+    original_direct = h5py.Dataset.read_direct
+
+    def record(dataset, key):
+        block = original(dataset, key)
+        reads.append(block.size)
+        return block
+
+    def record_direct(dataset, dest, source_sel=None, dest_sel=None):
+        original_direct(dataset, dest, source_sel, dest_sel)
+        reads.append(dest.size if dest_sel is None else dest[dest_sel].size)
+
+    monkeypatch.setattr(h5py.Dataset, "read_direct", record_direct)
+    monkeypatch.setattr(h5py.Dataset, "__getitem__", record)
+    ranges = (range(7), range(3, 59, 8), range(2, 59, 4))
+    got = pixels(stack, ranges)
+    np.testing.assert_array_equal(got, data[1:15:2, 5:61:8, 3:60:4])
+    assert sum(reads) == got.size
+
+
+def test_strided_window_reader_bounds_unsampled_work(monkeypatch):
+    from tomojax.cli import _browse as browse  # check-public-imports: allow-private
+
+    data = np.arange(12 * 71 * 97, dtype=np.uint16).reshape(12, 71, 97)
+    budget = 1024
+
+    class Frames:
+        dtype = data.dtype
+
+        def window(self, rows, cols):
+            class Window:
+                def __getitem__(self, key):
+                    block = data[key, rows, cols]
+                    assert block.nbytes <= budget
+                    return block.copy()
+
+            return Window()
+
+    monkeypatch.setattr(browse, "READ_BYTES", budget)
+    result = browse.pixels(Frames(), (range(1, 12, 2), range(1, 71, 8), range(3, 97, 5)))
+    np.testing.assert_array_equal(result, data[1::2, 1::8, 3::5])
