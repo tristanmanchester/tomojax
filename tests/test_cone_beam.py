@@ -522,8 +522,6 @@ def test_export_and_previews_refuse_an_untagged_volume_as_the_loader_does(
     # order is not guessed from its shape, whether or not the shape would decide it.
     import h5py
 
-    # check-public-imports: allow-private
-    from tomojax.cli._previews import _hdf5_images
     from tomojax.cli.main import main
     from tomojax.io import ProjectionDataset
 
@@ -547,8 +545,10 @@ def test_export_and_previews_refuse_an_untagged_volume_as_the_loader_does(
     assert main(["export", str(path), "-o", str(out)]) == 1
     assert "does not record its axis order" in capsys.readouterr().err
     assert not out.exists()
-    with pytest.raises(ValueError, match="does not record its axis order"):
-        _hdf5_images(path)
+    previews = tmp_path / "previews"
+    assert main(["inspect", str(path), "--preview-dir", str(previews)]) == 1
+    assert "does not record its axis order" in capsys.readouterr().err
+    assert not list(previews.glob("slice_*.png"))
 
 
 @pytest.mark.gpu
