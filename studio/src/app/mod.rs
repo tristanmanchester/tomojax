@@ -478,7 +478,12 @@ impl AppState {
                                         .parameter_choices
                                         .insert("kind".into(), kind.clone());
                                 }
-                                asset.kind = kind;
+                                // A worker result keeps the kind the worker gave it; the
+                                // header can't tell a crop of a reconstruction's scan, or
+                                // a scan with poses applied, from the source kind.
+                                if !asset.is_result() {
+                                    asset.kind = kind;
+                                }
                                 asset.inspection = report;
                                 asset.issue = None;
                                 // Arrays already registered came from the worker, which
@@ -650,7 +655,16 @@ impl AppState {
     }
 
     fn open_project(&mut self, path: &Path, create: bool) -> Result<(), String> {
+        // Kept previews copy their arrays on a local task while their job runs.
+        let running_job = self.project.as_ref().is_some_and(|project| {
+            project
+                .document
+                .jobs
+                .iter()
+                .any(|job| job.status == project::JobStatus::Running)
+        });
         if self.running.is_some()
+            || running_job
             || self.copying > 0
             || self.metadata_pending > 0
             || !self.pending.is_empty()

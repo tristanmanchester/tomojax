@@ -333,10 +333,13 @@ impl AppState {
             }
             _ => {
                 let index = if matches!(job.operation.as_str(), "project" | "backproject") {
-                    running
-                        .products
-                        .iter()
-                        .position(|p| p.scan_source().is_some())
+                    let key = if job.operation == "project" {
+                        "volume"
+                    } else {
+                        "projections"
+                    };
+                    let products: Vec<_> = running.products.iter().collect();
+                    projection_geometry(&products, key)
                         .ok_or("Select a source scan alongside the array")?
                 } else {
                     0
@@ -487,8 +490,11 @@ impl AppState {
                             .and_then(|p| p.document.asset_mut(&input.asset))
                     {
                         // The full inspection knows which stored frames are sample
-                        // views, which the header reader may not.
-                        if let Ok(arrays) = metadata::inspection_arrays(report, &input.path) {
+                        // views, which the header reader may not. Worker results keep
+                        // the worker's own registration.
+                        if !asset.is_result()
+                            && let Ok(arrays) = metadata::inspection_arrays(report, &input.path)
+                        {
                             match arrays.get("projections").cloned() {
                                 Some(mut projections) => {
                                     projections.relative_to(&root);
@@ -583,7 +589,10 @@ impl AppState {
                         j.stage = "Saving result into project".into();
                         j.progress = None;
                     }
-                    let command = json!({"type":"run","operation":{"type":"save","source":{"type":"member","handle":handle,"member":"self"},"path":path,"include_scan":true}});
+                    // A reconstruction opened without its scan has none to save.
+                    let include_scan =
+                        !matches!(output.value, Product::Reconstruction { scan: None, .. });
+                    let command = json!({"type":"run","operation":{"type":"save","source":{"type":"member","handle":handle,"member":"self"},"path":path,"include_scan":include_scan}});
                     if let Err(error) = self.send(
                         command,
                         Pending::Save {
@@ -1067,47 +1076,83 @@ impl AppState {
     }
 }
 
+/// Where forward or back projection reads its volume or projections.
+pub(super) struct ArraySource {
+    /// The input that holds it.
+    pub index: usize,
+    /// Whether it is a selected array result rather than a member of a scan or
+    /// reconstruction.
+    pub registered: bool,
+    pub storage: crate::protocol::Storage,
+    pub descriptor: Option<crate::protocol::ArrayDescriptor>,
+}
+
 /// The volume or projections that forward or back projection reads, with its
 /// registration when known. A selected array result (a saved volume or forward
-/// projection) wins; otherwise the arrays of the first input that holds them,
-/// which is also the input that supplies the geometry.
+/// projection) wins; otherwise the first input that holds one.
 pub(super) fn array_member<'a>(
-    mut products: impl Iterator<Item = &'a Product> + Clone,
+    products: impl Iterator<Item = &'a Product> + Clone,
     key: &str,
-) -> Option<(
-    crate::protocol::Storage,
-    Option<crate::protocol::ArrayDescriptor>,
-)> {
+) -> Option<ArraySource> {
     products
         .clone()
-        .find_map(|product| match product {
-            Product::Volume { volume } if key == "volume" => {
-                Some((volume.storage.clone(), Some(volume.clone())))
-            }
-            Product::Projections { projections } if key == "projections" => {
-                Some((projections.storage.clone(), Some(projections.clone())))
-            }
-            _ => None,
+        .enumerate()
+        .find_map(|(index, product)| {
+            let array = match product {
+                Product::Volume { volume } if key == "volume" => volume,
+                Product::Projections { projections } if key == "projections" => projections,
+                _ => return None,
+            };
+            Some(ArraySource {
+                index,
+                registered: true,
+                storage: array.storage.clone(),
+                descriptor: Some(array.clone()),
+            })
         })
         .or_else(|| {
-            products.find_map(|product| {
+            products.enumerate().find_map(|(index, product)| {
                 let members = product.members();
-                if key == "projections" {
-                    let descriptor = match product {
-                        Product::Scan { projections, .. } => Some(projections.clone()),
-                        _ => None,
-                    };
-                    return Some((members.get("projections")?.clone(), descriptor));
-                }
                 let (member, descriptor) = match product {
+                    Product::Scan { projections, .. } if key == "projections" => {
+                        ("projections", Some(projections))
+                    }
+                    _ if key == "projections" => ("projections", None),
                     Product::Reconstruction { volume, .. } => ("volume", Some(volume)),
                     Product::Simulation { phantom, .. } => ("phantom", Some(phantom)),
                     Product::Alignment { image, .. } => ("image", image.as_ref()),
                     _ => ("volume", None),
                 };
-                Some((members.get(member)?.clone(), descriptor.cloned()))
+                Some(ArraySource {
+                    index,
+                    registered: false,
+                    storage: members.get(member)?.clone(),
+                    descriptor: descriptor.cloned(),
+                })
             })
         })
+}
+
+/// The input whose scan supplies the geometry. Back projection uses the scan
+/// whose projections it reads, unless a projection result is selected. Forward
+/// projection prefers a selected scan other than the one holding the volume, so a
+/// reconstruction can be projected into another scan's geometry.
+pub(super) fn projection_geometry(products: &[&Product], key: &str) -> Option<usize> {
+    let array = array_member(products.iter().copied(), key);
+    let scans = || {
+        products
+            .iter()
+            .enumerate()
+            .filter(|(_, product)| product.scan_source().is_some())
+            .map(|(index, _)| index)
+    };
+    match array {
+        Some(array) if !array.registered && key == "projections" => Some(array.index),
+        Some(array) if !array.registered => scans()
+            .find(|&index| index != array.index)
+            .or_else(|| scans().find(|&index| index == array.index)),
+        _ => scans().next(),
+    }
 }
 
 /// Puts the volume or projections into a projection command. Forward projection
@@ -1126,7 +1171,12 @@ pub(super) fn fill_projection_array<'a>(
             .filter(|unit| !matches!(unit.as_str(), "pixel" | "index")),
         _ => None,
     });
-    let Some((storage, descriptor)) = array_member(products, key) else {
+    let Some(ArraySource {
+        storage,
+        descriptor,
+        ..
+    }) = array_member(products, key)
+    else {
         return Ok(false);
     };
     // The worker reads the volume in the scan's length unit.

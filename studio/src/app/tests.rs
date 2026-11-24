@@ -437,6 +437,38 @@ fn header_metadata_keeps_worker_registered_arrays() {
     });
     let asset = state.project.as_ref().unwrap().document.asset(&id).unwrap();
     assert_eq!(asset.arrays["projections"].domain, "line_integrals");
+
+    // A worker result keeps the kind the worker gave it.
+    let project = state.project.as_mut().unwrap();
+    let asset = project.document.asset_mut(&id).unwrap();
+    asset.kind = "scan".into();
+    asset.parent = Some("source-scan".into());
+    state.local_event(LocalEvent::Metadata {
+        asset: id.clone(),
+        result: Ok(Some((
+            "reconstruction".into(),
+            Default::default(),
+            json!({}),
+        ))),
+    });
+    let asset = state.project.as_ref().unwrap().document.asset(&id).unwrap();
+    assert_eq!(asset.kind, "scan");
+}
+
+#[test]
+fn projects_are_not_switched_while_a_kept_preview_is_being_copied() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state
+        .open_project(&directory.path().join("first"), true)
+        .unwrap();
+    let mut job = project::Job::new("slice", json!({}), vec![]);
+    job.status = JobStatus::Running;
+    state.project.as_mut().unwrap().document.jobs.push(job);
+    let error = state
+        .open_project(&directory.path().join("second"), true)
+        .unwrap_err();
+    assert!(error.contains("active work"), "{error}");
 }
 
 #[test]
@@ -476,7 +508,7 @@ fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
     };
     let (first, second) = (scan("first"), scan("second"));
     let chosen = |products: &[&Product]| {
-        jobs::array_member(products.iter().copied(), "projections").map(|(storage, _)| storage)
+        jobs::array_member(products.iter().copied(), "projections").map(|source| source.storage)
     };
     // A selected result wins wherever it sits in project order.
     for products in [[&selected, &first], [&first, &selected]] {
@@ -487,6 +519,34 @@ fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
         chosen(&[&first, &second]),
         Some(crate::protocol::Storage::Member { handle, .. }) if handle == "first"
     ));
+
+    // Geometry: forward projection into another selected scan, whichever comes
+    // first; back projection from the scan whose projections it reads.
+    let reconstruction = Product::Reconstruction {
+        handle: "reconstruction".into(),
+        volume: saved.clone(),
+        scan: Some(crate::protocol::Storage::Member {
+            handle: "reconstruction".into(),
+            member: "scan".into(),
+        }),
+        method: "fbp".into(),
+    };
+    assert_eq!(
+        jobs::projection_geometry(&[&reconstruction, &second], "volume"),
+        Some(1)
+    );
+    assert_eq!(
+        jobs::projection_geometry(&[&reconstruction], "volume"),
+        Some(0)
+    );
+    assert_eq!(
+        jobs::projection_geometry(&[&first, &second], "projections"),
+        Some(0)
+    );
+    assert_eq!(
+        jobs::projection_geometry(&[&selected, &second], "projections"),
+        Some(1)
+    );
 
     // Forward projection keeps the volume's own registered grid.
     let mut volume = saved.clone();

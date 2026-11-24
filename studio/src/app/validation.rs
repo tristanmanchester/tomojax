@@ -432,22 +432,50 @@ impl AppState {
         } else {
             vec![input.clone()]
         };
+        // Forward and back projection: the array and the geometry are chosen from
+        // the opened inputs exactly as execution chooses them.
+        if let Some(key) = array_key {
+            let mut products = Vec::new();
+            for input in &inputs {
+                if let Some(product) = super::jobs::registered_array(input) {
+                    products.push(product);
+                    continue;
+                }
+                self.previews
+                    .ensure_input(input.clone())
+                    .map_err(|message| DraftError::new("source", message))?;
+                match self
+                    .previews
+                    .source_product(input)
+                    .map_err(|message| DraftError::new("source", message))?
+                {
+                    Some(product) => products.push(product.clone()),
+                    None => return Ok(None),
+                }
+            }
+            let products: Vec<_> = products.iter().collect();
+            if !value.contains_key(key) {
+                super::jobs::fill_projection_array(&mut value, products.iter().copied(), key)
+                    .map_err(|error| DraftError::new(key, error))?;
+            }
+            let index = super::jobs::projection_geometry(&products, key)
+                .ok_or_else(|| DraftError::new("source", "Select a scan alongside the array."))?;
+            let Some(source) = self
+                .previews
+                .source_ref(&inputs[index])
+                .map_err(|message| DraftError::new("source", message))?
+            else {
+                return Ok(None);
+            };
+            value.insert("source".into(), json!(source));
+            self.validation.view.scope = format!("{} selected inputs", inputs.len());
+            return Ok(Some(Value::Object(value)));
+        }
         let mut sources = Vec::new();
         for input in &inputs {
-            if array_key.is_some() && super::jobs::registered_array(input).is_some() {
-                continue;
-            }
             self.previews
                 .ensure_input(input.clone())
                 .map_err(|message| DraftError::new("source", message))?;
-            // Forward and back projection take their geometry from the first input
-            // that holds a scan, as execution does; raw frames and array-only
-            // results don't supply it.
-            if array_key.is_some()
-                && matches!(self.previews.source_product(input), Ok(Some(product)) if product.scan_source().is_none())
-            {
-                continue;
-            }
             let source = self
                 .previews
                 .source_ref(input)
@@ -456,21 +484,6 @@ impl AppState {
                 Some(source) => sources.push(source),
                 None => return Ok(None),
             }
-        }
-        // The volume or projections as execution passes them: from the opened
-        // inputs, in the worker's canonical axis order.
-        if let Some(key) = array_key
-            && !value.contains_key(key)
-        {
-            let products = inputs
-                .iter()
-                .filter_map(|input| {
-                    super::jobs::registered_array(input)
-                        .or_else(|| self.previews.source_product(input).ok().flatten().cloned())
-                })
-                .collect::<Vec<_>>();
-            super::jobs::fill_projection_array(&mut value, products.iter(), key)
-                .map_err(|error| DraftError::new(key, error))?;
         }
         if combined {
             value.insert("sources".into(), json!(sources));
