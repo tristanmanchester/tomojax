@@ -496,6 +496,29 @@ fn exporting_a_standalone_reconstruction_leaves_out_the_scan_it_lacks() {
 }
 
 #[test]
+fn corrections_edited_as_json_survive_reopening() {
+    let mut state = AppState::init();
+    state.set_operation("correct", None);
+    let edit = |state: &mut AppState, text: &str| {
+        state
+            .ui
+            .parameter_edits
+            .get_mut("corrections")
+            .unwrap()
+            .replace_text(text);
+    };
+    edit(&mut state, r#"[{"type":"Zingers","threshold":0.1}]"#);
+    crate::ui::corrections::reset(&mut state.ui, &state.catalog);
+    state.ui.corrections.json_mode = true;
+    edit(&mut state, r#"[{"type":"Zingers","threshold":0.3}]"#);
+    let context = state.capture_workspace();
+    state.restore_workspace(&context);
+    assert!(state.ui.corrections.json_mode);
+    let parameters = crate::ui::corrections::parameters_detailed(&state.ui).unwrap();
+    assert_eq!(parameters[0]["threshold"], 0.3);
+}
+
+#[test]
 fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
     let directory = tempfile::tempdir().unwrap();
     let saved = ramp_volume(directory.path(), "forward", 2).arrays["volume"].clone();
@@ -534,6 +557,22 @@ fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
     assert_eq!(
         jobs::projection_geometry(&[&reconstruction, &second], "volume"),
         Some(1)
+    );
+    // A reconstruction is projected into a simulation's geometry, not the
+    // simulation's ground-truth phantom into the reconstruction's.
+    let simulation = Product::Simulation {
+        handle: "simulation".into(),
+        scan: crate::protocol::Storage::Member {
+            handle: "simulation".into(),
+            member: "scan".into(),
+        },
+        phantom: saved.clone(),
+    };
+    let volume = jobs::array_member([&simulation, &reconstruction].into_iter(), "volume").unwrap();
+    assert_eq!(volume.index, 1);
+    assert_eq!(
+        jobs::projection_geometry(&[&simulation, &reconstruction], "volume"),
+        Some(0)
     );
     assert_eq!(
         jobs::projection_geometry(&[&reconstruction], "volume"),

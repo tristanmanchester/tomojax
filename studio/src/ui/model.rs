@@ -284,6 +284,21 @@ impl UiModel {
             .iter()
             .find(|asset| Some(&asset.id) == self.active_asset.as_ref())
     }
+    /// The export format that applies to the active result: the worker writes
+    /// TIFF slices of volumes only, so a scan exports as NXtomo.
+    pub fn export_format<'a>(&self, chosen: &'a str) -> &'a str {
+        if self
+            .active()
+            .is_some_and(|asset| asset.kind == AssetKind::Scan)
+        {
+            "nxs"
+        } else {
+            chosen
+        }
+    }
+    pub fn tiff_export(&self) -> bool {
+        self.export_format("float32") == "float32"
+    }
     pub fn selection_count(&self) -> usize {
         self.selected_assets
             .len()

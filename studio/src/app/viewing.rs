@@ -735,6 +735,10 @@ impl AppState {
             "studio:compare_linked".into(),
             self.ui.compare_linked.to_string(),
         );
+        draft_choices.insert(
+            "studio:corrections_json".into(),
+            self.ui.corrections.json_mode.to_string(),
+        );
         let mut draft_edits: std::collections::BTreeMap<_, _> = self
             .ui
             .parameter_edits
@@ -871,6 +875,15 @@ impl AppState {
             {
                 edit.replace_text(value.clone());
             }
+        }
+        // Corrections edited as JSON stay in JSON, so its text is what runs.
+        if context
+            .draft_choices
+            .get("studio:corrections_json")
+            .map(String::as_str)
+            == Some("true")
+        {
+            self.ui.corrections.json_mode = true;
         }
         for (name, value) in &context.draft_choices {
             if let Some(choice) = self.ui.parameter_choices.get_mut(name) {

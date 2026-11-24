@@ -974,21 +974,27 @@ fn result_picker(state: &AppState, side: usize, title: &str, selected: Option<&s
 
 fn export_format(state: &AppState) -> El {
     let mut choices = row().gap(4.);
-    for (value, title) in [
-        ("nxs", "NXtomo"),
-        ("float32", "TIFF 32"),
-        ("uint16", "TIFF 16"),
-    ] {
+    let format = state.model.export_format(&state.ui.export_format);
+    let formats: &[(&str, &str)] = if state.model.tiff_export() {
+        &[
+            ("nxs", "NXtomo"),
+            ("float32", "TIFF 32"),
+            ("uint16", "TIFF 16"),
+        ]
+    } else {
+        &[("nxs", "NXtomo")]
+    };
+    for &(value, title) in formats {
         choices = choices.child(choice(
             &format!("export-format-{value}"),
             title,
-            state.ui.export_format == value,
+            format == value,
             true,
             UiAction::SetExportFormat(value.into()),
         ));
     }
     let mut export = col().gap(9.).child(choices);
-    if state.ui.export_format == "uint16" {
+    if format == "uint16" {
         export = export.child(help(
             "16-bit TIFF rescales values to integers over a percentile range.",
         ));
@@ -1051,7 +1057,7 @@ fn footer(state: &AppState) -> El {
             content = content.child(
                 action_button_icon(
                     "export-result",
-                    match state.ui.export_format.as_str() {
+                    match state.model.export_format(&state.ui.export_format) {
                         "float32" => "Export TIFF (float32)",
                         "uint16" => "Export TIFF (uint16)",
                         _ => "Export NXtomo",
@@ -1059,7 +1065,7 @@ fn footer(state: &AppState) -> El {
                     Icon::Export,
                     true,
                     state.model.active().is_some(),
-                    UiAction::Export(state.ui.export_format.clone()),
+                    UiAction::Export(state.model.export_format(&state.ui.export_format).into()),
                 )
                 .w_full()
                 .h(40.),

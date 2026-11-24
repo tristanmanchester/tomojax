@@ -250,12 +250,9 @@ pub fn suggested_kind(report: &Value) -> &'static str {
         && has("simulation_info")
     {
         "simulation"
-    } else if has("alignment_info")
-        || report
-            .pointer("/alignment/params_found")
-            .and_then(Value::as_bool)
-            == Some(true)
-    {
+    } else if has("alignment_info") {
+        // An alignment is its record; a scan saved with a pose table is still a
+        // scan (TomoJAX loads it as one and has no alignment record to load).
         "alignment"
     } else if report.pointer("/volume/found").and_then(Value::as_bool) == Some(true) {
         "reconstruction"
@@ -754,6 +751,16 @@ mod tests {
             string_attribute(&angles, "units").unwrap().as_deref(),
             Some("degree")
         );
+    }
+
+    #[test]
+    fn a_scan_with_a_pose_table_is_a_scan_and_an_alignment_needs_its_record() {
+        let posed = json!({"geometry":{"meta_keys":["corrections"]},
+            "alignment":{"found":true,"params_found":true}});
+        assert_eq!(suggested_kind(&posed), "scan");
+        let aligned = json!({"geometry":{"meta_keys":["alignment_info"]},
+            "alignment":{"found":true,"params_found":true}});
+        assert_eq!(suggested_kind(&aligned), "alignment");
     }
 
     #[test]

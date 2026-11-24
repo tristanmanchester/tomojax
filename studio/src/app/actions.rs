@@ -617,7 +617,7 @@ impl AppState {
             "jobs" => UiAction::SetWorkspace(Workspace::Jobs),
             "queue" => UiAction::QueueOperation(self.ui.operation.clone()),
             "simulate" => UiAction::Simulate,
-            "export" => UiAction::Export(self.ui.export_format.clone()),
+            "export" => UiAction::Export(self.model.export_format(&self.ui.export_format).into()),
             "fit" => UiAction::FitView,
             "window" => UiAction::AutoWindow,
             "axial" => UiAction::SetMainView(PlaneKind::Axial),

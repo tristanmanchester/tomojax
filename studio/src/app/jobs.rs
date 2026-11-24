@@ -1111,25 +1111,34 @@ pub(super) fn array_member<'a>(
             })
         })
         .or_else(|| {
-            products.enumerate().find_map(|(index, product)| {
-                let members = product.members();
-                let (member, descriptor) = match product {
-                    Product::Scan { projections, .. } if key == "projections" => {
-                        ("projections", Some(projections))
-                    }
-                    _ if key == "projections" => ("projections", None),
-                    Product::Reconstruction { volume, .. } => ("volume", Some(volume)),
-                    Product::Simulation { phantom, .. } => ("phantom", Some(phantom)),
-                    Product::Alignment { image, .. } => ("image", image.as_ref()),
-                    _ => ("volume", None),
-                };
-                Some(ArraySource {
-                    index,
-                    registered: false,
-                    storage: members.get(member)?.clone(),
-                    descriptor: descriptor.cloned(),
+            // A reconstructed or aligned volume before a simulation's ground-truth
+            // phantom, then project order.
+            products
+                .enumerate()
+                .filter_map(|(index, product)| {
+                    let members = product.members();
+                    let (rank, member, descriptor) = match product {
+                        Product::Scan { projections, .. } if key == "projections" => {
+                            (0, "projections", Some(projections))
+                        }
+                        _ if key == "projections" => (1, "projections", None),
+                        Product::Reconstruction { volume, .. } => (0, "volume", Some(volume)),
+                        Product::Alignment { image, .. } => (1, "image", image.as_ref()),
+                        Product::Simulation { phantom, .. } => (2, "phantom", Some(phantom)),
+                        _ => (3, "volume", None),
+                    };
+                    Some((
+                        rank,
+                        ArraySource {
+                            index,
+                            registered: false,
+                            storage: members.get(member)?.clone(),
+                            descriptor: descriptor.cloned(),
+                        },
+                    ))
                 })
-            })
+                .min_by_key(|(rank, source)| (*rank, source.index))
+                .map(|(_, source)| source)
         })
 }
 
