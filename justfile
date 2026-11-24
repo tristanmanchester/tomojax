@@ -2,6 +2,10 @@ set dotenv-load := false
 
 benchmark_scripts := "bench"
 
+# CPU tests run on one worker per two logical CPUs, each pinned to its share of the cores
+# (tests/conftest.py) and handed one test at a time, the slow ones first.
+parallel := "-n " + `echo $(( ($(nproc) + 1) / 2 ))` + " --maxschedchunk 1"
+
 setup:
     uv sync --locked --extra cpu --dev
 
@@ -29,10 +33,10 @@ imports:
     uv run --no-sync python tools/check_public_imports.py
 
 test:
-    JAX_PLATFORMS=cpu uv run --no-sync pytest -q -m "not gpu"
+    JAX_PLATFORMS=cpu uv run --no-sync pytest -q -m "not gpu" {{parallel}}
 
 test-cov:
-    JAX_PLATFORMS=cpu uv run --no-sync pytest -q tests -m "not gpu" --cov
+    JAX_PLATFORMS=cpu uv run --no-sync pytest -q tests -m "not gpu" --cov {{parallel}}
 
 package:
     rm -rf dist
@@ -84,7 +88,7 @@ ci:
     uv run --no-sync python tools/smoke_cli_workflow.py
     uv run --no-sync python examples/simulate_and_reconstruct.py
     uv run --no-sync python tools/smoke_accelerator.py
-    JAX_PLATFORMS=cpu uv run --no-sync pytest -q tests -m "not gpu" --cov
+    JAX_PLATFORMS=cpu uv run --no-sync pytest -q tests -m "not gpu and not slow" {{parallel}}
     just benchmark-smoke
 
 surface-check:
@@ -94,7 +98,7 @@ surface-check:
     uv run --no-sync python tools/check_public_imports.py
     uv run --no-sync python tools/smoke_cli_workflow.py
     uv run --no-sync python tools/smoke_accelerator.py
-    JAX_PLATFORMS=cpu uv run --no-sync pytest -q -m "surface and not numerical and not gpu"
+    JAX_PLATFORMS=cpu uv run --no-sync pytest -q -m "surface and not numerical and not gpu" {{parallel}}
 
 # Build the documentation site into site/out: the guides are copied from the
 # repository's Markdown and the API pages generated from the source by griffe.

@@ -86,6 +86,7 @@ dev = [
     "ruff>=0.11,<0.12",
     "twine>=6,<7",
     "jsonschema>=4.23,<5",
+    "pytest-xdist>=3.8,<4",
 ]
 
 [tool.ruff]
@@ -247,7 +248,7 @@ markers = [
     "gpu: requires GPU",
     "fresh_gpu: needs a GPU no other process holds; run in its own pytest process",
     "cuda: requires Cuda-capable backend",
-    "slow: slow tests",
+    "slow: takes over about 20 s on a CPU; starts first, and the CPU gate leaves it to the GPU suite",
 ]
 
 [tool.coverage.run]

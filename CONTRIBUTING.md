@@ -20,18 +20,19 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 | --- | --- |
 | `just format` | Format and auto-fix lint issues with Ruff |
 | `just surface-check` | Read-only format, lint, and import checks, CLI and accelerator smoke checks, and surface tests (excluding numerical and GPU markers) |
-| `just test` | CPU test suite, including numerical tests |
+| `just test` | Every CPU test, in parallel, including the alignment fits marked `slow` |
+| `just test-cov` | The same tests with branch coverage |
 | `just docstrings` | Validate NumPy-style public API docstrings |
 | `just docs` | Build the Python reference HTML into `.artifacts/docs/` |
 | `just typecheck` | Run `basedpyright` on the configured public API, IO, CLI, and tools |
 | `just imports` | Check dependency layers and public-import guardrails |
 | `just examples` | Run the public projection and reconstruction example |
 | `just package` | Build sdist and wheel, run `twine check --strict`, and smoke-test the installed wheel |
-| `just ci` | Full CPU gate: static checks, package build and smoke test, example, CPU coverage, and small analytic benchmarks |
-| `just test-cuda` | Require CUDA, then run every test with the GPU visible |
+| `just ci` | CPU gate: static checks, package build and smoke test, example, the CPU tests except those marked `slow`, and small analytic benchmarks |
+| `just test-cuda` | Require CUDA, then run every test with the GPU visible, the `slow` ones included |
 | `just guardrails` | Update the public API and code-health ratchet records after an intentional change |
 
-`just check` formats files before running checks; use `just ci` for read-only validation. Package recipes overwrite `dist/`, so store release artefacts elsewhere. Run `just test-cuda` on NVIDIA hardware whenever a change touches GPU kernels or accelerator paths.
+`just check` formats files before running checks; use `just ci` for read-only validation. Mark a test that takes more than about 20 s on a CPU `slow`: it starts first in a parallel run, and `just ci` leaves it to `just test-cuda`, where the same fit takes seconds. Package recipes overwrite `dist/`, so store release artefacts elsewhere. Run `just test-cuda` on NVIDIA hardware whenever a change touches GPU kernels or accelerator paths.
 
 `tools/smoke_installed_wheel.py` creates a disposable environment outside the repository, installs the built wheel without a package cache (requiring a real GPU under `--extra cuda12`), and runs simulation, automatic reconstruction, and slice export.
 

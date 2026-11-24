@@ -1,10 +1,12 @@
 """fit="rotations" is the axis's wobble: each view's angle about the axis stays as recorded."""
 
 import numpy as np
+import pytest
 
 import tomojax as tj
 
 
+@pytest.mark.slow
 def test_rotations_fit_the_wobble_and_leave_every_view_angle_as_recorded():
     grid, detector = tj.Grid(16, 16, 12, 1, 1, 1), tj.Detector(24, 16, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, 24, endpoint=False))

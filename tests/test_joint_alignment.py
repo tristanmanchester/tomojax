@@ -497,6 +497,7 @@ def test_pose_fit_recovers_per_view_rotations():
     assert after < 0.1 and after < 0.2 * before, (before, after)
 
 
+@pytest.mark.slow
 @pytest.mark.numerical
 def test_working_grid_follows_the_declared_geometry_not_the_pose_table():
     # A cone scan whose voxel equals the pixel footprint du / M exactly (M = 288 / 192 = 1.5).

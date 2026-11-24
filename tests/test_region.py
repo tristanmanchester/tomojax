@@ -48,6 +48,7 @@ def _layer_scan(layers: tuple[float, ...]) -> tuple[tj.Scan, list[tuple[np.ndarr
     return tj.Scan(np.array(data, np.float32), geometry, name="analytic layers"), components
 
 
+@pytest.mark.slow
 @pytest.mark.numerical
 @pytest.mark.parametrize("layers", [(4.0,), (-10.0, 10.0)])
 def test_region_from_independent_layers_retains_object_and_context(

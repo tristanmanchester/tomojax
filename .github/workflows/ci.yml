@@ -80,15 +80,15 @@ jobs:
       - name: Accelerator smoke workflow
         run: uv run --no-sync python tools/smoke_accelerator.py
 
-      # A pull request gets the quick public-surface tests; the numerical suite, about an
-      # hour on a hosted runner, runs on demand and before a release.
+      # A pull request gets the quick public-surface tests; the numerical suite runs on
+      # demand and before a release.
       - name: Surface tests
         if: github.event_name == 'pull_request'
-        run: uv run --no-sync pytest -q tests -m "surface and not numerical and not gpu"
+        run: uv run --no-sync pytest -q tests -m "surface and not numerical and not gpu" -n auto --maxschedchunk 1
 
       - name: Tests
         if: github.event_name != 'pull_request'
-        run: uv run --no-sync pytest -q tests -m "not gpu" --cov
+        run: uv run --no-sync pytest -q tests -m "not gpu" --cov -n auto --maxschedchunk 1
 
       - name: Analytic accuracy benchmarks
         env:

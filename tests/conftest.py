@@ -9,6 +9,14 @@ if os.environ.get("JAX_PLATFORMS") == "cpu":
     # Several CPU devices, so tests can share views among devices (test_devices.py).
     os.environ.setdefault("JAX_NUM_CPU_DEVICES", "4")
 
+if worker := os.environ.get("PYTEST_XDIST_WORKER"):
+    # Each parallel worker keeps to its own share of the cores. XLA sizes its thread
+    # pool to the CPUs the process may run on, so unpinned workers each start a pool
+    # for the whole machine and spend their time contending for it.
+    cores = sorted(os.sched_getaffinity(0))
+    index, count = int(worker.removeprefix("gw")), int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
+    os.sched_setaffinity(0, cores[index % len(cores) :: count] or cores)
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -16,8 +24,10 @@ if str(SRC) not in sys.path:
 
 
 def pytest_collection_modifyitems(config: object, items: list[object]) -> None:
-    """Skip ``gpu``-marked tests on machines without a CUDA device."""
+    """Start the slow tests first, and skip ``gpu``-marked tests without a CUDA device."""
     del config
+    # A parallel run ends when its last test does: the long ones must not start last.
+    items.sort(key=lambda item: item.get_closest_marker("slow") is None)  # pyright: ignore[reportAttributeAccessIssue]
     import jax
     import pytest
 

@@ -44,6 +44,7 @@ def test_reconstructing_an_aligned_scan_keeps_the_scan_grid(kind):
     assert np.shape(tj.reconstruct(result.scan).volume) == _shape(scan.grid)
 
 
+@pytest.mark.slow
 def test_the_align_docstring_example_reconstructs_at_the_scan_grid():
     scan = _scan("parallel")
     result = tj.align(scan, fit=("translations", "roll"))
