@@ -74,8 +74,8 @@ def _build_parser() -> ProgressParser:
         epilog=(
             "Command forms:\n"
             "  inspect INPUT [--preview-dir DIR] [--json]\n"
-            "  correct | align | reconstruct | export  INPUT -o OUTPUT [options]\n"
-            "  simulate -o OUTPUT [options]\n  serve\n\n"
+            "  correct | align | reconstruct | export  INPUT -o OUTPUT \\[options]\n"
+            "  simulate -o OUTPUT \\[options]\n  serve\n\n"
             "Commands refuse to replace an existing output without --force; "
             "`tomojax <command> --help` describes each one. Exit status: "
             "0 success, 1 failure, 2 usage error, 130 interrupted.\n\n"

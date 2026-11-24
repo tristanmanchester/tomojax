@@ -375,7 +375,8 @@ def _run(
         run.manifest,
         cast("str | None", metadata["config_path"]),
     )
-    admit_or_exit(parser, watch, force=cast("bool", args.force), related=related)
+    if not args.dry_run:
+        admit_or_exit(parser, watch, force=cast("bool", args.force), related=related)
     progress.check_cancelled()
 
     scan = tj.load(run.data, apply_poses=run.apply_poses)

@@ -42,7 +42,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     scan = tj.load(args.input)
-    sweep = interactive.resolve_sweep(scan, "z", args.plane, args.centres)
+    sweep = interactive.resolve_sweep(scan, "z", args.plane, args.centres, method="fbp")
     row0, row1, column0, column1 = args.region
     crops = [
         np.asarray(plane, np.float32)[row0:row1, column0:column1]

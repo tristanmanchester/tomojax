@@ -337,7 +337,8 @@ def _run(
     outputs = [] if args.dry_run else [args.out, args.manifest]
     check_paths(parser, inputs=[args.data], outputs=outputs, force=args.force)
     related = (args.data, args.out, args.manifest, cast("str | None", metadata["config_path"]))
-    admit_or_exit(parser, watch, force=args.force, related=related)
+    if not args.dry_run:
+        admit_or_exit(parser, watch, force=args.force, related=related)
     progress.check_cancelled()
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_cancelled()

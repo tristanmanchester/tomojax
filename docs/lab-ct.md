@@ -40,7 +40,9 @@ Pass `--stripes WIDTH`, `--rings`, or `--zingers` to `tomojax correct` (or `Stri
 
 ```bash
 tomojax correct scan/scan.xtekct --darks 0 --stripes 9 --rings --dry-run --preview band.png
-``` For beam-hardening linearisation with an explicit polynomial or X-ray spectrum, see [beam hardening](../src/tomojax/corrections/README.md#beam-hardening); vendor beam-hardening parameters are kept in metadata unapplied.
+```
+
+For beam-hardening linearisation with an explicit polynomial or X-ray spectrum, see [beam hardening](../src/tomojax/corrections/README.md#beam-hardening); vendor beam-hardening parameters are kept in metadata unapplied.
 
 ### Zeiss Xradia preview
 

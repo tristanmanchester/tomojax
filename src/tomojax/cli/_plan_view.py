@@ -142,9 +142,11 @@ def plan_header(command: str, scan: tj.Scan, work: Work, placement: Placement) -
         bins = ", ".join(str(level.binning) for level in work.schedule.levels)
         what = f"joint fit at binning {bins}"
     devices = ", ".join(placement.devices)
-    needed = size(placement.host_bytes + placement.device_bytes)
-    free = _available(placement)
-    return f"{command}: {what} · {placement.strategy} on {devices}, {needed} of {free}"
+    free, host, device = _available(placement), placement.host_bytes, placement.device_bytes
+    memory = f"{size(device)} of {free} on the device, {size(host)} on the host"
+    if all(s.scope == "host" for s in placement.snapshot):  # one memory holds both
+        memory = f"{size(host + device)} of {free}"
+    return f"{command}: {what} · {placement.strategy} on {devices}, {memory}"
 
 
 __all__ = [

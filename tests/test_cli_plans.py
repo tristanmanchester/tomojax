@@ -9,6 +9,7 @@ import pytest
 
 import tomojax as tj
 from tomojax import progress
+from tomojax.cli._plan_view import plan_header, plan_text  # check-public-imports: allow-private
 from tomojax.cli.main import main
 from tomojax.wire.resources import Placement, Snapshot
 
@@ -24,7 +25,6 @@ def scan_path(tmp_path_factory):
 
 def test_plan_text_names_the_method_grid_and_estimated_memory(scan_path):
     from tomojax._planning import resolve_reconstruction
-    from tomojax.cli._plan_view import plan_text  # check-public-imports: allow-private
     from tomojax.cli._plans import plan_product  # check-public-imports: allow-private
 
     scan = tj.load(scan_path)
@@ -46,6 +46,23 @@ def test_plan_text_names_the_method_grid_and_estimated_memory(scan_path):
         "available unknown"
     )
     assert plan_product(scan, work).method == "fista"
+
+
+def test_the_header_compares_device_memory_with_device_memory(scan_path):
+    from tomojax._planning import resolve_reconstruction
+
+    scan = tj.load(scan_path)
+    work = resolve_reconstruction(scan, "fbp")
+    gpu = Snapshot(0, "gpu:0", "jax", None, None, 8 * 2**30)
+    slabbed = Placement(("gpu:0",), "slabbed", 16 * 2**30, 2 * 2**30, (gpu,))
+    assert plan_header("reconstruct", scan, work, slabbed).endswith(
+        "slabbed on gpu:0, 2.0 GiB of 8.0 GiB on the device, 16.0 GiB on the host"
+    )
+    cpu = Snapshot(0, "cpu:0", "host", None, None, 8 * 2**30)
+    resident = Placement(("cpu:0",), "resident", 3 * 2**30, 0, (cpu,))
+    assert plan_header("reconstruct", scan, work, resident).endswith(
+        "resident on cpu:0, 3.0 GiB of 8.0 GiB"
+    )
 
 
 def _count_resolutions(monkeypatch):

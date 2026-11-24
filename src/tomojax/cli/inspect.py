@@ -138,6 +138,7 @@ def _make_previews(
     slices: list[tuple[pv.Axis, int]] | None,
     centres: tuple[float, ...] | None,
     force: bool,
+    listing: bool,
 ) -> pv.Previews:
     import tomojax as tj
     from tomojax._loading import is_raw_input
@@ -156,35 +157,34 @@ def _make_previews(
         )
     scan = None if frameless or raw or (saved and centres is None) else tj.load(path)
     projection = pv.projection_image(path)
-    names = [] if projection is None else ["projection.png"]
-    if scan is not None and not saved:
-        wanted = slices or [("z", scan.grid.nz // 2)]
-        names += [pv.slice_name(axis, index) for axis, index in dict.fromkeys(wanted)]
-    if scan is not None and centres is not None:
-        names += [pv.centre_name(i, len(centres), c) for i, c in enumerate(centres)]
-        names.append("centre_sweep.png")
+    if saved:
+        wanted = pv.saved_requests(path, slices)
+    else:
+        wanted = [] if scan is None else slices or [("z", scan.grid.nz // 2)]
+    has = {"projection": projection is not None, "listing": listing}
+    paths = pv.destinations(directory, wanted, centres or (), **has)
     try:
-        check_destinations({path.resolve()}, pv.destinations(directory, names), force=force)
+        check_destinations({path.resolve()}, paths, force=force)
     except FileExistsError as exc:
         parser.fail(str(exc), hint="pass --force to replace the previews")
     directory.mkdir(parents=True, exist_ok=True)
-    if projection is not None:
+    if saved:
+        pv.write_saved_slices(path, directory, wanted, out)
+    elif raw:
+        out.notes.append("raw frames: tomojax correct makes a scan whose slices can be previewed")
+    else:
+        assert scan is not None
+        pv.write_scan_slices(scan, directory, wanted, out)
+    if scan is not None and centres is not None:
+        plane = slices[0] if slices else None
+        pv.write_sweep(scan, path, directory, centres, plane, out)
+    if projection is not None:  # last, so a bad --slice leaves nothing that needs --force
         from tomojax.cli import _images
 
         image = _images.labelled(
             _images.to_uint8(projection, _images.limits(projection)), "central projection"
         )
         out.files["projection.png"] = str(_images.save_png(image, directory / "projection.png"))
-    if saved:
-        pv.write_saved_slices(path, directory, slices, out)
-    elif raw:
-        out.notes.append("raw frames: tomojax correct makes a scan whose slices can be previewed")
-    else:
-        assert scan is not None
-        pv.write_scan_slices(scan, directory, slices, out)
-    if scan is not None and centres is not None:
-        plane = slices[0] if slices else None
-        pv.write_sweep(scan, path, directory, centres, plane, out)
     return out
 
 
@@ -225,6 +225,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     slices=slices,
                     centres=centres,
                     force=cast("bool", args.force),
+                    listing=args.progress == "json",
                 )
             except (OSError, ValueError, KeyError) as exc:
                 preview_error = str(exc).strip("'\"")

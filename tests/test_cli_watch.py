@@ -50,6 +50,12 @@ def test_planes_get_square_physical_pixels_and_sinograms_keep_their_samples(imag
     assert images.display_shape((64, 32), plane, 2048) == (256, 64)
 
 
+def test_an_image_creates_its_folder(tmp_path, images):
+    path = tmp_path / "previews" / "band.png"
+    images.save_png(images.Image.new("L", (4, 4)), path)
+    assert path.exists()
+
+
 def test_shared_limits_and_non_finite_values(images):
     bright, dim = np.full((4, 4), 10.0), np.full((4, 4), 1.0)
     low, high = images.limits(bright, dim)
@@ -124,6 +130,13 @@ def test_no_update_means_no_image_and_a_status_that_says_so(tmp_path, scan):
     assert main([*argv, "--watch-dir", str(watch)]) == 0
     assert not list(watch.glob("*.png"))
     assert _status(watch)["status"] == "done, no preview"
+
+
+@pytest.mark.parametrize("command", ["reconstruct", "align"])
+def test_a_dry_run_leaves_the_watch_directory_alone(tmp_path, scan, command):
+    watch = tmp_path / "watch"
+    assert main([command, str(scan), "--dry-run", "--watch-dir", str(watch)]) == 0
+    assert not watch.exists()
 
 
 def test_reuse_removes_the_earlier_images(tmp_path, scan):

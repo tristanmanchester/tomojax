@@ -288,3 +288,38 @@ def test_a_scan_previews_its_reconstructed_central_slice(tmp_path, capsys):
     report = _inspect_json(capsys, str(path), "--preview-dir", str(directory))
     assert sorted(report["previews"]) == ["projection.png", "slice_z_4.png"]
     assert report["valid"] is True
+
+
+def test_a_parallel_scan_previews_and_sweeps_without_a_full_solve(tmp_path, capsys, monkeypatch):
+    def full_solve(plan, **kwargs):
+        raise AssertionError(f"{plan.method} reconstructed the whole volume for one plane")
+
+    monkeypatch.setattr(interactive, "reconstruct_resolved", full_solve)
+    path, directory = tmp_path / "scan.nxs", tmp_path / "pv"
+    tj.save(path, _scan())
+    argv = ["--preview-dir", str(directory), "--centres", "-1,0,1", "--slice", "z=4"]
+    report = _inspect_json(capsys, str(path), *argv)
+    assert "slice_z_4.png" in report["previews"] and len(report["sweep"]) == 3
+
+
+def test_a_bad_slice_writes_nothing_and_a_rerun_needs_force(tmp_path, capsys):
+    scan, directory = tmp_path / "scan.nxs", tmp_path / "pv"
+    tj.save(scan, _scan())
+    assert main(["inspect", str(scan), "--preview-dir", str(directory), "--slice", "z=99"]) == 1
+    assert not list(directory.glob("*.png"))
+    assert main(["inspect", str(scan), "--preview-dir", str(directory), "--slice", "z=4"]) == 0
+    recon = tmp_path / "recon.nxs"
+    assert main(["reconstruct", str(scan), "-o", str(recon), "--progress", "none"]) == 0
+    saved = tmp_path / "saved"
+    assert main(["inspect", str(recon), "--preview-dir", str(saved)]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as error:
+        main(["inspect", str(recon), "--preview-dir", str(saved)])
+    assert error.value.code == 2 and "slice_z_4.png" in capsys.readouterr().err
+
+
+def test_the_report_gives_the_grid_as_nx_ny_nz(tmp_path, capsys):
+    path = tmp_path / "scan.nxs"
+    tj.save(path, _scan())
+    assert main(["inspect", str(path)]) == 0
+    assert "for 16 x 16 x 8 voxels" in capsys.readouterr().out

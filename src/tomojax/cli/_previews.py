@@ -137,9 +137,19 @@ def _picture(image: np.ndarray, label: str) -> Image.Image:
     return _images.labelled(_images.to_uint8(shown, _images.limits(shown)), label)
 
 
-def destinations(directory: Path, names: Sequence[str]) -> list[Path]:
+def destinations(
+    directory: Path,
+    wanted: Sequence[tuple[Axis, int]],
+    centres: Sequence[float],
+    *,
+    projection: bool,
+    listing: bool,
+) -> list[Path]:
     """The files a preview run will write in ``directory``."""
-    return [directory / name for name in names]
+    names = [slice_name(axis, index) for axis, index in dict.fromkeys(wanted)]
+    names += [centre_name(i, len(centres), c) for i, c in enumerate(centres)]
+    extra = {"centre_sweep.png": bool(centres), "projection.png": projection, LISTING: listing}
+    return [directory / name for name in [*names, *(n for n, written in extra.items() if written)]]
 
 
 def slice_name(axis: str, index: int) -> str:
@@ -153,21 +163,24 @@ def centre_name(ordinal: int, count: int, centre: float) -> str:
     return f"centre_{ordinal:0{width}d}_{centre:+.2f}px.png"
 
 
-def write_saved_slices(
-    path: Path, directory: Path, requests: Sequence[tuple[Axis, int]] | None, out: Previews
-) -> None:
-    """Read and write planes of a saved reconstruction (its central planes by default)."""
+def saved_requests(
+    path: Path, requests: Sequence[tuple[Axis, int]] | None
+) -> list[tuple[Axis, int]]:
+    """The planes of a saved reconstruction to show (its central planes by default), checked."""
     order, shape = _saved_shape(path)
     sizes = dict(zip(order, shape, strict=True))
-    central: list[tuple[Axis, int]] = [
-        ("z", sizes["z"] // 2),
-        ("y", sizes["y"] // 2),
-        ("x", sizes["x"] // 2),
-    ]
+    central: list[tuple[Axis, int]] = [(axis, sizes[axis] // 2) for axis in ("z", "y", "x")]
     wanted = list(requests or central)
     for axis, index in wanted:
         if not 0 <= index < sizes[axis]:
             raise ValueError(f"--slice {axis}={index} is past the volume's {sizes[axis]} planes")
+    return wanted
+
+
+def write_saved_slices(
+    path: Path, directory: Path, wanted: Sequence[tuple[Axis, int]], out: Previews
+) -> None:
+    """Read and write the ``wanted`` planes of a saved reconstruction."""
     for axis, index in dict.fromkeys(wanted):
         name = slice_name(axis, index)
         plane = saved_plane(path, axis, index)
@@ -180,16 +193,14 @@ def write_saved_slices(
 
 
 def write_scan_slices(
-    scan: tj.Scan, directory: Path, requests: Sequence[tuple[Axis, int]] | None, out: Previews
+    scan: tj.Scan, directory: Path, wanted: Sequence[tuple[Axis, int]], out: Previews
 ) -> None:
-    """Reconstruct the requested planes of a scan (its central z plane by default)."""
+    """Reconstruct the ``wanted`` planes of a scan by FBP, which makes an axial plane alone."""
     from tomojax import interactive
     from tomojax.cli._results import unit_of
     from tomojax.core.registration import registered_plane, volume_axes
 
-    central: list[tuple[Axis, int]] = [("z", scan.grid.nz // 2)]
-    wanted = list(requests or central)
-    plan = interactive.plan_planes(scan, wanted)
+    plan = interactive.plan_planes(scan, wanted, method="fbp")
     if plan.full is not None:
         progress.note("info", "slice previews: one full reconstruction makes every plane")
     resolved = plan.full or plan.plans[0]
@@ -225,7 +236,7 @@ def write_sweep(
     from tomojax.cli._results import unit_of
 
     axis, index = plane or ("z", scan.grid.nz // 2)
-    sweep = interactive.resolve_sweep(scan, axis, index, centres)
+    sweep = interactive.resolve_sweep(scan, axis, index, centres, method="fbp")
     count, du = len(centres), scan.detector.du
     unit = unit_of(scan)
     shown_unit = "scan units" if unit == "scan_length" else unit
@@ -298,6 +309,7 @@ __all__ = [
     "parse_slice",
     "projection_image",
     "saved_plane",
+    "saved_requests",
     "slice_name",
     "write_saved_slices",
     "write_scan_slices",

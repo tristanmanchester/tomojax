@@ -144,7 +144,7 @@ def _memory_rows(memory: Mapping[str, Any]) -> list[tuple[str, str]]:
     if not memory["feasible"]:
         return [("volume working sets", f"not estimated ({memory['notes']})")]
     modes = memory["modes"]
-    grid = " x ".join(str(n) for n in reversed(memory["reconstruction_grid_shape"]))
+    grid = " x ".join(str(n) for n in memory["reconstruction_grid_shape"])
     sets = ", ".join(
         f"{name} {_size(modes[key]['estimated_working_set_bytes'])}"
         for name, key in (

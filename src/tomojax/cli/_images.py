@@ -189,6 +189,7 @@ def pose_plot(
 def save_png(image: Image.Image, path: Path) -> Path:
     """Write ``image`` to ``path`` through ``.<name>.tmp`` beside it, moved on once whole."""
     temporary = path.with_name(f".{path.name}.tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with temporary.open("wb") as stream:
             image.save(stream, format="PNG")
