@@ -473,12 +473,19 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
             "missing native live element {key}"
         );
     }
-    assert!(elements.iter().any(|element| {
-        element
-            .key
-            .as_deref()
-            .is_some_and(|key| key.starts_with("task-"))
-    }));
+    // A finished job leads with its results; its internal steps open as the worker trace.
+    let has_task_rows = |elements: &[rune::runtime::ElementInfo]| {
+        elements.iter().any(|element| {
+            element
+                .key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("task-"))
+        })
+    };
+    assert!(!has_task_rows(&elements));
+    runtime.state.ui.worker_trace = Some(id.clone());
+    runtime.frame(1. / 60.);
+    assert!(has_task_rows(&runtime.elements()));
     let poses = runtime.state.live.frame().unwrap().poses.as_ref().unwrap();
     assert_eq!(poses.shape, [24, 6]);
     assert_eq!(
