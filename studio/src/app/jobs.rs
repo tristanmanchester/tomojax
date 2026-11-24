@@ -658,14 +658,27 @@ impl AppState {
         asset.id = id.into();
         asset.kind = output.value.kind().into();
         // A back projection's parent is the input whose projections it used, which
-        // Explore shows beside the volume: a selected projection result wins.
+        // Explore shows beside the volume: the same choice execution made.
         let source = (job.operation == "backproject")
             .then(|| {
-                job.inputs.iter().find(|input| {
-                    matches!(registered_array(input), Some(Product::Projections { .. }))
-                })
+                self.running
+                    .as_ref()
+                    .filter(|running| running.job == job.id)
             })
-            .flatten();
+            .flatten()
+            .and_then(|running| {
+                let products: Vec<_> = running.products.iter().collect();
+                if job
+                    .parameters
+                    .get("projections")
+                    .is_some_and(|v| !v.is_null())
+                {
+                    projection_geometry(&products, "projections")
+                } else {
+                    array_member(products.iter().copied(), "projections").map(|array| array.index)
+                }
+            })
+            .and_then(|index| job.inputs.get(index));
         asset.parent = source
             .or(job.inputs.first())
             .map(|input| input.asset.clone());

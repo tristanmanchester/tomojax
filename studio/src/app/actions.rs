@@ -636,6 +636,9 @@ impl AppState {
     }
 
     fn export_dialog(&mut self, format: &str, tx: &mut Tx) -> Result<(), String> {
+        if format.is_empty() {
+            return Err("Raw frames can be exported once corrected".into());
+        }
         let id = self
             .model
             .active_asset

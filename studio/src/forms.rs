@@ -448,7 +448,13 @@ pub fn parameters_detailed(ui: &UiState, catalog: &SchemaCatalog) -> Result<Valu
             }
             continue;
         }
-        let value = if ty == "string"
+        // A string-or-list field (fit parameters) takes a JSON list too.
+        let list = (ty == "string" && text.starts_with('[') && accepts(&p.schema, "array"))
+            .then(|| serde_json::from_str::<Value>(text).ok())
+            .flatten();
+        let value = if let Some(list) = list {
+            list
+        } else if ty == "string"
             || schema
                 .get("enum")
                 .is_some_and(|v| v.as_array().is_some_and(|a| a.iter().all(Value::is_string)))
@@ -614,6 +620,26 @@ mod tests {
         assert_eq!(
             parameters_detailed(&ui, &catalog).unwrap_err().path,
             "corrections"
+        );
+    }
+
+    #[test]
+    fn a_string_or_list_field_takes_a_list() {
+        let catalog = SchemaCatalog::new(
+            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        let mut ui = UiState::default();
+        initialise(&mut ui, &catalog, "align", None);
+        let Some(fit) = ui.parameter_edits.get_mut("fit") else {
+            panic!("fit is a text field");
+        };
+        fit.replace_text(r#"["center", "translations"]"#);
+        let parameters = parameters_detailed(&ui, &catalog).unwrap();
+        assert_eq!(
+            parameters["fit"],
+            serde_json::json!(["center", "translations"])
         );
     }
 

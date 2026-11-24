@@ -292,6 +292,7 @@ impl UiModel {
             Some(Export::Volume) | None => "nxs",
             Some(Export::Dataset) => "nxs",
             Some(Export::Array) => "array",
+            Some(Export::Unavailable) => "",
         }
     }
     pub fn tiff_export(&self) -> bool {
@@ -357,6 +358,8 @@ pub enum Export {
     Volume,
     /// An array-only result: a registered NPY bundle.
     Array,
+    /// Raw frames, which are saved once corrected.
+    Unavailable,
 }
 #[derive(Clone, Debug, Default)]
 pub struct AssetView {

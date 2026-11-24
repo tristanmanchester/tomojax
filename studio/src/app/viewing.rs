@@ -262,6 +262,11 @@ impl AppState {
         }
         self.model.comparison_planes =
             [6, 7].map(|slot| self.imaging.plane(slot).map(|plane| plane_view(plane)));
+        for slot in [6, 7] {
+            if let ImagingStatus::Error(error) = self.imaging.status(slot) {
+                self.model.error = Some(error.clone());
+            }
+        }
         self.model.comparison_count = self
             .model
             .comparison_planes
@@ -1011,7 +1016,8 @@ impl AppState {
                             export: match a.kind.as_str() {
                                 "reconstruction" | "simulation" => Export::Volume,
                                 "alignment" if a.volume().is_some() => Export::Volume,
-                                "scan" | "frames" | "alignment" => Export::Dataset,
+                                "scan" | "alignment" => Export::Dataset,
+                                "frames" => Export::Unavailable,
                                 _ => Export::Array,
                             },
                             id: a.id.clone(),

@@ -700,7 +700,13 @@ fn explore(state: &AppState) -> El {
                 .child(help(format!("{} sampled pixels", stats.sampled_pixels))),
         ));
     }
-    sections.push(export_format(state));
+    if !state
+        .model
+        .export_format(&state.ui.export_format)
+        .is_empty()
+    {
+        sections.push(export_format(state));
+    }
     let mut content = col().gap(18.);
     for (index, section) in sections.into_iter().enumerate() {
         if index > 0 {
@@ -976,6 +982,7 @@ fn export_format(state: &AppState) -> El {
     let mut choices = row().gap(4.);
     let format = state.model.export_format(&state.ui.export_format);
     let formats: &[(&str, &str)] = match format {
+        "" => &[],
         "array" => &[("array", "NPY bundle")],
         _ if state.model.tiff_export() => &[
             ("nxs", "NXtomo"),
@@ -1065,7 +1072,10 @@ fn footer(state: &AppState) -> El {
                     },
                     Icon::Export,
                     true,
-                    state.model.active().is_some(),
+                    !state
+                        .model
+                        .export_format(&state.ui.export_format)
+                        .is_empty(),
                     UiAction::Export(state.model.export_format(&state.ui.export_format).into()),
                 )
                 .w_full()

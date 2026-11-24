@@ -523,25 +523,25 @@ fn a_back_projection_belongs_to_the_projections_it_used() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
     state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
-    let scan = ramp_volume(directory.path(), "scan", 2);
-    let mut forward = ramp_volume(directory.path(), "forward", 2);
-    forward.kind = "projections".into();
-    let array = forward.arrays.remove("volume").unwrap();
-    forward.arrays.insert("projections".into(), array.clone());
+    let first = ramp_volume(directory.path(), "first", 2);
+    let second = ramp_volume(directory.path(), "second", 2);
+    let array = first.arrays["volume"].clone();
     let project = state.project.as_mut().unwrap();
-    project.document.assets = vec![scan.clone(), forward.clone()];
+    project.document.assets = vec![first.clone(), second.clone()];
     let job = project::Job::new(
         "backproject",
         json!({}),
         vec![
-            project.capture(&scan.id).unwrap(),
-            project.capture(&forward.id).unwrap(),
+            project.capture(&first.id).unwrap(),
+            project.capture(&second.id).unwrap(),
         ],
     );
     let id = job.id.clone();
     project.document.jobs.push(job);
     let output = Output {
-        value: Product::Volume { volume: array },
+        value: Product::Volume {
+            volume: array.clone(),
+        },
         info: crate::protocol::Info {
             summary: Default::default(),
             arrays: Default::default(),
@@ -552,13 +552,41 @@ fn a_back_projection_belongs_to_the_projections_it_used() {
             inputs: vec![],
         },
     };
-    let result = state.result_asset(
-        &id,
-        "result-volume",
-        &directory.path().join("v.npy"),
-        &output,
-    );
-    assert_eq!(result.parent.as_deref(), Some(forward.id.as_str()));
+    let simulation = Product::Simulation {
+        handle: "simulation".into(),
+        scan: crate::protocol::Storage::Member {
+            handle: "simulation".into(),
+            member: "scan".into(),
+        },
+        phantom: array.clone(),
+    };
+    let scan = Product::Scan {
+        handle: "binned".into(),
+        projections: array.clone(),
+    };
+    let selected = Product::Projections {
+        projections: array.clone(),
+    };
+    // The parent is the input whose projections execution read: a selected
+    // projection result, else a scan before a simulation, as execution ranks them.
+    for (products, parent) in [
+        (vec![scan.clone(), selected], &second.id),
+        (vec![simulation, scan], &second.id),
+    ] {
+        state.running = Some(Running {
+            job: id.clone(),
+            handles: vec![String::new(); 2],
+            products,
+            next_input: 2,
+        });
+        let result = state.result_asset(
+            &id,
+            "result-volume",
+            &directory.path().join("v.npy"),
+            &output,
+        );
+        assert_eq!(result.parent.as_ref(), Some(parent));
+    }
 }
 
 #[test]
@@ -572,6 +600,7 @@ fn export_offers_what_each_kind_of_result_can_be_written_as() {
         (Export::Volume, "float32", "float32"),
         (Export::Volume, "array", "nxs"),
         (Export::Array, "float32", "array"),
+        (Export::Unavailable, "nxs", ""),
     ] {
         model.assets = vec![AssetView {
             id: "a".into(),
