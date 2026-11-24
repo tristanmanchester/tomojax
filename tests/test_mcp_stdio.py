@@ -910,7 +910,11 @@ def test_backproject_discovers_nexus_projections(tmp_path):
         file["/entry/projections"] = sim.scan.projections
     with connection(tmp_path) as c:
         scan = c.call("open", kind="scan", path=str(path))["structuredContent"]["handle"]
-        for src, expected in ((str(path), True), (str(plain), True), (f"{path}::/other", False)):
+        for src, expected in (
+            (str(path), True),
+            (f"{plain}::/entry/projections", True),
+            (f"{path}::/other", False),
+        ):
             reply = c.call("backproject", source=scan, projections=src)
             assert not reply["isError"], reply
             array = reply["structuredContent"]["handle"]
@@ -932,52 +936,38 @@ def test_projection_preview_keeps_requested_stride(tmp_path):
         assert "stride (1, 1, 2), display subsampling (1, 1, 2)" in panel["labels"]
 
 
-@pytest.mark.parametrize("suffix", ["nxs", "npz"])
-def test_backproject_selects_sample_frames_only_for_bare_paths(tmp_path, suffix):
-    import numpy as np
-
-    scan = tj.simulate(size=8, n_views=13).scan
-    path = tmp_path / f"samples.{suffix}"
-    tj.save(path, scan)
-    if suffix == "nxs":
-        with h5py.File(path, "r+") as file:
-            file["/entry/instrument/detector/image_key"][4] = 3
-    else:
-        with np.load(path) as saved:
-            fields = dict(saved)
-        fields["image_key"] = np.zeros(13, np.int32)
-        fields["image_key"][4] = 3
-        np.savez(path, **fields)
-    with connection(tmp_path) as c:
-        source = c.call("open", path=path.name)["structuredContent"]["handle"]
-        actual, expected = (
-            c.call("backproject", source=source, projections=ref)["structuredContent"]["handle"]
-            for ref in (path.name, f"{source}.projections")
-        )
-        assert c.call("python", code=f"np.array_equal(handles[{actual!r}], handles[{expected!r}])")[
-            "structuredContent"
-        ]["value"]
-        if suffix != "nxs":
-            return
-        literal = c.call(
-            "backproject", source=source, projections=f"{path}::/entry/instrument/detector/data"
-        )
-        assert literal["isError"] and "does not match" in literal["content"][0]["text"]
-
-
-def test_backproject_bliss_projection_blocks(tmp_path):
+@pytest.mark.parametrize(
+    "kind", ["raw.nxs", "raw.npz", "corrected.nxs", "corrected.npz", "bliss.h5"]
+)
+def test_backproject_bare_path_matches_opened_projections(tmp_path, kind):
     from tests.test_esrf_readers import _write_bliss_sequence
+    from tests.test_io_workflows import _labelled_dataset
+    from tomojax.io import save_dataset
 
-    path = tmp_path / "sequence.h5"
-    _write_bliss_sequence(path, "measurement/hrsrot")
+    path = tmp_path / kind
+    if kind.startswith("bliss"):
+        _write_bliss_sequence(path, "measurement/hrsrot")
+    elif kind.startswith("raw"):
+        save_dataset(path, _labelled_dataset([5, 11, 9, 1], [0, 1, 0, 2]))
+    else:
+        save_dataset(path, _labelled_dataset([0.5, 7, 0.25], [0, 3, 0]))
     with connection(tmp_path) as c:
-        scan = c.call("open", path=path.name)["structuredContent"]["handle"]
-        volumes = []
+        scan = c.call("open", kind="scan", path=path.name)["structuredContent"]["handle"]
+        volumes, profiles = [], []
         for ref in (path.name, f"{scan}.projections"):
+            profile = c.call("view", source=ref, mode="profile", roi=[[0, 2], [0, 1], [0, 1]])
+            assert not profile["isError"], profile
+            profiles.append(profile["structuredContent"])
             result = c.call("backproject", source=scan, projections=ref)
             assert not result["isError"], result
             volumes.append(result["structuredContent"]["handle"])
+        assert profiles[0] == profiles[1]
         actual, expected = volumes
         assert c.call("python", code=f"np.array_equal(handles[{actual!r}], handles[{expected!r}])")[
             "structuredContent"
         ]["value"]
+        if path.suffix == ".nxs":
+            literal = c.call(
+                "backproject", source=scan, projections=f"{path}::/entry/instrument/detector/data"
+            )
+            assert literal["isError"] and "does not match" in literal["content"][0]["text"]

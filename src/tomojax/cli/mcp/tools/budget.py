@@ -6,11 +6,13 @@ import base64
 import json
 from math import ceil
 import struct
-from typing import Any
-from uuid import uuid4
+from typing import TYPE_CHECKING, Any
 
 from mcp_types import CallToolResult, ImageContent, TextContent
 import msgspec
+
+if TYPE_CHECKING:
+    from tomojax.cli.mcp.parts import Parts
 
 LIMIT = 20_000
 PNG_BYTES = 512 * 1024
@@ -37,26 +39,26 @@ def cost(reply: CallToolResult) -> int:
     return len(msgspec.json.encode(payload)) + pixels + 256
 
 
-def bounded(reply: CallToolResult, parts: dict[str, list[str]]) -> CallToolResult:
+def bounded(reply: CallToolResult, parts: Parts) -> CallToolResult:
     """Retain high-priority fields and link to a lossless copy of the original result."""
     if cost(reply) <= LIMIT:
         return reply
-    call = uuid4().hex
     raw = json.dumps(
         reply.model_dump(mode="json", by_alias=True, exclude_none=True), separators=(",", ":")
     )
-    # ASCII chunks still fit when the resource serializes quotes and backslashes.
-    parts[call] = [raw[start : start + 8000] for start in range(0, len(raw), 8000)]
-    uri = f"tomojax://result/{call}/0"
-    data: dict[str, Any] = {"continuation": uri}
+    uri = parts.add(raw)
+    message = (
+        f"Full result continues at {uri}"
+        if uri
+        else "Result exceeds the paging limit. Repeat the call with a smaller result."
+    )
+    data: dict[str, Any] = {"continuation": uri} if uri else {"message": message}
     fields = reply.structured_content or {}
     headline = " ".join(
         str(fields[k])[:160] for k in ("handle", "kind", "method", "next") if fields.get(k)
     )
     clipped = CallToolResult(
-        content=[
-            TextContent(type="text", text=f"{headline}\nFull result continues at {uri}".strip())
-        ],
+        content=[TextContent(type="text", text=f"{headline}\n{message}".strip())],
         structured_content=data,
         is_error=reply.is_error,
     )

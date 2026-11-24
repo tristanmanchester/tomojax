@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from mcp.server.context import CallNext, ServerRequestContext
     from mcp_types import CallToolRequestParams
 
+    from tomojax.cli.mcp.parts import Parts
     from tomojax.cli.mcp.supervisor import Object
 
 TTL = 86_400
@@ -74,7 +75,7 @@ class Tasks(Extension):
 
     identifier = "io.modelcontextprotocol/tasks"
 
-    def __init__(self, parts: dict[str, list[str]]) -> None:
+    def __init__(self, parts: Parts) -> None:
         self.parts = parts
         self.eligible: set[str] = set()
         self.store: dict[str, Task] = {}
@@ -193,7 +194,7 @@ class Tasks(Extension):
             task.runner.cancel()
             content = task.fields.get("result", {}).get("structuredContent") or {}
             if uri := content.get("continuation"):
-                self.parts.pop(uri.split("/")[-2], None)
+                self.parts.discard(uri.split("/")[-2])
 
         loop = asyncio.get_running_loop()
         self.store[task_id] = Task(

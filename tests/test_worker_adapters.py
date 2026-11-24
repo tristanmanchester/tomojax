@@ -853,15 +853,20 @@ def test_saved_volume_axes_in_operators_and_roi(worker, tmp_path, axes):
         ref = dict(type="hdf5", path=str(path), dataset=group["volume"].name)
     source = dict(type="path", path=str(tmp_path / "scan.nxs"))
     tj.save(source["path"], sim.scan)
-    expected = tj.project(sim.scan.geometry, x)
-    projected = output(worker("run", operation=dict(type="project", source=source, volume=ref)))
-    np.testing.assert_allclose(
-        np.load(projected["value"]["projections"]["storage"]["path"]), expected, atol=1e-5
-    )
+    disk_pixels = x.transpose(tuple("zyx".index(a) for a in axes))
+    for volume, pixels in ((ref, disk_pixels), (dict(type="path", path=str(path)), x)):
+        projected = output(
+            worker("run", operation=dict(type="project", source=source, volume=volume))
+        )
+        np.testing.assert_allclose(
+            np.load(projected["value"]["projections"]["storage"]["path"]),
+            tj.project(sim.scan.geometry, pixels),
+            atol=1e-5,
+        )
     back = output(worker("run", operation=dict(type="backproject", source=source, projections=ref)))
     np.testing.assert_allclose(
         np.load(back["value"]["volume"]["storage"]["path"]),
-        tj.backproject(sim.scan.geometry, x),
+        tj.backproject(sim.scan.geometry, disk_pixels),
         atol=1e-5,
     )
     args = dict(

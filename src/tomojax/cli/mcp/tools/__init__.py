@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from tomojax.cli.mcp.core import Core
+    from tomojax.cli.mcp.parts import Parts
     from tomojax.cli.mcp.supervisor import Object
 
 
@@ -737,7 +738,7 @@ def binding(
     definitions: Object,
     *,
     name: str | None = None,
-    parts: dict[str, list[str]] | None = None,
+    parts: Parts | None = None,
 ) -> Object:
     """Construct a plain tool record with msgspec validation and actionable errors."""
     name = name or cls.__name__.lower()

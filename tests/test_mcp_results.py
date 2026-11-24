@@ -16,6 +16,7 @@ import pytest
 
 from tomojax.cli import operations as op
 from tomojax.cli.mcp import tasks, tools
+from tomojax.cli.mcp.parts import Parts
 from tomojax.cli.mcp.supervisor import Activity
 from tomojax.cli.mcp.tools import budget, seeing
 
@@ -41,13 +42,24 @@ def test_budget_and_lossless_reassembly(case):
                 data=base64.b64encode(stream.getvalue()).decode(),
             )
         )
-    parts = {}
-    clipped = budget.bounded(full, parts)
-    assert len(clipped.model_dump_json().encode()) < 20_000
-    assert clipped.is_error == full.is_error
-    assert clipped.structured_content["handle"] == data["handle"]
-    Draft202012Validator(tools.workflow_output()).validate(clipped.structured_content)
-    chunks = parts[clipped.structured_content["continuation"].split("/")[-2]]
+
+    async def page():
+        parts = Parts()
+        clipped = budget.bounded(full, parts)
+        assert len(clipped.model_dump_json().encode()) < 20_000
+        assert clipped.is_error == full.is_error
+        assert clipped.structured_content["handle"] == data["handle"]
+        Draft202012Validator(tools.workflow_output()).validate(clipped.structured_content)
+        uri = clipped.structured_content["continuation"]
+        chunks = []
+        while uri:
+            call, n = uri.split("/")[-2:]
+            part = await parts.read(call, int(n))
+            chunks.append(part["data"])
+            uri = part["next"]
+        return chunks
+
+    chunks = asyncio.run(page())
     for chunk in chunks:
         assert (
             len(
@@ -60,6 +72,36 @@ def test_budget_and_lossless_reassembly(case):
     assert json.loads("".join(chunks)) == full.model_dump(
         mode="json", by_alias=True, exclude_none=True
     )
+
+
+def test_paging_evicts_oldest_reply_by_total_bytes():
+    async def run():
+        parts = Parts(limit=12)
+        oldest, second = (parts.add(s).split("/")[-2] for s in ("first", "second"))
+        assert (await parts.read(oldest, 0))["data"] == "first"
+        third = parts.add("third!").split("/")[-2]
+        assert parts.add("too large for the store") is None
+        with pytest.raises(ValueError, match="Repeat the call"):
+            await parts.read(oldest, 0)
+        assert (await parts.read(second, 0))["data"] == "second"
+        assert (await parts.read(third, 0))["data"] == "third!"
+
+    asyncio.run(run())
+
+
+def test_synchronous_call_pages_expire_without_another_request():
+    async def run():
+        parts = Parts(ttl=0)
+        reply = budget.bounded(tools.result({"profile": "x" * 24000}), parts)
+        call = reply.structured_content["continuation"].split("/")[-2]
+        elapsed = asyncio.Event()
+        asyncio.get_running_loop().call_later(0, elapsed.set)
+        await elapsed.wait()
+        assert parts.nbytes == 0
+        with pytest.raises(ValueError, match="Repeat the call"):
+            await parts.read(call, 0)
+
+    asyncio.run(run())
 
 
 def test_each_wire_field_has_a_tool_owner():

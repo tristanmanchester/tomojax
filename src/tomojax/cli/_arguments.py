@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from functools import cache
-from pathlib import Path
 from typing import Any
 
 import h5py
@@ -12,12 +11,12 @@ import msgspec
 import numpy as np
 
 import tomojax as tj
-from tomojax._loading import load_hdf5_projections
 from tomojax.cli import execution as ex, operations as op
-from tomojax.cli._browse import pixels, source_array
 from tomojax.cli._parameter_types import option_types
 from tomojax.core.devices import as_devices
+from tomojax.core.files import read_hdf5
 from tomojax.errors import InvalidParameter, within
+from tomojax.io import load_dataset
 from tomojax.wire.arrays import Hdf5, Member, Npy, Record
 
 
@@ -57,19 +56,24 @@ def arguments(
     }
 
 
+def handle_member(name: str, value: Member, context: ex.ExecutionContext) -> Any:
+    """Resolve a handle member in the domain expected by the operation field."""
+    member = context.leases[value].value
+    if name == "geometry" and isinstance(member, tj.Frames | tj.Scan):
+        return member.geometry
+    if name == "region" and isinstance(member, tj.RegionEstimate):
+        return member
+    if name not in ("region", "geometry") and isinstance(member, ex.RegisteredArray):
+        return member.data
+    raise InvalidParameter(name, f"{value.handle}.{value.member} has the wrong kind for {name}")
+
+
 def read_reference(
     name: str, value: Member | Hdf5 | Npy | op.PathInput, context: ex.ExecutionContext
 ) -> Any:
     """Resolve stored pixels, a scan geometry, or a region estimate at execution."""
     if isinstance(value, Member):
-        member = context.leases[value].value
-        if name == "geometry" and isinstance(member, tj.Frames | tj.Scan):
-            return member.geometry
-        if name == "region" and isinstance(member, tj.RegionEstimate):
-            return member
-        if name not in ("region", "geometry") and isinstance(member, ex.RegisteredArray):
-            return member.data
-        raise InvalidParameter(name, f"{value.handle}.{value.member} has the wrong kind for {name}")
+        return handle_member(name, value, context)
     if isinstance(value, Npy):
         if value.artifact is not None:
             pinned = context.leases[value].value
@@ -77,10 +81,18 @@ def read_reference(
                 raise InvalidParameter(name, "expected an admitted NumPy file")
             value = pinned
         return np.load(value.path, mmap_mode="r", allow_pickle=False)
-    if name == "projections" and isinstance(value, op.PathInput) and h5py.is_hdf5(value.path):
-        return load_hdf5_projections(Path(value.path))
-    with source_array(value, context, member=name) as (data, meta, _):
-        return pixels(data, tuple(map(range, meta.shape)))
+    if isinstance(value, Hdf5):
+        with read_hdf5(value.path) as file:
+            data = file.get(value.dataset)
+            if not isinstance(data, h5py.Dataset):
+                raise InvalidParameter(name, f"no dataset {value.dataset} in {value.path}")
+            return data[...]
+    if name == "projections":
+        return tj.load(value.path).projections
+    volume = load_dataset(value.path).volume
+    if volume is None:
+        raise InvalidParameter(name, f"{value.path} holds no saved volume")
+    return volume
 
 
 def source(

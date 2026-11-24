@@ -87,13 +87,13 @@ Tools that accept `dry_run` report what a call would do without running it: the 
 
 Each result is kept in the server as a handle with an ID such as `@scan-12-k7m2`. Pass that ID to any tool that takes data. Add a member to choose part of a result, for example `@align-3-k7m2.scan` for the aligned scan or `@sim-1-k7m2.phantom` for a simulation's phantom. A bare handle gives the whole object to `save` and `export`, and its main array (volume, projections, phantom or working image) to an array field.
 
-Anything that is not a handle is a file path, resolved against the project directory. Name a dataset inside an HDF5 file as `scan.h5::/entry/data/data`, and write `./@name` for a file whose name starts with `@`.
+Anything that is not a handle is a file path, resolved against the project directory. A bare acquisition path in a projections field supplies the same line integrals as opening the scan and selecting `.projections`, including correction of raw detector counts. A volume field reads the saved volume in `(z, y, x)` order. Use `scan.h5::/entry/data/data` to read the literal dataset in storage order, and `./@name` for a file whose name starts with `@`.
 
 Handles last until you close them, the worker restarts, or the server exits. Save results you want to keep. An ID from an earlier session returns an error saying the handle is gone.
 
 ## Results, images and long jobs
 
-Every result has a short text summary, the same fields as structured content, and labelled PNG panels where an image helps: three central planes after `reconstruct`, a pose plot and slices after `align`, and the requested planes from `view` and `preview`. Panels that are meant to be compared, such as a centre sweep, share one display range. Large results are cut to fit the client's limits, and the rest is served as `tomojax://result/...` resources that the result names.
+Every result has a short text summary, the same fields as structured content, and labelled PNG panels where an image helps: three central planes after `reconstruct`, a pose plot and slices after `align`, and the requested planes from `view` and `preview`. Panels that are meant to be compared, such as a centre sweep, share one display range. Large results are cut to fit the client's limits, and the rest is served as `tomojax://result/...` resources that the result names. Each connection retains up to 64 MiB of paged replies for up to 15 minutes, evicting the oldest first. Repeat the call if a page has expired or been evicted.
 
 Long jobs send progress with the current stage, its metrics and an estimate of the time left. Clients that support the MCP tasks extension receive long calls as tasks they can poll and cancel; other clients wait for the result. Cancel a job from the client or with `control`; it stops at the next checkpoint.
 

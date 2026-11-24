@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from itertools import product
 import math
 from pathlib import Path
 import tempfile
 from typing import Any
+from zipfile import ZipFile
 
 import h5py
 import msgspec
@@ -18,13 +19,11 @@ import tomojax as tj
 from tomojax._files import saved_volume_grid
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._frame_reads import frame_pixels
-from tomojax.cli._handles import stage_array
-from tomojax.cli._results import disk_volume, scan_axes, stored_grid
-from tomojax.core.files import read_hdf5
-from tomojax.core.registration import recorded_length_unit
+from tomojax.cli._handles import handle, stage_array
+from tomojax.cli._results import disk_volume, stored_grid
+from tomojax.core.files import read_hdf5, read_path
 from tomojax.errors import InvalidParameter
-from tomojax.io import build_geometry_from_dataset_metadata
-from tomojax.io.api import load_nxtomo, mapped_npz
+from tomojax.io.api import mapped_npz
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage, Uniform
 
 READ_BYTES = 16 << 20
@@ -46,7 +45,7 @@ class SavedVolume:
 
 @contextmanager
 def source_array(
-    source: Storage | op.PathInput, context: ex.ExecutionContext, *, member: str | None = None
+    source: Storage | op.PathInput, context: ex.ExecutionContext
 ) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]]:
     """Keep HDF5 open only while its selected datasets are in use."""
     if isinstance(source, Member):
@@ -56,12 +55,8 @@ def source_array(
         yield registered.data, registered.metadata, {}
         return
     path = Path(source.path)
-    if isinstance(source, op.PathInput) and h5py.is_hdf5(path):
-        with read_hdf5(path) as file:
-            if member == "volume" or p.VOLUME_DATASET in file:
-                source = Hdf5(str(path), p.VOLUME_DATASET)
     if isinstance(source, op.PathInput):
-        yield from saved_array(path, member)
+        yield from saved_array(path)
         return
     if isinstance(source, Hdf5):
         with read_hdf5(path) as file:
@@ -70,12 +65,7 @@ def source_array(
                 raise InvalidParameter("source", f"no dataset {source.dataset} in {path}")
             if "/" + source.dataset.lstrip("/") == p.VOLUME_DATASET:
                 grid, _, geom_meta, axes = stored_grid(file, path)
-                volume = SavedVolume(data, axes)
-                yield (
-                    volume,
-                    disk_volume(path, grid, "zyx", volume.shape, data.dtype.str, geom_meta),
-                    {},
-                )
+                yield data, disk_volume(path, grid, axes, data.shape, data.dtype.str, geom_meta), {}
             else:
                 yield data, indexed(source, data), {}
         return
@@ -84,65 +74,47 @@ def source_array(
     yield data, (lease and lease.metadata) or indexed(source, data), {}
 
 
-def saved_array(
-    path: Path, member: str | None
-) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]]:
-    """Read the primary member of a saved volume or projection stack."""
-    with ExitStack() as files:
-        saved = (
-            files.enter_context(mapped_npz(str(path), member=member))
-            if path.suffix.lower() == ".npz"
-            else load_nxtomo(str(path), lazy=True)
-        )
-        meta = saved.metadata
-        if meta.volume is not None:
-            grid_meta = meta.grid.to_dict() if isinstance(meta.grid, tj.Grid) else meta.grid
-            grid = saved_volume_grid(grid_meta, meta.geometry_meta)
-            data = meta.volume
-            yield (
-                data,
-                disk_volume(
-                    path,
-                    grid,
-                    "zyx",
-                    data.shape,
-                    np.dtype(data.dtype).str,
-                    meta.geometry_meta or {},
-                ),
-                {},
-            )
-        else:
-            data = saved.projections
-            if data is None:
-                raise InvalidParameter("source", f"No array in {path}")
-            _, detector, geometry = build_geometry_from_dataset_metadata(
-                saved.geometry_inputs(), apply_poses=True
-            )
-            angles = np.asarray(geometry.angles)
-            if member == "projections" and meta.image_key is not None and np.any(meta.image_key):
-                samples = meta.image_key == 0
-                data, angles = data[samples], angles[samples]
-            view = Axis(
-                "view",
-                "acquisition",
-                "degree",
-                Coordinates(Hdf5(str(path), "/entry/sample/transformations/rotation_angle")),
-            )
-            axes = scan_axes(
-                detector, view, recorded_length_unit(meta.geometry_meta or {}) or "scan_length"
-            )
-            yield (
-                data,
-                Array(
-                    Hdf5(str(path), "/entry/instrument/detector/data"),
-                    data.shape,
-                    np.dtype(data.dtype).str,
-                    axes,
-                    "1",
-                    "line_integrals",
-                ),
-                {"view": angles},
-            )
+def saved_array(path: Path) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]]:
+    """Browse saved volumes in logical axis order or the opened scan's line integrals."""
+    if h5py.is_hdf5(path):
+        with read_hdf5(path) as file:
+            data = file.get(p.VOLUME_DATASET)
+            if isinstance(data, h5py.Dataset):
+                grid, _, geom_meta, axes = stored_grid(file, path)
+                volume = SavedVolume(data, axes)
+                yield (
+                    volume,
+                    disk_volume(path, grid, "zyx", volume.shape, volume.data.dtype.str, geom_meta),
+                    {},
+                )
+                return
+    elif path.suffix.lower() == ".npz":
+        with ZipFile(read_path(path)) as archive:
+            has_volume = "volume.npy" in archive.namelist()
+        if has_volume:
+            with mapped_npz(str(path), member="volume") as saved:
+                meta = saved.metadata
+                data = meta.volume
+                assert data is not None
+                grid_meta = meta.grid.to_dict() if isinstance(meta.grid, tj.Grid) else meta.grid
+                grid = saved_volume_grid(grid_meta, meta.geometry_meta)
+                yield (
+                    data,
+                    disk_volume(
+                        path,
+                        grid,
+                        "zyx",
+                        data.shape,
+                        np.dtype(data.dtype).str,
+                        meta.geometry_meta or {},
+                    ),
+                    {},
+                )
+            return
+    scan = tj.load(path)
+    projections = handle(scan).bind(str(path)).members["projections"]
+    assert isinstance(projections, ex.RegisteredArray)
+    yield projections.data, projections.metadata, {"view": np.asarray(scan.geometry.angles)}
 
 
 def indexed(storage: Storage, data: Any) -> Array:
