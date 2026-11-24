@@ -226,25 +226,65 @@ def read_window(context, data, meta, vectors, ranges, sampled=None):
     )
 
 
-def sample_chunks(data, ranges):
-    if hasattr(data, "sample_chunks"):
-        yield from data.sample_chunks(ranges)
-        return
+def ordered_tiles(ranges, capacity):
+    """Partition a window into C-order spans of at most capacity elements."""
     block = [1] * len(ranges)
-    capacity = READ_BYTES // 8
     for i in reversed(range(len(ranges))):
         block[i] = max(1, min(capacity, len(ranges[i])))
         capacity //= block[i]
     starts = (range(0, len(r), step) for r, step in zip(ranges, block, strict=True))
+    for origin in product(*starts):
+        yield tuple(r[start : start + n] for r, start, n in zip(ranges, origin, block, strict=True))
+
+
+def sample_chunks(data, ranges):
+    if hasattr(data, "sample_chunks"):
+        yield from data.sample_chunks(ranges)
+        return
     with data.cache(ranges) if isinstance(data, SampleTiles) else nullcontext():
-        for origin in product(*starts):
-            tile = tuple(
-                r[start : start + n] for r, start, n in zip(ranges, origin, block, strict=True)
-            )
+        for tile in ordered_tiles(ranges, READ_BYTES // 8):
             if isinstance(data, SampleTiles):
                 yield from data.chunks(tile, READ_BYTES)
             else:
                 yield pixels(data, tile)
+
+
+def exact_percentiles(samples, percentiles, low, high, control):
+    """Find bracketing order statistics by counting in independently sorted runs."""
+    step = READ_BYTES // samples.itemsize
+    if samples.size <= step:
+        control.checkpoint()
+        return np.percentile(samples, percentiles, overwrite_input=True)
+    starts = range(0, samples.size, step)
+    for start in starts:
+        control.checkpoint()
+        samples[start : start + step].sort()
+
+    positions = (np.asarray(percentiles) / 100) * (samples.size - 1)
+    ranks = np.unique(np.concatenate((np.floor(positions), np.ceil(positions)))).astype(np.int64)
+    lower = np.full(ranks.shape, low)
+    upper = np.full(ranks.shape, high)
+    while np.any(lower < upper):
+        # Keep each pivot below its upper endpoint even if the midpoint rounds up.
+        pivots = np.minimum(lower * 0.5 + upper * 0.5, np.nextafter(upper, lower))
+        counts = np.zeros_like(ranks)
+        below = np.full_like(lower, -np.inf)
+        above = np.full_like(upper, np.inf)
+        for start in starts:
+            control.checkpoint()
+            run = samples[start : start + step]
+            split = np.searchsorted(run, pivots, side="right")
+            counts += split
+            below = np.maximum(below, np.where(split > 0, run[split - 1], -np.inf))
+            above = np.minimum(
+                above, np.where(split < run.size, run[split.clip(max=run.size - 1)], np.inf)
+            )
+        # Snap to actual samples on either side. The retained interval always
+        # contains the requested rank and loses at least one distinct value.
+        move_lower = counts <= ranks
+        lower = np.where(move_lower, above, lower)
+        upper = np.where(move_lower, upper, below)
+    return np.interp(positions, ranks, lower)
 
 
 def statistics(request, context, data, meta, ranges):
@@ -255,12 +295,15 @@ def statistics(request, context, data, meta, ranges):
         raise InvalidParameter("percentiles", "percentiles must be between 0 and 100")
     count = 0
     mean = m2 = 0.0
+    low, high = math.inf, -math.inf
     with tempfile.TemporaryFile() as stream:
         for chunk in sample_chunks(data, ranges):
             context.control.checkpoint()
             finite = chunk[np.isfinite(chunk)].astype(np.float64)
             n = len(finite)
             if n:
+                low = min(low, float(finite.min()))
+                high = max(high, float(finite.max()))
                 finite.tofile(stream)
                 delta = float(finite.mean()) - mean
                 mean += delta * n / (count + n)
@@ -271,13 +314,11 @@ def statistics(request, context, data, meta, ranges):
         if count:
             samples = np.memmap(stream, np.float64, "r+", shape=(count,))
             if values:
-                qvalues = np.percentile(samples, request.percentiles, overwrite_input=True)
-                values = dict(zip(map(str, request.percentiles), map(float, qvalues), strict=True))
-            edges = tuple(
-                map(
-                    float, np.histogram_bin_edges([samples.min(), samples.max()], bins=request.bins)
+                qvalues = exact_percentiles(
+                    samples, request.percentiles, low, high, context.control
                 )
-            )
+                values = dict(zip(map(str, request.percentiles), map(float, qvalues), strict=True))
+            edges = tuple(map(float, np.histogram_bin_edges([low, high], bins=request.bins)))
             bins = np.zeros(request.bins, np.int64)
             for i in range(0, count, READ_BYTES // 8):
                 context.control.checkpoint()

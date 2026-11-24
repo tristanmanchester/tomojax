@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import fields, is_dataclass, replace
 from pathlib import Path
+from tempfile import TemporaryFile
 import traceback
 from types import FunctionType, MappingProxyType, ModuleType
 from typing import Any
@@ -18,7 +19,7 @@ import numpy as np
 
 import tomojax as tj
 from tomojax.cli import execution as ex, products as p
-from tomojax.cli._browse import indexed
+from tomojax.cli._browse import READ_BYTES, indexed, ordered_tiles, pixels
 from tomojax.cli._capture import capture
 from tomojax.cli._handles import handle, stage_array
 from tomojax.cli._options import ancestor_paths
@@ -68,6 +69,27 @@ def owner_of(buffer, issued):
     return None
 
 
+def frozen_pixels(buf, *, shared):
+    if isinstance(buf, np.ndarray):
+        if shared:
+            return np.asarray(memoryview(buf).toreadonly())
+        if 0 in buf.strides:
+            # A read-only broadcast may still have a writable base in the namespace.
+            distinct = tuple(slice(1) if stride == 0 else slice(None) for stride in buf.strides)
+            return np.broadcast_to(np.array(buf[distinct], copy=True), buf.shape)
+        if not isinstance(buf, np.memmap):
+            return np.array(buf, copy=True)
+    if isinstance(buf, h5py.Dataset):
+        record_hdf5_inputs(buf.file)
+    if buf.dtype.hasobject or 0 in buf.shape:
+        return np.array(buf[()], copy=True)
+    with TemporaryFile() as stream:
+        for tile in ordered_tiles(tuple(map(range, buf.shape)), READ_BYTES // buf.dtype.itemsize):
+            tj.progress.check_cancelled()
+            pixels(buf, tile).tofile(stream)
+        return np.memmap(stream, buf.dtype, "r", shape=buf.shape)
+
+
 def snapshot(value, *, issued, dependencies, source=None):
     memo = {}
     for buf in buffers(value, set(), metadata=True):
@@ -88,14 +110,7 @@ def snapshot(value, *, issued, dependencies, source=None):
         elif isinstance(buf, jax.Array):
             copy = buf.copy().block_until_ready()
         else:
-            if isinstance(buf, np.ndarray):
-                copy = (
-                    np.asarray(memoryview(buf).toreadonly()) if shared else np.array(buf, copy=True)
-                )
-            else:
-                if isinstance(buf, h5py.Dataset):
-                    record_hdf5_inputs(buf.file)
-                copy = np.array(buf[:], copy=True)
+            copy = frozen_pixels(buf, shared=shared)
             copy.flags.writeable = False
         memo[id(buf)] = copy
         if source is not None:

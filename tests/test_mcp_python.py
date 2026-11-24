@@ -221,6 +221,44 @@ state='completed'"""
         assert not c.call("status")["structuredContent"]["handles"]
 
 
+def test_cancel_during_percentile_selection_preserves_worker_and_handle(tmp_path):
+    import socket
+
+    with connection(tmp_path) as c, socket.create_server(("127.0.0.1", 0)) as listener:
+        listener.settimeout(10)
+        source, pid = python(
+            c,
+            f"""import os, socket
+live = register(tj.simulate(size=8, n_views=12).scan)
+samples = register(np.arange((1 << 21) + 1, dtype=np.float32))
+search = np.searchsorted
+chunks = []
+def gated_search(run, *args, **kwargs):
+    if isinstance(run, np.memmap):
+        chunks.append(run.size)
+        if len(chunks) == 1:
+            with socket.create_connection({listener.getsockname()!r}, timeout=10) as gate:
+                gate.recv(1)
+    return search(run, *args, **kwargs)
+np.searchsorted = gated_search
+[samples, os.getpid()]""",
+        )["value"]
+        request = c.send(
+            "tools/call", {"name": "view", "arguments": {"source": source, "mode": "statistics"}}
+        )
+        gate, _ = listener.accept()
+        with gate:
+            (target,) = c.call("status")["structuredContent"]["jobs"]
+            assert not c.call("control", action="cancel", target=target)["isError"]
+        terminal = c.receive("id", request)["result"]
+        assert terminal["isError"] and terminal["structuredContent"]["kind"] == "cancelled"
+        assert python(c, "[os.getpid(), len(chunks), len(handles[live].angles)]")["value"] == [
+            pid,
+            1,
+            12,
+        ]
+
+
 def test_registration_copies_nested_metadata(tmp_path):
     with connection(tmp_path) as c:
         python(
@@ -338,6 +376,32 @@ subset.views""",
         registered = python(c, "register(subset)")["value"]
         path.unlink()
         assert python(c, f"handles[{registered!r}].counts[0].tolist()")["value"] == [[9, 9], [9, 9]]
+
+
+def test_register_lazy_frames_bounds_pixel_and_metadata_copies(tmp_path):
+    import h5py
+
+    path = tmp_path / "large.h5"
+    with h5py.File(path, "w") as file:
+        file.create_dataset("data", shape=(256, 256, 256), dtype="f4", fillvalue=7)
+    with connection(tmp_path) as c:
+        python(c, "frames = tj.load_frames('large.h5', angles=np.arange(256), flats=10, darks=0)")
+        for selection, budget in [("frames.selected([17])", 4 << 20), ("frames", 32 << 20)]:
+            peak = python(
+                c,
+                f"""import tracemalloc
+item = {selection}
+tracemalloc.start()
+try:
+    handle = register(item)
+    peak = tracemalloc.get_traced_memory()[1]
+finally:
+    tracemalloc.stop()
+peak""",
+            )["value"]
+            assert peak < budget
+        path.unlink()
+        assert python(c, "float(handles[handle].counts[-1, 1, 2])")["value"] == 7
 
 
 def test_combined_scan_protects_both_python_inputs(tmp_path):
